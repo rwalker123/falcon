@@ -511,6 +511,11 @@ impl KeepingGear {
 /// `None` when the queue is empty, when the head declares a **ring** (which fills no rung meter and
 /// so names no verb), or when nobody is on the `builders` row — a declaration with no hands behind it
 /// puts nothing on the ground either.
+///
+/// ⛔ **THE RING'S ABSENCE HERE IS ABOUT THE VERB AND NOTHING ELSE.** This seam once decided the
+/// build's *material* claim too, and a ring therefore bid for no pile and widened a pen for free.
+/// The pile is laid by [`head_ring_leg`] now, off the ring's own gate — so filtering `ExtendPen` out
+/// of a **verb** answer no longer makes a ring materially free.
 struct SourceBankingFirstWork {
     source: Option<(BuildSource, Improvement)>,
 }
@@ -1752,6 +1757,46 @@ fn head_build_legs(
     legs
 }
 
+/// **THE ONE LEG A HEAD *RING* LAYS** — [`head_build_legs`]' twin for the queue entry that widens a
+/// pen instead of climbing a rung, in the same `(rung, owed, width)` shape and for the same reader.
+///
+/// # A RING IS A PEN BUILD, AND THE MATERIAL ACCOUNT IS WHERE THAT WAS LAST UNTRUE
+///
+/// Widening a fence is the same fencing labour on the same `animal:pen` record: the ring is priced at
+/// that rung's [`RungDef::build_cost`], raised by the same builders pool, and wears the same keepers'
+/// tools. **So it eats the same pile.** It was materially free for exactly one turn of this arc's
+/// life, because [`SourceBankingFirstWork`] answers a *verb* question and a ring names no verb — so
+/// nothing bid for it and it was quoted at [`FULLY_SERVED`].
+///
+/// Stating it as a **leg** rather than as a second draw is what keeps the two honest: the leg goes
+/// through [`build_material_wants`] with every rung leg, so *"a pile draws in proportion to the work
+/// banked"* has one expression, and the `owed` cap (`ring_cost − pen_extend_progress`) makes the
+/// closing turn draw only the remainder exactly as a rung's completing leg does.
+///
+/// `None` where there is no ring to pay for — the source is not a herd, the herd has left the
+/// registry, the pen rung has no build meter, or [`Herd::pen_extending`] (**the ring's whole gate**,
+/// the same flag the arm passes as the rung's `eligible`) is clear.
+fn head_ring_leg(
+    source: &BuildSource,
+    registry: &HerdRegistry,
+    ladder: &LadderConfig,
+) -> Option<(RungKey, f32, f32)> {
+    let BuildSource::Herd(fauna_id) = source else {
+        return None;
+    };
+    let herd = registry.find(fauna_id)?;
+    if !herd.pen_extending {
+        return None;
+    }
+    // **The ring's width is the pen's own cost, unscaled** — the arm's `ring_cost`, read off the same
+    // rung record so a retune moves both or neither. Penning takes no per-species multiplier.
+    let width = ladder
+        .rung(RungKey::AnimalPen)
+        .build_cost(RUNG_COST_UNSCALED)?;
+    let owed = (width - herd.pen_extend_progress).max(NOTHING_DEMANDED);
+    (owed > NOTHING_DEMANDED).then_some((RungKey::AnimalPen, owed, width))
+}
+
 fn build_material_wants(
     legs: &[(RungKey, f32, f32)],
     accrual: f32,
@@ -2238,34 +2283,58 @@ pub fn advance_labor_allocation(
         // **The build's want is struck against the head entry alone**, and only where its gate holds
         // — `banking` is that gate, resolved above and shared with the keeping claim, so the pool
         // cannot draw a pile for work it will not bank.
-        let build_want = match banking.source.as_ref() {
-            Some((source, improvement)) => {
-                let legs = head_build_legs(
+        //
+        // **AND THE HEAD MAY BE A RING**, which is why the two arms below meet in one pair. A ring is
+        // a pen build — the same rung record prices it, funds it and wears the same tools on it — so
+        // it draws the same pile, laid as [`head_ring_leg`] and spread by the very same
+        // [`build_material_wants`]. `banking` cannot answer for it (it resolves a *verb*, and a ring
+        // names none), so the ring's own gate is asked here instead: the head entry declares
+        // `ExtendPen`, the band has builders, and `Herd::pen_extending` is set.
+        let (pile_source, pile_legs) = match banking.source.as_ref() {
+            Some((source, improvement)) => (
+                Some(source.clone()),
+                head_build_legs(
                     source,
                     BuildJob::Rung(*improvement).destination(),
                     &forage_registry,
                     &registry,
                     &ladder,
-                );
+                ),
+            ),
+            None => match head_entry.as_ref().filter(|entry| {
+                matches!(entry.declared, BuildJob::ExtendPen) && builders > NO_CREW_ON_THIS_ACTIVITY
+            }) {
+                Some(entry) => (
+                    Some(entry.source.clone()),
+                    head_ring_leg(&entry.source, &registry, &ladder)
+                        .into_iter()
+                        .collect(),
+                ),
+                None => (None, Vec::new()),
+            },
+        };
+        let build_want = match pile_source.as_ref() {
+            Some(source) => {
                 // The turn's accrual as the arm will compute it — the whole pool at the entry's own
-                // kit, which is `RungDef::build_accrual`'s body once its gate has held.
+                // kit, which is `RungDef::build_accrual`'s body once its gate has held, and the
+                // ring arm's `pen_extend_accrual` on the same terms.
                 let accrual = crate::intensification::pool_work_supply(
                     builders,
                     builders_gear.for_source(source).work_per_worker,
                 );
                 BuildMaterialDraw {
                     coverage: FULLY_SERVED,
-                    wanted: build_material_wants(&legs, accrual, &ladder),
+                    wanted: build_material_wants(&pile_legs, accrual, &ladder),
                 }
             }
             None => BuildMaterialDraw::unbilled(),
         };
         // The head row's own rank, so the build competes for the store on the player's answer for
-        // that source rather than on a rank of its own.
-        let build_priority = banking
-            .source
+        // that source rather than on a rank of its own — a ring's included, so a widening pen queues
+        // for the hurdles behind a `High`-marked holding exactly as a fresh pen does.
+        let build_priority = pile_source
             .as_ref()
-            .and_then(|(source, _)| {
+            .and_then(|source| {
                 allocation
                     .assignments
                     .iter()
@@ -3999,13 +4068,19 @@ pub fn advance_labor_allocation(
                         // **`pen_extending` IS THE RING'S WHOLE GATE**, and it is passed as the
                         // rung's `eligible` rather than checked beside it, so the accrual and the
                         // quote below cannot come to disagree about whether a ring is running.
+                        //
+                        // **⛔ AND THE MATERIAL STORE SCALES IT, exactly as it scales a rung's**
+                        // (`docs/plan_standing_upkeep.md` §2.7). A ring bid for `animal:pen`'s own
+                        // build pile in the settlement above ([`head_ring_leg`]), so a store short of
+                        // hurdles stalls a widening fence in proportion and a dry one blocks it —
+                        // widening a pen costs the same panels as raising the pen it widens.
                         let ring_in_flight = herd.pen_extending;
                         let pen_extend_accrual = pen_rung.build_accrual(
                             Some(Improvement::Corral),
                             ring_in_flight,
                             ring_workers,
                             entry_gear.work_per_worker,
-                        );
+                        ) * build_coverage;
                         // A ring costs what the pen it widens costs — the same rung record, so the
                         // two can never drift — and the same keepers' tools raise both at the same
                         // rate.
@@ -4076,11 +4151,12 @@ pub fn advance_labor_allocation(
                                 BuildQuote {
                                     cost: ring_cost,
                                     banked: ring_banked,
-                                    // ⛔ **A RING DRAWS NO PILE TODAY**, so it is quoted at full
-                                    // coverage: `source_banking_its_first_work` filters
-                                    // `BuildJob::ExtendPen` out (a ring fills no rung meter and names
-                                    // no verb), so the settlement never bids for one. See the
-                                    // `animal:pen` rung's own config note.
+                                    // **THE COVERAGE THE SETTLEMENT HANDED THE RING** — a ring
+                                    // bids for `animal:pen`'s pile like any other build of that
+                                    // rung, so a store that cannot cover the panels publishes
+                                    // [`BuildGate::Materials`] here through
+                                    // [`crate::intensification::BuildQuote::blocking_gate`] rather
+                                    // than a confident countdown for a build nothing is feeding.
                                     material_coverage: entry_material_coverage,
                                     // **The animal web still carries per-rung meters**, so an entry
                                     // there is one rung and lays no legs — `work_remaining` falls

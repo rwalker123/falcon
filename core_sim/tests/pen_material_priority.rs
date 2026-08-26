@@ -454,3 +454,429 @@ fn a_pen_holding_twice_the_herd_is_billed_twice_the_material() {
          {small_bill} against {herds}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// **A RING IS A PEN BUILD, AND IT EATS THE SAME PILE**
+// ---------------------------------------------------------------------------------------------
+//
+// Widening a fence is the same fencing labour on the same `animal:pen` record — the same
+// `build_cost`, the same builders pool, the same keepers' tools — so it draws the same pile, in
+// proportion to the work banked, off the **same** `settle_material_upkeep` pass at the source row's
+// own `SourcePriority`.
+//
+// ⛔ It was materially free for one turn of this arc's life: `source_banking_its_first_work` answers
+// a **verb** question and a ring names no verb, so nothing bid for one and it was quoted at full
+// coverage. The claim is laid by `head_ring_leg` now, off the ring's own `pen_extending` gate.
+
+/// A builders pool small enough that one turn banks a **fraction** of the ring — a crew that closed
+/// the fence in a turn would draw the whole pile and leave no proportion to measure.
+const RING_BUILDERS: u32 = 25;
+
+/// How many times over the band is sized against the rows it staffs, so `normalize` sheds nobody and
+/// every arrangement drives the **same** crew.
+const BAND_HEADROOM: u32 = 2;
+
+/// A store no claim on it can bind — so a run measures the ring rather than the shelf.
+const AMPLE: f32 = 10_000.0;
+
+/// **THE SLACK A RESTOCKED STORE COSTS, in work units.** A `LocalStore` holds fixed-point `Scalar`
+/// batches, so a fixture that stocks *a measured fraction of a measured demand* quantises twice —
+/// once stating the amount and once reading it back — and the ring's banked work inherits that as a
+/// relative error. It is ~5e-4 at this fixture's scale; [`EPSILON`] is the right bar for the exact
+/// arithmetic and this is the right one for a claim routed through the shelf.
+const STORE_QUANTUM_SLACK: f32 = 1e-2;
+
+/// The `animal:pen` rung's work cost — what a pen costs and, because the two are one record, what a
+/// ring costs.
+fn pen_build_cost() -> f32 {
+    core_sim::LadderConfig::builtin()
+        .rung(core_sim::RungKey::AnimalPen)
+        .build_cost(core_sim::RUNG_COST_UNSCALED)
+        .expect("the pen rung has a build meter")
+}
+
+/// The `animal:pen` rung's build **pile** of the good — the whole amount raising it swallows.
+fn pen_build_pile() -> f32 {
+    core_sim::LadderConfig::builtin()
+        .rung(core_sim::RungKey::AnimalPen)
+        .build_materials()
+        .find(|(id, _)| *id == PEN_MATERIAL)
+        .map(|(_, amount)| amount)
+        .expect("the shipped pen rung declares the good on its pile")
+}
+
+/// The empty kit, so the pace under test is the pool's own and no start-stocked tool moves it.
+fn bare_builders() -> core_sim::KitChoice {
+    core_sim::EquipmentConfig::builtin()
+        .kit("none")
+        .expect("the shipped roster carries the empty kit")
+}
+
+/// Staff the band's `builders` row at [`RING_BUILDERS`] and queue `job` on `source` with a bare kit —
+/// the sim half of what `handle_extend_pen` and a `corral` order each do.
+fn queue_a_build(
+    app: &mut App,
+    keeper: Entity,
+    source: core_sim::BuildSource,
+    job: core_sim::BuildJob,
+) {
+    let mut allocation = app
+        .world
+        .get_mut::<LaborAllocation>(keeper)
+        .expect("the keeper band keeps its allocation");
+    allocation.assignments.push(LaborAssignment {
+        target: LaborTarget::Builders,
+        workers: RING_BUILDERS,
+        kit: None,
+        priority: SourcePriority::default(),
+    });
+    assert!(
+        allocation.enqueue_build(source.clone(), job),
+        "the keeper band works the source it is building"
+    );
+    assert!(
+        allocation.set_build_entry_kit(&source, Some(bare_builders())),
+        "the entry just declared takes the bare kit"
+    );
+    // ⛔ **THE BUILDERS ROW SPENDS THE SAME POOL THE KEEPERS DO.** `normalize` sheds crews until
+    // `Σ assignments ≤ available`, so a band sized for its hunt rows alone has this row trimmed to a
+    // hand or two, and *which* rows it takes them from depends on the vector — so the arrangement
+    // sweep would be varying the crew as well as the layout. Widen the band past every row it was
+    // just handed, with room to spare: `available_workers` floors a fixed-point `Scalar`, so a band
+    // sized to the nose loses a hand to the rounding alone.
+    let staffed: u32 = allocation
+        .assignments
+        .iter()
+        .map(|assignment| assignment.workers)
+        .sum();
+    let mut cohort = app
+        .world
+        .get_mut::<PopulationCohort>(keeper)
+        .expect("the keeper band persists");
+    cohort.working = scalar_from_f32((staffed * BAND_HEADROOM) as f32);
+}
+
+/// Put a ring in flight on `herd_id` and staff it.
+fn begin_a_ring(app: &mut App, keeper: Entity, herd_id: &str) {
+    let radius_max = app
+        .world
+        .resource::<FaunaConfigHandle>()
+        .get()
+        .husbandry
+        .pen_radius_max;
+    let began = app
+        .world
+        .resource_mut::<HerdRegistry>()
+        .herds
+        .iter_mut()
+        .find(|herd| herd.id == herd_id)
+        .expect("the pen is seated")
+        .begin_pen_extension(radius_max);
+    assert!(began, "a built pen below the radius cap may begin a ring");
+    queue_a_build(
+        app,
+        keeper,
+        core_sim::BuildSource::Herd(herd_id.to_string()),
+        core_sim::BuildJob::ExtendPen,
+    );
+}
+
+/// Seat one **tamed but unfenced** herd on `tile`, clearing whatever worldgen left — the source a
+/// fresh `Corral` is raised on, against which the ring is measured.
+fn seat_a_pastoral_herd(app: &mut App, tile: UVec2) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    registry.herds.clear();
+    let mut herd = Herd::new(
+        "pen_fresh".to_string(),
+        "Fixture pen_fresh".to_string(),
+        SizeClass::Small,
+        vec![tile],
+        BIG_PEN_BIOMASS,
+        PEN_CAPACITY,
+        FODDER_RATE,
+        WILD_R,
+        PEN_BODY_MASS,
+    );
+    herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
+    registry.herds.push(herd);
+}
+
+/// What the band still holds of the good.
+fn store_holds(app: &App, keeper: Entity) -> f32 {
+    app.world
+        .get::<PopulationCohort>(keeper)
+        .expect("the keeper band persists")
+        .stores
+        .material_total(PEN_MATERIAL)
+        .to_f32()
+}
+
+/// How far the ring got this turn.
+fn ring_banked(app: &App, herd_id: &str) -> f32 {
+    app.world
+        .resource::<HerdRegistry>()
+        .find(herd_id)
+        .expect("the pen is still seated")
+        .pen_extend_progress
+}
+
+/// Drive one real turn with a ring in flight on the big pen, laid out as `arrangement` says.
+fn run_ring_turn(
+    arrangement: Arrangement,
+    ring_rank: SourcePriority,
+    other_rank: SourcePriority,
+    units: f32,
+) -> (App, Entity) {
+    let mut app = base_world();
+    let tile = pen_tile(&app);
+    seat_two_pens(&mut app, tile);
+    let rows = match arrangement {
+        Arrangement::First | Arrangement::Edited => vec![
+            hunt_row("pen_big", ring_rank),
+            hunt_row("pen_small", other_rank),
+        ],
+        Arrangement::Last => vec![
+            hunt_row("pen_small", other_rank),
+            hunt_row("pen_big", ring_rank),
+        ],
+    };
+    let keeper = spawn_keeper(&mut app, rows, tile);
+    begin_a_ring(&mut app, keeper, "pen_big");
+    if arrangement == Arrangement::Edited {
+        edit_the_big_row(&mut app, keeper, ring_rank);
+    }
+    stock_material(&mut app, keeper, units);
+    app.world.run_system_once(advance_labor_allocation);
+    (app, keeper)
+}
+
+/// What the ring itself took off the store — the turn's whole fall, less the two pens' stamped
+/// upkeep, which is the only other claim in the fixture.
+fn ring_pile_drawn(app: &App, keeper: Entity, stocked: f32) -> f32 {
+    stocked - store_holds(app, keeper) - paid(app, "pen_big") - paid(app, "pen_small")
+}
+
+/// ⛔ **A RING DRAWS THE PEN'S OWN PILE, IN PROPORTION TO THE WORK IT BANKED.**
+///
+/// `pile × banked / cost` — the same expression a rung's leg is spread by, on the same rung record.
+/// Before the fix the ring's term was **zero**: widening a pen was materially free while raising one
+/// cost the whole pile.
+#[test]
+fn a_ring_draws_the_pens_own_build_pile_in_proportion_to_the_work_banked() {
+    let (app, keeper) = run_ring_turn(
+        Arrangement::First,
+        SourcePriority::Normal,
+        SourcePriority::Normal,
+        AMPLE,
+    );
+    let banked = ring_banked(&app, "pen_big");
+    let cost = pen_build_cost();
+    assert!(
+        banked > 0.0 && banked < cost - EPSILON,
+        "fixture: the ring must bank a FRACTION of its span this turn, or there is no proportion to \
+         measure (banked {banked} of {cost})"
+    );
+    let expected = pen_build_pile() * banked / cost;
+    assert!(
+        expected > EPSILON,
+        "**LIVENESS**: the expected draw must be a real quantity, or this test passes on a ring \
+         that draws nothing — which is the defect it exists to catch (got {expected})"
+    );
+    let drawn = ring_pile_drawn(&app, keeper, AMPLE);
+    assert!(
+        (drawn - expected).abs() < EPSILON,
+        "the ring ate the pen's own pile at the work it banked: drew {drawn} against {} × {banked} \
+         / {cost}",
+        pen_build_pile()
+    );
+}
+
+/// **A SHORT STORE STALLS THE RING IN PROPORTION, AND A DRY ONE BLOCKS IT** — the same
+/// `build_coverage` scaling and the same `BuildGate::Materials` cause a rung build already gets.
+#[test]
+fn a_short_store_stalls_the_ring_in_proportion_and_a_dry_one_blocks_it() {
+    /// The share of the turn's whole material demand the short store can cover.
+    const HALF: f32 = 0.5;
+
+    let (full, keeper) = run_ring_turn(
+        Arrangement::First,
+        SourcePriority::Normal,
+        SourcePriority::Normal,
+        AMPLE,
+    );
+    let banked_full = ring_banked(&full, "pen_big");
+    assert!(
+        banked_full > EPSILON,
+        "**LIVENESS**: the well-stocked run must bank real work, or every fraction below is a \
+         fraction of nothing (got {banked_full})"
+    );
+    let demanded = AMPLE - store_holds(&full, keeper);
+
+    // --- half the demand: every claim sits in one tier, so each is served the same fraction ---
+    let (short, _) = run_ring_turn(
+        Arrangement::First,
+        SourcePriority::Normal,
+        SourcePriority::Normal,
+        demanded * HALF,
+    );
+    let banked_short = ring_banked(&short, "pen_big");
+    assert!(
+        (banked_short - banked_full * HALF).abs() < STORE_QUANTUM_SLACK,
+        "a store covering half the turn's panels banks half the ring's work: {banked_short} against \
+         {banked_full} × {HALF}"
+    );
+
+    // --- nothing at all: the ring stalls outright, and says the store is why ---
+    let (dry, _) = run_ring_turn(
+        Arrangement::First,
+        SourcePriority::Normal,
+        SourcePriority::Normal,
+        0.0,
+    );
+    assert!(
+        ring_banked(&dry, "pen_big").abs() < EPSILON,
+        "a dry store banks NOTHING on the ring (got {})",
+        ring_banked(&dry, "pen_big")
+    );
+    assert_eq!(
+        dry.world
+            .resource::<HerdRegistry>()
+            .find("pen_big")
+            .expect("the pen is still seated")
+            .build_blocked_reason,
+        core_sim::BuildGate::Materials,
+        "…and it publishes the GOOD as the cause — *raise this band's Builders role* is wrong \
+         advice the moment the missing thing is hurdles"
+    );
+}
+
+/// ⛔ **THE RING'S CLAIM OBEYS THE MARKS AND NOT THE VECTOR — IN ALL THREE ARRANGEMENTS.**
+///
+/// A ring taking what it wants off the store in iteration order is the exact positional defect this
+/// arc spent a slice removing, and a fixture with one layout passes on it half the time.
+#[test]
+fn the_rings_claim_is_settled_by_the_marks_whatever_the_vector_says() {
+    let (full, keeper) = run_ring_turn(
+        Arrangement::First,
+        SourcePriority::Normal,
+        SourcePriority::Normal,
+        AMPLE,
+    );
+    let banked_full = ring_banked(&full, "pen_big");
+    // The store holds the ring's own pile and the big pen's own bill and nothing more, so the two
+    // claims on that row are covered whole and the other pen goes unpaid — if the marks say so.
+    let store = ring_pile_drawn(&full, keeper, AMPLE) + paid(&full, "pen_big");
+    assert!(
+        store < AMPLE - store_holds(&full, keeper) - EPSILON,
+        "fixture: the store must be short of the whole turn's demand, or the marks decide nothing"
+    );
+
+    for arrangement in [Arrangement::First, Arrangement::Last, Arrangement::Edited] {
+        let (app, _) = run_ring_turn(
+            arrangement,
+            SourcePriority::High,
+            SourcePriority::Low,
+            store,
+        );
+        assert!(
+            (ring_banked(&app, "pen_big") - banked_full).abs() < STORE_QUANTUM_SLACK,
+            "{arrangement:?}: the High-marked ring is covered whole and banks its full turn (got \
+             {} against {banked_full})",
+            ring_banked(&app, "pen_big")
+        );
+        assert!(
+            paid(&app, "pen_small").abs() < EPSILON,
+            "{arrangement:?}: …and the Low-marked pen gets nothing from what is left (got {})",
+            paid(&app, "pen_small")
+        );
+    }
+
+    // **AND THE MARKS ARE WHAT DECIDES IT.** Swapped, the ring is the one that goes short.
+    for arrangement in [Arrangement::First, Arrangement::Last, Arrangement::Edited] {
+        let (app, _) = run_ring_turn(
+            arrangement,
+            SourcePriority::Low,
+            SourcePriority::High,
+            store,
+        );
+        assert!(
+            ring_banked(&app, "pen_big") < banked_full - STORE_QUANTUM_SLACK,
+            "{arrangement:?}: a Low-marked ring is out-ranked by the pens above it and stalls (got \
+             {} against {banked_full})",
+            ring_banked(&app, "pen_big")
+        );
+    }
+}
+
+/// ⛔ **A RING AND A FRESH PEN DRAW THE SAME PANELS FOR THE SAME WORK BANKED.**
+///
+/// The whole of the ruling this section exists for: *the extension is just a pen build, nothing
+/// special about it other than that it is connected to the one next to it.* Driven as two real turns
+/// off the same crew and the same kit, so nothing but the queue kind differs — which is what stops
+/// the two drifting later.
+#[test]
+fn a_ring_and_a_fresh_pen_draw_the_same_pile_for_the_same_work_banked() {
+    // --- the ring: a built pen being widened ---
+    let (ring_app, ring_keeper) = run_ring_turn(
+        Arrangement::First,
+        SourcePriority::Normal,
+        SourcePriority::Normal,
+        AMPLE,
+    );
+    let ring_work = ring_banked(&ring_app, "pen_big");
+    let ring_pile = ring_pile_drawn(&ring_app, ring_keeper, AMPLE);
+
+    // --- the fresh pen: a tamed herd raising its first fence, same crew, same kit ---
+    let mut app = base_world();
+    let tile = pen_tile(&app);
+    seat_a_pastoral_herd(&mut app, tile);
+    let keeper = spawn_keeper(
+        &mut app,
+        vec![hunt_row("pen_fresh", SourcePriority::Normal)],
+        tile,
+    );
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(FactionId(0), core_sim::PENNING_DISCOVERY_ID, scalar_one());
+    queue_a_build(
+        &mut app,
+        keeper,
+        core_sim::BuildSource::Herd("pen_fresh".to_string()),
+        core_sim::BuildJob::Rung(core_sim::Improvement::Corral),
+    );
+    stock_material(&mut app, keeper, AMPLE);
+    app.world.run_system_once(advance_labor_allocation);
+    let build_work = app
+        .world
+        .resource::<HerdRegistry>()
+        .find("pen_fresh")
+        .expect("the herd persists")
+        .rung_work_done(
+            core_sim::RungKey::AnimalPen,
+            &core_sim::LadderConfig::builtin(),
+        );
+    // A herd below the pen rung owes no material RATE, so the whole of the store's fall is the pile.
+    assert!(
+        paid(&app, "pen_fresh").abs() < EPSILON,
+        "fixture: a pastoral herd names no material on its upkeep, so the store's fall is the pile \
+         alone (got {} on the bill)",
+        paid(&app, "pen_fresh")
+    );
+    let build_pile = AMPLE - store_holds(&app, keeper);
+
+    assert!(
+        (ring_work - build_work).abs() < EPSILON,
+        "**FIXTURE**: the two crews must bank the same work, or the comparison below is not about \
+         the pile (ring {ring_work}, pen {build_work})"
+    );
+    assert!(
+        ring_pile > EPSILON && build_pile > EPSILON,
+        "**LIVENESS**: both must draw a real quantity, or this passes on the very defect it exists \
+         to catch (ring {ring_pile}, pen {build_pile})"
+    );
+    assert!(
+        (ring_pile - build_pile).abs() < EPSILON,
+        "a ring and a fresh pen draw the SAME panels for the same work banked: ring {ring_pile}, \
+         pen {build_pile}"
+    );
+}

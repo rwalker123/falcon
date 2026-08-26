@@ -1312,7 +1312,9 @@ already read `self.build.as_ref()` and every other reader was already borrowing.
   same convention that quotes it at the full pool.
 - **THE STORE IS SPLIT BY `settle_scarce_store`, AND `SourcePriority` IS THE ONLY ORDERING.** One pass
   per band per material id, before the assignment loop, with **both accounts bidding at once**: every
-  source's upkeep rate and the head entry's pile. `upkeep_mode` is **not read** — the rank is the
+  source's upkeep rate and the head entry's pile — **the head's, whether it climbs a rung or widens a
+  pen**, since a ring is a pen build and draws `animal:pen`'s own pile through the same
+  `build_material_wants` (`husbandry.md` → "THE PEN COSTS HURDLES TOO"). `upkeep_mode` is **not read** — the rank is the
   player's per-row answer, the mode exists for a *pool* that has none, and reading both would let a
   row marked `High` starve with nothing on screen saying why. `core_sim/tests/pen_material_priority.rs`
   sweeps the three arrangements `pen_feed_priority.rs` does, and for its reason: a positional draw

@@ -125,6 +125,8 @@ fn cultivable_sites_in_one_work_range(app: &mut App) -> Vec<UVec2> {
     panic!("the fixture map must carry three cultivable sites inside one band's work range");
 }
 
+mod pen_materials_support;
+
 use core_sim::RungKey;
 use core_sim::TakeSelection;
 
@@ -1726,6 +1728,10 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             },
         ))
         .id();
+    // **A RING EATS THE PEN'S OWN PILE** (`docs/plan_standing_upkeep.md` §4.9 item 12) — widening a
+    // fence is a pen build, so a band with no panels is materials-blocked and this fixture would
+    // measure a stall it staged itself instead of the countdown it means to read.
+    pen_materials_support::stock_pen_materials(&mut app.world, band);
     (app, band, RING_HERD.to_string(), source)
 }
 

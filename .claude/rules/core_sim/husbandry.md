@@ -551,6 +551,17 @@ is here.
   raising a fence interpolates between wild and *pastoral* — which names no material — and owes its
   first hurdle only when the fence closes. **Half a fence is no fence**, and nothing here tests for
   the pen rung to make that true.
+- **AND AN EXTENSION RING EATS THE SAME PILE, off the same rung record.** Widening a pen *is* a pen
+  build — the same `build_cost`, the same builders pool, the same keepers' tools — so it is the same
+  6 hurdles. It bids in the **same** `settle_material_upkeep` pass at its own row's `SourcePriority`,
+  through `systems::labor::head_ring_leg`: one leg `(AnimalPen, ring_cost − pen_extend_progress,
+  ring_cost)` handed to the **same** `build_material_wants` every rung leg goes through, so *"a pile
+  draws in proportion to the work banked"* has one expression and a ring and a fresh pen draw alike.
+  A short store stalls the ring in proportion and a dry one publishes `BuildGate::Materials`.
+  ⛔ **`source_banking_its_first_work` still filters `ExtendPen` out, and that is only about the
+  VERB** — a ring fills no rung meter, so it names none; the pile is laid off the ring's own
+  `pen_extending` gate instead. Deciding both questions there is what made widening a pen materially
+  free while raising one cost six panels.
 - **THE SHORTFALL SHEDS ANIMALS, and no new penalty was added.** `uncontained_overage` reads
   `intensification::keeping_shortfall_fraction` now — the worst of the work fraction and each good's
   — so a pen fully staffed with no hurdles to mend the fence sheds at the hurdles' rate, one with

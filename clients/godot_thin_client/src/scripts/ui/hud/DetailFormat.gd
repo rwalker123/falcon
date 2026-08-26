@@ -211,7 +211,7 @@ const KIT_UNITS_UNSTATED := -1
 
 ## **UNITS OF ONE ITEM THE BAND OWNS**, or `KIT_UNITS_UNSTATED` where it states none.
 ##
-## > #### ⛔ THIS IS UNITS. `kit_workers_holding` IS PEOPLE, AND THEY ARE NOT INTERCHANGEABLE
+## > #### ⛔ THIS IS UNITS. `kit_coverage`'s `holding` IS PEOPLE, AND THEY ARE NOT INTERCHANGEABLE
 ## >
 ## > A unit arms `workers_per_unit` people — a per-item config number the wire does not carry — and a
 ## > unit needs its FULL crew or it is not used at all. So this may never stand in for
@@ -2714,14 +2714,13 @@ static func band_hunt_headcount(band: Dictionary) -> float:
         total += maxf(float(crew.get(HUNT_CREW_WORKERS_KEY, 0.0)), 0.0)
     return total
 
-## How many workers hold this item, `0` when the band publishes no row for it. **A `0` is three
-## different sentences** — nobody staffed on the job, the band owns none, or no quoted kit carries the
-## item — so this number alone never states a shortfall; `kit_coverage` below is what does.
-static func kit_workers_holding(band: Dictionary, item_id: String) -> float:
-    for row in band.get(KIT_ITEM_CONDITIONS_KEY, []):
-        if String(row.get(KIT_ITEM_ID_KEY, "")) == item_id:
-            return maxf(float(row.get(KIT_ITEM_WORKERS_HOLDING_KEY, 0.0)), 0.0)
-    return 0.0
+# **RETIRED: `kit_workers_holding(band, item_id)`** — the bare per-item people count, `0` where the
+# band published no row. It had no caller at any point this file has been under review, and its own
+# doc said why it could never have one: *"a `0` is three different sentences — nobody staffed on the
+# job, the band owns none, or no quoted kit carries the item — so this number alone never states a
+# shortfall"*. [`kit_coverage`] is what states one, and it reads
+# [`KIT_ITEM_WORKERS_HOLDING_KEY`] itself against a published denominator, which is the only reading
+# that separates those three sentences. The KEY is live and stays; only this accessor went.
 
 ## **HOW FAR AN ITEM REACHES INTO THE JOB THAT USES IT** — `{stated, holding, short, headcount}`, all
 ## three counts WHOLE PEOPLE, `stated` false when there is nothing to say.
