@@ -116,6 +116,7 @@ fn hunting_world_of(
                 workers: crew.unwrap_or(workers).max(1),
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
             ..Default::default()
         },
@@ -149,6 +150,7 @@ fn gathering_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
                 workers: workers.max(1),
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
             ..Default::default()
         },
@@ -168,6 +170,7 @@ fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
             workers: workers.max(1),
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         }],
         ..Default::default()
     });
@@ -266,8 +269,11 @@ const BASKETS: &str = "baskets";
 const WAYFINDING: &str = "wayfinding";
 /// The warrior TOE.
 const CLUBS: &str = "clubs";
-/// The animal web's handling and build gear — portable fence panels, halters, vessels.
-const HURDLES: &str = "hurdles";
+/// The animal web's handling and build gear — a long staff, halters, a butchering stone. It replaced
+/// `hurdles`, which became a **material** the `animal:pen` rung eats
+/// (`docs/plan_standing_upkeep.md` §4.9 item 12): a fence panel stays in the ground, so it is spent
+/// rather than carried to the next job.
+const CROOK: &str = "crook";
 /// The passive device — snares, nets, weirs, one item.
 const THE_PASSIVE_DEVICE: &str = "traps";
 
@@ -1394,14 +1400,18 @@ fn the_wayfinding_tier_steps_down_when_the_kit_runs_dry() {
     );
 }
 
-/// **A PEN IS COLLECTED ON THE HUSBANDRY GEAR'S TIER, NOT THE SLED'S**, and the whole point of the
-/// kit is that bringing the wrong tool costs you.
+/// **A PEN IS COLLECTED ON `PenCarry`, AND BOTH SIDES OF THAT STAT NOW SIT ON THE SLED.**
 ///
-/// A sled drags a carcass in off the range; a pen stands at the camp, and what bounds a slaughter
-/// there is handling gear. So `EquipmentStat::PenCarry` is a separate stat, the equipped side stays
-/// `labor_config.hunt.per_worker_biomass_capacity` (the rate a pen has always collected at, keeping
-/// its one home), and a crew that corralled its herd and stayed on the big-game kit collects at the
-/// bare rate.
+/// This test used to read *"only the husbandry kit collects a pen at the shipped rate"*, and that is
+/// no longer true. `pen_carry`'s **unequipped** side lived on the `hurdles` item; the material half
+/// of the standing upkeep made hurdles a **material** (`docs/plan_standing_upkeep.md` §4.9 item 12),
+/// and the pair moved to the sled — which already owned the *equipped* side through
+/// `EquipmentStat::shares_equipped_rate_with`, so the stat now has both sides on one item.
+///
+/// **The consequence is real and is what this test measures**: every hunt kit carrying a sled
+/// collects a pen at the equipped rate, so `big_game` and `husbandry` read alike and the bare rate
+/// belongs to a kit with **no sled at all**. The mistake the roster used to punish — bringing a drag
+/// harness to a pen — is no longer a mistake.
 #[test]
 fn only_the_husbandry_kit_collects_a_pen_at_the_shipped_rate() {
     let equipment = equipment();
@@ -1426,9 +1436,18 @@ fn only_the_husbandry_kit_collects_a_pen_at_the_shipped_rate() {
     );
     assert_eq!(
         equipment.pen_per_worker_biomass_capacity(baseline_rate, &big_game, &fresh),
-        unequipped_of(&equipment, HURDLES, EquipmentStat::PenCarry),
-        "a crew that brought spears and a sled to a pen collects at the bare rate — the sled is for \
-         the range, and this is the decision the husbandry kit exists to make"
+        equipped_carry(&equipment, SLED),
+        "a crew that brought spears AND A SLED collects at the equipped rate too — the sled carries \
+         both sides of `pen_carry` now"
+    );
+    // **The bare rate belongs to a kit with no sled**, which is where the two tiers still part.
+    let gathering = equipment
+        .kit("gathering")
+        .expect("the shipped roster carries the gathering kit");
+    assert_eq!(
+        equipment.pen_per_worker_biomass_capacity(baseline_rate, &gathering, &fresh),
+        unequipped_of(&equipment, SLED, EquipmentStat::PenCarry),
+        "…and a crew that brought baskets to a pen collects at the bare rate"
     );
     // ...and the two carry stats genuinely cannot reach each other: the husbandry kit still carries
     // a sled (a keeper hauls the meat home), so this is the discriminating direction.
@@ -1438,7 +1457,7 @@ fn only_the_husbandry_kit_collects_a_pen_at_the_shipped_rate() {
         "the husbandry kit carries a sled too, so its RANGE haul is untouched"
     );
     assert!(
-        equipment.pen_per_worker_biomass_capacity(baseline_rate, &big_game, &fresh)
+        equipment.pen_per_worker_biomass_capacity(baseline_rate, &gathering, &fresh)
             < equipped_carry(&equipment, SLED),
         "liveness: the bare pen rate must actually be lower, or both branches assert the same thing"
     );
@@ -1471,8 +1490,11 @@ fn a_pen_short_of_handling_gear_collects_between_the_bare_and_the_geared() {
     };
 
     let geared = pen_rate(&outfitted());
-    let partly = pen_rate(&short_of(HURDLES, GEAR_OWNED));
-    let bare = pen_rate(&dry(HURDLES));
+    // **The SLED is what supplies `pen_carry` now** — both sides of it — since the hurdles became a
+    // material (`docs/plan_standing_upkeep.md` §4.9 item 12). So the item a pen crew runs short of is
+    // the sled, and the coverage mix this test measures is over that.
+    let partly = pen_rate(&short_of(SLED, GEAR_OWNED));
+    let bare = pen_rate(&dry(SLED));
 
     assert_eq!(
         geared,
@@ -1481,7 +1503,7 @@ fn a_pen_short_of_handling_gear_collects_between_the_bare_and_the_geared() {
     );
     assert_eq!(
         bare,
-        unequipped_of(&equipment, HURDLES, EquipmentStat::PenCarry),
+        unequipped_of(&equipment, SLED, EquipmentStat::PenCarry),
         "and a crew with none of it collects at the bare rate"
     );
     assert!(
@@ -1569,7 +1591,12 @@ fn each_kit_wears_on_a_use_quantum_of_its_own_job() {
             .per
     };
     assert_eq!(quantum(WAYFINDING), core_sim::WearQuantum::TileRevealed);
-    assert_eq!(quantum(HURDLES), core_sim::WearQuantum::BiomassCollected);
+    // **The crook's headline is the BUILD**, because the butchering quantum went to the sled with the
+    // `pen_carry` pair when the hurdles became a material — the crook does no butchering.
+    assert_eq!(quantum(CROOK), core_sim::WearQuantum::BuildProgress);
+    // …and the SLED is the item on two quanta now, leading with the haul because its second entry was
+    // APPENDED: no shipped item's gauge changed units.
+    assert_eq!(quantum(SLED), core_sim::WearQuantum::BiomassHauled);
     // Every weapon, and only a weapon, is charged per blow landed.
     for weapon in [SPEARS, THE_PASSIVE_DEVICE, CLUBS] {
         assert_eq!(
@@ -1584,10 +1611,10 @@ fn each_kit_wears_on_a_use_quantum_of_its_own_job() {
         (SPEARS, BASKETS),
         (SLED, BASKETS),
         (SLED, WAYFINDING),
-        (SLED, HURDLES),
+        (SLED, CROOK),
         (BASKETS, WAYFINDING),
-        (BASKETS, HURDLES),
-        (WAYFINDING, HURDLES),
+        (BASKETS, CROOK),
+        (WAYFINDING, CROOK),
     ] {
         assert_ne!(
             quantum(a),
@@ -1721,7 +1748,7 @@ fn the_reference_ledger_is_one_unit_and_the_shipped_lives_are_unchanged() {
         SLED,
         BASKETS,
         THE_PASSIVE_DEVICE,
-        HURDLES,
+        CROOK,
         WAYFINDING,
         CLUBS,
     ] {
@@ -1752,7 +1779,12 @@ fn the_reference_ledger_is_one_unit_and_the_shipped_lives_are_unchanged() {
     assert_eq!(uses(SLED), 5000.0, "5000 biomass hauled");
     assert_eq!(uses(BASKETS), 2500.0, "2500 biomass gathered");
     assert_eq!(uses(THE_PASSIVE_DEVICE), 500.0, "500 kills of traps");
-    assert_eq!(uses(HURDLES), 2500.0, "2500 biomass butchered");
+    // **The crook's headline is the BUILD**, so its life reads in work units — 625, i.e. 12.5 of the
+    // ladder's reference gardens, exactly what the hoes beside it buy. The `2500 biomass butchered`
+    // this row used to state belonged to the retired `hurdles` item, and that quantum went to the
+    // **sled** with the `pen_carry` pair (`docs/plan_standing_upkeep.md` §4.9 item 12) — appended, so
+    // the sled's own headline life above is unmoved.
+    assert_eq!(uses(CROOK), 625.0, "625 work units built");
     assert_eq!(uses(WAYFINDING), 2000.0, "2000 first sightings");
     assert_eq!(uses(CLUBS), 50.0, "50 raids fought");
 }
@@ -1952,6 +1984,7 @@ fn report_the_strike_wear_the_shipped_opening_pays() {
             workers: workers.max(1),
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         }],
         ..Default::default()
     });

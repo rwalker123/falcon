@@ -3974,9 +3974,17 @@ func _pick_actor_band(entry: int) -> void:
 	# failure naming the press that caused it.
 	h._assert_hud("…and the press left the compose sheet OPEN rather than dismissing it",
 		h._hud.is_compose_sheet_open())
-	h._assert_hud("a press on the Band: picker's face opens its popup (announced=%s, visible=%s)"
-			% [popped[0], popup.visible], popped[0] and popup.visible)
-	if not popup.visible:
+	# **AND THE READ IS GUARDED FOR THE SAME REASON THE `disconnect` ABOVE IS.** A re-render frees the
+	# popup, and `popup.visible` on a freed object RAISES — which aborts this function rather than
+	# failing it, so the cascade that follows names some later probe instead of this press. Measured:
+	# staging one extra selection eight chapters upstream took `_pick_actor_band` out at
+	# `Invalid access to property 'visible' on a previously freed object` and reported five unrelated
+	# failures. Read liveness ONCE and let a dead popup fail the claim it belongs to.
+	var alive := is_instance_valid(popup)
+	var showing := alive and popup.visible
+	h._assert_hud("a press on the Band: picker's face opens its popup (announced=%s, alive=%s, visible=%s)"
+			% [popped[0], alive, showing], popped[0] and showing)
+	if not showing:
 		return
 	_actor_entry_pressed = ACTOR_NO_ENTRY_PRESSED
 	var witness := func(index: int) -> void:

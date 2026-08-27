@@ -122,10 +122,8 @@ fn draw_pass(
     materials: &MaterialsConfig,
 ) -> Option<DrawnInputs> {
     let efficiency = tiers.material_efficiency;
-    for input in &recipe.inputs {
-        if store.material_total(&input.material) < required(input.amount, efficiency) {
-            return None;
-        }
+    if !pass_is_affordable(store, recipe, tiers) {
+        return None;
     }
     let mut reading = None;
     let mut withdrawn = Vec::with_capacity(recipe.inputs.len());
@@ -152,6 +150,81 @@ fn draw_pass(
         tiers.quality_ceiling,
         materials,
     ))
+}
+
+/// **Can the store pay for one pass right now?** — the availability half of [`draw_pass`], factored
+/// out because the *projection* ([`bench_material_rate`]) has to ask the same question the draw will
+/// ask and a second reading of it would be free to drift from the one that actually spends.
+fn pass_is_affordable(store: &LocalStore, recipe: &RecipeDef, tiers: &BenchTiers) -> bool {
+    recipe.inputs.iter().all(|input| {
+        store.material_total(&input.material) >= required(input.amount, tiers.material_efficiency)
+    })
+}
+
+/// **WHAT THE BENCH WILL BANK, PER TURN, PER MATERIAL** — the forward half of a band's
+/// `material_upkeep_income` (`docs/plan_standing_upkeep.md` §2.7), and the **one producer** of it:
+/// the wire's `material_upkeep_income` row and [`crate::systems::labor`]'s material-shortfall Alert
+/// both read this, because a row and an event that summed the inflow apart would be free to
+/// disagree about whether a band is running out.
+///
+/// A bench finishes one item when its meter crosses the recipe's `work`, so its per-turn output is
+/// `rate_per_turn / work × the output's amount` — struck through the same
+/// [`rate_per_turn`] [`advance_crafting`] accrues with, so the projection and the accrual cannot
+/// describe different benches. `passes` is deliberately fractional: a bench two turns from an item
+/// is making half of one a turn, which is exactly what a *rate* means.
+///
+/// **Only MATERIAL outputs count** — a bench making a sled adds nothing to a material ledger.
+///
+/// # ⛔ EMPTY UNLESS THE BENCH WOULD ACTUALLY BANK THIS TURN
+///
+/// [`advance_crafting`] banks nothing for a bench that has drawn no pile and cannot draw one, so a
+/// rate published for it is income that never arrives. That is not a corner: on the shipped roster
+/// `hurdles` have **no producer but a bench**, and a band with `hurdles` queued and no `wood` banks
+/// zero for ever while the ledger read ~0.29/turn — which drove `material_upkeep_income` above
+/// `material_upkeep_need`, printed a runway of `∞` and left the caret untinted in exactly the state
+/// the standing bill exists to announce. The three gates, in the order [`advance_crafting`] applies
+/// them: a recipe the book still carries, a crew (`rate_per_turn > 0`), and **a pile drawn or
+/// affordable**.
+pub fn bench_material_rate(
+    bench: Option<&BandBench>,
+    store: &LocalStore,
+    recipes: &crate::recipes_config::RecipesConfig,
+    materials: &MaterialsConfig,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    wear: &BandEquipment,
+) -> std::collections::BTreeMap<String, f32> {
+    let mut rates = std::collections::BTreeMap::new();
+    let Some(bench) = bench else {
+        return rates;
+    };
+    let Some(recipe_id) = bench.recipe_id.as_deref() else {
+        return rates;
+    };
+    // A recipe the book no longer carries — the bench stalls rather than clearing itself
+    // ([`advance_crafting`]), and a stalled bench makes nothing.
+    let Some(recipe) = recipes.recipe(recipe_id) else {
+        return rates;
+    };
+    let Some(material) = recipe.bench_material() else {
+        return rates;
+    };
+    let tiers = bench_tiers(material, materials, equipment, wear);
+    let rate = rate_per_turn(bench.workers, &recipes.crafting, tiers.speed);
+    if recipe.work <= 0.0 || rate <= 0.0 {
+        return rates;
+    }
+    // **A pile already cut keeps the bench running** even if the store could not fund a *second*
+    // pass — `advance_crafting` gates the draw, not the progress.
+    if bench.drawn.is_none() && !pass_is_affordable(store, recipe, &tiers) {
+        return rates;
+    }
+    let passes = rate / recipe.work;
+    for output in &recipe.outputs {
+        if let Some(material) = output.material_id() {
+            *rates.entry(material.to_string()).or_insert(0.0) += output.amount * passes;
+        }
+    }
+    rates
 }
 
 /// **What a bench accrues in one turn** — `workers × progress_per_worker_turn × craft_speed`.

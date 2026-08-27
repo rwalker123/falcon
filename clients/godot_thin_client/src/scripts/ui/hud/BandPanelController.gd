@@ -3738,8 +3738,11 @@ func _emit_ready_declaration(band: Dictionary, model: Dictionary, rung: String) 
 func _open_rung_track(band: Dictionary, model: Dictionary, anchor: Control) -> void:
     var kind := String(model.get("kind", ""))
     var source := _rung_track_source(model)
+    # **THE BAND RIDES IN FOR ITS SHELF** (§2.7): the track's stall warning weighs a rung's material
+    # pile against what this band actually holds, which is the one thing on that card the SOURCE
+    # cannot answer for.
     var rows := RungLadder.track(kind, source, HudComposeVocab.BARE_FORECAST_PREFIX,
-        String(model.get("improvement", "")), _player_knowledge())
+        String(model.get("improvement", "")), _player_knowledge(), band)
     if not RungLadder.has_track(rows):
         return
     var track := _ensure_rung_track()
@@ -4124,7 +4127,7 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     # is building (its decay ⚠) — all three are trouble the eye must find; INK_DIM otherwise (a plain
     # policy glyph).
     marks.add_theme_color_override("font_color",
-        HudStyle.WARN if bool(model.get("warn", false)) or bool(model.get("under_herded", false)) \
+        HudStyle.WARN if bool(model.get("warn", false)) or bool(model.get("at_risk", false)) \
             else HudStyle.INK_DIM)
     marks.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -4321,7 +4324,12 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     if bool(model.get("warn", false)):
         col.add_child(HudWidgets.build_status_part(HudWorkVocab.WORK_INSPECT_OVERDRAW_LINE, HudStyle.WARN, true))
     if String(model.get("note", "")) != "":
-        col.add_child(HudWidgets.build_status_part(String(model.get("note", "")), HudStyle.WARN, true))
+        # **THE INK COMES OFF THE MODEL** (§2.7) — DANGER where the missing thing is a good, WARN where
+        # it is hands. One table (`HudWorkVocab.note_color`), read here and at the drawer's twin, so
+        # the two surfaces cannot colour one note two ways.
+        col.add_child(HudWidgets.build_status_part(String(model.get("note", "")),
+            HudWorkVocab.note_color(String(model.get("note_severity",
+                HudWorkVocab.NOTE_SEVERITY_WARN))), true))
     if String(model.get("muted_note", "")) != "":
         col.add_child(HudWidgets.build_status_part(String(model.get("muted_note", "")), HudStyle.INK_FAINT, true))
     var schedule: PackedFloat32Array = model.get("schedule", PackedFloat32Array())
@@ -4576,6 +4584,12 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             hunt_forecast = SourceForecast.with_published_useful_crew(hunt_forecast, m)
             cap = SourceForecast.source_worker_cap_state(hunt_forecast, workers, idle)
         var note := String(yld.get("note", ""))
+        # **THE NOTE'S SEVERITY IS MODEL STATE, NOT A RENDER-SITE CONSTANT** (§2.7). It was a
+        # hard-coded `HudStyle.WARN` at both this board's inspector and the drawer's twin, which is
+        # right for a staffing shortfall and wrong for a missing GOOD — a dead kit costs hands, a
+        # missing material stops the work outright, and the two must not read alike. The producer that
+        # knows which shortfall it is says so here; neither renderer sniffs the sentence.
+        var note_severity := HudWorkVocab.NOTE_SEVERITY_WARN
         var rung := _work_source_rung(kind, patch, live_herd)
         # THE RUNG ON OFFER — a third axis, orthogonal to both `marks` (the verb in flight) and
         # `rung_glyph` (the rung the source STANDS on). Same `RungGates` answer the map's badge and the
@@ -4696,16 +4710,36 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # own rule): `0` grace on an at-risk source means the penalty is biting THIS turn, while a
         # source that is not at risk states a `0` meaning nothing is at stake — so the flag decides,
         # and an unflagged source counts down from now.
+        #
+        # **AND WHEN THE MISSING THING IS A GOOD, THE NOTE NAMES IT INSTEAD** (§2.7). The row's own
+        # published pair — what its SOURCE was billed in materials and what the band's store paid —
+        # is what says so, and it supersedes the staffing sentence because it names a remedy the
+        # keeping stepper cannot reach: twelve keepers do not mend a fence with no hurdles. The
+        # countdown is unchanged, since either shortfall drives the same decay through the same
+        # grace.
+        var material_note := HudWorkVocab.material_short_note(kind,
+            SourceForecast.material_payoff_rows(m.get(
+                SourceForecast.ASSIGNMENT_MATERIAL_UPKEEP_DEMAND_KEY, [])),
+            SourceForecast.material_payoff_rows(m.get(
+                SourceForecast.ASSIGNMENT_MATERIAL_UPKEEP_SUPPLIED_KEY, [])))
+        # ⛔ **A GOOD-SHORT ROW IS UNDER-KEPT WHATEVER ITS WORK ACCOUNT SAYS, and reading only the work
+        # gate would have hidden the whole arm.** The two currencies are billed and judged SEPARATELY —
+        # that separation is the wire's own rule, so a full store cannot paper over missing hands —
+        # which means a pen whose keepers are paid in full and whose fence is not has
+        # `upkeep_shortfall == 0` and is losing its rung all the same. One shortfall of EITHER kind
+        # trips the same grace and drives the same decay, so it earns the same ⚠, the same slot and
+        # the same countdown.
+        var at_risk := under_kept or material_note != ""
         var under_kept_hint := ""
-        if under_kept:
+        if at_risk:
             var source_kind := SourceForecast.source_kind_for_labor(kind)
             var upkeep := SourceForecast.upkeep_state(rung_source,
                 HudComposeVocab.BARE_FORECAST_PREFIX)
             under_kept_hint = HudWorkVocab.under_kept_tooltip(kind,
                 DetailFormat.rung_badge_word(SourceForecast.at_risk_rung(
                     rung_source, HudComposeVocab.BARE_FORECAST_PREFIX, source_kind)),
-                int(upkeep["grace"]) if bool(upkeep.get("at_risk", false)) else 0)
-        if under_kept:
+                int(upkeep["grace"]) if bool(upkeep.get("at_risk", false)) else 0, material_note)
+        if at_risk:
             if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
                 marks += " " + HudComposeVocab.OVERHUNT_FLAG
             # **IT TAKES THE SLOT, where it used to yield to whatever was already in it.** The two
@@ -4714,7 +4748,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # can: an overstaffed TAKE crew on a source nobody keeps is an ordinary state. They are not
             # equal in weight, so the slot is not first-come: the overstaff note says some hands bring
             # nothing home, and this one says the ground or the flock is being lost.
-            note = HudWorkVocab.under_kept_note(kind)
+            note = HudWorkVocab.under_kept_note(kind, material_note)
+            note_severity = HudWorkVocab.under_kept_note_severity(material_note)
         models.append({
             "key": String(key), "kind": kind, "icon": icon, "icon_texture": icon_texture,
             "label": label,
@@ -4733,10 +4768,18 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # **ONE FLAG, WHERE THERE WERE TWO** (`docs/plan_standing_upkeep.md` §4.6a). It was
             # `under_herded` beside `unbuilt` — a keeper warning and a builder warning, split on
             # whether the meter was full — and one keeping pool owes both now, so the second key was a
-            # distinction with nothing under it. The name keeps the animal web's because that is the
-            # web every reader of it is on; what it means is *this source's keeping came up short*.
-            "under_herded": under_kept,
-            "note": note, "muted_note": String(yld.get("muted_note", "")), "marks": marks,
+            # distinction with nothing under it.
+            #
+            # ⛔ **AND THE SURVIVOR IS NO LONGER CALLED `under_herded`, BECAUSE IT STOPPED MEANING
+            # THAT.** It is short in EITHER CURRENCY (§2.7): a pen whose keepers are paid in full and
+            # whose fence is not is losing its rung exactly as fast, and calling that state
+            # *under-herded* named a headcount nothing here reads. What it holds is **this source is
+            # losing its rung, for any reason** — the source card's own `At risk:` vocabulary — so it
+            # is spelled the way `SourceForecast.upkeep_state`'s gate is, and the row's stripe and its
+            # ⚠ answer to it rather than to the work account alone.
+            "at_risk": at_risk,
+            "note": note, "note_severity": note_severity,
+            "muted_note": String(yld.get("muted_note", "")), "marks": marks,
             # The source's STANDING RUNG — orthogonal to `marks`, which carries the verb in flight.
             "rung_glyph": String(rung.get("glyph", "")), "rung_tooltip": String(rung.get("tooltip", "")),
             # The rung this source could climb NOW ("" for none) — see `ready` above.

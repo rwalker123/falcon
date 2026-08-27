@@ -753,6 +753,21 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		if (a as Dictionary).has(SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY):
 			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY] = \
 				(a as Dictionary)[SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY]
+		# **AND SO DOES THE GOOD-SIDE SHORTFALL PAIR** (`docs/plan_standing_upkeep.md` §2.7) — what
+		# this row's SOURCE was billed in materials and what the band's store paid toward it. Copied
+		# verbatim beside the account above, for the same two reasons: they are ARRAYS, so they cannot
+		# ride the `float()`-coerced list; and **this map is a hand-listed allowlist**, so a key not
+		# copied here does not exist as far as the work board is concerned — which is exactly how the
+		# board's good-shortfall note came out empty on a row whose wire carried both terms.
+		#
+		# **THE PENDING OVERLAY DELIBERATELY DOES NOT PRESERVE THEM.** A `+`/`−` on a row is a TAKE
+		# edit; what the source was billed in goods is settled by the turn, so a pending row states no
+		# shortfall until the recapture answers — the same shape `actual_yield` has, and the opposite
+		# of `improvement`, which the player is mid-edit on.
+		for material_key in [SourceForecast.ASSIGNMENT_MATERIAL_UPKEEP_DEMAND_KEY,
+				SourceForecast.ASSIGNMENT_MATERIAL_UPKEEP_SUPPLIED_KEY]:
+			if (a as Dictionary).has(material_key):
+				(merged[key] as Dictionary)[material_key] = (a as Dictionary)[material_key]
 		# **THE SIM'S OWN CREW CEILING FOR THIS ROW**, and it rides presence-sensitively for a
 		# sharper reason than the rates above: its `0` is *no crew is useful here* on a HUNT row and
 		# *does not apply* on every other one, so a `get(..., 0)` default would assert the first

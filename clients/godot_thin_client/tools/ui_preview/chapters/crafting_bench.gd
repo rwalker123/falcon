@@ -1449,8 +1449,13 @@ func _recipes() -> Array:
 		_kit_recipe("wayfinding", "Wayfinding gear", "weaving", [["fibre", 6.0, ""]]),
 		_kit_recipe("baskets", "Baskets", "weaving", [["fibre", 20.0, "strong"]]),
 		_kit_recipe("spears", "Spears", "bone_working", [["fibre", 12.0, ""], ["bone", 8.0, "dense"]]),
-		_kit_recipe("hurdles", "Hurdles", "tanning",
-			[["hide", 12.0, "tough"], ["fibre", 8.0, ""]]),
+		# **THE ANIMAL WEB'S KIT ITEM IS THE CROOK** (`recipes.json`) — a long bone hafted with fibre,
+		# so it reads bone's LENGTH where the spears above read its density. It stands where `hurdles`
+		# used to: hurdles are a crafted MATERIAL now (`docs/plan_standing_upkeep.md` §4.9 item 12) and
+		# their recipe declares no `grades`, so a kit-shaped fixture keyed on them staged a row the sim
+		# cannot produce — a material output carries no tier, no grade and no durability.
+		_kit_recipe("crook", "Crook", "bone_working",
+			[["bone", 1.0, "long"], ["fibre", 2.0, ""]]),
 		_kit_recipe("sled", "Sled", "tanning", [["hide", 18.0, "tough"], ["fibre", 10.0, ""]]),
 		_kit_recipe("clubs", "Clubs", "bone_working", [["bone", 10.0, "dense"]]),
 		_kit_recipe("traps", "Traps", "weaving", [["fibre", 14.0, ""], ["hide", 6.0, ""]]),
@@ -1665,8 +1670,8 @@ func _craft_offers() -> Array:
 		_offer("spears", "Spears", HudCraftingVocab.GROUP_KIT, "spears", false,
 			"Short 4.9 bone", HudCraftingVocab.SEVERITY_DANGER,
 			[{"material_id": "bone", "required": 8.0, "held": 3.1, "short": 4.9}]),
-		_offer("hurdles", "Hurdles", HudCraftingVocab.GROUP_KIT, "hurdles", true,
-			"Hide + tanning frame → good", HudCraftingVocab.SEVERITY_NEUTRAL),
+		_offer("crook", "Crook", HudCraftingVocab.GROUP_KIT, "crook", true,
+			"Long bone → good", HudCraftingVocab.SEVERITY_NEUTRAL),
 		_offer("sled", "Sled", HudCraftingVocab.GROUP_KIT, "sled", true,
 			"Mammoth hide → excellent", HudCraftingVocab.SEVERITY_NEUTRAL),
 		_offer("clubs", "Clubs", HudCraftingVocab.GROUP_KIT, "clubs", false,
@@ -1708,7 +1713,7 @@ func _equipment_batches() -> Array:
 			HudCraftingVocab.LIFE_SEVERITY_DANGER),
 		_batch_row("spears", TIER_FLINT, "good", 6, 34.0, "~15 turns left",
 			HudCraftingVocab.LIFE_SEVERITY_WARN),
-		_batch_row("hurdles", TIER_FLINT, "good", 2, 62.0, "~28 turns left",
+		_batch_row("crook", TIER_FLINT, "good", 2, 62.0, "~28 turns left",
 			HudCraftingVocab.LIFE_SEVERITY_HEALTHY),
 		_batch_row("sled", TIER_FLINT, "fair", 1, 71.0, "~42 turns left",
 			HudCraftingVocab.LIFE_SEVERITY_HEALTHY),

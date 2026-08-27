@@ -398,6 +398,7 @@ fn create_herds<'a>(
         // **WHERE THE HERD IS**, beside where it is going. Always written: every herd stands on a
         // rung, so unlike the destination there is no "not queued" reading to encode.
         let current_rung = builder.create_string(herd.current_rung.as_str());
+        let upkeep_kit_id = builder.create_string(herd.upkeep_kit_id.as_str());
         // **Always written, `""` included** — the empty string is *"no band has this queued"*, and a
         // client comparing its own selection against an absent field would read every source as a
         // mismatch, exactly as it would for `defaultKitId` above.
@@ -431,6 +432,17 @@ fn create_herds<'a>(
         } else {
             Some(builder.create_vector(&herd.regrowth_samples))
         };
+        // **THE MATERIAL HALF OF THE LADDER'S PRICE** — three per-good vectors, built before the
+        // parent table opens (the ordinary FlatBuffers rule). An EMPTY vector is *"this rung eats no
+        // material"*, never *"zero of something"*.
+        let build_material_cost = create_material_payoffs(builder, &herd.build_material_cost);
+        let upkeep_material_demand = create_material_payoffs(builder, &herd.upkeep_material_demand);
+        let upkeep_material_supplied =
+            create_material_payoffs(builder, &herd.upkeep_material_supplied);
+        let tame_upkeep_material_demand =
+            create_material_payoffs(builder, &herd.tame_upkeep_material_demand);
+        let corral_upkeep_material_demand =
+            create_material_payoffs(builder, &herd.corral_upkeep_material_demand);
         let entry = fb::HerdTelemetryState::create(
             builder,
             &fb::HerdTelemetryStateArgs {
@@ -576,6 +588,17 @@ fn create_herds<'a>(
                 // **The rung this herd STANDS on** — appended last (append-only wire), the
                 // twin of `buildDestinationRung`'s spelling at the source's own position.
                 currentRung: Some(current_rung),
+                buildMaterialCost: Some(build_material_cost),
+                upkeepMaterialDemand: Some(upkeep_material_demand),
+                upkeepMaterialSupplied: Some(upkeep_material_supplied),
+                // **THE PRE-COMMIT MATERIAL QUOTE, PER RUNG** — see the plant twin. The `corral` one
+                // is the number the `⌃` track's aside needs on a PASTORAL herd, whose own rung
+                // declares no material at all.
+                tameUpkeepMaterialDemand: Some(tame_upkeep_material_demand),
+                corralUpkeepMaterialDemand: Some(corral_upkeep_material_demand),
+                // **WHAT THIS SITE IS KEPT WITH** — the resolved kit, and whether a band stated it.
+                upkeepKitId: Some(upkeep_kit_id),
+                upkeepKitNamed: herd.upkeep_kit_named,
             },
         );
         entries.push(entry);
@@ -603,6 +626,7 @@ fn create_forage_patches<'a>(
         let build_destination_rung = builder.create_string(patch.build_destination_rung.as_str());
         // **WHERE THE PATCH IS**, beside where it is going — see the herd twin.
         let current_rung = builder.create_string(patch.current_rung.as_str());
+        let upkeep_kit_id = builder.create_string(patch.upkeep_kit_id.as_str());
         // Always written, `""` included — see the herd twin.
         let build_kit_id = builder.create_string(patch.build_kit_id.as_str());
         let build_legs = if patch.build_legs.is_empty() {
@@ -674,6 +698,18 @@ fn create_forage_patches<'a>(
         } else {
             Some(builder.create_vector(&patch.regrowth_samples))
         };
+        // **THE MATERIAL HALF OF THE LADDER'S PRICE** — three per-good vectors, built before the
+        // parent table opens (the ordinary FlatBuffers rule). An EMPTY vector is *"this rung eats no
+        // material"*, never *"zero of something"*.
+        let build_material_cost = create_material_payoffs(builder, &patch.build_material_cost);
+        let upkeep_material_demand =
+            create_material_payoffs(builder, &patch.upkeep_material_demand);
+        let upkeep_material_supplied =
+            create_material_payoffs(builder, &patch.upkeep_material_supplied);
+        let cultivation_upkeep_material_demand =
+            create_material_payoffs(builder, &patch.cultivation_upkeep_material_demand);
+        let field_upkeep_material_demand =
+            create_material_payoffs(builder, &patch.field_upkeep_material_demand);
         let entry = fb::ForagePatchState::create(
             builder,
             &fb::ForagePatchStateArgs {
@@ -774,6 +810,17 @@ fn create_forage_patches<'a>(
                 // **The rung this patch STANDS on** — appended last (append-only wire); see the
                 // herd twin.
                 currentRung: Some(current_rung),
+                buildMaterialCost: Some(build_material_cost),
+                upkeepMaterialDemand: Some(upkeep_material_demand),
+                upkeepMaterialSupplied: Some(upkeep_material_supplied),
+                // **THE PRE-COMMIT MATERIAL QUOTE, PER RUNG** — the rung's own rate at this source's
+                // scale, NOT the stamped bill beside it. The two disagree mid-climb, and that is the
+                // point: one says what you were billed, the other what this rung costs.
+                cultivationUpkeepMaterialDemand: Some(cultivation_upkeep_material_demand),
+                fieldUpkeepMaterialDemand: Some(field_upkeep_material_demand),
+                // **WHAT THIS SITE IS KEPT WITH** — the resolved kit, and whether a band stated it.
+                upkeepKitId: Some(upkeep_kit_id),
+                upkeepKitNamed: patch.upkeep_kit_named,
             },
         );
         entries.push(entry);

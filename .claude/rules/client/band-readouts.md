@@ -22,18 +22,21 @@ and it now buys three rows in three different ways — the differences are the r
 |---|---|---|
 | `Fodder` | **MERGED** onto Food as a fodder clause | that larder has no other home in the client |
 | `Growth` | **MERGED** onto Morale as a clause | the fertility breakdown has no other home either |
-| `Kit` | **KEPT, at every tier** | a spent kit is stated NOWHERE else and is not recoverable |
+| `Upkeep` | **KEPT, at every tier** | a standing bill in goods is stated nowhere else on this panel |
 
 **A fourth row, `Trade`, was the one this tier DROPPED**, on the reasoning that its rate was still
 stated by the WORK zone's head — the whole reason a drop was affordable there and nowhere else. Arc
 #527 retired the account and the row with it, so the tier drops nothing today; the rule survives it,
 and a future row with another home on the panel is the one that yields.
 
-**The `Kit` row is what forced the third merge.** Every live cohort states its kit
-(`DetailFormat.band_states_kit` is a bare `has()` on the spears key), so the row is shipped behaviour
-— and the band zone was already measured at 299 of its 300px box, so one more 26px vitals row put it
-25px over in 13 states. Dropping a row was not available: `Trade` was already the one this tier
-dropped (and has since been retired outright), and `Kit` is the row that cannot be.
+**A THIRD ROW IS WHAT FORCED THE THIRD MERGE, AND IT IS NOT THE ROW IT WAS.** The band zone was
+measured at 299 of its 300px box, so one more 26px vitals row put it 25px over in 13 states, and
+dropping a row was not available: `Trade` was already the one this tier dropped (and has since been
+retired outright). The row that could not be dropped was `Gear` when the merge was made; that row is
+retired now and the `Upkeep:` standing bill took its height, so the arithmetic is unchanged and the
+un-droppable row is the material bill — see "The `Gear` row is retired from BOTH pages" at the foot
+of this file. A spent kit is stated by the crafting panel's ledger and by the event dock's `kit_life`
+seams; a band's standing bill in goods has no second home.
 
 **Morale and Growth are the right pair to join.** Both are player-band health scalars, both already
 carry disclosure carets, and they read naturally together.
@@ -79,7 +82,7 @@ which is a property of the tier and not of the merge.
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/BandDetailLines.gd` | `RefCounted` producer (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **STATEFUL band/party detail-line producers** — the rows a BAND or a PARTY shows in whichever detail surface hosts it: `unit_summary_lines(unit, terrain_label, ctx, compact, with_position)` (Food · Fodder — on EVERY player band, live or dormant — · Morale · Growth · Position, registering the Food/Morale/Growth disclosures through `DisclosureController` as it emits them; the **Trade** row and its disclosure were retired with the account by arc #527) and `expedition_summary_lines(unit, ctx)` (Mission · Target + its live `(x, y)` · **Orders** · Phase · Carried/Provisions · Next delivery · the trip-bound clause · Position — the **Orders** row being the floor alone since issue #491 retired the fill target it was merged with, still ONE row via `DetailFormat.expedition_orders_line` because this producer's output lands in a `clip_contents` strip capped at ~300px; see `band-city-panel.md` → "The parties strip's SEVEN lines"), plus the private row builders `_band_food_line` / **`_band_kit_line`** (the three consumable kits and how much is left of each, registering a fifth `Kit` disclosure — see "The band's KIT" below) / `_band_morale_line` / `_morale_breakdown_lines` and the DORMANT twin `_band_fodder_dormant_line` (the shared gate itself moved to `DetailFormat.band_has_fodder_economy` when the faction rollup started asking it). **The two trailing flags are DIFFERENT QUESTIONS and must not be folded together**: `compact` is the band zone's HEIGHT TIER (it merges Fodder onto the Food line and Growth onto Morale), while `with_position` is the host saying whether it states the band's coordinates somewhere ELSE — the Band/City dock does, in its panel header, in every tier. **There is no `_band_output_line`**: productivity reads on the WORK zone's head now (see the Civilization Wellbeing bullet below). **It is the stateful HALF of a three-way split**: the PURE producers became `DetailFormat` statics (`herd_summary_lines`, the expedition tooltip trio). (`_format_stockpile_label` was the third piece of that split, via `HudFormat.stockpile_label`; both it and the accessible-stockpile rows it served are retired — see the accessible-stockpile note further down this file.) Hud holds it as `_banddetail`, constructed in `_ready` AFTER `_disclosures` and BEFORE `_bandpanel`; **both detail hosts share the one instance** — the Occupants-card drawer (`Hud._render_occupant_drawer`) and `BandPanelController`'s vitals label + parties inspector strip, which is what retired three of that controller's nine Callable injections. **THE INJECTION SURFACE IS ONE CALLABLE** — `_herd_label_for_id`, which cannot fold onto `HudBandLaborState` because it reads THREE collaborators (`_selectioncard.find_roster_herd` AND `_selection.herd()` AND `_band_labor.find_world_herd`); `_is_player_unit` is a trivial private COPY (the `SelectionCardController` / `BandPanelController` precedent). **IT NEVER SEES THE SELECTION MODEL**: the old producers read `_selection` at exactly two sites, both `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload, so that ONE display string is now a `terrain_label` PARAMETER and both hosts resolve it through the new `SelectionCardController.selected_terrain_label()`. It also owns `_food_flow_present`, which is a **private handshake between `_band_food_line` (writer) and `unit_summary_lines` (its only reader)** — the formatter has never seen it, so it is deliberately not on the `DetailFormat.Context`. Consts follow the `DetailFormat` rule (a const lives here iff every reader moved here): the Fodder/FULL-badge/morale-arrow/contribution-label vocabulary came (the stockpile-row vocabulary went with those rows). The disclosure `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` protocol vocabulary lives in `hud_disclosure_vocab.gd` and `MORALE_CAUSE_*` in `DetailFormat.gd` — read back as `HudDisclosureVocab.X` / `DetailFormat.X`, NOT as `HudLayer.X`; `Hud.gd` defines none of them |
+| `ui/hud/BandDetailLines.gd` | `RefCounted` producer (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **STATEFUL band/party detail-line producers** — the rows a BAND or a PARTY shows in whichever detail surface hosts it: `unit_summary_lines(unit, terrain_label, ctx, compact, with_position)` (Food · Fodder — on EVERY player band, live or dormant — · **Upkeep**, the standing MATERIAL bill, on a band that holds something which eats a good and NOWHERE else · Morale · Growth · Position, registering the Food/Morale/Growth disclosures through `DisclosureController` as it emits them; the **Trade** row and its disclosure were retired with the account by arc #527) and `expedition_summary_lines(unit, ctx)` (Mission · Target + its live `(x, y)` · **Orders** · Phase · Carried/Provisions · Next delivery · the trip-bound clause · Position — the **Orders** row being the floor alone since issue #491 retired the fill target it was merged with, still ONE row via `DetailFormat.expedition_orders_line` because this producer's output lands in a `clip_contents` strip capped at ~300px; see `band-city-panel.md` → "The parties strip's SEVEN lines"), plus the private row builders `_band_food_line` / **`_band_material_upkeep_line`** (the good in the WORST state and its runway, registering a fifth `Upkeep` disclosure whose popover states every good — see "THE STANDING MATERIAL BILL" at the foot of this file; **`_band_kit_line` and its `Gear` row are RETIRED** with `BAND_KIT_ROW_*` and the 22px `Zone_band` measurement their entry budget respected) / `_band_morale_line` / `_morale_breakdown_lines` and the DORMANT twin `_band_fodder_dormant_line` (the shared gate itself moved to `DetailFormat.band_has_fodder_economy` when the faction rollup started asking it). **The two trailing flags are DIFFERENT QUESTIONS and must not be folded together**: `compact` is the band zone's HEIGHT TIER (it merges Fodder onto the Food line and Growth onto Morale), while `with_position` is the host saying whether it states the band's coordinates somewhere ELSE — the Band/City dock does, in its panel header, in every tier. **There is no `_band_output_line`**: productivity reads on the WORK zone's head now (see the Civilization Wellbeing bullet below). **It is the stateful HALF of a three-way split**: the PURE producers became `DetailFormat` statics (`herd_summary_lines`, the expedition tooltip trio). (`_format_stockpile_label` was the third piece of that split, via `HudFormat.stockpile_label`; both it and the accessible-stockpile rows it served are retired — see the accessible-stockpile note further down this file.) Hud holds it as `_banddetail`, constructed in `_ready` AFTER `_disclosures` and BEFORE `_bandpanel`; **both detail hosts share the one instance** — the Occupants-card drawer (`Hud._render_occupant_drawer`) and `BandPanelController`'s vitals label + parties inspector strip, which is what retired three of that controller's nine Callable injections. **THE INJECTION SURFACE IS ONE CALLABLE** — `_herd_label_for_id`, which cannot fold onto `HudBandLaborState` because it reads THREE collaborators (`_selectioncard.find_roster_herd` AND `_selection.herd()` AND `_band_labor.find_world_herd`); `_is_player_unit` is a trivial private COPY (the `SelectionCardController` / `BandPanelController` precedent). **IT NEVER SEES THE SELECTION MODEL**: the old producers read `_selection` at exactly two sites, both `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload, so that ONE display string is now a `terrain_label` PARAMETER and both hosts resolve it through the new `SelectionCardController.selected_terrain_label()`. It also owns `_food_flow_present`, which is a **private handshake between `_band_food_line` (writer) and `unit_summary_lines` (its only reader)** — the formatter has never seen it, so it is deliberately not on the `DetailFormat.Context`. Consts follow the `DetailFormat` rule (a const lives here iff every reader moved here): the Fodder/FULL-badge/morale-arrow/contribution-label vocabulary came (the stockpile-row vocabulary went with those rows). The disclosure `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` protocol vocabulary lives in `hud_disclosure_vocab.gd` and `MORALE_CAUSE_*` in `DetailFormat.gd` — read back as `HudDisclosureVocab.X` / `DetailFormat.X`, NOT as `HudLayer.X`; `Hud.gd` defines none of them |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale and output warn/critical thresholds; morale carries the `color_for_morale`/`hex_for_morale` pair because it really has both a `Label` host and a BBCode host, while **output carries `color_for_output` ALONE** — its one surface is the WORK zone head, which is `Label`s), shared by MapView's band dot and Hud's food/morale lines + alerts |
 - **RETIRED — the demographics readout, and the wire section with no client reader.** The player
   faction's age structure (`PopulationDemographicsState`, snapshot `demographics[]`) rendered as the
@@ -333,7 +336,7 @@ which is a property of the tier and not of the merge.
     neither flow registers no disclosure at all — `register` declines an empty payload — so a caret
     never promises rows that are not behind it.
   - **The controller holds a DICTIONARY of registered rows**, keyed by row label, so this is the
-    FIFTH concurrent disclosure (Food, Fodder, Gear, Morale, Growth) rather than a second one
+    FIFTH concurrent disclosure (Food, Fodder, Upkeep, Morale, Growth) rather than a second one
     competing for a slot. `_is_concerning` gained a `BREAKDOWN_KIND_FODDER` case beside them.
 
   **THE ROW IS UNCONDITIONAL, AND `HAS FODDER **OR** OWES A BILL` NOW PICKS ITS FORM.** The test is
@@ -761,11 +764,18 @@ the defect slice 5 corrected in the sim, and a UI that repeats it is out of reac
 
 ### The row is the clock; the disclosure is the cliff
 
-`BandDetailLines._band_kit_line` emits one vitals row, `Kit: Spears 87 · Sled 54 · Baskets dry`, and
-`DisclosureController.kit_breakdown_lines` hangs the popover under it — the Food/Morale/Growth
-idiom, a fifth `BREAKDOWN_KIND_*`. The split is what each half can honestly answer at its size: the
-row says *how long have I got and which side of the line am I on*, and only the popover has room for
-*what each one is doing for me, and what happens when it stops*.
+> ⛔ **THE ROW HALF OF THIS SPLIT IS RETIRED** (`docs/plan_standing_upkeep.md` §4.9 item 12). It was
+> `BandDetailLines._band_kit_line`'s `Kit: Spears 87 · Sled 54 · Baskets dry`, and it is gone from the
+> band page and the faction page both — see "The `Gear` row is retired from BOTH pages" at the foot of
+> this file. **`DisclosureController.kit_breakdown_lines` is untouched**, and the reasoning below is
+> its reasoning: everything about what a kit DOES, how it is worded and how coverage is counted still
+> governs the crafting panel's ledger, the compose sheet's role hint and both harnesses' driven claims.
+> The bullets that describe the ROW specifically are marked where they occur.
+
+`DisclosureController.kit_breakdown_lines` composes one line per item the band carries. The split it
+was built for was what each half could honestly answer at its size: the row said *how long have I got
+and which side of the line am I on*, and only the popover has room for *what each one is doing for me,
+and what happens when it stops*. The second half is what survives.
 
 - **PERFORMANCE IS FLAT UNTIL EXPIRY, so nothing here may be scaled by the remaining condition** —
   no bar, no gauge, no gradient. Durability and performance are orthogonal axes: a kit at 3 performs
@@ -779,12 +789,15 @@ row says *how long have I got and which side of the line am I on*, and only the 
   single most important reading on the row, so only an ABSENT field may suppress it; a `> 0` gate
   would hide the loss it exists to announce, and a defaulted `Spears 0` on a pre-TOE cohort would
   report equipment destroyed that was never there.
-- **The caret is WARN once a kit has RUN OUT — or once one does not go round**
-  (`DetailFormat.band_kit_is_dry` **or `band_kit_is_short`**). Wearing down is not a fact to shout
-  about — nothing the player does changes its rate — while the step down is permanent, so a
-  remaining-condition threshold would either cry wolf every turn or fire after the loss. A SHORTFALL
-  is the second permanent-feeling state: a band holding ten spears for seventeen hunters has no dry
-  item at all and is still fighting with half a party.
+- **RETIRED WITH THE ROW: the WARN caret and its two predicates.** `DetailFormat.band_kit_is_dry` and
+  `band_kit_is_short` existed only to tint that caret and were **deleted** with it — a live-looking
+  predicate with no reader is worse than none. **The two states they judged are still the right two**,
+  and the event dock's `kit_life` line is what announces them now: wearing down is not a fact to shout
+  about (nothing the player does changes its rate) while running dry is a permanent step down, so a
+  remaining-condition threshold would either cry wolf every turn or fire after the loss; and a
+  SHORTFALL is the second permanent-feeling state, a band holding ten spears for seventeen hunters
+  having no dry item at all and still fighting with half a party. The coverage counting itself
+  (`DetailFormat.kit_coverage`, read by `kit_breakdown_row`) stayed, because the popover states it.
 - **All three are listed even on a band that neither hunts nor forages today.** Each wears on its own
   quantum (spears per animal killed, the sled per biomass hauled, baskets per biomass gathered), so
   this turn's activity does not predict which kit is closest to running out.
@@ -792,17 +805,19 @@ row says *how long have I got and which side of the line am I on*, and only the 
   same rule one roster wider. The popover answers *what does this band's gear do*, not *what is it
   doing this turn*, and a row that vanished when a role was unstaffed would hide the cliff exactly
   when the player is deciding whether to staff it again.
-- **It survives the `compact` (SHORT band-zone) tier, unlike the retired Trade row.** That row was a rate the WORK
-  zone's head restates; a spent kit is stated nowhere else in the client and is not recoverable.
+- **RETIRED (ROW) — *"It survives the `compact` (SHORT band-zone) tier, unlike the retired Trade
+  row"*.** That tier's spare row is the `Upkeep:` standing bill now, and a spent kit is stated by the
+  event dock's `kit_life` line and by the crafting panel's ledger.
 
-**Frames + assertions (`ui_preview`, `chapters/band_expedition.gd`):** `band_kit` (one kit dry, two
-intact — the row) · `band_kit_expanded` (the popover, and **the swap cross-check**: the sled's line
-must quote the hunt's carry and never the forage web's, and the basket's the reverse) · `band_kit_bare`
-(every kit dry — bare hands on all three roles, and the two carries STILL not swapped at the
-unequipped tier) · plus the PNG-less negative that a band stating no kit renders **no Kit row**,
-without which the three frames above pass on a row that renders unconditionally. The fixtures' three
-conditions are deliberately three DIFFERENT numbers (`fixtures_band.gd`), because two kits sharing one
-value would pass every assertion with their accessors swapped.
+**Assertions (`ui_preview`, `chapters/band_expedition.gd`) — DRIVEN AND PNG-LESS SINCE THE ROW WENT.**
+The five `band_kit_*` frames are retired with it (`band_kit`, `band_kit_expanded`, `band_kit_bare`,
+`band_kit_short`, `band_kit_forage_short`), and every claim they carried about the COMPOSITION now
+reads `kit_breakdown_lines` directly — the swap cross-check (the sled's line must quote the hunt's
+carry and never the forage web's, and the basket's the reverse), bare hands on all three roles with the
+two carries STILL not swapped at the unequipped tier, and the negative that a band stating no kit yields
+**no breakdown at all**, without which the positives pass on a producer that emits unconditionally. The
+fixtures' conditions are deliberately DIFFERENT numbers (`fixtures_band.gd`), because two kits sharing
+one value would pass every assertion with their accessors swapped.
 
 ### A partly-armed band must stop reading as a fully-armed one (issue #520)
 
@@ -834,19 +849,17 @@ three WHOLE PEOPLE.
   reachable with the item LIVE, an item needing a full crew (`workers_per_unit > 1`) equipping nobody
   until the job is staffed to it. Both clauses are spelled from one shared tail
   (`KIT_COVERAGE_SHORT_NEEDLE`, the `RECOVERY_GUIDANCE_TEXT` idiom) so a harness needle finds either.
-- **THREE INKS ON THE ROW, NOT TWO** (`_band_kit_line`): neutral INK for a live item that reaches
-  everybody, DANGER for one that has run out, **WARN for one that is live but short** — its gear works
-  perfectly for whoever holds it, which is why it must not read as the cliff and equally why it must
-  not read as fine. The face takes a bare fraction (`Spears 87 (10/17)`), the row being a
-  height-capped summary that already names the item in front of it.
-- **SHORT ITEMS LEAD, after dry ones.** Both are decisions and the row shows only
-  `BAND_KIT_ROW_MAX_ENTRIES` of them, so a shortfall must not be the thing pushed off.
+- **RETIRED (ROW) — the three-ink rule and the entry budget.** `_band_kit_line` inked a live item that
+  reached everybody neutral, a spent one DANGER and a live-but-short one WARN, and showed only
+  `BAND_KIT_ROW_MAX_ENTRIES` (3) entries, dry-first then short — a fourth wrapped and overflowed
+  `Zone_band` by 22px. **That 22px measurement retires with the row**: nothing on either page grows per
+  item any more. The three-state reading itself survives in the popover's own wording.
 - **A SHORT ITEM'S POPOVER ROW TAKES ▼, and that generalises the glyph rather than overloading it.**
   The two-tone rule was `equipped ? ▲ : ▼`; it asks whether the item is SOUND now, so the whole row
   tints WARN and the words say which state it is in — `— bare hands` for the cliff,
   `· only 10 of 17 hunters carry one` for the shortfall. A green row carrying an amber clause is what
   it replaces, and that read as fine.
-- **THE FACTION PAGE COUNTS A SHORT BAND TOO, and `all equipped` means it** (`FactionRollup._kit_line`).
+- **RETIRED (ROW) — the faction tally.** It read (`FactionRollup._kit_line`):
   The tally was dry bands alone, so a band holding ten spears for seventeen hunters was reported as
   equipped on the one surface a player uses to find WHICH band needs gear — the same reassuring-direction
   error one scope up. The two states share ONE count deliberately (the row is a count of bands worth
@@ -854,25 +867,27 @@ three WHOLE PEOPLE.
   `FACTION_KIT_SHORT_NOTE` on a band in both states, because the step down is permanent and a shortfall
   is the band outgrowing its gear, which crafting can answer.
 
-**The faction claim is DRIVEN and PNG-LESS**, on `FactionRollup._kit_line` with two band lists
-(`_assert_faction_kit_counts_the_short_band`). That page is `band_panel_preview`'s to render and
-staging a short band in its roster would move a frame for a claim that is one string, while the rollup
-is a pure function of the list. Asserted as a PAIR — the alert alone passes on a rollup that flags
-every band — and sabotage-verified against the dry-only tally, which fails exactly the short half.
+**The faction claim and `_assert_faction_kit_counts_the_short_band` are retired with that row.** What
+replaced its discovery path is the event dock's `material_shortfall` Alert, which NAMES the band and
+carries a jump to it.
 
-**Frames + assertions (`chapters/band_expedition.gd`):** `band_kit_short` — the same seven items at
-the same wear as `with_equipped_kit`, so the ONLY thing that can move this frame is the coverage. The
-row states the fraction on the spears' own face; the popover states the sentence on the SPEARS' line
+**Assertions (`chapters/band_expedition.gd`), driven:** the same seven items at the same wear as
+`with_equipped_kit`, so the ONLY thing that can move the claim is the coverage. The
+popover states the sentence on the SPEARS' line
 and **not on the SLED's** (both are hunt items and only one is short, so a clause rendered per BAND
 rather than per ITEM fails here); a short kit is never called bare hands; and **the unstaffed job is
-asserted on that same frame**, the band keeping no pen, since the two zeros are one glance apart and
-only a frame carrying both can show the readout telling them apart.
+asserted on that same band**, which keeps no pen, since the two zeros are one glance apart and only a
+state carrying both can show the readout telling them apart.
 
-**`band_kit_forage_short` is the four-job frame** — two baskets among four gatherers, with the hunt
+**The four-job case** — two baskets among four gatherers, with the hunt
 perfectly equipped and every item at full condition, i.e. the band that was unreadable while the hunt
 owned the only denominator. **The claim that the SPEARS say nothing is the load-bearing half**: a
 client still dividing everything by the hunt's 17 states the baskets as short too, so asserting the
 basket fraction alone passes on the wrong denominator.
+
+⛔ **AND THE ROW HALVES OF THOSE TWO CLAIMS WENT WITH THE ROW.** They asserted
+`KIT_COVERAGE_ROW_FORMAT` against the rendered vitals block, which no longer states an item condition
+at all; the popover halves above are what each claim now is.
 
 `band_kit` / `band_kit_expanded` / `band_kit_bare` moved with this arc and are now sharper: the dry
 baskets sit over a STAFFED forage job, so they read `Baskets dry (0/4)` and *"— bare hands · none of
@@ -1155,3 +1170,79 @@ the parties strip's seven-line worst case, which is a HUNT party's.
   renders two plausible numbers and every other assertion passes.
 
 Frame: `trade_party_panel`.
+
+## THE STANDING MATERIAL BILL, and the `Gear` row it replaced (`docs/plan_standing_upkeep.md` §2.7)
+
+**A PEN FRAYS ITS FENCE EVERY TURN IT STANDS; A ROAD WASHES OUT.** What a band has BUILT costs it a
+rate in goods beside the rate in hands, and nothing on either page said so. The `Upkeep:` row is that
+bill, and it is the Fodder row beat for beat:
+
+```
+Upkeep ▸  2 hurdles  (67 turns)
+  Hurdles
+    ▼ -0.05  Wanted
+    ▲ +0.02  Arriving
+    2  On the shelf
+```
+
+⛔ **THE ROW NAMES ONE GOOD, AND THAT IS WHAT KEEPS IT HONEST.** Six hurdles and two rope are not eight
+of anything — a summed figure here is the retired `Trade:` scalar rebuilt out of its own replacement,
+which is the flattening the materials model exists to refuse. The good quoted is the one in the WORST
+state (the shortest runway, i.e. the one that runs out first); the rest are one click down, ONE BLOCK
+PER GOOD in the popover, where growth is free. **Inline growth in a fixed-height zone is what clipped
+`Zone_band` once already**, and this ledger grows with the number of goods a band owes, which is config.
+
+⛔ **THE SIM SUMS `materialUpkeepNeed` AND THIS CLIENT MUST NOT.** `fodderNeed`'s own rule for
+`fodderNeed`'s own reason: herd rows are FOG-FILTERED, so a total rebuilt from the pens on screen
+silently drops one out of sight the band still owes for. `DetailFormat.band_material_bill` reads the
+published per-good figures and folds nothing. **The FACTION page's per-band fold is a different
+operation entirely** and is exactly what the Food and Fodder rows above it already do.
+
+**THE RUNWAY IS THE FOOD ROW'S IDEA ON THIS ACCOUNT** — the shelf against the gap the arrivals leave,
+`BandFoodStatus.UNLIMITED_TURNS` (the shared `∞`) where nothing is draining — and the value cell tints
+through `hex_for_turns` off `Context.material_turns`, so a short good takes the danger ink with no
+second severity rule beside it. `material_upkeep_is_concerning` is the caret's test, the FOOD test on
+this account.
+
+### NO DORMANT FORM — the one place it parts company with Fodder
+
+A band with no fodder economy still draws a dim `Fodder  —` because there is a *"you could have this"*
+story to tell: the Foddering craft is a thing to go and learn. **A band holding nothing that eats a good
+has no such story.** A standing bill is a CONSEQUENCE of what you have built, so a row promising one
+before anything is built would be a readout for an economy the player has not chosen to have. It draws
+**no row at all** and registers **no caret**, and the faction row is absent for the same reason when
+not one band on the roster owes a good.
+
+The faction drill-down likewise lists **only the bands that owe** — the Fodder drill-down lists the
+whole roster because *which band holds the hay* is a question every band answers, and *"none"* is a real
+answer to it; a band that has built nothing which eats a good has no value to state in this register at
+all. **NO FACTION RUNWAY**, for the Food row's reason: an average of one-band shelves describes no band
+that exists, so the per-band rows carry it and the ALERT reaches the row.
+
+### The `Gear` row is retired from BOTH pages
+
+**IT DID NOT COMPRESS TO A LINE, AND SOMETHING ELSE ALREADY OWNS IT.** The band row was a bounded
+summary of an unbounded list — three of however many items the server publishes, dry-first, the rest
+behind a caret — because a fourth entry wrapped and overflowed `Zone_band` by 22px. The faction row was
+an alert and a drill-down over durabilities that never aggregated. The CRAFTING panel's kit ledger
+states every item in full, and the Builders card's own gear line was retired in §4.7 for exactly this
+reason.
+
+Gone with it: `BandDetailLines._band_kit_line`, `BAND_KIT_ROW_*` (including the `BAND_KIT_ROW_MAX_ENTRIES`
+budget and the 22px measurement it respected), `FactionRollup._kit_line` / `_kit_face`,
+`HudWorkVocab.FACTION_KIT_DRY_NOTE` / `_SHORT_NOTE` / `_ALL_EQUIPPED`, `HudDisclosureVocab.DETAIL_ROW_KIT`
+/ `BREAKDOWN_KIND_KIT`, and `DisclosureController`'s kit arm of `_is_concerning`.
+
+⛔ **THE `DetailFormat` KIT LEAVES STAY** — `band_states_kit`, `kit_coverage`, `kit_condition_face`,
+`kit_is_equipped`, `kit_item_label` and the label/durability tables — because `KitRoster.role_hint` (the
+compose sheet) and the crafting panel's ledger still read every one of them.
+`DisclosureController.kit_breakdown_lines` stays too: it is the one composed statement of what each item
+DOES, and both harnesses now assert on it directly rather than through a popover that no longer opens.
+
+**WHAT REPLACED THEM IS NOTIFICATION.** `equipment.json`'s `life_readout` seams reach the event dock as
+`kit_life` (warn → Notable, danger → Alert), and a `material_shortfall` Alert NAMES THE BAND — which is
+what replaced the faction row's `⚠ N bands` → *which band* drill-down.
+
+**THE COMPACT (SHORT) TIER TRADED ONE ROW FOR THE OTHER.** That tier merges Growth onto Morale to pay
+for a row it cannot drop; the row it had gained was `Gear`, and the `Upkeep:` bill took its height. Net
+zero rows in every tier, and the tier keeps a fact rather than trading one away.

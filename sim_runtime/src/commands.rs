@@ -199,7 +199,7 @@ pub enum CommandPayload {
     /// are untouched; this sets a property of the **queue entry**.
     ///
     /// **The builders' kit is per ENTRY, not per band.** A build's default is derived from that
-    /// entry's own food web — a hoe for a Cultivate, hurdles for a `Tame` — so one stored id per band
+    /// entry's own food web — `tillage`'s hoes for a Cultivate, `hurdling`'s crook for a `Tame` — so one stored id per band
     /// is the one thing the derivation cannot express: naming a kit on the `builders` labor row
     /// pinned the animal web's tool onto every later plant build with no way back. `assign_labor`
     /// refuses a `kit` token on that role, and this is where the override lives.
@@ -209,6 +209,30 @@ pub enum CommandPayload {
     /// a client say *"back to default"* with no new vocabulary. An explicit bare-handed kit is a
     /// **real** selection and survives the round trip.
     BuildKit {
+        faction_id: u32,
+        target_x: Option<u32>,
+        target_y: Option<u32>,
+        herd_id: Option<String>,
+        /// Absent = clear the override; present = this roster kit, the bare one included.
+        kit_id: Option<String>,
+    },
+    /// **NAME THE KIT ONE WORK SITE IS KEPT WITH** — on every band of the faction that works the
+    /// source (`docs/plan_standing_upkeep.md` §2.7). The take crew, its own kit, the queue entry and
+    /// the meter are untouched; this sets a property of the **worked row**.
+    ///
+    /// **The keeping kit is per WORK SITE, not per band.** The band is the pool of workers and goods
+    /// to draw from; it does not decide which tool a given site is worked with. A single stored id on
+    /// the band's `agriculture` / `husbandry` role row — which is where this lived until §2.7 — could
+    /// not say *hoes on the Field, bare hands on the scrub patch beside it*. `assign_labor` refuses a
+    /// `kit` token on those roles, and this is where the override lives.
+    ///
+    /// **An absent [`Self::UpkeepKit::kit_id`] CLEARS the override** back to the site's own web
+    /// derivation — the same *"an absent `kitId` means the job's default"* rule every other selection
+    /// follows. An explicit bare-handed kit is a **real** selection and survives the round trip.
+    ///
+    /// **A kit that does not serve this site's web is a command FAILURE**, never a silent fall back,
+    /// exactly as `build_kit` refuses one whose `jobs` does not list `builders`.
+    UpkeepKit {
         faction_id: u32,
         target_x: Option<u32>,
         target_y: Option<u32>,
@@ -1222,6 +1246,19 @@ impl CommandEnvelope {
                 herd_id: herd_id.clone(),
                 kit_id: kit_id.clone(),
             }),
+            CommandPayload::UpkeepKit {
+                faction_id,
+                target_x,
+                target_y,
+                herd_id,
+                kit_id,
+            } => pb::command_envelope::Command::UpkeepKit(pb::UpkeepKitCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+                herd_id: herd_id.clone(),
+                kit_id: kit_id.clone(),
+            }),
             CommandPayload::WorkPriority {
                 faction_id,
                 band_id,
@@ -1709,6 +1746,13 @@ impl CommandEnvelope {
                 position: cmd.position,
             },
             pb::command_envelope::Command::BuildKit(cmd) => CommandPayload::BuildKit {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+                herd_id: cmd.herd_id,
+                kit_id: cmd.kit_id,
+            },
+            pb::command_envelope::Command::UpkeepKit(cmd) => CommandPayload::UpkeepKit {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,

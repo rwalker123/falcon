@@ -89,6 +89,8 @@ fn arena() -> (App, UVec2, Entity) {
         .insert_resource(core_sim::EquipmentConfigHandle::default());
     app.world
         .insert_resource(core_sim::MaterialsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::RecipesConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_forage);
@@ -150,6 +152,7 @@ fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> En
             workers: warriors,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         }]
     } else {
         Vec::new()

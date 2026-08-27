@@ -43,12 +43,24 @@ const BREAKDOWN_KIND_GROWTH := "growth"
 # goods were the second product of the same worked sources the Food breakdown itemizes, and that
 # account no longer exists.
 
-# The band's THREE consumable kits (`docs/plan_hunt_through_combat.md` §4.8) — spears, a sled, and
-# baskets — and the tier each one currently resolves its role to. It is a disclosure rather than three
-# more vitals rows because the ROW answers "how long have I got" in one glance and the popover answers
-# "and what happens when it runs out", which is a sentence and a table. See
-# `DisclosureController.kit_breakdown_lines`.
-const BREAKDOWN_KIND_KIT := "kit"
+# **`BREAKDOWN_KIND_KIT` IS RETIRED** (`docs/plan_standing_upkeep.md` §4.9 item 12) with the `Gear`
+# row it opened. A band's item conditions do not compress to a vitals line and the CRAFTING panel's
+# kit ledger already owns them in full — the Builders card's own gear line was retired in §4.7 for
+# exactly this reason. What replaces the row is NOTIFICATION: `equipment.json`'s `life_readout` seams
+# now reach the event dock as `kit_life` (warn → Notable, danger → Alert).
+# **`DisclosureController.kit_breakdown_lines` and the `DetailFormat` kit LEAVES stay** — the crafting
+# panel and the compose sheet still read them.
+
+# The band's STANDING MATERIAL BILL (`docs/plan_standing_upkeep.md` §2.7) — what its holdings swallow
+# per turn in goods, what arrives, and what is on the shelf, ONE BLOCK PER GOOD. It is a disclosure
+# for the reason Food and Fodder are: the ROW answers "which good runs out first and how long have I
+# got" in one glance, and the three terms that explain it are a table.
+#
+# ⛔ **THE POPOVER IS WHERE THE PER-GOOD DETAIL LIVES, AND THAT IS NOT A LAYOUT PREFERENCE.** Inline
+# growth in a fixed-height zone is what clipped `Zone_band` once already, and this ledger grows with
+# the number of goods the band owes — which is config, so the next material would do it again. See
+# `DisclosureController.material_upkeep_breakdown_lines`.
+const BREAKDOWN_KIND_UPKEEP := "upkeep"
 
 # The band's FODDER larder, itemized into the two flows that move it — what its Fields grew and what
 # its pens ate. It is a disclosure for the same reason Food is: the ROW answers "how long have I got"
@@ -69,7 +81,12 @@ const DETAIL_ROW_GROWTH := "Growth"
 # label IS the registration key, so the two cannot drift.
 const DETAIL_ROW_FODDER := "Fodder"
 
-# **"Gear", not "Kit"** — this row and its disclosure list the condition of the ITEMS the band owns.
-# The KIT is the named loadout a crew is sent out with, and it is picked in the compose sheet
-# (`HudComposeVocab.COMPOSE_FIELD_KIT`, which correctly stays "Kit"). Two different nouns.
-const DETAIL_ROW_KIT := "Gear"
+# **`DETAIL_ROW_KIT` ("Gear") IS RETIRED** (`docs/plan_standing_upkeep.md` §4.9 item 12) from both the
+# band page and the faction page. See `BREAKDOWN_KIND_UPKEEP` above for why, and for what took its
+# discovery path.
+
+# The band's standing material bill, beneath its two larders and spelled exactly as its own summary
+# row is — the row label IS the registration key, so the two cannot drift. **"Upkeep" names the
+# question the row answers** (*what do the things I have built cost me to keep?*); the value cell
+# names ONE GOOD, which is what keeps it from reading as the summed materials scalar this arc refuses.
+const DETAIL_ROW_UPKEEP := "Upkeep"

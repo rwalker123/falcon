@@ -1954,6 +1954,26 @@ pub struct LaborAssignment {
     /// along. `assign_labor` stores the *resolved* choice for a Forage/Hunt row, so a replayed
     /// command lands on the kit it named rather than on whatever the default is today.
     pub kit: Option<crate::equipment_config::KitChoice>,
+    /// **The kit the player NAMED for KEEPING THIS SITE, or `None` for "whatever this site's web
+    /// wants"** — the same distinction [`BuildQueueEntry::kit`] draws for a queue entry, moved to the
+    /// one place the keeping default actually varies (`docs/plan_standing_upkeep.md` §2.7).
+    ///
+    /// **THE KEEPING KIT IS PER WORK SITE, NOT PER BAND.** The band is the pool of workers and goods
+    /// to draw from; it does not decide which tool a given site is worked with. A single stored id
+    /// per band — which is what the retired kit on the `agriculture` / `husbandry` role row was —
+    /// cannot say *hoes on the Field, bare hands on the scrub patch beside it*, so every site a band
+    /// kept was worked with one tool and there was no way back. `None` is the **web's derived
+    /// default** ([`crate::equipment_config::EquipmentConfig::keeping_kit_for`]: the roster's plant
+    /// keeping kit for a patch, its animal one for a herd), which is what leaves that derivation
+    /// reachable.
+    ///
+    /// **`none` is a real selection and answers `Some`**, which is what preserves working one site
+    /// bare-handed to conserve the tool while its neighbour keeps the hoes.
+    ///
+    /// Set by `upkeep_kit <faction> <source…> [kit <id>]`; an absent `kit` token clears it back to
+    /// the derivation. A band-wide role row carries `None` and nothing reads it there — a role stands
+    /// on no ground, so it has no site to keep.
+    pub upkeep_kit: Option<crate::equipment_config::KitChoice>,
     /// **WHERE THE PLAYER PUT THIS ROW WHEN THE BAND RUNS SHORT** — see [`SourcePriority`].
     ///
     /// It is **intent**, so it is inside this type's `PartialEq` (unlike `LaborAllocation`'s
@@ -3457,6 +3477,35 @@ pub struct LaborAllocation {
     ///
     /// Reset then re-summed every turn, and **excluded from equality** below.
     pub last_fodder_drain: f32,
+    /// **THE STANDING MATERIAL BILL THIS BAND'S HOLDINGS RAN UP THIS TURN**, per material id — the
+    /// material twin of [`Self::last_fodder_need`] (`docs/plan_standing_upkeep.md` §2.7), summed
+    /// across **both** webs' rows by `advance_labor_allocation`.
+    ///
+    /// ⛔ **The sim sums it, not the client** — [`Self::last_fodder_need`]'s own rule, and
+    /// load-bearing for its own reason: herd rows are **fog-filtered**, so a client-side total
+    /// silently drops a pen out of sight the band still owes for.
+    ///
+    /// Reset then re-summed every turn, and **excluded from equality** below, like the rest of the
+    /// per-turn telemetry.
+    pub last_material_need: std::collections::BTreeMap<String, f32>,
+    /// **THE MATERIALS THIS BAND'S OWN SOURCES CREDITED THIS TURN**, per material id — the take
+    /// side of the same ledger, and the twin of [`Self::last_fodder_inflow`].
+    ///
+    /// It is **reported, never recomputed**: the amounts `credit_material_yield` actually deposited,
+    /// which is the same discipline `SourceYield::materials` carries. What a **bench** adds is not
+    /// here — a bench is not a source row and it deposits nothing until its meter crosses — so this
+    /// is only *half* the band's inflow. ⛔ **Never read it as the whole**: read
+    /// [`Self::material_income`], which is the figure the wire publishes and the shortfall Alert
+    /// judges against.
+    pub last_material_income: std::collections::BTreeMap<String, f32>,
+    /// **THE MATERIALS THIS BAND HAS ALREADY BEEN WARNED ABOUT**, in id order — the edge gate on the
+    /// `material_shortfall` alert, so a standing famine pushes one line rather than one a turn.
+    ///
+    /// **Transient and deliberately NOT checkpointed**, exactly as `Herd::pen_starving` is: a
+    /// rollback may re-announce once, which is cheaper than a second persisted flag and is the
+    /// concession that mechanic already makes. Excluded from equality below with the rest of the
+    /// per-turn telemetry — a warning already given is not *intent*.
+    pub material_shortfall_warned: Vec<String>,
     /// **HOW THIS BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH** — the player's own choice
     /// between *everything degrades a little* and *the biggest investments stay whole*
     /// ([`crate::intensification::UpkeepFundMode`], `docs/plan_standing_upkeep.md` §2.5).
@@ -3605,8 +3654,8 @@ pub struct BuildQueueEntry {
     pub source: BuildSource,
     pub declared: BuildJob,
     /// **The kit the player NAMED for THIS job, or `None` for "whatever this entry's web wants"** —
-    /// the same distinction [`LaborAllocation::named_kit_on`] draws for a singleton role, moved to
-    /// the one place the builders' default actually varies (`docs/plan_standing_upkeep.md` §4.7a ②).
+    /// the same distinction [`LaborAssignment::upkeep_kit`] draws one account over, on the one place
+    /// the builders' default actually varies (`docs/plan_standing_upkeep.md` §4.7a ②).
     ///
     /// A single stored id per **band** cannot be right for both food webs — a hoe for a Cultivate,
     /// hurdles for a `Tame` — so the derivation is per **entry**, and `None` is what leaves it
@@ -3619,6 +3668,28 @@ pub struct BuildQueueEntry {
 }
 
 impl LaborAllocation {
+    /// **THE BAND'S WHOLE MATERIAL INFLOW, PER TURN** — this turn's credited take
+    /// ([`Self::last_material_income`]) plus what its bench will bank
+    /// ([`crate::systems::bench_material_rate`], which is that half's only producer).
+    ///
+    /// ⛔ **ONE PRODUCER, because two readers judge one question.** The wire's
+    /// `material_upkeep_income` row and `announce_material_shortfall`'s *"X is running out"* Alert
+    /// both weigh this against [`Self::last_material_need`], and a row and an event that summed the
+    /// inflow apart *did* disagree: the Alert read the credited take alone, and on the shipped roster
+    /// `hurdles` have **no producer but a bench**, so the take is always absent, the gap is always
+    /// the whole bill, and the Alert fired for every band holding a pen — including one whose bench
+    /// out-produces its pens.
+    pub fn material_income(
+        &self,
+        bench_rate: &std::collections::BTreeMap<String, f32>,
+    ) -> std::collections::BTreeMap<String, f32> {
+        let mut income = self.last_material_income.clone();
+        for (id, rate) in bench_rate {
+            *income.entry(id.clone()).or_insert(0.0) += rate;
+        }
+        income
+    }
+
     /// Total workers currently staffed across all assignments.
     /// **EVERY HAND THIS BAND HAS COMMITTED** — every row's take, across the worked sources **and**
     /// the band-wide standing roles, which are rows in the same list
@@ -3689,28 +3760,11 @@ impl LaborAllocation {
             .unwrap_or_else(|| config.default_kit(target.kit_job()))
     }
 
-    /// **The kit the player NAMED on a singleton role, or `None` for "whatever the job wants"** —
-    /// [`Self::kit_on`]'s other half, and the distinction the two **keeping** pools' per-web
-    /// derivation turns on (`docs/plan_standing_upkeep.md` §4.8).
-    ///
-    /// `kit_on` collapses *"the player chose `none`"* and *"the player chose nothing"* into one
-    /// answer, which is right for every role whose default is a single id. A keeping role's default
-    /// is the **roster's** answer for its web, so the pool needs to know whether the row carries a
-    /// real selection to override that derivation with. An absent choice already means *"the job's
-    /// default"* everywhere else; this is what lets that default be derived.
-    ///
-    /// ⛔ **The `builders` row is NOT one of these.** Its kit is per **queue entry**
-    /// ([`BuildQueueEntry::kit`]), because one stored id per band cannot be right for both webs —
-    /// see [`Self::builders_kit`].
-    ///
-    /// **`none` is a real selection and answers `Some`**, which is what preserves deliberately
-    /// sending the builders out bare-handed to conserve gear.
-    pub fn named_kit_on(&self, target: &LaborTarget) -> Option<crate::equipment_config::KitChoice> {
-        self.assignments
-            .iter()
-            .find(|a| a.target.same_source(target))
-            .and_then(|a| a.kit.clone())
-    }
+    // **RETIRED: `named_kit_on`** — *"the kit the player named on a singleton role"*, whose one
+    // reader was the keeping pools' per-web gear derivation. The keeping kit is per **work site**
+    // now ([`LaborAssignment::upkeep_kit`]), so there is no band-wide keeping selection left for it
+    // to answer about, and neither remaining singleton role (`scout`, `warrior`) has a derived
+    // default to distinguish a named `none` from.
 
     /// **THE WEB THE BAND'S BUILDERS ARE ACTUALLY WORKING ON** — the head entry's, since the whole
     /// pool goes on the head. `None` when the queue is empty, which is *"nothing is being raised"*
@@ -3822,6 +3876,13 @@ impl LaborAllocation {
         // staffed or not: `assign_labor` states a crew and a tier and says nothing at all about
         // priority, so there is no reading of this command that could be an order to clear it.
         let mut standing_priority = SourcePriority::default();
+        // **AND THE KEEPING KIT THE PLAYER NAMED FOR THIS SITE, CARRIED THE SAME WAY THE RANK IS.**
+        // `assign_labor` states a take crew and the tier that crew works at; it says nothing at all
+        // about the tool the site is *kept* with, so there is no reading of this command that could
+        // be an order to clear the keeping override. Unlike [`LaborAssignment::kit`] it is therefore
+        // kept on **every** path, staffed or not — a `−`/`+` on the row must not silently put the
+        // keepers back on the derived default.
+        let mut standing_upkeep_kit = None;
         let mut had_row = false;
         if let Some(idx) = self
             .assignments
@@ -3830,6 +3891,7 @@ impl LaborAllocation {
         {
             standing_kit = self.assignments[idx].kit.clone();
             standing_priority = self.assignments[idx].priority;
+            standing_upkeep_kit = self.assignments[idx].upkeep_kit.clone();
             had_row = true;
             self.assignments.remove(idx);
             self.last_yields.remove(idx);
@@ -3849,6 +3911,7 @@ impl LaborAllocation {
                 // command deliberately resolves no kit when it is unstaffing, and writing that
                 // `None` onto a surviving row would forget the tier the band was working at.
                 kit: if keep_holding { standing_kit } else { kit },
+                upkeep_kit: standing_upkeep_kit,
                 priority: standing_priority,
             });
             self.last_yields.push(SourceYield::ZERO);
@@ -3902,6 +3965,35 @@ impl LaborAllocation {
             return false;
         };
         assignment.priority = priority;
+        true
+    }
+
+    /// **NAME THE KIT ONE WORK SITE IS KEPT WITH** — the whole of `upkeep_kit`
+    /// (`docs/plan_standing_upkeep.md` §2.7). Returns `false` when this band holds no row for that
+    /// source, which the caller reports the way the queue verbs report the same miss.
+    ///
+    /// `None` **clears the override** back to the site's own web derivation
+    /// ([`crate::equipment_config::EquipmentConfig::keeping_kit_for`]), which is the existing *"an
+    /// absent `kitId` means the job's default"* rule and is what lets a client say *"back to
+    /// default"* with no new vocabulary. `Some(<the bare kit>)` is a real selection and stays.
+    ///
+    /// **It touches nothing else on the row.** The take crew, its kit, the floor, the rank and the
+    /// queue entry are all statements the player made separately; this one says only *what the
+    /// keepers of this site carry*, so it is settable on a row held at zero exactly as it is on a
+    /// staffed one — a source with no gatherers on it still has a meter the pool owes for.
+    pub fn set_upkeep_kit(
+        &mut self,
+        target: &LaborTarget,
+        kit: Option<crate::equipment_config::KitChoice>,
+    ) -> bool {
+        let Some(assignment) = self
+            .assignments
+            .iter_mut()
+            .find(|a| a.target.same_source(target))
+        else {
+            return false;
+        };
+        assignment.upkeep_kit = kit;
         true
     }
 
@@ -4983,6 +5075,74 @@ impl Default for Tile {
 mod tests {
     use super::*;
 
+    /// **A `−`/`+` ON A ROW DOES NOT PUT ITS KEEPERS BACK ON THE DEFAULT TOOL** — the keeping
+    /// override survives a re-crew (`docs/plan_standing_upkeep.md` §2.7).
+    ///
+    /// [`LaborAllocation::set_assignment`] removes the edited row and appends it at the end, so
+    /// anything not deliberately carried across is lost. `assign_labor` states a take crew and the
+    /// tier **that crew** works at and says nothing at all about the keeping, so there is no reading
+    /// of the command that could be an order to clear the site's tool — the same argument
+    /// [`SourcePriority`] is carried on, and unlike [`LaborAssignment::kit`], which the command
+    /// really is a statement about.
+    ///
+    /// **The pair is the test**: the keeping kit survives *and* the take kit is still replaced. The
+    /// first alone would pass for a method that carried everything across and made the take kit
+    /// unchangeable.
+    #[test]
+    fn a_re_crew_keeps_the_sites_keeping_kit_and_still_replaces_its_take_kit() {
+        let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        let hoed = equipment
+            .kit("tillage")
+            .expect("the shipped roster carries tillage");
+        let baskets = equipment
+            .kit("gathering")
+            .expect("the shipped roster carries gathering");
+        let bare = equipment
+            .kit("none")
+            .expect("the shipped roster carries the bare kit");
+        let tile = bevy::math::UVec2::new(3, 4);
+        let target = || LaborTarget::Forage {
+            tile,
+            floor: crate::DEFAULT_ESCAPEMENT_FLOOR,
+            species: None,
+            take_species: TakeSelection::EVERYTHING,
+        };
+
+        let mut allocation = LaborAllocation::default();
+        const A_CREW: u32 = 2;
+        const A_BIGGER_CREW: u32 = 3;
+        const THE_BANDS_HANDS: u32 = 9;
+        allocation.set_assignment(target(), A_CREW, THE_BANDS_HANDS, Some(baskets.clone()));
+        assert!(
+            allocation.set_upkeep_kit(&target(), Some(hoed.clone())),
+            "fixture: the row must be there for the keeping kit to land on"
+        );
+
+        // The re-crew: a different crew, and a different TAKE kit.
+        allocation.set_assignment(target(), A_BIGGER_CREW, THE_BANDS_HANDS, Some(bare.clone()));
+        let row = allocation
+            .assignments
+            .iter()
+            .find(|assignment| assignment.target.same_source(&target()))
+            .expect("the row survives a re-crew");
+        assert_eq!(
+            row.upkeep_kit.as_ref().map(|kit| kit.id()),
+            Some(hoed.id()),
+            "the site's keeping tool is not a statement `assign_labor` makes, so a re-crew must \
+             leave it exactly where the player put it"
+        );
+        assert_eq!(
+            row.kit.as_ref().map(|kit| kit.id()),
+            Some(bare.id()),
+            "…while the TAKE kit is exactly what the command decides, and a re-assignment replaces \
+             it — carrying that one across would make the selection unchangeable"
+        );
+        assert_eq!(
+            row.workers, A_BIGGER_CREW,
+            "fixture: the re-crew must actually have landed"
+        );
+    }
+
     /// **A COMMITMENT PRUNES THE SELECTION AND NAMES THE NEW CROP** — the repair that keeps a crew
     /// from asking for plants its own `Cultivate`/`Sow` displaced, which is a zero selected share
     /// and therefore `+0.00` in **every** account at once.
@@ -5202,6 +5362,7 @@ mod tests {
             workers: take,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         }
     }
 
@@ -5229,6 +5390,7 @@ mod tests {
             workers: take,
             kit: None,
             priority,
+            upkeep_kit: None,
         }
     }
 
@@ -5249,6 +5411,7 @@ mod tests {
             workers,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         }
     }
 

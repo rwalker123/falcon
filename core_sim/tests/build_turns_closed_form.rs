@@ -28,6 +28,8 @@
 //! Read **off the exported snapshot**, never off the in-process registry: the claim is about what a
 //! client can compute from what it is sent, so a term that never reached the codec must fail here.
 
+mod pen_materials_support;
+
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
@@ -272,7 +274,7 @@ fn spawn_keepers_of(
                 // they state, so a pool sized at the bare counts lets `normalize` trim the build.
                 working: scalar_from_f32((KEEPERS + builders + rate + rate) as f32),
                 elders: scalar_zero(),
-                stores: LocalStore::new(),
+                stores: pen_materials_support::stocked_with_pen_materials(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_turn_transfer_received: 0.0,
@@ -311,6 +313,7 @@ fn spawn_keepers_of(
                         workers: KEEPERS,
                         kit: Some(kit.clone()),
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                     // **The build is staffed by the band's own POOL**, at the crew the caller
                     // named (`docs/plan_standing_upkeep.md` §2.5). **The row carries no kit** — a
@@ -322,6 +325,7 @@ fn spawn_keepers_of(
                         workers: builders,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                 ],
                 build_queue: improvement
@@ -1262,6 +1266,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                         workers: GATHERERS,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                     // **The builders are a band-level pool** since `docs/plan_standing_upkeep.md` §2.5,
                     // and the whole of it goes on the head of the queue below — which is this patch.
@@ -1272,6 +1277,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                         workers: BUILDERS,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                 ],
                 build_queue: vec![core_sim::BuildQueueEntry {

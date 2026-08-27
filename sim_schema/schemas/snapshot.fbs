@@ -1254,6 +1254,34 @@ table PopulationCohortState {
   // what its pens are missing. That is the pairing to render: the NEED carries the alarm, the runway
   // answers only "how long does this store last", and a store nothing draws lasts forever.
   turnsOfFodder:float = 0;
+
+  // --- THE STANDING MATERIAL BILL (appended, beside the hay ledger above) ------------------------
+  // WHAT THIS BAND'S HOLDINGS SWALLOW, WHAT ARRIVES, AND WHAT IS ON THE SHELF - the material twin of
+  // the Food and Fodder lines, per good (docs/plan_standing_upkeep.md 2.7). A pen frays its fence
+  // every turn it stands; a road washes out. Work was never the whole price.
+  //
+  // *** THE SIM SUMS IT, AND A CLIENT MUST NOT. *** The same rule the hay ledger above states, and
+  // load-bearing for the same reason: HERD ROWS ARE FOG-FILTERED, so a client-side total silently
+  // drops a pen out of sight that the band still owes for. It is also the mistake the retired
+  // `penFeedUpkeep` was minted to avoid.
+  //
+  // Three lists of (materialId, amount), on the MaterialPayoff rules every other such list here
+  // follows: NEVER SUMMED ACROSS GOODS, EMPTY MEANS "NO ROW" AND NEVER ZERO, key always present.
+  //
+  // materialUpkeepNeed   = the summed per-turn rate this band's improvements demand, across both
+  //                        webs. It is the ALARM, and it is published whether or not the band can pay
+  //                        it - `fodderNeed`'s own rule.
+  // materialUpkeepIncome = the rate the same goods ARRIVE at: what this band's own sources credited
+  //                        this turn plus what its bench finished. *** IT IS A RATE, NOT A TRAILING
+  //                        AVERAGE AND NOT AN EMA *** - the same shape `fodderIncome` above carries,
+  //                        which is this turn's harvest read as a per-turn flow.
+  // materialStore        = what the band holds right now, summed over its batches. It is a STOCK, so
+  //                        a client reads it against the two rates above rather than adding it to
+  //                        them; `materialBatches` beside it carries the per-rating breakdown and
+  //                        this is the total the bill is judged against.
+  materialUpkeepNeed:[MaterialPayoff];
+  materialUpkeepIncome:[MaterialPayoff];
+  materialStore:[MaterialPayoff];
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of
@@ -1718,6 +1746,24 @@ table LaborAssignment {
   // agriculture, husbandry, builders): a role is not a worked source and has no rank to state.
   // Captured live from the allocation, like the other intent fields. Appended last (append-only).
   priority:SourcePriority = Normal;
+
+  // --- THE WORK ROW'S PER-GOOD SHORTFALL (appended last) ----------------------------------------
+  // WHAT THIS ROW'S SOURCE WAS BILLED IN GOODS, AND WHAT THE STORE PAID - the good-side twin of the
+  // work shortfall the source tables carry (docs/plan_standing_upkeep.md 2.7). Two lists of
+  // (materialId, amount), never their difference: the sim publishes both terms so a note can read
+  // "Short of stone - 1.2 of the 2.0 a turn this road eats" with no client arithmetic.
+  //
+  // *** IT IS WHY THE WORK ROW'S UNDER-KEPT NOTE MUST NAME THE GOOD. *** "Raise this band's
+  // Agriculture role" is wrong advice the moment the missing thing is stone - it points the player at
+  // a stepper that cannot help. A dead kit makes a job want more hands; a missing material stops the
+  // work outright.
+  //
+  // EMPTY MEANS "THIS ROW'S RUNG EATS NO MATERIAL", which is every rung on the shipped ladder but
+  // `animal:pen` - never "zero of something". The amounts are NEVER added to `actualYield` or to any
+  // work figure: a full store must not paper over missing hands, so the decay rides the WORST of the
+  // two fractions and the two accounts stay separate everywhere.
+  materialUpkeepDemand:[MaterialPayoff];
+  materialUpkeepSupplied:[MaterialPayoff];
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -2827,6 +2873,112 @@ table ForagePatchState {
   // bools do, so a client that redacts them on a merely-remembered hex must redact this one with
   // them.
   currentRung:string;
+
+  // --- THE MATERIAL HALF OF THE LADDER'S PRICE (appended) ----------------------------------------
+  // WHAT THIS SOURCE'S NEXT RUNG EATS TO RAISE, and what its CURRENT rung eats to hold - the second
+  // currency beside `<rung>WorkCost` and `upkeepDemand` (docs/plan_standing_upkeep.md 2.7). Work was
+  // never the whole price: a fence swallows hurdles, a road swallows stone.
+  //
+  // STRUCTURED PER GOOD, NEVER PROSE. Each is a list of (materialId, amount); the SIM owns the
+  // numbers and the CLIENT owns the words, exactly as `craftOffers` splits them. The three rules the
+  // other MaterialPayoff lists on this wire follow apply here too: NEVER SUMMED (a total is a
+  // currency this model does not have), EMPTY MEANS "NO ROW" AND NEVER ZERO (a rung eating nothing
+  // must not read as one that eats badly), and the key is always present so "no quote" and "eats
+  // nothing" stay distinct.
+  //
+  // buildMaterialCost  = the WHOLE PILE the rung the `⌃` track would offer swallows, at full
+  //                      coverage. `<rung>WorkCost`'s own rule: resolved at capture off the LADDER,
+  //                      published whether or not a build is in flight, because the compose sheet has
+  //                      to quote a price before the player commits. The pile is drawn IN PROPORTION
+  //                      TO THE WORK BANKED rather than on completion, so a rung a third raised has
+  //                      swallowed a third of this - which is what lets a client say "you have 12
+  //                      hurdles; it will stall at about a third".
+  // upkeepMaterialDemand = what HOLDING this source's own rung swallows per turn, interpolated on the
+  //                      position and scaled by the same `scaled_by` the work demand reads: a pen
+  //                      holding twice the herd mends twice the fence. It is the STAMPED bill the
+  //                      keeping was judged against, exactly as `upkeepDemand` beside it is.
+  // upkeepMaterialSupplied = what the band's store actually paid toward it. `upkeepDemand -
+  //                      upkeepSupplied == upkeepShortfall` has its per-good twin here, and the sim
+  //                      publishes both terms rather than the difference for the reason the work
+  //                      trio does: a client renders and does no arithmetic.
+  //
+  // *** A SHORTFALL OF EITHER KIND TRIPS THE SAME GRACE. *** There is ONE `neglectGraceRemaining` and
+  // one neglect counter; the decay rides the WORST of the work fraction and each good's, so a
+  // fully-staffed source with an empty store rots at the store's rate. The amounts stay separate so a
+  // full store cannot paper over missing hands - do NOT add these to the work figures anywhere.
+  buildMaterialCost:[MaterialPayoff];
+  upkeepMaterialDemand:[MaterialPayoff];
+  upkeepMaterialSupplied:[MaterialPayoff];
+  // --- THE PRE-COMMIT MATERIAL QUOTE, PER RUNG (appended) ---------------------------------------
+  // WHAT EACH RUNG WOULD COST TO HOLD IN GOODS, PER TURN - the material twin of the
+  // `cultivationUpkeepDemand` / `fieldUpkeepDemand` pair above, and read beside them by the SAME
+  // rung-picking rule. This is what the up-track's third aside quotes: "then 1.00 work + 0.05
+  // hurdles a turn to hold".
+  //
+  // *** IT IS THE RUNG'S RATE, NOT THE STAMPED BILL, and the two are DIFFERENT QUESTIONS. ***
+  // `upkeepMaterialDemand` above answers "what was this source BILLED this turn" - it resolves
+  // through the rung the source stands on, and it is the STAMPED figure the keeping was judged
+  // against. These answer "what would THIS rung cost to hold", for a rung the source may not be on
+  // yet, which is the only question a player deciding whether to commit can act on. On a source
+  // mid-climb the two DISAGREE, and that is correct: one says what you were billed, the other what
+  // this rung costs. The work pair above has exactly that relationship and says so.
+  //
+  // Which is also why these are resolved LIVE at capture rather than read off the stamp. The stamp
+  // exists to stop an interpolated demand moving across the Population->Logistics carry; a
+  // pre-commit quote is carried nowhere, so it has nothing to be protected from - and reading the
+  // stamp would publish an empty list for every rung the source is not already standing on, which
+  // is every rung a track ever offers.
+  //
+  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the `*UpkeepDemand` rule): the LADDER's rate for that rung,
+  // published whether or not a build is in flight. EMPTY MEANS THE RUNG EATS NO MATERIAL, never
+  // "zero of something" - which is BOTH plant rungs on the shipped ladder, so both of these are
+  // empty today and the seam exists because the route branch's stone is what lands in it next.
+  //
+  // SCALED BY THE SAME MEASURE THE BILL IS - the rung reads ONE `scaled_by` for both currencies, so
+  // these are `rate x this patch's tile's tender-loads`, exactly as the work pair is. Quoting the
+  // bare ladder rate would show one price and charge another. The client does NO arithmetic on
+  // them.
+  cultivationUpkeepMaterialDemand:[MaterialPayoff];
+  fieldUpkeepMaterialDemand:[MaterialPayoff];
+  // --- WHAT THIS SITE IS KEPT WITH (appended last, append-only wire) ----------------------------
+  // THE KEEPING KIT IS PER WORK SITE, NOT PER BAND (docs/plan_standing_upkeep.md 2.7). The band is
+  // the pool of workers and goods to draw from; it does not decide which tool a given site is worked
+  // with. So this is a property of the WORKED ROW, set by `upkeep_kit <faction> <x> <y> [kit <id>]`,
+  // exactly as `buildKitId` above is a property of the queue entry.
+  //
+  // upkeepKitId = THE KIT THE KEEPERS OF THIS SITE ARE ACTUALLY CARRYING, resolved - never "the
+  //               player named none". `kitId`'s standing rule, and it matters here for `buildKitId`'s
+  //               reason one account over: the default is DERIVED from this site's own food web, so a
+  //               row that named nothing would otherwise publish "" while the keepers were out with
+  //               hoes. An explicit bare-handed pick crosses as the roster's own bare kit id, which
+  //               is a real selection and reads differently from the empty string. "" only when NO
+  //               band ANYWHERE works this source. NOT faction-filtered: `resolve_upkeep_kits` walks
+  //               every band's allocation, so on a source the viewer can SEE but only a rival works,
+  //               this publishes the RIVAL's kit with `upkeepKitNamed` true. The leak is inherited
+  //               verbatim from `buildKitId`'s `resolve_build_kit_ids` above; it is stated here
+  //               because a comment claiming a filter that does not exist is worse than the leak.
+  // upkeepKitNamed = whether that id is an OVERRIDE the player stated, as opposed to the web's
+  //               derivation. The two are NOT recoverable from the id alone - a player may name the
+  //               very kit the derivation would have picked - and a picker has to be able to draw its
+  //               `(default)` mark and offer "back to default" without guessing.
+  //
+  // WHICH KITS A CLIENT MAY OFFER HERE IS ALREADY ON THE WIRE, and there is deliberately NO second
+  // roster: `KitOption.jobs` lists "agriculture" for the kits that keep a PLANT site and "husbandry"
+  // for the kits that keep an ANIMAL one, and `buildWorkPerWorker`/`buildWorkBranch` beside it say
+  // what each is worth on which web. A kit named for a job outside that list is a COMMAND FAILURE,
+  // so the picker must filter by the site's web exactly as it filters a builders kit.
+  //
+  // IT IS CAPTURED LIVE off the bands' rows, NOT stamped by the turn - `buildKitId`'s rule, for its
+  // reason: the server re-captures and broadcasts after every dispatched command, so a kit picked on
+  // a row has to be visible in that frame where a turn-written one would lag a whole turn.
+  //
+  // WHEN SEVERAL BANDS WORK ONE SOURCE, A STATED OVERRIDE WINS over a band that left the derivation
+  // alone, and the first stated one wins among several. Every band that left it alone answers the
+  // SAME derived kit - it is a pure function of the site's web - so the only way two bands can
+  // disagree is that one of them named something, and publishing the derivation over a real pick
+  // would hide the pick entirely.
+  upkeepKitId:string;
+  upkeepKitNamed:bool = false;
 }
 
 // ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
@@ -4151,6 +4303,84 @@ table HerdTelemetryState {
   //
   // 0 for an unpenned herd, and for a pen its own land feeds (which owes nothing to start with).
   penFodderShortfall:float = 0;
+
+  // --- THE MATERIAL HALF OF THE LADDER'S PRICE (appended) ----------------------------------------
+  // WHAT THIS SOURCE'S NEXT RUNG EATS TO RAISE, and what its CURRENT rung eats to hold - the second
+  // currency beside `<rung>WorkCost` and `upkeepDemand` (docs/plan_standing_upkeep.md 2.7). Work was
+  // never the whole price: a fence swallows hurdles, a road swallows stone.
+  //
+  // STRUCTURED PER GOOD, NEVER PROSE. Each is a list of (materialId, amount); the SIM owns the
+  // numbers and the CLIENT owns the words, exactly as `craftOffers` splits them. The three rules the
+  // other MaterialPayoff lists on this wire follow apply here too: NEVER SUMMED (a total is a
+  // currency this model does not have), EMPTY MEANS "NO ROW" AND NEVER ZERO (a rung eating nothing
+  // must not read as one that eats badly), and the key is always present so "no quote" and "eats
+  // nothing" stay distinct.
+  //
+  // buildMaterialCost  = the WHOLE PILE the rung the `⌃` track would offer swallows, at full
+  //                      coverage. `<rung>WorkCost`'s own rule: resolved at capture off the LADDER,
+  //                      published whether or not a build is in flight, because the compose sheet has
+  //                      to quote a price before the player commits. The pile is drawn IN PROPORTION
+  //                      TO THE WORK BANKED rather than on completion, so a rung a third raised has
+  //                      swallowed a third of this - which is what lets a client say "you have 12
+  //                      hurdles; it will stall at about a third".
+  // upkeepMaterialDemand = what HOLDING this source's own rung swallows per turn, interpolated on the
+  //                      position and scaled by the same `scaled_by` the work demand reads: a pen
+  //                      holding twice the herd mends twice the fence. It is the STAMPED bill the
+  //                      keeping was judged against, exactly as `upkeepDemand` beside it is.
+  // upkeepMaterialSupplied = what the band's store actually paid toward it. `upkeepDemand -
+  //                      upkeepSupplied == upkeepShortfall` has its per-good twin here, and the sim
+  //                      publishes both terms rather than the difference for the reason the work
+  //                      trio does: a client renders and does no arithmetic.
+  //
+  // *** A SHORTFALL OF EITHER KIND TRIPS THE SAME GRACE. *** There is ONE `neglectGraceRemaining` and
+  // one neglect counter; the decay rides the WORST of the work fraction and each good's, so a
+  // fully-staffed source with an empty store rots at the store's rate. The amounts stay separate so a
+  // full store cannot paper over missing hands - do NOT add these to the work figures anywhere.
+  buildMaterialCost:[MaterialPayoff];
+  upkeepMaterialDemand:[MaterialPayoff];
+  upkeepMaterialSupplied:[MaterialPayoff];
+  // --- THE PRE-COMMIT MATERIAL QUOTE, PER RUNG (appended) ---------------------------------------
+  // WHAT EACH RUNG WOULD COST TO HOLD IN GOODS, PER TURN - the material twin of the
+  // `tameUpkeepDemand` / `corralUpkeepDemand` pair above, and read beside them by the SAME
+  // rung-picking rule. This is what the up-track's third aside quotes: "then 1.00 work + 0.05
+  // hurdles a turn to hold".
+  //
+  // *** IT IS THE RUNG'S RATE, NOT THE STAMPED BILL, and the two are DIFFERENT QUESTIONS. ***
+  // `upkeepMaterialDemand` above answers "what was this source BILLED this turn" - it resolves
+  // through the rung the source stands on, and it is the STAMPED figure the keeping was judged
+  // against. These answer "what would THIS rung cost to hold", for a rung the source may not be on
+  // yet, which is the only question a player deciding whether to commit can act on. On a source
+  // mid-climb the two DISAGREE, and that is correct: one says what you were billed, the other what
+  // this rung costs. The work pair above has exactly that relationship and says so.
+  //
+  // Which is also why these are resolved LIVE at capture rather than read off the stamp. The stamp
+  // exists to stop an interpolated demand moving across the Population->Logistics carry; a
+  // pre-commit quote is carried nowhere, so it has nothing to be protected from - and reading the
+  // stamp would publish an empty list for every rung the source is not already standing on, which
+  // is every rung a track ever offers.
+  //
+  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the `*UpkeepDemand` rule): the LADDER's rate for that rung,
+  // published whether or not a build is in flight. EMPTY MEANS THE RUNG EATS NO MATERIAL, never
+  // "zero of something" - so on the shipped ladder `tameUpkeepMaterialDemand` is ALWAYS empty
+  // (`animal:pastoral` names none) and `corralUpkeepMaterialDemand` names `hurdles`. THAT PAIR IS
+  // THE WHOLE POINT OF THE FIELD: a pastoral herd is the only source a track ever offers the Pen
+  // rung from, its CURRENT rung declares no material, and the stamped `upkeepMaterialDemand` above
+  // is therefore empty on exactly the row where the player needs the number. Without this the
+  // material half of the up-track's aside is unreachable in play.
+  //
+  // SCALED BY THE SAME MEASURE THE BILL IS - the rung reads ONE `scaled_by` for both currencies, so
+  // these are `rate x this patch's herd's keeper-loads`, exactly as the work pair is. Quoting the
+  // bare ladder rate would show one price and charge another. The client does NO arithmetic on
+  // them.
+  tameUpkeepMaterialDemand:[MaterialPayoff];
+  corralUpkeepMaterialDemand:[MaterialPayoff];
+  // --- WHAT THIS SITE IS KEPT WITH (appended last, append-only wire) ----------------------------
+  // The animal twin of `ForagePatchState.upkeepKitId` / `upkeepKitNamed`; that field carries the
+  // whole rationale, including why the wire states the RESOLVED kit, why the "named" flag is not
+  // recoverable from the id, and which published roster a picker filters for a HERD (`KitOption.jobs`
+  // containing "husbandry").
+  upkeepKitId:string;
+  upkeepKitNamed:bool = false;
 }
 
 table CommandEventState {
@@ -4443,11 +4673,17 @@ table KitOption {
   // LaborAssignment.kitId / PopulationCohortState.kitId / the estimate-table kit ids carry.
   id:string;
   displayName:string;
-  // Which verbs this kit may be sent on — any of "hunt", "forage", "scout", "warrior". A kit named
-  // for a job outside this list is a COMMAND FAILURE, never a silent fall back to the default — so
-  // the picker must filter by the job it is composing. THE BAND-WIDE ROLES HAVE A KIT AXIS NOW: they
-  // used to list none on the grounds that they consumed no component, and the expanded roster gave
-  // them one each (`wayfinding` -> ["scout"], `warrior` -> ["warrior"]) while `none` lists all four.
+  // Which verbs this kit may be sent on — any of "hunt", "forage", "scout", "warrior",
+  // "agriculture", "husbandry", "builders". A kit named for a job outside this list is a COMMAND
+  // FAILURE, never a silent fall back to the default — so the picker must filter by the job it is
+  // composing. THE BAND-WIDE ROLES HAVE A KIT AXIS NOW: they used to list none on the grounds that
+  // they consumed no component, and the expanded roster gave them one each (`wayfinding` ->
+  // ["scout"], `warrior` -> ["warrior"]) while `none` lists them all.
+  //
+  // THE LAST THREE ARE THE WORK JOBS, and they are what a KEEPING or BUILD picker filters on:
+  // "agriculture" is the kit list for keeping a PLANT site (`ForagePatchState.upkeepKitId`),
+  // "husbandry" for keeping an ANIMAL one (`HerdTelemetryState.upkeepKitId`), and "builders" for a
+  // queue entry (`buildKitId`). There is no second roster for any of them.
   jobs:[string];
   // A fresh-kit hunter's combat `attack` under this kit — the number the combat gate
   // max(0, attack - defense) compares against a herd's `defense`. Below a species' defense that

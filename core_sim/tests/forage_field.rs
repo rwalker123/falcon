@@ -164,6 +164,8 @@ fn spawn_world_on(grid_size: UVec2, seed: u64) -> App {
         .insert_resource(core_sim::EquipmentConfigHandle::default());
     app.world
         .insert_resource(core_sim::MaterialsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::RecipesConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_forage);
     app
@@ -480,12 +482,14 @@ fn spawn_forager_of(
                         workers: foragers,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                     LaborAssignment {
                         target: LaborTarget::Agriculture,
                         workers: keepers,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                     // **A pool of the same size staffs the build** — what this fixture meant when
                     // one crew did every job (`docs/plan_standing_upkeep.md` §2.5).
@@ -494,6 +498,7 @@ fn spawn_forager_of(
                         workers: foragers,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                 ],
                 build_queue: improvement

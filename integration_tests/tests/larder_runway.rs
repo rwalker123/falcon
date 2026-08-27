@@ -102,6 +102,7 @@ fn the_published_runway_is_the_turn_the_larder_really_empties() {
             workers: GATHERERS,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         }],
         ..Default::default()
     });

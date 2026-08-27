@@ -1250,6 +1250,7 @@ fn build_rows(
         workers,
         kit: None,
         priority: SourcePriority::default(),
+        upkeep_kit: None,
     }];
     if builders > 0 {
         rows.push(LaborAssignment {
@@ -1257,6 +1258,7 @@ fn build_rows(
             workers: builders,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         });
     }
     rows

@@ -216,6 +216,24 @@ the list.
 > depending on seed, so the Standard map lands at **130–134** rather than exactly 90 — the count
 > follows the map, which is what a fraction means.
 
+## A SPAWN STOCKS MATERIALS TOO, and `wood` is the only row that does
+
+`spawn_population_entity` inserts `BandEquipment::start_stocked_owned(...)` — a party's worth of every
+item some kit carries — and, since the material half of the standing upkeep
+(`docs/plan_standing_upkeep.md` §4.9 item 12), a `LocalStore` **seeded with materials** beside it
+(`start_stocked_materials`).
+
+- **The lever is on the MATERIAL, not on a start profile** — `MaterialDef::start_stock`
+  (`crafting.md` → "`MaterialDef::start_stock`"), because the roster is where a material is described.
+  Only **`wood`** declares one today: nothing produces it until forest foraging lands, and a band with
+  no wood can never craft the hurdles a pen eats.
+- **It is sized off the SAME floored worker count the kit is** — `(size × working_fraction).floor()`,
+  resolved once in that function so *"a party's worth"* means one thing there. A band with no workers
+  stocks nothing, which needs no special case: `deposit_material` refuses a non-positive deposit.
+- **It rides the spawn rather than `apply_starting_inventory_effects`** because it needs no
+  demographic split, unlike the larder. The comment saying brackets and larder are seeded at Startup
+  stays true.
+
 ## Data Shapes
 - **Rasters**: `elevation_m: i16`, `climate_band: u8`, `game_density: u8` (the square-8 hex `flow_dir` / `flow_accum` rasters are **deleted** — hydrology routes on the corner graph, see "Rivers")
 - **Vectors**: `rivers: [RiverSegment]` — per-edge `RiverEdge { hex, dir, class, discharge: f32 }` chains + a navigable hex tail (see "Rivers")

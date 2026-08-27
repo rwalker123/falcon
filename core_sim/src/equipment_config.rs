@@ -118,11 +118,17 @@ pub enum EquipmentStat {
     /// harvest has always run on, so a keeper carrying husbandry gear collects exactly what it
     /// always did, and that number keeps its single home on the sled's tier.
     ///
-    /// **A separate stat from [`Self::HuntCarry`], and that is the physical claim `one item, one
-    /// job` already makes twice.** A sled drags a carcass in off the range; a pen stands at the
-    /// camp, and what bounds a slaughter there is the handling gear — hurdles to work the beast into,
-    /// something to butcher onto, vessels to carry it in. A party that brought a sled to a pen has
-    /// the wrong tool, exactly as a party that brought baskets to a deer does.
+    /// **A separate stat from [`Self::HuntCarry`]**, because a pen and a range are different
+    /// places: a sled drags a carcass in off the range, and a pen stands at the camp.
+    ///
+    /// ⛔ **IT NO LONGER DISCRIMINATES BETWEEN THE HUNT KITS, and that is a fact about the roster
+    /// rather than about this stat.** It used to — the *unequipped* side lived on `hurdles`, so a
+    /// crew that brought a drag harness to a pen collected at `12` where the handling gear collected
+    /// at `40`. **The hurdles became a MATERIAL** (`docs/plan_standing_upkeep.md` §4.9 item 12) and
+    /// the whole pair moved to the **sled**, which already owned the equipped side through
+    /// [`Self::shares_equipped_rate_with`]. So **any** kit carrying a sled now collects a pen at the
+    /// equipped tier, and what the two tiers still separate is the **sledless** crew — a gathering,
+    /// hurdling or bare party at a pen. The discriminating item was deleted, not the stat.
     PenCarry,
     /// **The sight range each posted scout vantage reveals at.** Declared **unequipped**; the
     /// equipped `2` is `labor_config.json`'s `scout.vantage_range`.
@@ -134,7 +140,7 @@ pub enum EquipmentStat {
     ScoutVantageRange,
     /// **THE EXTRA WORK ONE EQUIPPED WORKER DELIVERS PER TURN ON A BUILD** — added to the crew's own
     /// output, never subtracted from the job (`docs/plan_standing_upkeep.md` §4.8). Neutral at
-    /// **`0.0`**; **flint hoes ship `+0.5` on the plant web and flint hurdles `+0.5` on the animal
+    /// **`0.0`**; **flint hoes ship `+0.5` on the plant web and a flint crook `+0.5` on the animal
     /// one**, so an equipped builder banks `PER_WORKER_OUTPUT + 0.5 = 1.5` work units a turn where a
     /// bare one banks `1.0`.
     ///
@@ -175,7 +181,7 @@ pub enum EquipmentStat {
     /// **This answers the question `BuildRate` left open** — whether a build tool wants the covered
     /// reading the carries take. **Yes.** The old stat was uncovered only because averaging a
     /// *multiplier* said *bring fewer keepers and the pen goes up faster* (measured: one set of
-    /// hurdles among ten keepers resolved ×1.05 against the ×1.5 declared). A per-worker
+    /// crook among ten keepers resolved ×1.05 against the ×1.5 declared). A per-worker
     /// contribution is a **sum**, not an average, so an un-geared hand adds zero instead of
     /// diluting.
     ///
@@ -191,7 +197,7 @@ pub enum EquipmentStat {
     ///
     /// **Deliberately NOT named for husbandry.** Both food webs' rungs read the one build seam, so a
     /// stat keyed to the animal branch would have to be renamed the day a hoe ships. What is
-    /// animal-only is one item: `hurdles` declare `branch: animal` and `hoes` declare
+    /// animal-only is one item: the `crook` declares `branch: animal` and `hoes` declare
     /// `branch: plant`, so which web a tool serves is *content* rather than a property of the stat.
     /// See [`EquipmentEffect::branch`] for why an unqualified build tool is refused at load.
     BuildWork,
@@ -354,7 +360,7 @@ pub struct EquipmentEffect {
     ///
     /// **Two builders kits cannot coexist without it.** `build_work` is a **per-worker sum** over
     /// the crew, so an unqualified hoe would speed a `Tame` and a bundle carrying both a hoe and a
-    /// set of hurdles would deliver `0.5 + 0.5` per worker per turn on a plant build — twice what either
+    /// crook would deliver `0.5 + 0.5` per worker per turn on a plant build — twice what either
     /// tool is worth.
     /// Outside its branch the effect contributes exactly nothing, which is the same shape a snare's
     /// `attack` takes against a Red Deer: there is no *"this tool is not for that"* branch anywhere,
@@ -484,7 +490,7 @@ pub enum WearQuantum {
     BuildProgress,
     /// Per **unit of keeping work a band's maintenance pool actually SUPPLIED** to a source this
     /// turn (`forage::patch_upkeep_supply` / `fauna::herd_upkeep_supply`). The keeping tools — a
-    /// keeper's hoes on the plant web, hurdles on the animal one.
+    /// keeper's hoes on the plant web, the crook on the animal one.
     ///
     /// # WITHOUT IT A KEEPING TOOL RAISED A POOL'S SUPPLY FOR EVER, FREE
     ///
@@ -547,7 +553,8 @@ impl WearQuantum {
             Self::BuildProgress => "gardens' worth",
             // **The same work unit, so the same reference job** — a hoe holds one life measured in
             // work, and the noun says which account is spending it. No shipped item **leads** with
-            // this quantum (hoes lead with `build_progress`, hurdles with `biomass_collected`), so
+            // this quantum (both build tools lead with `build_progress`, the sled with
+            // `biomass_hauled`), so
             // it is the reading the first item to headline keeping would get.
             Self::UpkeepWork => "gardens' worth kept",
         }
@@ -650,10 +657,12 @@ pub struct ItemDefinition {
     /// other's rate — and it survives. What it never covered is an item lifting **one** stat that
     /// two different sites read.
     ///
-    /// `hurdles` are that item. The fence panels, halters and a butchering stone are worked on the
-    /// beast at a slaughter ([`WearQuantum::BiomassCollected`]) *and* on the animals being gentled
-    /// during a `Tame` or fenced during a `Corral` ([`WearQuantum::BuildProgress`], issue #515) —
-    /// the same physical bundle, two kinds of work. With one slot the second was unbillable, and
+    /// The retired `hurdles` item was that item: worked on the beast at a slaughter
+    /// ([`WearQuantum::BiomassCollected`]) *and* on the animals being gentled during a `Tame` or
+    /// fenced during a `Corral` ([`WearQuantum::BuildProgress`], issue #515) — the same physical
+    /// bundle, two kinds of work. **The SLED carries the shape now**, having taken the butchering
+    /// quantum with the `pen_carry` pair, and the **crook** beside it is on two as well
+    /// (`BuildProgress` and `UpkeepWork`). With one slot the second was unbillable, and
     /// leaving it uncharged would have let a band tame every herd on the map for free, which is the
     /// whole thing *wear follows the work actually done* exists to prevent.
     ///
@@ -919,8 +928,8 @@ pub enum KitJob {
     /// meant to equip cannot be sent out with it. The build's gear offset used to ride the *source
     /// row's* kit — a `Corral` was priced off the hunt row's husbandry gear — because the builders
     /// stood on the tile. They stand on their own row now, so the offset is read off that row like
-    /// every other role's, and a kit carrying hurdles that does not list `builders` silently offsets
-    /// nothing.
+    /// every other role's, and a kit carrying a build tool that does not list `builders` silently
+    /// offsets nothing.
     ///
     /// **One job for both webs**, matching the role: a build is a job rather than a standing charge,
     /// and the queue already says which web is being worked.
@@ -989,11 +998,11 @@ pub struct DefaultKitsConfig {
     pub agriculture: String,
     /// The animal keeper's default — see [`Self::agriculture`].
     pub husbandry: String,
-    /// **The builders' default: nothing.** The one item declaring
-    /// [`EquipmentStat::BuildWork`] rides the `husbandry` kit, which now lists `builders` among its
-    /// jobs — but *defaulting* the pool onto it would hand a plant build an animal-handling offset
-    /// no forage crew has ever had. So the role opens bare, like the two keeping roles, and naming
-    /// the husbandry kit on it is how the player brings the hurdles.
+    /// **The builders' default: nothing.** Each web's [`EquipmentStat::BuildWork`] item rides its
+    /// own builders kit (`tillage` carries the hoes, `hurdling` the crook) — but *defaulting* the
+    /// pool onto either would hand one web's build the other's offset. So the role opens bare, like
+    /// the two keeping roles, and what the pool actually works with is derived per queue entry from
+    /// the head's own branch ([`EquipmentConfig::build_kit_for_branch`]).
     pub builders: String,
 }
 
@@ -1232,7 +1241,7 @@ impl KitChoice {
     ///
     /// [`Self::best_declared`]'s two clauses hold unchanged: only declared values participate, and
     /// the maximum wins because a worker uses the better tool rather than both at once. The branch
-    /// filter is what stops a kit carrying a hoe *and* a set of hurdles from delivering `0.5 + 0.5`
+    /// filter is what stops a kit carrying a hoe *and* a crook from delivering `0.5 + 0.5`
     /// per worker on a plant build — and it is a **filter**, not a second maximum, so the two tools never meet.
     fn best_build_work(
         &self,
@@ -1445,7 +1454,7 @@ impl EquipmentConfig {
     }
 
     /// **THE KEEPING ROLE THIS FOOD WEB'S UPKEEP IS STAFFED ON** — plant → `agriculture`, animal →
-    /// `husbandry`. The one place that mapping lives, so the pool's kit, its supply and the role the
+    /// `husbandry`. The one place that mapping lives, so a site's kit, its supply and the role the
     /// player types cannot come to name three different things.
     ///
     /// **It is the branch tag doing the same job it already does for builds**
@@ -1458,15 +1467,16 @@ impl EquipmentConfig {
         }
     }
 
-    /// **THE KEEPING KIT THIS FOOD WEB'S POOL WANTS** — [`Self::build_kit_for_branch`]'s twin one
+    /// **THE KEEPING KIT THIS FOOD WEB'S SITES WANT** — [`Self::build_kit_for_branch`]'s twin one
     /// account over, and the same roster lookup: the earliest entry serving this web's keeping role
     /// whose `build_work` serves `branch` at the fresh tier.
     ///
     /// **It exists because upkeep reads the same supply expression a build does** (§4.8), so a
-    /// keeper holding a hoe covers more of a patch's demand than one holding nothing — and there is
-    /// no keeping-kit picker in the client, so nothing would resolve a kit for these pools if the
-    /// roster did not answer. `default_kits.agriculture` / `.husbandry` are both `none`, which would
-    /// have made the whole change a silent no-op.
+    /// keeper holding a hoe covers more of a patch's demand than one holding nothing — and
+    /// `default_kits.agriculture` / `.husbandry` are both `none`, so a site that waited to be handed
+    /// a kit would resolve bare and the whole seam would be a silent no-op. The roster answering is
+    /// what makes the derivation the **default** a named override departs from, rather than a
+    /// prerequisite.
     pub fn keeping_kit_for_branch(
         &self,
         branch: crate::intensification::RungBranch,
@@ -1474,23 +1484,28 @@ impl EquipmentConfig {
         self.work_kit_for(Self::keeping_job(branch), branch)
     }
 
-    /// **THE KIT A BAND'S KEEPING POOL IS ACTUALLY WORKING WITH** — [`Self::builders_kit_for`]'s
-    /// twin, on the same three rules: a named kit wins (`none` included), else the roster answers
-    /// for this web, else the job's own default.
+    /// **THE KIT ONE WORK SITE IS ACTUALLY KEPT WITH** — [`Self::builders_kit_for`]'s twin, on the
+    /// same three rules: the kit named on **this site's row** wins (`none` included), else the
+    /// roster answers for this site's web, else the job's own default.
     ///
-    /// **The selection is on the ROW here, and that is not an inconsistency**: a keeping role is a
-    /// standing pool over every source on its web, so *"which tool are the keepers holding"* has one
-    /// answer per band. A build is one job, so the builders' selection is on the **entry**.
+    /// ⛔ **THE SELECTION IS PER WORK SITE, NEVER PER BAND** (`docs/plan_standing_upkeep.md` §2.7).
+    /// The band is the pool of workers and goods to draw from; it does not decide which tool a given
+    /// site is worked with. `site_kit` is therefore [`crate::components::LaborAssignment::upkeep_kit`]
+    /// — the same place the take kit lives and one account over from
+    /// [`crate::components::BuildQueueEntry::kit`], which makes the identical argument: *a single
+    /// stored id per band cannot be right for both food webs*. It was read off the band's
+    /// `agriculture` / `husbandry` **role row** until §2.7, which pinned one tool onto every site
+    /// that band kept with no way back.
     ///
-    /// It takes no `Option<branch>` where the builders' seam does, because a keeping role **is** a
-    /// web: `agriculture` keeps plants and nothing else, so there is no *"nothing is being worked"*
-    /// case for a branch to be absent in.
+    /// It takes no `Option<branch>` where the builders' seam does, because a site **is** a web: a
+    /// patch is plant and a herd is animal, so there is no *"nothing is being worked"* case for a
+    /// branch to be absent in.
     pub fn keeping_kit_for(
         &self,
-        row_kit: Option<&KitChoice>,
+        site_kit: Option<&KitChoice>,
         branch: crate::intensification::RungBranch,
     ) -> KitChoice {
-        row_kit
+        site_kit
             .cloned()
             .or_else(|| self.keeping_kit_for_branch(branch))
             .unwrap_or_else(|| self.default_kit(Self::keeping_job(branch)))
@@ -2089,7 +2104,7 @@ impl EquipmentConfig {
     /// maximum of what the live items declare, for [`KitChoice::best_declared`]'s reason: two tools
     /// that both help do not compound, a worker simply uses the better one.
     ///
-    /// **Flint hoes are +0.5 build work per worker per turn on a plant build, and flint hurdles +0.5
+    /// **Flint hoes are +0.5 build work per worker per turn on a plant build, and a flint crook +0.5
     /// on an animal one** (`equipment.json`), so an equipped builder banks
     /// [`crate::intensification::PER_WORKER_OUTPUT`] `+ 0.5 = 1.5` work units a turn where a bare
     /// one banks `1.0`.
@@ -2164,7 +2179,7 @@ impl EquipmentConfig {
     /// count). Each item covers a **prefix** of the party
     /// (`min(live units × workers_per_unit, the people brought)`), so adding hands raises the total
     /// **until every unit is in somebody's hands** and then raises it no further: an eleventh worker
-    /// with ten sets of hurdles between them contributes nothing.
+    /// with ten crooks between them contributes nothing.
     ///
     /// # It is a property of the KIT and the LEDGER — of no source and no crew
     ///
@@ -2912,7 +2927,7 @@ impl EquipmentConfig {
     /// `.claude/rules/core_sim/config-loading.md`'s *"looks live but isn't"*:
     ///
     /// - **Absent on a build tool** would apply to *both* food webs silently, so a hoe would speed a
-    ///   `Tame` and a kit bundling a hoe and a set of hurdles would deliver `0.5 + 0.5` per worker on
+    ///   `Tame` and a kit bundling a hoe and a crook would deliver `0.5 + 0.5` per worker on
     ///   a plant build — `build_work` is a per-worker **sum**. It is the "placement rule that places no
     ///   rule" failure `RungSiteRequirement` already rejects one config over.
     /// - **Present on any other stat** would parse, validate and then be read by nothing, exactly as
@@ -3195,9 +3210,11 @@ mod tests {
     const SLED: &str = "sled";
     const BASKETS: &str = "baskets";
     const TRAPS: &str = "traps";
-    /// The animal web's build tool — portable fence panels, and the handling gear a keeper works a
-    /// beast with. **The one item on two wear quanta.**
-    const HURDLES: &str = "hurdles";
+    /// The animal web's build tool — a long bone staff, and the halters and butchering stone a
+    /// keeper works a beast with. It replaced `hurdles`, which became a **material**
+    /// (`docs/plan_standing_upkeep.md` §2.7): a fence panel stays in the ground, so it is spent by
+    /// the `animal:pen` rung rather than carried to the next job.
+    const CROOK: &str = "crook";
 
     fn item<'a>(config: &'a EquipmentConfig, id: &str) -> &'a ItemDefinition {
         config
@@ -3604,16 +3621,19 @@ mod tests {
     }
 
     /// **AN ITEM MAY WEAR ON SEVERAL QUANTA, and each is charged over its own number** (issue #515).
-    /// The handling gear is the case: it is worked on the beast at a slaughter and on the animals
-    /// being gentled during a `Tame`, and with one slot the second was unbillable.
+    /// The **sled** is the case since the material half of the ladder landed: it is dragged on the
+    /// range (`biomass_hauled`) and worked on the beast brought out of a pen and killed
+    /// (`biomass_collected`), the second quantum having moved here with the `pen_carry` pair when
+    /// the hurdles became a material (`docs/plan_standing_upkeep.md` §2.7). The **crook** beside it
+    /// is on two as well (`build_progress` and `upkeep_work`), so the shape has two exercisers.
     #[test]
     fn an_item_may_wear_on_more_than_one_quantum() {
         let config = EquipmentConfig::builtin();
-        let gear = item(&config, HURDLES);
+        let gear = item(&config, SLED);
         assert!(
             gear.wears_on(WearQuantum::BiomassCollected)
-                && gear.wears_on(WearQuantum::BuildProgress),
-            "the shipped handling gear must be charged for both the jobs it does"
+                && gear.wears_on(WearQuantum::BiomassHauled),
+            "the shipped sled must be charged for both the jobs it does"
         );
         // **The two rates are independent**, which is what lets either life be retuned without
         // moving the other — the same reason the pen's two quanta were split in the first place.
@@ -3623,7 +3643,7 @@ mod tests {
                 .amount
                 > 0.0
                 && gear
-                    .wear_for(WearQuantum::BuildProgress)
+                    .wear_for(WearQuantum::BiomassHauled)
                     .expect("declared above")
                     .amount
                     > 0.0,
@@ -3644,15 +3664,15 @@ mod tests {
     fn validate_rejects_an_item_wearing_on_the_same_quantum_twice() {
         let mut json: serde_json::Value =
             serde_json::from_str(BUILTIN_EQUIPMENT_CONFIG).expect("the builtin parses");
-        json["items"]["hurdles"]["wear"] = serde_json::json!([
-            { "per": "biomass_collected", "amount": 0.04 },
-            { "per": "biomass_collected", "amount": 9.0 },
+        json["items"]["sled"]["wear"] = serde_json::json!([
+            { "per": "biomass_hauled", "amount": 0.02 },
+            { "per": "biomass_hauled", "amount": 9.0 },
         ]);
         let err = EquipmentConfig::from_json_str(&json.to_string())
             .expect_err("a duplicate quantum is invalid");
         assert!(
             matches!(&err, EquipmentConfigError::Invalid { field, .. }
-                if field == "items.hurdles.wear[1].per"),
+                if field == "items.sled.wear[1].per"),
             "unexpected error: {err}"
         );
     }
@@ -3701,16 +3721,11 @@ mod tests {
         // flat-then-step-down, and the step down IS the neutral — `0.0` for a contribution added
         // to what a worker delivers, where it was `1.0` for the multiplier this replaced.
         let mut dry = wear.clone();
-        dry.wear_item(
-            &config,
-            "hurdles",
-            WearQuantum::BuildProgress,
-            f32::MAX / 2.0,
-        );
+        dry.wear_item(&config, CROOK, WearQuantum::BuildProgress, f32::MAX / 2.0);
         assert_eq!(
             config.build_work_per_worker(&hurdling, &dry, RungBranch::Animal),
             NO_BUILD_GEAR,
-            "hurdles that have run dry must add nothing to what a builder delivers"
+            "a crook that has run dry must add nothing to what a builder delivers"
         );
     }
 
@@ -3722,7 +3737,7 @@ mod tests {
     ///
     /// **The double-count arm is the one that forced the qualifier.** `build_work` is a per-worker
     /// **sum**, so an unqualified bundle carrying both tools would deliver `0.5 + 0.5` per worker on
-    /// a plant build — twice what either tool is worth, on a job the hurdles do nothing for.
+    /// a plant build — twice what either tool is worth, on a job the crook does nothing for.
     #[test]
     fn a_build_tool_serves_its_own_web_and_two_of_them_do_not_compound() {
         let config = EquipmentConfig::builtin();
@@ -3739,7 +3754,7 @@ mod tests {
         assert!(
             hoed_plant > NO_BUILD_GEAR && hurdled_animal > NO_BUILD_GEAR,
             "**LIVENESS**: each builders kit must be worth something on its own web - hoes/plant \
-             {hoed_plant}, hurdles/animal {hurdled_animal}"
+             {hoed_plant}, crook/animal {hurdled_animal}"
         );
         assert_eq!(
             config.build_work_per_worker(&tillage, &wear, RungBranch::Animal),
@@ -3749,7 +3764,7 @@ mod tests {
         assert_eq!(
             config.build_work_per_worker(&hurdling, &wear, RungBranch::Plant),
             NO_BUILD_GEAR,
-            "hurdles must take nothing off a plant build"
+            "a crook must take nothing off a plant build"
         );
 
         // **A BUNDLE CARRYING BOTH TOOLS**, which no shipped kit is - the roster splits them
@@ -3757,12 +3772,12 @@ mod tests {
         // arithmetic together.
         let both = KitChoice {
             id: Arc::from("both"),
-            uses: Arc::from(vec![Arc::from("hoes"), Arc::from("hurdles")]),
+            uses: Arc::from(vec![Arc::from("hoes"), Arc::from(CROOK)]),
         };
         assert_eq!(
             config.build_work_per_worker(&both, &wear, RungBranch::Plant),
             hoed_plant,
-            "a kit holding a hoe AND hurdles must take ONE tool's worth off a plant build"
+            "a kit holding a hoe AND a crook must take ONE tool's worth off a plant build"
         );
         assert_eq!(
             config.build_work_per_worker(&both, &wear, RungBranch::Animal),
@@ -3818,7 +3833,8 @@ mod tests {
     /// ⛔ **EVERY WEB HAS A BUILDERS KIT, AND IT SERVES THAT WEB ALONE.**
     ///
     /// The replacement for *"every kit that supplies `build_work` offers the `builders` job"*, which
-    /// stopped being the invariant when `husbandry` kept its hurdles and gave up building: a kit may
+    /// stopped being the invariant when `husbandry` kept the handling gear and gave up building: a
+    /// kit may
     /// now carry a build tool for another job's sake, so what matters is not that every declarer
     /// offers the job but that **the job's derivation lands somewhere** for each ladder.
     ///
@@ -3885,7 +3901,7 @@ mod tests {
     /// makes the day one ships a decision (publish the envelope) rather than a silent under-quote.
     #[test]
     fn the_saturating_crew_reproduces_the_coverage_sum_at_every_crew_size() {
-        /// One set of hurdles, so the saturation point sits at a single worker and the sweep below
+        /// One crook, so the saturation point sits at a single worker and the sweep below
         /// straddles it.
         const HELD: u32 = 1;
         let config = EquipmentConfig::builtin();
@@ -3897,7 +3913,7 @@ mod tests {
         let saturating = config.build_work_saturating_crew(&hurdling, &wear, RungBranch::Animal);
         assert_eq!(
             saturating, HELD,
-            "fixture: the reference ledger holds one set of hurdles, so one worker saturates it - \
+            "fixture: the reference ledger holds one crook, so one worker saturates it - \
              got {saturating}"
         );
 

@@ -131,6 +131,8 @@ fn base_world() -> App {
         .insert_resource(core_sim::EquipmentConfigHandle::default());
     app.world
         .insert_resource(core_sim::MaterialsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::RecipesConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_graze);
@@ -199,6 +201,7 @@ fn hunt_row(herd_id: &str, priority: SourcePriority, workers: u32) -> LaborAssig
         workers,
         kit: None,
         priority,
+        upkeep_kit: None,
     }
 }
 

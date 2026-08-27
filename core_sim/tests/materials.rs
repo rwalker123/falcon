@@ -136,6 +136,8 @@ fn hunting_world() -> App {
     app.world
         .insert_resource(core_sim::EquipmentConfigHandle::default());
     app.world.insert_resource(MaterialsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::RecipesConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app
@@ -186,6 +188,7 @@ fn hunt_and_read_hide(floor: f32) -> (Scalar, Option<f32>, f32) {
                     workers: HUNT_WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },

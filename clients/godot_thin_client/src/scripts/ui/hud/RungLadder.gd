@@ -65,6 +65,23 @@ const ROW_TURNS_KEY := "turns_remaining"
 const ROW_REASONS_KEY := "reasons"
 const ROW_SELECTABLE_KEY := "selectable"
 
+## **THE TWO PRICE-ASIDE KEYS, BESIDE `ROW_REASONS_KEY` AND DELIBERATELY NOT INSIDE IT.** That array
+## means *why this rung is refused*, and a price is not a refusal — a LOCKED rung carries both, which
+## is the whole reason they could not share one key.
+##
+## `ROW_BUILD_ASIDES_KEY` is what raising the rung EATS — the pile, and beneath it the stall warning
+## when the band's shelf cannot cover it. `ROW_HOLD_ASIDES_KEY` is what holding it costs every turn.
+## Both are arrays of `{RUNG_ASIDE_TEXT_KEY, RUNG_ASIDE_WARN_KEY}` rather than of bare strings,
+## because the stall line is the one aside on this card that is not quiet: it is the reading that
+## should stop the player, and an aside array of strings has nowhere to say so.
+const ROW_BUILD_ASIDES_KEY := "build_asides"
+const ROW_HOLD_ASIDES_KEY := "hold_asides"
+
+## One aside's two fields. `warn` picks the ink at render (`_build_aside`), so the producer decides
+## severity and the renderer never sniffs the text for it.
+const RUNG_ASIDE_TEXT_KEY := "text"
+const RUNG_ASIDE_WARN_KEY := "warn"
+
 ## A rung whose owing this layer cannot state at all — the wire prices no such job on this source.
 ## Distinct from `0.0`, which is a real reading meaning *nothing left to pay*.
 const WORK_UNKNOWN := -1.0
@@ -108,8 +125,11 @@ const CROP_SIM_PICKS := ""
 ## `kind` is a LABOR kind (`forage` / `hunt`), `source` the RAW wire source dict, `prefix` the spelling
 ## its keys are in, `improvement` the assignment's declared verb (the second axis) and `knowledge` the
 ## faction's `{track: progress}` row.
+## `band` is the band the `⌃` was opened from, read for ONE thing — its `material_store`, which is
+## what the stall warning weighs a rung's pile against. `{}` (the default) simply drops that aside: a
+## caller with no band in hand states the price and not the shortfall, which is the honest half.
 static func track(kind: String, source: Dictionary, prefix: String, improvement: String,
-        knowledge: Dictionary) -> Array[Dictionary]:
+        knowledge: Dictionary, band: Dictionary = {}) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
     var source_kind := SourceForecast.source_kind_for_labor(kind)
     var branch := SourceForecast.rung_branch_for_kind(source_kind)
@@ -123,6 +143,13 @@ static func track(kind: String, source: Dictionary, prefix: String, improvement:
     # EMPTY on an unqueued source, which is why every figure below has a no-leg answer.
     var legs := _legs_by_rung(source, prefix)
     var gates := _gates(kind, source, prefix, knowledge)
+    # **THE PILE THE WIRE QUOTES BELONGS TO EXACTLY ONE ROW** — the rung directly above where the
+    # source stands, which is the only one `buildMaterialCost` prices (see
+    # `SourceForecast.FORECAST_BUILD_MATERIAL_COST_KEY`). Held as an index rather than re-tested per
+    # row so a track can never quote one rung's pile against another rung's name.
+    var priced_index := standing + 1
+    var pile := SourceForecast.build_material_cost(source, prefix)
+    var store := _material_store(band)
     # **THE PATH IS BLOCKED FROM BELOW.** A climb lays every leg between where the source stands and
     # where it was sent, so a barred rung bars everything above it — and the honest thing to state on
     # the rung above is the refusal that actually happened, further down.
@@ -138,6 +165,8 @@ static func track(kind: String, source: Dictionary, prefix: String, improvement:
             ROW_WORK_KEY: WORK_UNKNOWN,
             ROW_TURNS_KEY: SourceForecast.BUILD_TURNS_NO_ESTIMATE,
             ROW_REASONS_KEY: [] as Array[String],
+            ROW_BUILD_ASIDES_KEY: [] as Array[Dictionary],
+            ROW_HOLD_ASIDES_KEY: [] as Array[Dictionary],
             ROW_SELECTABLE_KEY: false,
         }
         if index < standing:
@@ -156,6 +185,13 @@ static func track(kind: String, source: Dictionary, prefix: String, improvement:
                 String((blocking_row[ROW_REASONS_KEY] as Array)[0])]]
         row[ROW_WORK_KEY] = _work_remaining(source, prefix, verb, legs, rung_key)
         row[ROW_TURNS_KEY] = _leg_turns(legs, rung_key)
+        # **THE PRICE ASIDES GO ON EVERY ROW ABOVE THE STANDING RUNG, LOCKED ONES INCLUDED.** A rung
+        # the branch refuses is still a rung the player may plan toward, and a price hidden behind a
+        # refusal is a price nobody can plan against — which is exactly the state a player who has
+        # never woven a hurdle is in when they look at a pen.
+        if index == priced_index:
+            row[ROW_BUILD_ASIDES_KEY] = _build_price_asides(pile, store)
+        row[ROW_HOLD_ASIDES_KEY] = _hold_price_asides(source, prefix, verb)
         if not reasons.is_empty():
             row[ROW_STATE_KEY] = STATE_LOCKED
             row[ROW_REASONS_KEY] = reasons
@@ -204,8 +240,18 @@ static func build_track(rows: Array[Dictionary], on_pick: Callable) -> VBoxConta
     column.add_child(title)
     for row in rows:
         column.add_child(_build_row(row, on_pick))
+        # **THE ORDER IS THE SENTENCE**: why it is refused (when it is), what it eats to raise, what
+        # the shelf will not cover, then what it costs to hold — the refusal first because a player
+        # reads *may I* before *what does it cost*, and the standing bill last because it is the half
+        # of the commitment that outlives the build.
         for reason in (row.get(ROW_REASONS_KEY, []) as Array):
             column.add_child(_build_aside(String(reason)))
+        for aside in (row.get(ROW_BUILD_ASIDES_KEY, []) as Array):
+            column.add_child(_build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
+                bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
+        for aside in (row.get(ROW_HOLD_ASIDES_KEY, []) as Array):
+            column.add_child(_build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
+                bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
     return column
 
 ## One rung's line: its name on the left, its state or its price on the right.
@@ -253,17 +299,156 @@ static func _build_row(row: Dictionary, on_pick: Callable) -> Control:
     return line
 
 ## An aside beneath a row, in the quiet ink a gate reason takes everywhere else in this client — used
-## for a locked rung's REASON and for a crop row's own price-and-payoff FACE, which are two different
-## statements in one shape rather than one statement with two meanings.
-static func _build_aside(text: String) -> Label:
+## for a locked rung's REASON, for a crop row's own price-and-payoff FACE, and for the two PRICE
+## asides a rung above the standing one carries, which are four different statements in one shape
+## rather than one statement with four meanings.
+##
+## `warn` is the ONE aside on this card that is not quiet — the stall warning, which says the band's
+## shelf will not carry the build it is about to order. Defaulted false, so the reason and crop-face
+## callers are untouched and the quiet register stays the rule rather than the exception.
+static func _build_aside(text: String, warn: bool = false) -> Label:
     var label := Label.new()
     label.text = text
     label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     label.custom_minimum_size = Vector2(HudWorkVocab.RUNG_TRACK_WIDTH, 0.0)
-    label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+    label.add_theme_color_override("font_color", HudStyle.WARN if warn else HudStyle.INK_FAINT)
     label.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_REASON_FONT_SIZE)
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     return label
+
+# ---- THE PRICE ASIDES — the material half of the ladder (`docs/plan_standing_upkeep.md` §2.7) -----
+
+## **WHAT RAISING THIS RUNG EATS, AND WHETHER THE SHELF WILL CARRY IT** — one aside for the pile, a
+## second in WARN ink when the store cannot cover it, and `[]` when the rung swallows no material at
+## all (which is every rung on the shipped ladder but `animal:pen`).
+##
+## ⛔ **AN EMPTY PILE IS "THIS RUNG EATS NOTHING", NOT "NOTHING IS KNOWN"** — the `MaterialPayoff`
+## contract this whole wire follows — so it renders NO aside rather than a `0` or a dash. A rung that
+## eats nothing must not read as one that eats badly.
+static func _build_price_asides(pile: Array[Dictionary],
+        store: Dictionary) -> Array[Dictionary]:
+    var asides: Array[Dictionary] = []
+    if pile.is_empty():
+        return asides
+    asides.append({
+        RUNG_ASIDE_TEXT_KEY: HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT % _material_terms(pile),
+        RUNG_ASIDE_WARN_KEY: false,
+    })
+    # **THE FRACTION IS THE WORST GOOD'S, AND THE CLAUSE NAMES THAT GOOD.** A build draws every good
+    # in its pile at one coverage fraction, so the one the shelf runs out of first is what the whole
+    # build stalls at — and a summed "you have 8 things" would be the currency this model refuses.
+    var worst := ""
+    var worst_share := 1.0
+    for row in pile:
+        var id := String(row.get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, ""))
+        var wanted := float(row.get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+        if wanted < SourceForecast.MATERIAL_FLOW_MIN:
+            continue
+        var share := float(store.get(id, 0.0)) / wanted
+        if share < worst_share:
+            worst_share = share
+            worst = id
+    if worst == "":
+        return asides
+    asides.append({
+        RUNG_ASIDE_TEXT_KEY: HudWorkVocab.RUNG_TRACK_STALL_FORMAT % [
+            _material_term(worst, float(store.get(worst, 0.0))),
+            _stall_fraction_word(worst_share)],
+        RUNG_ASIDE_WARN_KEY: true,
+    })
+    return asides
+
+## **WHAT HOLDING THIS RUNG COSTS EVERY TURN** — the work rate and, beside it, the goods. One aside on
+## every rung above the standing one, materials or not: the row's own face states a one-off price, and
+## the second half of what the player is agreeing to has nowhere else to be said.
+##
+## ⛔ **BOTH TERMS ARE THE OFFERED RUNG'S OWN RATE, and the SOURCE'S current bill is a different
+## question.** `build_upkeep_demand` and `build_upkeep_material_demand` both answer per RUNG — what
+## THIS rung would cost to hold, at every fullness, on a rung nobody has started. That is the only
+## question a player deciding whether to commit can act on, so neither clause may read the stamped
+## `upkeep_material_demand` / `upkeep_demand` pair, which says what the source was BILLED this turn
+## through the rung it already stands on. **On a source mid-climb the two disagree, and that is
+## correct** — do not reconcile them.
+##
+## Reading the stamp for the goods clause is what this aside used to do, and it silenced the clause on
+## the one row in the game that has a good to state: a **pastoral herd looking at the Pen row**, whose
+## current rung (`animal:pastoral`) declares no material at all. `animal:pen` is the top of its branch
+## so no track ever offers it from a penned herd, which left the material half unreachable in play.
+##
+## ⛔ **EMPTY MEANS THE RUNG EATS NO MATERIAL, never zero of something** — an empty quote renders NO
+## material clause at all and the aside still states its work term.
+##
+## `[]` where the rung is free to hold in both currencies — a `0 work a turn` bill reads as a defect,
+## and a rung that costs nothing should say nothing rather than say nothing twice.
+static func _hold_price_asides(source: Dictionary, prefix: String,
+        improvement: String) -> Array[Dictionary]:
+    var asides: Array[Dictionary] = []
+    var terms: Array[String] = []
+    var work := SourceForecast.build_upkeep_demand(source, prefix, improvement)
+    if work >= SourceForecast.UPKEEP_WORK_MIN:
+        terms.append(HudWorkVocab.RUNG_TRACK_HOLD_WORK_TERM % DetailFormat.format_work_units(work))
+    var goods := _material_term_list(
+        SourceForecast.build_upkeep_material_demand(source, prefix, improvement))
+    terms.append_array(goods)
+    if terms.is_empty():
+        return asides
+    asides.append({
+        RUNG_ASIDE_TEXT_KEY: HudWorkVocab.RUNG_TRACK_HOLD_FORMAT % HudWorkVocab
+            .RUNG_TRACK_PRICE_SEPARATOR.join(terms),
+        RUNG_ASIDE_WARN_KEY: false,
+    })
+    return asides
+
+## The band's shelf as `{material_id: amount}` — the ONE place `material_store` is turned into a
+## lookup, so the stall test reads a good's own stock and never a total across goods.
+static func _material_store(band: Dictionary) -> Dictionary:
+    var held := {}
+    for row in SourceForecast.material_payoff_rows(band.get(
+            DetailFormat.BAND_MATERIAL_STORE_KEY, [])):
+        held[String(row.get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, ""))] = float(
+            row.get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+    return held
+
+## A per-good list joined for one clause — `6 hurdles · 2 rope`. **Never a sum**: one term per good is
+## the whole contract, and a total is the retired trade axis under a new name.
+static func _material_terms(rows: Array[Dictionary]) -> String:
+    return HudWorkVocab.RUNG_TRACK_PRICE_SEPARATOR.join(_material_term_list(rows))
+
+static func _material_term_list(rows: Array[Dictionary]) -> Array[String]:
+    var terms: Array[String] = []
+    for row in rows:
+        var amount := float(row.get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+        if amount < SourceForecast.MATERIAL_FLOW_MIN:
+            continue
+        terms.append(_material_term(String(row.get(
+            SourceForecast.MATERIAL_PAYOFF_ID_KEY, "")), amount))
+    return terms
+
+## ONE good's amount and its name. **A material names itself** — the catalogue ships no display word,
+## so the id IS the noun, which is the rule every material readout in this client follows. The amount
+## is trimmed rather than fixed, so a whole pile reads `6` and a mending rate reads `0.05`.
+static func _material_term(material_id: String, amount: float) -> String:
+    return HudWorkVocab.RUNG_TRACK_MATERIAL_TERM % [
+        DetailFormat.format_trimmed(amount, HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
+        material_id]
+
+## **HOW FAR THE SHELF GETS, IN WORDS** — the NEAREST of `RUNG_TRACK_STALL_STEPS`' own values, so the
+## ladder is the words themselves and there is no threshold table beside them to drift. Under the
+## lowest named fraction's own nearest-neighbour boundary the answer is `barely at all`: a store
+## covering a fortieth of a pile is nearer to nothing than to a tenth.
+static func _stall_fraction_word(share: float) -> String:
+    var steps: Array = HudWorkVocab.RUNG_TRACK_STALL_STEPS
+    var lowest := float((steps[0] as Array)[0])
+    if share < lowest * 0.5:
+        return HudWorkVocab.RUNG_TRACK_STALL_BARELY
+    var best := String((steps[0] as Array)[1])
+    var best_gap := absf(share - lowest)
+    for step in steps:
+        var gap := absf(share - float((step as Array)[0]))
+        if gap < best_gap:
+            best_gap = gap
+            best = String((step as Array)[1])
+    return best
 
 # ---- THE CROP STEP — the second page of the same card --------------------------------------------
 

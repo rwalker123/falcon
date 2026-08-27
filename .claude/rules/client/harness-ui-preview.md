@@ -2073,7 +2073,10 @@ of the drive.
   configuration (a dock with no HUD column beside it); the state restores the ordinary ones after, and
   a rect-intersection claim rides beside the frame as its non-vacuity guard.
 
-**A clean run is 357 frames / 1432 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+**A clean run is 365 frames / 1535 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+figure this replaced (`357 / 1432`) had gone stale in the tree well before the arc below touched it,
+which is exactly the trap the rule is written for: **never sum a delta onto a recorded figure — take a
+baseline run first.**
 
 ### The frame diff that attributed this arc, and the one frame it could not explain
 
@@ -2099,3 +2102,36 @@ await, so the one fit that runs already measures the final body. The actual caus
 `chrome` term over-counting the header row, which is left as a separate decision. **The lesson is the
 method**: a plausible mechanism that explains the symptom is not the cause until the fix for it moves
 the number.
+
+
+## The material half's frames and the five it retired (`docs/plan_standing_upkeep.md` §4.9 item 12)
+
+**MEASURED, BEFORE AND AFTER, ON THIS TREE**: `366 / 1518` → `365 / 1535`, exit 0 both times. Net one
+frame FEWER and seventeen more `PASS`, and the arithmetic is worth writing down because the two move in
+opposite directions.
+
+**FIVE FRAMES RETIRED WITH THE BAND'S `Gear` ROW** — `band_kit`, `band_kit_expanded`, `band_kit_bare`,
+`band_kit_short`, `band_kit_forage_short` — because the row they photographed no longer exists and the
+`BAND_DISCLOSURE_KIT` caret they were driven through is no longer registered. **Their popover claims
+survive whole**: `chapters/band_expedition.gd`'s kit block is DRIVEN and PNG-LESS now, reading
+`DisclosureController.kit_breakdown_lines` directly, which is what `chapters/compose_rungs.gd`'s own
+gear claims already did. Four ROW claims went with the frames (the row states all three kits; a spent
+kit reads as a WORD in danger ink; the row states the spears' shortfall on their own face; the baskets
+state theirs against the forage head count) plus the two `_assert_faction_kit_counts_the_short_band`
+claims — the faction `Kit` row being retired too.
+
+**FOUR FRAMES ADDED**: `band_standing_bill` and `band_standing_bill_expanded` (the `Upkeep:` row and
+its open drill-down, `chapters/band_expedition.gd`), `tile_meter_blocked_materials` (the stuck reason
+that NAMES a good, `chapters/improvements.gd`) and `event_dock_material` (both `kit_life` seams beside
+the `material_shortfall` Alert, `chapters/event_dock.gd`).
+
+⛔ **THE PER-CHAPTER `EXPECTED_CHECKPOINTS` FLOORS MOVED AND WERE RE-MEASURED, NOT ADJUSTED BY THE
+DELTA.** `band_expedition` 101 → **102**, `improvements` 174 → **186**, `event_dock` 165 → **186**. The
+first of those is the one that shows why: it lost eleven checkpoints and gained ten, and its recorded
+floor was already under its real count, so a delta applied to the old number would have set a floor the
+chapter could fall THROUGH silently. Raise the const to an impossible number, run once, read the
+reported count, set it exactly.
+
+**`band_panel_queue_expanded_autoscroll.png` IS NON-DETERMINISTIC BETWEEN RUNS** and is not attributable
+to any change — measured directly: two consecutive runs of the unmodified tree agree with each other
+and differ from a third. Anything comparing frame sets across runs has to expect it.

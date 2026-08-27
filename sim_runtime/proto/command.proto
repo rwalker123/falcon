@@ -510,6 +510,37 @@ message BuildKitCommand {
   optional string kit_id = 5;
 }
 
+// Name the kit ONE WORK SITE IS KEPT WITH, on every band of the faction that works the source. The
+// take crew, its own kit, the queue entry and the meter are untouched - this sets a property of the
+// WORKED ROW.
+//
+// THE KEEPING KIT IS PER WORK SITE, NOT PER BAND (docs/plan_standing_upkeep.md 2.7). The band is the
+// pool of workers and goods to draw from; it does not decide which tool a given site is worked with.
+// A single stored id on the band's `agriculture` / `husbandry` role row - which is where this lived
+// until 2.7 - cannot say "hoes on the Field, bare hands on the scrub patch beside it", so every site
+// a band kept was worked with one tool and there was no way back. `assign_labor` refuses a `kit`
+// token on those roles; this is where the override lives.
+//
+// AN ABSENT `kit_id` CLEARS THE OVERRIDE back to the site's own web derivation - the same "an absent
+// kitId means the job's default" rule every other kit selection follows, and what lets a client say
+// "back to default" with no new vocabulary. An explicit bare-handed kit is a REAL selection and
+// survives the round trip: it is how a player conserves the tool on one site while its neighbour
+// keeps it.
+//
+// A KIT THAT DOES NOT SERVE THIS SITE'S WEB IS A COMMAND FAILURE, never a silent fall back: a plant
+// keeping kit named on a herd is refused by name, exactly as `build_kit` refuses a kit whose `jobs`
+// does not list `builders`.
+//
+// SOURCE ADDRESSING is the queue family's: two integer tokens name a TILE, one token names a HERD id.
+message UpkeepKitCommand {
+  uint32 faction_id = 1;
+  optional uint32 target_x = 2;
+  optional uint32 target_y = 3;
+  optional string herd_id = 4;
+  // Absent = clear the override; present = this roster kit, `none` included.
+  optional string kit_id = 5;
+}
+
 // Mark ONE WORKED ROW of one band with the player's own rank - `high` | `normal` | `low`, defaulting
 // to normal.
 //
@@ -1039,5 +1070,8 @@ message CommandEnvelope {
     WorkPriorityCommand work_priority = 61;
     // 61 is held by `work_priority`, so the bench's rank takes 62 (append-only; never renumber).
     BenchPriorityCommand bench_priority = 62;
+    // 62 is held by `bench_priority`, so the work site's keeping kit takes 63 (append-only; never
+    // renumber).
+    UpkeepKitCommand upkeep_kit = 63;
   }
 }

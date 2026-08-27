@@ -432,7 +432,7 @@ const ANIMAL_CORRAL_WORK_COST := 75.0
 ## reading and renders as no line at all.
 const ANIMAL_BUILD_TURNS_REMAINING := 6
 
-## **WHAT THIS HERD'S BUILDERS ADD WITH THE HANDLING GEAR, PER TURN** — the shipped `hurdles` flint
+## **WHAT THIS HERD'S BUILDERS ADD WITH THE HANDLING GEAR, PER TURN** — the shipped `crook` flint
 ## tier at `BandFx.KIT_BUILD_WORK_HANDLING` (0.5) per equipped worker, over the reference two-keeper
 ## crew, so `2 × 0.5` = 1.0. **The animal web is where this readout is judged**, no plant item
 ## declaring the stat yet (issue #539).

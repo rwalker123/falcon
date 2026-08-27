@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 101
+const EXPECTED_CHECKPOINTS := 104
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -880,6 +880,11 @@ func run(harness) -> void:
 	# ---- THE BAND'S HAY LEDGER --------------------------------------------------------------------
 	await _hay_ledger_states()
 
+	# ---- THE BAND'S STANDING MATERIAL BILL (`docs/plan_standing_upkeep.md` §2.7) ------------------
+	# **APPENDED, never inserted.** States render into one long-lived `HudLayer`, so a block moved is a
+	# set of frames changed — and this one deliberately follows the two ledgers it is the third of.
+	await _standing_bill_states()
+
 	# band_alerts (above) left _player_band as an alert-fixture band (no work_range, far from the food
 	# tile); seed a NEAR band so the forage controls resolve an in-range actor.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
@@ -889,56 +894,38 @@ func run(harness) -> void:
 
 
 # ---- THE THREE KITS (`docs/plan_hunt_through_combat.md` §4.8) ------------------------------------
-# The kit disclosure key for the kitted band — `DetailFormat.breakdown_key(kind, band)`'s shape, over
-# the reference band's own entity so it cannot collide with its Food/Morale/Growth popovers.
-const BAND_DISCLOSURE_KIT := "kit:904"
-
-## **THE KITS WERE INVISIBLE, AND A PLAYER COULD NOT SEE THEIR EQUIPMENT DYING.** Three consumables
-## ship — spears raising `attack`, a SLED carrying the hunt, BASKETS carrying the forage web — and all
-## six wire fields arrived and were dropped. These four frames are the readout, and the split is
-## deliberate: the ROW answers *how long have I got and which side of the line am I on*, and only the
-## DISCLOSURE has room for *what each one is doing for me, and what happens when it stops*.
-##
-## **NOTHING HERE MAY BE SCALED BY THE REMAINING CONDITION.** Durability and performance are
-## orthogonal — a kit at 3 performs exactly as one at 97 and then stops — so the assertions below pin
-## the TIER against its shipped constant rather than against anything derived from the condition, and
-## a readout that drew a gradient would fail them at every condition but full.
+#
+# ⛔ **THE BAND'S `Gear` ROW AND ITS FIVE FRAMES ARE RETIRED** (`docs/plan_standing_upkeep.md` §4.9
+# item 12) — `band_kit`, `band_kit_expanded`, `band_kit_bare`, `band_kit_short`,
+# `band_kit_forage_short`, `BAND_DISCLOSURE_KIT` and the three ROW claims they carried (the row states
+# all three kits; a spent kit reads as a WORD in danger ink; the row states the spears' shortfall on
+# their own face). The row is gone from the band page, so a frame of it would render a surface that no
+# longer exists.
+#
+# **THE POPOVER CLAIMS SURVIVE, AND THEY ARE THE ONES WORTH KEEPING.** Every cross-check the three-kit
+# split exists for is about `DisclosureController.kit_breakdown_lines` — the sled quoting the HUNT's
+# carry and the baskets the FORAGE web's, a dry kit's cliff sentence, a SHORT kit's coverage clause,
+# an unstaffed job's silent `0 of 0` — and that producer is untouched: the crafting panel's kit ledger
+# and the compose sheet's role hint both still read it. So this block is DRIVEN and PNG-less now,
+# asserting on the producer directly, which is what `compose_rungs.gd`'s own gear claims already do.
+#
+# **NOTHING HERE MAY BE SCALED BY THE REMAINING CONDITION.** Durability and performance are
+# orthogonal — a kit at 3 performs exactly as one at 97 and then stops — so the assertions below pin
+# the TIER against its shipped constant rather than against anything derived from the condition, and
+# a readout that drew a gradient would fail them at every condition but full.
 func _kit_states() -> void:
-	# State kit-a — ONE KIT DRY, the other two intact. The row reads two live conditions and one
-	# DANGER-inked word, which is the whole of what a glance has to deliver: two clocks and one loss.
+	# State kit-a — ONE KIT DRY, the other two intact.
 	var worn := BandFx.with_baskets_dry(BandFx.band_fixture())
 	h._hud._band_labor._player_band = worn
 	h._hud.show_unit_selection(worn)
 	await h._settle()
-	await h._save("band_kit")
-	# **THE FACES ARE READ OFF THE PARSED TEXT, THE INK OFF THE SOURCE**, and the split is forced by
-	# the row itself: each kit's condition is wrapped in its own `[color]` span, so the rendered
-	# source never contains `Spears 87` contiguously — while the parsed text, having dropped every
-	# tag, cannot testify about a colour. Two readings of one label, each asked what it can answer.
-	var kit_row := String(h._hud.occupant_detail.get_parsed_text())
-	h._assert_hud("the Kit row states all three kits, live ones by condition",
-		kit_row.contains("%s %s" % [DetailFormat.KIT_LABEL_SPEARS,
-				String.num(BandFx.KIT_CONDITION_SPEARS, DetailFormat.KIT_CONDITION_DECIMALS)])
-			and kit_row.contains("%s %s" % [DetailFormat.KIT_LABEL_SLED,
-				String.num(BandFx.KIT_CONDITION_SLED, DetailFormat.KIT_CONDITION_DECIMALS)]))
-	# **A SPENT KIT READS AS A WORD, NOT A ZERO.** The number is not the point — which side of the
-	# cliff the role is on is — and a `0` beside two live conditions reads as a quantity on the same
-	# scale rather than as a state change. The DANGER span is asserted with the kit's own NAME in
-	# front of it, because this label carries other red runs (a negative food net) that a bare hex
-	# search would match.
-	h._assert_hud("…and a spent kit reads as a WORD, in DANGER ink",
-		h._hud.occupant_detail.text.contains("%s [color=#%s]%s" % [DetailFormat.KIT_LABEL_BASKETS,
-			HudStyle.DANGER_HEX, DetailFormat.KIT_DRY_FACE]))
 
-	# State kit-b — the SAME band, disclosure OPEN. **This frame carries the cross-check the whole
+	# State kit-b — the SAME band, breakdown read. **This frame carries the cross-check the whole
 	# three-kit split exists for**: the sled's line must quote the HUNT's carry and the basket's line
 	# the FORAGE web's, and neither may quote the other's. Baskets boosting the hunt is precisely the
 	# defect slice 5 corrected in the sim, and rendering one tier on the other's row would carry it
 	# straight back into the UI where no sim test can see it.
-	_click_disclosure(BAND_DISCLOSURE_KIT)
-	await h._settle()
-	await h._save("band_kit_expanded")
-	var kit_popover := _popover_text()
+	var kit_popover := _kit_breakdown_text(worn)
 	var sled_line := _kit_breakdown_line(kit_popover, DetailFormat.KIT_LABEL_SLED)
 	var basket_line := _kit_breakdown_line(kit_popover, DetailFormat.KIT_LABEL_BASKETS)
 	var hunt_carry := String.num(BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS)
@@ -961,7 +948,6 @@ func _kit_states() -> void:
 	h._assert_hud("…and only the spent kit is called out as bare hands",
 		basket_line.contains(DetailFormat.KIT_BARE_HANDS_SUFFIX)
 			and not sled_line.contains(DetailFormat.KIT_BARE_HANDS_SUFFIX))
-	_click_disclosure(BAND_DISCLOSURE_KIT)
 
 	# State kit-c — EVERY kit run dry. Bare hands is a state worth showing plainly: there is no
 	# replenishment path, so all three roles have stepped down and stay there.
@@ -969,10 +955,7 @@ func _kit_states() -> void:
 	h._hud._band_labor._player_band = bare
 	h._hud.show_unit_selection(bare)
 	await h._settle()
-	_click_disclosure(BAND_DISCLOSURE_KIT)
-	await h._settle()
-	await h._save("band_kit_bare")
-	var bare_popover := _popover_text()
+	var bare_popover := _kit_breakdown_text(bare)
 	h._assert_hud("a band with nothing left states bare hands on all three roles",
 		_kit_breakdown_line(bare_popover, DetailFormat.KIT_LABEL_SPEARS).contains(
 				DetailFormat.KIT_BARE_HANDS_SUFFIX)
@@ -987,19 +970,18 @@ func _kit_states() -> void:
 				String.num(BandFx.KIT_HUNT_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS))
 			and _kit_breakdown_line(bare_popover, DetailFormat.KIT_LABEL_BASKETS).contains(
 				String.num(BandFx.KIT_FORAGE_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS)))
-	_click_disclosure(BAND_DISCLOSURE_KIT)
 
-	# **THE NEGATIVE HALF, and without it the three frames above are satisfied by a row that renders
+	# **THE NEGATIVE HALF, and without it every claim above is satisfied by a producer that emits
 	# unconditionally.** A band that states no kit at all — every fixture predating the TOE, and the
-	# state a rehydrated cohort is in — must render NO Kit row, because a defaulted `Spears 0` would
-	# report equipment destroyed that was never there. It is asserted rather than rendered: the
-	# reference band's own frame (`band`, far above) is the picture.
+	# state a rehydrated cohort is in — must yield NO breakdown, because a defaulted `Spears 0` would
+	# report equipment destroyed that was never there. **This is what the retired `Gear` row's own
+	# absence claim became**: the row is gone, so the assertion moved to the producer the crafting
+	# panel and the compose sheet still read.
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud.show_unit_selection(BandFx.band_fixture())
 	await h._settle()
-	h._assert_hud("a band that states no kit renders no Kit row — never a defaulted zero",
-		Readout.detail_excerpt(h._hud.occupant_detail.text, HudDisclosureVocab.DETAIL_ROW_KIT)
-			== Readout.DETAIL_EXCERPT_ABSENT)
+	h._assert_hud("a band that states no kit yields no breakdown — never a defaulted zero",
+		_kit_breakdown_text(BandFx.band_fixture()) == "")
 
 	# State kit-d — **TEN SPEARS AMONG SEVENTEEN HUNTERS** (issue #520). Every item is live and at the
 	# same wear as the equipped band far above, so a readout that only ever asks how much LIFE is left
@@ -1009,22 +991,14 @@ func _kit_states() -> void:
 	h._hud._band_labor._player_band = short
 	h._hud.show_unit_selection(short)
 	await h._settle()
-	_click_disclosure(BAND_DISCLOSURE_KIT)
-	await h._settle()
-	await h._save("band_kit_short")
-	# **THE ROW STATES THE FRACTION AND THE POPOVER STATES THE SENTENCE**, the split the whole Kit
-	# readout is built on — the row says which side of a line the item is on, the popover has room to
-	# say what that costs. Asserted as a pair, because a row that lost its marker still leaves a
-	# perfectly plausible popover behind it and vice versa.
-	var short_face := DetailFormat.KIT_COVERAGE_ROW_FORMAT % [
-		String.num(BandFx.KIT_CONDITION_SPEARS, DetailFormat.KIT_CONDITION_DECIMALS),
-		int(BandFx.KIT_SHORT_SPEARS_ARMED), int(BandFx.KIT_HUNT_HEADCOUNT)]
-	h._assert_hud("the Gear row states the SPEARS' shortfall on their own face: %s" % short_face,
-		String(h._hud.occupant_detail.get_parsed_text()).contains(short_face))
+	# ⛔ **THE ROW HALF OF THIS PAIR IS RETIRED WITH THE `Gear` ROW** — it asserted
+	# `KIT_COVERAGE_ROW_FORMAT` against the rendered vitals block, and that surface no longer exists.
+	# The popover half below is the whole claim now.
+	#
 	# **AND THE SLED, WHICH GOES ROUND, STATES NOTHING.** Both items are held by the hunt crews and
 	# only one is short, so a coverage clause rendered unconditionally — or one keyed on the band
 	# rather than on the item — fails here and nowhere else.
-	var short_popover := _popover_text()
+	var short_popover := _kit_breakdown_text(short)
 	var short_spears_line := _kit_breakdown_line(short_popover, DetailFormat.KIT_LABEL_SPEARS)
 	var short_sled_line := _kit_breakdown_line(short_popover, DetailFormat.KIT_LABEL_SLED)
 	var coverage_clause := DetailFormat.KIT_COVERAGE_BREAKDOWN_FORMAT % [
@@ -1041,16 +1015,14 @@ func _kit_states() -> void:
 	# them apart. This band keeps no pen, so its handling gear reaches nobody because nobody needed
 	# it; a reader that divided by that head count, or read the numerator alone, would light up a
 	# perfectly sound item at `0 of 0`.
-	var keeper_line := _kit_breakdown_line(short_popover, DetailFormat.KIT_LABEL_HURDLES)
+	var keeper_line := _kit_breakdown_line(short_popover, DetailFormat.KIT_LABEL_CROOK)
 	h._assert_hud("a job NOBODY is staffed on states no shortfall — 0 of 0 is not a warning",
 		not keeper_line.contains(DetailFormat.KIT_COVERAGE_SHORT_NEEDLE)
-			and keeper_line.contains(String.num(BandFx.KIT_CONDITION_HURDLES,
+			and keeper_line.contains(String.num(BandFx.KIT_CONDITION_CROOK,
 				DetailFormat.KIT_CONDITION_DECIMALS)))
 	h._assert_hud("…and it keeps the SOUND glyph, where the short spears wear the warning one",
 		keeper_line.contains(DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH)
 			and short_spears_line.contains(DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH))
-	_click_disclosure(BAND_DISCLOSURE_KIT)
-	_assert_faction_kit_counts_the_short_band(short)
 
 	# State kit-e — **TWO BASKETS AMONG FOUR GATHERERS** (issue #520, the four-job denominator). The
 	# hunt is perfectly equipped here and every item is at full condition, so until each row carried
@@ -1060,19 +1032,16 @@ func _kit_states() -> void:
 	h._hud._band_labor._player_band = forage_short
 	h._hud.show_unit_selection(forage_short)
 	await h._settle()
-	_click_disclosure(BAND_DISCLOSURE_KIT)
-	await h._settle()
-	await h._save("band_kit_forage_short")
-	var forage_face := DetailFormat.KIT_COVERAGE_ROW_FORMAT % [
-		String.num(BandFx.KIT_CONDITION_BASKETS, DetailFormat.KIT_CONDITION_DECIMALS),
-		int(BandFx.KIT_SHORT_BASKETS_HOLDING), int(BandFx.KIT_FORAGE_HEADCOUNT)]
-	h._assert_hud("the BASKETS state their shortfall against the FORAGE head count: %s" % forage_face,
-		String(h._hud.occupant_detail.get_parsed_text()).contains(forage_face))
+	# ⛔ **THE ROW HALF IS RETIRED WITH THE `Gear` ROW** — it asserted `KIT_COVERAGE_ROW_FORMAT` on the
+	# rendered vitals block. The DENOMINATOR claim it made survives whole in the popover form two
+	# assertions down (`KIT_COVERAGE_BREAKDOWN_FORMAT` over `KIT_FORAGE_HEADCOUNT`), which is the same
+	# number asked of the same producer.
+	#
 	# **AND THE HUNT IS NOT DRAGGED IN WITH IT.** A client that kept the hunt's head count as every
 	# job's denominator states this band's spears as `17 of 17` — silent — and its baskets as `2 of 17`,
 	# so asserting the basket fraction alone would pass on the wrong denominator too. The spears
 	# saying NOTHING is what pins that the two rows were divided by different numbers.
-	var forage_popover := _popover_text()
+	var forage_popover := _kit_breakdown_text(forage_short)
 	h._assert_hud("…and the perfectly-equipped SPEARS say nothing on the same band",
 		not _kit_breakdown_line(forage_popover, DetailFormat.KIT_LABEL_SPEARS).contains(
 			DetailFormat.KIT_COVERAGE_SHORT_NEEDLE))
@@ -1080,28 +1049,142 @@ func _kit_states() -> void:
 		_kit_breakdown_line(forage_popover, DetailFormat.KIT_LABEL_BASKETS).contains(
 			DetailFormat.KIT_COVERAGE_BREAKDOWN_FORMAT % [
 				int(BandFx.KIT_SHORT_BASKETS_HOLDING), int(BandFx.KIT_FORAGE_HEADCOUNT)]))
-	_click_disclosure(BAND_DISCLOSURE_KIT)
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 
-## **THE FACTION PAGE COUNTED DRY BANDS ALONE, so a partly-armed band read as equipped there** — the
-## reassuring-direction error this whole issue exists to remove, on the surface a player uses to find
-## WHICH band needs gear (issue #520).
-##
-## **DRIVEN AND PNG-LESS, on `FactionRollup._kit_line` directly.** That page is `band_panel_preview`'s
-## to render, and staging a short band in its roster would move a frame for a claim that is one string
-## — while the rollup itself is a pure function of the band list, so the honest test is to hand it two
-## lists. **Asserted as a PAIR**: the alert alone passes on a rollup that flags every band, and
-## `all equipped` alone passes on the bug fully restored.
-func _assert_faction_kit_counts_the_short_band(short: Dictionary) -> void:
-	var sound := BandFx.with_equipped_kit(BandFx.band_fixture())
-	var sound_line := FactionRollup._kit_line([sound], h._hud._disclosures)
-	var short_line := FactionRollup._kit_line([short], h._hud._disclosures)
-	h._assert_hud("a faction of soundly-equipped bands still reads '%s'"
-		% HudWorkVocab.FACTION_KIT_ALL_EQUIPPED,
-		sound_line.contains(HudWorkVocab.FACTION_KIT_ALL_EQUIPPED))
-	h._assert_hud("…and a band SHORT of a kit is counted, not reported as equipped",
-		short_line.contains(HudWorkVocab.FACTION_ALERT_GLYPH)
-			and not short_line.contains(HudWorkVocab.FACTION_KIT_ALL_EQUIPPED))
+## **THE FACTION `Kit` ROW AND ITS SHORT-BAND COUNT ARE RETIRED** (`docs/plan_standing_upkeep.md`
+## §4.9 item 12) with `_assert_faction_kit_counts_the_short_band`. The row was an alert and a
+## drill-down over durabilities that never aggregated; the crafting panel's kit ledger states the
+## items in full, and what replaced the `⚠ 1 band` → *which band* path is the event dock's
+## `material_shortfall` Alert, which names the band and carries a jump to it.
+
+
+# ---- THE BAND'S STANDING MATERIAL BILL (`docs/plan_standing_upkeep.md` §2.7) ---------------------
+#
+# **WORK WAS NEVER THE WHOLE PRICE, and the drawer said nothing about the other half.** A pen frays
+# its fence every turn it stands; a road washes out. This is the row that says so, and it is the
+# Fodder row beat for beat — one summary naming the good in the worst state, with the three terms
+# that explain it behind a caret.
+#
+# **IT TOOK THE `Gear` ROW'S HEIGHT**, which is why the block above it lost five frames and this one
+# gains two: net zero rows in every tier, and the tier keeps a fact rather than trading one away.
+
+## The good the shipped ladder eats (`animal:pen`'s `upkeep.materials`), and this band's three terms
+## written as the ANSWERS the row has to come out at: a 0.03-a-turn gap against a shelf of 2 is 66
+## turns of runway. **Comfortably clear of the warn line, deliberately** — the alarm is the faction
+## page's and the event dock's, and this frame is the row in its ordinary state.
+const BILL_MATERIAL := "hurdles"
+const BILL_NEED := 0.05
+const BILL_INCOME := 0.02
+const BILL_STORE := 2.0
+## …and the SHIPPED DEFAULT'S own income, which is none at all. Material income is empty on every
+## band the sim produces today, so `0.0` is not an edge of this readout — it is its ordinary state,
+## and `BILL_INCOME` above is the one that cannot happen yet. On the strict `> 0` boundary the row it
+## drew was `▼ -0  Arriving` in WARN amber: a debit sign, a debit glyph and a warning ink, all three
+## over the number zero. Kept as its own const rather than folded into the block above because the
+## block above is the row in its ordinary MID-CLIMB state and both readings are worth a frame.
+const BILL_INCOME_NONE := 0.0
+## Its disclosure key — `DetailFormat.breakdown_key(kind, band)`'s shape over the bill band's own
+## entity, so the caret cannot collide with the reference band's Food / Morale / Growth popovers.
+const BAND_DISCLOSURE_UPKEEP := "upkeep:908"
+
+## A band that HOLDS something which eats a good. Its own entity, for the disclosure key's sake.
+func _standing_bill_band_fixture() -> Dictionary:
+	var band := BandFx.band_fixture()
+	band["entity"] = 908
+	band["id"] = "Band 12"
+	band["material_upkeep_need"] = [{"material_id": BILL_MATERIAL, "amount": BILL_NEED}]
+	band["material_upkeep_income"] = [{"material_id": BILL_MATERIAL, "amount": BILL_INCOME}]
+	band["material_store"] = [{"material_id": BILL_MATERIAL, "amount": BILL_STORE}]
+	return band
+
+func _standing_bill_states() -> void:
+	var owing := _standing_bill_band_fixture()
+	h._hud._band_labor._player_band = owing
+	h._hud.show_unit_selection(owing)
+	await h._settle()
+	await h._save("band_standing_bill")
+	var vitals := String(h._hud.occupant_detail.get_parsed_text())
+	# **THE ROW NAMES ONE GOOD AND ITS SHELF.** The needle carries the STOCK as well as the label, so
+	# it cannot be satisfied by a row that drew the key over a defaulted reading — and it names a GOOD
+	# rather than a total, which is what keeps this from being the retired `Trade:` scalar rebuilt out
+	# of its own replacement.
+	var want := "%s %s" % [DetailFormat.format_trimmed(BILL_STORE, DetailFormat.MATERIAL_BILL_DECIMALS), BILL_MATERIAL]
+	h._assert_hud("the band's Upkeep row states the good and its shelf — \"%s\"" % want,
+		vitals.contains(HudDisclosureVocab.DETAIL_ROW_UPKEEP) and vitals.contains(want))
+	# **AND THE RUNWAY BESIDE IT**, which is the whole second term: a shelf with no runway says how
+	# much you have and never how long it lasts. 2 / (0.05 − 0.02) = 66 turns, written out here rather
+	# than asked of the code under test.
+	h._assert_hud("…and the runway the shelf buys against the gap (%s)"
+			% DetailFormat.food_turns_text(BILL_STORE / (BILL_NEED - BILL_INCOME)),
+		vitals.contains(DetailFormat.food_turns_text(BILL_STORE / (BILL_NEED - BILL_INCOME))))
+
+	# …and the drill-down, driven through the REAL `meta_clicked` the row's own text carries.
+	_click_disclosure(BAND_DISCLOSURE_UPKEEP)
+	await h._settle()
+	await h._save("band_standing_bill_expanded")
+	var popover := _popover_text()
+	h._assert_hud("the Upkeep caret opens a card headed by the good (%s)"
+		% DetailFormat.material_bill_heading(BILL_MATERIAL),
+		popover.contains(DetailFormat.material_bill_heading(BILL_MATERIAL)))
+	# **THREE TERMS, AND THE SUMMARY STATED ONE OF THEM.** A breakdown that merely restated the row
+	# would leave the question it exists for — *is this arriving as fast as it goes* — unanswered.
+	for term in [
+		[DetailFormat.MATERIAL_LABEL_WANTED, BILL_NEED],
+		[DetailFormat.MATERIAL_LABEL_ARRIVING, BILL_INCOME],
+		[DetailFormat.MATERIAL_LABEL_STORE, BILL_STORE],
+	]:
+		var label := String(term[0])
+		var amount := DetailFormat.format_trimmed(float(term[1]), DetailFormat.MATERIAL_BILL_DECIMALS)
+		h._assert_hud("…its %s term reads %s" % [label, amount],
+			_kit_breakdown_line(popover, label).contains(amount))
+	_click_disclosure(BAND_DISCLOSURE_UPKEEP)
+
+	# **…AND THE SAME BAND WITH NOTHING ARRIVING**, which is what every band on the shipped sim looks
+	# like: no bench finishes hurdles yet, so the Arriving term is exactly `0`. A zero income is not a
+	# debit — `SourceForecast._rate_sign`'s rule, and the same one the food and fodder rows beside this
+	# one have always used. The WHOLE row is compared rather than a `contains`: sign, glyph and label are
+	# three separate decisions and a needle that checked one of them would pass while the other two
+	# stayed wrong. Composed from the format constants and the fixture number, never by asking
+	# `material_bill_row` what it thinks it prints.
+	#
+	# ⛔ **PNG-LESS AND UN-DRIVEN, WHICH IS NOT THE DEFAULT AND IS MEASURED.** Staged as a fourth
+	# SELECTION with its own disclosure clicks, this state left `compose_band_switch_forage` — eight
+	# chapters downstream — pressing its `Band:` picker into a popup that had been freed under the
+	# probe, five failures deep, reproducibly. The claims here are about a PRODUCER and a FORMATTER, so
+	# nothing about them needs a selection at all; asking the two directly makes the state cost the walk
+	# no HUD state and no frames.
+	var dry := _standing_bill_band_fixture()
+	dry["material_upkeep_income"] = [{"material_id": BILL_MATERIAL, "amount": BILL_INCOME_NONE}]
+	var dry_want := "%s%s %s%s  %s" % [DetailFormat.MORALE_BREAKDOWN_INDENT,
+		DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH,
+		SourceForecast.RATE_SIGN_POSITIVE,
+		DetailFormat.format_trimmed(BILL_INCOME_NONE, DetailFormat.MATERIAL_BILL_DECIMALS),
+		DetailFormat.MATERIAL_LABEL_ARRIVING]
+	var dry_lines: Array[String] = h._hud._disclosures.material_upkeep_breakdown_lines(dry)
+	var dry_row := _kit_breakdown_line("\n".join(dry_lines), DetailFormat.MATERIAL_LABEL_ARRIVING)
+	h._assert_hud("nothing arriving reads \"%s\" — a credit of zero, never a debit of it"
+			% dry_want.strip_edges(), dry_row == dry_want)
+	# **AND THE INK FOLLOWS THE GLYPH**, which is the third of the three and the one a parsed string
+	# cannot see: `detail_bbcode` picks the tint off the ▲/▼, so the claim is made on the MARKUP that
+	# renderer produces. Amber here would be the HUD warning a player about an account that is simply
+	# not moving.
+	h._assert_hud("…and it is tinted HEALTHY, not the WARN amber a debit takes",
+		DetailFormat.detail_bbcode(dry_lines).contains(
+			"[color=#%s]%s[/color]" % [HudStyle.HEALTHY_HEX, dry_want]))
+
+	# **THE NEGATIVE HALF — a band that owes no good draws NO row and registers NO caret.** Without it
+	# both frames above pass on a producer that emits unconditionally. It is the one place this readout
+	# parts company with Fodder, which keeps a dormant dash: a standing bill is a CONSEQUENCE of what
+	# you have built, so there is no *"you could have this"* story a dormant form would tell.
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud.show_unit_selection(BandFx.band_fixture())
+	await h._settle()
+	h._assert_hud("a band that owes no good draws no Upkeep row at all",
+		Readout.detail_excerpt(h._hud.occupant_detail.text, HudDisclosureVocab.DETAIL_ROW_UPKEEP)
+			== Readout.DETAIL_EXCERPT_ABSENT)
+	h._assert_hud("…and registers no caret for it either",
+		not h._hud._disclosures.state().has(HudDisclosureVocab.DETAIL_ROW_UPKEEP))
+
 
 ## GUARD: **the Fodder summary fits the drawer column on ONE line** — the wrap this reshape exists to
 ## remove. It is invisible in a PNG (two lines of a rendered vitals block look exactly like two rows)
@@ -1141,6 +1224,20 @@ func _assert_fodder_row_fits() -> void:
 func _popover_text() -> String:
 	var label = h._hud._disclosures._breakdown_popover_label
 	return "" if label == null else (label as RichTextLabel).get_parsed_text()
+
+## The same popover as RAW BBCODE. `detail_bbcode` decides a breakdown row's ink from the sign glyph
+## it carries, and `get_parsed_text` above has already thrown the `[color=…]` runs away — so a claim
+## about the TINT can only be made here.
+func _popover_markup() -> String:
+	var label = h._hud._disclosures._breakdown_popover_label
+	return "" if label == null else (label as RichTextLabel).text
+
+## The band's kit breakdown as one string — the PRODUCER's return, read directly. The `Gear` row that
+## used to open this as a popover is retired (`docs/plan_standing_upkeep.md` §4.9 item 12), so there
+## is no click to cover any more; what survives is the composition, which the crafting panel's ledger
+## and the compose sheet's role hint both read. `compose_rungs.gd` asks it the same way.
+func _kit_breakdown_text(band: Dictionary) -> String:
+	return "\n".join(h._hud._disclosures.kit_breakdown_lines(band))
 
 ## ONE kit's breakdown line out of the popover, by the kit's NAME. Split per line rather than matched
 ## across the whole popover, because the three lines carry the same shape and a whole-popover
@@ -1251,7 +1348,8 @@ const DRAWER_TABLE_SEPARATION_THEME_KEY := "table_h_separation"
 ## The rows that can FOLLOW Fodder in the drawer, whichever comes first — the cut that bounds its run
 ## in the parsed text. `[table]` rows carry no line break into `get_parsed_text()`, so the whole vitals
 ## block comes back as one string and a run bounded by the wrong row measures two rows as one.
-const HAY_ROW_FOLLOWERS := [HudDisclosureVocab.DETAIL_ROW_KIT, HudDisclosureVocab.DETAIL_ROW_MORALE]
+const HAY_ROW_FOLLOWERS := [HudDisclosureVocab.DETAIL_ROW_UPKEEP,
+	HudDisclosureVocab.DETAIL_ROW_MORALE]
 
 func _hay_band_fixture(store: float, need: float, income: float, turns: float) -> Dictionary:
 	var band := _pen_keeper_band_fixture()

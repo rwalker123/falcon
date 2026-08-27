@@ -166,6 +166,7 @@ fn world_hunting_at(
                 // query below is asked at.
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
             ..Default::default()
         },

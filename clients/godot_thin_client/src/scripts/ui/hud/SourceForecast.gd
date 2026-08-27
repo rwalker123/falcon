@@ -652,6 +652,16 @@ const FORECAST_PER_WORKER_MATERIAL_KEY := "per_worker_material"
 # `MaterialStore` this turn. Read through `material_rows_of`, never as a forecast: the sim seeds it
 # EMPTY pre-commit by design (see there).
 const ASSIGNMENT_MATERIAL_YIELD_KEY := "material_yield"
+# **THE GOOD-SIDE SHORTFALL'S TWO TERMS, ON A LABOR ASSIGNMENT** (`docs/plan_standing_upkeep.md`
+# §2.7) — what this row's SOURCE was billed in materials to hold its rung, and what the band's store
+# actually paid. The sim publishes BOTH rather than their difference so the row's note can read
+# *"Short of hurdles — 0.03 of the 0.05 a turn this pen eats"* with no client arithmetic.
+#
+# ⛔ **NEVER ADDED TO ANY WORK FIGURE.** The two accounts are billed and judged separately, which is
+# what stops a full store papering over missing hands — and it is why a row can be short of a good
+# with `upkeep_shortfall` at zero.
+const ASSIGNMENT_MATERIAL_UPKEEP_DEMAND_KEY := "material_upkeep_demand"
+const ASSIGNMENT_MATERIAL_UPKEEP_SUPPLIED_KEY := "material_upkeep_supplied"
 # **THE CREW BEYOND WHICH MORE HANDS ADD NOTHING, *FIGHT INCLUDED*, ON A LABOR ASSIGNMENT** — the
 # sim's own `LaborAssignment.huntUsefulWorkers`, the plateau of the same `hunt_crew_take_curve` the
 # compose sheet's per-crew rows are drawn from. It rides the work-row map presence-sensitively
@@ -887,6 +897,27 @@ const FORECAST_BUILD_UPKEEP_DEMAND_KEYS := {
     IMPROVEMENT_TAME: "tame_upkeep_demand",
     IMPROVEMENT_CORRAL: "corral_upkeep_demand",
 }
+# **THE MATERIAL TWIN OF THAT PAIR** — what holding THAT rung costs in goods per turn, keyed by the
+# same improvement so price, meter, work rate and goods rate can never name four different rungs.
+#
+# ⛔ **THIS IS THE RUNG'S RATE; `FORECAST_UPKEEP_MATERIAL_DEMAND_KEY` IS THE STAMPED BILL.** The
+# stamp says what the source was BILLED this turn, resolved through the rung it stands on; these say
+# what a rung it may not be on yet would COST. **On a source mid-climb the two DISAGREE, and that is
+# correct** — the work pair directly above has exactly that relationship. Do not reconcile them.
+#
+# ⛔ **EMPTY MEANS THE RUNG EATS NO MATERIAL, never zero of something** (the `MaterialPayoff`
+# contract): a reader states NO material clause rather than `0 hurdles`. On the shipped ladder both
+# plant keys and `tame_upkeep_material_demand` are always empty and only
+# `corral_upkeep_material_demand` names a good — so **a pastoral herd looking at the Pen row is the
+# only place this is ever non-empty in play**, and it is exactly the place the stamp cannot answer,
+# `animal:pastoral` declaring no material of its own. The route branch's stone is what lands in the
+# plant-shaped seam next.
+const FORECAST_BUILD_UPKEEP_MATERIAL_DEMAND_KEYS := {
+    IMPROVEMENT_CULTIVATE: "cultivation_upkeep_material_demand",
+    IMPROVEMENT_SOW: "field_upkeep_material_demand",
+    IMPROVEMENT_TAME: "tame_upkeep_material_demand",
+    IMPROVEMENT_CORRAL: "corral_upkeep_material_demand",
+}
 # **HOW MANY MORE TURNS THE BUILD NEEDS, AND WHAT THE CREW'S TOOLS TOOK OFF IT.** One of each per
 # SOURCE rather than per rung: at most one improvement is ever in flight on one source.
 #
@@ -1071,6 +1102,27 @@ const FORECAST_NEGLECT_GRACE_KEY := "neglect_grace_remaining"
 # nothing, and it is the honest reading in three ordinary states: the keeping covers this source, the
 # source is still inside its grace, or the rung declares no meter decay at all — which is BOTH animal
 # rungs, whose penalty is a shed rather than a bleed, so an animal meter never goes backwards.
+# ---- THE MATERIAL HALF OF THE LADDER'S PRICE (`docs/plan_standing_upkeep.md` §2.7) --------------
+# **WORK WAS NEVER THE WHOLE PRICE.** A fence swallows hurdles and a road swallows stone: goods that
+# go INTO the thing and stay there, spent, where a kit is carried on to the next job. Three lists of
+# `{material_id, amount}` per source, beside `<rung>_work_cost` and the `upkeep_*` trio above.
+#
+# ⛔ **NEVER SUMMED ACROSS GOODS, AND EMPTY MEANS "NO ROW" RATHER THAN ZERO** — the `MaterialPayoff`
+# contract every such list on this wire follows. A total is a currency this model does not have (it
+# is the retired trade axis under a new name), and a rung that eats nothing must not read as one that
+# eats badly.
+#
+# `FORECAST_BUILD_MATERIAL_COST_KEY` prices **ONE rung** — the one DIRECTLY ABOVE where the source
+# stands, which is the only pile the wire quotes. A track row two rungs up therefore has no pile to
+# state and states none, exactly as a rung the wire prices no work for renders no figure.
+const FORECAST_BUILD_MATERIAL_COST_KEY := "build_material_cost"
+# What holding this source's OWN current rung swallows per turn (the STAMPED bill, `upkeep_demand`'s
+# per-good twin) and what the band's store actually paid toward it. The sim publishes both terms
+# rather than their difference, for the reason the work trio does: a client renders and subtracts
+# nothing.
+const FORECAST_UPKEEP_MATERIAL_DEMAND_KEY := "upkeep_material_demand"
+const FORECAST_UPKEEP_MATERIAL_SUPPLIED_KEY := "upkeep_material_supplied"
+
 const FORECAST_METER_ROT_KEY := "meter_rot_per_turn"
 ## Nothing is bleeding off this meter — the keeping covers it, the grace still holds, or the rung's
 ## penalty is not a meter bleed at all. A measured nothing, never *no answer*.
@@ -4783,6 +4835,84 @@ static func has_upkeep(state: Dictionary) -> bool:
 ## Is the keeping being underpaid THIS turn? The gate on every warning the shortfall drives.
 static func upkeep_is_short(state: Dictionary) -> bool:
     return float(state.get("shortfall", NO_UPKEEP_DEMAND)) >= UPKEEP_WORK_MIN
+
+## **THE PILE THE RUNG ABOVE THIS SOURCE SWALLOWS TO RAISE** — one row per good, `[]` when the wire
+## quotes none. See `FORECAST_BUILD_MATERIAL_COST_KEY`: it prices exactly ONE rung, so a caller may
+## only attach it to the rung directly above where the source stands.
+static func build_material_cost(src: Dictionary, prefix: String) -> Array[Dictionary]:
+    return material_payoff_rows(src.get(prefix + FORECAST_BUILD_MATERIAL_COST_KEY, []))
+
+## **WHAT HOLDING THE OFFERED RUNG WOULD COST IN GOODS, PER TURN** — the material half of
+## `build_upkeep_demand`, read at the rung being PRICED rather than at the rung the source is billed
+## for today. The `⌃` track's hold aside quotes the two together: *then 1.00 work + 0.05 hurdles a
+## turn to hold*.
+##
+## ⛔ **`upkeep_material_demand` BELOW IS A DIFFERENT QUESTION** — that is the stamped bill this
+## source's CURRENT rung was handed, and on a source mid-climb the two disagree by design, exactly as
+## the work pair does. See `FORECAST_BUILD_UPKEEP_MATERIAL_DEMAND_KEYS`.
+##
+## `[]` for a rung the wire names no material on, which the caller renders as NO material clause
+## rather than a zero — and which is every shipped rung but `animal:pen`.
+static func build_upkeep_material_demand(src: Dictionary, prefix: String,
+        improvement: String) -> Array[Dictionary]:
+    if not FORECAST_BUILD_UPKEEP_MATERIAL_DEMAND_KEYS.has(improvement):
+        return [] as Array[Dictionary]
+    return material_payoff_rows(src.get(
+        prefix + String(FORECAST_BUILD_UPKEEP_MATERIAL_DEMAND_KEYS[improvement]), []))
+
+## **WHAT HOLDING THIS SOURCE'S CURRENT RUNG SWALLOWS PER TURN** — one row per good, `[]` for a rung
+## that eats no material, which is every rung on the shipped ladder but `animal:pen`.
+static func upkeep_material_demand(src: Dictionary, prefix: String) -> Array[Dictionary]:
+    return material_payoff_rows(src.get(prefix + FORECAST_UPKEEP_MATERIAL_DEMAND_KEY, []))
+
+## …and what the band's store actually PAID toward it, on the same shape. Read BESIDE the demand and
+## never subtracted into it by anyone but `material_upkeep_shortfalls`, which is the one place the
+## pair becomes a verdict.
+static func upkeep_material_supplied(src: Dictionary, prefix: String) -> Array[Dictionary]:
+    return material_payoff_rows(src.get(prefix + FORECAST_UPKEEP_MATERIAL_SUPPLIED_KEY, []))
+
+## **EVERY GOOD THIS BILL WENT SHORT OF, PAIRED WITH BOTH ITS TERMS** — `[{material_id, demand,
+## supplied}]`, `[]` when every good was covered. The ONE place the demand/supplied pair is turned
+## into a verdict, so the work row's note, its hover and any future reader cannot disagree about what
+## "short of hurdles" means.
+##
+## **BOTH TERMS RIDE THE ROW, never their difference**: the note states *"0.03 of the 0.05 a turn"*,
+## which is the sim's own two numbers rendered. The row order is the wire's.
+##
+## ⛔ **A GOOD MISSING FROM `supplied` IS A ZERO PAYMENT, NOT AN ABSENT ANSWER.** The sim drops a
+## ledger entry that holds nothing (`material_payoffs` filters `> 0`), so the store paying NOTHING at
+## all toward a good publishes an empty supplied list — the worst shortfall there is, and the one a
+## `has()` gate would silently skip.
+static func material_upkeep_shortfalls(demand: Array[Dictionary],
+        supplied: Array[Dictionary]) -> Array[Dictionary]:
+    var paid := {}
+    for row in supplied:
+        paid[String(row.get(MATERIAL_PAYOFF_ID_KEY, ""))] = float(
+            row.get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+    var short: Array[Dictionary] = []
+    for row in demand:
+        var id := String(row.get(MATERIAL_PAYOFF_ID_KEY, ""))
+        var wanted := float(row.get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+        var got := float(paid.get(id, 0.0))
+        if wanted - got < MATERIAL_FLOW_MIN:
+            continue
+        short.append({
+            MATERIAL_PAYOFF_ID_KEY: id,
+            MATERIAL_UPKEEP_DEMAND_KEY: wanted,
+            MATERIAL_UPKEEP_SUPPLIED_KEY: got,
+        })
+    return short
+
+## The keys `material_upkeep_shortfalls` writes beside the material id. Named for the same reason the
+## payoff pair above is: producer and reader are different scripts.
+const MATERIAL_UPKEEP_DEMAND_KEY := "demand"
+const MATERIAL_UPKEEP_SUPPLIED_KEY := "supplied"
+
+## **THE FLOOR EVERY MATERIAL RATE IS READ AGAINST** — below it a good is not short, not arriving and
+## not owed. Materials are quoted at two decimals throughout this client (a pen's fence rate is
+## `0.05/turn`), so the floor is one step under the finest figure anything prints rather than
+## `FODDER_FLOW_MIN`'s 0.05, which would swallow the shipped pen bill whole.
+const MATERIAL_FLOW_MIN := 0.005
 
 ## **HOW MANY KEEPERS THIS SOURCE WANTS** — `upkeepWorkersNeeded`, the MAINTAIN activity's own
 ## `workers_needed`, read through the one `upkeep_state` reader so the compose sheet's `KEEPERS` row

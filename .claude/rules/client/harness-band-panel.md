@@ -1845,3 +1845,58 @@ one — so `carries NO hazard mark`, `READ APART` and the ink claim all pass on 
 vacuous (rows 1 and 4 fail all four), but the set's floor against *some other wrong face* is the exact
 string comparison alone.
 
+
+
+## The material half's frames (`docs/plan_standing_upkeep.md` §4.9 item 12)
+
+**MEASURED, BEFORE AND AFTER, ON THIS TREE**: `140 frames / 828 : PASS / 436 assert OK` →
+`144 / 853 / 448`, exit 0 both times.
+
+**FIVE FRAMES ADDED, ONE RETIRED.**
+
+- **`band_panel_rung_pen_price` / `band_panel_rung_pen_short`** — the `⌃` track's price asides on the
+  corral-ready Aurochs of the DECLARE board, whose next rung is the one rung on the shipped ladder that
+  eats a material. **The pair is the claim**: a band whose shelf covers the pile gets the price and the
+  hold cost and NO stall warning; a band two hurdles short of six gains the third aside in WARN ink.
+  *"The stall warning renders"* passes on a card that renders it always, and *"it does not"* on a card
+  that never does.
+- **`band_panel_work_material_short`** — the work row's good-shortfall note beside a hands-shortfall
+  one, ON ONE BOARD, with the inspector open on the good-short row. The ink is a render-site decision
+  and no model claim can see it, so the frame and the drawn `Label`'s `font_color` are both asserted.
+- **`band_panel_standing_bill` / `band_panel_standing_bill_expanded`** — the `Upkeep:` row and its open
+  per-good popover, plus the PNG-less negative that a band owing no good draws no row AND registers no
+  caret.
+- **`band_panel_kit_expanded` RETIRED** with the `Gear` row's popover. `_assert_gear_breakdown_states_every_kit`
+  survives whole, retargeted at `DisclosureController.kit_breakdown_lines` — every claim it made was
+  about the COMPOSITION, and that producer is untouched.
+
+**The faction page gained `_assert_faction_standing_bill` and lost the `Kit` row's presence claim.**
+`_faction_roster`'s BOTH bands now owe a good, deliberately: on a roster where one band owes, a sum and
+its single term are the same number and a page that had stopped summing would render identically. The
+shelves are 6.0 and 0.2, so the faction figure (6.2) is distinguishable from the mean, from the worst
+and from either band alone — and only the second band is inside the critical runway, which is exactly
+the case the alert clause exists for.
+
+> ### ⛔ AN EXPECTATION ASKED OF THE PRODUCER UNDER TEST PASSED ITS OWN FALSIFICATION
+>
+> `_assert_material_short_note` composed its expected sentence through `HudWorkVocab.material_short_note`.
+> With that arm restored to `return ""` the expectation collapsed to `""`, the row's note was `""`, and
+> **the claim passed over the defect it exists to catch** — three of the four sibling claims failed and
+> this one did not. It composes from `WORK_ROW_MATERIAL_SHORT_FORMAT` and the fixture's own numbers now.
+>
+> **The hover claim had the identical shape one layer up** and was found the same way: it built a
+> tooltip through `under_kept_tooltip` and then searched it for the string it had just handed in. It
+> reads the row model's own `tooltip` now.
+>
+> This is the second instance of the rule already written down in this file for `_assert_map_path_states_kit`
+> — *an expectation re-derived through the code under test asserts nothing* — and both were found by
+> the falsification pass rather than by review.
+
+**Falsification counts, each defect restored on its own:**
+
+| Defect restored | Failures |
+|---|---|
+| `_build_price_asides` / `_hold_price_asides` → `[]` | 4 (the pile aside, the hold aside, the stall aside, its WARN ink) |
+| `material_short_note` → `""` | 4 (the sentence, the DANGER severity, the hover, the drawn ink) |
+| `band_has_material_upkeep` → `false` | 9 band-page (2 row, 2 caret-never-clicked, 5 popover) |
+| `FactionRollup._upkeep_line` → `""` | 5 (the sum, the rate, the drill-down size, the per-band runway, the jump) |

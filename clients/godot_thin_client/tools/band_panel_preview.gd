@@ -301,9 +301,11 @@ const DENIAL_OUTBOUND_TRAVEL_TURNS := 2
 # Morale rows carry, i.e. what `DetailFormat.breakdown_key` builds for that band.
 const BAND_FIXTURE_DISCLOSURE_FOOD := "food:904"
 const BAND_FIXTURE_DISCLOSURE_MORALE := "morale:904"
-## …and its Kit row's, the gear popover this harness opens. Same shape, `HudDisclosureVocab`'s
-## `BREAKDOWN_KIND_KIT` over the same entity.
-const BAND_FIXTURE_DISCLOSURE_KIT := "kit:904"
+## …and its STANDING BILL row's, the material popover this harness opens
+## (`docs/plan_standing_upkeep.md` §2.7). Same shape, `HudDisclosureVocab`'s `BREAKDOWN_KIND_UPKEEP`
+## over the same entity. **It replaced `BAND_FIXTURE_DISCLOSURE_KIT`**, which opened the retired
+## `Gear` row's gear popover.
+const BAND_FIXTURE_DISCLOSURE_UPKEEP := "upkeep:904"
 
 ## The work-inspector policy-picker states work TWO Hunt rows on one band. They used to be told apart
 ## by the RUNG they stood on — one on `corral`, which the four-rung picker could not highlight at all.
@@ -1075,9 +1077,11 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_vitals_worst_case")
 	_assert_merged_food_row_fits()
-	# The SHORT tier's SECOND merge, and the one the `Kit` row is paid for with. Measured in the same
-	# frame as the Food merge because this is the frame that carries every optional row at once — the
-	# only state in which the zone is asked to hold the full set.
+	# The SHORT tier's SECOND merge, and the one the standing-bill row is paid for with — that row took
+	# the height the retired `Gear` row had (`docs/plan_standing_upkeep.md` §4.9 item 12), so the tier
+	# carries the same count it always did. Measured in the same frame as the Food merge because this
+	# is the frame that carries every optional row at once — the only state in which the zone is asked
+	# to hold the full set.
 	_assert_merged_morale_growth_fits()
 	# **RELEASED, not re-pinned to `PREVIEW_SIZE`.** Nothing had pinned a canvas before this state, so
 	# the states below it render at `project.godot`'s own 1920-wide base through the `expand` stretch —
@@ -1086,21 +1090,40 @@ func _ready() -> void:
 	_release_canvas_pin()
 	await _settle()
 
-	# (b3) THE GEAR BREAKDOWN — the Kit row's popover, opened on the reference band, which carries one
-	# condition row per item the shipped config has. It is the ONLY surface that states what each item
-	# DOES for the band, and until the expanded roster's three tiers reached the wire it could say
-	# nothing at all about handling gear, wayfinding gear or clubs: a player was handed a scout kit
-	# and a warrior kit whose effects were invisible, and whose running dry was invisible with them.
+	# (b3) THE GEAR BREAKDOWN — **PNG-LESS NOW** (`docs/plan_standing_upkeep.md` §4.9 item 12). The
+	# `band_panel_kit_expanded` frame is retired with the `Gear` row that opened it; the composition it
+	# rendered is untouched and is what every claim in that assertion was about, so the claim is made
+	# against the producer the crafting panel's kit ledger and the compose sheet's role hint read.
 	_push_bands([_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"band")
 	await _settle()
-	_click_disclosure(BAND_FIXTURE_DISCLOSURE_KIT)
+	_assert_gear_breakdown_states_every_kit(_band_fixture())
+
+	# (b4) THE STANDING MATERIAL BILL — the `Upkeep:` row and its open drill-down
+	# (`docs/plan_standing_upkeep.md` §2.7), on a band whose pen frays 0.05 hurdles a turn against a
+	# bench finishing 0.02. **The row names ONE good and the popover names them all**, which is the
+	# split it shares with Food and Fodder — and the reason it is not the retired `Trade:` scalar
+	# rebuilt: six hurdles and two rope are never eight of anything.
+	_push_bands([_standing_bill_band_fixture()])
 	await _settle()
-	await _save("band_panel_kit_expanded")
+	await _save("band_panel_standing_bill")
 	_assert_zones_within_bounds()
-	_assert_gear_breakdown_states_every_kit()
-	_click_disclosure(BAND_FIXTURE_DISCLOSURE_KIT)   # toggle shut before the next state
+	_assert_zone_content_fits()
+	_assert_standing_bill_row()
+	_click_disclosure(BAND_FIXTURE_DISCLOSURE_UPKEEP)
+	await _settle()
+	await _save("band_panel_standing_bill_expanded")
+	_assert_zones_within_bounds()
+	_assert_standing_bill_breakdown()
+	_click_disclosure(BAND_FIXTURE_DISCLOSURE_UPKEEP)   # toggle shut before the next state
+
+	# …and the NEGATIVE half, without which the two frames above pass on a row that renders
+	# unconditionally: a band holding nothing that eats a good draws NO row and registers NO caret.
+	# This is the one place this readout differs from Fodder, which keeps a dormant dash.
+	_push_bands([_band_fixture()])
+	await _settle()
+	_assert_no_standing_bill_row()
 
 	# (c) CONCERNING food (net negative + low runway): the breakdown AUTO-shows (no click) under a red net.
 	_push_bands([_concerning_food_band_fixture()])
@@ -1436,6 +1459,23 @@ func _ready() -> void:
 	# want of its own subject says nothing about the flag it was written to pin.
 	_assert_under_herded_work_row(UNDER_HERDED_WORK_HERD_ID)
 
+	# **THE GOOD-SHORTFALL NOTE, BESIDE THE HANDS-SHORTFALL ONE** (`docs/plan_standing_upkeep.md`
+	# §2.7). The same board gains a PENNED herd whose fence bill went unpaid while its keepers were
+	# paid in full, so one frame carries both refusals — and the two must not read alike or be inked
+	# alike. The inspector is opened on the good-short row, because the ink is a render-site decision
+	# and no model claim can see it.
+	_set_world_herds(_material_short_herd_fixtures())
+	_push_bands([_material_short_band_fixture()])
+	await _settle()
+	_open_work_inspector_for_herd(MATERIAL_SHORT_HERD_ID)
+	await _settle()
+	await _save("band_panel_work_material_short")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_material_short_note()
+	_assert_material_note_ink(_material_short_sentence())
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
+
 	# THE RUNG-READY MARK ON THE WORK BOARD (issue #412) — the panel twin of the map badge. Three rows,
 	# and the CONTRAST is what the frame is for: a tended patch on willing ground offers `⌃▦`, a fully
 	# tamed "pen"-ceiling herd offers `⌃🐄`, and a wild-ceiling herd offers nothing however much the
@@ -1485,6 +1525,29 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	await _assert_ready_mark_declares()
+
+	# **THE PEN'S PRICE ON THE `⌃` TRACK** (`docs/plan_standing_upkeep.md` §2.7) — the corral-ready
+	# Aurochs one row down, whose next rung is the ONE rung on the shipped ladder that eats a material.
+	# Two states, and the PAIR is the claim: a band that can cover the pile reads the price and the
+	# hold cost, and a band two hurdles short of six gains the stall warning in WARN ink.
+	_set_world_herds(_pen_price_herd_fixtures())
+	_push_bands([_pen_price_band_fixture(PEN_STORE_COVERED)])
+	await _settle()
+	await _assert_pen_price_covered()
+	await _save("band_panel_rung_pen_price")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_hud._bandpanel._rung_track.hide()
+	await _settle()
+
+	_push_bands([_pen_price_band_fixture(PEN_STORE_SHORT)])
+	await _settle()
+	await _assert_pen_price_short()
+	await _save("band_panel_rung_pen_short")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_hud._bandpanel._rung_track.hide()
+	await _settle()
 
 	# **THE DESTINATION TRACK** (`docs/plan_standing_upkeep.md` §2.8) — the `⌃`'s ladder card, rendered
 	# in the tall LEFT dock, the SHIPPED default edge. Two states and the PAIR is the claim: at rest
@@ -3858,6 +3921,148 @@ func _unbuilt_work_herd_fixtures() -> Array:
 	_set_managed_herders(taming, UNDER_HERDED_WORK_HERDERS_NEEDED)
 	return RUNG_FX.stamp_herds([taming])
 
+# ---- THE WORK ROW'S GOOD-SHORTFALL NOTE (`docs/plan_standing_upkeep.md` §2.7) --------------------
+#
+# ⛔ **"RAISE THIS BAND'S HUSBANDRY ROLE" IS WRONG ADVICE THE MOMENT THE MISSING THING IS A GOOD.**
+# Twelve keepers do not mend a fence with no hurdles — the note pointed at a stepper that cannot help,
+# on the one rung of the shipped ladder that eats a material.
+#
+# **THE BOARD CARRIES BOTH SHORTFALLS AT ONCE, and that is the whole fixture.** One herd is short of
+# HANDS and one is short of a GOOD, on one band, in one frame: the two notes must not read alike and
+# must not be inked alike, and a claim made about either alone passes on a client that words both the
+# same way.
+const MATERIAL_SHORT_HERD_ID := "game_aurochs_ms"
+## What the pen was billed in goods this turn and what the band's store actually paid — the sim
+## publishes BOTH terms, never their difference, so the note quotes them with no client arithmetic.
+const MATERIAL_SHORT_DEMAND := 0.05
+const MATERIAL_SHORT_SUPPLIED := 0.03
+const MATERIAL_SHORT_GOOD := "hurdles"
+## The pen rung's grace, part spent — so the hover reads a countdown a player can still act on rather
+## than "being lost now". Written down, because the claim is that the countdown SURVIVED the new arm.
+const MATERIAL_SHORT_GRACE := 3
+## The rung the countdown names on this fixture. **`at_risk_rung` routes it to the newest meter
+## CARRYING WORK**, and this penned herd's is its Tame — its corral meter is full and banked. Written
+## down rather than asked of that router, because the claim here is that the countdown SURVIVED the
+## good-shortfall arm; WHICH rung it names has its own assertions elsewhere in this harness.
+const MATERIAL_SHORT_AT_RISK_RUNG := SourceForecast.IMPROVEMENT_TAME
+
+## A PENNED herd whose fence bill went unpaid. Its WORK keeping is covered in full, which is the half
+## that makes the claim sharp: a row short of both would let a note that still names the role pass.
+func _material_short_herd_fixtures() -> Array:
+	var penned := {
+		"id": MATERIAL_SHORT_HERD_ID, "species": "Aurochs", "x": 69, "y": 17,
+		"population": 180, "ecology_phase": "thriving", "huntable": true,
+		"domestication": 1.0, "corralled": true, "per_worker_yield": 0.30,
+		"hunt_policy_ceilings": {"sustain": 0.30, "surplus": 0.90, "deplete": 1.40,
+			"eradicate": 2.00, "corral": 0.70},
+		# The WORK half is paid in full — `demand == supplied`, so `upkeep_shortfall` is zero and the
+		# hands are not what is missing here.
+		"upkeep_demand": 1.0, "upkeep_supplied": 1.0, "upkeep_shortfall": 0.0,
+		"upkeep_workers_needed": 1,
+		"has_neglect_grace": true, "neglect_grace_remaining": MATERIAL_SHORT_GRACE,
+		"upkeep_material_demand": [
+			{"material_id": MATERIAL_SHORT_GOOD, "amount": MATERIAL_SHORT_DEMAND}],
+		"upkeep_material_supplied": [
+			{"material_id": MATERIAL_SHORT_GOOD, "amount": MATERIAL_SHORT_SUPPLIED}],
+	}
+	_set_managed_herders(penned, 1)
+	return _under_herded_work_herd_fixtures() + RUNG_FX.stamp_herds([penned])
+
+## The band working both — the under-herded aurochs it already had, plus the penned one whose row
+## carries the good-side pair the sim publishes on the ASSIGNMENT.
+func _material_short_band_fixture() -> Dictionary:
+	var band := _under_herded_work_band_fixture()
+	band["entity"] = 951
+	band["id"] = "Band 19"
+	var rows: Array = band["labor_assignments"].duplicate()
+	rows.append({"kind": "hunt", "workers": 1, "workers_needed": 1, "floor": 0.5,
+		"fauna_id": MATERIAL_SHORT_HERD_ID, "target_x": 69, "target_y": 17,
+		"actual_yield": 0.30, "sustainable_yield": 0.30,
+		"material_upkeep_demand": [
+			{"material_id": MATERIAL_SHORT_GOOD, "amount": MATERIAL_SHORT_DEMAND}],
+		"material_upkeep_supplied": [
+			{"material_id": MATERIAL_SHORT_GOOD, "amount": MATERIAL_SHORT_SUPPLIED}]})
+	band["labor_assignments"] = rows
+	return band
+
+## **THREE SHORTFALLS, THREE REMEDIES, AND THEY MUST NOT READ ALIKE.** Asserted over the SAME board's
+## two rows, because the contrast is the claim: the good-short row names the GOOD and takes the danger
+## ink, and the hands-short row keeps the role sentence and the warn amber.
+func _assert_material_short_note() -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var good_note := ""
+	var good_severity := ""
+	var good_hover := ""
+	var hands_note := ""
+	var hands_severity := ""
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		if String(model.get("herd_id", "")) == MATERIAL_SHORT_HERD_ID:
+			good_note = String(model.get("note", ""))
+			good_severity = String(model.get("note_severity", ""))
+			good_hover = String(model.get("tooltip", ""))
+		elif String(model.get("herd_id", "")) == UNDER_HERDED_WORK_HERD_ID:
+			hands_note = String(model.get("note", ""))
+			hands_severity = String(model.get("note_severity", ""))
+	# ⛔ **COMPOSED FROM THE FORMAT AND THE FIXTURE'S OWN NUMBERS, NEVER THROUGH `material_short_note`.**
+	# It WAS asked of that producer, and the falsification pass caught it: with the arm restored to
+	# `return ""` the expectation collapsed to `""` too, the row's note was `""`, and the claim passed
+	# over the defect it exists to catch. An expectation re-derived through the code under test asserts
+	# nothing.
+	var want := _material_short_sentence()
+	_assert_band_panel("work note — the good-short row NAMES the good and both its terms: \"%s\" (got \"%s\")"
+		% [want, good_note], good_note == want)
+	_assert_band_panel("work note — …in the DANGER register, because no stepper fixes a missing good",
+		good_severity == HudWorkVocab.NOTE_SEVERITY_DANGER)
+	# **AND THE ROW BESIDE IT IS UNTOUCHED**, which is what stops the new arm swallowing the old one:
+	# a client that worded every under-kept row as a material shortfall passes the pair above.
+	_assert_band_panel("work note — …while the hands-short row keeps the ROLE sentence: \"%s\""
+		% hands_note,
+		hands_note == HudWorkVocab.under_kept_note(SourceForecast.LABOR_KIND_HUNT))
+	_assert_band_panel("work note — …in the WARN register, where the stepper IS the lever",
+		hands_severity == HudWorkVocab.NOTE_SEVERITY_WARN)
+	# **THE HOVER KEEPS ITS COUNTDOWN ON THE GOOD-SHORT ROW.** A material shortfall drives the same
+	# decay through the same grace and the same neglect counter, so dropping the countdown here would
+	# say the ground is safe while the fence comes apart.
+	#
+	# ⛔ **READ OFF THE ROW'S OWN `tooltip`, not recomposed.** A hover built here through
+	# `under_kept_tooltip` and then searched for the string it was just handed is a claim about this
+	# assertion and not about the board — the same self-satisfying shape the sentence above was fixed
+	# out of.
+	_assert_band_panel("work note — …and its hover carries the sentence AND the countdown: \"%s\""
+		% good_hover.replace("\n", " · "),
+		good_hover.contains(want) and good_hover.contains(
+			HudWorkVocab.UNDER_KEPT_LOST_FORMAT % [
+				DetailFormat.rung_badge_word(MATERIAL_SHORT_AT_RISK_RUNG),
+				MATERIAL_SHORT_GRACE]))
+
+## The sentence the good-short row must read, composed from the FORMAT and the fixture's own numbers.
+##
+## ⛔ **NEVER ASKED OF `material_short_note`, and the falsification pass is why.** It was: with that
+## producer restored to `return ""` the expectation collapsed to `""`, the row's note was `""`, and the
+## claim passed over the exact defect it exists to catch. An expectation re-derived through the code
+## under test asserts nothing.
+func _material_short_sentence() -> String:
+	return HudWorkVocab.WORK_ROW_MATERIAL_SHORT_FORMAT % [
+		MATERIAL_SHORT_GOOD,
+		DetailFormat.format_trimmed(MATERIAL_SHORT_SUPPLIED,
+			HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
+		DetailFormat.format_trimmed(MATERIAL_SHORT_DEMAND,
+			HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
+		HudWorkVocab.MATERIAL_SHORT_NOUN_HERD]
+
+## **THE INK IS ASSERTED ON THE DRAWN LABEL**, not on the model: the severity is a model field and the
+## colour is what the render site does with it, and until this arc that site was a hard-coded
+## `HudStyle.WARN`.
+func _assert_material_note_ink(note: String) -> void:
+	var label := _find_aside_label(_panel, note)
+	if label == null:
+		_fail("work note — the good-shortfall note is not drawn anywhere in the panel")
+		return
+	_assert_band_panel("work note — the drawn note takes the DANGER ink, not the staffing amber",
+		label.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.DANGER))
+
+
 ## GUARD: **a HALF-BUILT rung whose keeping is short wears the SAME ⚠ and the SAME note as a held one**
 ## (`docs/plan_standing_upkeep.md` §4.6a). It was the other way round — its own `unbuilt` flag and a
 ## note naming BUILDERS — because an unbuilt rung was billed to its build crew; one keeping pool owes
@@ -3872,7 +4077,7 @@ func _assert_unbuilt_warning(state_name: String) -> void:
 		if String(model.get("herd_id", "")) != UNBUILT_WORK_HERD_ID:
 			continue
 		found = true
-		if not bool(model.get("under_herded", false)):
+		if not bool(model.get("at_risk", false)):
 			failures.append("the at-risk flag is false on a part-built rung the pool did not cover")
 		if not String(model.get("marks", "")).contains(HudComposeVocab.OVERHUNT_FLAG):
 			failures.append("expected the ⚠ mark, got marks %s" % [model.get("marks", "")])
@@ -3911,11 +4116,11 @@ func _assert_keeper_warning(state_name: String, expect_warned: bool) -> void:
 		if String(model.get("herd_id", "")) != UNDER_HERDED_WORK_HERD_ID:
 			continue
 		found = true
-		var warned: bool = bool(model.get("under_herded", false))
+		var warned: bool = bool(model.get("at_risk", false))
 		var marks := String(model.get("marks", ""))
 		var note := String(model.get("note", ""))
 		if warned != expect_warned:
-			failures.append("under_herded is %s, expected %s" % [warned, expect_warned])
+			failures.append("at_risk is %s, expected %s" % [warned, expect_warned])
 		# **THE ROW'S HOVER IS THE ONE SURFACE THAT CARRIES THE COUNTDOWN, and the asymmetry IS the
 		# claim.** The source's own card states the same first sentence and no figure at all — this
 		# board is where staffing is decided this turn, so *how long you have* is actionable here.
@@ -5948,16 +6153,11 @@ func _assert_map_path_states_kit() -> void:
 	_assert_band_panel("…un-narrowed, spears reading %s against the fixture's %s"
 			% [str(copied), str(spears)],
 		is_equal_approx(copied, spears))
-	# The RENDER half — the row the report was actually about. The needle carries the VALUE as well as
-	# the label, so it cannot be satisfied by a row that rendered the kit's name over a defaulted
-	# reading; and it is composed from the FIXTURE's number rather than asked of `kit_condition_face`,
-	# which would re-derive the expectation through the code under test. **`BAND_KIT_ROW_PREFIX` is NOT
-	# what appears on screen** — the vitals rows are DISCLOSURES, so the row's own label is the caret's
-	# (`Kit ▸`) and the prefix is consumed by that wrapping.
-	var want := "%s %s" % [DetailFormat.KIT_LABEL_SPEARS,
-		String.num(spears, DetailFormat.KIT_CONDITION_DECIMALS)]
-	_assert_band_panel("…so the Kit row renders on the map path — \"%s\"" % want,
-		_rich_text_containing(_panel, want) != "")
+	# ⛔ **THE RENDER HALF IS RETIRED WITH THE `Gear` ROW** (`docs/plan_standing_upkeep.md` §4.9 item
+	# 12) — it asserted that the vitals block drew `Spears 87` on the map-click path, and no vitals row
+	# states an item condition any more. **The PAYLOAD half above is the claim that mattered**: the
+	# leak this was written for is the marker copy dropping wire fields, and the crafting panel's kit
+	# ledger reads exactly those fields off exactly that payload.
 
 ## **THE GEAR POPOVER STATES EVERY ITEM THE BAND CARRIES, EACH BESIDE THE TIER IT SETS** — the three
 ## the expanded roster added included, which is what this assertion was written for: their tiers
@@ -5971,23 +6171,47 @@ func _assert_map_path_states_kit() -> void:
 ## swap cannot pass — the pen collects at 12.0 where the sled hauls 40.0, and the camp is defended at
 ## 6 where the hunt attacks at 20.
 ##
-## Read off the popover's own RENDERED text, per line, like `ui_preview`'s kit assertions: the rows
-## share a shape, so a whole-popover `contains` would be satisfied by the WRONG row.
-func _assert_gear_breakdown_states_every_kit() -> void:
-	var popover := _kit_popover_text()
+## Read per LINE, like `ui_preview`'s kit assertions: the rows share a shape, so a whole-popover
+## `contains` would be satisfied by the WRONG row.
+##
+## ⛔ **IT IS READ OFF THE PRODUCER NOW, NOT OFF A RENDERED POPOVER** (`docs/plan_standing_upkeep.md`
+## §4.9 item 12). The `Gear` row that opened this popover is retired from both the band and the
+## faction page, so there is no click left to cover; what survives is the COMPOSITION, which the
+## crafting panel's kit ledger and the compose sheet's role hint both still read, and which is what
+## every claim below was ever about.
+func _assert_gear_breakdown_states_every_kit(band: Dictionary) -> void:
+	var popover := "\n".join(_hud._disclosures.kit_breakdown_lines(band))
 	_assert_band_panel("the gear popover opened at all (%d chars)" % popover.length(),
 		popover.contains(DetailFormat.KIT_BREAKDOWN_CLIFF_NOTE))
-	var pen_role := DetailFormat.KIT_ROLE_PEN_CARRY_FORMAT % String.num(
+	# **THE SLED CARRIES BOTH RATES AND THEY ARE STILL TWO NUMBERS** (`docs/plan_standing_upkeep.md`
+	# §4.9 item 12). `equipment.json` puts both sides of `pen_carry` on the sled — the item that used to
+	# declare the bare side left the roster with the hurdles — so the pen clause rides the SLED's row
+	# now. What has to stay true is that the two figures do not collapse into each other: a band on a
+	# stalking kit hunts at 40 and collects its pen at 12, and a readout that let the hunt carry stand
+	# in for the pen would be the mis-pairing this ledger keeps reproducing.
+	var pen_role := DetailFormat.KIT_ROLE_PEN_CARRY_SUFFIX % String.num(
 		BandFx.KIT_PEN_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS)
-	var sled_role := DetailFormat.KIT_ROLE_PEN_CARRY_FORMAT % String.num(
+	var pen_at_the_sleds_rate := DetailFormat.KIT_ROLE_PEN_CARRY_SUFFIX % String.num(
 		BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS)
-	var gear_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_HURDLES)
-	_assert_band_panel("HANDLING GEAR states the PEN's collection rate (%s), never the sled's (%s) — \"%s\""
-			% [pen_role, sled_role, gear_line],
-		gear_line.contains(pen_role) and not gear_line.contains(sled_role))
+	var sled_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_SLED)
+	_assert_band_panel("the SLED states the PEN's own collection rate (%s), never its hunt carry (%s) — \"%s\""
+			% [pen_role, pen_at_the_sleds_rate, sled_line],
+		sled_line.contains(pen_role) and not sled_line.contains(pen_at_the_sleds_rate))
+	# …and the HUNT half is on the same row, which the tail of this function already asserts against
+	# `sled_line` — the pairing that stops either clause being satisfied by a row that dropped the
+	# other, so the claim is made once and read against one line.
+	# **AND THE CROOK IS THE ANIMAL WEB'S ITEM NOW** — `hurdles` are a crafted MATERIAL and no item of
+	# that id is on the roster, so a ledger still keyed on it read `— bare hands` over an item every
+	# band carries. The row states its JOB rather than a carry rate, the crook's one effect being
+	# `build_work`, which has no flat per-band field to quote.
+	var gear_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_CROOK)
+	_assert_band_panel("the CROOK's row states what it is for (%s), and no carry rate — \"%s\""
+			% [DetailFormat.KIT_ROLE_CROOK, gear_line],
+		gear_line.contains(DetailFormat.KIT_ROLE_CROOK)
+			and not gear_line.contains(pen_role))
 	_assert_band_panel("…beside its own condition (%s)" % String.num(
-			BandFx.KIT_CONDITION_HURDLES, DetailFormat.KIT_CONDITION_DECIMALS),
-		gear_line.contains(String.num(BandFx.KIT_CONDITION_HURDLES,
+			BandFx.KIT_CONDITION_CROOK, DetailFormat.KIT_CONDITION_DECIMALS),
+		gear_line.contains(String.num(BandFx.KIT_CONDITION_CROOK,
 			DetailFormat.KIT_CONDITION_DECIMALS)))
 	# **THE VANTAGE IS TILES, and the assertion says so in both directions.** A biomass-rate format
 	# string here would print `2.0`, which reads as a rate and is not one.
@@ -6020,15 +6244,107 @@ func _assert_gear_breakdown_states_every_kit() -> void:
 			DetailFormat.KIT_CONDITION_DECIMALS)))
 	# …and the hunt rows are still paired with THEIR tiers, so the three new ones cannot have been
 	# added by making every row quote the same number.
-	var sled_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_SLED)
 	_assert_band_panel("…and the SLED still states the HUNT's carry (%s) — \"%s\""
 			% [String.num(BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS), sled_line],
 		sled_line.contains(DetailFormat.KIT_ROLE_HUNT_CARRY_FORMAT % String.num(
 			BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS)))
 
+# ---- THE STANDING MATERIAL BILL (`docs/plan_standing_upkeep.md` §2.7) ----------------------------
+#
+# **WORK WAS NEVER THE WHOLE PRICE**, and until this row nothing on either page said so: a pen frays
+# its fence every turn it stands, and a band whose bench could not keep up found out when the animals
+# started leaving. The fixture below is that band, written as ANSWERS rather than as inputs — the row
+# and the popover both have to come out at these figures, and a number re-derived through the code
+# under test asserts nothing.
+
+## The good the shipped ladder actually eats — `animal:pen`'s `upkeep.materials`.
+const BILL_MATERIAL := "hurdles"
+## What the band's pens frayed this turn, what its bench finished, and what is on the shelf. The gap
+## is 0.03 a turn against a shelf of 2, so the runway is 66 turns — **comfortably clear of the warn
+## line**, which is deliberate: this frame is the row in its ORDINARY state, and the alarm is the
+## faction page's and the event dock's to raise.
+const BILL_NEED := 0.05
+const BILL_INCOME := 0.02
+const BILL_STORE := 2.0
+
+## A player band that HOLDS something which eats a good. Derived from the reference band so the only
+## difference between this frame and `band_panel_left` is the row under test.
+func _standing_bill_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["material_upkeep_need"] = [{"material_id": BILL_MATERIAL, "amount": BILL_NEED}]
+	band["material_upkeep_income"] = [{"material_id": BILL_MATERIAL, "amount": BILL_INCOME}]
+	band["material_store"] = [{"material_id": BILL_MATERIAL, "amount": BILL_STORE}]
+	return band
+
+## **THE ROW NAMES THE GOOD AND ITS SHELF, AND IT NAMES ONE GOOD.** Asserted on the rendered vitals
+## text rather than on a frame: a picture cannot tell a row that is missing from one that scrolled.
+## The needle carries the STOCK as well as the label, so it cannot be satisfied by a row that drew the
+## key over a defaulted reading.
+func _assert_standing_bill_row() -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		_fail("standing-bill assert found no vitals label")
+		return
+	var text := vitals.get_parsed_text()
+	var want := "%s %s" % [DetailFormat.format_trimmed(BILL_STORE, DetailFormat.MATERIAL_BILL_DECIMALS),
+		BILL_MATERIAL]
+	_assert_band_panel("the band's Upkeep row states the good and its shelf — \"%s\"" % want,
+		text.contains(HudDisclosureVocab.DETAIL_ROW_UPKEEP) and text.contains(want))
+	# **AND THE RUNWAY BESIDE IT**, which is the whole second term: a shelf with no runway says how
+	# much you have and never how long it lasts. 2 / (0.05 − 0.02) = 66 turns, written out.
+	_assert_band_panel("…and the runway the shelf buys against the gap (%s)"
+			% DetailFormat.food_turns_text(BILL_STORE / (BILL_NEED - BILL_INCOME)),
+		text.contains(DetailFormat.food_turns_text(BILL_STORE / (BILL_NEED - BILL_INCOME))))
+
+## **THE THREE TERMS ARE THE POPOVER'S, ONE BLOCK PER GOOD** — wanted, arriving, on the shelf. The
+## summary line above states one of them, so a breakdown that merely restated the row would leave the
+## question it exists for unanswered.
+func _assert_standing_bill_breakdown() -> void:
+	var popover := _popover_text()
+	_assert_band_panel("the standing-bill popover opened at all (%d chars)" % popover.length(),
+		popover.contains(DetailFormat.material_bill_heading(BILL_MATERIAL)))
+	for term in [
+		[DetailFormat.MATERIAL_LABEL_WANTED, BILL_NEED],
+		[DetailFormat.MATERIAL_LABEL_ARRIVING, BILL_INCOME],
+		[DetailFormat.MATERIAL_LABEL_STORE, BILL_STORE],
+	]:
+		var label := String(term[0])
+		var amount := DetailFormat.format_trimmed(float(term[1]), DetailFormat.MATERIAL_BILL_DECIMALS)
+		_assert_band_panel("…and its %s term reads %s" % [label, amount],
+			_kit_breakdown_line(popover, label).contains(amount))
+	# **THE SIGNS ARE THE CONTRAST, and without them the three lines are one column of numbers.** What
+	# is WANTED is a debit and what ARRIVES is a credit; the shelf is neither, so it carries no sign at
+	# all and is the one line the renderer tints neutral.
+	_assert_band_panel("…the wanted term is a DEBIT and the arriving term a CREDIT",
+		_kit_breakdown_line(popover, DetailFormat.MATERIAL_LABEL_WANTED).contains(
+				DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH)
+			and _kit_breakdown_line(popover, DetailFormat.MATERIAL_LABEL_ARRIVING).contains(
+				DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH))
+	_assert_band_panel("…and the SHELF carries no sign — a stock is neither good news nor bad",
+		not _kit_breakdown_line(popover, DetailFormat.MATERIAL_LABEL_STORE).contains(
+				DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH)
+			and not _kit_breakdown_line(popover, DetailFormat.MATERIAL_LABEL_STORE).contains(
+				DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH))
+
+## **A BAND THAT OWES NO GOOD DRAWS NO ROW — never a dormant dash and never a zero.** The one place
+## this readout parts company with Fodder, and the reason is in `BandDetailLines`: a standing bill is
+## a CONSEQUENCE of what you have built, so there is no *"you could have this"* story a dormant form
+## would tell.
+func _assert_no_standing_bill_row() -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		_fail("standing-bill absence assert found no vitals label")
+		return
+	_assert_band_panel("a band that owes no good draws no Upkeep row at all",
+		not vitals.get_parsed_text().contains(HudDisclosureVocab.DETAIL_ROW_UPKEEP))
+	# …and registers no caret, which is the half a text search cannot see: a row absent from the label
+	# while its disclosure is still registered leaves a popover reachable with nothing behind it.
+	_assert_band_panel("…and registers no caret for it either",
+		not _hud._disclosures.state().has(HudDisclosureVocab.DETAIL_ROW_UPKEEP))
+
 ## The open breakdown popover's RENDERED text — the popover is a Window and never lands in a capture,
 ## so this is the only witness to what it says. Parsed, so the BBCode tags are gone.
-func _kit_popover_text() -> String:
+func _popover_text() -> String:
 	var label = _hud._disclosures._breakdown_popover_label
 	return "" if label == null else String((label as RichTextLabel).get_parsed_text())
 
@@ -6694,13 +7010,14 @@ func _assert_merged_food_row_fits() -> void:
 	if text.contains(FODDER_ROW_NEEDLE):
 		_fail("the SHORT tier still renders a standalone Fodder row beside the merged Food line")
 		return
-	# **THE ROW IS BOUNDED BY THE ROW THAT FOLLOWS IT, AND THAT ROW IS NOW `Kit`.** This read to
-	# `Morale` while Food and Morale were adjacent; the Kit row landed between them and the cut then
-	# measured TWO rows as one, reporting a 624px wrap on a line that fits comfortably. A bound naming
-	# the row that actually follows is the only kind that survives an insertion, so it takes whichever
-	# of the candidates comes FIRST rather than one fixed name.
+	# **THE ROW IS BOUNDED BY THE ROW THAT FOLLOWS IT, AND THAT ROW IS NOW `Upkeep`.** This read to
+	# `Morale` while Food and Morale were adjacent; a row landed between them and the cut then measured
+	# TWO rows as one, reporting a 624px wrap on a line that fits comfortably. A bound naming the row
+	# that actually follows is the only kind that survives an insertion, so it takes whichever of the
+	# candidates comes FIRST rather than one fixed name — which is exactly what let `Kit` retire out of
+	# this list and `Upkeep` take its place with no other edit.
 	var food_run := _vitals_run(text, HudDisclosureVocab.DETAIL_ROW_FOOD,
-		[HudDisclosureVocab.DETAIL_ROW_KIT, HudDisclosureVocab.DETAIL_ROW_MORALE])
+		[HudDisclosureVocab.DETAIL_ROW_UPKEEP, HudDisclosureVocab.DETAIL_ROW_MORALE])
 	if food_run == "":
 		_fail("merged-food-row assert cannot find the Food row (got: %s)" % text)
 		return
@@ -7350,7 +7667,40 @@ func _faction_roster() -> Array:
 	second["children"] = int(round(float(second["children"]) * FACTION_SECOND_BAND_SCALE))
 	second["elders"] = int(round(float(second["elders"]) * FACTION_SECOND_BAND_SCALE))
 	second["working_age"] = FACTION_SECOND_BAND_SIZE - int(second["children"]) - int(second["elders"])
-	return [_band_fixture(), second, _hunt_expedition_fixture()]
+	# **BOTH BANDS OWE A GOOD, AND THAT IS WHAT MAKES THE `Upkeep:` SUM A DISCRIMINATOR**
+	# (`docs/plan_standing_upkeep.md` §2.7). On a roster where one band owes, a sum and its single term
+	# are the same number and a page that had stopped summing would render identically — the same trap
+	# the two-band roster exists for. Their shelves are deliberately far apart (6.0 against 0.2), so
+	# the total is distinguishable from the mean, from the worst and from either band alone.
+	#
+	# **AND ONLY THE SECOND IS IN TROUBLE**: its shelf buys 2.5 turns against the faction's calm 77, so
+	# this roster is exactly the case the alert clause exists for — a faction figure that would have
+	# hidden the band it is about.
+	var first := _band_fixture()
+	first["material_upkeep_need"] = [
+		{"material_id": BILL_MATERIAL, "amount": FACTION_FIRST_BAND_BILL_NEED}]
+	first["material_upkeep_income"] = [
+		{"material_id": BILL_MATERIAL, "amount": FACTION_FIRST_BAND_BILL_INCOME}]
+	first["material_store"] = [
+		{"material_id": BILL_MATERIAL, "amount": FACTION_FIRST_BAND_BILL_STORE}]
+	second["material_upkeep_need"] = [
+		{"material_id": BILL_MATERIAL, "amount": FACTION_SECOND_BAND_BILL_NEED}]
+	second["material_upkeep_income"] = [
+		{"material_id": BILL_MATERIAL, "amount": FACTION_SECOND_BAND_BILL_INCOME}]
+	second["material_store"] = [
+		{"material_id": BILL_MATERIAL, "amount": FACTION_SECOND_BAND_BILL_STORE}]
+	return [first, second, _hunt_expedition_fixture()]
+
+## The roster's two standing bills, written as the ANSWERS the page has to come out at. The first
+## band's bench exactly meets its pens (an ∞ runway on a live bill, which is a real state and not a
+## dormant one); the second's does not, and its shelf buys 0.20 / (0.10 − 0.02) = 2.5 turns — inside
+## `BandFoodStatus.critical_turns()`, which is what puts the alert on the faction row.
+const FACTION_FIRST_BAND_BILL_NEED := 0.05
+const FACTION_FIRST_BAND_BILL_INCOME := 0.05
+const FACTION_FIRST_BAND_BILL_STORE := 6.0
+const FACTION_SECOND_BAND_BILL_NEED := 0.10
+const FACTION_SECOND_BAND_BILL_INCOME := 0.02
+const FACTION_SECOND_BAND_BILL_STORE := 0.20
 
 ## The faction page's rendered claims: the total really is the faction's, the header names the right
 ## thing, and the two affordances a band's header carries are correctly OFF.
@@ -7383,8 +7733,12 @@ func _assert_faction_page() -> void:
 	# missing from one that scrolled. The KEYS are what is checked — their values are the aggregation
 	# rules, which have their own assertions below.
 	var vitals := _faction_vitals_text(band_zone)
+	# **`Gear` LEFT THIS LIST AND NOTHING TOOK ITS PLACE IN IT** (`docs/plan_standing_upkeep.md` §4.9
+	# item 12): the faction `Upkeep` row renders only where SOME band on the roster owes a good, and
+	# this roster's bands hold nothing that eats one. That row's own presence is asserted on a roster
+	# staged for it — see `_assert_faction_standing_bill`.
 	for row in [HudDisclosureVocab.DETAIL_ROW_FOOD, HudDisclosureVocab.DETAIL_ROW_FODDER,
-			HudDisclosureVocab.DETAIL_ROW_KIT, HudDisclosureVocab.DETAIL_ROW_MORALE,
+			HudDisclosureVocab.DETAIL_ROW_MORALE,
 			HudDisclosureVocab.DETAIL_ROW_GROWTH]:
 		# The KEY alone, not `key + ": "` — `detail_bbcode` splits the pair and emits the key into its
 		# own `[cell]`, so the separator never survives into the rendered text.
@@ -7401,10 +7755,11 @@ func _assert_faction_page() -> void:
 	_assert_band_panel("faction page: Food states NO faction runway",
 		not vitals.contains("("))
 
-	# **THE KIT ROW CARRIES NO DURABILITIES**, a mean of three per band describing no band that exists.
-	# Asserted as an ABSENCE against the fixture's own spear condition, which the band page's Kit row
-	# would print — so a Kit row that quietly went back to summarising fails here.
-	_assert_band_panel("faction page: Kit states no faction durability",
+	# **THE KIT ROW IS RETIRED FROM THIS PAGE** (`docs/plan_standing_upkeep.md` §4.9 item 12), and the
+	# absence claim it carried survives as a stronger one: the durabilities never aggregated, so what
+	# had to be asserted was that no faction figure was invented from them. Now NO row states them at
+	# all, and the fixture's own spear condition must appear nowhere on the page.
+	_assert_band_panel("faction page: no row states a kit durability at all",
 		not vitals.contains(str(KIT_SHARED_SPEARS_CONDITION)))
 
 	# **MORALE IS POPULATION-WEIGHTED, and the fixture is built so that a PLAIN mean gives a different
@@ -7414,6 +7769,10 @@ func _assert_faction_page() -> void:
 	# **AND THE FODDER ROW IS THE FOOD ROW ON THE OTHER LARDER**, summed the same way and stating the
 	# same shape. Its own block, because the claim is arithmetic rather than presence.
 	_assert_faction_fodder_row(vitals)
+
+	# **AND THE STANDING MATERIAL BILL BESIDE THEM** (`docs/plan_standing_upkeep.md` §2.7), folded per
+	# band exactly as those two are. Its own block for the same reason: the claim is arithmetic.
+	_assert_faction_standing_bill(vitals)
 
 	# **THE TYPE SCALE IS ASKED OF THE BAND ZONE, not the work one, and that is where the page's stat
 	# rows now live.** The work zone's own rows are `build_inline_link` BUTTONS (a row's name jumps to
@@ -7550,6 +7909,56 @@ func _assert_faction_fodder_row(vitals: String) -> void:
 	_assert_band_panel("faction page: …and every Fodder row jumps to the band it names",
 		with_hay.contains(HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX)
 			and without_hay.contains(HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX))
+
+## **THE FACTION'S STANDING BILL — the two rows above, on the material account**
+## (`docs/plan_standing_upkeep.md` §2.7). Every claim here is the Fodder row's claim asked about goods,
+## because "exactly like Fodder" is the specification — with one deliberate difference, asserted at
+## the end.
+##
+## **THE SUM IS THE DISCRIMINATOR, AND BOTH BANDS OWE.** The roster's shelves are 6.0 and 0.2, so the
+## faction figure is 6.2 — a number neither a page that averaged its bands (3.1) nor one that reported
+## the worst band alone (0.2) nor one that reported the first (6.0) would produce.
+##
+## **NO FACTION RUNWAY, AND THE ALERT IS WHAT REACHES THE ROW.** 6.2 against a 0.08 gap is 77 turns —
+## perfectly calm — while the second band's own 0.2 against its own 0.08 is 2.5, inside the critical
+## line. That is precisely the figure that would have hidden the band it is about, so the row states
+## the sum and carries `⚠ 1 band` beside it.
+func _assert_faction_standing_bill(vitals: String) -> void:
+	var store := FACTION_FIRST_BAND_BILL_STORE + FACTION_SECOND_BAND_BILL_STORE
+	var net := (FACTION_FIRST_BAND_BILL_INCOME - FACTION_FIRST_BAND_BILL_NEED) \
+		+ (FACTION_SECOND_BAND_BILL_INCOME - FACTION_SECOND_BAND_BILL_NEED)
+	var want := "%s %s" % [DetailFormat.format_trimmed(store, DetailFormat.MATERIAL_BILL_DECIMALS), BILL_MATERIAL]
+	_assert_band_panel("faction page: Upkeep sums the roster's shelves, per good (%s)" % want,
+		vitals.contains(HudDisclosureVocab.DETAIL_ROW_UPKEEP) and vitals.contains(want))
+	_assert_band_panel("faction page: …and its net rate is the roster's (%s)"
+		% SourceForecast.format_signed(net),
+		vitals.contains(SourceForecast.format_signed(net)))
+	# **AND NOT THE AVERAGE**, which is the reading a rollup that forgot it was summing would print and
+	# which the fixture is staged to separate.
+	_assert_band_panel("faction page: …never the MEAN of the two shelves (%s)"
+		% DetailFormat.format_trimmed(store * 0.5, DetailFormat.MATERIAL_BILL_DECIMALS),
+		not vitals.contains("%s %s" % [DetailFormat.format_trimmed(store * 0.5,
+			DetailFormat.MATERIAL_BILL_DECIMALS), BILL_MATERIAL]))
+	# THE DRILL-DOWN, asked of the payload the popover would show. **ONLY THE BANDS THAT OWE A GOOD**,
+	# which is where this row parts company with Fodder: a band that has built nothing which eats a
+	# good has no value to state in this register at all.
+	var rows := _hud._disclosures._lines_for(DetailFormat.breakdown_key(
+		HudDisclosureVocab.BREAKDOWN_KIND_UPKEEP, {}))
+	_assert_band_panel("faction page: the Upkeep drill-down lists the bands that owe (%d of 2)"
+		% rows.size(), rows.size() == 2)
+	var short_row := ""
+	for line in rows:
+		if String(line).contains(DetailFormat.food_turns_text(
+				FACTION_SECOND_BAND_BILL_STORE / (FACTION_SECOND_BAND_BILL_NEED
+					- FACTION_SECOND_BAND_BILL_INCOME))):
+			short_row = String(line)
+	_assert_band_panel("faction page: …and the short band's row carries its OWN runway, not a faction one",
+		short_row != "")
+	# …and it is a LINK to the band it names, the same meta prefix the Food and Fodder rows carry. This
+	# is what makes the row a way to ACT, and it is the drill-down half of the discovery path the
+	# retired `Gear` row's `⚠ N bands` used to own.
+	_assert_band_panel("faction page: …and that row jumps to the band it names",
+		short_row.contains(HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX))
 
 ## **THE FODDER DRILL-DOWN, OPEN** — the faction page's `Fodder ▾` with its per-band card under it,
 ## the frame the Food row has had since the page shipped.
@@ -9540,6 +9949,171 @@ func _ready_mark_buttons() -> Dictionary:
 				break
 	return out
 
+# ---- THE PEN'S PRICE ON THE `⌃` TRACK (`docs/plan_standing_upkeep.md` §2.7) ----------------------
+#
+# **WORK WAS NEVER THE WHOLE PRICE, and the destination picker said nothing about the rest of it.** A
+# fence is a thing you build IN and leave behind — six hurdles, and 0.05 more a turn for as long as it
+# stands — and until these asides the card quoted `75 work · ≈12 turns` and stopped.
+#
+# **THE PEN IS THE SHIPPED CONSUMER, which is why these states are on the ANIMAL web.** `animal:pen`
+# is the only rung on the ladder that declares a material on either term, so a plant fixture would be
+# exercising the path against a price the game does not have.
+#
+# **THREE ASIDES, AND THE PAIR OF STATES IS WHAT SEPARATES THEM.** A band whose shelf covers the pile
+# gets the price and the hold cost; one whose shelf does not gets a third aside in WARN ink saying how
+# far the build gets. Asserted as a pair, because "the stall warning renders" passes on a card that
+# renders it always, and "it does not" passes on a card that never does.
+
+## The pile `animal:pen` swallows to raise, the rate it swallows to hold, and the good both are in —
+## the shipped `intensification_ladder.json` figures, so the card is quoting the game's own price.
+const PEN_BUILD_PILE := 6.0
+const PEN_HOLD_RATE := 0.05
+const PEN_MATERIAL := "hurdles"
+## The species the corral-ready row is named for, so the press lands on THAT row and not on whichever
+## `⌃` the board happens to draw first.
+const PEN_ROW_SPECIES := "Aurochs"
+## The theme key a `Label`'s ink is overridden under — the same string `_build_aside` writes.
+const FONT_COLOR_THEME_KEY := "font_color"
+## What the pen rung costs to hold in WORK, beside the goods — `corral_upkeep_demand`, the per-rung
+## pair the compose sheet's own price clause quotes. `PEN_HOLD_RATE` above is its MATERIAL twin
+## (`corral_upkeep_material_demand`), and the two ride the aside together.
+const PEN_HOLD_WORK := 1.0
+## The two shelves. One covers the pile outright; the other buys a third of it, which is the fraction
+## `RungLadder`'s own word ladder rounds to and the one the plan's UX prototype is drawn against.
+const PEN_STORE_COVERED := 6.0
+const PEN_STORE_SHORT := 2.0
+
+## The declare board's herds with the PEN's material price stamped on the corral-ready Aurochs. Its
+## `build_material_cost` is the rung ABOVE where it stands, which is the only rung the wire prices —
+## a pastoral herd's next rung IS the pen.
+##
+## ⛔ **THE HOLD RATE IS STAMPED ON `corral_upkeep_material_demand`, THE PER-RUNG QUOTE — NEVER ON
+## `upkeep_material_demand`.** That second key is the bill this herd's CURRENT rung was handed, and
+## `animal:pastoral` declares no material, so in play it is empty on exactly this row. Feeding it here
+## would prop the aside up with a number the game never sends and would pass whether or not the aside
+## reads the rung it is offering. This herd standing on `animal:pastoral` and looking at the Pen row
+## is the one state on the shipped ladder where the material clause is reachable at all.
+func _pen_price_herd_fixtures() -> Array:
+	var herds := _declare_herd_fixtures()
+	for herd_variant in herds:
+		var herd: Dictionary = herd_variant
+		if String(herd.get("id", "")) != DECLARE_CORRAL_HERD:
+			continue
+		herd["build_material_cost"] = [
+			{"material_id": PEN_MATERIAL, "amount": PEN_BUILD_PILE}]
+		herd["corral_upkeep_material_demand"] = [
+			{"material_id": PEN_MATERIAL, "amount": PEN_HOLD_RATE}]
+		herd["corral_upkeep_demand"] = PEN_HOLD_WORK
+	return herds
+
+## The declare band holding `store` hurdles on its shelf — the one thing on that card the SOURCE
+## cannot answer for, which is why `RungLadder.track` takes the band at all.
+func _pen_price_band_fixture(store: float) -> Dictionary:
+	var band := _declare_band_fixture()
+	band["material_store"] = [{"material_id": PEN_MATERIAL, "amount": store}]
+	return band
+
+## Every ASIDE on the open card, in render order — the wrapped `Label`s beneath the rows. Found by
+## their autowrap, which is the one property that tells an aside from a rung row's own name Label
+## (clipped, fixed-width) in a card whose every control is otherwise a Label or a Button.
+func _rung_track_asides() -> Array[String]:
+	var out: Array[String] = []
+	var card: Node = _hud._bandpanel._rung_track
+	if card == null:
+		return out
+	_collect_asides(card, out)
+	return out
+
+func _collect_asides(node: Node, out: Array[String]) -> void:
+	if node is Label and (node as Label).autowrap_mode == TextServer.AUTOWRAP_WORD_SMART:
+		out.append((node as Label).text)
+	for child in node.get_children():
+		_collect_asides(child, out)
+
+## Is any aside on the card this text, and is it drawn in the WARN ink? Two questions in one walk,
+## because the stall warning's whole job is to be the one aside that is NOT quiet — a card that got the
+## words right and the ink wrong looks correct in a thumbnail.
+## ⛔ **NO LAMBDA SINK HERE.** GDScript closures capture a local by VALUE, so a `found = …` written
+## inside one is discarded — the walk returns the label it found and the caller reads its ink.
+func _rung_track_aside_is_warn(needle: String) -> bool:
+	var label := _find_aside_label(_hud._bandpanel._rung_track, needle)
+	return label != null \
+		and label.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.WARN)
+
+func _find_aside_label(node: Node, needle: String) -> Label:
+	if node is Label and (node as Label).text == needle:
+		return node as Label
+	for child in node.get_children():
+		var found := _find_aside_label(child, needle)
+		if found != null:
+			return found
+	return null
+
+## **THE PRICE ASIDES, ON A BAND THAT CAN AFFORD THE PILE.** Two of the three: what the rung eats to
+## raise, and what it costs to hold. The stall warning must be ABSENT, which is half the pair.
+func _assert_pen_price_covered() -> void:
+	if not await _open_rung_track_named(PEN_ROW_SPECIES):
+		return
+	var asides := _rung_track_asides()
+	var pile := HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT % (
+		HudWorkVocab.RUNG_TRACK_MATERIAL_TERM % [DetailFormat.format_trimmed(PEN_BUILD_PILE,
+			HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS), PEN_MATERIAL])
+	_assert_band_panel("track — the pen's row states what it EATS to raise: \"%s\" (got %s)"
+		% [pile, str(asides)], asides.has(pile))
+	var hold := HudWorkVocab.RUNG_TRACK_HOLD_FORMAT % HudWorkVocab.RUNG_TRACK_PRICE_SEPARATOR.join([
+		HudWorkVocab.RUNG_TRACK_HOLD_WORK_TERM % DetailFormat.format_work_units(PEN_HOLD_WORK),
+		HudWorkVocab.RUNG_TRACK_MATERIAL_TERM % [DetailFormat.format_trimmed(PEN_HOLD_RATE,
+			HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS), PEN_MATERIAL]])
+	_assert_band_panel("track — …and what it costs to HOLD, in both currencies: \"%s\"" % hold,
+		asides.has(hold))
+	# **THE SHELF COVERS IT, SO NOTHING WARNS.** Without this the state below proves only that the card
+	# can draw a stall line, not that it draws one for a reason.
+	var stalled := false
+	for aside in asides:
+		if aside.begins_with(HudWorkVocab.RUNG_TRACK_STALL_FORMAT.split("%s")[0]):
+			stalled = true
+	_assert_band_panel("track — …and a shelf that covers the pile raises no stall warning",
+		not stalled)
+
+## **THE SAME CARD ON A BAND TWO HURDLES SHORT OF SIX.** The third aside, in WARN ink, saying how far
+## the build gets — because a short store STALLS a build and never refuses it, so the honest warning is
+## *how far this goes* rather than *you may not*.
+func _assert_pen_price_short() -> void:
+	if not await _open_rung_track_named(PEN_ROW_SPECIES):
+		return
+	var stall := HudWorkVocab.RUNG_TRACK_STALL_FORMAT % [
+		HudWorkVocab.RUNG_TRACK_MATERIAL_TERM % [DetailFormat.format_trimmed(PEN_STORE_SHORT,
+			HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS), PEN_MATERIAL],
+		PEN_STALL_WORD]
+	_assert_band_panel("track — a shelf of %s against a pile of %s stalls at \"%s\" (got %s)"
+		% [PEN_STORE_SHORT, PEN_BUILD_PILE, stall, str(_rung_track_asides())],
+		_rung_track_asides().has(stall))
+	# **AND IT IS THE ONE ASIDE ON THIS CARD THAT IS NOT QUIET.** Every other aside — a locked rung's
+	# reason, the pile, the hold cost — is INK_FAINT; this is the reading that should stop the player.
+	_assert_band_panel("track — …in the WARN ink, where every other aside on the card is quiet",
+		_rung_track_aside_is_warn(stall))
+
+## The fraction 2-of-6 rounds to, out of `RungLadder`'s own word ladder. Written down rather than
+## asked of the code under test — a third is what a third should read as.
+const PEN_STALL_WORD := "a third"
+
+## Open the `⌃` on the row whose NAME carries this needle. `_open_rung_track_from_mark` takes whichever
+## mark is first on the board, which on a three-row board is not the one a claim is about.
+func _open_rung_track_named(needle: String) -> bool:
+	var marks := _ready_mark_buttons()
+	for name_text in marks:
+		if not String(name_text).contains(needle):
+			continue
+		(marks[name_text] as Button).pressed.emit()
+		await _settle()
+		if _rung_track_states().is_empty():
+			_fail("track — the ⌃ on %s opened no track" % needle)
+			return false
+		return true
+	_fail("track — no row named %s offers a ⌃ (rows: %s)" % [needle, str(marks.keys())])
+	return false
+
+
 ## **THE OPEN DESTINATION TRACK'S ROW FOR ONE RUNG** — the `Button` a press would send, or `null`.
 ## Searched from `_hud` rather than from `_panel`: the track is a `PopupPanel` parented into the HUD
 ## CanvasLayer, which is the whole reason it costs the work zone nothing.
@@ -9942,8 +10516,8 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 		if String(m.get("herd_id", "")) != herd_id:
 			continue
 		found = true
-		if not bool(m.get("under_herded", false)):
-			_fail("expected under_herded on the Hunt row for %s" % herd_id)
+		if not bool(m.get("at_risk", false)):
+			_fail("expected at_risk on the Hunt row for %s" % herd_id)
 		else:
 			print("band_panel_preview: assert OK — the board still marks the herd under-herded (wants %d keepers)"
 				% HERDER_FLOOR_HERDERS_NEEDED)
@@ -9985,7 +10559,7 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 const UNDER_KEPT_COUNTDOWN_NEEDLE := "is lost in"
 
 ## The under-contained Hunt row must carry the shed flag: the ⚠ mark, the drifting-off note, and the
-## `under_herded` model flag the row + inspector tint from.
+## `at_risk` model flag the row + inspector tint from.
 func _assert_under_herded_work_row(herd_id: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
 	var found := false
@@ -9994,8 +10568,8 @@ func _assert_under_herded_work_row(herd_id: String) -> void:
 		if String(m.get("herd_id", "")) != herd_id:
 			continue
 		found = true
-		if not bool(m.get("under_herded", false)):
-			_fail("expected under_herded on the Hunt row for %s" % herd_id)
+		if not bool(m.get("at_risk", false)):
+			_fail("expected at_risk on the Hunt row for %s" % herd_id)
 		elif not String(m.get("marks", "")).contains(HudComposeVocab.OVERHUNT_FLAG):
 			_fail("expected the ⚠ mark on the under-herded row for %s" % herd_id)
 		elif not String(m.get("note", "")).contains("drifting off"):
@@ -12327,7 +12901,7 @@ const MAP_PATH_WARRIOR_ATTACK := 5.0
 
 func _kit_band_fixture() -> Dictionary:
 	var band := _band_fixture()
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 74.5}, {"item_id": "sled", "remaining": 58.0}, {"item_id": "baskets", "remaining": 91.0}, {"item_id": "traps", "remaining": 83.0}, {"item_id": "hurdles", "remaining": MAP_PATH_HURDLES_CONDITION}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": MAP_PATH_WAYFINDING_CONDITION}, {"item_id": "clubs", "remaining": MAP_PATH_CLUBS_CONDITION}]
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 74.5}, {"item_id": "sled", "remaining": 58.0}, {"item_id": "baskets", "remaining": 91.0}, {"item_id": "traps", "remaining": 83.0}, {"item_id": "crook", "remaining": MAP_PATH_HURDLES_CONDITION}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": MAP_PATH_WAYFINDING_CONDITION}, {"item_id": "clubs", "remaining": MAP_PATH_CLUBS_CONDITION}]
 	band["hunter_attack"] = 2.0
 	band["hunt_carry_per_worker_biomass"] = 2.5
 	band["forage_carry_per_worker_biomass"] = 1.75
@@ -12381,7 +12955,7 @@ func _kit_worn_band_fixture() -> Dictionary:
 	# The list is REPLACED rather than extended, so the expanded roster's three are restated here —
 	# a cohort the server publishes carries one row per item in the config's table, and dropping three
 	# of them would render a band no live world produces.
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_FRAME_SLED_DRY}, {"item_id": "baskets", "remaining": KIT_FRAME_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "hurdles", "remaining": BandFx.KIT_CONDITION_HURDLES}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}]
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_FRAME_SLED_DRY}, {"item_id": "baskets", "remaining": KIT_FRAME_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "crook", "remaining": BandFx.KIT_CONDITION_CROOK}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}]
 	# The band's OWN resolved tiers, i.e. what it gets under the JOB DEFAULT. They are the cohort's
 	# statement and the `Kit` row reads them; the picker does NOT — it resolves the SELECTED kit's
 	# tiers off the roster — so they are set consistently with the conditions above rather than being
@@ -12492,7 +13066,7 @@ func _band_fixture() -> Dictionary:
 		# Three DIFFERENT conditions on the 0-100 scale, so an assertion cannot pass with two
 		# accessors swapped; none dry, so the row's DANGER tint keeps its meaning and the frames that
 		# judge a spent kit stay the ones that state one.
-		"kit_item_conditions": [{"item_id": "spears", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_SHARED_SLED_CONDITION}, {"item_id": "baskets", "remaining": KIT_SHARED_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "hurdles", "remaining": BandFx.KIT_CONDITION_HURDLES}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}],
+		"kit_item_conditions": [{"item_id": "spears", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_SHARED_SLED_CONDITION}, {"item_id": "baskets", "remaining": KIT_SHARED_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "crook", "remaining": BandFx.KIT_CONDITION_CROOK}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}],
 		# The RESOLVED tiers the sim publishes beside them. Equipped throughout, matching the
 		# conditions above — `hunter_attack` well clear of `QUARRY_DEFENSE`, so no compose sheet on
 		# this band reads the combat gate's refusal and the frames that judge that refusal stay the
@@ -13098,7 +13672,7 @@ func _builders_band_fixture(queue: Array = []) -> Dictionary:
 # =====================================================================================
 #  THE BUILD QUEUE HEAD STATES THE POOL'S DERIVED KIT — and it is the ONLY surface that does
 # =====================================================================================
-# There are two builders kits — `hurdling` (hurdles, ANIMAL) and `tillage` (hoes, PLANT) — and which
+# There are two builders kits — `hurdling` (the crook, ANIMAL) and `tillage` (hoes, PLANT) — and which
 # one a queue entry gets is DERIVED from that entry's own web (`equipment.md` -> "THE BUILDERS' KIT IS
 # DERIVED PER QUEUE ENTRY"). The Builders role card stated it on a read-only gear line until §4.7,
 # which retired that line: the BUILD QUEUE head reads the SAME `_role_kit_id` and prints

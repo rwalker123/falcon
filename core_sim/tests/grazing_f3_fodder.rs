@@ -16,6 +16,8 @@
 //!
 //! Deterministic (a pinned map seed, no `Date`/rand), mirroring `grazing_2d_pen.rs`.
 
+mod pen_materials_support;
+
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
@@ -29,7 +31,7 @@ use core_sim::{
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry,
     GenerationId, GenerationRegistry, GrazeRegistry, Herd, HerdDensityMap, HerdRegistry,
     HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
-    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
+    LadderConfigHandle, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FODDER,
@@ -107,6 +109,8 @@ fn base_world() -> App {
         .insert_resource(core_sim::EquipmentConfigHandle::default());
     app.world
         .insert_resource(core_sim::MaterialsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::RecipesConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_graze);
@@ -193,7 +197,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entit
                 children: scalar_zero(),
                 working: scalar_from_f32(KEEPER_WORKERS as f32),
                 elders: scalar_zero(),
-                stores: LocalStore::new(),
+                stores: pen_materials_support::stocked_with_pen_materials(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_turn_transfer_received: 0.0,
@@ -225,6 +229,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entit
                     workers: KEEPER_WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },

@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use super::*;
 
 /// **"Is this crew actually working the source?"** — THE eligibility term that replaced the
@@ -39,11 +41,11 @@ const NOTHING_STANDS_ABOVE_THE_FLOOR: f32 = 0.0;
 /// **A CLAIM THAT ASKS FOR NOTHING** — the boundary [`settle_scarce_store`] skips a tier at and the
 /// value it settles an unserved claim to. Named for [`NOTHING_STANDS_ABOVE_THE_FLOOR`]'s reason: a
 /// bare `0.0` there reads as an epsilon rather than as the exact "no demand" boundary.
-const NOTHING_DEMANDED: f32 = 0.0;
+pub(crate) const NOTHING_DEMANDED: f32 = 0.0;
 
 /// **THE WHOLE OF A CLAIM'S DEMAND** — the cap on [`settle_scarce_store`]'s per-tier served
 /// fraction, so a tier the remaining store covers is paid in full and never more than once.
-const FULLY_SERVED: f32 = 1.0;
+pub(crate) const FULLY_SERVED: f32 = 1.0;
 
 /// **A BAND WITH NO HAY LEDGER AT ALL** — what `LaborAllocation`'s three fodder rates are cleared to
 /// at the top of every band's turn, before the exits that can end it without reaching the re-sum.
@@ -205,6 +207,10 @@ pub struct LaborConfigs<'w> {
     /// (`docs/plan_crafting_and_materials.md` §1). The *rows* come from the source's own config; only
     /// the banding lives here, because deriving a band needs the material's axis list.
     pub materials: Res<'w, crate::materials_config::MaterialsConfigHandle>,
+    /// The recipe book — read for **one** thing here: what this band's bench will bank per turn
+    /// ([`crate::systems::bench_material_rate`]), which is half the inflow the material-shortfall
+    /// Alert judges against. The bench itself is `advance_crafting`'s.
+    pub recipes: Res<'w, crate::recipes_config::RecipesConfigHandle>,
 }
 
 /// **WHAT EACH OF A BAND'S SOURCES GETS OUT OF ITS MAINTENANCE POOLS** — one work amount per
@@ -391,8 +397,8 @@ fn source_branch(source: &BuildSource) -> crate::intensification::RungBranch {
     }
 }
 
-/// **WHAT ONE OF THE BAND'S KEEPERS DELIVERS PER TURN, PER WEB** — [`BuildersGear`]'s twin one
-/// account over (`docs/plan_standing_upkeep.md` §4.8).
+/// **WHAT ONE KEEPER DELIVERS ON ONE WORK SITE, AND WHAT THAT WORK WEARS DOWN** — [`BuildersGear`]'s
+/// twin one account over (`docs/plan_standing_upkeep.md` §4.8), resolved **per site**.
 ///
 /// # ONE SUPPLY EXPRESSION, TWO CONSUMERS
 ///
@@ -406,71 +412,183 @@ fn source_branch(source: &BuildSource) -> crate::intensification::RungBranch {
 /// changes is what a keeper *supplies* against it. That is the build rule's mirror — *the job's work
 /// requirement never changes* — stated about a rate instead of a pile.
 ///
-/// # THE KIT IS DERIVED PER WEB, BECAUSE NOTHING ELSE WOULD RESOLVE ONE
+/// # ⛔ THE KIT IS THE SITE'S, NOT THE BAND'S
 ///
-/// There is **no keeping-kit picker in the client**, and `default_kits.agriculture` /
-/// `.husbandry` are both `none`, so a pool that waited to be handed a kit would resolve bare and
-/// this whole seam would be a silent no-op. `agriculture` therefore derives the plant tool and
-/// `husbandry` the animal one off the roster ([`EquipmentConfig::keeping_kit_for`]), with no player
-/// action required — exactly as the builders row derives per queue entry. A picker becomes an
-/// **override** later, not a prerequisite.
-struct KeepingGear {
-    plant: KeepingBranchGear,
-    animal: KeepingBranchGear,
-}
-
-/// One web's keeping answer: what a keeper of that web delivers, and the kit that delivered it.
-struct KeepingBranchGear {
-    /// **The coverage-weighted per-keeper contribution** — the term
-    /// [`crate::intensification::pool_work_supply`] raises the pool by.
-    work_per_worker: f32,
-    /// **The kit the pool keeps with, narrowed to the tools that actually serve this web** — what
-    /// the [`crate::equipment_config::WearQuantum::UpkeepWork`] charge is billed against, resolved
+/// The band is the pool of workers and goods to draw from; it does not decide which tool a given
+/// site is worked with. So the rate is resolved per **claim** off that claim's own row
+/// ([`crate::components::LaborAssignment::upkeep_kit`]), exactly as a build's is resolved per queue
+/// entry — and `None` on the row is the **web's derived default**
+/// ([`crate::equipment_config::EquipmentConfig::keeping_kit_for`]), which is what keeps the whole
+/// seam live with no player action. A single stored id on the `agriculture` / `husbandry` role row
+/// could not say *hoes on the Field, bare hands on the scrub beside it*.
+struct KeepingRate {
+    /// **What one of this site's keepers banks per turn**, bare hands included — the `r` a claim's
+    /// worker need `demand ÷ r` divides by.
+    ///
+    /// It cannot be zero: [`crate::intensification::build_work_per_worker_turn`] floors its gear
+    /// term at bare hands and adds a positive `PER_WORKER_OUTPUT`. [`Self::worker_need`] checks
+    /// anyway, because a division whose safety lives in another module is one config edit from a
+    /// `NaN` share.
+    per_worker: f32,
+    /// **The site's kit, narrowed to the tools that actually serve its web** — what the
+    /// [`crate::equipment_config::WearQuantum::UpkeepWork`] charge is billed against, resolved
     /// through the same [`crate::equipment_config::EquipmentConfig::build_gear_kit`] the builders'
-    /// wear kit is. The narrowing is what stops a pool holding the *other* web's tool from spending
-    /// it on work that tool contributed nothing to — wear follows the work actually done.
+    /// wear kit is. The narrowing is what stops a site whose kit holds the *other* web's tool from
+    /// spending it on work that tool contributed nothing to — wear follows the work actually done.
     wear_kit: crate::equipment_config::KitChoice,
 }
 
-impl KeepingGear {
-    fn resolve(
-        equipment: &crate::equipment_config::EquipmentConfig,
-        allocation: &LaborAllocation,
-        band_kit: &BandEquipment,
-    ) -> Self {
-        let on = |branch: crate::intensification::RungBranch| {
-            let role = match branch {
-                crate::intensification::RungBranch::Plant => LaborTarget::Agriculture,
-                crate::intensification::RungBranch::Animal => LaborTarget::Husbandry,
-            };
-            let kit = equipment.keeping_kit_for(allocation.named_kit_on(&role).as_ref(), branch);
-            // **The coverage is over the POOL**, exactly as the builders' is: the seam arms a
-            // prefix, so a part-equipped keeping pool gets the share it actually carries and the
-            // bare hands beside it still bring their own `PER_WORKER_OUTPUT`.
-            let keepers = allocation.workers_on(&role);
-            KeepingBranchGear {
-                work_per_worker: equipment
-                    .coverage(&kit, keepers as f32, band_kit)
-                    .weighted_rate(|crew| equipment.build_work_per_worker(crew, band_kit, branch)),
-                wear_kit: equipment.build_gear_kit(&kit, band_kit, branch),
-            }
-        };
+/// **THE KEEPING RATE AT WHICH NOBODY DELIVERS ANYTHING** — the zero
+/// [`KeepingRate::worker_need`] refuses to divide by.
+const NO_KEEPING_RATE: f32 = 0.0;
+
+impl KeepingRate {
+    /// **HOW MANY KEEPERS THIS SITE'S BILL NEEDS** — `demand ÷ r`, and **the unit the pool is split
+    /// in** since the kit became per site.
+    ///
+    /// The split has to be in *workers* rather than in work, because the two stopped being
+    /// interchangeable: with one rate for the whole web, splitting the work pool in proportion to
+    /// demand and splitting the worker pool in proportion to worker-need are the same arithmetic,
+    /// and with two rates they are not. Two sites owing the same demand, one hoed and one bare, ask
+    /// for **different numbers of hands** — which is exactly what a per-site tool means.
+    fn worker_need(&self, demand: f32) -> f32 {
+        if self.per_worker > NO_KEEPING_RATE {
+            demand / self.per_worker
+        } else {
+            NO_UPKEEP_DEMAND
+        }
+    }
+}
+
+/// **WHAT ONE ASSIGNMENT ROW WAS AWARDED FROM ITS WEB'S KEEPING POOL THIS TURN** —
+/// [`maintenance_shares`]'s answer, index-aligned with `allocation.assignments`.
+///
+/// **The work and the kit that did it travel together**, because the wear charge is billed on what
+/// the pool *supplied* to that source and the two must describe one site: paying one site's hours
+/// against another site's tool is the defect a per-band kit made unavoidable.
+#[derive(Clone)]
+struct KeepingAward {
+    /// This source's share of its web's pool, in **work** units.
+    work: f32,
+    /// The kit that work was done with, already narrowed to the tools serving this web. `None` for a
+    /// row that made no claim — it was supplied nothing, so it wore nothing.
+    wear_kit: Option<crate::equipment_config::KitChoice>,
+}
+
+impl Default for KeepingAward {
+    fn default() -> Self {
         Self {
-            plant: on(crate::intensification::RungBranch::Plant),
-            animal: on(crate::intensification::RungBranch::Animal),
+            work: NO_UPKEEP_DEMAND,
+            wear_kit: None,
         }
     }
+}
 
-    fn on(&self, branch: crate::intensification::RungBranch) -> f32 {
-        self.branch(branch).work_per_worker
+/// **WHAT EACH CLAIM'S KEEPERS DELIVER, AND WHAT THEIR WORK WEARS** — index-aligned with `claims`.
+///
+/// # ⛔ SITES SHARING A KIT SHARE ITS SCARCITY
+///
+/// [`crate::equipment_config::EquipmentConfig::coverage`] answers *"of these workers, how many
+/// actually carry the kit's items, given what the band owns"*. Asked naively per site it
+/// **double-counts**: a band owning three hoes, with two keepers on one patch and three on another,
+/// would arm two on the first and three on the second — five equipped hands off three hoes.
+///
+/// So the claims are **grouped by their resolved kit** and coverage is taken **once** per group,
+/// over that group's whole share of the pool. Sites naming different kits do not compete for each
+/// other's gear; sites naming the same one degrade together, exactly as the single band-wide pool
+/// did. With one distinct kit on a branch — which is every branch on the shipped roster — this is
+/// one call over the whole role, bit for bit what shipped before the kit moved to the site.
+///
+/// **THE GROUPING KEY IS THE KIT ID, so two DIFFERENT kits sharing an ITEM still double-count it** —
+/// two plant kits both listing `hoes` would each arm their own group off the same stock. No shipped
+/// kit shares an item with another on its own web, and the band-wide code this replaced had the
+/// identical property across the two branches, so nothing regressed and nothing is reachable today.
+/// Closing it means grouping by the item rather than by the kit, which is a real change to what
+/// "sharing scarcity" means and wants a case in front of it first.
+///
+/// # THE GROUP'S SHARE OF THE POOL IS STRUCK OFF THE BILL, AND IT HAS TO BE
+///
+/// A group's *rate* depends on how many hands stand in it, and how many hands stand in it depends on
+/// every group's rate — so the coverage read cannot be taken over the split it is an input to. It is
+/// taken over the group's share of the **demand** instead, which is the one measure of *how much of
+/// this band's keeping is this group* that does not mention a kit. The split proper
+/// ([`maintenance_shares`]) then runs in worker-need units against these rates and may land
+/// somewhere else — a group whose tool is efficient needs fewer hands than its share of the bill.
+fn keeping_rates(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
+    branch: crate::intensification::RungBranch,
+    keepers: u32,
+    claims: &[KeepingClaim],
+) -> Vec<KeepingRate> {
+    let total_demand = keeping_demand(claims);
+    // The distinct kits on this branch, and what each group's sites ask for between them. Keyed by
+    // roster id: an id determines the kit's items, so two claims that resolved the same id resolved
+    // the same gear.
+    let mut group_kits: Vec<crate::equipment_config::KitChoice> = Vec::new();
+    let mut group_demand: Vec<f32> = Vec::new();
+    let mut group_of_claim: Vec<usize> = Vec::with_capacity(claims.len());
+    for claim in claims {
+        let group = group_kits
+            .iter()
+            .position(|kit| kit.id() == claim.kit.id())
+            .unwrap_or_else(|| {
+                group_kits.push(claim.kit.clone());
+                group_demand.push(NO_UPKEEP_DEMAND);
+                group_kits.len() - 1
+            });
+        group_demand[group] += claim.demand;
+        group_of_claim.push(group);
     }
+    let resolved: Vec<KeepingRate> = group_kits
+        .iter()
+        .zip(&group_demand)
+        .map(|(kit, demand)| {
+            // **The coverage is over the GROUP**, exactly as the builders' is over their pool: the
+            // seam arms a prefix, so a part-equipped group gets the share it actually carries and
+            // the bare hands beside it still bring their own `PER_WORKER_OUTPUT`.
+            let share = if total_demand > NO_UPKEEP_DEMAND {
+                keepers as f32 * (demand / total_demand)
+            } else {
+                NO_UPKEEP_DEMAND
+            };
+            let gear = equipment
+                .coverage(kit, share, band_kit)
+                .weighted_rate(|crew| equipment.build_work_per_worker(crew, band_kit, branch));
+            KeepingRate {
+                per_worker: crate::intensification::build_work_per_worker_turn(gear),
+                wear_kit: equipment.build_gear_kit(kit, band_kit, branch),
+            }
+        })
+        .collect();
+    group_of_claim
+        .into_iter()
+        .map(|group| KeepingRate {
+            per_worker: resolved[group].per_worker,
+            wear_kit: resolved[group].wear_kit.clone(),
+        })
+        .collect()
+}
 
-    fn branch(&self, branch: crate::intensification::RungBranch) -> &KeepingBranchGear {
-        match branch {
-            crate::intensification::RungBranch::Plant => &self.plant,
-            crate::intensification::RungBranch::Animal => &self.animal,
-        }
-    }
+/// **HOW MANY KEEPERS ONE WEB'S BILL NEEDS THIS TURN** — the sum of every claim's
+/// [`KeepingRate::worker_need`], and the number [`spare_keepers`] strikes a role's head count
+/// against.
+///
+/// **It is struck through the same seam the split is** ([`keeping_rates`]), so *"more keepers than
+/// the bill needs"* and *"what each site is owed"* cannot come from two different readings of the
+/// same gear.
+fn keeping_worker_need(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
+    branch: crate::intensification::RungBranch,
+    keepers: u32,
+    claims: &[KeepingClaim],
+) -> f32 {
+    keeping_rates(equipment, band_kit, branch, keepers, claims)
+        .iter()
+        .zip(claims)
+        .map(|(rate, claim)| rate.worker_need(claim.demand))
+        .sum()
 }
 
 /// **THE ONE SOURCE THIS BAND'S BUILDERS CAN PUT WORK ON THE GROUND FOR THIS TURN**, and the rung it
@@ -504,11 +622,16 @@ impl KeepingGear {
 /// caused the first-turn bug. What a further narrowing risks instead is refusing a share on a turn
 /// the build really does bank — which is why the gate is resolved fresh from this turn's ground
 /// rather than read off last turn's published `build_blocked_reason` (the decay pass clears that at
-/// the top of every turn, so at this point in the turn it is always [`BuildGate::Open`]).
+/// the top of every turn, so at this point in the turn it is always [`crate::intensification::BuildGate::Open`]).
 ///
 /// `None` when the queue is empty, when the head declares a **ring** (which fills no rung meter and
 /// so names no verb), or when nobody is on the `builders` row — a declaration with no hands behind it
 /// puts nothing on the ground either.
+///
+/// ⛔ **THE RING'S ABSENCE HERE IS ABOUT THE VERB AND NOTHING ELSE.** This seam once decided the
+/// build's *material* claim too, and a ring therefore bid for no pile and widened a pen for free.
+/// The pile is laid by [`head_ring_leg`] now, off the ring's own gate — so filtering `ExtendPen` out
+/// of a **verb** answer no longer makes a ring materially free.
 struct SourceBankingFirstWork {
     source: Option<(BuildSource, Improvement)>,
 }
@@ -778,11 +901,16 @@ fn head_rung_gate(
     }
 }
 
-/// One source's claim on its web's pool: where to write the share back, what it asks for, and
-/// the two keys that make *most-invested first* a total order.
+/// One source's claim on its web's pool: where to write the share back, what it asks for, **what it
+/// is worked with**, and the two keys that make *most-invested first* a total order.
 struct KeepingClaim {
     index: usize,
     demand: f32,
+    /// **THE KIT THIS SITE IS KEPT WITH** — its own row's selection, else its web's derivation
+    /// ([`crate::equipment_config::EquipmentConfig::keeping_kit_for`]). Resolved here, with the
+    /// claim, because the rate a claim is funded at and the wear that rate spends are two readings
+    /// of one choice and must not be taken from two places.
+    kit: crate::equipment_config::KitChoice,
     invested: f32,
     tiebreak: String,
 }
@@ -798,6 +926,9 @@ struct KeepingClaim {
 fn keeping_claims(
     allocation: &LaborAllocation,
     banking: &SourceBankingFirstWork,
+    // **The roster the site kits resolve against** — a claim carries the kit it is worked with, so
+    // the derivation that answers for a row naming none is read here rather than a seam later.
+    equipment: &crate::equipment_config::EquipmentConfig,
     forage_registry: &ForageRegistry,
     // **The ground under each plant claim**, resolved by coord: the plant demand is quoted per
     // tender-load of the TILE's own `K` (`forage::patch_tender_loads`), so a claim cannot be priced
@@ -839,6 +970,10 @@ fn keeping_claims(
                 }
                 plant.push(KeepingClaim {
                     index,
+                    kit: equipment.keeping_kit_for(
+                        assignment.upkeep_kit.as_ref(),
+                        crate::intensification::RungBranch::Plant,
+                    ),
                     // **The DEMAND takes no verb any more** — it interpolates on the patch's own
                     // position, so there is no step for the one-turn carry to straddle. The verb
                     // survives one line up, where it still answers *does this source claim at all
@@ -874,6 +1009,10 @@ fn keeping_claims(
                 }
                 animal.push(KeepingClaim {
                     index,
+                    kit: equipment.keeping_kit_for(
+                        assignment.upkeep_kit.as_ref(),
+                        crate::intensification::RungBranch::Animal,
+                    ),
                     // **The DEMAND takes no verb any more** — it interpolates on the herd's own
                     // position, so there is no step for the one-turn carry to straddle. The verb
                     // survives one line up, where it still answers *does this source claim at all
@@ -905,17 +1044,16 @@ fn keeping_demand(claims: &[KeepingClaim]) -> f32 {
 }
 
 /// **HANDS ON A KEEPING ROLE THE BILL DOES NOT NEED** — the largest number that can leave the role
-/// with what remains still covering `demand` in full. The shedding order's step 3 spends exactly
+/// with what remains still covering every claim in full. The shedding order's step 3 spends exactly
 /// these, and only these, before anything that costs output.
 ///
-/// A pool does not divide into whole people, so the crew that must stay is `ceil(demand ÷ what one
-/// keeper supplies)` — the same [`crate::intensification::build_work_per_worker_turn`] rate
-/// [`crate::intensification::pool_work_supply`] multiplies up, so the surplus is struck against the
-/// supply the split will actually make. That rate floors its gear term at bare hands and bare hands
-/// deliver a positive `PER_WORKER_OUTPUT`, so the division cannot be by zero.
-fn spare_keepers(workers: u32, gear_per_worker: f32, demand: f32) -> u32 {
-    let per_keeper = crate::intensification::build_work_per_worker_turn(gear_per_worker);
-    let needed = (demand / per_keeper).ceil().max(0.0) as u32;
+/// A pool does not divide into whole people, so the crew that must stay is `ceil(worker_need)` —
+/// [`keeping_worker_need`], which is each site's own `demand ÷ its own keeper rate` summed. **The
+/// sum is over sites rather than one division of the web's whole bill**, because since the kit
+/// became per site the web has no single rate to divide by: a hoed Field and a bare patch owing the
+/// same demand need different numbers of hands.
+fn spare_keepers(workers: u32, worker_need: f32) -> u32 {
+    let needed = worker_need.ceil().max(0.0) as u32;
     workers.saturating_sub(needed)
 }
 
@@ -1057,13 +1195,15 @@ fn resolve_shed_facts(
     ladder: &LadderConfig,
     discovery: &DiscoveryProgressLedger,
     knowledge_threshold: f32,
-    keeping_gear: &KeepingGear,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
     width: u32,
     wrap: bool,
 ) -> ShedFacts {
     let (plant_claims, animal_claims) = keeping_claims(
         allocation,
         banking,
+        equipment,
         forage_registry,
         tile_capacity_of,
         forage,
@@ -1117,13 +1257,23 @@ fn resolve_shed_facts(
         threatened: band_is_threatened(band_pos, herds, fauna, width, wrap),
         spare_agriculture_keepers: spare_keepers(
             allocation.workers_on(&LaborTarget::Agriculture),
-            keeping_gear.on(crate::intensification::RungBranch::Plant),
-            keeping_demand(&plant_claims),
+            keeping_worker_need(
+                equipment,
+                band_kit,
+                crate::intensification::RungBranch::Plant,
+                allocation.workers_on(&LaborTarget::Agriculture),
+                &plant_claims,
+            ),
         ),
         spare_husbandry_keepers: spare_keepers(
             allocation.workers_on(&LaborTarget::Husbandry),
-            keeping_gear.on(crate::intensification::RungBranch::Animal),
-            keeping_demand(&animal_claims),
+            keeping_worker_need(
+                equipment,
+                band_kit,
+                crate::intensification::RungBranch::Animal,
+                allocation.workers_on(&LaborTarget::Husbandry),
+                &animal_claims,
+            ),
         ),
     }
 }
@@ -1138,12 +1288,14 @@ fn maintenance_shares(
     herds: &HerdRegistry,
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
-    keeping_gear: &KeepingGear,
-) -> Vec<f32> {
-    let mut shares = vec![NO_UPKEEP_DEMAND; allocation.assignments.len()];
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
+) -> Vec<KeepingAward> {
+    let mut awards = vec![KeepingAward::default(); allocation.assignments.len()];
     let (mut plant, mut animal) = keeping_claims(
         allocation,
         banking,
+        equipment,
         forage_registry,
         tile_capacity_of,
         forage,
@@ -1171,20 +1323,41 @@ fn maintenance_shares(
         });
         // **THE SAME SUPPLY EXPRESSION A BUILD DIVIDES ITS PILE BY** (§4.8) — an equipped keeper
         // covers more demand than a bare one, and the rung's demand is untouched by either. See
-        // [`KeepingGear`] for why the kit is derived rather than named.
-        let pool = crate::intensification::pool_work_supply(
-            allocation.workers_on(&role),
-            keeping_gear.on(branch),
-        );
-        let demands: Vec<f32> = claims.iter().map(|claim| claim.demand).collect();
-        for (claim, share) in claims
+        // [`KeepingRate`] for where each site's kit comes from.
+        //
+        // # ⛔ WHAT IS SPLIT IS THE WORKERS, AND THE UNIT IS EACH SITE'S OWN WORKER-NEED
+        //
+        // The pool used to be one work total struck at one rate for the whole web, divided in
+        // proportion to **work demand**. With the kit on the site there is no one rate to strike it
+        // at, so the **head count** is what the band actually has to divide and a site's claim on it
+        // is `demand ÷ what one of its own keepers delivers`. What each site is then supplied is
+        // `its hands × its own rate`.
+        //
+        // **It is the same arithmetic wherever the rates agree**, which is every branch on the
+        // shipped roster: with one `r`, `d_i / r` is `d_i` scaled by a constant, `distribute_upkeep_pool`
+        // is homogeneous in that constant under both modes, and `w_i × r` lands exactly on the share
+        // the work-unit split produced. The proof that this change moves nothing that ships is that
+        // equality — see `upkeep_kit_per_site_is_pacing_neutral_on_the_shipped_roster`.
+        let keepers = allocation.workers_on(&role);
+        let rates = keeping_rates(equipment, band_kit, branch, keepers, claims);
+        let needs: Vec<f32> = claims
             .iter()
-            .zip(distribute_upkeep_pool(pool, &demands, mode))
+            .zip(&rates)
+            .map(|(claim, rate)| rate.worker_need(claim.demand))
+            .collect();
+        for ((claim, rate), hands) in
+            claims
+                .iter()
+                .zip(&rates)
+                .zip(distribute_upkeep_pool(keepers as f32, &needs, mode))
         {
-            shares[claim.index] = share;
+            awards[claim.index] = KeepingAward {
+                work: hands * rate.per_worker,
+                wear_kit: Some(rate.wear_kit.clone()),
+            };
         }
     }
-    shares
+    awards
 }
 
 /// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired
@@ -1348,6 +1521,54 @@ fn settle_scarce_store(demands: &[(SourcePriority, f32)], available: f32) -> Vec
     settled
 }
 
+/// **HOW FAR THIS BAND'S HANDS ACTUALLY GO** — a patch inside `band_work_range`, a herd inside
+/// `hunt_reach`, and nothing beyond either.
+///
+/// # ⛔ EVERY SETTLEMENT STRUCK BEFORE THE ASSIGNMENT LOOP MUST ASK IT
+///
+/// Both arms of the loop lapse an out-of-reach row and `continue` **past** every keeping draw and
+/// material spend beneath them, so a settlement that reserved a store for that row would hold a
+/// reservation nothing ever draws — starving the row that *is* in reach with a shortfall it did not
+/// cause. [`settle_pen_hay`] carried the rule inline first; it is a type here so
+/// [`settle_material_upkeep`] beside it cannot state a second version of it.
+///
+/// The failure it closes: a band keeping two `Normal` pens, one past the leash, with exactly one
+/// pen's hurdles on the shelf. Each was settled half; the out-of-leash pen spent nothing; the
+/// **in-reach** pen was judged half-short and took the neglect counter, the decay fraction and the
+/// shed.
+#[derive(Clone, Copy)]
+struct BandReach {
+    band_pos: UVec2,
+    grid_width: u32,
+    wrap_horizontal: bool,
+    /// [`crate::labor_config::LaborConfig::band_work_range`] — the Forage arm's own lapse distance.
+    work_range: u32,
+    /// [`crate::labor_config::LaborConfig::hunt_reach`] — the Hunt arm's.
+    hunt_reach: u32,
+}
+
+impl BandReach {
+    /// **Will the assignment loop reach this row this turn?** A herd the registry no longer carries
+    /// is `false`, because the Hunt arm lapses that row on the very same `continue`.
+    fn holds(&self, target: &LaborTarget, registry: &HerdRegistry) -> bool {
+        let (position, limit) = match target {
+            LaborTarget::Forage { tile, .. } => (*tile, self.work_range),
+            LaborTarget::Hunt { fauna_id, .. } => match registry.find(fauna_id) {
+                Some(herd) => (herd.position(), self.hunt_reach),
+                None => return false,
+            },
+            // Every other role is worked where the band stands, so there is no distance to fail.
+            _ => return true,
+        };
+        crate::grid_utils::hex_distance_wrapped(
+            self.band_pos,
+            position,
+            self.grid_width,
+            self.wrap_horizontal,
+        ) <= limit
+    }
+}
+
 /// **THE HAY SPLIT, STRUCK ONCE FOR EVERY PEN THIS BAND KEEPS** — the fix for the positional
 /// allocation described on [`settle_scarce_store`], and the one place the corral arm's pasture-and-hay
 /// arithmetic lives. Served by [`settle_scarce_store`], so within one priority tier a short `FODDER`
@@ -1379,10 +1600,7 @@ fn settle_pen_hay(
     registry: &HerdRegistry,
     stores: &LocalStore,
     foddering_known: bool,
-    band_pos: UVec2,
-    hunt_reach: u32,
-    grid_width: u32,
-    wrap_horizontal: bool,
+    reach: BandReach,
 ) -> HashMap<String, PenFeedShare> {
     /// One pen's bid: its id, the player's rank on the row, its grass demand, the share of that
     /// demand the footprint covers, and the hay it is asking the `FODDER` store for.
@@ -1408,13 +1626,8 @@ fn settle_pen_hay(
         if !herd.is_corralled() {
             continue;
         }
-        if crate::grid_utils::hex_distance_wrapped(
-            band_pos,
-            herd.position(),
-            grid_width,
-            wrap_horizontal,
-        ) > hunt_reach
-        {
+        // **The gate the corral arm itself applies** — see [`BandReach`].
+        if !reach.holds(&assignment.target, registry) {
             continue;
         }
         // The grass this pen would eat if nothing else fed it, and the gap its footprint leaves —
@@ -1478,6 +1691,348 @@ fn settle_pen_hay(
         ));
     }
     settled.into_iter().collect()
+}
+
+/// **WHAT THIS BAND'S MATERIAL STORES ARE SETTLED TO PAY THIS TURN** — the material half of the
+/// standing upkeep and of the build pile, struck by [`settle_material_upkeep`] *before* the
+/// assignment loop and merely applied inside it (`docs/plan_standing_upkeep.md` §2.7).
+///
+/// **Both accounts bid on ONE store in ONE call**, per material id: every source's upkeep rate, and
+/// the pile the head queue entry wants for the work its builders are about to bank. They are settled
+/// together because they are the same scarcity — a band mending fences and raising a new pen out of
+/// one pile of hurdles is choosing between them, and two settlements would let the earlier one eat
+/// the store before the later one saw it.
+struct MaterialSettlement {
+    /// **Index-aligned with `assignments`** — the same convention `upkeep_shares` and `last_yields`
+    /// follow, so an arm reads its own row by the index it is already iterating on.
+    upkeep: Vec<MaterialUpkeepShare>,
+    /// The head entry's own draw. [`BuildMaterialDraw::coverage`] is what the arms scale by.
+    build: BuildMaterialDraw,
+}
+
+/// One source's material keeping for the turn: the bill it was handed, and what the store paid.
+#[derive(Debug, Clone, Default)]
+struct MaterialUpkeepShare {
+    /// The interpolated per-material demand, struck at the **pre-accrual** position — stamped onto
+    /// `ForagePatch::upkeep_materials_demanded` / `Herd::upkeep_materials_demanded` on the work
+    /// stamp's own first-write-wins rule, and for its reason.
+    demanded: BTreeMap<String, f32>,
+    /// What [`settle_scarce_store`] handed this claim, per material.
+    settled: BTreeMap<String, f32>,
+}
+
+impl MaterialUpkeepShare {
+    /// Whether this source asked the store for anything at all — the cheap skip every arm takes
+    /// before touching a map, since no plant rung and no rung below `animal:pen` declares a material.
+    fn is_empty(&self) -> bool {
+        self.demanded.is_empty()
+    }
+}
+
+/// **THE HEAD BUILD ENTRY'S SHARE OF THE PILE** — what the store will let this turn's accrual buy.
+///
+/// # ⛔ A SHORT STORE STALLS THE BUILD PROPORTIONALLY; IT NEVER REFUSES IT
+///
+/// [`Self::coverage`] scales **both** the work banked and the materials drawn, so a store covering a
+/// third of the hurdles a turn's fencing wants banks a third of the turn's work and eats a third of
+/// the pile. The unbanked remainder is **wasted**, not returned to the pool — §2.5's stated rule for
+/// an indivisible supplier, and it needs no new machinery because the builders' output was never a
+/// stock anyone could carry forward.
+///
+/// **There is deliberately no affordability gate anywhere.** The five verbs' gate was retired in
+/// §2.5; a build the store cannot cover **queues and stalls**, which is what a build whose builders
+/// walk away already does.
+#[derive(Debug, Clone)]
+struct BuildMaterialDraw {
+    /// **`s` — the fraction of this turn's accrual the store can pay for**, `min(1, min over the
+    /// declared materials of settled / wanted)`. [`FULLY_SERVED`] when the head declares no material
+    /// at all, which is every rung on the shipped ladder but `animal:pen`.
+    coverage: f32,
+    /// The whole pile this turn's accrual would draw at full coverage, per material — so the spend
+    /// is `coverage × wanted` and the arithmetic is stated once.
+    wanted: BTreeMap<String, f32>,
+}
+
+impl BuildMaterialDraw {
+    /// **A BUILD THAT ASKS THE STORE FOR NOTHING** — full coverage and an empty pile, which is what
+    /// a band with no queue, no builders, a refused head gate or a rung declaring no material gets.
+    fn unbilled() -> Self {
+        Self {
+            coverage: FULLY_SERVED,
+            wanted: BTreeMap::new(),
+        }
+    }
+}
+
+/// **THE MATERIAL SETTLEMENT, STRUCK ONCE FOR THE WHOLE BAND** — the material twin of
+/// [`settle_pen_hay`], served by [`settle_scarce_store`] for the same reason: within one priority
+/// tier a short store splits **in proportion to demand**, so no source's place in `assignments`
+/// decides anything and an edited row re-pushed to the end is not starved.
+///
+/// ⛔ **`SourcePriority` IS THE ONLY ORDERING, AND `upkeep_mode` IS NOT READ**
+/// (`docs/plan_standing_upkeep.md` §4.9 item 12). The rank is the player's own per-row answer; the
+/// fund mode exists for a **pool** that has none, and reading both would let a row the player marked
+/// `High` starve with nothing on screen saying why. [`distribute_upkeep_pool`] keeps the work half
+/// and takes no material axis.
+///
+/// **The store is read at the top of the pass**, exactly as the hay is: a material is a stock, so
+/// what a band holds now is what it can spend now, and a same-turn craft reaches next turn's bill.
+#[allow(clippy::too_many_arguments)] // both registries, both configs, the store and the head entry
+fn settle_material_upkeep(
+    assignments: &[LaborAssignment],
+    forage_registry: &ForageRegistry,
+    registry: &HerdRegistry,
+    tile_capacity_of: impl Fn(UVec2) -> f32,
+    forage_cfg: &crate::labor_config::ForageLaborConfig,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+    stores: &LocalStore,
+    build: BuildMaterialDraw,
+    build_priority: SourcePriority,
+    reach: BandReach,
+) -> MaterialSettlement {
+    let mut upkeep: Vec<MaterialUpkeepShare> =
+        vec![MaterialUpkeepShare::default(); assignments.len()];
+    for (index, assignment) in assignments.iter().enumerate() {
+        // **A ROW THE ARM WILL NOT REACH BIDS FOR NOTHING** — [`BandReach`]'s own rule, the same one
+        // [`settle_pen_hay`] applies to the hay. The arm `continue`s past `apply_material_keeping`
+        // for an out-of-leash row, so a claim settled here would reserve hurdles nothing ever spends
+        // and leave the pen that *is* in reach judged short.
+        if !reach.holds(&assignment.target, registry) {
+            continue;
+        }
+        upkeep[index].demanded = match &assignment.target {
+            LaborTarget::Forage { tile, .. } => forage_registry
+                .patch(*tile)
+                .map(|patch| {
+                    crate::forage::patch_upkeep_material_demands(
+                        patch,
+                        ladder,
+                        tile_capacity_of(*tile),
+                        forage_cfg,
+                    )
+                })
+                .unwrap_or_default(),
+            LaborTarget::Hunt { fauna_id, .. } => registry
+                .find(fauna_id)
+                .map(|herd| fauna::herd_upkeep_material_demands(herd, fauna, ladder))
+                .unwrap_or_default(),
+            _ => BTreeMap::new(),
+        };
+    }
+    // The union of every id either account names, so one `settle_scarce_store` call answers for one
+    // material and no id is settled twice.
+    let ids: BTreeSet<String> = upkeep
+        .iter()
+        .flat_map(|share| share.demanded.keys())
+        .chain(build.wanted.keys())
+        .cloned()
+        .collect();
+    // **The build's coverage is the WORST of its materials**, so a store rich in one good and empty
+    // of another stalls the build at the empty one's rate. Folded across the ids below; `FULLY_SERVED`
+    // is the identity a build declaring nothing keeps.
+    let mut coverage = FULLY_SERVED;
+    for id in &ids {
+        // The claim vector: every source's upkeep in assignment order, then the build's, so the
+        // settled vector splits back on the same index.
+        let mut claims: Vec<(SourcePriority, f32)> = assignments
+            .iter()
+            .enumerate()
+            .map(|(index, assignment)| {
+                (
+                    assignment.priority,
+                    upkeep[index]
+                        .demanded
+                        .get(id.as_str())
+                        .copied()
+                        .unwrap_or(NOTHING_DEMANDED),
+                )
+            })
+            .collect();
+        let wanted = build
+            .wanted
+            .get(id.as_str())
+            .copied()
+            .unwrap_or(NOTHING_DEMANDED);
+        claims.push((build_priority, wanted));
+        let settled = settle_scarce_store(&claims, stores.material_total(id.as_str()).to_f32());
+        for (index, share) in upkeep.iter_mut().enumerate() {
+            if settled[index] > NOTHING_DEMANDED {
+                share.settled.insert(id.clone(), settled[index]);
+            }
+        }
+        if wanted > NOTHING_DEMANDED {
+            let paid = settled[assignments.len()];
+            coverage = coverage.min(paid / wanted);
+        }
+    }
+    MaterialSettlement {
+        upkeep,
+        build: BuildMaterialDraw {
+            coverage: coverage.clamp(NOTHING_DEMANDED, FULLY_SERVED),
+            wanted: build.wanted,
+        },
+    }
+}
+
+/// **WHAT THE HEAD ENTRY'S TURN OF WORK WOULD SWALLOW AT FULL COVERAGE**, per material — the pile
+/// drawn *in proportion to the work banked*, never on completion (`docs/plan_standing_upkeep.md`
+/// §2.7).
+///
+/// `legs` are the entry's own legs in climb order, each carrying the rung, what it still **owes**
+/// from the source's position, and its **full span width** on this source's price list. A turn's
+/// accrual is walked across them — a queue entry can span two, and **each leg draws its own rung's
+/// pile** at `pile × (accrual_in_this_leg / width)`.
+///
+/// **The owed cap is what makes the completing turn honest**: a leg one work unit from full draws a
+/// unit's worth of pile and no more, so the whole climb draws exactly the whole pile.
+/// **STAMP ONE SOURCE'S MATERIAL KEEPING AND SPEND WHAT THE STORE SETTLED** — the material twin of
+/// the `upkeep_supplied` / `upkeep_demanded` pair, applied in the arm where the source is in hand.
+///
+/// - the **demand** is stamped **first-write-wins**, the work stamp's own rule: it interpolates on a
+///   position that moves later in the turn, and every band's share was struck before the accrual, so
+///   the first visit is the one that still sees the bill the shares were split against;
+/// - the **supply** is `+=`, because the demand is per **source**: two bands each put a part of it on
+///   the ground, and assigning would let whichever band the loop visited last speak for all of them;
+/// - and the store is debited by exactly what was settled, which the settlement guarantees it holds.
+///
+/// **Decay refunds nothing** — nothing anywhere credits a material back when a position falls
+/// (`docs/plan_standing_upkeep.md` §2.7). That is what makes neglect self-limiting: the position
+/// falls, the rate falls with it, and an abandoned thing decays toward costing nothing rather than
+/// bleeding a store for ever.
+fn apply_material_keeping(
+    stores: &mut LocalStore,
+    share: &MaterialUpkeepShare,
+    demanded: &mut BTreeMap<String, f32>,
+    supplied: &mut BTreeMap<String, f32>,
+) {
+    if share.is_empty() {
+        return;
+    }
+    if demanded.is_empty() {
+        *demanded = share.demanded.clone();
+    }
+    for (id, paid) in &share.settled {
+        if *paid <= NOTHING_DEMANDED {
+            continue;
+        }
+        stores.take_material_batches(id, crate::scalar::scalar_from_f32(*paid));
+        *supplied.entry(id.clone()).or_insert(NOTHING_DEMANDED) += *paid;
+    }
+}
+
+/// **THE LEGS A HEAD ENTRY STILL HAS TO LAY, AS THE MATERIAL DRAW NEEDS THEM** — every rung between
+/// where the source stands and the entry's destination, each as `(rung, owed, width)` on **this
+/// source's own price list**.
+///
+/// It is `forage::patch_build_legs`' own walk with the second term the pile needs: `owed` is what is
+/// left of the rung from here (which caps a completing turn's draw) and `width` is the rung's whole
+/// span (which is what the pile is spread over, so climbing the whole rung draws the whole pile).
+///
+/// **The price is the one IN FORCE on the source** — `rung_cost` reads the patch's stamped Field
+/// quote where a Field leg has started and the reference span otherwise, which is what the arm will
+/// charge. The published leg list resolves the *live* quote instead, because it has to date a job
+/// that has not started; a draw is against work being banked now.
+fn head_build_legs(
+    source: &BuildSource,
+    destination: RungKey,
+    forage_registry: &ForageRegistry,
+    registry: &HerdRegistry,
+    ladder: &LadderConfig,
+) -> Vec<(RungKey, f32, f32)> {
+    let mut legs = Vec::new();
+    let mut cursor = destination.branch().root_rung();
+    while let Some(rung) = cursor.above() {
+        if !destination.is_at_or_above(rung) {
+            break;
+        }
+        let span = match source {
+            BuildSource::Patch(tile) => forage_registry.patch(*tile).map(|patch| {
+                (
+                    crate::forage::patch_rung_span(patch, rung, ladder).1,
+                    crate::forage::patch_rung_work_done(patch, rung, ladder),
+                )
+            }),
+            BuildSource::Herd(id) => registry.find(id).map(|herd| {
+                (
+                    herd.rung_cost(rung, ladder),
+                    herd.rung_work_done(rung, ladder),
+                )
+            }),
+        };
+        if let Some((width, done)) = span {
+            let owed = (width - done).max(NOTHING_DEMANDED);
+            if owed > NOTHING_DEMANDED {
+                legs.push((rung, owed, width));
+            }
+        }
+        cursor = rung;
+    }
+    legs
+}
+
+/// **THE ONE LEG A HEAD *RING* LAYS** — [`head_build_legs`]' twin for the queue entry that widens a
+/// pen instead of climbing a rung, in the same `(rung, owed, width)` shape and for the same reader.
+///
+/// # A RING IS A PEN BUILD, AND THE MATERIAL ACCOUNT IS WHERE THAT WAS LAST UNTRUE
+///
+/// Widening a fence is the same fencing labour on the same `animal:pen` record: the ring is priced at
+/// that rung's [`RungDef::build_cost`], raised by the same builders pool, and wears the same keepers'
+/// tools. **So it eats the same pile.** It was materially free for exactly one turn of this arc's
+/// life, because [`SourceBankingFirstWork`] answers a *verb* question and a ring names no verb — so
+/// nothing bid for it and it was quoted at [`FULLY_SERVED`].
+///
+/// Stating it as a **leg** rather than as a second draw is what keeps the two honest: the leg goes
+/// through [`build_material_wants`] with every rung leg, so *"a pile draws in proportion to the work
+/// banked"* has one expression, and the `owed` cap (`ring_cost − pen_extend_progress`) makes the
+/// closing turn draw only the remainder exactly as a rung's completing leg does.
+///
+/// `None` where there is no ring to pay for — the source is not a herd, the herd has left the
+/// registry, the pen rung has no build meter, or [`Herd::pen_extending`] (**the ring's whole gate**,
+/// the same flag the arm passes as the rung's `eligible`) is clear.
+fn head_ring_leg(
+    source: &BuildSource,
+    registry: &HerdRegistry,
+    ladder: &LadderConfig,
+) -> Option<(RungKey, f32, f32)> {
+    let BuildSource::Herd(fauna_id) = source else {
+        return None;
+    };
+    let herd = registry.find(fauna_id)?;
+    if !herd.pen_extending {
+        return None;
+    }
+    // **The ring's width is the pen's own cost, unscaled** — the arm's `ring_cost`, read off the same
+    // rung record so a retune moves both or neither. Penning takes no per-species multiplier.
+    let width = ladder
+        .rung(RungKey::AnimalPen)
+        .build_cost(RUNG_COST_UNSCALED)?;
+    let owed = (width - herd.pen_extend_progress).max(NOTHING_DEMANDED);
+    (owed > NOTHING_DEMANDED).then_some((RungKey::AnimalPen, owed, width))
+}
+
+fn build_material_wants(
+    legs: &[(RungKey, f32, f32)],
+    accrual: f32,
+    ladder: &LadderConfig,
+) -> BTreeMap<String, f32> {
+    let mut wants: BTreeMap<String, f32> = BTreeMap::new();
+    let mut remaining = accrual.max(NOTHING_DEMANDED);
+    for (rung, owed, width) in legs {
+        if remaining <= NOTHING_DEMANDED {
+            break;
+        }
+        let banked = remaining.min(*owed);
+        remaining -= banked;
+        let def = ladder.rung(*rung);
+        for (id, _) in def.build_materials() {
+            let draw = def.build_material_draw(id, banked, *width);
+            if draw > NOTHING_DEMANDED {
+                *wants.entry(id.to_string()).or_insert(NOTHING_DEMANDED) += draw;
+            }
+        }
+    }
+    wants
 }
 
 // **RETIRED: `settle_pen_larder` / `PenLarderBid`** — the bread half of the pen feed, settled across
@@ -1579,6 +2134,13 @@ pub fn advance_labor_allocation(
     // **The materials table** (`docs/plan_crafting_and_materials.md` §1) — resolved once, because it
     // decides only how a stated reading BANDS. What each source yields is that source's own config.
     let materials_cfg = configs.materials.get();
+    // The recipe book, for the bench half of `LaborAllocation::material_income` — see
+    // [`LaborConfigs::recipes`].
+    let recipes_cfg = configs.recipes.get();
+    // **A band with no `BandEquipment` at all** — a hand-built test world may spawn a bare cohort,
+    // and `bench_tiers` wants a wear ledger to read a live tool out of. An empty one is the honest
+    // answer for a band that owns nothing: every tier falls back to the material's bare-handed rate.
+    let no_kit_at_all = BandEquipment::default();
     // The **no-equipment baselines** of the two carry kits. `labor_config.json`'s rates are what a
     // sledless party drags and a bare-handed forager holds; the *equipped* side of each lives on its
     // item's own tier now, and `EquipmentConfig::{hunt,forage}_per_worker_biomass_capacity` is what
@@ -1688,7 +2250,6 @@ pub fn advance_labor_allocation(
         // bill needs*, *is anything coming for it*, *what is standing on each row's ground* — so the
         // gear and the funded head are resolved here against that allocation, and resolved again
         // below against whatever survives, which is the reading the split funds.
-        let shed_keeping_gear = KeepingGear::resolve(&equipment_cfg, &allocation, &band_kit);
         let shed_banking = band_banking(
             &allocation,
             &forage_registry,
@@ -1722,7 +2283,8 @@ pub fn advance_labor_allocation(
             &ladder,
             &discovery,
             knowledge_threshold,
-            &shed_keeping_gear,
+            &equipment_cfg,
+            &band_kit,
             grid_width,
             wrap_horizontal,
         );
@@ -1747,12 +2309,27 @@ pub fn advance_labor_allocation(
         // figures would be least true.
         allocation.last_fodder_need = NO_FODDER_LEDGER;
         allocation.last_fodder_inflow = NO_FODDER_LEDGER;
+        // **The standing MATERIAL bill rides the same cycle and the same early-exit rule** — cleared
+        // ahead of the shed's `continue`s, so a band that loses its last worker stops republishing
+        // last turn's need for holdings it no longer keeps.
+        allocation.last_material_need.clear();
+        allocation.last_material_income.clear();
         allocation.last_fodder_drain = NO_FODDER_LEDGER;
         if allocation.assignments.is_empty() {
             continue;
         }
         let Ok(band_pos) = tiles.get(cohort.current_tile).map(|tile| tile.position) else {
             continue;
+        };
+        // **HOW FAR THIS BAND'S HANDS GO**, bundled once for every settlement struck before the
+        // assignment loop — see [`BandReach`] for why a settlement that ignores it starves the rows
+        // that *are* in reach.
+        let band_reach = BandReach {
+            band_pos,
+            grid_width,
+            wrap_horizontal,
+            work_range,
+            hunt_reach,
         };
         // Productivity modifier stack (wellbeing): scale every yield by the band's output
         // multiplier at PAYOUT. One call — future modifiers slot into `output_multiplier`.
@@ -1791,9 +2368,6 @@ pub fn advance_labor_allocation(
         // assignment index (`maintenance_shares`). Resolved **before** the loop because the split is
         // a property of the band's *whole* holding on a web: what one patch gets depends on what
         // every other one asked for, which nothing inside a per-assignment pass can see.
-        // **THE KEEPING POOLS' OWN GEAR, ONE READING PER FOOD WEB** — derived off the roster, since
-        // no picker names one (see [`KeepingGear`]).
-        let keeping_gear = KeepingGear::resolve(&equipment_cfg, &allocation, &band_kit);
         // **THE FUNDED HEAD, AND ONLY IF ITS OWN GATE HOLDS** — the claim side's verb term
         // ([`SourceBankingFirstWork`]). A head the ground refuses banks nothing however long it
         // stands there, so letting it claim would dilute the share of everything the band really
@@ -1827,7 +2401,8 @@ pub fn advance_labor_allocation(
             &registry,
             &fauna,
             &ladder,
-            &keeping_gear,
+            &equipment_cfg,
+            &band_kit,
         );
         // **⛔ AND THE BILL EACH HERD WAS HANDED, STAMPED AT THIS EXACT MOMENT.**
         //
@@ -1858,6 +2433,13 @@ pub fn advance_labor_allocation(
             // exactly `0` — recording that is what makes `supplied == demand` on the turn a Tame
             // banks its first work, where the live demand read a turn later is already positive.
             herd.upkeep_demanded = Some(fauna::herd_upkeep_demand(herd, &fauna, &ladder));
+            // **AND THE MATERIAL HALF, STAMPED IN THE SAME BREATH.** It has to be here rather than in
+            // the arm below: the arm is skipped for a herd out of the hunt leash or gone from the
+            // registry, and a `upkeep_demanded` stamped without its material twin would read as *"a
+            // band answered and this rung eats nothing"* — an abandoned pen judged short of hands and
+            // fully supplied with hurdles. One pass stamps both, so the pair cannot come apart.
+            herd.upkeep_materials_demanded =
+                fauna::herd_upkeep_material_demands(herd, &fauna, &ladder);
         }
         // **AN ENTRY REQUIRES A ROW** (`docs/plan_standing_upkeep.md` §3.2 of the slice brief): the
         // queue is pruned of anything the band no longer works before a single work unit is aimed,
@@ -1870,7 +2452,7 @@ pub fn advance_labor_allocation(
         // verb declares, and the hands are here.
         let builders = allocation.workers_on(&LaborTarget::Builders);
         // **THE HEAD STAYS THE HEAD EVEN WHEN ITS GATE REFUSES.** It is not skipped, not reordered
-        // and not passed over — a stuck head says so loudly (`BuildTurns::Blocked`) rather than
+        // and not passed over — a stuck head says so loudly (`crate::intensification::BuildTurns::Blocked`) rather than
         // letting the queue quietly fund something the player did not put first.
         let head_entry = allocation.build_queue.first().cloned();
         // The queue as it stands for this turn, read inside the assignment loop (which borrows the
@@ -1921,6 +2503,104 @@ pub fn advance_labor_allocation(
         // the pass is the right one to split, and there is no second settlement behind it: a pen the
         // land and the hay cannot fill is underfed, and the keeper's `FOOD` larder — which is what
         // the *people* eat — is never asked.
+        // **THE MATERIAL HALF OF THE STANDING UPKEEP AND OF THE BUILD PILE, SETTLED ONCE**
+        // (`docs/plan_standing_upkeep.md` §2.7). Both accounts bid on one store in one call per
+        // material, through [`settle_scarce_store`] — so a short store splits by the player's own
+        // `SourcePriority` and then in proportion to demand, and no row's place in `assignments`
+        // decides anything (`set_assignment` re-pushes an edited row to the end).
+        //
+        // **The build's want is struck against the head entry alone**, and only where its gate holds
+        // — `banking` is that gate, resolved above and shared with the keeping claim, so the pool
+        // cannot draw a pile for work it will not bank.
+        //
+        // **AND THE HEAD MAY BE A RING**, which is why the two arms below meet in one pair. A ring is
+        // a pen build — the same rung record prices it, funds it and wears the same tools on it — so
+        // it draws the same pile, laid as [`head_ring_leg`] and spread by the very same
+        // [`build_material_wants`]. `banking` cannot answer for it (it resolves a *verb*, and a ring
+        // names none), so the ring's own gate is asked here instead: the head entry declares
+        // `ExtendPen`, the band has builders, and `Herd::pen_extending` is set.
+        let (pile_source, pile_legs) = match banking.source.as_ref() {
+            Some((source, improvement)) => (
+                Some(source.clone()),
+                head_build_legs(
+                    source,
+                    BuildJob::Rung(*improvement).destination(),
+                    &forage_registry,
+                    &registry,
+                    &ladder,
+                ),
+            ),
+            None => match head_entry.as_ref().filter(|entry| {
+                matches!(entry.declared, BuildJob::ExtendPen) && builders > NO_CREW_ON_THIS_ACTIVITY
+            }) {
+                Some(entry) => (
+                    Some(entry.source.clone()),
+                    head_ring_leg(&entry.source, &registry, &ladder)
+                        .into_iter()
+                        .collect(),
+                ),
+                None => (None, Vec::new()),
+            },
+        };
+        let build_want = match pile_source.as_ref() {
+            Some(source) => {
+                // The turn's accrual as the arm will compute it — the whole pool at the entry's own
+                // kit, which is `RungDef::build_accrual`'s body once its gate has held, and the
+                // ring arm's `pen_extend_accrual` on the same terms.
+                let accrual = crate::intensification::pool_work_supply(
+                    builders,
+                    builders_gear.for_source(source).work_per_worker,
+                );
+                BuildMaterialDraw {
+                    coverage: FULLY_SERVED,
+                    wanted: build_material_wants(&pile_legs, accrual, &ladder),
+                }
+            }
+            None => BuildMaterialDraw::unbilled(),
+        };
+        // The head row's own rank, so the build competes for the store on the player's answer for
+        // that source rather than on a rank of its own — a ring's included, so a widening pen queues
+        // for the hurdles behind a `High`-marked holding exactly as a fresh pen does.
+        let build_priority = pile_source
+            .as_ref()
+            .and_then(|source| {
+                allocation
+                    .assignments
+                    .iter()
+                    .find(|assignment| BuildSource::of(&assignment.target).as_ref() == Some(source))
+                    .map(|assignment| assignment.priority)
+            })
+            .unwrap_or_default();
+        let material_settlement = settle_material_upkeep(
+            &allocation.assignments,
+            &forage_registry,
+            &registry,
+            tile_capacity_of,
+            &labor.forage,
+            &fauna,
+            &ladder,
+            &cohort.stores,
+            build_want,
+            build_priority,
+            band_reach,
+        );
+        // **AND THE BUILD'S SHARE IS SPENT HERE, at the coverage the store could pay.** The materials
+        // go in as the meter climbs — `coverage` scales the accrual in every build arm below, so the
+        // work banked and the pile drawn are one fraction of the same turn. **Decay refunds nothing**:
+        // nothing credits this back when a position falls.
+        for (id, wanted) in &material_settlement.build.wanted {
+            let drawn = wanted * material_settlement.build.coverage;
+            if drawn > NOTHING_DEMANDED {
+                cohort
+                    .stores
+                    .take_material_batches(id, crate::scalar::scalar_from_f32(drawn));
+            }
+        }
+        let build_coverage = material_settlement.build.coverage;
+        // **THE KIT'S LIFE AS THE TURN FOUND IT** — the before half of the crossing
+        // [`announce_kit_life`] reads at the foot of this band's turn. Taken here, ahead of every
+        // wear charge, so the pair is one turn's transition and not a level test.
+        let kit_life_before = kit_life_fractions(&equipment_cfg, band_equipment.as_deref());
         let pen_feed = settle_pen_hay(
             &allocation.assignments,
             &registry,
@@ -1931,10 +2611,7 @@ pub fn advance_labor_allocation(
                 FODDERING_DISCOVERY_ID,
                 knowledge_threshold,
             ),
-            band_pos,
-            hunt_reach,
-            grid_width,
-            wrap_horizontal,
+            band_reach,
         );
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
             let workers = assignment.workers;
@@ -1982,6 +2659,20 @@ pub fn advance_labor_allocation(
             } else {
                 NO_CREW_ON_THIS_ACTIVITY
             };
+            // **THE SHARE OF ITS MATERIAL PILE THIS ENTRY WAS SETTLED**
+            // (`docs/plan_standing_upkeep.md` §2.7), which scales its accrual **and its countdown**:
+            // a forecast and a take must not disagree, and an unscaled countdown published *"≈20
+            // turns"* for a build banking a quarter of its turn.
+            //
+            // ⛔ **ONLY THE HEAD HAS ONE.** The settlement struck its want against `banking.source`,
+            // which is the head and only the head; a waiting entry has bid on nothing and its store
+            // draw is not decided until it is funded, so it is quoted at [`FULLY_SERVED`] — the same
+            // convention that quotes every waiting entry at the **full pool**.
+            let entry_material_coverage = if is_queue_head {
+                build_coverage
+            } else {
+                FULLY_SERVED
+            };
             // **A RUNNING QUOTE DESCRIBES A QUEUE ENTRY** — the ring's rule (`if ring_queued`
             // below), stated for the four rung arms too, and the fix for a patch that published
             // `≈1 turn` for ever.
@@ -2026,7 +2717,16 @@ pub fn advance_labor_allocation(
             // crew standing on the tile (`docs/plan_standing_upkeep.md` §2.5). It is already work
             // rather than workers, because a share of a pool does not divide into whole people and
             // that indivisibility is exactly the waste the pool retired.
-            let keeping_share = upkeep_shares.get(idx).copied().unwrap_or(NO_UPKEEP_DEMAND);
+            let keeping_share = upkeep_shares
+                .get(idx)
+                .map_or(NO_UPKEEP_DEMAND, |award| award.work);
+            // **AND THE KIT THAT SHARE WAS WORKED WITH** — this site's own, resolved with the share
+            // it pays for (`docs/plan_standing_upkeep.md` §2.7). It travels beside the work rather
+            // than being re-derived here, so the hours charged and the tool charged for them can
+            // never describe two different sites.
+            let keeping_wear_kit = upkeep_shares
+                .get(idx)
+                .and_then(|award| award.wear_kit.as_ref());
             // **THE KIT THIS CREW WAS SENT OUT WITH** (`equipment.json`'s roster) — the mask that
             // decides which of the three components serve it at all, re-resolved from the
             // *assignment* every turn and never from what the band happens to hold. `None` = the
@@ -2458,6 +3158,18 @@ pub fn advance_labor_allocation(
                             &labor.forage,
                         ));
                     }
+                    // **AND THE MATERIAL HALF OF THE SAME BILL, on the same two rules** — the demand
+                    // stamped first-write-wins (it interpolates on the same moving position) and the
+                    // store's payment accumulated across the bands answering for this source. The
+                    // amounts stay **separate** from the work beside them: a full store must not be
+                    // able to paper over missing hands (§4.9 item 12), so the decay pass takes the
+                    // *worst* of the two shortfall fractions rather than a summed one.
+                    apply_material_keeping(
+                        &mut cohort.stores,
+                        &material_settlement.upkeep[idx],
+                        &mut patch.upkeep_materials_demanded,
+                        &mut patch.upkeep_materials_supplied,
+                    );
                     // **AND THE KEEPER'S TOOLS ARE SPENT ON EXACTLY THAT WORK** — the
                     // `WearQuantum::UpkeepWork` charge, billed on what the pool **supplied** to this
                     // patch and not on what the rung demanded, so an under-staffed pool wears only
@@ -2465,9 +3177,7 @@ pub fn advance_labor_allocation(
                     charge_keeping_wear(
                         band_equipment.as_deref_mut(),
                         &equipment_cfg,
-                        &keeping_gear
-                            .branch(crate::intensification::RungBranch::Plant)
-                            .wear_kit,
+                        keeping_wear_kit,
                         keeping_supplied,
                     );
                     // **WHAT THE GROUND WILL LOSE UNDER THE BUILDERS** — exactly what the next
@@ -2747,6 +3457,14 @@ pub fn advance_labor_allocation(
                         // rung's verb and the gates hold); the patch owns its meter and the
                         // side-effects of completing it. **The crew is the BUILD's own**, and the
                         // floor is not a term at all — see [`RungDef::build_accrual`].
+                        // **⛔ AND THE MATERIAL STORE SCALES IT** (`docs/plan_standing_upkeep.md`
+                        // §2.7). `build_coverage` is the fraction of this turn's pile the band's
+                        // store could pay for, settled before the loop across every claim on it —
+                        // so a short store **stalls the build proportionally** rather than refusing
+                        // it, and the unbanked `(1 − s)` of the crew's output is **wasted**, which
+                        // is §2.5's stated rule for an indivisible supplier. It is `FULLY_SERVED`
+                        // for every rung that declares no material, which is every one on the
+                        // shipped ladder but `animal:pen`.
                         let accrual =
                             // **THE CREW'S WHOLE OUTPUT** — a build crew supplies nothing toward the
                             // maintenance rate, which the band's keeping pool owes for this meter at
@@ -2756,7 +3474,7 @@ pub fn advance_labor_allocation(
                                 eligible,
                                 build_workers,
                                 entry_gear.work_per_worker,
-                            );
+                            ) * build_coverage;
                         // **THE SIGNED TWIN, NET OF THE ROT** — what the countdown is struck from. A
                         // meter may only be *added* to and the bleed is the decay pass's, so the
                         // estimate is where the two accounts meet: builders raising a meter more
@@ -2772,6 +3490,7 @@ pub fn advance_labor_allocation(
                             builders,
                             entry_gear.work_per_worker,
                             meter_rot,
+                            entry_material_coverage,
                         );
                         // **THE JOB'S PRICE**, in work units — `RUNG_COST_UNSCALED` because a patch
                         // is a patch: the only per-source cost multiplier on the ladder is a
@@ -2831,6 +3550,7 @@ pub fn advance_labor_allocation(
                                     }),
                                     balance,
                                     gate,
+                                    material_coverage: entry_material_coverage,
                                 },
                             ));
                         }
@@ -2900,6 +3620,7 @@ pub fn advance_labor_allocation(
                             entry_declares_a_rung,
                             meter_rot,
                             field_cost_multiplier,
+                            entry_material_coverage,
                         )
                     {
                         // The Field is the top of the plant branch, so finishing it is always
@@ -3247,14 +3968,22 @@ pub fn advance_labor_allocation(
                     let keeping_supplied =
                         fauna::herd_upkeep_supply(herd, improvement, keeping_share);
                     herd.upkeep_supplied += keeping_supplied;
+                    // **AND THE MATERIAL HALF OF THE SAME BILL** — the pen's hurdles, on the plant
+                    // twin's own two rules (see the Forage arm). The bill's *work* stamp is struck
+                    // pre-loop for this web, so this is the one place the material stamp can be:
+                    // `apply_material_keeping` is first-write-wins for the same reason.
+                    apply_material_keeping(
+                        &mut cohort.stores,
+                        &material_settlement.upkeep[idx],
+                        &mut herd.upkeep_materials_demanded,
+                        &mut herd.upkeep_materials_supplied,
+                    );
                     // **The plant twin's charge** — the keeping tools are spent on the work the pool
                     // actually supplied to this herd. See the Forage arm.
                     charge_keeping_wear(
                         band_equipment.as_deref_mut(),
                         &equipment_cfg,
-                        &keeping_gear
-                            .branch(crate::intensification::RungBranch::Animal)
-                            .wear_kit,
+                        keeping_wear_kit,
                         keeping_supplied,
                     );
                     // **WHAT THE METER IS LOSING** — the plant twin's seam, and on the shipped
@@ -3571,13 +4300,19 @@ pub fn advance_labor_allocation(
                         // **`pen_extending` IS THE RING'S WHOLE GATE**, and it is passed as the
                         // rung's `eligible` rather than checked beside it, so the accrual and the
                         // quote below cannot come to disagree about whether a ring is running.
+                        //
+                        // **⛔ AND THE MATERIAL STORE SCALES IT, exactly as it scales a rung's**
+                        // (`docs/plan_standing_upkeep.md` §2.7). A ring bid for `animal:pen`'s own
+                        // build pile in the settlement above ([`head_ring_leg`]), so a store short of
+                        // hurdles stalls a widening fence in proportion and a dry one blocks it —
+                        // widening a pen costs the same panels as raising the pen it widens.
                         let ring_in_flight = herd.pen_extending;
                         let pen_extend_accrual = pen_rung.build_accrual(
                             Some(Improvement::Corral),
                             ring_in_flight,
                             ring_workers,
                             entry_gear.work_per_worker,
-                        );
+                        ) * build_coverage;
                         // A ring costs what the pen it widens costs — the same rung record, so the
                         // two can never drift — and the same keepers' tools raise both at the same
                         // rate.
@@ -3593,6 +4328,7 @@ pub fn advance_labor_allocation(
                             builders,
                             entry_gear.work_per_worker,
                             meter_rot,
+                            entry_material_coverage,
                         );
                         // Accrue the extension ring **after** the take (mirroring `accrue_corral`), so
                         // this turn pays exactly the dipped yield the forecast promised; the completed
@@ -3625,7 +4361,7 @@ pub fn advance_labor_allocation(
                         // band's chain pass exactly as the four rung arms record theirs.
                         //
                         // **Without this the ring was the one queue entry with no quote**, so
-                        // `publish_build_chain`'s `None` arm minted [`BuildTurns::Blocked`] for a
+                        // `publish_build_chain`'s `None` arm minted [`crate::intensification::BuildTurns::Blocked`] for a
                         // ring that was accruing perfectly normally — and `carried` then handed that
                         // `-4` to **every other source the band works**. `extend_pen` is a one-click
                         // shipped button, so that was ordinary play, not an edge.
@@ -3647,6 +4383,13 @@ pub fn advance_labor_allocation(
                                 BuildQuote {
                                     cost: ring_cost,
                                     banked: ring_banked,
+                                    // **THE COVERAGE THE SETTLEMENT HANDED THE RING** — a ring
+                                    // bids for `animal:pen`'s pile like any other build of that
+                                    // rung, so a store that cannot cover the panels publishes
+                                    // [`BuildGate::Materials`] here through
+                                    // [`crate::intensification::BuildQuote::blocking_gate`] rather
+                                    // than a confident countdown for a build nothing is feeding.
+                                    material_coverage: entry_material_coverage,
                                     // **The animal web still carries per-rung meters**, so an entry
                                     // there is one rung and lays no legs — `work_remaining` falls
                                     // back to this meter's own remainder. Legs arrive on this web
@@ -3656,7 +4399,7 @@ pub fn advance_labor_allocation(
                                     // **The ring's whole gate is its in-flight flag**, so a
                                     // queued ring that is not running publishes that as its cause.
                                     gate: if ring_in_flight {
-                                        BuildGate::Open
+                                        crate::intensification::BuildGate::Open
                                     } else {
                                         BuildGate::RingIdle
                                     },
@@ -3896,7 +4639,7 @@ pub fn advance_labor_allocation(
                             eligible,
                             build_workers,
                             entry_gear.work_per_worker,
-                        );
+                        ) * build_coverage;
                         // **The countdown's signed twin** — the Cultivate arm's rule, net of the
                         // meter's rot, which on the animal web is always `0` (no `meter_decay`: an
                         // under-kept flock sheds animals instead). At the **full pool**, like every
@@ -3907,6 +4650,7 @@ pub fn advance_labor_allocation(
                             builders,
                             entry_gear.work_per_worker,
                             meter_rot,
+                            entry_material_coverage,
                         );
                         // **THE JOB'S PRICE** — the rung's `work_cost` times this species' own
                         // `taming_cost_multiplier` (slice 3c inverted): the rung owns the mechanic,
@@ -3958,6 +4702,7 @@ pub fn advance_labor_allocation(
                                     legs: Vec::new(),
                                     balance,
                                     gate,
+                                    material_coverage: entry_material_coverage,
                                 },
                             ));
                         }
@@ -4021,7 +4766,7 @@ pub fn advance_labor_allocation(
                             eligible,
                             build_workers,
                             entry_gear.work_per_worker,
-                        );
+                        ) * build_coverage;
                         // **The countdown's signed twin** — the Cultivate arm's rule, at the full
                         // pool.
                         let balance = pen_rung.build_balance(
@@ -4030,6 +4775,7 @@ pub fn advance_labor_allocation(
                             builders,
                             entry_gear.work_per_worker,
                             meter_rot,
+                            entry_material_coverage,
                         );
                         // Penning is a flat job for every species — a fence is a fence — so the pen
                         // takes no per-species multiplier; only *taming* varies.
@@ -4056,6 +4802,7 @@ pub fn advance_labor_allocation(
                                     legs: Vec::new(),
                                     balance,
                                     gate,
+                                    material_coverage: entry_material_coverage,
                                 },
                             ));
                         }
@@ -4402,7 +5149,68 @@ pub fn advance_labor_allocation(
         // arrive is entitled to see it before it has learned what to do with it.
         allocation.last_fodder_need = band_fodder_need;
         allocation.last_fodder_inflow = band_fodder_inflow;
+        // **THE STANDING MATERIAL BILL, SUMMED BY THE SIM** (`docs/plan_standing_upkeep.md` §2.7) —
+        // the need off the settlement's own per-source bills, the income off what the rows credited.
+        //
+        // ⛔ **The client cannot sum the need itself**: herd rows are fog-filtered, so a pen out of
+        // sight would silently drop out of a total the band certainly still owes — the rule the hay
+        // ledger beside it already states.
+        for share in &material_settlement.upkeep {
+            for (id, amount) in &share.demanded {
+                *allocation
+                    .last_material_need
+                    .entry(id.clone())
+                    .or_insert(NOTHING_DEMANDED) += *amount;
+            }
+        }
+        // **Reported, never recomputed** — the amounts `credit_material_yield` actually deposited,
+        // which is the discipline `SourceYield::materials` already carries. This is only **half** the
+        // band's inflow: a bench is not a source row and deposits nothing until its meter crosses, so
+        // its forward rate joins here through `LaborAllocation::material_income` — the one producer
+        // the wire row and the shortfall Alert both read.
+        for row in &yields {
+            for payoff in &row.materials {
+                *allocation
+                    .last_material_income
+                    .entry(payoff.material.clone())
+                    .or_insert(NOTHING_DEMANDED) += payoff.amount;
+            }
+        }
         allocation.last_fodder_drain = band_fodder_drain;
+        // **THE TWO NOTIFICATIONS THE MATERIAL HALF OWES THE PLAYER** — a kit item crossing a
+        // `life_readout` seam, and a good the standing bills eat faster than it arrives
+        // (`docs/plan_standing_upkeep.md` §4.9 item 12). Both are pushed here, after the turn's wear
+        // and after the bill is summed, so each reads the state it is about.
+        announce_kit_life(
+            &mut event_log,
+            tick.0,
+            faction,
+            band_id,
+            &equipment_cfg,
+            &kit_life_before,
+            &kit_life_fractions(&equipment_cfg, band_equipment.as_deref()),
+        );
+        // **THE WHOLE INFLOW, THROUGH THE WIRE ROW'S OWN PRODUCER** — the credited take plus what
+        // this band's bench will bank. `hurdles` have no producer but a bench on the shipped roster,
+        // so an Alert struck on the take alone fires for every band that keeps a pen.
+        let band_material_income =
+            allocation.material_income(&crate::systems::bench_material_rate(
+                bench.as_deref(),
+                &cohort.stores,
+                &recipes_cfg,
+                &materials_cfg,
+                &equipment_cfg,
+                band_equipment.as_deref().unwrap_or(&no_kit_at_all),
+            ));
+        announce_material_shortfall(
+            &mut event_log,
+            tick.0,
+            faction,
+            band_id,
+            &mut allocation,
+            &cohort.stores,
+            &band_material_income,
+        );
         if !kept_pens.is_empty() {
             let per_pen = if knows(
                 &discovery,
@@ -4631,7 +5439,7 @@ fn entry_job_already_built(
 /// |---|---|---|
 /// | a count | `cumulative + n` | its own span, behind everything above it |
 /// | [`BuildTurns::Holding`] / [`BuildTurns::Rotting`] | itself, carried down | a meter standing still or losing ground never reaches its cost |
-/// | no answer, **at the head, with a staffed pool** | [`BuildTurns::Blocked`], carried down | the pool is standing on a gate that refuses it |
+/// | no answer, **at the head, with a staffed pool** | [`crate::intensification::BuildTurns::Blocked`], carried down | the pool is standing on a gate that refuses it |
 /// | no answer, anywhere else | `None`, carried down | a *waiting* entry may well be eligible by the time it reaches the head, so it says the honest *"no estimate"* — and we cannot date what is behind an unanswerable entry |
 ///
 /// # AND A BLOCKED HEAD SAYS **WHY**, DOWN THE WHOLE QUEUE
@@ -4644,7 +5452,7 @@ fn entry_job_already_built(
 ///
 /// A head that produced **no quote at all** is [`BuildGate::Unworked`]: not a rung's gate refusing,
 /// but the labor loop never reaching this source. Everything that is not a blocked entry publishes
-/// [`BuildGate::Open`], whose key is `""`.
+/// [`crate::intensification::BuildGate::Open`], whose key is `""`.
 ///
 /// # A SOURCE WITH NO ENTRY IS QUOTED AT THE BACK OF THE LINE
 ///
@@ -4683,7 +5491,7 @@ fn publish_build_chain(
         let (published, reason) = match carried {
             Some(value) => value,
             None => match quote.as_ref().and_then(|quote| quote.turns(builders)) {
-                Some(BuildTurns::Turns(turns)) => {
+                Some(crate::intensification::BuildTurns::Turns(turns)) => {
                     // **THE LEGS ARE DATED ON THE SAME RUNNING SUM** — everything above this entry,
                     // then each leg's own span in climb order — so the last leg's number is exactly
                     // the entry's, by construction rather than by a second calculation agreeing with
@@ -4693,16 +5501,22 @@ fn publish_build_chain(
                         .as_ref()
                         .map_or_else(Vec::new, |quote| leg_chain(quote, cumulative, builders));
                     cumulative = cumulative.saturating_add(turns);
-                    (Some(BuildTurns::Turns(cumulative)), BuildGate::Open)
+                    (
+                        Some(crate::intensification::BuildTurns::Turns(cumulative)),
+                        crate::intensification::BuildGate::Open,
+                    )
                 }
                 Some(state @ (BuildTurns::Holding | BuildTurns::Rotting)) => {
-                    carried = Some((Some(state), BuildGate::Open));
-                    (Some(state), BuildGate::Open)
+                    carried = Some((Some(state), crate::intensification::BuildGate::Open));
+                    (Some(state), crate::intensification::BuildGate::Open)
                 }
                 // `build_turns_estimate` answers for one build's arithmetic and never returns this;
                 // the arm below is the only place it is minted. Carried like any other stall.
-                Some(BuildTurns::Blocked) => {
-                    let value = (Some(BuildTurns::Blocked), blocked_reason(quote.clone()));
+                Some(crate::intensification::BuildTurns::Blocked) => {
+                    let value = (
+                        Some(crate::intensification::BuildTurns::Blocked),
+                        blocked_reason(quote.clone()),
+                    );
                     carried = Some(value);
                     value
                 }
@@ -4711,11 +5525,14 @@ fn publish_build_chain(
                     // refuses may well be eligible by the time it reaches the head.
                     let value =
                         if position == BUILD_QUEUE_HEAD && builders > NO_CREW_ON_THIS_ACTIVITY {
-                            (Some(BuildTurns::Blocked), blocked_reason(quote.clone()))
+                            (
+                                Some(crate::intensification::BuildTurns::Blocked),
+                                blocked_reason(quote.clone()),
+                            )
                         } else {
                             // **Not blocked, so no cause** — an entry merely waiting its turn is not
                             // stuck and must not publish a reason it would have to explain away.
-                            (None, BuildGate::Open)
+                            (None, crate::intensification::BuildGate::Open)
                         };
                     carried = Some(value);
                     value
@@ -4762,11 +5579,13 @@ fn publish_build_chain(
         let (projected, reason) = match carried {
             Some(value) => value,
             None => match quote.turns(builders) {
-                Some(BuildTurns::Turns(turns)) => (
-                    Some(BuildTurns::Turns(cumulative.saturating_add(turns))),
-                    BuildGate::Open,
+                Some(crate::intensification::BuildTurns::Turns(turns)) => (
+                    Some(crate::intensification::BuildTurns::Turns(
+                        cumulative.saturating_add(turns),
+                    )),
+                    crate::intensification::BuildGate::Open,
                 ),
-                other => (other, BuildGate::Open),
+                other => (other, crate::intensification::BuildGate::Open),
             },
         };
         match source {
@@ -4796,7 +5615,7 @@ fn publish_build_chain(
     }
 }
 
-/// **WHY THE POOL IS STUCK ON THIS ENTRY** — the cause a [`BuildTurns::Blocked`] head publishes.
+/// **WHY THE POOL IS STUCK ON THIS ENTRY** — the cause a [`crate::intensification::BuildTurns::Blocked`] head publishes.
 ///
 /// A quote whose gate refused answers with that conjunct. Everything else is
 /// [`BuildGate::Unworked`]: either the source produced no quote this turn (the labor loop never
@@ -4845,9 +5664,9 @@ fn leg_chain(
                         builders,
                     );
                     match span {
-                        Some(BuildTurns::Turns(turns)) => {
+                        Some(crate::intensification::BuildTurns::Turns(turns)) => {
                             cumulative = cumulative.saturating_add(turns);
-                            Some(BuildTurns::Turns(cumulative))
+                            Some(crate::intensification::BuildTurns::Turns(cumulative))
                         }
                         other => {
                             carried = Some(other);
@@ -4867,7 +5686,12 @@ fn arrived_at_destination(destination: Option<RungKey>, held: RungKey) -> bool {
 
 fn blocked_reason(quote: Option<BuildQuote>) -> BuildGate {
     match quote {
-        Some(quote) if !quote.gate.holds() => quote.gate,
+        // ⛔ **THROUGH `blocking_gate`, NEVER `gate` DIRECTLY.** A build the **store** stopped has a
+        // rung gate that *holds* — there is no affordability gate on a build
+        // (`docs/plan_standing_upkeep.md` §2.5) — so reading `gate` would publish a block with no
+        // cause, the exact silence this field was added to end. `blocking_gate` folds the two into
+        // one answer, and it is the only reader of either.
+        Some(quote) if !quote.blocking_gate().holds() => quote.blocking_gate(),
         _ => BuildGate::Unworked,
     }
 }
@@ -5214,13 +6038,197 @@ fn charge_build_wear(
 ///
 /// **Once per source per band**, at the same seam that accumulates `upkeep_supplied` — so two bands
 /// keeping one patch each wear their own gear for their own share, exactly as they each supply it.
+/// **EVERY KIT ITEM'S LIFE, AS A FRACTION OF ONE FRESH UNIT** — the reading
+/// `snapshot::crafting::life_severity` colours, taken here so a turn's wear can be read as a
+/// **transition** rather than as a level.
+///
+/// # ⛔ THE PANEL'S OWN NUMBER, PER BATCH, ROLLED UP TO THE ITEM'S WORST
+///
+/// Each batch is struck by [`crate::snapshot::crafting::batch_life_fraction`] — the *only* producer
+/// of this fraction, at the **batch's own tier** — and the item takes the **minimum**, which is
+/// exactly the worst `equipmentBatches` row the player is looking at. So the dock fires when a row
+/// on the panel turns amber and never otherwise.
+///
+/// Reading it any other way is what made the two disagree: an item-level
+/// `(default_durability − Σ batch wear) / durability` clamped to `[0, 1]` announced a two-hoe batch
+/// at `1.30` (*healthy* on the panel) as `0.30` — *warn* — and summed two half-worn batches to `0`,
+/// a `danger` Alert on mostly-fresh gear.
+///
+/// An item the band owns no batch of has **no entry**, which is how the crossing test skips gear
+/// gained or lost this turn.
+pub(crate) fn kit_life_fractions(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    wear: Option<&BandEquipment>,
+) -> BTreeMap<String, f32> {
+    let mut lives = BTreeMap::new();
+    let Some(wear) = wear else {
+        return lives;
+    };
+    for (id, def) in equipment.items() {
+        let worst = wear
+            .batches_of(id)
+            .iter()
+            .map(|batch| {
+                crate::snapshot::crafting::batch_life_fraction(
+                    def.tier_or_default(&batch.tier),
+                    batch,
+                )
+            })
+            .fold(None::<f32>, |worst, life| {
+                Some(worst.map_or(life, |worst| worst.min(life)))
+            });
+        if let Some(worst) = worst {
+            lives.insert(id.to_string(), worst);
+        }
+    }
+    lives
+}
+
+/// **THE KIT-LIFE NOTIFICATION** (`docs/plan_standing_upkeep.md` §4.9 item 12) — the two seams
+/// `equipment.json`'s `life_readout` has shipped with all along, finally reaching the player.
+///
+/// **Edge-gated on the CROSSING, with no stored state.** A level test would push the same line every
+/// turn for the rest of a spear's life; the fractions taken before and after this turn's wear are the
+/// transition itself, so a line fires exactly once per item per seam crossed and nothing has to be
+/// checkpointed. An item the band gained or lost this turn is not a crossing and is skipped.
+///
+/// **And the fraction is the PANEL'S** ([`kit_life_fractions`] → the one
+/// [`crate::snapshot::crafting::batch_life_fraction`]), so the dock and the ledger cannot disagree
+/// about when a spear is nearly out. `remaining=` therefore rides above `1.00` for a stockpile,
+/// exactly as the `equipmentBatches` row does.
+///
+/// **The sim publishes a KIND and a DETAIL, never a rung.** There is no importance field on the wire;
+/// the Alert/Notable/Routine ladder is resolved client-side off `kind`, so the seam that was crossed
+/// rides the detail as `severity=warn|danger` — and it is
+/// [`crate::snapshot::crafting::life_severity`]'s own answer, never a second reading of the same two
+/// thresholds.
+fn announce_kit_life(
+    event_log: &mut CommandEventLog,
+    tick: u64,
+    faction: FactionId,
+    band: Option<BandId>,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    before: &BTreeMap<String, f32>,
+    after: &BTreeMap<String, f32>,
+) {
+    for (id, now) in after {
+        let Some(was) = before.get(id) else {
+            continue;
+        };
+        let crossed = crate::snapshot::crafting::life_severity(*now, equipment);
+        if crossed == crate::snapshot::crafting::life_severity(*was, equipment)
+            || crossed == crate::snapshot::crafting::LIFE_HEALTHY
+        {
+            continue;
+        }
+        let name = crate::crafting::title_from_id(id);
+        event_log.push(CommandEventEntry::new(
+            tick,
+            CommandEventKind::KitLife,
+            faction,
+            format!("{name} are wearing out"),
+            Some(band_detail_token(
+                format!(
+                    "status=wearing severity={crossed} item={id} remaining={now:.2} action=craft"
+                ),
+                band,
+            )),
+        ));
+    }
+}
+
+/// **THE MATERIAL-SHORTFALL ALERT — and it NAMES THE BAND**
+/// (`docs/plan_standing_upkeep.md` §4.9 item 12), which is what replaces the faction `Gear` row's
+/// *"⚠ 1 band"* discovery path: a faction-level line says something is wrong and not where.
+///
+/// **Driven off the standing bill the same turn publishes**, so the event and the disclosure row
+/// cannot describe different turns: the band's summed per-turn need against
+/// [`LaborAllocation::material_income`] — **the `material_upkeep_income` row's own producer**, take
+/// plus bench — with the store on the shelf as the buffer between them.
+///
+/// ⛔ The bench half is not optional garnish. `hurdles` have no producer but a bench on the shipped
+/// roster, so an Alert struck on the credited take alone sees zero income for ever, calls the whole
+/// pen bill a gap, and fires for **every band that keeps a pen** — including one whose bench
+/// out-produces its pens.
+///
+/// **The condition is *"the shelf will not outlast the gap"***, not *"the bill went unpaid"* — a bill
+/// paid out of a store that is emptying is exactly the case a player wants warning of, and the alert
+/// would otherwise arrive on the turn the fence started falling down.
+///
+/// **One line per band per material**, and edge-gated on the band's own transient
+/// [`LaborAllocation::material_shortfall_warned`] so a standing famine does not repeat every turn. It
+/// is deliberately **not** checkpointed: a rollback may re-announce once, which is the same
+/// concession `Herd::pen_starving` makes and is cheaper than a second persisted flag.
+fn announce_material_shortfall(
+    event_log: &mut CommandEventLog,
+    tick: u64,
+    faction: FactionId,
+    band: Option<BandId>,
+    allocation: &mut LaborAllocation,
+    stores: &LocalStore,
+    // **THE WHOLE PER-TURN INFLOW** — [`LaborAllocation::material_income`], which is the same figure
+    // `PopulationCohortState::material_upkeep_income` publishes. ⛔ Never
+    // [`LaborAllocation::last_material_income`] on its own: that is the *credited take*, and a bench
+    // credits nothing until its meter crosses, so a gap struck against it counts a band's whole
+    // hurdle bill as unfunded however hard its bench is working.
+    income: &BTreeMap<String, f32>,
+) {
+    /// **How many turns of shelf is "about to run out"** — a store that outlasts this is not news.
+    /// A **named constant, not a config lever**: it is the alert's own sensitivity and nothing in the
+    /// sim branches on it, so a dial here would be a number with no consequence to observe.
+    const SHELF_TURNS_WORTH_WARNING: f32 = 5.0;
+    let mut short: Vec<(String, f32)> = Vec::new();
+    for (id, need) in &allocation.last_material_need {
+        let arriving = income.get(id).copied().unwrap_or(NOTHING_DEMANDED);
+        let gap = need - arriving;
+        if gap <= NOTHING_DEMANDED {
+            continue;
+        }
+        if stores.material_total(id).to_f32() > gap * SHELF_TURNS_WORTH_WARNING {
+            continue;
+        }
+        short.push((id.clone(), gap));
+    }
+    let names: Vec<String> = short.iter().map(|(id, _)| id.clone()).collect();
+    if names == allocation.material_shortfall_warned {
+        return;
+    }
+    for (id, gap) in &short {
+        if allocation.material_shortfall_warned.contains(id) {
+            continue;
+        }
+        let name = crate::crafting::title_from_id(id);
+        event_log.push(CommandEventEntry::new(
+            tick,
+            CommandEventKind::MaterialShortfall,
+            faction,
+            format!("{name} is running out"),
+            Some(band_detail_token(
+                format!(
+                    "status=outrunning material={id} short={gap:.2} held={:.2} action=craft",
+                    stores.material_total(id).to_f32()
+                ),
+                band,
+            )),
+        ));
+    }
+    allocation.material_shortfall_warned = names;
+}
+
+/// **SPEND THIS SITE'S KEEPING TOOLS ON THE WORK ITS KEEPERS ACTUALLY DID** — the
+/// [`crate::equipment_config::WearQuantum::UpkeepWork`] charge.
+///
+/// `kit` is **the site's own** ([`KeepingAward::wear_kit`]), never the band's: two patches this band
+/// keeps with two different tools wear two different tools, and billing both against one would run
+/// down gear that was never in that site's hands. `None` is a row that claimed nothing, which
+/// therefore wore nothing.
 fn charge_keeping_wear(
     equipment: Option<&mut BandEquipment>,
     config: &crate::equipment_config::EquipmentConfig,
-    kit: &crate::equipment_config::KitChoice,
+    kit: Option<&crate::equipment_config::KitChoice>,
     supplied: f32,
 ) {
-    if let Some(wear) = equipment {
+    if let (Some(wear), Some(kit)) = (equipment, kit) {
         wear.wear_kit(
             config,
             kit,
@@ -5267,7 +6275,7 @@ fn charge_keeping_wear(
 #[allow(clippy::struct_field_names)]
 struct BuildEstimateSlots<'a> {
     turns: &'a mut Option<BuildTurns>,
-    /// **Why the entry is blocked**, [`BuildGate::Open`] when it is not — it rides the same winner
+    /// **Why the entry is blocked**, [`crate::intensification::BuildGate::Open`] when it is not — it rides the same winner
     /// as the countdown beside it, because a cause taken from one band's queue beside a date from
     /// another's would be two answers pretending to be one.
     reason: &'a mut BuildGate,
@@ -5375,7 +6383,7 @@ enum EstimateStanding {
     Holds,
     /// The meter is going backwards ([`BuildTurns::Rotting`]).
     Rots,
-    /// **The head of this band's queue is refused by its own gate** ([`BuildTurns::Blocked`]).
+    /// **The head of this band's queue is refused by its own gate** ([`crate::intensification::BuildTurns::Blocked`]).
     ///
     /// **Below `Rots` and above `Silent`**, which continues the one stated rule rather than starting
     /// a second: a band that is rotting a meter is at least *supplying* something to it, a blocked
@@ -5391,10 +6399,10 @@ enum EstimateStanding {
 /// to compile until someone states where in the order it belongs.
 fn estimate_standing(estimate: Option<BuildTurns>) -> EstimateStanding {
     match estimate {
-        Some(BuildTurns::Turns(turns)) => EstimateStanding::Finishes(turns),
+        Some(crate::intensification::BuildTurns::Turns(turns)) => EstimateStanding::Finishes(turns),
         Some(BuildTurns::Holding) => EstimateStanding::Holds,
         Some(BuildTurns::Rotting) => EstimateStanding::Rots,
-        Some(BuildTurns::Blocked) => EstimateStanding::Blocked,
+        Some(crate::intensification::BuildTurns::Blocked) => EstimateStanding::Blocked,
         None => EstimateStanding::Silent,
     }
 }
@@ -5472,14 +6480,36 @@ fn accrue_field(
     // **What the `plant:field` rung costs on THIS ground**, resolved pre-accrual by the caller — see
     // this function's doc.
     field_cost_multiplier: f32,
+    // **THIS ENTRY'S share of the band's material pile** (`docs/plan_standing_upkeep.md` §2.7) —
+    // settled across every claim on that store before the assignment loop, so a short store stalls
+    // this build *proportionally* rather than refusing it and the unbanked remainder of the crew's
+    // output is wasted. `FULLY_SERVED` for a rung declaring no material, which is both plant rungs
+    // on the shipped ladder.
+    //
+    // ⛔ **THE ENTRY'S, NEVER THE BAND'S** (`entry_material_coverage` at the call site). The
+    // settlement struck its want against the **head** alone, so handing a waiting `sow` the band-wide
+    // figure published `BuildTurns::Blocked` with cause `BuildGate::Materials` for a rung that
+    // declares no material at all — because the *head* was a pen with an empty hurdle store — and
+    // `publish_build_chain` then carried that block down the rest of the queue.
+    material_coverage: f32,
 ) -> bool {
     let eligible = gate.holds();
     // The Sow crew's whole output — the keeping pool owes the rate whatever the builders do.
-    let accrual = field_rung.build_accrual(improvement, eligible, workers, gear_per_worker);
+    let accrual = field_rung.build_accrual(improvement, eligible, workers, gear_per_worker)
+        * material_coverage;
     // **The signed twin** — the meter takes the accrual, the countdown takes it net of the rot, so
     // *holding against the bleed* and *losing to it* stay two answers. At the **full pool**, like
     // every entry's quote.
-    let balance = field_rung.build_balance(improvement, eligible, pool, gear_per_worker, meter_rot);
+    // **AND THE COUNTDOWN IS SCALED BY THE SAME COVERAGE THE ACCRUAL IS** — a forecast and a take
+    // must not disagree (`docs/plan_standing_upkeep.md` §2.7).
+    let balance = field_rung.build_balance(
+        improvement,
+        eligible,
+        pool,
+        gear_per_worker,
+        meter_rot,
+        material_coverage,
+    );
     // **THE JOB'S PRICE, ON THIS GROUND** — the rung's declared `work_cost` at this patch's own
     // multiplier, which is what a Sow costs by how much of the tile it has to replace (§4.15).
     // **A kit still never moves it** (§4.8): gear is a term of `balance` beside it.
@@ -5496,6 +6526,7 @@ fn accrue_field(
                 BuildSource::Patch(tile),
                 BuildQuote {
                     cost: sow_cost,
+                    material_coverage,
                     // **THE WHOLE CLIMB'S POSITION, not this rung's share of it.** `banked` is what
                     // `build_turns_estimate` reads to tell *"nobody has promised anything yet"* from
                     // *"a meter the player has paid into"*, and a `sow` ordered on untended ground
@@ -5551,6 +6582,7 @@ fn accrue_field(
             BuildSource::Patch(tile),
             BuildQuote {
                 cost: sow_cost,
+                material_coverage,
                 // The whole climb's position — see the stalled quote above.
                 banked: patch.ladder_position(),
                 legs: crate::forage::patch_build_legs(
@@ -6190,6 +7222,118 @@ pub fn advance_predator_raids(
 }
 
 #[cfg(test)]
+mod keeping_split_tests {
+    //! The per-site keeping split, at the level the labor loop cannot reach: how many keepers a
+    //! web's bill needs when its sites are worked with different tools
+    //! (`docs/plan_standing_upkeep.md` §2.7).
+
+    use super::*;
+
+    /// A claim on `demand`, worked with the roster kit `kit_id` — the shape
+    /// [`keeping_claims`] builds and the split consumes.
+    fn claim(index: usize, demand: f32, kit_id: &str) -> KeepingClaim {
+        KeepingClaim {
+            index,
+            demand,
+            kit: crate::equipment_config::EquipmentConfig::builtin()
+                .kit(kit_id)
+                .unwrap_or_else(|| panic!("the shipped roster carries '{kit_id}'")),
+            invested: demand,
+            tiebreak: format!("{index:010}"),
+        }
+    }
+
+    /// **THE CREW A WEB'S BILL NEEDS IS SUMMED OVER ITS SITES, NOT DIVIDED OUT OF ITS TOTAL.**
+    ///
+    /// The shedding order spends *spare* keepers before anything that costs output, so *"how many
+    /// hands must stay"* has to be struck at the tools the sites are actually worked with. With one
+    /// rate per web the answer was `bill ÷ that rate`; with a tool per site there is no single rate
+    /// to divide by, and a hoed site and a bare one owing the same work need **different numbers of
+    /// hands**.
+    ///
+    /// **Both halves.** The mixed pair lands strictly between the two uniform answers — which is
+    /// what a per-site sum means and what any single-rate reading gets wrong in one direction or the
+    /// other — and the uniform pair still lands exactly on `bill ÷ the one rate`, so the
+    /// generalisation did not move the case that ships.
+    #[test]
+    fn a_webs_keeper_need_is_the_sum_of_each_sites_own_and_not_one_division_of_the_bill() {
+        /// Two equal bills, so the only thing that can move the answer is the tool.
+        const A_BILL: f32 = 3.0;
+        /// Enough hands that the coverage read arms every keeper — the band's scarcity is the
+        /// grouping test's subject, not this one.
+        const KEEPERS: u32 = 8;
+
+        let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        let stocked = BandEquipment::start_stocked_for(&equipment, KEEPERS as f32);
+        let need = |kits: [&str; 2]| -> f32 {
+            keeping_worker_need(
+                &equipment,
+                &stocked,
+                crate::intensification::RungBranch::Plant,
+                KEEPERS,
+                &[claim(0, A_BILL, kits[0]), claim(1, A_BILL, kits[1])],
+            )
+        };
+
+        let bare = need(["none", "none"]);
+        let hoed = need(["tillage", "tillage"]);
+        let mixed = need(["tillage", "none"]);
+
+        assert_eq!(
+            bare,
+            2.0 * A_BILL / crate::intensification::PER_WORKER_OUTPUT,
+            "two bare sites need their whole bill in hands — {bare}"
+        );
+        assert!(
+            hoed < bare,
+            "fixture: the hoes must actually save hands, or every comparison below is vacuous — \
+             {hoed} against {bare}"
+        );
+        assert!(
+            mixed > hoed && mixed < bare,
+            "one hoed site and one bare needs strictly between the two uniform answers: {mixed} \
+             against {hoed} and {bare}"
+        );
+        assert!(
+            (mixed - (hoed + bare) / 2.0).abs() < 1e-5,
+            "…and exactly each site's own need summed, which for two equal bills is the mean of \
+             the uniform pair: {mixed} against {}",
+            (hoed + bare) / 2.0
+        );
+    }
+
+    /// **SPARE KEEPERS ARE THE HANDS THE BILL DOES NOT NEED, AND A FRACTION OF A HAND IS A HAND.**
+    ///
+    /// A pool does not divide into whole people, so the crew that must stay is `ceil(need)`. Rounding
+    /// the other way hands the shedding order a keeper the bill is still relying on, and the source
+    /// it was holding starts to rot on the turn the band merely got smaller.
+    #[test]
+    fn a_fractional_keeper_need_still_holds_a_whole_keeper_back() {
+        const A_CREW: u32 = 4;
+        assert_eq!(
+            spare_keepers(A_CREW, 2.1),
+            1,
+            "a need of 2.1 keeps THREE hands: the tenth of a keeper is a whole person"
+        );
+        assert_eq!(
+            spare_keepers(A_CREW, 2.0),
+            2,
+            "…and a need that lands on a whole number keeps exactly that many"
+        );
+        assert_eq!(
+            spare_keepers(A_CREW, NO_UPKEEP_DEMAND),
+            A_CREW,
+            "a web with nothing to hold needs nobody, so every hand on the role is spare"
+        );
+        assert_eq!(
+            spare_keepers(A_CREW, A_CREW as f32 * 2.0),
+            0,
+            "…and a bill bigger than the role can cover leaves nothing spare, never a wrap-around"
+        );
+    }
+}
+
+#[cfg(test)]
 mod labor_yield_tests {
 
     //! Retained per-source food-yield telemetry (`LaborAllocation.last_yields`): a depletable
@@ -6451,6 +7595,7 @@ mod labor_yield_tests {
         world.insert_resource(crate::creatures_config::CreaturesConfigHandle::default());
         world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
         world.insert_resource(crate::materials_config::MaterialsConfigHandle::default());
+        world.insert_resource(crate::recipes_config::RecipesConfigHandle::default());
         world.insert_resource(FactionInventory::default());
         world.insert_resource(DiscoveryProgressLedger::default());
         world.insert_resource(CommandEventLog::default());
@@ -6561,6 +7706,7 @@ mod labor_yield_tests {
             kit: None,
             workers: builders,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         });
         assert!(
             allocation.enqueue_build(source.clone(), declared),
@@ -6626,6 +7772,49 @@ mod labor_yield_tests {
             builders,
         );
     }
+
+    /// **A PILE OF HURDLES ON A FIXTURE BAND** — enough that a pen build and a pen's own keeping are
+    /// never store-bound (`docs/plan_standing_upkeep.md` §4.9 item 12).
+    ///
+    /// **A fixture measuring the LADDER has to state this**, because the `animal:pen` rung eats
+    /// `hurdles` on both terms now: a bare `LocalStore` covers `0` of the pile, the build's coverage
+    /// is `0`, and a harness written to measure pacing measures a stall it staged itself. It is the
+    /// same discipline `seed_gathering_site` imposes on the plant web — a fixture must describe a
+    /// world the sim can produce.
+    ///
+    /// The reading is the recipe's own output, so the batch a fixture holds is the batch a bench
+    /// would have made.
+    fn stock_pen_materials(world: &mut World, band: Entity) {
+        const AMPLE_HURDLES: f32 = 1_000.0;
+        let materials = crate::materials_config::MaterialsConfig::builtin();
+        let recipes = crate::recipes_config::RecipesConfig::builtin();
+        let characteristics = recipes
+            .recipes()
+            .find_map(|(_, recipe)| {
+                recipe
+                    .outputs
+                    .iter()
+                    .find(|output| output.material_id() == Some(PEN_MATERIAL))
+                    .map(|output| output.characteristics.clone())
+            })
+            .expect("the shipped book makes the pen's material");
+        let band_key = materials
+            .band_key(PEN_MATERIAL, &characteristics)
+            .expect("the shipped roster rates the pen's material");
+        world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the fixture band exists")
+            .stores
+            .deposit_material(
+                PEN_MATERIAL,
+                band_key,
+                scalar_from_f32(AMPLE_HURDLES),
+                &characteristics,
+            );
+    }
+
+    /// The material the `animal:pen` rung eats, on both its build pile and its upkeep rate.
+    const PEN_MATERIAL: &str = "hurdles";
 
     fn spawn_band(world: &mut World, tile: Entity, assignments: Vec<LaborAssignment>) -> Entity {
         world
@@ -6707,6 +7896,7 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -6716,6 +7906,7 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
         );
@@ -6788,6 +7979,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -6829,6 +8021,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -6972,6 +8165,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -7003,6 +8197,7 @@ mod labor_yield_tests {
                 workers: assigned,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
 
@@ -7069,6 +8264,7 @@ mod labor_yield_tests {
                 workers: assigned,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
 
@@ -7148,6 +8344,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         let keeper = spawn_band(
@@ -7168,6 +8365,7 @@ mod labor_yield_tests {
                         .expect("the shipped roster carries the husbandry kit"),
                 ),
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
 
@@ -7321,6 +8519,7 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
             );
             declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, BUILDERS);
@@ -7456,6 +8655,7 @@ mod labor_yield_tests {
                 workers: GATHERERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, BUILDERS);
@@ -7518,6 +8718,7 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
             );
             if let Some(declared) = improvement {
@@ -7629,6 +8830,7 @@ mod labor_yield_tests {
                 workers,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -7651,6 +8853,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -7881,6 +9084,7 @@ mod labor_yield_tests {
                 workers: assigned,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         // The sim's expectation: one crew, `max(herders, steady_haul)` — taken on the **pre-take**
@@ -8089,6 +9293,7 @@ mod labor_yield_tests {
                             workers,
                             kit: None,
                             priority: SourcePriority::default(),
+                            upkeep_kit: None,
                         }],
                     );
                     if let Some(declared) = improvement {
@@ -8177,6 +9382,7 @@ mod labor_yield_tests {
                                 workers,
                                 kit: None,
                                 priority: SourcePriority::default(),
+                                upkeep_kit: None,
                             }],
                         );
                         if let Some(declared) = improvement {
@@ -8387,6 +9593,7 @@ mod labor_yield_tests {
                 workers: field_workers_needed,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         let short_handed = spawn_band(
@@ -8412,6 +9619,7 @@ mod labor_yield_tests {
                         .expect("the shipped roster carries the husbandry kit"),
                 ),
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -8455,137 +9663,15 @@ mod labor_yield_tests {
         );
     }
 
-    /// **A body no single keeper can seat.** Waste in the pen branch needs
-    /// `workers × pen_carry < body_mass`, and the equipped `pen_carry` is
-    /// `equipped_haul_rate()` (40), so one keeper leaves most of this behind.
-    /// It is the **Wild Aurochs**' own mass — the one shipped pen species that reaches this regime,
-    /// at its single required keeper (`animals_per_herder 12`).
-    const UNSEATABLE_BODY_MASS: f32 = 120.0;
-    /// Capacity big enough that the pen's harvest clears a whole [`UNSEATABLE_BODY_MASS`] body every
-    /// turn, so the slaughter happens rather than the pen waiting for one to grow.
-    const UNSEATABLE_PEN_CAP: f32 = 8_000.0;
-    /// **Where the pen stands, as a fraction of its `K`** — a little above the `K/2` escapement point
-    /// the pen harvests down to (`fauna::managed_yield_biomass`). Seating it *at* `K/2` offers
-    /// exactly nothing and the keeper slaughters no animal at all.
-    const PEN_STOCK_ABOVE_ESCAPEMENT: f32 = 0.55;
-
-    /// **THE SLED IS CHARGED FOR WHAT IT HAULED; THE HANDLING GEAR FOR WHAT IT BUTCHERED.** A pen
-    /// harvest wears both, and on **different numbers**: hurdles, halters and a butchering stone are
-    /// worked on the whole beast brought out of the pen and killed, not on the fraction of it the
-    /// keeper could carry home.
-    ///
-    /// The two coincide on every pen a crew can seat whole, which is why this fixture is deliberately
-    /// in the regime where they part — and why the divergence is asserted **on the biomass each
-    /// quantum was charged over** rather than on the raw wear, which would merely be restating that
-    /// the two items ship different rates.
-    ///
-    /// Paired with a liveness assertion that the harvest really wasted something: on a pen that
-    /// seated its beast whole the two bases are equal and the ordering below would be a vacuous
-    /// truth about a fixture that never bound.
-    #[test]
-    fn a_pen_harvest_that_wastes_charges_the_handling_gear_for_more_than_the_sled() {
-        let (mut world, tile) = world_with_source(CAP);
-        // Seat the pen above its escapement point, on a capacity large enough that the stock
-        // standing over it is worth more than one whole body.
-        reseat_herd(
-            &mut world,
-            UNSEATABLE_PEN_CAP * PEN_STOCK_ABOVE_ESCAPEMENT,
-            UNSEATABLE_PEN_CAP,
-        );
-        {
-            let mut registry = world.resource_mut::<HerdRegistry>();
-            let herd = &mut registry.herds[0];
-            herd.body_mass = UNSEATABLE_BODY_MASS;
-            assert!(
-                herd.corral_at(SOURCE, &crate::intensification::LadderConfig::builtin()),
-                "the fixture species must be pennable"
-            );
-        }
-        let keeper = spawn_band(
-            &mut world,
-            tile,
-            vec![LaborAssignment {
-                target: LaborTarget::Hunt {
-                    fauna_id: HERD_ID.to_string(),
-                    floor: FOOD_PEAK_FLOOR,
-                },
-                // **One keeper**, which is what puts the harvest in the wasting regime: `1 × 40` of
-                // pen collection against a 120-unit body.
-                workers: 1,
-                // The husbandry kit, so both items under test are live: it carries the handling gear
-                // (the pen's own tier) *and* a sled (the keeper still hauls the meat home).
-                kit: Some(
-                    crate::equipment_config::EquipmentConfig::builtin()
-                        .kit("husbandry")
-                        .expect("the shipped roster carries the husbandry kit"),
-                ),
-                priority: SourcePriority::default(),
-            }],
-        );
-        // A start-stocked ledger — `spawn_band` builds no equipment, and wear is only charged on an
-        // item the band actually owns (an absent entry is NOT OWNED since the count slice).
-        world
-            .entity_mut(keeper)
-            .insert(crate::components::BandEquipment::start_stocked(
-                &crate::equipment_config::EquipmentConfig::builtin(),
-            ));
-
-        world.run_system_once(advance_labor_allocation);
-
-        let equipment = crate::equipment_config::EquipmentConfig::builtin();
-        let ledger = world
-            .get::<crate::components::BandEquipment>(keeper)
-            .expect("the keeper's ledger survives the turn")
-            .clone();
-        // Each item's wear divided by its own per-use rate is the biomass its quantum was charged
-        // over — the claim under test, and rate-independent so retuning either item cannot move it.
-        //
-        // **It names the quantum**, because `hurdles` wear on two of them (issue #515) and
-        // dividing its condition by the `build_progress` rate would answer a number about a build
-        // this fixture never runs. Nothing is corralling here, so the whole charge is the
-        // butchering one — which is exactly the assumption worth making explicit.
-        let charged_over = |item: &str, quantum: crate::equipment_config::WearQuantum| {
-            ledger.wear_of(item)
-                / equipment
-                    .item(item)
-                    .unwrap_or_else(|| panic!("the shipped roster must carry '{item}'"))
-                    .wear_for(quantum)
-                    .unwrap_or_else(|| panic!("'{item}' must wear on {quantum:?}"))
-                    .amount
-        };
-        let butchered = charged_over(
-            HURDLES,
-            crate::equipment_config::WearQuantum::BiomassCollected,
-        );
-        let hauled = charged_over("sled", crate::equipment_config::WearQuantum::BiomassHauled);
-
-        let pen_row = world.get::<LaborAllocation>(keeper).unwrap().last_yields[0].clone();
-        // **Liveness, both halves.** The pen has to have paid something (or nothing was slaughtered
-        // and both charges are zero), and it has to have wasted something (or the two bases coincide
-        // and the ordering below is trivially true of a fixture that never bound).
-        assert!(
-            hauled > 0.0 && pen_row.actual > 0.0,
-            "the keeper must have brought meat home: hauled={hauled} actual={}",
-            pen_row.actual
-        );
-        assert!(
-            pen_row.wasted > 0.0,
-            "the fixture must actually waste — a keeper who seated the whole beast charges both \
-             quanta the same number and proves nothing (wasted={})",
-            pen_row.wasted
-        );
-        assert!(
-            butchered > hauled,
-            "the handling gear is worked on the whole beast and the sled only drags home what fits: \
-             butchered={butchered} must exceed hauled={hauled}"
-        );
-        // ...and it is the *whole* body it was charged for, not merely more than the haul.
-        assert!(
-            (butchered - UNSEATABLE_BODY_MASS).abs() < FORECAST_EPSILON,
-            "one whole body was butchered, so that is what the gear is charged over: \
-             {butchered} vs {UNSEATABLE_BODY_MASS}"
-        );
-    }
+    // **RETIRED: `a_pen_harvest_that_wastes_charges_the_handling_gear_for_more_than_the_sled`**, and
+    // its three fixture constants (`UNSEATABLE_BODY_MASS`, `UNSEATABLE_PEN_CAP`,
+    // `PEN_STOCK_ABOVE_ESCAPEMENT`) with it — it asserted `butchered > hauled` across **two** items,
+    // and the material half of the standing upkeep put both quanta on the **sled**
+    // (`docs/plan_standing_upkeep.md` §4.9 item 12): the hurdles became a material, so `pen_carry`
+    // and `biomass_collected` moved to the sled beside `biomass_hauled`. The comparison would now be
+    // the sled against itself and would pass vacuously. What survives untested here is the two
+    // BASES, which `equipment.md` still states: a pen charges `killed_biomass` on one quantum and
+    // `carried` on the other.
 
     /// **Rung 2 is a WILD stand, and since Flora Roster S2 it is a NEUTRAL one** — the plant twin of a
     /// *pastoral* herd, but no longer on a boosted curve. A *bare* (uncommitted) tended patch is
@@ -8642,6 +9728,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
 
@@ -8738,6 +9825,7 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -8820,6 +9908,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         // Band B (same faction) forages the neighbor tile (1,0), which has no food module/patch →
@@ -8838,6 +9927,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
 
@@ -8885,6 +9975,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
 
@@ -8987,6 +10078,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -9018,6 +10110,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
@@ -9111,6 +10204,7 @@ mod labor_yield_tests {
                     workers: SOLE_FORAGER,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
             );
             if let Some(declared) = improvement {
@@ -9206,6 +10300,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -9243,9 +10338,12 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
+        // **The pen eats hurdles now** — see [`stock_pen_materials`].
+        stock_pen_materials(&mut world, band);
         world.run_system_once(advance_labor_allocation);
         let preparing = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
         // **The whole budget is on the fence, so the keeper carries nothing home** — at every crew
@@ -9311,6 +10409,7 @@ mod labor_yield_tests {
                     workers: SOLE_HUNTER,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
             );
             if let Some(declared) = improvement {
@@ -9502,6 +10601,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
@@ -9657,12 +10757,14 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Agriculture,
                     workers: keepers,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
         );
@@ -9795,12 +10897,14 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Husbandry,
                     workers: keepers,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
         );
@@ -9887,14 +10991,15 @@ mod labor_yield_tests {
     // handling gear. The claim is about the JOB, so it is measured on the job — see part (3) of
     // `the_handling_kit_takes_work_off_the_job_rather_than_speeding_the_crew`.
 
-    /// **The animal web's builders kit** — `hurdles` and nothing else. Named because the fixtures
-    /// below put it on the **builders** row, where a build's gear offset is read from: the
-    /// `husbandry` kit carries the same hurdles for the *hunt* job (a pen's `pen_carry`) and no
-    /// longer builds anything.
+    /// **The animal web's builders kit** — the `crook` and nothing else. Named because the fixtures
+    /// below put it on the **builders** row, where a build's gear offset is read from. It carried
+    /// `hurdles` until the material half of the standing upkeep made those a **material** the
+    /// `animal:pen` rung eats (`docs/plan_standing_upkeep.md` §4.9 item 12); every gear dial came
+    /// across unchanged, so the fixtures below measure the same pacing they always did.
     const HURDLING_KIT: &str = "hurdling";
 
-    /// The item both of those kits carry — what a build's wear is charged against on the animal web.
-    const HURDLES: &str = "hurdles";
+    /// The item that kit carries — what a build's wear is charged against on the animal web.
+    const CROOK: &str = "crook";
 
     /// **The PLANT web's builders kit and its tool.** Named so an animal-build fixture can assert
     /// that neither is touched: a hoe brought to a `Tame` adds nothing to what its builders
@@ -9954,6 +11059,7 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: Some(kit.clone()),
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 // **THE `builders` ROW CARRIES NO KIT** — one is refused there since §4.7a ②,
                 // because a build's gear is a property of the queue ENTRY and not of the band.
@@ -9962,6 +11068,7 @@ mod labor_yield_tests {
                     workers: builders,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
         );
@@ -9997,7 +11104,7 @@ mod labor_yield_tests {
         let gear_wear = world
             .get::<crate::components::BandEquipment>(band)
             .expect("the band's ledger survives the turn")
-            .wear_of(HURDLES);
+            .wear_of(CROOK);
         let hoe_wear = world
             .get::<crate::components::BandEquipment>(band)
             .expect("the band's ledger survives the turn")
@@ -10153,8 +11260,8 @@ mod labor_yield_tests {
             "fixture: the crew must actually have built something to be charged for"
         );
         let rate = crate::equipment_config::EquipmentConfig::builtin()
-            .item(HURDLES)
-            .expect("the shipped roster carries the hurdles")
+            .item(CROOK)
+            .expect("the shipped roster carries the crook")
             .wear_for(crate::equipment_config::WearQuantum::BuildProgress)
             .expect("the handling gear wears on build progress")
             .amount;
@@ -10187,6 +11294,7 @@ mod labor_yield_tests {
                         .expect("the shipped roster carries the hurdling kit"),
                 ),
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world
@@ -10203,7 +11311,7 @@ mod labor_yield_tests {
         // wild herd, so its sled is being dragged and that is real work. The handling gear is not
         // charged at a wild hunt on any quantum, which is what makes a bare `wear_of` honest here.
         assert_eq!(
-            ledger.wear_of(HURDLES),
+            ledger.wear_of(CROOK),
             0.0,
             "a crew holding the gear with no build in flight must spend none of it"
         );
@@ -10305,6 +11413,853 @@ mod labor_yield_tests {
         );
     }
 
+    // ==========================================================================================
+    // THE MATERIAL HALF OF BUILD AND UPKEEP (`docs/plan_standing_upkeep.md` §2.7 / §4.9 item 12)
+    // ==========================================================================================
+
+    /// **A store holding exactly `units` of the pen's material, and nothing else** — the fixture that
+    /// makes the build's coverage a measurable *fraction* rather than an all-or-nothing.
+    fn stock_pen_materials_units(world: &mut World, band: Entity, units: f32) {
+        let materials = crate::materials_config::MaterialsConfig::builtin();
+        let recipes = crate::recipes_config::RecipesConfig::builtin();
+        let characteristics = recipes
+            .recipes()
+            .find_map(|(_, recipe)| {
+                recipe
+                    .outputs
+                    .iter()
+                    .find(|output| output.material_id() == Some(PEN_MATERIAL))
+                    .map(|output| output.characteristics.clone())
+            })
+            .expect("the shipped book makes the pen's material");
+        let key = materials
+            .band_key(PEN_MATERIAL, &characteristics)
+            .expect("the shipped roster rates the pen's material");
+        let mut cohort = world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the fixture band exists");
+        let held = cohort.stores.material_total(PEN_MATERIAL);
+        cohort.stores.take_material_batches(PEN_MATERIAL, held);
+        cohort
+            .stores
+            .deposit_material(PEN_MATERIAL, key, scalar_from_f32(units), &characteristics);
+    }
+
+    /// **A TAMED HERD WITH A `Corral` QUEUED AND BUILDERS ON IT** — the one shipped rung that
+    /// declares a material on either term, so every test below drives it.
+    fn world_with_a_pen_build() -> (World, Entity) {
+        const BIG_HERD_CAP: f32 = 1_000.0;
+        let (mut world, tile) = world_with_source(CAP);
+        reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
+        grant_knowledge(&mut world, PENNING_DISCOVERY_ID);
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            registry.herds[0].tame_outright(
+                BAND_FACTION,
+                &crate::intensification::LadderConfig::builtin(),
+            );
+        }
+        let builders = animal_builders(&world, RungKey::AnimalPen);
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    floor: BUILDER_FLOOR,
+                },
+                workers: WORKERS,
+                kit: None,
+                priority: SourcePriority::default(),
+                upkeep_kit: None,
+            }],
+        );
+        declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
+        (world, band)
+    }
+
+    /// The work banked on the pen rung — the meter the pile is drawn against.
+    fn pen_position(world: &World) -> f32 {
+        world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .expect("the fixture herd")
+            .rung_work_done(
+                RungKey::AnimalPen,
+                &crate::intensification::LadderConfig::builtin(),
+            )
+    }
+
+    fn held_material(world: &World, band: Entity) -> f32 {
+        world
+            .get::<PopulationCohort>(band)
+            .expect("the fixture band")
+            .stores
+            .material_total(PEN_MATERIAL)
+            .to_f32()
+    }
+
+    /// The pen rung's declared pile and its own width — read off the ladder so a retune moves the
+    /// fixture with the game.
+    fn pen_pile_and_width() -> (f32, f32) {
+        let ladder = crate::intensification::LadderConfig::builtin();
+        let pile = ladder
+            .rung(RungKey::AnimalPen)
+            .build_materials()
+            .find(|(id, _)| *id == PEN_MATERIAL)
+            .map(|(_, amount)| amount)
+            .expect("the shipped `animal:pen` rung declares a material pile");
+        let width = ladder
+            .rung(RungKey::AnimalPen)
+            .build_cost(RUNG_COST_UNSCALED)
+            .expect("a rung a verb builds has a build meter");
+        (pile, width)
+    }
+
+    /// ⛔ **THE PILE IS DRAWN AS THE METER CLIMBS, NOT ON COMPLETION**
+    /// (`docs/plan_standing_upkeep.md` §2.7).
+    ///
+    /// The claim is a **proportion**, so it is asserted as one: after one turn the store has lost the
+    /// same share of the pile the meter gained of the rung, against the rung's *own* declared numbers
+    /// rather than remembered ones. **The liveness half is that the rung is only PART raised** —
+    /// on a finished rung *"drawn in proportion"* and *"drawn on completion"* are the same number.
+    #[test]
+    fn the_build_pile_is_drawn_in_proportion_to_the_work_banked() {
+        let (mut world, band) = world_with_a_pen_build();
+        stock_pen_materials(&mut world, band);
+        let (pile, width) = pen_pile_and_width();
+
+        let before = held_material(&world, band);
+        world.run_system_once(advance_labor_allocation);
+        let banked = pen_position(&world);
+        let drawn = before - held_material(&world, band);
+
+        assert!(
+            banked > 0.0 && banked < width,
+            "fixture: the pen must be PART raised, or 'in proportion' and 'on completion' cannot be \
+             told apart (banked {banked} of {width})"
+        );
+        assert!(
+            (drawn - pile * banked / width).abs() < FORECAST_EPSILON,
+            "the pile is drawn at the share of the rung this turn banked: drew {drawn} against \
+             {pile} × {banked}/{width}"
+        );
+        assert!(
+            drawn < pile,
+            "**LIVENESS**: drawing the WHOLE pile on a part-raised rung is the on-completion reading \
+             this test exists to exclude (drew {drawn} of {pile})"
+        );
+    }
+
+    /// ⛔ **A SHORT STORE STALLS THE BUILD PROPORTIONALLY — IT NEVER REFUSES IT** (§2.5's stated rule
+    /// for an indivisible supplier).
+    ///
+    /// A store holding a **quarter** of what the turn's pile wants banks a quarter of the turn's work
+    /// and spends the quarter; the rest of the crew's output is **wasted**. Both halves are asserted:
+    /// the build did move (so this is a stall, not a refusal), and it moved by exactly the coverage.
+    #[test]
+    fn a_short_store_stalls_the_build_proportionally_rather_than_refusing_it() {
+        /// The share of the turn's pile the short fixture's store can pay for.
+        const COVERAGE: f32 = 0.25;
+
+        let (mut full, band) = world_with_a_pen_build();
+        stock_pen_materials(&mut full, band);
+        let stocked = held_material(&full, band);
+        full.run_system_once(advance_labor_allocation);
+        let fully_banked = pen_position(&full);
+        let wanted = stocked - held_material(&full, band);
+
+        let (mut short, band) = world_with_a_pen_build();
+        stock_pen_materials_units(&mut short, band, wanted * COVERAGE);
+        short.run_system_once(advance_labor_allocation);
+        let short_banked = pen_position(&short);
+
+        assert!(
+            fully_banked > 0.0 && wanted > 0.0,
+            "fixture: the fully-stocked arm must build and draw, or every ratio below is 0/0 \
+             (banked {fully_banked}, drew {wanted})"
+        );
+        assert!(
+            short_banked > 0.0,
+            "**A SHORT STORE STALLS, IT DOES NOT REFUSE** — the build must still bank something \
+             (banked {short_banked})"
+        );
+        assert!(
+            (short_banked - fully_banked * COVERAGE).abs() < FORECAST_EPSILON,
+            "…and it banks exactly the coverage: {short_banked} against {fully_banked} × {COVERAGE}"
+        );
+        assert!(
+            held_material(&short, band) < FORECAST_EPSILON,
+            "the short store is spent to the last unit — the coverage IS what the store could pay"
+        );
+    }
+
+    /// **A TAMED HERD WITH A PEN QUEUED, AND A `sow` QUEUED BEHIND IT** — the two-entry queue the
+    /// waiting entry's coverage rule needs: the head is the shipped ladder's **only** material
+    /// declarer and the entry behind it declares none at all.
+    /// A species in [`SOURCE_BIOME`]'s realized basket whose `cultivation_ceiling` reaches
+    /// `plant:field` — what a `sow` on this fixture's ground can actually commit to.
+    const SOWABLE_SPECIES: &str = "wild_emmer";
+
+    fn world_with_a_sow_queued_behind_a_pen() -> (World, Entity) {
+        let (mut world, band) = world_with_a_pen_build();
+        grant_knowledge(&mut world, SEED_SELECTION_DISCOVERY_ID);
+        // **`plant:field` DECLARES `requires_fresh_water`**, so the harness's dry steppe refuses the
+        // rung on its site term and the gate never reaches the coverage test. Tagged on the source
+        // tile itself, which is `tile_is_fresh_watered`'s first arm.
+        {
+            let tile_entity = world
+                .resource::<TileRegistry>()
+                .index(SOURCE.x, SOURCE.y)
+                .expect("the fixture source tile");
+            world
+                .get_mut::<Tile>(tile_entity)
+                .expect("the fixture source tile")
+                .terrain_tags |= sim_runtime::TerrainTags::FRESHWATER;
+        }
+        let source = BuildSource::Patch(SOURCE);
+        {
+            let mut allocation = world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band has an allocation");
+            allocation.assignments.push(LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: SOURCE,
+                    floor: BUILDER_FLOOR,
+                    // **A NAMED CROP, because a Field commits to one.** The tile's realized basket
+                    // leads with `seed_grasses`, whose `cultivation_ceiling` stops at *tended*, so a
+                    // `sow` that named nothing would be refused `BuildGate::NoCrop` — and a refused
+                    // gate never reaches the coverage test this fixture exists to drive.
+                    species: Some(SOWABLE_SPECIES.to_string()),
+                    take_species: TakeSelection::EVERYTHING,
+                },
+                workers: WORKERS,
+                kit: None,
+                priority: SourcePriority::default(),
+                upkeep_kit: None,
+            });
+            assert!(
+                allocation.enqueue_build(source.clone(), BuildJob::Rung(Improvement::Sow)),
+                "fixture: the sow is queued on a source the band works"
+            );
+            assert_eq!(
+                allocation.build_queue_position(&source),
+                Some(1),
+                "fixture: the sow must sit BEHIND the pen — a head is funded and a waiting entry is \
+                 only dated, which is the whole distinction under test"
+            );
+            assert!(allocation.set_build_entry_kit(&source, Some(bare_builders())));
+        }
+        (world, band)
+    }
+
+    /// The countdown the patch entry publishes.
+    fn published_sow_countdown(world: &World) -> Option<crate::intensification::BuildTurns> {
+        world
+            .resource::<ForageRegistry>()
+            .patch(SOURCE)
+            .expect("the fixture patch")
+            .build_turns_remaining
+    }
+
+    /// The cause that countdown carries.
+    fn published_sow_block_reason(world: &World) -> crate::intensification::BuildGate {
+        world
+            .resource::<ForageRegistry>()
+            .patch(SOURCE)
+            .expect("the fixture patch")
+            .build_blocked_reason
+    }
+
+    /// The waiting entry's **own** span — what the chain added on top of the head's date. Both
+    /// numbers come off the wire, so this is what a client renders as *"and then N more"*.
+    fn sow_span_behind_the_pen(world: &World) -> u32 {
+        let head = match published_pen_countdown(world) {
+            Some(crate::intensification::BuildTurns::Turns(turns)) => turns,
+            other => {
+                panic!("fixture: the head must name a date for the tail to be measured: {other:?}")
+            }
+        };
+        let tail = match published_sow_countdown(world) {
+            Some(crate::intensification::BuildTurns::Turns(turns)) => turns,
+            other => panic!("fixture: the waiting sow must name a date: {other:?}"),
+        };
+        tail - head
+    }
+
+    /// ⛔ **A WAITING ENTRY IS QUOTED AT ITS OWN COVERAGE, NEVER THE BAND'S**
+    /// (`docs/plan_standing_upkeep.md` §2.7).
+    ///
+    /// The settlement strikes its material want against the **head** alone, so `build_coverage`
+    /// describes the head's store and nothing else. Handing it to an entry *behind* the head made
+    /// another source's shelf into this one's problem: the `sow` — a rung that declares no material
+    /// at all — was quoted at the pen's coverage, so a **half-stocked** pen doubled the sow's own
+    /// span and `publish_build_chain` carried the inflated date down the rest of the queue.
+    ///
+    /// The stretch is measured against a **fully-stocked** control run of the same fixture, so the
+    /// claim is *"the head's shelf does not move the tail"* rather than a remembered turn count.
+    #[test]
+    fn a_head_short_of_material_neither_blocks_nor_stretches_the_entry_behind_it() {
+        /// The share of the head's pile its store can pay for on the stretched arm. A half doubles
+        /// the head's own span, which no rounding can turn back into the covered one.
+        const COVERAGE: f32 = 0.5;
+
+        // --- the control: the head wants for nothing ---------------------------------------------
+        let (mut full, band) = world_with_a_sow_queued_behind_a_pen();
+        stock_pen_materials(&mut full, band);
+        let stocked = held_material(&full, band);
+        full.run_system_once(advance_labor_allocation);
+        let wanted = stocked - held_material(&full, band);
+        assert!(
+            wanted > 0.0,
+            "fixture: the head must actually draw material, or there is no shortage to inflict \
+             (drew {wanted})"
+        );
+        assert_eq!(
+            published_sow_block_reason(&full),
+            crate::intensification::BuildGate::Open,
+            "fixture: the queued sow's own gate must HOLD, or `turns()` never reaches the coverage \
+             test and this whole fixture is vacuous"
+        );
+        let covered_head = match published_pen_countdown(&full) {
+            Some(crate::intensification::BuildTurns::Turns(turns)) => turns,
+            other => panic!("fixture: a fully-stocked pen build names a date, got {other:?}"),
+        };
+        let covered_span = sow_span_behind_the_pen(&full);
+        assert!(
+            covered_span > 1,
+            "fixture: the waiting sow must span more than a turn, or a doubling is unmeasurable \
+             (span {covered_span})"
+        );
+
+        // --- the head's shelf is EMPTY: the tail inherits the head's block, and only that --------
+        // **This arm cannot see the defect and is here to say so.** A blocked head sets
+        // `publish_build_chain`'s `carried`, and every entry below it publishes that answer without
+        // its own quote ever being consulted — which is right: an entry behind a build that cannot
+        // start cannot be dated either. So the leak is only visible where the head is *stalled*
+        // rather than *stopped*, which is the third arm.
+        let (mut dry, band) = world_with_a_sow_queued_behind_a_pen();
+        stock_pen_materials_units(&mut dry, band, 0.0);
+        dry.run_system_once(advance_labor_allocation);
+        assert_eq!(
+            published_pen_countdown(&dry),
+            Some(crate::intensification::BuildTurns::Blocked),
+            "a pen build that cannot draw one hurdle publishes the blocked sentinel"
+        );
+        assert_eq!(
+            published_sow_countdown(&dry),
+            Some(crate::intensification::BuildTurns::Blocked),
+            "…and the queue behind it carries that, because a date behind an unstartable build \
+             would be a promise"
+        );
+
+        // --- the head's shelf is HALF: the tail's own span is untouched ---------------------------
+        let (mut partial, band) = world_with_a_sow_queued_behind_a_pen();
+        stock_pen_materials_units(&mut partial, band, wanted * COVERAGE);
+        partial.run_system_once(advance_labor_allocation);
+        let stretched_head = match published_pen_countdown(&partial) {
+            Some(crate::intensification::BuildTurns::Turns(turns)) => turns,
+            other => panic!("a PARTLY covered build still finishes, so it names a date: {other:?}"),
+        };
+        assert!(
+            stretched_head > covered_head,
+            "fixture: the head must actually be stalled by its short store ({stretched_head} \
+             against the covered {covered_head}), or there is no stretch to leak"
+        );
+        assert_eq!(
+            sow_span_behind_the_pen(&partial),
+            covered_span,
+            "**THE WAITING ENTRY'S OWN SPAN IS UNTOUCHED BY THE HEAD'S SHORTAGE** — it is dated at \
+             the full pool and at FULL coverage, because it has bid on nothing yet"
+        );
+    }
+
+    /// **A STORE WITH NOTHING IN IT BANKS NOTHING, AND THE ENTRY STAYS QUEUED.** The other end of the
+    /// stall: there is no affordability gate anywhere (§2.5 retired the five verbs' own), so the
+    /// build **queues** rather than being refused — which is what a build whose builders walked away
+    /// already does.
+    #[test]
+    fn a_build_with_no_material_at_all_stalls_and_stays_in_the_queue() {
+        let (mut world, band) = world_with_a_pen_build();
+        stock_pen_materials_units(&mut world, band, 0.0);
+        world.run_system_once(advance_labor_allocation);
+
+        assert_eq!(
+            pen_position(&world),
+            0.0,
+            "with no hurdles at all the coverage is zero, so the crew's whole output is wasted"
+        );
+        assert!(
+            world
+                .get::<LaborAllocation>(band)
+                .expect("the fixture band")
+                .build_queue_position(&BuildSource::Herd(HERD_ID.to_string()))
+                .is_some(),
+            "**AND IT IS A STALL, NOT A REFUSAL** — the entry stays in the queue, exactly as a build \
+             whose builders left does"
+        );
+    }
+
+    /// ⛔ **DECAY REFUNDS NOTHING.** Material goes in as the meter climbs and does not come back when
+    /// it falls — which is what makes neglect **self-limiting** rather than a store bleeding for
+    /// ever: the position falls, the rate falls with it, and an abandoned thing decays toward costing
+    /// nothing.
+    #[test]
+    fn decay_refunds_no_material() {
+        let (mut world, band) = world_with_a_pen_build();
+        stock_pen_materials(&mut world, band);
+        let stocked = held_material(&world, band);
+        world.run_system_once(advance_labor_allocation);
+        let after_build = held_material(&world, band);
+        let raised = pen_position(&world);
+        assert!(
+            raised > 0.0 && after_build < stocked,
+            "fixture: the build must have banked work AND spent material, or there is nothing for a \
+             refund to give back (banked {raised}, held {after_build} of {stocked})"
+        );
+
+        {
+            let ladder = crate::intensification::LadderConfig::builtin();
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            // **The one mutator of a position** (`Herd::set_ladder_position`), taken all the way back
+            // to where the rung started — the animal web sheds animals rather than bleeding a meter,
+            // so this is how a position falls at all.
+            let base = registry.herds[0].ladder_position() - raised;
+            registry.herds[0].set_ladder_position(base, &ladder);
+        }
+        assert_eq!(
+            pen_position(&world),
+            0.0,
+            "fixture: the decay must actually take the rung back, or the claim is vacuous"
+        );
+        assert_eq!(
+            held_material(&world, band),
+            after_build,
+            "**THE STORE IS UNTOUCHED** — the road washes away and the stone is spent"
+        );
+    }
+
+    /// **THE UPKEEP RATE READS THE SAME `scaled_by` THE WORK TERM READS** — one rule, two currencies
+    /// (§2.7). A pen holding twice the herd mends twice the fence.
+    #[test]
+    fn the_upkeep_material_rate_scales_with_the_source_load() {
+        let ladder = crate::intensification::LadderConfig::builtin();
+        let pen = ladder.rung(RungKey::AnimalPen);
+        let rate = pen
+            .upkeep_materials()
+            .find(|(id, _)| *id == PEN_MATERIAL)
+            .map(|(_, rate)| rate)
+            .expect("the shipped `animal:pen` rung declares a material rate");
+
+        assert!(
+            (pen.upkeep_material_demand(PEN_MATERIAL, 1.0) - rate).abs() < FORECAST_EPSILON,
+            "one load's worth is the declared rate itself"
+        );
+        assert!(
+            (pen.upkeep_material_demand(PEN_MATERIAL, 2.0)
+                - 2.0 * pen.upkeep_material_demand(PEN_MATERIAL, 1.0))
+            .abs()
+                < FORECAST_EPSILON,
+            "…and it is linear in the source's own load, exactly as the work rate is"
+        );
+        assert_eq!(
+            pen.upkeep_material_demand("a_material_no_rung_names", 1.0),
+            crate::intensification::NO_UPKEEP_DEMAND,
+            "a material the rung does not name is owed NOTHING — never a defaulted rate"
+        );
+    }
+
+    /// **THE RATE INTERPOLATES ON THE POSITION** — the second axis §2.7 gives the material term, and
+    /// on the shipped ladder `animal:pen`'s `partial_credit: on_completion` is what shapes it: half a
+    /// fence is no fence, so a part-raised pen owes the rung **below**'s rate (which names no
+    /// material) and the whole of it only once the fence closes.
+    #[test]
+    fn a_part_raised_pen_owes_no_hurdles_and_a_closed_one_owes_them_all() {
+        let ladder = crate::intensification::LadderConfig::builtin();
+        let fauna = crate::fauna_config::FaunaConfig::builtin();
+        let (_, width) = pen_pile_and_width();
+
+        let (mut world, band) = world_with_a_pen_build();
+        stock_pen_materials(&mut world, band);
+        world.run_system_once(advance_labor_allocation);
+        let part_raised = {
+            let herd = world
+                .resource::<HerdRegistry>()
+                .find(HERD_ID)
+                .expect("the fixture herd")
+                .clone();
+            assert!(
+                herd.rung_work_done(RungKey::AnimalPen, &ladder) > 0.0
+                    && herd.rung_work_done(RungKey::AnimalPen, &ladder) < width,
+                "fixture: the fence must be PART up, or the two readings coincide"
+            );
+            fauna::herd_upkeep_material_demand(&herd, &fauna, &ladder, PEN_MATERIAL)
+        };
+        assert_eq!(
+            part_raised,
+            crate::intensification::NO_UPKEEP_DEMAND,
+            "**HALF A FENCE IS NO FENCE** — an `on_completion` rung is worth the rung below it, and \
+             `animal:pastoral` names no material"
+        );
+
+        // …and the same herd with the fence closed owes the whole rate. Asserted against the rung's
+        // own arithmetic at this herd's own load, so a retune moves both sides together.
+        {
+            let anchor = world.resource::<HerdRegistry>().herds[0].current_pos;
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            assert!(
+                registry.herds[0].corral_at(anchor, &ladder),
+                "fixture: the species must be pennable"
+            );
+        }
+        let herd = world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .expect("the fixture herd")
+            .clone();
+        let closed = fauna::herd_upkeep_material_demand(&herd, &fauna, &ladder, PEN_MATERIAL);
+        assert!(
+            (closed
+                - ladder
+                    .rung(RungKey::AnimalPen)
+                    .upkeep_material_demand(PEN_MATERIAL, fauna::herd_keeper_load(&herd, &fauna)))
+            .abs()
+                < FORECAST_EPSILON,
+            "a closed fence owes the pen rung's whole rate at its own keeper load: {closed}"
+        );
+        assert!(
+            closed > part_raised,
+            "**LIVENESS**: the two readings must differ, or the interpolation is not being read"
+        );
+    }
+
+    /// **THE COUNTDOWN THIS HERD'S PEN ENTRY PUBLISHES**, off the band's own chain pass — the
+    /// number a client renders, not the quote it was struck from.
+    fn published_pen_countdown(world: &World) -> Option<crate::intensification::BuildTurns> {
+        world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .expect("the fixture herd")
+            .build_turns_remaining
+    }
+
+    /// **THE CAUSE THAT COUNTDOWN CARRIES** — `""` for anything that is not blocked.
+    fn published_pen_block_reason(world: &World) -> crate::intensification::BuildGate {
+        world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .expect("the fixture herd")
+            .build_blocked_reason
+    }
+
+    /// ⛔ **A MATERIALLY STALLED BUILD MUST NOT PUBLISH A NORMAL COUNTDOWN** — a forecast and a take
+    /// disagreeing is the shape this arc keeps repairing (`docs/plan_standing_upkeep.md` §2.7).
+    ///
+    /// The `⌃` track promises *"you have 12 hurdles; it will stall at about a third"*; a queue that
+    /// then counted down as though it would not defeats the readout the whole slice exists to add.
+    /// So the **same coverage that scales the accrual scales the pace**, and all three states are
+    /// swept **against each other** rather than against remembered numbers:
+    ///
+    /// | the store | the countdown |
+    /// |---|---|
+    /// | covers the pile | a real date |
+    /// | covers a **fraction** | that date **stretched by the same fraction** |
+    /// | covers **nothing** | the existing blocked sentinel, **naming the good** |
+    #[test]
+    fn a_materially_stalled_build_stretches_its_countdown_and_a_dry_store_blocks_it() {
+        /// The share of the turn's pile the partly-stocked arm's store can pay for. A half is chosen
+        /// so the stretched date is a *doubling*, which no rounding can turn into the unstretched
+        /// one on a job this long.
+        const COVERAGE: f32 = 0.5;
+
+        // --- fully covered: the date the other two arms are measured against ----------------------
+        let (mut full, band) = world_with_a_pen_build();
+        stock_pen_materials(&mut full, band);
+        let stocked = held_material(&full, band);
+        full.run_system_once(advance_labor_allocation);
+        let wanted = stocked - held_material(&full, band);
+        let covered = match published_pen_countdown(&full) {
+            Some(crate::intensification::BuildTurns::Turns(turns)) => turns,
+            other => {
+                panic!("fixture: a fully-stocked pen build must publish a real date, got {other:?}")
+            }
+        };
+        assert!(
+            covered > 1 && wanted > 0.0,
+            "fixture: the job must take more than one turn AND draw material, or a stretch cannot \
+             be told from a rounding (turns {covered}, drew {wanted})"
+        );
+        assert_eq!(
+            published_pen_block_reason(&full),
+            crate::intensification::BuildGate::Open,
+            "a build the store covers is not blocked, and publishes no cause"
+        );
+
+        // --- partly covered: the SAME date, stretched by the SAME fraction ------------------------
+        let (mut partial, band) = world_with_a_pen_build();
+        stock_pen_materials_units(&mut partial, band, wanted * COVERAGE);
+        partial.run_system_once(advance_labor_allocation);
+        let stretched = match published_pen_countdown(&partial) {
+            Some(crate::intensification::BuildTurns::Turns(turns)) => turns,
+            other => {
+                panic!("a PARTLY covered build still finishes, so it still names a date: {other:?}")
+            }
+        };
+        assert!(
+            stretched > covered,
+            "**A HALF-COVERED BUILD TAKES LONGER, AND THE QUEUE MUST SAY SO** — {stretched} against \
+             the covered {covered}"
+        );
+        // The pace is scaled, so the span is stretched by the inverse — asserted as a ratio against
+        // the covered arm rather than as a number, so a retune of the rung moves both together. One
+        // turn of slack for the `ceil` at each end.
+        let expected = (covered as f32 / COVERAGE).ceil() as u32;
+        assert!(
+            stretched.abs_diff(expected) <= 1,
+            "…and it is stretched by exactly the coverage: {stretched} against {covered}/{COVERAGE} \
+             = {expected}"
+        );
+        assert_eq!(
+            published_pen_block_reason(&partial),
+            crate::intensification::BuildGate::Open,
+            "**A STALL IS NOT A BLOCK** — a build that still banks something is not stuck, and must \
+             not publish a cause it would have to explain away"
+        );
+
+        // --- covered by nothing: the blocked sentinel, naming the good ----------------------------
+        let (mut dry, band) = world_with_a_pen_build();
+        stock_pen_materials_units(&mut dry, band, 0.0);
+        dry.run_system_once(advance_labor_allocation);
+        assert_eq!(
+            published_pen_countdown(&dry),
+            Some(crate::intensification::BuildTurns::Blocked),
+            "**A BUILD THAT CANNOT DRAW ONE UNIT OF WHAT IT EATS PUBLISHES THE BLOCKED SENTINEL** — \
+             a number would be a promise, and `Holding`/`Rotting` would name the wrong fact"
+        );
+        assert_eq!(
+            published_pen_block_reason(&dry),
+            crate::intensification::BuildGate::Materials,
+            "**AND IT SAYS WHY** — the rung's own gate HOLDS here, so a chain pass reading that \
+             would publish a block with no cause; the remedy is the bench, not the Builders role"
+        );
+    }
+
+    /// ⛔ **THE MATERIAL BILL IS THE STAMP, NEVER A LIVE RE-DERIVATION** — and the turn a fence
+    /// **closes** is the one turn where the two differ (`docs/plan_standing_upkeep.md` §2.7).
+    ///
+    /// The material demand interpolates on the same position the work demand does and is carried
+    /// across the same Population→Logistics boundary. `animal:pen` is `on_completion`, so a herd owes
+    /// **no** hurdles while its fence is going up and the pen rung's whole rate the instant it
+    /// closes — and the settlement struck its bill *before* that turn's accrual, so the store paid
+    /// nothing. **A decay pass that re-derived the demand live would read a full bill against a `0`
+    /// payment on the very turn the pen went up**, tripping the neglect counter on a band that had
+    /// done everything right. That is the *"a fully-staffed band bleeds ~0.03 work/turn for ever
+    /// while re-arming its grace every turn"* defect this arc already fixed once, restated in a
+    /// second currency.
+    ///
+    /// **The closing turn is the whole fixture**, and the assertion that the pen really did close on
+    /// it is what stops this passing on a build that never finished.
+    #[test]
+    fn the_turn_a_fence_closes_is_judged_against_the_bill_the_keepers_were_handed() {
+        let (mut world, band) = world_with_a_pen_build();
+        stock_pen_materials(&mut world, band);
+        let (_, width) = pen_pile_and_width();
+
+        // Walk to the turn the fence closes — the one turn on which the stamped bill and a live
+        // reading part company.
+        let mut closed = false;
+        for _ in 0..width.ceil() as u32 * 4 {
+            world.run_system_once(advance_labor_allocation);
+            if world
+                .resource::<HerdRegistry>()
+                .find(HERD_ID)
+                .expect("the fixture herd")
+                .is_corralled()
+            {
+                closed = true;
+                break;
+            }
+        }
+        assert!(
+            closed,
+            "fixture: the fence must close inside the walk, or there is no closing turn to judge"
+        );
+
+        let ladder = crate::intensification::LadderConfig::builtin();
+        let fauna_cfg = crate::fauna_config::FaunaConfig::builtin();
+        let herd = world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .expect("the fixture herd")
+            .clone();
+        // **LIVENESS**: with the fence up, a live reading is a real, positive bill — so the two
+        // readings genuinely differ on this turn and the equality below is not a truism.
+        let live = fauna::herd_upkeep_material_demand(&herd, &fauna_cfg, &ladder, PEN_MATERIAL);
+        assert!(
+            live > 0.0,
+            "fixture: a CLOSED fence owes hurdles, or the stamp and the live reading cannot differ \
+             (live {live})"
+        );
+        assert_eq!(
+            herd.upkeep_materials_demanded
+                .get(PEN_MATERIAL)
+                .copied()
+                .unwrap_or(crate::intensification::NO_UPKEEP_DEMAND),
+            crate::intensification::NO_UPKEEP_DEMAND,
+            "**THE BILL WAS STRUCK BEFORE THE ACCRUAL** — half a fence is no fence, so the keepers \
+             were handed nothing to pay for this turn"
+        );
+        assert_eq!(
+            fauna::herd_material_keeping_basis(&herd, &fauna_cfg, &ladder)
+                .get(PEN_MATERIAL)
+                .copied()
+                .unwrap_or(crate::intensification::NO_UPKEEP_DEMAND),
+            crate::intensification::NO_UPKEEP_DEMAND,
+            "…and the basis the decay pass judges against is that STAMP, not the live {live} the \
+             fence now owes — a live read makes a correctly-kept pen permanently short"
+        );
+        // **AND SO THE GOOD IS NOT WHAT MAKES THIS TURN UNMET** — which is what stops the neglect
+        // counter re-arming for ever on a band that had bought every hurdle its fence asked for.
+        //
+        // The **work** half is asked with the bill met, because this fixture stands up no `husbandry`
+        // keepers: the claim under test is the material stamp, and folding the work shortfall in
+        // would make the assertion fail for a reason it is not about.
+        let met_work = crate::fauna::herd_keeping_basis(&herd, &fauna_cfg, &ladder);
+        assert!(
+            !crate::intensification::keeping_is_short(
+                met_work,
+                met_work,
+                &fauna::herd_material_keeping_basis(&herd, &fauna_cfg, &ladder),
+                &herd.upkeep_materials_supplied,
+            ),
+            "a keeping that met its WORK bill is not short on the turn the fence closed — the good \
+             it was billed for was nothing, and the store paid nothing"
+        );
+    }
+
+    /// ⛔ **THE DECAY RIDES THE WORST OF THE TWO SHORTFALL FRACTIONS, AND THERE IS ONE COUNTER**
+    /// (§4.9 item 12). Three cases, asserted **against each other** rather than against remembered
+    /// numbers: hands short, goods short, and short of both.
+    #[test]
+    fn the_decay_fraction_is_the_worst_of_the_work_and_the_material_shortfalls() {
+        use crate::intensification::{keeping_is_short, keeping_shortfall_fraction};
+
+        const WORK_DEMAND: f32 = 4.0;
+        const MATERIAL_DEMAND: f32 = 1.0;
+        let goods =
+            || std::collections::BTreeMap::from([(PEN_MATERIAL.to_string(), MATERIAL_DEMAND)]);
+        let paid =
+            |amount: f32| std::collections::BTreeMap::from([(PEN_MATERIAL.to_string(), amount)]);
+
+        // Hands short (a quarter unmet), goods in hand.
+        let hands_short = keeping_shortfall_fraction(
+            WORK_DEMAND,
+            WORK_DEMAND * 0.75,
+            &goods(),
+            &paid(MATERIAL_DEMAND),
+        );
+        // Goods short (half unmet), fully staffed.
+        let goods_short = keeping_shortfall_fraction(
+            WORK_DEMAND,
+            WORK_DEMAND,
+            &goods(),
+            &paid(MATERIAL_DEMAND * 0.5),
+        );
+        // Short of both — the worse of the two, never their sum.
+        let both_short = keeping_shortfall_fraction(
+            WORK_DEMAND,
+            WORK_DEMAND * 0.75,
+            &goods(),
+            &paid(MATERIAL_DEMAND * 0.5),
+        );
+
+        assert!(
+            (hands_short - 0.25).abs() < FORECAST_EPSILON,
+            "fully supplied with goods, the fraction is the HANDS' own: {hands_short}"
+        );
+        assert!(
+            (goods_short - 0.5).abs() < FORECAST_EPSILON,
+            "**FULLY STAFFED WITH NO HURDLES ROTS AT THE HURDLES' RATE**: {goods_short}"
+        );
+        assert!(
+            (both_short - goods_short).abs() < FORECAST_EPSILON,
+            "short of both, it is the WORSE of the two and never their sum: {both_short} against \
+             {goods_short} (a sum would read {})",
+            hands_short + goods_short
+        );
+
+        // **ONE COUNTER, ONE GRACE.** The counter increments if ANY of them is short and resets only
+        // when all are met — the same `neglect_turns` and the same `upkeep.grace_turns`.
+        assert!(
+            keeping_is_short(
+                WORK_DEMAND,
+                WORK_DEMAND,
+                &goods(),
+                &paid(MATERIAL_DEMAND * 0.5)
+            ),
+            "a GOOD short is an unmet turn, on the rung's existing grace"
+        );
+        assert!(
+            keeping_is_short(
+                WORK_DEMAND,
+                WORK_DEMAND * 0.75,
+                &goods(),
+                &paid(MATERIAL_DEMAND)
+            ),
+            "…and so is a HAND short, exactly as it always was"
+        );
+        assert!(
+            !keeping_is_short(WORK_DEMAND, WORK_DEMAND, &goods(), &paid(MATERIAL_DEMAND)),
+            "**AND IT RESETS ONLY WHEN ALL OF THEM ARE MET** — the pairing that stops this passing \
+             on a predicate that always answers `true`"
+        );
+    }
+
+    /// **A TWO-LEG QUEUE ENTRY DRAWS EACH LEG'S OWN PILE**, at that leg's own rung's rate over that
+    /// leg's own width — the property a single-leg fixture cannot see.
+    ///
+    /// Asserted at [`super::build_material_wants`], because the shipped ladder has no two-leg climb whose
+    /// legs *both* declare a pile: the plant branch's two declare none, and a `corral` requires a
+    /// herd already tamed. Stating the legs is what makes the arithmetic under test the
+    /// **apportionment** rather than the roster.
+    #[test]
+    fn a_two_leg_entry_draws_each_legs_own_pile() {
+        let ladder = crate::intensification::LadderConfig::builtin();
+        let (pile, width) = pen_pile_and_width();
+
+        /// What the first leg has left — small, so a turn's accrual genuinely spills into the second.
+        const FIRST_LEG_OWED: f32 = 1.0;
+        let legs = [
+            (RungKey::AnimalPen, FIRST_LEG_OWED, width),
+            (RungKey::AnimalPen, width, width),
+        ];
+        let accrual = FIRST_LEG_OWED + 3.0;
+        let drawn = super::build_material_wants(&legs, accrual, &ladder)
+            .get(PEN_MATERIAL)
+            .copied()
+            .expect("both legs declare the pen's material");
+        assert!(
+            (drawn - pile * accrual / width).abs() < FORECAST_EPSILON,
+            "each leg draws its own rung's pile over its own width, so the two sum to the whole \
+             turn's share: {drawn} against {pile} × {accrual}/{width}"
+        );
+
+        // **THE OWED CAP IS WHAT MAKES A COMPLETING TURN HONEST** — an accrual that overruns every
+        // leg draws exactly the legs' own remainders and no more.
+        let capped = super::build_material_wants(&legs, width * 10.0, &ladder)
+            .get(PEN_MATERIAL)
+            .copied()
+            .expect("both legs declare the pen's material");
+        assert!(
+            (capped - pile * (FIRST_LEG_OWED + width) / width).abs() < FORECAST_EPSILON,
+            "an overrunning accrual draws exactly the legs' own remainders: {capped}"
+        );
+        assert!(
+            capped > drawn,
+            "**LIVENESS**: the two arms must differ, or the cap is not being read"
+        );
+    }
+
     /// **The animal twin, rung 3.** A pen that finishes this turn clears `Corral` the same way — the
     /// keeper crew stays on the herd, under the stance it chose, and starts drawing the pen's
     /// harvest.
@@ -10342,9 +12297,13 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
+        // **The pen eats hurdles now**, so a fixture measuring its pacing has to hold some or it
+        // measures a stall it staged itself — see [`stock_pen_materials`].
+        stock_pen_materials(&mut world, band);
 
         // Walked to rather than forecast — see the Tame fixture above.
         let mut turns_taken = 0;
@@ -10423,6 +12382,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
@@ -10453,6 +12413,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -10484,6 +12445,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -10528,6 +12490,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -10548,6 +12511,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);

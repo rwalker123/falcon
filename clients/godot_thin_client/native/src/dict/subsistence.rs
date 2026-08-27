@@ -306,6 +306,48 @@ pub(crate) fn herds_to_array(
         // third food web then costs a consumer nothing. **Never `""`** on an honest payload — an
         // untouched herd publishes `animal:wild`.
         let _ = dict.insert("current_rung", herd.currentRung().unwrap_or_default());
+        // **THE MATERIAL HALF OF THE LADDER'S PRICE** (`docs/plan_standing_upkeep.md` §2.7) — the
+        // second currency beside `<rung>_work_cost` and `upkeep_demand`. Work was never the whole
+        // price: a fence swallows hurdles, a road swallows stone.
+        //
+        // STRUCTURED PER GOOD, NEVER PROSE — the SIM owns the numbers and the CLIENT owns the words,
+        // exactly as `craft_offers` splits them. The `MaterialPayoff` rules apply here as everywhere
+        // on this wire: **NEVER SUMMED** (a total is a currency this model does not have), **EMPTY
+        // MEANS "NO ROW" AND NEVER ZERO** (a rung eating nothing must not read as one that eats
+        // badly), and the key is always present so "no quote" and "eats nothing" stay distinct.
+        //
+        //   `build_material_cost`      = the WHOLE PILE the rung DIRECTLY ABOVE the one this source
+        //                                stands on swallows, at full coverage, resolved off the
+        //                                ladder at capture and published whether or not a build is
+        //                                in flight. Empty at the top of a branch. The pile draws IN
+        //                                PROPORTION to the work banked, which is what lets the `⌃`
+        //                                track say *"you have 2 hurdles — it will stall at about a
+        //                                third"*. It prices ONE rung, so a track row two rungs up
+        //                                has no pile to quote and states none.
+        //   `upkeep_material_demand`   = what holding this source's OWN current rung swallows per
+        //                                turn — the STAMPED bill the keeping was judged against,
+        //                                exactly as `upkeep_demand` beside it is.
+        //   `upkeep_material_supplied` = what the band's store actually paid toward it. The sim
+        //                                publishes both terms rather than their difference, for the
+        //                                reason the work trio does: a client renders and does no
+        //                                arithmetic.
+        //
+        // **A SHORTFALL OF EITHER KIND TRIPS THE SAME GRACE** — one `neglect_grace_remaining`, one
+        // neglect counter, and the decay rides the WORST of the work fraction and each good's. The
+        // amounts stay separate so a full store cannot paper over missing hands: do NOT add these to
+        // the work figures anywhere.
+        let _ = dict.insert(
+            "build_material_cost",
+            &material_payoffs_to_array(herd.buildMaterialCost()),
+        );
+        let _ = dict.insert(
+            "upkeep_material_demand",
+            &material_payoffs_to_array(herd.upkeepMaterialDemand()),
+        );
+        let _ = dict.insert(
+            "upkeep_material_supplied",
+            &material_payoffs_to_array(herd.upkeepMaterialSupplied()),
+        );
         let _ = dict.insert("build_legs", &build_legs_to_array(herd.buildLegs()));
         // **WHAT THE POOL'S KITS ADD TO THIS BUILD EACH TURN**, in work units — the builders'
         // head count times what one equipped builder's kit delivers
@@ -569,6 +611,29 @@ pub(crate) fn herds_to_array(
         // and this rides the offered face as the second half of the deal.
         let _ = dict.insert("tame_upkeep_demand", herd.tameUpkeepDemand());
         let _ = dict.insert("corral_upkeep_demand", herd.corralUpkeepDemand());
+        // **THE MATERIAL TWIN OF THAT PAIR** — what holding THAT rung costs in goods per turn, read
+        // beside the work quote above by the same rung-picking rule, and quoted with it in the `⌃`
+        // track's hold aside: *"then 1.00 work + 0.05 hurdles a turn to hold"*.
+        //
+        // ⛔ **THE RUNG'S RATE, NOT THE STAMPED BILL** — `upkeep_material_demand` above says what
+        // this herd was BILLED this turn, resolved through the rung it stands on; these say what a
+        // rung it may not be on yet would COST. On a herd mid-climb the two DISAGREE and that is
+        // correct — the work pair has exactly that relationship. Do not reconcile them.
+        //
+        // **EMPTY MEANS THE RUNG EATS NO MATERIAL**, never zero of something, so a consumer renders
+        // NO material clause rather than `0 hurdles`. On the shipped ladder `tame_upkeep_material_
+        // demand` is ALWAYS empty (`animal:pastoral` names none) and `corral_upkeep_material_demand`
+        // names `hurdles` — a pastoral herd is the only source a track offers the Pen rung from, so
+        // that one row is where the whole field earns its keep. Carries this herd's keeper load, the
+        // same `scaled_by` the bill reads; the client does NO arithmetic on it.
+        let _ = dict.insert(
+            "tame_upkeep_material_demand",
+            &material_payoffs_to_array(herd.tameUpkeepMaterialDemand()),
+        );
+        let _ = dict.insert(
+            "corral_upkeep_material_demand",
+            &material_payoffs_to_array(herd.corralUpkeepMaterialDemand()),
+        );
         // **WHAT THE AT-RISK METER IS LOSING PER TURN** — the term the build's closed form actually
         // nets (`net = crew work − rot`), per SOURCE rather than per rung. Always meaningful, never a
         // sentinel: `0` when the keeping covers this herd, when it is inside its rung's grace, and —
@@ -625,9 +690,27 @@ pub(crate) fn herds_to_array(
         //
         // `""` means the roster could not resolve the species; the client reads that as "no herd
         // answer" and falls back to `SubsistenceSection.defaultHuntKitId`, exactly as the sim does.
-        // Newest live slot on `HerdTelemetryState`, following the two retired `*EstimatesKitId`
-        // slots the forecast query replaced — those are `(deprecated)` and are decoded nowhere.
+        // It follows the two retired `*EstimatesKitId` slots the forecast query replaced — those
+        // are `(deprecated)` and are decoded nowhere.
         let _ = dict.insert("default_kit_id", herd.defaultKitId().unwrap_or(""));
+        // **WHAT THIS HERD'S KEEPERS ARE CARRYING** — the animal twin of the plant web's pair
+        // below, set per WORK SITE by `upkeep_kit <faction> <herd_id> [kit <id>]`
+        // (`docs/plan_standing_upkeep.md` §2.7). The band is the pool of hands and goods to draw
+        // from; it does not decide which tool a given herd is kept with, so this rides the herd row
+        // exactly as `build_kit_id` above rides the queue entry.
+        //
+        // It states the **RESOLVED** kit, never *"the player named none"*: the default is derived
+        // from this site's own food web, so a row that named nothing would otherwise read empty
+        // while the keepers were out with hurdling. `""` means NO band of the viewing faction works
+        // this herd at all — an explicit bare-handed pick crosses as the roster's own bare kit id,
+        // which is a real selection and reads differently. Newest slot on `HerdTelemetryState`.
+        let _ = dict.insert("upkeep_kit_id", herd.upkeepKitId().unwrap_or(""));
+        // **WHETHER THAT ID IS THE PLAYER'S WORD OR THE WEB'S DERIVATION** — not recoverable from
+        // the id alone, because a player may name the very kit the derivation would have picked. A
+        // picker draws its `(default)` mark and offers "back to default" off this and not off a
+        // second client-side derivation. Decoded on both webs so one reader serves a herd and a
+        // patch alike.
+        let _ = dict.insert("upkeep_kit_named", herd.upkeepKitNamed());
         array.push(&dict.to_variant());
     }
     array
@@ -857,6 +940,48 @@ pub(crate) fn forage_patches_to_array(
         // one carries: it states the same ladder position `is_cultivated`/`is_field` do, so
         // `MapView.FOW_DISCOVERED_HIDDEN_KEYS` redacts it with them.
         let _ = dict.insert("current_rung", patch.currentRung().unwrap_or_default());
+        // **THE MATERIAL HALF OF THE LADDER'S PRICE** (`docs/plan_standing_upkeep.md` §2.7) — the
+        // second currency beside `<rung>_work_cost` and `upkeep_demand`. Work was never the whole
+        // price: a fence swallows hurdles, a road swallows stone.
+        //
+        // STRUCTURED PER GOOD, NEVER PROSE — the SIM owns the numbers and the CLIENT owns the words,
+        // exactly as `craft_offers` splits them. The `MaterialPayoff` rules apply here as everywhere
+        // on this wire: **NEVER SUMMED** (a total is a currency this model does not have), **EMPTY
+        // MEANS "NO ROW" AND NEVER ZERO** (a rung eating nothing must not read as one that eats
+        // badly), and the key is always present so "no quote" and "eats nothing" stay distinct.
+        //
+        //   `build_material_cost`      = the WHOLE PILE the rung DIRECTLY ABOVE the one this source
+        //                                stands on swallows, at full coverage, resolved off the
+        //                                ladder at capture and published whether or not a build is
+        //                                in flight. Empty at the top of a branch. The pile draws IN
+        //                                PROPORTION to the work banked, which is what lets the `⌃`
+        //                                track say *"you have 2 hurdles — it will stall at about a
+        //                                third"*. It prices ONE rung, so a track row two rungs up
+        //                                has no pile to quote and states none.
+        //   `upkeep_material_demand`   = what holding this source's OWN current rung swallows per
+        //                                turn — the STAMPED bill the keeping was judged against,
+        //                                exactly as `upkeep_demand` beside it is.
+        //   `upkeep_material_supplied` = what the band's store actually paid toward it. The sim
+        //                                publishes both terms rather than their difference, for the
+        //                                reason the work trio does: a client renders and does no
+        //                                arithmetic.
+        //
+        // **A SHORTFALL OF EITHER KIND TRIPS THE SAME GRACE** — one `neglect_grace_remaining`, one
+        // neglect counter, and the decay rides the WORST of the work fraction and each good's. The
+        // amounts stay separate so a full store cannot paper over missing hands: do NOT add these to
+        // the work figures anywhere.
+        let _ = dict.insert(
+            "build_material_cost",
+            &material_payoffs_to_array(patch.buildMaterialCost()),
+        );
+        let _ = dict.insert(
+            "upkeep_material_demand",
+            &material_payoffs_to_array(patch.upkeepMaterialDemand()),
+        );
+        let _ = dict.insert(
+            "upkeep_material_supplied",
+            &material_payoffs_to_array(patch.upkeepMaterialSupplied()),
+        );
         let _ = dict.insert("build_legs", &build_legs_to_array(patch.buildLegs()));
         let _ = dict.insert("build_work_from_gear", patch.buildWorkFromGear());
         // The plant twin of the herd block's estimate TERM — see there for why it rides beside
@@ -1149,6 +1274,20 @@ pub(crate) fn forage_patches_to_array(
         // they carry no rung and survive fog — see `tile_capacity` above.
         let _ = dict.insert("cultivation_upkeep_demand", patch.cultivationUpkeepDemand());
         let _ = dict.insert("field_upkeep_demand", patch.fieldUpkeepDemand());
+        // **THE MATERIAL TWIN OF THAT PAIR** — the plant side of the herd block's quote; see there
+        // for why this is the RUNG'S RATE rather than the stamped bill, and why the two are meant to
+        // disagree on a source mid-climb. Both are EMPTY on the shipped ladder (neither plant rung
+        // names a material) and the seam exists because the route branch's stone lands in it next —
+        // so a consumer must render no material clause at all rather than a `0`. Struck through this
+        // patch's own tender-load, exactly as the work quote above is.
+        let _ = dict.insert(
+            "cultivation_upkeep_material_demand",
+            &material_payoffs_to_array(patch.cultivationUpkeepMaterialDemand()),
+        );
+        let _ = dict.insert(
+            "field_upkeep_material_demand",
+            &material_payoffs_to_array(patch.fieldUpkeepMaterialDemand()),
+        );
         // **WHAT THE AT-RISK METER IS LOSING PER TURN** — the plant twin, and the one web where it is
         // routinely non-zero: a plant rung's penalty for an unpaid keeping IS a meter bleed. Per
         // SOURCE, the plant web unwinding newest-first, so it describes whichever meter is at risk.
@@ -1167,6 +1306,13 @@ pub(crate) fn forage_patches_to_array(
             "neglect_grace_remaining",
             i64::from(patch.neglectGraceRemaining()),
         );
+        // **WHAT THIS PATCH'S KEEPERS ARE CARRYING** — the plant twin of the herd block's pair; see
+        // there for why the wire states the RESOLVED kit, why `""` means no band of the viewing
+        // faction works this source at all, and why the "named" flag is not recoverable from the id.
+        // Set per WORK SITE by `upkeep_kit <faction> <x> <y> [kit <id>]`, so it rides the worked row
+        // rather than the band. Newest slot on `ForagePatchState`.
+        let _ = dict.insert("upkeep_kit_id", patch.upkeepKitId().unwrap_or(""));
+        let _ = dict.insert("upkeep_kit_named", patch.upkeepKitNamed());
         // THE BUILD CREWS ARE RETIRED with `crew_needed` (docs/plan_standing_upkeep.md section
         // 2.2). They floored the compose sheet's worker cap because that cap was inverted out of the
         // TAKE and a building crew was paid a dipped take, so a 25-turn improvement asked for FEWER

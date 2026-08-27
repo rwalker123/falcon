@@ -62,7 +62,10 @@
 //! is now rung 4 (Farm)'s identity — the first rung to drop the gathering-site term, with a fertility
 //! floor back in its place. Design: `docs/plan_intensification_ladder.md` §2.
 
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, HashMap},
+};
 
 use bevy::prelude::*;
 
@@ -385,6 +388,29 @@ pub struct ForagePatch {
     ///
     /// Transient per-turn scratch on [`Self::upkeep_supplied`]'s exact cycle, and for its reason.
     pub upkeep_demanded: Option<f32>,
+    /// **THE MATERIAL HALF OF THE SAME STAMPED BILL**, per material id, in that material's own units
+    /// per turn (`docs/plan_standing_upkeep.md` §2.7).
+    ///
+    /// ⛔ **IT NEEDS THE STAMP FOR EXACTLY [`Self::upkeep_demanded`]'S REASON.** The material demand
+    /// interpolates on the same position the work demand does, and it is carried across the same
+    /// Population→Logistics boundary, so a re-derived live value would judge the settled supply
+    /// against a bill nobody was handed — the *"a fully-staffed band bleeds ~0.03 work/turn for
+    /// ever while re-arming its grace every turn"* defect, restated in a second currency.
+    ///
+    /// **First write wins**, on the work stamp's own rule and for its own reason: several bands may
+    /// answer for one source and every share was struck at the pre-accrual position.
+    ///
+    /// An **empty** map on a source that was answered for is a real reading — the rung eats no
+    /// material — and is not the same as `upkeep_materials_demanded` being untouched, which is what
+    /// [`Self::upkeep_demanded`]'s `None` says beside it.
+    pub upkeep_materials_demanded: BTreeMap<String, f32>,
+    /// **WHAT THE BAND'S STORE ACTUALLY PAID TOWARD THAT BILL**, per material id — the material twin
+    /// of [`Self::upkeep_supplied`], stamped by the settlement in the labor pass and cleared by
+    /// `advance_cultivation` on the same cycle.
+    ///
+    /// It **accumulates** across the bands working the source, exactly as the work supply does: the
+    /// demand is per-source, so two bands may each pay part of it.
+    pub upkeep_materials_supplied: BTreeMap<String, f32>,
     // **RETIRED before it shipped: `ForagePatch::repair_verb`** — a per-turn flag stamped on the edge a
     // completed meter fell below its cost, so the labor arm could re-stamp the rung's verb.
     //
@@ -544,6 +570,8 @@ impl ForagePatch {
             neglect_turns: NEGLECT_NONE,
             upkeep_supplied: NO_UPKEEP_DEMAND,
             upkeep_demanded: None,
+            upkeep_materials_demanded: BTreeMap::new(),
+            upkeep_materials_supplied: BTreeMap::new(),
         }
     }
 
@@ -3010,6 +3038,74 @@ pub fn patch_keeping_basis(
         .unwrap_or_else(|| patch_upkeep_demand(patch, ladder, tile_capacity, forage))
 }
 
+/// **WHAT HOLDING THIS PATCH SWALLOWS OF ONE MATERIAL, PER TURN** — the material twin of
+/// [`patch_upkeep_demand`], interpolated over the same [`RungStanding`] and scaled by the same
+/// tender-load, because the rung reads one `scaled_by` for both currencies
+/// (`docs/plan_standing_upkeep.md` §2.7).
+///
+/// [`NO_UPKEEP_DEMAND`] for a rung that names no material — which is **every plant rung on the
+/// shipped ladder**. The seam exists because the route branch and any future rung will name one, and
+/// because a per-web asymmetry here would be a second model.
+pub fn patch_upkeep_material_demand(
+    patch: &ForagePatch,
+    ladder: &LadderConfig,
+    tile_capacity: f32,
+    forage: &ForageLaborConfig,
+    material: &str,
+) -> f32 {
+    let loads = patch_tender_loads(tile_capacity, forage);
+    interpolate(&patch.standing(), |rung| {
+        ladder.rung(rung).upkeep_material_demand(material, loads)
+    })
+}
+
+/// **EVERY MATERIAL THIS PATCH'S KEEPING WILL BE BILLED FOR THIS TURN**, with the interpolated
+/// per-turn amount — the settlement's claim list, and the map the labor pass stamps onto
+/// [`ForagePatch::upkeep_materials_demanded`].
+///
+/// It walks the ids named by the rung the patch **holds** and the rung it is **raising**, because
+/// [`interpolate`] reads both endpoints and an id named by only one of them still has a positive
+/// interpolated demand. Amounts at or below [`NO_UPKEEP_DEMAND`] are dropped, so an empty map is the
+/// honest *"this rung eats no material"*.
+pub fn patch_upkeep_material_demands(
+    patch: &ForagePatch,
+    ladder: &LadderConfig,
+    tile_capacity: f32,
+    forage: &ForageLaborConfig,
+) -> BTreeMap<String, f32> {
+    let standing = patch.standing();
+    let mut demands = BTreeMap::new();
+    for id in crate::intensification::standing_material_ids(&standing, ladder) {
+        let amount = patch_upkeep_material_demand(patch, ladder, tile_capacity, forage, &id);
+        if amount > NO_UPKEEP_DEMAND {
+            demands.insert(id, amount);
+        }
+    }
+    demands
+}
+
+/// **THE MATERIAL BILL THE KEEPING IS JUDGED AGAINST** — the stamped
+/// [`ForagePatch::upkeep_materials_demanded`] where a band answered for this patch, and the live
+/// [`patch_upkeep_material_demands`] where none did. [`patch_keeping_basis`]' own rule, in the second
+/// currency, and for its reason: a demand that moves within the turn is only safe to read once.
+pub fn patch_material_keeping_basis<'a>(
+    patch: &'a ForagePatch,
+    ladder: &LadderConfig,
+    tile_capacity: f32,
+    forage: &ForageLaborConfig,
+) -> Cow<'a, BTreeMap<String, f32>> {
+    if patch.upkeep_demanded.is_some() {
+        Cow::Borrowed(&patch.upkeep_materials_demanded)
+    } else {
+        Cow::Owned(patch_upkeep_material_demands(
+            patch,
+            ladder,
+            tile_capacity,
+            forage,
+        ))
+    }
+}
+
 /// **WHAT THIS PATCH'S AT-RISK METER WILL LOSE ON THE NEXT DECAY PASS**, in work units — what
 /// the **next** [`advance_cultivation`] will take off it, quoted through the rung's own
 /// [`RungDef::meter_rot`] seam so the published number and the pass that applies it cannot use two
@@ -3144,7 +3240,11 @@ pub fn advance_cultivation(
         // `ForagePatch::upkeep_demanded`. Judging the lagged supply against a demand that moved
         // under it makes a fully-staffed source permanently short the moment its meter climbs.
         let demand = patch_keeping_basis(patch, &ladder, tile_capacity, forage);
-        let shortfall = upkeep_shortfall(demand, patch.upkeep_supplied);
+        // **AND THE MATERIAL HALF OF THE SAME BILL** — the stamped
+        // `ForagePatch::upkeep_materials_demanded` where a band answered, the live interpolated
+        // demand where none did. Empty on every plant rung the ladder ships, so everything below is
+        // byte-identical for them.
+        let material_demand = patch_material_keeping_basis(patch, &ladder, tile_capacity, forage);
         // **HOW SHORT, as a fraction of what was asked** — what the decay actually rides
         // (`crate::intensification::upkeep_shortfall_fraction`). The absolute shortfall still gates
         // the counter, because *any* unmet work is an unmet turn.
@@ -3153,9 +3253,24 @@ pub fn advance_cultivation(
         // for both: the maintenance rate is owed either way, and only the supplier moved. A build
         // crew below the rate leaves a shortfall and the meter goes backwards; one exactly at it
         // holds; one above it banks the surplus (`RungDef::build_accrual`).
-        let shortfall_fraction =
-            crate::intensification::upkeep_shortfall_fraction(demand, patch.upkeep_supplied);
-        if shortfall <= NO_UPKEEP_DEMAND {
+        // **THE WORST OF THE TWO CURRENCIES, and one counter for both**
+        // (`docs/plan_standing_upkeep.md` §4.9 item 12). The amounts stay separate — a full store
+        // must not paper over missing hands — so the fraction the decay rides is the `max` and the
+        // grace is tripped by **either**. No new dial, and no second counter free to disagree.
+        let shortfall_fraction = crate::intensification::keeping_shortfall_fraction(
+            demand,
+            patch.upkeep_supplied,
+            &material_demand,
+            &patch.upkeep_materials_supplied,
+        );
+        let short = crate::intensification::keeping_is_short(
+            demand,
+            patch.upkeep_supplied,
+            &material_demand,
+            &patch.upkeep_materials_supplied,
+        );
+        drop(material_demand);
+        if !short {
             // The demand was met (or there was none to meet). Forgive whatever neglect had
             // accumulated, so the grace is about *consecutive* shortfall rather than a lifetime
             // budget.
@@ -3207,6 +3322,11 @@ pub fn advance_cultivation(
         // demand again unless somebody restates it.
         patch.upkeep_supplied = NO_UPKEEP_DEMAND;
         patch.upkeep_demanded = None;
+        // **The material half rides the same cycle**, and for the same reason: it is this turn's
+        // bill and this turn's payment, so next turn's shortfall is the whole demand again unless a
+        // band restates it.
+        patch.upkeep_materials_demanded.clear();
+        patch.upkeep_materials_supplied.clear();
     }
 }
 

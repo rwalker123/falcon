@@ -405,6 +405,15 @@ struct Published {
     bands: Vec<(String, f32)>,
     recipes: BTreeMap<String, PublishedRecipe>,
     craft_knowledge: Vec<(String, bool, f32)>,
+    /// **THE BAND'S STANDING MATERIAL BILL** — the two rates and the stock, per material
+    /// (`docs/plan_standing_upkeep.md` §2.7).
+    /// Empty on every band in this file — it keeps no pen — and read only by
+    /// [`the_standing_material_bill_reaches_the_client`]'s own liveness clause, which asserts that
+    /// **the honest answer for a band with no holdings is no row at all**. Its positive half lives
+    /// in `pen_material_priority.rs`, which drives real pens.
+    material_upkeep_need: Vec<(String, f32)>,
+    material_upkeep_income: Vec<(String, f32)>,
+    material_store: Vec<(String, f32)>,
 }
 
 #[derive(Clone, Debug)]
@@ -667,6 +676,48 @@ fn publish(app: &mut App, band: Entity) -> Published {
         bands,
         recipes,
         craft_knowledge,
+        // **THE BAND'S STANDING MATERIAL BILL**, three `[MaterialPayoff]` vectors read the same way
+        // (`docs/plan_standing_upkeep.md` §2.7). Spelled out rather than folded into a helper because
+        // the FlatBuffers vector type is a mouthful to name and the three reads are one line each.
+        material_upkeep_need: cohort
+            .materialUpkeepNeed()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| {
+                        (
+                            row.materialId().unwrap_or_default().to_string(),
+                            row.amount(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        material_upkeep_income: cohort
+            .materialUpkeepIncome()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| {
+                        (
+                            row.materialId().unwrap_or_default().to_string(),
+                            row.amount(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        material_store: cohort
+            .materialStore()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| {
+                        (
+                            row.materialId().unwrap_or_default().to_string(),
+                            row.amount(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -1973,11 +2024,13 @@ fn the_per_world_catalogues_round_trip() {
         hide.4, "tanning_frame",
         "the material names the tool that bounds it, which is what the 'No loom' refusal reads"
     );
-    // **Six ship: the three organics and the three uncrafted luxury crops** (arc #527). An
-    // *unreachable* material would still be dead content the catalogue publishes; these three are
-    // *uncrafted* — a plant grows them, a band banks them, and no bench works them yet — so their
-    // published `craft` is the empty string, which is what tells a client there is nothing to make.
-    assert_eq!(published.materials.len(), 6);
+    // **Eight ship: four crafted (the three organics plus `wood`) and four uncrafted.** An
+    // *unreachable* material would still be dead content the catalogue publishes; the uncrafted four
+    // are reachable — a plant grows the three luxury crops, a band banks them, and no bench works
+    // them yet; `hurdles` are made at a bench and eaten by the `animal:pen` rung, and nothing takes
+    // them as an INPUT (`docs/plan_standing_upkeep.md` §2.7). Their published `craft` is the empty
+    // string, which is what tells a client there is nothing to make *out of* them.
+    assert_eq!(published.materials.len(), 8);
     let uncrafted: Vec<&str> = published
         .materials
         .iter()
@@ -1986,8 +2039,8 @@ fn the_per_world_catalogues_round_trip() {
         .collect();
     assert_eq!(
         uncrafted,
-        vec!["grape", "tea", "tobacco"],
-        "exactly the three luxury crops publish no craft"
+        vec!["grape", "hurdles", "tea", "tobacco"],
+        "exactly the three luxury crops and the fence panels publish no craft"
     );
     for (id, craft, _, hand_workable, tool) in &published.materials {
         if !craft.is_empty() {
@@ -2303,5 +2356,207 @@ fn the_benchs_rank_reaches_the_client_running_or_idle() {
         idle.priority,
         fb::SourcePriority::Low,
         "an IDLE bench publishes its rank too — the command sets it either way"
+    );
+}
+
+/// ⛔ **THE STANDING MATERIAL BILL REACHES THE CLIENT — and a published field with no producer is a
+/// defect** (`docs/plan_standing_upkeep.md` §2.7 / §4.9 item 12).
+///
+/// Two of the three fields have producers this world can reach, and each proves a different one:
+///
+/// - **`materialStore`** proves the **worldgen** path. `StartKit.materials` was the materials *table*
+///   and stocked nothing; `MaterialDef::start_stock` is the path this slice added, and `wood` is its
+///   one declarer — with **no producer at all** until forest foraging lands, so a band that does not
+///   spawn holding it can never craft a hurdle and can never raise a pen.
+/// - **`materialUpkeepIncome`** proves the **bench** term. It is a *projection* off the bench's own
+///   `ratePerTurn`, and on the shipped roster the pen's `hurdles` have **no producer but a bench** —
+///   a ledger without that term would read zero income for ever for the one material a pen eats.
+/// - **`materialUpkeepNeed`** is the third, and it is honestly **empty** here: this band keeps no
+///   pen. Its own liveness lives in `pen_material_priority.rs`, which drives real pens.
+///
+/// **Each claim is PAIRED**, because *"the vector is non-empty"* passes on a wire that publishes the
+/// same rows everywhere: the store is read before and after the bench is staffed, and the income is
+/// asserted absent first.
+#[test]
+fn the_standing_material_bill_reaches_the_client() {
+    const WOOD: &str = "wood";
+    const HURDLES: &str = "hurdles";
+    let (mut app, band) = world();
+
+    // --- the STORE, straight off the spawn ------------------------------------------------------
+    let stocked = publish(&mut app, band).material_store;
+    let wood = stocked
+        .iter()
+        .find(|(id, _)| id == WOOD)
+        .map(|(_, amount)| *amount)
+        .unwrap_or_else(|| {
+            panic!("a spawned band must publish the wood its `start_stock` seeded, got {stocked:?}")
+        });
+    assert!(
+        wood > 0.0,
+        "…and it is a real pile, not a row of zero: {wood}"
+    );
+    assert!(
+        stocked.iter().all(|(_, amount)| *amount > 0.0),
+        "**EMPTY IS 'NO ROW', NEVER ZERO** — a material the band holds none of publishes no row at \
+         all: {stocked:?}"
+    );
+    assert!(
+        publish(&mut app, band).material_upkeep_need.is_empty(),
+        "…and the same rule on the NEED: a band keeping no improvement owes nothing, and publishes \
+         no row rather than a column of zeros"
+    );
+
+    // --- the INCOME, off the bench's own projected rate ------------------------------------------
+    assert!(
+        publish(&mut app, band)
+            .material_upkeep_income
+            .iter()
+            .all(|(id, _)| id != HURDLES),
+        "fixture: an idle band makes no hurdles, or the arm below proves nothing"
+    );
+    deposit(
+        &mut app,
+        band,
+        "hide",
+        100.0,
+        &[("toughness", 0.5), ("suppleness", 0.6)],
+    );
+    {
+        let mut bench = app
+            .world
+            .get_mut::<BandBench>(band)
+            .expect("a spawned band carries a bench");
+        bench.set_job(HURDLES, 4);
+    }
+    app.world.run_system_once(advance_crafting);
+    let income = publish(&mut app, band).material_upkeep_income;
+    let made = income
+        .iter()
+        .find(|(id, _)| id == HURDLES)
+        .map(|(_, amount)| *amount)
+        .unwrap_or_else(|| {
+            panic!(
+                "a bench working the hurdles recipe publishes its own per-turn output, got {income:?}"
+            )
+        });
+    assert!(
+        made > 0.0,
+        "…and it is the rate the bench is actually running at: {made}"
+    );
+
+    // …and the wood the bench cut for it really left the store, which is what makes the two fields
+    // one ledger rather than two readings of the same number.
+    let after = publish(&mut app, band).material_store;
+    let wood_left = after
+        .iter()
+        .find(|(id, _)| id == WOOD)
+        .map(|(_, amount)| *amount)
+        .unwrap_or_default();
+    assert!(
+        wood_left < wood,
+        "the bench drew its wood off the published store: {wood_left} against {wood}"
+    );
+}
+
+/// ⛔ **A BENCH THAT CAN DRAW NOTHING PROMISES NOTHING** (`docs/plan_standing_upkeep.md` §2.7).
+///
+/// `materialUpkeepIncome`'s bench term is a *projection*, and a projection of income that never
+/// arrives is worse than no projection at all. `advance_crafting` skips a bench whose pile is neither
+/// **drawn** nor **affordable**, so a band with `hurdles` queued and no `wood` banks zero for ever —
+/// while the ledger read the full `ratePerTurn / work × amount` and drove `materialUpkeepIncome`
+/// **above** `materialUpkeepNeed`, printing a runway of `∞` and leaving the caret untinted in exactly
+/// the state the standing bill exists to announce.
+///
+/// **The crew is on the bench the whole time**, so an empty row here can only mean the draw — a
+/// `ratePerTurn` of zero would make the claim vacuous, and it is asserted positive on both arms.
+/// The sim's own answer is read beside it: the projection and `advance_crafting`'s progress agree
+/// on both halves of the pairing.
+#[test]
+fn a_bench_that_cannot_draw_its_pile_publishes_no_income() {
+    const WOOD: &str = "wood";
+    const HURDLES: &str = "hurdles";
+    /// A crew big enough that the rate is unmistakably positive while the `work: 7` recipe still
+    /// takes more than one turn — so the *stocked* arm shows progress without a completion resetting
+    /// the meter this reads.
+    const BENCH_HANDS: u32 = 4;
+    /// Enough wood for a pass, banked at the material's own axes.
+    const A_PASS_OF_WOOD: f32 = 40.0;
+
+    let (mut app, band) = world();
+    deposit(
+        &mut app,
+        band,
+        HIDE,
+        PLENTY,
+        &[(TOUGHNESS, 0.5), (SUPPLENESS, 0.6)],
+    );
+    strip(&mut app, band, WOOD);
+    {
+        let mut bench = app
+            .world
+            .get_mut::<BandBench>(band)
+            .expect("a spawned band carries a bench");
+        bench.set_job(HURDLES, BENCH_HANDS);
+    }
+
+    // --- no wood: the row is absent, and the bench really does bank nothing --------------------
+    let short = publish(&mut app, band);
+    assert!(
+        short.bench.rate_per_turn > 0.0,
+        "fixture: the crew must be on the bench, or an absent income row proves only that nobody \
+         is working (rate {})",
+        short.bench.rate_per_turn
+    );
+    assert!(
+        short.bench.shortfalls.iter().any(|id| id == WOOD),
+        "fixture: the bench must be short of exactly the input this arm stripped, got {:?}",
+        short.bench.shortfalls
+    );
+    assert!(
+        short
+            .material_upkeep_income
+            .iter()
+            .all(|(id, _)| id != HURDLES),
+        "**A BENCH THAT CANNOT CUT ITS PILE MAKES NOTHING** — and the ledger must say so rather \
+         than promise a rate that never arrives: {:?}",
+        short.material_upkeep_income
+    );
+    app.world.run_system_once(advance_crafting);
+    assert_eq!(
+        publish(&mut app, band).bench.progress,
+        0.0,
+        "…and the SIM agrees, which is the point: `advance_crafting` banks nothing for a bench it \
+         cannot draw for"
+    );
+
+    // --- the wood arrives: the same bench, the same crew, and now a real rate -------------------
+    deposit(
+        &mut app,
+        band,
+        WOOD,
+        A_PASS_OF_WOOD,
+        &[("hardness", 0.5), ("pliancy", 0.6)],
+    );
+    app.world.run_system_once(advance_crafting);
+    let stocked = publish(&mut app, band);
+    assert!(
+        stocked.bench.progress > 0.0,
+        "fixture: the restocked bench must actually bank a turn, or the pairing is one-sided"
+    );
+    let promised = stocked
+        .material_upkeep_income
+        .iter()
+        .find(|(id, _)| id == HURDLES)
+        .map(|(_, amount)| *amount)
+        .unwrap_or_else(|| {
+            panic!(
+                "a bench that CAN draw publishes its per-turn output, got {:?}",
+                stocked.material_upkeep_income
+            )
+        });
+    assert!(
+        promised > 0.0,
+        "…and it is a real rate rather than a row of zero: {promised}"
     );
 }

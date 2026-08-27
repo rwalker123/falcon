@@ -275,6 +275,19 @@ constructor` raised inside `effective_worker_map`, which surfaces as a work boar
 rather than as a bad number. The vector is copied beside that list, verbatim; normalizing is
 `SourceForecast.material_payoff_rows`' job, beside the readouts that spend it.
 
+**AND THE STANDING-UPKEEP SLICE ADDED EIGHT MORE, ON THREE TABLES** (`docs/plan_standing_upkeep.md`
+§2.7): `ForagePatchState` / `HerdTelemetryState` gained `buildMaterialCost` / `upkeepMaterialDemand` /
+`upkeepMaterialSupplied`, `LaborAssignment` gained `materialUpkeepDemand` / `materialUpkeepSupplied`,
+and `PopulationCohortState` gained `materialUpkeepNeed` / `materialUpkeepIncome` / `materialStore` —
+every one a `[MaterialPayoff]` through `material_payoffs_to_array`, so the decoder step was a snake_case
+insert per field and nothing else.
+
+⛔ **THE ALLOWLIST BIT THE ASSIGNMENT PAIR EXACTLY AS THIS SECTION WARNS.** The decoder emitted both
+terms and the work board's note came out EMPTY, because `HudBandLaborState.effective_worker_map` is a
+hand-listed allowlist and a key not copied there does not exist as far as the board is concerned. The
+pair is copied verbatim beside `material_yield` — never into `OPTIONAL_YIELD_KEYS`, whose `float()`
+coercion is what the paragraph above is about.
+
 **THE EXPEDITION HALF ADDS ONE MORE VECTOR AND NEEDED NO NEW DECODER AT ALL.**
 `HuntTripRow.delivered_material` → `delivered_material` on every row of the `HuntTripForecast` QUERY
 reply (`bridge/query.rs`, not the snapshot path) — the trip's whole payload per material, which is

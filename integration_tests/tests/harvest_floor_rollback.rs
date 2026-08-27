@@ -141,6 +141,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         workers: 2,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                     LaborAssignment {
                         target: LaborTarget::Hunt {
@@ -150,6 +151,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         workers: 2,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                 ],
                 ..Default::default()

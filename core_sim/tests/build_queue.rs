@@ -125,6 +125,8 @@ fn cultivable_sites_in_one_work_range(app: &mut App) -> Vec<UVec2> {
     panic!("the fixture map must carry three cultivable sites inside one band's work range");
 }
 
+mod pen_materials_support;
+
 use core_sim::RungKey;
 use core_sim::TakeSelection;
 
@@ -189,6 +191,7 @@ fn world_with_a_queue_knowing(
             workers: GATHERERS,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         })
         .collect();
     assignments.push(LaborAssignment {
@@ -198,6 +201,7 @@ fn world_with_a_queue_knowing(
         // (`docs/plan_standing_upkeep.md` §4.7a ②).
         kit: None,
         priority: SourcePriority::default(),
+        upkeep_kit: None,
     });
     if keepers > 0 {
         assignments.push(LaborAssignment {
@@ -205,6 +209,7 @@ fn world_with_a_queue_knowing(
             workers: keepers,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         });
     }
     let staffed: u32 = assignments.iter().map(|row| row.workers).sum();
@@ -746,6 +751,7 @@ fn the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall() 
             workers: keepers,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         });
     }
 
@@ -869,12 +875,14 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
             workers: HUNTERS,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         },
         LaborAssignment {
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         },
     ];
     if keepers > 0 {
@@ -883,6 +891,7 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
             workers: keepers,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         });
     }
     let staffed: u32 = assignments.iter().map(|row| row.workers).sum();
@@ -1670,6 +1679,7 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             workers: RING_KEEPERS,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         },
         LaborAssignment {
             target: LaborTarget::Forage {
@@ -1681,24 +1691,28 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             workers: GATHERERS,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         },
         LaborAssignment {
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         },
         LaborAssignment {
             target: LaborTarget::Agriculture,
             workers: keeping_for(ONE_SOURCE),
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         },
         LaborAssignment {
             target: LaborTarget::Husbandry,
             workers: RING_KEEPERS,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         },
     ];
     let staffed: u32 = assignments.iter().map(|row| row.workers).sum();
@@ -1726,6 +1740,10 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             },
         ))
         .id();
+    // **A RING EATS THE PEN'S OWN PILE** (`docs/plan_standing_upkeep.md` §4.9 item 12) — widening a
+    // fence is a pen build, so a band with no panels is materials-blocked and this fixture would
+    // measure a stall it staged itself instead of the countdown it means to read.
+    pen_materials_support::stock_pen_materials(&mut app.world, band);
     (app, band, RING_HERD.to_string(), source)
 }
 
@@ -2021,6 +2039,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
         workers: GATHERERS,
         kit: None,
         priority: SourcePriority::default(),
+        upkeep_kit: None,
     };
     let cultivate = |source: UVec2| core_sim::BuildQueueEntry {
         source: BuildSource::Patch(source),
@@ -2035,12 +2054,14 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             workers: a_pool_that_finishes_a_cultivate_in_one_turn(),
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         },
         LaborAssignment {
             target: LaborTarget::Agriculture,
             workers: keeping_for(ONE_SOURCE),
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         },
     ];
     let survivor = vec![
@@ -2051,12 +2072,14 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             workers: BUILDERS,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         },
         LaborAssignment {
             target: LaborTarget::Agriculture,
             workers: keeping_for(2),
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         },
     ];
     let finisher_staffed: u32 = finisher.iter().map(|row| row.workers).sum();
@@ -2605,6 +2628,65 @@ fn plant_build_kit() -> core_sim::KitChoice {
     core_sim::EquipmentConfig::builtin()
         .kit("tillage")
         .expect("the shipped roster carries the plant builders kit")
+}
+
+/// **THE WIRE STATES THE KIT A SITE IS ACTUALLY KEPT WITH, AND WHETHER A BAND NAMED IT**
+/// (`docs/plan_standing_upkeep.md` §2.7).
+///
+/// # THE PAIR IS ONE READING, AND NEITHER HALF ANSWERS FOR THE OTHER
+///
+/// **The id is RESOLVED**, never *"the player named none"* — `buildKitId`'s standing rule, and it
+/// matters here for its reason one account over: the keeping default is derived from the site's own
+/// food web, so a row that named nothing would publish `""` while its keepers were out with hoes.
+///
+/// **And `named` is not recoverable from the id**, because a player may name the very kit the
+/// derivation would have picked. Without it a picker cannot draw its `(default)` mark or offer *back
+/// to default* — which is the whole reason the flag rides the wire instead of being re-derived.
+///
+/// Asserted on the **encoded** row rather than on the in-process state, because what a client reads
+/// is the FlatBuffer.
+#[test]
+fn the_published_upkeep_kit_is_the_one_the_site_resolves_to_and_says_whether_it_was_named() {
+    let (mut app, band, sources) = world_with_a_queue(2, BUILDERS);
+    let published_kit = |app: &App, source: UVec2| -> (String, bool) {
+        published(app, source, |patch| {
+            (
+                patch.upkeepKitId().unwrap_or_default().to_string(),
+                patch.upkeepKitNamed(),
+            )
+        })
+    };
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        // The first site names nothing — its web's derivation answers for it.
+        // …and the second names the bare kit, which is a selection and not an absence.
+        assert!(allocation.set_upkeep_kit(
+            &LaborTarget::Forage {
+                tile: sources[1],
+                floor: FOOD_PEAK,
+                species: None,
+                take_species: TakeSelection::EVERYTHING,
+            },
+            Some(bare_builders()),
+        ));
+    }
+    resolve_a_turn(&mut app);
+
+    assert_eq!(
+        published_kit(&app, sources[0]),
+        (plant_build_kit().id().to_string(), false),
+        "a site naming nothing publishes the kit its own web wants, marked as the DERIVATION — a \
+         row publishing the empty string would say 'no kit' while the keepers were out with hoes"
+    );
+    assert_eq!(
+        published_kit(&app, sources[1]),
+        (bare_builders().id().to_string(), true),
+        "…and an explicit bare-handed pick crosses as the roster's own bare id, marked as a NAMED \
+         override: the two are different statements and the flag is what keeps them apart"
+    );
 }
 
 /// **RE-DECLARING KEEPS THE ENTRY'S KIT**, exactly as it keeps its place in the line.

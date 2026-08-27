@@ -998,6 +998,7 @@ mod tests {
             fallback_party: &fallback,
             // The fog fixtures queue nothing, so no source names a builders kit.
             build_kits: &crate::snapshot::subsistence::BuildKitIds::default(),
+            upkeep_kits: &crate::snapshot::subsistence::UpkeepKitIds::default(),
         })
     }
 
@@ -1411,6 +1412,7 @@ mod tests {
                     workers: 10,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -1420,6 +1422,7 @@ mod tests {
                     workers: 5,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
             build_queue: Vec::new(),
@@ -1460,6 +1463,9 @@ mod tests {
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
+            last_material_need: Default::default(),
+            last_material_income: Default::default(),
+            material_shortfall_warned: Vec::new(),
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
@@ -1536,6 +1542,7 @@ mod tests {
                     workers: 10,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -1545,6 +1552,7 @@ mod tests {
                     workers: 5,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
             build_queue: Vec::new(),
@@ -1562,6 +1570,9 @@ mod tests {
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
+            last_material_need: Default::default(),
+            last_material_income: Default::default(),
+            material_shortfall_warned: Vec::new(),
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
@@ -1610,6 +1621,7 @@ mod tests {
                 workers: 10,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
             build_queue: Vec::new(),
             last_yields: Vec::new(),
@@ -1617,6 +1629,9 @@ mod tests {
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
+            last_material_need: Default::default(),
+            last_material_income: Default::default(),
+            material_shortfall_warned: Vec::new(),
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
@@ -1656,6 +1671,7 @@ mod tests {
             workers: 6,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         };
         let state = labor_assignment_to_state(
             &assignment,
@@ -1664,6 +1680,10 @@ mod tests {
             assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
             // These fixtures assert on the floor and the build axis, not on the take ceiling.
             crate::fauna::NO_USEFUL_CREW,
+            // …nor on the good-side shortfall, which is a fact about the SOURCE these row fixtures
+            // do not stand up.
+            Vec::new(),
+            Vec::new(),
         );
         assert_eq!(state.floor, UNNAMED_FLOOR, "the floor crosses verbatim");
         // Only the outbound leg is asserted now. `labor_allocation_from_state` was the decoder,
@@ -1691,6 +1711,7 @@ mod tests {
             workers: 6,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         };
         let state = labor_assignment_to_state(
             &assignment,
@@ -1701,6 +1722,10 @@ mod tests {
             assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
             // These fixtures assert on the floor and the build axis, not on the take ceiling.
             crate::fauna::NO_USEFUL_CREW,
+            // …nor on the good-side shortfall, which is a fact about the SOURCE these row fixtures
+            // do not stand up.
+            Vec::new(),
+            Vec::new(),
         );
         assert_eq!(state.floor, 0.15, "the pressure rides `floor`");
         assert_eq!(
@@ -1716,6 +1741,10 @@ mod tests {
             assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
             // These fixtures assert on the floor and the build axis, not on the take ceiling.
             crate::fauna::NO_USEFUL_CREW,
+            // …nor on the good-side shortfall, which is a fact about the SOURCE these row fixtures
+            // do not stand up.
+            Vec::new(),
+            Vec::new(),
         );
         assert_eq!(
             state.floor, 0.15,
@@ -2234,6 +2263,7 @@ mod tests {
             &FloraQuoteCache::default(),
             // Nothing is queued in this fixture, so no patch names a builders kit.
             &crate::snapshot::subsistence::BuildKitIds::default(),
+            &crate::snapshot::subsistence::UpkeepKitIds::default(),
         );
         assert_eq!(patches.len(), 2);
         // Emitted in stable (y, x) order: (1,0) then (0,1).
@@ -2289,6 +2319,7 @@ mod tests {
             &HashMap::new(),
             &FloraQuoteCache::default(),
             &crate::snapshot::subsistence::BuildKitIds::default(),
+            &crate::snapshot::subsistence::UpkeepKitIds::default(),
         );
 
         let published: Vec<&str> = patches
@@ -2705,6 +2736,7 @@ mod tests {
                 &tile_capacities,
                 &FloraQuoteCache::default(),
                 &crate::snapshot::subsistence::BuildKitIds::default(),
+                &crate::snapshot::subsistence::UpkeepKitIds::default(),
             );
             let row = &rows[0];
             assert_eq!(

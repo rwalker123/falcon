@@ -148,16 +148,18 @@ func _is_concerning(kind: String, band: Dictionary) -> bool:
             # this is the only place a fodder larder is judged worrying, and it judges it by the rule
             # the food larder is judged by.
             return DetailFormat.fodder_is_concerning(band)
-        HudDisclosureVocab.BREAKDOWN_KIND_KIT:
-            # A kit that has RUN OUT is concerning; one merely wearing down is not. There is no
-            # replenishment path, so the step down is permanent — the caret is the one warning the
-            # player gets, and gating it on a remaining-condition threshold would either cry wolf
-            # every turn or fire after the loss it was meant to announce.
-            #
-            # **A SHORTFALL COUNTS TOO** (issue #520). A band holding ten spears for seventeen
-            # hunters has no dry item and is still fighting with half a party; the caret is the
-            # invitation to open the popover that says which item and by how many.
-            return DetailFormat.band_kit_is_dry(band) or DetailFormat.band_kit_is_short(band)
+        HudDisclosureVocab.BREAKDOWN_KIND_UPKEEP:
+            # A bill whose goods are ARRIVING SLOWER THAN THEY ARE EATEN is worth opening; one the
+            # band's bench and fields keep up with is not. The test is the row's own runway — the
+            # same `BandFoodStatus` thresholds both larders' carets read — so "worrying" is one rule
+            # for every account in this client that can run out, and the three cannot disagree.
+            return DetailFormat.material_upkeep_is_concerning(band)
+        # **THE KIT ARM IS RETIRED** with the `Gear` row that owned it (`docs/plan_standing_upkeep.md`
+        # §4.9 item 12). It asked whether a kit had run out or would not go round, which is what
+        # tinted that row's caret; the row is gone from both the band and the faction page, and what
+        # replaced it is the event dock's `kit_life` line — the same two seams, pushed rather than
+        # waited for. `DetailFormat.band_kit_is_dry` / `band_kit_is_short` were its only readers and
+        # went with it; the kit leaves the crafting panel and the compose sheet still read stayed.
         _:
             return DetailFormat.morale_is_concerning(band)
 
@@ -242,6 +244,40 @@ func fodder_breakdown_lines(band: Dictionary) -> Array[String]:
         lines.append(DetailFormat.fodder_breakdown_row(-eaten, DetailFormat.FODDER_LABEL_PENS))
     return lines
 
+## **THE STANDING MATERIAL BILL, ONE BLOCK PER GOOD** (`docs/plan_standing_upkeep.md` §2.7) — the rows
+## under the `Upkeep:` summary, and the only place every good the band owes is stated. The summary
+## names ONE good (the one in the worst state); this is the rest of them.
+##
+## **THREE TERMS PER GOOD, IN THE ORDER A PLAYER ASKS THEM**: what is wanted, what arrives, what is on
+## the shelf. The first two are signed flows and take the two-tone treatment every breakdown family in
+## this client uses (▼ amber for the debit, ▲ green for the credit); the shelf carries NO sign and
+## therefore renders in neutral ink, which is right — a stock is not good news or bad news, the
+## runway on the row above already said which.
+##
+## ⛔ **`material_upkeep_need` IS THE SIM'S SUM ACROSS THIS BAND'S SOURCES**, per good, and it is never
+## re-summed here from the pens on screen: herd rows are FOG-FILTERED, so a client-side total silently
+## drops one out of sight the band still owes for. That is `fodder_need`'s own rule, one account over.
+##
+## ⛔ **AND NOTHING IS EVER SUMMED ACROSS GOODS.** One block per good is the whole contract — a total
+## is the retired trade axis under a new name.
+##
+## Empty for a band with no bill, which registers no disclosure at all (`register` declines an empty
+## payload), so the row keeps its caret honest: no caret, nothing behind it.
+func material_upkeep_breakdown_lines(band: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    for row in DetailFormat.band_material_bill(band):
+        lines.append(DetailFormat.material_bill_heading(
+            String(row[SourceForecast.MATERIAL_PAYOFF_ID_KEY])))
+        lines.append(DetailFormat.material_bill_row(
+            -float(row[DetailFormat.MATERIAL_BILL_NEED_KEY]),
+            DetailFormat.MATERIAL_LABEL_WANTED))
+        lines.append(DetailFormat.material_bill_row(
+            float(row[DetailFormat.MATERIAL_BILL_INCOME_KEY]),
+            DetailFormat.MATERIAL_LABEL_ARRIVING))
+        lines.append(DetailFormat.material_bill_stock_row(
+            float(row[DetailFormat.MATERIAL_BILL_STORE_KEY])))
+    return lines
+
 ## **`trade_breakdown_lines` IS RETIRED** (arc #527) with the Trade row it opened. It itemized the
 ## band's trade income by category (Gathered / Hunted); the account it summed no longer exists, and
 ## the materials that replaced it are held as batches rather than earned as a per-turn rate a
@@ -280,9 +316,18 @@ func kit_breakdown_lines(band: Dictionary) -> Array[String]:
         DetailFormat.KIT_LABEL_SPEARS, DetailFormat.KIT_ROLE_ATTACK_FORMAT % String.num(
             float(band.get(DetailFormat.KIT_TIER_KEY_ATTACK, 0.0)),
             DetailFormat.KIT_CONDITION_DECIMALS)))
+    # **THE SLED CARRIES BOTH RATES, WHICH IS ONE ROW AND NOT TWO.** It drags a carcass in off the
+    # range AND it is what a pen is collected with: `equipment.json` puts both sides of `pen_carry` on
+    # this item, the item that used to declare the bare side having left the roster with the hurdles
+    # (`docs/plan_standing_upkeep.md` §4.9 item 12). The two figures stay DISTINCT — a band whose sled
+    # is spent collects its pen at the bare rate and hunts at the bare rate, and they are different
+    # numbers — so both are quoted rather than one standing in for the other.
     lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_SLED,
         DetailFormat.KIT_LABEL_SLED, DetailFormat.KIT_ROLE_HUNT_CARRY_FORMAT % String.num(
             float(band.get(DetailFormat.KIT_TIER_KEY_HUNT_CARRY, 0.0)),
+            DetailFormat.KIT_CARRY_DECIMALS)
+        + DetailFormat.KIT_ROLE_PEN_CARRY_SUFFIX % String.num(
+            float(band.get(DetailFormat.KIT_TIER_KEY_PEN_CARRY, 0.0)),
             DetailFormat.KIT_CARRY_DECIMALS)))
     lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_BASKETS,
         DetailFormat.KIT_LABEL_BASKETS, DetailFormat.KIT_ROLE_FORAGE_CARRY_FORMAT % String.num(
@@ -292,25 +337,22 @@ func kit_breakdown_lines(band: Dictionary) -> Array[String]:
     # game, where a weapon's damage buys nothing because there is no defence to clear.
     lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_TRAPS,
         DetailFormat.KIT_LABEL_TRAPS, DetailFormat.KIT_ROLE_TRAPS))
-    # **HANDLING GEAR IS THE PEN'S CARRY AND IT IS NOT THE SLED'S.** A sled drags a carcass in off
-    # the range; a pen stands at the camp, so a band on a stalking kit collects its pen at the bare
-    # rate however healthy the sled is. Two rows, two tiers, both quoted at the hunt job's default.
-    # **AND IT TAKES WORK OFF THE CLIMB, which is the other half of what it is for** (issue #515, and
-    # `docs/plan_unit_costed_work.md` §6 for the change from a rate to work units). The build axis has
-    # no flat per-band field — it rides the band's own `kit_tiers` row, resolved here rather than in
-    # `DetailFormat` so the pure format layer keeps depending on nothing.
-    var husbandry_role := DetailFormat.KIT_ROLE_PEN_CARRY_FORMAT % String.num(
-        float(band.get(DetailFormat.KIT_TIER_KEY_PEN_CARRY, 0.0)),
-        DetailFormat.KIT_CARRY_DECIMALS)
+    # **THE CROOK STATES ITS JOB IN WORDS, then the work it takes off the climb** (issue #515, and
+    # `docs/plan_unit_costed_work.md` §6 for the change from a rate to work units). Its ONE effect is
+    # `build_work`, whose axis has no flat per-band field — it rides the band's own `kit_tiers` row,
+    # resolved here rather than in `DetailFormat` so the pure format layer keeps depending on nothing —
+    # so the row leads with what the item is FOR and adds the figure only when the gear is live. A band
+    # whose crook is spent still keeps the animals; it just does it at the bare rate.
+    var keeper_role := DetailFormat.KIT_ROLE_CROOK
     var build_work := float(KitRoster.band_kit_tiers(band, String(band.get(
         DetailFormat.BAND_QUOTED_KIT_ID_KEY, ""))).get(
             KitRoster.KIT_BUILD_WORK_KEY, DetailFormat.KIT_BUILD_WORK_NEUTRAL))
     if build_work > DetailFormat.KIT_BUILD_WORK_NEUTRAL:
-        husbandry_role += DetailFormat.KIT_ROLE_BUILD_WORK_SUFFIX % String.num(
+        keeper_role += DetailFormat.KIT_ROLE_BUILD_WORK_SUFFIX % String.num(
             build_work, DetailFormat.KIT_BUILD_WORK_DECIMALS)
     lines.append(DetailFormat.kit_breakdown_row(band,
-        DetailFormat.KIT_DURABILITY_KEY_HURDLES, DetailFormat.KIT_LABEL_HURDLES,
-        husbandry_role))
+        DetailFormat.KIT_DURABILITY_KEY_CROOK, DetailFormat.KIT_LABEL_CROOK,
+        keeper_role))
     # **WAYFINDING STATES TILES, NOT A BIOMASS RATE**, so it takes the vantage's own rounding rather
     # than the carries'. It is how far each POSTED vantage sees — how far out they are posted is not
     # a kit axis at all, so this row must not be read as the scouting reach.

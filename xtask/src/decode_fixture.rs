@@ -1072,6 +1072,10 @@ fn seed_snapshot() -> WorldSnapshot {
             // The row's MATERIAL account (arc #527) — a nested repeated field, seeded for the same
             // reason `arrival_schedule` is: an empty one is a field the decode guard cannot see.
             assignment.material_yield = rows();
+            // …and the good-side shortfall pair (the material half of the standing upkeep), for the
+            // same reason: two nested repeated fields the guard cannot see while they are empty.
+            assignment.material_upkeep_demand = rows();
+            assignment.material_upkeep_supplied = rows();
             // **WHICH PLANTS THE CREW CARRIES HOME** (the selective gather) — a `[string]`, seeded
             // for the same reason: a repeated field the fixture leaves empty is a field the decode
             // guard cannot exercise.
@@ -1086,6 +1090,10 @@ fn seed_snapshot() -> WorldSnapshot {
         // same reason the assignment's material account above is: an empty one is a field the decode
         // guard cannot see.
         cohort.expedition_cargo_materials = rows();
+        // **The band's STANDING MATERIAL BILL** — three repeated fields, seeded for the same reason.
+        cohort.material_upkeep_need = rows();
+        cohort.material_upkeep_income = rows();
+        cohort.material_store = rows();
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
         cohort.knowledge_fragments = rows();
@@ -1120,6 +1128,15 @@ fn seed_snapshot() -> WorldSnapshot {
         // …and the two investment rungs' material payoffs.
         herd.corral_material = rows();
         herd.pastoral_material = rows();
+        // …and the MATERIAL half of the ladder's price: the pile the next rung eats, the rate this
+        // one costs to hold, and what the store paid toward it.
+        herd.build_material_cost = rows();
+        herd.upkeep_material_demand = rows();
+        herd.upkeep_material_supplied = rows();
+        // …and the per-rung PRE-COMMIT quote pair, which is a different question from the stamped
+        // bill above and therefore a different pair of nested repeated fields.
+        herd.tame_upkeep_material_demand = rows();
+        herd.corral_upkeep_material_demand = rows();
         // The animal twin of `ForagePatchState.build_legs` — one leg on this web today, and seeded
         // for the same reason: a repeated field the fixture leaves empty is a field the decode guard
         // cannot exercise.
@@ -1197,6 +1214,14 @@ fn seed_snapshot() -> WorldSnapshot {
         // the same reason the curve below is.
         patch.material_per_biomass = rows();
         patch.per_worker_material = rows();
+        // The MATERIAL half of the ladder's price — the pile the next rung eats and the rate this
+        // one costs to hold, plus what the store paid. Three more nested repeated fields.
+        patch.build_material_cost = rows();
+        patch.upkeep_material_demand = rows();
+        patch.upkeep_material_supplied = rows();
+        // …and the per-rung PRE-COMMIT quote pair — see the herd twin.
+        patch.cultivation_upkeep_material_demand = rows();
+        patch.field_upkeep_material_demand = rows();
         // The TILE's per-rung vector (#426) — the plant twin of `hunt_policy_ceilings` above, and
         // seeded for the same reason: a repeated field the fixture leaves empty is a field the decode
         // guard cannot exercise, which is how four appended fields reached the client as zeros.

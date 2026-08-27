@@ -50,7 +50,7 @@ Three consequences of leaving it as three mechanisms:
 
 ### 2.1 Three costs, one currency
 
-An improvement may declare up to three things. All are in **work units**
+An improvement may declare up to three things. The **work** term of each is in work units
 (`intensification::PER_WORKER_OUTPUT` = one worker-turn at the food peak with no gear).
 
 | Cost | Shape | What it buys |
@@ -58,6 +58,13 @@ An improvement may declare up to three things. All are in **work units**
 | **Build** | a **pile**, drawn down once | the rung transition. Ships today as `RungBuild::work_cost` |
 | **Upkeep** | a **rate**, per turn, forever | the improvement stays at its rung |
 | **Production** | a **rate**, per turn | the yield actually taken |
+
+> **BUILD AND UPKEEP EACH HAVE A SECOND TERM, AND IT IS MATERIALS** (§2.7, §4.9 item 12). Work is
+> never the whole price: raising a fence swallows hurdles, holding a road swallows stone. So a rung
+> declares a **material pile** beside `work_cost` and a **material rate** beside its upkeep's
+> `work_per_turn`, and **both track the position** exactly as the work terms do — the pile draws in
+> proportion to the work banked, the rate scales with how much of the rung stands. Production keeps
+> no material term: what a source *consumes to run* is not upkeep, and §2.7 says why.
 
 **Every one of them is optional.** A route declares upkeep and no production — that is the point of
 building the term against routes, because an architecture that assumes every improvement produces
@@ -389,6 +396,33 @@ When the pool cannot cover the sum, there are two defensible answers and the cho
 
 The mode rides the band's allocation, so it is `SimState` and survives a rollback.
 
+#### THE POOL IS WORKERS AND GOODS; THE TOOL IS THE WORK SITE'S
+
+The band is what a site draws **from** — it does not decide what the hands it lends carry. So the
+keeping **kit** is a property of the worked row (`upkeep_kit <faction> <source…> [kit <id>]`,
+`LaborAssignment::upkeep_kit`), while the keepers and the store stay one pool per band. There is no
+tension between the two: the pool decides how many hands each site gets, the site decides what those
+hands carry.
+
+It was one stored id on the band's `agriculture` / `husbandry` **role row** until this note, which
+could not say *hoes on the Field, bare hands on the scrub patch beside it* — one pick put the same
+tool on every site that band kept, with no way back, and the wear of that one tool was charged
+against the work of all of them. It is the identical argument §4.7a ② makes for the builders' kit
+being per **queue entry**, and the take kit was already per row; keeping was the last one still
+band-scoped.
+
+**What that changes in the split**: with one rate per web, dividing the work pool in proportion to
+demand and dividing the worker pool in proportion to worker-need are the same arithmetic. With a tool
+per site they are not — two sites owing the same work but worked with different tools ask for
+**different numbers of hands** — so what is split is the **head count**, in units of `demand ÷ what
+one of that site's own keepers delivers`, under the same two modes above. Where the rates agree, which
+is every branch on the shipped roster, the answer does not move by a bit.
+
+**And sites naming the same kit share its scarcity.** A band's three hoes cannot arm two keepers on
+one patch *and* three on another, so the coverage read is taken once per distinct kit rather than once
+per site. Sites naming different kits do not compete; sites naming the same one degrade together,
+exactly as the single band-wide pool did.
+
 #### The per-source readouts STAY, and they answer a better question
 
 `upkeepDemand` / `upkeepSupplied` / `upkeepShortfall` remain per patch and per herd, with `supplied`
@@ -427,22 +461,49 @@ existing one is a config edit.
 Build already has this hook in miniature (`taming_cost_multiplier` scales a Tame by species; pen
 extension prices per ring), so this generalizes an established pattern rather than inventing one.
 
-### 2.7 The resource half — COLLECTED goods, never the land
+### 2.7 The material half — WHAT YOU LEAVE BEHIND, never what you carry home
 
-**Upkeep is work, and optionally a draw on stored goods your people gathered.** A road wants hands and
-stone; a pen wants keepers and **hay**.
+**A job spends three things, and they are not interchangeable.** **Workers**, the hands. **Kit**, the
+crafted tools a worker carries — and carries on to the next job. **Materials**, the goods that go
+*into* the thing and stay there.
 
-**The line is collected versus growing there.** Hay is cut, carried, stored and fed — a good that
-exists because somebody made it. Grazing is the land feeding the animals for free. Stone and timber
-for a road are quarried, hauled and laid; the rock in the hillside is not a road input until someone
-moves it. So hay and concrete are the same kind of thing, and grazing and the standing hillside are
-both **not upkeep at all**.
+> ⛔ **THE WORD `resource` IS RETIRED, AND SO IS THE MODEL IT NAMED.** This section read *"the
+> RESOURCE half — collected goods"* and made **hay** its reference: the fenced footprint grazed what
+> it could and hay covered the rest, so upkeep was a draw on whatever your people had gathered.
+> That conflated two different things under one word. **Hay is FEED** — an animal eats because it is
+> an animal, penned or not — and feeding is not holding. The pen feed settlement (`settle_pen_hay`,
+> `.claude/rules/core_sim/graze.md`) keeps doing its own job, untouched, and it is **not** an
+> instance of this section. What upkeep draws is **materials**, and nothing else.
 
-That makes the land's contribution an **offset**, which is exactly what the shipped pen already does:
-the footprint's grazing covers what it can and **hay covers the rest** (`pen_pasture_fraction` and
-`fodderDraw` — two terms of one demand, in one unit, asserted to sum to it). A pen on lush pasture is
-cheap because the land is doing the work; a pen on barren ground pays in full, and **if hay cannot
-cover it the herd starves** — the shortfall has nowhere else to go.
+**The test is whether it comes home with you.** A hoe goes to the next field, so it is kit: it wears
+with use and its absence makes the work dearer, never impossible. A fence stays in the ground, so it
+is material: it is spent, and no number of hands replaces it.
+
+**That makes hurdles the reference implementation, and they are currently misfiled.** A hurdle is a
+woven fence panel — it *is* the fence — and it ships as an equipment item with a durability pool. It
+should be a **material**, crafted from wood, drawn on the pen's build pile and again on its upkeep
+rate. §4.9 item 12 is that reclassification and the mechanism it needs.
+
+**Materials track the position, both ways.** Raising a rung draws its pile as the meter climbs;
+holding a partial rung owes its rate in proportion to how much of it stands. A road 30% raised has
+swallowed 12 of its 40 stone and owes 0.6 of the 2.0 a turn. This is the work half's own behaviour,
+restated in a second currency, so there is one rule rather than two.
+
+**And decay refunds nothing.** Material goes in proportionally and does not come back out — the road
+washes away and the stone is spent. What that buys is that **neglect is self-limiting**: position
+falls, the rate falls with it, and an abandoned thing decays toward costing nothing rather than
+bleeding a store forever.
+
+**The two failures are not the same failure, and must not read alike.** A dead kit makes the same job
+want more hands and takes nothing away. A missing material stops the work outright: twelve keepers do
+not mend a road with no stone. So a shortfall message that names the *pool* is wrong advice the
+moment the missing thing is a good — it points the player at a stepper that cannot help.
+
+**The land is a SCALE term, not an offset.** A route down a river valley is cheaper to hold than one
+over a range, and `infrastructure_cost` is where that per-terrain answer is already written — it
+*multiplies* the demand. That is a different mechanism from grazing, where the land supplies the same
+good the animal would otherwise be fed; grazing's offset lives inside the feed settlement and
+generalises to nothing.
 
 > ⛔ **IT WAS THREE TERMS UNTIL #578, AND THE THIRD ONE WAS A DEFECT.** The pen also drew **human
 > food** from the keeper's larder for whatever grazing and hay left uncovered — the corral arm's
@@ -450,25 +511,25 @@ cover it the herd starves** — the shortfall has nowhere else to go.
 > was short-circuiting the starvation path this section's own model depends on: when the land and the
 > hay fall short the answer is an underfed herd, never people going hungry to feed livestock. Retired
 > with `pen.upkeep_per_biomass`, the food-unit lever that expressed it; `penFeedUpkeep`, `penUpkeep`,
-> `penLarderBill` and `penHayFood` are deprecated slots. **A resource upkeep generalised from this
-> pen must not reintroduce a human-food path** — the reference implementation is *land offsets a
-> collected good*, and nothing else. **A route down a river valley versus one over a range is the same sentence**, and
-`infrastructure_cost` is where that per-terrain answer is already written.
+> `penLarderBill` and `penHayFood` are deprecated slots. **A material upkeep must not reintroduce a
+> human-food path** — and under the model above it cannot, because feed is not upkeep at all.
 
-**What is NOT upkeep**, and both were reached for during design:
+**What is NOT upkeep**, and all three were reached for during design:
 
 - **Inputs to a production activity** — seed for sowing, fuel at a drying rack, materials at a bench.
   Those are consumed when the activity *runs*, not by the thing *existing*.
-- **The animals eating, considered on its own.** A herd eats because it is a herd; a pastoral herd
-  with no fence at all eats the same amount. What penning changes is *where they can eat*, so the
-  cost that appears is the hay and larder needed to cover what the land no longer can — a
-  land-access consequence, and it vanishes the moment the land can cover it again.
+- **Feeding the animals.** A herd eats because it is a herd; a pastoral herd with no fence at all eats
+  the same amount. Penning changes *where* they eat, not *whether* — so the grass and hay that feed
+  them are the feed mechanism's business (`settle_pen_hay`) and appear nowhere in a rung's upkeep.
+- **Kit wear.** A worn tool is a real cost and it is **not a term here**. It is charged where the work
+  is done, per unit of work supplied (`WearQuantum::UpkeepWork`), and it is replaced by crafting. A
+  rung declaring a kit cost would bill the same tool twice.
 
-**Labor that always travels with the keeping is folded into the keeping, not split out.** Haying is
-genuinely work, but the keepers are already there and the pen's upkeep already scales with the herd —
-a separate feeding-work line would scale off the same term and would never be staffed independently.
-A number with no decision attached is not a lever. The same disposes of a road's quarrying and
-hauling: that work is the upkeep, not a second line beside it.
+**Labor that always travels with the keeping is folded into the keeping, not split out.** Mending a
+fence is genuinely work, but the keepers are already there and the pen's upkeep already scales with
+the herd — a separate mending-work line would scale off the same term and would never be staffed
+independently. A number with no decision attached is not a lever. The same disposes of a road's
+quarrying and hauling: that work is the upkeep, not a second line beside it.
 
 ### 2.8 ONE POSITION ON THE LADDER — the rung stops being a status and becomes a place
 
@@ -655,7 +716,7 @@ again.
 | `work_cost / crew` as the build pace | **restored**, with the rot as the term that eats it: `work_cost / (builders − rot)` (§2.2/§2.4) |
 | `learn_multiplier(floor)` on the build rate | retired — a build crew is not pulling on the source |
 | `yield_fraction_while_building` (×4 rungs) | retired — the build has its own hands, so what it costs is the pool it draws on |
-| `pen.upkeep_per_biomass` + the pasture/hay/larder split | the **resource half** of the pen rung's upkeep (hay and larder), with pasture as its **offset** — unchanged in behavior |
+| `pen.upkeep_per_biomass` + the pasture/hay/larder split | **retired outright** (#578, and §2.7's callout). Hay is FEED, not upkeep: the pasture/hay split stays in `settle_pen_hay` and is not an instance of the material half. The pen's upkeep material is **hurdles** (§4.9 item 12) |
 | `TerrainDefinition::infrastructure_cost` (never read) | the route rung's **scale term** |
 
 ---
@@ -1408,23 +1469,230 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     > turned the cliff into a slide without removing it, which is why the floor gets its own fix: **the
     > take is the room above the floor OR a share of the turn's growth, whichever is larger**, and the
     > build's eligibility gate moves with it.
-12. **The RESOURCE HALF of upkeep** (§2.7). Designed and **not built**: upkeep currently costs work
-    and nothing else, while the pen's feed runs as its own separate mechanism, deliberately untouched
-    so that moving it would not risk the pen-food ledger identity for no behaviour change.
-    > **Routes are what force it.** A road wants hands *and* quarried stone, and it is the first
-    > improvement whose resource draw does not already exist somewhere else — the pen's does. So this
-    > lands before §4.13 rather than after, and generalising the pen's shipped
-    > **pasture-offsets-hay** split is the reference implementation. It is a TWO-term split since
-    > #578 — see §2.7's callout on the human-food term that was removed, and do not reintroduce one.
+12. **The MATERIAL HALF of build and upkeep** (§2.7). Today a rung costs **work and nothing else**,
+    on both the pile and the rate. This adds the second term to both, and gives it a consumer on the
+    day it ships by reclassifying **hurdles**: a fence panel is a material you build in and leave
+    behind, not a tool you carry to the next job.
+    > **Routes are what force it, but routes are not what proves it.** A road wants hands *and*
+    > quarried stone, and §4.13 cannot be written without this term. But a mechanism whose only
+    > consumer is the next slice is the failure mode — so the pen is re-expressed through the general
+    > path here, and §4.13 inherits something already load-bearing.
     >
-    > **AND IT OWES A PROJECTED DEMAND, which #578 could not express.** A pen states its standing
-    > fodder bill once it exists (`penHayNeed`, the gap its footprint leaves), but the **pre-commit**
-    > row — the moment the player decides whether to build the thing — states only what it will earn,
-    > never what it will cost to hold. Nothing on the wire reconstructs it: a herd's
-    > `fodderPerBiomass` is its *yield* rate (structurally zero — no animal pays fodder), not its feed
-    > coefficient, and an unbuilt fence has no published footprint intake. **The cost of holding an
-    > improvement should be quotable BEFORE it is held**, which is this item's own subject, so the
-    > projection belongs here rather than as a pen special case.
+    > **THE MECHANISM.** `RungBuild` gains a material pile beside `work_cost`; `RungUpkeep` gains a
+    > material rate beside `work_per_turn`. **Both track the position** (§2.7): the pile draws in
+    > proportion to the work banked, the rate scales with how much of the rung stands, and decay
+    > refunds nothing. A short draw is a shortfall like any other and drives the decay and shed paths
+    > that already exist — **no new penalty**.
+    >
+    > **THE MATERIALS.** `wood` is added and supplied through worldgen's existing
+    > `StartKit { equipment, recipes, materials }` — produced by nothing yet, which is deliberate and
+    > has its own tracker item. `hurdles` stops being equipment and becomes a **material crafted from
+    > wood** (`RecipeOutput::material`, the weaving craft); `animal:pen` declares it on both terms.
+    >
+    > **AND THE KIT ROSTER MOVES WITH IT, because removing hurdles-as-equipment empties two kits.**
+    > `hurdling` takes a **crook** (bone + fibre) — one animal kit serving both husbandry keeping and
+    > animal builds, the shape `tillage` already has for plants — without which every tame, pen build
+    > and turn of herd keeping drops to bare-handed speed. `husbandry` loses hurdles and is left
+    > **sled-only**, which is correct while a penned herd resolves no fight; §4.9 item 12b is what
+    > deletes it. `pen_carry`'s bare-handed reading moves to the **sled**, which already owns the
+    > equipped side of that pair, and the `biomass_collected` wear goes with the item.
+    >
+    > **FOUR DECISIONS, SETTLED, so they are not re-derived:** a store that cannot cover a build
+    > **queues and stalls** rather than refusing — a build whose builders leave already stalls, and
+    > the five verbs' affordability gate was deliberately retired in §2.5. A shortfall of *either*
+    > kind trips the rung's **existing `grace_turns`** — the amounts stay separate so a full store
+    > cannot paper over missing hands, but a second counter is a second dial free to disagree. A short
+    > store splits by **`SourcePriority` tiers alone** (`settle_scarce_store`), ignoring
+    > `upkeep_mode`: the rank is the player's per-row answer and the mode exists for a pool that has
+    > none, so reading both would let a row marked `High` starve with nothing on screen saying why.
+    > And the demand **interpolates on position** — the general rule, which the plant rungs exercise.
+    > ⛔ **The pen does NOT test it, and this clause claimed the opposite.** `partial_credit:
+    > on_completion` gates the **cost as well as the payout**: `RungStanding::at` pins `credit` to
+    > zero for such a rung, so `interpolate` returns the rung *below* for the whole climb, and
+    > `animal:pen` is the ladder's only member. That is right rather than a gap — **you spend hurdles
+    > from the BUILD PILE while raising a fence, and owe the upkeep rate only once it stands**, there
+    > being no fence to mend mid-climb. The tamed herd's own `animal:pastoral` upkeep continues
+    > throughout, which is why the work account is non-zero there and the material one is not. See
+    > `.claude/rules/core_sim/husbandry.md` → the pen's hurdle bill.
+    >
+    > **THE READOUTS, and the surface is the `⌃` TRACK — not the compose sheet.** Foraging and
+    > hunting have no hold cost; the improvement is chosen from the work row's `⌃`, which opens
+    > `RungLadder.build_track`. Its rows already carry an **asides array** (a locked rung's reason, a
+    > crop row's price face), so a selectable rung takes two more: *what it eats to raise* and *what
+    > it costs to hold*. Beside that: a work-row shortfall note that **names the missing good**, since
+    > `WORK_ROW_UNDER_KEPT_NOTE`'s *"raise this band's Agriculture role"* is wrong advice when the
+    > missing thing is stone; and a standing-bill disclosure row on the **band and faction pages**,
+    > beside Food and Fodder, stating wants-against-comes-in per good.
+    >
+    > **THE `Gear` ROW COMES OFF BOTH PAGES.** It does not compress to a line and the crafting panel's
+    > kit ledger already owns it — the Builders card's own gear line was retired in §4.7 for exactly
+    > that reason. What replaces it is **notification**: `equipment.json`'s `life_readout` already
+    > ships `warn_fraction` 0.34 and `danger_fraction` 0.10 with *"nothing in the sim branches on
+    > either"*, and the danger seam was deliberately set inside a kit item's rebuild time. Wire them
+    > to the event dock — warn → Notable, danger → Alert — plus an Alert, **naming the band**, for a
+    > material the standing bills eat faster than it arrives. That last one is what replaces the
+    > faction `Gear` row's `⚠ 1 band` discovery path.
+    >
+    > ⛔ **THREE THINGS THIS SLICE DELIBERATELY DOES NOT DO.** It does not put a kit line on the
+    > Agriculture and Husbandry cards: those cards are the band's **head count** for a web, and the
+    > keeping kit is a property of the **work site** (§2.5) — so the kit belongs where the rung is
+    > known, on the source, and never on a band-wide role card. It does not make the pen's containment gains (`pen_gain`, `pen_density`,
+    > `herd_engage_rate`) **scale** with how well the fence is kept; that is a real idea, it is
+    > tuning-shaped, and it would make this slice's failure mode impossible to falsify against the one
+    > that already exists. And it does not touch the feed settlement (§2.7).
+    >
+    > **UX prototype**, drawn against the shipped surfaces and their real metrics — the `⌃` track at
+    > its true 292px, the work row, the band bill:
+    > `https://claude.ai/code/artifact/a7c6333d-b510-4cc1-a9e1-9829b288b49b`
+
+**12b — THE TAKE AT EVERY RUNG: wariness, and the pen's missing fight.** Independent of item 12 and
+lands after it, sharing only the kit roster that item 12 has to rewrite anyway.
+
+> **A tamed herd fights exactly as a wild one does**, because `herd_quarry_fight` reads the
+> species and its wounds and consults no rung. **A penned herd does not fight at all** —
+> `fight: NO_FIGHT_STAGE` when `is_corralled()`. So the ladder is a mode switch rather than a
+> slide, and taming buys nothing at the kill.
+>
+> **The take should run its three stages at every rung, with the rung tuning the first two.**
+> *Engage* — how many you can get hold of; the pen already raises this through
+> `herd_engage_rate`. *Retreat* — how many stay rather than bolt; this is `wariness`, an existing
+> species term a kit's `dispersion` already multiplies, so `pastoral_wariness` / `pen_wariness`
+> are the same per-species multipliers `pastoral_gain` / `pen_gain` already are. *Fight* — how
+> many go down; **species defense against the party's attack, unchanged at every rung.**
+>
+> **Containment solves catching; weapons solve killing.** A pen makes the take *reliable*, not
+> *safe* — a contained bull can still gore you. The consequence to state plainly is **no weapons,
+> no beef**: a bare-handed band can pen an aurochs and never butcher one, while goats and sheep
+> stay killable by hand.
+>
+> **Deleting `NO_FIGHT_STAGE` FIXES what it was papering over.** It exists because a bare-handed
+> band was quoted nothing and then paid a take — forecast and take disagreeing. With one
+> mechanism they agree by construction: quoted almost nothing, gets almost nothing.
+>
+> **And the `husbandry` kit dies here.** Item 12 leaves it sled-only, which is right while a pen
+> resolves no fight; the moment one does, a weaponless kit is obviously wrong and it collapses
+> into `big_game` — the hunters who took the herd wild are the hunters who take it penned, with
+> the gear they already carry.
+
+**12c — ONE WORD FOR THE TAKE CREW, AND THE WORK STRIP STATES BOTH KITS.** The readout half of the
+per-site upkeep kit (§2.5), and **the next slice after item 12**. Rides on it: the strip's Upkeep
+picker only means what it looks like once the kit belongs to the site.
+
+> **THE PLANT WEB'S TAKE CREW HAD TWO NAMES AND THE SECOND ONE WAS TAKEN.** The noun follows the
+> standing rung — *Foragers* on wild ground, *Tenders* on a Tended Patch or a Field — so on a Field
+> the sheet reads `ASSIGN TENDERS` and then offers the Gathering kit, which looks like a bug and is
+> not: the tending is the **Agriculture pool's**, and a hoe does nothing for a harvest. Reported
+> from play by Ray, who knows how it works and was still caught by it in the moment.
+>
+> **`Harvest` REPLACES BOTH, AT EVERY RUNG.** It is already this repo's cross-web word for taking
+> from a source (a *pen harvest*, the *harvest floor*), it is neutral between wild and cultivated —
+> which is the whole defect — and it survives the tech ladder, where *gatherers* would not. The
+> rung mark on the row still says which ground it is; what stops changing is the crew's name,
+> because the crew never changed. **The hunt sheet is NOT renamed**: `Hunters` is specific and
+> collides with nothing.
+>
+> **`HudFormat.plant_crew_label` is the seam** — the one place the Foragers/Tenders fork is spelled.
+> The one mismatch the choice costs is harvesters holding a *Gathering kit*; the kit's **id** stays
+> `gathering` and only its `display_name` is player-facing, so closing it is a one-field config edit
+> with no id or save churn.
+>
+> **THE STRIP IS THE SURFACE, because it is the one place the RUNG is known.** That is item 12's own
+> phrase, used when it declined a kit line on the Agriculture and Husbandry cards. The work board's
+> inspector strip already knows which source is selected and states none of it — not the rung, and
+> neither kit. It gains: the **rung state on the head line** (`Harvest (28, 16) · ▦ Field 100%`,
+> through `DetailFormat.rung_row_value`, so the strip and the tile card cannot word it differently),
+> and **one line carrying both kits** — `Harvest [Gathering kit ▾]  Upkeep [Tillage kit ▾]`.
+>
+> **BOTH ARE PICKERS, and both reach exactly this row.** `agriculture` offers what `forage` offers —
+> one real kit plus `none` — and `none` is a real choice, being how a site is worked bare-handed to
+> conserve the tool. Reasoning from today's thin roster is what nearly made the upkeep one read-only;
+> the roster is early and will not stay thin.
+>
+> **THE PAIR IS ONE `flex-wrap` ROW, NOT TWO HAND-PLACED ONES.** It rides one line where there is
+> room and drops the second onto its own line where there is not, so a narrow dock tier costs a row
+> instead of clipping a control and the strip needs no width branch. That also inverts the usual
+> trap: a wrapped line normally costs back the row it saved, *invisibly* — here the wrap is the
+> intended behaviour, so the height to reserve is the stacked one and the single line is the saving.
+>
+> **The metrics are the shipped ones** and the arithmetic is unmeasured until it renders: the strip
+> is 356px, its base `WORK_INSPECTOR_EXTENT` 58 + `WORK_INSPECTOR_SLACK` 6 = **64px**, a text line
+> `14 + 6 = 20px`, a picker `32 + 6 = 38px`. The rung costs **+0** (it rides a line already there)
+> and the kit line **+38**. Both pickers measure ~307 of the 336 usable width. `WORK_INSPECTOR_EXTENT`'s
+> own note says to re-measure after touching the strip's base children — do that rather than trusting
+> the sum.
+>
+> ⛔ **THREE THINGS THE DESIGN REJECTED, so they are not re-proposed.** A **second picker on the
+> Agriculture pool card** — redundant once upkeep is settable on the row, and two controls writing one
+> value is a drift surface. A **read-only upkeep line** beside an editable harvest one — it was written
+> when the kit was per-band, and a control with one visible option today is not a control with one
+> option tomorrow. And a **scope warning** on the upkeep picker (hover, or a `(band)` word on the
+> label) — that existed only to admit that setting it on one row changed every row, which §2.5's
+> per-site kit deletes outright.
+>
+> ⛔ **AND THE MATERIAL SHORTFALL NOTE STOPS SAYING A PEN *EATS*, WHICH IS NOT A WORDING NIT.**
+> `WORK_ROW_MATERIAL_SHORT_FORMAT` ships as *"Short of hurdles — 0.40 of the 0.58 a turn this pen
+> eats"*, and a pen genuinely **does** eat: grass and hay. §2.7's whole argument is that **hay is FEED,
+> not upkeep**, and #578 retired a defect that billed a pen's shortfall to the keepers' food larder —
+> so this sentence puts feed and upkeep back under one verb, on the surface whose `Fed: 100% — all
+> pasture` row sits two lines above it. The readout undoing the model is a defect, not a preference.
+>
+> **It reads `Short of hurdles — 0.40 of the 0.58 a turn it needs.`**, and it **names a remedy** the
+> way both its siblings do (*"raise this band's Agriculture role"* / *"…Husbandry role"*): the remedy
+> for a missing GOOD is the bench or a trade and **never more hands**, which is already the wording the
+> blocked-build cause carries. The `a turn this %s eats` tail retires with the
+> `MATERIAL_SHORT_NOUN_HERD` / `_PATCH` pair, which existed only to fill it.
+>
+> **AND IT BELONGS ON THE WORK ROW, NOT THE TILE CARD — §4.7 ALREADY SET THAT SHAPE.** That slice
+> pulled the `At risk:` block off the tile card for being *"way too wordy"*, left one state word on the
+> rung row (`🌾 Tended 90% ⚠ slipping`) and put the sentence on a hover, keeping the countdown on the
+> work board **and nowhere else**, because *"the board is where staffing is decided this turn … on the
+> tile card it is a number you cannot act on."* Item 12 shipped the full sentence to **both** entry
+> points (`under_kept_note` and `under_kept_note_for_source`) and so regressed against that rule.
+>
+> **The staffing half of §4.7's reason does not carry over, and a better one replaces it**: no head
+> count fixes a missing good. What this UI actually offers against a scarce one is the row's
+> **`SourcePriority` rank** — `High`/`Normal`/`Low` is precisely what decides which pen the hurdles
+> reach when there are not enough (`settle_scarce_store`) — and that control sits in the work row's own
+> strip. The tile card has nothing to press. So: the sentence on the work row and its strip, and the
+> card keeps at most the short state word its keeping shortfall already reads.
+>
+> **AND `extend_pen` IS DECLARED FROM THE WORK ROW, ON THE STANDING RUNG'S OWN MARK.** Reported from
+> play: extending a pen is a button on the TILE card, and it produces a **build queue entry** — so it
+> is the one queue entry in the game declared from somewhere other than the work tab.
+>
+> **The mechanical reason it ended up there:** `RungLadder.has_track` is false when nothing sits above
+> the standing rung, and `animal:pen` is the top of the animal branch — so a corralled herd's row
+> renders **no `⌃` at all** and there was no affordance to hang it on. Extending a pen is precisely
+> what you do *after* the ladder is finished. The prose in `selection-card.md` blamed it on being *"a
+> one-click standing action, not a compose flow"*, which is true and is the second reason.
+>
+> **The fix is a `⌃` on the STANDING-RUNG MARK, not a row in the track.** Ray's, and it is better than
+> putting it in the track on three counts: the track stays **one position on a ladder** (a ring is a
+> repeatable increment with no position, so it has no honest row shape there); the mark sits on **the
+> thing the job acts on**, since a ring extends the pen the mark denotes; and the day the animal
+> branch gains a rung above `pen`, a herd offers **both** — extend what stands, or climb — which is
+> two actions on two things and reads as two marks far better than as one list.
+>
+> **A ROW ALREADY CARRIES TWO MARKS AND THAT IS THE PRECEDENT.** The standing-rung glyph
+> (`BandPanelController`'s rung-mark resolver — `CORRAL_GLYPH` penned, the pastoral glyph tamed, the
+> tended/field glyphs on the plant side) is a **separate slot** from the `⌃`/building face, so a
+> mid-Sow patch already reads `🌾` *what it is* beside `▦ 28%` *what is being built on it*.
+>
+> **IT OPENS A PRICE, NOT A BARE COMMIT — and item 12 is what makes that necessary.** A ring draws
+> `animal:pen`'s own hurdle pile now (§2.7; it drew none until the defect was fixed alongside item 12),
+> so a one-click button states a cost nowhere. Opening the same shape the track's `⌃` opens — *what it
+> eats to raise, what it costs to hold, and where it will stall* — keeps the caret meaning ONE thing on
+> every mark that wears it, and puts the goods cost at the point of decision rather than in the queue
+> afterwards.
+>
+> **A ring in flight shows a BADGE, not a caret**, exactly as a queued build does, so a second ring
+> cannot be declared over the first — `Herd::pen_extending` is already the sim's gate for that and no
+> new one is needed. **The tile card's `Extend pen` button and its `Fencing N%` badge retire with the
+> move**, both being duplicates of what the row and the build queue then state.
+>
+> **UX prototype**, drawn against the shipped surfaces at their real metrics:
+> `https://claude.ai/code/artifact/9ea539e6-9a65-4ca2-9fc1-32dda77d2d14`
+
 13. **The route branch (#532 proper).** Routes as the ladder's third branch, `infrastructure_cost`
     wired for the first time, traversal-driven progress from supply links, shipments and movement.
 14. **The tuning spread.** Config-only, and **last** — §4.10 changes what the numbers do to the curve,
@@ -1717,6 +1985,22 @@ cheap answer is to make reassignment observable so it would be noticed rather th
 > in §4.6a — a build crew supplies no rate now, so the threshold it names does not exist. **The `∞`
 > pair survives with a different denominator** (the rot, §2.2), which is why the readout was not
 > deleted with the rule that first justified it.
+
+- **TWO ISSUES ARE OWED AND UNFILED, and each needs an arc parent chosen before it can be.** Neither
+  is a design question — both are settled work with no home on the board yet.
+  - **Wood from forest foraging.** §4.9 item 12 adds `wood` as a material and supplies it through
+    worldgen's `StartKit`, which means it is **produced by nothing**. That is deliberate — a
+    production path is flora work, not upkeep work — but it is a real gap the moment the start stock
+    runs out, and it is the only thing between this arc and a material economy that closes.
+  - **§4.9 item 12b.** Written up in full at §4.9 so it is not re-derived; it just has no issue.
+
+- **AND THE MATERIALS THEMSELVES NEED AXES, which item 12 does not choose.** A material in this
+  repo is generic with characteristic axes (`docs/plan_crafting_and_materials.md` §1), and
+  `RecipeOutput::material` **requires** them on the output — so `wood` and `hurdles` cannot load
+  without them. **Nothing reads them in item 12**, and the trap is why: a quality axis on a hurdle
+  invites *a better fence contains better*, which is precisely the containment-scaling item 12
+  defers. Give them axes for consistency with the model, wire no effect to either, and let the
+  question arrive with whatever slice actually wants it.
 
 ---
 

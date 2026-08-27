@@ -211,7 +211,7 @@ const KIT_UNITS_UNSTATED := -1
 
 ## **UNITS OF ONE ITEM THE BAND OWNS**, or `KIT_UNITS_UNSTATED` where it states none.
 ##
-## > #### ⛔ THIS IS UNITS. `kit_workers_holding` IS PEOPLE, AND THEY ARE NOT INTERCHANGEABLE
+## > #### ⛔ THIS IS UNITS. `kit_coverage`'s `holding` IS PEOPLE, AND THEY ARE NOT INTERCHANGEABLE
 ## >
 ## > A unit arms `workers_per_unit` people — a per-item config number the wire does not carry — and a
 ## > unit needs its FULL crew or it is not used at all. So this may never stand in for
@@ -292,17 +292,26 @@ const KIT_LABEL_TRAPS := "Traps"
 # keeper, a scout's vantage or a warrior — so a row could only have quoted a number the sim never
 # sent. The wire carries all three now (see `KIT_TIER_KEY_PEN_CARRY` and its two neighbours), so the
 # player can finally see a scout kit and a warrior kit dying instead of only its consequences.
-## **THE HANDLING GEAR IS `hurdles` NOW, ITEM ID AND LABEL BOTH.** It was `husbandry_gear` — a name
-## that described the KIT it happened to sit in rather than the object — and the object is portable
-## fence panels you work a beast into, the same thing whether you are raising the pen or butchering
-## in it. The client's own label followed: naming it *Handling gear* while the roster called it
-## *Hurdles* left the popover row and the picker's hint disagreeing about one item.
-const KIT_LABEL_HURDLES := "Hurdles"
+## **THE ANIMAL WEB'S ITEM IS THE `crook`** (`docs/plan_standing_upkeep.md` §4.9 item 12) — a long
+## bone staff with the halters a keeper works a beast with. It was `hurdles`, and before that
+## `husbandry_gear`; **hurdles are a crafted MATERIAL now** and no item of that id is on the roster at
+## all. The test the reclassification turned on is whether the thing comes home with you: a crook goes
+## to the next herd, so it is kit, while a fence panel stays in the ground and is spent into the
+## improvement. An id keyed here that the roster no longer ships is not a missing row — `kit_is_equipped`
+## answers false for it, so the ledger drew `— bare hands` in WARN over an item every band carries.
+const KIT_LABEL_CROOK := "Crook"
 const KIT_LABEL_WAYFINDING := "Wayfinding"
 const KIT_LABEL_CLUBS := "Clubs"
-const KIT_DURABILITY_KEY_HURDLES := "hurdles"
+const KIT_DURABILITY_KEY_CROOK := "crook"
 const KIT_DURABILITY_KEY_WAYFINDING := "wayfinding"
 const KIT_DURABILITY_KEY_CLUBS := "clubs"
+
+## **WHAT THE CROOK IS FOR, IN WORDS** — `KIT_ROLE_TRAPS`' precedent, and for its reason: a row pairs
+## an item with the resolved tier it sets, and the crook's ONE effect is `build_work`, which has no
+## flat per-band field to quote (it rides the `kit_tiers` row of whichever kit is selected). So the
+## row states the job and lets `KIT_ROLE_BUILD_WORK_SUFFIX` add the figure when this band's own gear
+## is live enough to earn one.
+const KIT_ROLE_CROOK := "keeping and raising animals"
 
 ## **THE PLANT WEB'S BUILD TOOL** — a bone blade hafted with fibre, and the second item in the game to
 ## declare `build_work`. It carries the `tillage` kit and nothing else, so a band that wants both
@@ -330,7 +339,7 @@ const KIT_ITEM_LABELS := {
     "sled": KIT_LABEL_SLED,
     "baskets": KIT_LABEL_BASKETS,
     "traps": KIT_LABEL_TRAPS,
-    KIT_DURABILITY_KEY_HURDLES: KIT_LABEL_HURDLES,
+    KIT_DURABILITY_KEY_CROOK: KIT_LABEL_CROOK,
     KIT_DURABILITY_KEY_HOES: KIT_LABEL_HOES,
     "wayfinding": KIT_LABEL_WAYFINDING,
     "clubs": KIT_LABEL_CLUBS,
@@ -390,10 +399,20 @@ const KIT_VANTAGE_DECIMALS := 0
 # off different items, and a band really does hold two different numbers for it — 20 on the hunt and
 # 6 defending the camp — so a bare `attack 6` beside a bare `attack 20` would read as one of them
 # being wrong rather than as two answers to two questions.
+## **THE JOINER BETWEEN TWO CLAUSES ON ONE ROW**, typed once. Two items on this ledger state more
+## than one thing — the sled's two carries, the crook's job and its build rate — and a second spelling
+## of the separator is how one row comes to punctuate differently from the other.
+const KIT_ROLE_CLAUSE_SEPARATOR := " · "
 const KIT_ROLE_ATTACK_FORMAT := "attack %s"
 const KIT_ROLE_HUNT_CARRY_FORMAT := "hunt carry %s per hunter"
 const KIT_ROLE_FORAGE_CARRY_FORMAT := "gathering %s per forager"
-const KIT_ROLE_PEN_CARRY_FORMAT := "pen collection %s per keeper"
+## **THE PEN'S COLLECTION RATE RIDES THE SLED'S ROW, BECAUSE THE SLED IS WHAT SETS IT.**
+## `equipment.json` puts BOTH sides of `pen_carry` on the sled — the unequipped 12 outright and the
+## equipped side through `shares_equipped_rate_with` — since the item that used to declare the bare
+## side left the roster with the hurdles. So this is a SECOND CLAUSE on one row rather than a row of
+## its own: two tiers, one item. Pairing it with the crook instead would be the mis-pairing this
+## ledger's own note warns about, one item further on.
+const KIT_ROLE_PEN_CARRY_SUFFIX := KIT_ROLE_CLAUSE_SEPARATOR + "pen collection %s per keeper"
 # **THE HANDLING GEAR DOES TWO JOBS, AND ITS ROW HAS TO SAY BOTH** (issue #515). Hurdles, halters and
 # a butchering stone bound a slaughter at a pen *and* speed the `Tame` and `Corral` builds — so a row
 # quoting only the pen rate describes the gear's payoff at the top of the ladder and says nothing
@@ -411,14 +430,15 @@ const KIT_ROLE_PEN_CARRY_FORMAT := "pen collection %s per keeper"
 # same fact in the units the meter is quoted in — which is what lets it sit beside a work cost.
 # A kit whose gear is spent adds nothing and the clause disappears, exactly as the neutral
 # multiplier's did.
-const KIT_ROLE_BUILD_WORK_SUFFIX := " · +%s work a turn per keeper on a tame or a pen"
+const KIT_ROLE_BUILD_WORK_SUFFIX := KIT_ROLE_CLAUSE_SEPARATOR \
+        + "+%s work a turn per keeper on a tame or a pen"
 # The contribution reads to one place: the shipped 0.5 is a playtest dial and a second decimal would
 # imply a precision the number does not have.
 const KIT_BUILD_WORK_DECIMALS := 1
 # **The value that means "this gear changes no build"** — the schema's own default and what every kit
-# carrying no build tool resolves to (which is every kit but `hurdling`, `tillage` and the `husbandry`
-# bundle the hurdles also ride). Named so the suffix's suppression reads as a stated rule rather than
-# a comparison against a bare literal.
+# carrying no build tool resolves to, which is every kit but `hurdling` (the crook) and `tillage` (the
+# hoes). Named so the suffix's suppression reads as a stated rule rather than a comparison against a
+# bare literal.
 const KIT_BUILD_WORK_NEUTRAL := 0.0
 # Written as `2-tile sight`, not `sight 2 tiles`, because the tier is a small whole number and the
 # unit would otherwise have to be pluralized: a bare-handed scout sees `1`, and `sight 1 tiles` is
@@ -430,19 +450,22 @@ const KIT_ROLE_WARRIOR_ATTACK_FORMAT := "attack %s defending the camp"
 # replenishment path and the role stays there.
 const KIT_BARE_HANDS_SUFFIX := " — bare hands"
 
-# **THE SHORTFALL, ON THE ROW AND IN THE POPOVER** (issue #520). A band with ten spears among
-# seventeen hunters used to render byte-identically to a fully armed one — the condition says how much
-# life is left, and nothing said how many people the item ever reached.
+# **THE SHORTFALL, IN THE POPOVER** (issue #520). A band with ten spears among seventeen hunters used
+# to render byte-identically to a fully armed one — the condition says how much life is left, and
+# nothing said how many people the item ever reached. `only` is doing real work here: `4 of 17` alone
+# reads as a fact, and the shortfall is the point.
 #
-# The row's form is a bare fraction because the row is a height-capped summary and already carries the
-# item's name in front of it; the popover has room for the sentence. `only` is doing real work in the
-# long form: `4 of 17` alone reads as a fact, and the shortfall is the point.
+# **THE ROW'S OWN BARE-FRACTION FORM IS RETIRED WITH THE `Gear` ROW**
+# (`docs/plan_standing_upkeep.md` §4.9 item 12). It was `KIT_COVERAGE_ROW_FORMAT`, a height-capped
+# summary's `Spears (10/17)`, and the row that printed it is gone from the band drawer and the faction
+# page alike — the popover below is where a coverage reading lives now, and it is the only one. The
+# leaves beside it are NOT orphaned with it: `kit_condition_face`, `KIT_DRY_FACE`,
+# `KIT_CONDITION_DECIMALS` and `kit_coverage` are each read by live surfaces still.
 #
 # **THE NOUN IS `workers`, NOT `hunters`, and that is the four-job wording.** Every job's coverage
-# comes through one path now, so a basket's clause is this same string — and it cannot name the job,
-# because the row does not carry one: `workersOnQuotedJob` is a head count and the job behind it is
-# resolved sim-side. `workers` is the one noun true of a gatherer, a keeper, a scout and a warrior.
-const KIT_COVERAGE_ROW_FORMAT := "%s (%d/%d)"
+# comes through one path, so a basket's clause is this same string — and it cannot name the job,
+# because the reading does not carry one: `workersOnQuotedJob` is a head count and the job behind it
+# is resolved sim-side. `workers` is the one noun true of a gatherer, a keeper, a scout and a warrior.
 # **SPELLED STRUCTURALLY, the `RECOVERY_GUIDANCE_TEXT` idiom** — the two clauses below share a tail and
 # a harness needs a needle that finds EITHER, so the tail is written once and both formats are built
 # from it. Two literals would let a reworded clause slip past an assertion still matching the other.
@@ -761,6 +784,11 @@ class Context extends RefCounted:
     ## `BandFoodStatus.hex_for_turns` map. NAN when no fodder row was emitted (a band with no fodder
     ## economy, or the `compact` tier, which carries the stock as a clause on Food instead).
     var fodder_turns: float = NAN
+    ## The STANDING MATERIAL BILL's runway — the worst good's shelf against the gap its arrivals leave,
+    ## for the `Upkeep:` row's value tint, through the same `BandFoodStatus.hex_for_turns` map both
+    ## larders read. NAN when no bill row was emitted (a band holding nothing that eats a good), which
+    ## is what stops the previous band's tint reaching a row that is not there.
+    var material_turns: float = NAN
     var morale: float = NAN
     ## The band's fertility MULTIPLIER (`hunger x reserve x trend`), 1.0 = its normal birth rate.
     ## NAN when there is no band, or when the sim published no reading yet (the not-projected
@@ -831,6 +859,19 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
             # tinted by `_value_hex` — so the mark can be shared while the ink stays disjoint.
             elif line.contains(DetailFormat.BUILD_TURNS_NEVER_GLYPH):
                 row_hex = HudStyle.WARN_HEX
+            # **A MISSING GOOD IS RED WHERE MISSING HANDS ARE AMBER**
+            # (`docs/plan_standing_upkeep.md` §2.7), and the fork is the one NAMED lead-in that means
+            # it: `Short of …`. Twelve keepers do not mend a fence with no hurdles, so the two
+            # shortfalls must not read alike — a stalled build and an under-kept source both draw an
+            # indented sentence here, and until this arm they drew it in the same ink.
+            #
+            # ⛔ **THE INK IS THE RENDERER'S BECAUSE THE SENTENCE CANNOT CARRY IT.** The same string
+            # goes verbatim into the build queue row's plain-text `tooltip_text`, where a `[color=…]`
+            # run would print its own markup. Keyed on the lead rather than on a list of known
+            # sentences, which is the rule the hazard-glyph branch below already states.
+            elif line.strip_edges().begins_with(
+                    HudSelectionVocab.BUILD_BLOCKED_MATERIAL_SHORT_LEAD):
+                row_hex = HudStyle.DANGER_HEX
             out += "[color=#%s]%s[/color]\n" % [row_hex, line]
             continue
         # **A FULL-WIDTH SENTENCE THAT LEADS WITH THE HAZARD MARK IS A WARNING, and that is now the
@@ -910,6 +951,15 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         # the food case above is, so a re-worded runway cannot leave this reading a stale tint.
         if not is_nan(ctx.fodder_turns) and (value.contains(FOOD_RUNWAY_UNIT) or value.contains(FOOD_UNLIMITED_GLYPH)):
             return BandFoodStatus.hex_for_turns(ctx.fodder_turns)
+    elif key == HudDisclosureVocab.DETAIL_ROW_UPKEEP:
+        # The standing material bill's row, tinted by the WORST good's runway through the same
+        # threshold map both larders use — one severity rule for every account that can run out, which
+        # is what lets a short good take the danger ink without a second grading beside it.
+        # Recognized by the SHARED runway spelling, exactly as the two cases above are, so a re-worded
+        # runway cannot leave this reading a stale tint.
+        if not is_nan(ctx.material_turns) and (value.contains(FOOD_RUNWAY_UNIT) \
+                or value.contains(FOOD_UNLIMITED_GLYPH)):
+            return BandFoodStatus.hex_for_turns(ctx.material_turns)
     elif key == HudDisclosureVocab.DETAIL_ROW_MORALE:
         # The player band's morale row tints by the morale thresholds.
         if not is_nan(ctx.morale):
@@ -1236,8 +1286,8 @@ static func build_meter_value(verb: String, progress: float,
 ## > keeping covers it, and **`RUNG_REVERTING_FORMAT`'s `⚠ Reverting 42%` where it does not**. That
 ## > format was retired with the client-side sliding inference and had to come back for exactly this:
 ## > the sim's `-3` replaced it **for the at-risk meter only**, and nothing replaced it for the other
-## > row. The fork is `rung_is_under_kept` — the published shortfall routed through `at_risk_rung` —
-## > which is the same seam the built row's mark uses and derives no number of its own.
+## > row. The fork is `rung_is_at_risk` — a published shortfall in EITHER currency, routed through
+## > `at_risk_rung` — which is the same seam the built row's mark uses and derives no number of its own.
 ## >
 ## > **`declared_rung` is a STRING rather than the bool it replaced** so both facts a row needs come
 ## > from one place: *is this the rung the player declared* (the unstarted row) and *is this the rung
@@ -1250,11 +1300,11 @@ static func build_meter_value(verb: String, progress: float,
 ## rung's LOSS and a rung's REPAIR one edge.
 ##
 ## **THE BUILT ROW'S `⚠` IS ROUTED TO THE AT-RISK RUNG, NOT PAINTED ON EVERY BUILT ONE** (§4.6a).
-## `is_under_kept` answers for the SOURCE — one pool, one shortfall — and `rung_is_under_kept` is what
-## puts that answer on the row it belongs to: **only one meter on a source is ever at risk**, the
-## newest one carrying work, which is what the published shortfall is resolved through
-## (`SourceForecast.at_risk_rung`). A patch mid-Sow is billed for the FIELD, so a mark on the tended
-## row beneath would point the player at ground that is fine.
+## The shortfalls answer for the SOURCE — one pool, one work shortfall, one stamped material bill —
+## and `rung_is_at_risk` is what puts that answer on the row it belongs to: **only one meter on a
+## source is ever at risk**, the newest one carrying work, which is what both published shortfalls are
+## resolved through (`SourceForecast.at_risk_rung`). A patch mid-Sow is billed for the FIELD, so a mark
+## on the tended row beneath would point the player at ground that is fine.
 ##
 ## **THE ROUTING USED TO BE ACCIDENTAL, WHICH IS WHY IT HAD TO BECOME DELIBERATE.** The test carried a
 ## `build_is_in_flight` gate — there to keep the mark off a source whose bill the BUILDERS owed — and
@@ -1271,7 +1321,7 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
     var percent := HudFormat.progress_percent(progress)
     if built:
         var face := HudSelectionVocab.RUNG_BUILT_FORMAT % [built_label, percent]
-        if SourceForecast.rung_is_under_kept(src, prefix, kind, improvement):
+        if rung_is_at_risk(src, prefix, kind, improvement):
             # **A BARE `⚠` WAS A MARK WITH NO WORD, and the three lines that used to explain it are
             # gone** (the `At risk:` retirement above). So the state joins the meter: `slipping` on the
             # plant web, `drifting` on the animal one — the two webs' own consequence, in the same
@@ -1285,7 +1335,7 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
     # **A ROW THAT IS NOT THE RUNG IN FLIGHT MAY NOT PRINT THE COUNTDOWN**, because there is exactly
     # ONE of those per source and the card has two rows. See the note above.
     if SourceForecast.build_verb(src, prefix, kind, declared_rung) != improvement:
-        if SourceForecast.rung_is_under_kept(src, prefix, kind, improvement):
+        if rung_is_at_risk(src, prefix, kind, improvement):
             return HudSelectionVocab.RUNG_REVERTING_FORMAT % [
                 HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
         return HudSelectionVocab.RUNG_HELD_FORMAT % percent
@@ -1302,9 +1352,44 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
 ## exactly the BBCode it always did.
 static func note_under_kept_hover(ctx: Context, row_key: String, src: Dictionary, prefix: String,
         kind: String, improvement: String) -> void:
-    if ctx == null or not SourceForecast.rung_is_under_kept(src, prefix, kind, improvement):
+    if ctx == null or not rung_is_at_risk(src, prefix, kind, improvement):
         return
-    ctx.row_tooltips[row_key] = HudWorkVocab.under_kept_tooltip_for_source(kind)
+    # **AND WHEN THE MISSING THING IS A GOOD, THE HOVER NAMES IT** (`docs/plan_standing_upkeep.md`
+    # §2.7) — the card's half of the work row's third arm, read off the SOURCE's own published
+    # material pair rather than a labor row's copy, because a card has no assignment in hand. The
+    # remedy differs in kind, so the sentence must: no staffing stepper mends a fence with no
+    # hurdles. `""` on every rung that eats no material, which falls straight back to the role
+    # sentence.
+    ctx.row_tooltips[row_key] = HudWorkVocab.under_kept_tooltip_for_source(kind,
+        rung_material_short_note(src, prefix, kind))
+
+## ⛔ **THE CARD'S ⚠ IS GATED ON BOTH CURRENCIES, and reading only the work account hid half of it.**
+## `SourceForecast.rung_is_under_kept` answers about HANDS — `crew > 0` and a work shortfall over
+## `UPKEEP_WORK_MIN` — so a corralled herd whose keepers are paid in full and whose hurdles are not
+## came back `false`: no `⚠` on the rung row, no hover, and nothing on the card saying the pen was
+## being lost. `BandPanelController._work_source_models` had already taken the disjunction
+## (`at_risk = under_kept or material_note != ""`) for the work board's row, so the two surfaces
+## stated opposite things about one source.
+##
+## **The two currencies are billed and judged SEPARATELY** — the wire's own rule — but one shortfall
+## of EITHER kind trips the same grace and drives the same decay, so it earns the same mark. The
+## material arm is routed to `at_risk_rung` exactly as the work arm is: a source publishes ONE stamped
+## material bill and can carry two meters, so the rung that owns the work shortfall owns the good
+## shortfall too.
+static func rung_is_at_risk(src: Dictionary, prefix: String, kind: String,
+        improvement: String) -> bool:
+    if SourceForecast.at_risk_rung(src, prefix, kind) != improvement:
+        return false
+    return SourceForecast.is_under_kept(src, prefix) \
+        or rung_material_short_note(src, prefix, kind) != ""
+
+## The card-side good-shortfall sentence for this source — `""` when every good the rung eats was
+## covered, and on every rung that eats none. Named once because it is BOTH the gate above and the
+## clause the hover carries, and deriving it twice is how a mark and its explanation come to disagree.
+static func rung_material_short_note(src: Dictionary, prefix: String, kind: String) -> String:
+    return HudWorkVocab.material_short_note_for_source(kind,
+        SourceForecast.upkeep_material_demand(src, prefix),
+        SourceForecast.upkeep_material_supplied(src, prefix))
 
 ## **WHAT TAMING IS BUYING, ON THE HUSBANDRY ROW ITSELF** — the ceiling, the best breeding rate and the
 ## sustainable yield, the three things a rung on this ladder actually moves.
@@ -1822,8 +1907,9 @@ static func build_blocked_lines(src: Dictionary, prefix: String, kind: String,
     if SourceForecast.build_turns_remaining(src, prefix) \
             != SourceForecast.BUILD_TURNS_QUEUE_BLOCKED:
         return lines
-    lines.append("%s%s" % [indent,
-        build_blocked_reason_text(SourceForecast.build_blocked_reason(src, prefix), kind)])
+    lines.append("%s%s" % [indent, build_blocked_reason_text(
+        SourceForecast.build_blocked_reason(src, prefix), kind,
+        SourceForecast.build_material_cost(src, prefix))])
     return lines
 
 ## The sim's cause key in the player's own words. An unknown key — and the empty one, which a `-4`
@@ -1835,11 +1921,29 @@ static func build_blocked_lines(src: Dictionary, prefix: String, kind: String,
 ## on a herd and is stated once. It was the same argument the retired keeping line forked on, which is
 ## why the parameter is still `kind` and not a bool: `HudWorkVocab.keeping_role_name` asks it the same
 ## way, so there is no second way of asking which web this source is.
-static func build_blocked_reason_text(key: String, kind: String) -> String:
+## **AND ONE CAUSE NAMES A GOOD, WHICH IS WHY `pile` IS A PARAMETER** (`docs/plan_standing_upkeep.md`
+## §2.7). The wire's key is only `materials`; WHICH good ran out is the rung's own build pile, so the
+## sentence is composed rather than looked up. `[]` — a wire this client is behind on — takes the
+## unnamed form rather than inventing a material.
+static func build_blocked_reason_text(key: String, kind: String,
+        pile: Array[Dictionary] = [] as Array[Dictionary]) -> String:
     if key == HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT:
         return HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_HERD \
             if kind == SourceForecast.SOURCE_KIND_HERD \
             else HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT
+    if key == HudSelectionVocab.BUILD_BLOCKED_REASON_MATERIALS:
+        # **EVERY GOOD IN THE PILE, JOINED — never a sum and never the first of them.** A rung eating
+        # two goods is blocked on whichever the store cannot cover, and the wire does not say which,
+        # so naming one would name a winner the sim did not.
+        var goods: Array[String] = []
+        for row in pile:
+            var id := String(row.get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, ""))
+            if id != "":
+                goods.append(id)
+        if goods.is_empty():
+            return HudSelectionVocab.BUILD_BLOCKED_MATERIALS_UNNAMED
+        return HudSelectionVocab.BUILD_BLOCKED_MATERIALS_FORMAT % HudWorkVocab \
+            .RUNG_TRACK_PRICE_SEPARATOR.join(goods)
     return String(HudSelectionVocab.BUILD_BLOCKED_REASONS.get(
         key, HudSelectionVocab.BUILD_BLOCKED_FALLBACK))
 
@@ -2512,6 +2616,98 @@ static func band_has_fodder_economy(band: Dictionary) -> bool:
     return band_fodder_store(band) >= SourceForecast.FODDER_FLOW_MIN \
         or float(band.get("fodder_need", 0.0)) >= SourceForecast.FODDER_FLOW_MIN
 
+## ---- THE BAND'S STANDING MATERIAL BILL (`docs/plan_standing_upkeep.md` §2.7) ---------------------
+##
+## **WORK WAS NEVER THE WHOLE PRICE.** A pen frays its fence every turn it stands; a road washes out.
+## The band's holdings therefore owe a rate in GOODS beside the rate in hands, and this is the ledger
+## that answers it: what is wanted, what arrives, and what is on the shelf — per good.
+##
+## ⛔ **THE SIM SUMS `material_upkeep_need` AND THIS CLIENT MUST NOT.** It is `fodder_need`'s own rule
+## for `fodder_need`'s own reason: herd rows are FOG-FILTERED, so a total rebuilt here from the pens
+## on screen silently drops one out of sight the band still owes for. Every accessor below reads the
+## published band figure and folds nothing.
+##
+## ⛔ **AND NOTHING IS EVER SUMMED ACROSS GOODS.** Six hurdles and two rope are not eight of anything —
+## that total is the retired trade axis under a new name, and it is the flattening the whole materials
+## model exists to refuse. The row's headline names ONE good; the popover states them all, one block
+## each.
+const BAND_MATERIAL_UPKEEP_NEED_KEY := "material_upkeep_need"
+const BAND_MATERIAL_UPKEEP_INCOME_KEY := "material_upkeep_income"
+const BAND_MATERIAL_STORE_KEY := "material_store"
+
+## The keys one bill ROW carries, beside `SourceForecast.MATERIAL_PAYOFF_ID_KEY`. Named because the
+## row is produced here and read by three surfaces (the band row, its popover, the faction rollup).
+const MATERIAL_BILL_NEED_KEY := "need"
+const MATERIAL_BILL_INCOME_KEY := "income"
+const MATERIAL_BILL_STORE_KEY := "store"
+const MATERIAL_BILL_RUNWAY_KEY := "turns"
+
+## **THIS BAND'S BILL, ONE ROW PER GOOD IT OWES** — `[{material_id, need, income, store, turns}]`, in
+## the wire's own order, `[]` for a band holding nothing that eats a good.
+##
+## **THE GOODS ARE THE ONES `need` NAMES, and no others.** A band may hold a store of flint it owes
+## nothing for; that is the Crafting panel's rail to state, not a standing bill. Income and store are
+## looked up per good against the need — an ABSENT entry in either is a real ZERO (the sim drops a
+## ledger row holding nothing), which is the worst reading there is and exactly what a `has()` gate
+## would skip.
+##
+## **THE RUNWAY IS THE FOOD ROW'S IDEA ON THIS ACCOUNT**: the shelf against the gap the arrivals do
+## not cover, `BandFoodStatus.UNLIMITED_TURNS` where the goods arrive at least as fast as they are
+## eaten — the same `∞` the two larders spell, so a player learns the mark once.
+static func band_material_bill(band: Dictionary) -> Array[Dictionary]:
+    var income := _material_amounts(band.get(BAND_MATERIAL_UPKEEP_INCOME_KEY, []))
+    var store := _material_amounts(band.get(BAND_MATERIAL_STORE_KEY, []))
+    var rows: Array[Dictionary] = []
+    for row in SourceForecast.material_payoff_rows(band.get(BAND_MATERIAL_UPKEEP_NEED_KEY, [])):
+        var id := String(row.get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, ""))
+        var need := float(row.get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+        if need < SourceForecast.MATERIAL_FLOW_MIN:
+            continue
+        var arriving := float(income.get(id, 0.0))
+        var held := float(store.get(id, 0.0))
+        rows.append({
+            SourceForecast.MATERIAL_PAYOFF_ID_KEY: id,
+            MATERIAL_BILL_NEED_KEY: need,
+            MATERIAL_BILL_INCOME_KEY: arriving,
+            MATERIAL_BILL_STORE_KEY: held,
+            MATERIAL_BILL_RUNWAY_KEY: material_runway(held, need, arriving),
+        })
+    return rows
+
+## **THE GOOD IN THE WORST STATE — the one the row headlines**, `{}` when the band owes nothing. The
+## shortest runway wins, because that is which good runs out first and therefore which one a player
+## has to act on; ties keep the wire's order, which is the sim's own id order.
+static func band_material_worst(band: Dictionary) -> Dictionary:
+    var worst := {}
+    for row in band_material_bill(band):
+        if worst.is_empty() or float(row[MATERIAL_BILL_RUNWAY_KEY]) \
+                < float(worst[MATERIAL_BILL_RUNWAY_KEY]):
+            worst = row
+    return worst
+
+## Does this band hold anything that eats a good? The ONE gate behind every spelling of "there is a
+## standing bill here", so the band row, its popover and the faction rollup cannot disagree.
+static func band_has_material_upkeep(band: Dictionary) -> bool:
+    return not band_material_bill(band).is_empty()
+
+## One good's runway: the shelf against the gap the arrivals leave. `UNLIMITED_TURNS` — the `∞` both
+## larders already spell — where nothing is draining, which is a band whose bench and fields keep up.
+static func material_runway(store: float, need: float, income: float) -> float:
+    var gap := need - income
+    if gap < SourceForecast.MATERIAL_FLOW_MIN:
+        return BandFoodStatus.UNLIMITED_TURNS
+    return store / gap
+
+## A `MaterialPayoff` list as `{material_id: amount}`. Private because a LOOKUP is a reading aid and
+## never a payload: nothing outside this file may iterate it, or the per-good rows stop being the
+## contract.
+static func _material_amounts(raw: Variant) -> Dictionary:
+    var amounts := {}
+    for row in SourceForecast.material_payoff_rows(raw):
+        amounts[String(row.get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, ""))] = float(
+            row.get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+    return amounts
+
 ## Per-row-per-band disclosure key — also the `[url]` meta payload and the popover's identity.
 static func breakdown_key(kind: String, band: Dictionary) -> String:
     return "%s:%d" % [kind, int(band.get("entity", -1))]
@@ -2553,21 +2749,6 @@ static func fertility_breakdown_row(factor: float, label: String) -> String:
 static func band_states_kit(band: Dictionary) -> bool:
     return not (band.get(KIT_ITEM_CONDITIONS_KEY, []) as Array).is_empty()
 
-## **HAS ANY KIT RUN OUT?** — what tints the Kit row's caret WARN, and the row's own value. It is the
-## whole of what "concerning" means here: running dry is a permanent step down to bare hands, and a
-## kit merely wearing is not a fact to shout about, because nothing the player can do changes its
-## rate. `false` for a band that states no kit at all.
-## **It sweeps whatever the server published**, rather than the three items this file happens to have
-## labels for — an item the client cannot name is still an item the band can run out of, and reading
-## only the known ones would hide exactly the cliff this warning exists for.
-static func band_kit_is_dry(band: Dictionary) -> bool:
-    if not band_states_kit(band):
-        return false
-    for row in band.get(KIT_ITEM_CONDITIONS_KEY, []):
-        if float(row.get(KIT_ITEM_REMAINING_KEY, KIT_DRY)) <= KIT_DRY:
-            return true
-    return false
-
 ## The band's hunt crews, best-equipped first. Empty for a cohort that publishes none (a snapshot
 ## predating the field), which every reader below treats as *nothing to say*.
 static func band_hunt_crews(band: Dictionary) -> Array:
@@ -2582,14 +2763,13 @@ static func band_hunt_headcount(band: Dictionary) -> float:
         total += maxf(float(crew.get(HUNT_CREW_WORKERS_KEY, 0.0)), 0.0)
     return total
 
-## How many workers hold this item, `0` when the band publishes no row for it. **A `0` is three
-## different sentences** — nobody staffed on the job, the band owns none, or no quoted kit carries the
-## item — so this number alone never states a shortfall; `kit_coverage` below is what does.
-static func kit_workers_holding(band: Dictionary, item_id: String) -> float:
-    for row in band.get(KIT_ITEM_CONDITIONS_KEY, []):
-        if String(row.get(KIT_ITEM_ID_KEY, "")) == item_id:
-            return maxf(float(row.get(KIT_ITEM_WORKERS_HOLDING_KEY, 0.0)), 0.0)
-    return 0.0
+# **RETIRED: `kit_workers_holding(band, item_id)`** — the bare per-item people count, `0` where the
+# band published no row. It had no caller at any point this file has been under review, and its own
+# doc said why it could never have one: *"a `0` is three different sentences — nobody staffed on the
+# job, the band owns none, or no quoted kit carries the item — so this number alone never states a
+# shortfall"*. [`kit_coverage`] is what states one, and it reads
+# [`KIT_ITEM_WORKERS_HOLDING_KEY`] itself against a published denominator, which is the only reading
+# that separates those three sentences. The KEY is live and stays; only this accessor went.
 
 ## **HOW FAR AN ITEM REACHES INTO THE JOB THAT USES IT** — `{stated, holding, short, headcount}`, all
 ## three counts WHOLE PEOPLE, `stated` false when there is nothing to say.
@@ -2627,16 +2807,6 @@ static func kit_coverage(band: Dictionary, item_id: String) -> Dictionary:
         return {"stated": true, "holding": parts[0], "short": parts[1],
             "headcount": parts[0] + parts[1]}
     return blank
-
-## **IS ANY ITEM SHORT OF THE PEOPLE WHO NEED IT?** — the shortfall twin of `band_kit_is_dry`, and the
-## other half of what tints the Gear caret WARN. A partly-armed band is not a worn one: the gear works
-## perfectly for whoever holds it, and the loss is that the rest of the party is standing there with
-## nothing.
-static func band_kit_is_short(band: Dictionary) -> bool:
-    for row in band.get(KIT_ITEM_CONDITIONS_KEY, []):
-        if int(kit_coverage(band, String(row.get(KIT_ITEM_ID_KEY, "")))["short"]) > 0:
-            return true
-    return false
 
 ## Is this item still equipped? The schema's own rule and the only test there is (see `KIT_DRY`).
 ##
@@ -2704,11 +2874,82 @@ static func food_breakdown_row(value: float, label: String) -> String:
 static func fodder_breakdown_row(value: float, label: String) -> String:
     return _breakdown_row(value, SourceForecast.format_signed_fodder(value), label)
 
+## ---- THE STANDING MATERIAL BILL'S BREAKDOWN ROWS -------------------------------------------------
+##
+## The `Upkeep:` popover's shape, one block per good: the good's NAME, then what is wanted, then what
+## arrives, then what is on the shelf. Three producers because the three lines are three kinds of
+## statement — a heading, a signed flow, a stock — and the renderer tells them apart by exactly that.
+
+## The block's heading — the good, capitalised, on its own full-width line. **NOT indented**, which is
+## what keeps it out of `detail_bbcode`'s signed-sub-line branch and reading as the thing the rows
+## under it are about. **A material names itself**: the catalogue ships no display word, so the id IS
+## the noun (`SourceForecast.PICKER_MATERIAL_PRODUCT_FORMAT`'s rule).
+static func material_bill_heading(material_id: String) -> String:
+    return material_id.substr(0, 1).to_upper() + material_id.substr(1)
+
+## One SIGNED term of the block — `    ▼ -0.05  Wanted`. The shared indent and the ▲/▼ the sign picks,
+## exactly as the food and fodder ledgers' rows, so the three accounts cannot drift apart on the
+## glyph. Materials print at `MATERIAL_BILL_DECIMALS` and are trimmed, which is finer than either
+## larder because a fence's mending bill is `0.05` a turn and a one-decimal rendering would read `0.1`.
+##
+## **ZERO IS A CREDIT, NOT A DEBIT** — `SourceForecast._rate_sign`'s rule, spelled the same way here
+## because it is the same question. Material income is EMPTY on the shipped default, so a band that
+## owes hurdles and finishes none renders this row at exactly `0.0`; on the strict test that read
+## `▼ −0  Arriving` in amber, which states the opposite of what is happening on all three of sign,
+## glyph and ink. The glyph comes from `_breakdown_row` and the ink from the glyph, so the boundary
+## has to be the same `>=` in both places or the row disagrees with itself.
+static func material_bill_row(value: float, label: String) -> String:
+    return _breakdown_row(value, MATERIAL_BILL_SIGNED_FORMAT % [
+        SourceForecast.RATE_SIGN_POSITIVE if value >= 0.0 else SourceForecast.RATE_SIGN_NEGATIVE,
+        format_trimmed(absf(value), MATERIAL_BILL_DECIMALS)], label)
+
+## The block's STOCK line — `    2  On the shelf`. It carries the shared indent and **NO SIGN**, which
+## is what routes it to the neutral ink: a stock is neither good news nor bad, and the runway on the
+## summary row above already said which. Deliberately not `_breakdown_row`, whose whole job is to pick
+## a ▲/▼ — a stock has no direction to pick one from.
+static func material_bill_stock_row(value: float) -> String:
+    return "%s%s  %s" % [MORALE_BREAKDOWN_INDENT,
+        format_trimmed(value, MATERIAL_BILL_DECIMALS), MATERIAL_LABEL_STORE]
+
+## The three labels, in the order a player asks them: what the band's holdings want, what its sources
+## and its bench bring in, and what is left on the shelf between the two.
+const MATERIAL_LABEL_WANTED := "Wanted"
+const MATERIAL_LABEL_ARRIVING := "Arriving"
+const MATERIAL_LABEL_STORE := "On the shelf"
+
+## A material figure's precision, and the sign it wears. Two decimals is what every material readout in
+## this client prints at, and one step finer than the shipped pen's 0.05-a-turn fence bill — a coarser
+## rendering would show that whole rate as a rounding artefact.
+const MATERIAL_BILL_DECIMALS := 2
+const MATERIAL_BILL_SIGNED_FORMAT := "%s%s"
+
+## ⛔ **THE SIGNS ARE `SourceForecast.RATE_SIGN_*` AND ARE NOT RE-SPELLED HERE.** They used to be a
+## local pair, and the minus in it was the TYPOGRAPHIC U+2212 while `format_signed` writes the ASCII
+## hyphen — so the band popover printed `−0.05` for the very account the faction page's Upkeep row
+## printed `-0.08` for, one glyph apart in the character a player reads first. A material bill is the
+## third account on the convention those two consts already exist to hold, not a fourth spelling of it.
+
+## Is this band's standing bill worth opening — **the food test, on the material account**. A good
+## arriving slower than it is eaten, or a shelf inside the shared warn line, read through the SAME
+## `BandFoodStatus` thresholds both larders' carets read. One rule for every account that can run out,
+## which is what stops three surfaces disagreeing about what worrying looks like.
+static func material_upkeep_is_concerning(band: Dictionary) -> bool:
+    var worst := band_material_worst(band)
+    if worst.is_empty():
+        return false
+    var turns := float(worst[MATERIAL_BILL_RUNWAY_KEY])
+    return BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.warn_turns()
+
 ## The shape BOTH ledgers' breakdown rows have: the shared indent, the ▲/▼ the sign picks, the
 ## already-formatted magnitude and the label. It takes the number as TEXT because the two accounts
 ## round differently and nothing else about the row does.
+##
+## **ZERO TAKES THE ▲**, matching the `+` that `SourceForecast._rate_sign` and `material_bill_row`
+## both put in front of it — a zero income is not a debit. It is decided HERE for every account
+## because `detail_bbcode`'s indented branch reads the GLYPH to pick the ink, so a row whose sign and
+## glyph disagreed would also be tinted against its own number.
 static func _breakdown_row(value: float, magnitude: String, label: String) -> String:
-    var glyph := DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH if value > 0.0 else DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH
+    var glyph := DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH if value >= 0.0 else DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH
     return "%s%s %s  %s" % [DetailFormat.MORALE_BREAKDOWN_INDENT, glyph, magnitude, label]
 
 

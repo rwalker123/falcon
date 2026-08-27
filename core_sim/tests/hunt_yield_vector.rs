@@ -148,6 +148,8 @@ fn spawn_world() -> App {
         .insert_resource(core_sim::EquipmentConfigHandle::default());
     app.world
         .insert_resource(core_sim::MaterialsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::RecipesConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_forage);
@@ -242,6 +244,7 @@ fn spawn_hunters(
                     workers,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },
@@ -704,6 +707,7 @@ fn spawn_resident_crew(
                     workers,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 })
                 // **The build's hands are a band-level pool** since
                 // `docs/plan_standing_upkeep.md` §2.5, staffed at the same count the take is so the
@@ -715,6 +719,7 @@ fn spawn_resident_crew(
                     workers: build_crew,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }))
                 .collect(),
                 build_queue: improvement

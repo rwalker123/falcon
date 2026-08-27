@@ -182,7 +182,7 @@ static func _faction_summary_lines(bands: Array, disclosures: DisclosureControll
     var lines: Array[String] = []
     lines.append(_food_line(bands, disclosures))
     lines.append(_fodder_line(bands, disclosures, knowledge, ctx))
-    lines.append(_kit_line(bands, disclosures))
+    lines.append(_upkeep_line(bands, disclosures))
     lines.append(_morale_line(bands, disclosures))
     var growth := _growth_line(bands, disclosures)
     if growth != "":
@@ -302,41 +302,109 @@ static func _any_fodder_economy(bands: Array) -> bool:
 ## refuse — so nothing replaces it here, and a per-material faction total would need a surface of its
 ## own rather than a vitals row.
 
-## `Kit: ⚠ 2 bands` / `Kit: all equipped`. **THE DURABILITIES DO NOT AGGREGATE AT ALL** — three per
-## band, and a mean of them describes no band that exists — so this row is the alert and nothing else.
-## Which band is bare-handed is the fact to act on, and it is one click away.
+## `Upkeep: 6 hurdles · −0.03 /turn  ⚠ 1 band` — **THE STANDING MATERIAL BILL, ON THE FODDER ROW'S
+## BEAT** (`docs/plan_standing_upkeep.md` §2.7). Two terms, no runway, one clickable row per band, and
+## the alert in place of the faction figure that would hide the band it is about.
 ##
-## **A BAND THAT IS SHORT OF A KIT COUNTS TOO, AND "all equipped" MEANS IT** (issue #520). The tally
-## was dry bands alone, so a band holding ten spears for seventeen hunters was reported as equipped —
-## wrong in exactly the reassuring direction the arc exists to remove, and the page is where a player
-## looks to find WHICH band needs gear. The two states share one count deliberately: this row is a
-## count of bands worth opening, not a diagnosis, and the drill-down row's note says which it is.
-static func _kit_line(bands: Array, disclosures: DisclosureController) -> String:
+## **IT SUMS THE WAY THE FODDER ROW SUMS**: per band, out of the answers that band's OWN page gives
+## (`DetailFormat.band_material_bill`), never recomposed from the wire here. Same rule, same reason — a
+## rollup that did its own arithmetic is a second source of truth for a figure the band page already
+## states, and the two would drift the first time either moved.
+##
+## ⛔ **THE FOLD IS PER BAND, AND IT IS NOT THE THING THE WIRE FORBIDS.** `materialUpkeepNeed` is
+## already summed BY THE SIM across a band's sources, and a client must not redo that sum — herd rows
+## are fog-filtered. Adding one band's published figure to another's is a different operation
+## entirely, and it is exactly what the Food and Fodder rows above do.
+##
+## ⛔ **AND NOTHING IS SUMMED ACROSS GOODS.** The row names ONE good — the one the roster is worst off
+## for — because six hurdles and two rope are not eight of anything. Which good, and which band, are
+## one click away.
+##
+## **NO FACTION RUNWAY, for the food row's reason exactly** — a shelf against one band's holdings, and
+## an average of them describes no band that exists. The per-band rows carry it, in `food_turns_text`
+## (the ∞ included), and the ALERT is what reaches this row.
+##
+## **ONLY THE BANDS THAT OWE A GOOD GET A ROW, and that is where this parts company with Fodder.** The
+## Fodder drill-down lists the whole roster because *which band holds the hay* is a question every band
+## answers, "none" included. A band that has built nothing which eats a good has no value to state in
+## this row's register at all — no good to name, no shelf to weigh — so it is absent here for the same
+## reason it draws no row on its own page.
+##
+## `""` when NOT ONE band owes a good, which renders no row at all rather than a dormant one: unlike a
+## fodder larder there is no *"you could have this"* story to tell, because a standing bill is a
+## consequence of what you have built rather than a thing to go and learn.
+static func _upkeep_line(bands: Array, disclosures: DisclosureController) -> String:
     var rows: Array[String] = []
-    var flagged := 0
+    var alarmed := 0
+    # The roster's own worst good, folded per band: its shelf, its net rate and its runway. Keyed by
+    # material id, because a total across goods is the currency this model does not have.
+    var store := {}
+    var net := {}
+    var need := {}
     for i in range(bands.size()):
         var band: Dictionary = bands[i]
-        if not DetailFormat.band_states_kit(band):
+        var worst := DetailFormat.band_material_worst(band)
+        if worst.is_empty():
             continue
-        var is_dry := DetailFormat.band_kit_is_dry(band)
-        var is_short := DetailFormat.band_kit_is_short(band)
-        if is_dry or is_short:
-            flagged += 1
-        # A DRY kit leads a short one: the step down is permanent and the shortfall is not, so a band
-        # in both states is named by the loss it cannot undo.
-        var note := ""
-        if is_dry:
-            note = HudWorkVocab.FACTION_KIT_DRY_NOTE
-        elif is_short:
-            note = HudWorkVocab.FACTION_KIT_SHORT_NOTE
-        rows.append(_band_row(band, i, _kit_face(band), note))
+        for row in DetailFormat.band_material_bill(band):
+            var id := String(row[SourceForecast.MATERIAL_PAYOFF_ID_KEY])
+            store[id] = float(store.get(id, 0.0)) + float(row[DetailFormat.MATERIAL_BILL_STORE_KEY])
+            need[id] = float(need.get(id, 0.0)) + float(row[DetailFormat.MATERIAL_BILL_NEED_KEY])
+            net[id] = float(net.get(id, 0.0)) \
+                + float(row[DetailFormat.MATERIAL_BILL_INCOME_KEY]) \
+                - float(row[DetailFormat.MATERIAL_BILL_NEED_KEY])
+        var turns := float(worst[DetailFormat.MATERIAL_BILL_RUNWAY_KEY])
+        if BandFoodStatus.is_critical(turns):
+            alarmed += 1
+        rows.append(_band_row(band, i, "%s · %s" % [
+            _material_face(String(worst[SourceForecast.MATERIAL_PAYOFF_ID_KEY]),
+                float(worst[DetailFormat.MATERIAL_BILL_STORE_KEY])),
+            SourceForecast.format_signed(float(worst[DetailFormat.MATERIAL_BILL_INCOME_KEY])
+                - float(worst[DetailFormat.MATERIAL_BILL_NEED_KEY]))],
+            DetailFormat.food_turns_text(turns)))
     if rows.is_empty():
         return ""
-    disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_KIT,
-        HudDisclosureVocab.BREAKDOWN_KIND_KIT, rows, flagged > 0)
-    var value := _alert_text(flagged, HudStyle.DANGER_HEX) if flagged > 0 \
-        else "[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, HudWorkVocab.FACTION_KIT_ALL_EQUIPPED]
-    return "%s%s%s" % [HudDisclosureVocab.DETAIL_ROW_KIT, DetailFormat.DETAIL_KV_SEPARATOR, value]
+    disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_UPKEEP,
+        HudDisclosureVocab.BREAKDOWN_KIND_UPKEEP, rows, alarmed > 0)
+    var headline := _faction_worst_material(store, need, net)
+    var rate := float(net.get(headline, 0.0))
+    return "%s%s%s · [color=#%s]%s[/color]%s" % [
+        HudDisclosureVocab.DETAIL_ROW_UPKEEP, DetailFormat.DETAIL_KV_SEPARATOR,
+        _material_face(headline, float(store.get(headline, 0.0))),
+        HudStyle.HEALTHY_HEX if rate >= 0.0 else HudStyle.DANGER_HEX,
+        SourceForecast.format_signed(rate),
+        _alert_clause(alarmed, HudStyle.DANGER_HEX)]
+
+## **WHICH GOOD THE ROSTER IS WORST OFF FOR** — the shortest runway over the folded figures, through
+## `DetailFormat.material_runway`, i.e. through the SAME expression a band's own row is judged by.
+## Ties keep insertion order, which is the wire's own id order.
+static func _faction_worst_material(store: Dictionary, need: Dictionary,
+        net: Dictionary) -> String:
+    var worst := ""
+    var worst_turns := INF
+    for id in need:
+        # `net` is income − need, so the arrivals term the runway wants is the two put back together.
+        var turns := DetailFormat.material_runway(float(store.get(id, 0.0)), float(need[id]),
+            float(need[id]) + float(net.get(id, 0.0)))
+        if turns < worst_turns:
+            worst_turns = turns
+            worst = String(id)
+    return worst
+
+## ONE good's stock and its name — `6 hurdles`. **A material names itself**, the rule every material
+## readout in this client follows, and the amount is trimmed so a shelf reads `6` rather than `6.00`.
+static func _material_face(material_id: String, amount: float) -> String:
+    return BandDetailLines.BAND_MATERIAL_TERM_FORMAT % [
+        DetailFormat.format_trimmed(amount, DetailFormat.MATERIAL_BILL_DECIMALS), material_id]
+
+## **THE `Kit: ⚠ 2 bands` ROW IS RETIRED** (`docs/plan_standing_upkeep.md` §4.9 item 12) with
+## `_kit_face` and the `FACTION_KIT_*` notes it read. The durabilities never aggregated — three per
+## band, and a mean of them describes no band that exists — so the row was an alert and a drill-down
+## and nothing else, and the CRAFTING panel's kit ledger already states every item in full.
+##
+## **ITS DISCOVERY PATH IS WHAT MATTERED, AND THAT IS WHAT WAS REPLACED**: `⚠ 1 band` → open → *which*
+## band. The event dock's `material_shortfall` Alert names the band outright and carries the jump, and
+## `kit_life` pushes the two `life_readout` seams the Gear row could only be read for.
 
 ## `Morale: 78% ▼` (+ the alert clause). Population-weighted through `FactionAggregate`, and the ARROW
 ## is the weighted mean of the bands' own `morale_delta` — NOT a diff of this mean against last turn's,
@@ -449,21 +517,10 @@ static func _severity_color(severity: String) -> Color:
         return HudStyle.INK_FAINT
     return HudStyle.WARN
 
-## One band's three kit conditions, composed from the SAME leaves `BandDetailLines._band_kit_line`
-## uses — `kit_condition_face` spells a dry kit as the WORD, and `kit_is_equipped` decides its ink, so
-## a drill-down row and the band's own Kit row can never describe one kit differently.
-static func _kit_face(band: Dictionary) -> String:
-    var entries: Array[String] = []
-    for kit in [
-        [DetailFormat.KIT_LABEL_SPEARS, DetailFormat.KIT_DURABILITY_KEY_SPEARS],
-        [DetailFormat.KIT_LABEL_SLED, DetailFormat.KIT_DURABILITY_KEY_SLED],
-        [DetailFormat.KIT_LABEL_BASKETS, DetailFormat.KIT_DURABILITY_KEY_BASKETS],
-    ]:
-        var key := String(kit[1])
-        entries.append("[color=#%s]%s[/color]" % [
-            HudStyle.INK_HEX if DetailFormat.kit_is_equipped(band, key) else HudStyle.DANGER_HEX,
-            DetailFormat.kit_condition_face(band, key)])
-    return BandDetailLines.BAND_KIT_ROW_SEPARATOR.join(entries)
+## **`_kit_face` IS RETIRED** with the `Kit` row it composed — see `_upkeep_line` above for what the
+## row's discovery path became. The `DetailFormat` kit leaves it read (`kit_condition_face`,
+## `kit_is_equipped`, the label and durability tables) stay: the compose sheet's role hint and the
+## crafting panel's ledger still read every one of them.
 
 ## One row of a drill-down: the band's name, its value, and an optional dim note. The NAME is a
 ## clickable `[url]` so the popover doubles as the page's second, better way to reach a band.

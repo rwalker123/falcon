@@ -1228,6 +1228,28 @@ pub enum CommandEventKind {
     /// The wire field is already a string, so the feed renders it generically — no schema or client
     /// change (see [`Self::NarrativeBeat`]).
     Craft,
+    /// **A KIT ITEM IS RUNNING DOWN** — `equipment.json`'s `life_readout` seams finally reaching the
+    /// player (`docs/plan_standing_upkeep.md` §4.9 item 12). Those two fractions shipped with
+    /// *"nothing in the sim branches on either"*, and the `danger` seam was deliberately set inside a
+    /// kit item's rebuild time, so the warning is actionable rather than a post-mortem.
+    ///
+    /// **One kind, two rungs, resolved client-side.** The sim publishes only a `kind` string and a
+    /// detail; the Alert/Notable/Routine ladder is `RUNG_BY_KIND`'s, so the severity rides the
+    /// **detail** (`severity=warn|danger`) and never a field of its own.
+    ///
+    /// **It reuses `snapshot::crafting`'s own three-way answer** rather than re-deriving the
+    /// thresholds — one home for the seams, and the dock and the ledger cannot disagree about when a
+    /// spear is nearly out.
+    KitLife,
+    /// **A MATERIAL THE STANDING BILLS EAT FASTER THAN IT ARRIVES** — the alert that replaces the
+    /// faction `Gear` row's `⚠ 1 band` discovery path (`docs/plan_standing_upkeep.md` §4.9 item 12).
+    ///
+    /// **It NAMES THE BAND**, because the bill is a band's: a faction-level line would tell the
+    /// player something is wrong and not where. Driven off the standing bill the same turn publishes
+    /// (`LaborAllocation::last_material_need` against `LaborAllocation::material_income`, which is
+    /// the `material_upkeep_income` row's own producer — bench included), so the event and the
+    /// disclosure row cannot describe different turns **or different inflows**.
+    MaterialShortfall,
     /// A **dangerous hunt** produced band casualties (Predators Phase 0, `docs/plan_predators.md`). The
     /// hunt-danger combat resolution pushes this whenever hunting an animal that fights back
     /// (`attack × ferocity > 0` — mammoth, ox) costs the party casualties (killed and/or wounded; the
@@ -1334,6 +1356,8 @@ impl CommandEventKind {
             CommandEventKind::Sow => "sow",
             CommandEventKind::Corral => "corral",
             CommandEventKind::Craft => "craft",
+            CommandEventKind::KitLife => "kit_life",
+            CommandEventKind::MaterialShortfall => "material_shortfall",
             CommandEventKind::HuntDanger => "hunt_danger",
             CommandEventKind::HuntReport => "hunt_report",
             CommandEventKind::PredatorRaid => "predator_raid",

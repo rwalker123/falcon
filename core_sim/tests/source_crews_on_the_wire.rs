@@ -125,6 +125,7 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                     workers: TAKE_CREW,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 // The keeping — a row of its own, on the band rather than the tile.
                 LaborAssignment {
@@ -132,6 +133,7 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                     workers: KEEP_CREW,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 // …and so is the building, since §2.5.
                 LaborAssignment {
@@ -139,6 +141,7 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                     workers: BUILD_CREW,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
             // The declaration the source row's `improvement` token is derived from.

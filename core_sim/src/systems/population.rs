@@ -1550,6 +1550,7 @@ mod food_flow_tests {
             workers: 4,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         }
     }
 
@@ -1570,6 +1571,9 @@ mod food_flow_tests {
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
+            last_material_need: Default::default(),
+            last_material_income: Default::default(),
+            material_shortfall_warned: Vec::new(),
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
@@ -1612,6 +1616,9 @@ mod food_flow_tests {
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
+            last_material_need: Default::default(),
+            last_material_income: Default::default(),
+            material_shortfall_warned: Vec::new(),
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),

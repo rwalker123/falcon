@@ -3,6 +3,8 @@
 //! overhunting collapse. Uses the source-centric labor allocation (a Hunt assignment) that replaced
 //! the retired persistent follow.
 
+mod pen_materials_support;
+
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
@@ -16,7 +18,7 @@ use core_sim::{
     FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry, GenerationId,
     GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, Improvement,
     LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
-    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, RungKey,
+    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, RungKey,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     SourcePriority, StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
     StartingUnit, TileRegistry, WellbeingConfigHandle, FODDER, FODDERING_DISCOVERY_ID, FOOD,
@@ -89,6 +91,8 @@ fn spawn_world() -> App {
         .insert_resource(core_sim::EquipmentConfigHandle::default());
     app.world
         .insert_resource(core_sim::MaterialsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::RecipesConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app
@@ -1040,7 +1044,7 @@ fn spawn_crew_of(
                 // have `normalize` trim the very row under measurement.
                 working: scalar_from_f32((hunters + builders + keepers + hunters) as f32),
                 elders: scalar_zero(),
-                stores: LocalStore::new(),
+                stores: pen_materials_support::stocked_with_pen_materials(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_turn_transfer_received: 0.0,
@@ -1081,6 +1085,7 @@ fn spawn_crew_of(
                             workers: hunters,
                             kit: None,
                             priority: SourcePriority::default(),
+                            upkeep_kit: None,
                         }],
                         improvement.map_or(0, |_| hunters),
                     ),
@@ -1757,6 +1762,7 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
                 workers: keepers,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             });
         run_turns_with_hunt(&mut app, 1);
         count(herd_of(&app, &id).build_turns_remaining)
@@ -3380,6 +3386,7 @@ fn set_hunt_improvement(
                         workers: builders,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     }),
                 }
                 assert!(
@@ -4050,6 +4057,7 @@ fn with_builders_pool(mut rows: Vec<LaborAssignment>, builders: u32) -> Vec<Labo
                     .expect("the shipped roster carries the empty kit"),
             ),
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         });
     }
     rows
@@ -4064,6 +4072,7 @@ fn with_keeping_role(mut rows: Vec<LaborAssignment>, keepers: u32) -> Vec<LaborA
             workers: keepers,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         });
     }
     rows
@@ -5052,6 +5061,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             workers: DIP_VISIBLE_HUNTERS,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         };
         let rows = with_keeping_role(
             with_builders_pool(vec![hunt_row(&holding), hunt_row(&build)], BUILDERS),
@@ -5066,7 +5076,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                 children: scalar_zero(),
                 working: scalar_from_f32(staffed as f32),
                 elders: scalar_zero(),
-                stores: LocalStore::new(),
+                stores: pen_materials_support::stocked_with_pen_materials(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_turn_transfer_received: 0.0,

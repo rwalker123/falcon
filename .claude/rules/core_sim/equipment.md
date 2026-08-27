@@ -30,10 +30,10 @@ cost a whole design conversation to unpick. **"Kit" now means only the roster en
 | item | declares | its use quantum |
 |---|---|---|
 | **`spears`** | `attack` **20** (equipped) | per **landed blow** |
-| **`sled`** — travois, drag harness | `hunt_carry` **40** (equipped, on its **tier**) | per **biomass hauled home from a hunt** |
+| **`sled`** — travois, drag harness | `hunt_carry` **40** (equipped, on its **tier**), and **both sides of `pen_carry`** — the equipped one shared off `hunt_carry`, the unequipped **12** declared | per **biomass hauled home from a hunt**, **and** per **biomass BUTCHERED off a pen** — the one item on two quanta |
 | **`baskets`** | `forage_carry` **8** (equipped, on its **tier**) | per **biomass gathered** |
 | **`traps`** — the passive device (snares, nets, weirs) | `attack` **20** bounded to `max_body_mass` **1.0**, `dispersion` **0**, `exposure` **0** | per **landed blow** |
-| **`hurdles`** — portable fence panels, plus the halters, butchering stone and vessels that go with them | `pen_carry` **12** (unequipped), `build_work` **+0.5 per worker per turn** on branch **`animal`** (equipped, on its **tier**) | per **biomass BUTCHERED off a pen**, **and** per **unit of build progress accrued** — the one item on two quanta |
+| **`crook`** — a long bone staff, plus the halters and butchering stone a keeper works a beast with | `build_work` **+0.5 per worker per turn** on branch **`animal`** (equipped, on its **tier**), and `upkeep_work` beside it | per **unit of build progress accrued**, **and** per **unit of keeping work supplied** |
 | **`hoes`** — a bone blade hafted with fibre | `build_work` **+0.5 per worker per turn** on branch **`plant`** (equipped, on its **tier**) | per **unit of build progress accrued**, and nothing else — the first item whose **headline** quantum is the build |
 | **`wayfinding`** — tallies, marked staves, a fire-drill | `scout_vantage_range` **1** (unequipped) | per **tile revealed for the FIRST time** |
 | **`clubs`** | `attack` **6** (equipped) | per **landed blow** |
@@ -42,9 +42,44 @@ cost a whole design conversation to unpick. **"Kit" now means only the roster en
 | **`bone_awl`** — bounds `bone` | `craft_speed` **1.6**, ceiling **0.85**, efficiency **0.70** | likewise |
 
 Shipped kits: **`big_game`** (`spears` + `sled`), **`trapping`** (`traps` + `sled`),
-**`gathering`** (`baskets`), **`husbandry`** (`hurdles` + `sled`), **`hurdling`** (`hurdles`),
+**`gathering`** (`baskets`), **`husbandry`** (`sled`), **`hurdling`** (`crook`),
 **`tillage`** (`hoes`), **`wayfinding`** (`wayfinding`), **`warrior`** (`clubs`), **`none`**
 (nothing).
+
+> ### ⛔ `hurdles` LEFT THE ROSTER — THEY ARE A MATERIAL NOW
+>
+> **The test is whether the thing comes home with you** (`docs/plan_standing_upkeep.md` §2.7). A hoe
+> goes to the next field, so it is kit: it wears with use and its absence makes the work *dearer*,
+> never impossible. A fence **stays in the ground**, so it is material: it is spent, and no number of
+> hands replaces it. So `hurdles` are a `materials.json` row the `animal:pen` rung eats on **both** its
+> build pile and its upkeep rate, and the item is gone.
+>
+> **What replaced it on the roster is the `crook`**, which takes over every dial the item carried —
+> wear `0.16` on both quanta, `build_work 0.5` on the `animal` branch, `starting_durability 100` —
+> **unchanged**, so the reclassification is pacing-neutral on gear: an animal build is geared exactly
+> as it was, and a keeper wears exactly what a keeper wore. `hurdling` uses it; `husbandry` is
+> **sled-only**.
+>
+> **AND `pen_carry` MOVED TO THE SLED, BOTH SIDES OF IT** — the sled already owned the *equipped* side
+> through `EquipmentStat::shares_equipped_rate_with`, so this puts one stat's two sides on one item,
+> and the `biomass_collected` quantum went with it (**appended**, so the sled's headline stays
+> `biomass_hauled` and its gauge reads exactly what it read).
+>
+> ⛔ **THE CONSEQUENCE IS A REAL GAMEPLAY CHANGE, AND IT IS NOT A SIDE EFFECT TO SKIM PAST.** *"A band
+> that corrals a herd and leaves the assignment on `big_game` collects at 12 rather than 40"* — the
+> mistake this roster was built to punish — **is no longer a mistake**: every kit carrying a sled
+> collects a pen at the equipped rate, so `big_game`, `trapping` and `husbandry` read alike. What is
+> left of the tier is the *sledless* case (a gathering, hurdling or bare crew at a pen), and
+> `EquipmentConfig::kit_supplying(Hunt, PenCarry)` — which a corralled herd's `defaultKitId` resolves
+> through — now answers **`big_game`**, the earliest hunt kit in file order carrying a sled. The
+> `husbandry` kit is therefore strictly dominated by `big_game` (same sled, plus spears) until §4.9
+> item 12b gives it something of its own.
+>
+> **The crook's gauge reads in the BUILD's unit**, because `build_progress` is written first: *"≈12
+> gardens' worth"*, the same reading the hoes get. That is a changed reading for a **new** item and
+> not for an existing one — the retired `hurdles` led with `biomass_collected` and read *"≈2500
+> biomass butchered"*, and the crook does no butchering at all. **No shipped item's life meter changed
+> units.**
 
 > **THE TWO BUILDERS KITS CARRY NO CARRY GEAR, and `husbandry` no longer builds.** Nothing is hauled
 > during a build and the sled does not even wear on `build_progress`, so it was inert baggage on the
@@ -182,11 +217,13 @@ build and the upkeep read.
 > **Every number here is provisional until the arc's tuning spread** (`plan_standing_upkeep.md`
 > §4.14): `0.5` is `8.5` re-expressed in the new units, not a value anybody balanced.
 
-**The defect it closes.** The husbandry kit only paid off *once a pen existed* — its `pen_carry` is
-read on a corralled herd and nowhere else — so the gear did nothing across the entire climb that
-produces the pen. That is backwards for what the gear physically is: hurdles, halters and a
+**The defect it closes.** The animal-handling gear only paid off *once a pen existed* — `pen_carry`
+is read on a corralled herd and nowhere else — so the gear did nothing across the entire climb that
+produces the pen. That is backwards for what the gear physically is: halters, a staff and a
 butchering stone are **animal-handling** tools, and `Tame` and `Corral` are exactly the turns a band
-spends handling animals.
+spends handling animals. (The item that carried both stats has since split: `pen_carry` went to the
+**sled** and `build_work` to the **crook** — see "`hurdles` LEFT THE ROSTER". The defect and its fix
+are unmoved; only which item holds which half changed.)
 
 - **NOT a two-tier rate, and that is what lets a second item declare it.** The `TWO_TIER` stats
   find their other side by searching the whole item table and taking the first match, so each may be
@@ -197,7 +234,7 @@ spends handling animals.
   live on `EquipmentStat::neutral`, so reading one as the other is not something a call site can do.
 - **NOT named for husbandry, and the WEB IS NOW A QUALIFIER ON THE EFFECT.** Both webs' rungs read
   the one build seam, so a stat keyed to the animal branch would have needed renaming the day a hoe
-  shipped. What is animal-only is the *content*, and it says so: `hurdles` declare
+  shipped. What is animal-only is the *content*, and it says so: the `crook` declares
   `"branch": "animal"` and `hoes` declare `"branch": "plant"`, and outside its branch an effect
   contributes the neutral **`0.0`** (`NO_BUILD_GEAR`). Reading that neutral as `1.0` would hand every
   ungeared crew a free work unit per worker off every job, which is exactly the wrong-neutral
@@ -305,9 +342,35 @@ spends handling animals.
 > > web's tool with no way back (`none` means bare-handed, which is a different statement, not an
 > > undo). §4.6b deleted the client picker rather than leave it harmful; §4.7 gave the override its
 > > home. The refusal is by name — a silently-dropped token is the same class of defect as the
-> > pinning it replaces. **The two KEEPING roles are untouched**: `agriculture` / `husbandry` are
-> > standing pools over a whole web, so one answer per band is right there and the selection stays
-> > on the row (`keeping_kit_for`).
+> > pinning it replaces.
+>
+> > ⛔ **AND THE KEEPING KIT IS PER WORK SITE, ON THE SAME ARGUMENT** (§2.7). The band is the pool of
+> > workers and goods to draw from; it does not decide which tool a given site is worked with. So
+> > `keeping_kit_for(site_kit, branch)` reads **`LaborAssignment::upkeep_kit`** — the worked row's own
+> > selection, the same place the take kit lives — and `None` is the web's derivation (`tillage` for a
+> > patch, `hurdling` for a herd). It was read off the band's `agriculture` / `husbandry` **role row**
+> > until §2.7, which could not say *hoes on the Field, bare hands on the scrub beside it*: one pick
+> > put the same tool on every site that band kept, and its wear was charged against the work of all
+> > of them. `LaborAllocation::named_kit_on` retired with that reading — it had no other caller, and
+> > `assign_labor` refuses a `kit` token on `agriculture` / `husbandry` exactly as it does on
+> > `builders`: **none of the three standing pools takes one**, because a pool is *how many hands*
+> > and never *what they carry*.
+> >
+> > **THE COMMAND IS `upkeep_kit <faction> <source…> [kit <id>]`**, `build_kit` line for line: same
+> > `BuildSourceRef` addressing, an absent token CLEARS back to the derivation, `kit none` is a real
+> > selection, and a kit that does not serve **this site's web** (`keeping_job(branch)` →
+> > `agriculture` for a patch, `husbandry` for a herd) is refused by name. Its reach is every band of
+> > the faction that **works** the source — wider than `build_kit`'s, because a keeping bill is owed
+> > by every band holding the ground and not only by whoever queued a build on it.
+> >
+> > **THE WIRE** states the RESOLVED kit per source — `ForagePatchState.upkeepKitId` /
+> > `HerdTelemetryState.upkeepKitId`, `""` only when no band of the faction works it — beside
+> > `upkeepKitNamed`, which says whether that id is a stated override or the derivation. The flag is
+> > not recoverable from the id (a player may name the very kit the derivation would have picked), so
+> > it rides the wire rather than being re-derived. Captured LIVE off the bands' rows
+> > (`snapshot::subsistence::resolve_upkeep_kits`) for `buildKitId`'s reason; where several bands work
+> > one source a **stated override beats a derivation** and the first stated one wins. A picker's
+> > option list is `KitOption.jobs` containing `agriculture` / `husbandry` — there is no second roster.
 >
 > **THE COMMAND IS `build_kit <faction> <source…> [kit <id>]`** — the fourth member of the queue
 > family, addressing a source through the same `BuildSourceRef` as `abandon` / `unqueue` /
@@ -734,7 +797,7 @@ back" below.
 
 | File | Purpose |
 |---|---|
-| `src/data/equipment.json` | **The TOE** (loader `equipment_config.rs`, env override `EQUIPMENT_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks plus one scalar. **`items`** — a map of id → `{ wear: { per, amount }, effects: [...], bounds_material?, tiers: [...] }`. **What is SHARED sits on the item and what the MATERIAL bought sits on a TIER** — `effects` here carries the multipliers and the *unequipped* side of a rate; each **tier** is `{ id, starting_durability, requires_knowledge?, effects }` and carries `attack` (with its mass bounds), the carry rates and a tool's craft stats. `stat` is one of `attack` / `hunt_carry` / `forage_carry` / `pen_carry` / `build_work` / `scout_vantage_range` / `dispersion` / `exposure` / `craft_speed` / `craft_quality_ceiling` / `craft_material_efficiency`; a **`build_work`** effect additionally carries **`branch`** (`plant` / `animal`), which is REQUIRED there and rejected everywhere else; `per` is `strike` / `biomass_hauled` / `biomass_gathered` / `biomass_collected` / `tile_revealed` / `item_crafted` — **there is no `turn` variant, and that is `docs/plan_denial_raid.md` §1.2 enforced by the type**. An item may also carry **`bounds_material`**, which makes it a **bench tool** (`crafting.md`), and **`workers_per_unit`** (serde default **1**, `validate` rejects `0`) — how many people one unit of it takes to use, the divisor `coverage` arms a party with. **Every shipped item ships ONE tier, `flint`** (see "Quality tiers"), at the durabilities the game has always had: `spears` (100, 0.4/**blow** → 250 blows, `attack 20`), `sled` (100, 0.02/biomass → 5000, `hunt_carry 40`), `baskets` (100, 0.04/biomass → 2500, `forage_carry 8`), `traps` (100, 0.2/**blow** → 500 — twice the spear's life per blow because a trap is *worked* rather than thrown, and on the **same quantum** so a trapping party cannot hunt for free), `hurdles` (100, 0.04/biomass **butchered** → 2500 — halved from the 0.08 the collected-equals-carried basis shipped with, because `killed_biomass ≥ carried` always — **and** 0.16/work unit built), `hoes` (100, 0.16/work unit built → 625 units ≈ **12.5 gardens**, the hurdles' build rate mirrored), `wayfinding` (100, 0.05/tile first-seen → 2000), `clubs` (100, 2.0/**blow** → 50 blows — the number is unretuned from its per-raid days and is the largest of the three gaps issue #495 has to close), and the three **bench tools** `tanning_frame` / `loom` / `bone_awl` (100, 4.0/item crafted → **25 items** each). **`kits`** — `{ id, display_name, jobs, uses }`, where `uses` names items and `jobs` is `hunt` / `forage` / `scout` / `warrior` / `agriculture` / `husbandry` / `builders`; plus `default_kits`, which names one per job, **`quarry_default_kit_margin`** (**0.25**) — how decisively a kit must beat `default_kits.hunt` on a species before it replaces it as that *quarry's* published default. Required, like every other key here. **`start_stock_fraction`** (**1.5**) — the multiple of a party's WORKER head count a spawn stocks of each item (`ceil(workers x this / workers_per_unit)`, min 1): `1.0` would arm exactly everybody and let the **first break** disarm someone, so the half-again is the opening reserve (~8 retirements of slack on the shipped 17-worker band, roughly the span the bench needs to make a replacement). Required, no serde default - a defaulted `0` would stock the one-unit floor and send the band out with one spear. And **`life_readout`** `{ warn_fraction 0.34, danger_fraction 0.10 }` — the two colour seams of the published `lifeSeverity`, as **fractions of one fresh unit's** quanta rather than absolute counts, because a spear's 250 blows and a sled's 5000 biomass are not comparable and one absolute would colour one of them permanently red. **Presentation only**: nothing in the sim branches on it (`crafting.md` → "the life meter is a fuel gauge"). **`validate` rejects**: an empty item table; a non-finite or `<= 0` wear amount or tier durability; an item with **no effects on itself or any tier** (it would wear out doing nothing); **an item with no tiers** (no durability — born dry); a **duplicate tier id**; a **knowledge gate on the first tier** (that one is what a spawn stocks and every reference rate resolves through, so it must ship known); a stat declared **twice within one layer** (`effect_entry` takes the first match, so the second is silently dead); a stat declared on **both the item and one of its tiers** (the tier wins, so the shared line would be dead config); an **`unequipped` side on a tier** (an unequipped value is what you get when the item is *not* there, which is true of every tier at once); a negative or non-finite effect value; a mass bound on any stat but `attack`, or an inverted one; **a `build_work` effect with no `branch`** (an unqualified build tool would serve BOTH food webs, so a hoe would speed a `Tame` and a bundle carrying both tools would double-count) **or a `branch` on any other stat** (nothing else is resolved against a web, so the qualifier would be silently ignored); **a mass-bounded `attack` on an item a Scout or Warrior kit uses**; **two items declaring the same two-sided rate** anywhere across their item and tier effects (`declared_tier` and `equipped_reference` both take the first match, so it would resolve alphabetically); a duplicate kit id; a kit listing no jobs; a default naming no roster entry or not covering its own job; a non-finite or negative `quarry_default_kit_margin`; a non-finite or non-positive `start_stock_fraction`; a **`workers_per_unit` of `0`** (a unit no worker has to hold covers everyone, which is a division with no meaning); a **`life_readout`** seam outside `0..=1` or a `danger_fraction` not strictly below `warn_fraction` (the warn band would be unreachable, so one colour would simply never appear); and **a `uses` entry naming an item the table does not carry**. That last one is a DEBT, not a nicety — see below. **The bench tool's own rejections** (`validate_bench_tools`, every one of which is otherwise silent at runtime): a craft stat on an item with no `bounds_material`; a craft stat declaring an `unequipped` side; two items bounding one material; a tool that does not wear per `item_crafted`, **or a non-tool that does**; a tool declaring no craft stat at all; and **a kit naming a bench tool**. Plus, at the composition seam, `validate_against_materials` rejects a `bounds_material` the materials table does not carry, **and a tier `requires_knowledge` naming a craft no material declares** — an authored tier that could never be earned is the `UnknownItem` debt in its most expensive direction. |
+| `src/data/equipment.json` | **The TOE** (loader `equipment_config.rs`, env override `EQUIPMENT_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks plus one scalar. **`items`** — a map of id → `{ wear: { per, amount }, effects: [...], bounds_material?, tiers: [...] }`. **What is SHARED sits on the item and what the MATERIAL bought sits on a TIER** — `effects` here carries the multipliers and the *unequipped* side of a rate; each **tier** is `{ id, starting_durability, requires_knowledge?, effects }` and carries `attack` (with its mass bounds), the carry rates and a tool's craft stats. `stat` is one of `attack` / `hunt_carry` / `forage_carry` / `pen_carry` / `build_work` / `scout_vantage_range` / `dispersion` / `exposure` / `craft_speed` / `craft_quality_ceiling` / `craft_material_efficiency`; a **`build_work`** effect additionally carries **`branch`** (`plant` / `animal`), which is REQUIRED there and rejected everywhere else; `per` is `strike` / `biomass_hauled` / `biomass_gathered` / `biomass_collected` / `tile_revealed` / `item_crafted` — **there is no `turn` variant, and that is `docs/plan_denial_raid.md` §1.2 enforced by the type**. An item may also carry **`bounds_material`**, which makes it a **bench tool** (`crafting.md`), and **`workers_per_unit`** (serde default **1**, `validate` rejects `0`) — how many people one unit of it takes to use, the divisor `coverage` arms a party with. **Every shipped item ships ONE tier, `flint`** (see "Quality tiers"), at the durabilities the game has always had: `spears` (100, 0.4/**blow** → 250 blows, `attack 20`), `sled` (100, 0.02/biomass hauled → 5000, `hunt_carry 40` **and both sides of `pen_carry`** — **and** 0.04/biomass **butchered** off a pen → 2500, appended so the haul stays its headline; halved from the 0.08 the collected-equals-carried basis shipped with, because `killed_biomass ≥ carried` always), `baskets` (100, 0.04/biomass → 2500, `forage_carry 8`), `traps` (100, 0.2/**blow** → 500 — twice the spear's life per blow because a trap is *worked* rather than thrown, and on the **same quantum** so a trapping party cannot hunt for free), `crook` (100, 0.16/work unit built → 625 units ≈ **12.5 gardens**, **and** 0.16/work unit of keeping supplied — every dial carried across unchanged from the retired `hurdles` item, so the reclassification is pacing-neutral on gear), `hoes` (100, 0.16/work unit built → 625 units ≈ **12.5 gardens**, the crook's build rate mirrored), `wayfinding` (100, 0.05/tile first-seen → 2000), `clubs` (100, 2.0/**blow** → 50 blows — the number is unretuned from its per-raid days and is the largest of the three gaps issue #495 has to close), and the three **bench tools** `tanning_frame` / `loom` / `bone_awl` (100, 4.0/item crafted → **25 items** each). **`kits`** — `{ id, display_name, jobs, uses }`, where `uses` names items and `jobs` is `hunt` / `forage` / `scout` / `warrior` / `agriculture` / `husbandry` / `builders`; plus `default_kits`, which names one per job, **`quarry_default_kit_margin`** (**0.25**) — how decisively a kit must beat `default_kits.hunt` on a species before it replaces it as that *quarry's* published default. Required, like every other key here. **`start_stock_fraction`** (**1.5**) — the multiple of a party's WORKER head count a spawn stocks of each item (`ceil(workers x this / workers_per_unit)`, min 1): `1.0` would arm exactly everybody and let the **first break** disarm someone, so the half-again is the opening reserve (~8 retirements of slack on the shipped 17-worker band, roughly the span the bench needs to make a replacement). Required, no serde default - a defaulted `0` would stock the one-unit floor and send the band out with one spear. And **`life_readout`** `{ warn_fraction 0.34, danger_fraction 0.10 }` — the two colour seams of the published `lifeSeverity`, as **fractions of one fresh unit's** quanta rather than absolute counts, because a spear's 250 blows and a sled's 5000 biomass are not comparable and one absolute would colour one of them permanently red. **Presentation only**: nothing in the sim branches on it (`crafting.md` → "the life meter is a fuel gauge"). **`validate` rejects**: an empty item table; a non-finite or `<= 0` wear amount or tier durability; an item with **no effects on itself or any tier** (it would wear out doing nothing); **an item with no tiers** (no durability — born dry); a **duplicate tier id**; a **knowledge gate on the first tier** (that one is what a spawn stocks and every reference rate resolves through, so it must ship known); a stat declared **twice within one layer** (`effect_entry` takes the first match, so the second is silently dead); a stat declared on **both the item and one of its tiers** (the tier wins, so the shared line would be dead config); an **`unequipped` side on a tier** (an unequipped value is what you get when the item is *not* there, which is true of every tier at once); a negative or non-finite effect value; a mass bound on any stat but `attack`, or an inverted one; **a `build_work` effect with no `branch`** (an unqualified build tool would serve BOTH food webs, so a hoe would speed a `Tame` and a bundle carrying both tools would double-count) **or a `branch` on any other stat** (nothing else is resolved against a web, so the qualifier would be silently ignored); **a mass-bounded `attack` on an item a Scout or Warrior kit uses**; **two items declaring the same two-sided rate** anywhere across their item and tier effects (`declared_tier` and `equipped_reference` both take the first match, so it would resolve alphabetically); a duplicate kit id; a kit listing no jobs; a default naming no roster entry or not covering its own job; a non-finite or negative `quarry_default_kit_margin`; a non-finite or non-positive `start_stock_fraction`; a **`workers_per_unit` of `0`** (a unit no worker has to hold covers everyone, which is a division with no meaning); a **`life_readout`** seam outside `0..=1` or a `danger_fraction` not strictly below `warn_fraction` (the warn band would be unreachable, so one colour would simply never appear); and **a `uses` entry naming an item the table does not carry**. That last one is a DEBT, not a nicety — see below. **The bench tool's own rejections** (`validate_bench_tools`, every one of which is otherwise silent at runtime): a craft stat on an item with no `bounds_material`; a craft stat declaring an `unequipped` side; two items bounding one material; a tool that does not wear per `item_crafted`, **or a non-tool that does**; a tool declaring no craft stat at all; and **a kit naming a bench tool**. Plus, at the composition seam, `validate_against_materials` rejects a `bounds_material` the materials table does not carry, **and a tier `requires_knowledge` naming a craft no material declares** — an authored tier that could never be earned is the `UnknownItem` debt in its most expensive direction. |
 | `src/data/creatures.json` | The creatures roster — intrinsic `CombatStats` for non-fauna units. `person.combat.attack` (**1.0**) is the hunting kit's **unequipped** tier. See `combat.md` for the roster's role in the fight. |
 
 ### `UnknownItem` pays back a guarantee the model used to get for free
