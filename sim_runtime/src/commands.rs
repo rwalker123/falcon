@@ -199,7 +199,7 @@ pub enum CommandPayload {
     /// are untouched; this sets a property of the **queue entry**.
     ///
     /// **The builders' kit is per ENTRY, not per band.** A build's default is derived from that
-    /// entry's own food web — a hoe for a Cultivate, hurdles for a `Tame` — so one stored id per band
+    /// entry's own food web — `tillage`'s hoes for a Cultivate, `hurdling`'s crook for a `Tame` — so one stored id per band
     /// is the one thing the derivation cannot express: naming a kit on the `builders` labor row
     /// pinned the animal web's tool onto every later plant build with no way back. `assign_labor`
     /// refuses a `kit` token on that role, and this is where the override lives.

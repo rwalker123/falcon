@@ -1246,8 +1246,9 @@ pub enum CommandEventKind {
     ///
     /// **It NAMES THE BAND**, because the bill is a band's: a faction-level line would tell the
     /// player something is wrong and not where. Driven off the standing bill the same turn publishes
-    /// (`LaborAllocation::last_material_need` against `last_material_income`), so the event and the
-    /// disclosure row cannot describe different turns.
+    /// (`LaborAllocation::last_material_need` against `LaborAllocation::material_income`, which is
+    /// the `material_upkeep_income` row's own producer — bench included), so the event and the
+    /// disclosure row cannot describe different turns **or different inflows**.
     MaterialShortfall,
     /// A **dangerous hunt** produced band casualties (Predators Phase 0, `docs/plan_predators.md`). The
     /// hunt-danger combat resolution pushes this whenever hunting an animal that fights back

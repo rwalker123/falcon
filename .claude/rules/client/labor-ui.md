@@ -2783,8 +2783,12 @@ the handling gear's condition and the SLED's.
   kits"). `role_gear` reads the same row, so the WARRIOR card reads the band's sim-resolved `attack`
   under the warrior kit — clubs, not spears — and the SCOUT card its sim-resolved vantage under the
   wayfinding kit, 1 tile once that gear is spent rather than the roster's fresh 2.
-- **`hurdles` / `hoes` / `wayfinding` / `clubs` also joined `DetailFormat.KIT_ITEM_LABELS`**, so the
-  band's `Gear` summary row names them instead of falling through to the raw wire ids — and each has a
+- **`crook` / `hoes` / `wayfinding` / `clubs` also joined `DetailFormat.KIT_ITEM_LABELS`**, so the
+  kit ledger and the picker's condition clauses name them instead of falling through to the raw wire
+  ids — the band's `Gear` summary row that first needed them is retired
+  (`band-readouts.md` → "The `Gear` row is retired from BOTH pages"), and the entry that read
+  `hurdles` moved to the `crook` with it, hurdles being a crafted MATERIAL now
+  (`docs/plan_standing_upkeep.md` §4.9 item 12). Each has a
   row in the kit BREAKDOWN too, that popover pairing an item with the resolved tier it sets and the
   cohort publishing all three (`band-readouts.md` → "The other three tiers, and the kit each is quoted
   at"). **The popover's rows and the picker's hint answer different questions off different fields**:

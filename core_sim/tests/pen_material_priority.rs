@@ -110,6 +110,8 @@ fn base_world() -> App {
         .insert_resource(core_sim::EquipmentConfigHandle::default());
     app.world
         .insert_resource(core_sim::MaterialsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::RecipesConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_graze);
@@ -881,4 +883,279 @@ fn a_ring_and_a_fresh_pen_draw_the_same_pile_for_the_same_work_banked() {
         "a ring and a fresh pen draw the SAME panels for the same work banked: ring {ring_pile}, \
          pen {build_pile}"
     );
+}
+
+/// **THE BENCH IS HALF THE BAND'S MATERIAL INCOME, AND THE ALERT MUST JUDGE AGAINST BOTH HALVES**
+/// (`docs/plan_standing_upkeep.md` §2.7 / §4.9 item 12).
+///
+/// `hurdles` have **no producer but a bench** on the shipped roster, so a shortfall struck against
+/// the *credited take* alone sees zero income for ever, calls the whole pen bill a gap, and fires
+/// *"Hurdles is running out"* for **every band that keeps a pen** — including one whose bench
+/// out-produces its pens. The wire's `materialUpkeepIncome` row already summed both halves, so the
+/// two disagreed about the same turn; `LaborAllocation::material_income` is now the one producer they
+/// share.
+///
+/// **Paired on the bench alone.** The two arms differ in exactly one thing — whether the hurdles
+/// recipe is on the bench — so an absent Alert cannot be an artifact of the store, the marks or the
+/// vector. The bench arm's income is checked against the bill through the same public producer the
+/// wire reads, which is what makes *"the bench covers it"* a stated state rather than a hope.
+#[test]
+fn a_bench_that_out_produces_the_pens_silences_the_shortfall_alert() {
+    /// A store deliberately far below `5 × the bill`, which is the Alert's own *"about to run out"*
+    /// window. Both arms hold it, so the shelf is not what tells them apart.
+    const A_THIN_SHELF: f32 = 0.01;
+    /// Hands on the bench. `70 × 1.0 progress-per-worker × 0.5 bare-handed wood ÷ 7.0 work` is
+    /// **5 hurdles a turn**, which is far above what two rabbit-class pens mend — and the fixture
+    /// asserts that rather than trusting it.
+    const BENCH_HANDS: u32 = 70;
+    /// Enough of both inputs that a pass is affordable, which is what makes the projected rate real
+    /// (a bench that cannot draw promises nothing).
+    const A_PASS_AND_MORE: f32 = 200.0;
+
+    let shouting = shortfall_lines(&run_two_pen_turn_with_bench(None, A_THIN_SHELF));
+    assert_eq!(
+        shouting, 1,
+        "fixture: a band keeping two pens on a nearly empty shelf and making nothing MUST be \
+         warned, or the silent arm below proves nothing"
+    );
+
+    let (app, keeper) =
+        run_two_pen_turn_with_bench(Some((BENCH_HANDS, A_PASS_AND_MORE)), A_THIN_SHELF);
+    let need = app
+        .world
+        .get::<LaborAllocation>(keeper)
+        .expect("the keeper carries an allocation")
+        .last_material_need
+        .get(PEN_MATERIAL)
+        .copied()
+        .unwrap_or(0.0);
+    assert!(
+        need > 0.0,
+        "fixture: the pens must actually owe hurdles, or there is no gap to close"
+    );
+    let income = band_material_income(&app, keeper);
+    assert!(
+        income > need,
+        "fixture: the bench must out-produce the pens, which is the state under test (income \
+         {income} against a bill of {need})"
+    );
+    assert_eq!(
+        shortfall_lines(&(app, keeper)),
+        0,
+        "**A BAND WHOSE BENCH OUT-PRODUCES ITS PENS IS NOT RUNNING OUT** — the Alert reads the same \
+         inflow the `materialUpkeepIncome` row publishes, bench included"
+    );
+}
+
+/// The band's whole per-turn material inflow, through the **public producer** the wire row uses —
+/// never a re-derivation here, which is the defect this test is about.
+fn band_material_income(app: &App, keeper: Entity) -> f32 {
+    let recipes = app.world.resource::<core_sim::RecipesConfigHandle>().get();
+    let materials = app
+        .world
+        .resource::<core_sim::MaterialsConfigHandle>()
+        .get();
+    let equipment = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    let cohort = app
+        .world
+        .get::<PopulationCohort>(keeper)
+        .expect("the keeper carries a cohort");
+    let bench = app.world.get::<core_sim::BandBench>(keeper);
+    let no_kit = core_sim::BandEquipment::default();
+    let wear = app
+        .world
+        .get::<core_sim::BandEquipment>(keeper)
+        .unwrap_or(&no_kit);
+    let rate = core_sim::bench_material_rate(
+        bench,
+        &cohort.stores,
+        &recipes,
+        &materials,
+        &equipment,
+        wear,
+    );
+    app.world
+        .get::<LaborAllocation>(keeper)
+        .expect("the keeper carries an allocation")
+        .material_income(&rate)
+        .get(PEN_MATERIAL)
+        .copied()
+        .unwrap_or(0.0)
+}
+
+/// How many *"Hurdles is running out"* lines this turn pushed.
+fn shortfall_lines(run: &(App, Entity)) -> usize {
+    run.0
+        .world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter(|entry| entry.kind == core_sim::CommandEventKind::MaterialShortfall)
+        .count()
+}
+
+/// [`run_two_pen_turn`] with a bench: `Some((hands, input pile))` puts the hurdles recipe on it and
+/// banks both of its inputs, `None` leaves the band with no bench at all.
+fn run_two_pen_turn_with_bench(bench: Option<(u32, f32)>, units: f32) -> (App, Entity) {
+    let mut app = base_world();
+    let tile = pen_tile(&app);
+    seat_two_pens(&mut app, tile);
+    let keeper = spawn_keeper(
+        &mut app,
+        vec![
+            hunt_row("pen_big", SourcePriority::Normal),
+            hunt_row("pen_small", SourcePriority::Normal),
+        ],
+        tile,
+    );
+    stock_material(&mut app, keeper, units);
+    if let Some((hands, pile)) = bench {
+        // **HANDS ENOUGH FOR THE PENS *AND* THE BENCH.** The two keeper rows ask for
+        // `KEEPER_WORKERS` each so the *work* half of the keeping never binds; a bench beside them
+        // would otherwise be trimmed to a single crafter by `LaborAllocation::normalize` and the
+        // fixture would measure a bench it had starved itself.
+        app.world
+            .get_mut::<PopulationCohort>(keeper)
+            .expect("the keeper carries a cohort")
+            .working = scalar_from_f32((KEEPER_WORKERS * 2 + hands) as f32);
+        deposit_input(
+            &mut app,
+            keeper,
+            "wood",
+            pile,
+            &[("hardness", 0.5), ("pliancy", 0.6)],
+        );
+        deposit_input(
+            &mut app,
+            keeper,
+            "hide",
+            pile,
+            &[("toughness", 0.5), ("suppleness", 0.6)],
+        );
+        let mut bench = core_sim::BandBench::default();
+        bench.set_job(BENCH_RECIPE, hands);
+        app.world.entity_mut(keeper).insert(bench);
+    }
+    app.world.run_system_once(advance_labor_allocation);
+    (app, keeper)
+}
+
+/// The recipe whose only output is the material a pen eats.
+const BENCH_RECIPE: &str = "hurdles";
+
+/// Bank one of the bench's inputs at an exact per-axis reading.
+fn deposit_input(app: &mut App, keeper: Entity, material: &str, amount: f32, axes: &[(&str, f32)]) {
+    let readings: std::collections::BTreeMap<String, f32> = axes
+        .iter()
+        .map(|(axis, value)| ((*axis).to_string(), *value))
+        .collect();
+    let key = MaterialsConfig::builtin()
+        .band_key(material, &readings)
+        .expect("the shipped roster rates this material");
+    let mut cohort = app.world.get_mut::<PopulationCohort>(keeper).unwrap();
+    cohort
+        .stores
+        .deposit_material(material, key, scalar_from_f32(amount), &readings);
+}
+
+/// ⛔ **A ROW THE ARM WILL NOT REACH BIDS FOR NOTHING** (`docs/plan_standing_upkeep.md` §2.7).
+///
+/// The Hunt arm `continue`s past `apply_material_keeping` for a herd beyond `hunt_reach`, so a claim
+/// settled for that row reserves hurdles **nothing ever spends** — and the pen that *is* in reach is
+/// judged short by the difference, taking the neglect counter, the decay fraction and the shed for a
+/// shortage it did not cause. `settle_pen_hay` has always filtered the hay by the same leash; the
+/// material settlement now shares the rule through `BandReach`.
+///
+/// **The store holds exactly the in-reach pen's whole bill.** Under a leash-blind settlement the two
+/// `Normal` pens split it in proportion to demand and the in-reach one is paid about half; the claim
+/// here is that it is paid **whole**.
+#[test]
+fn a_pen_past_the_leash_reserves_nothing_from_the_store() {
+    let (big_bill, small_bill) = full_bills();
+    assert!(
+        big_bill > 0.0 && small_bill > 0.0,
+        "fixture: both pens must owe the good, or an out-of-reach claim has nothing to reserve \
+         (big {big_bill}, small {small_bill})"
+    );
+
+    let (app, keeper) = run_one_pen_past_the_leash(big_bill);
+    assert!(
+        app.world
+            .resource::<CommandEventLog>()
+            .iter()
+            .any(|entry| entry
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("reason=out_of_leash"))),
+        "fixture: the far pen's row must actually LAPSE — if the arm reached it there is no \
+         unspendable reservation to make"
+    );
+    assert!(
+        app.world
+            .get::<LaborAllocation>(keeper)
+            .expect("the keeper carries an allocation")
+            .assignments
+            .iter()
+            .any(|row| matches!(&row.target, LaborTarget::Hunt { fauna_id, .. } if fauna_id == "pen_big")),
+        "fixture: the IN-reach pen's row must survive the turn, or nothing was paid at all"
+    );
+
+    let paid_in_reach = paid(&app, "pen_big");
+    assert!(
+        (paid_in_reach - big_bill).abs() < EPSILON,
+        "**THE PEN IN REACH IS PAID WHOLE** — the store held exactly its bill, and the pen the arm \
+         lapses must not have reserved a share of it (paid {paid_in_reach} of {big_bill})"
+    );
+    assert_eq!(
+        paid(&app, "pen_small"),
+        0.0,
+        "…and the far pen spent nothing, which is what makes any reservation for it dead"
+    );
+}
+
+/// Two `Normal` pens, one on the band's own tile and one past `hunt_reach`, with `units` of the good
+/// on the shelf. The far pen is seated by hand rather than through [`seat_two_pens`], which puts both
+/// on one tile.
+fn run_one_pen_past_the_leash(units: f32) -> (App, Entity) {
+    let mut app = base_world();
+    let tile = pen_tile(&app);
+    seat_two_pens(&mut app, tile);
+    let far = {
+        let reach = app.world.resource::<LaborConfigHandle>().get().hunt_reach();
+        let far = UVec2::new(tile.x + reach + 1, tile.y);
+        assert!(
+            app.world
+                .resource::<TileRegistry>()
+                .index(far.x, far.y)
+                .is_some(),
+            "fixture: the far tile must be on the map ({far:?})"
+        );
+        far
+    };
+    {
+        let ladder = core_sim::LadderConfig::builtin();
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == "pen_small")
+            .expect("the fixture seated both pens");
+        assert!(
+            herd.corral_at(far, &ladder),
+            "the fixture species must be pennable"
+        );
+    }
+    let keeper = spawn_keeper(
+        &mut app,
+        vec![
+            hunt_row("pen_big", SourcePriority::Normal),
+            hunt_row("pen_small", SourcePriority::Normal),
+        ],
+        tile,
+    );
+    stock_material(&mut app, keeper, units);
+    app.world.run_system_once(advance_labor_allocation);
+    (app, keeper)
 }

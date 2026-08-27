@@ -22,18 +22,21 @@ and it now buys three rows in three different ways — the differences are the r
 |---|---|---|
 | `Fodder` | **MERGED** onto Food as a fodder clause | that larder has no other home in the client |
 | `Growth` | **MERGED** onto Morale as a clause | the fertility breakdown has no other home either |
-| `Kit` | **KEPT, at every tier** | a spent kit is stated NOWHERE else and is not recoverable |
+| `Upkeep` | **KEPT, at every tier** | a standing bill in goods is stated nowhere else on this panel |
 
 **A fourth row, `Trade`, was the one this tier DROPPED**, on the reasoning that its rate was still
 stated by the WORK zone's head — the whole reason a drop was affordable there and nowhere else. Arc
 #527 retired the account and the row with it, so the tier drops nothing today; the rule survives it,
 and a future row with another home on the panel is the one that yields.
 
-**The `Kit` row is what forced the third merge.** Every live cohort states its kit
-(`DetailFormat.band_states_kit` is a bare `has()` on the spears key), so the row is shipped behaviour
-— and the band zone was already measured at 299 of its 300px box, so one more 26px vitals row put it
-25px over in 13 states. Dropping a row was not available: `Trade` was already the one this tier
-dropped (and has since been retired outright), and `Kit` is the row that cannot be.
+**A THIRD ROW IS WHAT FORCED THE THIRD MERGE, AND IT IS NOT THE ROW IT WAS.** The band zone was
+measured at 299 of its 300px box, so one more 26px vitals row put it 25px over in 13 states, and
+dropping a row was not available: `Trade` was already the one this tier dropped (and has since been
+retired outright). The row that could not be dropped was `Gear` when the merge was made; that row is
+retired now and the `Upkeep:` standing bill took its height, so the arithmetic is unchanged and the
+un-droppable row is the material bill — see "The `Gear` row is retired from BOTH pages" at the foot
+of this file. A spent kit is stated by the crafting panel's ledger and by the event dock's `kit_life`
+seams; a band's standing bill in goods has no second home.
 
 **Morale and Growth are the right pair to join.** Both are player-band health scalars, both already
 carry disclosure carets, and they read naturally together.

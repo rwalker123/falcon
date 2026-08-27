@@ -323,7 +323,8 @@ const KIT_FORAGE_CARRY_BARE := 1.6
 ## **THE PEN'S TIER, AND IT IS NOT THE SLED'S.** A sled drags a carcass in off the range and a pen
 ## stands at the camp, so a kit carrying only a sled collects a pen at the bare rate. The equipped
 ## side is `labor_config.hunt.per_worker_biomass_capacity` (the number a pen harvest has always been
-## capped by); the bare side is `equipment.json`'s `hurdles` declaration.
+## capped by); the bare side is `equipment.json`'s `sled` declaration, which owns both sides of the
+## axis now that the hurdles have left the roster.
 ##
 ## **NO ENTRY OF `kit_roster_fixture()` EQUIPS IT**, deliberately — the shared roster carries no
 ## `husbandry` kit, so adding one would change what every hunt picker in both harnesses lists. The
@@ -332,7 +333,7 @@ const KIT_PEN_CARRY_EQUIPPED := 40.0
 
 ## **THE BUILD AXIS — WORK UNITS off the job per equipped worker, neutral at 0.0, never a tier**
 ## (issue #515; the multiplier it replaced retired with `docs/plan_unit_costed_work.md` §6). The
-## `hurdles` and `hoes` are the two shipped items declaring it — one per web — so every kit carrying
+## `crook` and `hoes` are the two shipped items declaring it — one per web — so every kit carrying
 ## neither publishes the neutral and the roster's MINIMUM on this axis is that neutral, which is what
 ## `KitRoster.kit_uses` compares against.
 ##
@@ -347,7 +348,7 @@ const KIT_PEN_CARRY_EQUIPPED := 40.0
 ## fields are one reading, so an entry stating the worth and not the branch describes a wire the sim
 ## does not send.
 const KIT_BUILD_WORK_NEUTRAL := 0.0
-## What either build tool buys: the `equipment.json` `hurdles` flint tier's own value, which the
+## What either build tool buys: the `equipment.json` `crook` flint tier's own value, which the
 ## `hoes` mirror exactly — **the extra work ONE EQUIPPED WORKER DELIVERS PER TURN**, so an equipped
 ## builder banks `PER_WORKER_OUTPUT + this` = 1.5 where a bare one banks 1.0. The two webs' rungs cost
 ## the same, so mirroring the number is what makes a greyed kit read as a WEB refusal rather than as a
@@ -361,8 +362,8 @@ const KIT_BUILD_WORK_NEUTRAL := 0.0
 const KIT_BUILD_WORK_HANDLING := 0.5
 
 ## **HOW MANY KEEPERS THAT GEAR CAN ARM** — the other half of the axis, and the head count the compose
-## sheet's `min(workers, this)` saturates at. A band holding two sets of hurdles arms two keepers and
-## a third finds none left to carry, which is what makes a crew ABOVE it worth staging.
+## sheet's `min(workers, this)` saturates at. A band holding two crooks arms two keepers and a third
+## finds none left to carry, which is what makes a crew ABOVE it worth staging.
 const KIT_BUILD_SATURATING_CREW_HANDLING := 2
 
 ## …and the neutral, which is every kit that carries nothing helping a build: nobody is armed for one,
@@ -394,7 +395,7 @@ const KIT_CONDITION_BASKETS := 31.0
 ## three more DISTINCT numbers, none of them equal to each other or to spears/sled/baskets/traps. The
 ## gear popover states one row per item, so two items sharing a condition would pass every assertion
 ## with their rows swapped.
-const KIT_CONDITION_HURDLES := 45.0
+const KIT_CONDITION_CROOK := 45.0
 
 ## The hoes' own, and — like every condition here — a number no other item carries, so a readout that
 ## paired the Builders card with the wrong item's clock reads as a different figure rather than as a
@@ -416,7 +417,7 @@ const KIT_ITEM_TRAPS := "traps"
 ## The expanded roster's three. They are named for the same reason as the four above and they carry
 ## one more job: the band-wide role CARDS read their gear line off `KitOption.item_ids`, so these
 ## appear in the wayfinding and warrior roster entries as well as in the condition rows.
-const KIT_ITEM_HURDLES := "hurdles"
+const KIT_ITEM_CROOK := "crook"
 ## The plant web's build tool, and the roster's eighth item. It rides the `tillage` kit and nothing
 ## else, which is what makes a band that wants both webs' tools hold both items.
 const KIT_ITEM_HOES := "hoes"
@@ -492,7 +493,7 @@ static func kit_condition_rows(spears_holding: float = KIT_HUNT_HEADCOUNT,
 			KIT_FORAGE_HEADCOUNT),
 		kit_condition_row(KIT_ITEM_TRAPS, KIT_CONDITION_TRAPS, KIT_HUNT_HEADCOUNT,
 			KIT_HUNT_HEADCOUNT),
-		kit_condition_row(KIT_ITEM_HURDLES, KIT_CONDITION_HURDLES,
+		kit_condition_row(KIT_ITEM_CROOK, KIT_CONDITION_CROOK,
 			KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_HEADCOUNT),
 		# **THE PLANT WEB'S BUILD TOOL RIDES THE LIST TOO, because the wire's list is the CONFIG's item
 		# table and not the band's own holdings** — an item a band owns none of publishes `remaining 0`
@@ -617,11 +618,14 @@ static func kit_roster_fixture() -> Array:
 			"item_ids": [KIT_ITEM_CLUBS],
 		},
 		{
-			# **THE ANIMAL WEB'S BUILDERS KIT** (`equipment.json`) — hurdles and nothing else, since
-			# nothing is hauled during a build. It lists `builders` ALONE, which is what keeps it out
-			# of every hunt and forage picker in both harnesses: the only surface that lists it is the
-			# Builders role card.
-			"id": KIT_ID_HURDLING, "display_name": "Hurdling kit", "jobs": ["builders"],
+			# **THE ANIMAL WEB'S BUILDERS KIT** (`equipment.json`) — the CROOK and nothing else, since
+			# nothing is hauled during a build. **It lists `husbandry` beside `builders`**, which is the
+			# shipped roster's own pair: one animal kit serves both the pen builds and the turn-by-turn
+			# keeping, the shape `tillage` already has on the plant web. Neither job is `hunt` or
+			# `forage`, so it still appears in no hunt or forage picker in either harness — the surfaces
+			# that list it are the Builders role card and the per-site keeping picker.
+			"id": KIT_ID_HURDLING, "display_name": "Hurdling kit",
+			"jobs": ["builders", "husbandry"],
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
@@ -629,11 +633,11 @@ static func kit_roster_fixture() -> Array:
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
 			"build_work_per_worker": KIT_BUILD_WORK_HANDLING,
 			"build_work_branch": KitRoster.BUILD_BRANCH_ANIMAL,
-			"item_ids": [KIT_ITEM_HURDLES],
+			"item_ids": [KIT_ITEM_CROOK],
 		},
 		{
 			# **AND THE PLANT WEB'S**, mirroring it exactly — the two jobs cost the same, so the hoes'
-			# tier is the hurdles' and the only thing that differs is the branch. That mirroring is what
+			# tier is the crook's and the only thing that differs is the branch. That mirroring is what
 			# makes the greying claim legible: a kit greyed here is greyed for its WEB and never for a
 			# weaker number.
 			"id": KIT_ID_TILLAGE, "display_name": "Tillage kit", "jobs": ["builders"],
@@ -675,17 +679,17 @@ static func kit_roster_fixture() -> Array:
 ## **A ROW STATES ALL FIVE AXES `BandKitTiers` CARRIES**, the pen and the vantage included. They were
 ## absent here while the wire's table was, and a row that omits an axis exercises a fall-back rather
 ## than the real path: the client used to answer those two off the ROSTER's fresh tier, so a dry
-## `hurdles` band read `pen 40.0 per keeper` against a sim collecting 12. Stating them is what
+## `sled` band read `pen 40.0 per keeper` against a sim collecting 12. Stating them is what
 ## makes a worn fixture prove the step-down instead of hiding it.
 ##
 ## **EACH OF THE TWO IS SUPPLIED BY ONE ROSTER KIT, WHICH IS WHY ONLY THE VANTAGE TAKES AN ARGUMENT.**
 ## The wayfinding gear equips the vantage, so the `wayfinding` row moves with that item's condition and
 ## every other row reads the bare tier — a scout's reach is not a thing a sled or a basket can buy. The
-## PEN is bare on every row here because **no kit `kit_roster_fixture()` offers equips it**: the
-## handling gear rides the `husbandry` kit, which that roster does not carry (the one chapter that
+## PEN is bare on every row here because **no kit `kit_roster_fixture()` offers equips it**: the axis
+## is equipped through the `husbandry` kit, which that roster does not carry (the one chapter that
 ## needs it builds its own roster and its own row). A table that let the hunt carry stand in for the
-## pen would agree with a client that had put the roster fall-back back — a sled drags a carcass in off
-## the range and a pen stands at the camp.
+## pen would agree with a client that had put the roster fall-back back — the two are separate tiers on
+## one item, and a band can hold the bare one while the other is fresh.
 ##
 ## `KIT_ID_TRAPPING` gets a row although `kit_roster_fixture()` does not offer it: the roster is the
 ## PICKER's list, this is the BAND's answer sheet, and the trapping kit is a shipped kit that one chapter
@@ -733,9 +737,9 @@ static func kit_tiers_rows(attack: float, hunt_carry: float, forage_carry: float
 ## this band's own job defaults resolve to.
 ##
 ## **THE PEN TIER IS THE BARE ONE, AND THAT IS THE FIXTURE BEING HONEST.** `kit_roster_fixture()`
-## carries no husbandry kit, so the HUNT default (`big_game`) supplies no `hurdles` and a
-## keeper collects at 12 however healthy the item is — which is also what makes the pen row
-## assertable against the sled's 40 rather than agreeing with it by construction. The per-kit rows
+## carries no husbandry kit, so the HUNT default (`big_game`) does not equip the pen axis and a
+## keeper collects at 12 however healthy the item is — which is also what makes the pen clause
+## assertable against the sled's own 40 rather than agreeing with it by construction. The per-kit rows
 ## beside it say the same thing kit by kit, which is what a picker reads.
 static func with_equipped_kit(band: Dictionary) -> Dictionary:
 	band["kit_item_conditions"] = kit_condition_rows()

@@ -292,17 +292,26 @@ const KIT_LABEL_TRAPS := "Traps"
 # keeper, a scout's vantage or a warrior — so a row could only have quoted a number the sim never
 # sent. The wire carries all three now (see `KIT_TIER_KEY_PEN_CARRY` and its two neighbours), so the
 # player can finally see a scout kit and a warrior kit dying instead of only its consequences.
-## **THE HANDLING GEAR IS `hurdles` NOW, ITEM ID AND LABEL BOTH.** It was `husbandry_gear` — a name
-## that described the KIT it happened to sit in rather than the object — and the object is portable
-## fence panels you work a beast into, the same thing whether you are raising the pen or butchering
-## in it. The client's own label followed: naming it *Handling gear* while the roster called it
-## *Hurdles* left the popover row and the picker's hint disagreeing about one item.
-const KIT_LABEL_HURDLES := "Hurdles"
+## **THE ANIMAL WEB'S ITEM IS THE `crook`** (`docs/plan_standing_upkeep.md` §4.9 item 12) — a long
+## bone staff with the halters a keeper works a beast with. It was `hurdles`, and before that
+## `husbandry_gear`; **hurdles are a crafted MATERIAL now** and no item of that id is on the roster at
+## all. The test the reclassification turned on is whether the thing comes home with you: a crook goes
+## to the next herd, so it is kit, while a fence panel stays in the ground and is spent into the
+## improvement. An id keyed here that the roster no longer ships is not a missing row — `kit_is_equipped`
+## answers false for it, so the ledger drew `— bare hands` in WARN over an item every band carries.
+const KIT_LABEL_CROOK := "Crook"
 const KIT_LABEL_WAYFINDING := "Wayfinding"
 const KIT_LABEL_CLUBS := "Clubs"
-const KIT_DURABILITY_KEY_HURDLES := "hurdles"
+const KIT_DURABILITY_KEY_CROOK := "crook"
 const KIT_DURABILITY_KEY_WAYFINDING := "wayfinding"
 const KIT_DURABILITY_KEY_CLUBS := "clubs"
+
+## **WHAT THE CROOK IS FOR, IN WORDS** — `KIT_ROLE_TRAPS`' precedent, and for its reason: a row pairs
+## an item with the resolved tier it sets, and the crook's ONE effect is `build_work`, which has no
+## flat per-band field to quote (it rides the `kit_tiers` row of whichever kit is selected). So the
+## row states the job and lets `KIT_ROLE_BUILD_WORK_SUFFIX` add the figure when this band's own gear
+## is live enough to earn one.
+const KIT_ROLE_CROOK := "keeping and raising animals"
 
 ## **THE PLANT WEB'S BUILD TOOL** — a bone blade hafted with fibre, and the second item in the game to
 ## declare `build_work`. It carries the `tillage` kit and nothing else, so a band that wants both
@@ -330,7 +339,7 @@ const KIT_ITEM_LABELS := {
     "sled": KIT_LABEL_SLED,
     "baskets": KIT_LABEL_BASKETS,
     "traps": KIT_LABEL_TRAPS,
-    KIT_DURABILITY_KEY_HURDLES: KIT_LABEL_HURDLES,
+    KIT_DURABILITY_KEY_CROOK: KIT_LABEL_CROOK,
     KIT_DURABILITY_KEY_HOES: KIT_LABEL_HOES,
     "wayfinding": KIT_LABEL_WAYFINDING,
     "clubs": KIT_LABEL_CLUBS,
@@ -390,10 +399,20 @@ const KIT_VANTAGE_DECIMALS := 0
 # off different items, and a band really does hold two different numbers for it — 20 on the hunt and
 # 6 defending the camp — so a bare `attack 6` beside a bare `attack 20` would read as one of them
 # being wrong rather than as two answers to two questions.
+## **THE JOINER BETWEEN TWO CLAUSES ON ONE ROW**, typed once. Two items on this ledger state more
+## than one thing — the sled's two carries, the crook's job and its build rate — and a second spelling
+## of the separator is how one row comes to punctuate differently from the other.
+const KIT_ROLE_CLAUSE_SEPARATOR := " · "
 const KIT_ROLE_ATTACK_FORMAT := "attack %s"
 const KIT_ROLE_HUNT_CARRY_FORMAT := "hunt carry %s per hunter"
 const KIT_ROLE_FORAGE_CARRY_FORMAT := "gathering %s per forager"
-const KIT_ROLE_PEN_CARRY_FORMAT := "pen collection %s per keeper"
+## **THE PEN'S COLLECTION RATE RIDES THE SLED'S ROW, BECAUSE THE SLED IS WHAT SETS IT.**
+## `equipment.json` puts BOTH sides of `pen_carry` on the sled — the unequipped 12 outright and the
+## equipped side through `shares_equipped_rate_with` — since the item that used to declare the bare
+## side left the roster with the hurdles. So this is a SECOND CLAUSE on one row rather than a row of
+## its own: two tiers, one item. Pairing it with the crook instead would be the mis-pairing this
+## ledger's own note warns about, one item further on.
+const KIT_ROLE_PEN_CARRY_SUFFIX := KIT_ROLE_CLAUSE_SEPARATOR + "pen collection %s per keeper"
 # **THE HANDLING GEAR DOES TWO JOBS, AND ITS ROW HAS TO SAY BOTH** (issue #515). Hurdles, halters and
 # a butchering stone bound a slaughter at a pen *and* speed the `Tame` and `Corral` builds — so a row
 # quoting only the pen rate describes the gear's payoff at the top of the ladder and says nothing
@@ -411,14 +430,15 @@ const KIT_ROLE_PEN_CARRY_FORMAT := "pen collection %s per keeper"
 # same fact in the units the meter is quoted in — which is what lets it sit beside a work cost.
 # A kit whose gear is spent adds nothing and the clause disappears, exactly as the neutral
 # multiplier's did.
-const KIT_ROLE_BUILD_WORK_SUFFIX := " · +%s work a turn per keeper on a tame or a pen"
+const KIT_ROLE_BUILD_WORK_SUFFIX := KIT_ROLE_CLAUSE_SEPARATOR \
+        + "+%s work a turn per keeper on a tame or a pen"
 # The contribution reads to one place: the shipped 0.5 is a playtest dial and a second decimal would
 # imply a precision the number does not have.
 const KIT_BUILD_WORK_DECIMALS := 1
 # **The value that means "this gear changes no build"** — the schema's own default and what every kit
-# carrying no build tool resolves to (which is every kit but `hurdling`, `tillage` and the `husbandry`
-# bundle the hurdles also ride). Named so the suffix's suppression reads as a stated rule rather than
-# a comparison against a bare literal.
+# carrying no build tool resolves to, which is every kit but `hurdling` (the crook) and `tillage` (the
+# hoes). Named so the suffix's suppression reads as a stated rule rather than a comparison against a
+# bare literal.
 const KIT_BUILD_WORK_NEUTRAL := 0.0
 # Written as `2-tile sight`, not `sight 2 tiles`, because the tier is a small whole number and the
 # unit would otherwise have to be pluralized: a bare-handed scout sees `1`, and `sight 1 tiles` is
@@ -430,19 +450,22 @@ const KIT_ROLE_WARRIOR_ATTACK_FORMAT := "attack %s defending the camp"
 # replenishment path and the role stays there.
 const KIT_BARE_HANDS_SUFFIX := " — bare hands"
 
-# **THE SHORTFALL, ON THE ROW AND IN THE POPOVER** (issue #520). A band with ten spears among
-# seventeen hunters used to render byte-identically to a fully armed one — the condition says how much
-# life is left, and nothing said how many people the item ever reached.
+# **THE SHORTFALL, IN THE POPOVER** (issue #520). A band with ten spears among seventeen hunters used
+# to render byte-identically to a fully armed one — the condition says how much life is left, and
+# nothing said how many people the item ever reached. `only` is doing real work here: `4 of 17` alone
+# reads as a fact, and the shortfall is the point.
 #
-# The row's form is a bare fraction because the row is a height-capped summary and already carries the
-# item's name in front of it; the popover has room for the sentence. `only` is doing real work in the
-# long form: `4 of 17` alone reads as a fact, and the shortfall is the point.
+# **THE ROW'S OWN BARE-FRACTION FORM IS RETIRED WITH THE `Gear` ROW**
+# (`docs/plan_standing_upkeep.md` §4.9 item 12). It was `KIT_COVERAGE_ROW_FORMAT`, a height-capped
+# summary's `Spears (10/17)`, and the row that printed it is gone from the band drawer and the faction
+# page alike — the popover below is where a coverage reading lives now, and it is the only one. The
+# leaves beside it are NOT orphaned with it: `kit_condition_face`, `KIT_DRY_FACE`,
+# `KIT_CONDITION_DECIMALS` and `kit_coverage` are each read by live surfaces still.
 #
 # **THE NOUN IS `workers`, NOT `hunters`, and that is the four-job wording.** Every job's coverage
-# comes through one path now, so a basket's clause is this same string — and it cannot name the job,
-# because the row does not carry one: `workersOnQuotedJob` is a head count and the job behind it is
-# resolved sim-side. `workers` is the one noun true of a gatherer, a keeper, a scout and a warrior.
-const KIT_COVERAGE_ROW_FORMAT := "%s (%d/%d)"
+# comes through one path, so a basket's clause is this same string — and it cannot name the job,
+# because the reading does not carry one: `workersOnQuotedJob` is a head count and the job behind it
+# is resolved sim-side. `workers` is the one noun true of a gatherer, a keeper, a scout and a warrior.
 # **SPELLED STRUCTURALLY, the `RECOVERY_GUIDANCE_TEXT` idiom** — the two clauses below share a tail and
 # a harness needs a needle that finds EITHER, so the tail is written once and both formats are built
 # from it. Two literals would let a reworded clause slip past an assertion still matching the other.
@@ -1263,8 +1286,8 @@ static func build_meter_value(verb: String, progress: float,
 ## > keeping covers it, and **`RUNG_REVERTING_FORMAT`'s `⚠ Reverting 42%` where it does not**. That
 ## > format was retired with the client-side sliding inference and had to come back for exactly this:
 ## > the sim's `-3` replaced it **for the at-risk meter only**, and nothing replaced it for the other
-## > row. The fork is `rung_is_under_kept` — the published shortfall routed through `at_risk_rung` —
-## > which is the same seam the built row's mark uses and derives no number of its own.
+## > row. The fork is `rung_is_at_risk` — a published shortfall in EITHER currency, routed through
+## > `at_risk_rung` — which is the same seam the built row's mark uses and derives no number of its own.
 ## >
 ## > **`declared_rung` is a STRING rather than the bool it replaced** so both facts a row needs come
 ## > from one place: *is this the rung the player declared* (the unstarted row) and *is this the rung
@@ -1277,11 +1300,11 @@ static func build_meter_value(verb: String, progress: float,
 ## rung's LOSS and a rung's REPAIR one edge.
 ##
 ## **THE BUILT ROW'S `⚠` IS ROUTED TO THE AT-RISK RUNG, NOT PAINTED ON EVERY BUILT ONE** (§4.6a).
-## `is_under_kept` answers for the SOURCE — one pool, one shortfall — and `rung_is_under_kept` is what
-## puts that answer on the row it belongs to: **only one meter on a source is ever at risk**, the
-## newest one carrying work, which is what the published shortfall is resolved through
-## (`SourceForecast.at_risk_rung`). A patch mid-Sow is billed for the FIELD, so a mark on the tended
-## row beneath would point the player at ground that is fine.
+## The shortfalls answer for the SOURCE — one pool, one work shortfall, one stamped material bill —
+## and `rung_is_at_risk` is what puts that answer on the row it belongs to: **only one meter on a
+## source is ever at risk**, the newest one carrying work, which is what both published shortfalls are
+## resolved through (`SourceForecast.at_risk_rung`). A patch mid-Sow is billed for the FIELD, so a mark
+## on the tended row beneath would point the player at ground that is fine.
 ##
 ## **THE ROUTING USED TO BE ACCIDENTAL, WHICH IS WHY IT HAD TO BECOME DELIBERATE.** The test carried a
 ## `build_is_in_flight` gate — there to keep the mark off a source whose bill the BUILDERS owed — and
@@ -1298,7 +1321,7 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
     var percent := HudFormat.progress_percent(progress)
     if built:
         var face := HudSelectionVocab.RUNG_BUILT_FORMAT % [built_label, percent]
-        if SourceForecast.rung_is_under_kept(src, prefix, kind, improvement):
+        if rung_is_at_risk(src, prefix, kind, improvement):
             # **A BARE `⚠` WAS A MARK WITH NO WORD, and the three lines that used to explain it are
             # gone** (the `At risk:` retirement above). So the state joins the meter: `slipping` on the
             # plant web, `drifting` on the animal one — the two webs' own consequence, in the same
@@ -1312,7 +1335,7 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
     # **A ROW THAT IS NOT THE RUNG IN FLIGHT MAY NOT PRINT THE COUNTDOWN**, because there is exactly
     # ONE of those per source and the card has two rows. See the note above.
     if SourceForecast.build_verb(src, prefix, kind, declared_rung) != improvement:
-        if SourceForecast.rung_is_under_kept(src, prefix, kind, improvement):
+        if rung_is_at_risk(src, prefix, kind, improvement):
             return HudSelectionVocab.RUNG_REVERTING_FORMAT % [
                 HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
         return HudSelectionVocab.RUNG_HELD_FORMAT % percent
@@ -1329,7 +1352,7 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
 ## exactly the BBCode it always did.
 static func note_under_kept_hover(ctx: Context, row_key: String, src: Dictionary, prefix: String,
         kind: String, improvement: String) -> void:
-    if ctx == null or not SourceForecast.rung_is_under_kept(src, prefix, kind, improvement):
+    if ctx == null or not rung_is_at_risk(src, prefix, kind, improvement):
         return
     # **AND WHEN THE MISSING THING IS A GOOD, THE HOVER NAMES IT** (`docs/plan_standing_upkeep.md`
     # §2.7) — the card's half of the work row's third arm, read off the SOURCE's own published
@@ -1338,9 +1361,35 @@ static func note_under_kept_hover(ctx: Context, row_key: String, src: Dictionary
     # hurdles. `""` on every rung that eats no material, which falls straight back to the role
     # sentence.
     ctx.row_tooltips[row_key] = HudWorkVocab.under_kept_tooltip_for_source(kind,
-        HudWorkVocab.material_short_note_for_source(kind,
-            SourceForecast.upkeep_material_demand(src, prefix),
-            SourceForecast.upkeep_material_supplied(src, prefix)))
+        rung_material_short_note(src, prefix, kind))
+
+## ⛔ **THE CARD'S ⚠ IS GATED ON BOTH CURRENCIES, and reading only the work account hid half of it.**
+## `SourceForecast.rung_is_under_kept` answers about HANDS — `crew > 0` and a work shortfall over
+## `UPKEEP_WORK_MIN` — so a corralled herd whose keepers are paid in full and whose hurdles are not
+## came back `false`: no `⚠` on the rung row, no hover, and nothing on the card saying the pen was
+## being lost. `BandPanelController._work_source_models` had already taken the disjunction
+## (`at_risk = under_kept or material_note != ""`) for the work board's row, so the two surfaces
+## stated opposite things about one source.
+##
+## **The two currencies are billed and judged SEPARATELY** — the wire's own rule — but one shortfall
+## of EITHER kind trips the same grace and drives the same decay, so it earns the same mark. The
+## material arm is routed to `at_risk_rung` exactly as the work arm is: a source publishes ONE stamped
+## material bill and can carry two meters, so the rung that owns the work shortfall owns the good
+## shortfall too.
+static func rung_is_at_risk(src: Dictionary, prefix: String, kind: String,
+        improvement: String) -> bool:
+    if SourceForecast.at_risk_rung(src, prefix, kind) != improvement:
+        return false
+    return SourceForecast.is_under_kept(src, prefix) \
+        or rung_material_short_note(src, prefix, kind) != ""
+
+## The card-side good-shortfall sentence for this source — `""` when every good the rung eats was
+## covered, and on every rung that eats none. Named once because it is BOTH the gate above and the
+## clause the hover carries, and deriving it twice is how a mark and its explanation come to disagree.
+static func rung_material_short_note(src: Dictionary, prefix: String, kind: String) -> String:
+    return HudWorkVocab.material_short_note_for_source(kind,
+        SourceForecast.upkeep_material_demand(src, prefix),
+        SourceForecast.upkeep_material_supplied(src, prefix))
 
 ## **WHAT TAMING IS BUYING, ON THE HUSBANDRY ROW ITSELF** — the ceiling, the best breeding rate and the
 ## sustainable yield, the three things a rung on this ladder actually moves.
@@ -2842,9 +2891,16 @@ static func material_bill_heading(material_id: String) -> String:
 ## exactly as the food and fodder ledgers' rows, so the three accounts cannot drift apart on the
 ## glyph. Materials print at `MATERIAL_BILL_DECIMALS` and are trimmed, which is finer than either
 ## larder because a fence's mending bill is `0.05` a turn and a one-decimal rendering would read `0.1`.
+##
+## **ZERO IS A CREDIT, NOT A DEBIT** — `SourceForecast._rate_sign`'s rule, spelled the same way here
+## because it is the same question. Material income is EMPTY on the shipped default, so a band that
+## owes hurdles and finishes none renders this row at exactly `0.0`; on the strict test that read
+## `▼ −0  Arriving` in amber, which states the opposite of what is happening on all three of sign,
+## glyph and ink. The glyph comes from `_breakdown_row` and the ink from the glyph, so the boundary
+## has to be the same `>=` in both places or the row disagrees with itself.
 static func material_bill_row(value: float, label: String) -> String:
     return _breakdown_row(value, MATERIAL_BILL_SIGNED_FORMAT % [
-        MATERIAL_BILL_POSITIVE_SIGN if value > 0.0 else MATERIAL_BILL_NEGATIVE_SIGN,
+        SourceForecast.RATE_SIGN_POSITIVE if value >= 0.0 else SourceForecast.RATE_SIGN_NEGATIVE,
         format_trimmed(absf(value), MATERIAL_BILL_DECIMALS)], label)
 
 ## The block's STOCK line — `    2  On the shelf`. It carries the shared indent and **NO SIGN**, which
@@ -2866,10 +2922,12 @@ const MATERIAL_LABEL_STORE := "On the shelf"
 ## rendering would show that whole rate as a rounding artefact.
 const MATERIAL_BILL_DECIMALS := 2
 const MATERIAL_BILL_SIGNED_FORMAT := "%s%s"
-const MATERIAL_BILL_POSITIVE_SIGN := "+"
-## The TYPOGRAPHIC minus this client signs a debit with everywhere, not the ASCII hyphen — the same
-## glyph `SourceForecast.format_signed` writes, so one column of numbers reads as one column.
-const MATERIAL_BILL_NEGATIVE_SIGN := "−"
+
+## ⛔ **THE SIGNS ARE `SourceForecast.RATE_SIGN_*` AND ARE NOT RE-SPELLED HERE.** They used to be a
+## local pair, and the minus in it was the TYPOGRAPHIC U+2212 while `format_signed` writes the ASCII
+## hyphen — so the band popover printed `−0.05` for the very account the faction page's Upkeep row
+## printed `-0.08` for, one glyph apart in the character a player reads first. A material bill is the
+## third account on the convention those two consts already exist to hold, not a fourth spelling of it.
 
 ## Is this band's standing bill worth opening — **the food test, on the material account**. A good
 ## arriving slower than it is eaten, or a shelf inside the shared warn line, read through the SAME
@@ -2885,8 +2943,13 @@ static func material_upkeep_is_concerning(band: Dictionary) -> bool:
 ## The shape BOTH ledgers' breakdown rows have: the shared indent, the ▲/▼ the sign picks, the
 ## already-formatted magnitude and the label. It takes the number as TEXT because the two accounts
 ## round differently and nothing else about the row does.
+##
+## **ZERO TAKES THE ▲**, matching the `+` that `SourceForecast._rate_sign` and `material_bill_row`
+## both put in front of it — a zero income is not a debit. It is decided HERE for every account
+## because `detail_bbcode`'s indented branch reads the GLYPH to pick the ink, so a row whose sign and
+## glyph disagreed would also be tinted against its own number.
 static func _breakdown_row(value: float, magnitude: String, label: String) -> String:
-    var glyph := DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH if value > 0.0 else DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH
+    var glyph := DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH if value >= 0.0 else DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH
     return "%s%s %s  %s" % [DetailFormat.MORALE_BREAKDOWN_INDENT, glyph, magnitude, label]
 
 

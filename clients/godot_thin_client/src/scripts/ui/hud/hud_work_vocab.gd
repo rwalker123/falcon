@@ -1754,7 +1754,7 @@ const BUILD_QUEUE_SETTINGS_KIT_KEY := "KIT"
 ## (`docs/plan_standing_upkeep.md` §4.7a ②). Both sentences are load-bearing: the derivation is the
 ## thing the player is overriding, and *this job alone* is the promise the retired `builders`-row
 ## picker could not keep — one click there pinned a web's tool onto every later build with no way back.
-const BUILD_QUEUE_KIT_TOOLTIP := "Which tools this build is raised with. Left alone, the job derives its own from the food web it is on — hoes for a crop, hurdles for stock. A pick here changes THIS job alone."
+const BUILD_QUEUE_KIT_TOOLTIP := "Which tools this build is raised with. Left alone, the job derives its own from the food web it is on — hoes for a crop, a crook for stock. A pick here changes THIS job alone."
 
 ## **DOES THE SETTINGS STRIP FIT ITS TWO CONTROLS ON ONE LINE?** — the flow, computed rather than
 ## discovered (`docs/plan_standing_upkeep.md` §4.7b ②). Ray, on the layout: *"make it flow, so on

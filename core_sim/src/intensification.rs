@@ -1469,11 +1469,21 @@ pub fn keeping_is_short(
 /// **EVERY MATERIAL A SOURCE AT THIS STANDING CAN BE BILLED FOR** — the union of the ids named by the
 /// rung it **holds** and the rung it is **raising**, in id order.
 ///
-/// ⛔ **BOTH ENDPOINTS, because [`interpolate`] reads both.** An id named by only the raising rung
-/// has an interpolated demand of `credit × rate` — positive from the first work banked — and an id
-/// named by only the held rung is billed at `(1 − credit) × rate` on the way up. A walk over one
-/// endpoint silently drops half the bill, and the shipped `animal:pen` rung is exactly that case:
-/// `animal:pastoral` beneath it names nothing at all.
+/// ⛔ **BOTH ENDPOINTS, because [`interpolate`] reads both.** A demand is
+/// `held + credit × (raising − held)`, so an id named by only the *raising* rung is owed
+/// `credit × rate` and an id named by only the *held* rung is owed `(1 − credit) × rate`. A walk over
+/// one endpoint silently drops half the bill.
+///
+/// **On the shipped ladder it is the HELD endpoint that carries the only declarer.** `animal:pen` is
+/// `partial_credit: on_completion`, and [`RungStanding::at`] pins `credit` to [`NO_RUNG_CREDIT`] for
+/// such a rung — so a herd part-way up the fence interpolates to `animal:pastoral`'s value, which
+/// names nothing, and owes **no hurdles at all** until the fence closes. That is the model, not an
+/// accident: building the pen spends hurdles from the **build pile**, and mid-climb there is no fence
+/// to mend, while the tamed herd's own *work* upkeep runs throughout
+/// (`.claude/rules/core_sim/husbandry.md` → *"AND IT STEPS AT THE FENCE, for free"*). Once
+/// `animal:pen` is **held**, its hurdles are the held endpoint's and a raising-only walk would drop
+/// them; a `Continuous` rung that declared a material would be owed on the raising endpoint from its
+/// first banked work, and a held-only walk would drop that. Hence the union.
 ///
 /// It is the id list only; what each is owed comes from [`RungDef::upkeep_material_demand`] through
 /// [`interpolate`], so there is one arithmetic and this is one enumeration.

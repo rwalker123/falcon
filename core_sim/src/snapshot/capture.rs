@@ -2520,7 +2520,7 @@ pub fn capture_snapshot(
                         known_crafts: known_crafts_by_faction
                             .get(&cohort.faction)
                             .unwrap_or(&NO_CRAFTS_KNOWN),
-                        crafting: &recipes_config.crafting,
+                        recipes: &recipes_config,
                         // **The ladder's reference job**, resolved once per capture — an equipment
                         // life gauge quotes a build's wear in *gardens' worth*, not in bare work
                         // units, and the garden is the `plant:tended` rung's own `work_cost`.

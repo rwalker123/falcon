@@ -582,7 +582,7 @@ so *"tools are earned"* survives the flip by construction rather than by the old
 
 | File | Purpose |
 |---|---|
-| `src/data/materials.json` | **The materials table** (loader `materials_config.rs`, env override `MATERIALS_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks. **`characteristic_bands`** — the shared rating vocabulary, `[{ name, from }]` ascending: `poor 0.0 · fair 0.30 · good 0.55 · excellent 0.80`. Retuning these re-partitions every batch on the map. **`materials`** — id → `{ craft, characteristics[], hand_working?, varieties? }`. Shipped: **`hide`** (tanning; `toughness`/`suppleness`), **`fibre`** (weaving; `fineness`/`strength`), **`bone`** (bone_working; `density`/`length`), each `hand_working { rate 0.5, quality_ceiling 0.60 }` — plus the three **uncrafted** luxury crops **`tobacco`** / **`tea`** / **`grape`**, which name **no `craft`, no `hand_working` and no `varieties`** and carry the provisional axes `potency`/`keeping` (arc #527; see "A material with NO CRAFT is one nothing works"). Wood, stone, clay and metal still have no producer until the minerals arc, and an unreachable material is dead content the catalogue publishes — the three luxury crops are *uncrafted* rather than unreachable, which is a different thing. **`hand_working` absent means the material cannot be worked bare-handed at all** (rate `0`, which is how metal will refuse itself with no branch), and the bare-handed ceiling belongs to the **material**, not to the absent tool. **`varieties` are parsed, validated, and none ships** — named presets over the material's own axes (`copper`, `bronze`), exercised by a test fixture for the same reason the bronze equipment tier is. **`validate` rejects**: an empty material table; a band list that is empty, does not open at `0.0`, does not strictly ascend, or carries a seam outside `0..=1`; a material stating a **blank** craft (omit the key to say nothing works it — an empty string would put an unnameable craft in `crafts_declared_by`) or no characteristics; a duplicate characteristic on one material; a non-finite or negative `hand_working.rate`; a `quality_ceiling` outside `0..=1`; a variety that omits an axis the material declares or names one it does not, or states a reading off the range. **The root is open (`_comment*` keys) and `MaterialDef` is CLOSED** — a mistyped `hand_workng` would silently make a material unworkable, while a stray key at the root can only be prose. |
+| `src/data/materials.json` | **The materials table** (loader `materials_config.rs`, env override `MATERIALS_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks. **`characteristic_bands`** — the shared rating vocabulary, `[{ name, from }]` ascending: `poor 0.0 · fair 0.30 · good 0.55 · excellent 0.80`. Retuning these re-partitions every batch on the map. **`materials`** — id → `{ craft, characteristics[], hand_working?, varieties?, start_stock? }`. Shipped: **`hide`** (tanning; `toughness`/`suppleness`), **`fibre`** (weaving; `fineness`/`strength`), **`bone`** (bone_working; `density`/`length`), each `hand_working { rate 0.5, quality_ceiling 0.60 }` — plus the three **uncrafted** luxury crops **`tobacco`** / **`tea`** / **`grape`**, which name **no `craft`, no `hand_working` and no `varieties`** and carry the provisional axes `potency`/`keeping` (arc #527; see "A material with NO CRAFT is one nothing works"), and the two the material half of build-and-upkeep added (`docs/plan_standing_upkeep.md` §4.9 item 12): **`wood`** (weaving; `hardness`/`pliancy`, `hand_working { 0.5, 0.60 }`, and the roster's **only `start_stock`** — see "`MaterialDef::start_stock`" below) and **`hurdles`** (**no `craft` and no `hand_working`**, axes `stoutness`/`span`), which is a woven fence panel a pen spends on its build pile and its upkeep rate. **Stone, clay and metal still have no producer** until the minerals arc, and an unreachable material is dead content the catalogue publishes — but the roster now holds **three** kinds of thing that are not that: the luxury crops are *uncrafted* (a producer, no bench), `hurdles` are *crafted but never an input* (a bench, no recipe takes them), and `wood` is *stocked but unproduced* (an opening pile, no producer — deliberately, and the one owed tracker item this slice leaves behind). ⛔ **Nothing reads `wood`'s or `hurdles`' axes**, which is also deliberate: a quality axis on a fence panel invites *a better fence contains better*, the containment-scaling item 12 defers. **`hand_working` absent means the material cannot be worked bare-handed at all** (rate `0`, which is how metal will refuse itself with no branch), and the bare-handed ceiling belongs to the **material**, not to the absent tool. **`varieties` are parsed, validated, and none ships** — named presets over the material's own axes (`copper`, `bronze`), exercised by a test fixture for the same reason the bronze equipment tier is. **`validate` rejects**: an empty material table; a band list that is empty, does not open at `0.0`, does not strictly ascend, or carries a seam outside `0..=1`; a material stating a **blank** craft (omit the key to say nothing works it — an empty string would put an unnameable craft in `crafts_declared_by`) or no characteristics; a duplicate characteristic on one material; a non-finite or negative `hand_working.rate`; a `quality_ceiling` outside `0..=1`; a variety that omits an axis the material declares or names one it does not, or states a reading off the range; **a `start_stock.per_worker` that is not finite and `> 0`** (a stocked nothing is a block that should not be there, which is what an absent `start_stock` already says), **a `start_stock` naming an axis the material does not declare or omitting one it does** (through `exact_axes_fault`, the one home of that rule, shared with the recipe output's material arm), and **a `start_stock` reading outside `0..=1`**. **The root is open (`_comment*` keys) and `MaterialDef` is CLOSED** — a mistyped `hand_workng` would silently make a material unworkable, while a stray key at the root can only be prose. |
 
 | `src/data/recipes.json` | **The recipe book** (loader `recipes_config.rs`, env override `RECIPES_CONFIG_PATH`, `validate` inside `from_json_str`, cross-config `validate_against(&materials, &equipment)` at the `build_headless_app` seam). Two blocks. **`crafting`** — `progress_per_worker_turn` (**1.0**). **`recipes`** — id → `{ display_name, craft, work, requires_knowledge[]?, inputs[], outputs[], grades? }`, where `grades` is keyed by `characteristic_bands` NAME and carries only `effects` (there is no `when`), an input is `{ material, amount, variety?, reads? }` and an output is exactly one of `{ equipment }` or `{ material, characteristics }`. Eleven ship: **ten make EQUIPMENT and one makes a MATERIAL** — `hurdles` is the material (4 wood + 2 hide / work 7, reading hide's `suppleness`, so its bench is `tanning`; see "`hurdles` ARE A MATERIAL"), and the kit items are (`sled` 6 hide + 2 fibre / work 8; `crook` 1 bone + 2 fibre / 5, the animal web's build tool, reading bone's `length`; `hoes` 1 bone + 2 fibre / 5 — **ungraded**, deliberately, so plant and animal build gear stay consistent until both gain grades together (issue #561); `baskets` 5 fibre + 1 hide / 6; `traps` 6 fibre + 1 bone / 6; `spears` 1 bone + 2 fibre + 1 hide / 6; `clubs` 2 bone + 1 hide / 4; `wayfinding` 1 bone + 1 hide + 1 fibre / 4) and the three bench tools (`tanning_frame` 8 fibre + 2 bone / 12; `loom` 3 bone + 4 hide / 14; `bone_awl` 3 hide + 3 fibre / 10). **Costs are sized so MATERIAL, not bench time, is what binds** — see the file's `_comment_work_and_costs` for the measured income figures. **Bone is the scarce one by an order of magnitude** (0.0012–0.003 per biomass against hide's 0.006–0.022), so nothing costs more than 3 of it. **`validate` rejects**: a non-positive `progress_per_worker_turn`; an empty book; a non-positive `work` or `amount`; a recipe with no inputs or no outputs; the same material twice in one recipe's inputs; **more than one input carrying `reads`**; an output naming both or neither of `equipment`/`material`; an equipment output stating characteristics, or a material output stating none; a duplicate output; grades on a recipe that reads nothing or outputs only materials; a duplicate stat in one grade's effects. **`validate_against` additionally rejects**: an unknown material, item, variety or axis; a `craft` that is not the craft of the material the recipe reads; a `requires_knowledge` naming a craft no material declares **or one that none of the recipe's own inputs is worked by**; a tool recipe whose inputs include the material it bounds; **a fractional `amount` on an equipment output** (a batch's `count` cannot bank half a spear); **a grade key that is not a declared `characteristic_bands` name, and a lowest declared grade that is not the FIRST band**; and **a grade effect that names a stat no tier of the output item declares, drops that effect's mass bounds, or — at the DERIVED anchor band — disagrees with the item's default tier** (see "ONE QUALITY LADDER"). |
 
@@ -902,12 +902,13 @@ a new quantum would not update. A *count* quantum gets a count noun; a
 and a turns conversion would need a forecast of what the band is about to do.
 
 > **AN ITEM ON SEVERAL QUANTA IS QUOTED ON ITS FIRST** (`ItemDefinition::headline_wear`, issue #515 —
-> `equipment.md` → "An item may wear on SEVERAL quanta"). A gauge reads in **one** unit, so the
-> handling gear — worked both at a slaughter and on a `Tame` — has to pick one: `≈12 gardens' worth`
-> and `≈2500 biomass butchered` are the same condition counted two ways, and stating both would need
-> the readout to know the usage mix it exists to let the player choose. The item **declares** its
-> headline by writing that quantum first, exactly as `tiers[0]` declares the default tier — and
-> `hurdles` declare `biomass_collected`, so **their** row reads *"≈2500 biomass butchered"*.
+> `equipment.md` → "An item may wear on SEVERAL quanta"). A gauge reads in **one** unit, so an item
+> on two — a pile of hurdles was worked both at a slaughter and on a `Tame` — has to pick one:
+> `≈12 gardens' worth` and `≈2500 biomass butchered` are the same condition counted two ways, and
+> stating both would need the readout to know the usage mix it exists to let the player choose. The
+> item **declares** its headline by writing that quantum first, exactly as `tiers[0]` declares the
+> default tier. **The `sled` is the item on two quanta today**: it took `biomass_collected` with the
+> `pen_carry` pair when hurdles became a material, **appended**, so its row still reads the haul.
 
 > #### THE BUILD QUANTUM IS THE ONE WHOSE UNIT IS NOT ITS NOUN
 >
@@ -917,10 +918,9 @@ and a turns conversion would need a forecast of what the band is about to do.
 > nothing, so the gauge quotes it against a **named reference job**: the noun is *"gardens' worth"*
 > and `quantum_units_per_noun` divides by the `plant:tended` rung's own `work_cost`, giving
 > **"12 gardens' worth left"** — for the first item that **headlines** the build quantum. **No
-> shipped item did until the hoes landed**: the other build-wearing item is `hurdles`, which leads with the
-> slaughter, so today this arm is exercised by
-> `the_build_quanta_are_quoted_against_the_ladders_reference_job`, and the **hoes** are the first
-> item to lead with it, so theirs is the first published row that divides.
+> shipped item headlined it until the hoes landed**, so the arm is *also* exercised by
+> `the_build_quanta_are_quoted_against_the_ladders_reference_job`; the **hoes** were the first item to
+> lead with it, and the **crook** beside them leads with it too, so both publish rows that divide.
 >
 > **The reference is the LADDER's** (`intensification::REFERENCE_BUILD_RUNG`), carried on
 > `BandCraftInputs::reference_build_cost` and resolved once per capture — so a retune of the rung
@@ -958,11 +958,48 @@ Five wordings: `Untouched` · `48 blows left` · `~1 blow left` · **`Worn out`*
 which are fractions of *one fresh unit's* quanta rather than absolutes — a spear's life is 250 blows
 and a sled's is 5000 biomass, so any single absolute count would colour one of them permanently red.
 
+> ### ONE LIFE FRACTION, TWO READERS — the panel row and the dock line
+>
+> `snapshot::crafting::batch_life_fraction` is the **only** producer of *"how much of one fresh unit
+> is left"*: `(count × starting_durability − wear) / starting_durability`, **per batch**, at **that
+> batch's own tier**, and deliberately **unclamped** — a stockpile of two hoes seven tenths through
+> the first reads `1.30`, because the gauge is for the pile and not for the unit in hand.
+> `equipmentBatches` colours a row with it, and `systems::labor::kit_life_fractions` rolls it up to the
+> item's **worst batch** for the kit-life notification's edge gate, so the dock fires exactly when a row
+> on the panel turns amber.
+>
+> A second reading of the same idea drifted three ways at once on ordinary ledgers: taken at the
+> item's **default** tier rather than the batch's, **summing** `wear` across batches (two half-worn
+> ones read `0` — a `danger` Alert on mostly-fresh gear), and clamped to `[0, 1]` (that `1.30`
+> stockpile announced as `0.30`, *warn*, beside a panel reading *healthy*).
+> `the_dock_and_the_ledger_read_one_kit_life` sweeps all three arrangements.
+
 **`KitItemCondition` gained `count`, and `remaining == 0` no longer means "dry".** Since the count
 slice an absent entry is NOT OWNED, so an item the band has none of reads `remaining 0` — the same
 `0` a pre-count reader took for *"dry"*. `count` is the explicit ownership statement so nothing has
 to infer ownership from a condition of zero; *worn out* versus *never made* is `equipmentBatches`'
 job.
+
+## A bench that can draw nothing promises nothing
+
+`systems::crafting::bench_material_rate` is the **one producer** of the bench's per-turn material
+output — `rate_per_turn / work × the output's amount`, struck through the same `rate_per_turn`
+`advance_crafting` accrues with, so the projection and the accrual cannot describe different benches.
+It is the forward half of a band's material income (`intensification.md` → "THE BAND'S LEDGER"), read
+by the wire's `materialUpkeepIncome` row and by the material-shortfall Alert.
+
+⛔ **It is empty unless the bench would actually bank this turn.** `advance_crafting` skips a bench
+whose pile is neither **drawn** nor **affordable** (`pass_is_affordable`, the availability half of
+`draw_pass` — factored out so the projection asks the question the draw will ask), so the three gates
+are, in that order: a recipe the book still carries, a crew, and a pile it can cut. A rate published
+without the third is income that never arrives: a band with `hurdles` queued and no `wood` banks zero
+for ever while the ledger read ~`0.29`/turn, which drove `materialUpkeepIncome` above
+`materialUpkeepNeed`, printed a runway of `∞` and left the caret untinted in exactly the state the
+standing bill exists to announce. `a_bench_that_cannot_draw_its_pile_publishes_no_income` pairs the
+projection against `advance_crafting`'s own progress on both halves.
+
+**A pile already cut keeps the bench running** even where the store could not fund a *second* pass —
+the gate is on the draw, not on the progress.
 
 ## The three per-world catalogues, plus the learned one
 

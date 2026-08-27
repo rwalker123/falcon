@@ -316,9 +316,18 @@ func kit_breakdown_lines(band: Dictionary) -> Array[String]:
         DetailFormat.KIT_LABEL_SPEARS, DetailFormat.KIT_ROLE_ATTACK_FORMAT % String.num(
             float(band.get(DetailFormat.KIT_TIER_KEY_ATTACK, 0.0)),
             DetailFormat.KIT_CONDITION_DECIMALS)))
+    # **THE SLED CARRIES BOTH RATES, WHICH IS ONE ROW AND NOT TWO.** It drags a carcass in off the
+    # range AND it is what a pen is collected with: `equipment.json` puts both sides of `pen_carry` on
+    # this item, the item that used to declare the bare side having left the roster with the hurdles
+    # (`docs/plan_standing_upkeep.md` §4.9 item 12). The two figures stay DISTINCT — a band whose sled
+    # is spent collects its pen at the bare rate and hunts at the bare rate, and they are different
+    # numbers — so both are quoted rather than one standing in for the other.
     lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_SLED,
         DetailFormat.KIT_LABEL_SLED, DetailFormat.KIT_ROLE_HUNT_CARRY_FORMAT % String.num(
             float(band.get(DetailFormat.KIT_TIER_KEY_HUNT_CARRY, 0.0)),
+            DetailFormat.KIT_CARRY_DECIMALS)
+        + DetailFormat.KIT_ROLE_PEN_CARRY_SUFFIX % String.num(
+            float(band.get(DetailFormat.KIT_TIER_KEY_PEN_CARRY, 0.0)),
             DetailFormat.KIT_CARRY_DECIMALS)))
     lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_BASKETS,
         DetailFormat.KIT_LABEL_BASKETS, DetailFormat.KIT_ROLE_FORAGE_CARRY_FORMAT % String.num(
@@ -328,25 +337,22 @@ func kit_breakdown_lines(band: Dictionary) -> Array[String]:
     # game, where a weapon's damage buys nothing because there is no defence to clear.
     lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_TRAPS,
         DetailFormat.KIT_LABEL_TRAPS, DetailFormat.KIT_ROLE_TRAPS))
-    # **HANDLING GEAR IS THE PEN'S CARRY AND IT IS NOT THE SLED'S.** A sled drags a carcass in off
-    # the range; a pen stands at the camp, so a band on a stalking kit collects its pen at the bare
-    # rate however healthy the sled is. Two rows, two tiers, both quoted at the hunt job's default.
-    # **AND IT TAKES WORK OFF THE CLIMB, which is the other half of what it is for** (issue #515, and
-    # `docs/plan_unit_costed_work.md` §6 for the change from a rate to work units). The build axis has
-    # no flat per-band field — it rides the band's own `kit_tiers` row, resolved here rather than in
-    # `DetailFormat` so the pure format layer keeps depending on nothing.
-    var husbandry_role := DetailFormat.KIT_ROLE_PEN_CARRY_FORMAT % String.num(
-        float(band.get(DetailFormat.KIT_TIER_KEY_PEN_CARRY, 0.0)),
-        DetailFormat.KIT_CARRY_DECIMALS)
+    # **THE CROOK STATES ITS JOB IN WORDS, then the work it takes off the climb** (issue #515, and
+    # `docs/plan_unit_costed_work.md` §6 for the change from a rate to work units). Its ONE effect is
+    # `build_work`, whose axis has no flat per-band field — it rides the band's own `kit_tiers` row,
+    # resolved here rather than in `DetailFormat` so the pure format layer keeps depending on nothing —
+    # so the row leads with what the item is FOR and adds the figure only when the gear is live. A band
+    # whose crook is spent still keeps the animals; it just does it at the bare rate.
+    var keeper_role := DetailFormat.KIT_ROLE_CROOK
     var build_work := float(KitRoster.band_kit_tiers(band, String(band.get(
         DetailFormat.BAND_QUOTED_KIT_ID_KEY, ""))).get(
             KitRoster.KIT_BUILD_WORK_KEY, DetailFormat.KIT_BUILD_WORK_NEUTRAL))
     if build_work > DetailFormat.KIT_BUILD_WORK_NEUTRAL:
-        husbandry_role += DetailFormat.KIT_ROLE_BUILD_WORK_SUFFIX % String.num(
+        keeper_role += DetailFormat.KIT_ROLE_BUILD_WORK_SUFFIX % String.num(
             build_work, DetailFormat.KIT_BUILD_WORK_DECIMALS)
     lines.append(DetailFormat.kit_breakdown_row(band,
-        DetailFormat.KIT_DURABILITY_KEY_HURDLES, DetailFormat.KIT_LABEL_HURDLES,
-        husbandry_role))
+        DetailFormat.KIT_DURABILITY_KEY_CROOK, DetailFormat.KIT_LABEL_CROOK,
+        keeper_role))
     # **WAYFINDING STATES TILES, NOT A BIOMASS RATE**, so it takes the vantage's own rounding rather
     # than the carries'. It is how far each POSTED vantage sees — how far out they are posted is not
     # a kit axis at all, so this row must not be read as the scouting reach.

@@ -2952,7 +2952,11 @@ table ForagePatchState {
   //               row that named nothing would otherwise publish "" while the keepers were out with
   //               hoes. An explicit bare-handed pick crosses as the roster's own bare kit id, which
   //               is a real selection and reads differently from the empty string. "" only when NO
-  //               band of the viewing faction works this source at all.
+  //               band ANYWHERE works this source. NOT faction-filtered: `resolve_upkeep_kits` walks
+  //               every band's allocation, so on a source the viewer can SEE but only a rival works,
+  //               this publishes the RIVAL's kit with `upkeepKitNamed` true. The leak is inherited
+  //               verbatim from `buildKitId`'s `resolve_build_kit_ids` above; it is stated here
+  //               because a comment claiming a filter that does not exist is worse than the leak.
   // upkeepKitNamed = whether that id is an OVERRIDE the player stated, as opposed to the web's
   //               derivation. The two are NOT recoverable from the id alone - a player may name the
   //               very kit the derivation would have picked - and a picker has to be able to draw its

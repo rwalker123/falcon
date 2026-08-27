@@ -440,7 +440,7 @@ edge on a horizontal dock is the HUD's authored lateral column (`Hud.lateral_col
 `max(authored, live)`), which the card is holding clear on purpose. It is not the card failing to
 stretch, and widening it into that gap would put it over a live HUD column.
 - **Zone `band` — vitals · PEOPLE · KEEPING · food outlook · WORKFORCE + role cards** (`BandPanelController.build_band_zone`; the KEEPING block is `docs/plan_standing_upkeep.md` §2.5's and is specified in "THE KEEPING BLOCK" below).
-  The Food/Morale/Growth/Kit rows are the disclosures — and their breakdowns open in a
+  The Food/Fodder/Upkeep/Morale/Growth rows are the disclosures — and their breakdowns open in a
   POPOVER, never inline (see Band food status: inline growth is what clipped this very zone).
   **There is no `Output:` row and no `Position:` row here.** Productivity reads on the WORK zone's
   head, where the rates it scales are (see Zone `work` below); the coordinates read in the panel
@@ -751,19 +751,20 @@ stretch, and widening it into that gap would put it over a live HUD column.
   which re-resolves the brackets from the `populations` entry and therefore SELF-HEALS a lossy marker
   copy — so it structurally could not catch the dropped age brackets. This
   state ASSERTS the three PEOPLE brackets sum to the band's own `size`. **It also
-  carries the Minimal TOE's Kit claims** (`_assert_map_path_states_kit`): the PAYLOAD holds all six kit
-  keys — named from `DetailFormat`'s and `SourceForecast`'s OWN constants, since the structural copy
+  carries the Minimal TOE's kit claims** (`_assert_map_path_states_kit`): the PAYLOAD holds every kit
+  key — named from `DetailFormat`'s and `SourceForecast`'s OWN constants, since the structural copy
   leaves no key list on MapView to borrow and borrowing one would assert that the copy copies what the
-  copy copies — the payload is the WHOLE cohort, spears arrives un-narrowed, and the `Kit` row RENDERS — the payload
-  claim being where the leak is, and a marker carrying six keys nothing draws being no fix either. Its
-  band comes from **`_kit_band_fixture`, a SEPARATE fixture, and that separation is itself a finding**:
-  the `Kit` row costs 26px, the band zone already reads 299 of its 300px box in a height-capped T/B
-  dock, so putting the six on the shared `_band_fixture` overflows `Zone_band` by exactly 25px in **13
-  states**. Every live band states its kit, so that overflow is real and the kitless fixture was hiding
-  it; which SHORT-tier row yields is a design decision and is reported rather than guessed at. The
-  needle carries the VALUE (`Spears 74`) and is composed from the fixture's own number — **and it is
-  NOT `BAND_KIT_ROW_PREFIX`**, the vitals rows being disclosures, so what renders is the caret's own
-  `Kit ▸` and the prefix is consumed by that wrapping) ·
+  copy copies — the payload is the WHOLE cohort, and spears arrives un-narrowed as the FLOAT the wire
+  carries. **The RENDER half of it is retired with the `Gear` row** (`docs/plan_standing_upkeep.md`
+  §4.9 item 12): no vitals row states an item condition any more, so there is nothing on this path
+  left to draw `Spears 87`, and the payload claim is the one that mattered — the leak this was written
+  for is the marker copy dropping wire fields, and the crafting panel's kit ledger reads exactly those
+  fields off exactly that payload. Its band still comes from **`_kit_band_fixture`, a SEPARATE
+  fixture, and that separation was itself a finding**: while the `Gear` row existed it cost 26px
+  against a band zone already reading 299 of its 300px box in a height-capped T/B dock, so putting the
+  kit keys on the shared `_band_fixture` overflowed `Zone_band` by exactly 25px in **13 states**. The
+  fixtures stay apart because the payload claim wants a cohort carrying every kit key and no other
+  state does) ·
   `band_panel_work_page` (34 sources, narrow shell) · `band_panel_work_wide` (the same 34 in the
   bottom dock — 4 columns, column-major, `Page 1 / 2`, `1–28 of 34`) · `band_panel_inspector` (a row
   open, the board shrunk to 31 rows and a pager appearing to pay for it) · `band_panel_compose_hunt`

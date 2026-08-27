@@ -3492,8 +3492,11 @@ pub struct LaborAllocation {
     /// side of the same ledger, and the twin of [`Self::last_fodder_inflow`].
     ///
     /// It is **reported, never recomputed**: the amounts `credit_material_yield` actually deposited,
-    /// which is the same discipline `SourceYield::materials` carries. What a **bench** adds is
-    /// resolved at capture off the bench's own rate, because a bench is not a source row.
+    /// which is the same discipline `SourceYield::materials` carries. What a **bench** adds is not
+    /// here — a bench is not a source row and it deposits nothing until its meter crosses — so this
+    /// is only *half* the band's inflow. ⛔ **Never read it as the whole**: read
+    /// [`Self::material_income`], which is the figure the wire publishes and the shortfall Alert
+    /// judges against.
     pub last_material_income: std::collections::BTreeMap<String, f32>,
     /// **THE MATERIALS THIS BAND HAS ALREADY BEEN WARNED ABOUT**, in id order — the edge gate on the
     /// `material_shortfall` alert, so a standing famine pushes one line rather than one a turn.
@@ -3665,6 +3668,28 @@ pub struct BuildQueueEntry {
 }
 
 impl LaborAllocation {
+    /// **THE BAND'S WHOLE MATERIAL INFLOW, PER TURN** — this turn's credited take
+    /// ([`Self::last_material_income`]) plus what its bench will bank
+    /// ([`crate::systems::bench_material_rate`], which is that half's only producer).
+    ///
+    /// ⛔ **ONE PRODUCER, because two readers judge one question.** The wire's
+    /// `material_upkeep_income` row and `announce_material_shortfall`'s *"X is running out"* Alert
+    /// both weigh this against [`Self::last_material_need`], and a row and an event that summed the
+    /// inflow apart *did* disagree: the Alert read the credited take alone, and on the shipped roster
+    /// `hurdles` have **no producer but a bench**, so the take is always absent, the gap is always
+    /// the whole bill, and the Alert fired for every band holding a pen — including one whose bench
+    /// out-produces its pens.
+    pub fn material_income(
+        &self,
+        bench_rate: &std::collections::BTreeMap<String, f32>,
+    ) -> std::collections::BTreeMap<String, f32> {
+        let mut income = self.last_material_income.clone();
+        for (id, rate) in bench_rate {
+            *income.entry(id.clone()).or_insert(0.0) += rate;
+        }
+        income
+    }
+
     /// Total workers currently staffed across all assignments.
     /// **EVERY HAND THIS BAND HAS COMMITTED** — every row's take, across the worked sources **and**
     /// the band-wide standing roles, which are rows in the same list

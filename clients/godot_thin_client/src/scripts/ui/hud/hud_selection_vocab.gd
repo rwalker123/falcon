@@ -243,9 +243,9 @@ const RUNG_HELD_FORMAT := "Held at %d%%"
 # touching. So a row that is not the rung in flight states what it IS: `RUNG_HELD_FORMAT` where the
 # keeping covers it, and this where it does not.
 #
-# **THE FORK IS `SourceForecast.rung_is_under_kept`** — the published shortfall routed through the
-# at-risk rung — so this row derives no number of its own and cannot disagree with the mark on the
-# built row beside it, which uses the same seam.
+# **THE FORK IS `DetailFormat.rung_is_at_risk`** — a published shortfall in EITHER currency (hands or
+# goods), routed through the at-risk rung — so this row derives no number of its own and cannot
+# disagree with the mark on the built row beside it, which uses the same seam.
 const RUNG_REVERTING_FORMAT := "%s Reverting %d%%"
 
 # **HAZARD: builders are on it and the meter is not moving anyway** — the sim's `-1` for a rung whose

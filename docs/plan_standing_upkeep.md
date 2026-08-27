@@ -1505,9 +1505,15 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     > store splits by **`SourcePriority` tiers alone** (`settle_scarce_store`), ignoring
     > `upkeep_mode`: the rank is the player's per-row answer and the mode exists for a pool that has
     > none, so reading both would let a row marked `High` starve with nothing on screen saying why.
-    > And the demand **interpolates on position**, which the pen can test *today* — `partial_credit:
-    > on_completion` gates the payout, not the cost, and §4.6a already bills from the first work
-    > banked.
+    > And the demand **interpolates on position** — the general rule, which the plant rungs exercise.
+    > ⛔ **The pen does NOT test it, and this clause claimed the opposite.** `partial_credit:
+    > on_completion` gates the **cost as well as the payout**: `RungStanding::at` pins `credit` to
+    > zero for such a rung, so `interpolate` returns the rung *below* for the whole climb, and
+    > `animal:pen` is the ladder's only member. That is right rather than a gap — **you spend hurdles
+    > from the BUILD PILE while raising a fence, and owe the upkeep rate only once it stands**, there
+    > being no fence to mend mid-climb. The tamed herd's own `animal:pastoral` upkeep continues
+    > throughout, which is why the work account is non-zero there and the material one is not. See
+    > `.claude/rules/core_sim/husbandry.md` → the pen's hurdle bill.
     >
     > **THE READOUTS, and the surface is the `⌃` TRACK — not the compose sheet.** Foraging and
     > hunting have no hold cost; the improvement is chosen from the work row's `⌃`, which opens

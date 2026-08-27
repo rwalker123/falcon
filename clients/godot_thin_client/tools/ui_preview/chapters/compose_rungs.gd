@@ -1189,7 +1189,7 @@ func _assert_husbandry_hint_states_the_pen() -> void:
 	var sled := HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [
 		BandFx.KIT_ITEM_SLED, int(BandFx.KIT_CONDITION_SLED)]
 	var handling_gear := HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [
-		BandFx.KIT_ITEM_HURDLES, int(BandFx.KIT_CONDITION_HURDLES)]
+		BandFx.KIT_ITEM_CROOK, int(BandFx.KIT_CONDITION_CROOK)]
 	# --- the WILD column: byte-identical to what this line rendered before the pen axis existed ----
 	var wild_stalking := KitRoster.tier_hint(kits, stalking, band, KitRoster.JOB_HUNT, wild)
 	var wild_handling := KitRoster.tier_hint(kits, handling, band, KitRoster.JOB_HUNT, wild)
@@ -1245,7 +1245,7 @@ func _assert_the_appended_axes_read_the_band() -> void:
 	var want_worn := HudComposeVocab.KIT_HINT_SEPARATOR.join([
 		HudComposeVocab.KIT_HINT_PEN_CARRY_FORMAT % String.num(
 			BandFx.KIT_PEN_CARRY_BARE, HudComposeVocab.KIT_TIER_DECIMALS),
-		HudComposeVocab.KIT_HINT_DRY_FORMAT % BandFx.KIT_ITEM_HURDLES,
+		HudComposeVocab.KIT_HINT_DRY_FORMAT % BandFx.KIT_ITEM_CROOK,
 		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [
 			BandFx.KIT_ITEM_SLED, int(BandFx.KIT_CONDITION_SLED)]])
 	h._assert_hud("…and once it is DRY the same pen reads the BARE keeper's tier — \"%s\"" % worn_hint,
@@ -1352,7 +1352,7 @@ func _assert_the_gear_row_states_the_build_it_speeds(band: Dictionary) -> void:
 ## The handling gear's line out of the band's own gear breakdown, `""` when no row carries the label.
 func _gear_row(band: Dictionary) -> String:
 	for line in h._hud._disclosures.kit_breakdown_lines(band):
-		if String(line).contains(DetailFormat.KIT_LABEL_HURDLES):
+		if String(line).contains(DetailFormat.KIT_LABEL_CROOK):
 			return String(line)
 	return ""
 
@@ -1389,7 +1389,7 @@ func _pen_axis_roster() -> Array:
 		"build_work_branch": KitRoster.BUILD_BRANCH_ANIMAL,
 		# Handling gear, then the sled it also carries — config order, and the list the hint's condition
 		# clauses are read off. See the trapping entry above for why an entry without one is inert.
-		"item_ids": [BandFx.KIT_ITEM_HURDLES, BandFx.KIT_ITEM_SLED],
+		"item_ids": [BandFx.KIT_ITEM_CROOK, BandFx.KIT_ITEM_SLED],
 	})
 	return kits
 
@@ -1454,7 +1454,7 @@ func _dry_handling_gear_conditions(band: Dictionary) -> Array:
 	var out: Array = []
 	for row_variant in band.get(KitRoster.BAND_ITEM_CONDITIONS_KEY, []):
 		var row: Dictionary = (row_variant as Dictionary).duplicate()
-		if String(row.get(KitRoster.ITEM_CONDITION_ID_KEY, "")) == BandFx.KIT_ITEM_HURDLES:
+		if String(row.get(KitRoster.ITEM_CONDITION_ID_KEY, "")) == BandFx.KIT_ITEM_CROOK:
 			row[KitRoster.ITEM_CONDITION_REMAINING_KEY] = KitRoster.CONDITION_DRY
 		out.append(row)
 	return out

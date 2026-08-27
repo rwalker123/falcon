@@ -131,7 +131,7 @@ pub struct MaterialDef {
     /// *"this material is not named further"*.
     #[serde(default)]
     pub varieties: BTreeMap<String, VarietyReadings>,
-    /// **WHAT A SPAWNED BAND IS SENT OUT HOLDING OF THIS MATERIAL** ([`MaterialStartStock`).
+    /// **WHAT A SPAWNED BAND IS SENT OUT HOLDING OF THIS MATERIAL** ([`MaterialStartStock`]).
     ///
     /// **Absent is the ordinary case and means *"a band starts with none"*** — every material with a
     /// producer, since a band that can gather a thing needs no opening pile of it. Today exactly one

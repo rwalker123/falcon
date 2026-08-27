@@ -1333,21 +1333,16 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 .map(|a| a.last_material_need.clone())
                 .unwrap_or_default(),
         ),
-        // **WHAT ARRIVES** — this turn's credited take **plus the bench's own per-turn output**. A
-        // bench is not a source row, so its contribution cannot ride the allocation's accumulator;
-        // it is resolved here, off the same `rate_per_turn` the bench publishes, which is what makes
-        // it a **rate** rather than a trailing figure. On the shipped roster the pen's `hurdles` have
-        // **no producer but a bench**, so a ledger without this term would read `0` income forever
-        // for the one material a pen actually eats.
-        material_upkeep_income: material_payoffs(&{
-            let mut income = allocation
-                .map(|a| a.last_material_income.clone())
-                .unwrap_or_default();
-            for (id, rate) in bench_material_rate {
-                *income.entry(id).or_insert(0.0) += rate;
-            }
-            income
-        }),
+        // **WHAT ARRIVES** — this turn's credited take **plus the bench's own per-turn output**,
+        // joined by [`LaborAllocation::material_income`] because `announce_material_shortfall` judges
+        // this band against the same figure and the two must not be summed apart. On the shipped
+        // roster the pen's `hurdles` have **no producer but a bench**, so a ledger without the bench
+        // term would read `0` income forever for the one material a pen actually eats.
+        material_upkeep_income: material_payoffs(
+            &allocation
+                .map(|a| a.material_income(&bench_material_rate))
+                .unwrap_or_default(),
+        ),
         // **THE STOCK ON THE SHELF**, summed over the band's batches — the total the two rates above
         // are read against. `material_batches` beside it carries the per-rating breakdown.
         material_store: cohort

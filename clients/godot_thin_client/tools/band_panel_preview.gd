@@ -6183,17 +6183,35 @@ func _assert_gear_breakdown_states_every_kit(band: Dictionary) -> void:
 	var popover := "\n".join(_hud._disclosures.kit_breakdown_lines(band))
 	_assert_band_panel("the gear popover opened at all (%d chars)" % popover.length(),
 		popover.contains(DetailFormat.KIT_BREAKDOWN_CLIFF_NOTE))
-	var pen_role := DetailFormat.KIT_ROLE_PEN_CARRY_FORMAT % String.num(
+	# **THE SLED CARRIES BOTH RATES AND THEY ARE STILL TWO NUMBERS** (`docs/plan_standing_upkeep.md`
+	# §4.9 item 12). `equipment.json` puts both sides of `pen_carry` on the sled — the item that used to
+	# declare the bare side left the roster with the hurdles — so the pen clause rides the SLED's row
+	# now. What has to stay true is that the two figures do not collapse into each other: a band on a
+	# stalking kit hunts at 40 and collects its pen at 12, and a readout that let the hunt carry stand
+	# in for the pen would be the mis-pairing this ledger keeps reproducing.
+	var pen_role := DetailFormat.KIT_ROLE_PEN_CARRY_SUFFIX % String.num(
 		BandFx.KIT_PEN_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS)
-	var sled_role := DetailFormat.KIT_ROLE_PEN_CARRY_FORMAT % String.num(
+	var pen_at_the_sleds_rate := DetailFormat.KIT_ROLE_PEN_CARRY_SUFFIX % String.num(
 		BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS)
-	var gear_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_HURDLES)
-	_assert_band_panel("HANDLING GEAR states the PEN's collection rate (%s), never the sled's (%s) — \"%s\""
-			% [pen_role, sled_role, gear_line],
-		gear_line.contains(pen_role) and not gear_line.contains(sled_role))
+	var sled_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_SLED)
+	_assert_band_panel("the SLED states the PEN's own collection rate (%s), never its hunt carry (%s) — \"%s\""
+			% [pen_role, pen_at_the_sleds_rate, sled_line],
+		sled_line.contains(pen_role) and not sled_line.contains(pen_at_the_sleds_rate))
+	# …and the HUNT half is on the same row, which the tail of this function already asserts against
+	# `sled_line` — the pairing that stops either clause being satisfied by a row that dropped the
+	# other, so the claim is made once and read against one line.
+	# **AND THE CROOK IS THE ANIMAL WEB'S ITEM NOW** — `hurdles` are a crafted MATERIAL and no item of
+	# that id is on the roster, so a ledger still keyed on it read `— bare hands` over an item every
+	# band carries. The row states its JOB rather than a carry rate, the crook's one effect being
+	# `build_work`, which has no flat per-band field to quote.
+	var gear_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_CROOK)
+	_assert_band_panel("the CROOK's row states what it is for (%s), and no carry rate — \"%s\""
+			% [DetailFormat.KIT_ROLE_CROOK, gear_line],
+		gear_line.contains(DetailFormat.KIT_ROLE_CROOK)
+			and not gear_line.contains(pen_role))
 	_assert_band_panel("…beside its own condition (%s)" % String.num(
-			BandFx.KIT_CONDITION_HURDLES, DetailFormat.KIT_CONDITION_DECIMALS),
-		gear_line.contains(String.num(BandFx.KIT_CONDITION_HURDLES,
+			BandFx.KIT_CONDITION_CROOK, DetailFormat.KIT_CONDITION_DECIMALS),
+		gear_line.contains(String.num(BandFx.KIT_CONDITION_CROOK,
 			DetailFormat.KIT_CONDITION_DECIMALS)))
 	# **THE VANTAGE IS TILES, and the assertion says so in both directions.** A biomass-rate format
 	# string here would print `2.0`, which reads as a rate and is not one.
@@ -6226,7 +6244,6 @@ func _assert_gear_breakdown_states_every_kit(band: Dictionary) -> void:
 			DetailFormat.KIT_CONDITION_DECIMALS)))
 	# …and the hunt rows are still paired with THEIR tiers, so the three new ones cannot have been
 	# added by making every row quote the same number.
-	var sled_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_SLED)
 	_assert_band_panel("…and the SLED still states the HUNT's carry (%s) — \"%s\""
 			% [String.num(BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS), sled_line],
 		sled_line.contains(DetailFormat.KIT_ROLE_HUNT_CARRY_FORMAT % String.num(
@@ -12884,7 +12901,7 @@ const MAP_PATH_WARRIOR_ATTACK := 5.0
 
 func _kit_band_fixture() -> Dictionary:
 	var band := _band_fixture()
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 74.5}, {"item_id": "sled", "remaining": 58.0}, {"item_id": "baskets", "remaining": 91.0}, {"item_id": "traps", "remaining": 83.0}, {"item_id": "hurdles", "remaining": MAP_PATH_HURDLES_CONDITION}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": MAP_PATH_WAYFINDING_CONDITION}, {"item_id": "clubs", "remaining": MAP_PATH_CLUBS_CONDITION}]
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 74.5}, {"item_id": "sled", "remaining": 58.0}, {"item_id": "baskets", "remaining": 91.0}, {"item_id": "traps", "remaining": 83.0}, {"item_id": "crook", "remaining": MAP_PATH_HURDLES_CONDITION}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": MAP_PATH_WAYFINDING_CONDITION}, {"item_id": "clubs", "remaining": MAP_PATH_CLUBS_CONDITION}]
 	band["hunter_attack"] = 2.0
 	band["hunt_carry_per_worker_biomass"] = 2.5
 	band["forage_carry_per_worker_biomass"] = 1.75
@@ -12938,7 +12955,7 @@ func _kit_worn_band_fixture() -> Dictionary:
 	# The list is REPLACED rather than extended, so the expanded roster's three are restated here —
 	# a cohort the server publishes carries one row per item in the config's table, and dropping three
 	# of them would render a band no live world produces.
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_FRAME_SLED_DRY}, {"item_id": "baskets", "remaining": KIT_FRAME_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "hurdles", "remaining": BandFx.KIT_CONDITION_HURDLES}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}]
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_FRAME_SLED_DRY}, {"item_id": "baskets", "remaining": KIT_FRAME_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "crook", "remaining": BandFx.KIT_CONDITION_CROOK}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}]
 	# The band's OWN resolved tiers, i.e. what it gets under the JOB DEFAULT. They are the cohort's
 	# statement and the `Kit` row reads them; the picker does NOT — it resolves the SELECTED kit's
 	# tiers off the roster — so they are set consistently with the conditions above rather than being
@@ -13049,7 +13066,7 @@ func _band_fixture() -> Dictionary:
 		# Three DIFFERENT conditions on the 0-100 scale, so an assertion cannot pass with two
 		# accessors swapped; none dry, so the row's DANGER tint keeps its meaning and the frames that
 		# judge a spent kit stay the ones that state one.
-		"kit_item_conditions": [{"item_id": "spears", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_SHARED_SLED_CONDITION}, {"item_id": "baskets", "remaining": KIT_SHARED_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "hurdles", "remaining": BandFx.KIT_CONDITION_HURDLES}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}],
+		"kit_item_conditions": [{"item_id": "spears", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_SHARED_SLED_CONDITION}, {"item_id": "baskets", "remaining": KIT_SHARED_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "crook", "remaining": BandFx.KIT_CONDITION_CROOK}, {"item_id": "hoes", "remaining": BandFx.KIT_CONDITION_HOES}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}],
 		# The RESOLVED tiers the sim publishes beside them. Equipped throughout, matching the
 		# conditions above — `hunter_attack` well clear of `QUARRY_DEFENSE`, so no compose sheet on
 		# this band reads the combat gate's refusal and the frames that judge that refusal stay the
@@ -13655,7 +13672,7 @@ func _builders_band_fixture(queue: Array = []) -> Dictionary:
 # =====================================================================================
 #  THE BUILD QUEUE HEAD STATES THE POOL'S DERIVED KIT — and it is the ONLY surface that does
 # =====================================================================================
-# There are two builders kits — `hurdling` (hurdles, ANIMAL) and `tillage` (hoes, PLANT) — and which
+# There are two builders kits — `hurdling` (the crook, ANIMAL) and `tillage` (hoes, PLANT) — and which
 # one a queue entry gets is DERIVED from that entry's own web (`equipment.md` -> "THE BUILDERS' KIT IS
 # DERIVED PER QUEUE ENTRY"). The Builders role card stated it on a read-only gear line until §4.7,
 # which retired that line: the BUILD QUEUE head reads the SAME `_role_kit_id` and prints

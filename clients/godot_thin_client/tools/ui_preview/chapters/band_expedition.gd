@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 102
+const EXPECTED_CHECKPOINTS := 104
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -1015,10 +1015,10 @@ func _kit_states() -> void:
 	# them apart. This band keeps no pen, so its handling gear reaches nobody because nobody needed
 	# it; a reader that divided by that head count, or read the numerator alone, would light up a
 	# perfectly sound item at `0 of 0`.
-	var keeper_line := _kit_breakdown_line(short_popover, DetailFormat.KIT_LABEL_HURDLES)
+	var keeper_line := _kit_breakdown_line(short_popover, DetailFormat.KIT_LABEL_CROOK)
 	h._assert_hud("a job NOBODY is staffed on states no shortfall — 0 of 0 is not a warning",
 		not keeper_line.contains(DetailFormat.KIT_COVERAGE_SHORT_NEEDLE)
-			and keeper_line.contains(String.num(BandFx.KIT_CONDITION_HURDLES,
+			and keeper_line.contains(String.num(BandFx.KIT_CONDITION_CROOK,
 				DetailFormat.KIT_CONDITION_DECIMALS)))
 	h._assert_hud("…and it keeps the SOUND glyph, where the short spears wear the warning one",
 		keeper_line.contains(DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH)
@@ -1076,6 +1076,13 @@ const BILL_MATERIAL := "hurdles"
 const BILL_NEED := 0.05
 const BILL_INCOME := 0.02
 const BILL_STORE := 2.0
+## …and the SHIPPED DEFAULT'S own income, which is none at all. Material income is empty on every
+## band the sim produces today, so `0.0` is not an edge of this readout — it is its ordinary state,
+## and `BILL_INCOME` above is the one that cannot happen yet. On the strict `> 0` boundary the row it
+## drew was `▼ -0  Arriving` in WARN amber: a debit sign, a debit glyph and a warning ink, all three
+## over the number zero. Kept as its own const rather than folded into the block above because the
+## block above is the row in its ordinary MID-CLIMB state and both readings are worth a frame.
+const BILL_INCOME_NONE := 0.0
 ## Its disclosure key — `DetailFormat.breakdown_key(kind, band)`'s shape over the bill band's own
 ## entity, so the caret cannot collide with the reference band's Food / Morale / Growth popovers.
 const BAND_DISCLOSURE_UPKEEP := "upkeep:908"
@@ -1132,6 +1139,39 @@ func _standing_bill_states() -> void:
 			_kit_breakdown_line(popover, label).contains(amount))
 	_click_disclosure(BAND_DISCLOSURE_UPKEEP)
 
+	# **…AND THE SAME BAND WITH NOTHING ARRIVING**, which is what every band on the shipped sim looks
+	# like: no bench finishes hurdles yet, so the Arriving term is exactly `0`. A zero income is not a
+	# debit — `SourceForecast._rate_sign`'s rule, and the same one the food and fodder rows beside this
+	# one have always used. The WHOLE row is compared rather than a `contains`: sign, glyph and label are
+	# three separate decisions and a needle that checked one of them would pass while the other two
+	# stayed wrong. Composed from the format constants and the fixture number, never by asking
+	# `material_bill_row` what it thinks it prints.
+	#
+	# ⛔ **PNG-LESS AND UN-DRIVEN, WHICH IS NOT THE DEFAULT AND IS MEASURED.** Staged as a fourth
+	# SELECTION with its own disclosure clicks, this state left `compose_band_switch_forage` — eight
+	# chapters downstream — pressing its `Band:` picker into a popup that had been freed under the
+	# probe, five failures deep, reproducibly. The claims here are about a PRODUCER and a FORMATTER, so
+	# nothing about them needs a selection at all; asking the two directly makes the state cost the walk
+	# no HUD state and no frames.
+	var dry := _standing_bill_band_fixture()
+	dry["material_upkeep_income"] = [{"material_id": BILL_MATERIAL, "amount": BILL_INCOME_NONE}]
+	var dry_want := "%s%s %s%s  %s" % [DetailFormat.MORALE_BREAKDOWN_INDENT,
+		DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH,
+		SourceForecast.RATE_SIGN_POSITIVE,
+		DetailFormat.format_trimmed(BILL_INCOME_NONE, DetailFormat.MATERIAL_BILL_DECIMALS),
+		DetailFormat.MATERIAL_LABEL_ARRIVING]
+	var dry_lines: Array[String] = h._hud._disclosures.material_upkeep_breakdown_lines(dry)
+	var dry_row := _kit_breakdown_line("\n".join(dry_lines), DetailFormat.MATERIAL_LABEL_ARRIVING)
+	h._assert_hud("nothing arriving reads \"%s\" — a credit of zero, never a debit of it"
+			% dry_want.strip_edges(), dry_row == dry_want)
+	# **AND THE INK FOLLOWS THE GLYPH**, which is the third of the three and the one a parsed string
+	# cannot see: `detail_bbcode` picks the tint off the ▲/▼, so the claim is made on the MARKUP that
+	# renderer produces. Amber here would be the HUD warning a player about an account that is simply
+	# not moving.
+	h._assert_hud("…and it is tinted HEALTHY, not the WARN amber a debit takes",
+		DetailFormat.detail_bbcode(dry_lines).contains(
+			"[color=#%s]%s[/color]" % [HudStyle.HEALTHY_HEX, dry_want]))
+
 	# **THE NEGATIVE HALF — a band that owes no good draws NO row and registers NO caret.** Without it
 	# both frames above pass on a producer that emits unconditionally. It is the one place this readout
 	# parts company with Fodder, which keeps a dormant dash: a standing bill is a CONSEQUENCE of what
@@ -1184,6 +1224,13 @@ func _assert_fodder_row_fits() -> void:
 func _popover_text() -> String:
 	var label = h._hud._disclosures._breakdown_popover_label
 	return "" if label == null else (label as RichTextLabel).get_parsed_text()
+
+## The same popover as RAW BBCODE. `detail_bbcode` decides a breakdown row's ink from the sign glyph
+## it carries, and `get_parsed_text` above has already thrown the `[color=…]` runs away — so a claim
+## about the TINT can only be made here.
+func _popover_markup() -> String:
+	var label = h._hud._disclosures._breakdown_popover_label
+	return "" if label == null else (label as RichTextLabel).text
 
 ## The band's kit breakdown as one string — the PRODUCER's return, read directly. The `Gear` row that
 ## used to open this as a popover is retired (`docs/plan_standing_upkeep.md` §4.9 item 12), so there

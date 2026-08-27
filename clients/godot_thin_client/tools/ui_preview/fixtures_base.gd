@@ -159,7 +159,7 @@ const BUILD_TURNS_REMAINING := 11
 
 ## **NO PLANT ITEM DECLARES THE BUILD STAT YET** (issue #539 is the hoe), so a plant build's gear
 ## contribution is honestly `0` and the tile card renders no gear line. The ANIMAL fixtures carry a
-## real one — `hurdles` ships 8.5 per equipped keeper — which is where that readout is judged.
+## real one — the `crook` ships 0.5 per equipped keeper — which is where that readout is judged.
 const PLANT_BUILD_WORK_FROM_GEAR := 0.0
 
 ## **THE TERMS THE COMPOSE SHEET EVALUATES ITS OWN ESTIMATE FROM**, beside the sim's answer above.

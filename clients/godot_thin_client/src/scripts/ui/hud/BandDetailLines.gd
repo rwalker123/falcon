@@ -109,7 +109,7 @@ const BAND_FOOD_FODDER_CLAUSE_FORMAT := " · [color=#%s]%s fodder[/color]"
 #   `Upkeep: 2 hurdles  (7 turns)`
 #     hurdles
 #       ▼ -0.05  Wanted
-#       ▲ +0.00  Arriving
+#       ▲ +0  Arriving
 #       2  On the shelf
 #
 # ⛔ **THE VALUE NAMES ONE GOOD, AND THAT IS WHAT KEEPS IT HONEST.** Six hurdles and two rope are not

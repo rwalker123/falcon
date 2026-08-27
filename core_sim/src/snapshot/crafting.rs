@@ -33,9 +33,9 @@ use sim_runtime::{
 };
 
 use crate::{
-    components::{BandBench, BandEquipment, LocalStore, SourcePriority},
+    components::{BandBench, BandEquipment, EquipmentBatch, LocalStore, SourcePriority},
     crafting::{craft_discovery_id, title_from_id},
-    equipment_config::{EquipmentConfig, EquipmentStat, WearQuantum},
+    equipment_config::{EquipmentConfig, EquipmentStat, EquipmentTier, WearQuantum},
     intensification::knows,
     materials_config::MaterialsConfig,
     orders::FactionId,
@@ -170,10 +170,12 @@ pub(crate) struct BandCraftInputs<'a> {
     /// rather than per recipe, because a discovery lookup is a map probe and there are ten recipes
     /// naming three crafts.
     pub(crate) known_crafts: &'a BTreeMap<String, bool>,
-    /// The book's bench dials — `progress_per_worker_turn` is the one term of the bench's accrual
-    /// that lives on no recipe row, carried here so [`bench_state`] can publish the whole product
-    /// through the same [`crate::systems::rate_per_turn`] the bench applies.
-    pub(crate) crafting: &'a crate::recipes_config::CraftingTuning,
+    /// **The whole book**, because two readouts need different halves of it: `bench_state` needs the
+    /// `crafting` dials (`progress_per_worker_turn` is the one term of the bench's accrual that lives
+    /// on no recipe row) and [`crate::systems::bench_material_rate`] needs the recipe rows
+    /// themselves. Carrying the tuning alone would force the projection to re-derive the recipe from
+    /// [`Self::plans`] and become a second reading of the bench.
+    pub(crate) recipes: &'a RecipesConfig,
     /// **The reference job an equipment life gauge is quoted against**, in work units — the ladder's
     /// [`crate::intensification::REFERENCE_BUILD_RUNG`] `work_cost`, resolved once per capture. See
     /// [`quantum_units_per_noun`] for why a build's wear cannot be counted in its own units.
@@ -191,15 +193,10 @@ pub(crate) struct BandCraftState {
     /// **WHAT THE BENCH IS MAKING, PER TURN, PER MATERIAL** — the forward half of a band's
     /// `material_upkeep_income` (`docs/plan_standing_upkeep.md` §2.7).
     ///
-    /// A bench finishes one item when its meter crosses the recipe's `work`, so its per-turn output
-    /// is `rate_per_turn / work × the output's amount` — **the same rate this row publishes**, which
-    /// is the one `advance_crafting` accrues with, so the projection and the accrual cannot describe
-    /// different benches. It is a **projection** rather than a trailing count, and it is empty for an
-    /// idle or blocked bench because that rate is `0`.
-    ///
-    /// **Only MATERIAL outputs count** — a bench making a sled adds nothing to a material ledger. It
-    /// is resolved here rather than beside the band's other ledgers because on the shipped roster the
-    /// pen's `hurdles` have **no producer but a bench**, so a ledger without this term would read
+    /// **Struck by [`crate::systems::bench_material_rate`], never here**: the wire row and
+    /// the material-shortfall Alert judge the same band's inflow, so they read one producer. It is
+    /// resolved on this row rather than beside the band's other ledgers because on the shipped roster
+    /// the pen's `hurdles` have **no producer but a bench**, so a ledger without this term would read
     /// zero income for ever for the one material a pen actually eats.
     pub(crate) bench_material_rate: BTreeMap<String, f32>,
 }
@@ -233,7 +230,14 @@ pub(crate) fn band_craft_state(
         })
         .collect();
     let bench_row = bench_state(bench, store, inputs, &tiers_by_material);
-    let bench_material_rate = bench_material_rate(&bench_row, running, inputs);
+    let bench_material_rate = crate::systems::bench_material_rate(
+        bench,
+        store,
+        inputs.recipes,
+        inputs.materials,
+        inputs.equipment,
+        wear,
+    );
     BandCraftState {
         material_batches: material_batches(store, inputs.materials),
         bench: bench_row,
@@ -241,32 +245,6 @@ pub(crate) fn band_craft_state(
         equipment_batches: equipment_batches(wear, inputs.equipment, inputs.reference_build_cost),
         bench_material_rate,
     }
-}
-
-/// See [`BandCraftState::bench_material_rate`]. `passes` is deliberately fractional — a bench two
-/// turns from an item is making half of one a turn, which is exactly what a *rate* means.
-fn bench_material_rate(
-    row: &BenchState,
-    running: Option<&str>,
-    inputs: &BandCraftInputs<'_>,
-) -> BTreeMap<String, f32> {
-    let mut rates = BTreeMap::new();
-    let Some(id) = running else {
-        return rates;
-    };
-    let Some(plan) = inputs.plans.iter().find(|plan| plan.id == id) else {
-        return rates;
-    };
-    if row.work <= 0.0 || row.rate_per_turn <= 0.0 {
-        return rates;
-    }
-    let passes = row.rate_per_turn / row.work;
-    for output in &plan.recipe.outputs {
-        if let Some(material) = output.material_id() {
-            *rates.entry(material.to_string()).or_insert(0.0) += output.amount * passes;
-        }
-    }
-    rates
 }
 
 /// **What a recipe with no bench material resolves to: nothing works.** `validate` makes a recipe
@@ -439,7 +417,7 @@ fn bench_state(
         // client that multiplied `workers × work` would read a bare-handed organic's `0.5` as `1.0`
         // and promise a finish in half the turns it takes. Resolved through the same helper
         // `advance_crafting` accrues with, so the published rate is the applied rate.
-        rate_per_turn: rate_per_turn(bench.workers, inputs.crafting, tiers.speed),
+        rate_per_turn: rate_per_turn(bench.workers, &inputs.recipes.crafting, tiers.speed),
         // **What the store already lost for the job in flight** — the withdrawn amounts, not the
         // recipe's stated inputs, so a clear or a swap can name what it destroys. Empty on an
         // undrawn bench, which is the honest answer: nothing has been cut yet.
@@ -827,16 +805,11 @@ fn equipment_batches(
                     } else {
                         0.0
                     };
-                    let full_unit_quanta = if per_noun > 0.0 {
-                        tier.starting_durability / per_noun
-                    } else {
-                        0.0
-                    };
-                    let fraction = if full_unit_quanta > 0.0 {
-                        quanta_left / full_unit_quanta
-                    } else {
-                        0.0
-                    };
+                    // **The gauge's own fraction, struck by the one producer** — see
+                    // [`batch_life_fraction`]. It is `quanta_left / (starting_durability / per_noun)`
+                    // with the noun divided out, so the colour does not depend on the unit the row is
+                    // *worded* in.
+                    let fraction = batch_life_fraction(tier, batch);
                     EquipmentBatchState {
                         item_id: item.to_string(),
                         tier_id: batch.tier.clone(),
@@ -871,6 +844,29 @@ fn life_wording(worn: f32, quanta_left: f32, quantum: WearQuantum) -> String {
         return format!("~1 {} left", quantum.singular_noun());
     }
     format!("{:.0} {} left", quanta_left, quantum.noun())
+}
+
+/// **THE LIFE LEFT IN ONE BATCH, AS A FRACTION OF ONE FRESH UNIT** — `(count × starting_durability
+/// − wear) / starting_durability`, at **this batch's own tier**, which is the number
+/// [`life_severity`] colours.
+///
+/// A batch of `count` holds `count` units' worth of life spent one unit at a time, so **the reading
+/// runs above `1.0`**: two fresh hoes read `2.0`, and one two-thirds through its first hoe reads
+/// `1.33`. That is what makes it a fuel gauge for a stockpile rather than for the unit in hand, and
+/// it is why it is deliberately **not** clamped.
+///
+/// # ⛔ ONE PRODUCER, BECAUSE THE PANEL AND THE DOCK BOTH READ IT
+///
+/// `equipmentBatches` publishes it and [`crate::systems::labor`]'s kit-life notification edge-gates
+/// on it. A second reading drifted in three ways at once, all of them on the same band: it took the
+/// item's **default** tier rather than the batch's, it **summed** `wear` across batches so two
+/// half-worn ones read `0` — a `danger` Alert on mostly-fresh gear — and it clamped to `1.0` so a
+/// two-hoe batch at `1.30` was announced as `0.30`, *warn*, while the panel beside it read *healthy*.
+pub(crate) fn batch_life_fraction(tier: &EquipmentTier, batch: &EquipmentBatch) -> f32 {
+    if tier.starting_durability <= 0.0 {
+        return 0.0;
+    }
+    (tier.starting_durability * batch.count as f32 - batch.wear).max(0.0) / tier.starting_durability
 }
 
 /// The bar's colour, off the two seams in `equipment.json`'s `life_readout`. See
@@ -1035,7 +1031,7 @@ pub(crate) fn builtin_craft_inputs() -> &'static BandCraftInputs<'static> {
             equipment,
             plans: PLANS.get_or_init(|| plan_craft_offers(recipes, equipment)),
             known_crafts: KNOWN.get_or_init(BTreeMap::new),
-            crafting: &recipes.crafting,
+            recipes,
             reference_build_cost: LADDER
                 .get_or_init(crate::intensification::LadderConfig::builtin)
                 .reference_build_cost(),
@@ -1047,6 +1043,149 @@ pub(crate) fn builtin_craft_inputs() -> &'static BandCraftInputs<'static> {
 mod tests {
     use super::*;
     use crate::equipment_config::WearQuantum;
+
+    /// ⛔ **THE DOCK AND THE PANEL READ ONE LIFE FRACTION** (`docs/plan_standing_upkeep.md` §4.9
+    /// item 12) — [`batch_life_fraction`], per batch, at the batch's own tier.
+    ///
+    /// The kit-life notification used to strike its own `(default durability − Σ batch wear) /
+    /// durability`, clamped to `[0, 1]`, and the two readings parted company on ordinary ledgers:
+    ///
+    /// | what the band holds | the panel row | what the dock said |
+    /// |---|---|---|
+    /// | 2 hoes in **one** batch, seven tenths through the first | `1.30`, healthy | `0.30` — **warn** |
+    /// | **two** batches, each half through its unit | `0.50` each, healthy | `0.00` — **danger** |
+    ///
+    /// Both are read here off the same ledger: the dock's own fraction, and the severity
+    /// `equipmentBatches` publishes for every row of that item. The **third** arrangement is the
+    /// liveness half — a genuinely spent unit must still colour, or *"they always agree"* would pass
+    /// on a pair of readings that never say anything.
+    #[test]
+    fn the_dock_and_the_ledger_read_one_kit_life() {
+        /// The item the review's two arrangements are about: hoes wear on `build_progress` and on
+        /// `upkeep_work`, so a keeper band really does run them down.
+        const HOES: &str = "hoes";
+        /// A stockpile the panel reads **above one fresh unit** — the reading a clamp destroys.
+        const A_PAIR: u32 = 2;
+        /// One unit, alone in its batch.
+        const A_SINGLE: u32 = 1;
+        /// Seven tenths through the unit in hand.
+        const MOSTLY_THROUGH_THE_FIRST: f32 = 0.7;
+        /// Halfway through the unit in hand — twice over, in two separate batches.
+        const HALF_THROUGH: f32 = 0.5;
+        /// Nineteen twentieths through the only unit there is: below `life_readout.danger_fraction`
+        /// on **any** honest reading of one batch.
+        const NEARLY_SPENT: f32 = 0.95;
+
+        let equipment = EquipmentConfig::builtin();
+        let reference = crate::intensification::LadderConfig::builtin().reference_build_cost();
+        let tier = equipment
+            .item(HOES)
+            .expect("the shipped roster carries hoes")
+            .default_tier();
+        let durability = tier.starting_durability;
+        assert!(
+            durability > 0.0,
+            "fixture: the item must carry a life, or every fraction below is zero by construction"
+        );
+
+        // `(the batches this band holds, what the panel and the dock must both say)`.
+        let arrangements: [(&str, Vec<EquipmentBatch>, &str); 3] = [
+            (
+                "two in one batch, seven tenths through the first",
+                vec![batch(
+                    A_PAIR,
+                    &tier.id,
+                    MOSTLY_THROUGH_THE_FIRST * durability,
+                )],
+                LIFE_HEALTHY,
+            ),
+            (
+                "two batches, each half through its unit",
+                vec![
+                    batch(A_SINGLE, &tier.id, HALF_THROUGH * durability),
+                    batch(A_SINGLE, &tier.id, HALF_THROUGH * durability),
+                ],
+                LIFE_HEALTHY,
+            ),
+            (
+                "one unit, nearly spent",
+                vec![batch(A_SINGLE, &tier.id, NEARLY_SPENT * durability)],
+                LIFE_DANGER,
+            ),
+        ];
+
+        for (name, batches, expected) in arrangements {
+            let mut wear = BandEquipment::default();
+            wear.restore_batches(HOES, batches);
+
+            let rows: Vec<_> = equipment_batches(&wear, &equipment, reference)
+                .into_iter()
+                .filter(|row| row.item_id == HOES && row.count > 0)
+                .collect();
+            assert!(
+                !rows.is_empty(),
+                "{name}: fixture — the ledger must publish a row per batch held"
+            );
+            for row in &rows {
+                assert_eq!(
+                    row.life_severity, expected,
+                    "{name}: the panel row colours {expected}"
+                );
+            }
+
+            let dock = crate::systems::labor::kit_life_fractions(&equipment, Some(&wear));
+            let fraction = dock.get(HOES).copied().unwrap_or_else(|| {
+                panic!("{name}: the dock reads a life for an item the band holds")
+            });
+            assert_eq!(
+                life_severity(fraction, &equipment),
+                expected,
+                "{name}: **AND THE DOCK SAYS THE SAME THING** — it is the same producer, read once \
+                 per batch and rolled up to the worst (got {fraction})"
+            );
+        }
+
+        // **The two shapes a second reading destroyed**, pinned directly so a future clamp or a
+        // re-summed `wear_of` cannot pass by accident.
+        let mut stockpile = BandEquipment::default();
+        stockpile.restore_batches(
+            HOES,
+            vec![batch(
+                A_PAIR,
+                &tier.id,
+                MOSTLY_THROUGH_THE_FIRST * durability,
+            )],
+        );
+        assert!(
+            crate::systems::labor::kit_life_fractions(&equipment, Some(&stockpile))[HOES] > 1.0,
+            "**A STOCKPILE READS ABOVE ONE FRESH UNIT** — a clamp to `[0, 1]` is what turned 1.30 \
+             into a warning"
+        );
+
+        let mut two_halves = BandEquipment::default();
+        two_halves.restore_batches(
+            HOES,
+            vec![
+                batch(A_SINGLE, &tier.id, HALF_THROUGH * durability),
+                batch(A_SINGLE, &tier.id, HALF_THROUGH * durability),
+            ],
+        );
+        assert!(
+            crate::systems::labor::kit_life_fractions(&equipment, Some(&two_halves))[HOES] > 0.0,
+            "**WEAR IS NOT SUMMED ACROSS BATCHES** — adding two half-worn units to one whole one is \
+             what raised a `danger` Alert on mostly-fresh gear"
+        );
+    }
+
+    /// One batch of `count` units of `tier`, `worn` condition off the unit in hand.
+    fn batch(count: u32, tier: &str, worn: f32) -> EquipmentBatch {
+        EquipmentBatch {
+            count,
+            tier: tier.to_string(),
+            grade: None,
+            wear: worn,
+        }
+    }
 
     /// **THE BUILD QUANTUM IS THE ONE WHOSE UNIT IS NOT ITS NOUN**, and this pins the divisor that
     /// turns one into the other — `quantum_units_per_noun`'s only non-identity arm.

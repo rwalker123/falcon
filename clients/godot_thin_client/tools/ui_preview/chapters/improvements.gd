@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 186
+const EXPECTED_CHECKPOINTS := 191
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -1409,6 +1409,68 @@ func run(harness) -> void:
 		{"material_id": BLOCKED_MATERIAL, "amount": HOVER_MATERIAL_DEMAND}]
 	h._assert_hud("…while a source whose GOODS are covered keeps the role sentence (%s)"
 		% _under_kept_hover(paid_good), _under_kept_hover(paid_good) == under_kept)
+
+	# ⛔ **AND THE ARM FIRES WITH THE WORK ACCOUNT FULLY PAID, which `short_good` above cannot show.**
+	# That fixture is short of BOTH currencies — its `patch_upkeep_shortfall` is positive — so it passes
+	# whether the card's gate reads one account or two, and the gate really did read one: it was
+	# `SourceForecast.rung_is_under_kept`, i.e. `crew > 0 and work shortfall >= UPKEEP_WORK_MIN`. A
+	# tended patch whose keepers are paid in full and whose stone is not therefore drew NO `⚠` and NO
+	# hover, while `BandPanelController._work_source_models` took the disjunction and put
+	# "Short of stone…" on the same source's work row in DANGER ink. **Two surfaces, one source,
+	# opposite statements.**
+	#
+	# The reference tile is already paid in full (`supplied == demand`), so the only thing this fixture
+	# moves is the goods.
+	var goods_only := BaseFx.food_tile_fixture()
+	goods_only["patch_is_cultivated"] = true
+	goods_only["patch_cultivation_progress"] = SourceForecast.BUILD_METER_FULL
+	goods_only["patch_upkeep_material_demand"] = [
+		{"material_id": BLOCKED_MATERIAL, "amount": HOVER_MATERIAL_DEMAND}]
+	goods_only["patch_upkeep_material_supplied"] = [
+		{"material_id": BLOCKED_MATERIAL, "amount": HOVER_MATERIAL_SUPPLIED}]
+	RungFx.stamp_patch(goods_only, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	# THE PRECONDITION, and it is the whole point of the fixture: the WORK account is not short, so the
+	# old gate was silent here — and the rung the goods belong to is the tended one.
+	h._assert_hud("the goods-only patch is paid in HANDS, so the work gate alone says nothing",
+		not SourceForecast.is_under_kept(goods_only, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+			and SourceForecast.at_risk_rung(goods_only, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+				SourceForecast.SOURCE_KIND_FORAGE) == SourceForecast.IMPROVEMENT_CULTIVATE)
+	h._assert_hud("…yet the card's own gate calls it AT RISK, the goods being short",
+		DetailFormat.rung_is_at_risk(goods_only, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+			SourceForecast.SOURCE_KIND_FORAGE, SourceForecast.IMPROVEMENT_CULTIVATE))
+	# …and the hover NAMES the good, composed from the format and the fixture's numbers rather than
+	# asked of `material_short_note` — `good_sentence` above is that composition and is reused whole.
+	h._assert_hud("…and its hover names the missing good — \"%s\" (got \"%s\")"
+			% [good_sentence, _under_kept_hover(goods_only)],
+		_under_kept_hover(goods_only) == good_sentence)
+	# **AND AS RENDERED — the `⚠` and the state word on the tended row itself.** The producer claims
+	# above pass on a card that never calls them, which is exactly how this arm went missing from the
+	# card while the work board had it.
+	h._hud._band_labor._player_band = BandFx.cultivating_forage_band_fixture(
+		int(goods_only["x"]), int(goods_only["y"]))
+	h._hud._band_labor._player_bands = [h._hud._band_labor.player_band()]
+	h._hud.clear_selection()
+	h._show_tile(goods_only)
+	await h._settle()
+	var goods_only_row: String = h._hud.tile_detail.text
+	print("ui_preview: goods short, hands paid  %s"
+		% Readout.detail_excerpt(goods_only_row, CULTIVATION_ROW_KEY))
+	h._assert_hud("…so the tended row carries the hazard mark and the plant web's state word",
+		Readout.detail_excerpt(goods_only_row, CULTIVATION_ROW_KEY).contains(
+				HudSelectionVocab.RUNG_HAZARD_GLYPH)
+			and Readout.detail_excerpt(goods_only_row, CULTIVATION_ROW_KEY).contains(
+				HudSelectionVocab.RUNG_UNDER_KEPT_PLANT_WORD))
+	# **THE NEGATIVE, on the same tile with the goods covered** — without it every claim above is
+	# satisfied by a card that marks every built rung.
+	var goods_paid := goods_only.duplicate(true)
+	goods_paid["patch_upkeep_material_supplied"] = [
+		{"material_id": BLOCKED_MATERIAL, "amount": HOVER_MATERIAL_DEMAND}]
+	h._hud.clear_selection()
+	h._show_tile(goods_paid)
+	await h._settle()
+	h._assert_hud("…while the same patch with its goods COVERED carries no mark at all",
+		not Readout.detail_excerpt(h._hud.tile_detail.text, CULTIVATION_ROW_KEY).contains(
+			HudSelectionVocab.RUNG_HAZARD_GLYPH))
 
 	# **AND THE HOVER CARRIES NO COUNTDOWN, which is the asymmetry with the work board stated as a
 	# claim** — that board takes the same first sentence plus `Tended is lost in 3 turns.`, because

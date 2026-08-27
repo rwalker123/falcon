@@ -690,9 +690,27 @@ pub(crate) fn herds_to_array(
         //
         // `""` means the roster could not resolve the species; the client reads that as "no herd
         // answer" and falls back to `SubsistenceSection.defaultHuntKitId`, exactly as the sim does.
-        // Newest live slot on `HerdTelemetryState`, following the two retired `*EstimatesKitId`
-        // slots the forecast query replaced — those are `(deprecated)` and are decoded nowhere.
+        // It follows the two retired `*EstimatesKitId` slots the forecast query replaced — those
+        // are `(deprecated)` and are decoded nowhere.
         let _ = dict.insert("default_kit_id", herd.defaultKitId().unwrap_or(""));
+        // **WHAT THIS HERD'S KEEPERS ARE CARRYING** — the animal twin of the plant web's pair
+        // below, set per WORK SITE by `upkeep_kit <faction> <herd_id> [kit <id>]`
+        // (`docs/plan_standing_upkeep.md` §2.7). The band is the pool of hands and goods to draw
+        // from; it does not decide which tool a given herd is kept with, so this rides the herd row
+        // exactly as `build_kit_id` above rides the queue entry.
+        //
+        // It states the **RESOLVED** kit, never *"the player named none"*: the default is derived
+        // from this site's own food web, so a row that named nothing would otherwise read empty
+        // while the keepers were out with hurdling. `""` means NO band of the viewing faction works
+        // this herd at all — an explicit bare-handed pick crosses as the roster's own bare kit id,
+        // which is a real selection and reads differently. Newest slot on `HerdTelemetryState`.
+        let _ = dict.insert("upkeep_kit_id", herd.upkeepKitId().unwrap_or(""));
+        // **WHETHER THAT ID IS THE PLAYER'S WORD OR THE WEB'S DERIVATION** — not recoverable from
+        // the id alone, because a player may name the very kit the derivation would have picked. A
+        // picker draws its `(default)` mark and offers "back to default" off this and not off a
+        // second client-side derivation. Decoded on both webs so one reader serves a herd and a
+        // patch alike.
+        let _ = dict.insert("upkeep_kit_named", herd.upkeepKitNamed());
         array.push(&dict.to_variant());
     }
     array
@@ -1288,6 +1306,13 @@ pub(crate) fn forage_patches_to_array(
             "neglect_grace_remaining",
             i64::from(patch.neglectGraceRemaining()),
         );
+        // **WHAT THIS PATCH'S KEEPERS ARE CARRYING** — the plant twin of the herd block's pair; see
+        // there for why the wire states the RESOLVED kit, why `""` means no band of the viewing
+        // faction works this source at all, and why the "named" flag is not recoverable from the id.
+        // Set per WORK SITE by `upkeep_kit <faction> <x> <y> [kit <id>]`, so it rides the worked row
+        // rather than the band. Newest slot on `ForagePatchState`.
+        let _ = dict.insert("upkeep_kit_id", patch.upkeepKitId().unwrap_or(""));
+        let _ = dict.insert("upkeep_kit_named", patch.upkeepKitNamed());
         // THE BUILD CREWS ARE RETIRED with `crew_needed` (docs/plan_standing_upkeep.md section
         // 2.2). They floored the compose sheet's worker cap because that cap was inverted out of the
         // TAKE and a building crew was paid a dipped take, so a 25-turn improvement asked for FEWER

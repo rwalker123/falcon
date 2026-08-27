@@ -2458,3 +2458,105 @@ fn the_standing_material_bill_reaches_the_client() {
         "the bench drew its wood off the published store: {wood_left} against {wood}"
     );
 }
+
+/// ⛔ **A BENCH THAT CAN DRAW NOTHING PROMISES NOTHING** (`docs/plan_standing_upkeep.md` §2.7).
+///
+/// `materialUpkeepIncome`'s bench term is a *projection*, and a projection of income that never
+/// arrives is worse than no projection at all. `advance_crafting` skips a bench whose pile is neither
+/// **drawn** nor **affordable**, so a band with `hurdles` queued and no `wood` banks zero for ever —
+/// while the ledger read the full `ratePerTurn / work × amount` and drove `materialUpkeepIncome`
+/// **above** `materialUpkeepNeed`, printing a runway of `∞` and leaving the caret untinted in exactly
+/// the state the standing bill exists to announce.
+///
+/// **The crew is on the bench the whole time**, so an empty row here can only mean the draw — a
+/// `ratePerTurn` of zero would make the claim vacuous, and it is asserted positive on both arms.
+/// The sim's own answer is read beside it: the projection and `advance_crafting`'s progress agree
+/// on both halves of the pairing.
+#[test]
+fn a_bench_that_cannot_draw_its_pile_publishes_no_income() {
+    const WOOD: &str = "wood";
+    const HURDLES: &str = "hurdles";
+    /// A crew big enough that the rate is unmistakably positive while the `work: 7` recipe still
+    /// takes more than one turn — so the *stocked* arm shows progress without a completion resetting
+    /// the meter this reads.
+    const BENCH_HANDS: u32 = 4;
+    /// Enough wood for a pass, banked at the material's own axes.
+    const A_PASS_OF_WOOD: f32 = 40.0;
+
+    let (mut app, band) = world();
+    deposit(
+        &mut app,
+        band,
+        HIDE,
+        PLENTY,
+        &[(TOUGHNESS, 0.5), (SUPPLENESS, 0.6)],
+    );
+    strip(&mut app, band, WOOD);
+    {
+        let mut bench = app
+            .world
+            .get_mut::<BandBench>(band)
+            .expect("a spawned band carries a bench");
+        bench.set_job(HURDLES, BENCH_HANDS);
+    }
+
+    // --- no wood: the row is absent, and the bench really does bank nothing --------------------
+    let short = publish(&mut app, band);
+    assert!(
+        short.bench.rate_per_turn > 0.0,
+        "fixture: the crew must be on the bench, or an absent income row proves only that nobody \
+         is working (rate {})",
+        short.bench.rate_per_turn
+    );
+    assert!(
+        short.bench.shortfalls.iter().any(|id| id == WOOD),
+        "fixture: the bench must be short of exactly the input this arm stripped, got {:?}",
+        short.bench.shortfalls
+    );
+    assert!(
+        short
+            .material_upkeep_income
+            .iter()
+            .all(|(id, _)| id != HURDLES),
+        "**A BENCH THAT CANNOT CUT ITS PILE MAKES NOTHING** — and the ledger must say so rather \
+         than promise a rate that never arrives: {:?}",
+        short.material_upkeep_income
+    );
+    app.world.run_system_once(advance_crafting);
+    assert_eq!(
+        publish(&mut app, band).bench.progress,
+        0.0,
+        "…and the SIM agrees, which is the point: `advance_crafting` banks nothing for a bench it \
+         cannot draw for"
+    );
+
+    // --- the wood arrives: the same bench, the same crew, and now a real rate -------------------
+    deposit(
+        &mut app,
+        band,
+        WOOD,
+        A_PASS_OF_WOOD,
+        &[("hardness", 0.5), ("pliancy", 0.6)],
+    );
+    app.world.run_system_once(advance_crafting);
+    let stocked = publish(&mut app, band);
+    assert!(
+        stocked.bench.progress > 0.0,
+        "fixture: the restocked bench must actually bank a turn, or the pairing is one-sided"
+    );
+    let promised = stocked
+        .material_upkeep_income
+        .iter()
+        .find(|(id, _)| id == HURDLES)
+        .map(|(_, amount)| *amount)
+        .unwrap_or_else(|| {
+            panic!(
+                "a bench that CAN draw publishes its per-turn output, got {:?}",
+                stocked.material_upkeep_income
+            )
+        });
+    assert!(
+        promised > 0.0,
+        "…and it is a real rate rather than a row of zero: {promised}"
+    );
+}

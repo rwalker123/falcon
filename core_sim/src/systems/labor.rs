@@ -207,6 +207,10 @@ pub struct LaborConfigs<'w> {
     /// (`docs/plan_crafting_and_materials.md` §1). The *rows* come from the source's own config; only
     /// the banding lives here, because deriving a band needs the material's axis list.
     pub materials: Res<'w, crate::materials_config::MaterialsConfigHandle>,
+    /// The recipe book — read for **one** thing here: what this band's bench will bank per turn
+    /// ([`crate::systems::bench_material_rate`]), which is half the inflow the material-shortfall
+    /// Alert judges against. The bench itself is `advance_crafting`'s.
+    pub recipes: Res<'w, crate::recipes_config::RecipesConfigHandle>,
 }
 
 /// **WHAT EACH OF A BAND'S SOURCES GETS OUT OF ITS MAINTENANCE POOLS** — one work amount per
@@ -1517,6 +1521,54 @@ fn settle_scarce_store(demands: &[(SourcePriority, f32)], available: f32) -> Vec
     settled
 }
 
+/// **HOW FAR THIS BAND'S HANDS ACTUALLY GO** — a patch inside `band_work_range`, a herd inside
+/// `hunt_reach`, and nothing beyond either.
+///
+/// # ⛔ EVERY SETTLEMENT STRUCK BEFORE THE ASSIGNMENT LOOP MUST ASK IT
+///
+/// Both arms of the loop lapse an out-of-reach row and `continue` **past** every keeping draw and
+/// material spend beneath them, so a settlement that reserved a store for that row would hold a
+/// reservation nothing ever draws — starving the row that *is* in reach with a shortfall it did not
+/// cause. [`settle_pen_hay`] carried the rule inline first; it is a type here so
+/// [`settle_material_upkeep`] beside it cannot state a second version of it.
+///
+/// The failure it closes: a band keeping two `Normal` pens, one past the leash, with exactly one
+/// pen's hurdles on the shelf. Each was settled half; the out-of-leash pen spent nothing; the
+/// **in-reach** pen was judged half-short and took the neglect counter, the decay fraction and the
+/// shed.
+#[derive(Clone, Copy)]
+struct BandReach {
+    band_pos: UVec2,
+    grid_width: u32,
+    wrap_horizontal: bool,
+    /// [`crate::labor_config::LaborConfig::band_work_range`] — the Forage arm's own lapse distance.
+    work_range: u32,
+    /// [`crate::labor_config::LaborConfig::hunt_reach`] — the Hunt arm's.
+    hunt_reach: u32,
+}
+
+impl BandReach {
+    /// **Will the assignment loop reach this row this turn?** A herd the registry no longer carries
+    /// is `false`, because the Hunt arm lapses that row on the very same `continue`.
+    fn holds(&self, target: &LaborTarget, registry: &HerdRegistry) -> bool {
+        let (position, limit) = match target {
+            LaborTarget::Forage { tile, .. } => (*tile, self.work_range),
+            LaborTarget::Hunt { fauna_id, .. } => match registry.find(fauna_id) {
+                Some(herd) => (herd.position(), self.hunt_reach),
+                None => return false,
+            },
+            // Every other role is worked where the band stands, so there is no distance to fail.
+            _ => return true,
+        };
+        crate::grid_utils::hex_distance_wrapped(
+            self.band_pos,
+            position,
+            self.grid_width,
+            self.wrap_horizontal,
+        ) <= limit
+    }
+}
+
 /// **THE HAY SPLIT, STRUCK ONCE FOR EVERY PEN THIS BAND KEEPS** — the fix for the positional
 /// allocation described on [`settle_scarce_store`], and the one place the corral arm's pasture-and-hay
 /// arithmetic lives. Served by [`settle_scarce_store`], so within one priority tier a short `FODDER`
@@ -1548,10 +1600,7 @@ fn settle_pen_hay(
     registry: &HerdRegistry,
     stores: &LocalStore,
     foddering_known: bool,
-    band_pos: UVec2,
-    hunt_reach: u32,
-    grid_width: u32,
-    wrap_horizontal: bool,
+    reach: BandReach,
 ) -> HashMap<String, PenFeedShare> {
     /// One pen's bid: its id, the player's rank on the row, its grass demand, the share of that
     /// demand the footprint covers, and the hay it is asking the `FODDER` store for.
@@ -1577,13 +1626,8 @@ fn settle_pen_hay(
         if !herd.is_corralled() {
             continue;
         }
-        if crate::grid_utils::hex_distance_wrapped(
-            band_pos,
-            herd.position(),
-            grid_width,
-            wrap_horizontal,
-        ) > hunt_reach
-        {
+        // **The gate the corral arm itself applies** — see [`BandReach`].
+        if !reach.holds(&assignment.target, registry) {
             continue;
         }
         // The grass this pen would eat if nothing else fed it, and the gap its footprint leaves —
@@ -1745,10 +1789,18 @@ fn settle_material_upkeep(
     stores: &LocalStore,
     build: BuildMaterialDraw,
     build_priority: SourcePriority,
+    reach: BandReach,
 ) -> MaterialSettlement {
     let mut upkeep: Vec<MaterialUpkeepShare> =
         vec![MaterialUpkeepShare::default(); assignments.len()];
     for (index, assignment) in assignments.iter().enumerate() {
+        // **A ROW THE ARM WILL NOT REACH BIDS FOR NOTHING** — [`BandReach`]'s own rule, the same one
+        // [`settle_pen_hay`] applies to the hay. The arm `continue`s past `apply_material_keeping`
+        // for an out-of-leash row, so a claim settled here would reserve hurdles nothing ever spends
+        // and leave the pen that *is* in reach judged short.
+        if !reach.holds(&assignment.target, registry) {
+            continue;
+        }
         upkeep[index].demanded = match &assignment.target {
             LaborTarget::Forage { tile, .. } => forage_registry
                 .patch(*tile)
@@ -2082,6 +2134,13 @@ pub fn advance_labor_allocation(
     // **The materials table** (`docs/plan_crafting_and_materials.md` §1) — resolved once, because it
     // decides only how a stated reading BANDS. What each source yields is that source's own config.
     let materials_cfg = configs.materials.get();
+    // The recipe book, for the bench half of `LaborAllocation::material_income` — see
+    // [`LaborConfigs::recipes`].
+    let recipes_cfg = configs.recipes.get();
+    // **A band with no `BandEquipment` at all** — a hand-built test world may spawn a bare cohort,
+    // and `bench_tiers` wants a wear ledger to read a live tool out of. An empty one is the honest
+    // answer for a band that owns nothing: every tier falls back to the material's bare-handed rate.
+    let no_kit_at_all = BandEquipment::default();
     // The **no-equipment baselines** of the two carry kits. `labor_config.json`'s rates are what a
     // sledless party drags and a bare-handed forager holds; the *equipped* side of each lives on its
     // item's own tier now, and `EquipmentConfig::{hunt,forage}_per_worker_biomass_capacity` is what
@@ -2261,6 +2320,16 @@ pub fn advance_labor_allocation(
         }
         let Ok(band_pos) = tiles.get(cohort.current_tile).map(|tile| tile.position) else {
             continue;
+        };
+        // **HOW FAR THIS BAND'S HANDS GO**, bundled once for every settlement struck before the
+        // assignment loop — see [`BandReach`] for why a settlement that ignores it starves the rows
+        // that *are* in reach.
+        let band_reach = BandReach {
+            band_pos,
+            grid_width,
+            wrap_horizontal,
+            work_range,
+            hunt_reach,
         };
         // Productivity modifier stack (wellbeing): scale every yield by the band's output
         // multiplier at PAYOUT. One call — future modifiers slot into `output_multiplier`.
@@ -2513,6 +2582,7 @@ pub fn advance_labor_allocation(
             &cohort.stores,
             build_want,
             build_priority,
+            band_reach,
         );
         // **AND THE BUILD'S SHARE IS SPENT HERE, at the coverage the store could pay.** The materials
         // go in as the meter climbs — `coverage` scales the accrual in every build arm below, so the
@@ -2541,10 +2611,7 @@ pub fn advance_labor_allocation(
                 FODDERING_DISCOVERY_ID,
                 knowledge_threshold,
             ),
-            band_pos,
-            hunt_reach,
-            grid_width,
-            wrap_horizontal,
+            band_reach,
         );
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
             let workers = assignment.workers;
@@ -3553,7 +3620,7 @@ pub fn advance_labor_allocation(
                             entry_declares_a_rung,
                             meter_rot,
                             field_cost_multiplier,
-                            build_coverage,
+                            entry_material_coverage,
                         )
                     {
                         // The Field is the top of the plant branch, so finishing it is always
@@ -5097,8 +5164,10 @@ pub fn advance_labor_allocation(
             }
         }
         // **Reported, never recomputed** — the amounts `credit_material_yield` actually deposited,
-        // which is the discipline `SourceYield::materials` already carries. What a **bench** adds is
-        // resolved at capture, because a bench is not a source row.
+        // which is the discipline `SourceYield::materials` already carries. This is only **half** the
+        // band's inflow: a bench is not a source row and deposits nothing until its meter crosses, so
+        // its forward rate joins here through `LaborAllocation::material_income` — the one producer
+        // the wire row and the shortfall Alert both read.
         for row in &yields {
             for payoff in &row.materials {
                 *allocation
@@ -5121,6 +5190,18 @@ pub fn advance_labor_allocation(
             &kit_life_before,
             &kit_life_fractions(&equipment_cfg, band_equipment.as_deref()),
         );
+        // **THE WHOLE INFLOW, THROUGH THE WIRE ROW'S OWN PRODUCER** — the credited take plus what
+        // this band's bench will bank. `hurdles` have no producer but a bench on the shipped roster,
+        // so an Alert struck on the take alone fires for every band that keeps a pen.
+        let band_material_income =
+            allocation.material_income(&crate::systems::bench_material_rate(
+                bench.as_deref(),
+                &cohort.stores,
+                &recipes_cfg,
+                &materials_cfg,
+                &equipment_cfg,
+                band_equipment.as_deref().unwrap_or(&no_kit_at_all),
+            ));
         announce_material_shortfall(
             &mut event_log,
             tick.0,
@@ -5128,6 +5209,7 @@ pub fn advance_labor_allocation(
             band_id,
             &mut allocation,
             &cohort.stores,
+            &band_material_income,
         );
         if !kept_pens.is_empty() {
             let per_pen = if knows(
@@ -5959,7 +6041,22 @@ fn charge_build_wear(
 /// **EVERY KIT ITEM'S LIFE, AS A FRACTION OF ONE FRESH UNIT** — the reading
 /// `snapshot::crafting::life_severity` colours, taken here so a turn's wear can be read as a
 /// **transition** rather than as a level.
-fn kit_life_fractions(
+///
+/// # ⛔ THE PANEL'S OWN NUMBER, PER BATCH, ROLLED UP TO THE ITEM'S WORST
+///
+/// Each batch is struck by [`crate::snapshot::crafting::batch_life_fraction`] — the *only* producer
+/// of this fraction, at the **batch's own tier** — and the item takes the **minimum**, which is
+/// exactly the worst `equipmentBatches` row the player is looking at. So the dock fires when a row
+/// on the panel turns amber and never otherwise.
+///
+/// Reading it any other way is what made the two disagree: an item-level
+/// `(default_durability − Σ batch wear) / durability` clamped to `[0, 1]` announced a two-hoe batch
+/// at `1.30` (*healthy* on the panel) as `0.30` — *warn* — and summed two half-worn batches to `0`,
+/// a `danger` Alert on mostly-fresh gear.
+///
+/// An item the band owns no batch of has **no entry**, which is how the crossing test skips gear
+/// gained or lost this turn.
+pub(crate) fn kit_life_fractions(
     equipment: &crate::equipment_config::EquipmentConfig,
     wear: Option<&BandEquipment>,
 ) -> BTreeMap<String, f32> {
@@ -5968,14 +6065,21 @@ fn kit_life_fractions(
         return lives;
     };
     for (id, def) in equipment.items() {
-        let durability = def.default_tier().starting_durability;
-        if durability <= 0.0 || wear.count_of(id) == 0 {
-            continue;
+        let worst = wear
+            .batches_of(id)
+            .iter()
+            .map(|batch| {
+                crate::snapshot::crafting::batch_life_fraction(
+                    def.tier_or_default(&batch.tier),
+                    batch,
+                )
+            })
+            .fold(None::<f32>, |worst, life| {
+                Some(worst.map_or(life, |worst| worst.min(life)))
+            });
+        if let Some(worst) = worst {
+            lives.insert(id.to_string(), worst);
         }
-        lives.insert(
-            id.to_string(),
-            ((durability - wear.wear_of(id)) / durability).clamp(0.0, 1.0),
-        );
     }
     lives
 }
@@ -5987,6 +6091,11 @@ fn kit_life_fractions(
 /// turn for the rest of a spear's life; the fractions taken before and after this turn's wear are the
 /// transition itself, so a line fires exactly once per item per seam crossed and nothing has to be
 /// checkpointed. An item the band gained or lost this turn is not a crossing and is skipped.
+///
+/// **And the fraction is the PANEL'S** ([`kit_life_fractions`] → the one
+/// [`crate::snapshot::crafting::batch_life_fraction`]), so the dock and the ledger cannot disagree
+/// about when a spear is nearly out. `remaining=` therefore rides above `1.00` for a stockpile,
+/// exactly as the `equipmentBatches` row does.
 ///
 /// **The sim publishes a KIND and a DETAIL, never a rung.** There is no importance field on the wire;
 /// the Alert/Notable/Routine ladder is resolved client-side off `kind`, so the seam that was crossed
@@ -6033,8 +6142,14 @@ fn announce_kit_life(
 /// *"⚠ 1 band"* discovery path: a faction-level line says something is wrong and not where.
 ///
 /// **Driven off the standing bill the same turn publishes**, so the event and the disclosure row
-/// cannot describe different turns: the band's summed per-turn need against what its own sources
-/// credited, with the store on the shelf as the buffer between them.
+/// cannot describe different turns: the band's summed per-turn need against
+/// [`LaborAllocation::material_income`] — **the `material_upkeep_income` row's own producer**, take
+/// plus bench — with the store on the shelf as the buffer between them.
+///
+/// ⛔ The bench half is not optional garnish. `hurdles` have no producer but a bench on the shipped
+/// roster, so an Alert struck on the credited take alone sees zero income for ever, calls the whole
+/// pen bill a gap, and fires for **every band that keeps a pen** — including one whose bench
+/// out-produces its pens.
 ///
 /// **The condition is *"the shelf will not outlast the gap"***, not *"the bill went unpaid"* — a bill
 /// paid out of a store that is emptying is exactly the case a player wants warning of, and the alert
@@ -6051,6 +6166,12 @@ fn announce_material_shortfall(
     band: Option<BandId>,
     allocation: &mut LaborAllocation,
     stores: &LocalStore,
+    // **THE WHOLE PER-TURN INFLOW** — [`LaborAllocation::material_income`], which is the same figure
+    // `PopulationCohortState::material_upkeep_income` publishes. ⛔ Never
+    // [`LaborAllocation::last_material_income`] on its own: that is the *credited take*, and a bench
+    // credits nothing until its meter crosses, so a gap struck against it counts a band's whole
+    // hurdle bill as unfunded however hard its bench is working.
+    income: &BTreeMap<String, f32>,
 ) {
     /// **How many turns of shelf is "about to run out"** — a store that outlasts this is not news.
     /// A **named constant, not a config lever**: it is the alert's own sensitivity and nothing in the
@@ -6058,11 +6179,7 @@ fn announce_material_shortfall(
     const SHELF_TURNS_WORTH_WARNING: f32 = 5.0;
     let mut short: Vec<(String, f32)> = Vec::new();
     for (id, need) in &allocation.last_material_need {
-        let arriving = allocation
-            .last_material_income
-            .get(id)
-            .copied()
-            .unwrap_or(NOTHING_DEMANDED);
+        let arriving = income.get(id).copied().unwrap_or(NOTHING_DEMANDED);
         let gap = need - arriving;
         if gap <= NOTHING_DEMANDED {
             continue;
@@ -6363,11 +6480,17 @@ fn accrue_field(
     // **What the `plant:field` rung costs on THIS ground**, resolved pre-accrual by the caller — see
     // this function's doc.
     field_cost_multiplier: f32,
-    // **The fraction of this turn's material pile the band's store could pay for**
-    // (`docs/plan_standing_upkeep.md` §2.7) — settled across every claim on that store before the
-    // assignment loop, so a short store stalls this build *proportionally* rather than refusing it
-    // and the unbanked remainder of the crew's output is wasted. `FULLY_SERVED` for a rung declaring
-    // no material, which is both plant rungs on the shipped ladder.
+    // **THIS ENTRY'S share of the band's material pile** (`docs/plan_standing_upkeep.md` §2.7) —
+    // settled across every claim on that store before the assignment loop, so a short store stalls
+    // this build *proportionally* rather than refusing it and the unbanked remainder of the crew's
+    // output is wasted. `FULLY_SERVED` for a rung declaring no material, which is both plant rungs
+    // on the shipped ladder.
+    //
+    // ⛔ **THE ENTRY'S, NEVER THE BAND'S** (`entry_material_coverage` at the call site). The
+    // settlement struck its want against the **head** alone, so handing a waiting `sow` the band-wide
+    // figure published `BuildTurns::Blocked` with cause `BuildGate::Materials` for a rung that
+    // declares no material at all — because the *head* was a pen with an empty hurdle store — and
+    // `publish_build_chain` then carried that block down the rest of the queue.
     material_coverage: f32,
 ) -> bool {
     let eligible = gate.holds();
@@ -7472,6 +7595,7 @@ mod labor_yield_tests {
         world.insert_resource(crate::creatures_config::CreaturesConfigHandle::default());
         world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
         world.insert_resource(crate::materials_config::MaterialsConfigHandle::default());
+        world.insert_resource(crate::recipes_config::RecipesConfigHandle::default());
         world.insert_resource(FactionInventory::default());
         world.insert_resource(DiscoveryProgressLedger::default());
         world.insert_resource(CommandEventLog::default());
@@ -11467,6 +11591,186 @@ mod labor_yield_tests {
         assert!(
             held_material(&short, band) < FORECAST_EPSILON,
             "the short store is spent to the last unit — the coverage IS what the store could pay"
+        );
+    }
+
+    /// **A TAMED HERD WITH A PEN QUEUED, AND A `sow` QUEUED BEHIND IT** — the two-entry queue the
+    /// waiting entry's coverage rule needs: the head is the shipped ladder's **only** material
+    /// declarer and the entry behind it declares none at all.
+    /// A species in [`SOURCE_BIOME`]'s realized basket whose `cultivation_ceiling` reaches
+    /// `plant:field` — what a `sow` on this fixture's ground can actually commit to.
+    const SOWABLE_SPECIES: &str = "wild_emmer";
+
+    fn world_with_a_sow_queued_behind_a_pen() -> (World, Entity) {
+        let (mut world, band) = world_with_a_pen_build();
+        grant_knowledge(&mut world, SEED_SELECTION_DISCOVERY_ID);
+        // **`plant:field` DECLARES `requires_fresh_water`**, so the harness's dry steppe refuses the
+        // rung on its site term and the gate never reaches the coverage test. Tagged on the source
+        // tile itself, which is `tile_is_fresh_watered`'s first arm.
+        {
+            let tile_entity = world
+                .resource::<TileRegistry>()
+                .index(SOURCE.x, SOURCE.y)
+                .expect("the fixture source tile");
+            world
+                .get_mut::<Tile>(tile_entity)
+                .expect("the fixture source tile")
+                .terrain_tags |= sim_runtime::TerrainTags::FRESHWATER;
+        }
+        let source = BuildSource::Patch(SOURCE);
+        {
+            let mut allocation = world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band has an allocation");
+            allocation.assignments.push(LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: SOURCE,
+                    floor: BUILDER_FLOOR,
+                    // **A NAMED CROP, because a Field commits to one.** The tile's realized basket
+                    // leads with `seed_grasses`, whose `cultivation_ceiling` stops at *tended*, so a
+                    // `sow` that named nothing would be refused `BuildGate::NoCrop` — and a refused
+                    // gate never reaches the coverage test this fixture exists to drive.
+                    species: Some(SOWABLE_SPECIES.to_string()),
+                    take_species: TakeSelection::EVERYTHING,
+                },
+                workers: WORKERS,
+                kit: None,
+                priority: SourcePriority::default(),
+                upkeep_kit: None,
+            });
+            assert!(
+                allocation.enqueue_build(source.clone(), BuildJob::Rung(Improvement::Sow)),
+                "fixture: the sow is queued on a source the band works"
+            );
+            assert_eq!(
+                allocation.build_queue_position(&source),
+                Some(1),
+                "fixture: the sow must sit BEHIND the pen — a head is funded and a waiting entry is \
+                 only dated, which is the whole distinction under test"
+            );
+            assert!(allocation.set_build_entry_kit(&source, Some(bare_builders())));
+        }
+        (world, band)
+    }
+
+    /// The countdown the patch entry publishes.
+    fn published_sow_countdown(world: &World) -> Option<crate::intensification::BuildTurns> {
+        world
+            .resource::<ForageRegistry>()
+            .patch(SOURCE)
+            .expect("the fixture patch")
+            .build_turns_remaining
+    }
+
+    /// The cause that countdown carries.
+    fn published_sow_block_reason(world: &World) -> crate::intensification::BuildGate {
+        world
+            .resource::<ForageRegistry>()
+            .patch(SOURCE)
+            .expect("the fixture patch")
+            .build_blocked_reason
+    }
+
+    /// The waiting entry's **own** span — what the chain added on top of the head's date. Both
+    /// numbers come off the wire, so this is what a client renders as *"and then N more"*.
+    fn sow_span_behind_the_pen(world: &World) -> u32 {
+        let head = match published_pen_countdown(world) {
+            Some(crate::intensification::BuildTurns::Turns(turns)) => turns,
+            other => {
+                panic!("fixture: the head must name a date for the tail to be measured: {other:?}")
+            }
+        };
+        let tail = match published_sow_countdown(world) {
+            Some(crate::intensification::BuildTurns::Turns(turns)) => turns,
+            other => panic!("fixture: the waiting sow must name a date: {other:?}"),
+        };
+        tail - head
+    }
+
+    /// ⛔ **A WAITING ENTRY IS QUOTED AT ITS OWN COVERAGE, NEVER THE BAND'S**
+    /// (`docs/plan_standing_upkeep.md` §2.7).
+    ///
+    /// The settlement strikes its material want against the **head** alone, so `build_coverage`
+    /// describes the head's store and nothing else. Handing it to an entry *behind* the head made
+    /// another source's shelf into this one's problem: the `sow` — a rung that declares no material
+    /// at all — was quoted at the pen's coverage, so a **half-stocked** pen doubled the sow's own
+    /// span and `publish_build_chain` carried the inflated date down the rest of the queue.
+    ///
+    /// The stretch is measured against a **fully-stocked** control run of the same fixture, so the
+    /// claim is *"the head's shelf does not move the tail"* rather than a remembered turn count.
+    #[test]
+    fn a_head_short_of_material_neither_blocks_nor_stretches_the_entry_behind_it() {
+        /// The share of the head's pile its store can pay for on the stretched arm. A half doubles
+        /// the head's own span, which no rounding can turn back into the covered one.
+        const COVERAGE: f32 = 0.5;
+
+        // --- the control: the head wants for nothing ---------------------------------------------
+        let (mut full, band) = world_with_a_sow_queued_behind_a_pen();
+        stock_pen_materials(&mut full, band);
+        let stocked = held_material(&full, band);
+        full.run_system_once(advance_labor_allocation);
+        let wanted = stocked - held_material(&full, band);
+        assert!(
+            wanted > 0.0,
+            "fixture: the head must actually draw material, or there is no shortage to inflict \
+             (drew {wanted})"
+        );
+        assert_eq!(
+            published_sow_block_reason(&full),
+            crate::intensification::BuildGate::Open,
+            "fixture: the queued sow's own gate must HOLD, or `turns()` never reaches the coverage \
+             test and this whole fixture is vacuous"
+        );
+        let covered_head = match published_pen_countdown(&full) {
+            Some(crate::intensification::BuildTurns::Turns(turns)) => turns,
+            other => panic!("fixture: a fully-stocked pen build names a date, got {other:?}"),
+        };
+        let covered_span = sow_span_behind_the_pen(&full);
+        assert!(
+            covered_span > 1,
+            "fixture: the waiting sow must span more than a turn, or a doubling is unmeasurable \
+             (span {covered_span})"
+        );
+
+        // --- the head's shelf is EMPTY: the tail inherits the head's block, and only that --------
+        // **This arm cannot see the defect and is here to say so.** A blocked head sets
+        // `publish_build_chain`'s `carried`, and every entry below it publishes that answer without
+        // its own quote ever being consulted — which is right: an entry behind a build that cannot
+        // start cannot be dated either. So the leak is only visible where the head is *stalled*
+        // rather than *stopped*, which is the third arm.
+        let (mut dry, band) = world_with_a_sow_queued_behind_a_pen();
+        stock_pen_materials_units(&mut dry, band, 0.0);
+        dry.run_system_once(advance_labor_allocation);
+        assert_eq!(
+            published_pen_countdown(&dry),
+            Some(crate::intensification::BuildTurns::Blocked),
+            "a pen build that cannot draw one hurdle publishes the blocked sentinel"
+        );
+        assert_eq!(
+            published_sow_countdown(&dry),
+            Some(crate::intensification::BuildTurns::Blocked),
+            "…and the queue behind it carries that, because a date behind an unstartable build \
+             would be a promise"
+        );
+
+        // --- the head's shelf is HALF: the tail's own span is untouched ---------------------------
+        let (mut partial, band) = world_with_a_sow_queued_behind_a_pen();
+        stock_pen_materials_units(&mut partial, band, wanted * COVERAGE);
+        partial.run_system_once(advance_labor_allocation);
+        let stretched_head = match published_pen_countdown(&partial) {
+            Some(crate::intensification::BuildTurns::Turns(turns)) => turns,
+            other => panic!("a PARTLY covered build still finishes, so it names a date: {other:?}"),
+        };
+        assert!(
+            stretched_head > covered_head,
+            "fixture: the head must actually be stalled by its short store ({stretched_head} \
+             against the covered {covered_head}), or there is no stretch to leak"
+        );
+        assert_eq!(
+            sow_span_behind_the_pen(&partial),
+            covered_span,
+            "**THE WAITING ENTRY'S OWN SPAN IS UNTOUCHED BY THE HEAD'S SHORTAGE** — it is dated at \
+             the full pool and at FULL coverage, because it has bid on nothing yet"
         );
     }
 

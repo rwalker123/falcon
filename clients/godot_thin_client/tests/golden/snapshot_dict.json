@@ -632,6 +632,8 @@
       "tended_yield": 11.58,
       "tile_capacity": 74.75,
       "upkeep_demand": 46.18,
+      "upkeep_kit_id": "forage_patches[0].upkeep_kit_id",
+      "upkeep_kit_named": true,
       "upkeep_material_demand": [
         {
           "amount": 64.879997,
@@ -862,6 +864,8 @@
       "tended_yield": 86.169998,
       "tile_capacity": 2.22,
       "upkeep_demand": 10.09,
+      "upkeep_kit_id": "forage_patches[1].upkeep_kit_id",
+      "upkeep_kit_named": true,
       "upkeep_material_demand": [
         {
           "amount": 99.330002,
@@ -1175,6 +1179,8 @@
       "tame_work_cost": 86.699997,
       "tame_work_done": 60.59,
       "upkeep_demand": 43.459999,
+      "upkeep_kit_id": "herds[0].upkeep_kit_id",
+      "upkeep_kit_named": true,
       "upkeep_material_demand": [
         {
           "amount": 100.720001,
@@ -1350,6 +1356,8 @@
       "tame_work_cost": 84.620003,
       "tame_work_done": 10.41,
       "upkeep_demand": 25.92,
+      "upkeep_kit_id": "herds[1].upkeep_kit_id",
+      "upkeep_kit_named": true,
       "upkeep_material_demand": [
         {
           "amount": 87.059998,

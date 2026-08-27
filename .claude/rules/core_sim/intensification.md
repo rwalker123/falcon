@@ -1352,6 +1352,31 @@ already read `self.build.as_ref()` and every other reader was already borrowing.
   penned herd, and a **pastoral** herd — the only source the Pen rung is ever offered from — stands on
   a rung declaring no material, so its stamped bill is empty on exactly the row the player is
   deciding on. `core_sim/tests/rung_material_quote.rs` drives that case.
+- ⛔ **A ROW THE ASSIGNMENT LOOP WILL NOT REACH BIDS FOR NOTHING.** Both arms lapse an out-of-range
+  source — a patch past `band_work_range`, a herd past `hunt_reach` — and `continue` **past**
+  `apply_material_keeping`, so a claim settled for that row reserves goods nothing ever spends and the
+  source that *is* in reach is judged short by the difference: the neglect counter, the decay fraction
+  and the shed, for a shortage it did not cause. `settle_material_upkeep` and `settle_pen_hay` read one
+  rule, `systems::labor::BandReach`, because two copies of a leash are two leashes.
+  `a_pen_past_the_leash_reserves_nothing_from_the_store` drives it.
+- ⛔ **THE COUNTDOWN SCALES BY THE *ENTRY'S* COVERAGE, NEVER THE BAND'S.** The settlement strikes its
+  material want against the **head** alone, so a waiting entry is quoted at `FULLY_SERVED` and its own
+  span is untouched by what the head's shelf holds. Every rung arm passes `entry_material_coverage`,
+  `accrue_field`'s included: handing a waiting `sow` — a rung declaring no material at all — the
+  band-wide figure doubled its span behind a half-stocked pen, and `publish_build_chain` carried the
+  inflated date down the rest of the queue. The **empty**-shelf case is invisible from the wire, and
+  for a reason worth knowing: a blocked head sets the chain's `carried`, so every entry below it
+  publishes that answer without its own quote ever being consulted.
+- **THE BAND'S LEDGER IS `need` / `income` / `store`, and the income has TWO HALVES.**
+  `LaborAllocation::last_material_need` is the summed bill (the sim sums it, because herd rows are
+  fog-filtered and a client-side total would silently drop a pen out of sight); `last_material_income`
+  is only the **credited take**. A bench is not a source row and deposits nothing until its meter
+  crosses, so its forward rate joins through **`LaborAllocation::material_income`** — the one producer
+  the wire's `materialUpkeepIncome` row and `announce_material_shortfall`'s *"X is running out"* Alert
+  both read. On the shipped roster `hurdles` have **no producer but a bench**, so an Alert struck on
+  the take alone sees zero income for ever, calls the whole pen bill a gap, and fires for every band
+  that keeps a pen — including one whose bench out-produces its pens. The gate on the bench half is
+  `crafting.md` → "A bench that can draw nothing promises nothing".
 - **THE BILL IS STAMPED, on `ForagePatch::upkeep_materials_demanded` / `Herd::upkeep_materials_demanded`.**
   The material demand interpolates on the same moving position and crosses the same
   Population→Logistics carry, so a re-derived live value judges a settled supply against a bill nobody
