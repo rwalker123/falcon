@@ -1623,6 +1623,33 @@ picker only means what it looks like once the kit belongs to the site.
 > label) — that existed only to admit that setting it on one row changed every row, which §2.5's
 > per-site kit deletes outright.
 >
+> ⛔ **AND THE MATERIAL SHORTFALL NOTE STOPS SAYING A PEN *EATS*, WHICH IS NOT A WORDING NIT.**
+> `WORK_ROW_MATERIAL_SHORT_FORMAT` ships as *"Short of hurdles — 0.40 of the 0.58 a turn this pen
+> eats"*, and a pen genuinely **does** eat: grass and hay. §2.7's whole argument is that **hay is FEED,
+> not upkeep**, and #578 retired a defect that billed a pen's shortfall to the keepers' food larder —
+> so this sentence puts feed and upkeep back under one verb, on the surface whose `Fed: 100% — all
+> pasture` row sits two lines above it. The readout undoing the model is a defect, not a preference.
+>
+> **It reads `Short of hurdles — 0.40 of the 0.58 a turn it needs.`**, and it **names a remedy** the
+> way both its siblings do (*"raise this band's Agriculture role"* / *"…Husbandry role"*): the remedy
+> for a missing GOOD is the bench or a trade and **never more hands**, which is already the wording the
+> blocked-build cause carries. The `a turn this %s eats` tail retires with the
+> `MATERIAL_SHORT_NOUN_HERD` / `_PATCH` pair, which existed only to fill it.
+>
+> **AND IT BELONGS ON THE WORK ROW, NOT THE TILE CARD — §4.7 ALREADY SET THAT SHAPE.** That slice
+> pulled the `At risk:` block off the tile card for being *"way too wordy"*, left one state word on the
+> rung row (`🌾 Tended 90% ⚠ slipping`) and put the sentence on a hover, keeping the countdown on the
+> work board **and nowhere else**, because *"the board is where staffing is decided this turn … on the
+> tile card it is a number you cannot act on."* Item 12 shipped the full sentence to **both** entry
+> points (`under_kept_note` and `under_kept_note_for_source`) and so regressed against that rule.
+>
+> **The staffing half of §4.7's reason does not carry over, and a better one replaces it**: no head
+> count fixes a missing good. What this UI actually offers against a scarce one is the row's
+> **`SourcePriority` rank** — `High`/`Normal`/`Low` is precisely what decides which pen the hurdles
+> reach when there are not enough (`settle_scarce_store`) — and that control sits in the work row's own
+> strip. The tile card has nothing to press. So: the sentence on the work row and its strip, and the
+> card keeps at most the short state word its keeping shortfall already reads.
+>
 > **AND `extend_pen` IS DECLARED FROM THE WORK ROW, ON THE STANDING RUNG'S OWN MARK.** Reported from
 > play: extending a pen is a button on the TILE card, and it produces a **build queue entry** — so it
 > is the one queue entry in the game declared from somewhere other than the work tab.
