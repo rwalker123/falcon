@@ -58,14 +58,14 @@ const TAMEABLE_SPECIES: &str = "Wild Boar";
 /// roster has five such rows (rabbit, fowl, crag goat, wild sheep, snow hare).
 const UNSCALED_TAMEABLE_SPECIES: &str = "Crag Goats";
 
-/// **The kit the keepers are sent out with** — the one shipped roster entry declaring
-/// `EquipmentStat::BuildWork`, so the gear term under test is non-zero rather than a term the
-/// arithmetic never exercises.
-const HANDLING_KIT: &str = "husbandry";
+/// **The kit the keepers are sent out with on the HUNT ROW** — the animal web's own take kit, which
+/// carries the sled a keeper hauls with. It was `husbandry` until §4.9 item 12b deleted that kit: a
+/// pen resolves the ordinary fight, so the hunters who took the herd wild take it penned.
+const HANDLING_KIT: &str = "big_game";
 
-/// **The kit the BUILDERS are sent out with** — the animal web's builders kit, whose hurdles are the
-/// gear term under test. It is not [`HANDLING_KIT`]: since the builders-kits slice `husbandry` lists
-/// only `hunt` (a pen is collected on `pen_carry`), and what raises a `Tame` is `hurdling`.
+/// **The kit the BUILDERS are sent out with** — the animal web's builders kit, whose crook is the
+/// gear term under test. It is deliberately not [`HANDLING_KIT`]: a take kit does no building, and
+/// what raises a `Tame` is `hurdling`.
 const BUILDERS_KIT: &str = "hurdling";
 
 /// **The plant web's builders kit** — hoes, which take work off a Cultivate and nothing off a `Tame`.
@@ -253,7 +253,7 @@ fn spawn_keepers_of(
     let equipment = EquipmentConfig::builtin();
     let kit = equipment
         .kit(HANDLING_KIT)
-        .expect("the shipped roster carries the handling kit");
+        .expect("the shipped roster carries the big-game kit");
     let builders_kit = equipment
         .kit(BUILDERS_KIT)
         .expect("the shipped roster carries the hurdling kit");

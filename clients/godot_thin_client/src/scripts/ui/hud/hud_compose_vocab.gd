@@ -1337,8 +1337,8 @@ const KIT_WITHHELD_ENTRY_FORMAT := "%s — %s"
 ## player is choosing between is kits, and the animal is the term that changes under them.
 const KIT_WITHHELD_REASON_CANNOT_HURT := "nothing it carries can bring down a %s"
 ## The PEN rule's reason — the kit's contribution is `pen_carry`, which only a corralled herd is
-## collected on. Worded for the AXIS rather than for the husbandry kit by name: the rule is that the
-## source cannot read the stat, and a second kit supplying it tomorrow gets the same sentence.
+## collected on. Worded for the AXIS rather than for any one kit by name: the rule is that the source
+## cannot read the stat, and a second kit supplying it tomorrow gets the same sentence.
 const KIT_WITHHELD_REASON_PEN_ONLY := "what it adds is only used on a penned herd"
 ## The BUILD-BRANCH rule's reason — this kit's tool serves the other food web, so on the build in
 ## front of it the contribution is the neutral zero. `%s` is the web the entry is on, as a noun a
@@ -1371,7 +1371,7 @@ const KIT_HINT_FORAGE_CARRY_FORMAT := "carry %s per gatherer"
 ## **THE PEN'S OWN CARRY, AND IT IS NOT THE SLED'S.** A sled drags a carcass in off the range; a pen
 ## stands at the camp, and what bounds a slaughter there is handling gear — so a kit carrying only a
 ## sled collects a pen at the bare rate. It prints on a hunt sheet BESIDE the sled's line rather than
-## instead of it (a husbandry kit carries both), and only for a kit that actually supplies the axis.
+## instead of it (a handling kit carries both), and only for a kit that actually supplies the axis.
 const KIT_HINT_PEN_CARRY_FORMAT := "pen %s per keeper"
 ## **HOW MANY OF THE COMPOSED CREW THIS KIT ACTUALLY REACHES** — `3 of 8 equipped`, printed after the
 ## tier clauses and before the item conditions.

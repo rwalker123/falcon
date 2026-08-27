@@ -87,8 +87,8 @@ const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 ## to escape. Stated as a per-worker QUANTITY of work instead, the job's own size decides what the
 ## tool is worth. The wire still carries `buildRate`, frozen at its neutral `1`, and this client no
 ## longer decodes it: a reader left on it reads "changes no build" for every kit in the game, which
-## silently drops the husbandry kit's own clause AND withholds it from a herd being tamed (see
-## `kit_offer`).
+## silently drops the handling gear's own clause AND withholds the kit carrying it from a herd being
+## tamed (see `kit_offer`).
 ##
 ## **IT IS NOT A TIER AND HAS NO HINT-LINE HOME.** The four axes above are rates a readout can quote
 ## per worker; this one prices a build the sheet is not otherwise talking about, and the surface that
@@ -272,12 +272,12 @@ const JOB_WARRIOR := "warrior"
 ## read off this role's own row now that the build crew has left the tile.
 ##
 ## **THERE ARE TWO BUILDERS KITS, ONE PER WEB — `hurdling` (hurdles) and `tillage` (hoes)** — and
-## `husbandry` is not one of them any more: it kept `hunt`, the one job it can actually do, and gave
-## up `builders` (`equipment.md` → "THE TWO BUILDERS KITS CARRY NO CARRY GEAR"). The claim this
-## comment used to carry — *`husbandry` is the ONE kit whose items declare `build_work`* — was the
-## whole reason an animal-handling bundle was offered for a Cultivate, and it is false in two
-## directions now: `hoes` declare the axis too, and the husbandry kit still declares it (it carries
-## hurdles) while being unable to take the builders job at all.
+## `husbandry` is not one of them, and since `docs/plan_standing_upkeep.md` §4.9 item 12b it is not a
+## kit at all — the weaponless hunt bundle was deleted, `big_game` being a strict superset of it. (The
+## `husbandry` JOB is untouched: `hurdling` lists it, and `keeping_kit_for_branch` maps the animal
+## branch to it.) The claim this comment used to carry — *`husbandry` is the ONE kit whose items
+## declare `build_work`* — was the whole reason an animal-handling bundle was offered for a Cultivate,
+## and `hoes` declare the axis too.
 ##
 ## ⚠ **THE WIRE NAMES NO DEFAULT FOR IT, AND THE ROW STATES THE DERIVED ANSWER INSTEAD.**
 ## `SubsistenceSection` publishes `defaultHunt` / `Forage` / `Scout` / `WarriorKitId` and no builders
@@ -609,9 +609,9 @@ static func repriced_source(src: Dictionary, prefix: String, carry: float, refer
 ##
 ## **THE AXIS IS A PROPERTY OF THE SOURCE, AND A JOB-KEYED TABLE ALONE COULD NOT SAY SO.** A corralled
 ## herd is worked from a Hunt row, so pricing it by job read the SLED's tier — while the sim collects
-## a pen on `EquipmentStat::PenCarry`, which only the husbandry kit supplies. That UNDER-stated the
-## very kit the pen exists for and OVER-stated every kit carrying a sled and no handling gear, and on
-## the shipped roster (where husbandry and stalking both carry a sled) the two errors cancelled into
+## a pen on `EquipmentStat::PenCarry`, a stat of its own and not the hunt haul's. That UNDER-stated
+## the very kit the pen exists for and OVER-stated every kit carrying a sled and no handling gear, and
+## on a roster whose hunt kits all carry a sled the two errors cancelled into
 ## *every hunt kit quotes a pen the same number* — a perfectly plausible sheet, which is why only a
 ## driven assertion can hold it. A sled drags a carcass in off the range; a pen stands at the camp.
 ##
@@ -800,12 +800,13 @@ static func kit_reaches_a_wild_hunt(kits: Array, kit: Dictionary) -> bool:
 ## *"it cannot bring one down"* is a fact about the animal and would go unsaid on a rabbit.
 ##
 ## ⛔ **IT MATCHES NO KIT ON THE SHIPPED ROSTER, and that is a fact about the roster rather than dead
-## code.** Every hunt kit carries a **sled**, and the sled supplies `hunt_carry` — so all three reach
-## a wild hunt and the rule declines to withhold any of them. What still trips it is a kit supplying
-## the pen axis and nothing the range can read, which is exactly what the retired `hurdles` bundle
-## was; `docs/plan_standing_upkeep.md` §4.9 item 12b reshapes this roster next. The husbandry kit is
-## therefore withheld on a Red Deer by the WEAPON rule below (it carries no weapon), which is what
-## `equipment.json`'s `_comment_kits` has always said of it.
+## code.** Every hunt kit carries a **sled**, and the sled supplies `hunt_carry` — so all of them
+## reach a wild hunt and the rule declines to withhold any of them. What still trips it is a kit
+## supplying the pen axis and nothing the range can read, which is exactly what the retired `hurdles`
+## bundle was. A kit carrying a sled and NO weapon is withheld on a Red Deer by the WEAPON rule below
+## instead: `docs/plan_standing_upkeep.md` §4.9 item 12b deleted the last shipped kit of that shape
+## (`husbandry`), so `ui_preview`'s `compose_rungs.gd` stages one synthetically to keep the branch
+## provable.
 ##
 ## **A PEN IS NOT FOUGHT, so rule 1 does not run on one.** A penned animal is slaughtered rather than
 ## stalked and publishes no engagement stage — the same predicate the gate LINE is mounted behind —
@@ -1243,7 +1244,7 @@ static func kit_item_ids(kit: Dictionary) -> Array:
 ##   mounted behind), and the sim charges no weapon for the kill.
 ##
 ## **THE PEN ARM IS GATED ON THE SOURCE, NOT ON THE KIT, AND THE DIFFERENCE IS THE POINT.** Gating it
-## on the kit printed a pen tier for a husbandry kit selected against a *wild* herd — a number that
+## on the kit printed a pen tier for a handling kit selected against a *wild* herd — a number that
 ## would never be read — while withholding it from the sled-only kit at a pen, which is the one place
 ## the player needs to see it: at a pen, `pen 12.0 per keeper` beside `pen 40.0 per keeper` is the
 ## whole visible difference the handling gear buys.

@@ -94,7 +94,7 @@ const NO_NEGLECT_REMAINING: u32 = 0;
 /// same reading `fauna::hunt_engage_workers` gives it.
 ///
 /// **On a pen, *unbounded* is the wrong reading and the field is simply unpublished** — the tend
-/// branch bounds its collection by [`crate::fauna::animals_handled`] at its own call site. See the
+/// branch is bounded by [`crate::fauna::herd_engage_rate`] like every other rung. See the
 /// `engage_rate` site below and issue #572.
 const NO_ENGAGEMENT_STAGE: f32 = 0.0;
 
@@ -837,13 +837,14 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // an unresolvable species, and the wire's finite reading of it spares a reader an
                 // infinity to divide by.
                 //
-                // ⛔ **For a pen that `0` is no longer the truth.** A penned animal is not *stalked*,
-                // but its tend branch does have a real collection bound — `fauna::animals_handled`,
-                // the keepers' handling rate against the room — applied at the pen's own call site.
-                // A reader following the schema's `<= 0 ⇒ unbounded` rule therefore quotes a penned
-                // collection above what the sim pays. The published value stays `0` here: a real rate
-                // on this field flips the gate clients use to route pens away from the hunt paths.
-                // Issue #572 tracks closing it.
+                // ⛔ **For a pen that `0` is no longer the truth.** Since §4.9 item 12b a penned
+                // herd is engaged, retreats and fights through the very same `systems::hunt_take` the
+                // range runs — its reach is `fauna::herd_engage_rate` (the species' rate × the pen's
+                // handling gain) — so it has a real engagement bound and always did have one under
+                // the take path that preceded this. A reader following the schema's `<= 0 ⇒
+                // unbounded` rule therefore quotes a penned collection above what the sim pays. The
+                // published value stays `0` here: a real rate on this field flips the gate clients
+                // use to route pens away from the hunt paths. Issue #572 tracks closing it.
                 engage_rate: herd
                     .filter(|herd| !herd.is_corralled())
                     .map(|herd| fauna.engage_rate_for(&herd.species))
@@ -985,13 +986,25 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // **`1 − wariness`, the retreat as a term** — through the sim's own
                 // [`crate::fauna::stay_fraction`] rather than re-spelled, so the wire and the crew
                 // /take sizing that divides by it cannot drift. Published at the **neutral
-                // dispersion**: the species half of the retreat, which the client composes with its
-                // chosen `KitOption.dispersion`. `1.0` for a species the roster cannot resolve —
-                // nothing breaks off — which is the same reading a pen and the plant web give and
-                // keeps an unresolved row from silently zeroing a take.
-                stay_fraction: species_def.map_or(NO_RETREAT_STAGE_STAY, |def| {
-                    crate::fauna::stay_fraction(def.combat.wariness, WIRE_NEUTRAL_DISPERSION)
-                }),
+                // dispersion**: the herd's half of the retreat, which the client composes with its
+                // chosen `KitOption.dispersion`.
+                //
+                // **AT THE HERD'S OWN RUNG when there is a herd** ([`crate::fauna::herd_wariness`]):
+                // a fence calms the animals (`husbandry.pen_wariness`) rather than deleting the
+                // stage, so a pen row that published the wild `wariness` would size a crew against a
+                // retreat its keepers never run. The species-table fall-back is for a row whose herd
+                // is out of the registry, and `1.0` for a species the roster cannot resolve —
+                // nothing breaks off — which is the reading the plant web gives and keeps an
+                // unresolved row from silently zeroing a take.
+                stay_fraction: match herd {
+                    Some(herd) => crate::fauna::stay_fraction(
+                        crate::fauna::herd_wariness(herd, fauna),
+                        WIRE_NEUTRAL_DISPERSION,
+                    ),
+                    None => species_def.map_or(NO_RETREAT_STAGE_STAY, |def| {
+                        crate::fauna::stay_fraction(def.combat.wariness, WIRE_NEUTRAL_DISPERSION)
+                    }),
+                },
                 ferocity: species_def.map(|def| def.ferocity).unwrap_or(0.0),
                 aggression: species_def.map(|def| def.aggression).unwrap_or(0.0),
                 // Predators Phase 1a — the herd's prey-sensing radius, but ONLY for a carnivore

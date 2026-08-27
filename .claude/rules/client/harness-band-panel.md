@@ -432,7 +432,7 @@ frames move and they are precisely the corralled-herd compose sheets — `hunt_c
 each in the Kit hint alone, now `pen 12.0 per keeper` where it read the stalking kit's attack and
 sled.
 
-**Their NUMBERS are unchanged**, because `BandFx.kit_roster_fixture()` carries no husbandry kit: the
+**Their NUMBERS are unchanged**, because `BandFx.kit_roster_fixture()` carries no pen-axis kit: the
 roster's max on the pen axis equals its bare tier, so the ratio is 1 and the repricing
 short-circuits. Measured by rendering HEAD's two files and diffing by SHA-256 in both directions — 5
 of 279 differ, and restoring the change reproduces the post-change set byte-for-byte.
@@ -538,7 +538,7 @@ shadow it). The figures before it were **85 / 224 / 257**.
 `band_panel_preview`** — `herd_kit_offer_red_deer`, the same sheet with the picker OPEN (a closed
 `OptionButton` face names the selected kit alone, so only the popup can show a withheld row and the
 reason on it) and `herd_kit_offer_rabbit`, all three in `chapters/compose_rungs.gd` over a
-locally-built roster, `BandFx.kit_roster_fixture()` carrying neither a trapping nor a husbandry kit.
+locally-built roster, `BandFx.kit_roster_fixture()` carrying neither a trapping nor a pen-axis kit.
 The dock harness is untouched because its own roster carries no mass-bounded weapon and its quarry
 no pen, so every kit on every one of its sheets is offered exactly as before. Rationale in
 `labor-ui.md` → "A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED". The fodder face contributes ONE
@@ -553,7 +553,7 @@ built on `_snapshot_work`, which gained the hay Field that renders the label (`m
 `map_band_pending` · `map_band_label_overlap` · `map_worked_ready`). The EXPANDED TOE ROSTER
 contributes the last two `PASS` in `ui_preview` and NO frame: its husbandry-hint pair
 (`chapters/compose_rungs.gd`) drives `KitRoster.tier_hint` over a locally-built roster,
-`BandFx.kit_roster_fixture()` carrying no `husbandry` kit. The figures before the two of them were
+`BandFx.kit_roster_fixture()` carrying no pen-axis kit. The figures before the two of them were
 **84 / 222 / 245** and **275 / 625**, reached once the interface-scale arc, the faction page and the
 CRAFTABLE-KITS arc (#493) had all merged — 80 + main's 4 faction states, and main's 269 + our 5,
 plus `event_dock_narrow_band` (1 frame / 3 assertions) from the review of #497.

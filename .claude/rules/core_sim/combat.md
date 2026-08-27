@@ -289,9 +289,15 @@ ferocity alone — frail, still costs you people"*. `fauna::hunt_injuries` adds 
     `combat::units_brought_down` primitives `resolve_fight` does, so the kill count is identical.
   - **The dip multiplies the crew here too** — every caller passes `workers × build_dip`, the same
     term `animals_engaged` is handed, or a band mid-Tame would fight at full strength for free.
-  - **A pen has no fight at all**: the corral-tend branch passes `f32::INFINITY`, which is returned
-    untouched with no casualties and `fought == false`. A penned animal is not stalked, not fought
-    and not wary.
+  - **⛔ A PEN FIGHTS EXACTLY AS THE RANGE DOES** (`docs/plan_standing_upkeep.md` §4.9 item 12b).
+    The corral-tend branch calls `systems::hunt_take`, so the same `resolve_hunt_fight` runs at every
+    rung against the species' own `defense`, `durability` and `attack × ferocity`. **The husbandry
+    ladder tunes the take's first two stages and only those** — the reach through
+    `husbandry.pen_engage_gain`, the retreat through `husbandry.pen_wariness` — because containment
+    solves catching and weapons solve killing. Consequences the sim now carries: a bare hand
+    (`attack 1`) clears no pennable species' `defense` but the three `defense 0` rows, and a
+    contained bull **still gores** — the tend branch applies the casualties and charges the weapon's
+    `Strike` wear, like the range arm.
   - **Restraint is free**: the escapement floor bounds **`engaged`**, not `killed`
     (`fauna::animals_affordable`), so a crew at its floor does not engage, take casualties and wear
     its kit for animals it was never going to keep.
@@ -353,7 +359,8 @@ mammoth, over any horizon; a better weapon pays off on big game and not on small
 `engage_rate × body_mass`, swept over the whole roster with per-species liveness; the kill rate
 responds to party, weapon and quarry; a fractional engagement reaches one animal and fails at the
 *fight*; **a harmless quarry is no battle but still hurts someone**; the fast path agrees with the full
-resolver; a pen has no fight at all; hunt ordering does not change outcomes at a live sub-1
+resolver; **a penned animal fights exactly as a wild one does**, and the quarry a forecast holds
+carries the rung's own `wariness`; hunt ordering does not change outcomes at a live sub-1
 `hit_chance`; **a sub-threshold party kills after enough turns**, **more hunters shorten the wait**,
 **wounds decay out of contact but not instantly**, **the baseline injury wounds and never kills**,
 **it tracks the engagement and never dominates a real fight** — all at a **`wariness 0`** roster, since

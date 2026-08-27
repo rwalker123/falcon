@@ -918,8 +918,8 @@ vantage`, `▲ Clubs 22 — attack 6 defending the camp`.
   `KIT_VANTAGE_DECIMALS` and the `%s-tile sight per vantage` phrasing, which also sidesteps the
   `sight 1 tiles` a bare-handed scout would otherwise print.
 - **An item is a CLOCK and its axis is a TIER, and the two are read from different places** — which
-  is why a live item can sit beside a bare tier. The shared roster equips no husbandry kit, so a band
-  on the stalking kit collects its pen at 12 with its handling gear at 45; the row is honest, and the
+  is why a live item can sit beside a bare tier. The shared roster equips no kit on the pen axis, so a
+  band on the stalking kit collects its pen at 12 with its handling gear at 45; the row is honest, and the
   fixture is built that way deliberately so the pen row cannot pass by quoting the sled's 40.
 
 **Frames + assertions (`band_panel_preview`):** `band_panel_kit_expanded` — the dock's own gear
@@ -950,7 +950,8 @@ It reads `pen collection 40.0 per keeper · 8.5 work off a tame or a pen, per ke
   (`buildWorkPerWorker`) is what the row reads, and the old `buildRate` is **frozen at its neutral
   `1` on the wire and no longer decoded at all**. That is not tidiness: a reader left on it renders
   `> 1.0` for no kit in the game, so the clause silently disappears **and** `KitRoster.kit_offer`
-  stops offering the husbandry kit on a herd being tamed, which is the one job the gear is for.
+  stops offering the kit that carries the handling gear on a herd being tamed, which is the one job
+  that gear is for.
   **The gear's worth is now qualified by a `build_work_branch`** — hurdles serve the ANIMAL web and
   hoes the PLANT one — and this row is unaffected, being about a herd either way; what reads the pair
   is `KitRoster.build_kit_for_branch`, which the Builders card and the build queue's header both

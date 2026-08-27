@@ -2588,9 +2588,11 @@ something the source already publishes:**
 - **The pen rule is asked before the weapon rule**, so a kit that trips it states the same reason on
   every quarry: *"what it adds is only used on a penned herd"* is a fact about the KIT, where
   *"nothing it carries can bring down a Red Deer"* is a fact about the deer and would go unsaid on a
-  rabbit. **The husbandry kit is not that kit any more** — it carries a sled, so it reaches a wild
-  hunt on the haul axis and is greyed on a Red Deer by the WEAPON rule, which is what
-  `equipment.json`'s `_comment_kits` has always said of a bundle with no `attack`.
+  rabbit. **No SHIPPED kit is that kit** — `docs/plan_standing_upkeep.md` §4.9 item 12b deleted the
+  `husbandry` kit, the last hunt bundle with no `attack`, so every kit a hunt picker lists carries a
+  sled and reaches a wild hunt on the haul axis. A weaponless hunt kit is greyed on a Red Deer by the
+  WEAPON rule instead, and that shape survives only as `ui_preview`'s synthetic roster entry
+  (`compose_rungs.gd` → `HANDLING_KIT_ID`), which is what keeps this branch provable.
 > #### A SLED IS NOT PEN GEAR, AND FOR ONE RELEASE THE PICKER SAID IT WAS
 >
 > Reported from play: the ASSIGN HUNTERS sheet on a wild Red Deer greyed **all three** hunt kits with
@@ -2612,13 +2614,14 @@ something the source already publishes:**
 > is `default_kit_for` and reads the ROSTER rather than the selection. Correcting the predicate
 > restores the opening selection; nothing else moved.
 >
-> ⛔ **THE RULE NOW MATCHES NO KIT ON THE SHIPPED ROSTER, and that is a fact about the roster rather
-> than dead code.** `big_game` (spears + sled), `trapping` (traps + sled) and `husbandry` (sled) all
-> reach a wild hunt, so none of them trips it; what would is a kit supplying the pen axis and nothing
-> the range can read, which is what the retired hurdles bundle was and what item 12b's reshaped roster
-> may be again. Against a wild Red Deer the three now read: `big_game` **offered**, `trapping`
-> **withheld — cannot hurt** (a trap clears no defence), `husbandry` **withheld — cannot hurt** (no
-> weapon at all).
+> ⛔ **THE RULE MATCHES NO KIT ON THE SHIPPED ROSTER, and that is a fact about the roster rather
+> than dead code.** The animal web's hunt pair is `big_game` (spears + sled) and `trapping` (traps +
+> sled) since §4.9 item 12b, and both reach a wild hunt, so neither trips it; what would is a kit
+> supplying the pen axis and nothing the range can read, which is what the retired hurdles bundle was.
+> Against a wild Red Deer the two read: `big_game` **offered**, `trapping` **withheld — cannot hurt**
+> (a trap clears no defence). The third reading the fix has to keep honest — a sled and no weapon,
+> **withheld — cannot hurt** — is the deleted `husbandry` kit's shape, and `ui_preview` stages it
+> synthetically (`HANDLING_KIT_ID`) precisely because no shipped roster can produce it any more.
 >
 > **Pinned with the contrast, because a picker that offers everything everywhere is as wrong as one
 > that offers nothing** (`ui_preview`, `compose_rungs` → `_assert_a_sled_does_not_make_a_hunt_kit_pen_only`):
@@ -2682,7 +2685,7 @@ of what it brings down, and this one brings nothing down.
   `max(0, 1 − 1)`, which is exactly the state the constraint above insists stays selectable.
 
 **Coverage** — `compose_rungs.gd`'s `_kit_offer_states`, over a locally-built roster (the shared
-`BandFx.kit_roster_fixture()` carries neither a trapping nor a husbandry kit, and adding them would
+`BandFx.kit_roster_fixture()` carries neither a trapping nor a pen-axis kit, and adding them would
 re-list every hunt picker in both harnesses). Three frames — `herd_kit_offer_red_deer`, the same sheet
 with the picker OPEN (the closed face names the selected kit alone, so only the popup can show a
 withheld row and its reason), and `herd_kit_offer_rabbit` — plus nine assertions. **The pair of
@@ -2731,15 +2734,15 @@ the "absent terms render no line" convention `hunt_gate_model` already takes.
 **The carry axis is a property of the SOURCE, not of the job**, and `KitRoster.carry_axis_for(job,
 src)` is the one place that is decided. A corralled herd is worked from a Hunt row, so the job-keyed
 `JOB_CARRY_AXES` priced a pen on the SLED's tier while the sim collects one on
-`EquipmentStat::PenCarry`, which only the husbandry kit supplies. A sled drags a carcass in off the
-range; a pen stands at the camp.
+`EquipmentStat::PenCarry`, a stat of its own and not the hunt haul's. A sled drags a carcass in off
+the range; a pen stands at the camp.
 
-**Neither half of that error was visible, because on the shipped roster they CANCEL.** Husbandry and
-stalking both carry a sled, so both sat at the sled's equipped tier and every hunt kit quoted a pen
-the same number — under-stating the kit the pen exists for and over-stating every kit that carries a
-sled and no handling gear, into one plausible-looking sheet. Only a driven assertion can hold it;
+**Neither half of that error was visible, because on a roster whose hunt kits all carry a sled they
+CANCEL.** Each one sat at the sled's equipped tier, so every hunt kit quoted a pen the same number —
+under-stating the kit the pen exists for and over-stating every kit that carries a sled and no
+handling gear, into one plausible-looking sheet. Only a driven assertion can hold it;
 `ui_preview`'s `chapters/compose_rungs.gd` states the claim as a triple (the wild reading unmoved, the
-husbandry kit at the reference, the sled-only kit at the bare keeper's tier), because the pen pair
+synthetic handling kit at the reference, the sled-only kit at the bare keeper's tier), because the pen pair
 alone is satisfied by pricing everything on the pen axis and the wild reading alone by no fix at all.
 
 - **The corral state comes off `src`, and that is not a reach for state** — on the hunt job `src` IS
@@ -2766,7 +2769,7 @@ the handling gear's condition and the SLED's.
   stalked, it publishes no engagement stage (the predicate the gate LINE is mounted behind), and the
   sim charges no weapon for the kill.
 - **The pen line is gated on the SOURCE, not on the KIT, and the difference is the point.** Gating it
-  on the kit printed a pen tier for a husbandry kit against a wild herd — a tier nothing would read —
+  on the kit printed a pen tier for a handling kit against a wild herd — a tier nothing would read —
   and withheld it from a sled-only kit at a pen, which is the one place a player needs it: at a pen,
   `pen 12.0 per keeper` beside `pen 40.0 per keeper` is the whole visible difference the handling gear
   buys. The condition CLAUSES are the kit's own `item_ids` list and are not gated on the source at all
@@ -2799,7 +2802,8 @@ the handling gear's condition and the SLED's.
 
 Reported from play: the Builders card offered the **Husbandry kit** to raise a Cultivate. The roster
 now carries **two builders kits, one per web** — `hurdling` (hurdles, `animal`) and `tillage` (hoes,
-`plant`) — `husbandry` has given up the `builders` job entirely, and which kit a queue entry gets is
+`plant`) — and the `husbandry` KIT that used to list `builders` is gone entirely (§4.9 item 12b; the
+husbandry JOB is untouched and load-bearing). Which kit a queue entry gets is
 DERIVED from that entry's own branch (`equipment.md` → "THE BUILDERS' KIT IS DERIVED PER QUEUE
 ENTRY"). Three client consequences, and the first is a defect the sheets shipped:
 

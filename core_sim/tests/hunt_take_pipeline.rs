@@ -170,15 +170,13 @@ fn a_pack_that_seats_one_and_a_half_animals_carries_one_and_a_half() {
     const PACK: f32 = BODY_MASS * 1.5;
     /// Room for far more animals than the pack, so the herd is never the binding term.
     const AMPLE_CEILING: f32 = BODY_MASS * 100.0;
-    /// What the fight put on the ground.
+    /// What the fight put on the ground — already whole bodies, as `resolve_hunt_fight` hands them
+    /// back at every rung. It used to be routed through the pen's own `animals_handled` clamp, which
+    /// was the identity against [`AMPLE_CEILING`] and retired with that separate take path
+    /// (`docs/plan_standing_upkeep.md` §4.9 item 12b).
     const BROUGHT_DOWN: f32 = 2.0;
 
-    let take = quantise_animal_take(
-        PACK,
-        BODY_MASS,
-        core_sim::animals_handled(BROUGHT_DOWN, AMPLE_CEILING, BODY_MASS),
-        EngagementStop::WhenPackFull,
-    );
+    let take = quantise_animal_take(PACK, BODY_MASS, BROUGHT_DOWN, EngagementStop::WhenPackFull);
     assert_eq!(
         take.killed, 2,
         "the animal the pack cannot seat whole is still killed whole"

@@ -761,15 +761,27 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
             kit.penCarryPerWorkerBiomass() as f64,
         );
         let _ = dict.insert("scout_vantage_range", kit.scoutVantageRange() as f64);
-        // **THE BUILD AXIS, IN WORK UNITS** — what ONE equipped worker takes off an improvement's
-        // cost, summed over the equipped crew. Neutral `0`; the shipped handling gear declares 8.5.
+        // **THE BUILD AXIS, IN WORK UNITS** — the EXTRA work ONE equipped worker DELIVERS per turn,
+        // summed over the equipped crew. Neutral `0`; the shipped crook declares **0.5**, so an
+        // equipped builder banks `1.0 + 0.5 = 1.5` work a turn where a bare one banks `1.0`.
+        //
+        // ⛔ **IT IS AN ADDEND, NOT A DISCOUNT — and this comment said the opposite until §4.9 item
+        // 12b.** It read *"what one equipped worker takes off an improvement's cost"*, with the
+        // retired subtraction's **8.5** beside it, four hundred lines under the `upkeep_work` decode
+        // that already carries the same ⛔ for the same stat. **A job's work requirement NEVER
+        // changes** — a 50-work Cultivate costs 50 work geared, bare, and with any tool that ever
+        // ships — so nothing subtracts this and nothing divides by it
+        // (`docs/plan_standing_upkeep.md` §4.8). The old number could not simply carry across
+        // because the two readings are different quantities in different units: read as an addend,
+        // `8.5` would be a worker delivering nine and a half times a bare one. What the addend gives
+        // up is scale-sensitivity — it saves the same PERCENTAGE of turns on a garden and on a farm
+        // — and that is accepted, not overlooked; `equipment.json`'s `_comment_durability` owns the
+        // full derivation of the `8.5 → 0.5` round trip.
         //
         // **IT REPLACES `buildRate`, WHICH IS RETIRED AND NOW FROZEN AT ITS NEUTRAL `1`** — so the
         // old key is not decoded at all rather than left decoded and always neutral, which would
-        // silently strip the husbandry kit's build clause and withhold the kit from the very herd
-        // the player is taming (`KitRoster.kit_offer` asks this axis FIRST). A multiplier on the
-        // crew cancels the job's cost and so saves the same PERCENTAGE of turns on a garden and on a
-        // farm; subtracted from the job, the job's own size decides what the tool is worth.
+        // silently strip the crook's build clause and withhold the kit carrying it from the very
+        // herd the player is taming (`KitRoster.kit_offer` asks this axis FIRST).
         let _ = dict.insert("build_work_per_worker", kit.buildWorkPerWorker() as f64);
         // **WHICH FOOD WEB THAT BUILD AXIS IS FOR** — `"plant"` | `"animal"`, and `""` for a kit
         // carrying no build tool at all. The pair is ONE reading: a hoe takes 8.5 off a Cultivate and

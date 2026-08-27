@@ -46,14 +46,30 @@ never what its progress bar reads).
   fence interpolates between wild and *pastoral* and reaches the pen's rate only when the fence closes.
   No call site tests for the pen. Half a fence is no fence; that is the deliberate difference from the
   Field, where half a sown field genuinely has half a crop in the ground.
-- **⛔ A PEN HAS ITS OWN CREW CURVE, and it is not the stalking one.** `fauna::hunt_crew_take_curve`
-  branches on `is_corralled()`. A corralled herd is resolved in `advance_labor_allocation`'s own tend
-  branch, which `continue`s before `hunt_take`: **no engagement, no retreat, no fight.** What bounds a
-  pen instead is the room above the floor (crew-independent), the crew's **husbandry** haul tier, and
-  `herd_engage_rate × workers` (the species rate through `husbandry.pen_engage_gain`). That is monotone
-  in the crew and plateaus, so *"would another pair of hands buy me more"* has a real answer for a pen
-  — a different curve, not the absence of one. `low == likely == high` on a pen row, because a
-  slaughter has no fight to be uncertain about.
+- **⛔ A PEN'S CREW CURVE IS THE STALKING CURVE PLUS ONE `.min()`, AND THAT `.min()` IS THE HAUL.**
+  `fauna::hunt_crew_take_curve` is **one function** since §4.9 item 12b: every row is
+  `resolve_hunt_engagement(..).fight.expected_brought_down` — the room, the reach, the retreat and
+  the fight, at the rung the herd stands on — and a **corralled** row then takes `.min(keepers'
+  carry)` at the `pen_carry` tier. So *"would another pair of hands buy me more"* has a real answer
+  for a pen, and a pen row carries a real `low <= likely <= high` band like every other row.
+  > **⛔ `pen_crew_take_curve` IS RETIRED, AND IT WAS THE LAST PEN EXEMPTION.** It priced the room,
+  > the handling and the carry with **no retreat and no fight**, and published
+  > `low == likely == high`. Before 12b it agreed with the take (both were fightless); after, it did
+  > not — a bare-handed band with a penned aurochs was quoted nothing and paid nothing while
+  > `hunt_useful_crew` and the Work board's `+` went on answering *"another pair of hands buys you
+  > more"*. **A forecast and a readout disagreeing about one row is the defect class this slice
+  > deletes**, so it was fixed here and not filed. Its two surviving terms were already inside
+  > `resolve_hunt_engagement` (the room clamp and `herd_engage_rate`), so folding the pen back in
+  > applies neither twice.
+  >
+  > **The carry `.min()` is UNREACHABLE on the shipped roster**, and that is measured rather than
+  > assumed: it binds only where `body_mass × (attack − defense) ÷ durability` beats the crew's
+  > `pen_carry` tier, and the largest per-worker kill across all seven pennable species is the
+  > aurochs' `120 × 14 ÷ 150 = 11.2` biomass a turn — under the **bare** tier's `12`, let alone the
+  > equipped `40`. It is kept because it is the honest model and a retune can walk into it, and it is
+  > exercised by an authored fixture
+  > (`hunt_useful_crew_on_the_wire::a_pens_curve_is_bounded_by_what_its_keepers_can_carry_home`),
+  > exactly as `pen_engage_gain`'s handling arm is.
   > **THE BRANCH IS AT THE ONE PRODUCER, so both transports inherit it** — the snapshot's
   > `huntUsefulWorkers` and the compose sheet's query rows. It was briefly the *client* deciding when
   > to disbelieve the sim (gating the field on an engagement-stage test of its own), which is the
@@ -240,49 +256,44 @@ domestication *reduce* capacity). **Playtest dials.**
   own `engage_rate`, times `husbandry.pen_engage_gain` for a corralled herd, because a keeper genuinely
   handles far more animals per turn than a hunter — a **number**, not the absence of one.
 
-  > #### ⛔ THE PEN BOUNDS ITS COLLECTION AT ITS OWN CALL SITE — `fauna::animals_handled`
-  >
-  > ```text
-  > hunt:  engaged   = reach.min(animals_affordable(ceiling))     // resolve_hunt_engagement, before the fight
-  > pen:   collected = floor(handling).min(animals_affordable(production))   // animals_handled, before the take
-  > ```
-  >
-  > **A hunt bounds what it goes after; a pen bounds what it collects.** Both spend the escapement room
-  > *before* the take, which is what makes restraint free on both — and what the pen did not do. The
-  > tend branch handed `herd_engage_rate × workers` — the keepers' raw handling rate — straight to
-  > `quantise_animal_take` as `brought_down`, so **the pen was the one take path with no bound of its
-  > own**, and the only thing between a large keeper crew and a stripped pen was a post-hoc `affordable`
-  > clamp inside the quantiser that was dead on every other path.
-  >
-  > **The asymmetry is what hid it.** A quantiser that also clamped by the room made the missing stage
-  > unobservable from the pen's own code, and the clamp's *"the source cannot spare a whole animal —
-  > wait for it to regrow"* early return read as a mechanic rather than as the pen's missing bound
-  > wearing a mechanic's clothes. The room, and that wait, now live where the pen spends them; the
-  > quantiser holds no ceiling at all (`fauna.md` → "THE ESCAPEMENT ROOM IS SPENT AT STEP 1").
-  >
-  > **The collection is FLOORED, because a keeper does not walk out half a beast.** A fight hands back
-  > whole bodies and a pen must too, or `AnimalTake::killed` (a truncating `u32`) and its
-  > `killed_biomass` describe two different events — a handling rate of `3.6` reported **3 killed**
-  > while the flock lost **3.6 bodies**. The remainder is not lost, it is **left standing**: the herd's
-  > own biomass is the accumulator, exactly as every other whole-animal wait carries. A curve is the one
-  > reading that does not floor (`pen_crew_take_curve`, `EngagementQuantum::Rate`) — a cadence must not
-  > be reported as a never.
-  >
-  > **AND EVERY FORECAST OF A PEN RUNS THAT STAGE AND NO OTHER.** `hunt_forecast` builds
-  > `fight: NO_FIGHT_STAGE` for a corralled herd, and the quote
-  > (`forecast_production_and_take_at`), the steady headline (`project_realized_hunt`) and the arrival
-  > schedule (`project_arrivals_hunt`) each fork on `is_corralled()` and price the three terms above —
-  > the quantised two by calling `animals_handled` itself, so there is no second expression of the
-  > pen's take to drift from the tend branch's. Quoting a stalking fight over a fence read the
-  > quarry's `defense` against the crew's *hunting* kit: a bare-handed band with a penned Wild Aurochs
-  > was promised nothing and then paid a take. The reasoning lives in `yield-forecast.md` → "A PEN
-  > FORECASTS NO FIGHT, BECAUSE ITS PAYOUT RESOLVES NONE".
-  >
   > **The shipped roster rarely reaches the handling arm**, which is why the pen's numbers did not move:
   > `pen_engage_gain` is authored at `20` precisely so the keepers' *carry* binds first on every
   > pennable species (the constraint on a keeper is carrying the meat home, not catching the animal).
   > The arm exists to be reachable — `fauna_husbandry::a_fractional_pen_handling_rate_collects_whole_animals`
   > authors a fractional rate to reach it, because the shipped one cannot.
+
+- **⛔ THE TAKE RUNS ITS THREE STAGES AT EVERY RUNG, AND THE RUNG TUNES THE FIRST TWO ONLY**
+  (`docs/plan_standing_upkeep.md` §4.9 item 12b). The corral-tend branch calls
+  `systems::hunt_take` — the same function the range arm calls — with the pen's own two terms handed
+  in: the **husbandry** carry tier and the assignment's floor. There is one take path, not two that
+  agree.
+
+  | stage | what the rung buys | seam |
+  |---|---|---|
+  | **engage** | `husbandry.pen_engage_gain` × the species' `engage_rate` | `fauna::herd_engage_rate` |
+  | **retreat** | `husbandry.pastoral_wariness` / `pen_wariness` × the species' `combat.wariness` | `fauna::herd_wariness` |
+  | **fight** | **nothing — the species' own `defense` at every rung** | `fauna::herd_quarry_fight` |
+
+  > **A PEN IS RELIABLE, NOT SAFE.** Containment solves catching; weapons solve killing. **No
+  > weapons, no beef**: a bare hand's `attack 1` clears no pennable species' `defense` except the
+  > three `defense 0` rows (rabbit, fowl, snow hare), so a band that fences an aurochs and brings
+  > nothing to it is quoted nothing and paid nothing. And a contained bull still gores — the tend
+  > branch applies `HuntOutcome::fight`'s casualties and charges the weapon's `Strike` wear, through
+  > the same `settle_hunt_band_side` seam the range arm uses.
+  >
+  > **What retired with the exemption**: `fauna::animals_handled` (the pen's own collection stage),
+  > `fauna::NO_FIGHT_STAGE`, the `is_corralled()` forks in `hunt_forecast`,
+  > `forecast_production_and_take_at`, `project_realized_hunt` and `project_arrivals_hunt`, and the
+  > `husbandry` **kit** (see `equipment.md`). `NO_RETREAT_STAGE_STAY` survives for the plant web
+  > alone. The room clamp the pen used to spend at its own call site is
+  > `resolve_hunt_engagement`'s `reach.min(animals_affordable(ceiling))` now, shared with the range,
+  > so restraint is still free at every rung and the whole-animal floor is still
+  > `resolve_hunt_fight`'s.
+  >
+  > **Why the ladder could not simply exempt the quote instead.** The quote had always run three
+  > stages; it was the payout that ran none. Matching them by *deleting* the quote's stages would
+  > have made the ladder a **mode switch** — taming and penning would buy nothing at the kill, and a
+  > fenced animal would be collected by a formula the range never uses.
 
 - **EVERYTHING PENNING BUYS STEPS AT THE FENCE**, and that is the deliberate difference from the
   plant web. The pen's regrowth gain, its density multiplier on `K`, its escape fraction and its

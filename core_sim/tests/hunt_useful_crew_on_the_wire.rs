@@ -598,115 +598,101 @@ fn world_keeping_a_pen_at(
     app
 }
 
-/// **WHAT A STALKING CURVE OVER THIS HERD WOULD HAVE PUBLISHED** — the plateau of
-/// `expected_brought_down` across the asked crews, walked with the same second implementation the
-/// tests above use.
-///
-/// [`take_and_reach`] resolves the fight unconditionally: it does not ask whether the herd is
-/// corralled, which is precisely the reading the field used to carry. So this is the *defect's own
-/// answer*, computed on the very herd under test rather than argued about.
-fn stalking_plateau(app: &App, wear: &BandEquipment) -> u32 {
-    let curve: Vec<(u32, f32)> = (1..=POOL)
-        .map(|workers| (workers, take_and_reach(app, workers, wear).0))
-        .collect();
-    plateau_of(&curve)
-}
-
-/// **THE PEN'S OWN CEILING, walked from the tend branch's three terms** — a second implementation,
-/// held to the same standard as [`plateau_of`]: two copies that agree are evidence, one copy
-/// compared with itself is not.
+/// **THE PEN'S OWN CEILING, walked from the curve's two terms** — a second implementation, held to
+/// the same standard as [`plateau_of`]: two copies that agree are evidence, one copy compared with
+/// itself is not.
 ///
 /// ```text
-/// production = herd_take_room(herd, floor)        // crew-INDEPENDENT — the stock above the floor
-/// collection = workers × pen carry tier           // husbandry gear, coverage-weighted
-/// handling   = herd_engage_rate(herd) × workers   // the species' rate × the pen's handling gain
+/// kill  = resolve_hunt_engagement(..).fight.expected_brought_down   // room, reach, retreat, FIGHT
+/// carry = workers × pen carry tier ÷ body_mass                      // the keepers' haul
+/// row   = min(kill, max(carry, ONE_WHOLE_ANIMAL))
 /// ```
+///
+/// ⛔ **The first line is the whole of §4.9 item 12b.** It used to be three hand-composed terms —
+/// the room, the handling and the carry — with **no retreat and no fight**, because the pen ran
+/// neither. It runs both now, through the very seam `systems::hunt_take` runs, so the only term this
+/// helper still composes itself is the carry.
 fn pen_plateau(app: &App, wear: &BandEquipment) -> u32 {
-    let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
-    let equipment = EquipmentConfig::builtin();
-    let kit = equipment.default_kit(core_sim::KitJob::Hunt);
     let herd = app
         .world
         .resource::<HerdRegistry>()
         .find(HERD_ID)
         .expect("the fixture herd is in the registry")
         .clone();
-    let production = core_sim::herd_take_room(&herd, FLOOR, &fauna);
-    let handling = core_sim::herd_engage_rate(&herd, &fauna);
     let curve: Vec<(u32, f32)> = (1..=POOL)
         .map(|workers| {
-            let coverage = equipment.coverage(&kit, workers as f32, wear);
-            let carry = coverage.weighted_rate(|kit| {
-                equipment.pen_per_worker_biomass_capacity(
-                    labor.hunt.per_worker_biomass_capacity,
-                    kit,
-                    wear,
-                )
-            });
-            // **A RATE, un-floored, exactly as the producer resolves it** — `animals_sparable`
-            // rather than `quantise_animal_take`'s whole-animal `killed`, with the carry arm
-            // un-floored beside it and only its one-body minimum kept (a keeper who cannot haul a
-            // whole beast still walks one out).
-            let killed = core_sim::animals_sparable(production, herd.body_mass)
-                .min((workers as f32 * carry / herd.body_mass).max(ONE_WHOLE_ANIMAL))
-                .min(handling * workers as f32);
-            (workers, killed)
+            let carry = (workers as f32 * pen_carry_per_worker(app, workers, wear)
+                / herd.body_mass)
+                // A keeper who cannot haul a whole beast still walks one out and wastes the rest —
+                // a fact about the animal, not a rounding, so it survives the rate.
+                .max(ONE_WHOLE_ANIMAL);
+            (workers, take_and_reach(app, workers, wear).0.min(carry))
         })
         .collect();
     plateau_of(&curve)
 }
 
-/// **A PENNED ROW PUBLISHES THE PEN'S CEILING, NOT THE STALKING CURVE'S ANSWER.**
+/// **A PENNED ROW PUBLISHES THE PEN'S OWN CURVE — AND THE FIGHT GATES IT, EXACTLY AS IT GATES THE
+/// RANGE** (`docs/plan_standing_upkeep.md` §4.9 item 12b).
 ///
-/// Three preconditions, and every one of them is load-bearing rather than decoration:
+/// This test **inverted**. It used to assert that a corralled row must *not* publish the stalking
+/// curve's answer — a bare-handed band with a penned aurochs was quoted `NO_USEFUL_CREW` by a
+/// stalking reading while its keepers collected perfectly well, so the producer forked on
+/// `is_corralled()` into a fightless curve of its own. The **take** resolves the ordinary fight now,
+/// so that fork is a lie in the other direction: the row would offer a crew for a take that pays
+/// nothing. `fauna::pen_crew_take_curve` is retired and the pen is one `.min()` — the keepers' haul —
+/// on the one curve.
 ///
-/// 1. the fixture herd really **is** corralled — without it this is the roaming test again;
-/// 2. a stalking curve over *this very herd* really would publish [`NO_USEFUL_CREW`] — without it
-///    the two readings could agree and the test would pass with the branch ripped out;
-/// 3. the pen's own ceiling is a real, positive number — without it *"they disagree"* would be
-///    satisfied by a pen that also answers nothing.
+/// Both halves live here, because either alone passes on a broken sim:
+///
+/// 1. **bare hands publish [`NO_USEFUL_CREW`]** — `max(0, attack 1 − defense 6)` is nothing at every
+///    crew size, so no headcount is useful and the board's `+` is honestly shut;
+/// 2. **the identical fixture, kitted, publishes a real cap**, and it is the plateau the second
+///    implementation above walks.
 #[test]
-fn a_penned_row_publishes_the_pens_own_ceiling_and_not_the_stalking_curves() {
-    let app = world_keeping_a_pen(AUROCHS, bare());
-
+fn a_penned_rows_cap_is_its_own_curve_and_the_fight_gates_it_too() {
+    let bare_pen = world_keeping_a_pen(AUROCHS, bare());
     assert!(
-        app.world
+        bare_pen
+            .world
             .resource::<HerdRegistry>()
             .find(HERD_ID)
             .expect("the fixture herd is in the registry")
             .is_corralled(),
         "PRECONDITION: the fixture herd must be CORRALLED, or this is the roaming test again"
     );
-
-    let stalking = stalking_plateau(&app, &bare());
     assert_eq!(
-        stalking, NO_USEFUL_CREW,
-        "PRECONDITION: a stalking curve over this herd must publish NO_USEFUL_CREW — bare hands          against the aurochs' defense bring down nothing at any crew. It answered {stalking}, so          the two readings could agree and this test would pass against the defect"
+        published_useful_workers(&bare_pen),
+        NO_USEFUL_CREW,
+        "a fence does not kill the animal: bare hands against the aurochs' defense are useful at NO          crew size, penned or not"
     );
 
-    let expected = pen_plateau(&app, &bare());
+    let kitted = world_keeping_a_pen(AUROCHS, stocked());
+    let expected = pen_plateau(&kitted, &stocked());
     assert!(
         expected > NO_USEFUL_CREW,
-        "PRECONDITION: the pen must have a real ceiling for the row to be wrong about — the          second implementation says {expected}"
+        "LIVENESS: the kitted pen must have a real ceiling for the row to be right about — the          second implementation says {expected}"
     );
-
-    let published = published_useful_workers(&app);
     assert_eq!(
-        published, expected,
-        "a corralled row publishes the crew at which the PEN's collection stops rising — the          stock above the floor, the keepers' husbandry-tier carry and the species' handling rate.          The stalking reading beside it is {stalking}"
+        published_useful_workers(&kitted),
+        expected,
+        "a corralled row publishes the crew at which the PEN's own curve stops rising — the room          above the floor, the keepers' reach and calmed retreat, the fight, and their haul"
     );
 }
 
-/// **…AND THE SAME NUMBER CROSSES THE SOCKET** — one producer, two transports, on the pen branch as
-/// much as on the stalking one.
+/// **…AND THE SAME NUMBER CROSSES THE SOCKET** — one producer, two transports, on a penned quarry as
+/// much as on a stalked one.
 ///
 /// The compose sheet asks `fauna::hunt_crew_take_curve` for rows and plateaus them itself, so a pen
-/// branch that reached only the capture would put the sheet and the worked row back into
-/// disagreement — which is the exact failure the one-producer rule exists to prevent.
+/// reading that reached only the capture would put the sheet and the worked row back into
+/// disagreement — which is the exact failure the one-producer rule exists to prevent. Since §4.9
+/// item 12b there is no pen *branch* left to disagree: the two rungs are one function and the pen is
+/// a carry `.min()`.
 #[test]
 fn the_pens_published_cap_is_the_plateau_of_the_curve_the_socket_answers() {
-    let mut app = world_keeping_a_pen(AUROCHS, bare());
+    // **Kitted**, because a pen is gated by the fight now: a bare-handed curve over this quarry is
+    // zero at every crew and "one number equals one number" would be two zeroes agreeing.
+    let mut app = world_keeping_a_pen(AUROCHS, stocked());
     let published = published_useful_workers(&app);
     let curve = crew_take_curve(&mut app);
     assert_eq!(
@@ -714,20 +700,159 @@ fn the_pens_published_cap_is_the_plateau_of_the_curve_the_socket_answers() {
         POOL as usize,
         "the curve must cover the same crew pool the row was priced over: {curve:?}"
     );
+    assert!(
+        published > NO_USEFUL_CREW,
+        "LIVENESS: the kitted pen must publish a real cap, or the equality below is two zeroes:          {curve:?}"
+    );
     assert_eq!(
         published,
         plateau_of(&curve),
-        "the cap the snapshot published and the plateau of the curve the socket answered must be \
-         ONE number on a penned quarry too: {curve:?}"
+        "the cap the snapshot published and the plateau of the curve the socket answered must be          ONE number on a penned quarry too: {curve:?}"
     );
-    // **A slaughter has no fight, so it has no spread** — a reader drawing a confidence band around
-    // a pen row would be drawing one around a certainty. Asserted on the rows the socket actually
-    // shipped rather than on the producer.
     let rising = curve.iter().filter(|(_, likely)| *likely > 0.0).count();
     assert!(
         rising > 0,
-        "fixture: the pen curve must pay something somewhere, or the row check below is vacuous: \
-         {curve:?}"
+        "fixture: the pen curve must pay something somewhere: {curve:?}"
+    );
+}
+
+/// **A PEN'S THREE READINGS AGREE, AND THEY AGREE IN BOTH DIRECTIONS** — the quote, the payout and
+/// the useful-crew cap, all off the **exported** artifact, on one fixture read twice.
+///
+/// This is the assertion that pins §4.9 item 12b's own failure mode shut. The slice made the pen's
+/// *take* resolve a fight; `fauna::pen_crew_take_curve` was the one reading left that did not, so
+/// for a moment a bare-handed band with a penned aurochs was **quoted nothing, paid nothing, and
+/// told another pair of hands would buy it more**. A forecast and a readout disagreeing about one
+/// row is the whole defect class this slice deletes — it must not survive one level down.
+///
+/// **Both halves are here on purpose.** A containment claim (*"all three say nothing"*) passes
+/// perfectly on a pen that is simply broken, so the same fixture `stocked()` has to make all three
+/// speak.
+#[test]
+fn a_pens_quote_its_payout_and_its_useful_crew_all_agree_at_both_kits() {
+    // --- BARE: the fight gates all three ------------------------------------------------------
+    let mut bare_pen = world_keeping_a_pen(AUROCHS, bare());
+    let bare_band = the_band(&mut bare_pen);
+    seed_the_row(&mut bare_pen, bare_band, CREW_ON_THE_ROW, &bare(), FLOOR);
+    let bare_quote = published_actual_yield(&bare_pen);
+    let bare_cap = published_useful_workers(&bare_pen);
+    let bare_curve = crew_take_curve(&mut bare_pen);
+    let bare_paid = resolve_and_republish(&mut bare_pen);
+    assert_eq!(
+        (bare_quote, bare_paid),
+        (NOTHING, NOTHING),
+        "bare hands cannot clear the aurochs' defense at either rung: quoted {bare_quote}, paid          {bare_paid}"
+    );
+    assert_eq!(
+        bare_cap, NO_USEFUL_CREW,
+        "…so no crew is useful on it either — a `+` gate that opened here would offer hands for a          take that pays nothing: {bare_curve:?}"
+    );
+    assert!(
+        bare_curve.iter().all(|(_, likely)| *likely <= NOTHING),
+        "…and the socket's own rows say the same thing: {bare_curve:?}"
+    );
+
+    // --- STOCKED: the identical fixture, and all three speak ----------------------------------
+    let mut kitted = world_keeping_a_pen(AUROCHS, stocked());
+    let kitted_band = the_band(&mut kitted);
+    staff_the_row(&mut kitted, kitted_band, POOL);
+    seed_the_row(&mut kitted, kitted_band, POOL, &stocked(), FLOOR);
+    let kitted_quote = published_actual_yield(&kitted);
+    let kitted_cap = published_useful_workers(&kitted);
+    let kitted_curve = crew_take_curve(&mut kitted);
+    let kitted_paid = resolve_and_republish(&mut kitted);
+    assert!(
+        kitted_quote > NOTHING && kitted_paid > NOTHING,
+        "LIVENESS: spears turn the same fenced aurochs into a take — quoted {kitted_quote}, paid          {kitted_paid}"
+    );
+    assert!(
+        kitted_cap > NO_USEFUL_CREW,
+        "…and the crew cap must open with it: {kitted_curve:?}"
+    );
+    assert!(
+        kitted_curve.iter().any(|(_, likely)| *likely > NOTHING),
+        "…and the socket's rows must pay: {kitted_curve:?}"
+    );
+}
+
+/// **Author `species`' `combat.durability`** — the one lever that moves a party's kill *rate* without
+/// touching what it can carry, so the carry arm below becomes the binding one. Mirrors
+/// `fauna_husbandry::author_pen_handling_rate`, which authors a rate for the same reason: an arm the
+/// shipped roster cannot reach still has to be reachable.
+fn author_quarry_durability(app: &mut App, species: &str, durability: f32) {
+    let mut config = (*app.world.resource::<FaunaConfigHandle>().get()).clone();
+    let key = config
+        .species
+        .iter()
+        .find(|(_, def)| def.display_name == species)
+        .map(|(key, _)| key.clone())
+        .expect("the fixture names a shipped species");
+    config
+        .species
+        .get_mut(&key)
+        .expect("just resolved")
+        .combat
+        .durability = durability;
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .replace(std::sync::Arc::new(config));
+}
+
+/// **A durability the shipped roster does not carry, chosen so the KEEPERS' HAUL binds.**
+///
+/// A curve row is `min(kill rate, carry)`, and on the **shipped** roster the carry arm is
+/// unreachable at every pennable species and both kit tiers: the largest per-worker kill is the
+/// aurochs' `120 × (20 − 6) ÷ 150 = 11.2` biomass a turn, against a bare-tier pen carry of `12` and
+/// an equipped one of `40`. Measured across all seven `husbandry_ceiling: "pen"` rows — nothing
+/// comes within a tenth of it.
+///
+/// At `10` the same aurochs kills `120 × 14 ÷ 10 = 168` biomass a worker-turn, so a lone keeper's
+/// `40` is what stops it. **`10` is not a balance opinion** — it is the smallest round value that
+/// clears the `< 42` the inequality asks for.
+const CARRY_BOUND_DURABILITY: f32 = 10.0;
+
+/// **THE KEEPERS' HAUL IS A REAL BOUND ON THE PEN'S CURVE** — the one term that survived §4.9 item
+/// 12b as the pen's own, and the only thing left that makes a penned row's curve differ from a
+/// stalking one.
+///
+/// The room, the reach, the retreat and the fight are all shared with the range now
+/// (`fauna::resolve_hunt_engagement`); what a pen adds is *"and then somebody has to carry it
+/// home"*, at the `pen_carry` tier rather than the hunt haul's. **The shipped roster cannot reach
+/// it** — see [`CARRY_BOUND_DURABILITY`] — so this fixture authors a quarry that can, exactly as
+/// `fauna_husbandry::a_fractional_pen_handling_rate_collects_whole_animals` authors a handling rate
+/// for the arm above it.
+///
+/// Asserted as a **crew cap that moves**: with the haul in the way the curve keeps rising for
+/// several more keepers than the kill rate alone would, so the published cap is strictly larger than
+/// the crew at which the kill rate itself plateaus. Both numbers are read from the socket's own rows
+/// rather than composed here.
+#[test]
+fn a_pens_curve_is_bounded_by_what_its_keepers_can_carry_home() {
+    let mut app = world_keeping_a_pen(AUROCHS, stocked());
+    author_quarry_durability(&mut app, AUROCHS, CARRY_BOUND_DURABILITY);
+    recapture_snapshot_in_place(&mut app.world);
+
+    // **The kill rate alone**, off `resolve_hunt_engagement` — the curve with the haul taken out.
+    let kill_only: Vec<(u32, f32)> = (1..=POOL)
+        .map(|workers| (workers, take_and_reach(&app, workers, &stocked()).0))
+        .collect();
+    let kill_plateau = plateau_of(&kill_only);
+
+    let curve = crew_take_curve(&mut app);
+    let published = published_useful_workers(&app);
+    assert_eq!(
+        published,
+        plateau_of(&curve),
+        "one producer, two transports: {curve:?}"
+    );
+    assert!(
+        published > kill_plateau,
+        "the haul must keep the curve rising past the crew the KILL rate plateaus at ({kill_plateau}),          or the carry arm is not reaching this fixture at all — published {published}, curve {curve:?}"
+    );
+    // **LIVENESS** — the rows really pay, so the cap above is a cap on a take rather than on zero.
+    assert!(
+        curve.iter().any(|(_, likely)| *likely > NOTHING),
+        "the authored pen must still collect: {curve:?}"
     );
 }
 
@@ -918,19 +1043,32 @@ fn a_thin_pen_publishes_a_rate_and_a_crew() {
 //
 // The crew cap above is one of two numbers a hunt row publishes about a pen; the other is the
 // **yield** — `actualYield`, the assign-time seed the compose sheet prints as *"Expected yield"*.
-// It came out of `fauna::hunt_forecast`, which built `fight: Some(..)` for every herd and so ran an
-// engagement, a retreat and a fight that the tend branch does not: it `continue`s before
-// `systems::hunt_take` and collects through `fauna::animals_handled`.
 //
-// A bare-handed band with a penned **Wild Aurochs** (`defense 6`) was therefore quoted `0` and then
-// paid a real take on the turn — the forecast-vs-actual split
-// `.claude/rules/core_sim/yield-forecast.md` forbids, on the one surface the player commits from.
-// The fork is `Herd::is_corralled()` and nothing else: a wild herd still fights for every animal.
+// The quote and the payout disagreed on a pen, and `docs/plan_standing_upkeep.md` §4.9 item 12b
+// closed the gap **from the take's side**. The quote had always run three stages; it was the *tend
+// branch* that ran none of them — it `continue`d before `systems::hunt_take` and collected with a
+// formula of its own — so a bare-handed band with a penned **Wild Aurochs** (`defense 6`) was quoted
+// `0` and then butchered it anyway. Exempting the quote to match would have made the ladder a mode
+// switch: taming and penning would buy nothing at the kill, and containment would substitute for
+// weapons.
+//
+// **So the pen takes through `hunt_take` like every other rung**, and what penning buys is the first
+// two stages only — the reach (`husbandry.pen_engage_gain`) and the retreat
+// (`husbandry.pen_wariness`). The fight is the species' own `defense` against the party's `attack`
+// at every rung: **no weapons, no beef**, and a pen is *reliable*, not *safe*.
 
-/// **The keeper crews the quote sweep walks.** Sized so both surviving stages bind somewhere in the
-/// sweep — one keeper cannot carry a 120-kg body home (the carry arm), twenty are stopped by the two
-/// bodies the floor leaves sparable (the room arm) — and both are asserted below rather than assumed.
-const KEEPER_CREWS: [u32; 4] = [1, 2, 4, 20];
+/// **The keeper crews the quote sweep walks**, on the fenced [`BOAR`]. Sized so the two bounds a pen
+/// has always had bind somewhere in the sweep — two keepers seat fewer bodies than the floor leaves
+/// sparable (the carry arm), twenty are stopped by the room — and both are asserted below rather
+/// than assumed.
+///
+/// ⛔ **It starts at TWO, and that is the fight rather than a rounder number.** Since §4.9 item 12b a
+/// pen resolves the ordinary fight, and one speared keeper lands `attack 20 − defense 2 = 18` damage
+/// against the boar's `durability 20` — nine tenths of a body, which is a **wait turn**. The wound
+/// ledger banks it and the next turn finishes the animal, so a lone keeper is a real and correct
+/// state; it is simply not one a single-turn `quote == payout` harness can read, exactly as the
+/// aurochs is not one at any crew this fixture can staff.
+const KEEPER_CREWS: [u32; 3] = [2, 4, 20];
 
 /// **How close two provisions readings count as the same take** — the `Scalar` grid the larder
 /// quantises onto with room for the different multiplication orders on either side of the
@@ -1119,18 +1257,19 @@ fn the_quote_prices_the_state_the_turn_will_find() {
     );
 }
 
-/// **A BARE-HANDED BAND WITH A PENNED HEAVY ANIMAL IS QUOTED WHAT IT COLLECTS** — the reported
-/// shape, asserted as `quote == payout` on the published row rather than merely as *"not zero"*.
+/// **A BARE-HANDED BAND WITH A PENNED HEAVY ANIMAL TAKES NOTHING, AND IS QUOTED NOTHING** — the
+/// fight gates a pen exactly as it gates the range (§4.9 item 12b).
 ///
-/// Two preconditions carry it, and both are derived from the fixture rather than asserted of the
-/// seam under test:
+/// Asserted as an **identity** on the published row rather than as an epsilon: a fightless party's
+/// take is `0`, not a small number. Bare hands swing the `person` row's `attack 1` against the
+/// aurochs' `defense 6`, and `max(0, 1 − 6)` is nothing at any crew size — the precondition scans
+/// the whole pool rather than probing one crew.
 ///
-/// 1. this band genuinely **cannot fight** this quarry — bare hands against `defense 6` bring down
-///    nothing at any crew size, which is what made the old quote `0`;
-/// 2. the pen nonetheless **pays** something, or *"the quote equals the payout"* would be satisfied
-///    by two zeroes and the test would pass against the defect.
+/// **The liveness half rides beside it, on the identical fixture**: the same band, the same fenced
+/// aurochs, `stocked()` — quoted a real take and paid one. Without it the two zeroes above would be
+/// satisfied by a broken pen, a lapsed assignment or a herd that never got penned at all.
 #[test]
-fn a_bare_handed_pen_is_quoted_the_take_the_turn_pays() {
+fn a_bare_handed_pen_is_quoted_nothing_and_paid_nothing() {
     let mut app = world_keeping_a_pen(AUROCHS, bare());
     let band = the_band(&mut app);
 
@@ -1141,41 +1280,65 @@ fn a_bare_handed_pen_is_quoted_the_take_the_turn_pays() {
         fightless.len(),
         POOL as usize,
         "PRECONDITION: bare hands against the aurochs' defense must bring down nothing at EVERY \
-         crew size, or the quote this test is about was never gated by the fight. Crews that land \
-         nothing: {fightless:?}"
+         crew size, or this test's zeroes are about something else. Crews that land nothing: \
+         {fightless:?}"
     );
 
     seed_the_row(&mut app, band, CREW_ON_THE_ROW, &bare(), FLOOR);
     let quoted = published_actual_yield(&app);
     let paid = resolve_and_republish(&mut app);
-
-    assert!(
-        paid > NOTHING,
-        "PRECONDITION: the pen must actually pay this bare-handed crew something, or the equality \
-         below is two zeroes agreeing"
+    assert_eq!(
+        (quoted, paid),
+        (NOTHING, NOTHING),
+        "a fence does not kill the animal: bare hands on a penned aurochs must be quoted nothing \
+         AND paid nothing, got quoted {quoted}, paid {paid}"
     );
+
+    // **LIVENESS — the same pen, kitted.** The whole pool, because the aurochs' `durability 150`
+    // banks wounds for several turns against a smaller crew and this harness resolves one
+    // (`an_equipped_wild_row_is_quoted_the_take_it_pays` documents the same regime on the range).
+    let mut kitted = world_keeping_a_pen(AUROCHS, stocked());
+    let kitted_band = the_band(&mut kitted);
+    staff_the_row(&mut kitted, kitted_band, POOL);
+    seed_the_row(&mut kitted, kitted_band, POOL, &stocked(), FLOOR);
+    let kitted_quote = published_actual_yield(&kitted);
+    let kitted_paid = resolve_and_republish(&mut kitted);
     assert!(
-        (quoted - paid).abs() <= YIELD_EPSILON,
-        "a penned row must be quoted the take its keepers collect: quoted {quoted}, paid {paid}"
+        kitted_quote > NOTHING && kitted_paid > NOTHING,
+        "liveness: spears turn the same fenced aurochs into a take — quoted {kitted_quote}, paid \
+         {kitted_paid}. If either is zero the identities above are the fixture, not the fight"
     );
 }
 
-/// **THE QUOTE IS THE PAYOUT ACROSS THE KEEPER RANGE — on both bounds that survive a pen.**
+/// **THE QUOTE IS THE PAYOUT ACROSS THE KEEPER RANGE.**
 ///
-/// A slaughter has no engagement, no retreat and no fight, so exactly two stages are left to bind:
-/// the **room** above the assignment's floor, and what the keepers can **carry** home. The sweep
-/// asserts it saw both, so it cannot degenerate into testing one arm four times.
+/// A pen has **four** stages that can bind now, not two: the **room** above the assignment's floor,
+/// the keepers' **reach** (`husbandry.pen_engage_gain`), the **retreat** (`husbandry.pen_wariness`),
+/// the **fight**, and what the keepers can **carry** home. The sweep asserts it saw the two the old
+/// exemption left — room and carry — so it cannot degenerate into testing one arm four times.
+///
+/// **With the RETREAT held at its identity**, exactly as the wild sweep beside it is
+/// (`an_equipped_wild_row_is_quoted_the_take_it_pays`): a quote reads the retreat's *expectation*
+/// over a seed it cannot draw, so at a live wariness `quote == payout` is the wrong invariant to
+/// assert. Held to zero the distribution is degenerate and the equality is exact.
+///
+/// **On the BOAR and with a kit**, because the fight is a real term now: the aurochs' `durability
+/// 150` banks wounds for several turns against any crew this harness can staff, and a bare hand
+/// clears no pennable species' `defense` at all.
 #[test]
 fn a_pens_quote_is_its_payout_at_every_keeper_count() {
     let mut saw_room_bound = false;
     let mut saw_carry_bound = false;
     for keepers in KEEPER_CREWS {
-        let mut app = world_keeping_a_pen(AUROCHS, bare());
+        let mut app = world_keeping_a_pen(BOAR, stocked());
+        app.world
+            .resource_mut::<FaunaConfigHandle>()
+            .hold_wariness_at_zero();
         let band = the_band(&mut app);
         staff_the_row(&mut app, band, keepers);
 
-        // **Which arm binds, composed from the tend branch's own terms** — the whole bodies the
-        // floor leaves sparable against the whole bodies the crew's load seats.
+        // **Which arm binds, composed from the take's own terms** — the whole bodies the floor
+        // leaves sparable against the whole bodies the crew's load seats.
         let (room_animals, carry_animals) = {
             let fauna = app.world.resource::<FaunaConfigHandle>().get();
             let herd = app
@@ -1188,7 +1351,7 @@ fn a_pens_quote_is_its_payout_at_every_keeper_count() {
                 core_sim::herd_take_room(&herd, FLOOR, &fauna),
                 herd.body_mass,
             );
-            let carry = (keepers as f32 * pen_carry_per_worker(&app, keepers, &bare())
+            let carry = (keepers as f32 * pen_carry_per_worker(&app, keepers, &stocked())
                 / herd.body_mass)
                 .max(ONE_WHOLE_ANIMAL);
             (room, carry)
@@ -1199,7 +1362,7 @@ fn a_pens_quote_is_its_payout_at_every_keeper_count() {
             saw_room_bound = true;
         }
 
-        seed_the_row(&mut app, band, keepers, &bare(), FLOOR);
+        seed_the_row(&mut app, band, keepers, &stocked(), FLOOR);
         let quoted = published_actual_yield(&app);
         let paid = resolve_and_republish(&mut app);
         assert!(
@@ -1214,7 +1377,7 @@ fn a_pens_quote_is_its_payout_at_every_keeper_count() {
     }
     assert!(
         saw_room_bound && saw_carry_bound,
-        "the sweep must exercise both surviving bounds: room-bound={saw_room_bound} \
+        "the sweep must exercise both of the bounds the pen already had: room-bound={saw_room_bound} \
          carry-bound={saw_carry_bound}"
     );
 }
@@ -1251,14 +1414,90 @@ fn a_wild_row_is_still_gated_by_the_fight() {
          still say so: quoted {quoted}, paid {paid}"
     );
 
-    // **Liveness** — the identical band and herd, fenced, collects perfectly well.
-    let mut penned = world_keeping_a_pen(AUROCHS, bare());
+    // **Liveness** — the identical herd, fenced AND the band kitted, is quoted a real take. The
+    // rider used to keep the band bare-handed, because a pen ran no fight; since §4.9 item 12b it
+    // does, so bare hands are quoted nothing at *either* rung and the spears are what has to change
+    // for this to prove anything.
+    let mut penned = world_keeping_a_pen(AUROCHS, stocked());
     let penned_band = the_band(&mut penned);
-    seed_the_row(&mut penned, penned_band, CREW_ON_THE_ROW, &bare(), FLOOR);
+    staff_the_row(&mut penned, penned_band, POOL);
+    seed_the_row(&mut penned, penned_band, POOL, &stocked(), FLOOR);
     assert!(
         published_actual_yield(&penned) > NOTHING,
-        "liveness: the same bare hands must be quoted a real take once the herd is penned, or the \
-         zeroes above are the fixture rather than the fight"
+        "liveness: a kitted crew must be quoted a real take on this herd, or the zeroes above are \
+         the fixture rather than the fight"
+    );
+}
+
+/// **The spear id the strike quantum is charged against** — named so the wear assertion reads as the
+/// claim rather than as a string.
+const SPEARS: &str = "spears";
+
+/// **What the band has left of `item`**, off its live [`BandEquipment`] ledger.
+fn condition_left(app: &App, band: Entity, item: &str) -> f32 {
+    app.world
+        .get::<BandEquipment>(band)
+        .expect("the fixture band carries its ledger")
+        .remaining(item, &EquipmentConfig::builtin())
+}
+
+/// **The band's working-age head count**, which is where a hunt's dead come out of
+/// (`PopulationCohort::apply_combat_casualties`).
+fn working_hands(app: &App, band: Entity) -> f32 {
+    app.world
+        .get::<PopulationCohort>(band)
+        .expect("the fixture band carries its cohort")
+        .working
+        .to_f32()
+}
+
+/// **A CONTAINED BULL STILL GORES, AND THE SPEAR THAT KILLED IT STILL BLUNTS** — the band's side of a
+/// pen's take (`docs/plan_standing_upkeep.md` §4.9 item 12b), which is the half that makes a pen
+/// **reliable rather than safe**.
+///
+/// The tend branch used to `continue` before any of this: no fight, so no casualties to apply, no
+/// blow to charge a weapon for, and a wear comment that said outright *"a penned beast is
+/// slaughtered, not stalked, so there is no spear to blunt"*. Both are false now, and both are
+/// asserted here on the shipped surfaces rather than on the resolver:
+///
+/// 1. the **spears** lose condition over the turn — the `Strike` quantum, charged from the pen;
+/// 2. the **band** loses working-age hands — the aurochs' `attack 4 × ferocity 0.7` answering back.
+///
+/// **Liveness rides on the take itself**: the same turn must actually pay, or a pen that resolved
+/// nothing at all would satisfy neither claim for the wrong reason.
+#[test]
+fn a_pens_take_blunts_the_spear_and_costs_the_keepers() {
+    let mut app = world_keeping_a_pen(AUROCHS, stocked());
+    let band = the_band(&mut app);
+    staff_the_row(&mut app, band, POOL);
+    seed_the_row(&mut app, band, POOL, &stocked(), FLOOR);
+
+    let spears_before = condition_left(&app, band, SPEARS);
+    let hands_before = working_hands(&app, band);
+    assert!(
+        spears_before > NOTHING && hands_before > NOTHING,
+        "PRECONDITION: the fixture band must hold spears ({spears_before}) and hands \
+         ({hands_before}) to spend"
+    );
+
+    let paid = resolve_and_republish(&mut app);
+    assert!(
+        paid > NOTHING,
+        "liveness: the keepers must actually take an animal, or neither cost below is a cost of \
+         anything"
+    );
+
+    assert!(
+        condition_left(&app, band, SPEARS) < spears_before,
+        "the keepers SWUNG: the spears must have lost condition over the pen's turn ({} against \
+         {spears_before})",
+        condition_left(&app, band, SPEARS)
+    );
+    assert!(
+        working_hands(&app, band) < hands_before,
+        "…and the bull answered: the band must be down working-age hands ({} against \
+         {hands_before})",
+        working_hands(&app, band)
     );
 }
 
@@ -1298,39 +1537,56 @@ fn an_equipped_wild_row_is_quoted_the_take_it_pays() {
     );
 }
 
-/// **THE STEADY HEADLINE AND THE ARRIVAL SCHEDULE ARE THE SAME PEN** — the two forward projections
-/// beside `actualYield` on the row, and the two that were still running a stalking party's fight
-/// over a fenced herd after the quote stopped.
+/// **THE STEADY HEADLINE AND THE ARRIVAL SCHEDULE ARE THE SAME PEN AS THE QUOTE** — the two forward
+/// projections beside `actualYield` on the row.
 ///
 /// `fauna::project_realized_hunt` fills `realizedYield` (*"this source steadily pays…"*) and
 /// `fauna::project_arrivals_hunt` fills `arrivalSchedule` (*"…and the next lands in N turns"*). Both
-/// simulate the take forward, so both must simulate the take the tend branch runs: a pen collects
-/// through `fauna::animals_handled` at the keepers' handling rate, with no engagement, no retreat and
-/// no fight. Left stalking, they read **zero for ever** on exactly the fixture below — so the panel
-/// said *no steady income, no delivery in the next twenty turns* about a pen paying every turn.
+/// simulate the take forward, so both must simulate the take the tend branch runs — which since
+/// §4.9 item 12b is `systems::hunt_take`, engagement, retreat and fight included.
 ///
-/// The precondition is the one the quote test uses, for the same reason: these bare hands genuinely
-/// cannot fight this quarry.
+/// **This test inverts.** It used to assert that a bare-handed pen projects a steady income and a
+/// delivery, because the pen ran no fight and the projections did; now the pen fights, and a party
+/// that cannot clear the quarry's `defense` projects **nothing** — which is exactly consistent with
+/// the `NOTHING` it is quoted and paid one test above. The two halves below are that consistency and
+/// its liveness: the same fixture, kitted, projects both.
 #[test]
-fn a_bare_handed_pen_projects_a_steady_income_and_a_delivery() {
+fn a_bare_handed_pen_projects_no_income_and_a_kitted_one_projects_both() {
     let mut app = world_keeping_a_pen(AUROCHS, bare());
     let band = the_band(&mut app);
     assert!(
         take_and_reach(&app, CREW_ON_THE_ROW, &bare()).0 <= NOTHING,
-        "PRECONDITION: these bare hands must bring down nothing in a stalking fight, or neither \
-         projection was ever gated by one"
+        "PRECONDITION: these bare hands must bring down nothing, or neither projection is gated by \
+         a fight"
     );
 
     seed_the_row(&mut app, band, CREW_ON_THE_ROW, &bare(), FLOOR);
     let (realized, arrivals) = published_projections(&app);
 
-    assert!(
-        realized > NOTHING,
-        "a pen its keepers collect from every turn must publish a steady income, not {realized}"
+    assert_eq!(
+        realized, NOTHING,
+        "a pen its keepers cannot kill from projects no steady income — an identity, not a small \
+         number"
     );
     assert!(
-        arrivals.iter().any(|slot| *slot > NOTHING),
-        "…and at least one turn in the horizon must deliver food: {arrivals:?}"
+        arrivals.iter().all(|slot| *slot <= NOTHING),
+        "…and nothing lands in the whole horizon: {arrivals:?}"
+    );
+
+    // **LIVENESS** — spears, and the same two projections come alive on the same fenced herd.
+    let mut kitted = world_keeping_a_pen(AUROCHS, stocked());
+    let kitted_band = the_band(&mut kitted);
+    staff_the_row(&mut kitted, kitted_band, POOL);
+    seed_the_row(&mut kitted, kitted_band, POOL, &stocked(), FLOOR);
+    let (kitted_realized, kitted_arrivals) = published_projections(&kitted);
+    assert!(
+        kitted_realized > NOTHING,
+        "liveness: a pen a kitted crew CAN kill from must publish a steady income, not \
+         {kitted_realized}"
+    );
+    assert!(
+        kitted_arrivals.iter().any(|slot| *slot > NOTHING),
+        "…and at least one turn in the horizon must deliver food: {kitted_arrivals:?}"
     );
 }
 

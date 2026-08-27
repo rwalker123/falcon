@@ -243,7 +243,7 @@ rendered nowhere — a cell showing it would be the retired column again, one fi
 
 `_is_shrug` requires a NEUTRAL offer severity **and** an item at full condition
 (`remaining >= 100`). The first cut required neutral + a `healthy` life severity, and that dimmed a
-sled at 42 turns left and a husbandry kit at 28 — real gear in active use, reading as though there
+sled at 42 turns left and a set of hurdles at 28 — real gear in active use, reading as though there
 were nothing to think about. `healthy` covers most of an item's life; the shrug is the item that has
 never been touched.
 

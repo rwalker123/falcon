@@ -2111,7 +2111,7 @@ fn a_worker_hunting_a_pastoral_herd_takes_its_pastoral_msy_and_draws_the_herd_do
         let take = quantise_animal_take(
             msy,
             herd.body_mass,
-            core_sim::animals_handled(f32::INFINITY, msy, herd.body_mass),
+            core_sim::animals_affordable(msy, herd.body_mass),
             core_sim::EngagementStop::WhenPackFull,
         )
         .carried;
@@ -2325,12 +2325,14 @@ fn tended_corral_harvests_msy_and_settles_at_half_capacity() {
     );
 }
 
-// ---- The pen's collection stage (`fauna::animals_handled`) ---------------------------------------
+// ---- The pen's collection stage (`fauna::resolve_hunt_engagement`) -------------------------------
 //
-// A hunt bounds what it **goes after** by the room above the floor (`resolve_hunt_engagement`); the
-// pen bounds what it **collects** by the same room, at its own call site in `systems::labor`'s tend
-// branch. The three tests below are that bound: nothing is collected at the floor, no crew collects
-// past it, and what is collected is whole animals.
+// A hunt bounds what it **goes after** by the room above the floor, and since
+// `docs/plan_standing_upkeep.md` §4.9 item 12b **so does a pen, through the very same seam**: the
+// tend branch takes through `systems::hunt_take` like the range does, so the room clamp, the retreat
+// and the fight are one expression at every rung and the pen-side `animals_handled` helper is gone.
+// The three tests below are that bound: nothing is collected at the floor, no crew collects past it,
+// and what is collected is whole animals.
 
 /// **A single keeper** — the smallest crew a pen can have, so a floor that holds for it and for
 /// [`HUNT_WORKERS`] holds for every crew in between (the collection is monotone in the crew).
@@ -2367,9 +2369,9 @@ fn pen_collection_turn(
 /// **A PEN AT ITS FLOOR COLLECTS NOTHING, AT ANY CREW SIZE** — the keepers have nothing to spare, so
 /// they walk no animal out and the flock is untouched by the Population stage.
 ///
-/// This is the pen's half of *"restraint is free"*: the room is spent **before** the collection
-/// ([`core_sim::animals_handled`]), exactly where a hunt spends it before its retreat, so a pen whose
-/// floor is at capacity is not merely prevented from banking a take — it never takes one.
+/// This is the pen's half of *"restraint is free"*: the room is spent **before** the retreat
+/// ([`core_sim::resolve_hunt_engagement`]), at the pen exactly as on the range, so a pen whose floor
+/// is at capacity is not merely prevented from banking a take — it never takes one.
 ///
 /// **Each crew is paired with the same crew at a workable floor**, or the assertion would pass just
 /// as well on a fixture whose assignment had lapsed, whose pen had escaped, or whose species was not
@@ -2414,7 +2416,8 @@ fn a_pen_at_its_floor_collects_nothing_however_many_keepers() {
 
 /// **NO CREW COLLECTS A PEN BELOW ITS FLOOR** — the case the missing bound allowed: the tend branch
 /// handed `herd_engage_rate × workers` straight to the quantiser, so the only thing between a big
-/// keeper crew and a stripped pen was a post-hoc clamp inside it.
+/// keeper crew and a stripped pen was a post-hoc clamp inside it. The clamp is
+/// `resolve_hunt_engagement`'s own since §4.9 item 12b, shared with the range.
 ///
 /// Asserted on **the herd's biomass after the turn**, not on the take: a take that is bounded and a
 /// herd that ends up above its floor are the same claim only when the bound is the one the herd is
@@ -2459,10 +2462,11 @@ fn a_large_keeper_crew_cannot_collect_a_pen_below_its_floor() {
 /// body_mass`, so the count and the biomass describe one event.
 ///
 /// The tend branch handed the raw rate in, and [`core_sim::AnimalTake::killed`] truncates: a crew
-/// handling `3.6` animals reported **3 killed** while the flock lost **3.6 bodies**. A pen is
-/// collected rather than fought — a keeper does not walk out half a beast — so the rate is floored
-/// where it is spent and the remainder stays standing in the pen, the way every other whole-animal
-/// wait carries (the herd's own biomass is the accumulator).
+/// handling `3.6` animals reported **3 killed** while the flock lost **3.6 bodies**. A keeper does
+/// not walk out half a beast, so the rate is floored where the fight resolves it — the same
+/// `resolve_hunt_fight` the range runs, since §4.9 item 12b — and the remainder stays standing in
+/// the pen, the way every other whole-animal wait carries (the herd's own biomass is the
+/// accumulator).
 ///
 /// **The fixture has to author the rate**, because the shipped `pen_engage_gain` of `20` is
 /// deliberately high enough that the keepers' *carry* binds first on every pennable species — the
@@ -2506,20 +2510,18 @@ fn a_fractional_pen_handling_rate_collects_whole_animals() {
              lost {taken} biomass, which is {animals} bodies"
         );
 
-        // …and the take the sim's own seam produces says the same in both currencies: the reported
-        // count times one body IS the biomass the herd loses.
-        let take = quantise_animal_take(
-            // A collection nothing could bind on, so the two numbers under test are the handling
-            // arm's.
-            f32::INFINITY,
-            herd.body_mass,
-            core_sim::animals_handled(handling_per_keeper, room, herd.body_mass),
-            core_sim::EngagementStop::WhenPackFull,
-        );
-        assert_eq!(take.killed as f32, whole_animals);
+        // …and the two currencies describe ONE event: the biomass the flock lost is an exact whole
+        // number of BODIES, never the fractional handling rate shaved off the stock. This used to
+        // be re-derived through the pen's own `animals_handled` clamp; since §4.9 item 12b there is
+        // no pen-side helper to re-derive from — the whole-animal floor is `resolve_hunt_fight`'s,
+        // inside `systems::hunt_take`, like every other rung's — so the claim is asserted where it
+        // is observable, on the herd the turn actually drew from.
         assert!(
-            (take.killed_biomass() - take.killed as f32 * herd.body_mass).abs() < SAME_BIOMASS,
-            "the count and the biomass must describe one event: {take:?}"
+            (taken - whole_animals * herd.body_mass).abs() < SAME_BIOMASS,
+            "the count and the biomass must describe one event: {whole_animals} bodies of \
+             {} is {}, and the flock lost {taken}",
+            herd.body_mass,
+            whole_animals * herd.body_mass
         );
     }
 }

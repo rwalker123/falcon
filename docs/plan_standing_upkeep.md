@@ -1562,8 +1562,18 @@ lands after it, sharing only the kit roster that item 12 has to rewrite anyway.
 >
 > **Containment solves catching; weapons solve killing.** A pen makes the take *reliable*, not
 > *safe* — a contained bull can still gore you. The consequence to state plainly is **no weapons,
-> no beef**: a bare-handed band can pen an aurochs and never butcher one, while goats and sheep
-> stay killable by hand.
+> no beef**: a bare-handed band can pen an aurochs and never butcher one.
+>
+> ⛔ **AND THE ROSTER SAYS THAT MORE SHARPLY THAN THIS CLAUSE ONCE DID.** It read *"while goats
+> and sheep stay killable by hand"*, which is false by one point of `defense` and was never a
+> decision anyone took. The bare hand's `attack` is `1.0` (`creatures.json` `person.combat.attack`)
+> and the gate is `max(0, attack − defense)`, so of the seven species that can be penned
+> (`husbandry_ceiling: "pen"`) only the three `defense 0` rows — **rabbit, fowl, snow hare** — fall
+> to a bare hand at all. `crag_goat` and `wild_sheep` are `defense 1` and yield exactly zero;
+> `boar` is 2 and `aurochs` is 6. **No roster value moves for this** — the fight is the one stage
+> the rung may not tune, and retuning it to rescue an illustration would be tuning the wild hunt
+> too. What the pen's default kit resolves to is `big_game` (spears, `attack 20`), so the bare hand
+> is a choice the player makes, not the state they start in.
 >
 > **Deleting `NO_FIGHT_STAGE` FIXES what it was papering over.** It exists because a bare-handed
 > band was quoted nothing and then paid a take — forecast and take disagreeing. With one
