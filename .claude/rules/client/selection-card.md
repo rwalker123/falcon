@@ -357,6 +357,7 @@ FAILURE state leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
 | under the rot, staffed or not | `⚠ ∞ turns, losing ground (42%)` | the work already bought is going BACK — so it is RED, not amber |
 | built, and the keeping pool is short | `🌾 Tended 92% ⚠` | the rung is HELD and slipping, which no build crew fixes |
 | **the band's builders are ON it and its own gate refuses** | **`⚠ Blocked 96% — your builders are held here`**, over an indented remedy | **the hands are staffed and STUCK** — see below |
+| **the rung LAPSED — work banked, nobody on it, and no queue entry left** | **`⚠ Lapsed 99%`**, with the re-queue sentence on its hover | **nobody is on it at all**, so *Stalled* names the wrong situation and *Held* the wrong mood — see below |
 
 > #### ⛔ THE BLOCKED ROW NAMES THE REMEDY, AND THE REMEDY IS THE KEEPING ROLE (§4.6b)
 >
@@ -427,6 +428,54 @@ an empty escapement room. It gets its own word, and must not render as a bare pe
 silence this family exists to remove. **It reads alike to the HELD row in INK and could not be more
 different in meaning** — *no answer* against *no problem* — which is exactly why the held row spends a
 word on saying so.
+
+> #### ⛔ `-1` IS TWO STATES, AND THE QUEUE POSITION IS WHAT SEPARATES THEM
+>
+> **A LAPSED RUNG IS THE SAME `-1` ON A SOURCE NO BAND HAS QUEUED** — `RUNG_LAPSED_FORMAT`,
+> `⚠ Lapsed 99%`. Measured in play at tile (78, 20): a Field completed on tick 88 and went feral on
+> tick 89 (*"untended, the ground is reverting"*), which dropped the standing rung back to
+> `plant:tended`. **A build queue entry retires the turn its destination rung completes**, so the
+> feral turn found nothing left to carry the meter: at tick 93 the patch still held 49.612 of 49.624
+> work, publishing `-1` on the countdown and `NOT_IN_ANY_BUILD_QUEUE` on the position, with the yield
+> already fallen from a Field's 12.48 to a tended patch's 1.39.
+>
+> **THE FORK IS THE WIRE'S OWN `build_queue_position`, THREADED IN LIKE `build_crew`** — three
+> conjuncts inside `DetailFormat.build_sentinel_value`: `-1`, a meter above `BUILD_PERCENT_EMPTY`,
+> and no entry. It is emphatically **not** the crew fork on `-1` that was built and reverted:
+> `RungDef::build_accrual`'s `eligible` takes no crew count, so a refused gate answers `-1` at any
+> staffing and a client guessing from a crew disagreed with its own compose sheet.
+>
+> **THE THIRD CONJUNCT IS WHAT KEEPS A NEVER-STARTED RUNG OUT.** An untouched rung sits at `0%` in no
+> queue too, and calling that *Lapsed* would announce the loss of a payoff the player never had.
+>
+> **NEITHER NEIGHBOURING WORD FITS, AND BOTH WERE CHECKED.** `RUNG_REVERTING_FORMAT` is a rung its
+> keeping does NOT cover, actively slipping — this one published `upkeepShortfall 0` and
+> `meterRotPerTurn 0`, so it is stable, and *Reverting* would send the player to an account that is
+> already paid. `RUNG_HELD_FORMAT` is a deliberate park with the keeping covered, and carries **no
+> mark** for that reason — the neutral would be the reassuring reading of a loss already taken.
+>
+> **THE HOVER IS WHERE THE REMEDY LIVES**, the mark being two words on a ~245px card:
+> `RUNG_LAPSED_TOOLTIP` states the ground went feral, that the banked work survives, and that
+> re-queuing from the work row's build face picks it back up. It is routed off the value the row
+> already composed (`DetailFormat.note_lapsed_hover`), not re-derived — one verdict, one producer.
+
+### `100%` MEANS DONE, SO `HudFormat.progress_percent` FLOORS
+
+`round()` is what let that Field print `100`: 0.9997586 rounds up, and the card then read
+`⚠ Stalled 100%` — a full meter with a hazard on it, which gives the player no reason to look for
+the twelve thousandths of work still missing. **Every caller of this helper is a COMPLETION meter** —
+the knowledge tracks, the crafting track, pen fencing, the four build meters, the rung gates — and in
+all of them `100%` is a claim that a thing is finished.
+
+**THE `clampf` IS WHAT MAKES FLOORING SAFE AT THE TOP END.** A genuinely complete source publishes
+`>= 1.0`, often a hair over; the clamp pins it to exactly `1.0`, so it still prints `100`. Flooring
+therefore makes `100%` reachable **only** at a true completion — the property the readout was always
+supposed to have. The clamp is not protecting against the rounding; it is what lets the floor be
+exact, which is why reverting to `round()` "for symmetry" reintroduces the bug.
+
+**IT MOVED NOTHING ELSE.** Measured by running both harnesses under `floor` and under `round` and
+diffing every printed readout: the only line that differs across ~2000 claims and 512 frames is the
+feral-Field fixture the change exists for.
 
 **THE BUILT ROW'S MARK IS ROUTED TO THE AT-RISK RUNG** (`SourceForecast.rung_is_under_kept`, §4.6a).
 `is_under_kept` answers for the SOURCE — one pool, one shortfall — and **only one meter on a source is

@@ -1340,13 +1340,35 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
                 HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
         return HudSelectionVocab.RUNG_HELD_FORMAT % percent
     return build_countdown_value(SourceForecast.build_turns_remaining(src, prefix),
-        build_crew, percent)
+        build_crew, percent, SourceForecast.build_queue_position(src, prefix))
 
 ## **THE REMEDY, ON THE HOVER OF THE ROW THAT IS SLIPPING** — the whole of what replaced the `At risk:`
 ## row and its indented instruction. Registers `HudWorkVocab.under_kept_tooltip_for_source` against the
 ## rung row's own key and NOTHING else: no shortfall, no countdown, because a card cannot act on either
 ## (the work board takes the countdown — see that producer's flag).
 ##
+## **THE LAPSED ROW'S OWN SENTENCE, on the hover of the row that lost the rung.** `⚠ Lapsed 99%` is
+## two words on a ~245px card and the state needs three facts — what happened, that the banked work
+## survives, and the one click that resumes it — so the words go where there is room for them
+## (`HudSelectionVocab.RUNG_LAPSED_TOOLTIP`).
+##
+## ⛔ **IT TAKES THE COMPOSED VALUE, NEVER THE SOURCE, so the verdict is reached exactly once.**
+## `build_sentinel_value` already forked on the countdown, the meter and the queue position; a hover
+## that asked those three questions again would be a second producer for one state, which is the
+## defect this family has shipped twice (`tile_meter_stalled`'s note, where the sheet said *held* and
+## the card said `⚠ Stalled`). The row's own word is the seam — the same shape `rung_value_hex` uses
+## to pick its ink off `RUNG_ROTTING_PHRASE`.
+##
+## **IT IS REGISTERED BEFORE `note_under_kept_hover` SO THE KEEPING WINS WHERE BOTH APPLY.** A rung
+## can be lapsed and under-kept at once, and then the shortfall is the more urgent remedy: re-queuing
+## a job whose keeping is unpaid buys the player a second lapse.
+##
+## Silent on every value that is not lapsed, and silent for a caller passing no context.
+static func note_lapsed_hover(ctx: Context, row_key: String, value: String) -> void:
+    if ctx == null or not value.contains(HudSelectionVocab.RUNG_LAPSED_WORD):
+        return
+    ctx.row_tooltips[row_key] = HudSelectionVocab.RUNG_LAPSED_TOOLTIP
+
 ## Silent on a rung whose keeping is paid, which is every rung on every calm card in the game, and
 ## silent for a caller that passes no context — so a host that renders these lines without one gets
 ## exactly the BBCode it always did.
@@ -1529,8 +1551,9 @@ static func rung_badge_word(improvement: String) -> String:
 ##
 ## `percent` is the meter's own fullness, supplied by the caller because the two callers read it from
 ## different places — a rung row from its own meter, a queue row from the entry's.
-static func build_countdown_value(turns: int, build_crew: int, percent: int) -> String:
-    var sentinel := build_sentinel_value(turns, build_crew, percent)
+static func build_countdown_value(turns: int, build_crew: int, percent: int,
+        queue_position: int) -> String:
+    var sentinel := build_sentinel_value(turns, build_crew, percent, queue_position)
     if sentinel != "":
         return sentinel
     if turns == BUILD_TURNS_SINGULAR:
@@ -1566,8 +1589,8 @@ static func build_countdown_value(turns: int, build_crew: int, percent: int) -> 
 ## `""` — or a rung with no participle — renders the bare dated face, which is what every caller
 ## emitted before a leg was in the question.
 static func build_completion_value(turns: int, build_crew: int, percent: int,
-        current_turn: int, leg: String = "") -> String:
-    var sentinel := build_sentinel_value(turns, build_crew, percent)
+        current_turn: int, queue_position: int, leg: String = "") -> String:
+    var sentinel := build_sentinel_value(turns, build_crew, percent, queue_position)
     if sentinel != "":
         return sentinel
     var verb := String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(leg, ""))
@@ -1581,7 +1604,8 @@ static func build_completion_value(turns: int, build_crew: int, percent: int,
 ## left behind by a newly-spelled sentinel** (`-3` split out of `-2`, then `-4` added beside them), so
 ## a caller that wants a new rendering of a COUNT writes it in terms of this rather than beside it.
 ## **`-5` IS THE THIRD TIME**, and it landed INSIDE this fork for exactly that reason.
-static func build_sentinel_value(turns: int, build_crew: int, percent: int) -> String:
+static func build_sentinel_value(turns: int, build_crew: int, percent: int,
+        queue_position: int) -> String:
     if turns == SourceForecast.BUILD_TURNS_HOLDS:
         if build_crew <= SourceForecast.BUILD_CREW_NONE:
             return HudSelectionVocab.RUNG_HELD_FORMAT % percent
@@ -1622,7 +1646,28 @@ static func build_sentinel_value(turns: int, build_crew: int, percent: int) -> S
     # third time.
     if turns == SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED:
         return HudSelectionVocab.RUNG_QUEUED_FORMAT % percent
+    # **AND `-1` FORKS ONCE MORE, ON WHETHER ANY BAND STILL HAS THE SOURCE QUEUED** — the lapsed
+    # rung (`HudSelectionVocab.RUNG_LAPSED_FORMAT`). A build queue entry retires the turn its
+    # destination rung completes, so a rung that then goes feral loses its meter's last sliver with
+    # no entry left to carry it: work banked, `-1` on the countdown, and
+    # `NOT_IN_ANY_BUILD_QUEUE` on the position. Measured on the patch at (78, 20) — sown on tick 88,
+    # feral on tick 89, still at 49.612 of 49.624 work on tick 93 — where it rendered `⚠ Stalled`.
+    #
+    # ⛔ **IT IS NOT A CREW FORK BY ANOTHER NAME.** The crew fork on `-1` was built and reverted, for
+    # the reason written above: `RungDef::build_accrual`'s `eligible` takes no crew count, so a
+    # refused gate answers `-1` at any staffing, and a client that guessed from a crew disagreed with
+    # its own compose sheet. This forks on a field the WIRE publishes about the same source
+    # (`SourceForecast.build_queue_position`), read once by the caller and threaded in exactly as
+    # `build_crew` is — so nothing here is derived and no caller re-computes the verdict beside it.
+    #
+    # **AN EMPTY METER IS NOT LAPSED, and that is the third conjunct.** A rung nobody has ever
+    # started sits at `0%` in no queue too; calling it *Lapsed* would announce the loss of a payoff
+    # the player never had. Only a meter carrying work has something to have lost.
     if turns == SourceForecast.BUILD_TURNS_NO_ESTIMATE:
+        if percent > BUILD_PERCENT_EMPTY \
+                and queue_position == SourceForecast.NOT_IN_ANY_BUILD_QUEUE:
+            return HudSelectionVocab.RUNG_LAPSED_FORMAT % [
+                HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
         return HudSelectionVocab.RUNG_STALLED_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
     return ""
@@ -1630,6 +1675,12 @@ static func build_sentinel_value(turns: int, build_crew: int, percent: int) -> S
 ## A meter with nothing banked on it at all — the boundary between *declared* and *under way*, and the
 ## one value at which a rung row states a sentence rather than a number.
 const BUILD_METER_EMPTY := 0.0
+
+## The same boundary **as the whole percent a row actually prints** — the value `build_sentinel_value`
+## tests, that function holding the rendered percentage and no fraction. It is deliberately the
+## displayed number rather than a second reading of the meter: a rung the card shows as `0%` has
+## nothing visible to have lost, so *Lapsed* would be announcing a loss the row cannot evidence.
+const BUILD_PERCENT_EMPTY := 0
 
 ## **THE ONE TINT RULE FOR ALL FOUR RUNG ROWS.** A value that says the meter is going BACKWARDS under a
 ## crew is red, any other value carrying the hazard mark is amber, a value carrying its rung's BUILT
@@ -3082,9 +3133,11 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
             # animal meter never goes backwards: an abandoned Tame is parked exactly where it was
             # left, which is a decision rather than a failure and takes no mark. It rendered
             # `⚠ Stalled` while the wire answered `-1` for an unstaffed source.
-            lines.append("%s: %s" % [HUSBANDRY_ROW, rung_row_value(herd_data, herd_prefix,
+            var husbandry_value := rung_row_value(herd_data, herd_prefix,
                 SourceForecast.IMPROVEMENT_TAME, SourceForecast.SOURCE_KIND_HERD,
-                husbandry_built_label(), tamed, domestication, build_crew, unstaffed_build)])
+                husbandry_built_label(), tamed, domestication, build_crew, unstaffed_build)
+            lines.append("%s: %s" % [HUSBANDRY_ROW, husbandry_value])
+            note_lapsed_hover(ctx, HUSBANDRY_ROW, husbandry_value)
             note_under_kept_hover(ctx, HUSBANDRY_ROW, herd_data, herd_prefix,
                 SourceForecast.SOURCE_KIND_HERD, SourceForecast.IMPROVEMENT_TAME)
             # …and, on a row with no REMEDY to state, what the ladder is buying. The remedy wins the
@@ -3127,10 +3180,12 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
         if ceiling == SourceForecast.HUSBANDRY_CEILING_PEN:
             var corral_progress := float(herd_data.get("corral_progress", 0.0))
             if bool(herd_data.get("corralled", false)):
-                lines.append("%s: %s" % [CORRAL_ROW, rung_row_value(herd_data, herd_prefix,
+                var built_corral_value := rung_row_value(herd_data, herd_prefix,
                     SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.SOURCE_KIND_HERD,
                     corral_built_label(), true, CORRAL_PROGRESS_COMPLETE,
-                    SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)])
+                    SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
+                lines.append("%s: %s" % [CORRAL_ROW, built_corral_value])
+                note_lapsed_hover(ctx, CORRAL_ROW, built_corral_value)
                 note_under_kept_hover(ctx, CORRAL_ROW, herd_data, herd_prefix,
                     SourceForecast.SOURCE_KIND_HERD, SourceForecast.IMPROVEMENT_CORRAL)
                 # The pen is fenced LAND (Grazing 2d-γ): its footprint (radius + the SERVER's in-bounds
@@ -3145,10 +3200,12 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                 # Penning is a flat job for every species — a fence is a fence — so unlike the Tame
                 # row above this cost carries no species multiplier, and the turns leading the row
                 # move only with the keeper crew, their floor and their kit.
-                lines.append("%s: %s" % [CORRAL_ROW, rung_row_value(herd_data, herd_prefix,
+                var corral_value := rung_row_value(herd_data, herd_prefix,
                     SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.SOURCE_KIND_HERD,
                     corral_built_label(), false, corral_progress,
-                    build_crew, unstaffed_build)])
+                    build_crew, unstaffed_build)
+                lines.append("%s: %s" % [CORRAL_ROW, corral_value])
+                note_lapsed_hover(ctx, CORRAL_ROW, corral_value)
                 note_under_kept_hover(ctx, CORRAL_ROW, herd_data, herd_prefix,
                     SourceForecast.SOURCE_KIND_HERD, SourceForecast.IMPROVEMENT_CORRAL)
                 lines.append_array(build_gear_lines(herd_data, herd_prefix))

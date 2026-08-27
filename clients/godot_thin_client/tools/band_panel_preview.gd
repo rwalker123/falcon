@@ -17447,11 +17447,18 @@ func _assert_repair_card_states_no_countdown() -> void:
 		SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.SOURCE_KIND_FORAGE,
 		DetailFormat.cultivation_built_label(), true, REPAIR_ERODED_PROGRESS,
 		SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
+	# **THE SENTINEL THIS SHAPE RENDERS IS `Lapsed`, NOT `Stalled`.** The fixture's own note says it:
+	# nothing queued and no builders, which is the queue-position half of `build_sentinel_value`'s
+	# `-1` fork. *Stalled* is the same `-1` on an entry a band still holds, and the two want opposite
+	# remedies — clear the gate, against queue the job again.
+	var lapsed := HudSelectionVocab.RUNG_LAPSED_FORMAT % [
+		HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
 	var stalled := HudSelectionVocab.RUNG_STALLED_FORMAT % [
 		HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
 	_assert_band_panel("the eroded rung's card row states its BADGE, not the sim's `-1` (got \"%s\")"
 			% row,
-		row.contains(DetailFormat.cultivation_built_label()) and not row.contains(stalled))
+		row.contains(DetailFormat.cultivation_built_label())
+			and not row.contains(lapsed) and not row.contains(stalled))
 	# …and the row that is NOT built still reads the wire, or the claim above is about a producer that
 	# ignores the countdown everywhere.
 	var unbuilt := DetailFormat.rung_row_value(patch, HudComposeVocab.BARE_FORECAST_PREFIX,
@@ -17459,7 +17466,11 @@ func _assert_repair_card_states_no_countdown() -> void:
 		DetailFormat.cultivation_built_label(), false, REPAIR_ERODED_PROGRESS,
 		SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
 	_assert_band_panel("…while the same row UNBUILT still states the sim's own sentinel (got \"%s\")"
-			% unbuilt, unbuilt == stalled)
+			% unbuilt, unbuilt == lapsed)
+	# **AND IT IS THE LAPSED ONE SPECIFICALLY**, or the claim above is satisfied by a producer that
+	# renamed the stall everywhere and lost the state that word was written for.
+	_assert_band_panel("…and it is the LAPSED face, this source being in no band's queue",
+		unbuilt != stalled)
 
 ## The herd the band has queued a Tame on. **`upkeep_demand` is ZERO by default**, which is the sim
 ## being honest — the meter is empty, nothing is owned yet, so nothing is billed — and it is exactly
