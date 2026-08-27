@@ -1623,6 +1623,40 @@ picker only means what it looks like once the kit belongs to the site.
 > label) — that existed only to admit that setting it on one row changed every row, which §2.5's
 > per-site kit deletes outright.
 >
+> **AND `extend_pen` IS DECLARED FROM THE WORK ROW, ON THE STANDING RUNG'S OWN MARK.** Reported from
+> play: extending a pen is a button on the TILE card, and it produces a **build queue entry** — so it
+> is the one queue entry in the game declared from somewhere other than the work tab.
+>
+> **The mechanical reason it ended up there:** `RungLadder.has_track` is false when nothing sits above
+> the standing rung, and `animal:pen` is the top of the animal branch — so a corralled herd's row
+> renders **no `⌃` at all** and there was no affordance to hang it on. Extending a pen is precisely
+> what you do *after* the ladder is finished. The prose in `selection-card.md` blamed it on being *"a
+> one-click standing action, not a compose flow"*, which is true and is the second reason.
+>
+> **The fix is a `⌃` on the STANDING-RUNG MARK, not a row in the track.** Ray's, and it is better than
+> putting it in the track on three counts: the track stays **one position on a ladder** (a ring is a
+> repeatable increment with no position, so it has no honest row shape there); the mark sits on **the
+> thing the job acts on**, since a ring extends the pen the mark denotes; and the day the animal
+> branch gains a rung above `pen`, a herd offers **both** — extend what stands, or climb — which is
+> two actions on two things and reads as two marks far better than as one list.
+>
+> **A ROW ALREADY CARRIES TWO MARKS AND THAT IS THE PRECEDENT.** The standing-rung glyph
+> (`BandPanelController`'s rung-mark resolver — `CORRAL_GLYPH` penned, the pastoral glyph tamed, the
+> tended/field glyphs on the plant side) is a **separate slot** from the `⌃`/building face, so a
+> mid-Sow patch already reads `🌾` *what it is* beside `▦ 28%` *what is being built on it*.
+>
+> **IT OPENS A PRICE, NOT A BARE COMMIT — and item 12 is what makes that necessary.** A ring draws
+> `animal:pen`'s own hurdle pile now (§2.7; it drew none until the defect was fixed alongside item 12),
+> so a one-click button states a cost nowhere. Opening the same shape the track's `⌃` opens — *what it
+> eats to raise, what it costs to hold, and where it will stall* — keeps the caret meaning ONE thing on
+> every mark that wears it, and puts the goods cost at the point of decision rather than in the queue
+> afterwards.
+>
+> **A ring in flight shows a BADGE, not a caret**, exactly as a queued build does, so a second ring
+> cannot be declared over the first — `Herd::pen_extending` is already the sim's gate for that and no
+> new one is needed. **The tile card's `Extend pen` button and its `Fencing N%` badge retire with the
+> move**, both being duplicates of what the row and the build queue then state.
+>
 > **UX prototype**, drawn against the shipped surfaces at their real metrics:
 > `https://claude.ai/code/artifact/9ea539e6-9a65-4ca2-9fc1-32dda77d2d14`
 
