@@ -3869,7 +3869,10 @@ const ACTOR_HERD_ID := "game_deer_07"
 ## The ordinary commit verbs, spelled out here rather than read back through `HudComposeVocab`: an
 ## expectation composed from the vocabulary under test can only ever agree with itself. `Unassign` is
 ## the one face taken from the vocabulary, because its ABSENCE is what is being claimed.
-const ACTOR_FORAGE_VERB := "Forage"
+## ⛔ It was `"Forage"` until `docs/plan_standing_upkeep.md` §4.9 item 12c collapsed the plant web's
+## two commit verbs into ONE — the second word was already the Agriculture pool's, so a Field's sheet
+## read `ASSIGN TENDERS` and then offered the *Gathering* kit. Spelled out here, not read back.
+const ACTOR_FORAGE_VERB := "Harvest"
 const ACTOR_HUNT_VERB := "Hunt Here"
 
 ## The rung each web's improvement control offers on these fixtures — a wild Thriving patch offers

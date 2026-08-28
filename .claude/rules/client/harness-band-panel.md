@@ -1900,3 +1900,47 @@ the case the alert clause exists for.
 | `material_short_note` → `""` | 4 (the sentence, the DANGER severity, the hover, the drawn ink) |
 | `band_has_material_upkeep` → `false` | 9 band-page (2 row, 2 caret-never-clicked, 5 popover) |
 | `FactionRollup._upkeep_line` → `""` | 5 (the sum, the rate, the drill-down size, the per-band runway, the jump) |
+
+## The HARVEST rename's half here (`docs/plan_standing_upkeep.md` §4.9 item 12c)
+
+**MEASURED, BEFORE AND AFTER, ON THIS TREE**: `855 : PASS / 448 assert OK` → `858 / 448`, exit 0 both
+times. **NO FRAME ADDED AND NONE RETIRED**; the board's plant rows and the pen row's shortfall
+sentence read differently inside the frames they already had.
+
+The three `: PASS` are the material note's two new claims (it does not say the source EATS the good;
+it names the remedy) and `_assert_work_sort_groups_by_kind`.
+
+> ### ⛔ CLAIM 4 OF `_assert_work_sort_stable` LOST ITS FALSIFIER TO THE RENAME
+>
+> *The DEFAULT sort groups by KIND* was made to bite by a managed plant row reading `Tend (…)`, which
+> sorts AFTER every `Hunt …` row while its `kind` is still `forage`. Every plant row reads
+> `Harvest (…)` now and **`"Harvest" < "Hunt"`**, so label order and kind order COINCIDE on every
+> board the shipped vocabulary can produce and a label-only comparator satisfies the claim.
+>
+> **Measured rather than reasoned**: dropping the kind term from `_work_name_sorts_before` fails
+> **exactly one** assertion, and it is `_assert_work_sort_groups_by_kind` — the new synthetic pair
+> whose labels run opposite to their kinds — not the mixed-rung fixture that used to carry it. The
+> fixture's labels are composed from `WORK_ROW_PLANT_FORMAT` so it still describes a board the game can
+> draw; what it can no longer do is falsify.
+>
+> **THE SYNTHETIC LABELS ARE MARKED AS SYNTHETIC AND MUST STAY SO.** They are the one place in this
+> harness where a work row's label is not a string the client can produce, and the reason is written
+> at the constants: no shipped label can express the disagreement any more.
+
+**`_material_short_sentence` DROPPED ITS SOURCE-NOUN ARGUMENT and kept its shape.** The ⛔ at its head
+— composed from the FORMAT and the fixture's own numbers, **never** through `material_short_note` —
+is unchanged and is why the rename could not launder itself through the expectation.
+
+**A RETIRED THING NEEDS A TEST THAT IT IS GONE**, so the retired tail is spelled as a needle
+(`MATERIAL_SHORT_RETIRED_EATS_NEEDLE`, `" eats."`) rather than reached through a const that no longer
+exists — and it is asserted as a PAIR with the remedy's presence, or *"the sentence lost a clause"*
+passes.
+
+**Falsification counts, each defect restored on its own:**
+
+| Defect restored | Failures |
+|---|---|
+| the retired `a turn this pen eats` tail | **2** here — the EATS needle and the remedy — naming the played sentence |
+| `_work_name_sorts_before` drops its kind term | **1** here — the synthetic pair, `(hunt, forage)` |
+| `plant_crew_label` → `""` | **0** here, **30** in `ui_preview` (the five states' four surfaces, their agreement claims, the five liveness claims and both rung-blind claims) |
+| the card-side material sentence restored | **0** here, **4** in `ui_preview`'s `improvements` |

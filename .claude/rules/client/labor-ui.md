@@ -6419,7 +6419,81 @@ reason once before the render — exactly that one assertion fails, and only it.
 fixture repair rather than a convenience: every meadow in it is WILD, so at the ladder's default dial
 the frames that exist to show three live accounts would mute the third.
 
-## The plant web's crew noun follows the STANDING RUNG
+## The plant web's crew is `Harvesters`, and it HARVESTS — one word at every rung
+
+> ### ⛔ THE HEADING WAS "The plant web's crew noun follows the STANDING RUNG", AND THE FORK IS RETIRED
+>
+> `docs/plan_standing_upkeep.md` §4.9 item 12c. Everything below records why the fork was built and
+> what it cost; **where a passage says a managed source's crew are `Tenders` or that its commit verb
+> is `Tend`, read it against this.** Nothing about the SIM's model changed — the ladder config still
+> declares `worker_take` on `wild` and `worker_tend` on both upper rungs, and a managed source is
+> still never gather-drawn — and none of that needed a second player-facing word.
+>
+> **THE SECOND WORD WAS ALREADY TAKEN.** On a Field the sheet read `ASSIGN TENDERS` and then offered
+> the *Gathering* kit, which looks like a bug and is not: the tending is the AGRICULTURE pool's, and
+> a hoe does nothing for a harvest. **Reported from play by Ray, who knows how it works and was still
+> caught by it in the moment** — which is the whole argument, since a reading that catches the person
+> who built the model is not a reading a player recovers from.
+>
+> **`Harvest` IS ALREADY THIS REPO'S CROSS-WEB WORD** for taking from a source (a *pen harvest*, the
+> *harvest floor*), it is neutral between wild and cultivated — which IS the defect — and it survives
+> the tech ladder where *gatherers* would not. What stops changing is the CREW's name, because the
+> crew never changed; the rung MARK on the row still says which ground it is.
+>
+> **THE HUNT SHEET IS NOT RENAMED.** `Hunters` / `Herders` is specific and collides with nothing, so
+> `HUNT_ASSIGN_BUTTONS`, `HUNT_NOOP_HINTS`, `_herd_crew_noun` and `HERD_CREW_LABEL` are untouched —
+> and the animal web is now the ONE web whose crew noun still follows its rung.
+>
+> #### The word lands in TWO grammatical slots and takes TWO forms
+>
+> | slot | form | reads |
+> |---|---|---|
+> | work row / strip head | VERB | `Harvest (28, 16)` |
+> | commit button | VERB | `Harvest` |
+> | sheet eyebrow | NOUN | `Assign harvesters` |
+> | drawer open button | NOUN | `Assign harvesters ▸` |
+> | standing summary | NOUN | `♻ 3 harvesters · +2.74 /turn` |
+> | dead-button hint | NOUN (singular) | `Nobody assigned yet — send at least one harvester.` |
+>
+> **ONE STRING CANNOT FILL BOTH** — `Assign harvest` and `♻ 3 harvest` are the readings that prove
+> it — so the noun→verb tables SURVIVE the collapse rather than retiring with the fork they held:
+> `PLANT_ASSIGN_BUTTONS` and `PLANT_NOOP_HINTS` go from two entries to one each,
+> `WORK_ROW_PLANT_FORMATS` likewise, and `WORK_ROW_FORAGE_FORMAT` / `WORK_ROW_TEND_FORMAT` collapse
+> into `WORK_ROW_PLANT_FORMAT`. **Do not add a second fork to carry the verb.**
+>
+> #### `plant_crew_label` STAYS A FUNCTION though it no longer forks
+>
+> Four code call sites and its docstring are the documented seam for this word; inlining the const
+> scatters it across the drawer, the sheet and the work board — which is the shape the seam exists to
+> prevent. Its `src` / `prefix` parameters are kept so every caller still reads the SOURCE it is
+> naming a crew for.
+>
+> #### The `gathering` kit's DISPLAY NAME is now `Harvesting kit` — its ID is unchanged
+>
+> One field in `core_sim/src/data/equipment.json`. The id stays `gathering`, so no sim code, test or
+> wire contract moves, and `BandFx.kit_roster_fixture()`'s copy of the roster follows it. The two
+> as-built WIDTH measurements that name the old string (`hud_compose_vocab.gd`'s field-key derivation,
+> `HudWidgets.build_option_picker`'s caret autopsy) are corrected in place: `Harvesting kit` is one
+> character LONGER, so both conclusions hold a fortiori.
+>
+> #### What the collapse cost the harness, and what pays for it
+>
+> **THE FIVE `plant_crew_*` STATES NOW ALL EXPECT ONE NOUN, WHICH IS A WEAKER SET.**
+> `_assert_plant_crew_noun` gained a LIVENESS half — the resolved noun AND the verb its table yields
+> must both be non-empty — because five equalities against one const are otherwise satisfied by a
+> resolver answering `""` (and by a `PLANT_ASSIGN_BUTTONS` lookup missing its one key, which also
+> answers `""`). `_assert_plant_crew_noun_is_rung_blind` beside them asks the resolver directly over
+> the three rungs the fork used to split, which is the COLLAPSE itself: five separate equalities
+> against one const cannot say that the rungs agree.
+>
+> **AND `band_panel_preview`'s CLAIM 4 LOST ITS FALSIFIER TO THE RENAME.** That claim — the default
+> sort groups by KIND — was made to bite by a managed plant row reading `Tend (…)`, which sorts AFTER
+> `Hunt`; every plant row reads `Harvest (…)` now and **`"Harvest" < "Hunt"`**, so on every board the
+> shipped vocabulary can produce the label order and the kind order COINCIDE and a label-only
+> comparator passes. Measured: dropping the comparator's kind term fails **exactly one** assertion,
+> and it is not that one. `_assert_work_sort_groups_by_kind` carries the falsifier on a SYNTHETIC pair
+> whose labels run opposite to their kinds, marked as synthetic, because no shipped label can express
+> that disagreement any more.
 
 Every surface for a sown Field said *forage* / *Foragers* — the wrong verb, not merely an awkward
 one. Reported from play.
@@ -7186,9 +7260,38 @@ aside and states the price alone, which is the honest half.
 ⛔ **`WORK_ROW_UNDER_KEPT_NOTE`'s *"raise this band's Agriculture role"* is wrong advice the moment the
 missing thing is a material.** Twelve keepers do not mend a fence with no hurdles; it points the player
 at a stepper that cannot help. `HudWorkVocab.material_short_note` is the third arm —
-`Short of hurdles — 0.03 of the 0.05 a turn this pen eats.` — built from the row's own published pair
-(`LaborAssignment.materialUpkeepDemand` / `materialUpkeepSupplied`), **both terms and never their
-difference**, so the sentence needs no client arithmetic.
+`Short of hurdles — 0.40 of the 0.58 a turn it needs. The bench or a trade, not more hands.` — built
+from the row's own published pair (`LaborAssignment.materialUpkeepDemand` / `materialUpkeepSupplied`),
+**both terms and never their difference**, so the sentence needs no client arithmetic.
+
+> #### ⛔ IT SAID `a turn this pen eats`, AND A PEN GENUINELY DOES EAT (§4.9 item 12c)
+>
+> It eats GRASS and HAY, and §2.7's whole argument is that **hay is FEED, not upkeep** — #578 retired
+> a defect that billed a pen's shortfall to the keepers' FOOD larder. So the retired tail put feed and
+> upkeep back under one verb, two lines below a `Fed: 100% — all pasture` row on the same surface.
+> **A readout that undoes the model is a defect, not a preference.**
+>
+> `it needs` names the obligation without naming an appetite, and the **`MATERIAL_SHORT_NOUN_HERD` /
+> `_PATCH` pair retires with the clause that consumed it** — the `pen` / `patch` nouns filled that
+> tail and were used for nothing else. `material_short_note`'s `kind` parameter went with them
+> (`material_short_note(demand, supplied)`), and so did `material_short_note_for_source`, whose only
+> job was translating a SOURCE kind into the labor kind the sentence no longer wants.
+>
+> **THE REMEDY IS ITS OWN CONST, `MATERIAL_SHORT_REMEDY`**, so the two families' wording has one
+> visible relationship: `HudSelectionVocab.BUILD_BLOCKED_MATERIALS_FORMAT` reads *"the bench or a
+> trade, not more builders."* and this reads *"The bench or a trade, not more hands."* — the same two
+> levers, refusing the same lever. **`hands`, NOT `builders`**: upkeep is staffed by KEEPERS
+> (`agriculture` / `husbandry`), so naming builders would send the player to the one role card that
+> cannot move this number. Its two siblings on this row (`WORK_ROW_UNDER_KEPT_NOTE` /
+> `WORK_ROW_UNDER_HERDED_NOTE`) name a role to RAISE; this one exists to say no head count helps.
+>
+> **IT IS WEB-INDEPENDENT BY DESIGN**, which is what let the `kind` go: a bench and a trade are the
+> answer on both webs.
+>
+> **THE SHARED LEAD-IN IS UNCHANGED AND IS LOAD-BEARING.**
+> `HudSelectionVocab.BUILD_BLOCKED_MATERIAL_SHORT_LEAD` is what `DetailFormat.detail_bbcode` tints an
+> indented sub-line DANGER on, which is what makes a missing GOOD red where missing hands are amber.
+> ⛔ It may not carry BBCode.
 
 **THREE SHORTFALLS, THREE REGISTERS**: a missing GOOD is DANGER (no stepper fixes it); missing HANDS
 are WARN and keep the role sentence (the stepper IS the lever); a dead KIT is quiet and is the event
@@ -7217,9 +7320,44 @@ sentence wearing the staffing amber.
 > there explicitly (they are ARRAYS, so they cannot ride the `float()`-coerced `OPTIONAL_YIELD_KEYS`
 > list) — until they were, the board's note came out empty on a row whose wire carried both terms.
 
-**THE CARD SIDE TAKES THE SAME ARM**, off the SOURCE's own `upkeepMaterialDemand` /
-`upkeepMaterialSupplied` rather than a labor row's copy, because a card has no assignment in hand
-(`DetailFormat.note_under_kept_hover`). That is what gives the source-row pair a production reader.
+### …AND THE SENTENCE IS THE WORK ROW'S ALONE — the card keeps the MARK (§4.9 item 12c)
+
+⛔ **THE CARD SIDE TOOK THE SAME ARM FOR A RELEASE, AND THAT REGRESSED AGAINST §4.7.** The retired
+claim was *"the card side takes the same arm, off the SOURCE's own `upkeepMaterialDemand` /
+`upkeepMaterialSupplied` rather than a labor row's copy, because a card has no assignment in hand"* —
+a good reason for WHERE the figures come from and no reason at all for the card to state them. §4.7
+had already settled that: it pulled the `At risk:` block off the tile card for being *"way too
+wordy"*, left one state word on the rung row, and kept the countdown on the work board **and nowhere
+else**, because *"the board is where staffing is decided this turn … on the tile card it is a number
+you cannot act on."* Item 12 shipped the full sentence to BOTH entry points.
+
+**THE STAFFING HALF OF §4.7's REASON DOES NOT CARRY OVER, AND A BETTER ONE REPLACES IT.** No head
+count fixes a missing good, so *"staffing is decided on the board"* is not why this sentence belongs
+there. What this UI offers against a SCARCE good is the row's own **`SourcePriority` rank** —
+`High`/`Normal`/`Low` is precisely what decides which pen the hurdles reach when there are not enough
+(the sim's `settle_scarce_store`) — and that control sits in the work row's own inspector strip. **The
+tile card has nothing to press.**
+
+**SO `DetailFormat.rung_material_short_note` IS RETIRED AND `rung_material_is_short` REPLACES IT** — a
+BOOLEAN, over `HudWorkVocab.has_material_shortfall`, which walks the same `_worst_material_shortfall`
+and therefore the same `MATERIAL_FLOW_MIN` threshold the sentence uses. Composing prose in order to
+test it for emptiness is the one coupling that would hold the retired readout in place.
+
+**THE ⚠ GATE STAYS LIVE, AND THAT IS NOT A HALF-MEASURE.** `rung_is_at_risk`'s own ⛔ records that
+reading only the WORK account left a pen whose hurdles had run out wearing no mark at all while the
+work board's row already said the rung was being lost — two surfaces, one source, opposite statements.
+So the card keeps the mark and the short state word `rung_row_value` already draws, and
+`note_under_kept_hover` falls back to the role sentence every other short source on that card shows.
+
+**THAT FALLBACK IS THE ONE THING GIVEN UP HERE, STATED PLAINLY**: on a source short of a GOOD alone,
+the card's hover names a role that will not fix it. It is the same sentence the card gives every other
+short source, one hover away from a board that says exactly what is missing — against a card that
+repeated the board's whole sentence in a register with no control to act on.
+
+**ASSERT IT AS A PAIR, or "the card does not state it" passes on a card that renders nothing.**
+`ui_preview`'s `improvements` chapter inverts the two claims it used to make and adds the LIVENESS
+half — the hover must equal the role sentence — beside the unchanged mark-and-state-word claims that
+say the card still draws its rung row.
 
 ### The blocked-build cause that names a good
 

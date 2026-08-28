@@ -585,7 +585,7 @@ static func kit_roster_fixture() -> Array:
 			"item_ids": [KIT_ITEM_SPEARS, KIT_ITEM_SLED],
 		},
 		{
-			"id": KIT_ID_GATHERING, "display_name": "Gathering kit", "jobs": ["forage"],
+			"id": KIT_ID_GATHERING, "display_name": "Harvesting kit", "jobs": ["forage"],
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_EQUIPPED,

@@ -4177,7 +4177,7 @@ func refresh_drawer_actions() -> void:
         build_forage_drawer_actions(_selection.tile_info())
 
 ## The LAND drawer's read state: the standing forage summary (when the player already works this
-## patch) and the `Assign foragers ▸` button that opens the sheet. Fills `%ForageAssignControls`,
+## patch) and the `Assign harvesters ▸` button that opens the sheet. Fills `%ForageAssignControls`,
 ## which is why that node keeps its name and its place in the drawer — the compose block MOVED out
 ## of it, the node did not move.
 func build_forage_drawer_actions(tile_info: Dictionary) -> void:
@@ -4376,7 +4376,7 @@ func _standing_assignment(kind: String, x: int, y: int, herd_id: String) -> Dict
             return found
     return {}
 
-## The drawer's one-line standing-assignment summary: `♻ 3 foragers · +2.74 /turn`, with the SAME
+## The drawer's one-line standing-assignment summary: `♻ 3 harvesters · +2.74 /turn`, with the SAME
 ## warn/overdraw and overstaff/wasted flags the Band panel's Current-actions rows render, from the
 ## SAME `SourceForecast.source_yield_readout` call. The rate is never recomputed here.
 ## The standing-summary's display model — the values `_build_standing_summary_from_model` renders,
@@ -4403,7 +4403,7 @@ func _standing_summary_model(assignment: Dictionary, kind: String, noun: String)
     # the same `note` / `muted_note` pair, so a third arm added to one and not the other is exactly the
     # drift this repo keeps paying for. `material_short_note` supersedes whatever the readout put in
     # the slot, for the reason it does there: it names a remedy no stepper on this sheet can reach.
-    var material_note := HudWorkVocab.material_short_note(kind,
+    var material_note := HudWorkVocab.material_short_note(
         SourceForecast.material_payoff_rows(assignment.get(
             SourceForecast.ASSIGNMENT_MATERIAL_UPKEEP_DEMAND_KEY, [])),
         SourceForecast.material_payoff_rows(assignment.get(
@@ -4419,7 +4419,7 @@ func _standing_summary_model(assignment: Dictionary, kind: String, noun: String)
         "muted_note": String(readout["muted_note"]),
     }
 
-## Build the drawer's one-line standing-assignment summary (`♻ 3 foragers · +2.74 /turn`) from a
+## Build the drawer's one-line standing-assignment summary (`♻ 3 harvesters · +2.74 /turn`) from a
 ## precomputed model. Same warn/overdraw + overstaff/wasted flags a Band-panel Current-actions row
 ## renders, same three colours.
 func _build_standing_summary_from_model(model: Dictionary) -> Control:

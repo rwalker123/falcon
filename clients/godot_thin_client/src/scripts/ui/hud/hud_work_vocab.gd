@@ -971,17 +971,22 @@ const WORK_UNASSIGN_CONFIRM_FORMAT := "Return all %d sources' workers to idle? S
 
 const WORK_UNASSIGN_CONFIRM_OK := "Unassign all"
 
-const WORK_ROW_FORAGE_FORMAT := "Forage (%d, %d)"
-
-# The MANAGED plant row's twin. A Tended Patch or a Field is never gather-drawn, so its crew tends it;
-# the board says so in the same two nouns the compose sheet uses. Keyed by the crew label
-# `HudFormat.plant_crew_label` resolves, so the board row and the sheet it opens cannot disagree about
-# what the people on that tile are doing. DISPLAY ONLY — the row's `kind` is still `forage`.
-const WORK_ROW_TEND_FORMAT := "Tend (%d, %d)"
+# **THE PLANT ROW'S VERB, AT EVERY RUNG** (`docs/plan_standing_upkeep.md` §4.9 item 12c). Keyed by
+# the crew label `HudFormat.plant_crew_label` resolves, so the board row and the sheet it opens cannot
+# disagree about what the people on that tile are doing. DISPLAY ONLY — the row's `kind` is still
+# `forage`.
+#
+# ⛔ **IT WAS A PAIR — `WORK_ROW_FORAGE_FORMAT` (`"Forage (%d, %d)"`) AND `WORK_ROW_TEND_FORMAT`
+# (`"Tend (%d, %d)"`), THE SECOND OF WHICH CLAIMED**, verbatim: *"The MANAGED plant row's twin. A
+# Tended Patch or a Field is never gather-drawn, so its crew tends it; the board says so in the same
+# two nouns the compose sheet uses."* Still true of the SIM, and item 12c retired the second word
+# anyway: a Field's sheet read `ASSIGN TENDERS` and then offered the *Gathering* kit, the tending
+# being the Agriculture pool's rather than the harvest crew's. The rung MARK on the row still says
+# which ground it is; what stops changing is the verb, because the job never changed.
+const WORK_ROW_PLANT_FORMAT := "Harvest (%d, %d)"
 
 const WORK_ROW_PLANT_FORMATS := {
-    HudComposeVocab.FORAGE_CREW_LABEL: WORK_ROW_FORAGE_FORMAT,
-    HudComposeVocab.TEND_CREW_LABEL: WORK_ROW_TEND_FORMAT,
+    HudComposeVocab.HARVEST_CREW_LABEL: WORK_ROW_PLANT_FORMAT,
 }
 
 const WORK_ROW_HUNT_FORMAT := "Hunt %s"
@@ -1097,22 +1102,43 @@ const UNDER_KEPT_LOST_NOW := "%s is being lost now."
 ##   • a DEAD KIT — the FAINT ink, quiet. It costs hands and takes nothing away, and it is the event
 ##     dock's `kit_life` line rather than a note on this row at all.
 ##
-## **IT STATES BOTH TERMS, NEVER THEIR DIFFERENCE** — `Short of hurdles — 0.03 of the 0.05 a turn this
-## pen eats` — because the sim publishes both precisely so this sentence needs no client arithmetic.
-## The noun at the end is the SOURCE, so the sentence says what is eating the good as well as which
-## good it is.
+## **THE REMEDY, IN THE BLOCKED-BUILD FAMILY'S OWN WORDS**, and its own const so the two families'
+## wording has ONE visible relationship: `HudSelectionVocab.BUILD_BLOCKED_MATERIALS_FORMAT` reads
+## *"Short of %s — the bench or a trade, not more builders."* — the same two levers, refusing the same
+## lever.
+##
+## **`hands`, NOT `builders`.** Upkeep is staffed by KEEPERS (`agriculture` / `husbandry`), not by the
+## builders pool, so naming builders here would send the player to the one role card that cannot move
+## this number. Its two siblings on this row — `WORK_ROW_UNDER_KEPT_NOTE` / `WORK_ROW_UNDER_HERDED_NOTE`
+## — name a role to RAISE; this one exists to say no head count helps, which is what the row's own
+## `SourcePriority` rank is for instead (the sim's `settle_scarce_store` decides which pen the hurdles
+## reach when there are not enough).
+##
+## **IT IS WEB-INDEPENDENT BY DESIGN.** A bench and a trade are the answer on both webs, which is why
+## the sentence needs no source kind at all.
+const MATERIAL_SHORT_REMEDY := "The bench or a trade, not more hands."
+
+## **IT STATES BOTH TERMS, NEVER THEIR DIFFERENCE** — `Short of hurdles — 0.40 of the 0.58 a turn it
+## needs. The bench or a trade, not more hands.` — because the sim publishes both precisely so this
+## sentence needs no client arithmetic.
+##
+## ⛔ **IT SAID `a turn this pen eats` AND A PEN GENUINELY DOES EAT** (`docs/plan_standing_upkeep.md`
+## §4.9 item 12c). It ate grass and hay, and §2.7's whole argument is that **hay is FEED, not
+## upkeep** — #578 retired a defect that billed a pen's shortfall to the keepers' food larder — so the
+## retired tail (`"%s — %s of the %s a turn this %s eats."`, filled from a `pen`/`patch` noun pair) put
+## feed and upkeep back under one verb, two lines below a `Fed: 100% — all pasture` row. The readout
+## undoing the model is a defect, not a preference. `it needs` names the obligation without naming an
+## appetite, and the source noun retires with the clause that consumed it — see
+## `MATERIAL_SHORT_REMEDY`.
+##
 ## **THE LEAD-IN IS SHARED WITH THE BLOCKED-BUILD CAUSE, and that is what makes both red.**
 ## `HudSelectionVocab.BUILD_BLOCKED_MATERIAL_SHORT_LEAD` is the one prefix in this client that means
 ## *a good is missing*, and `DetailFormat.detail_bbcode` tints an indented sub-line DANGER on it — so
 ## the work row's note and the queue's stuck reason take one ink from one string, and neither can drift
-## into the amber that means *missing hands*.
+## into the amber that means *missing hands*. ⛔ It may not carry BBCode: both hosts draw this note as a
+## plain `Label`.
 const WORK_ROW_MATERIAL_SHORT_FORMAT := HudSelectionVocab.BUILD_BLOCKED_MATERIAL_SHORT_LEAD \
-    + "%s — %s of the %s a turn this %s eats."
-
-## The two source nouns the sentence ends on, keyed by web the way every other pair in this file is —
-## one picker, so the plant and animal wordings cannot drift.
-const MATERIAL_SHORT_NOUN_HERD := "pen"
-const MATERIAL_SHORT_NOUN_PATCH := "patch"
+    + "%s — %s of the %s a turn it needs. " + MATERIAL_SHORT_REMEDY
 
 ## **THE NOTE'S SEVERITY, CARRIED ON THE MODEL RATHER THAN GUESSED AT THE RENDER SITE.** The work
 ## inspector and the drawer's standing summary both drew this note in a hard-coded `HudStyle.WARN`,
@@ -1136,7 +1162,13 @@ static func note_color(severity: String) -> Color:
 ## `materialUpkeepSupplied`); the WORST good is the one named, because a note has one sentence and the
 ## good furthest behind is the one to act on. **Never a total across goods** — that is the currency
 ## this model does not have.
-static func material_short_note(kind: String, demand: Array[Dictionary],
+##
+## ⛔ **IT TOOK A `kind` AND NO LONGER DOES.** That argument filled the retired `a turn this %s eats`
+## tail from the `MATERIAL_SHORT_NOUN_HERD`/`_PATCH` pair and was used for nothing else, so the web is
+## no longer a term of this sentence at all — see `MATERIAL_SHORT_REMEDY`, which is the same answer on
+## both. `material_short_note_for_source` retired with it: its whole job was translating a SOURCE kind
+## into the labor kind this function no longer wants.
+static func material_short_note(demand: Array[Dictionary],
         supplied: Array[Dictionary]) -> String:
     var worst := _worst_material_shortfall(demand, supplied)
     if worst.is_empty():
@@ -1146,9 +1178,16 @@ static func material_short_note(kind: String, demand: Array[Dictionary],
         DetailFormat.format_trimmed(float(worst[SourceForecast.MATERIAL_UPKEEP_SUPPLIED_KEY]),
             RUNG_TRACK_MATERIAL_DECIMALS),
         DetailFormat.format_trimmed(float(worst[SourceForecast.MATERIAL_UPKEEP_DEMAND_KEY]),
-            RUNG_TRACK_MATERIAL_DECIMALS),
-        MATERIAL_SHORT_NOUN_HERD if kind == SourceForecast.LABOR_KIND_HUNT \
-            else MATERIAL_SHORT_NOUN_PATCH]
+            RUNG_TRACK_MATERIAL_DECIMALS)]
+
+## **IS THIS SOURCE SHORT OF A GOOD AT ALL** — the BOOLEAN the card side's ⚠ gate asks, over the same
+## `_worst_material_shortfall` walk and therefore the same `MATERIAL_FLOW_MIN` threshold the sentence
+## uses. `DetailFormat.rung_is_at_risk` used to ask by testing the SENTENCE for emptiness; once the
+## card stopped printing that sentence (§4.9 item 12c, §4.7's *the board is where staffing is decided*)
+## composing prose in order to test it would be the one coupling holding the retired readout in place.
+static func has_material_shortfall(demand: Array[Dictionary],
+        supplied: Array[Dictionary]) -> bool:
+    return not _worst_material_shortfall(demand, supplied).is_empty()
 
 ## The good furthest behind its bill, by the SHARE paid rather than the raw gap: a rung wanting 6 of
 ## one good and 0.05 of another is not worse off for the larger number, it is worse off for the one it
@@ -1210,13 +1249,20 @@ static func under_kept_note_for_source(source_kind: String,
         material_note: String = "") -> String:
     return under_kept_note(_labor_kind_of(source_kind), material_note)
 
-## **THE CARD-SIDE GOOD-SHORTFALL SENTENCE**, asked with a SOURCE kind — `SOURCE_KIND_HERD` is
-## `"herd"` while `LABOR_KIND_HUNT` is `"hunt"`, so handing one straight to the labor-keyed producer
-## silently words an animal source's note for the plant web. It delegates rather than re-spelling, the
-## same shape the note and tooltip pair above already have.
-static func material_short_note_for_source(source_kind: String, demand: Array[Dictionary],
-        supplied: Array[Dictionary]) -> String:
-    return material_short_note(_labor_kind_of(source_kind), demand, supplied)
+## ⛔ **RETIRED — `material_short_note_for_source(source_kind, demand, supplied)`**, the card-side
+## entry point onto the sentence above. It existed for one reason — `SOURCE_KIND_HERD` is `"herd"`
+## while `LABOR_KIND_HUNT` is `"hunt"`, so a card handing its own kind straight to the labor-keyed
+## producer would silently word an animal source's note for the plant web — and BOTH halves of that
+## reason are gone: the sentence takes no kind any more, and the card does not state it at all
+## (`docs/plan_standing_upkeep.md` §4.9 item 12c). §4.7 set that shape and item 12 regressed against
+## it by shipping the full sentence to both entry points: **the board is where staffing is decided
+## this turn, and on the tile card it is a number you cannot act on.** The staffing half of that
+## argument does not carry over — no head count fixes a missing good — and a better one replaces it:
+## what this UI offers against a scarce good is the row's own `SourcePriority` rank, and that control
+## sits in the work row's strip. The tile card has nothing to press.
+##
+## What the card keeps is the ⚠ and its short state word, which `DetailFormat.rung_is_at_risk` still
+## routes through `has_material_shortfall` above — the mark, not the sentence.
 
 ## …and the HOVER asked the same way, which is the form both source CARDS use. It supplies no
 ## countdown by construction: the card states no figure at all, and the one surface that does states

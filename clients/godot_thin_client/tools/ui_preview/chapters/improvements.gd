@@ -1428,13 +1428,19 @@ func run(harness) -> void:
 	h._assert_hud("…and the ESCAPEMENT source short of keeping answers exactly the same (%s)"
 			% _under_kept_hover(blocked), _under_kept_hover(blocked) == short_knowledge_hover)
 
-	# **AND THE CARD'S OWN GOOD-SHORTFALL ARM** (`docs/plan_standing_upkeep.md` §2.7) — the source-row
-	# twin of the work board's note, read off `upkeepMaterialDemand` / `upkeepMaterialSupplied` on the
-	# SOURCE rather than off a labor row's copy, because a card has no assignment in hand.
+	# **AND THE CARD'S OWN GOOD-SHORTFALL ARM** (`docs/plan_standing_upkeep.md` §2.7, re-aimed by §4.9
+	# item 12c) — the card still MARKS a source short of a good, off `upkeepMaterialDemand` /
+	# `upkeepMaterialSupplied` on the SOURCE rather than off a labor row's copy, because a card has no
+	# assignment in hand.
 	#
-	# ⛔ **THE REMEDY DIFFERS IN KIND, SO THE SENTENCE MUST.** No staffing stepper mends a fence with
-	# no hurdles, and the role sentence is what every other short source on this card says — so the
-	# claim is the PAIR: the good named, and the role sentence gone.
+	# ⛔ **THE SENTENCE IS THE WORK BOARD'S NOW, AND THIS CLAIM IS INVERTED RATHER THAN DELETED.** The
+	# dead claim, verbatim: *"a source short of a GOOD names it on the card's hover"*, paired with
+	# *"…and never the role sentence, which no missing good is fixed by"*. §4.7's shape is what item
+	# 12c restored — the board is where staffing is decided this turn, and on the tile card the good's
+	# figures are numbers you cannot act on — so the card keeps the ⚠ and its state word and the hover
+	# falls back to the role sentence. **The LIVENESS half is what makes that worth asserting**: a
+	# hover that had stopped rendering satisfies "it does not name the good" for free, so the sentence
+	# it DOES carry is asserted by equality beside the containment claim.
 	#
 	# **PNG-LESS, because a hover is a `tooltip_text` and no capture can show one.** Driven through
 	# `note_under_kept_hover`, which is the one producer both source cards call.
@@ -1451,23 +1457,28 @@ func run(harness) -> void:
 	short_good["patch_upkeep_material_supplied"] = [
 		{"material_id": BLOCKED_MATERIAL, "amount": HOVER_MATERIAL_SUPPLIED}]
 	var good_hover := _under_kept_hover(short_good)
-	# Composed from the FORMAT and the fixture's own numbers, never asked of `material_short_note` —
-	# an expectation re-derived through the code under test collapses to `""` with the arm restored to
-	# a stub and passes over the very defect it exists to catch.
+	# The board's sentence, composed from the FORMAT and the fixture's own numbers and never asked of
+	# `material_short_note` — an expectation re-derived through the code under test collapses to `""`
+	# with the arm restored to a stub and passes over the very defect it exists to catch. Here it is
+	# the NEEDLE for a sentence the card must not carry.
 	var good_sentence := HudWorkVocab.WORK_ROW_MATERIAL_SHORT_FORMAT % [
 		BLOCKED_MATERIAL,
 		DetailFormat.format_trimmed(HOVER_MATERIAL_SUPPLIED,
 			HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
 		DetailFormat.format_trimmed(HOVER_MATERIAL_DEMAND,
-			HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
-		HudWorkVocab.MATERIAL_SHORT_NOUN_PATCH]
-	h._assert_hud("a source short of a GOOD names it on the card's hover — \"%s\" (got \"%s\")"
-		% [good_sentence, good_hover], good_hover == good_sentence)
-	h._assert_hud("…and never the role sentence, which no missing good is fixed by",
-		not good_hover.contains(under_kept))
-	# **AND THE SOURCE WHOSE GOODS ARE PAID IS UNTOUCHED**, which is what stops the new arm swallowing
-	# the old one: a client that worded every short source as a material shortfall passes the pair
-	# above. Same patch, the supplied term raised to meet the demand.
+			HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS)]
+	h._assert_hud("a source short of a GOOD does NOT state the board's sentence on the card — \"%s\""
+		% good_hover, not good_hover.contains(HudWorkVocab.MATERIAL_SHORT_REMEDY))
+	h._assert_hud("…nor the good's own figures, which are the work board's to state (\"%s\")"
+		% good_sentence, good_hover != good_sentence)
+	# THE LIVENESS HALF: the two negatives above pass on a hover that renders nothing at all, so what
+	# the card DOES say is asserted by equality — the role sentence, which is what every other short
+	# source on this card says.
+	h._assert_hud("…and the hover still carries the role sentence it shares with every other short source (%s)"
+		% good_hover, good_hover == under_kept)
+	# **AND THE SOURCE WHOSE GOODS ARE PAID IS UNTOUCHED**, which is what stops the card's ⚠ arm
+	# swallowing every source: a client that marked every patch passes the claims above. Same patch,
+	# the supplied term raised to meet the demand.
 	var paid_good := short_good.duplicate()
 	paid_good["patch_upkeep_material_supplied"] = [
 		{"material_id": BLOCKED_MATERIAL, "amount": HOVER_MATERIAL_DEMAND}]
@@ -1502,11 +1513,12 @@ func run(harness) -> void:
 	h._assert_hud("…yet the card's own gate calls it AT RISK, the goods being short",
 		DetailFormat.rung_is_at_risk(goods_only, HudComposeVocab.FORAGE_FORECAST_PREFIX,
 			SourceForecast.SOURCE_KIND_FORAGE, SourceForecast.IMPROVEMENT_CULTIVATE))
-	# …and the hover NAMES the good, composed from the format and the fixture's numbers rather than
-	# asked of `material_short_note` — `good_sentence` above is that composition and is reused whole.
-	h._assert_hud("…and its hover names the missing good — \"%s\" (got \"%s\")"
-			% [good_sentence, _under_kept_hover(goods_only)],
-		_under_kept_hover(goods_only) == good_sentence)
+	# …and its hover carries the ROLE sentence rather than the board's good-shortfall one (§4.9 item
+	# 12c). `good_sentence` above is the board's composition and is reused whole as the NEEDLE.
+	h._assert_hud("…while its hover states the role sentence, not the board's (\"%s\")"
+			% _under_kept_hover(goods_only),
+		_under_kept_hover(goods_only) == under_kept
+			and _under_kept_hover(goods_only) != good_sentence)
 	# **AND AS RENDERED — the `⚠` and the state word on the tended row itself.** The producer claims
 	# above pass on a card that never calls them, which is exactly how this arm went missing from the
 	# card while the work board had it.

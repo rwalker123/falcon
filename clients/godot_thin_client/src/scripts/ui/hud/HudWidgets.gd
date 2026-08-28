@@ -568,7 +568,8 @@ static func build_field_key(text: String) -> Label:
 ##
 ## **IT REPLACED A `MenuButton` WHOSE FACE CARRIED A `⌄` GLYPH, AND THE MECHANISM IS THE WHOLE POINT.**
 ## A `MenuButton` draws no arrow, so the affordance had to be baked into `text` — where `clip_text`
-## eats it the moment the label reaches the button's edge (`Gathering kit` did, so the forage sheet's
+## eats it the moment the label reaches the button's edge (`Harvesting kit` does — it read
+## `Gathering kit` when measured, one character shorter — so the forage sheet's
 ## kit picker showed no caret at all) and where it renders as a small low-baseline mark rather than as
 ## the themed arrow the `Band:` picker one row above already drew. An `OptionButton` reserves the
 ## arrow's width as an internal right margin, so the icon is drawn OUTSIDE the text's clip rect and no

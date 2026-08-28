@@ -3534,15 +3534,26 @@ asks for a live ranking gets one, and live re-ranking under an edit is arguably 
 
 **It sorts KIND first, then label, then `key` — and the kind term is load-bearing, not tidiness.**
 `Sort by name` is still one sort with one name; what it orders on is kind-major. The tempting
-simplification is that the label prefixes already group by kind, so alphabetical order would do:
-`"Forage (%d, %d)"` sorts above `"Hunt %s"`. **That is false, and it is the trap this term exists to
-close.** A plant row's label is resolved through `WORK_ROW_PLANT_FORMATS`, keyed on the crew noun
-`HudFormat.plant_crew_label` returns — so a source whose Cultivate improvement is done renders
-**`WORK_ROW_TEND_FORMAT`, `"Tend (%d, %d)"`**, while its `kind` stays `forage` (the format is DISPLAY
-ONLY). Alphabetically `Forage < Hunt < Tend`, so a label-only sort renders a band working a wild
-patch, a herd and a Tended Patch as **Forage → Hunt → Tend**: the forage kind split in two with the
-hunt block wedged between. `WORK_FILTER_FORAGE` selects on `kind == "forage"` — *both* labels — so
-that board contradicts the very chips above it. `band_panel_rung_ready` already stages this mix.
+simplification is that the label prefixes already group by kind, so alphabetical order would do — and
+that is a claim about today's WORDS rather than about the model. `WORK_FILTER_FORAGE` selects on
+`kind == "forage"`, so a board ordered by label alone stops matching the chips above it the moment the
+two orders part.
+
+> ⛔ **THEY PARTED UNTIL `docs/plan_standing_upkeep.md` §4.9 item 12c, AND THEY NO LONGER DO — so the
+> shipped vocabulary has stopped being the witness.** The dead claim, verbatim: *"A plant row's label
+> is resolved through `WORK_ROW_PLANT_FORMATS`, keyed on the crew noun `HudFormat.plant_crew_label`
+> returns — so a source whose Cultivate improvement is done renders `WORK_ROW_TEND_FORMAT`,
+> `"Tend (%d, %d)"`, while its `kind` stays `forage` (the format is DISPLAY ONLY). Alphabetically
+> `Forage < Hunt < Tend`, so a label-only sort renders a band working a wild patch, a herd and a
+> Tended Patch as Forage → Hunt → Tend: the forage kind split in two with the hunt block wedged
+> between."*
+>
+> Item 12c collapsed both plant formats into `WORK_ROW_PLANT_FORMAT` (`Harvest (%d, %d)`) and
+> **`"Harvest" < "Hunt"`**, so on every board the shipped roster can produce the label order and the
+> kind order coincide. **The rule is unchanged; its FALSIFIER had to be re-staged.** Measured:
+> dropping the comparator's kind term fails exactly ONE assertion, and it is the synthetic pair
+> (`_assert_work_sort_groups_by_kind`, whose labels run opposite to their kinds, marked as synthetic)
+> rather than the mixed-rung board this paragraph used to point at.
 
 Sorting on `kind` means no third label prefix can break it. The kind test is a **boolean tier**, which
 is exact for the two kinds that exist; a third kind would need an explicit rank, since a boolean

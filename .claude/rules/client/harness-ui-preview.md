@@ -2087,7 +2087,14 @@ of the drive.
   configuration (a dock with no HUD column beside it); the state restores the ordinary ones after, and
   a rect-intersection claim rides beside the frame as its non-vacuity guard.
 
-**A clean run is 370 frames / 1581 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+**A clean run is 370 frames / 1589 `PASS`, exit 0 — RE-MEASURED.** (It was 370 / 1581 before
+`docs/plan_standing_upkeep.md` §4.9 item 12c collapsed the plant web's crew noun. **NO FRAME MOVED IN
+COUNT and forty-odd moved in CONTENT** — every plant compose sheet, every plant work row and every
+`Harvesting kit` face — which is the shape of a rename: the states are the same states, reading
+differently. The eight `PASS`es are five liveness claims on `_assert_plant_crew_noun` and the two
+`_assert_plant_crew_noun_is_rung_blind` claims that carry the collapse itself, less one net from
+`improvements`' inverted card-side block, which lost the *"names the good"* pair and gained a
+containment claim, a figures claim and the liveness one.) The
 figure this replaced (`365 / 1535`) had itself gone stale by five frames and forty `PASS`es before the
 crafting stock-row change above touched it, which is the second time in a row that has happened —
 **read this number as a date stamp, not as a live total**, and re-measure rather than trusting it. The

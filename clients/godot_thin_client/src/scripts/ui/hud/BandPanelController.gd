@@ -4549,10 +4549,12 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # Held in a local because the RUNG mark reads it too — `forage_patch_lookup` spells its keys
             # BARE (`is_cultivated` / `is_field`), unlike the `patch_`-prefixed `tile_info` cross-ref.
             patch = _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
-            # THE ROW'S VERB FOLLOWS THE STANDING RUNG, through the same `HudFormat.plant_crew_label`
-            # the compose sheet's noun does: a crew on a Tended Patch or a Field is TENDING, not
-            # foraging, so `Forage (27, 26)` would name an activity the sim does not run there. The
-            # rung MARK beside it answers a different question (what the source IS) and both stay.
+            # THE ROW'S VERB IS `Harvest` AT EVERY RUNG, through the same `HudFormat.plant_crew_label`
+            # the compose sheet's noun goes through (§4.9 item 12c). ⛔ It used to FORK — *"a crew on a
+            # Tended Patch or a Field is TENDING, not foraging, so `Forage (27, 26)` would name an
+            # activity the sim does not run there"* — and the second word was already taken by the
+            # Agriculture pool, so the sheet read `ASSIGN TENDERS` over the *Gathering* kit. The rung
+            # MARK beside it answers a different question (what the source IS) and both stay.
             label = String(HudWorkVocab.WORK_ROW_PLANT_FORMATS.get(
                 HudFormat.plant_crew_label(patch, HudComposeVocab.BARE_FORECAST_PREFIX), "")) % [x, y]
             # **THE VERB NO LONGER MOVES THIS ROW'S CAP** (`docs/plan_standing_upkeep.md` §2.2). It
@@ -4725,7 +4727,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # keeping stepper cannot reach: twelve keepers do not mend a fence with no hurdles. The
         # countdown is unchanged, since either shortfall drives the same decay through the same
         # grace.
-        var material_note := HudWorkVocab.material_short_note(kind,
+        var material_note := HudWorkVocab.material_short_note(
             SourceForecast.material_payoff_rows(m.get(
                 SourceForecast.ASSIGNMENT_MATERIAL_UPKEEP_DEMAND_KEY, [])),
             SourceForecast.material_payoff_rows(m.get(
@@ -4997,14 +4999,20 @@ func _sort_work_models(models: Array) -> void:
 
 ## "Sort by name" — KIND FIRST, then label, then `key`.
 ##
-## **THE LABEL PREFIX IS NOT A PROXY FOR THE KIND, so alphabetical order alone SPLITS A KIND IN TWO.**
-## A forage row whose Cultivate improvement is done renders through `WORK_ROW_TEND_FORMAT`
-## ("Tend (%d, %d)"), which is display only — its `kind` is still `forage`. With three live prefixes
-## and "Forage" < "Hunt" < "Tend", a band working a wild patch, a herd and a Tended Patch would read
-## Forage → Hunt → Tend, i.e. the forage block interrupted by the hunt block. The `Forage`/`Hunt`
-## filter chips select on `kind` (`_work_models_matching`), so the unsorted-by-kind board would not
-## match the blocks those chips name. Leading with the kind makes the board agree with the chips
-## whatever a row's label says.
+## **THE LABEL PREFIX IS NOT A PROXY FOR THE KIND**, and the sort leads with the kind for that reason
+## rather than because today's words happen to disagree. The `Forage`/`Hunt` filter chips select on
+## `kind` (`_work_models_matching`), so a board ordered by label alone would not match the blocks
+## those chips name whenever the two orders part.
+##
+## ⛔ **THEY PARTED UNTIL §4.9 item 12c AND THEY NO LONGER DO — the shipped vocabulary stopped being
+## the witness.** The dead claim, verbatim: *"A forage row whose Cultivate improvement is done renders
+## through `WORK_ROW_TEND_FORMAT` ("Tend (%d, %d)"), which is display only — its `kind` is still
+## `forage`. With three live prefixes and "Forage" < "Hunt" < "Tend", a band working a wild patch, a
+## herd and a Tended Patch would read Forage → Hunt → Tend, i.e. the forage block interrupted by the
+## hunt block."* Every plant row reads `Harvest (…)` now and `"Harvest" < "Hunt"`, so label order and
+## kind order coincide on every board the game can produce. **The rule is unchanged and the guard has
+## to be synthetic**: `band_panel_preview` asserts the kind grouping over a hand-built pair whose
+## labels run OPPOSITE to their kinds, because no shipped label can express that disagreement.
 ##
 ## The `key` tiebreak makes it a TOTAL ORDER. `sort_custom` is NOT stable in Godot and a label tie is
 ## genuinely reachable — two herds of the same species render the identical `WORK_ROW_HUNT_FORMAT`

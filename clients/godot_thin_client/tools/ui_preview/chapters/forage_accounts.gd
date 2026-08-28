@@ -288,6 +288,29 @@ func _compose_sheet_eyebrow() -> String:
 ## `improvement` composes a build IN FLIGHT (`""` for none). It must not move the noun — a crew clearing
 ## ground is still foraging the stand — which is exactly what the `plant_crew_wild_building` /
 ## `plant_crew_wild_sowing` states pass it for.
+## **THE COLLAPSE ITSELF, ASKED OF THE RESOLVER** (`docs/plan_standing_upkeep.md` §4.9 item 12c) —
+## PNG-less, because it is a claim about a STRING and every one of these rungs renders a perfectly
+## plausible sheet whichever noun it drew.
+##
+## The five rendered states above each pin the four surfaces of ONE rung; they cannot say that the
+## rungs AGREE, since five separate equalities against one const are also satisfied by five separate
+## consts that happen to match. This asks `plant_crew_label` directly over the three rungs the retired
+## fork split — wild ground, a Tended Patch, and a Field sown straight from wild ground — plus the
+## non-empty guard without which "they all answer the same" is satisfied by "they all answer nothing".
+func _assert_plant_crew_noun_is_rung_blind() -> void:
+	var wild := HudFormat.plant_crew_label(BaseFx.food_tile_fixture(),
+		HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var tended := HudFormat.plant_crew_label(TileFx.tended_tile_fixture(),
+		HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var field := HudFormat.plant_crew_label(_wild_sown_field_tile_fixture(),
+		HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	h._assert_hud("the plant crew noun is the SAME at every rung — wild `%s`, tended `%s`, field `%s`"
+			% [wild, tended, field],
+		wild != "" and wild == tended and tended == field)
+	h._assert_hud("…and it is the one the vocabulary declares (`%s`)"
+			% HudComposeVocab.HARVEST_CREW_LABEL,
+		wild == HudComposeVocab.HARVEST_CREW_LABEL)
+
 func _assert_plant_crew_noun(state_name: String, tile: Dictionary, want_label: String,
 		improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
 	h._hud._compose.reset_forage_source()
@@ -322,6 +345,14 @@ func _assert_plant_crew_noun(state_name: String, tile: Dictionary, want_label: S
 	var commit := Q.compose_commit_button(sheet)
 	var open_btn: Button = h._forage_open_button()
 	var want_eyebrow := (HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % want_label.to_lower()).to_upper()
+	# ⛔ **THE LIVENESS HALF, and it is what keeps this set worth anything now that all five states
+	# expect ONE noun** (§4.9 item 12c). Every claim below is an EQUALITY against strings resolved from
+	# the vocabulary, so a resolver answering `""` — and a `PLANT_ASSIGN_BUTTONS` lookup missing its one
+	# key, which also answers `""` — would be satisfied by controls that drew nothing at all.
+	var want_verb := String(HudComposeVocab.PLANT_ASSIGN_BUTTONS.get(want_label, ""))
+	h._assert_hud("%s: the crew NOUN and its VERB both resolve to something (`%s` / `%s`)"
+			% [state_name, want_label, want_verb],
+		want_label != "" and want_verb != "")
 	h._assert_hud("%s: the sheet's eyebrow reads `%s`" % [state_name, want_eyebrow],
 		eyebrow.begins_with(want_eyebrow))
 	h._assert_hud("%s: the crew row is labelled `%s`" % [state_name, want_label.to_upper()],
@@ -1262,34 +1293,40 @@ func run(harness) -> void:
 			HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE))
 	h._hud._compose.reset_forage_source()
 
-	# ---- THE PLANT WEB'S CREW NOUN FOLLOWS THE STANDING RUNG -------------------------------------
-	# Reported from play: every surface for a sown Field still said *forage* / *Foragers*. The ladder
-	# config is the authority — `wild` declares the harvest primitive `worker_take`, `tended` and
-	# `field` both declare `worker_tend` — so a managed source's crew are TENDERS and only a wild
-	# stand's are FORAGERS. `HudFormat.plant_crew_label` is the one resolver; these four states drive
-	# the four surfaces it feeds (sheet eyebrow, crew-row label, commit button, drawer open button)
-	# and, on every frame, assert the eyebrow and the stepper AGREE — the disagreement being the
-	# failure the single resolver exists to make unexpressible.
+	# ---- THE PLANT WEB'S CREW NOUN IS ONE WORD AT EVERY RUNG --------------------------------------
+	# ⛔ **THESE FIVE STATES USED TO ASSERT A FORK AND NOW ASSERT ITS COLLAPSE**
+	# (`docs/plan_standing_upkeep.md` §4.9 item 12c). The dead claim, verbatim: *"every surface for a
+	# sown Field still said forage / Foragers … a managed source's crew are TENDERS and only a wild
+	# stand's are FORAGERS"*, with the two upper rungs expecting `Tenders` and the wild rung and both
+	# in-flight builds expecting `Foragers`. Item 12c retired the second word — a Field's sheet read
+	# `ASSIGN TENDERS` and then offered the *Gathering* kit, the tending being the Agriculture pool's —
+	# so every state below expects `HARVEST_CREW_LABEL`.
+	#
+	# **THAT IS A WEAKER SET, so `_assert_plant_crew_noun` gained a LIVENESS half**: the resolved noun
+	# and its verb must both be NON-EMPTY as well as equal, or a resolver answering `""` would satisfy
+	# five states all expecting `""`. What the states still discriminate is the FOUR SURFACES and their
+	# agreement on one frame; `_assert_plant_crew_noun_is_rung_blind` below is the collapse itself,
+	# asked of the resolver over rungs that used to disagree.
 	await _assert_plant_crew_noun("plant_crew_wild", BaseFx.food_tile_fixture(),
-		HudComposeVocab.FORAGE_CREW_LABEL)
+		HudComposeVocab.HARVEST_CREW_LABEL)
 	await _assert_plant_crew_noun("plant_crew_tended", TileFx.tended_tile_fixture(),
-		HudComposeVocab.TEND_CREW_LABEL)
+		HudComposeVocab.HARVEST_CREW_LABEL)
 	# **BOTH UPPER RUNGS, NOT ONE.** A Tended Patch stands on `plant:tended` and a Field sown from wild
-	# ground on `plant:field`, two different rungs reaching one noun through the same at-or-above test —
-	# so a resolver that only matched the rung exactly would pass above and fail here
-	# (`_wild_sown_field_tile_fixture` is the Field that was never cultivated).
+	# ground on `plant:field` — two different rungs, and they were the two the retired fork reached
+	# through one at-or-above test (`_wild_sown_field_tile_fixture` is the Field that was never
+	# cultivated). They are kept because they are still the two rungs a re-introduced fork would split.
 	await _assert_plant_crew_noun("plant_crew_field", _wild_sown_field_tile_fixture(),
-		HudComposeVocab.TEND_CREW_LABEL)
-	# **THE CASE A NAIVE "IS AN IMPROVEMENT COMPOSED?" TEST GETS WRONG.** These people are foraging the
-	# wild stand AND clearing ground — which is exactly what the build dip charges them for — so the
-	# noun must not move until the rung COMPLETES. `_building_patch_tile_fixture` is wild ground with
-	# `cultivation_progress` part-way and `is_cultivated` false, and the compose carries the verb.
+		HudComposeVocab.HARVEST_CREW_LABEL)
+	# **THE CASE A NAIVE "IS AN IMPROVEMENT COMPOSED?" TEST GOT WRONG.** `_building_patch_tile_fixture`
+	# is wild ground with `cultivation_progress` part-way and `is_cultivated` false, and the compose
+	# carries the verb — the state in which the retired resolver had to keep the WILD noun.
 	await _assert_plant_crew_noun("plant_crew_wild_building", _building_patch_tile_fixture(),
-		HudComposeVocab.FORAGE_CREW_LABEL, SourceForecast.IMPROVEMENT_CULTIVATE)
+		HudComposeVocab.HARVEST_CREW_LABEL, SourceForecast.IMPROVEMENT_CULTIVATE)
 	# …and its Sow twin, on the same wild ground: `Sow` needs no prior patch, so a Sow in flight is the
 	# other half of "a build is running here" and must read identically.
 	await _assert_plant_crew_noun("plant_crew_wild_sowing", _building_patch_tile_fixture(),
-		HudComposeVocab.FORAGE_CREW_LABEL, SourceForecast.IMPROVEMENT_SOW)
+		HudComposeVocab.HARVEST_CREW_LABEL, SourceForecast.IMPROVEMENT_SOW)
+	_assert_plant_crew_noun_is_rung_blind()
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_improvement("")
 

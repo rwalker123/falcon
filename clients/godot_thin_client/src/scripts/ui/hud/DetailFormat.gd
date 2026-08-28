@@ -1376,14 +1376,18 @@ static func note_under_kept_hover(ctx: Context, row_key: String, src: Dictionary
         kind: String, improvement: String) -> void:
     if ctx == null or not rung_is_at_risk(src, prefix, kind, improvement):
         return
-    # **AND WHEN THE MISSING THING IS A GOOD, THE HOVER NAMES IT** (`docs/plan_standing_upkeep.md`
-    # §2.7) — the card's half of the work row's third arm, read off the SOURCE's own published
-    # material pair rather than a labor row's copy, because a card has no assignment in hand. The
+    # ⛔ **THE GOOD-SHORTFALL SENTENCE IS THE WORK BOARD'S AND IS NOT SERVED HERE**
+    # (`docs/plan_standing_upkeep.md` §4.9 item 12c). This hover passed
+    # `rung_material_short_note(src, prefix, kind)` as a second argument, on the reasoning that *"the
     # remedy differs in kind, so the sentence must: no staffing stepper mends a fence with no
-    # hurdles. `""` on every rung that eats no material, which falls straight back to the role
-    # sentence.
-    ctx.row_tooltips[row_key] = HudWorkVocab.under_kept_tooltip_for_source(kind,
-        rung_material_short_note(src, prefix, kind))
+    # hurdles"* — true, and an argument for stating it where it can be acted on. §4.7 already settled
+    # where that is: it pulled the `At risk:` block off this card for being *"way too wordy"* and kept
+    # the countdown on the work board **and nowhere else**, because *"the board is where staffing is
+    # decided this turn … on the tile card it is a number you cannot act on."* Item 12 shipped the
+    # sentence to both entry points and regressed against that. The card keeps the ⚠ and the short
+    # state word `rung_row_value` already draws; what a player presses against a scarce good is the
+    # row's `SourcePriority` rank, which lives in the work row's own strip.
+    ctx.row_tooltips[row_key] = HudWorkVocab.under_kept_tooltip_for_source(kind)
 
 ## ⛔ **THE CARD'S ⚠ IS GATED ON BOTH CURRENCIES, and reading only the work account hid half of it.**
 ## `SourceForecast.rung_is_under_kept` answers about HANDS — `crew > 0` and a work shortfall over
@@ -1403,13 +1407,21 @@ static func rung_is_at_risk(src: Dictionary, prefix: String, kind: String,
     if SourceForecast.at_risk_rung(src, prefix, kind) != improvement:
         return false
     return SourceForecast.is_under_kept(src, prefix) \
-        or rung_material_short_note(src, prefix, kind) != ""
+        or rung_material_is_short(src, prefix)
 
-## The card-side good-shortfall sentence for this source — `""` when every good the rung eats was
-## covered, and on every rung that eats none. Named once because it is BOTH the gate above and the
-## clause the hover carries, and deriving it twice is how a mark and its explanation come to disagree.
-static func rung_material_short_note(src: Dictionary, prefix: String, kind: String) -> String:
-    return HudWorkVocab.material_short_note_for_source(kind,
+## **IS THIS SOURCE SHORT OF A GOOD** — the card's own material arm, off the SOURCE's published pair
+## rather than a labor row's copy, because a card has no assignment in hand. `false` on every rung that
+## eats no material.
+##
+## ⛔ **IT WAS `rung_material_short_note(src, prefix, kind)`, A SENTENCE THE GATE TESTED FOR
+## EMPTINESS**, described as *"BOTH the gate above and the clause the hover carries"*. The hover
+## stopped carrying it (§4.9 item 12c — see `note_under_kept_hover`), and a gate that composes prose in
+## order to ask a yes/no question is the coupling that would hold the retired readout in place. The
+## MARK is what survives, and it must: `rung_is_at_risk`'s own ⛔ records that reading only the work
+## account left a pen whose hurdles had run out wearing no `⚠` at all while the work board's row
+## already said it was being lost.
+static func rung_material_is_short(src: Dictionary, prefix: String) -> bool:
+    return HudWorkVocab.has_material_shortfall(
         SourceForecast.upkeep_material_demand(src, prefix),
         SourceForecast.upkeep_material_supplied(src, prefix))
 

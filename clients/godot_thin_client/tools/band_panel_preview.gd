@@ -1313,6 +1313,7 @@ func _ready() -> void:
 	# The board renders in NAME order now (issue #460), so this is where both halves of that change are
 	# judged: the sorts themselves, and the `⋯` menu saying which one is running.
 	_assert_work_sort_stable()
+	_assert_work_sort_groups_by_kind()
 	_assert_work_sort_tiers()
 	_assert_work_menu_marks_active_sort("band_panel_work_page")
 
@@ -3945,6 +3946,12 @@ const MATERIAL_SHORT_GRACE := 3
 ## down rather than asked of that router, because the claim here is that the countdown SURVIVED the
 ## good-shortfall arm; WHICH rung it names has its own assertions elsewhere in this harness.
 const MATERIAL_SHORT_AT_RISK_RUNG := SourceForecast.IMPROVEMENT_TAME
+## ⛔ **THE RETIRED TAIL, AS A NEEDLE** (`docs/plan_standing_upkeep.md` §4.9 item 12c). The sentence
+## read `… a turn this pen eats.`, filled from a `MATERIAL_SHORT_NOUN_HERD`/`_PATCH` pair — feed and
+## upkeep under one verb, on a surface whose `Fed:` row sits two lines above it. Spelled here rather
+## than reached through a const, because the const is gone and a retired thing needs a test that it
+## is gone.
+const MATERIAL_SHORT_RETIRED_EATS_NEEDLE := " eats."
 
 ## A PENNED herd whose fence bill went unpaid. Its WORK keeping is covered in full, which is the half
 ## that makes the claim sharp: a row short of both would let a note that still names the role pass.
@@ -4012,6 +4019,15 @@ func _assert_material_short_note() -> void:
 	var want := _material_short_sentence()
 	_assert_band_panel("work note — the good-short row NAMES the good and both its terms: \"%s\" (got \"%s\")"
 		% [want, good_note], good_note == want)
+	# ⛔ **A PEN GENUINELY EATS, AND THIS SENTENCE IS ABOUT UPKEEP** (§4.9 item 12c). The retired tail
+	# read `a turn this pen eats`, two lines below a `Fed: 100% — all pasture` row — feed and upkeep
+	# under one verb, which is §2.7's model undone by its own readout. Asserted as a PAIR: the dead
+	# phrase gone, AND the remedy that replaced it present, or "the sentence lost a clause" passes.
+	_assert_band_panel("work note — …and it does not say the source EATS the good (\"%s\")" % good_note,
+		not good_note.contains(MATERIAL_SHORT_RETIRED_EATS_NEEDLE))
+	_assert_band_panel("work note — …and it names the remedy no head count reaches: \"%s\""
+		% HudWorkVocab.MATERIAL_SHORT_REMEDY,
+		good_note.ends_with(HudWorkVocab.MATERIAL_SHORT_REMEDY))
 	_assert_band_panel("work note — …in the DANGER register, because no stepper fixes a missing good",
 		good_severity == HudWorkVocab.NOTE_SEVERITY_DANGER)
 	# **AND THE ROW BESIDE IT IS UNTOUCHED**, which is what stops the new arm swallowing the old one:
@@ -4048,8 +4064,7 @@ func _material_short_sentence() -> String:
 		DetailFormat.format_trimmed(MATERIAL_SHORT_SUPPLIED,
 			HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
 		DetailFormat.format_trimmed(MATERIAL_SHORT_DEMAND,
-			HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
-		HudWorkVocab.MATERIAL_SHORT_NOUN_HERD]
+			HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS)]
 
 ## **THE INK IS ASSERTED ON THE DRAWN LABEL**, not on the model: the severity is a model field and the
 ## colour is what the render site does with it, and until this arc that site was a hard-coded
@@ -8728,10 +8743,13 @@ func _assert_band_panel(label: String, ok: bool) -> void:
 ##   2. under `WORK_SORT_YIELD` the SAME step DOES reorder — the opt-in sort still ranks live;
 ##   3. both sorts answer the same key sequence from two different starting permutations, which is the
 ##      only thing that can see a missing `key` tiebreak (`sort_custom` is not stable in Godot);
-##   4. the DEFAULT sort groups by KIND — every `forage` row above every `hunt` row — which the label
-##      order alone does NOT give, since a managed plant row reads "Tend (…)" and sorts after "Hunt".
-##      Asserted on `kind`, never on the label: testing the label would re-enact the assumption that
-##      the prefix identifies the kind, which is exactly what is false.
+##   4. the DEFAULT sort groups by KIND — every `forage` row above every `hunt` row. Asserted on
+##      `kind`, never on the label: testing the label would re-enact the assumption that the prefix
+##      identifies the kind, which is exactly what this sort refuses to rely on.
+##      ⛔ **THE FIXTURE NO LONGER FALSIFIES A LABEL-ONLY COMPARATOR.** It used to, because a managed
+##      plant row read `Tend (…)` and sorted after `Hunt`; item 12c collapsed the plant verb to
+##      `Harvest`, which sorts BEFORE it, so on this fixture the two orders coincide.
+##      `_assert_work_sort_groups_by_kind` carries that falsifier on a synthetic pair instead.
 func _assert_work_sort_stable() -> void:
 	var controller = _hud._bandpanel
 	# THE FIRST CLAIM IS ABOUT THE LIVE DEFAULT, so it does NOT set the sort — nothing in this harness
@@ -8802,33 +8820,66 @@ func _assert_work_sort_tiers() -> void:
 ## renders one string per species, so two Wild Boar herds collide) and two sources sharing a rate.
 ## Only the keys the two comparators read are populated — this exercises the sort, not the board.
 ##
-## The TEND row is what makes claim 4 bite: its label is built from `WORK_ROW_TEND_FORMAT`, so it
-## sorts alphabetically AFTER every "Hunt …" row while its `kind` is still `forage`. Composing the
-## label from the format const rather than a literal means renaming the format cannot silently leave
-## this case uncovered.
+## ⛔ **THE MANAGED PLANT ROW USED TO MAKE CLAIM 4 BITE, AND IT CANNOT ANY MORE.** The dead comment,
+## verbatim: *"The TEND row is what makes claim 4 bite: its label is built from `WORK_ROW_TEND_FORMAT`,
+## so it sorts alphabetically AFTER every "Hunt …" row while its `kind` is still `forage`."* Item 12c
+## collapsed both plant formats into `WORK_ROW_PLANT_FORMAT` (`Harvest (%d, %d)`), and
+## `"Harvest" < "Hunt"` — so on every board the shipped vocabulary can produce, label order and kind
+## order COINCIDE. The falsifier is therefore SYNTHETIC now: `_assert_work_sort_groups_by_kind` builds
+## a pair whose labels run opposite to their kinds. Every label here is still composed from the
+## shipped format, so the fixture keeps describing a board the game can draw.
 func _work_sort_fixture_models() -> Array:
 	return [
 		{"key": "hunt:boar_b", "label": "Hunt Wild Boar", "kind": "hunt", "rate": 0.40},
 		{"key": WORK_SORT_STEPPED_KEY, "label": "Hunt Wild Boar", "kind": "hunt",
 			"rate": WORK_SORT_TIED_RATE},
-		{"key": "forage:12,7", "label": "Forage (12, 7)", "kind": "forage",
+		{"key": "forage:12,7", "kind": "forage",
+			"label": HudWorkVocab.WORK_ROW_PLANT_FORMAT % [12, 7],
 			"rate": WORK_SORT_TIED_RATE},
-		{"key": "forage:3,9", "label": "Forage (3, 9)", "kind": "forage", "rate": 0.60},
+		{"key": "forage:3,9", "kind": "forage",
+			"label": HudWorkVocab.WORK_ROW_PLANT_FORMAT % [3, 9], "rate": 0.60},
 		{"key": "forage:8,4", "kind": "forage",
-			"label": HudWorkVocab.WORK_ROW_TEND_FORMAT % [WORK_SORT_TEND_TILE.x, WORK_SORT_TEND_TILE.y],
+			"label": HudWorkVocab.WORK_ROW_PLANT_FORMAT % [WORK_SORT_TEND_TILE.x, WORK_SORT_TEND_TILE.y],
 			"rate": 0.30},
 		# The SECOND tier's pair (issue #449), and they only mean anything TOGETHER: a sown hay Field
 		# pays no food, so under a food-only rule it sat at 0.0 among the rows paying nothing at all
 		# and was separated from them by the `key` tiebreak alone. The barren row is what makes "above
 		# the dead rows" falsifiable — without it the Field is last either way.
-		{"key": WORK_SORT_FODDER_KEY, "label": "Forage (5, 5)", "kind": "forage",
+		{"key": WORK_SORT_FODDER_KEY, "kind": "forage",
+			"label": HudWorkVocab.WORK_ROW_PLANT_FORMAT % [5, 5],
 			"rate": 0.0, "fodder_rate": WORK_SORT_FODDER_RATE},
-		{"key": WORK_SORT_PAYS_NOTHING_KEY, "label": "Forage (6, 6)", "kind": "forage",
+		{"key": WORK_SORT_PAYS_NOTHING_KEY, "kind": "forage",
+			"label": HudWorkVocab.WORK_ROW_PLANT_FORMAT % [6, 6],
 			"rate": 0.0, "fodder_rate": 0.0},
 	]
 
 ## The tile the fixture's managed plant row sits on — only its label is read, so any coordinate does.
 const WORK_SORT_TEND_TILE := Vector2i(8, 4)
+
+## **THE SYNTHETIC PAIR CLAIM 4 NEEDS SINCE THE PLANT VERB COLLAPSED.** The default sort must group by
+## KIND, and the only way to see that is a board whose LABEL order contradicts its kind order — which
+## no shipped vocabulary can now produce (`Harvest` sorts before `Hunt`, and every hunt label begins
+## `Hunt `). So the labels here are deliberately synthetic and are marked as such: a `hunt` row named
+## to sort first and a `forage` row named to sort last. A comparator that ranked on the label alone
+## returns them in the opposite order.
+const WORK_SORT_KIND_PROBE_HUNT_LABEL := "AAA synthetic hunt row"
+const WORK_SORT_KIND_PROBE_FORAGE_LABEL := "ZZZ synthetic forage row"
+
+func _assert_work_sort_groups_by_kind() -> void:
+	var controller = _hud._bandpanel
+	var restore_sort: StringName = controller._work_sort
+	controller._work_sort = HudWorkVocab.WORK_SORT_NAME
+	var probe := [
+		{"key": "hunt:probe", "label": WORK_SORT_KIND_PROBE_HUNT_LABEL,
+			"kind": SourceForecast.LABOR_KIND_HUNT, "rate": 0.10},
+		{"key": "forage:probe", "label": WORK_SORT_KIND_PROBE_FORAGE_LABEL,
+			"kind": SourceForecast.LABOR_KIND_FORAGE, "rate": 0.10},
+	]
+	var kinds := _sorted_work_kinds(controller, probe)
+	_assert_band_panel("work sort — the DEFAULT groups by KIND even where the LABELS run the other way (%s)"
+		% ", ".join(kinds),
+		kinds.size() == 2 and kinds[0] == SourceForecast.LABOR_KIND_FORAGE)
+	controller._work_sort = restore_sort
 
 ## The two sources the TIER claims are made about, named because each assertion states which boundary
 ## it is asking about. The fodder rate is deliberately LARGER than the smallest food row's, so a
@@ -10236,7 +10287,7 @@ func _assert_ready_mark_declares() -> void:
 	# Composed through the SHIPPED formats, so the claim pins the numbers rather than the wording.
 	var plant_mark: Button = null
 	for label in marks.keys():
-		if String(label).begins_with(HudWorkVocab.WORK_ROW_TEND_FORMAT.split(" ")[0]):
+		if String(label).begins_with(HudWorkVocab.WORK_ROW_PLANT_FORMAT.split(" ")[0]):
 			plant_mark = marks[label] as Button
 	if plant_mark == null:
 		_fail("declare — no plant ⌃ to read a price off")
@@ -10692,18 +10743,24 @@ func _assert_work_row_rungs() -> void:
 		"hunt:%s" % RUNG_PASTORAL_HERD_ID: DetailFormat.pastoral_glyph(),
 		"hunt:%s" % RUNG_PENNED_HERD_ID: DetailFormat.CORRAL_GLYPH,
 	}
-	# **THE ROW'S VERB FOLLOWS THE SAME RUNG, and it is a SECOND axis off the same patch dict** — a crew
-	# on a Tended Patch or a Field is TENDING, not foraging (`labor-ui.md` → "The plant web's crew noun
-	# follows the standing rung"). Asserted beside the rung MARK rather than instead of it: the mark
-	# says what the source IS and the label says what is being DONE there, so one passing cannot stand
-	# in for the other. The hunt rows keep their own `WORK_ROW_HUNT_FORMAT` and are not in this table.
+	# **THE ROW'S VERB IS `Harvest` ON ALL THREE PLANT RUNGS, and it is a SECOND axis off the same patch
+	# dict** — the mark says what the source IS and the label says what is being DONE there, so one
+	# passing cannot stand in for the other. The hunt rows keep their own `WORK_ROW_HUNT_FORMAT` and are
+	# not in this table.
+	#
+	# ⛔ **THIS USED TO ASSERT THE FORK AND NOW ASSERTS THE COLLAPSE** (§4.9 item 12c). The dead claim
+	# was *"a crew on a Tended Patch or a Field is TENDING, not foraging"*, with the wild row expecting
+	# one format and the two managed rows another — which is a WEAKER test now that all three read the
+	# same string, so the LIVENESS half below carries the weight: every plant row's label must be
+	# NON-EMPTY as well as equal, or a resolver that answered `""` for every rung would satisfy a
+	# table whose three entries had also collapsed to `""`.
 	var expected_labels := {
 		"forage:%d,%d" % [RUNG_WILD_TILE.x, RUNG_WILD_TILE.y]:
-			HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [RUNG_WILD_TILE.x, RUNG_WILD_TILE.y],
+			HudWorkVocab.WORK_ROW_PLANT_FORMAT % [RUNG_WILD_TILE.x, RUNG_WILD_TILE.y],
 		"forage:%d,%d" % [RUNG_TENDED_TILE.x, RUNG_TENDED_TILE.y]:
-			HudWorkVocab.WORK_ROW_TEND_FORMAT % [RUNG_TENDED_TILE.x, RUNG_TENDED_TILE.y],
+			HudWorkVocab.WORK_ROW_PLANT_FORMAT % [RUNG_TENDED_TILE.x, RUNG_TENDED_TILE.y],
 		"forage:%d,%d" % [RUNG_FIELD_TILE.x, RUNG_FIELD_TILE.y]:
-			HudWorkVocab.WORK_ROW_TEND_FORMAT % [RUNG_FIELD_TILE.x, RUNG_FIELD_TILE.y],
+			HudWorkVocab.WORK_ROW_PLANT_FORMAT % [RUNG_FIELD_TILE.x, RUNG_FIELD_TILE.y],
 	}
 	var labels_seen := 0
 	var seen := {}
@@ -10715,9 +10772,11 @@ func _assert_work_row_rungs() -> void:
 		seen[key] = true
 		if expected_labels.has(key):
 			var label := String(m.get("label", ""))
-			if label != String(expected_labels[key]):
-				_fail("%s expected row label '%s' but got '%s'" % [
-					key, expected_labels[key], label])
+			var want_label := String(expected_labels[key])
+			if want_label == "":
+				_fail("%s: the shipped plant format resolved to nothing, so this claim is vacuous" % key)
+			elif label != want_label:
+				_fail("%s expected row label '%s' but got '%s'" % [key, want_label, label])
 			else:
 				labels_seen += 1
 		var glyph := String(m.get("rung_glyph", ""))
@@ -10732,8 +10791,8 @@ func _assert_work_row_rungs() -> void:
 	if seen.size() == expected.size():
 		print("band_panel_preview: assert OK — %d work rows wear their standing rung (wild bare)" % seen.size())
 	if labels_seen == expected_labels.size():
-		print("band_panel_preview: assert OK — %d plant rows name the verb their rung runs (Forage/Tend)"
-			% labels_seen)
+		print("band_panel_preview: assert OK — %d plant rows name ONE verb at every rung (%s)"
+			% [labels_seen, HudWorkVocab.WORK_ROW_PLANT_FORMAT])
 
 ## The rung mark's TOOLTIP has to actually be reachable, and its slot must not eat the row's click —
 ## two SILENT failures a rendered frame cannot show. A `Label` defaults to `MOUSE_FILTER_IGNORE`, which
@@ -17849,7 +17908,7 @@ func _render_work_material_width_states() -> void:
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_work_material_forage")
 	_assert_work_row_states_its_materials("band_panel_work_material_forage",
-		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_FORAGE_X, MATERIAL_FORAGE_Y],
+		HudWorkVocab.WORK_ROW_PLANT_FORMAT % [MATERIAL_FORAGE_X, MATERIAL_FORAGE_Y],
 		MATERIAL_FORAGE_ROWS)
 
 	# THE MEASURED WORST CASE — four cash crops on one patch.
@@ -17865,11 +17924,11 @@ func _render_work_material_width_states() -> void:
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_work_material_crops")
 	_assert_work_row_states_its_materials("band_panel_work_material_crops",
-		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y],
+		HudWorkVocab.WORK_ROW_PLANT_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y],
 		MATERIAL_CROPS_ROWS)
 	# The NARROWEST box the work zone is ever given, so the name column is measured where it binds.
 	_report_work_row_name_column("band_panel_work_material_crops",
-		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y])
+		HudWorkVocab.WORK_ROW_PLANT_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y])
 
 	_push_bands([_band_fixture()])
 	await _settle()
@@ -18123,10 +18182,10 @@ func _render_work_priority_states() -> void:
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_work_priority_widest")
 	_assert_work_row_states_its_materials("band_panel_work_priority_widest",
-		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y],
+		HudWorkVocab.WORK_ROW_PLANT_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y],
 		MATERIAL_CROPS_ROWS)
 	_assert_marked_row_accounts_still_fit("band_panel_work_priority_widest",
-		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y])
+		HudWorkVocab.WORK_ROW_PLANT_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y])
 
 	_push_bands([_band_fixture()])
 	await _settle()
