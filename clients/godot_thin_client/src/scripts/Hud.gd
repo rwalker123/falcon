@@ -110,6 +110,17 @@ signal unqueue_requested(payload: Dictionary)
 ## is a real selection.
 signal build_kit_requested(payload: Dictionary)
 
+## The KIT one WORK SITE is kept with — { faction, x, y, herd_id, kit_id, default_kit_id }, Main
+## formatting `upkeep_kit <faction> <x> <y> [kit <id>]` / `upkeep_kit <faction> <herd_id> [kit <id>]`
+## (`docs/plan_standing_upkeep.md` §2.7, surfaced by §4.9 item 12c).
+##
+## **THE SAME PAYLOAD AS THE SIGNAL ABOVE AND A WIDER REACH.** A queue entry belongs to the band that
+## declared it; a site's keeping tool is owed by every band of the faction working that site, which is
+## the sim's own `bands_working_source`. `default_kit_id` is `_kit_token`'s, so picking the
+## `(default)` entry omits the token and hands the site back to its derivation; `none` is bare-handed
+## and is a real selection.
+signal upkeep_kit_requested(payload: Dictionary)
+
 ## The band's build queue was DRAGGED into a new order — { faction, band_id, x, y, herd_id, position },
 ## Main formatting `build_order <faction> <band> <x> <y> <position>` /
 ## `build_order <faction> <band> <herd_id> <position>` (`docs/plan_standing_upkeep.md` §4.7b ③).
@@ -567,8 +578,6 @@ func _ready() -> void:
         _resolve_assign_band, _herd_label_for_id, _emit_assign_labor)
     _drawercompose.send_hunt_expedition_requested.connect(
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
-    _drawercompose.extend_pen_requested.connect(
-        func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
     # **THE COMPOSE SHEET ASKS FOR THE WORK TAB; THE PANEL IS REACHED ONLY FROM HERE** (§4.7a ①).
     # `_bandpanel` is constructed BELOW this line, so the relay is a lambda rather than a direct
     # connection to its method — by the time a link can be clicked it is populated, which is the same
@@ -631,6 +640,16 @@ func _ready() -> void:
     # beside the ordering it is about.
     _bandpanel.build_kit_requested.connect(
         func(payload: Dictionary) -> void: build_kit_requested.emit(payload))
+    # The inspector strip's UPKEEP picker, straight through for the queue picker's reason:
+    # `upkeepKitId` is captured LIVE, so the recapture the command triggers already carries the pick
+    # and there is no optimistic write on this layer to roll back.
+    _bandpanel.upkeep_kit_requested.connect(
+        func(payload: Dictionary) -> void: upkeep_kit_requested.emit(payload))
+    # …and the ring, whose entry point moved to the work row's standing-rung mark (§4.9 item 12c).
+    # Straight through: `extend_pen` declares a build-queue entry and the recapture it triggers is
+    # what draws it, so there is no optimistic write on this layer.
+    _bandpanel.extend_pen_requested.connect(
+        func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
     _bandpanel.build_order_requested.connect(
         func(payload: Dictionary) -> void: build_order_requested.emit(payload))
     _bandpanel.work_priority_requested.connect(

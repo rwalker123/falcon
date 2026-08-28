@@ -120,9 +120,17 @@ paths:
       compose state members (`_forage_assign_*` / `_hunt_assign_*` and the autofill one-shots) are
       untouched — the sheet is a different HOST, not a different state model. **Gate-reason lines
       travel WITH the picker**: they explain the greyed buttons, so they belong beside them.
-    - **Extend-pen stays in the DRAWER.** It is a one-click standing action on a built pen, not a
-      compose flow; hiding it behind a sheet you must open first would be worse. So
-      `_build_herd_drawer_actions` renders it (or the "Fencing N%" badge) directly.
+    - ⛔ **EXTEND-PEN LEFT THE DRAWER** (`docs/plan_standing_upkeep.md` §4.9 item 12c). The dead claim,
+      verbatim: *"Extend-pen stays in the DRAWER. It is a one-click standing action on a built pen, not
+      a compose flow; hiding it behind a sheet you must open first would be worse. So
+      `_build_herd_drawer_actions` renders it (or the "Fencing N%" badge) directly."* The second
+      sentence was true and was never the whole reason — reported from play, the button produced a
+      **build queue entry**, making it the one queue entry in the game declared from somewhere other
+      than the work tab. It is a `⌃` on the work row's standing-rung mark now, and it opens a PRICE
+      rather than committing on the click, a ring drawing `animal:pen`'s own hurdle pile since §2.7.
+      **The `Fencing N%` badge retired outright** — the build queue row dates and withdraws the ring.
+      `band-city-panel.md` → "`extend_pen` is declared from the standing-rung mark" has the whole of
+      it, the `has_track`-is-false mechanism included.
     - **The standing summary reuses `SourceForecast.source_yield_readout` — it never recomputes a rate.**
       `♻ 3 foragers · +2.74 /turn`, policy glyph from `FoodIcons.for_policy`, and the SAME two
       INDEPENDENT flags a Band-panel Current-actions row wears: the ⚠ overdraw (ecological, the

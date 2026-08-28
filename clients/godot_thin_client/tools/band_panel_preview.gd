@@ -1716,6 +1716,7 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 	_assert_work_row_rungs()
+	_assert_ring_caret_rides_the_standing_mark()
 	_assert_rung_labels_are_hoverable()
 
 	# The same five rows in the WIDE (bottom) shell, where the rung slot competes with the multi-column
@@ -3434,10 +3435,15 @@ func _render_upkeep_mode_states() -> void:
 	_report_zone_content_extent("band_panel_pools_wide_selected")
 	_assert_work_inspector_fits("band_panel_pools_wide_selected")
 	await _assert_work_inspector_worst_case_fits("band_panel_pools_wide_selected")
+	await _assert_kits_picker_is_exclusive_and_costs_the_max()
+	await _assert_kits_picker_draws_both_controls()
 	# The PRECONDITION, without which the state is `band_panel_pools_wide` rendered twice: a strip
 	# really is open, and the queue block really is up beside it.
 	_assert_band_panel("band_panel_pools_wide_selected: a work inspector strip really is open",
 		_find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META) != null)
+	var _dbg_hosts := ""
+	for h in _find_zone_hosts(_panel):
+		_dbg_hosts += "%s(%d) " % [(h as Control).name, (h as Control).get_child_count()]
 	_assert_band_panel("band_panel_pools_wide_selected: …with the BUILD QUEUE block still beside it",
 		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META) != null)
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
@@ -3562,6 +3568,164 @@ func _assert_work_inspector_fits(where: String) -> void:
 	# these constants are re-derived from measurements like this one.
 	_assert_band_panel("%s: the work inspector RESERVES what it DRAWS (%.0f reserved, %.0f drawn)"
 			% [where, reserved, drawn], reserved + ZONE_BOUNDS_TOLERANCE >= drawn)
+
+## GUARD: **THE OPEN PICKER REALLY DRAWS BOTH CONTROLS, AND THE LINK REALLY OPENS IT.** Every claim
+## about the pair's HEIGHT above passes on a picker that renders nothing at all — an empty expansion
+## reserves 44px and draws 0, which fits any box — so the liveness half is asserted here, on the
+## rendered tree, through the REAL `Kits` link rather than by writing `_work_picker_open` directly.
+##
+## **PAIRED WITH ITS OWN NEGATIVE**: the two pickers must be ABSENT while the expansion is closed, or
+## "both are drawn" passes on a strip that draws them permanently — which is exactly the block form
+## this replaced.
+func _assert_kits_picker_draws_both_controls() -> void:
+	var was_open: StringName = _hud._bandpanel._work_picker_open
+	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_NONE
+	_hud._bandpanel._repage_work_zone()
+	await _settle()
+	_assert_band_panel("kits picker — with the expansion CLOSED the strip draws neither picker",
+		_find_meta_control(_panel, HudWorkVocab.WORK_INSPECT_TAKE_KIT_META) == null
+			and _find_meta_control(_panel, HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_META) == null)
+	# **THE LINK IS WHAT OPENS IT**, found by its own face among the strip's inline links — the one
+	# control a player has, and the thing a height-only claim cannot see.
+	var link := _find_button_with_text(_panel, HudWorkVocab.WORK_INSPECT_KITS)
+	_assert_band_panel("kits picker — the strip offers a `%s` link beside the other two"
+		% HudWorkVocab.WORK_INSPECT_KITS, link != null)
+	_hud._bandpanel._toggle_work_picker(HudWorkVocab.WORK_PICKER_KITS)
+	await _settle()
+	# **THE ONE FRAME THE PAIR HAS**, and it is the picker's own state rather than a second fixture:
+	# every other strip frame in this file has the expansion closed, which is what makes the two
+	# pickers unphotographed everywhere else.
+	await _save("band_panel_work_kits_picker")
+	# ⛔ **AND WHAT AN OPEN PICKER COSTS THIS ZONE IS REPORTED, NOT ASSERTED — because it is a DECISION
+	# rather than a regression, and because it is not this picker's.** Measured on the wide dock: the
+	# zone has 4px of spare with the strip closed, so ANY open expansion overflows it — the shipped
+	# PRIORITY picker by 48 and this one by 40, it being the shortest of the three. The frame above
+	# shows the second row clipped by the zone's bottom edge for exactly that reason.
+	#
+	# A failing assertion here would report the kit pair for a budget the priority picker has been
+	# overrunning since §4.9 item 9b, on a state no frame has ever rendered (every picker-open frame is
+	# a TALL dock, every wide-dock frame has the expansion closed — the disjoint-families gap this file
+	# has now recorded three times). `band_panel_vitals_worst_case`'s rule: a red line here asks for a
+	# decision, so it prints one.
+	_report_zone_content_extent("band_panel_work_kits_picker")
+	var take := _find_meta_control(_panel, HudWorkVocab.WORK_INSPECT_TAKE_KIT_META)
+	var upkeep := _find_meta_control(_panel, HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_META)
+	_assert_band_panel("kits picker — opened, it draws BOTH pickers (take %s, upkeep %s)"
+			% ["yes" if take != null else "no", "yes" if upkeep != null else "no"],
+		take != null and upkeep != null)
+	# …and each is a live `OptionButton` with entries in it, not an empty control shaped like one.
+	_assert_band_panel("kits picker — …and each really carries its roster (take %d, upkeep %d entries)"
+			% [(take as OptionButton).item_count if take is OptionButton else -1,
+				(upkeep as OptionButton).item_count if upkeep is OptionButton else -1],
+		take is OptionButton and upkeep is OptionButton
+			and (take as OptionButton).item_count > 0
+			and (upkeep as OptionButton).item_count > 0)
+	# ⛔ **AND `none` IS ON BOTH ROSTERS**, which is the choice the tooltips promise and the one a
+	# job-filtered roster silently drops when a config edit forgets a `jobs` entry — the exact staleness
+	# `fixtures_band.gd`'s own kit roster carried until §4.9 item 12c.
+	_assert_band_panel("kits picker — …and `none` is offered on both, which the tooltips promise",
+		_option_has_item(take as OptionButton, KIT_NONE_FACE)
+			and _option_has_item(upkeep as OptionButton, KIT_NONE_FACE))
+	_hud._bandpanel._work_picker_open = was_open
+	_hud._bandpanel._repage_work_zone()
+	await _settle()
+
+## The bare kit's own display face, spelled here rather than resolved through `KitRoster`: an
+## expectation re-derived through the code under test agrees with it by construction.
+const KIT_NONE_FACE := "No kit"
+
+## An inline link is a `Button` (`HudWidgets.build_inline_link`), never a Label — so a Label-only walk
+## cannot see one, which is a mistake this harness has already recorded twice elsewhere.
+func _find_button_with_text(node: Node, face: String) -> Button:
+	if node is Button and (node as Button).text == face:
+		return node as Button
+	for child in node.get_children():
+		var found := _find_button_with_text(child, face)
+		if found != null:
+			return found
+	return null
+
+func _option_has_item(picker: OptionButton, face: String) -> bool:
+	if picker == null:
+		return false
+	for i in range(picker.item_count):
+		if picker.get_item_text(i).begins_with(face):
+			return true
+	return false
+
+## GUARD: **THE THREE PICKERS ARE MUTUALLY EXCLUSIVE AND THE STRIP RESERVES THE MAX, NOT THE SUM**
+## (`docs/plan_standing_upkeep.md` §4.9 item 12c). That property is the whole of why the kit pair is
+## free: as a permanent block it cost 50px on TOP of whichever picker was open and took the wide dock
+## 46px past its box; as a third picker it costs 44 INSTEAD of the priority picker's 52, so the
+## strip's worst case does not move at all.
+##
+## ⛔ **IT IS THE ONE PROPERTY A LATER CHANGE BREAKS SILENTLY.** A fourth picker added as a bare `if`
+## rather than an `elif` — in the builder, in `_work_inspector_height`, or in either alone — still
+## renders a perfectly plausible strip; what it does is reserve for one expansion and draw two, which
+## this zone answers by clipping the bottom of the board. So the claim is made on the ARITHMETIC and
+## not on a frame.
+func _assert_kits_picker_is_exclusive_and_costs_the_max() -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	if models.is_empty():
+		_fail("kits picker — no work model to measure the strip against")
+		return
+	var model: Dictionary = models[0]
+	var was_open: StringName = _hud._bandpanel._work_picker_open
+	# The three open heights, each measured through the SHIPPED producer rather than read off a const:
+	# the claim is that the chain answers one term, and a const table cannot say that.
+	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_NONE
+	var closed: float = _hud._bandpanel._work_inspector_height(model)
+	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_FLOOR
+	var floor_open: float = _hud._bandpanel._work_inspector_height(model)
+	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_PRIORITY
+	var priority_open: float = _hud._bandpanel._work_inspector_height(model)
+	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_KITS
+	var kits_open: float = _hud._bandpanel._work_inspector_height(model)
+	_hud._bandpanel._work_picker_open = was_open
+	# **THE CLOSED STRIP IS THE CHEAPEST OF THE FOUR, which is the whole difference from the block
+	# form** — that form added its 50px to every one of these, so `closed` was not the minimum and the
+	# three deltas below were unchanged. Both halves are needed: this says no picker term rides the
+	# closed strip, and the deltas say each open one rides exactly once.
+	#
+	# ⛔ **NOT AN EQUALITY AGAINST `WORK_INSPECTOR_HEIGHT`.** The model this measures is the UNDER-KEPT
+	# herd, deliberately (its `note` is one of the four conditional children the reservation is model-
+	# driven for), so the closed strip is legitimately the base PLUS that note — 84 against a base of
+	# 64. An equality there asserts the fixture has no conditional children, which is the opposite of
+	# what this state was chosen for.
+	_assert_band_panel("kits picker — the CLOSED strip is the cheapest of the four (%.0f, against floor %.0f / priority %.0f / kits %.0f)"
+			% [closed, floor_open, priority_open, kits_open],
+		closed < floor_open and closed < priority_open and closed < kits_open)
+	# …and each open picker adds EXACTLY its own term — the max-not-sum property, stated three ways.
+	_assert_band_panel("kits picker — opening it costs its own height and nothing else (%.0f − %.0f = %.0f, want %.0f)"
+			% [kits_open, closed, kits_open - closed, HudWorkVocab.WORK_INSPECTOR_KITS_PICKER_HEIGHT],
+		is_equal_approx(kits_open - closed, HudWorkVocab.WORK_INSPECTOR_KITS_PICKER_HEIGHT))
+	_assert_band_panel("kits picker — …as the floor picker does (%.0f) and the priority picker does (%.0f)"
+			% [floor_open - closed, priority_open - closed],
+		is_equal_approx(floor_open - closed, HudWorkVocab.WORK_INSPECTOR_POLICY_PICKER_HEIGHT)
+			and is_equal_approx(priority_open - closed,
+				HudWorkVocab.WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT))
+	# **AND THE KIT PAIR IS NOT THE WORST CASE**, which is what keeps `WORK_INSPECTOR_CEILING_HEIGHT`
+	# — and therefore the zone's own budget — where it was.
+	_assert_band_panel("kits picker — …and it is SHORTER than the priority picker, so the ceiling does not move (%.0f < %.0f)"
+			% [kits_open, priority_open], kits_open < priority_open)
+	# **THE EXCLUSIVITY, DRIVEN THROUGH THE ONE TOGGLE.** Opening each in turn must leave exactly one
+	# open; a second `_work_picker_open` value surviving is the state the height chain cannot reserve for.
+	for picker in [HudWorkVocab.WORK_PICKER_FLOOR, HudWorkVocab.WORK_PICKER_PRIORITY,
+			HudWorkVocab.WORK_PICKER_KITS]:
+		_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_NONE
+		_hud._bandpanel._toggle_work_picker(picker)
+		_assert_band_panel("kits picker — opening `%s` leaves exactly it open (got `%s`)"
+				% [String(picker), String(_hud._bandpanel._work_picker_open)],
+			_hud._bandpanel._work_picker_open == picker)
+		# …and opening ANOTHER closes it, which is the half a single-open claim cannot make.
+		_hud._bandpanel._toggle_work_picker(HudWorkVocab.WORK_PICKER_KITS if picker \
+			!= HudWorkVocab.WORK_PICKER_KITS else HudWorkVocab.WORK_PICKER_FLOOR)
+		_assert_band_panel("kits picker — …and opening another CLOSES it (`%s` is not `%s`)"
+				% [String(_hud._bandpanel._work_picker_open), String(picker)],
+			_hud._bandpanel._work_picker_open != picker)
+	_hud._bandpanel._work_picker_open = was_open
+	_hud._bandpanel._repage_work_zone()
 
 ## GUARD: **the same claim at the strip's WORST CASE, driven rather than staged — and this is the half
 ## that can see the model-blind reservation.** `WORK_INSPECTOR_HEIGHT` carries ~20px of slack over what
@@ -10794,6 +10958,77 @@ func _assert_work_row_rungs() -> void:
 		print("band_panel_preview: assert OK — %d plant rows name ONE verb at every rung (%s)"
 			% [labels_seen, HudWorkVocab.WORK_ROW_PLANT_FORMAT])
 
+## GUARD: **the ring is declared from the STANDING-RUNG MARK, and only where a ring may be declared**
+## (`docs/plan_standing_upkeep.md` §4.9 item 12c).
+##
+## ⛔ **THE READY SLOT IS EMPTY ON THIS ROW AND THAT IS THE WHOLE REASON THE CONTROL IS HERE.**
+## `RungLadder.has_track` is FALSE at `animal:pen` — the top of the animal branch — so a corralled
+## herd's row renders no `⌃` in the ready slot at all, which is the mechanical reason extending a pen
+## ended up as a button on the tile card. Asserted beside the caret rather than assumed: if that slot
+## ever grew an offer, this control would be a second `⌃` on one row meaning something else.
+##
+## **THE A/B IS THE CLAIM.** A caret on every mark would satisfy a bare presence check, so the PASTORAL
+## row — a standing rung with no pen to widen — is asserted to carry none, and the same penned herd
+## with a ring already banked is asserted to lose it. That last one is what stops a second ring being
+## declared over the first, and it is driven rather than staged: the fixture is mutated and the models
+## re-derived, so no frame's subject moves.
+func _assert_ring_caret_rides_the_standing_mark() -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var penned := _work_model_for_key("hunt:%s" % RUNG_PENNED_HERD_ID)
+	var pastoral := _work_model_for_key("hunt:%s" % RUNG_PASTORAL_HERD_ID)
+	if penned.is_empty() or pastoral.is_empty():
+		_fail("ring caret — the rung board is missing the penned or the pastoral row")
+		return
+	_assert_band_panel("ring caret — a PENNED row offers another ring on its standing-rung mark",
+		bool(penned.get("ring_offered", false)))
+	_assert_band_panel("ring caret — …while its READY slot offers nothing, `animal:pen` being the top of the branch (%s)"
+			% [penned.get("ready_glyph", "")],
+		String(penned.get("ready_glyph", "")) == "")
+	_assert_band_panel("ring caret — …and a PASTORAL row, which has no pen to widen, carries no caret",
+		not bool(pastoral.get("ring_offered", false)))
+	# **AND AS RENDERED.** The model claims above pass on a board that never draws the mark, which is
+	# exactly how a control goes missing while its flag stays true.
+	var mark := _find_meta_control(_panel, HudWorkVocab.WORK_ROW_RING_META)
+	var pressable: Button = null
+	for node in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_RING_META):
+		if node is Button:
+			pressable = node as Button
+	_assert_band_panel("ring caret — …and the board really draws it as a PRESSABLE mark (%s)"
+			% ("yes" if pressable != null else "no"),
+		mark != null and pressable != null
+			and pressable.text == HudWorkVocab.WORK_ROW_RING_FORMAT % DetailFormat.CORRAL_GLYPH)
+	# **THE RING IN FLIGHT WITHDRAWS THE OFFER**, driven off the same fixture so nothing else moves.
+	var ringing := _rung_herd_fixtures()
+	for herd_variant in ringing:
+		var herd: Dictionary = herd_variant
+		if String(herd.get("id", "")) == RUNG_PENNED_HERD_ID:
+			herd[SourceForecast.PEN_EXTEND_PROGRESS_KEY] = RING_IN_FLIGHT_WORK_DONE
+			herd[SourceForecast.PEN_EXTEND_COST_KEY] = RING_IN_FLIGHT_WORK_COST
+	_set_world_herds(ringing)
+	var in_flight := _work_model_for_key("hunt:%s" % RUNG_PENNED_HERD_ID)
+	_assert_band_panel("ring caret — a pen with a ring ALREADY going up offers no second one",
+		not in_flight.is_empty() and not bool(in_flight.get("ring_offered", false))
+			and bool(in_flight.get("ring_in_flight", false)))
+	# …and the row still says a ring is up, or "the caret is gone" is satisfied by the mark going blank.
+	_assert_band_panel("ring caret — …and states how far it has got (%d%%), which the mark's hover carries"
+			% HudFormat.progress_percent(float(in_flight.get("ring_progress", 0.0))),
+		is_equal_approx(float(in_flight.get("ring_progress", 0.0)),
+			RING_IN_FLIGHT_WORK_DONE / RING_IN_FLIGHT_WORK_COST))
+	_set_world_herds(_rung_herd_fixtures())
+
+## The ring the A/B above puts in flight, in WORK UNITS — the pair the sim banks and stamps. A clean
+## fraction, so the percentage the claim quotes is exact rather than a rounding.
+const RING_IN_FLIGHT_WORK_DONE := 42.0
+const RING_IN_FLIGHT_WORK_COST := 70.0
+
+## One work model by its key, or `{}` — the board's own models, re-derived so a claim reads what the
+## row was built from rather than what a fixture said.
+func _work_model_for_key(key: String) -> Dictionary:
+	for model in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
+		if String((model as Dictionary).get("key", "")) == key:
+			return model as Dictionary
+	return {}
+
 ## The rung mark's TOOLTIP has to actually be reachable, and its slot must not eat the row's click —
 ## two SILENT failures a rendered frame cannot show. A `Label` defaults to `MOUSE_FILTER_IGNORE`, which
 ## makes `tooltip_text` a no-op (this HUD has shipped six such tooltips nobody ever saw), while the
@@ -10804,26 +11039,44 @@ func _assert_work_row_rungs() -> void:
 ## SITE icon is also 🌾, so a text match walks straight into the row's source-icon Label — which this
 ## assertion did, and failed on, before the meta existed.
 func _assert_rung_labels_are_hoverable() -> void:
-	var labels: Array = []
-	_collect_rung_labels(_panel, labels)
+	var marks: Array[Control] = _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_RUNG_META)
 	var marked := 0
-	for label_variant in labels:
-		var label: Label = label_variant
-		if String(label.get_meta(HudWorkVocab.WORK_ROW_RUNG_META)) == "":
+	var pressable := 0
+	for mark in marks:
+		if String(mark.get_meta(HudWorkVocab.WORK_ROW_RUNG_META)) == "":
 			continue   # a WILD row's reserved-but-empty slot — nothing to hover
 		marked += 1
-		if label.tooltip_text == "":
-			_fail("rung mark '%s' carries no tooltip" % label.text)
+		var face: String = mark.text if mark is Label else (mark as Button).text
+		if mark.tooltip_text == "":
+			_fail("rung mark '%s' carries no tooltip" % face)
 			return
-		if label.mouse_filter != Control.MOUSE_FILTER_PASS:
+		# ⛔ **THE RING MARK IS A `Button` AND TAKES THE OPPOSITE FILTER, WHICH IS WHY THIS FORKS**
+		# (`docs/plan_standing_upkeep.md` §4.9 item 12c). A read-only mark needs PASS — the only value
+		# that both shows a Label's tooltip and lets the row's click through to the inspector — while a
+		# mark that OPENS THE RING CARD needs STOP, or the same press would also open the inspector
+		# under the card it just raised. The ready slot beside it has forked exactly this way since it
+		# gained a pressable face.
+		if mark is Button:
+			pressable += 1
+			if mark.mouse_filter != Control.MOUSE_FILTER_STOP:
+				_fail("ring mark '%s' has mouse_filter %d — STOP is what stops the press ALSO opening the inspector" % [
+					face, mark.mouse_filter])
+				return
+		elif mark.mouse_filter != Control.MOUSE_FILTER_PASS:
 			_fail("rung mark '%s' has mouse_filter %d — PASS is the only value that both shows the tooltip and lets the row's click through" % [
-				label.text, label.mouse_filter])
+				face, mark.mouse_filter])
 			return
 	if marked == 0:
-		_fail("no rung mark rendered in the panel (%d slots) — the mark is missing" % labels.size())
-	else:
-		print("band_panel_preview: assert OK — %d rung marks are hoverable (tooltip + PASS), %d wild slots bare" % [
-			marked, labels.size() - marked])
+		_fail("no rung mark rendered in the panel (%d slots) — the mark is missing" % marks.size())
+		return
+	# **THE PRESSABLE ONE IS COUNTED SEPARATELY, or this guard silently stops covering the row the ring
+	# control is on.** It did: the collector walked `Label`s alone, so the penned herd's mark dropped
+	# out of the count the moment it became a `Button` — 4 marks became 3 and nothing failed.
+	if pressable == 0:
+		_fail("no PRESSABLE rung mark on a board carrying a penned herd — the ring caret is not drawn")
+		return
+	print("band_panel_preview: assert OK — %d rung marks are hoverable (%d of them the ring's pressable caret), %d wild slots bare" % [
+		marked, pressable, marks.size() - marked])
 
 ## Every `Label` under `node`, in tree order — the read an assertion makes when its claim is about what
 ## the board actually RENDERED rather than about what a model answers.
@@ -10962,11 +11215,10 @@ func _assert_no_work_fodder_total() -> void:
 	_assert_band_panel("fodder — a band growing no feed renders no fodder total (got \"%s\")"
 		% ("<none>" if total == null else total.text), total == null)
 
-func _collect_rung_labels(node: Node, out: Array) -> void:
-	if node is Label and (node as Label).has_meta(HudWorkVocab.WORK_ROW_RUNG_META):
-		out.append(node)
-	for child in node.get_children():
-		_collect_rung_labels(child, out)
+## ⛔ RETIRED — **`_collect_rung_labels`**, which walked `Label`s alone. The rung mark is a `Button` on
+## a penned herd since §4.9 item 12c, so a Label-only collector silently stopped covering that row —
+## the count fell from 4 marks to 3 and no claim failed. `_collect_meta_controls` finds both kinds by
+## the meta they share, which is what the meta was for.
 
 ## Open the work inspector on the row standing on `policy`, with its policy picker EXPANDED, and
 ## repage so the picker actually renders. No harness otherwise opens `_work_picker_open` in either

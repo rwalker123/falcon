@@ -65,6 +65,25 @@ signal unqueue_requested(payload: Dictionary)
 # outright. `{ faction, x, y, herd_id, kit_id, default_kit_id }`: the last pair is `_kit_token`'s, so
 # picking the DERIVED answer omits the token and CLEARS the override rather than pinning it.
 signal build_kit_requested(payload: Dictionary)
+# The KIT one WORK SITE is kept with was picked (`docs/plan_standing_upkeep.md` §2.7, surfaced by
+# §4.9 item 12c) — relayed to HudLayer.upkeep_kit_requested and formatted by `Main.format_upkeep_kit`.
+#
+# **ITS OWN SIGNAL BECAUSE ITS OWN SCOPE, one step wider than the one above.** `build_kit` sets a
+# property of a source's QUEUE ENTRY; this sets a property of the SITE, on every band of the faction
+# that works it — a keeping bill is owed by everyone holding the ground. Same payload shape
+# (`{ faction, x, y, herd_id, kit_id, default_kit_id }`) because a source has one grammar whichever
+# control names it, and the last pair is `_kit_token`'s: picking the DERIVED answer omits the token
+# and clears the site back to its own web derivation, while `none` is bare-handed and is a real
+# selection that survives the round trip.
+signal upkeep_kit_requested(payload: Dictionary)
+# Another ring was declared around a pen (`docs/plan_standing_upkeep.md` §4.9 item 12c) — relayed to
+# HudLayer.extend_pen_requested and formatted by `Main.format_extend_pen`, both unchanged.
+#
+# **THE COMMAND DID NOT MOVE; ITS ENTRY POINT DID.** It was emitted by `DrawerComposeController` from
+# an `Extend pen` button on the tile card — the one build-queue entry in the game declared from
+# somewhere other than the work tab — and it is emitted from the work row's standing-rung mark now.
+# `{ faction, x, y }`, the pen's ANCHOR tile, which is the herd's own.
+signal extend_pen_requested(payload: Dictionary)
 # The band's build queue was DRAGGED into a new order (`docs/plan_standing_upkeep.md` §4.7b ③) —
 # relayed to HudLayer.build_order_requested and formatted by `Main.format_build_order`.
 #
@@ -2986,8 +3005,10 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # two — `resolved_build_job` publishes `extend_pen` rather than a rung verb, because a built pen
     # carries no meter for a verb to name — so the branch is on the token the model already holds, and
     # the number it swaps in is `SourceForecast.pen_extend_fraction`'s, the same division the herd
-    # drawer's "Fencing N%" badge quotes. The FACE is untouched: a ring derives the verb of the rung it
-    # widens, which is why the row is still titled `Corral <herd>`. The DATE is untouched too — the sim
+    # drawer's retired "Fencing N%" badge quoted. The FACE is untouched: a ring derives the verb of the rung it
+    # widens, which is why the row is still titled `Corral <herd>`. **This row is now the ONLY surface
+    # quoting that meter** — the herd drawer's `Fencing N%` badge retired with the tile card's
+    # `Extend pen` button (§4.9 item 12c). The DATE is untouched too — the sim
     # publishes a dedicated ring countdown, and only the percentage was ever missing.
     var pending := _build_queue_row_is_pending(model)
     var turns := int(model.get("build_turns", SourceForecast.BUILD_TURNS_NO_ESTIMATE))
@@ -3818,6 +3839,60 @@ func _open_crop_step(band: Dictionary, model: Dictionary, source: Dictionary, ru
         rung))
     track.popup(_rung_track_anchor_rect(anchor))
 
+## **THE RING'S PRICE CARD, OPENED FROM THE STANDING-RUNG MARK** (`docs/plan_standing_upkeep.md` §4.9
+## item 12c).
+##
+## ⛔ **IT OPENS A PRICE, NOT A BARE COMMIT, AND ITEM 12 IS WHAT MADE THAT NECESSARY.** A ring draws
+## `animal:pen`'s own hurdle pile now (§2.7 — it drew none until the defect was fixed alongside item
+## 12), so a one-click button states a cost nowhere. Opening the same shape the track's `⌃` opens —
+## what it eats to raise, what it costs to hold, and where it will stall — keeps the caret meaning ONE
+## thing on every mark that wears it, and puts the goods cost at the point of decision rather than in
+## the queue afterwards.
+##
+## **IT REUSES THE TRACK'S WINDOW, AND THAT IS WHAT KEEPS IT FREE.** The work zone reads 396 of 396 in
+## height and 354 of 356 in width with a row selected, and both budgets ASSERT rather than clip — so a
+## card drawn as a block would slice the board. A `PopupPanel` costs the zone nothing. Its CONTENT is
+## rebuilt per open, never patched, for the track's own reason: the herd's position, the band's shelf
+## and whatever is queued all move per snapshot.
+func _open_ring_card(band: Dictionary, model: Dictionary, anchor: Control) -> void:
+    var source := _rung_track_source(model)
+    if source.is_empty():
+        return
+    var card := _ensure_rung_track()
+    var margin := _rung_track_body
+    HudWidgets.clear_children(margin)
+    var body := RungLadder.build_ring_card(
+        RungLadder.ring_row(source, HudComposeVocab.BARE_FORECAST_PREFIX, band),
+        func() -> void:
+            # The press closes the card BEFORE it emits, the track's own rule: the declaration
+            # re-renders the whole zone and frees the row this card is anchored to.
+            _dismiss_rung_track()
+            _emit_extend_pen(band, source))
+    body.set_meta(HudWorkVocab.RING_CARD_META, true)
+    margin.add_child(body)
+    card.popup(_rung_track_anchor_rect(anchor))
+
+## **DECLARE ANOTHER RING — `extend_pen <faction> <x> <y>`, and the command has not moved.** Only its
+## entry point has: the tile card's button and its `Fencing N%` badge retired with this, both being
+## duplicates of what the row and the build queue now state.
+##
+## ⛔ **IT TARGETS THE PEN'S ANCHOR TILE, WHICH IS THE HERD'S OWN, and it names no band.** A penned
+## herd sits AT `corralled_at`, so the herd's live tile is the anchor; the verb appends an entry to the
+## build queue of every band keeping the pen, and the grammar is closed at three tokens (a trailing
+## crew is a parse error). The model's `x`/`y` are the ASSIGNMENT's launch-time target, which for a
+## migrating herd is not where the animal stands — so the anchor comes off the live herd dict, the
+## same one `_rung_track_source` resolves.
+func _emit_extend_pen(band: Dictionary, herd: Dictionary) -> void:
+    var x := int(herd.get("x", -1))
+    var y := int(herd.get("y", -1))
+    if x < 0 or y < 0:
+        return
+    emit_signal("extend_pen_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "x": x,
+        "y": y,
+    })
+
 ## Take the track down, if one is up. Idempotent, and safe before the card has ever been built.
 func _dismiss_rung_track() -> void:
     if _rung_track != null and is_instance_valid(_rung_track) and _rung_track.visible:
@@ -4026,18 +4101,59 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     # give it in the detail readouts; that colour is also what keeps the two glyph families from
     # reading as one compound mark at this size. Empty text on a wild source — the slot stays reserved
     # so the right-anchored furniture lines up down the board.
-    var rung := Label.new()
-    rung.text = String(model.get("rung_glyph", ""))
+    var rung_glyph := String(model.get("rung_glyph", ""))
+    # **AND ON A PENNED HERD THE MARK CARRIES A `⌃`** (`docs/plan_standing_upkeep.md` §4.9 item 12c) —
+    # extending the pen is declared from the thing the job acts on, a ring widening the pen this mark
+    # denotes. It is NOT in the ready slot beside it: that slot's `⌃▦` / `▦45%` / `⚠▦` / lapsed
+    # four-way is about CLIMBING, and `RungLadder.has_track` is false at the top of the animal branch,
+    # so it renders nothing at all on exactly this row. A row already carries two marks — a mid-Sow
+    # patch reads `🌾` what it is beside `▦ 28%` what is being built on it — and this is that precedent
+    # read one slot to the left.
+    var ring_offered := bool(model.get("ring_offered", false))
+    var rung: Control
+    if ring_offered:
+        var ring_btn := Button.new()
+        ring_btn.text = HudWorkVocab.WORK_ROW_RING_FORMAT % rung_glyph
+        ring_btn.focus_mode = Control.FOCUS_NONE
+        ring_btn.tooltip_text = HudWorkVocab.WORK_ROW_RING_TOOLTIP
+        HudStyle.apply_button(ring_btn, "ghost")
+        HudWidgets.compact(ring_btn, HudWorkVocab.WORK_ROW_FONT_SIZE,
+            HudWorkVocab.WORK_PAGER_PADDING_V)
+        # AFTER `apply_button`, which writes its own `font_color`: the mark keeps the SIGNAL ink a
+        # standing rung wears everywhere, and the hover brightening stays as the affordance.
+        ring_btn.add_theme_color_override("font_color", HudStyle.SIGNAL)
+        ring_btn.pressed.connect(func() -> void: _open_ring_card(band, model, ring_btn))
+        rung = ring_btn
+    else:
+        var rung_label := Label.new()
+        rung_label.text = rung_glyph
+        rung_label.add_theme_color_override("font_color", HudStyle.SIGNAL)
+        rung_label.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+        # PASS, not IGNORE: a Label needs a non-IGNORE filter for its own `tooltip_text` to ever show.
+        # Deliberately NOT `HudWidgets.set_label_tooltip`, which sets STOP — the whole row is a click
+        # target, and STOP here would make the rung slot a dead 16px hole in it. PASS shows the
+        # tooltip AND lets the press bubble to the row's `gui_input`.
+        rung_label.mouse_filter = Control.MOUSE_FILTER_PASS if rung_glyph != "" \
+            else Control.MOUSE_FILTER_IGNORE
+        # **A RING IN FLIGHT SAYS SO HERE AND CARRIES NO CARET**, which is what stops a second being
+        # declared over the first (`Herd::pen_extending` is the sim's own gate and needs no client
+        # twin). The PERCENTAGE is the build queue row's, which is the surface that dates and
+        # withdraws the ring; the tile card's `Fencing N%` badge retired rather than becoming a third
+        # statement of one meter.
+        rung_label.tooltip_text = HudWorkVocab.WORK_ROW_RING_BUILDING_TOOLTIP_FORMAT % \
+            HudFormat.progress_percent(float(model.get("ring_progress", 0.0))) \
+            if bool(model.get("ring_in_flight", false)) \
+            else String(model.get("rung_tooltip", ""))
+        rung = rung_label
     rung.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_RUNG_WIDTH, 0.0)
-    rung.add_theme_color_override("font_color", HudStyle.SIGNAL)
-    rung.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    # PASS, not IGNORE: a Label needs a non-IGNORE filter for its own `tooltip_text` to ever show.
-    # Deliberately NOT `HudWidgets.set_label_tooltip`, which sets STOP — the whole row is a click
-    # target, and STOP here would make the rung slot a dead 16px hole in it. PASS shows the tooltip
-    # AND lets the press bubble to the row's `gui_input`.
-    rung.mouse_filter = Control.MOUSE_FILTER_PASS if rung.text != "" else Control.MOUSE_FILTER_IGNORE
-    rung.tooltip_text = String(model.get("rung_tooltip", ""))
-    rung.set_meta(HudWorkVocab.WORK_ROW_RUNG_META, String(model.get("rung_glyph", "")))
+    rung.set_meta(HudWorkVocab.WORK_ROW_RUNG_META, rung_glyph)
+    # …and whether this mark is the pressable ring one, on its own handle: the two shapes differ by a
+    # glyph, so a harness reading the text would be asserting the string it had already composed.
+    rung.set_meta(HudWorkVocab.WORK_ROW_RING_META, ring_offered)
+    # STOP on the button so the press does not ALSO bubble to the row's `gui_input` and open the
+    # inspector under the card the click just opened — the ready slot's own rule one slot over.
+    if ring_offered:
+        rung.mouse_filter = Control.MOUSE_FILTER_STOP
     line.add_child(rung)
     # THE RUNG ON OFFER — the third and last glyph axis on a row, and it is deliberately a SEPARATE
     # slot from the two beside it: `rung_glyph` is what the source IS, `marks` is what the band is
@@ -4301,7 +4417,19 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
         model.get("icon_texture") as Texture2D, String(model.get("icon", "")),
         HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
     var title := Label.new()
+    # **THE HEAD LINE STATES THE RUNG, AND IT COSTS NOTHING** (`docs/plan_standing_upkeep.md` §4.9 item
+    # 12c) — `Harvest (28, 16) · ▦ Field 100%`. It rides a line that is already there, so the strip's
+    # reservation does not move; the label CLIPS, which is this zone's standing rule, and the clause is
+    # appended rather than given its own child precisely so it is the first thing to go when it must.
+    #
+    # ⛔ **THE FACE IS ASKED, NEVER COMPOSED HERE.** `DetailFormat.standing_rung_face` routes through
+    # the same `rung_row_value` the tile card's rung row goes through, so the two surfaces cannot word
+    # one rung differently — the hazard mark, the state word and the floored percent all arrive
+    # decided. `""` on a wild source, which appends nothing at all.
     title.text = String(model.get("label", ""))
+    var rung_face := String(model.get("rung_face", ""))
+    if rung_face != "":
+        title.text += HudWorkVocab.WORK_INSPECT_RUNG_SEPARATOR + rung_face
     title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     title.clip_text = true
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -4356,6 +4484,13 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     # buttons — and ahead of `Unassign`, which is the destructive one and stays last.
     links.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_PRIORITY, HudStyle.INK, func() -> void:
         _toggle_work_picker(HudWorkVocab.WORK_PICKER_PRIORITY)))
+    # **AND THE KIT PAIR, ON THE SAME FOOTING AS THE TWO BESIDE IT** (`docs/plan_standing_upkeep.md`
+    # §4.9 item 12c). The three are the same kind of control — a standing property of this row, picked
+    # on demand — and `Unassign` stays last, being the destructive one. **Only where the row HAS kits**:
+    # a link opening an empty picker is a click that answers nothing, the queue row's own rule.
+    if _work_inspector_has_kits(model):
+        links.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_KITS, HudStyle.INK,
+            func() -> void: _toggle_work_picker(HudWorkVocab.WORK_PICKER_KITS)))
     links.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_UNASSIGN, HudStyle.DANGER, func() -> void:
         _work_open_key = ""
         _work_picker_open = HudWorkVocab.WORK_PICKER_NONE
@@ -4368,7 +4503,14 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
         col.add_child(HudWidgets.build_work_priority_picker(func(level: String) -> void:
             _commit_work_priority(band, model, level),
             String(model.get("priority", HudWorkVocab.WORK_PRIORITY_NORMAL))))
-    if _work_picker_open == HudWorkVocab.WORK_PICKER_FLOOR:
+    # **THE KIT PAIR AS A PICKER BODY** (§4.9 item 12c) — two rows, one per kit, at the strip's full
+    # width. It is `elif` for the reason the pair above it is: `_work_picker_open` holds ONE value, so
+    # the strip draws at most one expansion and `_work_inspector_height` reserves the MAX rather than
+    # the sum. Drawn as a block instead, the pair cost 50px on top of whichever picker was open and
+    # took the wide dock 46px past its box.
+    elif _work_picker_open == HudWorkVocab.WORK_PICKER_KITS:
+        col.add_child(_build_work_inspector_kits(band, model))
+    elif _work_picker_open == HudWorkVocab.WORK_PICKER_FLOOR:
         # THE THREE FLOOR PRESETS, and nothing else to say about them. **DELIBERATELY NO SLIDER HERE**:
         # this zone is a fixed-width box the compose sheet is not, and re-pointing a standing crew from
         # the board is a coarse decision — the fine dial lives on the source's own compose sheet, where
@@ -4377,6 +4519,200 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
             _commit_work_floor(band, model, floor),
             float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), {}))
     return strip
+
+## **THE STRIP'S KIT PAIR — the take crew's tool and the SITE's keeping tool, on one wrapping line.**
+## `null` for a row whose jobs the roster covers with no tool at all, which reserves nothing.
+##
+## ⛔ **AN ANIMAL ROW GETS BOTH PICKERS TOO, and only the LEFT WORD differs.** §4.9 item 12c's strip
+## section is written in plant vocabulary, which is not the same as being plant-only: the strip is the
+## one place the RUNG is known on either web, and `upkeepKitId` is published for herds as well as
+## patches. So a plant row reads `Harvesters [Harvesting kit ▾]  Upkeep [Tillage kit ▾]` and an animal
+## one `Hunters [Stalking kit ▾]  Upkeep [Hurdling kit ▾]`.
+##
+## ⛔ **A PEN ROW'S LEFT PICKER IS A WEAPON PICKER, because item 12b made it one.** It is the
+## `Hunters` / hunt-kit control and never a *Harvest* one — the §4.9 item 12c rename is PLANT-ONLY, so
+## nothing on an animal row says *Harvest*. A penned herd resolves the ordinary fight now, so *no
+## weapons, no beef* is discoverable only if the picker says so; `KitRoster.kit_entries` greys and
+## explains through `SourceForecast.is_fought`, the one seam that answers it, and nothing here
+## re-derives that verdict.
+func _build_work_inspector_kits(band: Dictionary, model: Dictionary) -> VBoxContainer:
+    var column := VBoxContainer.new()
+    # ZERO separation, the queue settings strip's own: the second line costs a CONTROL and not a
+    # block, so the gap above the picker is the column's and is charged exactly once.
+    column.add_theme_constant_override("separation", 0)
+    # **TWO ROWS, UNCONDITIONALLY, AND NO WRAP PREDICATE.** A picker body has the strip's whole width
+    # and two controls to place, so there is no width branch to state — which is what removed the
+    # predicate, its `one_line` argument and the drift surface between a reservation that computed the
+    # wrap and a container that performed it. Both keys take `WORK_INSPECTOR_KIT_KEY_WIDTH`, so the
+    # two pickers share a left edge.
+    var take := _build_work_inspector_kit_line(column, _work_inspector_take_key(model))
+    take.add_child(_build_work_inspector_take_kit_picker(band, model))
+    var upkeep := _build_work_inspector_kit_line(column, HudWorkVocab.WORK_INSPECT_UPKEEP_KEY)
+    upkeep.add_child(_build_work_inspector_upkeep_kit_picker(band, model))
+    return column
+
+## One control line of the pair, at the height the reservation counted it at.
+func _build_work_inspector_kit_line(column: VBoxContainer, key_text: String) -> HBoxContainer:
+    var line := HBoxContainer.new()
+    line.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_COMPACT_PICKER_LINE_HEIGHT)
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    column.add_child(line)
+    line.add_child(_build_work_inspector_kit_key(key_text))
+    return line
+
+## A key at the ONE declared width both take, so the two pickers share a left edge whether they sit
+## side by side or stack — `_build_queue_settings_key`'s rule, one host over.
+func _build_work_inspector_kit_key(key_text: String) -> Label:
+    var key := Label.new()
+    key.text = key_text
+    key.custom_minimum_size = Vector2(HudWorkVocab.WORK_INSPECTOR_KIT_KEY_WIDTH, 0.0)
+    key.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+    key.add_theme_font_size_override("font_size", HudWorkVocab.WORK_CHIP_FONT_SIZE)
+    key.clip_text = true
+    key.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    return key
+
+## **THE LEFT KEY IS THE CREW NOUN, THROUGH THE EXISTING RESOLVERS AND NEVER A THIRD ONE.** The plant
+## web has one word since §4.9 item 12c (`HudFormat.plant_crew_label`); the animal web still forks
+## Hunters/Herders off the standing rung, which is `SourceForecast.is_managed_hunt_source` — the same
+## predicate `DrawerComposeController._herd_crew_noun` asks. Asking it here rather than reaching into
+## that controller is what keeps this zone free of a cross-panel dependency; the PREDICATE is shared,
+## which is what stops the two answers drifting.
+func _work_inspector_take_key(model: Dictionary) -> String:
+    if String(model.get("kind", "")) != SourceForecast.LABOR_KIND_HUNT:
+        return HudFormat.plant_crew_label(_work_inspector_source(model),
+            HudComposeVocab.BARE_FORECAST_PREFIX)
+    var herd := _work_inspector_source(model)
+    return HudComposeVocab.HERD_CREW_LABEL \
+        if SourceForecast.is_managed_hunt_source(herd, String(model.get("improvement", ""))) \
+        else HudComposeVocab.HUNT_CREW_LABEL
+
+## The raw wire SOURCE behind an inspector model — the patch or the herd, which is what the crew noun
+## and the take kit's own derivation read. `{}` for a model whose source the band's lookups do not
+## hold, which every reader below answers as "nothing to say".
+##
+## **A HERD IS READ LIVE, the model builder's own rule**: herds MIGRATE, so the assignment's
+## launch-time target is not where the animal is, and `find_world_herd` is the one lookup that answers
+## for where it actually stands.
+func _work_inspector_source(model: Dictionary) -> Dictionary:
+    var herd_id := String(model.get("herd_id", ""))
+    if herd_id != "":
+        return _band_labor.find_world_herd(herd_id)
+    return _band_labor.forage_patch_lookup().get(
+        Vector2i(int(model.get("x", -1)), int(model.get("y", -1))), {})
+
+## The TAKE job this row's crew works under — the same `LABOR_KIND_*` the row's own `kind` is, which
+## is what makes the picker offer exactly what the compose sheet offers.
+func _work_inspector_take_job(model: Dictionary) -> String:
+    return KitRoster.JOB_HUNT if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT \
+        else KitRoster.JOB_FORAGE
+
+## …and the KEEPING job, which is the web's rather than the crew's: `agriculture` keeps ground and
+## `husbandry` keeps animals, and the sim REFUSES a plant keeping kit named on a herd outright rather
+## than falling back — so the picker must offer only its own web's tools.
+func _work_inspector_upkeep_job(model: Dictionary) -> String:
+    return KitRoster.JOB_HUSBANDRY if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT \
+        else KitRoster.JOB_AGRICULTURE
+
+## Does this row offer a kit line at all — true when EITHER job lists a tool. Asked by the reservation
+## and by the builder from one place, so the two cannot disagree about whether a line was drawn.
+func _work_inspector_has_kits(model: Dictionary) -> bool:
+    if model.is_empty():
+        return false
+    var kits := _band_labor.kits()
+    return not KitRoster.kits_for_job(kits, _work_inspector_take_job(model)).is_empty() \
+        and not KitRoster.kits_for_job(kits, _work_inspector_upkeep_job(model)).is_empty()
+
+## **THE TAKE PICKER — the crew's own tool, on the path the compose sheet already uses.** It sends
+## `assign_labor … kit <id>`, so this control adds no second command for a value that already has one;
+## the row's crew, floor and rank are re-sent unchanged beside it because that command states them all.
+func _build_work_inspector_take_kit_picker(band: Dictionary, model: Dictionary) -> OptionButton:
+    var kits := _band_labor.kits()
+    var job := _work_inspector_take_job(model)
+    var source := _work_inspector_source(model)
+    var default_id := KitRoster.default_kit_for(job, source,
+        String(source.get("default_kit_id", "")))
+    var selected := String(model.get("kit_id", ""))
+    if selected == "":
+        selected = default_id
+    var listing := KitRoster.kit_entries(kits, job, selected, default_id,
+        func(kit_id: String) -> void: _emit_work_take_kit(band, model, kit_id, default_id),
+        source, HudComposeVocab.BARE_FORECAST_PREFIX)
+    return _build_work_inspector_picker(listing, kits, selected,
+        HudWorkVocab.WORK_INSPECT_TAKE_KIT_TOOLTIP, HudWorkVocab.WORK_INSPECT_TAKE_KIT_META)
+
+## **THE UPKEEP PICKER — what this SITE is held with, turn after turn.** Per site since §2.5, which is
+## why it needs no scope warning: there is no longer a scope to warn about.
+##
+## ⛔ **THE `(default)` MARK COMES OFF `upkeep_kit_named`, NEVER OFF A SECOND CLIENT DERIVATION.** The
+## wire states the RESOLVED kit and a separate flag for whether the player named it, precisely because
+## the id alone cannot say — a player may name the very kit the derivation would have picked. So an
+## UNNAMED row's default IS the id it is showing, and only a NAMED one has to ask
+## `KitRoster.keeping_kit_for` what the derivation would have been.
+func _build_work_inspector_upkeep_kit_picker(band: Dictionary, model: Dictionary) -> OptionButton:
+    var kits := _band_labor.kits()
+    var job := _work_inspector_upkeep_job(model)
+    var selected := String(model.get("upkeep_kit_id", ""))
+    var default_id := selected if not bool(model.get("upkeep_kit_named", false)) \
+        else KitRoster.keeping_kit_for(kits, job)
+    var listing := KitRoster.kit_entries(kits, job, selected, default_id,
+        func(kit_id: String) -> void: _emit_upkeep_kit(band, model, kit_id, default_id))
+    return _build_work_inspector_picker(listing, kits, selected,
+        HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_TOOLTIP, HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_META)
+
+## The chrome both pickers wear — one builder, so the pair cannot come out at two widths or two type
+## sizes on one line.
+func _build_work_inspector_picker(listing: Dictionary, kits: Array, chosen: String,
+        tooltip: String, meta: StringName) -> OptionButton:
+    var picker := HudWidgets.build_option_picker(
+        listing[KitRoster.KIT_ENTRIES_KEY] as Array,
+        int(listing[KitRoster.KIT_ENTRIES_SELECTED_KEY]),
+        KitRoster.display_name_for_id(kits, chosen), tooltip)
+    picker.set_meta(meta, chosen)
+    # **THE PICKER EXPANDS INTO WHAT THE KEY LEAVES**, rather than declaring a column: a picker BODY
+    # has the strip's whole width, so a fixed 168 would leave dead space on a wide dock and clip a kit
+    # name on a narrow one. The key is the row's only fixed child.
+    picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    HudWidgets.compact(picker, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
+    return picker
+
+## **THE TAKE KIT RIDES `assign_labor`, WHICH ALREADY CARRIES IT.** A second command for a value the
+## compose sheet's own path sets would be two writers of one field — the drift this arc keeps naming —
+## so the pick is re-sent as the row's standing assignment with its crew, floor, verb and take
+## selection unchanged. `_emit_work_assign` restates every one of those off the model, so the ONE
+## thing this override changes is the kit.
+##
+## ⛔ **`default_id` IS UNUSED HERE AND ITS ABSENCE IS THE POINT.** `assign_labor`'s parser reads an
+## omitted `kit` token as *the job's default*, so a pick equal to the default is expressed by sending
+## the id anyway — pinning it — rather than by dropping the token. That is the OPPOSITE of `build_kit`
+## and `upkeep_kit`, where an absent token clears an OVERRIDE back to a derivation; `assign_labor`
+## has no override to clear, and `_emit_work_assign`'s own ⛔ records what dropping the token costs.
+func _emit_work_take_kit(band: Dictionary, model: Dictionary, kit_id: String,
+        _default_id: String) -> void:
+    _emit_work_assign(band, model, int(model.get("workers", 0)),
+        RESTATE_STANDING_FLOOR, RESTATE_STANDING_SPECIES, kit_id)
+
+## **THE PER-SITE KEEPING KIT** (`docs/plan_standing_upkeep.md` §2.7) — `upkeep_kit`, naming a SOURCE
+## and setting a property of the SITE on every band of the faction that works it.
+##
+## ⛔ **PICKING THE DERIVED DEFAULT EMITS NO `kit` TOKEN, AND THAT IS WHAT CLEARS THE OVERRIDE** —
+## `_emit_build_kit`'s rule one scope out. `none` is a DIFFERENT statement (bare-handed, and how a
+## player conserves the tool on one site while its neighbour goes on using it) and survives the round
+## trip as the real selection it is.
+##
+## **NO OPTIMISTIC OVERLAY.** `upkeepKitId` is captured LIVE, so the recapture this command triggers
+## already carries the new value.
+func _emit_upkeep_kit(band: Dictionary, model: Dictionary, kit_id: String,
+        default_id: String) -> void:
+    emit_signal("upkeep_kit_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "x": int(model.get("x", -1)),
+        "y": int(model.get("y", -1)),
+        "herd_id": String(model.get("herd_id", "")),
+        "kit_id": kit_id,
+        "default_kit_id": default_id,
+    })
+    _repage_work_zone()
 
 func _commit_work_floor(band: Dictionary, model: Dictionary, floor: float) -> void:
     _work_picker_open = HudWorkVocab.WORK_PICKER_NONE
@@ -4439,18 +4775,24 @@ func _work_inspector_height(model: Dictionary) -> float:
     var schedule: PackedFloat32Array = model.get("schedule", PackedFloat32Array())
     if ArrivalStrip.has_gap(schedule):
         height += HudWorkVocab.WORK_INSPECTOR_ARRIVALS_HEIGHT
-    # ONE open height for the picker: the standing-investment line the taller variant reserved room
-    # for is gone with the axis split (see `_build_work_inspector`), so every open picker is the same
-    # four rungs. It is panel state rather than model state, which is why it is the one term here that
-    # does not read the dict.
-    # ONE open height per picker, and AT MOST ONE of them is open (`_work_picker_open`). They are
+    # **ONE OPEN HEIGHT PER PICKER, AND AT MOST ONE OF THEM IS OPEN** (`_work_picker_open`). They are
     # panel state rather than model state, which is why they are the terms here that do not read the
-    # dict; the priority one is the taller of the two by its hint line, and is what
-    # `WORK_INSPECTOR_CEILING_HEIGHT` therefore counts.
+    # dict. **The `if/elif` chain is the max-not-sum property made STRUCTURAL** — the builder's own
+    # chain matches it arm for arm, so the strip cannot draw two expansions or reserve for the wrong
+    # one. The PRIORITY arm is the tallest (52, its hint line), which is what
+    # `WORK_INSPECTOR_CEILING_HEIGHT` counts.
+    #
+    # ⛔ **THE KIT PAIR IS AN ARM HERE AND NOT A TERM ABOVE, and that is the whole of why it is free**
+    # (`docs/plan_standing_upkeep.md` §4.9 item 12c). It was `height += work_inspector_kits_height(…)`
+    # outside this chain — charged to every strip whether or not a picker was open, and ON TOP of
+    # whichever one was — which took the wide dock to 442 in a 396px box. At 44 it is SHORTER than the
+    # priority picker it now competes with, so the worst case does not move at all.
     if _work_picker_open == HudWorkVocab.WORK_PICKER_FLOOR:
         height += HudWorkVocab.WORK_INSPECTOR_POLICY_PICKER_HEIGHT
     elif _work_picker_open == HudWorkVocab.WORK_PICKER_PRIORITY:
         height += HudWorkVocab.WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT
+    elif _work_picker_open == HudWorkVocab.WORK_PICKER_KITS:
+        height += HudWorkVocab.WORK_INSPECTOR_KITS_PICKER_HEIGHT
     return height
 
 ## **LINE TWO'S WHOLE STRING — every account this source pays, then the floor the player set it to.**
@@ -4792,6 +5134,28 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "muted_note": String(yld.get("muted_note", "")), "marks": marks,
             # The source's STANDING RUNG — orthogonal to `marks`, which carries the verb in flight.
             "rung_glyph": String(rung.get("glyph", "")), "rung_tooltip": String(rung.get("tooltip", "")),
+            # …and the same rung's FACE, for the inspector strip's head line (§4.9 item 12c). It rides
+            # the model beside the glyph because the two are one answer in two registers — a mark for
+            # the row, a face for the strip — and `SourceForecast.standing_improvement` is the single
+            # fork both go through. `""` on a wild source. **The board row does NOT draw this**: the
+            # row has a fixed mark column and 356px of zone, which is why the mark exists at all.
+            "rung_face": DetailFormat.standing_rung_face(rung_source,
+                HudComposeVocab.BARE_FORECAST_PREFIX,
+                SourceForecast.source_kind_for_labor(kind)),
+            # **WHETHER THIS ROW MAY DECLARE ANOTHER FENCED RING, AND WHETHER ONE IS ALREADY UP**
+            # (`docs/plan_standing_upkeep.md` §4.9 item 12c). Only a CORRALLED herd has a pen to widen,
+            # which is the standing rung rather than a flag of its own — one fork, the same
+            # `standing_improvement` the mark and the face already go through. The two are mutually
+            # exclusive by construction: a ring in flight withdraws the offer, which is what stops a
+            # second being declared over the first.
+            "ring_in_flight": SourceForecast.pen_ring_is_in_flight(live_herd),
+            "ring_offered": SourceForecast.standing_improvement(rung_source,
+                    HudComposeVocab.BARE_FORECAST_PREFIX) == SourceForecast.IMPROVEMENT_CORRAL \
+                and not SourceForecast.pen_ring_is_in_flight(live_herd),
+            # …and how far it has got, for the mark's hover alone. `pen_extend_fraction` is the ONE
+            # division of the ring's work pair, shared with the build queue row's percentage, so one
+            # ring can never be quoted two ways.
+            "ring_progress": SourceForecast.pen_extend_fraction(live_herd),
             # The rung this source could climb NOW ("" for none) — see `ready` above.
             "ready_policy": String(ready.get("policy", "")), "ready_glyph": String(ready.get("glyph", "")),
             # …and the hover BOTH the mark and the row state, resolved once above.
@@ -4883,6 +5247,19 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # hand, and because the five are one reading of one entry.
             "build_kit_id": SourceForecast.build_kit_id(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
+            # **THE SITE'S KEEPING KIT, WHICH IS NOT THE CREW'S** (`docs/plan_standing_upkeep.md`
+            # §4.9 item 12c). The strip's pair edits two kits and they come from two DIFFERENT places
+            # because they are properties of two different things: the TAKE kit is the ASSIGNMENT's
+            # (`kit_id` above — this band's crew on this source), while the UPKEEP kit is the
+            # SOURCE's, set per work site since §2.5 and therefore the same on every band that works
+            # it. Reading both off one of them is how the pair would come to state one band's take
+            # beside another band's keeping, or a site's keeping as if this band had chosen it.
+            "upkeep_kit_id": String(rung_source.get("upkeep_kit_id", "")),
+            # **WHETHER THAT ID IS THE PLAYER'S WORD OR THE WEB'S DERIVATION**, which the id alone
+            # cannot say — a player may name the very kit the derivation would have picked. The
+            # picker draws its `(default)` mark off this rather than off a second client-side
+            # derivation, which is the decoder's own instruction.
+            "upkeep_kit_named": bool(rung_source.get("upkeep_kit_named", false)),
             # **WHY THE BUILDERS ARE HELD ON THIS ENTRY, THROUGH THE ONE PRODUCER THE SOURCE'S OWN
             # CARD USES** (`docs/plan_standing_upkeep.md` §4.6b). The countdown above says the pool is
             # stuck; these say which conjunct of the rung's gate refused, and — where the cause is the
@@ -4945,26 +5322,39 @@ func _rung_is_an_unordered_repair(source: Dictionary, improvement: String,
     return SourceForecast.rung_needs_repair(source,
         HudComposeVocab.BARE_FORECAST_PREFIX, building_rung)
 
+## ⛔ **THE POSITION COMES FROM `SourceForecast.standing_improvement`, NOT FROM EACH WEB'S PRIVATE
+## FLAGS** (`docs/plan_standing_upkeep.md` §4.9 item 12c). It forked on `is_field` / `is_cultivated` /
+## `corralled` / a `domestication >= HUSBANDRY_PROGRESS_COMPLETE` threshold — a reassembly of the very
+## position the sim publishes outright as `current_rung`, which `improvement_is_done`'s own ⛔ records
+## having removed one seam over. It mattered here the moment the INSPECTOR head line started stating
+## the same rung's face (`DetailFormat.standing_rung_face`): a mark forking one way and a face forking
+## another is two answers to *what is this source standing on*, and this row would draw both at once.
+##
+## **THE GLYPH AND THE HOVER STAY THIS FUNCTION'S**, because they are the MARK's — the face's glyph
+## comes welded into `rung_built_label` and the hover names the crop, which no rung badge carries.
 func _work_source_rung(kind: String, patch: Dictionary, herd: Dictionary) -> Dictionary:
-    if kind == SourceForecast.LABOR_KIND_FORAGE:
-        var crop := String(patch.get("committed_display_name", "")).strip_edges()
-        if bool(patch.get("is_field", false)):
+    var source: Dictionary = patch if kind == SourceForecast.LABOR_KIND_FORAGE else herd
+    match SourceForecast.standing_improvement(source, HudComposeVocab.BARE_FORECAST_PREFIX):
+        SourceForecast.IMPROVEMENT_SOW:
+            var field_crop := String(patch.get("committed_display_name", "")).strip_edges()
             return {
                 "glyph": DetailFormat.field_glyph(),
-                "tooltip": HudWorkVocab.WORK_ROW_RUNG_FIELD_TOOLTIP if crop == "" \
-                    else HudWorkVocab.WORK_ROW_RUNG_FIELD_CROP_FORMAT % crop,
+                "tooltip": HudWorkVocab.WORK_ROW_RUNG_FIELD_TOOLTIP if field_crop == "" \
+                    else HudWorkVocab.WORK_ROW_RUNG_FIELD_CROP_FORMAT % field_crop,
             }
-        if bool(patch.get("is_cultivated", false)):
+        SourceForecast.IMPROVEMENT_CULTIVATE:
+            var crop := String(patch.get("committed_display_name", "")).strip_edges()
             return {
                 "glyph": DetailFormat.CULTIVATION_GLYPH,
                 "tooltip": HudWorkVocab.WORK_ROW_RUNG_TENDED_TOOLTIP if crop == "" \
                     else HudWorkVocab.WORK_ROW_RUNG_TENDED_CROP_FORMAT % crop,
             }
-        return {}
-    if bool(herd.get("corralled", false)):
-        return {"glyph": DetailFormat.CORRAL_GLYPH, "tooltip": HudWorkVocab.WORK_ROW_RUNG_PENNED_TOOLTIP}
-    if float(herd.get("domestication", 0.0)) >= DetailFormat.HUSBANDRY_PROGRESS_COMPLETE:
-        return {"glyph": DetailFormat.pastoral_glyph(), "tooltip": HudWorkVocab.WORK_ROW_RUNG_PASTORAL_TOOLTIP}
+        SourceForecast.IMPROVEMENT_CORRAL:
+            return {"glyph": DetailFormat.CORRAL_GLYPH,
+                "tooltip": HudWorkVocab.WORK_ROW_RUNG_PENNED_TOOLTIP}
+        SourceForecast.IMPROVEMENT_TAME:
+            return {"glyph": DetailFormat.pastoral_glyph(),
+                "tooltip": HudWorkVocab.WORK_ROW_RUNG_PASTORAL_TOOLTIP}
     return {}
 
 ## Reset a filter that now selects nothing back to `All`. A kind/attention chip is hidden once its set
@@ -5106,9 +5496,21 @@ const RESTATE_STANDING_FLOOR := -1.0
 ## crop, exactly as it restates the improvement and the kit; only the QUEUE ROW's picker states one.
 const RESTATE_STANDING_SPECIES := "￿"
 
+## **AND `kit_id`'s OWN SENTINEL, for the crop's exact reason** (`docs/plan_standing_upkeep.md` §4.9
+## item 12c). `""` is a REAL instruction on this axis too — `assign_labor`'s parser reads an omitted
+## `kit` token as *the job's default* — so it cannot double as *leave the kit alone*. Every caller but
+## the inspector strip's TAKE picker leaves it alone; that one picker is the only control on this zone
+## that states a kit, and it states it by overriding this.
+##
+## It shares the crop's non-character sentinel rather than declaring a second one: both mean the same
+## thing (*this caller is not speaking to this axis*) and a second value to recognise is a second
+## thing that can be got wrong.
+const RESTATE_STANDING_KIT := RESTATE_STANDING_SPECIES
+
 func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int,
         floor: float = RESTATE_STANDING_FLOOR,
-        species: String = RESTATE_STANDING_SPECIES) -> void:
+        species: String = RESTATE_STANDING_SPECIES,
+        kit_id: String = RESTATE_STANDING_KIT) -> void:
     var kind := String(model.get("kind", ""))
     var standing := float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
     _emit_assign_labor(band, kind, workers, int(model.get("x", -1)), int(model.get("y", -1)),
@@ -5121,7 +5523,8 @@ func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int,
         # means "the job's default" to the parser, so a `+`/`−` that dropped it would re-kit a crew
         # the player deliberately sent out bare-handed. Restated from the row model, which carries the
         # assignment's own `kit_id`.
-        String(model.get("kit_id", KitRoster.NO_KIT_ID)),
+        String(model.get("kit_id", KitRoster.NO_KIT_ID)) if kit_id == RESTATE_STANDING_KIT \
+            else kit_id,
         # **AND THE TAKE SELECTION RIDES IT TOO, for the identical reason one axis over.** An omitted
         # `take:` token means *the whole basket* to the parser and CLEARS whatever the row carried, so
         # a `+`/`−` on the board that dropped it would silently widen a crew the player had narrowed

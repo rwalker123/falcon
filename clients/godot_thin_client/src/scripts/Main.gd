@@ -297,6 +297,8 @@ func _ready() -> void:
             hud.connect("unqueue_requested", Callable(self, "_on_hud_unqueue"))
         if hud.has_signal("build_kit_requested") and not hud.is_connected("build_kit_requested", Callable(self, "_on_hud_build_kit")):
             hud.connect("build_kit_requested", Callable(self, "_on_hud_build_kit"))
+        if hud.has_signal("upkeep_kit_requested") and not hud.is_connected("upkeep_kit_requested", Callable(self, "_on_hud_upkeep_kit")):
+            hud.connect("upkeep_kit_requested", Callable(self, "_on_hud_upkeep_kit"))
         if hud.has_signal("build_order_requested") and not hud.is_connected("build_order_requested", Callable(self, "_on_hud_build_order")):
             hud.connect("build_order_requested", Callable(self, "_on_hud_build_order"))
         if hud.has_signal("work_priority_requested") and not hud.is_connected("work_priority_requested", Callable(self, "_on_hud_work_priority")):
@@ -1399,6 +1401,52 @@ static func format_build_kit(payload: Dictionary) -> Dictionary:
 ## back, and *"with "* followed by nothing states nothing at all.
 const BUILD_KIT_DERIVED_NOTE := "the tools this job derives for itself"
 
+## **`upkeep_kit <faction> <x> <y> [kit <id>]` | `upkeep_kit <faction> <herd_id> [kit <id>]` — THE
+## PER-SITE KEEPING KIT** (`docs/plan_standing_upkeep.md` §2.7, surfaced by §4.9 item 12c). It names a
+## SOURCE and sets that site's keeping tool on every band of the faction that works it — a WIDER reach
+## than `build_kit`'s, because a keeping bill is owed by every band holding the ground and not only by
+## whoever queued a build on it. The take crew, its own kit, the queue entry and the meter are
+## untouched.
+##
+## **THE BAND IS THE POOL, NOT THE DECISION.** A kit stored on the band's `agriculture` / `husbandry`
+## role row — where this lived until §2.7 — is the one thing a per-site derivation cannot express: one
+## pick put the same tool on every site that band kept, with no way back. That is also why the strip's
+## picker needs no scope warning: there is no longer a scope to warn about.
+##
+## ⛔ **`none` AND "NO SELECTION" ARE DIFFERENT STATES, AND GETTING IT BACKWARDS IS SILENT.** An
+## ABSENT `kit` token clears the site back to its own web derivation; **`kit none` is bare-handed and
+## is a real selection**, which is how a player conserves the tool on one site while its neighbour
+## goes on using it. `_kit_token`'s standing rule produces both: it omits the token when the pick
+## equals the default, and `none` is an ordinary roster member whose id is never equal to a derived
+## kit's. `KitRoster.NO_KIT_ID` (`""`) is the third thing — *nothing to say* — and also omits.
+##
+## The two source shapes are told apart exactly as `format_build_kit` tells them apart, which is how
+## the sim's own parser does it: a non-empty herd id is the herd form, else two integers are a tile.
+static func format_upkeep_kit(payload: Dictionary) -> Dictionary:
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var kit_face := String(payload.get("kit_id", "")).strip_edges()
+    var token := _kit_token(payload)
+    var message_kit := kit_face if token != "" else UPKEEP_KIT_DERIVED_NOTE
+    var herd_id := String(payload.get("herd_id", "")).strip_edges()
+    if herd_id != "":
+        return {
+            "line": "upkeep_kit %d %s%s" % [faction, herd_id, token],
+            "message": "Keep %s with %s." % [herd_id, message_kit],
+        }
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if x < 0 or y < 0:
+        return {}
+    return {
+        "line": "upkeep_kit %d %d %d%s" % [faction, x, y, token],
+        "message": "Keep (%d, %d) with %s." % [x, y, message_kit],
+    }
+
+## The keeping twin of `BUILD_KIT_DERIVED_NOTE`, and its own string because the two sentences say
+## different things about the same absence: a build derives its kit from the ENTRY's food web, a site
+## from the SITE's.
+const UPKEEP_KIT_DERIVED_NOTE := "the tools this site derives for itself"
+
 ## **WHAT THE PLAYER CALLS THE FIRST SLOT OF A QUEUE.** The wire's `position` is a 0-based INDEX and
 ## stays one; the sim's own reply spells the landed slot `#{landed + 1}`, so the echo beside it adds
 ## the same one. Named because the two bases are a real distinction here — the token and the sentence
@@ -1702,6 +1750,17 @@ func _on_hud_unqueue(payload: Dictionary) -> void:
 ## field in the queue block that needs no client-side shadow.
 func _on_hud_build_kit(payload: Dictionary) -> void:
     _send_formatted_command(format_build_kit(payload))
+
+## NAME THE KIT one WORK SITE is kept with (`docs/plan_standing_upkeep.md` §2.7, surfaced by §4.9 item
+## 12c) — its own handler because its own command and its own scope: it names a SOURCE and sets a
+## property of that SITE, where `build_kit` sets a property of that site's queue entry and
+## `assign_labor` names a band and a role.
+##
+## **NO ROLLBACK, because there is no optimistic write to roll back** — `_on_hud_build_kit`'s rule.
+## `upkeepKitId` is captured LIVE rather than turn-written, so the recapture this command triggers
+## already carries the new value.
+func _on_hud_upkeep_kit(payload: Dictionary) -> void:
+    _send_formatted_command(format_upkeep_kit(payload))
 
 ## RE-ORDER a band's build queue (`docs/plan_standing_upkeep.md` §4.7b ③).
 ##

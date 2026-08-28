@@ -2566,9 +2566,13 @@ zero.
   `_work_source_models` where the live herd dict is already in hand — beside the six other build fields
   and for their reason. `PEN_EXTEND_EMPTY_METER` on every entry that is not a ring: the field is
   meaningful only under the branch `improvement` selects.
-- **IT IS THE SAME DIVISION THE HERD DRAWER'S BADGE QUOTES.** The queue row and the `Fencing N%` pill
-  read one ring through one helper, so they cannot state it two ways — see `labor-ui.md` → "The fence
-  ring's meter is a work pair" for the units and the zero-denominator rule.
+- ⛔ **IT WAS THE SAME DIVISION THE HERD DRAWER'S BADGE QUOTED, AND THIS ROW IS THE LAST READER LEFT**
+  (`docs/plan_standing_upkeep.md` §4.9 item 12c). The dead claim: *"The queue row and the `Fencing N%`
+  pill read one ring through one helper, so they cannot state it two ways."* The pill retired with the
+  tile card's `Extend pen` button, being a third statement of a meter this row already dates and
+  withdraws — so `pen_extend_fraction` now has exactly one caller and the drift it was written against
+  is structural rather than disciplinary. See `labor-ui.md` → "The fence ring's meter is a work pair"
+  for the units and the zero-denominator rule.
 
 Asserted in `band_panel_preview` as `band_panel_queue_ring` on three claims, the first being the
 precondition without which the other two pass for free: that the pen rung is FULL with no rung in
@@ -4918,3 +4922,165 @@ LIST above it gives up (it is the `EXPAND_FILL` child).
 **Frames:** `trade_footer` (all five buttons, and the frame that proves the glyph DRAWS — a mark
 missing from this client's fallback font renders as an invisible gap that no assertion catches),
 `trade_picker_empty`, `trade_picker_destination`, `trade_cargo_loaded`, `trade_cargo_over_cap`.
+
+
+## The work row states its RUNG in two registers, and the ring is declared from the mark
+
+`docs/plan_standing_upkeep.md` §4.9 item 12c. **`SourceForecast.standing_improvement` is the ONE fork**
+answering *what is this source standing on*, read off the wire's own `current_rung` (`<branch>:<id>`).
+Three readers go through it: the board row's rung MARK, the inspector strip's head-line FACE, and the
+ring caret's offer test.
+
+> ### ⛔ THE MARK USED TO REASSEMBLE THE POSITION OUT OF EACH WEB'S PRIVATE FLAGS
+>
+> `_work_source_rung` forked on `is_field` / `is_cultivated` / `corralled` / a
+> `domestication >= HUSBANDRY_PROGRESS_COMPLETE` threshold — the very reassembly
+> `SourceForecast.improvement_is_done`'s own ⛔ records the sim having replaced with a published
+> position. It was harmless while the mark was the only reader. It stopped being harmless the moment
+> the strip stated the same rung's FACE: a mark forking one way and a face forking another is two
+> answers to one question, drawn on one row.
+>
+> **`standing_improvement` is an EXACT match, never at-or-above** — that is what makes it different
+> from `improvement_is_done`, which answers `true` for Cultivate on a Field. Neither can stand in for
+> the other.
+
+**THE HEAD LINE COSTS +0 AND ASKS RATHER THAN COMPOSES.** `Harvest (28, 16) · ▦ Field 100%` rides the
+title `Label` that was already there, so the strip's reservation does not move; the label CLIPS, this
+zone's standing rule, and the clause is appended rather than given its own child precisely so it is
+the first thing to go. `DetailFormat.standing_rung_face` routes through **`rung_row_value`**, the same
+fork the tile card's rung row goes through — so the hazard mark, `slipping`/`drifting`, `Lapsed`,
+`Held`, `Reverting` and the floored percent all arrive already decided, and the two surfaces cannot
+word one rung differently. It takes **no `declared_rung` and no `build_crew`**: both are countdown
+terms and a STANDING rung returns on `rung_row_value`'s first branch, so accepting them would
+advertise a dependency the face does not have.
+
+**A METER THE WIRE DOES NOT STATE READS FULL, NOT ZERO.** `improvement_progress` answers `0.0` for an
+unstated key — indistinguishable from a meter eroded to nothing — and a built corral states no meter
+at all, which is why the tile card's own built-corral row passes `CORRAL_PROGRESS_COMPLETE` by hand.
+The `> BUILD_METER_UNSTARTED` test is `rung_needs_repair`'s, reused rather than re-invented.
+
+### `extend_pen` is declared from the standing-rung mark, and it opens a price
+
+**Reported from play**: extending a pen was a button on the TILE card producing a **build queue
+entry** — the one queue entry in the game declared from somewhere other than the work tab.
+
+> **THE MECHANICAL REASON IT ENDED UP THERE:** `RungLadder.has_track` is FALSE when nothing sits above
+> the standing rung, and `animal:pen` is the top of the animal branch — so a corralled herd's row
+> renders **no `⌃` in the ready slot at all**. Extending a pen is precisely what you do *after* the
+> ladder is finished. `selection-card.md` blamed it on being *"a one-click standing action, not a
+> compose flow"*, which was true and was the second reason.
+
+**IT RIDES THE MARK SLOT, NOT THE READY SLOT.** That slot is already a four-way — `⌃▦` offers a rung,
+`▦45%` reports one climbing, `⚠▦` reports one stuck, and a fourth reports one lapsed — and a fifth
+meaning on the one control for *what could this be* would collapse a distinction the whole feature
+draws. The mark sits on **the thing the job acts on**: a ring extends the pen the mark denotes. **A
+row already carries two marks and that is the precedent** — a mid-Sow patch reads `🌾` *what it is*
+beside `▦ 28%` *what is being built on it*.
+
+**IT OPENS A PRICE, NOT A BARE COMMIT, and item 12 is what made that necessary.** A ring draws
+`animal:pen`'s own hurdle pile since §2.7, so a one-click button stated a cost nowhere. `_open_ring_card`
+opens the same shape the track's `⌃` opens — what it eats to raise, what it costs to hold, and where
+it will stall — through **`RungLadder.ring_row` + `build_ring_card`, which reuse the track's own
+`_build_price_asides` / `_hold_price_asides` / `_build_row`**. That is what keeps the caret meaning ONE
+thing on every mark that wears it.
+
+> **A RING IS NOT A TRACK ROW, and giving it one would be a lie about the ladder.** The track is one
+> POSITION on a branch; a ring is a **repeatable increment with no position**. It is its own small
+> card. Its price is `animal:pen`'s own rung cost — **not** the herd's `pen_extend_cost`, which the sim
+> stamps only once a ring is accruing and which is therefore the in-flight meter's denominator.
+
+**A RING IN FLIGHT WEARS NO CARET**, which is what stops a second being declared over the first
+(`Herd::pen_extending` is the sim's gate and needs no client twin). The gate is
+`SourceForecast.pen_ring_is_in_flight` — **the NUMERATOR, not the fraction**: `begin_pen_extension`
+sets the flag and `accrue_pen_extension` stamps the cost, so a ring declared this turn has both fields
+at zero, and a fraction test would render it as stalled at `0%`. The **percentage** lives on the build
+queue row, which is the surface that dates and withdraws the ring.
+
+**THE MARK'S MOUSE FILTER FORKS WITH ITS SHAPE.** A read-only mark takes `PASS` — the only value that
+both shows a `Label`'s tooltip and lets the row's click through to the inspector — and the ring mark
+takes `STOP`, or the press that opens the card would also open the inspector under it. The ready slot
+has forked exactly this way since it gained a pressable face.
+
+> #### ⛔ AND THE HOVERABILITY GUARD SILENTLY STOPPED COVERING THAT ROW
+>
+> `_assert_rung_labels_are_hoverable` walked `Label`s (`_collect_rung_labels`), so the penned herd's
+> mark dropped out of it the moment it became a `Button`: **4 marks became 3 and nothing failed.**
+> It walks `_collect_meta_controls` on the shared meta now — which is what the meta was for — counts
+> the pressable one separately, and FAILS when a board carrying a penned herd draws none.
+
+### The kit pair is a THIRD PICKER on the links row, and that is what made it free
+
+Item 12c's second half — the take crew's kit beside the SITE's upkeep kit. It is a picker opened from
+the strip's `Kits` link, exactly as `Change policy` and `Priority` are, and **the exclusivity is what
+pays for it**: `_work_picker_open` holds ONE value, the builder's `if/elif` chain draws at most one
+expansion, and `_work_inspector_height`'s matching chain reserves the MAX rather than the sum.
+
+| picker | costs |
+|---|---|
+| `WORK_INSPECTOR_POLICY_PICKER_HEIGHT` (floor) | 32 |
+| **`WORK_INSPECTOR_KITS_PICKER_HEIGHT`** | **44** (2 × `WORK_COMPACT_PICKER_LINE_HEIGHT`) |
+| `WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT` | 52 (32 + a hint line) |
+
+At 44 the kit pair is **shorter than the priority picker already is**, so it cannot be the strip's
+worst case and `WORK_INSPECTOR_CEILING_HEIGHT` does not move for it — the ceiling stays 190 and the
+zone's own budget is untouched.
+
+> #### ⛔ IT WAS A PERMANENT BLOCK FIRST, AND THAT COST 50px UNCONDITIONALLY
+>
+> On top of whichever picker was open, on every strip, open or not. Measured on the wide dock with a
+> row selected: **442 into a 396px box, over by 46**, plus 5–55px over at every narrow-shell viewport
+> the `MAX_WIDE_HEIGHT_FRACTION` clamp binds at.
+>
+> **The board could not absorb it.** `_work_board_capacity` floors at `maxi(1, …)` and a row is
+> `WORK_ROW_TWO_LINE_HEIGHT` = 44px; the strip grew 50 and the zone grew 46, so the board gave back
+> 4px of `int()` truncation and **zero rows**. The strip's own `reserved ≥ drawn` passed throughout —
+> it was never an under-reserve, it was the zone having nowhere to put an honest reservation.
+>
+> **The dead reasoning, quoted rather than deleted**: *"THE PAIR IS ONE FLEX-WRAP ROW, NOT TWO
+> HAND-PLACED ONES, and that INVERTS the usual trap. A wrapped line normally costs back the row it
+> saved invisibly; here the wrap is the INTENDED behaviour, so the height to reserve is the STACKED
+> one and the single line is the saving."* Every measurement in it is correct, and the conclusion it
+> supports is what killed the shape: **the pair never rode one line on any dock the game ships** (472px
+> needed against a widest shipped work zone of 382), so the "saving" was hypothetical while the 50px
+> was charged to every strip.
+>
+> **A picker body has the strip's whole width**, so it stacks unconditionally — which removed the wrap
+> predicate, its `one_line` argument, the pickers' declared 168px column and the drift surface between
+> a reservation that computed the wrap and a container that performed it.
+
+**TWO PLAN FIGURES WERE WRONG, both re-measured.** A picker in this zone is **22px**, not the plan's
+`32 + 6`: that is the COMPOSE SHEET's control, and the block gap is charged once per BLOCK rather than
+per line (`WORK_COMPACT_PICKER_LINE_HEIGHT`, the one measured figure the queue settings strip and the
+inspector pair both name). And the pair never rides one line, above.
+
+**NO HINT LINE, and the arithmetic is why.** The priority picker's 52 is 32 + a 20px hint; two kit
+rows plus a hint is 64 — 12 over the current max, which busts the wide shell by 8. What a hint would
+have said (`none` is a real choice, not an empty one — it is how a site is worked bare-handed to
+conserve the tool) is in BOTH pickers' tooltips instead, since `none` means the same on either kit.
+
+> #### ⛔ AND AN OPEN PICKER OVERFLOWS THE WIDE DOCK TODAY — ALL THREE OF THEM
+>
+> Measured with a row selected, wide shell, one board column: the zone reads **396 of 396 with the
+> expansion CLOSED**, so it has **4px of spare** and no expansion fits in it.
+>
+> | open picker | zone needs | over by |
+> |---|---|---|
+> | kits (44) | 436 | **40** |
+> | priority (52) | 444 | **48** |
+>
+> **This is not the kit pair's defect and predates it**: the priority picker has been overrunning the
+> same budget since §4.9 item 9b, and the kit pair is the SHORTEST of the three. No frame had ever
+> rendered it, for the reason this file has now recorded three times — **every picker-open frame is a
+> TALL dock and every wide-dock frame has the expansion closed**, two disjoint families with the
+> defect living in the gap. `WORK_INSPECTOR_CEILING_HEIGHT`'s own note already said the ceiling is
+> *"stated because it is UNMEASURED rather than because it is reserved"* and that *"if one is ever
+> observed, this is the figure both of that constant's levers move by."* One has now been observed, at
+> a single open picker rather than at the full combination.
+>
+> `band_panel_work_kits_picker` is the frame — its second picker row is visibly clipped by the zone's
+> bottom edge — and it REPORTS its extent rather than asserting it (`band_panel_vitals_worst_case`'s
+> rule: a red line here asks for a decision, not a failing run).
+>
+> **The vertical dock is unaffected at every viewport measured** (1080 / 900 / 768 / 720): its zone box
+> is the window height less chrome — 939 / 759 / 627 / 579 — against a strip that reserves 128 with the
+> pair open.

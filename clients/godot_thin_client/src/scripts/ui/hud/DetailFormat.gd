@@ -1342,6 +1342,60 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
     return build_countdown_value(SourceForecast.build_turns_remaining(src, prefix),
         build_crew, percent, SourceForecast.build_queue_position(src, prefix))
 
+## **THE BADGE OF ONE RUNG, BY ITS IMPROVEMENT KEY** — the four `*_built_label` helpers behind one
+## lookup, so a caller holding a rung key rather than a row can ask for its face without re-spelling
+## the fork. `""` for `IMPROVEMENT_NONE` and for any verb that builds no rung.
+##
+## **THEY STAY SEPARATE FUNCTIONS.** Each is called by name from the row that owns it and each carries
+## its own note (`corral_built_label`'s records that it stopped speaking for the feed); this is a
+## dispatcher over them, not a replacement.
+static func rung_built_label(improvement: String) -> String:
+    match improvement:
+        SourceForecast.IMPROVEMENT_CULTIVATE:
+            return cultivation_built_label()
+        SourceForecast.IMPROVEMENT_SOW:
+            return field_built_label()
+        SourceForecast.IMPROVEMENT_TAME:
+            return husbandry_built_label()
+        SourceForecast.IMPROVEMENT_CORRAL:
+            return corral_built_label()
+    return ""
+
+## **THE FACE OF THE RUNG A SOURCE STANDS ON — `▦ Field 100%`, `🐄 Corralled 100%`, and the hazard
+## states with them** (`docs/plan_standing_upkeep.md` §4.9 item 12c). `""` on a source standing on its
+## branch's floor, which is every wild patch and every wild herd.
+##
+## ⛔ **IT COMPOSES NOTHING ITSELF — it ASKS `rung_row_value`.** The work inspector's head line and the
+## tile card's rung row state the same verdict about the same rung, and two producers of one verdict is
+## the failure this client has shipped twice (`tile_meter_stalled`'s note, where the sheet said *held*
+## and the card said `⚠ Stalled`). Routing through that one fork is what makes it impossible for the
+## strip and the card to word a rung differently — the hazard mark, `slipping`/`drifting`, `Lapsed`,
+## `Held`, `Reverting` and the floored percent all arrive already decided.
+##
+## **`built` IS TRUE BY CONSTRUCTION HERE**, because standing on a rung is what being built means; the
+## caller does not get to say otherwise, which is what keeps this from becoming a second answer to
+## `rung_row_value`'s own `built`-vs-`progress >= 1` distinction.
+##
+## **A METER THE WIRE DOES NOT STATE READS FULL, NOT ZERO.** `improvement_progress` answers `0.0` for
+## an unstated key — indistinguishable from a meter eroded to nothing — and a built corral states no
+## meter at all, which is why the tile card's own built-corral row passes `CORRAL_PROGRESS_COMPLETE` by
+## hand. The `> BUILD_METER_UNSTARTED` test is `rung_needs_repair`'s, reused rather than re-invented:
+## a stated meter is the erosion story (`🌾 Tended 92%`) and an unstated one is simply complete.
+## **IT TAKES NO `declared_rung` AND NO `build_crew`, and that is a statement about `rung_row_value`
+## rather than an omission.** Both are countdown terms, and a rung that is STANDING never reaches the
+## countdown: `built` returns on the first branch. Accepting them would advertise a dependency this
+## face does not have and invite a caller to pass a rung in flight, which is the other row's story.
+static func standing_rung_face(src: Dictionary, prefix: String, kind: String) -> String:
+    var improvement := SourceForecast.standing_improvement(src, prefix)
+    var label := rung_built_label(improvement)
+    if label == "":
+        return ""
+    var progress := SourceForecast.improvement_progress(src, prefix, improvement)
+    if progress <= SourceForecast.BUILD_METER_UNSTARTED:
+        progress = SourceForecast.BUILD_METER_FULL
+    return rung_row_value(src, prefix, improvement, kind, label, true, progress,
+        SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
+
 ## **THE LAPSED ROW'S OWN SENTENCE, on the hover of the row carrying a rung nobody is building.**
 ## `⚠ Lapsed 99%` is two words on a ~245px card and the state needs three facts — what the state IS,
 ## that the banked work survives, and the one click that resumes it — so the words go where there is

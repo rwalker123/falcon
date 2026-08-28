@@ -4476,26 +4476,33 @@ until `docs/plan_unit_costed_work.md` §4.8, and its readers were not moved with
 units scaled by `PROGRESS_PERCENT_SCALE` rendered as **`Fencing 6900%`**, reported from play.
 
 - **`SourceForecast.pen_extend_fraction(herd)` IS THE ONLY PLACE THAT DIVISION IS WRITTEN**, with
-  `pen_extend_work_done` / `pen_extend_cost` beside it for the absolutes. Two surfaces quote a ring —
-  the herd drawer's WARN-amber `Fencing N%` pill (built by `_build_extend_pen_control`, patched in
-  place by `_update_extend_pen_control`, both through `_apply_fencing_badge`) and the build queue's
-  percentage for a ring entry — and they were two open-coded copies of the same wrong multiplication.
+  `pen_extend_work_done` / `pen_extend_cost` beside it for the absolutes. It was written twice —
+  two open-coded copies of the same wrong multiplication — for the two surfaces that quoted a ring.
+  ⛔ **ONE OF THOSE TWO IS GONE** (§4.9 item 12c): the herd drawer's WARN-amber `Fencing N%` pill, its
+  in-place patch and `_apply_fencing_badge` retired with the tile card's `Extend pen` button, so **the
+  BUILD QUEUE row is the only surface quoting a ring's meter now**, and `PEN_FENCING_VERB` retired too
+  — that row states a bare percentage beside the rung's own verb (`Corral <herd>`, a ring deriving the
+  verb of the rung it widens), so no surface left needs a word for it.
 - **A ZERO DENOMINATOR IS AN UNPRICED RING, NOT A FULL ONE.** `begin_pen_extension` leaves both fields
   at zero and the accrual seam is what stamps the cost, so `0 / 0` is *no ring*: the helper answers an
-  empty meter rather than dividing. The drawer's own gate is on the NUMERATOR
-  (`pen_extend_work_done(herd) > 0`), which is what keeps a declared-but-unaccrued ring out of the
-  badge entirely instead of rendering it as `0%`.
+  empty meter rather than dividing. **The gate is on the NUMERATOR**, which is what keeps a
+  declared-but-unaccrued ring out of the readout entirely instead of rendering it as `0%` — it is
+  `SourceForecast.pen_ring_is_in_flight` now, named rather than open-coded, because the work row's
+  standing-rung mark asks it to decide whether to draw the ring `⌃` at all.
 - **NO `FORECAST_BUILD_*_KEYS` ROW, AND `build_verb` ANSWERS NOTHING FOR IT.** A ring widens the pen
   rung its herd already stands on, so the herd reads `Corralled 100%` for the ring's whole life and
   the rung ladder has no meter in flight to report. `extend_pen` is therefore not an
   `IMPROVEMENT_*` — it is `BUILD_JOB_EXTEND_PEN`, the token
   `snapshot::population::resolved_build_job` publishes in the wire's `improvement` slot for a ring
   entry, and the one thing that tells a ring from a rung with what is already on the wire.
-- **THE BADGE STAYS A PERCENTAGE AND THE PAIR RIDES ITS HOVER.** `Fencing 42 / 70 work (60%)` bursts a
-  compact pill in a drawer column, so the hover carries it — through
-  `DetailFormat.build_meter_value`, the house form every other build meter uses, rather than a second
-  spelling. Frame: `herd_pen_extending` (42 of 70 work banked → `Fencing 60%`), asserted on the NUMBER
-  and on both render paths, since a presence check passes throughout the defect's life.
+- ⛔ **THE BADGE AND ITS HOVER ARE RETIRED** (§4.9 item 12c). The dead claim: *"`Fencing 42 / 70 work
+  (60%)` bursts a compact pill in a drawer column, so the hover carries it — through
+  `DetailFormat.build_meter_value`, the house form every other build meter uses."* True while the pill
+  existed; it was a THIRD statement of a meter the build queue row already dates and withdraws.
+  **The frame survives with its claim inverted**: `herd_pen_extending` still stages 42 of 70 work
+  banked, and asserts the badge and the `Extend pen` button are GONE — paired with a precondition that
+  the fixture really is mid-extension (or "no badge" is free) and a liveness claim that the drawer
+  still draws its action row (or "no badge" is satisfied by a broken drawer).
 
 ### CLOSED — the build's PRICE and its turn estimate are on the wire now
 

@@ -296,20 +296,28 @@ const POLICY_TOOLTIP_NAME_FORMAT := "%s — %s"
 # **`pen_extend_progress` IS WORK, NOT A FRACTION**, banked against `pen_extend_cost` on the same herd
 # dict, so the badge's percentage is `SourceForecast.pen_extend_fraction` and never the bare field
 # scaled by `PROGRESS_PERCENT_SCALE` — 69 banked work units read as `Fencing 6900%` that way.
-const PEN_EXTEND_LABEL := "Extend pen"
+# ⛔ RETIRED — **`PEN_EXTEND_LABEL` (`Extend pen`), `PEN_EXTEND_TOOLTIP` AND `PEN_FENCING_LABEL`**
+# (`docs/plan_standing_upkeep.md` §4.9 item 12c), with the tile-card control that wore them
+# (`DrawerComposeController`, where the whole retirement is recorded). The button was the one build
+# declared from somewhere other than the work tab; it is a `⌃` on the work row's standing-rung mark
+# now, and it opens a PRICE rather than committing on the click, a ring drawing `animal:pen`'s own
+# hurdle pile since §2.7.
+#
+# The dead tooltip, quoted because it is the only place the ring's MECHANICS were ever written down
+# for the player: *"Queue another ring around the pen. A ring is the same job as the pen it widens, so
+# it joins the band's build queue like any other job and its builders raise it when it reaches the
+# head. Then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum."*
+# The ring card states the first two sentences as PRICES now; the pen-radius refusal is still the
+# server's feed message, max radius not being on the wire.
+#
+# `PEN_EXTEND_CREW_LABEL` (`Fencers`) went earlier: the verb took a trailing worker count for one
+# slice, and `extend_pen <faction> <x> <y>` is closed at three tokens again (§2.5).
 
-const PEN_EXTEND_TOOLTIP := "Queue another ring around the pen. A ring is the same job as the pen it widens, so it joins the band's build queue like any other job and its builders raise it when it reaches the head. Then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum."
-# RETIRED — **`PEN_EXTEND_CREW_LABEL`** (`Fencers`), the ring's own crew row-label. The verb took a
-# trailing worker count for one slice; `extend_pen <faction> <x> <y>` is closed at three tokens again
-# (`docs/plan_standing_upkeep.md` §2.5), so there is no crew to name.
-
-# **THE BADGE STAYS A PERCENTAGE and the work pair rides its HOVER.** It is a compact WARN-amber pill
-# in a drawer column; `Fencing 42 / 70 work (60%)` bursts it. The hover states the pair through
-# `DetailFormat.build_meter_value` — the house form every other build meter uses — rather than a
-# second spelling of the same idea.
-const PEN_FENCING_VERB := "Fencing"
-
-const PEN_FENCING_LABEL := PEN_FENCING_VERB + " %d%%"
+# …and **`PEN_FENCING_VERB` (`Fencing`) RETIRES WITH THEM**, which was worth checking rather than
+# assuming: the badge's face and its `DetailFormat.build_meter_value` hover were its only readers, and
+# the BUILD QUEUE row — the one surface that quotes a ring's meter now — states a bare percentage
+# beside the rung's own verb (`Corral <herd>`, a ring deriving the verb of the rung it widens). No
+# surface left needs a word for the ring's meter.
 
 # WHAT COMMITTING TO AN IMPROVEMENT BUYS AND COSTS — the improvement control's tooltip, one entry per
 # rung, BOTH webs in one table.

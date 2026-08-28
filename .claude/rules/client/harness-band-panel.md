@@ -1944,3 +1944,42 @@ passes.
 | `_work_name_sorts_before` drops its kind term | **1** here — the synthetic pair, `(hunt, forage)` |
 | `plant_crew_label` → `""` | **0** here, **30** in `ui_preview` (the five states' four surfaces, their agreement claims, the five liveness claims and both rung-blind claims) |
 | the card-side material sentence restored | **0** here, **4** in `ui_preview`'s `improvements` |
+
+
+## The ring caret and the strip's head line (§4.9 item 12c, Stage B)
+
+**MEASURED, BEFORE AND AFTER**: `858 : PASS / 448 assert OK` → `864 / 445`. **No frame added and none
+retired.**
+
+The six `: PASS` are `_assert_ring_caret_rides_the_standing_mark`. The `assert OK` figure falls by
+**three, and all three are the parked kit pair** — `every zone renders inside its zone rect` plus the
+two `content fits its zone box` lines for `band_panel_pools_wide_selected` and
+`band_panel_queue_settings_exclusive`, which FAIL rather than passing while that pair is mounted. **No
+assertion was lost**; the run's only failures are those three.
+
+> ### ⛔ AND ONE GUARD SILENTLY STOPPED COVERING THE ROW THE NEW CONTROL IS ON
+>
+> `_assert_rung_labels_are_hoverable` walked `Label`s through `_collect_rung_labels`. The penned
+> herd's rung mark is a `Button` now, so it dropped straight out: the line read **`4 rung marks are
+> hoverable` → `3`** and nothing failed. Caught by diffing the `assert OK` LINES against the baseline
+> rather than by the exit status or the count, which is what that diff is for.
+>
+> It walks `_collect_meta_controls` on the shared meta now — which is what the meta was always for —
+> and it **forks the filter test with the shape**: `PASS` on a read-only mark (the only value that
+> both shows a Label's tooltip and lets the row's click through), `STOP` on the ring mark, or the
+> press that opens the card would also open the inspector under it. It counts the pressable one
+> separately and FAILS when a board carrying a penned herd draws none, so the coverage cannot go
+> quiet the same way twice.
+
+**THE A/B IS THE CLAIM, three ways.** A caret on every mark satisfies a bare presence check, so the
+PASTORAL row is asserted to carry none; the READY slot is asserted EMPTY on the penned row, which is
+the mechanical reason the control is on the mark at all (`RungLadder.has_track` is false at the top of
+the animal branch) and would silently stop being true if that slot ever grew an offer; and the same
+penned herd with a ring already banked is asserted to lose the caret — **driven, not staged**: the
+fixture is mutated and the models re-derived, so no frame's subject moves.
+
+**`herd_graze_pen`'s `herd_pen_extending` is the inverted twin.** It asserted the badge's NUMBER on
+both render paths; it asserts the badge and the `Extend pen` button are GONE, against a
+**precondition** that the fixture really has a ring 60% banked (or "no badge" is free on a pen with no
+ring) and a **liveness** claim that the drawer still draws its action row (`["Assign herders ▸"]`).
+Net `-1` on `ui_preview`: four claims became three, then the precondition put it back.

@@ -4442,6 +4442,32 @@ static func improvement_is_done(src: Dictionary, prefix: String, improvement: St
     return rung_at_or_above(String(src.get(prefix + FORECAST_CURRENT_RUNG_KEY, "")),
         String(IMPROVEMENT_RUNG_KEYS[improvement]))
 
+## **WHICH RUNG DOES THIS SOURCE STAND ON, AS AN IMPROVEMENT KEY** — `IMPROVEMENT_RUNG_KEYS` read
+## backwards against the ONE wire field that states the position (`current_rung`, `<branch>:<id>`).
+## `IMPROVEMENT_NONE` on a source standing on its branch's floor, which is every wild patch and every
+## wild herd; nobody built the floor.
+##
+## **IT IS AN EXACT MATCH, NEVER AT-OR-ABOVE, which is what makes it different from
+## `improvement_is_done`.** That test asks *has this verb's rung been reached* and answers `true` for
+## Cultivate on a Field; this asks *what is the source STANDING on* and there is exactly one answer.
+## Neither can stand in for the other.
+##
+## **ONE FORK, SO A ROW'S MARK AND ITS FACE CANNOT NAME TWO DIFFERENT RUNGS**
+## (`docs/plan_standing_upkeep.md` §4.9 item 12c). The work board's rung-mark resolver and the work
+## inspector's head line both ask this. Before it, the mark reassembled the position out of each web's
+## private flags (`is_field` / `is_cultivated` / `corralled` / a `domestication` threshold) — the very
+## reassembly `improvement_is_done`'s own ⛔ records the sim publishing outright.
+##
+## `prefix` spells the key, so a `patch_`-prefixed `tile_info` cross-ref and a bare wire row both work.
+static func standing_improvement(src: Dictionary, prefix: String) -> String:
+    var standing := String(src.get(prefix + FORECAST_CURRENT_RUNG_KEY, ""))
+    if standing == "":
+        return IMPROVEMENT_NONE
+    for improvement in IMPROVEMENT_RUNG_KEYS:
+        if String(IMPROVEMENT_RUNG_KEYS[improvement]) == standing:
+            return String(improvement)
+    return IMPROVEMENT_NONE
+
 ## **HAS THIS SOURCE ACHIEVED THIS RUNG AND THEN LET IT SLIP?** — the two facts `build_verb`'s own
 ## docstring insists stay orthogonal, asked TOGETHER for the one question that needs both: the rung is
 ## stamped BUILT and its meter is short of its cost, so there is room to put work back into it.
@@ -4530,6 +4556,21 @@ static func pen_extend_work_done(herd: Dictionary) -> float:
 ## priced yet.
 static func pen_extend_cost(herd: Dictionary) -> float:
     return maxf(float(herd.get(PEN_EXTEND_COST_KEY, BUILD_WORK_COST_NONE)), BUILD_WORK_COST_NONE)
+
+## **IS A RING BEING RAISED ON THIS PEN RIGHT NOW?** — the gate that decides whether the work row's
+## standing-rung mark offers a `⌃` or states a ring already under way
+## (`docs/plan_standing_upkeep.md` §4.9 item 12c), and the client half of the sim's own
+## `Herd::pen_extending`. No new sim gate is needed: a second ring cannot be declared over the first
+## because the caret is not drawn while this answers `true`.
+##
+## ⛔ **IT IS THE NUMERATOR, NOT THE FRACTION, and that is deliberate.** `begin_pen_extension` sets the
+## flag and `accrue_pen_extension` stamps the cost, so a ring declared this turn has BOTH fields at
+## zero — and a fraction test would put it in the meter's hands, which renders `0%` for a ring that has
+## simply not been worked yet. Reading the work banked keeps a declared-but-unaccrued ring out of the
+## readout entirely rather than showing it as stalled at nothing. `_build_extend_pen_control` carried
+## this same test and this same reasoning before the control moved to the work row.
+static func pen_ring_is_in_flight(herd: Dictionary) -> bool:
+    return pen_extend_work_done(herd) > BUILD_WORK_COST_NONE
 
 ## **THE RING'S METER AS A FRACTION — the ONE place that division is written.** Two surfaces quote a
 ## ring: the herd drawer's WARN-amber `Fencing N%` badge (and its in-place patch) and the build
