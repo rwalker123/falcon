@@ -10,16 +10,39 @@ extends RefCounted
 ## recovers ~14px (the turn cluster's 128 and `BottomBar`'s authored 150 hold the floor), so the whole
 ## bar has to vacate for the budget to actually come back.
 ##
-## THE CHROME GOES IN ONE COLUMN AT THE ROW'S TRAILING END, STACKED — nav cluster on top, turn cluster
-## below — and the row's leading end gets no rail at all. A gutter at each end was built first and
-## rejected on sight with a real minimap in it: the left rail is ~300px, so two opposite gutters pushed
-## the band zone inward AND stranded dead space around the orb, costing ~562px of row. One column costs
-## `max(nav, turn)` ≈ 296–302 depending on map aspect (296 Standard, 302 Large), plus one
-## `BandCityPanel.RAIL_SEPARATOR_SPAN` gutter. That hands the zones ~240px back and drops the
-## wide->narrow flip from ~1605px of window width to ~1377px (both figures on Standard; the gutter is
-## in them, so do not quote the pre-gutter 1358). Minimap-on-top for BOTH `SIDE_TOP` and
-## `SIDE_BOTTOM` so the stack reads the same either way — and on a bottom dock that also leaves the
-## orb where it already lives, bottom-right.
+## THE CHROME SPLITS TO THE ROW'S TWO ENDS WHERE THERE IS ROOM FOR IT — nav cluster (minimap + zoom
+## rail) at the LEADING end, turn cluster at the TRAILING end — which is where they sit when the panel
+## is docked at the TOP and `BottomBar` stays intact. Below the fit gate they stack in ONE column at the
+## trailing end instead, nav above turn, which is what every bottom dock used to do.
+##
+## ⛔ **ONE COLUMN WAS NOT A PREFERENCE, IT WAS A MEASURED REJECTION — quoted rather than deleted,
+## because it was right when it was made and a reader who finds only an absence will re-stack this**:
+## *"A gutter at each end was built first and rejected on sight with a real minimap in it: the left rail
+## is ~300px, so two opposite gutters pushed the band zone inward AND stranded dead space around the orb,
+## costing ~562px of row. One column costs `max(nav, turn)` ≈ 296–302 … That hands the zones ~240px back
+## and drops the wide->narrow flip from ~1605px of window width to ~1377px."*
+##
+## **TWO THINGS MOVED, AND BOTH ARE WHY THAT NO LONGER DECIDES IT.** (1) The card stopped wanting the
+## whole row: issue #377 builds its width up from the declared column count and floats it as an ISLAND,
+## so room beside it is slack over live map rather than width taken off the zones — the "pushed the band
+## zone inward" term is simply gone. (2) The TURN cluster shrank from 260 wide to 116 when its `Turn N`
+## caption moved into the orb face, so the second gutter is not a second ~300px rail. Re-measured, the
+## split costs `turn + RAIL_SEPARATOR_SPAN` MORE of row than the stack — not the ~562 of two nav rails.
+##
+## **THE GATE IS THE PANEL'S, AND IT IS `wide_shell_min_width()`** (`BandCityPanel._rail_split`): split
+## while both islands plus the card's three-zone minimum still fit the strip, stack when they do not. So
+## the old rejection still governs every window too narrow for it, and — because the split is refused
+## exactly when it would cost the wide shell — **the wide->narrow flip width is unmoved.**
+##
+## **THIS CONTROLLER DOES NOT CHOOSE THE ARRANGEMENT**, and that split of duties is the existing one:
+## the HUD owns the chrome and MEASURES it (`set_rail_widths` declares both clusters' widths), the panel
+## owns the empty slots and decides where they sit. The park itself is unchanged — nav into
+## `RAIL_SLOT_TOP`, turn into `RAIL_SLOT_BOTTOM` — and the panel moves the slot HOST between its two
+## islands with the parked cluster still inside it.
+##
+## A TOP dock never reflows at all (`REFLOW_EDGES` is `[SIDE_BOTTOM]`), so its minimap and orb stay in
+## the intact `BottomBar` where the scene put them; a vertical dock keeps the stacked column's rules for
+## the same reason it always did.
 ##
 ## OWNERSHIP: the HUD owns the chrome NODES and this controller does all the reparenting; the panel
 ## owns only the empty rail SLOTS it parks them into. That is the exact opposite of `set_zones`, which
@@ -70,7 +93,7 @@ func _init(bottom_bar: HBoxContainer, nav_backing: Control, turn_cluster: Contro
 	# (`MinimapPanel.resize_to_aspect` scales `embedded_height × aspect`, clamped into
 	# [min_width, max_width]), so the nav cluster's minimum CHANGES on a new map. While reflowed,
 	# re-declare the rail width whenever either cluster's minimum moves. Connected once,
-	# `is_connected`-guarded; `BandCityPanel.set_rail_width` no-ops on an unchanged value, so this
+	# `is_connected`-guarded; `BandCityPanel.set_rail_widths` no-ops on an unchanged pair, so this
 	# cannot churn. The stack's HEIGHT needs no push — the slot containers read their own child's
 	# minimum, so the column re-centres itself.
 	for cluster in [_nav, _turn]:
@@ -143,7 +166,7 @@ func _restore() -> void:
 	# Retire the rail FIRST, so the panel re-chooses its shell against the full row before the clusters
 	# leave (and the rail is hidden and zero-width when they do).
 	if _panel != null:
-		_panel.set_rail_width(0.0)
+		_panel.set_rail_widths(0.0, 0.0)
 	for entry_variant in _home:
 		var entry: Dictionary = entry_variant
 		_move_home(entry)
@@ -151,21 +174,32 @@ func _restore() -> void:
 		_bottom_bar.custom_minimum_size.y = _bottom_bar_min_height
 		_bottom_bar.visible = true
 
-## Declare the rail column's width: the WIDER of the two clusters, so neither is clipped and the column
-## is no wider than it has to be. The HUD owns the chrome, so the HUD is what measures it — the panel
-## only ever stores what it is told. Also the `minimum_size_changed` handler (a new map resizes the
-## minimap), and a no-op unless the chrome is actually parked.
+## Declare BOTH clusters' widths. The HUD owns the chrome, so the HUD is what measures it — the panel
+## only ever stores what it is told, and it is the panel that decides whether the two go to opposite
+## ends or into one column (`BandCityPanel._rail_split`). Declaring the PAIR rather than the `max` is
+## what makes that decision possible without the panel measuring anything. Also the
+## `minimum_size_changed` handler (a new map resizes the minimap), and a no-op unless the chrome is
+## actually parked.
 func _push_rail_width() -> void:
 	if not _is_reflowed or _panel == null:
 		return
-	_panel.set_rail_width(_measured_rail_width())
+	_panel.set_rail_widths(_cluster_width(_nav), _cluster_width(_turn))
 
-## The wider of the two clusters — the ONE measurement, so what `rail_width_for` predicts and what
-## `_push_rail_width` declares cannot drift apart.
+## One cluster's declared minimum width, or 0 when it is absent.
+func _cluster_width(cluster: Control) -> float:
+	return 0.0 if cluster == null else cluster.get_combined_minimum_size().x
+
+## The STACKED arrangement's rail width — the wider of the two clusters.
+##
+## ⛔ **IT IS THE STACKED FIGURE EVEN WHERE THE ROW SPLITS, AND THAT IS SOUND RATHER THAN STALE.** Its
+## one reader is `rail_width_for`, which feeds `BandCityPanel.affords_wide_shell_with_bounds` — a
+## question about whether the card can still stand in its three-zone shell. The stacked span is the
+## SMALLER of the two arrangements, and the panel splits only where the LARGER one still clears
+## `wide_shell_min_width()`; so wherever this predicate answers "affords", the arrangement the panel
+## actually picks affords it too. Reporting the split total here would make the predicate refuse the
+## HUD's yield on windows where the panel would simply have stacked instead.
 func _measured_rail_width() -> float:
-	var nav_width := 0.0 if _nav == null else _nav.get_combined_minimum_size().x
-	var turn_width := 0.0 if _turn == null else _turn.get_combined_minimum_size().x
-	return maxf(nav_width, turn_width)
+	return maxf(_cluster_width(_nav), _cluster_width(_turn))
 
 ## Reparent a cluster into its rail slot. **No anchors, offsets or presets are written here, and that is
 ## the point**: a slot is a `MarginContainer`, so it lays the cluster out and the panel's

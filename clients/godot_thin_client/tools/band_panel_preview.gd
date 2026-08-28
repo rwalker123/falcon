@@ -2414,9 +2414,14 @@ func _ready() -> void:
 	# back on, or they would bracket a threshold the panel no longer applies to the raw window width. The
 	# width is canvas-independent (`max` of a fixed 260px turn cluster and a grid-aspect minimap), and the
 	# panel is already bottom-docked + reflowed from the ultrawide state above, so it can be read here.
-	# `_rail_span()`, not `_rail_width()`: the rail also costs a `RAIL_SEPARATOR_SPAN` gutter, and probing
-	# against the bare width would bracket the threshold 25px off.
-	var rail_span: float = _panel._rail_span()
+	# ⛔ **THE STACKED SPAN, NOT THE LIVE ONE.** `_rail_span()` became canvas-dependent when the row
+	# learned to split: read here at the ULTRAWIDE canvas it reports the SPLIT span (both islands), and
+	# the probe below would then pin a canvas ~141px too wide — at which the row does NOT split, leaves
+	# that 141px to the card, and comes out WIDE one pixel below a threshold it was meant to be under.
+	# Below the threshold the row never splits (that is the gate), so the span this must bracket against
+	# is always the stacked one: the wider cluster plus its single `RAIL_SEPARATOR_SPAN` gutter.
+	var rail_span: float = _panel._rail_span_of(
+		_hud.bottom_chrome_rail_width(SIDE_BOTTOM, _panel.current_reservation_size()))
 	# **THE THRESHOLD IS THE PANEL'S OWN, ASKED OF THE LIVE LAYOUT** — it is a sum over the declared
 	# zones now, not a `const`, so a band subject answers 1190 and the four-zone faction page 1569. The
 	# panel is on a BAND here (`_many_sources_band_fixture` above), so this brackets the three-zone
@@ -2651,6 +2656,7 @@ func _render_dock_row_states() -> void:
 	_assert_zone_content_fits()
 	_assert_chrome_parked(true, "band_panel_dockrow_bottom")
 	_assert_parked_chrome_fits("band_panel_dockrow_bottom")
+	_assert_chrome_ends("band_panel_dockrow_bottom")
 	_assert_parked_chrome_margin("band_panel_dockrow_bottom", 1)
 	_assert_shell_is_wide(true, "band_panel_dockrow_bottom")
 	# **1920 IS PAST THE FORK NOW, AND THAT IS THE POINT OF THIS STATE.** It used to be the status-quo
@@ -2765,6 +2771,7 @@ func _render_dock_row_states() -> void:
 	_assert_zone_content_fits()
 	_assert_chrome_parked(true, "band_panel_dockrow_ultrawide")
 	_assert_parked_chrome_fits("band_panel_dockrow_ultrawide")
+	_assert_chrome_ends("band_panel_dockrow_ultrawide")
 	_assert_shell_is_wide(true, "band_panel_dockrow_ultrawide")
 	_assert_card_is_narrower_than_strip("band_panel_dockrow_ultrawide")
 	_assert_rail_is_right_justified("band_panel_dockrow_ultrawide")
@@ -2834,6 +2841,7 @@ func _render_bottom_yield_states() -> void:
 	_assert_zone_content_fits()
 	_assert_chrome_parked(true, "band_panel_dockrow_bottom_yield")
 	_assert_parked_chrome_fits("band_panel_dockrow_bottom_yield")
+	_assert_chrome_ends("band_panel_dockrow_bottom_yield")
 	# The three halves of the claim, and none of them implies the others: the HUD kept its strip, the
 	# tile column therefore reaches the window's bottom edge, and the card is STILL in the wide shell —
 	# the thing a naive exemption loses.
@@ -2946,7 +2954,16 @@ func _assert_card_clears_lateral_columns(state_name: String) -> void:
 	var card := _panel._panel.get_global_rect()
 	_panel.reservation_changed.disconnect(_reservation_listener)
 	_panel.set_lateral_bounds(0.0, 0.0)
-	var unbound := _panel._panel.get_global_rect()
+	# ⛔ **THE CONTROL IS ON THE LEADING-MOST FURNITURE, WHICH IS NOT ALWAYS THE CARD.** Where the row
+	# splits, the chrome's leading island stands between the left column and the card — so an unbound
+	# CARD clears the column for a reason that has nothing to do with the bound, and the control went
+	# vacuous exactly where the leading end became crowded. What must collide unbound is whatever the
+	# panel draws first along the row.
+	var unbound: Rect2 = _panel._panel.get_global_rect()
+	var unbound_what := "card"
+	if _panel._rail_lead != null and _panel._rail_lead.visible:
+		unbound = _panel._rail_lead.get_global_rect()
+		unbound_what = "leading chrome island"
 	var would_collide: bool = unbound.intersects(left)
 	var live: Vector2 = _hud.lateral_column_widths()
 	_panel.set_lateral_bounds(live.x, live.y)
@@ -2954,9 +2971,16 @@ func _assert_card_clears_lateral_columns(state_name: String) -> void:
 	var reach: Dictionary = _right_dock_content_reach()
 	var failures: Array[String] = []
 	if not would_collide:
-		failures.append("the UNBOUND card %s clears the left column %s anyway, so this state proves nothing — stage a busier band or a narrower canvas" % [unbound, left])
+		failures.append("the UNBOUND %s %s clears the left column %s anyway, so this state proves nothing — stage a busier band or a narrower canvas" % [
+			unbound_what, unbound, left])
 	if card.intersects(left):
 		failures.append("the card %s is drawn over the left dock %s" % [card, left])
+	# …and the leading island is held off it by the same bound, or the card is merely hiding behind
+	# furniture that is itself drawn over the column.
+	if _panel._rail_lead != null and _panel._rail_lead.visible \
+			and _panel._rail_lead.get_global_rect().intersects(left):
+		failures.append("the leading chrome island %s is drawn over the left dock %s" % [
+			_panel._rail_lead.get_global_rect(), left])
 	if int(reach["cards"]) > 0 and card.intersects(Rect2(reach["painted"])):
 		failures.append("the card %s is drawn over the right dock's painted content %s" % [
 			card, str(reach["painted"])])
@@ -5296,6 +5320,15 @@ func _assert_chrome_parked(parked: bool, state_name: String) -> void:
 		if cluster.get_parent() != want:
 			failures.append("%s sits under %s, expected %s" % [
 				cluster.name, cluster.get_parent().name, want.name])
+	# **THE LEADING ISLAND MUST BE RETIRED ON THE WAY HOME, or the split leaks.** It is a `_root` child
+	# of the panel rather than one of `BottomBar`'s, so `_home` cannot restore it and nothing else would
+	# notice a 296px band of chrome left standing over the map on a vertical dock.
+	if not parked and _panel._rail_lead != null:
+		if _panel._rail_lead.visible:
+			failures.append("the leading chrome island is still visible with the chrome home")
+		if _panel._rail_lead.custom_minimum_size.x > 0.0:
+			failures.append("the leading chrome island still declares %.0fpx of width with the chrome home"
+				% _panel._rail_lead.custom_minimum_size.x)
 	if failures.is_empty():
 		print("band_panel_preview: assert OK — %s chrome %s" % [state_name, "parked in the row" if parked else "home in BottomBar"])
 		return
@@ -5310,6 +5343,94 @@ func _parked_chrome_pairs() -> Array:
 		[_hud.nav_backing, _panel.rail_slot_host(BandCityPanel.RAIL_SLOT_TOP)],
 		[_hud.turn_orb, _panel.rail_slot_host(BandCityPanel.RAIL_SLOT_BOTTOM)],
 	]
+
+## The chrome ISLANDS this dock actually draws — the trailing one wherever the chrome is parked, and the
+## LEADING one as well wherever the row splits (`BandCityPanel._rail_split`). One definition, so every
+## island-shaped claim below sees the same set and none of them can be hard-wired to the trailing rail.
+func _chrome_islands() -> Array[Control]:
+	var islands: Array[Control] = []
+	if _panel._rail_lead != null and _panel._rail_lead.visible:
+		islands.append(_panel._rail_lead)
+	if _panel._rail != null and _panel._rail.visible:
+		islands.append(_panel._rail)
+	return islands
+
+## The island a parked cluster actually sits in — its nearest rail ancestor, since the panel moves the
+## SLOT HOST between islands with the cluster inside it. Answered by ancestry rather than by re-deriving
+## the split verdict, so the claim is about where the node IS and not about what it should be.
+func _chrome_island_for(cluster: Control) -> Control:
+	var node: Node = cluster
+	while node != null:
+		if node == _panel._rail or node == _panel._rail_lead:
+			return node as Control
+		node = node.get_parent()
+	return null
+
+## Where the CARD's gap ENDS: at the trailing chrome island (one gutter clear of it) wherever the chrome
+## is parked, and at the trailing HUD bound otherwise. The twin of the leading edge below, split out
+## because the click-through probe and the centring claim must agree about where the gap stops.
+func _card_gap_trail_edge() -> float:
+	if _panel._rail_width() > 0.0:
+		return _panel._rail.get_global_rect().position.x - BandCityPanel.RAIL_SEPARATOR_SPAN
+	return _panel._root.get_global_rect().end.x - _panel._bound_trailing
+
+## Where the CARD's gap begins: past the leading HUD bound, and past the leading chrome island (plus its
+## gutter) wherever the row splits. The twin of the trailing edge the centring claim already measures off
+## whatever really stands there — the same rule, now that something can stand at the leading end too.
+func _card_gap_lead_edge() -> float:
+	if _panel._rail_lead != null and _panel._rail_lead.visible:
+		return _panel._rail_lead.get_global_rect().end.x + BandCityPanel.RAIL_SEPARATOR_SPAN
+	return _panel._root.get_global_rect().position.x + _panel._bound_leading
+
+## GUARD: **WHICH END OF THE ROW EACH CLUSTER IS AT** — the claim Ray's ask is actually about, and the
+## one none of the fit/centring assertions can make: a stacked column and a split pair both "fit", both
+## "centre", and both draw a perfectly plausible PNG.
+##
+## **SPLIT**: the nav cluster (minimap + zoom rail) is wholly LEADING of the card and the turn cluster
+## wholly TRAILING of it — minimap bottom-left, orb bottom-right, which is where an intact `BottomBar`
+## puts them and therefore what a TOP dock already looks like. **STACKED**: both in the same island, nav
+## ABOVE turn. Asserted as ORDER along the axis that matters for each, so neither arrangement can pass
+## on the other's layout.
+##
+## **PAIRED WITH LIVENESS, because chrome that never rendered is at no end at all** — both clusters must
+## be visible in tree with a non-degenerate rect. Without it every claim below is satisfied by a row
+## that parked nothing.
+func _assert_chrome_ends(state_name: String) -> void:
+	var failures: Array[String] = []
+	var nav: Control = _hud.nav_backing
+	var turn: Control = _hud.turn_orb
+	for pair in [[nav, "nav cluster"], [turn, "turn cluster"]]:
+		var cluster: Control = pair[0]
+		var rect := cluster.get_global_rect()
+		if not cluster.is_visible_in_tree() or rect.size.x <= 0.0 or rect.size.y <= 0.0:
+			failures.append("the %s is not rendering (visible %s, rect %s)" % [
+				pair[1], cluster.is_visible_in_tree(), rect])
+	var nav_rect := nav.get_global_rect()
+	var turn_rect := turn.get_global_rect()
+	var card := _panel._panel.get_global_rect()
+	var split: bool = _panel._rail_split()
+	if split:
+		if nav_rect.end.x > card.position.x + ZONE_BOUNDS_TOLERANCE:
+			failures.append("the row SPLIT but the nav cluster %s is not wholly leading the card %s" % [
+				nav_rect, card])
+		if turn_rect.position.x + ZONE_BOUNDS_TOLERANCE < card.end.x:
+			failures.append("the row SPLIT but the turn cluster %s is not wholly trailing the card %s" % [
+				turn_rect, card])
+		if _chrome_island_for(nav) == _chrome_island_for(turn):
+			failures.append("the row SPLIT but both clusters sit in the same island")
+	else:
+		if nav_rect.get_center().y >= turn_rect.get_center().y:
+			failures.append("the row STACKED but the nav cluster (centre y %.0f) is not above the turn cluster (centre y %.0f)" % [
+				nav_rect.get_center().y, turn_rect.get_center().y])
+		if _chrome_island_for(nav) != _chrome_island_for(turn):
+			failures.append("the row STACKED but its clusters sit in different islands")
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s the chrome is %s (nav centre x %.0f, turn centre x %.0f, card %.0f–%.0f)" % [
+			state_name, "SPLIT to the row's two ends" if split else "STACKED at the trailing end",
+			nav_rect.get_center().x, turn_rect.get_center().x, card.position.x, card.end.x])
+		return
+	for failure in failures:
+		_fail("%s — %s" % [state_name, failure])
 
 ## GUARD: the parked chrome must FIT the rail and the rail must fit the strip, and the STACK must sit
 ## CENTRED in the column.
@@ -5364,33 +5485,52 @@ func _assert_parked_chrome_margin(state_name: String, expected_columns: int) -> 
 
 func _assert_parked_chrome_fits(state_name: String) -> void:
 	var failures: Array[String] = []
-	var rail: Control = _panel._rail
-	var rail_rect := rail.get_global_rect()
-	var stack_top := INF
-	var stack_bottom := -INF
+	# ⛔ **EACH CLUSTER IS MEASURED AGAINST THE ISLAND IT IS ACTUALLY IN.** The row splits the two to
+	# opposite ends wherever it can afford to, so a claim hard-wired to the trailing rail asks the wrong
+	# container of the nav cluster on every split dock — and reported it spilling by ~2km of screen.
+	var extents := {}
 	for pair in _parked_chrome_pairs():
 		var cluster: Control = pair[0]
+		var island := _chrome_island_for(cluster)
+		if island == null:
+			failures.append("%s sits in neither chrome island" % cluster.name)
+			continue
 		var rect := cluster.get_global_rect()
-		stack_top = minf(stack_top, rect.position.y)
-		stack_bottom = maxf(stack_bottom, rect.end.y)
-		var over := _rect_overflow(rect, rail_rect)
+		var island_rect := island.get_global_rect()
+		var span: Array = extents.get(island, [INF, -INF])
+		extents[island] = [minf(float(span[0]), rect.position.y), maxf(float(span[1]), rect.end.y)]
+		var over := _rect_overflow(rect, island_rect)
 		if over.x > ZONE_BOUNDS_TOLERANCE or over.y > ZONE_BOUNDS_TOLERANCE:
-			failures.append("%s %s spills the rail %s by (%.1f, %.1f)" % [
-				cluster.name, rect, rail_rect, maxf(over.x, 0.0), maxf(over.y, 0.0)])
-	# The rail must stay inside the STRIP — `_root`, not the card. Since issue #377 the chrome cluster is
-	# a SIBLING of the card rather than its last cell, so asking whether it fits the card would now be
+			failures.append("%s %s spills %s %s by (%.1f, %.1f)" % [
+				cluster.name, rect, island.name, island_rect, maxf(over.x, 0.0), maxf(over.y, 0.0)])
+	# LIVENESS, and it is what makes the containment claims above mean something: chrome that parked
+	# nowhere fits every island trivially. The ARRANGEMENT is asserted as a count — one island when the
+	# row stacks, two when it splits — so a split that silently kept both clusters together (or a stack
+	# that scattered them) fails here rather than looking correct.
+	var want_islands: int = 2 if _panel._rail_split() else 1
+	if extents.size() != want_islands:
+		failures.append("the %s row put its clusters in %d island(s), expected %d" % [
+			"SPLIT" if _panel._rail_split() else "stacked", extents.size(), want_islands])
+	# Each island must stay inside the STRIP — `_root`, not the card. Since issue #377 the chrome is a
+	# SIBLING of the card rather than its last cell, so asking whether it fits the card would now be
 	# asking the wrong container entirely (and would fail on a correct layout).
 	var strip := _panel._root.get_global_rect()
-	var rail_over := _rect_overflow(rail_rect, strip)
-	if rail_over.x > ZONE_BOUNDS_TOLERANCE or rail_over.y > ZONE_BOUNDS_TOLERANCE:
-		failures.append("the chrome rail %s spills the card %s by (%.1f, %.1f)" % [
-			rail_rect, strip, maxf(rail_over.x, 0.0), maxf(rail_over.y, 0.0)])
-	var drift: float = absf(0.5 * (stack_top + stack_bottom) - rail_rect.get_center().y)
-	if drift > ZONE_BOUNDS_TOLERANCE:
-		failures.append("the chrome stack sits %.0fpx off the rail's vertical centre (stack %.0f, rail %.0f)" % [
-			drift, 0.5 * (stack_top + stack_bottom), rail_rect.get_center().y])
+	for island_variant in extents:
+		var island: Control = island_variant
+		var island_rect := island.get_global_rect()
+		var island_over := _rect_overflow(island_rect, strip)
+		if island_over.x > ZONE_BOUNDS_TOLERANCE or island_over.y > ZONE_BOUNDS_TOLERANCE:
+			failures.append("%s %s spills the strip %s by (%.1f, %.1f)" % [
+				island.name, island_rect, strip, maxf(island_over.x, 0.0), maxf(island_over.y, 0.0)])
+		var span: Array = extents[island]
+		var centre: float = 0.5 * (float(span[0]) + float(span[1]))
+		var drift: float = absf(centre - island_rect.get_center().y)
+		if drift > ZONE_BOUNDS_TOLERANCE:
+			failures.append("%s's stack sits %.0fpx off its vertical centre (stack %.0f, island %.0f)" % [
+				island.name, drift, centre, island_rect.get_center().y])
 	if failures.is_empty():
-		print("band_panel_preview: assert OK — %s the chrome stack fits its rail, the rail fits the strip, and the stack is centred" % state_name)
+		print("band_panel_preview: assert OK — %s the chrome fits its %d island(s), each inside the strip and vertically centred (%s)" % [
+			state_name, extents.size(), "split" if _panel._rail_split() else "stacked"])
 		return
 	for failure in failures:
 		_fail("%s — %s" % [state_name, failure])
@@ -5559,22 +5699,25 @@ func _assert_card_clears_hud_columns(state_name: String) -> void:  # coroutine: 
 func _assert_card_is_centred(state_name: String) -> void:
 	var card := _panel._panel.get_global_rect()
 	var strip := _panel._root.get_global_rect()
-	var trail_edge: float
-	var trail_what: String
-	if _panel._rail_width() > 0.0:
-		trail_edge = _panel._rail.get_global_rect().position.x - BandCityPanel.RAIL_SEPARATOR_SPAN
-		trail_what = "the parked chrome"
-	else:
-		trail_edge = strip.end.x - _panel._bound_trailing
-		trail_what = "a %.0fpx HUD column" % _panel._bound_trailing
-	var lead_margin: float = card.position.x - (strip.position.x + _panel._bound_leading)
+	var trail_edge: float = _card_gap_trail_edge()
+	var trail_what: String = "the parked chrome" if _panel._rail_width() > 0.0 \
+		else "a %.0fpx HUD column" % _panel._bound_trailing
+	# **THE LEADING EDGE OF THE GAP IS MEASURED OFF WHAT ACTUALLY STANDS THERE TOO**, which is the rule
+	# the trailing edge already followed and which became load-bearing when the row learned to put a
+	# chrome island at the leading end. Measuring from the HUD column alone reports a correctly centred
+	# card as off-centre by exactly the leading island's span.
+	var lead_edge: float = _card_gap_lead_edge()
+	var lead_what: String = "a %.0fpx HUD column" % _panel._bound_leading
+	if _panel._rail_lead != null and _panel._rail_lead.visible:
+		lead_what = "the parked chrome's leading island"
+	var lead_margin: float = card.position.x - lead_edge
 	var trail_margin: float = trail_edge - card.end.x
 	if absf(lead_margin - trail_margin) > ZONE_BOUNDS_TOLERANCE:
-		_fail("%s — the card is not centred in its gap: %.0fpx of margin leading (past a %.0fpx HUD column) and %.0fpx trailing (up to %s at %.0f)" % [
-			state_name, lead_margin, _panel._bound_leading, trail_margin, trail_what, trail_edge])
+		_fail("%s — the card is not centred in its gap: %.0fpx of margin leading (past %s at %.0f) and %.0fpx trailing (up to %s at %.0f)" % [
+			state_name, lead_margin, lead_what, lead_edge, trail_margin, trail_what, trail_edge])
 		return
-	print("band_panel_preview: assert OK — %s the card is centred in its gap (%.0fpx either side, between a %.0fpx HUD column and %s)" % [
-		state_name, lead_margin, _panel._bound_leading, trail_what])
+	print("band_panel_preview: assert OK — %s the card is centred in its gap (%.0fpx either side, between %s and %s)" % [
+		state_name, lead_margin, lead_what, trail_what])
 
 ## GUARD: THE OPEN MAP EITHER SIDE OF THE CARD IS STILL CLICKABLE (issue #377).
 ##
@@ -5607,7 +5750,6 @@ func _assert_card_is_centred(state_name: String) -> void:
 func _assert_open_strip_reaches_the_map(state_name: String) -> void:
 	var strip := _panel._root.get_global_rect()
 	var card := _panel._panel.get_global_rect()
-	var rail_span: float = _panel._rail_span()
 	var failures: Array[String] = []
 	# PRECONDITION: a press on bare canvas, far from the strip, must reach unhandled input at all.
 	var canvas: Vector2 = get_viewport().get_visible_rect().size
@@ -5619,14 +5761,17 @@ func _assert_open_strip_reaches_the_map(state_name: String) -> void:
 	# `_bound_trailing` bands are the HUD's own furniture, not open map, and what this guard is about is
 	# whether the PANEL eats clicks aimed past it. Both bounds are 0 wherever the HUD yielded, which is
 	# every state that ran this before.
-	var row_start: float = strip.position.x + _panel._bound_leading
+	# `_card_gap_lead_edge()`, not the bare bound: where the row splits, the leading chrome island stands
+	# between the HUD column and the card, so probing from the bound fires INTO the island and reports
+	# the panel eating clicks it is supposed to eat.
+	var row_start: float = _card_gap_lead_edge()
 	var row_end: float = strip.end.x - _panel._bound_trailing
 	var gaps := {
 		"the open strip LEADING the card": Rect2(
 			Vector2(row_start, strip.position.y), Vector2(card.position.x - row_start, strip.size.y)),
 		"the open strip TRAILING the card": Rect2(
 			Vector2(card.end.x, strip.position.y),
-			Vector2(row_end - rail_span - card.end.x, strip.size.y)),
+			Vector2(_card_gap_trail_edge() - card.end.x, strip.size.y)),
 	}
 	for gap_name_variant in gaps:
 		var gap: Rect2 = gaps[gap_name_variant]
@@ -5646,8 +5791,11 @@ func _assert_open_strip_reaches_the_map(state_name: String) -> void:
 	# arithmetic rather than on the panel.
 	var islands := {
 		"the card's own chrome ring": _rect_ring_probe_points(card),
-		"the chrome cluster": _rect_ring_probe_points(_panel._rail.get_global_rect()),
 	}
+	# EVERY chrome island, not just the trailing one — a leading island that fell through to the map
+	# would be the same defect on the other end of the row.
+	for island in _chrome_islands():
+		islands["the chrome island %s" % island.name] = _rect_ring_probe_points(island.get_global_rect())
 	for island_name_variant in islands:
 		for point: Vector2 in islands[island_name_variant]:
 			if await _press_reaches_map(_canvas_to_window(point)):
@@ -5659,11 +5807,13 @@ func _assert_open_strip_reaches_the_map(state_name: String) -> void:
 		failures.append("PanelRoot's mouse_filter is %d, not IGNORE — the strip is not transparent to the pointer" % _panel._root.mouse_filter)
 	if _panel._panel.mouse_filter != Control.MOUSE_FILTER_STOP:
 		failures.append("PanelCard's mouse_filter is %d, not STOP" % _panel._panel.mouse_filter)
-	if _panel._rail.mouse_filter != Control.MOUSE_FILTER_STOP:
-		failures.append("ChromeRail's mouse_filter is %d, not STOP" % _panel._rail.mouse_filter)
+	for island in _chrome_islands():
+		if island.mouse_filter != Control.MOUSE_FILTER_STOP:
+			failures.append("%s's mouse_filter is %d, not STOP" % [island.name, island.mouse_filter])
 	if failures.is_empty():
-		print("band_panel_preview: assert OK — %s the open map either side of the card takes clicks (%.0fpx leading, %.0fpx trailing) and the card still eats its own" % [
-			state_name, card.position.x - row_start, row_end - rail_span - card.end.x])
+		print("band_panel_preview: assert OK — %s the open map either side of the card takes clicks (%.0fpx leading, %.0fpx trailing) and its %d island(s) still eat their own" % [
+			state_name, card.position.x - row_start, _card_gap_trail_edge() - card.end.x,
+			islands.size()])
 		return
 	for failure in failures:
 		_fail("%s — %s" % [state_name, failure])
@@ -9140,7 +9290,12 @@ func _assert_faction_shell_threshold() -> void:
 	_assert_band_panel("faction threshold: the three-zone derivation is %.0f (got %.0f)" % [
 			FACTION_SHELL_MIN_WIDTH, derived],
 		is_equal_approx(derived, FACTION_SHELL_MIN_WIDTH))
-	var rail_span: float = _panel._rail_span()
+	# The STACKED span, for the reason `_render_wide_dock_states`' probe states at length: `_rail_span()`
+	# reports the SPLIT total wherever the live canvas affords it, and bracketing against that pins a
+	# canvas ~141px too wide — at which the row does not split and the shell comes out WIDE below its own
+	# threshold. The row never splits below the threshold, so the stacked span is the honest term.
+	var rail_span: float = _panel._rail_span_of(
+		_hud.bottom_chrome_rail_width(SIDE_BOTTOM, _panel.current_reservation_size()))
 	var at := int(ceil(derived + rail_span))
 	print("band_panel_preview: faction shell threshold probes at %d / %d (threshold %.0f + rail span %.0f)" % [
 		at - SHELL_THRESHOLD_UNDERSHOOT, at, derived, rail_span])

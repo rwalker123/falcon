@@ -1997,6 +1997,123 @@ deliberately.** It inherits the count from the SAME band's previous render (the 
 from a board that had just declared), so every shipped frame reads one column and no stretch is
 observable; what the right width for a full-queue list is, is a design question rather than this defect.
 
+## The bottom row SPLITS its chrome to both ends where it fits, and stacks it where it does not
+
+Ray, on a bottom dock: put the minimap at the leading end and the turn orb at the trailing end, the way
+they sit when the panel is docked at the TOP and `BottomBar` stays intact. His reasoning — *"there was a
+reason for that when the horizontal band was first done. However, now the band panel doesn't take up the
+entire space"* — is correct, and the re-measurement below says by how much.
+
+**THE RECORDED REJECTION, QUOTED, because it was right when it was made**: *"A gutter at each end was
+built first and rejected on sight with a real minimap in it: the left rail is ~300px, so two opposite
+gutters pushed the band zone inward AND stranded dead space around the orb, costing ~562px of row. One
+column costs `max(nav, turn)` ≈ 296–302 … That hands the zones ~240px back and drops the wide→narrow flip
+from ~1605px of window width to ~1377px."*
+
+**RE-MEASURED, THE SPLIT COSTS 141px OF ROW, NOT 562.** Two things moved:
+
+| | then | now |
+|---|---|---|
+| nav cluster (`NavBacking`) width | ~296 | 296 (Standard) / 308 (Large) |
+| turn cluster width | **260** | **116** — the `Turn N` caption moved into the orb face |
+| stacked span | 296 + 25 gutter = **321** | **321** |
+| split span | 296 + 260 + 2 gutters = **~606** | 296 + 116 + 2 gutters = **462** |
+| **extra cost of splitting** | ~285 | **141** |
+
+The other half of the old objection — *"pushed the band zone inward"* — expired with issue #377: the card
+is sized to its CONTENT and floats as an island, so room beside it is slack over live map rather than
+width taken off the zones.
+
+### The gate, and what it is measured against
+
+`BandCityPanel._rail_split()` — split iff `viewport − split span − lateral bounds >= wide_shell_min_width()`.
+**Existing vocabulary, no new tunable.** Below it the old rejection still governs: two islands plus a card
+cannot fit an arbitrarily narrow window, and the chrome stacks exactly as before.
+
+It is the shell's MINIMUM rather than `_card_width()`'s current answer **deliberately**: the declared card
+width follows the work board's column count, so gating on it would move the minimap to the other end of
+the screen when a band gains a source — and it would be a cycle besides (`_card_width` ← `_work_columns` ←
+`set_work_columns` ← `_affordable_work_columns` ← `_available_card_span` ← `_rail_span` ← the verdict).
+
+**Measured flip widths** (Standard map, 3-zone band subject, `wide_shell_min_width()` = 1190):
+
+| state | window | leading bound | verdict |
+|---|---|---|---|
+| `band_panel_dockrow_bottom` | 1920 | 360 (HUD keeps its column) | **stacked** — 1098 of room, 92 short |
+| `band_panel_dockrow_bottom_yield` | 2560 | 0 (HUD yields) | **split** |
+| `band_panel_dockrow_ultrawide` | 3440 | 360 | **split** |
+
+So the split needs **≥ 2012px** of window while the HUD keeps its left column (1190 + 462 + 360), and
+**≥ 1652px** where it yields. **A 1920 monitor therefore still stacks** — there is genuinely no room for
+two ~300px islands beside a 1190px card and a 360px HUD column.
+
+**THE WIDE→NARROW SHELL FLIP DID NOT MOVE.** It is 1331 before and after (`shell threshold probes at
+1330 / 1331`), because the split is refused exactly where it would cost the wide shell. The old
+two-gutter shape's ~1605 is not approached.
+
+⛔ **WHAT IT DOES COST, MEASURED AND ACCEPTED**: on a 3440 bottom dock with 34 sources and a TWO-column
+band flank, the extra 141px takes the work board from four columns to three (`band_panel_dockrow_ultrawide`,
+zone 1522 → 1142), with 648px of open map still beside the card. A gate that could refuse *that* would have
+to cost both arrangements in board columns, which needs `_fixed_zone_span()` — the flanks at their CURRENT
+counts — and that call chain is the verdict again (measured as a 1000-frame stack overflow, not a
+theoretical cycle). Restating it through `wide_shell_min_width()` terminates but silently answers a
+different question: that sum is the flanks at ONE column each, so where the flank has two it over-counts
+the room by 380 and never fires. It was written, measured, and removed rather than left in looking useful.
+
+### The seam
+
+**The panel decides the ARRANGEMENT; the HUD still owns and measures the chrome.** `DockRowController`
+declares both clusters' widths (`set_rail_widths(nav, turn)` replacing `set_rail_width(max)`) and parks
+into `RAIL_SLOT_TOP` / `RAIL_SLOT_BOTTOM` exactly as it always did; `BandCityPanel` moves the nav cluster's
+SLOT HOST between a new leading island and the trailing one, with the parked cluster still inside it. So
+the split is invisible to the controller and no ownership rule changed.
+
+`DockRowController._measured_rail_width()` still reports the STACKED width, and that is sound rather than
+stale: its one reader is `rail_width_for` → `affords_wide_shell_with_bounds`, the stacked span is the
+SMALLER of the two arrangements, and the panel splits only where the LARGER one still clears the shell
+minimum — so wherever that predicate says "affords", the arrangement actually chosen affords it too.
+
+The slot ids still read `RAIL_SLOT_TOP` / `RAIL_SLOT_BOTTOM` and now mean "nav" / "turn"; they are kept
+rather than renamed because the HUD parks by them and renaming would touch every call site to say the
+same thing.
+
+### What the harness had to relearn
+
+Five claims were written against a row with exactly one chrome island, and each failed on a *correct*
+split layout:
+
+* **`_assert_parked_chrome_fits`** measured both clusters against the trailing rail — reported the nav
+  cluster spilling by ~2,000px. Now each cluster is measured against the island it is actually in (found
+  by ancestry), with per-island centring, plus a new liveness claim on the island COUNT: one when stacked,
+  two when split.
+* **`_assert_card_is_centred`** measured the gap's leading edge from the HUD bound, so a correctly centred
+  card read as off-centre by exactly the leading island's span. The leading edge is now measured off
+  whatever really stands there — the same rule the trailing edge already followed.
+* **`_assert_open_strip_reaches_the_map`** probed from the bound (i.e. into the new island, which is
+  supposed to eat clicks) and subtracted the whole rail span from the trailing gap (double-counting the
+  leading island, giving a −141px gap). Both edges now come from the shared `_card_gap_lead_edge()` /
+  `_card_gap_trail_edge()`, and every island is probed for click-eating, not just the trailing one.
+* **`_assert_card_clears_lateral_columns`**'s negative control asked whether the UNBOUND card collides
+  with the left column. Where the row splits, the leading island stands in front of the card, so the
+  control went vacuous. It now tests the leading-MOST furniture, and the leading island is separately
+  asserted to clear the column.
+* **Both shell-threshold probes** read `_rail_span()` live at an ULTRAWIDE canvas and then pinned a canvas
+  `threshold + span` wide. That span is canvas-dependent now: read where the row splits, it is 141px too
+  big, and the probe landed on a window where the row does NOT split, kept the 141px, and came out WIDE
+  one pixel below the threshold it was meant to be under. They read the STACKED span now — which is the
+  honest term, since the row never splits below the threshold.
+
+**New claim: `_assert_chrome_ends`**, on all three parked states. Split ⇒ the nav cluster is wholly
+LEADING of the card and the turn cluster wholly TRAILING of it, in different islands; stacked ⇒ same
+island, nav above turn. Order along the axis that matters for each, so neither arrangement passes on the
+other's layout, and paired with liveness (both clusters visible with a non-degenerate rect) because chrome
+that never rendered is at no end at all.
+
+**And the leak check**: `_assert_chrome_parked(false, …)` now also requires the leading island to be
+retired — hidden and zero-width. It is a `_root` child of the PANEL, not of `BottomBar`, so
+`DockRowController._home` cannot restore it and nothing else would have noticed a 296px band of chrome
+left standing over the map on a vertical dock.
+
 ## The band zone's tier reads the whole STACKING BUDGET, and the split is authored
 
 `_band_zone_tier_height()` is the zone box **times the column count**. Both terms are geometric, so the
