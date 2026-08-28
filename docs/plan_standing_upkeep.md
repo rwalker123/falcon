@@ -1724,6 +1724,61 @@ picker only means what it looks like once the kit belongs to the site.
 > **UX prototype**, drawn against the shipped surfaces at their real metrics:
 > `https://claude.ai/code/artifact/9ea539e6-9a65-4ca2-9fc1-32dda77d2d14`
 
+**12d — THE WORK INSPECTOR BECOMES A DIALOG, AND THE ZONE STOPS PAYING FOR IT.** Ray's, decided
+against the measurements item 12c forced. Not a readout slice: it is the structural answer
+`band-city-panel.md` has been asking for, in a cheaper form than either shape that file names.
+
+> **THE ZONE HAS FOUR PIXELS AND EVERY EXPANSION OVERFLOWS IT.** Measured on a 1920 bottom dock with
+> a row selected: the box is **396** and the strip closed asks **392**. Open the *shipped* priority
+> picker and it asks **444** — over by **48**. Open item 12c's kits picker and it asks 436, over by
+> 40. There is no expansion small enough: `_work_board_capacity` is already floored at `maxi(1, …)`,
+> so the board gives back 4px of `int()` truncation and **zero rows**.
+>
+> **THE PRIORITY PICKER HAS OVERRUN THAT DOCK SINCE §4.9 ITEM 9b and no frame ever rendered it**, for
+> the reason `band-city-panel.md` records twice: *every picker-open frame is a tall dock, and every
+> wide-dock frame has the expansion closed*. Two disjoint frame families with the defect living in
+> the gap — the same shape as the bug that raised `PANEL_HEIGHT_WIDE` to 456 in the first place. Item
+> 12c's own measurement is what finally rendered it.
+>
+> **AND TWO SMALL BOTTOM DOCKS ALREADY OVERFLOW WITH NOTHING EXPANDED** — `1152×720` by **25** and
+> `1024×768` by **27**, on shipped code with no kit pair, both against boxes `MAX_WIDE_HEIGHT_FRACTION`
+> has clamped. So the horizontal dock's height is not short by one control; it is short.
+>
+> **A WINDOW CANNOT CHANGE A ZONE'S HEIGHT, and that is the whole fix.** `_open_rung_track`'s own
+> docstring already argues it for a smaller piece of content in this same zone — *"the detail
+> breakdowns are popovers and the destructive confirms are `ConfirmationDialog`s. It costs the zone
+> nothing at all."* The inspector is the piece the argument was never applied to. Hosting it as a
+> window makes the overflow **impossible** rather than made to fit, and hands the board back the
+> **84–190px** the strip reserves — two to four rows on a dock floored at one.
+>
+> **IT IS A DIALOG, NOT A POPOVER, AND THE PAIRING IS THE POINT.** Anchored-and-transient is one
+> coherent thing (the rung track: open, pick, gone); persistent-and-placed is the other. The
+> inspector is a WORKING surface — open a picker, change the policy, change the rank, then reach for
+> a stepper — so it stays open until dismissed, and an anchored control that never goes away is the
+> incoherent combination. Four properties, and each is load-bearing:
+>
+>   * **VIEWPORT-CENTRED**, not centred on the panel and not anchored to the row. On a bottom dock the
+>     panel is a strip with a screen of map above it; on a side dock a column with the map beside it —
+>     so a viewport-centred dialog lands **over the MAP** in both, and the board stays fully visible.
+>     Centring on the panel would only move the occlusion onto the rows being compared.
+>   * ⛔ **NON-MODAL — NO INPUT-BLOCKING SCRIM.** It re-targets when another row is selected, which is
+>     only possible if the board stays live underneath. This is the property most likely to be built
+>     wrong from the word *dialog*, and a scrim would delete the workflow the persistence exists for.
+>   * **PERSISTENT, with an explicit dismiss.** It does not close on an outside click; a stepper press
+>     on a different row is ordinary use, not a dismissal gesture.
+>   * **EVERY DOCK, not the horizontal one.** The vertical dock does not need it — its box is the full
+>     window height less chrome (939 at 1080 against a strip reserving 134) — but a fork means two
+>     layouts and two frame families, which is precisely the shape that hid both defects above. One
+>     behaviour, one code path, one test matrix. The vertical dock gets the freed rows too.
+>
+> **AND ONE PLACEMENT RATHER THAN FOUR.** Floating it off the panel's map-facing edge aligned to the
+> selected row reads better and travels the eye less, and it was rejected: four dock edges means four
+> placements plus clamping, against the same one-behaviour argument that settled the fork above.
+>
+> **WHAT THIS SLICE DOES NOT DO:** it does not raise `PANEL_HEIGHT_WIDE` (ruled out — the horizontal
+> dock may not get taller), and it retunes no config value. The two shipped overflows above are FIXED
+> BY CONSTRUCTION once the strip stops competing for zone height, so neither needs its own patch.
+
 13. **The route branch (#532 proper).** Routes as the ladder's third branch, `infrastructure_cost`
     wired for the first time, traversal-driven progress from supply links, shipments and movement.
 14. **The tuning spread.** Config-only, and **last** — §4.10 changes what the numbers do to the curve,
