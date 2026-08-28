@@ -4540,11 +4540,21 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     if _work_inspector_has_kits(model):
         _build_work_inspector_section(col, HudWorkVocab.WORK_INSPECT_KITS)
         col.add_child(_build_work_inspector_kits(band, model))
-        # **AND THE HINT THE STRIP COULD NOT AFFORD** (§4.9 item 12d, second pass): `none` is a real
-        # choice rather than a hole. It was in both pickers' tooltips for want of a line to put it on;
-        # a visible line is better, and the tooltips keep only what a shared hint cannot say.
-        col.add_child(HudWidgets.build_status_part(HudWorkVocab.WORK_INSPECT_KITS_HINT,
-            HudStyle.INK_FAINT, true))
+        # **AND THE SITE'S OWN BILL, WITH THE UPKEEP PICKER AND ONLY WITH IT.** A keeping tool is
+        # meaningless without what is being kept, and a rate is unactionable without the control that
+        # speeds it — so the two are one term (`WORK_INSPECTOR_KITS_UPKEEP_HEIGHT`) behind one
+        # predicate. On a wild source neither draws: nothing stands there to keep.
+        #
+        # ⛔ **THE RETIRED LINE SAID THE OPPOSITE OF WHAT THE SECTION NEEDED**, and it is quoted
+        # rather than deleted: *"\"No kit\" is a real choice — the site worked bare-handed."* It drew
+        # on every kitted row including the wild ones, where it explained that going without a keeping
+        # tool was fine for a site that had nothing to keep in the first place. The `none` caveat is
+        # back in the two pickers' tooltips, which is the per-control place it belongs.
+        if _work_inspector_has_upkeep(model):
+            col.add_child(HudWidgets.build_status_part(
+                HudWorkVocab.WORK_INSPECT_KITS_UPKEEP_FORMAT % HudWorkVocab
+                    .RUNG_TRACK_PRICE_SEPARATOR.join(_work_inspector_upkeep_terms(model)),
+                HudStyle.INK_FAINT, true))
     # **THE TWO PURE ACTIONS, and they are buttons because they have no content to show.** Everything
     # above is a section — a standing property of the row with its controls drawn — while these two
     # do something and are gone. `Unassign` is destructive, so it keeps its DANGER ink and is pushed to
@@ -4588,14 +4598,24 @@ func _build_work_inspector_rule(col: VBoxContainer) -> void:
     rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
     col.add_child(rule)
 
-## **THE STRIP'S KIT PAIR — the take crew's tool and the SITE's keeping tool, on one wrapping line.**
-## `null` for a row whose jobs the roster covers with no tool at all, which reserves nothing.
+## **THE STRIP'S KITS — the take crew's tool always, and the SITE's keeping tool only where there is a
+## site to keep.**
+##
+## ⛔ **AN UPKEEP PICKER ON A WILD SOURCE WAS A CONTROL FOR A JOB THAT DOES NOT EXIST, ON BOTH WEBS.**
+## Reported from play: a wild herd and a wild patch each drew `Upkeep [Hurdling kit ▾]` /
+## `Upkeep [Tillage kit ▾]`, silently defaulted to a kit, and the sim accepted the resulting
+## `upkeep_kit` command for a site with no standing rung at all. **Upkeep is a property of a STANDING
+## RUNG** — a pen has hurdles to mend, a Tended Patch and a Field have their own bills, a wild stand
+## and a wild herd have no improvement — so the row is gated on the SITE's published bill
+## (`_work_inspector_has_upkeep`, through `RungLadder.upkeep_price_terms`) and not on a re-derived rung
+## test.
 ##
 ## ⛔ **AN ANIMAL ROW GETS BOTH PICKERS TOO, and only the LEFT WORD differs.** §4.9 item 12c's strip
 ## section is written in plant vocabulary, which is not the same as being plant-only: the strip is the
 ## one place the RUNG is known on either web, and `upkeepKitId` is published for herds as well as
-## patches. So a plant row reads `Harvesters [Harvesting kit ▾]  Upkeep [Tillage kit ▾]` and an animal
-## one `Hunters [Stalking kit ▾]  Upkeep [Hurdling kit ▾]`.
+## patches. So a FIELD row reads `Harvesters [Harvesting kit ▾]  Upkeep [Tillage kit ▾]` and a PENNED
+## one `Hunters [Stalking kit ▾]  Upkeep [Hurdling kit ▾]`, while a wild row of either web reads its
+## take picker and nothing else.
 ##
 ## ⛔ **A PEN ROW'S LEFT PICKER IS A WEAPON PICKER, because item 12b made it one.** It is the
 ## `Hunters` / hunt-kit control and never a *Harvest* one — the §4.9 item 12c rename is PLANT-ONLY, so
@@ -4608,15 +4628,17 @@ func _build_work_inspector_kits(band: Dictionary, model: Dictionary) -> VBoxCont
     # ZERO separation, the queue settings strip's own: the second line costs a CONTROL and not a
     # block, so the gap above the picker is the column's and is charged exactly once.
     column.add_theme_constant_override("separation", 0)
-    # **TWO ROWS, UNCONDITIONALLY, AND NO WRAP PREDICATE.** A picker body has the strip's whole width
-    # and two controls to place, so there is no width branch to state — which is what removed the
-    # predicate, its `one_line` argument and the drift surface between a reservation that computed the
-    # wrap and a container that performed it. Both keys take `WORK_INSPECTOR_KIT_KEY_WIDTH`, so the
-    # two pickers share a left edge.
+    # **THE TAKE ROW IS UNCONDITIONAL AND THE UPKEEP ROW IS NOT, AND NO WRAP PREDICATE EITHER WAY.** A
+    # picker body has the strip's whole width and one control to place per row, so there is no width
+    # branch to state — which is what removed the predicate, its `one_line` argument and the drift
+    # surface between a reservation that computed the wrap and a container that performed it. Both
+    # keys take `WORK_INSPECTOR_KIT_KEY_WIDTH`, so the two pickers share a left edge on the shape that
+    # draws both.
     var take := _build_work_inspector_kit_line(column, _work_inspector_take_key(model))
     take.add_child(_build_work_inspector_take_kit_picker(band, model))
-    var upkeep := _build_work_inspector_kit_line(column, HudWorkVocab.WORK_INSPECT_UPKEEP_KEY)
-    upkeep.add_child(_build_work_inspector_upkeep_kit_picker(band, model))
+    if _work_inspector_has_upkeep(model):
+        var upkeep := _build_work_inspector_kit_line(column, HudWorkVocab.WORK_INSPECT_UPKEEP_KEY)
+        upkeep.add_child(_build_work_inspector_upkeep_kit_picker(band, model))
     return column
 
 ## One control line of the pair, at the height the reservation counted it at.
@@ -4682,14 +4704,40 @@ func _work_inspector_upkeep_job(model: Dictionary) -> String:
     return KitRoster.JOB_HUSBANDRY if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT \
         else KitRoster.JOB_AGRICULTURE
 
-## Does this row offer a kit line at all — true when EITHER job lists a tool. Asked by the reservation
-## and by the builder from one place, so the two cannot disagree about whether a line was drawn.
+## Does the KITS section draw at all — true when the TAKE job lists a tool, which is the one row every
+## row has. Asked by the reservation and by the builder from one place, so the two cannot disagree
+## about whether the section was drawn.
+##
+## ⛔ **IT WAS A CONJUNCTION OVER BOTH JOBS AND THAT WAS WRONG IN BOTH DIRECTIONS.** It read *"true
+## when EITHER job lists a tool"* and was written `and` — so a roster with no KEEPING tool suppressed
+## the take picker as well, and, worse, a roster that had one drew an Upkeep picker on a wild source
+## with nothing to keep. The keeping half is `_work_inspector_has_upkeep` now, gated on the SITE's
+## bill as well as on the roster.
 func _work_inspector_has_kits(model: Dictionary) -> bool:
     if model.is_empty():
         return false
-    var kits := _band_labor.kits()
-    return not KitRoster.kits_for_job(kits, _work_inspector_take_job(model)).is_empty() \
-        and not KitRoster.kits_for_job(kits, _work_inspector_upkeep_job(model)).is_empty()
+    return not KitRoster.kits_for_job(
+        _band_labor.kits(), _work_inspector_take_job(model)).is_empty()
+
+## …and does the UPKEEP half of that section draw — the picker AND the bill line under it, which are
+## one term. **Two conjuncts, and both are necessary**: the SITE must owe something to keep
+## (`RungLadder.upkeep_price_terms`, `[]` on a wild source), and the web's keeping job must list a
+## tool to offer. Asked by the reservation and by the builder from one place, exactly as the section's
+## own gate is.
+func _work_inspector_has_upkeep(model: Dictionary) -> bool:
+    if model.is_empty() or _work_inspector_upkeep_terms(model).is_empty():
+        return false
+    return not KitRoster.kits_for_job(
+        _band_labor.kits(), _work_inspector_upkeep_job(model)).is_empty()
+
+## The site's standing bill as terms, off the model rather than re-read from the source: composed once
+## where the raw wire source was in hand, so the gate above and the line the builder renders are the
+## same list and cannot come apart.
+func _work_inspector_upkeep_terms(model: Dictionary) -> Array[String]:
+    var terms: Array[String] = []
+    for term in model.get("upkeep_price_terms", []) as Array:
+        terms.append(String(term))
+    return terms
 
 ## **THE TAKE PICKER — the crew's own tool, on the path the compose sheet already uses.** It sends
 ## `assign_labor … kit <id>`, so this control adds no second command for a value that already has one;
@@ -4858,6 +4906,10 @@ func _work_inspector_height(model: Dictionary) -> float:
     height += HudWorkVocab.WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT
     if _work_inspector_has_kits(model):
         height += HudWorkVocab.WORK_INSPECTOR_KITS_SECTION_HEIGHT
+        # …and the UPKEEP half on top, which a WILD source does not draw: the picker and the bill line
+        # under it are one term behind the builder's own second predicate, verbatim.
+        if _work_inspector_has_upkeep(model):
+            height += HudWorkVocab.WORK_INSPECTOR_KITS_UPKEEP_HEIGHT
     # …and the hairline that separates the two pure actions from the last section above them. The row
     # itself has always been inside `WORK_INSPECTOR_EXTENT`; only its rule is new.
     height += HudWorkVocab.WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
@@ -5323,6 +5375,18 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # it. Reading both off one of them is how the pair would come to state one band's take
             # beside another band's keeping, or a site's keeping as if this band had chosen it.
             "upkeep_kit_id": String(rung_source.get("upkeep_kit_id", "")),
+            # **WHAT THIS SITE IS BILLED TO STAND, PER TURN, AND WHETHER IT IS BILLED AT ALL.** One
+            # list, spent twice: `_work_inspector_has_upkeep` reads its EMPTINESS as the gate on the
+            # Upkeep picker, and the line under that picker renders its TERMS. `RungLadder
+            # .upkeep_price_terms` carries why one producer answers both, and why a wild source —
+            # standing on no rung, with no improvement to keep — answers `[]`.
+            #
+            # It rides the model beside the keeping kit because that is the pair: the kit is what the
+            # bill is paid WITH, and a picker for a bill that does not exist is the control this
+            # field exists to stop drawing. Composed here for the reason the five build fields above
+            # are — this is where the raw wire source is in hand.
+            "upkeep_price_terms": RungLadder.upkeep_price_terms(
+                rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
             # **WHETHER THAT ID IS THE PLAYER'S WORD OR THE WEB'S DERIVATION**, which the id alone
             # cannot say — a player may name the very kit the derivation would have picked. The
             # picker draws its `(default)` mark off this rather than off a second client-side

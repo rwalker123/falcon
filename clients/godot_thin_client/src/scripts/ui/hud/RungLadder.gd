@@ -444,13 +444,9 @@ static func _build_price_asides(pile: Array[Dictionary],
 static func _hold_price_asides(source: Dictionary, prefix: String,
         improvement: String) -> Array[Dictionary]:
     var asides: Array[Dictionary] = []
-    var terms: Array[String] = []
-    var work := SourceForecast.build_upkeep_demand(source, prefix, improvement)
-    if work >= SourceForecast.UPKEEP_WORK_MIN:
-        terms.append(HudWorkVocab.RUNG_TRACK_HOLD_WORK_TERM % DetailFormat.format_work_units(work))
-    var goods := _material_term_list(
+    var terms := _price_terms(
+        SourceForecast.build_upkeep_demand(source, prefix, improvement),
         SourceForecast.build_upkeep_material_demand(source, prefix, improvement))
-    terms.append_array(goods)
     if terms.is_empty():
         return asides
     asides.append({
@@ -459,6 +455,49 @@ static func _hold_price_asides(source: Dictionary, prefix: String,
         RUNG_ASIDE_WARN_KEY: false,
     })
     return asides
+
+## **WHAT THIS SOURCE IS BILLED TO STAND, PER TURN, AS TERMS** — `["1 work", "0.05 hurdles"]`, `[]`
+## for a source that owes nothing at all. **`[]` IS THE WILD ANSWER AND IT IS THE GATE**: a source on
+## no standing rung has no improvement to keep, so the work board inspector draws no Upkeep picker and
+## no bill rather than a picker over a job that does not exist.
+##
+## ⛔ **ONE PRODUCER FOR *DOES THIS SITE OWE UPKEEP* AND FOR *WHAT DOES IT OWE*, deliberately.** The
+## gate is `is_empty()` on the very list the line renders, so the picker cannot draw beside a bill that
+## says nothing, nor a bill sit under a picker that did not draw. A re-derived rung test (`is_field`,
+## `corralled`, a `domestication` threshold) would be a SECOND authority over a question
+## `SourceForecast` already answers — and would additionally get the mid-climb case wrong: a source
+## raising its FIRST rung stands on `wild` and is already billed, which is exactly what the stamped
+## terms say and a rung word cannot.
+##
+## ⛔ **BOTH CURRENCIES, AND EITHER ONE ALONE IS ENOUGH.** A rung may owe work, goods, or both; a
+## keeping kit speeds the work half even where the material half is zero, so the disjunction is what
+## decides whether the picker is worth offering. The material half is `[]` on every shipped rung but
+## `animal:pen` (`SourceForecast.FORECAST_UPKEEP_MATERIAL_DEMAND_KEY`), which is why reading only the
+## work account would still have been right today and wrong on the next rung that eats a good.
+##
+## ⛔ **THE STAMPED PAIR, NEVER THE PER-RUNG QUOTE.** `_hold_price_asides` above answers *what would
+## this rung cost to hold* for a rung nobody has started, and `SourceForecast.upkeep_state`'s own ⛔
+## forbids reading one as the other — on a source mid-climb the two disagree by design. This one
+## answers *what is this source billed right now*, which is the present-tense question the inspector's
+## line asks and the only one a site already standing can be asked.
+static func upkeep_price_terms(source: Dictionary, prefix: String) -> Array[String]:
+    return _price_terms(
+        float(SourceForecast.upkeep_state(source, prefix).get(
+            "demand", SourceForecast.NO_UPKEEP_DEMAND)),
+        SourceForecast.upkeep_material_demand(source, prefix))
+
+## The work term and the goods terms of ONE bill, in that order — the shape both price readings take,
+## so a rate quoted on the track and the same rate quoted on the work board cannot be worded two ways.
+##
+## ⛔ **A ZERO WORK RATE STATES NO WORK TERM AND AN EMPTY GOODS LIST STATES NO GOODS TERM** — the
+## `MaterialPayoff` contract's own rule, one scope up: `0 work a turn` reads as a defect, and a bill
+## that costs nothing in a currency should say nothing rather than say nothing twice.
+static func _price_terms(work: float, goods: Array[Dictionary]) -> Array[String]:
+    var terms: Array[String] = []
+    if work >= SourceForecast.UPKEEP_WORK_MIN:
+        terms.append(HudWorkVocab.RUNG_TRACK_HOLD_WORK_TERM % DetailFormat.format_work_units(work))
+    terms.append_array(_material_term_list(goods))
+    return terms
 
 ## The band's shelf as `{material_id: amount}` — the ONE place `material_store` is turned into a
 ## lookup, so the stall test reads a good's own stock and never a total across goods.

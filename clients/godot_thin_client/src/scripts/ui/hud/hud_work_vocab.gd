@@ -791,12 +791,27 @@ const WORK_INSPECTOR_POLICY_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT
 const WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
     + WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT
 
-## …and the KITS section, which is the one that grew: its header, its two control lines, and the HINT
-## line the strip could not afford (`WORK_INSPECT_KITS_HINT`). **It is the only section a row can
-## LACK** — `_work_inspector_has_kits` gates it, a section with an empty picker in it being a control
-## that answers nothing.
+## …and the KITS section AT ITS FLOOR: its header and the ONE control line every row draws — the take
+## crew's tool. **It is the only section a row can LACK** — `_work_inspector_has_kits` gates it, a
+## section with an empty picker in it being a control that answers nothing.
+##
+## ⛔ **THE UPKEEP ROW IS NOT IN HERE, AND THAT IS THE FIX** (issue: the wild source's Upkeep row).
+## The retired reading was *"the one that grew: its header, its two control lines, and the HINT line
+## the strip could not afford"* — a flat two-row price, which is what let the card draw an Upkeep
+## picker on a source that stands on no rung and therefore has nothing to keep. The second row and the
+## line under it are `WORK_INSPECTOR_KITS_UPKEEP_HEIGHT`, added only where the site really owes a bill.
 const WORK_INSPECTOR_KITS_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
-    + WORK_INSPECTOR_KITS_PICKER_HEIGHT + WORK_INSPECTOR_NOTE_HEIGHT
+    + WORK_COMPACT_PICKER_LINE_HEIGHT
+
+## …and what the UPKEEP half costs ON TOP of that floor: its own control line, and the line beneath
+## that states what the site is billed per turn (`WORK_INSPECT_KITS_UPKEEP_FORMAT`).
+##
+## **BOTH ARE GATED ON ONE ANSWER AND THE PAIR IS INDIVISIBLE.** An Upkeep picker with no bill beside
+## it is the control this constant exists to stop drawing, and a bill with no picker beside it is a
+## number the player cannot act on — so the two are one term, added by `_work_inspector_has_upkeep`
+## and by nothing else.
+const WORK_INSPECTOR_KITS_UPKEEP_HEIGHT := WORK_COMPACT_PICKER_LINE_HEIGHT \
+    + WORK_INSPECTOR_NOTE_HEIGHT
 
 ## **THE CEILING THESE TERMS ADD UP TO, AND IT IS A SUM OVER THREE SECTIONS**
 ## (`docs/plan_standing_upkeep.md` §4.9 item 12d). A model carrying every conditional child at once —
@@ -835,6 +850,7 @@ const WORK_INSPECTOR_CEILING_HEIGHT := WORK_INSPECTOR_HEIGHT \
     + WORK_INSPECTOR_POLICY_SECTION_HEIGHT \
     + WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT \
     + WORK_INSPECTOR_KITS_SECTION_HEIGHT \
+    + WORK_INSPECTOR_KITS_UPKEEP_HEIGHT \
     + WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
 
 ## Gaps the work column always spends: head→chips, chips→board.
@@ -2026,26 +2042,21 @@ const BUILD_QUEUE_SETTINGS_KIT_KEY := "KIT"
 ## arithmetic said 38px** (`32 + 6`); that is the COMPOSE SHEET's picker, a free-standing form with a
 ## whole column to spend. In this zone the shipped figure is 22.
 ##
-## **TWO LINES, ONE PER KIT, AND NO WRAP PREDICATE.** A picker body has the strip's full width and two
-## controls to place, so it stacks them unconditionally — which removes the width branch, the
-## `one_line` argument and the drift surface between a predicate and a container that the block form
-## needed. `WORK_INSPECTOR_KIT_KEY_WIDTH` still lines the two keys up.
-const WORK_INSPECTOR_KIT_LINES := 2.0
-
-## **AND THE PICKER'S HEIGHT, WHICH IS THE TERM THE `max` COMPETES ON** — two control lines and no
-## chrome of its own, the block gap being the column's. 44 against the priority picker's 52, so this
-## never becomes the strip's worst case and `WORK_INSPECTOR_CEILING_HEIGHT` does not move for it.
+## **ONE LINE PER KIT ROW, AND NO WRAP PREDICATE.** A picker body has the strip's full width and one
+## control to place per row, so it stacks them — which removes the width branch, the `one_line`
+## argument and the drift surface between a predicate and a container that the block form needed.
+## `WORK_INSPECTOR_KIT_KEY_WIDTH` still lines the keys up.
 ##
-## ⛔ **THE HINT LINE IS BACK, AND IT IS NOT COUNTED HERE** — this term is the two CONTROL lines, and
-## `WORK_INSPECTOR_KITS_SECTION_HEIGHT` adds the header and `WORK_INSPECT_KITS_HINT` around them
-## (`docs/plan_standing_upkeep.md` §4.9 item 12d, second pass). **The reason it was cut is quoted
-## rather than deleted**: *"NO HINT LINE, and the arithmetic is why. The priority picker\'s 52 is 32 +
-## a 20px hint; two kit lines plus a hint would be 64 — 12 over the current max, which busts the wide
-## shell by 8. What the hint would have said … is in each picker\'s TOOLTIP instead."* Every figure in
-## it is right and every one of them is about a strip inside a 396px zone box. The card is measured
-## against the viewport, so 64 is simply 64.
-const WORK_INSPECTOR_KITS_PICKER_HEIGHT := WORK_INSPECTOR_KIT_LINES \
-    * WORK_COMPACT_PICKER_LINE_HEIGHT
+## ⛔ RETIRED — **`WORK_INSPECTOR_KIT_LINES` (`2.0`) and `WORK_INSPECTOR_KITS_PICKER_HEIGHT`**, the
+## pair that priced the section as *always two control lines*. Their note read: *"AND THE PICKER\'S
+## HEIGHT, WHICH IS THE TERM THE `max` COMPETES ON — two control lines and no chrome of its own … 44
+## against the priority picker\'s 52"* and *"THE HINT LINE IS BACK, AND IT IS NOT COUNTED HERE — this
+## term is the two CONTROL lines, and `WORK_INSPECTOR_KITS_SECTION_HEIGHT` adds the header and
+## `WORK_INSPECT_KITS_HINT` around them"*. **The second row is CONDITIONAL now** — a wild source has no
+## standing rung and therefore nothing to keep — so a constant that folds two rows into one figure
+## cannot be asked how tall the section is on the shape that has one. The take row rides
+## `WORK_INSPECTOR_KITS_SECTION_HEIGHT` and the upkeep row rides
+## `WORK_INSPECTOR_KITS_UPKEEP_HEIGHT`, which is what makes *reserved ≥ drawn* hold on BOTH shapes.
 
 ## The crew key's declared width — wider than the queue strip's `CROP`/`KIT` because this key is a
 ## crew NOUN (`Harvesters` / `Hunters` / `Herders`) rather than a three-letter tag, and both keys in
@@ -2062,33 +2073,46 @@ const WORK_INSPECTOR_KIT_KEY_WIDTH := 62.0
 ## read as a control over that role's pool — which this is not, the kit being per SITE since §2.5.
 const WORK_INSPECT_UPKEEP_KEY := "Upkeep"
 
-## **THE KITS SECTION\'S HINT LINE, and it says the one thing neither control can** — that `none` is a
-## choice a player makes rather than a hole (`docs/plan_standing_upkeep.md` §4.9 item 12d, second
-## pass). It is the priority section\'s hint beat for beat: one line, at `ALLOC_SECTION_FONT_SIZE`,
-## under the controls it explains.
+## ⛔ RETIRED — **`WORK_INSPECT_KITS_HINT`**, which read *"\"No kit\" is a real choice — the site worked
+## bare-handed."* and sat under the pair on every kitted row. **It said nothing the section needed and
+## it drew where the section had a hole**: on a WILD source the card rendered an Upkeep picker over a
+## site with no standing rung to keep, and this line stood under it explaining that going without a
+## tool was fine — an answer to a question that was itself the defect. The `none` rule went BACK into
+## the two tooltips it was taken out of, which is where a per-control caveat belongs; what the line\'s
+## slot carries now is `WORK_INSPECT_KITS_UPKEEP_FORMAT`, the site\'s actual bill, which is the fact an
+## Upkeep picker is meaningless without.
 ##
-## ⛔ **IT WAS CUT FOR ONE REASON AND THAT REASON IS GONE.** The retired note read: *"THE `none` RULE
-## LIVES IN BOTH TOOLTIPS BECAUSE THE PICKER HAS NO HINT LINE. The priority picker\'s 52px is 32 + a
-## 20px hint; two kit rows plus a hint would be 64, which is 12 over the strip\'s current worst case
-## and busts the wide dock by 8."* That arithmetic was about a strip competing for a 396px zone box.
-## The card is measured against the viewport and clears the shortest shipped one by hundreds of
-## pixels, so the line is simply affordable.
+## The measurement in its own retired note stays true of its replacement and is why the format below
+## is short: *"IT IS SHORTER THAN `WORK_PRIORITY_HINT`, and that is a MEASUREMENT rather than a
+## preference: that sentence is the longest this card renders on one line, and the first draft of this
+## one ran seven characters past it and was drawn ELLIPSISED in the frame."*
+
+## **WHAT THIS SITE IS BILLED TO STAND, PER TURN — the one thing the Upkeep picker cannot be read
+## without.** `Kept at 1 work · 0.05 hurdles a turn.` It draws with the Upkeep row and only with it, so
+## the picker and the bill it speeds arrive together or not at all.
 ##
-## **IT IS SHORTER THAN `WORK_PRIORITY_HINT`, and that is a MEASUREMENT rather than a preference**:
-## that sentence is the longest this card renders on one line, and the first draft of this one ran
-## seven characters past it and was drawn ELLIPSISED in the frame — a hint the card reserved one line
-## for and could not fit. It names the picker\'s own face (`No kit`) rather than the wire token, so a
-## player reads the line and the entry as one thing.
-const WORK_INSPECT_KITS_HINT := "\"No kit\" is a real choice — the site worked bare-handed."
+## ⛔ **IT STATES THE TERMS AND NOT THE RUNG WORD, because the card\'s HEAD LINE already states the
+## rung** (`Hunt Aurochs · 🐄 Corralled 100%`, through `DetailFormat.standing_rung_face`). One rung
+## worded twice on one card is how two surfaces come to disagree about one source, and the head line
+## is the producer this card already asks — so what is missing here is the PRICE, which no line on the
+## card said at all.
+##
+## **PRESENT TENSE, DELIBERATELY.** The terms are the source\'s STAMPED bill
+## (`SourceForecast.upkeep_state`\'s `demand` and `upkeep_material_demand`), which answers *what is
+## this source billed right now* — the question this line asks. It is NOT the per-rung
+## `build_upkeep_demand` quote, which answers *what would a rung cost to hold* for a rung nobody has
+## started; that producer\'s own ⛔ forbids reading one as the other, and on a source mid-climb the two
+## disagree by design.
+const WORK_INSPECT_KITS_UPKEEP_FORMAT := "Kept at %s a turn."
 
-## ⛔ **THE TOOLTIPS KEEP WHAT ONLY THEY SAY, AND LOSE WHAT THE HINT NOW SAYS.** The `none` sentence
-## was in BOTH of them precisely because there was no visible line to put it on; a visible line is
-## better, so the duplicate goes. What survives is the half a hint under BOTH controls cannot carry —
-## which of the two this picker IS (the crew\'s tool against the site\'s) and the upkeep one\'s SCOPE.
-## Deleting them outright would have lost that.
-const WORK_INSPECT_TAKE_KIT_TOOLTIP := "What this crew carries when it works the source."
+## ⛔ **THE `none` RULE IS BACK IN BOTH TOOLTIPS, WHICH IS WHERE IT CAME FROM.** It was moved out to a
+## shared hint line for one slice; that line is retired above, and a caveat about what ONE control\'s
+## `No kit` entry means is a per-control fact rather than a section-wide one. What each tooltip carries
+## besides is the half a shared line never could — which of the two this picker IS (the crew\'s tool
+## against the site\'s) and the upkeep one\'s SCOPE.
+const WORK_INSPECT_TAKE_KIT_TOOLTIP := "What this crew carries when it works the source. `none` is a real choice, not an empty one — it is how a site is worked bare-handed to conserve the tool."
 
-const WORK_INSPECT_UPKEEP_KIT_TOOLTIP := "What this SITE is held with, turn after turn — the keeping tool, not the take one. Set per site, so a pick here moves this row and no other."
+const WORK_INSPECT_UPKEEP_KIT_TOOLTIP := "What this SITE is held with, turn after turn — the keeping tool, not the take one. Set per site, so a pick here moves this row and no other. `none` is a real choice, not an empty one — it is how a site is held bare-handed to conserve the tool."
 
 ## ⛔ RETIRED — **`work_inspector_kits_one_line_width` / `work_inspector_kits_one_line` /
 ## `work_inspector_kits_height(has_kits, one_line)`**, the block form's width predicate and its

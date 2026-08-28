@@ -3491,8 +3491,8 @@ unreserved 106px risk against a 396px box.
              <the rank hint>
  ────────────────────────────────────────
  KITS        Harvesters [Harvesting kit ▾]
-             Upkeep     [Tillage kit ▾]
-             <the `No kit` hint, VISIBLE>
+             Upkeep     [Tillage kit ▾]        ← only where the site OWES upkeep
+             Kept at 2 work a turn.            ← ditto; the terms, not the rung word
  ────────────────────────────────────────
  Jump to source                  Unassign
 ```
@@ -3526,12 +3526,15 @@ panel's bench-link face, which is why it stays a shared const.
 | `WORK_INSPECTOR_SECTION_HEAD_HEIGHT` | **27** | rule (1) + gap (6) + label line (14) + gap (6) |
 | POLICY section | **59** | head + the floor picker's 32 |
 | PRIORITY section | **79** | head + the rank picker's 52 (grid + hint) |
-| KITS section | **91** | head + two control lines (44) + the hint (20) |
+| KITS section | **49** | head + the TAKE control line (22) — every row that has kits |
+| …its UPKEEP half | **42** | the second control line (22) + the standing bill (20) — only where the site owes one |
 | `WORK_INSPECTOR_ACTIONS_RULE_HEIGHT` | **7** | the hairline above the two actions and its gap |
 | **`WORK_INSPECTOR_CEILING_HEIGHT`** | **374** | every conditional child, on a row with kits |
 
-An ordinary kitted row with no conditional notes measures **300**; the rendered card is **340** at the
-fixture's width (the priority hint and the notes it carries). **The section rule is
+An ordinary KEPT row with no conditional notes measures **300** and a WILD one **258**; the rendered
+card is **298** at the fixture's width, on the wild queue row the dialog frames open (the priority hint
+and the note it carries). It read *"the rendered card is 340"* while a wild row still drew an Upkeep
+picker it had no bill for. **The section rule is
 `HudStyle.LINE_SOFT` at `BandCityPanel._make_zone_separator`'s thickness** — the panel's own hairline
 vocabulary, turned on its side — and the headers are `HudWidgets.alloc_section_label`, which is what
 the allocation panel already heads its sections with. Nothing was invented.
@@ -3567,12 +3570,20 @@ The placement rule is unchanged in KIND: one centre, one rect, no dock-edge fork
 *"the board stays visible"* is now structural rather than a consequence of the card being small.
 
 **The cost is a scroll on the four smallest BOTTOM docks.** The room a bottom dock leaves is the map
-band above it, and at 1366×768 / 1280×800 / 1152×720 / 1024×768 that is 264–296px against a 340px
-card, so `fit_to_content` clamps the card and its own `ScrollContainer` carries the rest —
-`band_panel_work_inspector_dialog_tight` is the frame, and on it the KITS upkeep row and both actions
-are below the fold. **Against the raw VIEWPORT the card fits every configuration** (340 of the 696px a
-720-high window leaves, a margin of 356), so this is a cost of not covering the board rather than of
-the card being too tall. A vertical dock has 356–716px of margin everywhere.
+band above it, and at 1366×768 / 1280×800 / 1152×720 / 1024×768 that is 264–296px against a **298px**
+card — the WILD queue row those frames open; a KEPT row is 340 — so `fit_to_content` clamps the card
+and its own `ScrollContainer` carries the rest. `band_panel_work_inspector_dialog_tight` is the frame,
+and on it the KITS take row and both actions are below the fold. It read *"the KITS upkeep row and
+both actions are below the fold"*, which was written while a wild source still drew an Upkeep picker
+it had no bill for; that row has no upkeep row to push under the fold at all. **Against the raw
+VIEWPORT the card fits every configuration** (298–340 of the 696px a 720-high window leaves, a margin
+of 356 or better), so this is a cost of not covering the board rather than of the card being too tall.
+A vertical dock has 356–716px of margin everywhere.
+
+⛔ **THE WILD ROW IS SHORTER AND THAT IS NOT A FIX FOR THE CLAMP.** Dropping the Upkeep row takes 42px
+off a wild card, which eases the four smallest bottom docks by exactly that much and changes nothing
+about the mechanism: a KEPT row on the same dock still scrolls. The clamp is a property of the room a
+bottom dock leaves, not of the KITS section.
 
 #### The assertions that had to be inverted, and why they were kept
 
@@ -3582,7 +3593,7 @@ deleted** — a claim quietly guarding retired behaviour is worse than no claim:
 | was | is |
 |---|---|
 | `_assert_kits_picker_is_exclusive_and_costs_the_max` — the three pickers are mutually exclusive and the strip reserves the MAX | `_assert_sections_are_drawn_and_cost_the_sum` — all three sections draw on one render and the card reserves the SUM, term for term against the producer, plus *"more than the tallest section alone"* |
-| *"with the expansion CLOSED the strip draws neither picker"* | `_assert_kits_section_draws_both_controls` — both pickers, their rosters, `none` on both, and the HINT, with **no click at all** |
+| *"with the expansion CLOSED the strip draws neither picker"* | `_assert_kits_section_draws_both_controls` — both pickers, their rosters, `none` on both and the site's BILL, with **no click at all**, staged on a source that stands on a rung. It asserted *"and the HINT"* until the hint retired; `_assert_wild_source_offers_no_upkeep` is its other arm, and neither is worth anything without the other |
 | *"the pick CLOSES the picker"* | the PRIORITY section is still drawn after a pick, which is what lets the three levels be pressed in sequence the way a player does |
 | *"`Change policy` swapped the strip to the FLOOR picker … the priority picker is GONE with it"* | both grids are on the card at once, each under its own header |
 | *"the card is centred in the VIEWPORT"* | the card is centred in the ROOM the dock leaves |
@@ -5341,12 +5352,50 @@ itself — with the HINT line the exclusivity had cost it.
 | picker | costs |
 |---|---|
 | `WORK_INSPECTOR_POLICY_PICKER_HEIGHT` (floor) | 32 |
-| **`WORK_INSPECTOR_KITS_PICKER_HEIGHT`** | **44** (2 × `WORK_COMPACT_PICKER_LINE_HEIGHT`) |
+| one kit control line | 22 (`WORK_COMPACT_PICKER_LINE_HEIGHT`) |
 | `WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT` | 52 (32 + a hint line) |
 
-At 44 the kit pair is shorter than the priority picker — which mattered while the ceiling was a MAX
-and matters no longer, all three now being terms in a SUM
-(`WORK_INSPECTOR_KITS_SECTION_HEIGHT` wraps this 44 in a header and a hint, for 91).
+⛔ **`WORK_INSPECTOR_KITS_PICKER_HEIGHT` (`44`, `2 × WORK_COMPACT_PICKER_LINE_HEIGHT`) AND
+`WORK_INSPECTOR_KIT_LINES` (`2.0`) ARE RETIRED, and the flat two is what shipped the defect.** The
+retired claim read *"At 44 the kit pair is shorter than the priority picker — which mattered while the
+ceiling was a MAX and matters no longer … `WORK_INSPECTOR_KITS_SECTION_HEIGHT` wraps this 44 in a
+header and a hint, for 91."* The arithmetic was right and the SHAPE was wrong: the section has two
+shapes, and a constant that folds both rows into one number cannot be asked how tall the one-row shape
+is. The section is `27 + 22 = 49` at its floor and `+ 42` where the site owes upkeep, and **374 is
+unchanged** — `27 + 44 + 20` and `27 + 22 + 22 + 20` are the same 91, so the ceiling did not move.
+
+#### ⛔ THE UPKEEP ROW DREW ON WILD SOURCES, ON BOTH WEBS — reported in play
+
+A **wild** source has no standing rung and therefore **nothing to keep**; upkeep is a property of a
+rung (a pen has hurdles to mend, a Tended Patch and a Field have their own bills, a wild stand and a
+wild herd have no improvement at all). The card drew `Upkeep [Hurdling kit ▾]` / `Upkeep [Tillage kit
+▾]` on them anyway, silently defaulted to a kit, and stood a hint line under it saying *"\"No kit\" is
+a real choice — the site worked bare-handed."* — an answer to a question that was itself the defect.
+**Both webs behaved identically**; the plant half was not a separate bug.
+
+**The gate is the SITE's published bill and not a re-derived rung test.**
+`RungLadder.upkeep_price_terms(source, prefix)` composes the STAMPED pair — `upkeepDemand` (work) and
+`upkeepMaterialDemand` (goods) — into terms, and **`[]` is the wild answer**. That list is the ONE
+producer: `BandPanelController._work_inspector_has_upkeep` reads its emptiness as the gate and the
+card renders its terms as the bill, so a picker cannot draw beside a bill that says nothing. Reaching
+for `is_field` / `corralled` / a `domestication` threshold would be a second authority over a question
+`SourceForecast` already answers — and would get the mid-climb case WRONG, a source raising its FIRST
+rung standing on `wild` while already being billed.
+
+**Either currency alone is enough.** A rung may owe work, goods or both, and a keeping kit speeds the
+work half even where the material half is zero — so the gate is a disjunction. `upkeepMaterialDemand`
+is empty on every shipped rung but `animal:pen`, which is why reading only the work account would have
+been right today and wrong on the next rung that eats a good.
+
+**The line states the TERMS and not the rung word** (`WORK_INSPECT_KITS_UPKEEP_FORMAT`, *"Kept at %s a
+turn."*): the head line already names the rung through `DetailFormat.standing_rung_face`
+(`Hunt Aurochs · 🐄 Corralled 100%`), and one rung worded twice on one card is how two surfaces come to
+disagree about one source. On a wild source the head line states no rung at all, which is the same
+verdict read through the other producer — the harness asserts both together.
+
+**The take row (`Hunters` / `Herders` / `Harvesters`) is unconditional**, and
+`_work_inspector_has_kits` is now a test on the TAKE job alone. It used to be a conjunction over both
+jobs, which additionally meant a roster with no keeping tool suppressed the take picker as well.
 
 > #### ⛔ IT WAS A PERMANENT BLOCK FIRST, AND THAT COST 50px UNCONDITIONALLY
 >

@@ -6629,7 +6629,9 @@ never load that one:
 `WORK_PICKER_NONE`/`_FLOOR`/`_PRIORITY`/`_KITS` are retired outright with
 `BandPanelController._work_picker_open` and `_toggle_work_picker`: the card draws POLICY, PRIORITY and
 KITS at once, so `_work_inspector_height` adds all three rather than one, and the ceiling is **374**
-(base 64 + 3×20 notes + 14 arrivals + 59 + 79 + 91 + a 7px actions rule) rather than 210.
+(base 64 + 3×20 notes + 14 arrivals + 59 + 79 + [49 + 42] + a 7px actions rule) rather than 210. The
+KITS term is TWO terms since the wild-source fix below — 49 at its floor, plus 42 where the site owes
+upkeep — and 374 did not move, `27 + 44 + 20` and `27 + 22 + 22 + 20` being the same 91.
 
 - **`WORK_INSPECTOR_SECTION_HEAD_HEIGHT` (27)** is what one header costs: the rule (1), the gap under
   it (6), the label's own measured line (14) and the gap under that (6). The label is
@@ -6639,13 +6641,25 @@ KITS at once, so `_work_inspector_height` adds all three rather than one, and th
   deliberately not a read of it: a vocab leaf reaching for a `class_name`d panel script at class load
   is a cycle waiting to happen, which is the rule `WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT` already
   follows against `ArrivalStrip.STRIP_HEIGHT`. Change one and change the other.
-- **`WORK_INSPECT_KITS_HINT` came back and the two kit TOOLTIPS lost the sentence it duplicates.** It
-  was cut because *"two kit lines plus a hint would be 64 — 12 over the current max, which busts the
-  wide shell by 8"*, which was arithmetic about a 396px zone box. The tooltips keep the half a shared
-  hint cannot say (which of the two pickers this is, and the upkeep one's per-site scope). **The hint
-  is shorter than `WORK_PRIORITY_HINT` as a MEASUREMENT**: that sentence is the longest this card
-  renders on one line, and the first draft of this one ran seven characters past it and drew
-  ellipsised.
+- ⛔ **`WORK_INSPECT_KITS_HINT` IS RETIRED AND THE `none` SENTENCE IS BACK IN BOTH TOOLTIPS.** The
+  retired claim read: *"`WORK_INSPECT_KITS_HINT` came back and the two kit TOOLTIPS lost the sentence
+  it duplicates. It was cut because 'two kit lines plus a hint would be 64 — 12 over the current max,
+  which busts the wide shell by 8', which was arithmetic about a 396px zone box."* The height argument
+  was sound; the LINE was not. It read *"\"No kit\" is a real choice — the site worked bare-handed."*
+  and drew under an Upkeep picker that, on a wild source, should never have been there — explaining
+  that going toolless was fine for a site with nothing to keep. What its slot carries now is
+  `WORK_INSPECT_KITS_UPKEEP_FORMAT`, the site's own standing bill; a caveat about what ONE control's
+  `No kit` entry means is per-control and lives in that control's tooltip. **The width measurement
+  survives its subject and is why the replacement is short**: *"the hint is shorter than
+  `WORK_PRIORITY_HINT` as a MEASUREMENT — that sentence is the longest this card renders on one line,
+  and the first draft of this one ran seven characters past it and drew ellipsised."*
+- **`WORK_INSPECT_KITS_UPKEEP_FORMAT` ("Kept at %s a turn.") is composed from the STAMPED pair.**
+  `RungLadder.upkeep_price_terms` joins `upkeepDemand` (work) and `upkeepMaterialDemand` (goods) into
+  terms — `Kept at 1 work · 0.05 hurdles a turn.` — and its EMPTINESS is the gate on the Upkeep row.
+  It is deliberately NOT `build_upkeep_demand`'s per-rung quote: that answers *what would a rung cost
+  to hold* for a rung nobody has started, this answers *what is this source billed right now*, and
+  `SourceForecast.upkeep_state`'s own ⛔ forbids reading one as the other. The full rationale for the
+  gate is in `band-city-panel.md` → "THE UPKEEP ROW DREW ON WILD SOURCES, ON BOTH WEBS".
 - **`WORK_INSPECT_POLICY` ("Change policy") is retired**, a header naming what is below it rather than
   what you press; `WORK_INSPECT_POLICY_SECTION` ("Policy") replaces it. `WORK_INSPECT_PRIORITY` and
   `WORK_INSPECT_KITS` were already nouns and are reused unchanged — the former is also the CRAFTING

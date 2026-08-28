@@ -3614,7 +3614,9 @@ func _assert_work_inspector_fits(where: String) -> void:
 	_assert_band_panel("%s: the work inspector RESERVES what it DRAWS (%.0f reserved, %.0f drawn)"
 			% [where, reserved, drawn], reserved + ZONE_BOUNDS_TOLERANCE >= drawn)
 
-## GUARD: **THE KITS SECTION REALLY DRAWS BOTH CONTROLS, ITS HEADER AND ITS HINT.** Every claim about
+## GUARD: **THE KITS SECTION REALLY DRAWS BOTH CONTROLS, ITS HEADER AND THE SITE'S BILL.** Staged on a
+## source that stands on a rung — `_assert_wild_source_offers_no_upkeep` is the other arm, and neither
+## is worth anything without the other. Every claim about
 ## the pair's HEIGHT is satisfied by a section that renders nothing at all — an empty block reserves
 ## 91px and draws 0, which fits any card — so the liveness half is asserted here, on the rendered tree.
 ##
@@ -3643,21 +3645,123 @@ func _assert_kits_section_draws_both_controls() -> void:
 		take is OptionButton and upkeep is OptionButton
 			and (take as OptionButton).item_count > 0
 			and (upkeep as OptionButton).item_count > 0)
-	# ⛔ **AND `none` IS ON BOTH ROSTERS**, which is the choice the HINT now promises in the open and the
+	# ⛔ **AND `none` IS ON BOTH ROSTERS**, which is the choice both pickers' TOOLTIPS promise and the
 	# one a job-filtered roster silently drops when a config edit forgets a `jobs` entry — the exact
 	# staleness `fixtures_band.gd`'s own kit roster carried until §4.9 item 12c.
-	_assert_band_panel("kits section — …and `none` is offered on both, which the hint line promises",
+	_assert_band_panel("kits section — …and `none` is offered on both, which both tooltips promise",
 		_option_has_item(take as OptionButton, KIT_NONE_FACE)
 			and _option_has_item(upkeep as OptionButton, KIT_NONE_FACE))
-	# **THE HINT IS DRAWN, not merely afforded.** It was cut for 12px of zone height and brought back
-	# when the card stopped competing for any; a section that reserved for it and drew nothing would
-	# leave the `none` rule stated in no visible place at all.
-	_assert_band_panel("kits section — …and its HINT line is drawn, not merely reserved for",
-		_find_aside_label(_work_inspector_root(), HudWorkVocab.WORK_INSPECT_KITS_HINT) != null)
+	# **AND THE SITE'S BILL IS DRAWN BESIDE THE PICKER, not merely afforded.**
+	#
+	# ⛔ **THIS ASSERTED A HINT LINE AND THE HINT LINE WAS THE DEFECT.** It read *"THE HINT IS DRAWN,
+	# not merely afforded. It was cut for 12px of zone height and brought back when the card stopped
+	# competing for any; a section that reserved for it and drew nothing would leave the `none` rule
+	# stated in no visible place at all."* The line it guarded said *"\"No kit\" is a real choice — the
+	# site worked bare-handed."*, which was nonsense on a card whose Upkeep picker should not have been
+	# there at all. What the slot carries now is what the picker cannot be read without — the rate the
+	# keeping kit speeds — so the claim is INVERTED rather than deleted: the line is present AND it
+	# carries the terms this source really owes.
+	var bill := _kits_upkeep_bill_label()
+	_assert_band_panel("kits section — …and the SITE'S BILL is drawn beside the pickers (\"%s\")"
+			% ("<none>" if bill == null else bill.text),
+		bill != null and bill.text != "" and bill.text != _kits_upkeep_bill_face([]))
 
 ## The bare kit's own display face, spelled here rather than resolved through `KitRoster`: an
 ## expectation re-derived through the code under test agrees with it by construction.
 const KIT_NONE_FACE := "No kit"
+
+## The `Kept at … a turn.` line the KITS section draws beside its Upkeep picker, or `null`. Found by
+## its FORMAT's fixed prefix rather than by a meta, so a card that drew the sentence with no terms in
+## it is still found and still fails the emptiness half of the claim.
+func _kits_upkeep_bill_label() -> Label:
+	return _find_label_prefixed(_work_inspector_root(), _kits_upkeep_bill_prefix())
+
+## The literal head of `WORK_INSPECT_KITS_UPKEEP_FORMAT`, so the search does not depend on what the
+## terms are — which is exactly what the wild/kept fork changes.
+func _kits_upkeep_bill_prefix() -> String:
+	return HudWorkVocab.WORK_INSPECT_KITS_UPKEEP_FORMAT.split("%s")[0]
+
+## The sentence with NO terms in it — what a bill composed from an empty list would read. Never a
+## legal render; it is the degenerate string the liveness claim above excludes.
+func _kits_upkeep_bill_face(terms: Array[String]) -> String:
+	return HudWorkVocab.WORK_INSPECT_KITS_UPKEEP_FORMAT % HudWorkVocab \
+		.RUNG_TRACK_PRICE_SEPARATOR.join(terms)
+
+func _find_label_prefixed(node: Node, prefix: String) -> Label:
+	if node is Label and (node as Label).text.begins_with(prefix):
+		return node as Label
+	for child in node.get_children():
+		var found := _find_label_prefixed(child, prefix)
+		if found != null:
+			return found
+	return null
+
+## GUARD: **A WILD SOURCE OFFERS A TAKE KIT AND NOTHING TO KEEP — on BOTH WEBS.**
+##
+## ⛔ **THIS IS THE CASE THE DEFECT LIVED IN, AND NO FRAME HELD IT.** Reported from play on our own
+## build: a wild herd and a wild patch each drew `Upkeep [Hurdling kit ▾]` / `Upkeep [Tillage kit ▾]`
+## over a site standing on NO RUNG — a tool offered for a job that does not exist, silently defaulted
+## to a kit. Every claim in this file about the kit pair asserted the pair was PRESENT, so all of them
+## passed on exactly the card that was wrong.
+##
+## ⛔ **THE NEGATIVE IS PAIRED WITH LIVENESS, or it passes on a card rendering no kits at all.** Three
+## absences are asserted — the upkeep picker, the `Upkeep` key beside it and the bill line under it —
+## against a take picker that really is drawn, really is an `OptionButton`, really carries its roster
+## and really offers `none`. Without the second half, "no upkeep picker" is satisfied by a KITS section
+## that failed to build.
+func _assert_wild_source_offers_no_upkeep(where: String) -> void:
+	var root := _work_inspector_root()
+	var take := _find_meta_control(root, HudWorkVocab.WORK_INSPECT_TAKE_KIT_META)
+	_assert_band_panel("%s: the TAKE picker is drawn on a wild source, with its roster and `none` (%d entries)"
+			% [where, (take as OptionButton).item_count if take is OptionButton else -1],
+		take is OptionButton and (take as OptionButton).item_count > 0
+			and _option_has_item(take as OptionButton, KIT_NONE_FACE))
+	# …and NOTHING of the keeping half: not the picker, not its key, not the bill.
+	var upkeep := _find_meta_control(root, HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_META)
+	_assert_band_panel("%s: …and NO upkeep picker anywhere on the card — a wild source has nothing to keep"
+		% where, upkeep == null)
+	_assert_band_panel("%s: …and no `%s` key beside it either"
+			% [where, HudWorkVocab.WORK_INSPECT_UPKEEP_KEY],
+		_label_titled_under(root, HudWorkVocab.WORK_INSPECT_UPKEEP_KEY) == null)
+	_assert_band_panel("%s: …and no standing bill under it" % where,
+		_kits_upkeep_bill_label() == null)
+	# **AND THE HEAD LINE AGREES**: a wild source states no rung at all, which is the same fact read
+	# through the producer the head line uses. Asserted here so "no upkeep row" cannot pass on a KEPT
+	# source whose section simply failed to build its second half.
+	_assert_band_panel("%s: …and the head line states no rung, which is the same wild verdict" % where,
+		_inspected_rung_face() == "")
+
+## GUARD: **A KEPT SOURCE OFFERS BOTH, AND SAYS WHAT IT COSTS — on BOTH WEBS.** The positive half of
+## the fork above, on a source that really does stand on a rung: the take picker, the upkeep picker
+## AND the non-empty bill line the picker cannot be read without.
+func _assert_kept_source_offers_upkeep(where: String) -> void:
+	var root := _work_inspector_root()
+	var take := _find_meta_control(root, HudWorkVocab.WORK_INSPECT_TAKE_KIT_META)
+	var upkeep := _find_meta_control(root, HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_META)
+	_assert_band_panel("%s: a kept source draws BOTH pickers (take %s, upkeep %s)"
+			% [where, "yes" if take != null else "no", "yes" if upkeep != null else "no"],
+		take is OptionButton and upkeep is OptionButton
+			and (take as OptionButton).item_count > 0
+			and (upkeep as OptionButton).item_count > 0)
+	var bill := _kits_upkeep_bill_label()
+	_assert_band_panel("%s: …and the standing bill beneath them, with real terms in it (\"%s\")"
+			% [where, "<none>" if bill == null else bill.text],
+		bill != null and bill.text != "" and bill.text != _kits_upkeep_bill_face([]))
+	# **AND THE HEAD LINE NAMES THE RUNG**, which is why the bill states TERMS and not a rung word: one
+	# rung worded twice on one card is what this section refused to do.
+	_assert_band_panel("%s: …and the head line names the rung the bill is for (\"%s\")"
+			% [where, _inspected_rung_face()], _inspected_rung_face() != "")
+
+## The rung face the OPEN card's model carries — `""` on a wild source, `🐄 Corralled 100%` on a penned
+## one. Read off the model rather than off the drawn head line, whose label CLIPS: a rung scrolled off
+## the right edge of a 356px column is still a rung the card stated.
+func _inspected_rung_face() -> String:
+	var band: Dictionary = _hud._band_labor._panel_band
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		if String(model.get("key", "")) == _hud._bandpanel._work_open_key:
+			return String(model.get("rung_face", ""))
+	return ""
 
 ## An inline link is a `Button` (`HudWidgets.build_inline_link`), never a Label — so a Label-only walk
 ## cannot see one, which is a mistake this harness has already recorded twice elsewhere.
@@ -3705,6 +3809,11 @@ func _assert_sections_are_drawn_and_cost_the_sum() -> void:
 	var model: Dictionary = models[0]
 	var reserved: float = _hud._bandpanel._work_inspector_height(model)
 	var kitted: bool = _hud._bandpanel._work_inspector_has_kits(model)
+	# **AND THE KITS SECTION'S OWN SECOND SHAPE.** The Upkeep picker and the bill line under it are one
+	# conditional term, gated on whether the SITE owes anything at all — so a WILD row reserves one
+	# control line and a KEPT one reserves two plus the line, and `reserved >= drawn` has to hold on
+	# both. Asked through the builder's own predicate rather than assumed, exactly as `kitted` is.
+	var kept: bool = _hud._bandpanel._work_inspector_has_upkeep(model)
 	# **THE SUM, TERM FOR TERM, AGAINST THE PRODUCER.** The KITS term is conditional on the ONE
 	# predicate the builder uses, asked here rather than assumed, so a row without kits is measured
 	# for what it draws rather than failing for what it does not.
@@ -3713,6 +3822,8 @@ func _assert_sections_are_drawn_and_cost_the_sum() -> void:
 		+ HudWorkVocab.WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
 	if kitted:
 		sections += HudWorkVocab.WORK_INSPECTOR_KITS_SECTION_HEIGHT
+		if kept:
+			sections += HudWorkVocab.WORK_INSPECTOR_KITS_UPKEEP_HEIGHT
 	var conditional := 0.0
 	for key in ["warn", "note", "muted_note"]:
 		var present := bool(model.get(key, false)) if key == "warn" \
@@ -3724,7 +3835,8 @@ func _assert_sections_are_drawn_and_cost_the_sum() -> void:
 	var want := HudWorkVocab.WORK_INSPECTOR_HEIGHT + conditional + sections
 	_assert_band_panel("sections — the card reserves the SUM of every section it draws (%.0f, want %.0f: base %.0f + notes %.0f + sections %.0f%s)"
 			% [reserved, want, HudWorkVocab.WORK_INSPECTOR_HEIGHT, conditional, sections,
-				"" if kitted else " — this row has no kits"],
+				"" if kitted and kept else (" — this row has no kits" if not kitted
+					else " — this WILD row keeps nothing")],
 		is_equal_approx(reserved, want))
 	# **AND THE SUM IS STRICTLY MORE THAN ANY ONE OF ITS TERMS**, which is the sentence the retired max
 	# claim made in reverse. Stated against the tallest section, so it cannot pass on a card that
@@ -3810,6 +3922,13 @@ func _assert_work_inspector_worst_case_fits(where: String) -> void:
 	# A schedule with a zero in it is what `ArrivalStrip.has_gap` admits — the whole of what makes the
 	# strip mount at all.
 	model["schedule"] = PackedFloat32Array(WORST_CASE_INSPECTOR_SCHEDULE)
+	# **AND THE SITE OWES A BILL, which is what makes the KITS section draw its TALLER shape.** The
+	# board's own first row is routinely a WILD source — it has no standing rung, so it draws the take
+	# picker alone — and a worst case built from it would reserve the short KITS section and quietly
+	# stop being the worst case at all. Stamped as TERMS rather than as raw wire fields because the
+	# terms list IS the model's field: `RungLadder.upkeep_price_terms` composed it once, and a fixture
+	# that re-derived it through the code under test would agree with it by construction.
+	model["upkeep_price_terms"] = WORST_CASE_INSPECTOR_UPKEEP_TERMS
 	# ⛔ **THERE IS NO PICKER TO STAGE ANY MORE, and that is what §4.9 item 12d's second pass did to
 	# this fixture.** It used to set `_work_picker_open = WORK_PICKER_PRIORITY` here, because the
 	# ceiling was a MAX and the priority arm was the tallest of three: *"staging the FLOOR picker here
@@ -3868,6 +3987,10 @@ func _assert_work_inspector_worst_case_fits(where: String) -> void:
 ## are irrelevant — what is measured is that each mounts a line — but they are stated rather than
 ## borrowed from the vocabulary so the fixture cannot change under a copy edit.
 const WORST_CASE_INSPECTOR_NOTE := "Animals are drifting off."
+
+## …and the standing bill that makes the KITS section draw its Upkeep row and the line under it. Both
+## currencies, because the worst case is the shape that states both terms.
+const WORST_CASE_INSPECTOR_UPKEEP_TERMS: Array[String] = ["1 work", "0.05 hurdles"]
 const WORST_CASE_INSPECTOR_MUTED_NOTE := "Some of the take went to waste."
 const WORST_CASE_INSPECTOR_SCHEDULE: Array[float] = [1.0, 0.0, 1.0]
 
@@ -11302,6 +11425,21 @@ func _assert_no_work_fodder_total() -> void:
 ## a penned herd since §4.9 item 12c, so a Label-only collector silently stopped covering that row —
 ## the count fell from 4 marks to 3 and no claim failed. `_collect_meta_controls` finds both kinds by
 ## the meta they share, which is what the meta was for.
+
+## Open the work inspector on the row working a NAMED TILE — the plant-web twin of
+## `_open_work_inspector_for_herd`, for the frames that must name which patch they are looking at.
+func _open_work_inspector_for_tile(tile: Vector2i) -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	for model_variant in models:
+		var model: Dictionary = model_variant
+		if String(model.get("herd_id", "")) != "":
+			continue
+		if int(model.get("x", -1)) != tile.x or int(model.get("y", -1)) != tile.y:
+			continue
+		_hud._bandpanel._toggle_work_inspector(String(model.get("key", "")))
+		return
+	_fail("no forage work row for tile %s to open the inspector on" % str(tile))
 
 ## Open the work inspector on the row working a NAMED herd — the trade-row frames need a specific
 ## source (the wolf), not "the first row", which is the forage patch.
@@ -19039,9 +19177,91 @@ func _render_work_inspector_dialog_states() -> void:
 
 	await _assert_rung_track_opens_over_the_dialog()
 
+	await _render_kits_upkeep_gate_states()
+
 	_set_forage_patches([])
 	_set_world_herds(_herd_fixtures())
 	_push_bands([_band_fixture()])
+	await _settle()
+
+## **THE FORK THE KITS SECTION MAKES, PHOTOGRAPHED ON BOTH WEBS.** Four frames, because the defect was
+## one card drawn on four kinds of source and the two that were wrong looked exactly like the two that
+## were right.
+##
+## ⛔ **THE WILD PAIR IS THE CASE NOTHING COVERED.** Every kit claim in this file was staged on a
+## source that stands on a rung — the under-kept penned aurochs — so a wild herd and a wild patch each
+## drew an Upkeep picker over a site with nothing to keep and every assertion went green. Ray reported
+## it in play, on both webs, and the plant half behaved identically to the animal half.
+##
+## The fixtures are already in this file and are used for exactly what they are: the BUILD QUEUE band
+## works wild patches and a wild herd (neither publishes a keeping bill), and the KEEPING POOL band
+## works a tended patch and a penned aurochs (both do). Nothing new is fabricated — a fixture invented
+## for a guard is a fixture no other frame renders.
+func _render_kits_upkeep_gate_states() -> void:
+	await _pin_canvas(PREVIEW_SIZE)
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+
+	# ---- WILD, BOTH WEBS: a take picker and nothing to keep ------------------------------------
+	_set_forage_patches(_build_queue_patches(0))
+	_set_world_herds(_build_queue_herds(SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
+		SourceForecast.BUILD_TURNS_NO_ESTIMATE))
+	_push_bands([_build_queue_band_fixture(0)])
+	await _settle()
+	_open_work_inspector_for_tile(QUEUE_HEAD_PATCH)
+	await _settle()
+	await _settle()
+	await _save("band_panel_work_kits_wild_patch")
+	_assert_work_inspector_is_a_dialog("band_panel_work_kits_wild_patch")
+	_assert_wild_source_offers_no_upkeep("band_panel_work_kits_wild_patch")
+	_assert_work_inspector_fits("band_panel_work_kits_wild_patch")
+	_assert_sections_are_drawn_and_cost_the_sum()
+
+	_open_work_inspector_for_herd(QUEUE_HERD_ID)
+	await _settle()
+	await _settle()
+	await _save("band_panel_work_kits_wild_herd")
+	_assert_work_inspector_is_a_dialog("band_panel_work_kits_wild_herd")
+	_assert_wild_source_offers_no_upkeep("band_panel_work_kits_wild_herd")
+	_assert_work_inspector_fits("band_panel_work_kits_wild_herd")
+
+	# ---- KEPT, BOTH WEBS: both pickers and the bill under them ---------------------------------
+	_hud._bandpanel.close_work_inspector()
+	_set_forage_patches(_keeping_pool_patch_fixtures())
+	_set_world_herds(_under_herded_work_herd_fixtures())
+	_push_bands([_keeping_pool_band_fixture(HudConst.UPKEEP_FUND_MODE_SPREAD)])
+	await _settle()
+	_open_work_inspector_for_tile(KEEPING_POOL_TILE)
+	await _settle()
+	await _settle()
+	await _save("band_panel_work_kits_kept_patch")
+	_assert_kept_source_offers_upkeep("band_panel_work_kits_kept_patch")
+	_assert_work_inspector_fits("band_panel_work_kits_kept_patch")
+	_assert_sections_are_drawn_and_cost_the_sum()
+
+	# …and the ANIMAL half on the one shipped rung that eats a GOOD as well as hands. **Both currencies
+	# in one bill is the shape the gate has to admit** — a rung may owe work, goods or both, and a
+	# keeping kit speeds the work half even where the material half is zero — so the penned herd
+	# carrying a fence bill is the frame that proves the material term reaches the line at all.
+	_hud._bandpanel.close_work_inspector()
+	_set_world_herds(_material_short_herd_fixtures())
+	_push_bands([_material_short_band_fixture()])
+	await _settle()
+	_open_work_inspector_for_herd(MATERIAL_SHORT_HERD_ID)
+	await _settle()
+	await _settle()
+	await _save("band_panel_work_kits_kept_herd")
+	_assert_kept_source_offers_upkeep("band_panel_work_kits_kept_herd")
+	_assert_work_inspector_fits("band_panel_work_kits_kept_herd")
+	# **AND THE GOOD IS NAMED IN IT**, which the work term alone cannot say: a bill quoting only hands
+	# on the one rung in the game that also eats hurdles is the half-reading `rung_is_at_risk`'s own ⛔
+	# records shipping once already.
+	var kept_bill := _kits_upkeep_bill_label()
+	_assert_band_panel("band_panel_work_kits_kept_herd: …and that bill names the GOOD as well as the work (\"%s\")"
+			% ("<none>" if kept_bill == null else kept_bill.text),
+		kept_bill != null and kept_bill.text.contains(MATERIAL_SHORT_GOOD)
+			and kept_bill.text.contains(HudWorkVocab.RUNG_TRACK_HOLD_WORK_TERM.replace("%s", "")))
+	_hud._bandpanel.close_work_inspector()
 	await _settle()
 
 ## One configuration of the matrix: dock it, size it, open the card, and report what the zone asks of
