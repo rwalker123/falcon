@@ -909,6 +909,19 @@ twelve frames and one hundred and four `PASS`es (counted on the `: PASS` delimit
 assertions carrying the bare word in its prose); the band-compose arc three frames and twelve `PASS`es (the
 drawer pair's three, the dock frame's three, and the two-band compose pair below).
 
+**The crafting STOCK-ROW readout is worth six `PASS`es and NO frame** — measured, `1575 → 1581`, exit
+0 both, **370 frames unchanged**. Two of the six ride the existing `crafting_panel` save and four are
+PNG-less. **It moves about ten frames without adding one**, which is the accounting that matters here:
+giving the fixture band a `cordage` material and two batches of it puts a fourth group in the rail of
+every state built on `_crafting_band()` / `_two_tier_band()` — `crafting_panel`,
+`crafting_panel_reserved_edges`, `crafting_panel_event_bar`, the three band-dock states, the
+re-render state, both two-tier states and `crafting_bench_priority`.
+
+**And the `1575` is a RUN, not a subtraction.** It was first reported as `1581 − 6`, which is exactly
+the "never sum a delta onto a recorded figure" trap below wearing the other face — the arithmetic
+happened to come out right, and it was still not evidence. The baseline was re-taken by restoring the
+three changed client files to the PR's merge-base in place and running the harness.
+
 **The band FODDER LEDGER arc is worth four frames and six `PASS`es** — measured, `1381 → 1387` and
 `490 → 494` on one windowed run. Five of the six are `band_expedition`'s
 (`band_hay_short` / `band_hay_covered` / `band_hay_empty_store` / `band_hay_and_pen`, whose block
@@ -2074,8 +2087,11 @@ of the drive.
   configuration (a dock with no HUD column beside it); the state restores the ordinary ones after, and
   a rect-intersection claim rides beside the frame as its non-vacuity guard.
 
-**A clean run is 365 frames / 1535 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
-figure this replaced (`357 / 1432`) had gone stale in the tree well before the arc below touched it,
+**A clean run is 370 frames / 1581 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+figure this replaced (`365 / 1535`) had itself gone stale by five frames and forty `PASS`es before the
+crafting stock-row change above touched it, which is the second time in a row that has happened —
+**read this number as a date stamp, not as a live total**, and re-measure rather than trusting it. The
+figure BEFORE that one (`357 / 1432`) had gone stale in the tree well before the arc below touched it,
 which is exactly the trap the rule is written for: **never sum a delta onto a recorded figure — take a
 baseline run first.**
 
