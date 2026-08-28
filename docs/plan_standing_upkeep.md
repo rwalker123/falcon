@@ -1601,6 +1601,17 @@ picker only means what it looks like once the kit belongs to the site.
 > because the crew never changed. **The hunt sheet is NOT renamed**: `Hunters` is specific and
 > collides with nothing.
 >
+> **THE WORD LANDS IN TWO GRAMMATICAL SLOTS AND TAKES TWO FORMS: the crew NOUN is `Harvesters`, the
+> VERB is `Harvest`.** *"Replaces both"* above names the noun pair `Foragers`/`Tenders`; the row label
+> and the commit button are a **verb** slot (`Forage (27, 26)` / `Tend`), and one string cannot fill
+> both — `Assign harvest` and `♻ 3 harvest` are the readings that proves it. The existing noun→verb
+> tables already do exactly this job (`WORK_ROW_PLANT_FORMATS`, `PLANT_ASSIGN_BUTTONS` are keyed off
+> the resolved noun), so they simply collapse from two entries to one. So: `Harvest (28, 16)` on the
+> board and the strip head line as drawn in the prototype, `Harvesters [Gathering kit ▾]` on the kit
+> line beside the animal web's `Hunters`, `Assign harvesters` on the sheet, `♻ 3 harvesters` on the
+> standing summary, and *"send at least one harvester"* on the dead button. Ray's call, taken against
+> the prototype, which drew only the verb slot and so left the noun open.
+>
 > **`HudFormat.plant_crew_label` is the seam** — the one place the Foragers/Tenders fork is spelled.
 > The one mismatch the choice costs is harvesters holding a *Gathering kit*; the kit's **id** stays
 > `gathering` and only its `display_name` is player-facing, so closing it is a one-field config edit
@@ -1617,6 +1628,16 @@ picker only means what it looks like once the kit belongs to the site.
 > one real kit plus `none` — and `none` is a real choice, being how a site is worked bare-handed to
 > conserve the tool. Reasoning from today's thin roster is what nearly made the upkeep one read-only;
 > the roster is early and will not stay thin.
+>
+> **AND AN ANIMAL ROW GETS BOTH PICKERS TOO — the paragraphs above are written in plant vocabulary,
+> which is not the same as being plant-only.** The strip is the one place the rung is known on
+> **either** web, and `upkeepKitId` is already published for herds as well as patches
+> (`snapshot/subsistence.rs` → `upkeep_kits.herd(...)`), so the pair mounts on a herd row from the
+> same producer. **What differs is only the LEFT picker's word**: the rename below is the PLANT web's
+> crew, so an animal row's take crew is still `Hunters` and the pair reads
+> `Hunters [Stalking kit ▾]  Upkeep [Hurdling kit ▾]`. The right-hand picker is the same control on
+> both webs, and `upkeep_kit`'s own grammar already carries both source shapes
+> (`upkeep_kit <faction> <x> <y> [kit <id>]` / `upkeep_kit <faction> <herd_id> [kit <id>]`).
 >
 > **THE PAIR IS ONE `flex-wrap` ROW, NOT TWO HAND-PLACED ONES.** It rides one line where there is
 > room and drops the second onto its own line where there is not, so a narrow dock tier costs a row
