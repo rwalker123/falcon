@@ -2517,12 +2517,115 @@ func _ready() -> void:
 
 	await _render_work_inspector_dialog_states()
 
+	await _render_empty_work_zone_states()
+
 	_assert_pending_assign_rollback()
 
 	await _assert_action_registry()
 
 	_assert_herd_field_pairs()
 	_finish()
+
+## **A BAND WITH NOTHING WORKED, ON A HORIZONTAL DOCK — the state a stretched empty view shipped in.**
+##
+## ⛔ **NOTHING IN THIS FILE HAD EVER RENDERED `HudWorkVocab.WORK_EMPTY_HINT`.** The nearest state,
+## `band_panel_dockrow_ultrawide_empty`, is called "empty" and is not: its band works no sources of its
+## OWN, but the world still holds patches and herds, so `_work_source_models` returns rows, the board
+## draws and `_work_board_capacity` runs. The zero-source path is the one where `_fill_work_zone_column`
+## returns at its `filtered.is_empty()` branch — BEFORE the only call that declares a column count — and
+## no frame reached it.
+##
+## **THE CLAIM IS THE ZONE'S WIDTH AGAINST THE COLUMNS IT DECLARED**, which is the one an empty view
+## cannot pass by accident: a stretched zone renders a perfectly plausible picture, and every existing
+## width assertion in this file (`_assert_work_zone_readable`, the content-width walk) asks whether the
+## zone is WIDE ENOUGH and is satisfied by one that is far too wide.
+##
+## **PAIRED WITH LIVENESS**, or a zone that rendered nothing at all would satisfy every width claim here.
+func _render_empty_work_zone_states() -> void:
+	# The world is emptied as well as the band: a band that works nothing while patches and herds stand
+	# around it is `band_panel_dockrow_ultrawide_empty`, which is a different state and already covered.
+	# ⛔ **THE BUSY BAND COMES FIRST, AND THAT ORDERING IS THE WHOLE REPRODUCTION.** A stale column count
+	# is invisible on a panel that already held one column, so a state that opened straight onto the
+	# empty band would pass with the defect in — which is exactly what a first cut of this state did at
+	# `DOCKROW_CANVAS`. The player reaches it by CYCLING off a band with sources, so the state does too.
+	# The ULTRAWIDE canvas is where the gap is widest: the busy band earns every column it can.
+	_set_forage_patches([])
+	_set_world_herds([])
+	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
+	_panel.set_dock(SIDE_BOTTOM)
+	_panel.set_active_tab(&"work")
+	_push_bands([_many_sources_band_fixture()])
+	await _settle()
+	var busy_columns: int = _panel._work_columns
+	# The PRECONDITION. Without it every claim below passes for free on a dock that only ever affords
+	# one column, and the state proves nothing about a count that went stale.
+	_assert_band_panel("band_panel_work_empty_wide: precondition — the busy band earns more than one board column (%d)"
+			% busy_columns, busy_columns > 1)
+
+	_push_bands([_unworked_band_fixture()])
+	await _settle()
+	await _save("band_panel_work_empty_wide")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_empty_work_zone_is_one_column("band_panel_work_empty_wide")
+
+	_set_forage_patches([])
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_band_fixture()])
+	await _pin_canvas(PREVIEW_SIZE)
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+
+## GUARD: **AN EMPTY WORK ZONE IS ONE BOARD COLUMN WIDE, NOT WHATEVER THE LAST BAND LEFT BEHIND.**
+##
+## `BandCityPanel._card_width()` builds the wide shell's card UP from `_work_columns`, which is DECLARED
+## by `_work_board_capacity` — and the empty branch of `_fill_work_zone_column` returns before reaching
+## it, so the count is stale. On a fresh panel that stale value is `WORK_MAX_COLUMNS`; after cycling off a
+## busy band it is that band's. Either way the zone is drawn wider than any board it contains, and the
+## POOLS cards, the chips and the hint stretch across it.
+##
+## The claim is made against `ZONE_WORK_MIN_WIDTH` — ONE readable board column, which is what a board
+## with no rows wants — rather than against a measured pixel figure that would drift with the dock.
+func _assert_empty_work_zone_is_one_column(where: String) -> void:
+	var failures: Array[String] = []
+	# LIVENESS FIRST. A zone rendering nothing is trivially not over-wide.
+	if not _has_label_containing(_panel, HudWorkVocab.WORK_EMPTY_HINT):
+		failures.append("the empty-state hint does not render at all")
+	if _find_meta_control(_panel, HudWorkVocab.POOLS_BLOCK_META) == null:
+		failures.append("the POOLS block does not render at all")
+	if _work_board_row_count() != 0:
+		failures.append("this band is meant to work NOTHING, but the board drew %d rows" % _work_board_row_count())
+	var columns: int = _panel._work_columns
+	if columns != 1:
+		failures.append("the panel still holds %d declared board columns for a band with no sources" % columns)
+	var zone_width: float = _panel.work_zone_size().x
+	if zone_width > BandCityPanel.ZONE_WORK_MIN_WIDTH + ZONE_BOUNDS_TOLERANCE:
+		failures.append("the work zone is %.0fpx wide for a board of one column (%.0fpx) — everything in it is stretched" % [
+			zone_width, BandCityPanel.ZONE_WORK_MIN_WIDTH])
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s an empty work zone is one board column (%.0fpx, %d declared column) with its hint and pools live" % [
+			where, zone_width, columns])
+		return
+	for failure in failures:
+		_fail("%s — %s" % [where, failure])
+
+## The reference band with every TAKE row removed — a band that works nothing at all, which is turn one
+## of a new game and the state `HudWorkVocab.WORK_EMPTY_HINT` exists for.
+##
+## **DERIVED FROM `_band_fixture()` RATHER THAN AUTHORED**, so it cannot drift from the band every other
+## claim in this file is made against; only the thing under test differs. The STANDING roles stay — a
+## band with no sources still has scouts and warriors, and dropping them would additionally empty the
+## WORKFORCE bar and the role cards, which is a different state.
+func _unworked_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	var standing: Array = []
+	for row_variant in band.get("labor_assignments", []):
+		var row: Dictionary = row_variant
+		var kind := String(row.get("kind", ""))
+		if kind != SourceForecast.LABOR_KIND_FORAGE and kind != SourceForecast.LABOR_KIND_HUNT:
+			standing.append(row)
+	band["labor_assignments"] = standing
+	return band
 
 # ---- THE DOCK-ROW REFLOW (issue #324) ---------------------------------------------------------
 #
@@ -14457,15 +14560,29 @@ const QUEUE_ROW_WORKERS := 1
 ## needs a 480px box (a 540 strip), which crosses `HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` and flips
 ## the band flank's tier. That was weighed and declined — see `BandCityPanel.PANEL_HEIGHT_WIDE`.
 ##
-## ⛔ **IT IS TWO NOW, AND NOT ONE PIXEL OF THE STRIP MOVED TO BUY IT** (`docs/plan_standing_upkeep.md`
-## §4.9 item 12d). The work inspector left the zone, so `build_queue_rows_max` stopped reserving
-## `WORK_INSPECTOR_HEIGHT` against a strip that can no longer appear — and the zone's allocation rule
-## is unchanged, so the freed room goes where it always went: the queue claims up to its authored cap
-## and the BOARD takes the remainder. Part of it is spent again on `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT`,
-## the headroom the queue's own settings strip needs against a board floored at one row, which is what
-## the retiring inspector term had been paying for by accident. The tall LEFT dock still draws all
-## three, and the authored third row on a horizontal dock still needs a taller strip nobody wants.
-const WIDE_DOCK_QUEUE_ROWS := 2
+## ⛔ **IT WAS TWO, BOUGHT BY THE INSPECTOR'S REHOST, AND THE STRIP HAS SINCE GIVEN THE ROOM BACK.**
+## The dead claim, quoted rather than deleted because its mechanism is still live: *"IT IS TWO NOW, AND
+## NOT ONE PIXEL OF THE STRIP MOVED TO BUY IT (`docs/plan_standing_upkeep.md` §4.9 item 12d). The work
+## inspector left the zone, so `build_queue_rows_max` stopped reserving `WORK_INSPECTOR_HEIGHT` against a
+## strip that can no longer appear — and the zone's allocation rule is unchanged, so the freed room goes
+## where it always went: the queue claims up to its authored cap and the BOARD takes the remainder."*
+##
+## **IT IS ONE, BECAUSE `BandCityPanel.PANEL_HEIGHT_WIDE` WENT 456 → 418** — the first time that budget has
+## gone DOWN, the strip having been reported from play as too tall once item 12d stopped charging the zone
+## for a strip it no longer draws. **This is the SECOND row of that trade and the whole of its cost**: 38px
+## of strip on every column, against the wide dock's queue drawing one entry and `+3 more` where it drew
+## two and `+2 more`. Nothing else moved — the board's row count is unchanged at every dock in the matrix.
+##
+## **ONE IS `HudWorkVocab.BUILD_QUEUE_ROWS_MIN`, i.e. the floor rather than a number with room under it**,
+## which is what makes it the honest reading: the block draws one entry row plus its overflow, and
+## `build_queue_rows_max` clamps there however short the box gets. The claims made against it still BITE —
+## a block that drew NO entry row fails them, since they compare for equality against this count rather
+## than merely requiring the block to exist.
+##
+## **The tall LEFT dock still draws all three**, and the authored third row on a horizontal dock still
+## needs a taller strip nobody wants — the 480px box that would restore it crosses
+## `HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` and flips the band flank's tier, weighed and declined twice.
+const WIDE_DOCK_QUEUE_ROWS := 1
 
 func _render_build_queue_states() -> void:
 	_panel.set_dock(SIDE_LEFT)
@@ -14527,7 +14644,7 @@ func _render_build_queue_states() -> void:
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_build_queue_wide")
 	# **THE WIDE DOCK DRAWS ONE ENTRY AND ITS OVERFLOW, and that is the measurement rather than the
-	# ceiling** (§4.7): the POOLS block takes ~82px out of this 300px box, so the zone affords
+	# ceiling** (§4.7): the POOLS block takes 82px out of this 358px box, so the zone affords
 	# `WIDE_DOCK_QUEUE_ROWS` of the authored three. The tall LEFT dock above still draws all three.
 	_assert_build_queue_block(4, "the wide dock's four-entry queue", WIDE_DOCK_QUEUE_ROWS)
 	_assert_build_queue_overflow(4, WIDE_DOCK_QUEUE_ROWS)
@@ -17680,7 +17797,11 @@ func _render_pending_queue_states() -> void:
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_build_queue_pending_wide")
-	_assert_build_queue_block(2, "the wide dock's pending queue")
+	# **THE ZONE'S ANSWER, NOT THE CEILING — this is a WIDE dock too.** It took the default (i.e. the
+	# authored `BUILD_QUEUE_ROWS_MAX`) while the 396px box happened to afford both entries; at
+	# `BandCityPanel.PANEL_HEIGHT_WIDE`'s 418 it affords `WIDE_DOCK_QUEUE_ROWS`, and a horizontal-dock
+	# state that reads the ceiling is exactly what that constant exists to stop.
+	_assert_build_queue_block(2, "the wide dock's pending queue", WIDE_DOCK_QUEUE_ROWS)
 	_assert_build_queue_leaves_the_board_rows()
 
 	#   (d) THE RECONCILIATION, VERIFIED RATHER THAN ASSUMED: a snapshot on a NEWER turn drops the
@@ -19228,6 +19349,38 @@ func _render_work_inspector_dialog_states() -> void:
 	_assert_zone_content_fits()
 	_hud._bandpanel.close_work_inspector()
 	await _settle()
+
+	# **THE SMALLEST BOTTOM DOCK WITH A QUEUE ROW'S SETTINGS STRIP OPEN — the combination neither this
+	# matrix nor the queue-control states reached.** The matrix walks every configuration with the
+	# INSPECTOR open and never touches the queue; `band_panel_queue_settings_wide` opens the strip and
+	# only ever at `DOCKROW_CANVAS`. So the two disjoint frame families are exactly the shape this file
+	# records three times over, and the state living in the gap is the one where the strip's own
+	# reservation (`HudWorkVocab.BUILD_QUEUE_ROOM_SETTINGS_HEIGHT`) meets the shortest box any shipped
+	# window hands this zone — `MAX_WIDE_HEIGHT_FRACTION` clamps 1152x720 well under the body budget.
+	#
+	# It is asserted rather than merely reported because the zone CLIPS: a strip drawn past the box
+	# takes the difference off the bottom of the board in silence, which is the failure mode the
+	# reservation exists to prevent and the one no picture can show.
+	await _pin_canvas(DIALOG_PROBE_TIGHTEST_CANVAS)
+	_panel.set_dock(SIDE_BOTTOM)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	var tight_queue_key := _queue_entry_key(false)
+	if tight_queue_key == "":
+		_fail("the tightest bottom dock — no PLANT entry to open settings on")
+	else:
+		_hud._bandpanel._toggle_queue_settings(tight_queue_key)
+		await _settle()
+		await _save("band_panel_queue_settings_tight")
+		# LIVENESS FIRST: a zone that drew no strip at all fits any box, so the fit claim below says
+		# nothing without it.
+		_assert_band_panel("band_panel_queue_settings_tight: the settings strip is really open",
+			_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) != null)
+		_assert_zones_within_bounds()
+		_assert_zone_content_fits()
+		_report_zone_content_extent("band_panel_queue_settings_tight")
+		_hud._bandpanel._toggle_queue_settings(tight_queue_key)
+		await _settle()
 
 	# **THE TAB SWITCH TAKES THE CARD DOWN**, which the wide shell can never show: a persistent card
 	# floating over the map for a board the player has tabbed away from has nothing behind it to act

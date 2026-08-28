@@ -76,27 +76,64 @@ const PANEL_WIDTH := 380.0
 ##
 ## 440 handed the zones a 380px box, which cleared both with 4px of slack.
 ##
-## **IT IS 456, AND THE WORK INSPECTOR IS WHAT RAISED IT — the same trade a third time.** The pools
-## block took the strip 360 → 440; selecting a work row opens the inspector strip, a FOURTH fixed-height
-## block in that zone, and the worst case with a row selected measured **396px of the 380px box** — the
-## panel visibly running past the bottom of the screen, reported from play as happening *only when
-## something is selected in the work list*. Everything inside the zone that could give had already
-## given (the board is floored at one row, the queue at one entry row plus its overflow, and the
-## strip's own reservation was re-measured off what it draws), so the remaining lever was this budget.
-## **456 hands the zones a 396px box**, which is the measurement exactly — see
-## `PANEL_HEIGHT_WIDE_TWO_COLUMN`'s work-zone bullet, where the terms are enumerated.
+## **IT WAS 456, AND THE WORK INSPECTOR IS WHAT RAISED IT — the same trade a third time.** ⛔ **That
+## justification is DEAD, and it is quoted rather than deleted because it is the record of why the number
+## moved a third time**: *"The pools block took the strip 360 → 440; selecting a work row opens the
+## inspector strip, a FOURTH fixed-height block in that zone, and the worst case with a row selected
+## measured 396px of the 380px box — the panel visibly running past the bottom of the screen, reported
+## from play as happening only when something is selected in the work list. Everything inside the zone
+## that could give had already given (the board is floored at one row, the queue at one entry row plus its
+## overflow, and the strip's own reservation was re-measured off what it draws), so the remaining lever
+## was this budget. 456 hands the zones a 396px box, which is the measurement exactly."*
+## `docs/plan_standing_upkeep.md` §4.9 item 12d rehosted that strip as a viewport-centred
+## `WorkInspectorDialog`, so **NO inspector term survives anywhere in this zone's budget** — not in
+## `BandPanelController._work_board_capacity`, not in `HudWorkVocab.build_queue_rows_max`, and
+## `WORK_ZONE_GAP_COUNT` and `BUILD_QUEUE_ROOM_GAP_COUNT` each lost the gap that went with it. The 396 the
+## paragraph above was measured against describes a zone that no longer exists.
 ##
-## **IT IS DELIBERATELY STILL SHORT OF `HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` (420), and that is what
-## made 456 the minimal move rather than a round one.** A one-column flank's tier is the box times one,
-## so a box at or over 420 flips the band zone to TALL — which would restore the food-outlook chart and
-## the role-card hints on a horizontal dock, and costs another 40px of strip on top of this. 396 clears
-## 380 with 24px to spare before that flip; the NEXT raise in this zone has that much room and no more.
-## **The raise crosses `BAND_ZONE_CHART_MIN_HEIGHT` (340) either way**, so a one-column horizontal dock
-## renders at COMPACT rather than SHORT and the vitals rows do not merge there.
+## **IT IS 418, AND THIS IS THE FIRST TIME THIS CONSTANT HAS GONE DOWN.** Reported from play: the bottom
+## strip is too tall — the band flank, the workforce and the work column all end well above the bottom of
+## it, and only the parties column reaches it, its action grid being bottom-anchored. Item 12d's rehost is
+## why there was room to give: the raise the inspector had paid for was only PARTLY re-claimed by what
+## replaced it, leaving the budget over-provisioned by 38px.
 ##
-## At a 1080-high viewport the strip is **42% of the window** against the old 33%, inside
+## **THE BINDING TERM IS THE BUILD QUEUE'S SETTINGS STRIP NOW, NOT THE INSPECTOR** — which is why this is
+## a 38px correction rather than the ~104 the retired strip would suggest. Taking the inspector out of
+## `build_queue_rows_max` exposed a defect one block over: the queue had been claiming rows the zone could
+## only afford while that reservation covered the settings strip by accident, so
+## `HudWorkVocab.BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` (56, the strip's WRAPPED control pair) arrived to pay
+## for it honestly. The work zone's floor is therefore **358px**, and it decomposes exactly:
+##
+##   * `HudWorkVocab.ZONE_HEAD_HEIGHT` 20 + `WORK_CHIPS_HEIGHT` 26
+##   * the POOLS block **82** (`pools_block_height(false)`; fund mode's 110 buys the queue fewer rows and
+##     does not raise the floor)
+##   * the BUILD QUEUE at its floor with a settings strip open — **132** = its own head 20 + one entry row
+##     and the overflow row (2 × `WORK_ROW_HEIGHT`) + `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` 56
+##   * one un-droppable board row **44** (`WORK_ROW_TWO_LINE_HEIGHT`; `_work_board_capacity` floors at
+##     `maxi(1, …)`)
+##   * `WORK_PAGER_HEIGHT` 24, and five `ZONE_BLOCK_SEPARATION` gaps **30**
+##
+## **418 = 358 + `HORIZONTAL_BODY_CHROME`**, and it is MEASURED rather than derived: swept against the
+## whole `band_panel_preview` run, **416** hands the zones a 356px box and `band_panel_build_queue_wide`
+## fails with `needs 358px … short by 2`, while 418 clips nothing at any dock or viewport in the matrix.
+## **What the 38px costs is one BUILD QUEUE entry row** — a wide dock draws one entry and `+3 more` where
+## it drew two and `+2 more`. The board's row count does not move (2 rows at 1920/1600/1024, 4 at
+## 1440/1366/1280/1152), and no other zone binds: the band flank SCROLLS (its one-column content is 442px
+## at any budget) and the parties zone's floor is 226.
+##
+## **NO TIER BOUNDARY IS CROSSED ON THE WAY DOWN, which is what makes the drop cheap.**
+## `BandPanelController._band_zone_tier_height()` is the box times the COLUMN COUNT, so a ONE-column flank
+## was already COMPACT at 396 (`HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` is 420 and nothing here ever
+## reached it) and a two-column one stays TALL until the box halves. `BAND_ZONE_CHART_MIN_HEIGHT` (340) is
+## crossed at a budget of **402** — BELOW this floor, so the work zone clips before the flank can re-tier.
+## And a tier drops no content in any case: that constant's own note is that the zone scrolls instead.
+##
+## **IT IS STILL ABOVE `PANEL_HEIGHT_WIDE_TWO_COLUMN` (335)**, so `_horizontal_panel_height()`'s `maxf`
+## resolves to this budget at both column counts and the two-column branch stays inert.
+##
+## At a 1080-high viewport the strip is **39% of the window** against the 42% 456 took, inside
 ## `MAX_WIDE_HEIGHT_FRACTION` (0.6) with room.
-const PANEL_HEIGHT_WIDE := 456.0
+const PANEL_HEIGHT_WIDE := 418.0
 ## FLOOR on the cross-axis size when collapsed to a thin rail (both orientations) — the rail is at
 ## least this thin, and thicker when its own chrome needs more (`_collapsed_cross_axis_size`).
 const COLLAPSED_SIZE := 46.0

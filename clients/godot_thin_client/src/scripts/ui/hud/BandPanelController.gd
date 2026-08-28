@@ -1815,6 +1815,26 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
         _work_open_key = ""
     _work_inspected = inspected
     if filtered.is_empty():
+        # ⛔ **AN EMPTY BOARD STILL HAS TO DECLARE ITS WIDTH, AND THIS RETURN IS WHY IT DID NOT.**
+        # `BandCityPanel._card_width()` builds the wide shell's card UP from `_work_columns`, and the
+        # ONLY thing that ever sets it is `set_work_columns`, reached from `_work_board_capacity` —
+        # which is below this branch. So a band with nothing worked left the previous band's count
+        # standing and the panel drew a zone that many columns wide with no board in it: measured on a
+        # 3440 bottom dock, **1520px of work zone (4 × `ZONE_WORK_MIN_WIDTH`) holding one hint line**,
+        # with the POOLS cards stretched across the whole of it. Reported from play as *"the empty view
+        # is too wide at the work tab, everything is stretched."*
+        #
+        # **It is a DECLARATION here rather than a clamp on any child**, because the width is the
+        # defect and the pools block is only what shows it — the chips, the hint and the board would
+        # all still be sitting in an over-wide zone if the cards alone were pinned. The count is
+        # `_declare_work_columns`' own answer for a zero-length board, i.e. ONE (`_wanted_work_columns`
+        # clamps `ceil(0 / rows)` up), so this states the same thing the drawn path would and adds no
+        # second rule. The rows argument cannot move that answer; it is named rather than spelled so it
+        # reads as the board's own unit.
+        #
+        # **It is still exactly ONE declaration per pass** — this branch returns, so it can never run
+        # beside `_work_board_capacity`'s.
+        _declare_work_columns(filtered.size(), HudWorkVocab.WORK_PREFERRED_ROWS_PER_COLUMN)
         var hint := HudWidgets.alloc_hint_label(HudWorkVocab.WORK_EMPTY_HINT)
         hint.size_flags_vertical = Control.SIZE_EXPAND_FILL
         col.add_child(hint)
