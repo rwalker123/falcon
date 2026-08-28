@@ -1284,7 +1284,12 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
     #
     # **THE WORK ROW'S `⌃` FOLLOWS THE SAME ORDER** (`_on_work_row_improvement_requested`), so there
     # is ONE rule for every optimistic write on this layer rather than two orderings to reason about.
-    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, floor, improvement)
+    # **THE KIT TRAVELS WITH THE OPTIMISTIC WRITE, because this command STATES it.** The overlay row
+    # REPLACES the confirmed one, so a kit left off here is a pending row with no kit at all — which
+    # blanks the work inspector's take picker and, through `_emit_work_assign`'s restate, re-kits the
+    # crew to the job default on the next `+`. `record_pending_assign` carries the long form.
+    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, floor, improvement,
+        kit_id)
     _after_pending_change()
     emit_signal("assign_labor_requested", {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -1354,7 +1359,12 @@ func _on_work_row_improvement_requested(payload: Dictionary) -> void:
             int(payload.get("workers", 0)), int(payload.get("x", -1)), int(payload.get("y", -1)),
             String(payload.get("herd_id", "")), float(payload.get("floor",
                 SourceForecast.DEFAULT_HARVEST_FLOOR)),
-            String(payload.get("improvement", "")))
+            String(payload.get("improvement", "")),
+            # **THE ROW'S OWN KIT, RESTATED LIKE ITS CREW AND ITS FLOOR.** The `⌃` sends no
+            # `assign_labor`, so nothing here changes the take kit — but the overlay entry REPLACES
+            # the merged row, so omitting it would blank the kit of a row the player only declared a
+            # rung on, exactly as omitting the crew would blank the crew.
+            String(payload.get("kit_id", KitRoster.NO_KIT_ID)))
         _after_pending_change()
         # …and an OPEN compose sheet on that source flips OFFERED → DECLARED on the same frame. It
         # reads the declaration through the overlay (`build_verb`'s `composed` argument), and

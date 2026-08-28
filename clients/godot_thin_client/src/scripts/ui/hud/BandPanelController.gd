@@ -3782,6 +3782,10 @@ func _emit_ready_declaration(band: Dictionary, model: Dictionary, rung: String) 
         # row the declaration is about.
         "workers": int(model.get("workers", 0)),
         "floor": float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)),
+        # …and the row's TAKE KIT, for the crew's and the floor's reason. The overlay entry REPLACES
+        # the merged row, so a declaration that omitted it would blank the kit of a row nobody
+        # re-kitted — and the work inspector's take picker reads exactly that field.
+        "kit_id": String(model.get("kit_id", KitRoster.NO_KIT_ID)),
         "pending_entity": int(band.get("entity", -1)),
     })
 
@@ -4742,12 +4746,25 @@ func _work_inspector_upkeep_terms(model: Dictionary) -> Array[String]:
 ## **THE TAKE PICKER — the crew's own tool, on the path the compose sheet already uses.** It sends
 ## `assign_labor … kit <id>`, so this control adds no second command for a value that already has one;
 ## the row's crew, floor and rank are re-sent unchanged beside it because that command states them all.
+##
+## ⛔ **THE JOB DEFAULT IS THE WIRE'S, NOT A SECOND READ OF THE SOURCE.** `KitRoster.default_kit_for`
+## takes the SOURCE — whose `default_kit_id` is the HERD's own per-quarry override, a field only a herd
+## publishes — AND the JOB's default; this passed `source.get("default_kit_id")` for **both**, so on
+## the plant web, where a patch carries no such field, the job default was `""` at every rung. It cost
+## two things: no forage entry ever wore the `(default)` mark, and a row whose assignment stated no
+## kit fell through to a BLANK, unselected face. `_band_labor.default_kit_id(job)` is the same answer
+## `Hud._emit_assign_labor` measures the command's omitted `kit` token against, so the mark this picker
+## draws and the omission that command makes cannot name two different kits.
+##
+## **IT IS THE FALLBACK, NOT THE FIX FOR A PENDING ROW.** A pending assignment's own kit rides the
+## optimistic overlay now (`HudBandLaborState.record_pending_assign`), so `selected` is a real id on
+## every row the board draws; this default is what marks the entry and what answers for a row the wire
+## somehow states no kit for.
 func _build_work_inspector_take_kit_picker(band: Dictionary, model: Dictionary) -> OptionButton:
     var kits := _band_labor.kits()
     var job := _work_inspector_take_job(model)
     var source := _work_inspector_source(model)
-    var default_id := KitRoster.default_kit_for(job, source,
-        String(source.get("default_kit_id", "")))
+    var default_id := KitRoster.default_kit_for(job, source, _band_labor.default_kit_id(job))
     var selected := String(model.get("kit_id", ""))
     if selected == "":
         selected = default_id
@@ -4765,10 +4782,25 @@ func _build_work_inspector_take_kit_picker(band: Dictionary, model: Dictionary) 
 ## the id alone cannot say — a player may name the very kit the derivation would have picked. So an
 ## UNNAMED row's default IS the id it is showing, and only a NAMED one has to ask
 ## `KitRoster.keeping_kit_for` what the derivation would have been.
+##
+## ⛔ **AN UNSTATED KIT FALLS THROUGH TO THAT DERIVATION RATHER THAN RENDERING A BLANK CONTROL, and
+## the state it answers for is REACHABLE.** `resolve_upkeep_kits` walks the bands' LABOR ROWS, so a
+## source no band works yet is absent from that map and publishes `""` — while `upkeep_price_terms`
+## comes off the source's own RUNG, which exists regardless. A brand-new **pending** assignment on a
+## kept source therefore drew the Upkeep row with an empty face and nothing lit, the take picker's
+## reported defect arriving through the other control. The fall-through is not a missing-field guard:
+## `keeping_kit_for` is this client's own copy of the very derivation the sim will apply the moment
+## the assignment lands, and it is already what a NAMED row's `(default)` mark is measured against.
+##
+## **The mark stays honest across it.** With nothing stated the derivation IS both the selection and
+## the default, which is exactly what an UNNAMED row means — so the entry is marked `(default)` and
+## no second client derivation has been introduced.
 func _build_work_inspector_upkeep_kit_picker(band: Dictionary, model: Dictionary) -> OptionButton:
     var kits := _band_labor.kits()
     var job := _work_inspector_upkeep_job(model)
     var selected := String(model.get("upkeep_kit_id", ""))
+    if selected == KitRoster.NO_KIT_ID:
+        selected = KitRoster.keeping_kit_for(kits, job)
     var default_id := selected if not bool(model.get("upkeep_kit_named", false)) \
         else KitRoster.keeping_kit_for(kits, job)
     var listing := KitRoster.kit_entries(kits, job, selected, default_id,

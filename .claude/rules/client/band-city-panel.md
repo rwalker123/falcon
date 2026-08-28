@@ -5397,6 +5397,31 @@ verdict read through the other producer — the harness asserts both together.
 `_work_inspector_has_kits` is now a test on the TAKE job alone. It used to be a conjunction over both
 jobs, which additionally meant a roster with no keeping tool suppressed the take picker as well.
 
+#### ⛔ AND NEITHER PICKER MAY RENDER WITHOUT A SELECTION — a blank face is a DEAD CONTROL
+
+Reported in play on a PENDING harvest crew: the `Harvesters` picker showed nothing, and picking from
+it changed nothing either. `HudWidgets.build_option_picker` takes the lit INDEX and the FACE as two
+separate arguments, so an unresolved kit id produces `select(NO_ENTRY_SELECTED)` over a face
+`KitRoster.display_name_for_id` answers `""` for — a perfectly findable, perfectly populated,
+perfectly useless control that photographs as an ordinary card.
+
+- **The TAKE picker's fallback is the JOB's default, not a field off the source.** The full autopsy —
+  the pending overlay's dropped `kit_id`, the plant web's absent `default_kit_id`, and why the hunt
+  web only looked immune — is in `labor-ui.md` → "THE KIT RIDES EVERY CREW EDIT".
+- **The UPKEEP picker falls through to `KitRoster.keeping_kit_for`, and the state it answers for is
+  REACHABLE.** `resolve_upkeep_kits` walks the BANDS' LABOR ROWS, so a source no band works yet is
+  absent from that map and publishes `""` — while the BILL this row is gated on comes off the
+  source's own RUNG and is there regardless. A brand-new PENDING assignment on a kept source
+  therefore drew the Upkeep row blank. **That fall-through is not a missing-field guard**: it is the
+  client's own copy of the derivation the sim applies the moment the assignment lands, and it is
+  already what a NAMED row's `(default)` mark is measured against. With nothing stated the derivation
+  IS both the selection and the default, which is exactly what an UNNAMED row means — so the ⛔ above
+  about the mark coming off `upkeep_kit_named` still holds and no second derivation was introduced.
+- **Every kit assertion in `band_panel_preview` asked whether a picker EXISTED and what its ROSTER
+  held; none asked what it was SHOWING**, which is why a dead control passed every claim the harness
+  had. `_assert_kit_pickers_state_a_selection` is the one that was missing — entries, a lit index and
+  a non-empty face, on every state that draws a picker.
+
 > #### ⛔ IT WAS A PERMANENT BLOCK FIRST, AND THAT COST 50px UNCONDITIONALLY
 >
 > On top of whichever picker was open, on every strip, open or not. Measured on the wide dock with a

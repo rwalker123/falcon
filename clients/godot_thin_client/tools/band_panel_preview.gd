@@ -3651,6 +3651,8 @@ func _assert_kits_section_draws_both_controls() -> void:
 	_assert_band_panel("kits section — …and `none` is offered on both, which both tooltips promise",
 		_option_has_item(take as OptionButton, KIT_NONE_FACE)
 			and _option_has_item(upkeep as OptionButton, KIT_NONE_FACE))
+	# …and NEITHER is a dead control: lit on an entry, with a face that names it.
+	_assert_kit_pickers_state_a_selection("band_panel_work_kits_picker")
 	# **AND THE SITE'S BILL IS DRAWN BESIDE THE PICKER, not merely afforded.**
 	#
 	# ⛔ **THIS ASSERTED A HINT LINE AND THE HINT LINE WAS THE DEFECT.** It read *"THE HINT IS DRAWN,
@@ -3696,6 +3698,52 @@ func _find_label_prefixed(node: Node, prefix: String) -> Label:
 			return found
 	return null
 
+## GUARD: **EVERY KIT PICKER ON THE CARD STATES A SELECTION — a roster, a LIT entry, AND A FACE.**
+##
+## ⛔ **THIS IS THE CLAIM WHOSE ABSENCE LET A DEAD CONTROL SHIP.** Every kit assertion in this file
+## asks whether a picker EXISTS and whether it carries entries; none asked what it was SHOWING.
+## Reported from play on a pending forage assignment: the `Harvesters` picker was blank and nothing
+## could be chosen from it — `select(NO_ENTRY_SELECTED)` over a face resolved from an empty kit id,
+## which is a perfectly findable, perfectly populated, perfectly useless control, and it renders as a
+## plausible-looking card in every frame. **Two causes were live at once**, and either alone produces
+## it: the optimistic overlay dropped the assignment's `kit_id`, so `selected` was `""`; and the take
+## picker measured its fallback against the SOURCE's `default_kit_id` — a field only a HERD publishes
+## — so on the plant web there was no default to fall through to either.
+##
+## **THE FACE AND THE INDEX ARE ASSERTED SEPARATELY, because they come from different arguments.**
+## `HudWidgets.build_option_picker` takes the index and the face as two parameters and writes the face
+## AFTER the select, so a picker can be lit on the right entry and still read blank (and the reverse).
+##
+## **THE LIVENESS HALF IS THE TAKE PICKER'S PRESENCE.** The loop skips a picker that is not drawn —
+## the Upkeep one is conditional by design — so without it "no picker is blank" is satisfied by a card
+## that drew no pickers at all.
+func _assert_kit_pickers_state_a_selection(where: String) -> void:
+	var root := _work_inspector_root()
+	var take := _find_meta_control(root, HudWorkVocab.WORK_INSPECT_TAKE_KIT_META)
+	_assert_band_panel("%s: the card draws a TAKE kit picker to judge" % where,
+		take is OptionButton)
+	for meta in KIT_PICKER_METAS:
+		var found := _find_meta_control(root, meta)
+		if not (found is OptionButton):
+			continue
+		var picker := found as OptionButton
+		_assert_band_panel("%s: the `%s` picker carries its roster (%d entries)"
+				% [where, meta, picker.item_count], picker.item_count > 0)
+		_assert_band_panel("%s: …and `%s` is LIT on one of them (index %d of %d)"
+				% [where, meta, picker.selected, picker.item_count],
+			picker.selected != HudWidgets.NO_ENTRY_SELECTED
+				and picker.selected < picker.item_count)
+		_assert_band_panel("%s: …and its FACE names the kit `%s` is holding (\"%s\")"
+				% [where, meta, picker.text], picker.text.strip_edges() != "")
+
+## The two kit pickers a work-inspector card can draw. The TAKE one is unconditional; the UPKEEP one
+## renders only where the SITE owes a standing bill, which is why the walk above skips a missing one
+## rather than failing on it.
+const KIT_PICKER_METAS: Array[StringName] = [
+	HudWorkVocab.WORK_INSPECT_TAKE_KIT_META,
+	HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_META,
+]
+
 ## GUARD: **A WILD SOURCE OFFERS A TAKE KIT AND NOTHING TO KEEP — on BOTH WEBS.**
 ##
 ## ⛔ **THIS IS THE CASE THE DEFECT LIVED IN, AND NO FRAME HELD IT.** Reported from play on our own
@@ -3730,6 +3778,8 @@ func _assert_wild_source_offers_no_upkeep(where: String) -> void:
 	# source whose section simply failed to build its second half.
 	_assert_band_panel("%s: …and the head line states no rung, which is the same wild verdict" % where,
 		_inspected_rung_face() == "")
+	# …and the take picker it DOES draw is a live control rather than a blank one.
+	_assert_kit_pickers_state_a_selection(where)
 
 ## GUARD: **A KEPT SOURCE OFFERS BOTH, AND SAYS WHAT IT COSTS — on BOTH WEBS.** The positive half of
 ## the fork above, on a source that really does stand on a rung: the take picker, the upkeep picker
@@ -3751,6 +3801,9 @@ func _assert_kept_source_offers_upkeep(where: String) -> void:
 	# rung worded twice on one card is what this section refused to do.
 	_assert_band_panel("%s: …and the head line names the rung the bill is for (\"%s\")"
 			% [where, _inspected_rung_face()], _inspected_rung_face() != "")
+	# …and BOTH pickers state a selection — the UPKEEP one is only judged where it is drawn, which is
+	# here, so this is the arm that covers the site's keeping kit as well as the crew's tool.
+	_assert_kit_pickers_state_a_selection(where)
 
 ## The rung face the OPEN card's model carries — `""` on a wild source, `🐄 Corralled 100%` on a penned
 ## one. Read off the model rather than off the drawn head line, whose label CLIPS: a rung scrolled off
@@ -4155,6 +4208,12 @@ func _keeping_pool_band_fixture(mode: String) -> Dictionary:
 
 ## The tended patch that band works, short of its keeping. Keys are BARE — this is a patch dict from
 ## the forage lookup, not a `patch_`-prefixed tile_info.
+## The keeping kits a live wire states for a kept source on each web — the derivation
+## `EquipmentConfig::keeping_kit_for` lands on, spelled from the shared roster's own ids so a config
+## rename moves the fixture with it. The PLANT one is agriculture's, the ANIMAL one husbandry's.
+const KEEPING_POOL_PATCH_UPKEEP_KIT := BandFx.KIT_ID_TILLAGE
+const KEEPING_POOL_HERD_UPKEEP_KIT := BandFx.KIT_ID_HURDLING
+
 func _keeping_pool_patch_fixtures() -> Array:
 	return RUNG_FX.stamp_patches([{
 		"x": KEEPING_POOL_TILE.x, "y": KEEPING_POOL_TILE.y,
@@ -4163,6 +4222,13 @@ func _keeping_pool_patch_fixtures() -> Array:
 		"upkeep_supplied": KEEPING_POOL_PATCH_SUPPLIED,
 		"upkeep_shortfall": KEEPING_POOL_PATCH_DEMAND - KEEPING_POOL_PATCH_SUPPLIED,
 		"upkeep_workers_needed": int(KEEPING_POOL_PATCH_DEMAND),
+		# **THE KEEPING KIT THE SIM RESOLVES FOR A WORKED SOURCE, which every live one carries.**
+		# `resolve_upkeep_kits` walks the bands' labor rows and `keeping_kit_for` always answers a
+		# real roster id, so a kept source this band works publishes one — a fixture that omitted it
+		# described a site no server can produce and left the Upkeep picker resolving through its
+		# FALL-THROUGH on every frame in this file. `upkeep_kit_named` stays false: nobody overrode
+		# it, which is what makes the entry wear the `(default)` mark.
+		"upkeep_kit_id": KEEPING_POOL_PATCH_UPKEEP_KIT, "upkeep_kit_named": false,
 		"has_neglect_grace": true, "neglect_grace_remaining": 2,
 		# …and the queue entry that makes this the work zone's WORST case: a band that both holds
 		# something short of keepers AND has a build on the list carries the fund-mode row and the
@@ -4338,6 +4404,8 @@ func _material_short_herd_fixtures() -> Array:
 			{"material_id": MATERIAL_SHORT_GOOD, "amount": MATERIAL_SHORT_DEMAND}],
 		"upkeep_material_supplied": [
 			{"material_id": MATERIAL_SHORT_GOOD, "amount": MATERIAL_SHORT_SUPPLIED}],
+		# …and the resolved keeping kit every worked source carries — see the patch fixture's note.
+		"upkeep_kit_id": KEEPING_POOL_HERD_UPKEEP_KIT, "upkeep_kit_named": false,
 	}
 	_set_managed_herders(penned, 1)
 	return _under_herded_work_herd_fixtures() + RUNG_FX.stamp_herds([penned])
@@ -10861,6 +10929,9 @@ func _under_herded_work_herd_fixtures(pool_share: int = KEEPER_POOL_UNFUNDED) ->
 	# says more than the source's card does.
 	penned["has_neglect_grace"] = true
 	penned["neglect_grace_remaining"] = UNDER_HERDED_WORK_GRACE_TURNS
+	# …and the resolved keeping kit every worked source carries — see the patch fixture's own note.
+	penned["upkeep_kit_id"] = KEEPING_POOL_HERD_UPKEEP_KIT
+	penned["upkeep_kit_named"] = false
 	return RUNG_FX.stamp_herds([penned])
 
 ## The turns of grace the under-kept herd has left — enough that the hover reads the COUNTDOWN form
@@ -13650,8 +13721,14 @@ func _band_fixture() -> Dictionary:
 			# The pressure axis is a FLOOR, not a stance — `policy` went with `FollowPolicy`. (Both rows
 			# carried a `trade_yield` / `realized_trade_yield` pair, the shape a live cash-crop patch
 			# shipped with, until arc #527 retired that account.)
-			{"kind": "forage", "workers": 5, "workers_needed": 2, "floor": 0.5, "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
-			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20},
+			# **BOTH SOURCE ROWS STATE A `kit_id`, because every live one does** — `LaborAssignment
+			# .kitId` is always a real roster id on a forage or hunt row, so a fixture that omitted it
+			# described a band no server can produce and left the work inspector's take picker
+			# resolving through its FALLBACK on every frame in this file. Each row states its own job's
+			# DEFAULT, so no frame moves; what it buys is that "the picker names the row's kit" is a
+			# claim about the row rather than about the fallback.
+			{"kind": "forage", "workers": 5, "workers_needed": 2, "floor": 0.5, "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48, "kit_id": BandFx.KIT_DEFAULT_FORAGE},
+			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20, "kit_id": BandFx.KIT_DEFAULT_HUNT},
 			{"kind": "scout", "workers": 2},
 			{"kind": "warrior", "workers": 2},
 		],
@@ -19179,6 +19256,8 @@ func _render_work_inspector_dialog_states() -> void:
 
 	await _render_kits_upkeep_gate_states()
 
+	await _render_pending_row_kit_states()
+
 	_set_forage_patches([])
 	_set_world_herds(_herd_fixtures())
 	_push_bands([_band_fixture()])
@@ -19263,6 +19342,187 @@ func _render_kits_upkeep_gate_states() -> void:
 			and kept_bill.text.contains(HudWorkVocab.RUNG_TRACK_HOLD_WORK_TERM.replace("%s", "")))
 	_hud._bandpanel.close_work_inspector()
 	await _settle()
+
+## **THE PENDING ROW, ON BOTH WEBS — the state a live game found and this file did not cover.**
+##
+## ⛔ **REPORTED FROM PLAY: assign a harvest crew to a tile, open that row's inspector BEFORE ending
+## the turn, and the `Harvesters` picker is blank with nothing selectable in it.** Every kit state in
+## this file was staged on a CONFIRMED assignment, so the one row shape the client builds optimistically
+## — a source the wire has never described for this band — had no frame at all, and the previous round
+## dismissed exactly this symptom as *"fixture-driven, in play those carry real ids"*, which was wrong
+## in both halves: it was a real state, and the harness could have held it.
+##
+## **THE FIXTURE IS A BRAND-NEW ASSIGNMENT, which is the harder half of the case.** Both sources are
+## ones the band does NOT work — `QUEUE_SECOND_PATCH` carries a patch and no row, `PENDING_KIT_HERD`
+## is the roster's second deer — so there is no confirmed row for the overlay to inherit a kit from
+## and the ONLY honest answer is the kit the command itself carried. A repair that preserved the
+## settled row's kit would pass on an EDIT and fail here.
+##
+## **THE KIT IS DELIBERATELY THE NON-DEFAULT ONE.** `none` is a real roster member on both jobs, so a
+## picker that fell back to the job default would read `Harvesting kit` / `Stalking kit` and pass every
+## presence claim — the face is asserted by EQUALITY against `No kit` for exactly that reason.
+##
+## Driven through `_hud._emit_assign_labor`, the REAL path a compose-sheet commit takes, so the payload
+## under test is the one `Main` receives and the overlay under test is the one the board reads.
+func _render_pending_row_kit_states() -> void:
+	await _pin_canvas(PREVIEW_SIZE)
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	_set_forage_patches(_build_queue_patches(0))
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_band_fixture()])
+	await _settle()
+
+	# ---- PENDING FORAGE: the reported row ------------------------------------------------------
+	#
+	# **THE BAND IS STAMPED LOCALLY RATHER THAN READ OFF `_panel_band`, and that is the same trap
+	# `_assert_crew_edit_keeps_improvement` records.** An emit runs `Hud._after_pending_change`, which
+	# re-renders the SELECTED unit into the panel — and an earlier state in this file left an UNSTAMPED
+	# `_band_fixture()` in the selection, so `_panel_band` comes back carrying `entity` and no
+	# `band_id` and the next `_emit_assign_labor` returns at its own guard. Measured: the first emit
+	# landed and the crew edit after it silently did nothing. The overlay is keyed by `entity`, which
+	# is unchanged, so the row the inspector opens on is still this one.
+	var band: Dictionary = _stamp_band_ids([_band_fixture()])[0]
+	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, PENDING_KIT_CREW,
+		QUEUE_SECOND_PATCH.x, QUEUE_SECOND_PATCH.y, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
+		"", SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
+	await _settle()
+	_open_work_inspector_for_tile(QUEUE_SECOND_PATCH)
+	await _settle()
+	await _settle()
+	await _save("band_panel_work_kits_pending_patch")
+	_assert_pending_row_is_pending("band_panel_work_kits_pending_patch", band, "", QUEUE_SECOND_PATCH)
+	_assert_kit_pickers_state_a_selection("band_panel_work_kits_pending_patch")
+	_assert_take_picker_names("band_panel_work_kits_pending_patch", KIT_NONE_FACE)
+	_assert_work_inspector_fits("band_panel_work_kits_pending_patch")
+	_assert_crew_edit_keeps_the_kit("band_panel_work_kits_pending_patch", band, "",
+		QUEUE_SECOND_PATCH)
+
+	# ---- PENDING HUNT: the web Ray thought might escape it, and it does not -------------------
+	#
+	# **A HERD PUBLISHES `default_kit_id` AND A PATCH DOES NOT, which is the whole of why the plant
+	# web was the one reported.** That per-quarry default is a FALLBACK, so on the animal web it hid
+	# the blank face — but it is not the player's kit, so the SILENT RE-KIT below was live on both.
+	_hud._bandpanel.close_work_inspector()
+	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, PENDING_KIT_CREW, -1, -1,
+		PENDING_KIT_HERD, SourceForecast.DEFAULT_HARVEST_FLOOR,
+		"", SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
+	await _settle()
+	_open_work_inspector_for_herd(PENDING_KIT_HERD)
+	await _settle()
+	await _settle()
+	await _save("band_panel_work_kits_pending_herd")
+	_assert_pending_row_is_pending("band_panel_work_kits_pending_herd", band, PENDING_KIT_HERD,
+		Vector2i(-1, -1))
+	_assert_kit_pickers_state_a_selection("band_panel_work_kits_pending_herd")
+	_assert_take_picker_names("band_panel_work_kits_pending_herd", KIT_NONE_FACE)
+	_assert_crew_edit_keeps_the_kit("band_panel_work_kits_pending_herd", band, PENDING_KIT_HERD,
+		Vector2i(-1, -1))
+
+	_assert_unstated_upkeep_kit_falls_through()
+
+	_hud._bandpanel.close_work_inspector()
+	_clear_pending_labor()
+	await _settle()
+
+## GUARD: **AN UNSTATED KEEPING KIT RESOLVES TO THE DERIVATION, NOT TO A BLANK CONTROL.**
+##
+## ⛔ **PNG-LESS AND DRIVEN, BECAUSE NO FIXTURE IN THIS FILE CAN RENDER THE STATE.** The wire's
+## `upkeep_kit_id` is resolved by walking the BANDS' LABOR ROWS, so it is empty only for a source no
+## band works yet — and every kept source in this harness is one its band works, which is what a live
+## server publishes too. What reaches it in play is a brand-new PENDING assignment on a kept source:
+## the bill comes off the source's own RUNG and is there, the kit comes off the assignment map and is
+## not. Staging that would need a kept patch no fixture band works, so the BUILDER is driven directly
+## with the model the wire would produce.
+##
+## Three claims, and the third is what stops the first two passing on a picker that simply defaults:
+## it is LIT, its face names the derivation, and the entry it lit wears the `(default)` mark — an
+## unnamed row's resolved kit IS the derivation, so anything else would be a second one.
+func _assert_unstated_upkeep_kit_falls_through() -> void:
+	var band: Dictionary = _stamp_band_ids([_band_fixture()])[0]
+	var kits: Array = _hud._band_labor.kits()
+	var want := KitRoster.keeping_kit_for(kits, KitRoster.JOB_AGRICULTURE)
+	if want == KitRoster.NO_KIT_ID:
+		_fail("the roster derives no agriculture keeping kit — the fall-through claim would be vacuous")
+		return
+	var picker := _hud._bandpanel._build_work_inspector_upkeep_kit_picker(band, {
+		"kind": SourceForecast.LABOR_KIND_FORAGE,
+		"upkeep_kit_id": KitRoster.NO_KIT_ID, "upkeep_kit_named": false,
+	})
+	_assert_band_panel("an unstated keeping kit LITS the derived entry (index %d of %d)"
+			% [picker.selected, picker.item_count],
+		picker.selected != HudWidgets.NO_ENTRY_SELECTED and picker.item_count > 0)
+	_assert_band_panel("…and the face names it (\"%s\", want \"%s\")"
+			% [picker.text, KitRoster.display_name_for_id(kits, want)],
+		picker.text == KitRoster.display_name_for_id(kits, want))
+	_assert_band_panel("…and the entry it lit wears the `(default)` mark (\"%s\")"
+			% picker.get_item_text(picker.selected),
+		picker.get_item_text(picker.selected).ends_with(
+			HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX))
+	picker.free()
+
+## The roster's SECOND deer — a herd `_band_fixture()` does not hunt, so a pending assignment on it
+## has no confirmed row behind it. Named because both the emit and the row lookup spell it.
+const PENDING_KIT_HERD := "game_deer_79"
+
+## The crew the pending assignment carries. Above one, so a `+` in `_assert_crew_edit_keeps_the_kit`
+## is distinguishable from the count a fresh row would default to.
+const PENDING_KIT_CREW := 2
+
+## **THE PRECONDITION EVERY CLAIM ABOVE STANDS ON.** Without it a card built from a CONFIRMED row
+## satisfies the picker claims and says nothing about the state under test.
+func _assert_pending_row_is_pending(where: String, band: Dictionary, herd_id: String,
+		tile: Vector2i) -> void:
+	var model := _pending_kit_model(band, herd_id, tile)
+	_assert_band_panel("%s: precondition — the row under test is PENDING and not a confirmed one"
+		% where, bool(model.get("pending", false)))
+
+## The take picker's FACE, by EQUALITY. `contains` would pass on `Harvesting kit` for a `No kit`
+## claim's sake only if the words overlapped, but equality is what separates the player's own pick
+## from the job default the fallback would otherwise supply — which is the difference under test.
+func _assert_take_picker_names(where: String, face: String) -> void:
+	var take := _find_meta_control(_work_inspector_root(),
+		HudWorkVocab.WORK_INSPECT_TAKE_KIT_META)
+	_assert_band_panel("%s: the take picker names the kit the PLAYER sent (\"%s\", want \"%s\")"
+			% [where, "<none>" if take == null else (take as OptionButton).text, face],
+		take is OptionButton and (take as OptionButton).text == face)
+
+## GUARD: **A `+` ON A PENDING ROW MUST NOT SILENTLY RE-KIT THE CREW.**
+##
+## ⛔ `_emit_work_assign` restates the model's `kit_id` on every crew edit — that restate exists
+## precisely so a stepper press cannot re-kit a crew the player sent out bare-handed — and
+## `Main._kit_token` OMITS the token for an empty id, which the sim reads as *the job's default*. So a
+## pending row carrying no kit turned the guard into the very substitution it was written to prevent,
+## on BOTH webs, with nothing on screen saying so. PNG-less and DRIVEN: the re-kit is a value on a
+## command line, and the card it happens under looks exactly the same either way.
+func _assert_crew_edit_keeps_the_kit(where: String, band: Dictionary, herd_id: String,
+		tile: Vector2i) -> void:
+	var before := _pending_kit_model(band, herd_id, tile)
+	if String(before.get("kit_id", "")) != BandFx.KIT_ID_NONE:
+		_fail("%s: the row does not carry the sent kit before the edit (\"%s\") — the crew-edit claim would be vacuous"
+			% [where, String(before.get("kit_id", ""))])
+		return
+	_hud._bandpanel._emit_work_assign(band, before, int(before.get("workers", 0)) + 1)
+	var after := _pending_kit_model(band, herd_id, tile)
+	_assert_band_panel("%s: a `+` on the pending row keeps the crew's kit (\"%s\", want \"%s\") and moves the count (%d → %d)"
+			% [where, String(after.get("kit_id", "")), BandFx.KIT_ID_NONE,
+				int(before.get("workers", 0)), int(after.get("workers", 0))],
+		String(after.get("kit_id", "")) == BandFx.KIT_ID_NONE
+			and int(after.get("workers", 0)) == int(before.get("workers", 0)) + 1)
+
+## The work model for the pending source, re-found per call — the models are rebuilt each time, so a
+## row cannot be held across an edit.
+func _pending_kit_model(band: Dictionary, herd_id: String, tile: Vector2i) -> Dictionary:
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		if herd_id != "":
+			if String(model.get("herd_id", "")) == herd_id:
+				return model
+			continue
+		if String(model.get("herd_id", "")) == "" and int(model.get("x", -1)) == tile.x \
+				and int(model.get("y", -1)) == tile.y:
+			return model
+	return {}
 
 ## One configuration of the matrix: dock it, size it, open the card, and report what the zone asks of
 ## its box and what the card asks of its room.

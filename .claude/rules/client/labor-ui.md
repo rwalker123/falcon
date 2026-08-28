@@ -3153,6 +3153,36 @@ default", so a `+`/`−` on the work board that dropped it would silently re-kit
 deliberately sent out bare-handed. A band-wide role (scout / warrior) carries `""` and emits nothing —
 it consumes no component and has no kit axis, which is "no selection to make", never "no kit".
 
+> #### ⛔ …AND THE OPTIMISTIC OVERLAY HAS TO CARRY IT, OR THE RESTATE RESTATES NOTHING
+>
+> `effective_worker_map`'s pending branch **REPLACES** the merged row rather than patching it, and
+> `record_pending_assign` recorded no `kit_id` at all — so every PENDING row carried `""` and the
+> guard above became the very substitution it was written to prevent: a second `+` on a row the
+> player had just staffed emitted no `kit` token, and the sim resolved the job default. **Live on
+> BOTH webs**, with nothing on screen saying so.
+>
+> **It is the OPPOSITE treatment to `improvement` and `priority`, and which one a field takes is
+> decided by whether `assign_labor` STATES it.** A rank is not on that command, so the overlay reads
+> the SETTLED row's; the take kit is, so the overlay states what the command just carried. On a
+> brand-new assignment there is no settled row to inherit from anyway, which is the case this was
+> reported on — so "preserve the confirmed kit" is a repair that passes on an EDIT and fails on the
+> reported state.
+>
+> **`Hud._emit_assign_labor` passes its own `kit_id` through**, and the work row's `⌃` payload gained
+> one (`_emit_work_row_improvement`) for the reason it already restates the crew and the floor: it
+> sends no `assign_labor`, but its overlay entry REPLACES the row, so omitting the kit would blank
+> the kit of a row nobody re-kitted.
+>
+> **The second, VISIBLE half was the work inspector's take picker**, which resolved through
+> `KitRoster.default_kit_for(job, source, source.get("default_kit_id"))` — the SOURCE's own field for
+> both arguments, where the third is the JOB's default. Only a HERD publishes `default_kit_id`, so on
+> the plant web the fallback was `""` at every rung: the picker opened on nothing, showed an empty
+> face, and re-picking from it re-recorded a pending row with no kit, so the face never filled and
+> the control read as dead. It is `_band_labor.default_kit_id(job)` now — the same answer
+> `_emit_assign_labor` measures the command's omitted token against, so the `(default)` mark and the
+> omission cannot name two different kits. **The hunt web only LOOKED immune**: a herd's per-quarry
+> default hid the blank face there, and the silent re-kit was live on both.
+
 ---
 
 ## An assignment has TWO axes: the STANCE and the IMPROVEMENT (issue #442)

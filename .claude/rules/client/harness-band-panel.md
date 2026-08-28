@@ -2082,3 +2082,81 @@ could change about the zone, so the zone figure is taken once and the interestin
 CARD's height against the room it is centred in. `band_panel_work_inspector_dialog_tight` is the frame
 for the tightest room any shipped configuration leaves (a 1152×720 bottom dock: 264px against a 340px
 card, so the card's own scroll carries the rest).
+
+## The PENDING row's kit pickers — the state a live game found and this file did not cover
+
+**MEASURED, BEFORE AND AFTER, ON THIS TREE**: `154 frames / 983 : PASS / 479 assert OK` →
+`156 / 1030 / 479`, exit 0 both times. `ui_preview` is unchanged in every figure (370 frames /
+1589 `PASS`, exit 0), which is what says the client half moved no HUD render.
+
+**The `assert OK` tally does not move for a new frame here, and that is not a miscount.** These two
+states call `_assert_work_inspector_fits` (which reports through `_assert_band_panel`, i.e. `PASS`)
+and neither `_assert_zones_within_bounds` nor `_assert_zone_content_fits` — the card is a
+viewport-centred dialog and takes no zone height, so the zone pair those two states would report is
+the pair the *previous* state already reported.
+
+**TWO FRAMES, ONE PER WEB** — `band_panel_work_kits_pending_patch` and `_pending_herd` — appended
+after `_render_kits_upkeep_gate_states`, each a **BRAND-NEW** assignment on a source the band does not
+work (`QUEUE_SECOND_PATCH` carries a patch and no row; `PENDING_KIT_HERD` is the roster's second
+deer). That is the harder half of the case on purpose: with no confirmed row behind it the only
+honest answer is the kit the command itself carried, so a repair that preserved the SETTLED row's kit
+passes on an edit and fails here.
+
+**The kit sent is deliberately the NON-DEFAULT `none`.** A picker falling back to the job default
+reads `Harvesting kit` / `Stalking kit` and satisfies every presence and liveness claim, so the face
+is asserted by EQUALITY against `No kit`.
+
+**`_assert_crew_edit_keeps_the_kit` is PNG-less and driven**, because the silent re-kit is a value on
+a command line and the card it happens under is byte-identical either way. It drives the REAL
+`_emit_work_assign` and requires both the kit AND the count to move correctly — the count half is
+what catches an emit that returned at its own guard.
+
+> ### ⛔ THE BAND IS STAMPED LOCALLY, NEVER READ OFF `_panel_band`
+>
+> `Hud._after_pending_change` re-renders the SELECTED unit into the panel, and an earlier state in
+> this file leaves an UNSTAMPED `_band_fixture()` in the selection — so `_panel_band` comes back
+> carrying `entity` and no `band_id`, and the next `_emit_assign_labor` returns at its own guard.
+> **Measured: the first emit landed and the crew edit after it silently did nothing** (`2 → 2`), with
+> the kit claim beside it still green because the old record was still there. It is the same trap
+> `_assert_crew_edit_keeps_improvement` records; the overlay is keyed by `entity`, which is unchanged,
+> so the row the inspector opens on is still the right one.
+
+### `_assert_kit_pickers_state_a_selection` — the claim whose absence let a dead control ship
+
+Every kit assertion in this file asked whether a picker EXISTED and whether it carried entries. None
+asked what it was SHOWING, so `select(NO_ENTRY_SELECTED)` over an empty face passed all of them. It
+walks `KIT_PICKER_METAS` and makes three claims per drawn picker — a roster, a LIT index, a non-empty
+FACE — paired with the liveness half that a TAKE picker was drawn at all (the loop SKIPS a picker
+that is not there, the Upkeep one being conditional by design, so without it "no picker is blank" is
+satisfied by a card that drew none). **The face and the index are separate claims because
+`build_option_picker` takes them as separate arguments** and writes the face AFTER the select.
+
+It is called from all three existing kit guards (`_assert_kits_section_draws_both_controls`,
+`_assert_wild_source_offers_no_upkeep`, `_assert_kept_source_offers_upkeep`) and from both pending
+states, i.e. every state in this file that draws one.
+
+### Two fixture repairs, both describing a source no server can produce
+
+- **`_band_fixture()`'s forage and hunt rows state a `kit_id`.** `LaborAssignment.kitId` is always a
+  real roster id on a source row, so a fixture omitting it left the take picker resolving through its
+  FALLBACK on every frame in this file. Each row states its own job's DEFAULT, so **no frame moved**;
+  what it buys is that "the picker names the row's kit" is a claim about the row.
+- **The three KEPT fixtures state `upkeep_kit_id` + `upkeep_kit_named`.** `resolve_upkeep_kits`
+  answers a real id for every source a band works, so the same argument holds one account over, and
+  without it all three kept states would have been testing the client's fall-through rather than the
+  wire path. `KEEPING_POOL_PATCH_UPKEEP_KIT` / `_HERD_UPKEEP_KIT` are the two webs' derivations,
+  spelled from the shared roster's ids.
+
+**`_assert_unstated_upkeep_kit_falls_through` is PNG-LESS and DRIVEN because no fixture here can
+render its state.** The wire states `""` only for a source no band works, and every kept source in
+this harness is one its band works — so the BUILDER is called directly with the model the wire would
+produce. Three claims, the third being what stops the first two passing on a picker that merely
+defaults: it is lit, its face names the derivation, and the entry it lit wears the `(default)` mark.
+
+### The three falsifications, each failing a DISJOINT set
+
+| Restored defect | Failures |
+|---|---|
+| the pending overlay drops `kit_id` | **4** — both webs' *"the take picker names the kit the PLAYER sent"* (`"Harvesting kit"` / `"Stalking kit"` against `"No kit"`) and both crew-edit vacuity guards. **The face and LIT claims stay GREEN**, which is the demonstration that the picker's fallback alone hides the blank face while leaving the silent re-kit live |
+| the take picker measures its default against `source.get("default_kit_id")` | **6** — the LIT and FACE claims on `band_panel_work_kits_picker` / `_kept_patch` / `_kept_herd`, each reading `index -1 of 2` and `""`. The two PENDING states stay green (their rows carry a real kit), and so do the two WILD ones (their band is `_band_fixture()`, now stamped) |
+| the upkeep picker's fall-through removed | **3** — the driven block alone, naming `index -1 of 2` and `"" want "Tillage kit"` |
