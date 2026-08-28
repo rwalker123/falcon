@@ -717,6 +717,13 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 			# beside the floor everywhere the map is read, so no consumer has to go back to the raw
 			# assignment for it.
 			"improvement": String(a.get("improvement", "")), "pending": false,
+			# **WHAT THIS CREW CARRIES WHEN IT WORKS THE SOURCE** (`docs/plan_standing_upkeep.md`
+			# §4.9 item 12c) — the TAKE kit, the left half of the work inspector's kit pair. It is
+			# the assignment's own `kit_id`, already resolved by the sim, and it rides this map for
+			# the reason every other key here does: **this map is a hand-listed allowlist**, so a key
+			# not copied here does not exist as far as the work board is concerned. (That is exactly
+			# how the good-shortfall pair below came out empty on a row whose wire carried it.)
+			"kit_id": String(a.get("kit_id", "")),
 			# **WHERE THE PLAYER PUT THIS ROW WHEN THE BAND RUNS SHORT** (`docs/plan_standing_upkeep.md`
 			# §4.9 item 9b) — one of the three WORDS the decoder writes, normalized here so no reader
 			# downstream has to decide what an unrecognised token means. It rides beside the floor for
