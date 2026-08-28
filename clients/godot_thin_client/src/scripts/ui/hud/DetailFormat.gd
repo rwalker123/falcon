@@ -1342,15 +1342,10 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
     return build_countdown_value(SourceForecast.build_turns_remaining(src, prefix),
         build_crew, percent, SourceForecast.build_queue_position(src, prefix))
 
-## **THE REMEDY, ON THE HOVER OF THE ROW THAT IS SLIPPING** — the whole of what replaced the `At risk:`
-## row and its indented instruction. Registers `HudWorkVocab.under_kept_tooltip_for_source` against the
-## rung row's own key and NOTHING else: no shortfall, no countdown, because a card cannot act on either
-## (the work board takes the countdown — see that producer's flag).
-##
-## **THE LAPSED ROW'S OWN SENTENCE, on the hover of the row that lost the rung.** `⚠ Lapsed 99%` is
-## two words on a ~245px card and the state needs three facts — what happened, that the banked work
-## survives, and the one click that resumes it — so the words go where there is room for them
-## (`HudSelectionVocab.RUNG_LAPSED_TOOLTIP`).
+## **THE LAPSED ROW'S OWN SENTENCE, on the hover of the row carrying a rung nobody is building.**
+## `⚠ Lapsed 99%` is two words on a ~245px card and the state needs three facts — what the state IS,
+## that the banked work survives, and the one click that resumes it — so the words go where there is
+## room for them (`HudSelectionVocab.RUNG_LAPSED_TOOLTIP`, which names no CAUSE, and says there why).
 ##
 ## ⛔ **IT TAKES THE COMPOSED VALUE, NEVER THE SOURCE, so the verdict is reached exactly once.**
 ## `build_sentinel_value` already forked on the countdown, the meter and the queue position; a hover
@@ -1369,6 +1364,11 @@ static func note_lapsed_hover(ctx: Context, row_key: String, value: String) -> v
         return
     ctx.row_tooltips[row_key] = HudSelectionVocab.RUNG_LAPSED_TOOLTIP
 
+## **THE REMEDY, ON THE HOVER OF THE ROW THAT IS SLIPPING** — the whole of what replaced the `At risk:`
+## row and its indented instruction. Registers `HudWorkVocab.under_kept_tooltip_for_source` against the
+## rung row's own key and NOTHING else: no shortfall, no countdown, because a card cannot act on either
+## (the work board takes the countdown — see that producer's flag).
+##
 ## Silent on a rung whose keeping is paid, which is every rung on every calm card in the game, and
 ## silent for a caller that passes no context — so a host that renders these lines without one gets
 ## exactly the BBCode it always did.

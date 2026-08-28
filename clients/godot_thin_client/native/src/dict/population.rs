@@ -400,9 +400,19 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 row.penCarryPerWorkerBiomass() as f64,
             );
             let _ = entry.insert("scout_vantage_range", row.scoutVantageRange() as f64);
-            // **THE BUILD AXIS AT THIS BAND'S LIVE WEAR, IN WORK UNITS** — what one equipped worker
-            // takes off an improvement's cost (neutral `0`, the handling gear's flint tier 8.5), so
-            // spent gear steps back to neutral here the way every other axis does. `buildRate` is
+            // **THE BUILD AXIS AT THIS BAND'S LIVE WEAR, IN WORK UNITS** — the EXTRA work one
+            // equipped worker DELIVERS per turn (neutral `0`; the crook's and the hoes' flint tiers
+            // each declare 0.5, so an equipped builder banks `1.0 + 0.5 = 1.5` where a bare one banks
+            // `1.0`), so spent gear steps back to neutral here the way every other axis does.
+            //
+            // ⛔ **AN ADDEND, NOT A DISCOUNT.** This read *"what one equipped worker takes off an
+            // improvement's cost"* with the retired subtraction's **8.5** beside it. **A job's work
+            // requirement NEVER changes** — a 50-work Cultivate costs 50 work geared and bare — so
+            // nothing subtracts this and nothing divides by it. The old number could not carry across
+            // because the two readings are different quantities in different units: read as an
+            // addend, `8.5` would be a worker delivering nine and a half times a bare one.
+            // `core_sim/src/data/equipment.json`'s `_comment_durability` owns the `8.5 → 0.5` round
+            // trip. `buildRate` is
             // retired and frozen at its neutral `1` on the wire, so it is no longer decoded: a
             // reader kept on it would quote a capability the kit no longer advertises.
             let _ = entry.insert("build_work_per_worker", row.buildWorkPerWorker() as f64);
@@ -424,9 +434,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             );
             // …and **WHICH WEB THE TWO ABOVE ARE FOR**, at this band's live wear: `"plant"` |
             // `"animal"`, `""` for a kit holding no live build tool. The three fields are one
-            // reading — a kit's worth off a build is real and simply not real HERE when the branch
-            // disagrees — which is what lets a picker grey `tillage` in front of a `Tame` and what
-            // stops a compose sheet quoting the hurdles' 8.5 against a Cultivate.
+            // reading — a kit's contribution to a build is real and simply not real HERE when the
+            // branch disagrees — which is what lets a picker grey `tillage` in front of a `Tame` and
+            // what stops a compose sheet quoting the crook's 0.5 against a Cultivate. (`hurdles` was
+            // the item that used to declare the animal side; it is a MATERIAL since §4.9 item 12 and
+            // the kit item is the **crook**.)
             let _ = entry.insert(
                 "build_work_branch",
                 row.buildWorkBranch().unwrap_or_default(),

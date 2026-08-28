@@ -938,10 +938,18 @@ roster's own display name cannot disagree about one item; `hoes` joined `KIT_ITE
 and deliberately has **no breakdown row**, the build axis having no flat per-band field for a row to
 pair it with (`labor-ui.md` → "THE BUILDERS' KIT IS DERIVED PER QUEUE ENTRY" on the client side).
 
-`hurdles` bound a slaughter at a pen **and** take work off the `Tame` and `Corral` builds
-(issue #515, `.claude/rules/core_sim/equipment.md` → "The build axis"), so a row quoting only the pen
-rate describes the payoff at the top of the ladder and says nothing about the climb that produces it.
-It reads `pen collection 40.0 per keeper · 8.5 work off a tame or a pen, per keeper`.
+The handling gear binds a slaughter at a pen **and** raises what a worker delivers to the `Tame` and
+`Corral` builds (issue #515, `.claude/rules/core_sim/equipment.md` → "The build axis"), so a row
+quoting only the pen rate describes the payoff at the top of the ladder and says nothing about the
+climb that produces it. It reads
+`pen collection 40.0 per keeper · +0.5 work a turn per keeper on a tame or a pen`.
+
+> ⛔ **THE CLAUSE READ `8.5 work off a tame or a pen, per keeper` AND BOTH HALVES OF THAT ARE
+> RETIRED.** `build_work` is an ADDEND on what an equipped worker DELIVERS per turn, never units off
+> the job — a job's work requirement never changes (`docs/plan_standing_upkeep.md` §4.8) — and the
+> magnitude moved with the meaning, `8.5` being the old subtraction's units and `0.5` the rate's
+> (`core_sim/src/data/equipment.json` → `_comment_durability` owns the round trip). The item is the
+> **crook** too: `hurdles` became a MATERIAL at §4.9 item 12.
 
 - **IT IS WORK UNITS, NOT A MULTIPLIER, and the wire field changed with the wording.**
   `EquipmentStat::BuildRate` is retired (`docs/plan_unit_costed_work.md` §6): a multiplier on the

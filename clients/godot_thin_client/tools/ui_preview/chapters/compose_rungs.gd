@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 85
+const EXPECTED_CHECKPOINTS := 90
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -975,6 +975,11 @@ const SLED_ROSTER_DEER_ID := "game_deer_sled_roster"
 ## fixture's id renders against that herd instead.
 const SLED_ROSTER_PEN_ID := "game_boar_sled_roster_pen"
 
+## The penned twin's own CONTROL — a corralled Rabbit Warren, on its own id for the same two reasons.
+## It is what stops "a pen greys the weaponless kits" from being read as "a pen greys everything": the
+## warren's `defense 0` is cleared by the bare hand, so the identical roster greys nothing on it.
+const SLED_ROSTER_PEN_WARREN_ID := "game_rabbit_sled_roster_pen"
+
 ## The penned twin's species terms, at the shipped `fauna_config.json` numbers — a **Wild Boar**
 ## (12 kg, `defense 2`, husbandry ceiling `pen`). Both halves are load-bearing: the defence is what
 ## makes the weapon rule grey the trap and the handling kit out on the range, and the ceiling is what
@@ -1112,8 +1117,11 @@ func _assert_a_sled_does_not_make_a_hunt_kit_pen_only() -> void:
 	var pen := _offer_quarry(SLED_ROSTER_PEN_ID, "Wild Boar", "big", PEN_BOAR_BODY_MASS,
 		PEN_BOAR_DEFENSE, SourceForecast.HUSBANDRY_CEILING_PEN)
 	pen[KitRoster.QUARRY_CORRALLED_KEY] = true
-	# A pen is slaughtered rather than stalked and publishes no engagement stage, which is the sim's
-	# own reading — see `KitRoster.kit_offer`, where it is the second of the two pen guards.
+	# ⛔ **`NO_ENGAGEMENT_STAGE` IS WHAT THE WIRE ACTUALLY PUBLISHES FOR A PEN, and this fixture keeps
+	# it deliberately.** `core_sim/src/snapshot/subsistence.rs` still filters the field on
+	# `is_corralled()`, against the sim's own behaviour, until issue #572 closes it — so a fixture that
+	# quietly stated a real reach here would prove the greying below against a frame no live client
+	# ever receives. `KitRoster.quarry_is_fought` reads the CORRALLED flag for exactly this reason.
 	pen["engage_rate"] = SourceForecast.NO_ENGAGEMENT_STAGE
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(pen)
@@ -1132,16 +1140,71 @@ func _assert_a_sled_does_not_make_a_hunt_kit_pen_only() -> void:
 	var pen_rows := _picker_entries(pen_sheet)
 	h._assert_hud("precondition: the corralled twin lists the same kits (%d)" % pen_rows.size(),
 		pen_rows.size() == SLED_ROSTER_HUNT_KITS)
-	var pen_greyed := 0
-	for row_variant in pen_rows:
-		if bool((row_variant as Dictionary)["disabled"]):
-			pen_greyed += 1
-	h._assert_hud("a corralled herd greys nothing — a pen is collected, not fought (%d greyed)"
-		% pen_greyed, pen_greyed == 0)
+	# ⛔ **THIS BLOCK INVERTED AT §4.9 item 12b, and the old claim was that a corralled herd greys
+	# NOTHING.** It was true of a sim that quoted a fence-holding band a take whatever it carried; the
+	# take resolves engage → retreat → fight at every rung now, at the species' own `defense`, so a
+	# bare-handed party at a pen is quoted nothing and paid nothing
+	# (`core_sim/tests/hunt_useful_crew_on_the_wire.rs`). **Containment solves the catching, weapons
+	# solve the killing** — and the picker has to say so before the crew is sent.
+	var pen_trapping := _picker_entry(pen_sheet, "Trapping kit")
+	h._assert_hud("a fence does not kill the boar: Trapping is greyed at the PEN too, for the WEAPON's reason — \"%s\""
+			% String(pen_trapping.get("text", "")),
+		bool(pen_trapping.get("disabled", false))
+			and String(pen_trapping.get("text", "")).contains(
+				HudComposeVocab.KIT_WITHHELD_REASON_CANNOT_HURT % "Wild Boar"))
+	# **THE SPEAR LINE IS THE OTHER HALF OF THE CLAIM.** A rule that greyed everything on a pen would
+	# satisfy the line above on its own, and it would be the old defect pointing the other way.
+	var pen_stalking := _picker_entry(pen_sheet, "Stalking kit")
+	h._assert_hud("…while the spear line clears the same defence and stays selectable — \"%s\""
+			% String(pen_stalking.get("text", "")),
+		not bool(pen_stalking.get("disabled", true)))
+	# **AND THE HANDLING KIT IS STILL OFFERED, on the BUILD axis rather than on the weapon.** It
+	# carries no weapon and could not bring the boar down, but this pen has a rung left to climb and
+	# the axis that speeds that climb is asked BEFORE the fight — a crook does not have to kill a beast
+	# to be the right thing to carry while you are gentling one. Out on the range the same kit on the
+	# same roster IS greyed (the wild twin above), because a wild boar offers no rung to build.
+	var pen_handling := _picker_entry(pen_sheet, HANDLING_KIT_LABEL)
+	h._assert_hud("…and the handling kit stays offered on the rung its gear can still speed — \"%s\""
+			% String(pen_handling.get("text", "")),
+		not bool(pen_handling.get("disabled", true))
+			and RungGates.hunt_rung_remains(pen, HudComposeVocab.BARE_FORECAST_PREFIX))
 	h._assert_hud("…and the PEN is the axis it is priced on",
 		KitRoster.carry_axis_for(KitRoster.JOB_HUNT, pen) == KitRoster.KIT_PEN_CARRY_KEY)
 	h._assert_hud("…where the wild twin is priced on the hunt haul",
 		KitRoster.carry_axis_for(KitRoster.JOB_HUNT, deer) == KitRoster.KIT_HUNT_CARRY_KEY)
+
+	# --- THE PENNED ANIMAL THE PARTY CAN ACTUALLY KILL: nothing is greyed -------------------------
+	# **THE PAIRING IS THE CLAIM, and without this half the boar's greying proves only that a pen
+	# greys things.** A Rabbit Warren states `defense 0`, so the bare hand's `attack 1` clears it,
+	# `max(0, 1 − 0)` is positive and the gate is open for every kit on the roster — penned exactly as
+	# it is wild. What decides the greying is the ANIMAL, never the fence.
+	var pen_warren := _offer_quarry(SLED_ROSTER_PEN_WARREN_ID, "Rabbit Warren", "small",
+		OFFER_RABBIT_BODY_MASS, OFFER_RABBIT_DEFENSE, SourceForecast.HUSBANDRY_CEILING_PEN)
+	pen_warren[KitRoster.QUARRY_CORRALLED_KEY] = true
+	pen_warren["engage_rate"] = SourceForecast.NO_ENGAGEMENT_STAGE
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(pen_warren)
+	h._compose_herd(pen_warren, OFFER_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	var warren_sheet: Control = h._hud._drawercompose._compose_sheet
+	var warren_picker := Q.find_meta_node(warren_sheet, KitRoster.KIT_PICKER_META) as OptionButton
+	if warren_picker != null:
+		warren_picker.get_popup().position = Vector2i(
+			warren_picker.get_screen_position() + Vector2(0.0, warren_picker.size.y))
+		warren_picker.get_popup().popup()
+	await h._settle()
+	await h._save("herd_kit_offer_sled_roster_pen_warren")
+	if warren_picker != null:
+		warren_picker.get_popup().hide()
+	var warren_rows := _picker_entries(warren_sheet)
+	h._assert_hud("precondition: the penned warren lists the same kits (%d)" % warren_rows.size(),
+		warren_rows.size() == SLED_ROSTER_HUNT_KITS)
+	var warren_greyed := 0
+	for row_variant in warren_rows:
+		if bool((row_variant as Dictionary)["disabled"]):
+			warren_greyed += 1
+	h._assert_hud("a penned warren greys NOTHING — every kit clears a `defense 0` (%d greyed)"
+		% warren_greyed, warren_greyed == 0)
 
 ## **A HANDLING KIT'S HINT NAMES THE PEN, AND AN ORDINARY HUNT KIT'S DOES NOT.**
 ##

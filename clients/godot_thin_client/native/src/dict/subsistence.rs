@@ -784,9 +784,10 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
         // herd the player is taming (`KitRoster.kit_offer` asks this axis FIRST).
         let _ = dict.insert("build_work_per_worker", kit.buildWorkPerWorker() as f64);
         // **WHICH FOOD WEB THAT BUILD AXIS IS FOR** — `"plant"` | `"animal"`, and `""` for a kit
-        // carrying no build tool at all. The pair is ONE reading: a hoe takes 8.5 off a Cultivate and
-        // NOTHING off a Tame, so a picker offering builders kits must grey the one whose branch
-        // disagrees with the entry in front of it, exactly as it greys a snare against a Red Deer.
+        // carrying no build tool at all. The pair is ONE reading: a hoe ADDS its 0.5 to a worker on a
+        // Cultivate and NOTHING to one on a Tame — the addend above, never a discount — so a picker
+        // offering builders kits must grey the one whose branch disagrees with the entry in front of
+        // it, exactly as it greys a snare against a Red Deer.
         // Decoding the worth without the branch is how a single number comes to be believed on both
         // webs — the same failure `attack_max_body_mass` exists to prevent one axis over.
         let _ = dict.insert("build_work_branch", kit.buildWorkBranch().unwrap_or(""));

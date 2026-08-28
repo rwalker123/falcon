@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 345
+const EXPECTED_CHECKPOINTS := 350
 
 ## The countdown verdict's opening, as a needle — the precondition every claim about that sentence
 ## rests on ("this model reached the reaching branch at all").
@@ -2015,6 +2015,19 @@ func run(harness) -> void:
 ## moved one would move only one of the two assertions below.
 const GATE_MAMMOTH_DEFENSE := 12.0
 
+## The gentle pen's own id and `defense`. **Its own id** because the sheet re-reads its quarry from the
+## SELECTION by id, so a twin sharing the fixture's id renders against the herd already selected and
+## its terms never arrive. **`0` defence** because the bare hand's `attack 1` has to CLEAR it — this is
+## the pairing's positive half, and a value the bare hand merely ties would refuse it too.
+const GATE_GENTLE_PEN_ID := "game_pen_gate_gentle"
+
+const GATE_GENTLE_PEN_DEFENSE := 0.0
+
+## How far the pen's PUBLISHED ceiling is put from the client's own closed-form cap, so the two can
+## never coincide and the equality can only pass by the published number actually being read. One hand
+## is enough — the claim is about which producer answered, not about the size of the gap.
+const PUBLISHED_CAP_APART := 1
+
 const GATE_MAMMOTH_DURABILITY := 500.0
 
 ## §2.1's own row: twenty hunters can surround one mammoth. Stated as the wire's `engageRate` and
@@ -2033,16 +2046,31 @@ func _combat_gate_mammoth() -> Dictionary:
 	herd["engage_rate"] = GATE_MAMMOTH_ENGAGE_RATE
 	return herd
 
-## **A PEN CARRYING THE FIGHT'S TERMS AND STILL SAYING NOTHING.** The herd is corralled, so it
-## publishes `NO_ENGAGEMENT_STAGE` — a penned animal is not stalked — while keeping a real `defense`
-## and `durability`. That is what makes the negative below a claim about the ENGAGEMENT GATE rather
-## than about a fixture that simply omitted the fields: strip the gate and this sheet grows both
-## lines, which is the byte-identity this arc has to hold for the pen and the whole plant web.
+## **A PEN CARRYING THE FIGHT'S TERMS, AND SINCE §4.9 item 12b IT IS FOUGHT ON THEM.** The herd is
+## corralled and keeps the mammoth's `defense` and `durability`, so a bare-handed party at this fence
+## is refused exactly as it is on the range — containment solves the catching, weapons solve the
+## killing.
+##
+## ⛔ **IT STILL PUBLISHES `NO_ENGAGEMENT_STAGE`, DELIBERATELY, BECAUSE THE WIRE DOES.**
+## `core_sim/src/snapshot/subsistence.rs` filters the field on `is_corralled()` against the sim's own
+## behaviour until issue #572; a fixture that quietly stated a real reach here would prove the refusal
+## below against a frame no live client ever receives. `SourceForecast.quarry_is_fought` reads the
+## CORRALLED flag for that reason, and this fixture is what pins it.
 func _combat_gate_pen() -> Dictionary:
 	var herd := HerdFx.domesticated_herd_fixture()
 	herd["defense"] = GATE_MAMMOTH_DEFENSE
 	herd["durability"] = GATE_MAMMOTH_DURABILITY
 	herd["engage_rate"] = SourceForecast.NO_ENGAGEMENT_STAGE
+	return herd
+
+## **THE PEN THE SAME BARE PARTY CAN ACTUALLY KILL** — the identical fixture at a `defense` the bare
+## hand clears, so `max(0, 1 − 0)` is positive and the gate opens. It is the other half of the claim:
+## a change that simply suppressed the sheet's fight lines on every pen would satisfy the refusal
+## above on its own, and it would be the old exemption pointing the other way.
+func _combat_gate_pen_gentle() -> Dictionary:
+	var herd := _combat_gate_pen()
+	herd["id"] = GATE_GENTLE_PEN_ID
+	herd["defense"] = GATE_GENTLE_PEN_DEFENSE
 	return herd
 
 func _combat_gate_states() -> void:
@@ -2098,21 +2126,42 @@ func _combat_gate_states() -> void:
 				String.num(BandFx.KIT_ATTACK_BARE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS))
 			and Readout.hunt_gate_line(bare_sheet).contains(
 				String.num(GATE_MAMMOTH_DEFENSE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS)))
-	# **THE NEGATIVE, AND IT IS THE HALF THE ARC KEEPS BREAKING.** A PEN publishes no engagement
-	# stage, so the refusal may not render on one — and this fixture carries a real `defense` and
-	# `durability`, so the silence is the ENGAGEMENT GATE's doing rather than a fixture that omitted
-	# the terms. **That gate is the reason `has_engagement_stage` survives the removal above**: a
-	# penned animal is not fought, and without it a pen would wear the refusal. PNG-less: the claim is
-	# an absence, which a picture states only by not showing something, and the frame set's byte-diff
-	# is where a regression would actually surface.
+	# ⛔ **THIS CLAIM INVERTED AT §4.9 item 12b, and its old form is the sentence someone would use to
+	# reinstate the exemption.** It read *"a PEN is not stalked and not fought — the refusal does not
+	# render on one"*, mounted on `has_engagement_stage` and justified by a pen publishing
+	# `NO_ENGAGEMENT_STAGE`. The take resolves the ORDINARY fight at every rung now, so a bare-handed
+	# party at this fence brings nothing down and the sheet rendered a stepper, a kit row and a
+	# forecast over a take the sim pays nothing for. The fixture's wire value has NOT changed — it
+	# still publishes the pen's own `0` — which is exactly why the predicate had to stop being the
+	# engagement field.
+	#
+	# **THIS HALF TAKES A FRAME NOW, WHERE THE OLD CLAIM COULD NOT.** The old one asserted an ABSENCE,
+	# which a picture states only by not showing something; this one asserts the refusal is THERE, on a
+	# sheet the player is looking at, which is exactly what a frame is good for.
 	var pen := _combat_gate_pen()
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(pen)
 	h._compose_herd(pen, LOCAL_HUNT_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
 	await h._settle()
+	await h._save("herd_hunt_gate_blocked_pen")
 	var pen_sheet: Control = h._hud._drawercompose._compose_sheet
-	h._assert_hud("a PEN is not stalked and not fought — the refusal does not render on one",
-		Readout.hunt_gate_blocked(pen_sheet) == Readout.HUNT_GATE_ABSENT)
+	h._assert_hud("a fence does not kill the mammoth: bare hands at a PEN are refused IN WORDS too",
+		Readout.hunt_gate_blocked(pen_sheet) == Readout.HUNT_GATE_BLOCKED)
+	h._assert_hud("…and that refusal names BOTH terms at the pen exactly as it does on the range",
+		Readout.hunt_gate_line(pen_sheet).contains(
+				String.num(BandFx.KIT_ATTACK_BARE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS))
+			and Readout.hunt_gate_line(pen_sheet).contains(
+				String.num(GATE_MAMMOTH_DEFENSE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS)))
+	# **THE POSITIVE HALF.** The same bare party, the same fence, an animal it CAN kill: no refusal.
+	# Without this a rule that silenced every pen's sheet — or blocked every pen's — passes above.
+	var gentle := _combat_gate_pen_gentle()
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(gentle)
+	h._compose_herd(gentle, LOCAL_HUNT_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	h._assert_hud("…while a penned animal the same bare hands CAN kill states no refusal at all",
+		Readout.hunt_gate_blocked(h._hud._drawercompose._compose_sheet)
+			== Readout.HUNT_GATE_ABSENT)
 
 	# State gate-d — **THE SAME MAMMOTH, TEN SPEARS AMONG SEVENTEEN HUNTERS** (issue #520). The gate
 	# clears, because it is asked at ONE tier and that tier is the best-equipped crew's — which is the
@@ -4386,18 +4435,48 @@ func _board_cap_matches_the_sheet(herd: Dictionary, band: Dictionary, floor_valu
 	h._assert_hud("…and its cap stays its own %d rather than collapsing to that zero" % patch_cap,
 		patch_cap > 0 and SourceForecast.max_useful_workers(
 			SourceForecast.with_published_useful_crew(patch_forecast, patch_row)) == patch_cap)
-	# **A PEN IS THE SAME REFUSAL ONE STEP OVER.** It IS a hunt row, so the wire publishes the field
-	# on it — but a penned beast is collected rather than stalked (`NO_ENGAGEMENT_STAGE`), and its cap
-	# was never the fightless quotient this replaces. A stalking curve's plateau must not bind it.
+	# ⛔ **A PEN TAKES THE SIM'S ANSWER NOW, AND THIS CLAIM INVERTED AT §4.9 item 12b.** It read *"a
+	# PEN keeps its own cap — no engagement stage, no published plateau"*, on the ground that a penned
+	# beast is collected rather than stalked and its cap was never the fightless quotient this
+	# replaces. The fear behind that was right and the conclusion is now wrong: what must not bind a
+	# pen is a STALKING curve's plateau, and this field is not one — it is the plateau of the PEN's own
+	# curve (the room above the floor, the keepers' reach and calmed retreat, the fight, and their
+	# haul), published by the same producer since the sim stopped forking on `is_corralled()`.
+	# Discarding it left the board's `+` offering hands the sim had just called useless.
+	#
+	# **BOTH HALVES, because a rule that simply suppressed the `+` on every pen passes the first.**
 	var pen := _retreat_crew_pen(UNCHANGED_PROBE_STAY)
 	var pen_cap := _source_worker_cap(pen, SourceForecast.SOURCE_KIND_HERD)
 	var pen_forecast := SourceForecast.forecast_inputs(pen, SourceForecast.SOURCE_KIND_HERD,
 		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
-	h._assert_hud("a PEN keeps its own cap (%d) — no engagement stage, no published plateau" % pen_cap,
-		pen_cap > 0 and SourceForecast.max_useful_workers(
+	h._assert_hud(("precondition: this pen's OWN cap is a real crew (%d), so the sim's answer below is"
+			+ " a number the client had something else to say about") % pen_cap, pen_cap > 0)
+	# A bare-handed party on a defended pen: the sim says NO crew is useful, and the board must say it.
+	h._assert_hud("a fence does not kill the animal: a PEN's published `no crew is useful` is honoured",
+		SourceForecast.max_useful_workers(
 			SourceForecast.with_published_useful_crew(pen_forecast, {
 				SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY:
-					SourceForecast.PUBLISHED_NO_USEFUL_CREW})) == pen_cap)
+					SourceForecast.PUBLISHED_NO_USEFUL_CREW}))
+			== SourceForecast.PUBLISHED_NO_USEFUL_CREW)
+	# …and the identical pen whose published ceiling is a REAL crew still offers one. **This is the
+	# half that stops the fix being a blanket suppression** — a change that shut the `+` on every pen
+	# would satisfy the claim above on its own and would be the old defect pointing the other way.
+	#
+	# **IT IS THE PEN'S OWN CAP, NOT THE PUBLISHED NUMBER, AND THAT IS THE EXISTING MODEL RATHER THAN
+	# A GAP IN THIS ONE.** `max_useful_workers` spends a published plateau inside its `whole_animal`
+	# branch, and a pen is not whole-animal by construction (`whole_animal = food_per_animal > 0 and
+	# not corralled`) — it is a managed source paying a production, so it caps on the ceiling it pays.
+	# Carrying the sim's answer onto a pen therefore moves exactly ONE reading, the `NO_USEFUL_CREW`
+	# refusal above, which is the reading the fight opened. Asserting equality with the published
+	# number here would be asserting a pen branch this arc did not build.
+	# **Deliberately put APART from the client's own cap** (`PUBLISHED_CAP_APART`), so a board that
+	# HAD started quoting the published number would fail this rather than agree with it by accident.
+	var pen_plateau := pen_cap + PUBLISHED_CAP_APART
+	h._assert_hud(("…while the same pen with a real published ceiling still offers a crew — its own"
+			+ " %d, the managed cap, not the suppressed nothing above") % pen_cap,
+		SourceForecast.max_useful_workers(
+			SourceForecast.with_published_useful_crew(pen_forecast, {
+				SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY: pen_plateau})) == pen_cap)
 
 func _subone_take_assertions() -> void:
 	var prior_band = h._hud._band_labor.player_band()

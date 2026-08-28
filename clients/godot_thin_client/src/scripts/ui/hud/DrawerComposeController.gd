@@ -2822,11 +2822,20 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # directly under the crew that will fight it — both lines answer "is this crew the right size, and
     # can it win at all", which is what the stepper one row up has just posed.
     #
-    # **THE ENGAGEMENT STAGE IS THE GATE ON BOTH, and that is what keeps a PEN and the whole PLANT web
-    # byte-identical**: both publish `NO_ENGAGEMENT_STAGE` — a penned animal is not stalked and a berry
-    # does not fight back — so neither line renders and neither sheet moves. **The reach carries no
-    # build term** (`docs/plan_standing_upkeep.md` §2.2): a Tame in flight is staffed by its own crew,
-    # so the hunters beside it stalk exactly as they would with no build running.
+    # **THE FIGHT IS THE GATE ON BOTH** (`SourceForecast.quarry_is_fought`, the one predicate the kit
+    # picker's greying and the sheet's own numbers already take), so the whole PLANT web renders
+    # neither line and no forage sheet moves. **The reach carries no build term**
+    # (`docs/plan_standing_upkeep.md` §2.2): a Tame in flight is staffed by its own crew, so the
+    # hunters beside it stalk exactly as they would with no build running.
+    #
+    # ⛔ **A PEN USED TO BE ON THE PLANT WEB'S SIDE OF THAT GATE, AND IT NO LONGER IS.** This read
+    # `has_engagement_stage`, on the stated ground that *"a PEN and the whole PLANT web are
+    # byte-identical: both publish `NO_ENGAGEMENT_STAGE` — a penned animal is not stalked and a berry
+    # does not fight back"*. The first half died with §4.9 item 12b: a penned herd resolves the
+    # ORDINARY fight, so a bare-handed party at a fenced aurochs (`defense 6`) is refused outright and
+    # this sheet rendered no refusal at all — a stepper, a kit row and a forecast over a take the sim
+    # pays nothing for. **Containment solves the catching, weapons solve the killing.** The byte
+    # identity with forage survives, because that was always the claim worth keeping.
     var engage_rate := float(herd.get(
         HudComposeVocab.BARE_FORECAST_PREFIX + SourceForecast.FORECAST_ENGAGE_RATE_KEY,
         SourceForecast.NO_ENGAGEMENT_STAGE))
@@ -2842,7 +2851,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # forecast that already prices the trip. The REFUSAL stays and is the whole point of keeping the
     # helper — a sub-gate party kills nothing at any headcount and still takes casualties, which reads
     # as a bug unexplained, and it is the honesty line a `none` kit depends on.
-    if SourceForecast.has_engagement_stage(engage_rate):
+    if SourceForecast.is_fought(engage_rate,
+            bool(herd.get(SourceForecast.SOURCE_CORRALLED_KEY, false))):
         var quarry := _herd_label_for_id(herd_id)
         # **IT IS ASKED AT THE SELECTED KIT'S EFFECTIVE ATTACK, NOT THE BAND'S DEFAULT-KIT TIER.** The
         # picker one row up decides what these hunters carry, so a gate quoting the band's default kit

@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 203
+const EXPECTED_CHECKPOINTS := 204
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -1699,8 +1699,17 @@ func run(harness) -> void:
 		_rung_value_lapsed() != _rung_value_for_turns(SourceForecast.BUILD_TURNS_NO_ESTIMATE))
 	# **THE HOVER CARRIES THE SENTENCE, the mark being two words on a ~245px card.** It has to say the
 	# work survived and where the click is, or the word names a loss without a remedy.
-	h._assert_hud("the lapsed row's hover states the feral ground, the banked work and the re-queue",
+	h._assert_hud("the lapsed row's hover states the part-built rung, the banked work and the re-queue",
 		_lapsed_hover(lapsed_value) == HudSelectionVocab.RUNG_LAPSED_TOOLTIP)
+	# ⛔ **AND IT NAMES NO CAUSE, which is a claim about every row this hover is registered on.**
+	# `DetailFormat.note_lapsed_hover` mounts it on `HUSBANDRY_ROW` and `CORRAL_ROW` as well as the two
+	# plant rows, and it opened *"The ground went feral…"* — ground a HERD does not have. The three
+	# conjuncts behind the mark are also satisfied by a plainly CANCELLED queue entry with work banked,
+	# where nothing went feral at all. The word `Lapsed` is right in all three; a cause would be a
+	# guess, so the sentence asserts none.
+	h._assert_hud("…and it blames no cause it cannot know — no ground, no feralness, on a hover herds share",
+		not HudSelectionVocab.RUNG_LAPSED_TOOLTIP.to_lower().contains("feral")
+			and not HudSelectionVocab.RUNG_LAPSED_TOOLTIP.to_lower().contains("ground"))
 	h._assert_hud("…and a row that is NOT lapsed registers no such hover",
 		_lapsed_hover(_rung_value_for_turns(SourceForecast.BUILD_TURNS_NO_ESTIMATE)) == "")
 

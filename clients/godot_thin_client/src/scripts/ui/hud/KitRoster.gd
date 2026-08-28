@@ -191,7 +191,9 @@ const MASS_BOUND_UNBOUNDED := 0.0
 ## `durability` are NOT spelled here: `SourceForecast.hunt_gate_model_at` owns that pair, and asking it
 ## is how the offer test and the gate line cannot come to disagree about what a closed gate is.
 const QUARRY_BODY_MASS_KEY := "body_mass"
-const QUARRY_CORRALLED_KEY := "corralled"
+## Aliased off the shared layer, not re-spelled: `SourceForecast.quarry_is_fought` reads the same wire
+## key, and two spellings of one field is how two surfaces come to disagree about a pen.
+const QUARRY_CORRALLED_KEY := SourceForecast.SOURCE_CORRALLED_KEY
 
 ## The BAND's remaining condition per ITEM — one row per item the server's config carries, as
 ## `{item_id, remaining}` on `equipment.json`'s 0-100 scale (`0` = dry). A dry item steps its role
@@ -769,6 +771,13 @@ static func kit_supplies_any(kit: Dictionary) -> bool:
 static func kit_reaches_a_wild_hunt(kits: Array, kit: Dictionary) -> bool:
 	return kit_uses(kits, kit, KIT_ATTACK_KEY) or kit_uses(kits, kit, KIT_HUNT_CARRY_KEY)
 
+## **THE FIGHT PREDICATE LIVES IN `SourceForecast.quarry_is_fought`, NOT HERE.** Four surfaces ask it
+## — this file's offer test and priced gate, the compose sheet's refusal line, and the crew cap the
+## Work board's `+` reads — and the two lower ones cannot reach up into this module, so the shared
+## layer is the only home that all four can share. Its docstring owns the reason the test is not
+## `has_engagement_stage`: the wire still publishes `NO_ENGAGEMENT_STAGE` for a pen, against the sim's
+## own behaviour, until issue #572.
+
 ## **THE OFFER TEST — `{offered, reason}` for ONE kit against ONE source.**
 ##
 ## > Offer a kit as selectable only if something it declares can change this source's outcome.
@@ -808,9 +817,22 @@ static func kit_reaches_a_wild_hunt(kits: Array, kit: Dictionary) -> bool:
 ## (`husbandry`), so `ui_preview`'s `compose_rungs.gd` stages one synthetically to keep the branch
 ## provable.
 ##
-## **A PEN IS NOT FOUGHT, so rule 1 does not run on one.** A penned animal is slaughtered rather than
-## stalked and publishes no engagement stage — the same predicate the gate LINE is mounted behind —
-## and without that guard a corralled Red Deer would withhold every kit but the spear line.
+## **A PEN IS FOUGHT NOW, so rule 1 runs on one exactly as it runs on the range**
+## (`docs/plan_standing_upkeep.md` §4.9 item 12b). The take resolves engage → retreat → fight at every
+## rung and the fight is the species' own `defense` against the party's `attack`, unchanged by the
+## fence: **containment solves the catching, weapons solve the killing.** This guard used to read *"a
+## penned animal is slaughtered rather than stalked"* and spared a pen the weapon rule entirely, which
+## was right for a sim that let a bare-handed band butcher a fenced aurochs; the sim quotes that band
+## nothing and pays it nothing now (`core_sim/tests/hunt_useful_crew_on_the_wire.rs`).
+##
+## **So a corralled Red Deer DOES withhold every kit but the spear line, and that is the point rather
+## than the cost.** Its `defense 1` against the bare hand's `attack 1` is `max(0, 1 − 1)`, and a trap's
+## attack is bounded off a deer by `max_body_mass` — so only the spear line can bring one down, penned
+## or not, and a picker that hid that would be quoting a take the sim refuses.
+##
+## ⛔ **THE WIRE'S `engage_rate` CANNOT ANSWER "IS THERE A FIGHT HERE?" FOR A PEN** — it still
+## publishes `NO_ENGAGEMENT_STAGE` there. `quarry_is_fought` owns that reading; both this test and the
+## priced gate take it, and nothing here may re-derive it from the engagement field alone.
 ##
 ## **RESOLVED AT THE FRESH TIER, AND THAT IS THE LOAD-BEARING CONSTRAINT.** Which kits are offered and
 ## which is default are properties of (kit × quarry); the band's wear moves the QUOTED number and the
@@ -822,10 +844,10 @@ static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Diction
 		prefix: String, build_branch: String = BUILD_BRANCH_NONE) -> Dictionary:
 	# **THE BUILDERS ROW HAS ITS OWN APPLICABILITY QUESTION, and it is the same one asked of a snare
 	# against a Red Deer**: can what this kit carries change the outcome of the job in front of it? A
-	# hoe takes nothing off a `Tame` and hurdles take nothing off a `Cultivate`, so a builders kit
-	# serving the other web is greyed WITH ITS REASON rather than hidden — a player should learn that
-	# a hoe is not for stock, and invisibility is what let the wrong tool be offered in the first
-	# place. `none` is never withheld here for the reason it is never withheld anywhere: it carries
+	# hoe adds nothing to a `Tame` and a crook nothing to a `Cultivate` — the axis is the EXTRA work a
+	# worker delivers, never units off the job — so a builders kit serving the other web is greyed WITH
+	# ITS REASON rather than hidden: a player should learn that a hoe is not for stock, and
+	# invisibility is what let the wrong tool be offered in the first place. `none` is never withheld here for the reason it is never withheld anywhere: it carries
 	# nothing, so there is no job it can be inapplicable *to*.
 	if job == JOB_BUILDERS:
 		if kit.is_empty() or build_branch == BUILD_BRANCH_NONE or not kit_supplies_any(kit):
@@ -854,10 +876,7 @@ static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Diction
 	if kit_uses(kits, kit, KIT_PEN_CARRY_KEY) and not penned \
 			and not kit_reaches_a_wild_hunt(kits, kit):
 		return _kit_withheld(HudComposeVocab.KIT_WITHHELD_REASON_PEN_ONLY)
-	if penned:
-		return _kit_offered()
-	if not SourceForecast.has_engagement_stage(
-			float(quarry.get(prefix + SOURCE_ENGAGE_RATE, SourceForecast.NO_ENGAGEMENT_STAGE))):
+	if not SourceForecast.quarry_is_fought(quarry, prefix):
 		return _kit_offered()
 	var bare := unequipped_tier(kits, KIT_ATTACK_KEY)
 	if is_inf(bare):
@@ -904,14 +923,16 @@ static func _kit_withheld(reason: String) -> Dictionary:
 ## band's own WORN tier rather than at the fresh one, because this one decides a NUMBER rather than a
 ## choice. A dry-speared band against a Red Deer kills nothing, and the sheet must say zero.
 ##
-## The pen and the plant web are excluded by the same engagement-stage guard `kit_offer` takes: there
-## is no fight to lose at a pen, and a patch states no `durability` for the gate to be `stated` about.
+## **THE PLANT WEB IS EXCLUDED AND THE PEN IS NOT, by the same `quarry_is_fought` test `kit_offer`
+## takes** — a patch states no `durability` for the gate to be `stated` about, but a penned herd
+## resolves the ordinary fight (`docs/plan_standing_upkeep.md` §4.9 item 12b). Skipping a pen here is
+## what let the ASSIGN HUNTERS sheet reprice a real `per_worker` and a real crew target for a party
+## the sim pays nothing, one surface over from the greying `kit_offer` had already stopped doing.
 static func hunt_gate_closes(kits: Array, kit: Dictionary, band: Dictionary, quarry: Dictionary,
 		prefix: String) -> bool:
-	if kit.is_empty() or quarry.is_empty() or bool(quarry.get(QUARRY_CORRALLED_KEY, false)):
+	if kit.is_empty() or quarry.is_empty():
 		return false
-	if not SourceForecast.has_engagement_stage(
-			float(quarry.get(prefix + SOURCE_ENGAGE_RATE, SourceForecast.NO_ENGAGEMENT_STAGE))):
+	if not SourceForecast.quarry_is_fought(quarry, prefix):
 		return false
 	var gate := SourceForecast.hunt_gate_model_at(effective_attack_against(kits, kit, band,
 		float(quarry.get(QUARRY_BODY_MASS_KEY, 0.0))), quarry, "")
@@ -1070,8 +1091,8 @@ const ROLE_GEAR_STATED_KEY := "stated"
 ## **THE BRANCH IS PART OF THE READING, NOT A FILTER ON TOP OF IT.** A row whose
 ## `build_work_branch` disagrees with the build being priced contributes the neutral `0.0`, exactly
 ## as the sim's `EquipmentEffect::serves_branch` does — so a sheet handed the wrong web's kit quotes
-## an ungeared build rather than the hurdles' 8.5 against a garden. `BUILD_BRANCH_NONE` asks for no
-## branch test at all, which is what a caller with no build in front of it wants.
+## an ungeared build rather than the crook's `0.5` per worker against a garden. `BUILD_BRANCH_NONE`
+## asks for no branch test at all, which is what a caller with no build in front of it wants.
 ##
 ## `{}` for a kit this band publishes no row for, which `SourceForecast.build_turns_at` reads as the
 ## ungeared case — the same direction `TIER_ABSENT` errs in, and the honest answer for a wire this

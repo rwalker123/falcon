@@ -287,10 +287,19 @@ const RUNG_LAPSED_FORMAT := "%s Lapsed %d%%"
 # the same shape `RUNG_ROTTING_PHRASE` has for the tint rule.
 const RUNG_LAPSED_WORD := "Lapsed"
 
-# **THE HOVER, because the mark is two words on a ~245px card.** It states what happened, that the
-# work is not lost, and the one click that resumes it — the register `WORK_ROW_READY_TRACK_TOOLTIP`
-# set for the chevron, which names the word AND what the press does.
-const RUNG_LAPSED_TOOLTIP := "The ground went feral and lost this rung, and no band has it queued. The work already banked is still here — re-queue the job from the work row's build face to pick it back up."
+# **THE HOVER, because the mark is two words on a ~245px card.** It states the STATE, that the work is
+# not lost, and the one click that resumes it — the register `WORK_ROW_READY_TRACK_TOOLTIP` set for
+# the chevron, which names the word AND what the press does.
+#
+# ⛔ **IT NAMES NO CAUSE, because the three conjuncts behind the mark cannot tell which one it was.**
+# It opened *"The ground went feral and lost this rung"* — a PLANT-web sentence on a hover
+# `DetailFormat.note_lapsed_hover` registers on `HUSBANDRY_ROW` and `CORRAL_ROW` as well, where a herd
+# with a part-built Tame and nobody on it was told about ground it does not have. And a feral field is
+# only one of the ways here: cancelling a queue entry with work banked satisfies the same three
+# conjuncts (`build_turns` at the wire's `-1`, a meter above empty, no entry) with nothing having gone
+# wrong at all. The word `Lapsed` is right in every one of them; only a cause would be a guess, so the
+# sentence states what IS and what to do and asserts nothing about how it got here.
+const RUNG_LAPSED_TOOLTIP := "This rung is part-built and no band has it queued. The work already banked is still here — re-queue the job from the work row's build face to pick it back up."
 
 # **NOT A HAZARD: THE SIM HAS NOT LOOKED AT THIS ENTRY YET**
 # (`SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED`, the wire's own `-5`,

@@ -455,9 +455,18 @@ word on saying so.
 > mark** for that reason — the neutral would be the reassuring reading of a loss already taken.
 >
 > **THE HOVER IS WHERE THE REMEDY LIVES**, the mark being two words on a ~245px card:
-> `RUNG_LAPSED_TOOLTIP` states the ground went feral, that the banked work survives, and that
-> re-queuing from the work row's build face picks it back up. It is routed off the value the row
-> already composed (`DetailFormat.note_lapsed_hover`), not re-derived — one verdict, one producer.
+> `RUNG_LAPSED_TOOLTIP` states that the rung is part-built with nobody on it, that the banked work
+> survives, and that re-queuing from the work row's build face picks it back up. It is routed off the
+> value the row already composed (`DetailFormat.note_lapsed_hover`), not re-derived — one verdict, one
+> producer.
+>
+> ⛔ **IT NAMES NO CAUSE, and it opened with one for a release.** *"The ground went feral and lost
+> this rung"* is a PLANT-web sentence on a hover `note_lapsed_hover` also registers on `HUSBANDRY_ROW`
+> and `CORRAL_ROW` — a herd part-way through a Tame with nobody queued was told about ground it does
+> not have. And a feral field is only one of the ways in: **cancelling** a queue entry with work
+> banked satisfies the same three conjuncts (`build_turns` at `-1`, a meter above empty, no entry)
+> with nothing having gone feral at all. The WORD is right in every case; only the cause was a guess,
+> so the sentence states the state and the remedy and asserts nothing about how the rung got there.
 
 ### `100%` MEANS DONE, SO `HudFormat.progress_percent` FLOORS
 
