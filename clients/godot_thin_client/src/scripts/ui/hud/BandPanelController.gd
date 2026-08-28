@@ -1840,12 +1840,18 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     if pages > 1:
         col.add_child(_build_work_pager(pages, start, mini(start + page_size, filtered.size()), filtered.size()))
 
-## Board capacity, derived ENTIRELY from the fixed zone box:
-##   cols        = zone width / WORK_COLUMN_MIN_WIDTH, clamped to 1..WORK_MAX_COLUMNS
-##   rows_per_col = remaining height / WORK_ROW_TWO_LINE_HEIGHT, after the head, chips and (when it
-##                  is actually needed) the pager — each of which reserves the very height it draws at.
+## Board capacity. The zone box fixes the HEIGHT this can spend:
+##   rows        = remaining height / WORK_ROW_TWO_LINE_HEIGHT, after the head, chips and (when it
+##                 is actually needed) the pager — each of which reserves the very height it draws at.
+##   cols, rows_per_col = `_declare_work_layout`, which asks the panel for the columns a
+##                 `WORK_PREFERRED_ROWS_PER_COLUMN` column implies and falls back to the full `rows`
+##                 where that ask is not granted enough columns to pay for itself.
 ## The pager is circular (it only exists when one page cannot hold everything, but it costs a row), so
 ## it is resolved in two passes: measure without it, and if that still needs more than one page, remeasure.
+##
+## ⛔ **`cols` IS NOT `zone width / WORK_COLUMN_MIN_WIDTH` — that direction inverted with issue #377**
+## and this header claimed it long after it stopped being true. Width FOLLOWS the column count now; see
+## `_declare_work_columns`. Only the HEIGHT is read off the box here, which is what keeps it acyclic.
 ##
 ## ⛔ **THERE IS NO INSPECTOR TERM HERE, AND A LATER CHANGE MUST NOT ADD ONE BACK**
 ## (`docs/plan_standing_upkeep.md` §4.9 item 12d). The signature used to open with an `inspected`
@@ -1879,13 +1885,15 @@ func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
     var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT \
         + queue_h + pools_h + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * gaps
     var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT))
-    var cols := _declare_work_columns(count, rows)
-    var pages := ceili(float(count) / float(maxi(cols * rows, 1)))
+    var layout := _declare_work_layout(count, rows)
+    var pages := ceili(float(count) / float(maxi(int(layout["page_size"]), 1)))
     if pages > 1:
         rows = maxi(1, int((box.y - chrome - HudWorkVocab.WORK_PAGER_HEIGHT - float(HudWorkVocab.ZONE_BLOCK_SEPARATION)) / HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT))
-        cols = _declare_work_columns(count, rows)
-        pages = ceili(float(count) / float(maxi(cols * rows, 1)))
-    return {"cols": cols, "rows_per_col": rows, "page_size": cols * rows, "pages": maxi(pages, 1)}
+        layout = _declare_work_layout(count, rows)
+        pages = ceili(float(count) / float(maxi(int(layout["page_size"]), 1)))
+    return {"cols": int(layout["cols"]), "rows_per_col": int(layout["rows_per_col"]),
+        "page_size": int(layout["page_size"]),
+        "baseline_page_size": int(layout["baseline_page_size"]), "pages": maxi(pages, 1)}
 
 ## How many board columns this band's sources actually WANT, declared to the panel so the card can be
 ## drawn that wide (issue #377), and answered back for the board to fill.
@@ -1896,8 +1904,9 @@ func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
 ## across two feet of screen. It is now derived from the SOURCE COUNT and the rows a column holds, and
 ## the panel sizes its card to the answer.
 ##
-## **It stays acyclic because `rows` comes from the zone's HEIGHT**, which a horizontal dock fixes and
-## which nothing here can move. Width follows count; count never follows width.
+## **It stays acyclic because the rows-per-column it is handed never came from the WIDTH** — it is
+## either the zone's HEIGHT, which a horizontal dock fixes and which nothing here can move, or the
+## `WORK_PREFERRED_ROWS_PER_COLUMN` constant. Width follows count; count never follows width.
 ##
 ## Without a panel (the `ui_preview` no-dock fallback) there is nobody to declare to, so it falls back
 ## to measuring the box exactly as before — that host is a fixed-width card with no card to resize.
@@ -1907,8 +1916,73 @@ func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
 func _declare_work_columns(count: int, rows: int) -> int:
     if _panel == null:
         return clampi(int(_zone_box().x / HudWorkVocab.WORK_COLUMN_MIN_WIDTH), 1, HudWorkVocab.WORK_MAX_COLUMNS)
-    var wanted := clampi(ceili(float(count) / float(maxi(rows, 1))), 1, HudWorkVocab.WORK_MAX_COLUMNS)
-    return _panel.set_work_columns(wanted)
+    return _panel.set_work_columns(_wanted_work_columns(count, rows))
+
+## The column count a given rows-per-column implies, which is the WANT `_declare_work_columns` states
+## and the same expression `_declare_work_layout` costs its two candidates with — one arithmetic, so a
+## layout can never be chosen against a want the declaration would not have made.
+func _wanted_work_columns(count: int, rows: int) -> int:
+    return clampi(ceili(float(count) / float(maxi(rows, 1))), 1, HudWorkVocab.WORK_MAX_COLUMNS)
+
+## The board's shape for one page: how many columns, and how many rows each of them holds.
+##
+## **THE COLUMN IS SHORTER THAN THE ZONE AFFORDS WHEN THAT BUYS A BETTER-BALANCED BOARD.** Filling to
+## the height-derived `rows` is what put six sources on a bottom dock into a 5 + 1 column-major board:
+## `ceil(6/5)` asks for two columns and the second one holds a single row, which reads as an accident.
+## So the board asks at `HudWorkVocab.WORK_PREFERRED_ROWS_PER_COLUMN` instead — the column count a
+## 3-row column implies — and six sources come out 3 + 3.
+##
+## ⛔ **AND IT TAKES THE SHORTER COLUMN ONLY WHERE NO SOURCE FALLS OFF THE PAGE FOR IT** — the trap in
+## this whole change. `set_work_columns` grants `min(want, affordable)`, so on a strip that cannot pay
+## for the extra column a 3-row fill would answer the SAME column count as the tall one and drop the
+## page from 1 x 5 to 1 x 3, pushing two sources onto a second page. So both candidates are costed and
+## the preference is taken only when it still shows every source the height-derived page would have.
+##
+## **THE TEST IS `min(page, count)`, NOT `page` — and that distinction is the whole feature.** A page
+## measured on its own says a 2 x 5 board beats a 2 x 3 one, so a six-source band on a bottom dock that
+## affords two columns would keep its 10-slot page and go on drawing 5 + 1 with four slots empty: the
+## exact board this change exists to rebalance, refused to protect room nothing can occupy. Compared in
+## SOURCES SHOWN both hold all six, the preference wins, and the board reads 3 + 3. Where the page is
+## the binding constraint — a band past what the columns can hold, or an affordance of one — the two
+## readings agree and the taller column is kept, so the guard against a source falling off is intact.
+## `pages` therefore never rises either: a page that shows every source it used to needs no more of them.
+##
+## **THE AFFORDANCE IS READ, NOT DISCOVERED BY DECLARING** (`BandCityPanel.work_columns_affordable`), so
+## this still makes exactly ONE declaration per pass, as it did when it was a bare `_declare_work_columns`
+## call — declaring twice to find out would resize the card mid-build to a width it then gives back.
+## The panel's ANSWER to that one declaration is still what gets built.
+##
+## **WHICH IS ALSO WHY THERE IS NO DOCK-EDGE TEST HERE.** A narrow vertical dock affords ONE column, so
+## the preferred layout costs 1 x 3 against the height-derived 1 x n, loses, and the tall single column
+## is kept untouched. The affordance answers the question a dock-edge fork would have hard-coded.
+func _declare_work_layout(count: int, rows: int) -> Dictionary:
+    var tall := maxi(rows, 1)
+    var short := mini(tall, HudWorkVocab.WORK_PREFERRED_ROWS_PER_COLUMN)
+    var rows_per_col := tall
+    # **THE HEIGHT-DERIVED PAGE, KEPT AS THE FLOOR THE ANSWER IS HELD TO** rather than only as the
+    # branch condition. It is what this returned before the preference existed, so `band_panel_preview`
+    # can assert the shipped page against it across the whole dock/viewport matrix — the one regression
+    # this design exists to prevent, and the one a later edit to the constant could reintroduce.
+    var baseline := 0
+    # No panel is the `ui_preview` fallback host, where the column count is MEASURED off a fixed-width
+    # card and does not follow the want at all — so there is no extra column to be granted there and a
+    # shorter column could only ever shrink the page. Skipped outright rather than costed.
+    if _panel != null and short < tall:
+        var afford := maxi(_panel.work_columns_affordable(), 1)
+        baseline = mini(_wanted_work_columns(count, tall), afford) * tall
+        var short_page := mini(_wanted_work_columns(count, short), afford) * short
+        # **THE TEST IS SOURCES SHOWN, NOT PAGE SIZE** — see the docstring: a page bigger than the band
+        # is spare room, and refusing to rebalance for spare room is what leaves 5 + 1 on the screen.
+        if mini(short_page, count) >= mini(baseline, count):
+            rows_per_col = short
+    var cols := _declare_work_columns(count, rows_per_col)
+    var page_size := cols * rows_per_col
+    # Where the preference never applied, the answer IS the height-derived one — read off the grant
+    # rather than predicted, so the floor is never stated above what actually got built.
+    if baseline == 0:
+        baseline = page_size
+    return {"cols": cols, "rows_per_col": rows_per_col, "page_size": page_size,
+        "baseline_page_size": baseline}
 
 ## The board itself: `cols` column VBoxes filled COLUMN-MAJOR (top of column 1 to its bottom, then
 ## column 2), separated by a hairline rule. Fixed-height rows, no scroll — the page IS the limit.

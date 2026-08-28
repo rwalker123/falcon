@@ -2003,11 +2003,39 @@ Net `-1` on `ui_preview`: four claims became three, then the precondition put it
 `band-city-panel.md` → "THE WORK INSPECTOR IS A DIALOG"; what belongs here is the shape of the walk and
 what would have been missed without it.
 
-**IT IS ELEVEN CONFIGURATIONS × FOUR PICKER STATES, not a frame.** The defect it exists to stop lived
-in the gap between two frame families this file had built for years — *every picker-open frame was a
-tall dock and every wide-dock frame had the expansion closed* — so a twelfth frame in either family
-would have proved nothing. LEFT at 1080/900/768/720 and BOTTOM at 1920×1080, 1600×900, 1440×900,
-1366×768, 1280×800, 1152×720, 1024×768, with `none`/`floor`/`priority`/`kits` walked at each.
+**IT IS ELEVEN CONFIGURATIONS, not a frame.** The defect it exists to stop lived in the gap between
+two frame families this file had built for years — *every picker-open frame was a tall dock and every
+wide-dock frame had the expansion closed* — so a twelfth frame in either family would have proved
+nothing. LEFT at 1080/900/768/720 and BOTTOM at 1920×1080, 1600×900, 1440×900, 1366×768, 1280×800,
+1152×720, 1024×768. (It read *"ELEVEN CONFIGURATIONS × FOUR PICKER STATES … with
+`none`/`floor`/`priority`/`kits` walked at each"* until item 12d's second pass retired
+`_work_picker_open` outright; the card draws POLICY, PRIORITY and KITS at once, so there is nothing
+left to walk and each configuration measures ONE card. `DIALOG_PROBE_PICKERS` is a ⛔ RETIRED comment
+in the harness for the same reason.)
+
+**AND THE MATRIX IS NOW THE HOME OF THE BOARD-LAYOUT CLAIM TOO** (`_probe_work_board_layout`), which
+is a reuse rather than a new walk: the rows-per-column preference is decided against a dock's
+AFFORDANCE, and this is already the one place that enumerates docks and viewports. Per configuration
+it walks `BOARD_LAYOUT_PROBE_COUNTS` (3, 4, 6, 8, 12 — the preference exactly, the 5 + 1 board it
+exists to rebalance, the two counts either side, and one past every affordable column) at two queue
+depths, and asserts the page still SHOWS every source the height-derived layout would have and takes
+no more pages to do it. See `band-city-panel.md` → "THE COLUMN BREAKS AT THREE ROWS BY PREFERENCE".
+- **BOTH QUEUE DEPTHS, because the queue is what decides how tall a column can be.** The matrix's
+  fixture is the fullest band in this file, whose four-entry BUILD QUEUE leaves a bottom dock about
+  three board rows — so at the staged depth the preference has nothing to shorten and the probe would
+  have reported "no change" everywhere while proving nothing. The board the change is about is the
+  same dock with NOTHING queued, where the height affords five. Walking both is what makes it a probe
+  of the RULE rather than of one fixture's queue depth.
+- **It asserts `min(page, count)`, never `page`.** Slots a band cannot fill are not worth protecting,
+  and a raw-page assertion would forbid the change's whole purpose — a six-source band would have to
+  keep a 10-slot 2 × 5 page with four slots empty and go on drawing 5 + 1. The two readings coincide
+  wherever the page binds, which is wherever a source could actually be lost.
+- **THE SWEEP DECLARES, so it hands the card back.** `_work_board_capacity` is not a pure reader — it
+  calls `set_work_columns`, which resizes the card — so the probe re-renders at the end to restore the
+  count the REAL band declares. Without it every configuration after the first is measured against a
+  card sized for twelve synthetic sources.
+- **Paired with liveness**, the rule this whole section runs on: a board that draws no rows satisfies
+  every inequality above, so the live board's own row count is asserted non-zero beside them.
 
 **THE FIXTURE IS THE FULLEST BAND IN THIS FILE, and that is the choice the matrix stands on.** It runs
 on `_build_queue_band_fixture(4)` with `_build_queue_patches(4)` — the POOLS block, a four-entry BUILD

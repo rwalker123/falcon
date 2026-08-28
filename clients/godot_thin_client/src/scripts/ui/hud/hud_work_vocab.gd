@@ -639,6 +639,24 @@ const WORK_COLUMN_MIN_WIDTH := 380.0
 
 const WORK_MAX_COLUMNS := 4
 
+## How many rows a board column PREFERS to hold before the board reaches for another column.
+##
+## The height-derived row count is what a column CAN hold; this is what it SHOULD hold. Six sources in
+## a bottom dock affording five rows fill COLUMN-MAJOR as 5 + 1 — a second column holding one row reads
+## as an accident rather than as a second column. At three they read as a balanced 3 + 3.
+##
+## ⛔ **A PREFERENCE, NOT A CAP: it yields to the affordance and can never cost a visible source.** All
+## it changes is the column count `BandPanelController._declare_work_layout` asks the panel for. The
+## panel still answers with what the strip can actually pay for, and the shorter column is taken ONLY
+## where that answer holds at least as many sources per page as the height-derived layout would have.
+## Where the extra column is refused the board falls back to the full height and nothing moves — which
+## is also why this needs no dock-edge test: a narrow vertical dock affords one column, refuses, and
+## keeps its tall single column.
+##
+## THREE, because it is the largest count that still reads as a balanced pair at the six sources a
+## typical band's board carries — at four, six sources are 4 + 2 again.
+const WORK_PREFERRED_ROWS_PER_COLUMN := 3
+
 const WORK_CHIPS_HEIGHT := 26.0
 
 const WORK_PAGER_HEIGHT := 24.0

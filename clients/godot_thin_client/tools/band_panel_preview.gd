@@ -19559,6 +19559,80 @@ func _probe_inspector_dialog(edge: int, canvas: Vector2i) -> void:
 	_assert_dialog_fits_its_room(where)
 	_hud._bandpanel.close_work_inspector()
 	await _settle()
+	await _probe_work_board_layout(where)
+
+## The source counts the board-layout probe walks at every configuration of the matrix. **The
+## interesting behaviour is at the BOUNDARIES, not at whatever one staged band happens to hold**:
+## three is `WORK_PREFERRED_ROWS_PER_COLUMN` exactly, six is the 5 + 1 board the preference exists to
+## rebalance, four and eight straddle it, and twelve wants more columns than any dock this client
+## renders can afford — the configurations where the ask has to be refused and the board pages instead.
+const BOARD_LAYOUT_PROBE_COUNTS: Array[int] = [3, 4, 6, 8, 12]
+
+## GUARD: **THE SHORTER COLUMN NEVER COSTS THE BOARD A VISIBLE SOURCE.** The board prefers three rows
+## per column so six sources read 3 + 3 instead of 5 + 1, but `set_work_columns` grants
+## `min(want, affordable)` — so on a strip that cannot pay for the extra column, filling three rows
+## anyway would drop the page from 1 x 5 to 1 x 3 and push two sources onto a second page. That is the
+## regression this design is built around, and the one a later tweak to the constant could reintroduce
+## in silence.
+##
+## So the claim is a pair of INEQUALITIES against `baseline_page_size` — what that same call would have
+## answered with no preference at all, from the height-derived rows and the SAME affordance — asserted
+## at every source count on every configuration of the matrix rather than at the one the fixture stages:
+## the page must still SHOW every source it used to (`min(page, count)`), and it must not take more
+## pages to do it.
+##
+## ⛔ **IT IS `min(page, count)` AND NOT `page`, DELIBERATELY.** Slots a band cannot fill are not a
+## property worth protecting, and asserting on the raw page would forbid the change's whole purpose:
+## six sources on a bottom dock affording two columns would have to keep a 10-slot 2 x 5 page — four
+## slots of it empty — and go on drawing 5 + 1. Both readings coincide wherever the page actually binds,
+## which is where a source could be lost, so the guard is no weaker there.
+##
+## **PAIRED WITH LIVENESS, because a board drawing nothing satisfies every inequality here**: the live
+## board's own row count is asserted non-zero alongside, and every swept answer must be a positive
+## `cols x rows`.
+##
+## ⛔ **THE SWEEP DECLARES, so it has to hand the card back.** `_work_board_capacity` is not a pure
+## reader — it calls `set_work_columns`, which resizes the card — so walking synthetic counts leaves the
+## panel sized for the last of them. The re-render at the end restores the count the REAL band declares;
+## without it every configuration after the first would be measured against a 12-source card.
+func _probe_work_board_layout(where: String) -> void:  # coroutine: it re-renders to undo its own declarations
+	var failures: Array[String] = []
+	# **BOTH QUEUE STATES, because the queue block is what decides how tall a column can be.** The
+	# matrix stages the busiest band this file has — a four-entry BUILD QUEUE and a POOLS block — which
+	# on a bottom dock leaves the board about three rows, so the preference has nothing to shorten
+	# there. The board Ray is looking at is the same dock with NOTHING queued, where the height affords
+	# five and the column-major fill puts six sources into 5 + 1. Walking both is what makes this a
+	# probe of the RULE rather than of one fixture's queue depth.
+	for queue_rows in [_build_queue_rows().size(), 0]:
+		var shapes: Array[String] = []
+		for count in BOARD_LAYOUT_PROBE_COUNTS:
+			var capacity: Dictionary = _hud._bandpanel._work_board_capacity(
+				count, queue_rows, HudWorkVocab.BUILD_QUEUE_ROWS_MAX, false)
+			var cols := int(capacity["cols"])
+			var rows_per_col := int(capacity["rows_per_col"])
+			var page := int(capacity["page_size"])
+			var baseline := int(capacity["baseline_page_size"])
+			shapes.append("%d src -> %dx%d page %d (was %d) %d page(s)" % [
+				count, cols, rows_per_col, page, baseline, int(capacity["pages"])])
+			if mini(page, count) < mini(baseline, count):
+				failures.append("%d sources with %d queued shows %d of them against the height-derived %d (page %d against %d)" % [
+					count, queue_rows, mini(page, count), mini(baseline, count), page, baseline])
+			if int(capacity["pages"]) > ceili(float(count) / float(maxi(baseline, 1))):
+				failures.append("%d sources with %d queued paged %d times against the height-derived %d" % [
+					count, queue_rows, int(capacity["pages"]),
+					ceili(float(count) / float(maxi(baseline, 1)))])
+			if cols <= 0 or rows_per_col <= 0:
+				failures.append("%d sources with %d queued answered a %dx%d board" % [
+					count, queue_rows, cols, rows_per_col])
+		print("band_panel_preview: %s board layout, %d queued — %s" % [where, queue_rows, ", ".join(shapes)])
+	_assert_band_panel("%s: the 3-row preference costs no visible source and no extra page at any source count, and the live board draws %d rows"
+			% [where, _work_board_row_count()],
+		failures.is_empty() and _work_board_row_count() > 0)
+	for failure in failures:
+		_fail("%s — %s" % [where, failure])
+	# The synthetic declarations above resized the card; this puts it back on the real band's own count.
+	_hud._bandpanel.rerender()
+	await _settle()
 
 ## Open the inspector on the first row the board lists. The matrix is about GEOMETRY, so it wants the
 ## board's own first row rather than a staged fixture — whichever source that is, the card is the same

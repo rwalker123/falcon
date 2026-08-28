@@ -1903,6 +1903,17 @@ func set_work_columns(columns: int) -> int:
 		_last_work_zone_size = work_zone_size()
 	return _work_columns
 
+## How many board columns the strip can pay for RIGHT NOW — the cap `set_work_columns` applies to a
+## declaration, published so the controller can weigh two candidate layouts against the same number
+## instead of declaring twice to find out what it would be cut to.
+##
+## **It does NOT invert the declare direction.** This is GEOMETRY — the strip, the dock edge, the
+## shell, the lateral bounds — none of which depend on the source count, exactly like `work_zone_size()`
+## which the controller already reads. The controller still owns "how many columns do I want"; this only
+## says what a want above the affordance would become.
+func work_columns_affordable() -> int:
+	return _affordable_work_columns()
+
 ## The most board columns the STRIP can pay for, whatever the source count wants. The card grows to fit
 ## its content, but only up to the room it actually has — past that the board has to page instead.
 ##

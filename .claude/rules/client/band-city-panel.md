@@ -360,11 +360,44 @@ command center**: shown whenever ≥1 player band exists, always displaying a
     `_fixed_zone_span()`, a sum over the LIVE zone list), and the column count arrives through
     **`set_work_columns`** from `BandPanelController`, which is the only thing that knows how many
     sources there are. That is the `set_rail_width` contract again — DECLARED, never measured here.
-    - **It is acyclic because the count comes from the zone's HEIGHT.** `_work_board_capacity` derives
-      `rows` from the box's height (which a horizontal dock fixes), then `cols = ceil(count / rows)`.
-      Width follows count; count never follows width. The SHELL is still chosen from the room the
-      *strip* has (`_shell_is_wide`), never from the card, so nothing can feed back into the choice
-      that produced it.
+    - **It is acyclic because the count comes from the zone's HEIGHT and from a CONSTANT — never from
+      a width.** `_work_board_capacity` derives `rows` from the box's height (which a horizontal dock
+      fixes) and `_declare_work_layout` turns that into `cols = ceil(count / rows_per_col)`. Width
+      follows count; count never follows width. The SHELL is still chosen from the room the *strip*
+      has (`_shell_is_wide`), never from the card, so nothing can feed back into the choice that
+      produced it. (This bullet read `cols = ceil(count / rows)` flat until the rows-per-column
+      preference below split "how tall a column CAN be" from "how tall it SHOULD be".)
+    - **THE COLUMN BREAKS AT THREE ROWS BY PREFERENCE, AND THE PREFERENCE YIELDS TO THE AFFORDANCE.**
+      `HudWorkVocab.WORK_PREFERRED_ROWS_PER_COLUMN` (3) is what the board ASKS at, not what it is
+      capped to. Filling a column to whatever the height afforded is what made six sources on a bottom
+      dock read **5 + 1**: `ceil(6/5)` asks for two columns and the column-major fill drops one lonely
+      row into the second. Asking at three asks for the same two columns and fills them **3 + 3**.
+      - **The test for taking the shorter column is SOURCES SHOWN, not page size** —
+        `min(page, count)` against the height-derived layout's, both costed against the SAME
+        `work_columns_affordable()`. That distinction is the whole feature rather than a detail of it:
+        compared on raw page size, a 2 × 5 board (10 slots, four of them unfillable by a six-source
+        band) beats a 2 × 3 one, so the preference would lose in exactly the configuration it was
+        written for and the board would go on drawing 5 + 1. Where the page actually BINDS — a band
+        past what its columns can hold, or a strip that affords one column — the two readings agree
+        and the taller column is kept.
+      - **What that buys is the guarantee the design exists for: no source ever falls off the page for
+        this, and `pages` never rises.** A 380px side dock affords one column, so a 3-row fill there
+        would drop a 1 × 5 page to 1 × 3 and push two sources onto a second page. The affordance
+        refuses the ask, the fallback keeps the full height, and nothing moves — **which is also why
+        there is no dock-edge test**: a vertical dock disables the preference by affording one column,
+        not by being asked what edge it is on.
+      - **The affordance is READ, not discovered by declaring.** `BandCityPanel.work_columns_affordable()`
+        publishes the cap `set_work_columns` applies, so the controller costs both candidates and makes
+        exactly ONE declaration per pass. Declaring twice to find out would resize the card mid-build
+        to a width it then hands back. It does not invert the declare direction — the affordance is
+        geometry (strip, edge, shell, lateral bounds), the same kind of thing `work_zone_size()` already
+        reports, and none of it depends on the source count.
+      - **Measured across the whole dock/viewport matrix** (`band_panel_preview`'s
+        `_probe_work_board_layout`, 11 configurations × 5 source counts × 2 queue depths): the only
+        boards that moved are the ones that were lopsided. A bottom dock affording two columns goes
+        6 sources 2 × 5 → 2 × 3 and 4 sources 1 × 5 → 2 × 3; 8 and 12 sources keep their tall columns
+        because there the page binds; every vertical dock and every one-column bottom dock is
+        unchanged; the 34-source board is unchanged to the pixel.
     - **`set_work_columns` RETURNS the count it granted, and the board must build to that.** A want is
       not a grant: `_affordable_work_columns()` caps it at what the strip can actually pay for, and a
       board built to the want overflows its CLIPPING zone host silently — measured at ~190px in a 380px
