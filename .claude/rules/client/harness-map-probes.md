@@ -138,12 +138,13 @@ content — the 11 `map_rivers*` frames (the shader's `TIME × river_flow_speed`
 `map_quarry_targeting` / `map_expeditions` (the `delta`-driven targeting and awaiting-expedition
 pulses).
 
-**The frame set is consequently a STRICT BIT-IDENTITY REFERENCE — 65/65 frames byte-identical across
-runs** (verified over consecutive runs, most recently while adding five fauna sprites for issue #439
-— which added no states, the count having read a stale 62 since some run before that; note the
-harness has 50 `_save` CALL SITES and saves 65 frames, because several states save inside a loop, so
-the two numbers are not meant to match), which is the property the decomposition passes rely on: a
-frame that varies cannot be pixel-diffed to prove a refactor changed nothing.
+**The frame set is consequently a STRICT BIT-IDENTITY REFERENCE — 72/72 frames byte-identical across
+runs** (verified over consecutive runs, most recently while fixing the herd trail's seam handling —
+which added no states, the count having read a stale 65 since some run before that, as it had read a
+stale 62 before that; note the harness has 54 `_save` CALL SITES and saves 72 frames, because
+several states save inside a loop, so the two numbers are not meant to match), which is the property
+the decomposition passes rely on: a frame that varies cannot be pixel-diffed to prove a refactor
+changed nothing.
 
 **The cost is that every animation renders at a FIXED PHASE** rather than wherever the clock landed,
 so those 14 frames moved once when it landed (a deliberate re-baseline; the other 42 are
@@ -291,6 +292,37 @@ radius the ring is split and the "inks nothing else" half fails on the outline's
 
 **It saves no PNG and moves none** — the frame set was byte-identical across the fix, the outline
 being unwrapped and wrapped to the same place on every non-wrapping fixture here.
+
+### `_assert_herd_trail_unwraps` — the seam guard for a CONNECTED path
+
+The second PNG-less seam block, on its own wrapping fixture (`_snapshot_herd_trail_seam`: one herd,
+no band, parked one hex east of the seam). It pans half a map west so the seam sits mid-frame,
+captures, seeds `herd_trails` with a trail crossing it — the map's last two columns then its first
+two, head on the herd's own tile — captures again, and makes two claims about the ink: that there IS
+some, and that it spans no more than `HERD_TRAIL_SEAM_MAX_SPAN_COLS` hex columns.
+
+**THE HARNESS COULD NEVER HAVE CAUGHT THIS ON A PNG, AND THAT IS THE GENERAL LESSON HERE**: a trail
+needs TWO successive snapshots to reach a second point, and every fixture in this file is ONE
+snapshot, so `_draw_herd_trail` had no coverage of any kind — not a weak frame, no frame. A draw fed
+by ACCUMULATED state is invisible to a single-snapshot harness whatever else it renders, and the
+seeded-state probe is how it gets covered. `map_preview`'s other accumulator (`culture_layer_map`)
+is in the same position.
+
+**The bound is set from the two MEASURED spans, not from the map's width**, which is the part worth
+copying. The arithmetic says the unwrapped defect draws a 15-column segment; measured, it inks
+**6.1 columns (456px)**, because the line runs off-frame west and is CLIPPED. The honest drawing inks
+**3.0 columns (224px)** — its four hexes are three steps apart. A bound reasoned from 15 would sit
+above BOTH and pass the bug; 4.0 splits what was actually rendered.
+
+**The liveness half is not decoration.** A span bound alone is satisfied by a trail that draws
+NOTHING — the tightest span is the empty one — which is the shape of every "a dead field cannot
+diverge" trap. Sabotage-verified in both directions, and they fail independently: restoring the
+per-point `_hex_center` fails the span alone (`456px, within 299`), and stubbing the draw out fails
+the liveness alone (`0 px changed`).
+
+**It saves no PNG and moves none** — 72/72 byte-identical across the fix, since it clears
+`herd_trails` behind it and the next state re-fits the camera, and since the unwrapping is an
+identity on the non-wrapping fixtures the trail and the routes actually appear on.
 
 ### `map_overlay_picker` — the channel picker OPEN, and the two claims a picture cannot carry
 

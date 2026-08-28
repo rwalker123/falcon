@@ -11,10 +11,11 @@ extends RefCounted
 ## Owns this family's own state and nothing else: `_terrain_highlight_id`,
 ## `_crisis_annotations`, `_routes`, and the targeting dict + its animation clock. Every draw
 ## command plus the shared geometry/label primitives (`_hex_center` / `_hex_points` /
-## `_hex_center_wrapped` / `_draw_label` / `_draw_reticle` / `_hex_distance` / `_wrapped_col_delta` /
-## `_is_player_unit` / `_get_adjusted_viewport_size`) and the world state it reads (units, herds,
-## terrain, `tile_lookup`, `faction_colors`, `active_overlay_key`, the hovered tile) stay on MapView
-## and are reached through the `_view` back-ref.
+## `_hex_center_wrapped` / `_unwrapped_path_points` / `_draw_label` / `_draw_reticle` /
+## `_hex_distance` / `_wrapped_col_delta` / `_is_player_unit` / `_get_adjusted_viewport_size`) and
+## the world state it reads (units, herds, terrain, `tile_lookup`, `faction_colors`,
+## `active_overlay_key`, the hovered tile) stay on MapView and are reached through the `_view`
+## back-ref.
 ##
 ## TWO PUBLIC SEAMS STAY ON MAPVIEW as thin same-named pass-throughs, because both are reached
 ## REFLECTIVELY — a rename would not error, it would silently do nothing:
@@ -254,6 +255,7 @@ func draw_crisis_annotations(radius: float, origin: Vector2) -> void:
 		var fill_color: Color = color
 		fill_color.a = min(color.a, CRISIS_FILL_MAX_ALPHA)
 		var coords: Array[Vector2] = []
+		var tiles: Array[Vector2i] = []
 		var path_variant: Variant = entry.get("path", PackedInt32Array())
 		if path_variant is PackedInt32Array:
 			var packed: PackedInt32Array = path_variant
@@ -265,7 +267,7 @@ func draw_crisis_annotations(radius: float, origin: Vector2) -> void:
 					break
 				var col := int(packed[idx])
 				var row := int(packed[idx + 1])
-				coords.append(_view._hex_center(col, row, radius, origin))
+				tiles.append(Vector2i(col, row))
 		elif path_variant is Array:
 			var arr: Array = path_variant
 			if arr.is_empty():
@@ -274,7 +276,18 @@ func draw_crisis_annotations(radius: float, origin: Vector2) -> void:
 				if step is Array and step.size() >= COORD_PAIR_SIZE:
 					var col := int(step[0])
 					var row := int(step[1])
-					coords.append(_view._hex_center(col, row, radius, origin))
+					tiles.append(Vector2i(col, row))
+		# Both ingest forms carry DATA columns, so the COUNT picks the seam idiom. One coordinate is
+		# a MARKER on a named tile — `_hex_center_wrapped` stamps it on the copy of that column the
+		# viewport is actually over, instead of a map width off-frame (and the live sim publishes
+		# exactly one, so this is the case every real annotation takes). Two or more are a connected
+		# PATH, and `_unwrapped_path_points` lifts them into one column frame so a seam-crossing leg
+		# does not draw back across the whole map — the same fix `_draw_route` carries below.
+		if tiles.size() == 1:
+			coords.append(_view._hex_center_wrapped(tiles[0].x, tiles[0].y, radius, origin))
+		elif tiles.size() > 1:
+			for point in _view._unwrapped_path_points(tiles, radius, origin):
+				coords.append(point)
 		if coords.is_empty():
 			continue
 		var stroke_width: float = clamp(radius * CRISIS_STROKE_WIDTH_FACTOR,
@@ -321,13 +334,17 @@ func _draw_route(order: Dictionary, radius: float, origin: Vector2) -> void:
 	if path.is_empty():
 		return
 	var color: Color = _view.faction_colors.get(order.get("faction", ""), ROUTE_FALLBACK_COLOR)
-	var points: Array[Vector2] = []
+	var tiles: Array = []
 	for waypoint in path:
 		if waypoint.size() != COORD_PAIR_SIZE:
 			continue
-		points.append(_view._hex_center(int(waypoint[0]), int(waypoint[1]), radius, origin))
-	if points.size() < ROUTE_MIN_POINTS:
+		tiles.append(Vector2i(int(waypoint[0]), int(waypoint[1])))
+	if tiles.size() < ROUTE_MIN_POINTS:
 		return
+	# A route's waypoints are DATA columns, so a seam-crossing leg drawn from the raw `_hex_center`
+	# would shoot back across the whole map — the herd-trail bug, in the same shape. Unwrap the whole
+	# path into one column frame first (`MapView._unwrapped_path_points`).
+	var points := _view._unwrapped_path_points(tiles, radius, origin)
 	for i in range(points.size() - 1):
 		_view.draw_line(points[i], points[i + 1], color, ROUTE_WIDTH)
 
