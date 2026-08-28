@@ -4693,16 +4693,24 @@ alone. **The A/B is staged on a SHORT-KEPT patch now** (`_short_kept_food_tile`,
 rots at nothing and every staffed builder on it climbs — which is the model working, and would have
 asserted the `∞` away had the fixture not moved with it.
 
-**A JOB THE GEAR ALONE PAYS OFF IS `BUILD_FINISHES_IN_ONE_TURN`, NOT "no estimate"** — the client's
-transcription of `intensification::BUILD_FINISHES_IN_ONE_TURN`, which the sim returns for the same two
-states: the work is already banked, or the crew's gear covers the job outright
-(`LadderConfig::effective_build_cost` is unfloored, so a well-equipped crew drives the bar to or below
-zero). Both finish on the first worked turn (`docs/plan_unit_costed_work.md` §6.2), which is an
-ANSWER — and the two constants must not be conflated, because withholding the line broke this arc's
-own headline claim at exactly the crew that demonstrates it: **it is reachable on shipped config**, a
-start-stocked band's 26 `hurdles` at 8.5 apiece covering a 50-unit Tame at six keepers,
-so the estimate fell 25 → 13 → 4 → 2 → *nothing* as hands were added, beside a tile card correctly
-reading `≈1 turn at this crew`.
+**A JOB THE CREW FINISHES ON ITS FIRST WORKED TURN IS `BUILD_FINISHES_IN_ONE_TURN`, NOT "no
+estimate"** — the client's transcription of `intensification::BUILD_FINISHES_IN_ONE_TURN`, which the
+sim returns for two states: the work is **already banked**, or the pool's **supply covers the whole
+job in one turn**. Both are an ANSWER (`docs/plan_unit_costed_work.md` §6.2), and the two constants
+must not be conflated — withholding the line broke this arc's own headline claim at exactly the crew
+that demonstrates it.
+
+> ⛔ **ONE TURN IS REACHED BY OUT-PRODUCING THE JOB, NEVER BY ARITHMETIC — and this paragraph used to
+> say the opposite.** It read *"the crew's gear covers the job outright (`LadderConfig::effective_build_cost`
+> is unfloored, so a well-equipped crew drives the bar to or below zero)"*, illustrated by a
+> start-stocked band's *"26 `hurdles` at 8.5 apiece covering a 50-unit Tame at six keepers"*. **Every
+> load-bearing noun in that sentence is retired**: `effective_build_cost` is gone (§4.8), `hurdles`
+> became a MATERIAL and the build kit's item is the **crook** (§4.9 item 12), and `8.5` was the
+> SUBTRACTION form's figure — the crook declares **0.5**, an addend. **A job's work requirement never
+> changes**, so gear cannot pay a job off; it raises what each worker DELIVERS, and a big enough pool
+> finishes in one turn the same way fifty bare hands do. The fixture that encoded the old reading was
+> re-aimed rather than deleted and now pins both halves —
+> `intensification::tests::one_turn_is_reached_by_out_producing_the_job_not_by_the_gear_paying_it_off`.
 
 **And the count is SPELLED in one place, for both faces** — `DetailFormat.build_turns_clause`, which
 forks the singular (`≈1 turn` / `≈25 turns`). The two faces quote one estimate about one job, so a
