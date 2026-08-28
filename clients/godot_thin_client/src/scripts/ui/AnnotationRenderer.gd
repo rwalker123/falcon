@@ -321,13 +321,17 @@ func _draw_route(order: Dictionary, radius: float, origin: Vector2) -> void:
 	if path.is_empty():
 		return
 	var color: Color = _view.faction_colors.get(order.get("faction", ""), ROUTE_FALLBACK_COLOR)
-	var points: Array[Vector2] = []
+	var tiles: Array = []
 	for waypoint in path:
 		if waypoint.size() != COORD_PAIR_SIZE:
 			continue
-		points.append(_view._hex_center(int(waypoint[0]), int(waypoint[1]), radius, origin))
-	if points.size() < ROUTE_MIN_POINTS:
+		tiles.append(Vector2i(int(waypoint[0]), int(waypoint[1])))
+	if tiles.size() < ROUTE_MIN_POINTS:
 		return
+	# A route's waypoints are DATA columns, so a seam-crossing leg drawn from the raw `_hex_center`
+	# would shoot back across the whole map — the herd-trail bug, in the same shape. Unwrap the whole
+	# path into one column frame first (`MapView._unwrapped_path_points`).
+	var points := _view._unwrapped_path_points(tiles, radius, origin)
 	for i in range(points.size() - 1):
 		_view.draw_line(points[i], points[i + 1], color, ROUTE_WIDTH)
 

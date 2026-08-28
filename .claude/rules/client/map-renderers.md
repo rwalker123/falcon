@@ -147,6 +147,39 @@ Guarded by `map_preview`'s PNG-less `_assert_selection_outline_wraps` — see
 `harness-map-probes.md`, which also says why it reads PIXELS rather than re-asking
 `_hex_center_wrapped` the question the draw asks it.
 
+## A CONNECTED PATH IS UNWRAPPED INTO ONE FRAME — it does not wrap point by point
+
+The rule above governs a SINGLE tile. A path — a herd's migration trail, an order route — is the
+other case the same seam produces, and neither of the two idioms on this page is the answer to it.
+`_hex_center` alone draws a herd that has just stepped over the seam as a segment between data
+columns `15` and `0`: **one line the full width of the map, at nearly constant row**, over unexplored
+ground, which is what it looks like on screen and why it reads as a terrain bug rather than an
+overlay one. And `_hex_center_wrapped` per point is worse than useless here — it snaps every point
+toward the viewport centre *independently*, tearing the path in half at exactly the seam it was
+called to fix (the range-disk reasoning one section up, applied to a polyline).
+
+**`_unwrapped_path_points(tiles, radius, origin)` is the third idiom, and connected geometry uses
+it.** It resolves the LAST tile's effective column with `_band_effective_col` — the copy
+`_hex_center_wrapped` puts a MARKER on, so a trail's head lands on its own herd — then walks
+backwards placing each earlier tile by `_wrapped_col_delta` off the frame already fixed. Every step
+is then at most half a map width **by construction**, so a connected path needs none of the
+`0.4 * last_map_size.x` skip the DISCONNECTED links carry (supply links, the migration arrow, the
+band task arrow, the pending link): there is no artifact to skip. A path that genuinely circles the
+world draws longer than one map width, which is the truth about it.
+
+Its two callers are the two connected paths the client draws: `MapView._draw_herd_trail` and
+`AnnotationRenderer._draw_route`. **The route half was latent** — nothing publishes `orders`, so only
+`map_routes`' fixture has ever fed it — and it is fixed with the trail because it is the same defect
+in the same shape, not because a frame showed it.
+
+**On a NON-wrapping map the walk is an identity**: `_band_effective_col` returns the column and
+`_wrapped_col_delta` the raw difference, so every point lands where `_hex_center` put it. Measured —
+the whole `map_preview` set came back **72/72 byte-identical** across the change, every wrapping
+fixture in it being one the trail and the routes do not appear on.
+
+Guarded by `map_preview`'s PNG-less `_assert_herd_trail_unwraps` (`harness-map-probes.md`), which
+reads pixels for the reason the selection guard does.
+
 ## A POINTER-DRIVEN NAVIGATION INPUT IS DECLINED WHERE A CONTROL CLAIMS THE PIXEL
 
 **The GUI pass stops a press for the map and stops a scroll for nobody.** Measured in Godot 4.7 by

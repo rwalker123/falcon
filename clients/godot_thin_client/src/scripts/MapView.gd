@@ -286,6 +286,10 @@ const FOOD_HARVEST_RING_WIDTH := 2.0
 # Migration arrow: thinner, and only on the hovered/selected herd tile to cut clutter.
 const HERD_MIGRATION_ARROW_COLOR := Color(0.98, 0.58, 0.18, 0.8)
 const HERD_MIGRATION_ARROW_WIDTH := 1.6
+# Migration TRAIL: the same amber, dimmer than the arrow — where the herd has BEEN reads under
+# where it is going.
+const HERD_TRAIL_COLOR := Color(0.97, 0.69, 0.25, 0.6)
+const HERD_TRAIL_WIDTH := 2.0
 
 # Count / overflow badge (shared dark pill: primary `×N`, secondary `+N`).
 const MARKER_BADGE_BG := Color(0.05, 0.06, 0.08, 0.9)
@@ -2236,6 +2240,38 @@ func _wrapped_col_delta(from_col: int, to_col: int) -> int:
 			d += grid_width
 	return d
 
+## A connected tile path (a herd's migration trail, an order route) unwrapped into ONE continuous
+## column frame, so a polyline through it follows the seam-crossing path that was actually walked
+## instead of shooting the long way back across the whole map. `tiles` holds DATA columns — what a
+## snapshot publishes, so a herd stepping over the seam records `95` then `0`, and a raw
+## `_hex_center` per point draws a segment the full width of the map at nearly constant row.
+##
+## The frame is anchored on the LAST tile via
+## `_band_effective_col` (the copy `_hex_center_wrapped` puts a MARKER on, so a trail's head lands
+## on its herd) and every earlier step is placed by the SHORTEST wrapped delta, which is at most
+## half a map width — so no segment CAN span the map and this needs none of the
+## `0.4 * last_map_size.x` skip that the DISCONNECTED links use (supply links, the migration arrow,
+## the band task arrow). A path that genuinely circles the world draws longer than one map width,
+## which is the truth about it.
+##
+## **Do NOT wrap the points individually.** `_hex_center_wrapped` on each one snaps every point
+## toward the viewport centre on its own and tears a seam-crossing path into two halves — the same
+## reason the range disks walk `eff_col + delta` from a resolved anchor (see `map-renderers.md`
+## → "THE SELECTION OUTLINE WRAPS": a data column wraps, a resolved one does not).
+func _unwrapped_path_points(tiles: Array, radius: float, origin: Vector2) -> PackedVector2Array:
+	var points := PackedVector2Array()
+	if tiles.is_empty():
+		return points
+	points.resize(tiles.size())
+	var last: int = tiles.size() - 1
+	var eff_col: int = _band_effective_col(int(tiles[last].x), radius, origin)
+	points[last] = _hex_center(eff_col, int(tiles[last].y), radius, origin)
+	# Walk BACKWARDS off that anchor: subtract the forward delta i -> i+1 from the frame already placed.
+	for i in range(last - 1, -1, -1):
+		eff_col -= _wrapped_col_delta(int(tiles[i].x), int(tiles[i + 1].x))
+		points[i] = _hex_center(eff_col, int(tiles[i].y), radius, origin)
+	return points
+
 func _fill_hex(col: int, row: int, radius: float, origin: Vector2, fill: Color) -> void:
 	var center := _hex_center(col, row, radius, origin)
 	var pts := _hex_points(center, radius)
@@ -2784,12 +2820,15 @@ func _draw_herd_trail(herd_id: String, radius: float, origin: Vector2) -> void:
 	var trail: Array = herd_trails[herd_id]
 	if trail.size() < 2:
 		return
-	var points := PackedVector2Array()
+	var tiles: Array = []
 	for tile in trail:
 		if tile is Vector2i:
-			points.append(_hex_center(tile.x, tile.y, radius, origin))
-	if points.size() >= 2:
-		draw_polyline(points, Color(0.97, 0.69, 0.25, 0.6), 2.0)
+			tiles.append(tile)
+	if tiles.size() < 2:
+		return
+	# The trail holds DATA columns, so it MUST be unwrapped into one frame before it is connected —
+	# see `_unwrapped_path_points`.
+	draw_polyline(_unwrapped_path_points(tiles, radius, origin), HERD_TRAIL_COLOR, HERD_TRAIL_WIDTH)
 
 func _draw_arrowhead(start: Vector2, end: Vector2, color: Color, size: float = 8.0) -> void:
 	var direction := end - start
