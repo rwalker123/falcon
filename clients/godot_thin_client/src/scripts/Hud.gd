@@ -491,12 +491,13 @@ var _right_column_bottom_clearance: float = 0.0
 ##
 ## **ONE LAYER ABOVE THE DOCK, STATED AS THAT RELATION rather than as the number it evaluates to.**
 ## The ladder it joins is `BandCityPanel.LAYER_INDEX` (103) → `EventDockPanel.LAYER_INDEX` (104) →
-## this → `Main`'s `PauseLayer` (200), which still covers everything. No cycle: `EventDockPanel`
+## `WORK_INSPECTOR_LAYER_INDEX` (105) → this → `Main`'s `PauseLayer` (200), which still covers
+## everything. No cycle: `EventDockPanel`
 ## references nothing on `HudLayer` at class-load time, so the `const` direction runs one way only
 ## (see `.claude/rules/client/hud-modules.md`).
 ##
 ## ⛔ **THE BAND/CITY PANEL CHANGED SIDES, AND THAT IS A DECISION RATHER THAN A SIDE EFFECT.** The
-## sheet used to sit at `HUD_LAYER` (101), i.e. UNDER the panel's 103; at 105 it is over it, and
+## sheet used to sit at `HUD_LAYER` (101), i.e. UNDER the panel's 103; at 106 it is over it, and
 ## `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` dismiss catcher. So with a sheet open, the
 ## first click anywhere on the Band/City panel is swallowed as a dismissal instead of reaching the
 ## panel. **Intended, and not to be re-litigated**: no integer is both above 104 and below 103, a
@@ -505,7 +506,27 @@ var _right_column_bottom_clearance: float = 0.0
 ## sheet would be sabotaging its own affordance — its `Work tab` link, which sends the player to a
 ## board on 103 — is closed by `DrawerComposeController._navigate_to_work_tab` closing the sheet as
 ## it navigates. `.claude/rules/client/panel-framework.md` carries the long form.
-const COMPOSE_LAYER_INDEX := EventDockPanel.LAYER_INDEX + 1
+## **THE WORK INSPECTOR'S OWN LAYER, ONE ABOVE THE EVENT DOCK** (`docs/plan_standing_upkeep.md` §4.9
+## item 12d). The Band panel's work-board inspector is a persistent, NON-MODAL, viewport-centred
+## `WorkInspectorDialog` now rather than a strip inside the work zone, and it takes a layer for the one
+## property that makes the rehost work: a `CanvasLayer` child does not participate in any zone's
+## layout, so no expansion of that card can ever cost the board a row again.
+##
+## **ABOVE THE BAR (104) BECAUSE IT IS A SURFACE YOU WRITE INTO** — the bar is `MOUSE_FILTER_STOP` by
+## design, so a picker drawn under it is not merely obscured but unreachable, which is the same
+## autopsy `COMPOSE_LAYER_INDEX` below carries.
+##
+## ⛔ **AND BELOW THE COMPOSE LAYER, WHICH IS WHY THAT CONST IS NOW RELATIVE TO THIS ONE.**
+## `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` dismiss catcher with its card centred inside
+## it; a centred dialog drawn OVER it would take the clicks meant for that card and leave a modal sheet
+## partly unreachable. So the sheet stays on top and a click on this dialog with a sheet open is a
+## dismissal — exactly the trade already accepted for the Band/City panel itself.
+const WORK_INSPECTOR_LAYER_INDEX := EventDockPanel.LAYER_INDEX + 1
+## The node the const names, created in `_ready` (see `work_inspector_host`).
+const WORK_INSPECTOR_LAYER_NAME := &"WorkInspectorLayer"
+var _work_inspector_layer: CanvasLayer = null
+
+const COMPOSE_LAYER_INDEX := WORK_INSPECTOR_LAYER_INDEX + 1
 ## The node the const names, created in `_ready` (see `compose_host`).
 const COMPOSE_LAYER_NAME := &"ComposeLayer"
 var _compose_layer: CanvasLayer = null
@@ -525,10 +546,31 @@ var _compose_layer: CanvasLayer = null
 func compose_host() -> Node:
     return _compose_layer
 
+## The host the Band panel's work inspector parents its dialog into — see `WORK_INSPECTOR_LAYER_INDEX`
+## for the ladder and for why it is neither `self` nor the compose layer.
+func work_inspector_host() -> Node:
+    return _work_inspector_layer
+
+## Is the Band panel's work inspector dialog up? Reached BY NAME from `Main._unhandled_input` for the
+## ESC chain (`Main.escape_claimant`), the `is_compose_sheet_open` idiom — a `has_method` probe that
+## fails SILENTLY, so this method must stay callable on the HUD node.
+func is_work_inspector_open() -> bool:
+    return _bandpanel != null and _bandpanel.is_work_inspector_open()
+
+## …and put it away. ESC's handler, and the twin of `close_compose_sheet`.
+func close_work_inspector() -> void:
+    if _bandpanel != null:
+        _bandpanel.close_work_inspector()
+
 func _ready() -> void:
     # FIRST, before any controller is constructed: each is handed `self` as its host and reads
-    # `compose_host()` back off it lazily, and a null here would silently re-parent a sheet onto the
-    # HUD — the exact bug this layer exists to close, and one that shows only when a bar is docked.
+    # `compose_host()` / `work_inspector_host()` back off it lazily, and a null here would silently
+    # re-parent a sheet onto the HUD — the exact bug these layers exist to close, and one that shows
+    # only when a bar is docked.
+    _work_inspector_layer = CanvasLayer.new()
+    _work_inspector_layer.name = WORK_INSPECTOR_LAYER_NAME
+    _work_inspector_layer.layer = WORK_INSPECTOR_LAYER_INDEX
+    add_child(_work_inspector_layer)
     _compose_layer = CanvasLayer.new()
     _compose_layer.name = COMPOSE_LAYER_NAME
     _compose_layer.layer = COMPOSE_LAYER_INDEX

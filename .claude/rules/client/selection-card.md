@@ -150,8 +150,12 @@ paths:
       two can never disagree about whether a sheet is open.
     - **ESC PRECEDENCE.** `Hud.is_compose_sheet_open()` is checked BEFORE `is_targeting_active()` —
       the sheet is the innermost surface. The chain is `Main.escape_claimant(pause_open, compose_open,
-      targeting)`, a pure static extracted so the ORDER is assertable without standing up the app
-      scene; `Main._unhandled_input` matches on its answer.
+      targeting, work_inspector_open)`, a pure static extracted so the ORDER is assertable without
+      standing up the app scene; `Main._unhandled_input` matches on its answer. **The fourth term is
+      the Band panel's work-inspector dialog** (`docs/plan_standing_upkeep.md` §4.9 item 12d), which
+      sits behind targeting and ahead of the pause menu: it is the OUTERMOST working surface of the
+      three — the sheet is transient and modal, targeting is a question the client has asked and is
+      waiting on, and this one is still there afterwards, so it yields.
     - **Nothing is re-derived.** Every yield, forecast, ceiling and gate reason comes from the same
       call it came from when the block lived in the drawer, and the forage range gate / herd
       local-vs-expedition branch still read the **selected band's** position, explicitly threaded.

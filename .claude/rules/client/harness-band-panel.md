@@ -1775,6 +1775,14 @@ the two by its hint line. The two are mutually exclusive, so the strip's documen
 over the pair rather than a sum; staging the floor picker there would understate it by that line and
 leave `WORK_INSPECTOR_CEILING_HEIGHT` describing a state that is no longer the worst one.
 
+**IT IS MEASURED AGAINST THE DIALOG SINCE `docs/plan_standing_upkeep.md` §4.9 item 12d, and it is the
+one state that ever tested this.** It used to add the built strip to the harness offscreen and compare
+the reservation against the strip's own column — a claim about a strip no zone hosts any more. The
+worst case is MOUNTED into the real `WorkInspectorDialog` now, and four things are asked of it: the
+reservation covers what the strip draws, the CARD was fitted to that reservation plus its own chrome,
+the card FITS the viewport it is centred in, and the reservation still IS the documented ceiling. The
+last two are the pair that turned a 106px unreserved risk into a rect that either fits or does not.
+
 **Falsified, four ways, and every one of them failed loudly.** Baseline before the slice: **761 PASS,
 0 FAIL**; after: **789 PASS, 0 FAIL** (exit 0 both times — and the exit STATUS is the verdict, since a
 scene that fails to parse exits 0 with no assertions run at all, which is exactly what the first draft
@@ -1983,3 +1991,62 @@ both render paths; it asserts the badge and the `Extend pen` button are GONE, ag
 **precondition** that the fixture really has a ring 60% banked (or "no badge" is free on a pen with no
 ring) and a **liveness** claim that the drawer still draws its action row (`["Assign herders ▸"]`).
 Net `-1` on `ui_preview`: four claims became three, then the precondition put it back.
+
+## The inspector DIALOG's matrix, and why it is a matrix (§4.9 item 12d)
+
+`_render_work_inspector_dialog_states`, appended last in the run order. The behaviour it covers is in
+`band-city-panel.md` → "THE WORK INSPECTOR IS A DIALOG"; what belongs here is the shape of the walk and
+what would have been missed without it.
+
+**IT IS ELEVEN CONFIGURATIONS × FOUR PICKER STATES, not a frame.** The defect it exists to stop lived
+in the gap between two frame families this file had built for years — *every picker-open frame was a
+tall dock and every wide-dock frame had the expansion closed* — so a twelfth frame in either family
+would have proved nothing. LEFT at 1080/900/768/720 and BOTTOM at 1920×1080, 1600×900, 1440×900,
+1366×768, 1280×800, 1152×720, 1024×768, with `none`/`floor`/`priority`/`kits` walked at each.
+
+**THE FIXTURE IS THE FULLEST BAND IN THIS FILE, and that is the choice the matrix stands on.** It runs
+on `_build_queue_band_fixture(4)` with `_build_queue_patches(4)` — the POOLS block, a four-entry BUILD
+QUEUE and a board stacked together, which is the state the four pixels of spare were measured in. On
+the reference band the same walk reports 400–700px of spare on every row and asserts nothing about the
+arithmetic that mattered.
+
+**Three frames, and the third is the one item 12c never got**:
+`band_panel_work_inspector_dialog_bottom` (the card centred over a wide dock's map, the board whole
+underneath it), `…_left` (the SAME card on a vertical dock — the fork the slice refused to make, so
+there is one code path and one frame family), and `…_kits` (the kit pair open on a WIDE dock).
+`band_panel_work_inspector_dialog_over_track` is the fourth: the rung track opened from a board row
+while the card is up.
+
+**WHAT IT ASSERTS THAT A FRAME CANNOT.** Each of these is paired with a liveness half, because every
+one of them is an ABSENCE claim and an absence claim passes on a surface that was never built:
+
+| claim | its liveness half |
+|---|---|
+| no inspector strip is left anywhere inside the panel | the card is up, and really draws its head, its links row and its close `✕` |
+| `_work_board_capacity` answers identically for all four pickers | the rendered row count does not move either, and is non-zero |
+| the card's layer holds no dismiss catcher | the card is `MOUSE_FILTER_STOP` over a board that really drew rows |
+| the card does not intersect `BandCityPanel.card_rect()` | its centre is the viewport's, and its rect has area |
+| tabbing away from Work takes the card down | it was up on the Work tab first |
+
+**The re-select claim captures the NODE, not the state.** *"Still open"* is satisfied by a card that
+was freed and rebuilt, so `_assert_dialog_survives_a_reselect` holds the instance across the switch and
+requires the SAME card holding a DIFFERENT strip — plus the same key still closing it, which is what
+keeps the toggle a toggle.
+
+**The stacking claim is structural and says so.** `_assert_rung_track_opens_over_the_dialog` asserts
+the node KINDS — a `PopupPanel` (an embedded subwindow, which Godot composites above every
+`CanvasLayer` of the parent viewport) over a `Control` on a `CanvasLayer` — plus the state that makes
+the question live, both up at once. No comparison of two rects could establish it on a frame where
+they happen not to overlap, and a price card opening behind the surface that spawned it is exactly the
+kind of thing that ships.
+
+**Sabotage-verified by restoring the retired terms** (`_work_board_capacity`'s `inspector_h`,
+`WORK_ZONE_GAP_COUNT` 3, `BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT`): 2 failures, and the informative one is
+`the board's capacity does not move for ANY picker … (rows [2, 1, 1, 1], drawn [1, 1, 1, 1])`. The
+matrix's own printout shows the same thing as a measurement — LEFT 1440×720 drops from 3 board rows to
+2 the moment a picker opens.
+
+**Every strip-finding assertion in this file moved off `_panel`.** `_work_inspector_root()` is
+`HudLayer.work_inspector_host()` — the LAYER rather than the dialog node, because it is never null once
+the HUD is up and every recursive finder rooted at it is also used for a NEGATIVE claim, where a `null`
+root would crash instead of answering *not there*.

@@ -145,8 +145,12 @@ on the forage/hunt compose sheet.
 
 **So a modal write surface takes a CanvasLayer above the overlay's**, and the ladder is stated in
 `HudLayer.COMPOSE_LAYER_INDEX` as the relation rather than as its value —
-`EventDockPanel.LAYER_INDEX + 1`, one above the bar, with `BandCityPanel.LAYER_INDEX` (103) below it
-and `Main`'s `PauseLayer` (200) still over everything. `compose_host()` is the node, created in
+`WORK_INSPECTOR_LAYER_INDEX + 1`, with `BandCityPanel.LAYER_INDEX` (103) and
+`EventDockPanel.LAYER_INDEX` (104) below it and `Main`'s `PauseLayer` (200) still over everything.
+**Stating it as a relation is what let a fourth rung be inserted with no digit edited anywhere**:
+`docs/plan_standing_upkeep.md` §4.9 item 12d put the Band panel's work-inspector dialog on its own
+layer between the bar and the sheet, so the compose const now resolves to 106 and the sheet is still
+one above whatever precedes it. `compose_host()` is the node, created in
 `HudLayer._ready` (the same in-code idiom `EventDockPanel._ready` and `OverlayPicker` use), and
 `DrawerComposeController._ensure_compose_sheet` and `BandPanelController._mount_compose_float` are
 its two clients — the same sheet reached from the drawer and from the Band panel, so both entry
@@ -158,6 +162,7 @@ points had the same defect and both take the same host.
 |---|---|
 | a free-floating card you READ — the crafting ledger, the knowledge screen | `set_overlay_inset` → `FloatingRoom`, i.e. **dodge** the bar |
 | a MODAL surface you WRITE INTO — a compose sheet, its Band-panel float | a CanvasLayer **above** the overlay's; no `room_bounds`, no inset |
+| a PERSISTENT NON-MODAL surface you write into — the Band panel's `WorkInspectorDialog` | the same: a CanvasLayer above the overlay's, no `room_bounds`, and **no catcher either**, because the surface it floats over has to stay live underneath (`band-city-panel.md` → "THE WORK INSPECTOR IS A DIALOG") |
 
 **A modal surface gains no `room_bounds`, deliberately.** It covers the bar rather than dodging it,
 and giving it both would be two mechanisms answering one question.
@@ -171,7 +176,8 @@ band out of: one click puts the sheet away and the bar is still there for the se
 quarry picker needs the sheet to survive a map click), so a bar click reaches the bar there.
 
 **AND THE BAND/CITY PANEL IS NOW UNDER THAT CATCHER TOO — a decision, not a side effect.**
-`COMPOSE_LAYER_INDEX` is 105, above `BandCityPanel.LAYER_INDEX` (103) as well as the dock's 104,
+`COMPOSE_LAYER_INDEX` is 106, above `BandCityPanel.LAYER_INDEX` (103), the dock's 104 and the work
+inspector's 105,
 where the sheet used to sit at the HUD's 101, i.e. **under** the panel. So with a sheet open the
 first click anywhere on the Band/City panel is swallowed as a dismissal instead of reaching the
 panel. That is accepted and is not to be re-litigated: no integer is both above 104 and below 103,

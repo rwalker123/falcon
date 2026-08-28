@@ -752,22 +752,36 @@ const WORK_INSPECTOR_POLICY_PICKER_HEIGHT := 32.0
 const WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT := WORK_INSPECTOR_POLICY_PICKER_HEIGHT \
     + WORK_INSPECTOR_NOTE_HEIGHT
 
-## **THE CEILING THESE TERMS ADD UP TO, stated because it is UNMEASURED rather than because it is
-## reserved.** A model carrying every conditional child at once — the overdraw line, the `note`, the
-## `muted_note`, the `ArrivalStrip` and an open picker — reserves **210px** (84 + 3×20 + 14 + 52)
-## against the 104 the tallest row any fixture produces asks for. **The picker term is the TALLER of
-## the two**, the priority one: they cannot both be open (`_work_picker_open`), so the ceiling is a
-## max rather than a sum, and taking the floor picker's 32 here would understate it by the hint line.
-## `BandCityPanel.PANEL_HEIGHT_WIDE` is sized against that 104, so a row reaching this ceiling would
-## take the work zone 106px past its box on a horizontal dock.
+## **THE CEILING THESE TERMS ADD UP TO, and the DIALOG CAN SIMPLY BE THAT TALL**
+## (`docs/plan_standing_upkeep.md` §4.9 item 12d). A model carrying every conditional child at once —
+## the overdraw line, the `note`, the `muted_note`, the `ArrivalStrip` and an open picker — reserves
+## **210px** (84 + 3×20 + 14 + 52), and that figure is now the `WorkInspectorDialog`'s own
+## `min_height` at that model rather than a debt anybody owes the work zone. The dialog is measured
+## against the VIEWPORT, whose shortest shipped height is 720, so the ceiling is comfortably inside its
+## room on every configuration this client renders — and where a window ever is too short, the card's
+## own scroll carries the remainder instead of a zone clipping the board.
 ##
-## **NOTHING PADS FOR IT, DELIBERATELY.** No fixture produces the combination and it is not known to be
-## reachable in play — `warn` and `note` are near-exclusive on the board's own rows, and the picker is
-## panel state a player opens — so the zone is not made 106px taller for a state nobody has seen. A
-## KNOWN unmeasured worst case is the cheaper thing to carry; if one is ever observed, this is the
-## figure both of that constant's levers move by.
+## **The picker term is the TALLER of the two**, the priority one: they cannot both be open
+## (`_work_picker_open`), so the ceiling is a max rather than a sum, and taking the floor picker's 32
+## here would understate it by the hint line.
+##
+## ⛔ **THE RETIRED REASONING, QUOTED RATHER THAN DELETED — it was about a strip inside the zone, and
+## there is no such strip.** *"THE CEILING THESE TERMS ADD UP TO, stated because it is UNMEASURED
+## rather than because it is reserved. … against the 104 the tallest row any fixture produces asks
+## for. `BandCityPanel.PANEL_HEIGHT_WIDE` is sized against that 104, so a row reaching this ceiling
+## would take the work zone 106px past its box on a horizontal dock. NOTHING PADS FOR IT,
+## DELIBERATELY. No fixture produces the combination and it is not known to be reachable in play —
+## `warn` and `note` are near-exclusive on the board's own rows, and the picker is panel state a
+## player opens — so the zone is not made 106px taller for a state nobody has seen. A KNOWN unmeasured
+## worst case is the cheaper thing to carry; if one is ever observed, this is the figure both of that
+## constant's levers move by."* Every measurement in it is still correct; what expired is the
+## conclusion. The zone budget no longer carries an inspector term at all, so this height cannot take
+## it past its box by any number, and `PANEL_HEIGHT_WIDE` — *"both of that constant's levers"* being
+## its 456 and the `MAX_WIDE_HEIGHT_FRACTION` clamp over it — is not the lever a taller strip would
+## move any more. It is no longer an unmeasured RISK; it is simply the tallest card the dialog draws.
+##
 ## `band_panel_preview._assert_work_inspector_worst_case_fits` builds it and pins the strip's own
-## arithmetic, which is what keeps the number above honest even though no zone reserves it.
+## arithmetic against the DIALOG that hosts it, which is what keeps the number above honest.
 ## ⛔ **THE KIT PAIR IS NOT A TERM HERE, AND THAT IS THE POINT OF THE THIRD PICKER**
 ## (`docs/plan_standing_upkeep.md` §4.9 item 12c). It rides the `max` with the other two —
 ## `WORK_INSPECTOR_KITS_PICKER_HEIGHT` is 44 against the priority picker's 52 — so it **cannot** be the
@@ -788,8 +802,14 @@ const WORK_INSPECTOR_CEILING_HEIGHT := WORK_INSPECTOR_HEIGHT \
     + 3.0 * WORK_INSPECTOR_NOTE_HEIGHT \
     + WORK_INSPECTOR_ARRIVALS_HEIGHT + WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT
 
-## Gaps the work column always spends: head→chips, chips→board, board→(inspector | nothing).
-const WORK_ZONE_GAP_COUNT := 3.0
+## Gaps the work column always spends: head→chips, chips→board.
+##
+## ⛔ **IT WAS 3, AND THE THIRD WAS THE INSPECTOR'S** (`docs/plan_standing_upkeep.md` §4.9 item 12d).
+## The retired reading was *"head→chips, chips→board, board→(inspector | nothing)"* — a gap charged to
+## every render whether or not a row was selected, because the strip could appear on any of them. The
+## strip is a viewport-centred dialog now (`WorkInspectorDialog`), so there is no board→inspector seam
+## in this column at all and the gap retires with the term beside it in `_work_board_capacity`.
+const WORK_ZONE_GAP_COUNT := 2.0
 
 const WORK_COLUMN_RULE_WIDTH := 1.0
 
@@ -1361,6 +1381,13 @@ const WORK_EMPTY_HINT := ALLOC_NO_SOURCES_HINT
 ## re-deriving it and agreeing with the builder by construction, the `POOLS_BLOCK_META` idiom.
 const WORK_INSPECTOR_META := "work_inspector"
 
+## …and the DIALOG that hosts it (`docs/plan_standing_upkeep.md` §4.9 item 12d). Its own handle rather
+## than the strip's, because the two claims a harness makes about them are opposites: the strip must
+## be found OUTSIDE every zone now, and the card around it must be found centred in the viewport. One
+## meta answering both would make "the zone no longer contains the strip" and "the dialog is up" the
+## same question.
+const WORK_INSPECTOR_DIALOG_META := "work_inspector_dialog"
+
 const INSPECTOR_CLOSE_GLYPH := "✕"
 
 const INSPECTOR_CLOSE_TOOLTIP := "Close detail"
@@ -1620,18 +1647,24 @@ const BUILD_QUEUE_ROWS_MAX := 3
 const BUILD_QUEUE_ROWS_MIN := 1
 
 ## The gaps the queue's own room has to clear before it may claim a row: head→pools, pools→queue,
-## queue→chips, chips→board, board→pager, and the inspector gap `_work_board_capacity` reserves
-## unconditionally. Named rather than spelled, since it is the one term of the reservation that is a
-## COUNT rather than a height.
-const BUILD_QUEUE_ROOM_GAP_COUNT := 6.0
+## queue→chips, chips→board, board→pager. Named rather than spelled, since it is the one term of the
+## reservation that is a COUNT rather than a height.
+##
+## ⛔ **IT WAS 6, AND THE SIXTH WAS THE INSPECTOR'S GAP** (`docs/plan_standing_upkeep.md` §4.9 item
+## 12d), beside a `BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT` term that is retired with it. **The retired
+## reasoning is quoted rather than deleted**: *"AND THE INSPECTOR'S OWN HEIGHT BESIDE THAT GAP. The
+## reservation below budgeted the STRIP'S GAP and not the strip, so the queue claimed rows the zone
+## could only afford while nothing was selected — and selecting a row is one click, after which the
+## board (floored at one row) has nothing left to give back. It is the BASE height rather than a worst
+## case on purpose: the conditional lines and the policy picker are the board's to pay for, and a
+## queue cap sized on the tallest strip a model could ever produce would shrink the block on every
+## dock for a state most bands never reach."* Every word of that was true while the strip lived in
+## this column. It does not: the inspector is a viewport-centred `WorkInspectorDialog` and no
+## selection can take a pixel off this zone, so **the whole point is that NO inspector term survives
+## anywhere in the zone's budget** — one left here would go on charging the queue for a strip that
+## cannot appear.
+const BUILD_QUEUE_ROOM_GAP_COUNT := 5.0
 
-## **AND THE INSPECTOR'S OWN HEIGHT BESIDE THAT GAP.** The reservation below budgeted the STRIP'S GAP
-## and not the strip, so the queue claimed rows the zone could only afford while nothing was selected
-## — and selecting a row is one click, after which the board (floored at one row) has nothing left to
-## give back. It is the BASE height rather than a worst case on purpose: the conditional lines and the
-## policy picker are the board's to pay for, and a queue cap sized on the tallest strip a model could
-## ever produce would shrink the block on every dock for a state most bands never reach.
-const BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT := WORK_INSPECTOR_HEIGHT
 
 ## **HOW MANY ENTRY ROWS THIS ZONE CAN AFFORD**, clamped into `[BUILD_QUEUE_ROWS_MIN,
 ## BUILD_QUEUE_ROWS_MAX]`. It reserves everything the zone owes whatever the queue does — its head,
@@ -1647,7 +1680,7 @@ static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, entri
     # divides for are QUEUE rows, which are one line each.
     var reserved := ZONE_HEAD_HEIGHT + WORK_CHIPS_HEIGHT + pools_block_height(pools_fund_mode) \
         + ZONE_HEAD_HEIGHT + WORK_ROW_TWO_LINE_HEIGHT + WORK_PAGER_HEIGHT \
-        + BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT \
+        + BUILD_QUEUE_ROOM_SETTINGS_HEIGHT \
         + float(ZONE_BLOCK_SEPARATION) * BUILD_QUEUE_ROOM_GAP_COUNT
     var afforded := int((box_height - reserved) / WORK_ROW_HEIGHT)
     if entries > afforded:
@@ -1875,6 +1908,27 @@ const BUILD_QUEUE_SETTINGS_CHROME := 12.0
 ## (`docs/plan_standing_upkeep.md` §4.7b ②): a reservation that counted only the control was short by
 ## the chrome around it every time a strip opened.
 const BUILD_QUEUE_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_CHROME \
+    + BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
+
+## **THE HEADROOM `build_queue_rows_max` KEEPS FOR THIS STRIP, and it is what the retired
+## `BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT` was paying for by accident** (`docs/plan_standing_upkeep.md`
+## §4.9 item 12d). An open settings strip is charged to the BOARD, and the board is floored at
+## `maxi(1, …)` — so once the queue has claimed enough rows to leave the board at that floor, an
+## opened strip has nothing to come out of and the zone simply overflows. It never showed while the
+## queue's reservation carried 84px of inspector the queue could not use: the strip fitted in its
+## shadow. Taking the inspector out of that reservation is exactly what exposed it — measured on a
+## 1920 bottom dock, the queue claimed 3 rows instead of 1 and `Zone_work` drew **414 into its 396px
+## box** the moment a strip opened.
+##
+## **STATED AS THE STRIP'S OWN WORST CASE rather than as a cushion**: the WRAPPED control pair, which
+## is what an entry carrying both a crop and a kit draws wherever the strip is too narrow for one
+## line. **LEGS ARE DELIBERATELY NOT COUNTED** — a multi-leg climb is the rarer entry, and reserving
+## for it would shrink the block on every dock for a state most bands never reach, which is the same
+## trade the retired constant's own comment made.
+##
+## ⛔ **IT IS DECLARED HERE, NOT BESIDE `BUILD_QUEUE_ROOM_GAP_COUNT` WHERE IT IS READ**, because a
+## GDScript `const` may not read one declared below it and both of its terms are on the lines above.
+const BUILD_QUEUE_ROOM_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_HEIGHT \
     + BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
 
 ## **THE KEY COLUMN BOTH SETTINGS KEYS DECLARE — `CROP` and `KIT` alike.** One constant, because the
@@ -2152,8 +2206,9 @@ const BUILD_QUEUE_SETTINGS_META := "build_queue_settings"
 ##
 ## **`settings_legs` / `settings_crop` ARE THE ROW EXPANSION, AND IT COSTS NOTHING CLOSED**
 ## (§4.7a ②, ③). The strip is open-only and one-at-a-time, so it adds its height exactly when it
-## draws — the work board's own inspector term (`_work_board_capacity`'s `inspector_h`) in this
-## block's arithmetic.
+## draws — the shape the work board's own inspector term used to have in this block's arithmetic,
+## before §4.9 item 12d took that strip out of the zone entirely and left this the only expansion in
+## the column that costs it anything.
 ##
 ## **THEY ARE THE STRIP'S TWO INPUTS RATHER THAN ITS HEIGHT, so the number still lives in one place.**
 ## It was a lone BOOL for exactly that reason — a caller passing a float could pass a different one

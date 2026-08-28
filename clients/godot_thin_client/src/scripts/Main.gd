@@ -1873,21 +1873,35 @@ func _send_runtime_command(line: String, message: String,
 ##   (2) an open COMPOSE SHEET closes — it is the innermost working surface, so it claims ESC ahead
 ##       of targeting (docs/plan_tile_panel_layout.md §15);
 ##   (3) active targeting keeps ESC for MapView's targeting-cancel path (we must NOT consume it);
-##   (4) otherwise the pause menu opens.
+##   (4) the Band panel's WORK INSPECTOR dialog closes;
+##   (5) otherwise the pause menu opens.
 ## Extracted as a pure static so the ORDER can be asserted without standing up the whole app scene
 ## (ui_preview drives it with the real HUD's own `is_compose_sheet_open` / `is_targeting_active`).
+##
+## **THE WORK INSPECTOR SITS FOURTH, AND EACH NEIGHBOUR IS A DECISION**
+## (`docs/plan_standing_upkeep.md` §4.9 item 12d). It is behind the compose sheet and behind targeting
+## because it is the OUTERMOST working surface of the three: the sheet is transient and modal and the
+## targeting flow is a question the client has asked and is waiting on, while this dialog is
+## PERSISTENT — the one that is still there afterwards, so it is the one that yields. It is ahead of
+## the pause menu because a surface with an explicit dismiss must answer ESC before ESC means "leave
+## the game"; a persistent card that ignored the key would be the only dismissible surface in the
+## client that does.
 const ESC_RESUME := "resume"
 const ESC_COMPOSE_SHEET := "compose_sheet"
 const ESC_TARGETING := "targeting"
+const ESC_WORK_INSPECTOR := "work_inspector"
 const ESC_PAUSE := "pause"
 
-static func escape_claimant(pause_open: bool, compose_open: bool, targeting: bool) -> String:
+static func escape_claimant(pause_open: bool, compose_open: bool, targeting: bool,
+        work_inspector_open: bool) -> String:
     if pause_open:
         return ESC_RESUME
     if compose_open:
         return ESC_COMPOSE_SHEET
     if targeting:
         return ESC_TARGETING
+    if work_inspector_open:
+        return ESC_WORK_INSPECTOR
     return ESC_PAUSE
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1895,7 +1909,8 @@ func _unhandled_input(event: InputEvent) -> void:
         var claimant := escape_claimant(
             pause_layer != null and pause_layer.visible,
             hud != null and hud.has_method("is_compose_sheet_open") and bool(hud.call("is_compose_sheet_open")),
-            hud != null and hud.has_method("is_targeting_active") and bool(hud.call("is_targeting_active")))
+            hud != null and hud.has_method("is_targeting_active") and bool(hud.call("is_targeting_active")),
+            hud != null and hud.has_method("is_work_inspector_open") and bool(hud.call("is_work_inspector_open")))
         match claimant:
             ESC_RESUME:
                 _hide_pause_menu()
@@ -1905,6 +1920,9 @@ func _unhandled_input(event: InputEvent) -> void:
                 get_viewport().set_input_as_handled()
             ESC_TARGETING:
                 return
+            ESC_WORK_INSPECTOR:
+                hud.call("close_work_inspector")
+                get_viewport().set_input_as_handled()
             _:
                 _show_pause_menu()
                 get_viewport().set_input_as_handled()

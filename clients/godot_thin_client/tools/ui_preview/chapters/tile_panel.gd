@@ -742,12 +742,14 @@ func run(harness) -> void:
 	h._assert_hud("precondition: a sheet and targeting are BOTH active",
 		h._hud.is_compose_sheet_open() and h._hud.is_targeting_active())
 	h._assert_hud("ESC claims the sheet AHEAD of targeting (and never the pause menu)",
-		h.MAIN_SCRIPT.escape_claimant(false, h._hud.is_compose_sheet_open(), h._hud.is_targeting_active())
+		h.MAIN_SCRIPT.escape_claimant(false, h._hud.is_compose_sheet_open(),
+			h._hud.is_targeting_active(), h._hud.is_work_inspector_open())
 			== h.MAIN_SCRIPT.ESC_COMPOSE_SHEET)
 	h._hud.close_compose_sheet()
 	await h._settle()
 	h._assert_hud("…and with the sheet closed, ESC falls back through to targeting-cancel",
-		h.MAIN_SCRIPT.escape_claimant(false, h._hud.is_compose_sheet_open(), h._hud.is_targeting_active())
+		h.MAIN_SCRIPT.escape_claimant(false, h._hud.is_compose_sheet_open(),
+			h._hud.is_targeting_active(), h._hud.is_work_inspector_open())
 			== h.MAIN_SCRIPT.ESC_TARGETING)
 	h._hud.cancel_active_targeting()
 	await h._settle()

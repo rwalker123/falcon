@@ -823,6 +823,22 @@ func zone_size(zone: StringName) -> Vector2:
 func work_zone_size() -> Vector2:
 	return zone_size(ZONE_WORK)
 
+## **IS `zone` ACTUALLY ON SCREEN RIGHT NOW?** — the panel shown and uncollapsed, and, in the NARROW
+## shell, the tab the body is showing. The wide shell draws every declared zone side by side, so it
+## answers `true` for all of them.
+##
+## `zone_size()` cannot answer this: it is the box a zone's content is BUILT against, and every zone is
+## built on every render whichever tab is up (the narrow shell keeps the others detached but owned, so
+## a tab switch is a reparent rather than a re-render). The one caller is
+## `BandPanelController._sync_work_inspector_dialog`, whose card lives OUTSIDE the panel and must come
+## down when the board it belongs to is not being drawn (`docs/plan_standing_upkeep.md` §4.9 item 12d).
+func shows_zone(zone: StringName) -> bool:
+	if _collapsed or not _shown:
+		return false
+	if _shell_is_wide():
+		return _zones.get(zone) is Control
+	return _effective_tab() == zone
+
 ## The CARD's global rect — the island the strip holds, not the strip (`_root`) itself. Published for
 ## the free-floating compose card, which anchors itself to the card's map-facing edge and must never
 ## overlap it; every other reader of this geometry lives inside this file. See `_position_card_and_rail`

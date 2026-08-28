@@ -1879,12 +1879,21 @@ compose sheet parented onto the HUD was therefore **under** a top-docked event b
 screenshots.
 
 **`HudLayer.compose_host()` is a `CanvasLayer` at `COMPOSE_LAYER_INDEX`, and the const is the
-RELATION rather than the number** — `EventDockPanel.LAYER_INDEX + 1`, which states the invariant the
-next reader has to preserve instead of restating a 105 they would have to go and check. There is no
-load cycle to fear: `EventDockPanel` references nothing on `HudLayer` at class-load time, so the
-`const` direction runs one way only (`hud-modules.md` → the `const` direction rule). The ladder it
-joins is `BandCityPanel.LAYER_INDEX` 103 → `EventDockPanel.LAYER_INDEX` 104 → compose → `Main`'s
-`PauseLayer` 200.
+RELATION rather than the number** — which states the invariant the next reader has to preserve instead
+of restating a number they would have to go and check. **That is what let a fourth rung be inserted
+UNDER it without touching a digit anywhere**: `docs/plan_standing_upkeep.md` §4.9 item 12d put the
+Band panel's work-inspector dialog on its own layer between the bar and the sheet, so the const reads
+`WORK_INSPECTOR_LAYER_INDEX + 1` now and resolves to 106. There is no load cycle to fear:
+`EventDockPanel` references nothing on `HudLayer` at class-load time, so the `const` direction runs
+one way only (`hud-modules.md` → the `const` direction rule). The ladder it joins is
+`BandCityPanel.LAYER_INDEX` 103 → `EventDockPanel.LAYER_INDEX` 104 →
+`HudLayer.WORK_INSPECTOR_LAYER_INDEX` 105 → compose → `Main`'s `PauseLayer` 200.
+
+**The sheet stays ON TOP of the work-inspector dialog, and that is the decision rather than the
+accident.** `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` catcher with its card centred inside
+it; a centred non-modal dialog drawn OVER it would take the clicks meant for that card and leave a
+modal sheet partly unreachable. So a click on the inspector card with a sheet open is a dismissal —
+the same trade already accepted for the Band/City panel itself.
 
 - **It is created IN CODE, in `_ready`, not in `HudLayer.tscn`.** Every offline harness stands the HUD
   up differently and several instance it without `Main`, so a node that exists only in the scene is a
@@ -3236,7 +3245,8 @@ retires, so no rung of that picker can be disabled.
 >   clickable. `work_tab_requested(band_entity)` is a `DrawerComposeController` signal relayed by
 >   `HudLayer` to the panel — **the compose sheet never reaches the dock itself**.
 >   - **THE SHEET CLOSES AS THE LINK NAVIGATES** (`_navigate_to_work_tab`), and that is not tidiness.
->     The compose surfaces moved to `HudLayer.COMPOSE_LAYER_INDEX` (105), above `BandCityPanel`'s 103,
+>     The compose surfaces moved to `HudLayer.COMPOSE_LAYER_INDEX` (106 since §4.9 item 12d inserted a
+>     rung beneath it; 105 when this shipped), above `BandCityPanel`'s 103,
 >     and `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` dismiss catcher — so a sheet left open
 >     lands the player on the board this sentence sent them to and swallows their first press, the `⌃`
 >     it just told them to use. It is the only control inside a compose surface that navigates to
@@ -6583,6 +6593,43 @@ thing every assertion here is ABOUT: finding one by text could only confirm the 
 already assumed. The three `ui_preview` sites that reached the forage commit / open button by face were
 repointed at it, and the bare `assert` beside one of them became `_assert_hud` — under sabotage it broke
 the headless run into the debugger and hung the suite, which is the hazard that rule already records.
+
+## `hud_work_vocab`'s ZONE BUDGET CARRIES NO INSPECTOR TERM (`docs/plan_standing_upkeep.md` §4.9 12d)
+
+The work board's inspector strip is a viewport-centred `WorkInspectorDialog` now, not the last child
+of the work column — the whole decision, its four load-bearing properties and the dock/viewport matrix
+that guards it live in `band-city-panel.md` → "THE WORK INSPECTOR IS A DIALOG". What lands in **this**
+file is the arithmetic, because it is this file's constants that moved and a reader editing them may
+never load that one:
+
+- **`WORK_ZONE_GAP_COUNT` is 2**, not 3. The retired third was *"board→(inspector | nothing)"* — a gap
+  charged on every render whether or not a row was selected, because the strip could appear on any of
+  them. There is no board→inspector seam in this column at all.
+- **`BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT` is gone and `BUILD_QUEUE_ROOM_GAP_COUNT` is 5.** The queue's
+  own room reserved `WORK_INSPECTOR_HEIGHT` plus a separation against a strip that can no longer
+  appear.
+- **`BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` replaced it, and it is a different quantity with a real name.**
+  A queue row's settings strip is charged to the BOARD, and the board is floored at `maxi(1, …)` — so
+  once the queue has claimed enough rows to leave the board at that floor, an opened strip has nothing
+  to come out of. That never showed while the inspector's 84px sat in the queue's reservation: the
+  settings strip fitted in its shadow. Removing the inspector term is exactly what exposed it
+  (measured: `Zone_work` drew **414 into its 396px box** the moment a strip opened on a 1920 bottom
+  dock). It is stated as the strip's own worst case — the WRAPPED control pair — and **legs are
+  deliberately not counted**, a multi-leg climb being the rarer entry.
+- **`WORK_INSPECTOR_HEIGHT` and everything under it are UNCHANGED, and that is the point.**
+  `BandPanelController._work_inspector_height` still sums them per model; only its consumer moved,
+  from the zone's budget to the dialog's `min_height`. That is what keeps *reserved ≥ drawn* a claim
+  anybody can still make about this strip.
+- **`WORK_INSPECTOR_CEILING_HEIGHT` stopped being a risk and became a size.** It was *"stated because
+  it is UNMEASURED rather than because it is reserved"*, and a row reaching it would have taken the
+  work zone 106px past its box; the card can simply be 210px tall against a viewport whose shortest
+  shipped height is 720. `BandCityPanel.PANEL_HEIGHT_WIDE` is no longer the lever it would move.
+
+⛔ **A LATER CHANGE MUST NOT PUT AN INSPECTOR TERM BACK**, and it is asserted rather than asked for:
+`band_panel_preview._assert_zone_budget_has_no_inspector_term` calls `_work_board_capacity` once per
+picker state and requires every answer to be identical, paired with the rendered row count not moving
+and being non-zero. Sabotage-verified — with the retired terms restored it fails at `rows
+[2, 1, 1, 1]`.
 
 ## The work row carries TWO axes — the standing RUNG and the verb in flight
 

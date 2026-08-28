@@ -188,16 +188,33 @@ var _panel: BandCityPanel = null
 var _work_filter: StringName = HudWorkVocab.WORK_FILTER_ALL
 var _work_sort: StringName = HudWorkVocab.WORK_SORT_NAME
 var _work_page: int = 0
-## The source key open in the work inspector strip ("" = none), and WHICH of its expansions is out.
-## One row at a time — the strip costs board rows, which `_work_board_capacity` subtracts.
+## The source key open in the work inspector ("" = none), and WHICH of its expansions is out.
+## One row at a time — the dialog shows ONE source, and opening a second re-targets it.
+##
+## ⛔ **IT COSTS THE BOARD NOTHING NOW** (`docs/plan_standing_upkeep.md` §4.9 item 12d). It used to
+## read *"the strip costs board rows, which `_work_board_capacity` subtracts"*, and that is exactly the
+## coupling the rehost deleted: the inspector is a viewport-centred `WorkInspectorDialog`, so this key
+## decides what a WINDOW shows and no longer takes a pixel off the zone.
 ##
 ## ⛔ **THE TWO PICKERS ARE MUTUALLY EXCLUSIVE, AND THIS IS WHAT MAKES THEM SO.** The strip offers a
 ## floor picker and a priority picker one link apart; two bools would admit a fourth state — both
-## open — that `_work_inspector_height` would have to reserve for, growing the zone's tallest state
+## open — that `_work_inspector_height` would have to reserve for, growing the DIALOG's tallest state
 ## for a combination no reading needs (a floor and a rank answer different questions and are set one
 ## at a time). A three-valued state cannot express it: opening either CLOSES the other by assignment.
 var _work_open_key: String = ""
 var _work_picker_open: StringName = HudWorkVocab.WORK_PICKER_NONE
+## The board model the work zone last resolved `_work_open_key` to, `{}` when none — written by the
+## fill and read by `_sync_work_inspector_dialog` one step later.
+##
+## **IT EXISTS BECAUSE THE FILL HAS EARLY RETURNS AND GDScript HAS NO `defer`.** The dialog must be
+## reconciled on EVERY path through the zone (an empty board, the expanded queue, the ordinary board),
+## and re-deriving the model at the reconcile point would mean filtering and sorting the sources a
+## second time — two derivations free to disagree about which row is open.
+var _work_inspected: Dictionary = {}
+## The inspector's own card, built on first use and reused (`docs/plan_standing_upkeep.md` §4.9 item
+## 12d). **IT IS A WINDOW-LIKE SURFACE AND SO IS NOT ZONE STATE**, exactly as `_rung_track` is not: it
+## holds a node that renders over the map and changes no zone's layout at all.
+var _work_inspector_dialog: WorkInspectorDialog = null
 ## The party (expedition entity, as a string) whose parties-zone inspector strip is open ("" = none),
 ## the parties twin of `_work_open_key`. One at a time — clicking a row body toggles it.
 var _party_open_key: String = ""
@@ -1713,7 +1730,19 @@ func _repage_work_zone() -> void:
 func _queue_drag_in_flight() -> bool:
     return _queue_drag_key != ""
 
+## The work zone's fill, plus the one thing that is no longer IN the zone: the inspector dialog.
+##
+## ⛔ **THE RECONCILE IS HERE RATHER THAN INSIDE THE COLUMN BUILDER, and that is what makes it total.**
+## `_fill_work_zone_column` has three exits (an empty board, the expanded queue, the ordinary path)
+## and a dialog left up over a board that no longer lists its row is the worst outcome available. So
+## the column builder records what it resolved (`_work_inspected`) and this function — the ONE door
+## every fill goes through — mounts or dismisses on the way out.
 func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
+    _work_inspected = {}
+    _fill_work_zone_column(col, band)
+    _sync_work_inspector_dialog(band)
+
+func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     _ensure_queue_drag_watcher()
     # ⛔ **THE PLAYER'S PLACE IN THE LIST IS TAKEN OFF THE OUTGOING NODE, HERE, BECAUSE THIS IS THE
     # LAST MOMENT IT EXISTS.** Both fill paths reach this line with the previous list still readable —
@@ -1781,6 +1810,7 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     if inspected.is_empty():
         _work_open_key = ""
         _work_picker_open = HudWorkVocab.WORK_PICKER_NONE
+    _work_inspected = inspected
     if filtered.is_empty():
         var hint := HudWidgets.alloc_hint_label(HudWorkVocab.WORK_EMPTY_HINT)
         hint.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1789,11 +1819,12 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     # The pools block's own reserved height is read back off the block it just built, so the number
     # subtracted here and the number drawn cannot come from two different answers to "is the fund-mode
     # row rendering?" — `_build_upkeep_mode_row` is the one decider and the meta is its record.
-    # **THE SETTINGS STRIP IS CHARGED TO THE BOARD, exactly as the work inspector is.** It is asked
-    # of the SAME resolver the block builds from, so the height reserved here and the height drawn
-    # there are one decision; asking twice is idempotent (it only prunes a stale key).
+    # **THE SETTINGS STRIP IS CHARGED TO THE BOARD — and it is the LAST expansion in this zone that
+    # is** (`docs/plan_standing_upkeep.md` §4.9 item 12d retired the work inspector's twin term). It is
+    # asked of the SAME resolver the block builds from, so the height reserved here and the height
+    # drawn there are one decision; asking twice is idempotent (it only prunes a stale key).
     var queue_settings := _queue_settings_state(band, queued, mini(queued.size(), queue_rows_max))
-    var capacity := _work_board_capacity(filtered.size(), inspected, queued.size(),
+    var capacity := _work_board_capacity(filtered.size(), queued.size(),
         queue_rows_max, pools_fund_mode,
         int(queue_settings["legs"]), bool(queue_settings["crop"]),
         bool(queue_settings["kit"]), bool(queue_settings["one_line"]))
@@ -1805,16 +1836,21 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
         int(capacity["cols"]), int(capacity["rows_per_col"])))
     if pages > 1:
         col.add_child(_build_work_pager(pages, start, mini(start + page_size, filtered.size()), filtered.size()))
-    if not inspected.is_empty():
-        col.add_child(_build_work_inspector(band, inspected))
 
 ## Board capacity, derived ENTIRELY from the fixed zone box:
 ##   cols        = zone width / WORK_COLUMN_MIN_WIDTH, clamped to 1..WORK_MAX_COLUMNS
-##   rows_per_col = remaining height / WORK_ROW_TWO_LINE_HEIGHT, after the head, chips, inspector and (when it
+##   rows_per_col = remaining height / WORK_ROW_TWO_LINE_HEIGHT, after the head, chips and (when it
 ##                  is actually needed) the pager — each of which reserves the very height it draws at.
 ## The pager is circular (it only exists when one page cannot hold everything, but it costs a row), so
 ## it is resolved in two passes: measure without it, and if that still needs more than one page, remeasure.
-## `inspected` is the open inspector's model, EMPTY when none is open.
+##
+## ⛔ **THERE IS NO INSPECTOR TERM HERE, AND A LATER CHANGE MUST NOT ADD ONE BACK**
+## (`docs/plan_standing_upkeep.md` §4.9 item 12d). The signature used to open with an `inspected`
+## model and subtract `_work_inspector_height(inspected)`; the strip is a viewport-centred
+## `WorkInspectorDialog` now, so a selection changes this answer by nothing at all. That is where the
+## reclaimed rows come from — the parameter is gone rather than passed and ignored, so the term cannot
+## quietly return as a `0.0` that later grows, and `band_panel_preview` asserts the budget against a
+## re-derivation that names every term it may contain.
 ##
 ## **THE BUILD QUEUE BLOCK IS PAID FOR HERE OR IT SLICES THE BOARD** (§4.6b). This zone
 ## `clip_contents`, so a block that draws without being subtracted from the board's room takes its
@@ -1826,19 +1862,18 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
 ## **AND SO IS THE POOLS BLOCK** (§4.7), through the identical arrangement —
 ## `HudWorkVocab.pools_block_height` is both the block's own `custom_minimum_size` and this term, plus
 ## one more separation for the gap. Unlike the queue's it is ALWAYS charged: the block always renders.
-func _work_board_capacity(count: int, inspected: Dictionary, queue_rows: int, queue_rows_max: int,
+func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
         pools_fund_mode: bool, queue_settings_legs: int = 0,
         queue_settings_crop: bool = false, queue_settings_kit: bool = false,
         queue_settings_one_line: bool = true) -> Dictionary:
     var box := _zone_box()
-    var inspector_h := 0.0 if inspected.is_empty() else _work_inspector_height(inspected)
     var queue_h := HudWorkVocab.build_queue_block_height(queue_rows, queue_rows_max,
         queue_settings_legs, queue_settings_crop, queue_settings_kit, queue_settings_one_line)
     var pools_h := HudWorkVocab.pools_block_height(pools_fund_mode)
     var gaps := HudWorkVocab.WORK_ZONE_GAP_COUNT + 1.0
     if queue_h > 0.0:
         gaps += 1.0
-    var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT + inspector_h \
+    var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT \
         + queue_h + pools_h + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * gaps
     var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT))
     var cols := _declare_work_columns(count, rows)
@@ -4389,11 +4424,19 @@ func _build_work_pager(pages: int, start: int, shown_end: int, total: int) -> HB
     pager.add_child(range_label)
     return pager
 
-## The inspector strip — the row's SECOND and THIRD lines, relocated to one place at the bottom of the
-## zone so the board itself stays one line per source. Spells the yield/policy/status out in words,
-## carries the warning lines and the arrival strip, and offers the three inline actions.
-## `Unassign` lives HERE (not as a hover `✕` on the row) — a destructive control beside the `−`
-## stepper would be a mis-click hazard; this is the labelled version.
+## The inspector strip — the row's SECOND and THIRD lines, relocated to one place so the board itself
+## stays one line per source. Spells the yield/policy/status out in words, carries the warning lines
+## and the arrival strip, and offers the three inline actions. `Unassign` lives HERE (not as a hover
+## `✕` on the row) — a destructive control beside the `−` stepper would be a mis-click hazard; this is
+## the labelled version.
+##
+## ⛔ **THE CONTENT IS UNCHANGED AND THE HOST IS NOT** (`docs/plan_standing_upkeep.md` §4.9 item 12d).
+## This built the last child of the work COLUMN — *"one place at the bottom of the zone"* — and now
+## builds the body of a viewport-centred `WorkInspectorDialog`. **It is a rehost, not a redesign**: the
+## head line, the conditional notes, the arrivals strip, the links row and whichever picker is open are
+## the same children in the same order, the strip keeps its `WORK_INSPECTOR_META` and its
+## `custom_minimum_size`, and `_work_inspector_height` still answers for both — what moved is who pays.
+## `_sync_work_inspector_dialog` is the only caller.
 func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContainer:
     var strip := PanelContainer.new()
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -4750,8 +4793,14 @@ func _commit_work_priority(band: Dictionary, model: Dictionary, level: String) -
     })
     _repage_work_zone()
 
-## The height the open inspector reserves — BOTH what `_work_board_capacity` subtracts from the board
-## and what the strip actually draws at, so the page can never overflow its zone (the work-board rule).
+## The height the open inspector reserves — BOTH the `WorkInspectorDialog`'s own `min_height` and what
+## the strip actually draws at, so the card can never be fitted shorter than its content.
+##
+## ⛔ **ITS CONSUMER CHANGED AND ITS JOB DID NOT** (`docs/plan_standing_upkeep.md` §4.9 item 12d). It
+## used to be *"what `_work_board_capacity` subtracts from the board … so the page can never overflow
+## its zone"*; the zone no longer has an inspector term to subtract, and the same number is now what
+## the dialog is fitted against. Keeping it is what keeps *reserved ≥ drawn* a claim anybody can still
+## make about this strip — deleting it would have made the rehost unfalsifiable rather than free.
 ##
 ## **IT READS THE MODEL, and for a long time it did not — the parameter was `_model`.** It forked on
 ## one panel-state value (`_work_picker_open`) and answered one of two totals, while
@@ -5540,23 +5589,87 @@ func _focus_work_source(model: Dictionary) -> void:
     else:
         focus_labor_source(int(model.get("x", -1)), int(model.get("y", -1)))
 
-## One inspector row at a time — opening a second closes the first (and opening one costs the board
-## rows, which is why `_work_board_capacity` subtracts the strip's height).
-## ⛔ **ONE EXPANSION OPEN AT A TIME IN THE WORK ZONE — the queue's strip and the board's inspector
-## are MUTUALLY EXCLUSIVE** (`docs/plan_standing_upkeep.md` §4.7b).
+## One inspector row at a time — opening a second RE-TARGETS the dialog rather than closing it, the
+## same key press being what closes it.
 ##
-## **THE DEFECT IT CLOSES SHIPPED AND WAS REACHABLE IN ONE CLICK EACH.** Open a queue row's settings
-## AND a work row's inspector on a bottom dock and `Zone_work` drew 426 into a 396 box, with the board
-## already at its `maxi(1, …)` floor and nothing left to give back. No frame caught it because every
-## strip-open frame had no inspector and every inspector-open frame had no strip — two disjoint frame
-## families, the defect living in the gap, which is the same shape §4.7 found in the inspector's own
-## height. Each list already enforced this rule INTERNALLY; it is the same rule read one level up, and
-## it costs nothing.
+## ⛔ **ONE EXPANSION OPEN AT A TIME IN THE WORK ZONE — the queue's strip and the board's inspector
+## are MUTUALLY EXCLUSIVE** (`docs/plan_standing_upkeep.md` §4.7b). **Its ARITHMETIC half retired with
+## §4.9 item 12d and the rule is kept for its reading half**, so the reason it shipped for is quoted
+## rather than deleted: *"THE DEFECT IT CLOSES SHIPPED AND WAS REACHABLE IN ONE CLICK EACH. Open a
+## queue row's settings AND a work row's inspector on a bottom dock and `Zone_work` drew 426 into a
+## 396 box, with the board already at its `maxi(1, …)` floor and nothing left to give back. No frame
+## caught it because every strip-open frame had no inspector and every inspector-open frame had no
+## strip — two disjoint frame families, the defect living in the gap."* The inspector takes no zone
+## height at all now, so the two can no longer overflow anything together; what survives is that a
+## board row and a queue row are two different subjects and expanding both states neither clearly.
 func _toggle_work_inspector(key: String) -> void:
     _work_open_key = "" if _work_open_key == key else key
     _work_picker_open = HudWorkVocab.WORK_PICKER_NONE
     if _work_open_key != "":
         _queue_open_key = ""
+    _repage_work_zone()
+
+## Mount, re-target or take down the inspector card against what the fill just resolved.
+##
+## **RE-MOUNTING IS THE RE-TARGET.** A second row selected while the card is up rebuilds its body and
+## leaves the card standing — never a dismiss followed by a fresh open, which would blink the surface
+## the player is working in and throw away the fit it had already settled on.
+func _sync_work_inspector_dialog(band: Dictionary) -> void:
+    if _work_inspected.is_empty() or not _work_zone_is_on_screen():
+        _dismiss_work_inspector_dialog()
+        return
+    var dialog := _ensure_work_inspector_dialog()
+    if dialog == null:
+        return
+    dialog.mount(_build_work_inspector(band, _work_inspected),
+        _work_inspector_height(_work_inspected))
+
+## **IS THE BOARD THE CARD BELONGS TO ACTUALLY VISIBLE?** The narrow shell shows ONE tab, and the panel
+## can be collapsed or hidden outright — and a persistent card floating over the map for a board the
+## player has tabbed away from is a surface with nothing behind it to act on. The wide shell shows
+## every zone, so this only ever bites on a vertical dock.
+func _work_zone_is_on_screen() -> bool:
+    return _panel != null and _panel.shows_zone(BandCityPanel.ZONE_WORK)
+
+## The card, built on first use and reused. `null` while the HUD cannot name a host — the same honest
+## answer `_mount_compose_float` gives, and for the same reason: a `RefCounted` cannot parent.
+func _ensure_work_inspector_dialog() -> WorkInspectorDialog:
+    if _work_inspector_dialog != null and is_instance_valid(_work_inspector_dialog):
+        return _work_inspector_dialog
+    if _host == null or not _host.has_method("work_inspector_host"):
+        return null
+    var host: Node = _host.work_inspector_host()
+    if host == null:
+        return null
+    _work_inspector_dialog = WorkInspectorDialog.new()
+    host.add_child(_work_inspector_dialog)
+    return _work_inspector_dialog
+
+func _dismiss_work_inspector_dialog() -> void:
+    if _work_inspector_dialog != null and is_instance_valid(_work_inspector_dialog):
+        _work_inspector_dialog.dismiss()
+
+## Is the inspector card up? Relayed by `HudLayer.is_work_inspector_open` for `Main`'s ESC chain.
+##
+## **IT ANSWERS THE KEY, NOT THE NODE.** The key is what every render reconciles the card against, so a
+## reading taken off `visible` would disagree with it for exactly the one frame between a selection and
+## the fill that mounts for it — and ESC arriving in that frame would open the pause menu instead.
+func is_work_inspector_open() -> bool:
+    return _work_open_key != ""
+
+## Put the card away. The `✕`'s path in everything but its entry point, and ESC's
+## (`Main.escape_claimant` → `HudLayer.close_work_inspector`).
+##
+## **THE NODE IS DISMISSED HERE AS WELL AS THROUGH THE RENDER.** `_repage_work_zone` no-ops while a
+## queue row is being dragged or while the zone has no host, and a card left up after the player asked
+## for it to go is the one outcome an explicit dismiss exists to rule out.
+func close_work_inspector() -> void:
+    if _work_open_key == "":
+        return
+    _work_open_key = ""
+    _work_picker_open = HudWorkVocab.WORK_PICKER_NONE
+    _work_inspected = {}
+    _dismiss_work_inspector_dialog()
     _repage_work_zone()
 
 func _set_work_filter(filter: StringName) -> void:
@@ -7430,6 +7543,9 @@ func render_faction() -> void:
     _dismiss_compose_float()
     # This page builds no work BOARD, so the re-page path must have nothing to re-page: `_on_zones_resized`
     # would otherwise rebuild the previous band's board into a host `set_zones` is about to free.
+    # **AND THE INSPECTOR'S CARD COMES DOWN WITH IT, the float's own rule** — it lives outside the panel,
+    # it is pinned to a row of the band being left, and no zone rebuild on this page would reach it.
+    close_work_inspector()
     _work_zone_host = null
     _work_zone_band = {}
     _parties_zone_col = null
@@ -7685,8 +7801,10 @@ func refresh_snapshot() -> void:
         _panel_is_faction = false
         _panel.set_band_present(false)
         _panel.set_shown(false)
-        # No band ⇒ no zones are rebuilt, so the footer builder's teardown never runs. The float is
-        # the one piece of this panel that lives OUTSIDE it, and it must go down with the panel.
+        # No band ⇒ no zones are rebuilt, so the footer builder's teardown never runs. The float and
+        # the work inspector's card are the two pieces of this panel that live OUTSIDE it, and both
+        # must go down with the panel.
+        close_work_inspector()
         _party_compose_open = false
         _party_compose_mission = ""
         _split_workers = 1
