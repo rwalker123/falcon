@@ -35,11 +35,21 @@ class_name WorkInspectorDialog
 ## `DockScrollFit` is the wrong half of the pair and would misbehave silently. Both axes are fitted
 ## explicitly because this node is a plain `Control` and no child minimum ever reaches it.
 ##
-## **ONE PLACEMENT, NOT FOUR.** Viewport-centred on every dock edge: a bottom dock is a strip with a
-## screen of map above it and a side dock a column with map beside it, so the centre is over the MAP
-## either way and the board stays visible. Floating it off the panel's map-facing edge aligned to the
-## selected row reads better and was declined — four dock edges means four placements plus clamping,
-## against the one-behaviour argument that also refused to exempt the vertical dock.
+## **ONE PLACEMENT, NOT FOUR: CENTRED IN THE ROOM THE PANEL LEAVES.** A bottom dock is a strip with a
+## screen of map above it and a side dock a column with map beside it, so the room is over the MAP
+## either way and the board stays fully visible. Floating it off the panel's map-facing edge ALIGNED
+## TO THE SELECTED ROW reads better and was declined — four dock edges means four placements plus
+## clamping, against the one-behaviour argument that also refused to exempt the vertical dock. This is
+## still one rule: centre, in a rect computed once.
+##
+## ⛔ **IT WAS CENTRED IN THE RAW VIEWPORT FOR ONE SLICE, AND THE SECTIONS BROKE IT.** With one
+## expansion at a time the card was ~104–156px tall and the viewport's centre was always over map;
+## drawing POLICY, PRIORITY and KITS together took it to **340**, and a 340px card centred in a 1080
+## viewport spans y=370…710 while a bottom dock's panel card starts at **624**. It covered the header
+## and the top of the very board it exists to free — measured, and caught by the assertion that says
+## so. The room is cut back off the panel card now (`BandComposeFloat.map_facing_side`, the one table
+## that names which side of a docked card faces the map), so *"the board stays visible"* is
+## structural rather than a consequence of the card being small.
 ##
 ## **NO `room_bounds`, DELIBERATELY.** A card that DODGES the reserved edges is the answer for a
 ## surface you READ (`panel-framework.md`'s table); this is one you WRITE INTO, so it takes a
@@ -51,6 +61,11 @@ class_name WorkInspectorDialog
 ## quantity, and the same number for the same reason: enough to read as a floating surface rather than
 ## as a thing stuck to the window.
 const VIEWPORT_MARGIN := 12.0
+
+## The clearance kept between the panel card's map-facing edge and this card — the same read as the
+## wide shell's inter-zone gutter, and the same number `BandComposeFloat` keeps for the same seam:
+## enough that the two read as two surfaces rather than one.
+const ANCHOR_GAP := 12.0
 
 ## **THE COLUMN THE STRIP WAS AUTHORED FOR.** Every line in `_build_work_inspector` elides against the
 ## narrow shell's work-zone width, and `BandCityPanel.ZONE_PARTY_WIDTH` is that width stated once
@@ -72,6 +87,10 @@ var _body: VBoxContainer = null
 ## zone's budget and it is this card's own minimum height, which is what keeps `reserved >= drawn` a
 ## claim anybody can still make.
 var _reserved: float = 0.0
+## The panel card's global rect and which of its sides faces the map, as of the last mount — the two
+## terms `_room` cuts with. `BandComposeFloat` holds the identical pair for the identical reason.
+var _anchor: Rect2 = Rect2()
+var _edge: int = SIDE_TOP
 var _fit_pending: bool = false
 
 func _ready() -> void:
@@ -127,8 +146,10 @@ func _ready() -> void:
 ## move per snapshot. Re-mounting is also what RE-TARGETS the dialog when another board row is
 ## selected — the card stays up and its body changes, which is the behaviour a close-and-reopen would
 ## destroy.
-func mount(strip_control: Control, reserved: float) -> void:
+func mount(strip_control: Control, reserved: float, card_rect: Rect2, map_facing: int) -> void:
 	_reserved = reserved
+	_anchor = card_rect
+	_edge = map_facing
 	min_height = reserved + _card_chrome().y
 	target_width = CONTENT_WIDTH + _card_chrome_width()
 	_clear_body()
@@ -174,6 +195,12 @@ func card() -> PanelContainer:
 func reserved_height() -> float:
 	return _reserved
 
+## The room this card places and sizes itself in. Published because a harness asking
+## `available_room()` would get the RAW viewport and judge the fit against a rect the card does not
+## use — the one seam rule, read from outside.
+func room() -> Rect2:
+	return _room()
+
 ## Re-fit the card to its content and re-centre it. Coalesced across one frame for the reason
 ## `BandComposeFloat.refit` is: the content's height is a function of the card's width, so a
 ## measurement taken in the same frame the body was rebuilt reports the PREVIOUS content's wrapping.
@@ -185,7 +212,7 @@ func refit() -> void:
 	_fit_pending = false
 	if not visible or _body == null:
 		return
-	var room := available_room(VIEWPORT_MARGIN)
+	var room := _room()
 	max_width = maxf(room.size.x, target_width)
 	fit_width(_body.get_combined_minimum_size().x, _card_chrome_width())
 	max_height = room.size.y
@@ -198,10 +225,43 @@ func refit() -> void:
 ## to. `position` is parent-local and the parent is a `CanvasLayer` carrying an identity transform, so
 ## this IS the global rect.
 func _place() -> void:
-	var room := available_room(VIEWPORT_MARGIN)
+	var room := _room()
 	position = Vector2(
 		room.position.x + maxf((room.size.x - size.x) * 0.5, 0.0),
 		room.position.y + maxf((room.size.y - size.y) * 0.5, 0.0))
+
+## **THE ROOM THE CARD MAY USE — the one rect the width fit, the height fit and the placement all
+## read.** The viewport inside `VIEWPORT_MARGIN`, cut back to the MAP-FACING side of the panel card
+## with `ANCHOR_GAP` of clearance. Because every geometry decision is made against this rect rather
+## than against the raw viewport, *"it never covers the board"* is structural: a card too tall for the
+## room scrolls, it does not creep back across the seam.
+##
+## An UNSET anchor (a zero rect, i.e. a panel that could not state its geometry) leaves the whole
+## viewport, which is the honest answer rather than a guessed cut — `BandComposeFloat`'s rule that the
+## drastic branch must be positively justified, read one surface over.
+func _room() -> Rect2:
+	var room := available_room(VIEWPORT_MARGIN)
+	if _anchor.size.x <= 0.0 or _anchor.size.y <= 0.0:
+		return room
+	match _edge:
+		SIDE_RIGHT:
+			return _cut_to(room, _anchor.end.x + ANCHOR_GAP, room.end.x, true)
+		SIDE_LEFT:
+			return _cut_to(room, room.position.x, _anchor.position.x - ANCHOR_GAP, true)
+		SIDE_BOTTOM:
+			return _cut_to(room, _anchor.end.y + ANCHOR_GAP, room.end.y, false)
+		_:
+			return _cut_to(room, room.position.y, _anchor.position.y - ANCHOR_GAP, false)
+
+## `room` narrowed to `[lo, hi]` on one axis, never inverted (a panel taller than the window leaves a
+## zero-extent room rather than a negative one). `BandComposeFloat._cut_to`'s twin.
+func _cut_to(room: Rect2, lo: float, hi: float, horizontal: bool) -> Rect2:
+	var low: float = maxf(lo, room.position.x if horizontal else room.position.y)
+	var high: float = minf(hi, room.end.x if horizontal else room.end.y)
+	var span: float = maxf(high - low, 0.0)
+	if horizontal:
+		return Rect2(Vector2(low, room.position.y), Vector2(span, room.size.y))
+	return Rect2(Vector2(room.position.x, low), Vector2(room.size.x, span))
 
 ## What the card's own chrome costs on each axis. Read off the stylebox the card actually DRAWS with —
 ## which is exactly what `PanelContainer` adds to its child's minimum — rather than restated from the

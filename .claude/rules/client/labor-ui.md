@@ -6594,7 +6594,7 @@ already assumed. The three `ui_preview` sites that reached the forage commit / o
 repointed at it, and the bare `assert` beside one of them became `_assert_hud` — under sabotage it broke
 the headless run into the debugger and hung the suite, which is the hazard that rule already records.
 
-## `hud_work_vocab`'s ZONE BUDGET CARRIES NO INSPECTOR TERM (`docs/plan_standing_upkeep.md` §4.9 12d)
+## `hud_work_vocab`'s INSPECTOR TERMS after §4.9 item 12d — the zone pays none, the card sums three
 
 The work board's inspector strip is a viewport-centred `WorkInspectorDialog` now, not the last child
 of the work column — the whole decision, its four load-bearing properties and the dock/viewport matrix
@@ -6616,14 +6616,40 @@ never load that one:
   (measured: `Zone_work` drew **414 into its 396px box** the moment a strip opened on a 1920 bottom
   dock). It is stated as the strip's own worst case — the WRAPPED control pair — and **legs are
   deliberately not counted**, a multi-leg climb being the rarer entry.
-- **`WORK_INSPECTOR_HEIGHT` and everything under it are UNCHANGED, and that is the point.**
+- **`WORK_INSPECTOR_HEIGHT` and the conditional terms under it are UNCHANGED, and that is the point.**
   `BandPanelController._work_inspector_height` still sums them per model; only its consumer moved,
   from the zone's budget to the dialog's `min_height`. That is what keeps *reserved ≥ drawn* a claim
   anybody can still make about this strip.
 - **`WORK_INSPECTOR_CEILING_HEIGHT` stopped being a risk and became a size.** It was *"stated because
   it is UNMEASURED rather than because it is reserved"*, and a row reaching it would have taken the
-  work zone 106px past its box; the card can simply be 210px tall against a viewport whose shortest
+  work zone 106px past its box; the card can simply be that tall against a viewport whose shortest
   shipped height is 720. `BandCityPanel.PANEL_HEIGHT_WIDE` is no longer the lever it would move.
+
+⛔ **AND THE PICKER TERMS BECAME SECTION TERMS — the ceiling is a SUM** (§4.9 item 12d, second pass).
+`WORK_PICKER_NONE`/`_FLOOR`/`_PRIORITY`/`_KITS` are retired outright with
+`BandPanelController._work_picker_open` and `_toggle_work_picker`: the card draws POLICY, PRIORITY and
+KITS at once, so `_work_inspector_height` adds all three rather than one, and the ceiling is **374**
+(base 64 + 3×20 notes + 14 arrivals + 59 + 79 + 91 + a 7px actions rule) rather than 210.
+
+- **`WORK_INSPECTOR_SECTION_HEAD_HEIGHT` (27)** is what one header costs: the rule (1), the gap under
+  it (6), the label's own measured line (14) and the gap under that (6). The label is
+  `HudWidgets.alloc_section_label`, the allocation panel's own dim-uppercase header, and the rule is
+  `HudStyle.LINE_SOFT` at `BandCityPanel._make_zone_separator`'s thickness. Neither is new chrome.
+- **`WORK_INSPECTOR_SECTION_RULE_THICKNESS` is a TWIN of `BandCityPanel.ZONE_SEPARATOR_THICKNESS`**,
+  deliberately not a read of it: a vocab leaf reaching for a `class_name`d panel script at class load
+  is a cycle waiting to happen, which is the rule `WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT` already
+  follows against `ArrivalStrip.STRIP_HEIGHT`. Change one and change the other.
+- **`WORK_INSPECT_KITS_HINT` came back and the two kit TOOLTIPS lost the sentence it duplicates.** It
+  was cut because *"two kit lines plus a hint would be 64 — 12 over the current max, which busts the
+  wide shell by 8"*, which was arithmetic about a 396px zone box. The tooltips keep the half a shared
+  hint cannot say (which of the two pickers this is, and the upkeep one's per-site scope). **The hint
+  is shorter than `WORK_PRIORITY_HINT` as a MEASUREMENT**: that sentence is the longest this card
+  renders on one line, and the first draft of this one ran seven characters past it and drew
+  ellipsised.
+- **`WORK_INSPECT_POLICY` ("Change policy") is retired**, a header naming what is below it rather than
+  what you press; `WORK_INSPECT_POLICY_SECTION` ("Policy") replaces it. `WORK_INSPECT_PRIORITY` and
+  `WORK_INSPECT_KITS` were already nouns and are reused unchanged — the former is also the CRAFTING
+  panel's bench-link face, which is why it stays a shared const.
 
 ⛔ **A LATER CHANGE MUST NOT PUT AN INSPECTOR TERM BACK**, and it is asserted rather than asked for:
 `band_panel_preview._assert_zone_budget_has_no_inspector_term` calls `_work_board_capacity` once per

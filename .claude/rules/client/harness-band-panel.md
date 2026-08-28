@@ -1775,6 +1775,11 @@ the two by its hint line. The two are mutually exclusive, so the strip's documen
 over the pair rather than a sum; staging the floor picker there would understate it by that line and
 leave `WORK_INSPECTOR_CEILING_HEIGHT` describing a state that is no longer the worst one.
 
+**AND THERE IS NO PICKER TO STAGE ANY MORE.** It set `_work_picker_open = WORK_PICKER_PRIORITY` for
+one slice, because the ceiling was a MAX and the priority arm was the tallest of three; item 12d's
+second pass draws every section unconditionally, so the worst case is a property of the MODEL alone
+and the conditional children are the whole of what makes it worse than the board's own rows.
+
 **IT IS MEASURED AGAINST THE DIALOG SINCE `docs/plan_standing_upkeep.md` §4.9 item 12d, and it is the
 one state that ever tested this.** It used to add the built strip to the harness offscreen and compare
 the reservation against the strip's own column — a claim about a strip no zone hosts any more. The
@@ -2050,3 +2055,30 @@ matrix's own printout shows the same thing as a measurement — LEFT 1440×720 d
 `HudLayer.work_inspector_host()` — the LAYER rather than the dialog node, because it is never null once
 the HUD is up and every recursive finder rooted at it is also used for a NEGATIVE claim, where a `null`
 root would crash instead of answering *not there*.
+
+## The three claims this branch had to INVERT rather than delete (§4.9 item 12d, second pass)
+
+An assertion that outlives the property it was written for does not go red — it goes on passing, and
+what it now guards is retired behaviour. Three of them on one branch, each inverted with its liveness
+half kept:
+
+| the assertion | asserted | asserts now |
+|---|---|---|
+| `_assert_kits_picker_is_exclusive_and_costs_the_max` → **`_assert_sections_are_drawn_and_cost_the_sum`** | the three pickers are mutually exclusive and the strip reserves the MAX | all three sections draw on ONE render and the card reserves the **SUM**, term for term against the producer, and that sum is more than its tallest term |
+| `_assert_kits_picker_draws_both_controls` → **`_assert_kits_section_draws_both_controls`** | *"with the expansion CLOSED the strip draws neither picker"*, driven by writing `_work_picker_open` and pressing a `Kits` link | both pickers, their rosters, `none` on both and the HINT — with **no click at all** |
+| the priority frame's swap pair | *"`Change policy` swapped the strip to the FLOOR picker … the priority picker is GONE with it, not merely covered"* | both grids are on the card at once, each under its own header |
+
+Two more went with them: *"the pick CLOSES the picker"* became *"the PRIORITY section is still drawn
+after the pick"* — which is what lets the three levels be pressed in sequence the way a player does —
+and *"the card is centred in the VIEWPORT"* became *"…in the ROOM the dock leaves"*, which is the one
+that caught a 340px card running straight through a bottom dock's panel.
+
+**`_press_work_inspector_link` is deleted.** Its whole job was pressing a link that opened an
+expansion, and there is no such link; its last caller went with the swap frame it drove.
+
+**The matrix stopped walking four picker states per configuration**, and that is a stronger reading of
+the same property rather than a weaker one: with `_work_picker_open` retired there is nothing a click
+could change about the zone, so the zone figure is taken once and the interesting number moved to the
+CARD's height against the room it is centred in. `band_panel_work_inspector_dialog_tight` is the frame
+for the tightest room any shipped configuration leaves (a 1152×720 bottom dock: 264px against a 340px
+card, so the card's own scroll carries the rest).

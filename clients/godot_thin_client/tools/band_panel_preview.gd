@@ -1404,7 +1404,7 @@ func _ready() -> void:
 	_assert_work_fodder_readouts()
 
 	# THE WORK INSPECTOR'S POLICY PICKER — the one control on the board with no frame coverage at all
-	# until it got these (no harness otherwise opens `_work_picker_open`). Two rows: one
+	# until it got these. Two rows: one
 	# BUILDING a pen beside one that is not, and the claim is that the picker cannot tell them apart.
 	# The standing-investment WARN line and the discard confirm that used to ride the first row are
 	# gone with issue #442 — a stance re-pick leaves the improvement alone, so there is nothing to warn
@@ -1420,8 +1420,7 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
-	# …and the strip with its POLICY PICKER open, which is the one conditional child that is panel
-	# state rather than model state.
+	# …and the card with its POLICY section drawn, which since §4.9 item 12d it always is.
 	_assert_work_inspector_fits("band_panel_work_policy_investment")
 	# A BUILDING row lights its STANCE like any other — the state that used to light nothing.
 	_assert_lit_rung(INVESTMENT_ROW_PRESET)
@@ -1440,7 +1439,6 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_assert_lit_rung(EXTRACTIVE_ROW_PRESET)
 	_assert_policy_pick_confirms(EXTRACTIVE_ROW_HERD_ID, false)
-	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_NONE
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
 	# UNDER-CONTAINED managed herd in the WORK board (fauna neglect-escape arc): a Corralled herd that
@@ -3437,8 +3435,8 @@ func _render_upkeep_mode_states() -> void:
 	_report_zone_content_extent("band_panel_pools_wide_selected")
 	_assert_work_inspector_fits("band_panel_pools_wide_selected")
 	await _assert_work_inspector_worst_case_fits("band_panel_pools_wide_selected")
-	await _assert_kits_picker_is_exclusive_and_costs_the_max()
-	await _assert_kits_picker_draws_both_controls()
+	_assert_sections_are_drawn_and_cost_the_sum()
+	await _assert_kits_section_draws_both_controls()
 	# The PRECONDITION, without which the state is `band_panel_pools_wide` rendered twice: a strip
 	# really is open, and the queue block really is up beside it.
 	_assert_work_inspector_is_a_dialog("band_panel_pools_wide_selected")
@@ -3534,6 +3532,11 @@ func _assert_upkeep_mode_row_fits(where: String, block: Control) -> void:
 			% [where, row_bottom - row_top, HudWorkVocab.UPKEEP_MODE_ROW_HEIGHT],
 		row_bottom - row_top <= HudWorkVocab.UPKEEP_MODE_ROW_HEIGHT + ZONE_BOUNDS_TOLERANCE)
 
+## How many sections EVERY open card draws, whatever the row: POLICY and PRIORITY. The KITS section is
+## the one a row can lack (`_work_inspector_has_kits`), so a claim made on every dialog frame — some of
+## which are staged on rows with no kit roster — has to be the floor rather than the count.
+const WORK_INSPECTOR_UNCONDITIONAL_SECTIONS := 2
+
 ## GUARD: **THE STRIP IS OUTSIDE EVERY ZONE AND INSIDE THE DIALOG, and NEITHER HALF IS WORTH ANYTHING
 ## ALONE** (`docs/plan_standing_upkeep.md` §4.9 item 12d).
 ##
@@ -3558,16 +3561,22 @@ func _assert_work_inspector_is_a_dialog(where: String) -> void:
 	# The links are found by their own faces, which is what a player has; the `✕` is what makes the
 	# dialog dismissible at all, and a persistent surface without it is the one failure this whole
 	# slice could ship.
-	var links: Array[String] = [HudWorkVocab.WORK_INSPECT_JUMP, HudWorkVocab.WORK_INSPECT_POLICY,
-		HudWorkVocab.WORK_INSPECT_PRIORITY, HudWorkVocab.WORK_INSPECT_UNASSIGN]
+	var actions: Array[String] = [HudWorkVocab.WORK_INSPECT_JUMP, HudWorkVocab.WORK_INSPECT_UNASSIGN,
+		HudWorkVocab.INSPECTOR_CLOSE_GLYPH]
 	var missing: Array[String] = []
-	for face in links:
+	for face in actions:
 		if _find_button_with_text(strip, face) == null:
 			missing.append(face)
-	if _find_button_with_text(strip, HudWorkVocab.INSPECTOR_CLOSE_GLYPH) == null:
-		missing.append(HudWorkVocab.INSPECTOR_CLOSE_GLYPH)
-	_assert_band_panel("%s: …and it really DRAWS its links row and its close glyph (missing %s)"
+	_assert_band_panel("%s: …and it really DRAWS its two actions and its close glyph (missing %s)"
 		% [where, missing], missing.is_empty())
+	# **AND ITS SECTIONS, which is the other half of "the card is alive"** (§4.9 item 12d, second
+	# pass): the retired list above named `Change policy` / `Priority` / `Kits` as LINKS, and all three
+	# are section headers now. `_assert_sections_are_drawn_and_cost_the_sum` is the full claim; this is
+	# the cheap one every dialog frame can afford.
+	_assert_band_panel("%s: …and at least the POLICY and PRIORITY sections, on every row (%d headers)"
+			% [where, _collect_meta_controls(strip, HudWorkVocab.WORK_INSPECTOR_SECTION_META, []).size()],
+		_collect_meta_controls(strip, HudWorkVocab.WORK_INSPECTOR_SECTION_META, []).size()
+			>= WORK_INSPECTOR_UNCONDITIONAL_SECTIONS)
 
 ## GUARD: **the WORK INSPECTOR strip draws inside the height it RESERVED** — the pools block's own
 ## rule (`_assert_pools_block`), asked of the one block in this zone that never got it.
@@ -3605,66 +3614,46 @@ func _assert_work_inspector_fits(where: String) -> void:
 	_assert_band_panel("%s: the work inspector RESERVES what it DRAWS (%.0f reserved, %.0f drawn)"
 			% [where, reserved, drawn], reserved + ZONE_BOUNDS_TOLERANCE >= drawn)
 
-## GUARD: **THE OPEN PICKER REALLY DRAWS BOTH CONTROLS, AND THE LINK REALLY OPENS IT.** Every claim
-## about the pair's HEIGHT above passes on a picker that renders nothing at all — an empty expansion
-## reserves 44px and draws 0, which fits any box — so the liveness half is asserted here, on the
-## rendered tree, through the REAL `Kits` link rather than by writing `_work_picker_open` directly.
+## GUARD: **THE KITS SECTION REALLY DRAWS BOTH CONTROLS, ITS HEADER AND ITS HINT.** Every claim about
+## the pair's HEIGHT is satisfied by a section that renders nothing at all — an empty block reserves
+## 91px and draws 0, which fits any card — so the liveness half is asserted here, on the rendered tree.
 ##
-## **PAIRED WITH ITS OWN NEGATIVE**: the two pickers must be ABSENT while the expansion is closed, or
-## "both are drawn" passes on a strip that draws them permanently — which is exactly the block form
-## this replaced.
-func _assert_kits_picker_draws_both_controls() -> void:
-	var was_open: StringName = _hud._bandpanel._work_picker_open
-	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_NONE
-	_hud._bandpanel._repage_work_zone()
+## ⛔ **ITS PAIRED NEGATIVE INVERTED WITH §4.9 item 12d's SECOND PASS, and inverting it is the point.**
+## It used to read *"the two pickers must be ABSENT while the expansion is closed, or 'both are drawn'
+## passes on a strip that draws them permanently — which is exactly the block form this replaced"*, and
+## it drove that by writing `_work_picker_open` and pressing a `Kits` link. **Drawing them permanently
+## is now the specification**, so the negative that survives is a different one: the two ACTIONS must
+## still be buttons and the three SECTIONS must not, or "everything is drawn" is satisfied by a card
+## that has stopped distinguishing a control from a verb.
+func _assert_kits_section_draws_both_controls() -> void:
 	await _settle()
-	_assert_band_panel("kits picker — with the expansion CLOSED the strip draws neither picker",
-		_find_meta_control(_work_inspector_root(), HudWorkVocab.WORK_INSPECT_TAKE_KIT_META) == null
-			and _find_meta_control(_work_inspector_root(), HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_META) == null)
-	# **THE LINK IS WHAT OPENS IT**, found by its own face among the strip's inline links — the one
-	# control a player has, and the thing a height-only claim cannot see.
-	var link := _find_button_with_text(_work_inspector_root(), HudWorkVocab.WORK_INSPECT_KITS)
-	_assert_band_panel("kits picker — the strip offers a `%s` link beside the other two"
-		% HudWorkVocab.WORK_INSPECT_KITS, link != null)
-	_hud._bandpanel._toggle_work_picker(HudWorkVocab.WORK_PICKER_KITS)
-	await _settle()
-	# **THE ONE FRAME THE PAIR HAS**, and it is the picker's own state rather than a second fixture:
-	# every other strip frame in this file has the expansion closed, which is what makes the two
-	# pickers unphotographed everywhere else.
+	# **THE ONE FRAME THE PAIR HAS.** It is no longer a picker state — there is none — so it is simply
+	# the card, which is what every inspector frame in this file now shows.
 	await _save("band_panel_work_kits_picker")
-	# ⛔ **AND WHAT AN OPEN PICKER COSTS THIS ZONE IS REPORTED, NOT ASSERTED — because it is a DECISION
-	# rather than a regression, and because it is not this picker's.** Measured on the wide dock: the
-	# zone has 4px of spare with the strip closed, so ANY open expansion overflows it — the shipped
-	# PRIORITY picker by 48 and this one by 40, it being the shortest of the three. The frame above
-	# shows the second row clipped by the zone's bottom edge for exactly that reason.
-	#
-	# A failing assertion here would report the kit pair for a budget the priority picker has been
-	# overrunning since §4.9 item 9b, on a state no frame has ever rendered (every picker-open frame is
-	# a TALL dock, every wide-dock frame has the expansion closed — the disjoint-families gap this file
-	# has now recorded three times). `band_panel_vitals_worst_case`'s rule: a red line here asks for a
-	# decision, so it prints one.
 	_report_zone_content_extent("band_panel_work_kits_picker")
 	var take := _find_meta_control(_work_inspector_root(), HudWorkVocab.WORK_INSPECT_TAKE_KIT_META)
 	var upkeep := _find_meta_control(_work_inspector_root(), HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_META)
-	_assert_band_panel("kits picker — opened, it draws BOTH pickers (take %s, upkeep %s)"
+	_assert_band_panel("kits section — it draws BOTH pickers with NO click at all (take %s, upkeep %s)"
 			% ["yes" if take != null else "no", "yes" if upkeep != null else "no"],
 		take != null and upkeep != null)
 	# …and each is a live `OptionButton` with entries in it, not an empty control shaped like one.
-	_assert_band_panel("kits picker — …and each really carries its roster (take %d, upkeep %d entries)"
+	_assert_band_panel("kits section — …and each really carries its roster (take %d, upkeep %d entries)"
 			% [(take as OptionButton).item_count if take is OptionButton else -1,
 				(upkeep as OptionButton).item_count if upkeep is OptionButton else -1],
 		take is OptionButton and upkeep is OptionButton
 			and (take as OptionButton).item_count > 0
 			and (upkeep as OptionButton).item_count > 0)
-	# ⛔ **AND `none` IS ON BOTH ROSTERS**, which is the choice the tooltips promise and the one a
-	# job-filtered roster silently drops when a config edit forgets a `jobs` entry — the exact staleness
-	# `fixtures_band.gd`'s own kit roster carried until §4.9 item 12c.
-	_assert_band_panel("kits picker — …and `none` is offered on both, which the tooltips promise",
+	# ⛔ **AND `none` IS ON BOTH ROSTERS**, which is the choice the HINT now promises in the open and the
+	# one a job-filtered roster silently drops when a config edit forgets a `jobs` entry — the exact
+	# staleness `fixtures_band.gd`'s own kit roster carried until §4.9 item 12c.
+	_assert_band_panel("kits section — …and `none` is offered on both, which the hint line promises",
 		_option_has_item(take as OptionButton, KIT_NONE_FACE)
 			and _option_has_item(upkeep as OptionButton, KIT_NONE_FACE))
-	_hud._bandpanel._work_picker_open = was_open
-	_hud._bandpanel._repage_work_zone()
-	await _settle()
+	# **THE HINT IS DRAWN, not merely afforded.** It was cut for 12px of zone height and brought back
+	# when the card stopped competing for any; a section that reserved for it and drew nothing would
+	# leave the `none` rule stated in no visible place at all.
+	_assert_band_panel("kits section — …and its HINT line is drawn, not merely reserved for",
+		_find_aside_label(_work_inspector_root(), HudWorkVocab.WORK_INSPECT_KITS_HINT) != null)
 
 ## The bare kit's own display face, spelled here rather than resolved through `KitRoster`: an
 ## expectation re-derived through the code under test agrees with it by construction.
@@ -3689,79 +3678,99 @@ func _option_has_item(picker: OptionButton, face: String) -> bool:
 			return true
 	return false
 
-## GUARD: **THE THREE PICKERS ARE MUTUALLY EXCLUSIVE AND THE STRIP RESERVES THE MAX, NOT THE SUM**
-## (`docs/plan_standing_upkeep.md` §4.9 item 12c). That property is the whole of why the kit pair is
-## free: as a permanent block it cost 50px on TOP of whichever picker was open and took the wide dock
-## 46px past its box; as a third picker it costs 44 INSTEAD of the priority picker's 52, so the
-## strip's worst case does not move at all.
+## GUARD: **THE THREE SECTIONS ARE DRAWN TOGETHER AND THE CARD RESERVES THE SUM, NOT THE MAX**
+## (`docs/plan_standing_upkeep.md` §4.9 item 12d, second pass).
 ##
-## ⛔ **IT IS THE ONE PROPERTY A LATER CHANGE BREAKS SILENTLY.** A fourth picker added as a bare `if`
-## rather than an `elif` — in the builder, in `_work_inspector_height`, or in either alone — still
-## renders a perfectly plausible strip; what it does is reserve for one expansion and draw two, which
-## this zone answers by clipping the bottom of the board. So the claim is made on the ARITHMETIC and
-## not on a frame.
-func _assert_kits_picker_is_exclusive_and_costs_the_max() -> void:
+## ⛔ **THIS IS THE EXACT INVERSE OF WHAT IT ASSERTED ONE SLICE AGO, and inverting it rather than
+## deleting it is the point.** It read: *"THE THREE PICKERS ARE MUTUALLY EXCLUSIVE AND THE STRIP
+## RESERVES THE MAX, NOT THE SUM. That property is the whole of why the kit pair is free: as a
+## permanent block it cost 50px on TOP of whichever picker was open and took the wide dock 46px past
+## its box; as a third picker it costs 44 INSTEAD of the priority picker's 52, so the strip's worst
+## case does not move at all."* Every figure in it was a fact about a strip inside a 396px zone box.
+## The card competes with no zone, so the mutual exclusion is gone and the reservation is a SUM — and
+## an assertion left standing on the old property would quietly guard retired behaviour, which is the
+## third time on this branch that a claim had to be inverted rather than trusted.
+##
+## ⛔ **IT IS STILL MADE ON THE ARITHMETIC AND NOT ON A FRAME**, for the reason the retired version
+## gave and which did not expire: a fourth section added to the builder and not to the reservation
+## renders a perfectly plausible card and simply draws taller than it was fitted for. The LIVENESS
+## half — that three sections really draw — is asserted on the rendered tree beside it, or "the
+## reservation is the sum of three sections" passes on a card that draws none of them.
+func _assert_sections_are_drawn_and_cost_the_sum() -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
 	var models: Array = _hud._bandpanel._work_source_models(band, 0)
 	if models.is_empty():
-		_fail("kits picker — no work model to measure the strip against")
+		_fail("sections — no work model to measure the card against")
 		return
 	var model: Dictionary = models[0]
-	var was_open: StringName = _hud._bandpanel._work_picker_open
-	# The three open heights, each measured through the SHIPPED producer rather than read off a const:
-	# the claim is that the chain answers one term, and a const table cannot say that.
-	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_NONE
-	var closed: float = _hud._bandpanel._work_inspector_height(model)
-	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_FLOOR
-	var floor_open: float = _hud._bandpanel._work_inspector_height(model)
-	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_PRIORITY
-	var priority_open: float = _hud._bandpanel._work_inspector_height(model)
-	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_KITS
-	var kits_open: float = _hud._bandpanel._work_inspector_height(model)
-	_hud._bandpanel._work_picker_open = was_open
-	# **THE CLOSED STRIP IS THE CHEAPEST OF THE FOUR, which is the whole difference from the block
-	# form** — that form added its 50px to every one of these, so `closed` was not the minimum and the
-	# three deltas below were unchanged. Both halves are needed: this says no picker term rides the
-	# closed strip, and the deltas say each open one rides exactly once.
-	#
-	# ⛔ **NOT AN EQUALITY AGAINST `WORK_INSPECTOR_HEIGHT`.** The model this measures is the UNDER-KEPT
-	# herd, deliberately (its `note` is one of the four conditional children the reservation is model-
-	# driven for), so the closed strip is legitimately the base PLUS that note — 84 against a base of
-	# 64. An equality there asserts the fixture has no conditional children, which is the opposite of
-	# what this state was chosen for.
-	_assert_band_panel("kits picker — the CLOSED strip is the cheapest of the four (%.0f, against floor %.0f / priority %.0f / kits %.0f)"
-			% [closed, floor_open, priority_open, kits_open],
-		closed < floor_open and closed < priority_open and closed < kits_open)
-	# …and each open picker adds EXACTLY its own term — the max-not-sum property, stated three ways.
-	_assert_band_panel("kits picker — opening it costs its own height and nothing else (%.0f − %.0f = %.0f, want %.0f)"
-			% [kits_open, closed, kits_open - closed, HudWorkVocab.WORK_INSPECTOR_KITS_PICKER_HEIGHT],
-		is_equal_approx(kits_open - closed, HudWorkVocab.WORK_INSPECTOR_KITS_PICKER_HEIGHT))
-	_assert_band_panel("kits picker — …as the floor picker does (%.0f) and the priority picker does (%.0f)"
-			% [floor_open - closed, priority_open - closed],
-		is_equal_approx(floor_open - closed, HudWorkVocab.WORK_INSPECTOR_POLICY_PICKER_HEIGHT)
-			and is_equal_approx(priority_open - closed,
-				HudWorkVocab.WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT))
-	# **AND THE KIT PAIR IS NOT THE WORST CASE**, which is what keeps `WORK_INSPECTOR_CEILING_HEIGHT`
-	# — and therefore the zone's own budget — where it was.
-	_assert_band_panel("kits picker — …and it is SHORTER than the priority picker, so the ceiling does not move (%.0f < %.0f)"
-			% [kits_open, priority_open], kits_open < priority_open)
-	# **THE EXCLUSIVITY, DRIVEN THROUGH THE ONE TOGGLE.** Opening each in turn must leave exactly one
-	# open; a second `_work_picker_open` value surviving is the state the height chain cannot reserve for.
-	for picker in [HudWorkVocab.WORK_PICKER_FLOOR, HudWorkVocab.WORK_PICKER_PRIORITY,
-			HudWorkVocab.WORK_PICKER_KITS]:
-		_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_NONE
-		_hud._bandpanel._toggle_work_picker(picker)
-		_assert_band_panel("kits picker — opening `%s` leaves exactly it open (got `%s`)"
-				% [String(picker), String(_hud._bandpanel._work_picker_open)],
-			_hud._bandpanel._work_picker_open == picker)
-		# …and opening ANOTHER closes it, which is the half a single-open claim cannot make.
-		_hud._bandpanel._toggle_work_picker(HudWorkVocab.WORK_PICKER_KITS if picker \
-			!= HudWorkVocab.WORK_PICKER_KITS else HudWorkVocab.WORK_PICKER_FLOOR)
-		_assert_band_panel("kits picker — …and opening another CLOSES it (`%s` is not `%s`)"
-				% [String(_hud._bandpanel._work_picker_open), String(picker)],
-			_hud._bandpanel._work_picker_open != picker)
-	_hud._bandpanel._work_picker_open = was_open
-	_hud._bandpanel._repage_work_zone()
+	var reserved: float = _hud._bandpanel._work_inspector_height(model)
+	var kitted: bool = _hud._bandpanel._work_inspector_has_kits(model)
+	# **THE SUM, TERM FOR TERM, AGAINST THE PRODUCER.** The KITS term is conditional on the ONE
+	# predicate the builder uses, asked here rather than assumed, so a row without kits is measured
+	# for what it draws rather than failing for what it does not.
+	var sections := HudWorkVocab.WORK_INSPECTOR_POLICY_SECTION_HEIGHT \
+		+ HudWorkVocab.WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT \
+		+ HudWorkVocab.WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
+	if kitted:
+		sections += HudWorkVocab.WORK_INSPECTOR_KITS_SECTION_HEIGHT
+	var conditional := 0.0
+	for key in ["warn", "note", "muted_note"]:
+		var present := bool(model.get(key, false)) if key == "warn" \
+			else String(model.get(key, "")) != ""
+		if present:
+			conditional += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT
+	if ArrivalStrip.has_gap(model.get("schedule", PackedFloat32Array())):
+		conditional += HudWorkVocab.WORK_INSPECTOR_ARRIVALS_HEIGHT
+	var want := HudWorkVocab.WORK_INSPECTOR_HEIGHT + conditional + sections
+	_assert_band_panel("sections — the card reserves the SUM of every section it draws (%.0f, want %.0f: base %.0f + notes %.0f + sections %.0f%s)"
+			% [reserved, want, HudWorkVocab.WORK_INSPECTOR_HEIGHT, conditional, sections,
+				"" if kitted else " — this row has no kits"],
+		is_equal_approx(reserved, want))
+	# **AND THE SUM IS STRICTLY MORE THAN ANY ONE OF ITS TERMS**, which is the sentence the retired max
+	# claim made in reverse. Stated against the tallest section, so it cannot pass on a card that
+	# reserves one section and calls it three.
+	_assert_band_panel("sections — …and that is MORE than the tallest section alone (%.0f > %.0f)"
+			% [sections, HudWorkVocab.WORK_INSPECTOR_KITS_SECTION_HEIGHT],
+		sections > HudWorkVocab.WORK_INSPECTOR_KITS_SECTION_HEIGHT)
+	# **THE LIVENESS HALF, ON THE RENDERED TREE.** All three headers, on ONE render, found by the meta
+	# the section builder stamps rather than by their words — the words are `HudWidgets.
+	# alloc_section_label`'s uppercasing of a vocab const, so a text match would assert a string this
+	# assertion had itself composed.
+	var heads := _collect_meta_controls(_work_inspector_root(),
+		HudWorkVocab.WORK_INSPECTOR_SECTION_META, [])
+	var titles: Array[String] = []
+	for head in heads:
+		titles.append(String(head.get_meta(HudWorkVocab.WORK_INSPECTOR_SECTION_META)))
+	_assert_band_panel("sections — all THREE headers draw on ONE render, no click anywhere (%s)"
+			% str(titles),
+		titles.has(HudWorkVocab.WORK_INSPECT_POLICY_SECTION)
+			and titles.has(HudWorkVocab.WORK_INSPECT_PRIORITY)
+			and titles.has(HudWorkVocab.WORK_INSPECT_KITS))
+	# …and each section's controls are live in the same breath: both 3-cell grids present with exactly
+	# one cell marked current, and the kit pair carrying its rosters (`_assert_kits_section_draws_both_
+	# controls`). A header with nothing under it is a section in name only.
+	_assert_band_panel("sections — …the POLICY grid draws its rungs with exactly one lit (%d rungs)"
+			% _picker_rung_buttons().size(),
+		_picker_rung_buttons().size() > 0)
+	var ranks := _collect_meta_controls(_work_inspector_root(),
+		HudWorkVocab.WORK_PRIORITY_RUNG_META, [])
+	var lit := 0
+	for rank in ranks:
+		var box := (rank as Button).get_theme_stylebox("normal")
+		if box is StyleBoxFlat and (box as StyleBoxFlat).bg_color.is_equal_approx(HudStyle.BUTTON_PRIMARY_BG):
+			lit += 1
+	_assert_band_panel("sections — …and the PRIORITY grid draws all three levels with exactly one lit (%d of %d)"
+			% [lit, ranks.size()],
+		ranks.size() == HudWorkVocab.WORK_PRIORITY_LEVELS.size() and lit == 1)
+	# ⛔ **AND THE TWO PURE ACTIONS ARE BUTTONS, WHILE NO SECTION IS.** This is the negative that
+	# replaced *"the pickers must be ABSENT while the expansion is closed"*: the distinction the card
+	# now makes is CONTENT against VERB, so what must not happen is a section reappearing as a link.
+	for face in [HudWorkVocab.WORK_INSPECT_JUMP, HudWorkVocab.WORK_INSPECT_UNASSIGN]:
+		_assert_band_panel("sections — `%s` is a pressable ACTION, not a section" % face,
+			_find_button_with_text(_work_inspector_root(), face) != null)
+	_assert_band_panel("sections — …and `%s` is NOT a link any more, it is a header"
+			% HudWorkVocab.WORK_INSPECT_KITS,
+		_find_button_with_text(_work_inspector_root(), HudWorkVocab.WORK_INSPECT_KITS) == null)
 
 ## GUARD: **the same claim at the strip's WORST CASE, driven rather than staged — and this is the half
 ## that can see the model-blind reservation.** `WORK_INSPECTOR_HEIGHT` carries slack over what the base
@@ -3801,16 +3810,20 @@ func _assert_work_inspector_worst_case_fits(where: String) -> void:
 	# A schedule with a zero in it is what `ArrivalStrip.has_gap` admits — the whole of what makes the
 	# strip mount at all.
 	model["schedule"] = PackedFloat32Array(WORST_CASE_INSPECTOR_SCHEDULE)
-	# **THE TALLER PICKER, WHICH IS THE PRIORITY ONE** (§4.9 item 9b). The two are mutually exclusive,
-	# so the strip's ceiling takes a max rather than a sum — and staging the FLOOR picker here would
-	# understate it by the hint line and leave `WORK_INSPECTOR_CEILING_HEIGHT` describing a state that
-	# is no longer the worst one.
-	var was_open: StringName = _hud._bandpanel._work_picker_open
-	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_PRIORITY
+	# ⛔ **THERE IS NO PICKER TO STAGE ANY MORE, and that is what §4.9 item 12d's second pass did to
+	# this fixture.** It used to set `_work_picker_open = WORK_PICKER_PRIORITY` here, because the
+	# ceiling was a MAX and the priority arm was the tallest of three: *"staging the FLOOR picker here
+	# would understate it by the hint line and leave `WORK_INSPECTOR_CEILING_HEIGHT` describing a state
+	# that is no longer the worst one."* The card draws all three sections unconditionally, so the
+	# worst case is now a property of the MODEL alone and the conditional children above are the whole
+	# of what makes this one worse than the board's own rows.
 	var reserved: float = _hud._bandpanel._work_inspector_height(model)
 	var strip: Control = _hud._bandpanel._build_work_inspector(band, model)
-	_hud._bandpanel._work_picker_open = was_open
-	dialog.mount(strip, reserved)
+	# The panel's own geometry, exactly as `_sync_work_inspector_dialog` hands it over — a worst case
+	# mounted against a zero anchor would be centred in the raw viewport and could not fail the
+	# does-not-cover-the-board claim the real card is judged by.
+	dialog.mount(strip, reserved, _panel.card_rect(),
+		BandComposeFloat.map_facing_side(_panel.get_dock()))
 	# TWO settles: `refit` waits a frame for the layout pass before it measures, so a reading taken on
 	# the first is the previous content's.
 	await _settle()
@@ -3836,7 +3849,7 @@ func _assert_work_inspector_worst_case_fits(where: String) -> void:
 	# **AND THE WORST CASE FITS THE VIEWPORT** — the state that used to be 106px of unreserved risk
 	# against a horizontal dock's box. It is asked of the ROOM the card places itself in, inset by the
 	# card's own margin, so it is the same rect `_place` clamps to.
-	var room := dialog.available_room(WorkInspectorDialog.VIEWPORT_MARGIN)
+	var room := dialog.room()
 	_assert_band_panel("%s: …and that worst case FITS the viewport it is centred in (%.0f of %.0fpx of room)"
 			% [where, dialog.size.y, room.size.y],
 		dialog.size.y <= room.size.y + ZONE_BOUNDS_TOLERANCE
@@ -11290,9 +11303,6 @@ func _assert_no_work_fodder_total() -> void:
 ## the count fell from 4 marks to 3 and no claim failed. `_collect_meta_controls` finds both kinds by
 ## the meta they share, which is what the meta was for.
 
-## Open the work inspector on the row standing on `policy`, with its policy picker EXPANDED, and
-## repage so the picker actually renders. No harness otherwise opens `_work_picker_open` in either
-## harness, which is why this control had zero frame coverage.
 ## Open the work inspector on the row working a NAMED herd — the trade-row frames need a specific
 ## source (the wolf), not "the first row", which is the forage patch.
 func _open_work_inspector_for_herd(herd_id: String) -> void:
@@ -11308,18 +11318,14 @@ func _open_work_inspector_for_herd(herd_id: String) -> void:
 
 ## **Keyed on the HERD, not on the rung.** Both rows stand on the same stance now (issue #442 — the
 ## build verb moved to its own field), so a rung is no longer an identity; the source is.
+##
+## ⛔ **IT NO LONGER OPENS ANYTHING SECOND.** It used to set `_work_picker_open = WORK_PICKER_FLOOR`
+## beside the row key, because the policy picker was an expansion behind a link; §4.9 item 12d's
+## second pass draws POLICY as a SECTION on every open card, so opening the row IS opening the
+## picker. It survives as its own name because the states below are about that picker, and a reader
+## following `_open_work_inspector_for_herd` would not know which control they were looking at.
 func _open_work_policy_picker_for_herd(herd_id: String) -> void:
-	var band: Dictionary = _hud._band_labor._panel_band
-	var models: Array = _hud._bandpanel._work_source_models(band, 0)
-	for model_variant in models:
-		var model: Dictionary = model_variant
-		if String(model.get("herd_id", "")) != herd_id:
-			continue
-		_hud._bandpanel._work_open_key = String(model.get("key", ""))
-		_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_FLOOR
-		_hud._bandpanel._repage_work_zone()
-		return
-	_fail("%s" % _work_row_absence_report(herd_id, band, models))
+	_open_work_inspector_for_herd(herd_id)
 
 ## WHY A WORK ROW IS MISSING, in the terms the two helpers above can actually be wrong about.
 ## The message they used to share — "fixture drifted?" — named the ONE cause that is checked into the
@@ -15400,7 +15406,7 @@ func _assert_queue_expanded_shape(where: String, entries: int) -> void:
 		chips == 0)
 	_assert_band_panel("…and the pager went with the pages (%d)" % pagers, pagers == 0)
 	_assert_band_panel("…and no work inspector can be open in this mode",
-		_hud._bandpanel._work_open_key == "" and _hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_NONE)
+		_hud._bandpanel._work_open_key == "")
 	_assert_band_panel("…and there is no `+N more` row left, every entry having a row of its own",
 		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META) == null)
 	# **WHAT IT KEEPS.** The zone's own head, so the player knows where they are; and the POOLS block
@@ -15456,7 +15462,7 @@ func _assert_queue_expansion_doors() -> void:
 	# ⛔ …AND ENTERING THE MODE CLEARED THE WORK INSPECTOR WITH IT.
 	_assert_band_panel("⛔ …and entering the mode CLEARED the open work inspector, so it cannot spring back on the collapse (`%s`)"
 			% _hud._bandpanel._work_open_key,
-		_hud._bandpanel._work_open_key == "" and _hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_NONE)
+		_hud._bandpanel._work_open_key == "")
 	# ② THE HEADER FOLDS IT BACK — the expanded view has no overflow row left, so this is the only way.
 	var head := _queue_head_toggle()
 	if head == null:
@@ -15858,7 +15864,7 @@ func _assert_queue_expanded_settings() -> void:
 				and strip.global_position.y >= owner.global_position.y)
 	# ⛔ THE EXCLUSION, on the frame where both expansions are asked for at once.
 	_assert_band_panel("…and no work inspector is open beside it — entering the mode cleared it",
-		_hud._bandpanel._work_open_key == "" and _hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_NONE)
+		_hud._bandpanel._work_open_key == "")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_assert_scroll_only_where_sanctioned()
@@ -18468,13 +18474,16 @@ func _render_work_priority_states() -> void:
 	await _settle()
 	_open_work_inspector_for_herd(PRIORITY_LOW_HERD_ID)
 	await _settle()
-	# ⛔ THE PICKER IS OPENED BY A REAL PRESS ON THE REAL LINK, never by poking `_work_picker_open`.
-	await _press_work_inspector_link(HudWorkVocab.WORK_INSPECT_PRIORITY)
+	# ⛔ **THERE IS NO LINK TO PRESS ANY MORE — OPENING THE ROW IS OPENING THE PICKER.** This read
+	# *"THE PICKER IS OPENED BY A REAL PRESS ON THE REAL LINK, never by poking `_work_picker_open`"*,
+	# and the press it drove was the `Priority` link (§4.9 item 12d, second pass retired both). What
+	# replaces the claim is stronger, not weaker: the picker has to be there with NO click at all.
 	await _save("band_panel_work_priority")
 	_assert_shell_is_wide(false, "band_panel_work_priority")
-	_assert_band_panel("band_panel_work_priority: the `%s` link really opened the PRIORITY picker (%s)"
-			% [HudWorkVocab.WORK_INSPECT_PRIORITY, _hud._bandpanel._work_picker_open],
-		_hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_PRIORITY)
+	_assert_band_panel("band_panel_work_priority: the PRIORITY section draws its picker on the open card, unclicked (%d rungs)"
+			% _collect_meta_controls(_work_inspector_root(), HudWorkVocab.WORK_PRIORITY_RUNG_META, []).size(),
+		_collect_meta_controls(_work_inspector_root(), HudWorkVocab.WORK_PRIORITY_RUNG_META, []).size()
+			== HudWorkVocab.WORK_PRIORITY_LEVELS.size())
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
@@ -18485,27 +18494,23 @@ func _render_work_priority_states() -> void:
 	_assert_work_priority_picker_lit("band_panel_work_priority", PRIORITY_LOW_LEVEL)
 	_report_work_links_row_width("band_panel_work_priority")
 
-	# ⛔ THE MUTUAL EXCLUSION, on the one row both pickers are offered on. Driven with a real press on
-	# `Change policy` while the priority picker is standing, so what is asserted is that opening one
-	# CLOSED the other — a claim no frame showing a single picker can make.
-	await _press_work_inspector_link(HudWorkVocab.WORK_INSPECT_POLICY)
+	# ⛔ **THE MUTUAL EXCLUSION INVERTED, AND THE FRAME KEPT ITS NAME.** It drove a real press on
+	# `Change policy` while the priority picker stood, and asserted *"opening one CLOSED the other — a
+	# claim no frame showing a single picker can make"*, with *"the priority picker is GONE with it,
+	# not merely covered"* beside it. §4.9 item 12d's second pass deletes the exclusion outright, so
+	# the claim this frame now makes is its exact opposite: BOTH grids are on the card at once, with no
+	# press between them.
 	await _save("band_panel_work_priority_floor_swap")
-	_assert_band_panel("band_panel_work_priority_floor_swap: `%s` swapped the strip to the FLOOR picker (%s)"
-			% [HudWorkVocab.WORK_INSPECT_POLICY, _hud._bandpanel._work_picker_open],
-		_hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_FLOOR)
-	_assert_band_panel("…and the priority picker is GONE with it, not merely covered",
-		_find_meta_control(_work_inspector_root(), HudWorkVocab.WORK_PRIORITY_RUNG_META) == null)
-	_assert_band_panel("…and the floor picker really is the one showing",
-		_find_meta_control(_work_inspector_root(), HudWidgets.POLICY_RUNG_META) != null)
+	_assert_band_panel("band_panel_work_priority_floor_swap: the FLOOR picker and the PRIORITY picker are BOTH drawn, together",
+		_find_meta_control(_work_inspector_root(), HudWidgets.POLICY_RUNG_META) != null
+			and _find_meta_control(_work_inspector_root(), HudWorkVocab.WORK_PRIORITY_RUNG_META) != null)
+	_assert_band_panel("…and neither one covers the other — each grid has its own section header",
+		_collect_meta_controls(_work_inspector_root(),
+			HudWorkVocab.WORK_INSPECTOR_SECTION_META, []).size()
+			>= WORK_INSPECTOR_UNCONDITIONAL_SECTIONS)
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_assert_work_inspector_fits("band_panel_work_priority_floor_swap")
-	# …and back the other way, so neither picker is the privileged one.
-	await _press_work_inspector_link(HudWorkVocab.WORK_INSPECT_PRIORITY)
-	_assert_band_panel("…and pressing `%s` again swaps back, closing the floor picker (%s)"
-			% [HudWorkVocab.WORK_INSPECT_PRIORITY, _hud._bandpanel._work_picker_open],
-		_hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_PRIORITY
-			and _find_meta_control(_work_inspector_root(), HudWidgets.POLICY_RUNG_META) == null)
 
 	# ⛔ WHAT EACH BUTTON SENDS, read off the command LINE. All three, because a picker that sent one
 	# level whatever was pressed would satisfy any single-button claim.
@@ -18531,25 +18536,6 @@ func _render_work_priority_states() -> void:
 
 	_push_bands([_band_fixture()])
 	await _settle()
-
-## Press one of the work inspector strip's inline links the way a player presses it — found by FACE,
-## because an inline link's face IS its identity (`HudWidgets.build_inline_link` carries no meta and
-## the four faces are fixed vocabulary), and driven through `_drive_click` so a link that is covered,
-## zero-size or filtered out fails here rather than passing on a Callable nobody could reach.
-func _press_work_inspector_link(face: String) -> void:
-	var strip := _find_meta_control(_work_inspector_root(), HudWorkVocab.WORK_INSPECTOR_META)
-	if strip == null:
-		_fail("work priority — no work inspector strip is open to press `%s` on" % face)
-		return
-	var buttons: Array[Button] = []
-	_collect_buttons_typed(strip, buttons)
-	for button in buttons:
-		if button.text != face:
-			continue
-		await _drive_click(_canvas_to_window(button.get_global_rect().get_center()))
-		await _settle()
-		return
-	_fail("work priority — the strip carries no `%s` link to press" % face)
 
 ## GUARD: **all three ranks are on this board at once, and the DEFAULT one prints nothing.** The two
 ## halves are asserted together because either alone is satisfiable by a defect: "the marked rows
@@ -18619,18 +18605,18 @@ func _assert_work_priority_picker_lit(state_name: String, want_level: String) ->
 ## command LINE rather than on the payload dict, so the token order, the source form and the level
 ## word are all judged as the socket would see them.
 ##
-## The picker is re-opened by pressing the link again, because committing CLOSES it — which is itself
-## part of the contract and is asserted here rather than in a frame of its own.
+## ⛔ **THE PICKER SURVIVES ITS OWN PICK NOW, and the retired contract is quoted rather than deleted**
+## (§4.9 item 12d, second pass): *"The picker is re-opened by pressing the link again, because
+## committing CLOSES it — which is itself part of the contract."* It closed because it was an
+## expansion behind a link and the strip could afford one; it is a section on a card that competes for
+## nothing, so a pick re-renders the card with the new rank lit and the grid still there. The three
+## levels below are therefore pressed in sequence with no re-open between them, which is exactly what
+## a player does.
 func _assert_work_priority_click(level: String) -> void:
-	# The link is a TOGGLE, so this presses it only when the picker is shut — which after the first
-	# pick is every time, the commit having closed it. Pressing unconditionally would close the picker
-	# the caller had just opened and the button would be gone before it could be found.
-	if _hud._bandpanel._work_picker_open != HudWorkVocab.WORK_PICKER_PRIORITY:
-		await _press_work_inspector_link(HudWorkVocab.WORK_INSPECT_PRIORITY)
 	var button := _find_meta_control_valued(_work_inspector_root(), HudWorkVocab.WORK_PRIORITY_RUNG_META, level) \
 		as Button
 	if button == null:
-		_fail("work priority — the open picker carries no `%s` button" % level)
+		_fail("work priority — the PRIORITY section carries no `%s` button" % level)
 		return
 	var seen: Array = []
 	var sink := func(payload: Dictionary) -> void: seen.append(payload)
@@ -18648,9 +18634,14 @@ func _assert_work_priority_click(level: String) -> void:
 		int(payload.get("band_id", HudConst.NO_BAND_ID)), PRIORITY_LOW_HERD_ID, level]
 	_assert_band_panel("work priority — a REAL click on `%s` sends `%s` (got \"%s\")"
 		% [level, want, line], line == want)
-	_assert_band_panel("…and the pick CLOSES the picker (%s)"
-		% _hud._bandpanel._work_picker_open,
-		_hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_NONE)
+	# …and the section is still standing afterwards, which is the inverse of the retired
+	# "the pick CLOSES the picker" claim and the property the next level's press depends on.
+	await _settle()
+	_assert_band_panel("…and the PRIORITY section is still drawn after the pick (%d rungs)"
+			% _collect_meta_controls(_work_inspector_root(), HudWorkVocab.WORK_PRIORITY_RUNG_META, []).size(),
+		_collect_meta_controls(_work_inspector_root(),
+			HudWorkVocab.WORK_PRIORITY_RUNG_META, []).size()
+			== HudWorkVocab.WORK_PRIORITY_LEVELS.size())
 
 ## GUARD + REPORT: **the mark did not cost the accounts their room.** Line two elides onto its floor
 ## clause at the four-cash-crop worst case, and the whole placement argument is that a LEADING mark
@@ -18707,14 +18698,17 @@ func _report_work_links_row_width(state_name: String) -> void:
 		return
 	var buttons: Array[Button] = []
 	_collect_buttons_typed(strip, buttons)
+	# **FOUND FROM `Unassign`, which is the row's LAST child and its only certain one.** The row was
+	# five links and is two (§4.9 item 12d, second pass); `Priority` — what this used to look for — is
+	# a section header now, and a header is not in this row at all.
 	var links: Control = null
 	for button in buttons:
-		if button.text == HudWorkVocab.WORK_INSPECT_PRIORITY:
+		if button.text == HudWorkVocab.WORK_INSPECT_UNASSIGN:
 			links = button.get_parent() as Control
 			break
 	if links == null:
-		_fail("%s — the strip carries no `%s` link to measure from" % [
-			state_name, HudWorkVocab.WORK_INSPECT_PRIORITY])
+		_fail("%s — the card carries no `%s` action to measure the row from" % [
+			state_name, HudWorkVocab.WORK_INSPECT_UNASSIGN])
 		return
 	# **THE BOX IS THE DIALOG\'S CARD NOW, not the work zone\'s** (§4.9 item 12d): the links row is
 	# drawn inside a viewport-centred card at `WorkInspectorDialog.CONTENT_WIDTH`, so measuring it
@@ -18908,12 +18902,17 @@ const DIALOG_PROBE_BOTTOM_CANVASES: Array[Vector2i] = [
 	Vector2i(1280, 800), Vector2i(1152, 720), Vector2i(1024, 768),
 ]
 
-## Every state of the inspector's one three-valued expansion, closed first. Named rather than spelled
-## at the call site so a fourth picker is added to the matrix by adding it here.
-const DIALOG_PROBE_PICKERS: Array[StringName] = [
-	HudWorkVocab.WORK_PICKER_NONE, HudWorkVocab.WORK_PICKER_FLOOR,
-	HudWorkVocab.WORK_PICKER_PRIORITY, HudWorkVocab.WORK_PICKER_KITS,
-]
+## ⛔ **RETIRED — `DIALOG_PROBE_PICKERS`, the four expansion states this matrix used to walk.** It read
+## *"Every state of the inspector's one three-valued expansion, closed first"*, and the matrix opened
+## each in turn to prove the ZONE never moved for any of them. §4.9 item 12d's second pass retires
+## `_work_picker_open` outright: the card draws POLICY, PRIORITY and KITS at once, so there are no
+## states to walk and the matrix measures ONE card per configuration — which is a stronger reading of
+## the same property, the zone having nothing left that a click could change.
+
+## The narrowest room any shipped configuration leaves the card — a bottom dock on the shortest window
+## this client renders at. Named rather than spelled so the frame and the matrix row that found it
+## cannot drift apart.
+const DIALOG_PROBE_TIGHTEST_CANVAS := Vector2i(1152, 720)
 
 ## **THE BOARD ROWS THE 1920 BOTTOM DOCK DRAWS WITH A ROW SELECTED, and the whole point is that it is
 ## the same number it draws with nothing selected.** Before the rehost a selection cost this dock rows
@@ -18976,9 +18975,9 @@ func _render_work_inspector_dialog_states() -> void:
 	_assert_dialog_is_centred_over_the_map("band_panel_work_inspector_dialog_left")
 	_assert_zone_content_fits()
 
-	# …and the KITS picker open on a WIDE dock, which is the frame item 12c never got: every
-	# picker-open frame in this file was a tall dock.
-	_hud._bandpanel._toggle_work_picker(HudWorkVocab.WORK_PICKER_KITS)
+	# …and the WHOLE card on a WIDE dock — every section at once, which is the frame neither item 12c
+	# nor its own second pass could have got out of the strip: every picker-open frame in this file
+	# used to be a tall dock, and there was never a state that drew all three together anywhere.
 	await _pin_canvas(DOCKROW_CANVAS)
 	_panel.set_dock(SIDE_BOTTOM)
 	await _settle()
@@ -18986,8 +18985,8 @@ func _render_work_inspector_dialog_states() -> void:
 	await _save("band_panel_work_inspector_dialog_kits")
 	_assert_work_inspector_fits("band_panel_work_inspector_dialog_kits")
 	_assert_dialog_is_centred_over_the_map("band_panel_work_inspector_dialog_kits")
+	_assert_sections_are_drawn_and_cost_the_sum()
 	_assert_zone_content_fits()
-	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_NONE
 	_hud._bandpanel.close_work_inspector()
 	await _settle()
 
@@ -18996,6 +18995,24 @@ func _render_work_inspector_dialog_states() -> void:
 		await _probe_inspector_dialog(SIDE_LEFT, Vector2i(DIALOG_PROBE_LEFT_WIDTH, height))
 	for canvas in DIALOG_PROBE_BOTTOM_CANVASES:
 		await _probe_inspector_dialog(SIDE_BOTTOM, canvas)
+
+	# **THE TIGHTEST ROOM THE MATRIX FOUND, PHOTOGRAPHED.** A 1152x720 bottom dock leaves 264px of map
+	# above the panel and the card wants 340, so the card is clamped to the room and its own scroll
+	# carries the rest. That is a real state a player reaches, it is the ONE configuration where the
+	# sections do not all fit at once, and a number in the probe's printout is not a picture of it.
+	await _pin_canvas(DIALOG_PROBE_TIGHTEST_CANVAS)
+	_panel.set_dock(SIDE_BOTTOM)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	_open_first_work_inspector()
+	await _settle()
+	await _settle()
+	await _save("band_panel_work_inspector_dialog_tight")
+	_assert_dialog_is_centred_over_the_map("band_panel_work_inspector_dialog_tight")
+	_assert_dialog_fits_its_room("band_panel_work_inspector_dialog_tight")
+	_assert_zone_content_fits()
+	_hud._bandpanel.close_work_inspector()
+	await _settle()
 
 	# **THE TAB SWITCH TAKES THE CARD DOWN**, which the wide shell can never show: a persistent card
 	# floating over the map for a board the player has tabbed away from has nothing behind it to act
@@ -19027,13 +19044,15 @@ func _render_work_inspector_dialog_states() -> void:
 	_push_bands([_band_fixture()])
 	await _settle()
 
-## One configuration of the matrix: dock it, size it, and walk the three pickers plus the closed
-## state, reporting what the zone asks of its box and what the card asks of its room.
+## One configuration of the matrix: dock it, size it, open the card, and report what the zone asks of
+## its box and what the card asks of its room.
 ##
-## **THE ZONE FIGURE IS REPORTED FOR EVERY PICKER even though it cannot move**, and that is the point:
-## a run where it DOES move is a run where an inspector term has come back into the zone's budget, and
-## the number is what shows it. The assertion beside it is `_assert_zone_content_fits`, which is the
-## claim; this is the measurement that says by how much.
+## ⛔ **IT WALKED FOUR PICKER STATES PER CONFIGURATION AND NOW WALKS NONE, which is a stronger reading
+## of the same property.** The retired loop existed to show the zone figure did not move for any
+## expansion; §4.9 item 12d's second pass deleted the expansions, so the zone has nothing a click
+## could change and the card is measured once. The interesting number moved with them: it is the
+## CARD's full height against the room it is centred in, on the shortest windows this client renders
+## at, since the card is a sum over three sections now rather than a base plus the tallest one.
 func _probe_inspector_dialog(edge: int, canvas: Vector2i) -> void:
 	await _pin_canvas(canvas)
 	_panel.set_dock(edge)
@@ -19041,28 +19060,23 @@ func _probe_inspector_dialog(edge: int, canvas: Vector2i) -> void:
 	await _settle()
 	_open_first_work_inspector()
 	await _settle()
+	await _settle()
 	var where := "dialog_probe %s %dx%d" % [
 		"LEFT" if edge == SIDE_LEFT else "BOTTOM", canvas.x, canvas.y]
-	for picker in DIALOG_PROBE_PICKERS:
-		_hud._bandpanel._work_picker_open = picker
-		_hud._bandpanel._repage_work_zone()
-		await _settle()
-		await _settle()
-		var host: Control = _hud._bandpanel._work_zone_host
-		var extent := 0.0
-		var box := 0.0
-		if host != null and is_instance_valid(host):
-			extent = _zone_content_extent(host, host)
-			box = host.size.y
-		var dialog := _work_inspector_dialog()
-		var room := Vector2.ZERO if dialog == null else dialog.available_room(
-			WorkInspectorDialog.VIEWPORT_MARGIN).size
-		print("band_panel_preview: %s picker=%s — zone %.0f of %.0fpx (%.0f spare), board %d rows, queue %d rows, card %.0f of %.0fpx of room" % [
-			where, String(picker), extent, box, box - extent, _work_board_row_count(),
-			_build_queue_rows().size(), 0.0 if dialog == null else dialog.size.y, room.y])
-		_assert_zone_content_fits()
-		_assert_dialog_fits_its_room(where)
-	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_NONE
+	var host: Control = _hud._bandpanel._work_zone_host
+	var extent := 0.0
+	var box := 0.0
+	if host != null and is_instance_valid(host):
+		extent = _zone_content_extent(host, host)
+		box = host.size.y
+	var dialog := _work_inspector_dialog()
+	var room := Vector2.ZERO if dialog == null else dialog.room().size
+	var card := 0.0 if dialog == null else dialog.size.y
+	print("band_panel_preview: %s — zone %.0f of %.0fpx (%.0f spare), board %d rows, queue %d rows, card %.0f of %.0fpx of room (%.0f margin)" % [
+		where, extent, box, box - extent, _work_board_row_count(),
+		_build_queue_rows().size(), card, room.y, room.y - card])
+	_assert_zone_content_fits()
+	_assert_dialog_fits_its_room(where)
 	_hud._bandpanel.close_work_inspector()
 	await _settle()
 
@@ -19088,28 +19102,35 @@ func _assert_dialog_fits_its_room(where: String) -> void:
 	if dialog == null or not dialog.is_open():
 		_fail("%s — no inspector card to measure" % where)
 		return
-	var room := dialog.available_room(WorkInspectorDialog.VIEWPORT_MARGIN)
+	var room := dialog.room()
 	_assert_band_panel("%s: the inspector card fits its room (%.0fx%.0f of %.0fx%.0f)"
 			% [where, dialog.size.x, dialog.size.y, room.size.x, room.size.y],
 		room.encloses(dialog.get_global_rect().grow(-ZONE_BOUNDS_TOLERANCE)))
 
-## GUARD: **THE CARD IS CENTRED IN THE VIEWPORT AND THE BOARD IS NOT UNDER IT.** One placement on every
-## dock edge, so the claim is made the same way on every edge: the card's centre is the viewport's,
-## and its rect does not touch the panel card the board is drawn in.
+## GUARD: **THE CARD IS CENTRED OVER THE MAP AND THE BOARD IS NOT UNDER IT.** One placement on every
+## dock edge, so the claim is made the same way on every edge: the card's centre is the centre of the
+## ROOM the dock leaves, and its rect does not touch the panel card the board is drawn in.
 ##
-## **THE SECOND HALF IS THE ONE THAT MATTERS.** A dialog that measures correctly and covers the rows it
-## was built to free is still wrong, and no arithmetic claim can see that — it is a rect against a
-## rect.
+## ⛔ **THE FIRST HALF READ "centred in the VIEWPORT" FOR ONE SLICE, and the sections are what changed
+## it.** At ~104–156px the card was always over map wherever the viewport's centre happened to be; at
+## 340 a 1080-high bottom dock puts the viewport's centre THROUGH the panel — measured, card
+## y=370…710 against a panel card starting at 624. The room is the viewport cut back off that card
+## now, so the placement rule is unchanged in kind (one centre, one rect) and the property it was
+## always for is structural instead of incidental.
+##
+## **THE SECOND HALF IS THE ONE THAT MATTERS, and it is the one that caught this.** A dialog that
+## measures correctly and covers the rows it was built to free is still wrong, and no arithmetic claim
+## can see that — it is a rect against a rect.
 func _assert_dialog_is_centred_over_the_map(where: String) -> void:
 	var dialog := _work_inspector_dialog()
 	if dialog == null or not dialog.is_open():
 		_fail("%s — no inspector card to place" % where)
 		return
-	var viewport := get_viewport().get_visible_rect()
+	var room := dialog.room()
 	var card := dialog.get_global_rect()
-	_assert_band_panel("%s: the card is centred in the VIEWPORT (centre %s of %s)"
-			% [where, str(card.get_center().round()), str(viewport.get_center().round())],
-		card.get_center().distance_to(viewport.get_center()) <= DIALOG_CENTRE_TOLERANCE)
+	_assert_band_panel("%s: the card is centred in the ROOM the dock leaves (centre %s of %s)"
+			% [where, str(card.get_center().round()), str(room.get_center().round())],
+		card.get_center().distance_to(room.get_center()) <= DIALOG_CENTRE_TOLERANCE)
 	_assert_band_panel("%s: …and it does not cover the panel card the board is drawn in (card %s, panel %s)"
 			% [where, str(card), str(_panel.card_rect())],
 		not card.intersects(_panel.card_rect()))
@@ -19179,39 +19200,39 @@ func _assert_dialog_survives_a_reselect() -> void:
 ## GUARD: **THE ZONE'S BUDGET CONTAINS NO INSPECTOR TERM AT ALL — asked of the ARITHMETIC, so a later
 ## change cannot quietly re-add one** (`docs/plan_standing_upkeep.md` §4.9 item 12d).
 ##
-## `_work_board_capacity` is called directly, once per picker state, and every answer must be
-## identical. A term reintroduced as a `0.0` that later grows, or a fourth picker charged to the zone,
-## moves one of these four and nothing else in this file would notice — every rendered frame still
-## fits, because the board absorbs it by drawing fewer rows.
+## **THE CLAIM IS NOW A SELECTION, NOT A PICKER WALK.** It used to call `_work_board_capacity` once per
+## `_work_picker_open` value and require all four answers to match; that state is retired, so what is
+## compared is the board with a row SELECTED against the same board with nothing selected. The card is
+## the tallest surface this client draws over the map and the zone must not move by one pixel for it.
 ##
 ## **PAIRED WITH THE RENDERED HALF**: the row count on the tree must not move either, and it must be
-## non-zero. "Nothing changes" is satisfied by a board that draws nothing whatever is open.
+## non-zero. "Nothing changes" is satisfied by a board that draws nothing at all.
 func _assert_zone_budget_has_no_inspector_term(where: String) -> void:
-	var was_open: StringName = _hud._bandpanel._work_picker_open
+	var was_key: String = _hud._bandpanel._work_open_key
 	var answers: Array[int] = []
 	var drawn: Array[int] = []
-	for picker in DIALOG_PROBE_PICKERS:
-		_hud._bandpanel._work_picker_open = picker
-		_hud._bandpanel._repage_work_zone()
+	for open_it in [true, false]:
+		if open_it:
+			_open_first_work_inspector()
+		else:
+			_hud._bandpanel.close_work_inspector()
 		await _settle()
 		var capacity: Dictionary = _hud._bandpanel._work_board_capacity(
 			_work_board_row_count(), _build_queue_rows().size(),
 			HudWorkVocab.BUILD_QUEUE_ROWS_MAX, false)
 		answers.append(int(capacity["rows_per_col"]))
 		drawn.append(_work_board_row_count())
-	_hud._bandpanel._work_picker_open = was_open
-	_hud._bandpanel._repage_work_zone()
+	if was_key != "":
+		_hud._bandpanel._toggle_work_inspector(was_key)
 	await _settle()
-	var stable := true
-	for value in answers:
-		if value != answers[0]:
-			stable = false
-	for value in drawn:
-		if value != drawn[0]:
-			stable = false
-	_assert_band_panel("%s: the board's capacity does not move for ANY picker — no inspector term survives in the zone (rows %s, drawn %s)"
+	_assert_band_panel("%s: the board's capacity does not move when a row is SELECTED — no inspector term survives in the zone (rows %s, drawn %s)"
 			% [where, str(answers), str(drawn)],
-		stable and answers[0] > 0 and drawn[0] > 0)
+		answers[0] == answers[1] and drawn[0] == drawn[1]
+			and answers[0] > 0 and drawn[0] > 0)
+	# …and the CARD really was up for the first of those two readings, or the claim is "an unopened
+	# inspector costs nothing", which is true of every surface that does not exist.
+	_assert_band_panel("%s: …and the card really was up while that first reading was taken"
+			% where, _work_inspector_dialog() != null)
 
 ## GUARD: **ESC CLAIMS THE CARD, AND IT CLAIMS IT AHEAD OF THE PAUSE MENU AND BEHIND EVERYTHING ELSE.**
 ## The chain lives in `Main.escape_claimant`, driven here with the REAL HUD's own readers rather than
