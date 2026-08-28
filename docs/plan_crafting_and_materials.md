@@ -338,8 +338,22 @@ that split.
 - **The OWNED cell is count and grade** — `×3 · good`. It is the question the panel could not
   previously answer at all, and it is what tells a player that the thing they just crafted exists.
   Owning none states the **consequence** rather than the arithmetic (*Bare hands* for a kit, *Not
-  made* for a tool): `×0` is the same fact and the worse sentence. A stock recipe, which owns nothing,
-  states what a pass yields instead (`→ 6 cordage`).
+  made* for a tool): `×0` is the same fact and the worse sentence.
+- **A STOCK ROW REPORTS THE BAND'S PILE OF THE MATERIAL IT MAKES, and the pass's yield rides with the
+  COST.** This bullet used to read *"a stock recipe, which owns nothing, states what a pass yields
+  instead (`→ 6 cordage`)"*, and the premise was false: a crafted material is banked in
+  `material_batches` exactly as a gathered one is, so the Owned cell reports the pile: **the band's
+  TOTAL of it, summed across every batch, on one line.** It was reported from play as *"the count
+  isn't working"*, because a cell under a head reading **Owned** was answering a different question.
+  **A material is measured, not counted**, so no `×`: `9.3`, not `×9`.
+- **THE PER-RATING BREAKDOWN IS THE MATERIAL RAIL'S, AND THE LEDGER DOES NOT REPEAT IT.** The Owned
+  cell splits a kit ONE LINE PER GRADE because two grades are different objects and the grade appears
+  nowhere else in the panel; a material's ratings are already drawn in the rail, wider, in the same
+  panel, always visible. A per-batch split here was built and then withdrawn — measured, the
+  characteristic chips wrap in the 172px column and cost the ledger 29px, which is width and height
+  spent on a second copy of the rail's own fact.
+  The yield moved to the Rebuild-costs cell — `4 wood · 2 hide → 1 hurdles` — where `inputs → output`
+  is what an arrow means; alone in a cell it named a relation with nothing on its left.
 - **A band may hold one item at two grades, and the cell lists them** — three spears knapped off poor
   bone and two off excellent are genuinely different objects, and the sim already stores them as
   separate batches for that reason. `×5 · excellent` would be a lie. Collapsing to one grade needs a

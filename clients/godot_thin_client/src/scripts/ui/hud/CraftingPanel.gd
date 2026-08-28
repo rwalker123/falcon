@@ -547,7 +547,10 @@ func _build_bench(payload: Dictionary) -> void:
 		var recipe := _recipe_of(recipe_id, payload)
 		var craft_name := _craft_display_name(String(recipe.get(HudCraftingVocab.MATERIAL_CRAFT_KEY, "")), payload)
 		var made := String(bench.get(HudCraftingVocab.BENCH_DISPLAY_NAME_KEY, recipe_id))
-		title.text = (HudCraftingVocab.BENCH_TITLE_FORMAT % [craft_name, made]).strip_edges()
+		# **THE THING, THEN THE CRAFT** — and the craft only when the sim published one, so an
+		# unresolved track prints `Hurdles` rather than a title opening on a separator.
+		title.text = made if craft_name == "" \
+			else HudCraftingVocab.BENCH_TITLE_FORMAT % [made, craft_name]
 		sub.text = _bench_sub_line(bench)
 		blocked = String(bench.get(HudCraftingVocab.BENCH_BLOCKED_REASON_KEY, ""))
 		blocked_severity = String(bench.get(HudCraftingVocab.BENCH_BLOCKED_SEVERITY_KEY, ""))
@@ -828,6 +831,9 @@ func _build_crew_stepper(bench: Dictionary, payload: Dictionary, running: bool) 
 func _build_ledger(payload: Dictionary) -> void:
 	var band: Dictionary = payload.get(PAYLOAD_BAND, {})
 	var batches_by_item := _equipment_by_item(band)
+	# **THE SAME GROUPING THE RAIL BUILDS, BUILT ONCE** — the Owned cell of a stock row reports the
+	# band's pile of the material that row makes, which is the rail's own fact read from the ledger.
+	var batches_by_material := _batches_by_material(band)
 
 	var table := VBoxContainer.new()
 	table.add_theme_constant_override("separation", 0)
@@ -850,7 +856,7 @@ func _build_ledger(payload: Dictionary) -> void:
 		offers.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 			return _urgency_key(a, batches_by_item) < _urgency_key(b, batches_by_item))
 		for offer in offers:
-			table.add_child(_build_ledger_row(offer, batches_by_item, payload))
+			table.add_child(_build_ledger_row(offer, batches_by_item, batches_by_material, payload))
 			# A hairline UNDER each row rather than separation between them: the rule is what makes a
 			# four-column row read across, and separation alone leaves four stacks side by side.
 			table.add_child(_rule(HudStyle.LINE_SOFT))
@@ -975,12 +981,14 @@ func _toggle_fold(head_name: String) -> void:
 	if not _payload.is_empty():
 		render(_payload)
 
-func _build_ledger_row(offer: Dictionary, batches_by_item: Dictionary, payload: Dictionary) -> Control:
+func _build_ledger_row(offer: Dictionary, batches_by_item: Dictionary,
+		batches_by_material: Dictionary, payload: Dictionary) -> Control:
 	var row := _ledger_row_container()
 	var group := String(offer.get(HudCraftingVocab.OFFER_GROUP_KEY, ""))
 	var batch := _batch_for(offer, batches_by_item)
 	row.add_child(_column_cell(_build_item_cell(offer, payload), 0.0, true))
-	var owned := _build_owned_cell(offer, _batches_for(offer, batches_by_item), group, payload)
+	var owned := _build_owned_cell(offer, _batches_for(offer, batches_by_item), group, payload,
+		batches_by_material)
 	owned.set_meta(HudCraftingVocab.OWNED_CELL_META,
 		String(offer.get(HudCraftingVocab.OFFER_OUTPUT_ITEM_ID_KEY, "")))
 	row.add_child(_column_cell(owned, HudCraftingVocab.COLUMN_OWNED_WIDTH, false))
@@ -1047,20 +1055,29 @@ func _role_line(offer: Dictionary, payload: Dictionary) -> String:
 			if String(material.get("tool_item_id", "")) == item_id and item_id != "":
 				return HudCraftingVocab.ROLE_TOOL_FORMAT % String(material.get(
 					HudCraftingVocab.MATERIAL_ID_KEY, ""))
+	var craft_name := _craft_display_name(
+		String(recipe.get(HudCraftingVocab.MATERIAL_CRAFT_KEY, "")), payload)
 	if group == HudCraftingVocab.GROUP_STOCK:
 		for input_variant in recipe.get(HudCraftingVocab.RECIPE_INPUTS_KEY, []):
 			if not (input_variant is Dictionary):
 				continue
 			var input: Dictionary = input_variant
 			var axis := String(input.get("reads_axis", ""))
-			if axis != "":
-				return HudCraftingVocab.ROLE_STOCK_FORMAT % [
-					String(input.get(HudCraftingVocab.RECIPE_INPUT_MATERIAL_ID_KEY, "")), axis]
-	return _craft_display_name(String(recipe.get(HudCraftingVocab.MATERIAL_CRAFT_KEY, "")), payload)
+			if axis == "":
+				continue
+			# **THE CRAFT LEADS AND THE MATERIAL IS ABSENT.** The material is named twice already on
+			# this row — the cost cell and the sim's own refusal — so the axis is the only fact this
+			# line adds, and leading with the craft keeps line two a category on every row.
+			if craft_name == "":
+				return HudCraftingVocab.ROLE_STOCK_NO_CRAFT_FORMAT % axis
+			return HudCraftingVocab.ROLE_STOCK_FORMAT % [craft_name, axis]
+	return craft_name
 
-## **WHAT THE BAND HAS, AND HOW GOOD IT IS.** Three cases, and only the last of them is a count:
+## **WHAT THE BAND HAS, AND HOW GOOD IT IS.** Three cases, and only one of them is a count:
 ##
-## - A **stock** recipe owns nothing, so the cell states what a pass yields — `→ 6 cordage`.
+## - A **stock** recipe reports the band's TOTAL of the material it makes — one number, summed across
+##   its batches, with no `×` and no rating chips: the per-batch ratings are the material rail's fact
+##   and this cell would only duplicate them. See `_build_stock_owned_cell`.
 ## - Owning **none** states the CONSEQUENCE rather than the arithmetic — `Bare hands` for a kit,
 ##   `Not made` for a tool. Keyed off the published `group` and off `count`, NEVER off
 ##   `remaining == 0`: a spent batch is removed, so worn-out and never-made both read zero condition.
@@ -1073,19 +1090,10 @@ func _role_line(offer: Dictionary, payload: Dictionary) -> String:
 ##
 ## Under the lines, `ownedNote` VERBATIM when the sim published one. **It is the only route by which a
 ## tier word reaches this cell**, it arrives only when it is news, and no `tier_id` is rendered here.
-func _build_owned_cell(offer: Dictionary, batches: Array, group: String, payload: Dictionary) -> Control:
+func _build_owned_cell(offer: Dictionary, batches: Array, group: String, payload: Dictionary,
+		batches_by_material: Dictionary) -> Control:
 	if group == HudCraftingVocab.GROUP_STOCK:
-		var recipe := _recipe_of(String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, "")), payload)
-		for output_variant in recipe.get(HudCraftingVocab.RECIPE_OUTPUTS_KEY, []):
-			if not (output_variant is Dictionary):
-				continue
-			var output: Dictionary = output_variant
-			var material_id := String(output.get(HudCraftingVocab.RECIPE_OUTPUT_MATERIAL_ID_KEY, ""))
-			if material_id != "":
-				return _chip(HudCraftingVocab.OWNED_STOCK_FORMAT % [
-					_amount_text(float(output.get(HudCraftingVocab.RECIPE_OUTPUT_AMOUNT_KEY, 0.0))),
-					material_id], HudStyle.INK_FAINT, HudCraftingVocab.OWNED_CHIP_FONT_SIZE)
-		return _empty_cell()
+		return _build_stock_owned_cell(offer, payload, batches_by_material)
 
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
@@ -1111,6 +1119,65 @@ func _build_owned_cell(offer: Dictionary, batches: Array, group: String, payload
 		note_label.custom_minimum_size = Vector2(HudCraftingVocab.COLUMN_OWNED_WIDTH, 0.0)
 		column.add_child(note_label)
 	return column
+
+## **THE BAND'S TOTAL OF THE MATERIAL THIS ROW MAKES — ONE NUMBER, summed across its batches.**
+##
+## The cell used to state the recipe's YIELD here (`→ 1 hurdles`) on the premise that *a stock recipe
+## owns nothing*, which was simply false: a crafted material is banked in `material_batches` like any
+## other, and the same panel was already drawing the band's 5.0 hurdles in the rail 250px to the left
+## while this cell — under a column head reading **Owned** — reported a number that was not an amount.
+## The yield moved to the cost cell, where `inputs → output` gives the arrow its left-hand side.
+##
+## **THE PER-BATCH RATINGS ARE THE RAIL'S FACT, NOT THIS CELL'S**, which is why `_build_batch_row` is
+## deliberately NOT reused here. Reusing it imported a 250px column's layout into a 172px one: at the
+## shipped axis names (`hurdles` is rated `stoutness` / `span`) the chip pair wraps, and a two-batch
+## pile then cost the ledger ~29px — measured as the difference that pushed the collapsed band-dock
+## ledger past its room. The chips were paying that in duplicate: the rail shows the same batches at
+## the same ratings, in the same panel, always visible.
+##
+## **AND WITHOUT THE CHIPS THE SPLIT MEANS NOTHING.** Equipment splits by GRADE because two grades are
+## genuinely different objects and the grade appears nowhere else; strip a pile's ratings and its two
+## lines are two indistinguishable numbers. So the split collapses with them, and what is left is the
+## question a column headed *Owned* asks: how much have we got.
+##
+## **THE AMOUNT IS FRACTIONAL AND CARRIES NO `×`** (`BATCH_AMOUNT_FORMAT`, the rail's own spelling), but
+## it is sized like the equipment column's count — a material total and a kit count are the same kind
+## of number and should read as one.
+func _build_stock_owned_cell(offer: Dictionary, payload: Dictionary,
+		batches_by_material: Dictionary) -> Control:
+	var recipe := _recipe_of(String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, "")), payload)
+	var output := _stock_output(recipe)
+	if output.is_empty():
+		return _empty_cell()
+	var batches: Array = batches_by_material.get(
+		String(output.get(HudCraftingVocab.RECIPE_OUTPUT_MATERIAL_ID_KEY, "")), [])
+	if batches.is_empty():
+		# **A MATERIAL THE BAND HOLDS NONE OF STATES THAT, not `0.0`.** The kit and tool branches below
+		# say what owning none MEANS for their kind of thing; this is that sentence for a pile.
+		return _chip(HudCraftingVocab.OWNED_STOCK_NONE, HudStyle.INK_FAINT,
+			HudCraftingVocab.OWNED_CHIP_FONT_SIZE)
+	var total := 0.0
+	for batch_variant in batches:
+		if batch_variant is Dictionary:
+			total += float((batch_variant as Dictionary).get(HudCraftingVocab.BATCH_AMOUNT_KEY, 0.0))
+	var held := Label.new()
+	held.text = HudCraftingVocab.BATCH_AMOUNT_FORMAT % total
+	held.add_theme_font_size_override("font_size", HudCraftingVocab.OWNED_COUNT_FONT_SIZE)
+	held.add_theme_color_override("font_color", HudStyle.INK)
+	return held
+
+## **THE OUTPUT ROW THAT MAKES A RECIPE A STOCK RECIPE** — the first output that names a MATERIAL, and
+## `{}` on a recipe whose outputs are equipment. Read by both surfaces that state the pass's yield: the
+## Owned cell joins on its material id and the cost cell prints its amount beside it, and one lookup is
+## what keeps the two from disagreeing about which output the arrow points at.
+func _stock_output(recipe: Dictionary) -> Dictionary:
+	for output_variant in recipe.get(HudCraftingVocab.RECIPE_OUTPUTS_KEY, []):
+		if not (output_variant is Dictionary):
+			continue
+		var output: Dictionary = output_variant
+		if String(output.get(HudCraftingVocab.RECIPE_OUTPUT_MATERIAL_ID_KEY, "")) != "":
+			return output
+	return {}
 
 ## One owned line: the count, then the grade as a chip. **A grade the published legend does not
 ## contain renders NO chip** — a start-stocked unit publishes `""`, and a spawn's kit was never on a
@@ -1190,6 +1257,20 @@ func _grade_color(grade: String, payload: Dictionary) -> Color:
 ## used, because it is already net of the bench tool's material efficiency and is the number the
 ## refusal beside it was computed against. A short material is tinted so the eye finds it without
 ## reading the button.
+##
+## **A STOCK RECIPE'S YIELD IS THIS CELL'S SECOND LINE — `4 wood · 2 hide` over `→ 1 hurdles`.** It
+## hung in the Owned cell until the arrow was reported as meaningless, which it was: `→ 1 hurdles`
+## alone in a cell names a relation with nothing on its left. Here the inputs ARE the left-hand side,
+## which is the only place in the panel where an arrow reads. It renders on a MATERIAL output and on
+## no other — a kit recipe's output is the row's own name, and an arrow back at the title says nothing.
+##
+## **THE SECOND LINE IS DELIBERATE, NOT A WRAP**, which is why the cell is a VBox of the inputs' flow
+## and the yield rather than one flow holding both. The shipped two-input `hurdles` costs about 157px
+## at `COST_FONT_SIZE` against a `COLUMN_COST_WIDTH` of 140, so appending the yield to the flow put the
+## arrow alone at the head of a wrapped line — and any width that fixed that breaks again on a
+## three-input recipe, while widening the cost column would steal from the Item column on EVERY row to
+## pay for a fact only stock rows carry. Stacked, the inputs sit directly above the arrow, which is the
+## left-hand side moving the yield here was for.
 func _build_cost_cell(offer: Dictionary, payload: Dictionary) -> Control:
 	var recipe := _recipe_of(String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, "")), payload)
 	var shortfalls := {}
@@ -1197,10 +1278,14 @@ func _build_cost_cell(offer: Dictionary, payload: Dictionary) -> Control:
 		if shortfall_variant is Dictionary:
 			var shortfall: Dictionary = shortfall_variant
 			shortfalls[String(shortfall.get(HudCraftingVocab.SHORTFALL_MATERIAL_ID_KEY, ""))] = shortfall
+	var cell := VBoxContainer.new()
+	cell.add_theme_constant_override("separation", 0)
 	var flow := HFlowContainer.new()
 	var inputs: Array = recipe.get(HudCraftingVocab.RECIPE_INPUTS_KEY, [])
+	var yielded := _stock_output(recipe)
 	if inputs.is_empty():
 		return _empty_cell()
+	cell.add_child(flow)
 	for i in range(inputs.size()):
 		if not (inputs[i] is Dictionary):
 			continue
@@ -1218,7 +1303,18 @@ func _build_cost_cell(offer: Dictionary, payload: Dictionary) -> Control:
 		clause.add_theme_font_size_override("font_size", HudCraftingVocab.COST_FONT_SIZE)
 		clause.add_theme_color_override("font_color", HudStyle.DANGER if short else HudStyle.INK_DIM)
 		flow.add_child(clause)
-	return flow
+	# The yield is a SEPARATE label under the flow rather than another clause in it, and it carries no
+	# ` · `: the arrow is its own separator, and its own line keeps it under the inputs it points out
+	# of instead of wherever the flow's wrap happens to leave it.
+	if not yielded.is_empty():
+		var made := Label.new()
+		made.text = HudCraftingVocab.COST_YIELD_FORMAT % [
+			_amount_text(float(yielded.get(HudCraftingVocab.RECIPE_OUTPUT_AMOUNT_KEY, 0.0))),
+			String(yielded.get(HudCraftingVocab.RECIPE_OUTPUT_MATERIAL_ID_KEY, ""))]
+		made.add_theme_font_size_override("font_size", HudCraftingVocab.COST_FONT_SIZE)
+		made.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+		cell.add_child(made)
+	return cell
 
 ## **MAKE STAGES THE JOB, AND A REFUSAL NAMES ITS NUMBER.** The button puts the recipe on the bench
 ## and leaves the crew to the stepper; the running row's button is spent and reads *On the bench*.

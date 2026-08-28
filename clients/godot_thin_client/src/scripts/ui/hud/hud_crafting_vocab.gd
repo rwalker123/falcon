@@ -239,8 +239,14 @@ const CHARACTERISTIC_CHIP_FORMAT := "%s: %s"
 
 const BENCH_IDLE_TITLE := "Nothing on the bench"
 const BENCH_IDLE_SUB := "Press Make on a row below to put it up."
-## What the bench is making. The craft's name, then the thing.
-const BENCH_TITLE_FORMAT := "%s %s"
+## What the bench is making: **the THING first, then the craft, with a separator between them.** The
+## two nouns were juxtaposed (`Tanning Hurdles`) until it was reported as a different item from the
+## `Hurdles` row in the ledger below — and the collision is not that row's bad luck, it is the shape:
+## every craft name in the book is a gerund, so `Weaving Baskets` reads as a verb phrase and
+## `Bone-working Crook` as a compound noun. The separator is the `·` the sub line and the cost cell
+## already join clauses with. **A bench whose craft the sim has not published prints the thing alone**
+## rather than a dangling separator.
+const BENCH_TITLE_FORMAT := "%s · %s"
 ## Its progress, in the units the sim keeps it in: the recipe's own `work`, accrued against the
 ## pass's cost. **THE UNIT IS `work`, NOT `worker-turns`** — a worker-turn is not what a worker does
 ## in a turn (bare-handed `craft_speed` is 0.5, so two crafters deliver 1.0), and the old name
@@ -329,8 +335,24 @@ const OWNED_TOOL_NONE := "Not made"
 ## **ONE LINE PER GRADE**, counts summed across the batches that share one — two `good` batches at
 ## different wear are one line of `×5`, wear not being this panel's fact. Best grade first.
 const OWNED_COUNT_FORMAT := "×%d"
-## A STOCK recipe owns nothing, so its cell states what a pass yields instead.
-const OWNED_STOCK_FORMAT := "→ %s %s"
+## **WHAT THE BAND HOLDS OF A CRAFTED MATERIAL** — no wording of its own, because the pile reads as
+## ONE TOTAL in the rail's own `BATCH_AMOUNT_FORMAT` (`9.3`), summed across the material's batches.
+## **A stock recipe owns something and the panel knew it all along** — this cell stated the recipe's
+## YIELD (`→ 1 hurdles`) under a column head that says *Owned*, while the band's 5.0 hurdles sat in
+## `material_batches` being drawn in the rail 250px to its left. The yield moved to the Rebuild-costs
+## cell, where an arrow has a left-hand side (see `COST_YIELD_FORMAT`).
+##
+## **NO RATING CHIPS AND NO PER-BATCH SPLIT HERE** — both are the RAIL's fact, drawn 250px wide and
+## always visible, and at shipped axis names (`stoutness` / `span`) a chip pair wraps inside
+## `COLUMN_OWNED_WIDTH`, so the duplicate cost the ledger real height. Without the chips the split
+## would be two indistinguishable numbers anyway; equipment splits by GRADE because a grade is
+## rendered nowhere else.
+##
+## **THE AMOUNT IS FRACTIONAL AND THE `×` IS DELIBERATELY ABSENT.** Equipment is counted (`×26`
+## sleds); a material is measured — 22.8 hide, 5.0 hurdles — and an `×5` here would be a lie the first
+## turn a pile is not whole. It is SIZED like the count (`OWNED_COUNT_FONT_SIZE`) all the same: the two
+## answer the same question about different kinds of thing.
+const OWNED_STOCK_NONE := "None on hand"
 ## How the Owned cell is found by IDENTITY. It carries the row's own item id, so a claim about what
 ## reaches the CELL (a tier word, an owned note) can be scoped to the cell rather than to the ledger —
 ## the group HEAD is a tier word by design, and a panel-wide text scan cannot tell the two apart.
@@ -502,15 +524,36 @@ const GROUP_HEAD_FONT_SIZE := 10
 
 ## The Item cell's second line — what this row IS, every one of them a JOIN of published fields
 ## rather than an authored table: a tool names the material it bounds (`materials[].tool_item_id`), a
-## stock recipe names the characteristic its input is judged on (`inputs[].reads_axis`), and a kit
-## row names the craft that makes it (`RecipeDefState.craft`, whose display name is resolved
+## stock recipe names the CRAFT and the characteristic its input is judged on (`inputs[].reads_axis`),
+## and a kit row names the craft that makes it (`RecipeDefState.craft`, whose display name is resolved
 ## sim-side). A row whose join finds nothing simply shows no second line.
+##
+## **THE STOCK LINE NAMES NO MATERIAL, and leads with the craft like every other row.** It read
+## `Reads hide suppleness` until it was reported as meaningless, and both halves of that were wrong:
+## two bare nouns collide with no separator between them, and the *material* is the one fact the row
+## already states twice over — the Rebuild-costs cell beside it says `4 wood · 2 hide`, and the sim's
+## own refusal under the button says `Hide, no tanning frame → poor`. What is genuinely new on this
+## line is the AXIS, which is the whole of "there is no best hide": the same pelt makes a good sled
+## (reads toughness) and poor hurdles (reads suppleness). Leading with the craft is also what keeps
+## line two a CATEGORY on every row — the stock row was the only one whose line two was a sentence.
 const ROLE_TOOL_FORMAT := "Bench tool — %s"
-const ROLE_STOCK_FORMAT := "Reads %s %s"
+const ROLE_STOCK_FORMAT := "%s · quality from %s"
+## The same line on a recipe whose craft the sim has not published — the axis alone, capitalized,
+## rather than a leading separator with nothing before it.
+const ROLE_STOCK_NO_CRAFT_FORMAT := "Quality from %s"
 
 ## The cost cell's per-material clause: the amount, then the material.
 const COST_CLAUSE_FORMAT := "%s %s"
 const COST_SEPARATOR := " · "
+## **WHAT A PASS YIELDS, ON ITS OWN LINE UNDER WHAT IT COSTS** — `4 wood · 2 hide` and then
+## `→ 1 hurdles` beneath it. It sits in the cost cell rather than in the Owned cell because
+## `inputs → output` is what an arrow means: alone in a cell, with nothing on its left, `→ 1 hurdles`
+## named a relation whose other side was missing. The break is DELIBERATE and not a wrap — the cell
+## stacks the inputs' flow and this label (see `CraftingPanel._build_cost_cell`), because the shipped
+## two-input recipe overruns `COLUMN_COST_WIDTH` and a wrapped flow would strand the arrow at the head
+## of line two. Rendered on a recipe whose output is a MATERIAL and on no other — a kit recipe's output
+## is the row's own name, and restating it would be the arrow pointing at the title.
+const COST_YIELD_FORMAT := "→ %s %s"
 ## A cost amount reads whole where it is whole — a recipe asking for 12 fibre should not say 12.0.
 const COST_AMOUNT_DECIMALS := 1
 const COST_WHOLE_EPSILON := 0.05
