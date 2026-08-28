@@ -1209,6 +1209,25 @@ pub struct HusbandryConfig {
     /// The penned rung's growth multiplier: `min(husbandry_regrowth_cap, wild_r × pen_gain)` — the top
     /// of the ladder (`> pastoral_gain`). Retires the flat `pen.ecology.regrowth_rate`.
     pub pen_gain: f32,
+    /// **THE PASTORAL RUNG'S WARINESS MULTIPLIER — what a halter buys at the retreat.** A tamed herd
+    /// still bolts, just less: this scales the species' own [`crate::combat::CombatStats::wariness`]
+    /// exactly as `pastoral_gain` scales its `regrowth_rate`, so a jumpy gazelle and a placid mammoth
+    /// stay different economies at every rung ([`crate::fauna::herd_wariness`]).
+    ///
+    /// **The engagement has no pastoral twin, deliberately.** Only the pen buys reach
+    /// ([`HusbandryConfig::pen_engage_gain`]); taming buys calm.
+    ///
+    /// Validated finite, `> 0` and `<= 1`. **Strictly positive**: a `0` would delete the retreat
+    /// stage on a whole rung, which is the exemption this lever exists to replace rather than
+    /// re-spell.
+    pub pastoral_wariness: f32,
+    /// The penned rung's wariness multiplier — the ladder's calmest rung (`< pastoral_wariness`, so
+    /// the ladder is monotone: a fence calms more than a halter).
+    ///
+    /// **It does NOT buy a fight.** Containment solves catching; weapons solve killing. A penned
+    /// herd's `defense` is the species' own at every rung, which is what makes a pen **reliable, not
+    /// safe** — a contained bull still gores the keeper who comes at it bare-handed.
+    pub pen_wariness: f32,
     /// **THE PEN'S HANDLING GAIN — the engagement bound at rung 3, and it is a NUMBER rather than
     /// the absence of one.**
     ///
@@ -1323,6 +1342,8 @@ impl Default for HusbandryConfig {
             pen: PenConfig::default(),
             pastoral_gain: DEFAULT_PASTORAL_GAIN,
             pen_gain: DEFAULT_PEN_GAIN,
+            pastoral_wariness: DEFAULT_PASTORAL_WARINESS,
+            pen_wariness: DEFAULT_PEN_WARINESS,
             pen_engage_gain: DEFAULT_PEN_ENGAGE_GAIN,
             husbandry_regrowth_cap: DEFAULT_HUSBANDRY_REGROWTH_CAP,
             pen_radius_max: DEFAULT_PEN_RADIUS_MAX,
@@ -1408,6 +1429,19 @@ const DEFAULT_PEN_ENGAGE_GAIN: f32 = 20.0;
 /// its wild rate (capped). Resulting pen `r`: rabbit `0.75` (capped, booms) · deer `0.30` · mammoth
 /// `0.12` (a long-haul investment). Retires the flat `0.90`. A **playtest lever**.
 const DEFAULT_PEN_GAIN: f32 = 3.0;
+
+/// **HOW MUCH OF ITS OWN WARINESS A TAMED HERD KEEPS** (`docs/plan_standing_upkeep.md` §4.9 item
+/// 12b) — the multiplier on the species' `wariness` at the pastoral rung. Half: a haltered animal
+/// still breaks off at contact about half as often as a wild one, so the take's retreat stage is
+/// *cheaper* at rung 2 and never absent. A **playtest lever**.
+const DEFAULT_PASTORAL_WARINESS: f32 = 0.5;
+
+/// **HOW MUCH OF ITS OWN WARINESS A PENNED HERD KEEPS** — the ladder's calmest rung, and the reason
+/// a pen reads as a reliable supply: at `0.15` a fenced aurochs (`wariness 0.20`) breaks off 3% of
+/// the time instead of 20%, so the keepers reach nearly everything they go after. What they do
+/// to it once they reach it is still the species' `defense` against their own kit. A **playtest
+/// lever**, validated strictly below [`DEFAULT_PASTORAL_WARINESS`].
+const DEFAULT_PEN_WARINESS: f32 = 0.15;
 
 /// **The stable-band cap on any managed `r`.** `wild_r × gain` is clamped here so a fast breeder cannot
 /// be scaled into an unstable/oscillating discrete-logistic rate. `0.75` keeps growth monotone (well
@@ -1887,6 +1921,23 @@ impl FaunaConfig {
         require_positive_finite(
             "husbandry.husbandry_regrowth_cap",
             self.husbandry.husbandry_regrowth_cap,
+        )?;
+        // --- The ladder is monotone at the RETREAT too (`docs/plan_standing_upkeep.md` §4.9 item
+        // 12b): management buys a *fraction* of the species' own `wariness`, so each rung's animals
+        // break off less often than the one below. Both are `(0, 1]` — a value above 1 would make
+        // taming an animal spookier, and **a value of `0` would delete the retreat stage on that
+        // rung**, which is the blanket exemption this pair exists to replace rather than re-spell
+        // under a config key.
+        require_positive_fraction(
+            "husbandry.pastoral_wariness",
+            self.husbandry.pastoral_wariness,
+        )?;
+        require_positive_fraction("husbandry.pen_wariness", self.husbandry.pen_wariness)?;
+        require_greater_than(
+            "husbandry.pastoral_wariness",
+            self.husbandry.pastoral_wariness,
+            "husbandry.pen_wariness (a fence calms more than a halter)",
+            self.husbandry.pen_wariness,
         )?;
         // **The pen's HANDLING gain may never make an animal harder to handle.** It is the engagement
         // bound at rung 3 (`fauna::herd_engage_rate`), a multiplier on the species' own rate, so a
@@ -2446,9 +2497,22 @@ fn require_in_unit_range(field: &'static str, value: f32) -> Result<(), FaunaCon
     Ok(())
 }
 
-// NB: `require_fraction` — the `(0, 1]` bound — went with the earned-knowledge dials it was this
-// config's only caller of (slice 4). It lives on as `intensification::validate_knowledge`'s
-// `completion_threshold` check, which now states the bound once for both food webs.
+/// `(0, 1]` — a fraction that may be whole but may **not** be zero, because zero would switch the
+/// stage it scales off entirely rather than tune it (the husbandry wariness pair,
+/// `docs/plan_standing_upkeep.md` §4.9 item 12b).
+///
+/// It is the `require_fraction` the earned-knowledge dials retired (slice 4), brought back under a
+/// name that says which end is excluded — the bound now has a caller again.
+fn require_positive_fraction(field: &'static str, value: f32) -> Result<(), FaunaConfigError> {
+    if !value.is_finite() || value <= 0.0 || value > MAX_FRACTION {
+        return Err(FaunaConfigError::Invalid {
+            field,
+            constraint: format!("be finite and in (0, {MAX_FRACTION}]"),
+            value: value.to_string(),
+        });
+    }
+    Ok(())
+}
 
 // NB: `require_open_unit_fraction` — the strict `(0, 1)` bound — went with the proportional-skim
 // dials it was the only caller of, and the multiples-of-MSY dials that briefly replaced them have
@@ -3140,6 +3204,39 @@ mod tests {
         // Management must beat wild growth, or taming is a downgrade.
         let err = reject(|json| json["husbandry"]["pastoral_gain"] = (0.9).into());
         assert_rejects_field(err, "husbandry.pastoral_gain");
+    }
+
+    /// **THE WARINESS LADDER IS MONOTONE, AND NEITHER RUNG MAY DELETE THE RETREAT**
+    /// (`docs/plan_standing_upkeep.md` §4.9 item 12b).
+    ///
+    /// The `0` cases are the point: a zero multiplier is `NO_RETREAT_STAGE_STAY` under a config key
+    /// — the blanket pen exemption this pair replaced — so the bound is `(0, 1]` and not `[0, 1]`.
+    #[test]
+    fn validate_rejects_a_wariness_ladder_that_inverts_or_deletes_the_retreat() {
+        // A fence must calm MORE than a halter, or penning makes the animals spookier.
+        let err = reject(|json| json["husbandry"]["pen_wariness"] = (0.9).into());
+        assert_rejects_field(err, "husbandry.pastoral_wariness");
+        // Neither rung may make an animal warier than it is in the wild.
+        for over in [1.01_f64, 2.0] {
+            let err = reject(|json| json["husbandry"]["pastoral_wariness"] = (over).into());
+            assert_rejects_field(err, "husbandry.pastoral_wariness");
+        }
+        // ...and neither may switch the stage off.
+        let err = reject(|json| json["husbandry"]["pastoral_wariness"] = (0.0).into());
+        assert_rejects_field(err, "husbandry.pastoral_wariness");
+        let err = reject(|json| json["husbandry"]["pen_wariness"] = (0.0).into());
+        assert_rejects_field(err, "husbandry.pen_wariness");
+        // **Liveness** — the shipped file itself satisfies all of it, ordering included, or every
+        // rejection above would be a statement about a config nobody ships.
+        let config = FaunaConfig::builtin();
+        assert!(
+            config.husbandry.pen_wariness > 0.0
+                && config.husbandry.pen_wariness < config.husbandry.pastoral_wariness
+                && config.husbandry.pastoral_wariness <= 1.0,
+            "the shipped ladder must be 0 < pen {} < pastoral {} <= 1",
+            config.husbandry.pen_wariness,
+            config.husbandry.pastoral_wariness
+        );
     }
 
     #[test]

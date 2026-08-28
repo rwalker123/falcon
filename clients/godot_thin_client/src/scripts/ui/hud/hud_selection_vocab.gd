@@ -255,6 +255,52 @@ const RUNG_REVERTING_FORMAT := "%s Reverting %d%%"
 # is the silence this whole family exists to remove).
 const RUNG_STALLED_FORMAT := "%s Stalled %d%%"
 
+# **HAZARD: THE RUNG LAPSED — work banked, NOBODY on it, and no queue entry that could pick it up.**
+# The sim's `-1` again, but on a source that is in no band's build queue at all
+# (`SourceForecast.NOT_IN_ANY_BUILD_QUEUE`) with a meter that is not empty. Its own word, because the
+# player has silently lost what the rung was paying and nothing will recover it until they act.
+#
+# **THE MEASURED CASE IT EXISTS FOR** — a patch at (78, 20). `Field sown` completed on tick 88, and on
+# tick 89 the sim logged *"the field at (78,20) has gone feral — untended, the ground is reverting"*.
+# The queue entry had already retired at completion, so at tick 93 the tile sat at
+# `49.612 / 49.624 work` — 0.9997586 — with `buildTurnsRemaining -1`, `buildQueuePosition -1`, and its
+# yield fallen from a Field's 12.48 to a tended patch's 1.39. The card said `⚠ Stalled 100%`, a
+# reading that is wrong in both halves: it was not 100% (see `HudFormat.progress_percent`, which now
+# floors), and *Stalled* named a situation the player could not act on from the words given.
+#
+# ⛔ **`RUNG_REVERTING_FORMAT` AND `RUNG_HELD_FORMAT` ARE BOTH TAKEN AND NEITHER FITS.** *Reverting* is
+# a rung whose keeping does NOT cover it and which is actively slipping; this one published
+# `upkeepShortfall 0` and `meterRotPerTurn 0` — it is stable, and telling the player it is bleeding
+# would send them to a keeping account that is already paid. *Held* is a meter parked deliberately
+# with the keeping covered, and it carries NO mark for exactly that reason; this was not a decision
+# and it has already cost the player the rung's whole payoff, so the neutral would be the reassuring
+# reading of a real loss.
+#
+# **IT IS NOT `RUNG_STALLED_FORMAT` EITHER, AND THE DIFFERENCE IS WHO IS PRESENT.** *Stalled* is
+# documented above as *builders are on it and the meter is not moving anyway* — a live entry whose
+# gate refuses. Nobody is on this one and no entry exists, so the two states want opposite remedies:
+# a stall wants the gate cleared, a lapse wants the job queued again.
+const RUNG_LAPSED_FORMAT := "%s Lapsed %d%%"
+
+# The word `RUNG_LAPSED_FORMAT` puts on the row, named once so the hover that explains the state can
+# be routed off the value the row already composed rather than re-deriving the verdict beside it —
+# the same shape `RUNG_ROTTING_PHRASE` has for the tint rule.
+const RUNG_LAPSED_WORD := "Lapsed"
+
+# **THE HOVER, because the mark is two words on a ~245px card.** It states the STATE, that the work is
+# not lost, and the one click that resumes it — the register `WORK_ROW_READY_TRACK_TOOLTIP` set for
+# the chevron, which names the word AND what the press does.
+#
+# ⛔ **IT NAMES NO CAUSE, because the three conjuncts behind the mark cannot tell which one it was.**
+# It opened *"The ground went feral and lost this rung"* — a PLANT-web sentence on a hover
+# `DetailFormat.note_lapsed_hover` registers on `HUSBANDRY_ROW` and `CORRAL_ROW` as well, where a herd
+# with a part-built Tame and nobody on it was told about ground it does not have. And a feral field is
+# only one of the ways here: cancelling a queue entry with work banked satisfies the same three
+# conjuncts (`build_turns` at the wire's `-1`, a meter above empty, no entry) with nothing having gone
+# wrong at all. The word `Lapsed` is right in every one of them; only a cause would be a guess, so the
+# sentence states what IS and what to do and asserts nothing about how it got here.
+const RUNG_LAPSED_TOOLTIP := "This rung is part-built and no band has it queued. The work already banked is still here — re-queue the job from the work row's build face to pick it back up."
+
 # **NOT A HAZARD: THE SIM HAS NOT LOOKED AT THIS ENTRY YET**
 # (`SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED`, the wire's own `-5`,
 # `docs/plan_standing_upkeep.md` §4.9). The player queued the build since the last turn resolved, so

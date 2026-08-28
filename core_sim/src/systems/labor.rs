@@ -2043,6 +2043,70 @@ fn build_material_wants(
 // the *people* were already starving. What grass and hay leave unpaid is a shortfall now, and
 // [`settle_pen_hay`] is the only settlement there is.
 
+/// **THE BAND'S SIDE OF A HUNT, SETTLED — at every rung.** The animal side is already off the herd
+/// inside [`crate::systems::hunt_take`] (`take.killed_biomass()`); this is where what the animals did
+/// back lands.
+///
+/// # Why it is a function rather than two copies
+///
+/// The range arm and the pen's tend branch resolve the *same* fight through the same `hunt_take`
+/// since `docs/plan_standing_upkeep.md` §4.9 item 12b — **a contained bull still gores** — so a
+/// second copy of this block would be two readings of one event, which is exactly the split
+/// §0.1 of `docs/plan_hunt_through_combat.md` closed on the take itself.
+///
+/// # The death line is gated on a DEATH, not on any casualty
+///
+/// §4.5: snaring rabbits is not a war. The hunt carries a baseline injury risk (§4.6), so every
+/// engagement produces *some* `wounded` and `casualties.any()` would push a "cost 0 lives" line for
+/// every band every turn. `killed` come out of the working-age bracket (the casualty mortality
+/// path); `wounded` is computed and surfaced but mechanically inert this phase.
+///
+/// # The hunt report is NOT that line's wounded-only twin
+///
+/// §6.6: it is what happened, as facts, every turn a hunt happens — the wounded ride there, beside
+/// which bound actually ended the take. [`crate::systems::expeditions::hunt_report_event`] returns
+/// `None` for a turn that engaged nothing, so a wait turn writes no line.
+fn settle_hunt_band_side(
+    outcome: &crate::systems::expeditions::HuntOutcome,
+    species: &str,
+    fauna: &FaunaConfig,
+    tick: u64,
+    faction: FactionId,
+    cohort: &mut PopulationCohort,
+    event_log: &mut CommandEventLog,
+) {
+    // Human text names the SPECIES, never the internal herd id.
+    let species_name = fauna
+        .species_by_display(species)
+        .map(|def| def.display_name.clone())
+        .unwrap_or_else(|| species.to_string());
+    if outcome.fight.casualties.killed > fauna::NO_DEATHS_TO_REPORT {
+        let killed_f = outcome.fight.casualties.killed;
+        let wounded_f = outcome.fight.casualties.wounded;
+        cohort.apply_combat_casualties(scalar_from_f32(killed_f));
+        // The prose rounds `killed` for a readable "cost N lives"; the **detail carries the
+        // fractional truth** (casualties are `Scalar`-fractional by design — a well-guarded party
+        // takes a fraction of a death), so a consumer reads precise killed/wounded rather than a
+        // rounded 0.
+        let killed_r = killed_f.round() as u32;
+        event_log.push(CommandEventEntry::new(
+            tick,
+            CommandEventKind::HuntDanger,
+            faction,
+            format!("The {} hunt cost {} lives", species_name, killed_r),
+            Some(format!(
+                "killed={:.3} wounded={:.3} species={}",
+                killed_f, wounded_f, species_name
+            )),
+        ));
+    }
+    if let Some(entry) =
+        crate::systems::expeditions::hunt_report_event(tick, faction, &species_name, outcome)
+    {
+        event_log.push(entry);
+    }
+}
+
 /// **EVERY PIECE OF A BAND [`advance_labor_allocation`] TOUCHES**, named because the tuple crossed
 /// clippy's complexity bar when the bench joined it.
 ///
@@ -4176,33 +4240,49 @@ pub fn advance_labor_allocation(
                         // `yield_fraction_while_building`, and then a share of one shared budget — is
                         // now simply *the hands that are fencing instead of butchering*, which is a
                         // number the player typed rather than one the sim derived.
-                        let collection = workers as f32 * herd_carry_per_worker;
-                        // **AND A REAL ENGAGEMENT BOUND** — `f32::INFINITY` is not *"a penned animal
-                        // is not stalked"*, it is *no bound*, and it is what let the pen's take
-                        // escape every check the wild path applies. A keeper handles far more animals
-                        // per turn than a hunter because they are standing still rather than running
-                        // away; that is a multiplier on this species' own rate
-                        // (`fauna::herd_engage_rate`), not the absence of a number.
+                        // # ⛔ THE PEN TAKES THROUGH `hunt_take`, LIKE EVERY OTHER RUNG
                         //
-                        // **AND THE ROOM IS SPENT HERE, BEFORE THE TAKE** — [`fauna::animals_handled`]
-                        // is to a pen what `resolve_hunt_engagement`'s
-                        // `reach.min(animals_affordable(ceiling))` is to a hunt: the keepers' handling
-                        // rate clamped by the whole animals this assignment's floor leaves sparable,
-                        // and floored, because a keeper does not walk out half a beast. Handing the
-                        // raw rate to the quantiser made the pen the one take path that bounded
-                        // nothing before taking — the escapement floor was left to a post-hoc clamp
-                        // inside the quantiser, and the fractional rate made the reported count and
-                        // the herd's loss two different numbers.
-                        let handling = fauna::herd_engage_rate(herd, &fauna) * workers as f32;
-                        let collected =
-                            fauna::animals_handled(handling, production, herd.body_mass);
-                        let take = fauna::quantise_animal_take(
-                            collection,
-                            herd.body_mass,
-                            collected,
-                            fauna::EngagementStop::WhenPackFull,
+                        // This arm used to compose a take of its own — the keepers' handling rate
+                        // clamped by the room, floored, quantised — which made the ladder a **mode
+                        // switch**: a fenced herd ran no retreat and no fight, so taming and penning
+                        // bought nothing at the kill and a bare-handed band butchered an aurochs a
+                        // stalking party could not scratch. **The take runs its three stages at every
+                        // rung now** (`docs/plan_standing_upkeep.md` §4.9 item 12b), and the rung
+                        // tunes the first two only:
+                        //
+                        // - **engage** — `husbandry.pen_engage_gain` on the species' own rate
+                        //   (`fauna::herd_engage_rate`): a keeper handles far more animals a turn
+                        //   than a hunter, because they are standing still rather than running away;
+                        // - **retreat** — `husbandry.pen_wariness` on the species' own `wariness`
+                        //   (`fauna::herd_wariness`): a fence calms, it does not hypnotise;
+                        // - **fight** — the species' `defense` against this party's `attack`,
+                        //   **undiscounted**. Containment solves catching; weapons solve killing.
+                        //   No weapons, no beef.
+                        //
+                        // So this is the *same call* the range arm makes below, with the pen's own
+                        // two terms handed in: the **husbandry** carry tier (`herd_carry_per_worker`,
+                        // off `pen_carry`) and this assignment's own floor. The band has no carry
+                        // room, so the cap is unbounded exactly as the Hunt row passes it.
+                        //
+                        // `hunt_take` does the room, the three stages, the wound store-back, the
+                        // quantiser and the herd's own loss — one path rather than two that agree
+                        // today.
+                        let outcome = hunt_take(
+                            herd,
+                            workers,
+                            *floor,
+                            herd_carry_per_worker,
+                            &party_for(herd.body_mass),
+                            &fauna,
+                            f32::INFINITY,
+                            fauna::HuntDraw::Seeded(fauna::retreat_seed(
+                                sim_config.map_seed,
+                                tick.0,
+                                &herd.id,
+                                workers,
+                            )),
                         );
-                        herd.biomass -= take.killed_biomass();
+                        let take = outcome.take;
                         // **A pen charges TWO quanta over TWO DIFFERENT NUMBERS: the sled is charged
                         // for what it HAULED, the handling gear for what it BUTCHERED.** Hurdles,
                         // halters, a butchering stone and vessels are worked on the whole beast that
@@ -4218,12 +4298,19 @@ pub fn advance_labor_allocation(
                         // pens leave a sled it never took onto the range untouched, and what lets
                         // either life be retuned without moving the other.
                         //
-                        // The *hunting* kit is untouched on both: a penned beast is slaughtered, not
-                        // stalked, so there is no fight and no spear to blunt — the same reason this
-                        // branch passes no engagement bound to the quantiser. Each charge is gated
-                        // on the predicate that chose its own tier, so a keeper with no sled dragged
-                        // the carcass by hand and wore nothing out doing it.
+                        // **AND SINCE §4.9 item 12b A THIRD RIDES BESIDE THEM: the WEAPON, per
+                        // strike.** The keepers are swinging now — a pen resolves the ordinary fight
+                        // — so the spear that killed the beast blunts on the blow exactly as it does
+                        // on the range. It is *in addition to* the two above, never instead of them:
+                        // the sled still hauls what was carried and the handling gear still works
+                        // the whole carcass. (What this comment used to say — *"a penned beast is
+                        // slaughtered, not stalked, so there is no fight and no spear to blunt"* —
+                        // was true of the take path that retired with the exemption.)
+                        //
+                        // Each charge is gated on the predicate that chose its own tier, so a keeper
+                        // with no sled dragged the carcass by hand and wore nothing out doing it.
                         if let Some(kit) = band_equipment.as_mut() {
+                            outcome.fight.charge_strike_wear(kit, &equipment_cfg);
                             kit.wear_kit(
                                 &equipment_cfg,
                                 &crew_kit,
@@ -4461,29 +4548,48 @@ pub fn advance_labor_allocation(
                             // projects its managed yield, already smooth).
                             realized: hunt_realized.provisions,
                             arrivals,
-                            // Resolved: a fact, so the band is a point. A pen is also the one animal
-                            // source with no stochastic stage at all — not stalked, not fought, not
-                            // wary — so its forecast is a point too.
+                            // Resolved: a fact, so the band is a point — the same reading the
+                            // range arm's row carries. (It said *"a pen has no stochastic stage at
+                            // all"* until §4.9 item 12b; a pen retreats and fights now, so its
+                            // **quote** carries a real distribution like any other hunting row.)
                             range: YieldRange::certain(tended),
                             wasted: pen_yield.apply(take.wasted, mult_f).provisions,
-                            // **ONE CREW doing both jobs** ([`source_crew_needed`]): big enough to
-                            // mind the heads *and* to haul the meat. The haul side is the **steady
-                            // peak-drop carry crew** ([`fauna::hunt_haul_workers`]) off the pen's
-                            // per-turn `production`, NOT this turn's lumpy `take.carried` — a slow-
-                            // breeding pen (the aurochs pulses) drops 0 animals on a wait turn, which
-                            // would collapse the crew to the herder count and contradict `wasted`.
+                            // **THE SAME THREE-UNIT CREW THE RANGE ROW SIZES**
+                            // ([`fauna::hunt_take_workers`]): hands enough to *reach* the drop and to
+                            // *carry* it, off the pen's per-turn `production` rather than this turn's
+                            // lumpy `take.carried` — a slow-breeding pen (the aurochs pulses) drops 0
+                            // animals on a wait turn, which would collapse the crew and contradict
+                            // `wasted`.
                             //
-                            // **No engagement term here, deliberately** — a penned animal is not
-                            // stalked, so there is no reach to invert (the same exemption this branch
-                            // states by passing `f32::INFINITY` to the quantiser). `hunt_haul_workers`
-                            // rather than `hunt_take_workers` says that in the signature.
-                            workers_needed: fauna::hunt_haul_workers(
+                            // **The engagement term is a real one here** — a pen has a reach
+                            // (`herd_engage_rate`, the keepers' handling) and a retreat
+                            // (`herd_wariness`, the fence's calm), so the crew inverts the bound the
+                            // take was actually paid at. It was `hunt_haul_workers` while the pen ran
+                            // neither stage, and `forecast_source_yield` — the assign-time seed for
+                            // this very row — has always used `hunt_take_workers`, so the two
+                            // disagreed the moment the pen started retreating.
+                            workers_needed: fauna::hunt_take_workers(
                                 production,
                                 herd.body_mass,
                                 herd_carry_per_worker,
+                                fauna::herd_engage_rate(herd, &fauna),
+                                party_for(herd.body_mass)
+                                    .stay_fraction(fauna::herd_wariness(herd, &fauna)),
                             ),
                             overdraws: false,
                         };
+                        // **THE BAND'S SIDE OF THE SAME FIGHT** — a contained bull still gores. The
+                        // pen resolves the ordinary fight now, so its casualties land exactly where
+                        // the range arm's do, through the one seam both call.
+                        settle_hunt_band_side(
+                            &outcome,
+                            &herd.species,
+                            &fauna,
+                            tick.0,
+                            faction,
+                            &mut cohort,
+                            &mut event_log,
+                        );
                         continue;
                     }
                     // Take food via the shared primitive: the per-policy escapement ceiling, rounded
@@ -4985,7 +5091,7 @@ pub fn advance_labor_allocation(
                         herd.body_mass,
                         herd_carry_per_worker,
                         fauna.engage_rate_for(&herd.species),
-                        party_for(herd.body_mass).stay_fraction(fauna.wariness_for(&herd.species)),
+                        party_for(herd.body_mass).stay_fraction(fauna::herd_wariness(herd, &fauna)),
                     );
                     // **The arrival schedule — computed POST-take, unlike `realized`.** It
                     // answers "when does the next food land", so it must start from the state the
@@ -5038,64 +5144,16 @@ pub fn advance_labor_allocation(
                         range: YieldRange::certain(provisions.to_f32()),
                     };
                     // **The fight already happened — inside the take** (`docs/plan_hunt_through_combat.md`
-                    // §0.1). This site used to resolve the party's casualties in a *second*
-                    // `resolve_fight` beside a take computed from carrying capacity, so a band could
-                    // succeed at the take on one path while the other said the mammoth routed it.
-                    // There is one resolution now: `hunt_take` handed back both sides of it, the
-                    // animal side is already off the herd as `take.killed_biomass()`, and this is
-                    // where the band side lands.
-                    //
-                    // **The line is gated on a DEATH, not on any casualty** (§4.5: snaring rabbits
-                    // is not a war). Since the hunt carries a baseline injury risk (§4.6) every hunt
-                    // now produces *some* `wounded`, so `casualties.any()` would push a
-                    // "cost N lives" line — reading `0` — for every band, every turn. A hunting
-                    // accident is real in the numbers and becomes mechanically live with the rest of
-                    // `wounded` when the recovery slice lands; it is not a battle report.
-                    if outcome.fight.casualties.killed > fauna::NO_DEATHS_TO_REPORT {
-                        let killed_f = outcome.fight.casualties.killed;
-                        let wounded_f = outcome.fight.casualties.wounded;
-                        // `killed` come out of the working-age bracket (the casualty mortality path);
-                        // `wounded` is **computed and surfaced but mechanically inert this phase** —
-                        // no capacity/recovery effect yet (a later slice).
-                        cohort.apply_combat_casualties(scalar_from_f32(killed_f));
-                        // The prose rounds `killed` for a readable "cost N lives"; the **detail
-                        // carries the fractional truth** (casualties are `Scalar`-fractional by
-                        // design — a well-guarded party takes a fraction of a death), so a consumer
-                        // reads precise killed/wounded rather than a rounded 0.
-                        let killed_r = killed_f.round() as u32;
-                        // Human text names the SPECIES, never the internal herd id.
-                        let species_name = fauna
-                            .species_by_display(&herd.species)
-                            .map(|def| def.display_name.clone())
-                            .unwrap_or_else(|| herd.species.clone());
-                        event_log.push(CommandEventEntry::new(
-                            tick.0,
-                            CommandEventKind::HuntDanger,
-                            faction,
-                            format!("The {} hunt cost {} lives", species_name, killed_r),
-                            Some(format!(
-                                "killed={:.3} wounded={:.3} species={}",
-                                killed_f, wounded_f, species_name
-                            )),
-                        ));
-                    }
-                    // **THE HUNT REPORT** (`docs/plan_hunt_through_combat.md` §6.6) — what happened,
-                    // as facts, every turn a hunt happens. It is not the wounded-only twin of the
-                    // `HuntDanger` line above: that stays gated on a **death**, because the baseline
-                    // injury risk makes every engagement produce some `wounded` and a "cost 0 lives"
-                    // line per band per turn is not a report. The wounded ride here instead, on every
-                    // hunt, beside which bound actually ended the take.
-                    if let Some(entry) = crate::systems::expeditions::hunt_report_event(
+                    // §0.1), and both rungs settle its band side through the one seam.
+                    settle_hunt_band_side(
+                        &outcome,
+                        &herd.species,
+                        &fauna,
                         tick.0,
                         faction,
-                        &fauna
-                            .species_by_display(&herd.species)
-                            .map(|def| def.display_name.clone())
-                            .unwrap_or_else(|| herd.species.clone()),
-                        &outcome,
-                    ) {
-                        event_log.push(entry);
-                    }
+                        &mut cohort,
+                        &mut event_log,
+                    );
                 }
                 LaborTarget::Scout => {
                     // Scouts act as forward observers in `calculate_visibility`: staffed scouts
@@ -8361,8 +8419,8 @@ mod labor_yield_tests {
                 // shipped `hunt.per_worker_biomass_capacity` the pen has always collected at.
                 kit: Some(
                     crate::equipment_config::EquipmentConfig::builtin()
-                        .kit("husbandry")
-                        .expect("the shipped roster carries the husbandry kit"),
+                        .kit("big_game")
+                        .expect("the shipped roster carries the big-game kit"),
                 ),
                 priority: SourcePriority::default(),
                 upkeep_kit: None,
@@ -9615,8 +9673,8 @@ mod labor_yield_tests {
                 // and a different test.
                 kit: Some(
                     crate::equipment_config::EquipmentConfig::builtin()
-                        .kit("husbandry")
-                        .expect("the shipped roster carries the husbandry kit"),
+                        .kit("big_game")
+                        .expect("the shipped roster carries the big-game kit"),
                 ),
                 priority: SourcePriority::default(),
                 upkeep_kit: None,

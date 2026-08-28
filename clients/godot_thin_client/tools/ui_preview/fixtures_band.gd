@@ -737,7 +737,7 @@ static func kit_tiers_rows(attack: float, hunt_carry: float, forage_carry: float
 ## this band's own job defaults resolve to.
 ##
 ## **THE PEN TIER IS THE BARE ONE, AND THAT IS THE FIXTURE BEING HONEST.** `kit_roster_fixture()`
-## carries no husbandry kit, so the HUNT default (`big_game`) does not equip the pen axis and a
+## carries no pen-axis kit, so the HUNT default (`big_game`) does not equip the pen axis and a
 ## keeper collects at 12 however healthy the item is — which is also what makes the pen clause
 ## assertable against the sled's own 40 rather than agreeing with it by construction. The per-kit rows
 ## beside it say the same thing kit by kit, which is what a picker reads.

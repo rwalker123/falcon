@@ -2190,13 +2190,20 @@ the same `_build_role_card`; nothing about the keeping is a parallel surface.
   it. **THAT TOKEN IS NOW REFUSED BY THE SIM** — `handle_assign_labor` rejects a `kit` on this role by
   name — and the per-entry override lands on the QUEUE ROW (§4.7b, below: one job, one kit,
   `(default)` marked as hunting's is), which is where an entry can answer for itself.
-- **…BUT THE CARD STILL STATES WHAT THE POOL IS CARRYING, on a read-only gear line.** Removing the
-  selection is not removing the information: `KitRoster.role_gear_line` renders
-  `Tillage kit · 8.5 work off a build, per builder · Hoes 38` — the kit's name, then the picker's old
-  help text. **`KitRoster.ROLE_AXES` carries the role's build axis** so that hint prices the build
-  rather than falling through to `tier_hint`'s hunt wording (`attack 1.0 · carry 12.0 per hunter`, on
-  a role that fights nothing), and `_role_effect_phrase` renders NOTHING at the neutral tier, so a
-  band with no build gear reads a bare card rather than a boast of zero.
+- **…AND THE READ-ONLY GEAR LINE WENT WITH IT — the Builders card states no kit at all.**
+  `KitRoster.ROLE_AXES` names **`scout` and `warrior` and nothing else**, so `is_band_wide_role` is
+  false for `builders`, `role_axis` answers `""`, and `_role_effect_phrase` falls through its match
+  to `""`. There is no builders gear line to render.
+  > ⛔ **THIS BULLET DESCRIBED A SURFACE THAT NO LONGER EXISTS.** It read *"the card STILL STATES what
+  > the pool is carrying, on a read-only gear line: `KitRoster.role_gear_line` renders `Tillage kit ·
+  > 8.5 work off a build, per builder · Hoes 38`"*, and credited `ROLE_AXES` with carrying the role's
+  > build axis. **The line was retired in §4.7** and the axis went with it, so the sentence outlived
+  > its mechanism — and its figure outlived the model twice over: `8.5` is the retired SUBTRACTION
+  > form (hoes deliver **+0.5 build work per equipped worker per turn**, an addend; a job's work
+  > requirement never changes), and `Hoes 38` is a condition clause off a line nothing draws.
+  > **Where the question is answered now:** the crafting panel's kit ledger owns *what the band is
+  > carrying*, and the per-entry kit lands on the QUEUE ROW (§4.7b, below), which is the one surface
+  > that knows which job it is pricing.
 - **IT IS `_role_kit_id`, THE BUILD QUEUE HEADER'S OWN CALL** — one resolution, two surfaces, so the
   card and `3 builders · Tillage kit` cannot name two different webs' tools for one pool. The sim
   publishes the `builders` row's kit already resolved; an unstaffed row is derived client-side through

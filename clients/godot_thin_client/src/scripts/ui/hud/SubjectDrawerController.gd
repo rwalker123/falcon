@@ -481,10 +481,15 @@ func _tile_terrain_lines(tile_info: Dictionary,
         # `BUILD_METER_HOLDS` cannot carry**, so the crew is what the row is given.
         var cultivate_crew := _band_labor.build_crew_forage(
             int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
-        lines.append("%s: %s" % [DetailFormat.CULTIVATION_ROW, DetailFormat.rung_row_value(
+        var cultivate_value := DetailFormat.rung_row_value(
             tile_info, prefix, SourceForecast.IMPROVEMENT_CULTIVATE,
             SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.cultivation_built_label(), cultivated,
-            cultivation_progress, cultivate_crew, unstaffed_rung)])
+            cultivation_progress, cultivate_crew, unstaffed_rung)
+        lines.append("%s: %s" % [DetailFormat.CULTIVATION_ROW, cultivate_value])
+        # …and the LAPSED row's sentence, routed off the value the row just composed rather than
+        # re-asking the three questions behind it. Registered before the keeping hover below, which
+        # outranks it wherever a rung is both lapsed and under-kept.
+        DetailFormat.note_lapsed_hover(ctx, DetailFormat.CULTIVATION_ROW, cultivate_value)
         # **THE REMEDY IS THE ROW'S HOVER NOW** — the `At risk:` row, its shortfall, its countdown and
         # the indented instruction under it are all retired, and this is what replaced the four of
         # them: `⚠ slipping` on the row, and one sentence naming the role that pays behind it.
@@ -517,11 +522,13 @@ func _tile_terrain_lines(tile_info: Dictionary,
     if is_field or field_progress > DetailFormat.BUILD_METER_EMPTY or sow_declared:
         # The Cultivation branch's own two corrections, on the twin row: the REAL build crew rather
         # than a *this rung is in flight* bool, and the gear line hung off `build_verb`'s answer.
-        lines.append("%s: %s" % [HudFloraVocab.FIELD_ROW, DetailFormat.rung_row_value(
+        var field_value := DetailFormat.rung_row_value(
             tile_info, prefix, SourceForecast.IMPROVEMENT_SOW,
             SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.field_built_label(), is_field,
             field_progress, _band_labor.build_crew_forage(int(tile_info.get("x", -1)),
-                int(tile_info.get("y", -1))), unstaffed_rung)])
+                int(tile_info.get("y", -1))), unstaffed_rung)
+        lines.append("%s: %s" % [HudFloraVocab.FIELD_ROW, field_value])
+        DetailFormat.note_lapsed_hover(ctx, HudFloraVocab.FIELD_ROW, field_value)
         DetailFormat.note_under_kept_hover(ctx, HudFloraVocab.FIELD_ROW, tile_info, prefix,
             SourceForecast.SOURCE_KIND_FORAGE, SourceForecast.IMPROVEMENT_SOW)
         if SourceForecast.build_verb(tile_info, prefix, SourceForecast.SOURCE_KIND_FORAGE,

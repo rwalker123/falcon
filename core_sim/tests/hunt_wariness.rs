@@ -401,6 +401,146 @@ fn herd_of(app: &App, id: &str) -> Herd {
 }
 
 // ---------------------------------------------------------------------------------------------
+// §4.9 item 12b — THE RETREAT IS ON THE HUSBANDRY LADDER, AND THE TAKE READS IT
+// ---------------------------------------------------------------------------------------------
+
+/// **The species this ladder is measured on** — a pennable row that ships a high `wariness` (`0.75`),
+/// so each rung's scaling is a large, unambiguous move rather than float noise. It is one of
+/// [`PEN_SMALL_GAME`], which §3.1 places at the top of the roster for exactly this reason: a warren
+/// survives by scattering.
+const LADDER_QUARRY: &str = "Rabbit Warren";
+
+/// The crew every rung of the ladder sweep is resolved at. Sized so the reach is never zero at any
+/// rung; which arm binds does not matter, because the assertion is a **ratio**.
+const LADDER_CREW: u32 = 6;
+
+/// Stock and ceiling far above what this crew can spare, so the escapement room never clamps the
+/// engagement and the ratio below is the retreat's alone.
+const LADDER_STOCK: f32 = 4000.0;
+
+/// The floor the sweep works at — take everything, so the room is not a term.
+const LADDER_FLOOR: f32 = 0.0;
+
+/// **How close two retreat ratios count as the same** — the retreat is a closed-form expectation at
+/// [`HuntDraw::EXPECTED`], so this is float slop on a handful of multiplications and nothing more.
+const RETREAT_EPSILON: f32 = 1e-3;
+
+/// **THE TAKE'S RETREAT STAGE IS SCALED BY THE RUNG, AT EVERY RUNG**
+/// (`docs/plan_standing_upkeep.md` §4.9 item 12b).
+///
+/// A pen used to run **no retreat at all** — the whole stage was skipped on `is_corralled()` — which
+/// made the ladder a mode switch rather than a tuning. It is a multiplier on the species' own
+/// `wariness` now (`husbandry.pastoral_wariness`, `husbandry.pen_wariness`), so a jumpy warren and a
+/// placid mammoth stay different animals at rung 3.
+///
+/// **Asserted on `HuntEngagement`, the take's own seam** — `stayed ÷ engaged`, which isolates the
+/// retreat from the reach the pen also scales (`husbandry.pen_engage_gain`). The expectation is a
+/// **second implementation** of `stay_fraction` built from fixture numbers — the species' authored
+/// `wariness`, the rung's own config scalar and the party's kit `dispersion` — rather than a call to
+/// the seam under test, so an agreeing pair is evidence.
+#[test]
+fn the_takes_retreat_is_scaled_by_the_rung_and_never_switched_off() {
+    let fauna = FaunaConfig::builtin();
+    let ladder = core_sim::LadderConfig::builtin();
+    let combat = CombatConfig::builtin();
+    let party = party_at(&combat);
+    let def = fauna
+        .species_by_display(LADDER_QUARRY)
+        .expect("the fixture names a shipped species");
+    let wild_wariness = def.combat.wariness;
+    assert!(
+        wild_wariness > 0.0 && wild_wariness < 1.0,
+        "PRECONDITION: the fixture species must ship a real wariness, or every ratio below is 1.0"
+    );
+
+    let herd_at = |rung: u8| {
+        let mut herd = Herd::new(
+            "retreat_ladder_probe".to_string(),
+            LADDER_QUARRY.to_string(),
+            core_sim::SizeClass::Big,
+            vec![UVec2::new(1, 1)],
+            LADDER_STOCK,
+            LADDER_STOCK,
+            def.fodder_per_biomass,
+            def.regrowth_rate.unwrap_or(0.1),
+            def.body_mass,
+        );
+        if rung >= 2 {
+            assert!(
+                herd.tame_outright(FactionId(0), &ladder),
+                "fixture: the quarry must be tameable"
+            );
+        }
+        if rung >= 3 {
+            assert!(
+                herd.corral_at(UVec2::new(1, 1), &ladder),
+                "fixture: the quarry must be pennable"
+            );
+        }
+        herd
+    };
+
+    // **`stayed ÷ engaged`, off the take's own three-stage seam.** The rate quantum, because a ratio
+    // of whole animals would be a reading of the floor rather than of the retreat.
+    let kept_share = |herd: &Herd| {
+        let engagement = core_sim::resolve_hunt_engagement(
+            herd,
+            &fauna,
+            &party,
+            LADDER_CREW,
+            LADDER_FLOOR,
+            HuntDraw::EXPECTED,
+            core_sim::EngagementQuantum::Rate,
+        );
+        assert!(
+            engagement.engaged > 0.0,
+            "the crew must reach something at every rung, or the ratio is 0/0"
+        );
+        engagement.stayed / engagement.engaged
+    };
+
+    // The second implementation: `1 − clamp(wariness × rung scalar × dispersion, 0, 1)`.
+    let expected_share =
+        |rung_scalar: f32| 1.0 - (wild_wariness * rung_scalar * party.dispersion).clamp(0.0, 1.0);
+    /// The wild rung's own scalar — the identity, because a wild animal is exactly as wary as the
+    /// roster says it is.
+    const WILD: f32 = 1.0;
+
+    for (rung, scalar, name) in [
+        (1u8, WILD, "wild"),
+        (2, fauna.husbandry.pastoral_wariness, "pastoral"),
+        (3, fauna.husbandry.pen_wariness, "penned"),
+    ] {
+        let measured = kept_share(&herd_at(rung));
+        let expected = expected_share(scalar);
+        assert!(
+            (measured - expected).abs() <= RETREAT_EPSILON,
+            "the {name} rung must keep {expected} of what it engages (wariness {wild_wariness} × \
+             {scalar} × dispersion {}): the take kept {measured}",
+            party.dispersion
+        );
+    }
+
+    // **The ladder is MONOTONE and the stage is never deleted** — the two halves the config
+    // validation makes unrepresentable, asserted here on the take that reads it.
+    let (wild, pastoral, penned) = (
+        kept_share(&herd_at(1)),
+        kept_share(&herd_at(2)),
+        kept_share(&herd_at(3)),
+    );
+    assert!(
+        wild < pastoral && pastoral < penned,
+        "each rung must keep strictly more than the one below it: wild {wild}, pastoral \
+         {pastoral}, penned {penned}"
+    );
+    assert!(
+        penned < 1.0,
+        "…and the top of the ladder still RUNS the stage: a penned herd keeping all of {penned} \
+         would be the blanket exemption under another name"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
 // §6.4 — THE RANGE STOPS BEING DEGENERATE
 // ---------------------------------------------------------------------------------------------
 

@@ -1975,10 +1975,23 @@ quoted at, this is what still answers what the party can and cannot hurt.
 `band_panel_compose_deny_kit_mismatch` asserts on it **by equality**, so removing the wrong face
 fails there loudly.
 
-**`has_engagement_stage` SURVIVES, and it is not an oversight.** It still gates the block: a PEN
-publishes `NO_ENGAGEMENT_STAGE` — a penned animal is not stalked and not fought — and without the
-gate a pen would wear the refusal on a fixture that carries real `defense` and `durability`. The
-harness pins that (`hunt.gd`'s pen negative).
+**THE BLOCK IS GATED ON `SourceForecast.quarry_is_fought`, WHICH IS NOT `has_engagement_stage`.**
+The whole PLANT web publishes no engagement stage — a berry does not fight back — so no forage sheet
+grows a fight line. A **pen** does now, and it renders the refusal: bare hands at a fenced mammoth are
+told so before the party is sent, and the harness pins the pairing (`hunt.gd`'s `_combat_gate_pen`
+blocked, `_combat_gate_pen_gentle` — the same bare party at a `defense 0` pen — silent).
+
+> ⛔ **THIS PARAGRAPH SAID THE OPPOSITE, AND IT IS THE SENTENCE SOMEONE WOULD USE TO PUT THE
+> EXEMPTION BACK.** It read: *"`has_engagement_stage` SURVIVES, and it is not an oversight. It still
+> gates the block: a PEN publishes `NO_ENGAGEMENT_STAGE` — a penned animal is not stalked and not
+> fought — and without the gate a pen would wear the refusal on a fixture that carries real `defense`
+> and `durability`."* Both halves of the middle clause died at `docs/plan_standing_upkeep.md` §4.9
+> item 12b: a penned herd resolves the **ordinary fight** at every rung, so *"a pen would wear the
+> refusal"* stopped being the failure mode and became the requirement. **Containment solves the
+> catching, weapons solve the killing.** What survived intact is the observation that a pen publishes
+> `NO_ENGAGEMENT_STAGE` — that is still literally what the wire says, and it is now a **known lie**
+> the client must route around (see the `quarry_is_fought` callout under "A PEN IS FOUGHT" below, and
+> issue #572).
 
 The model's remaining shape is `{stated, blocked, effective_attack, text}`, and **`text` is non-empty
 only when `blocked`**. `durability` is still the STATED-ness test even though no surviving face
@@ -2582,15 +2595,46 @@ something the source already publishes:**
 > same roster in the same run is offered. A rule that simply stopped greying anything fails the deer
 > half.
 
-- **A PEN is exempt from the weapon rule**, gated on the same `has_engagement_stage` predicate the
-  gate LINE is mounted behind: a penned animal is slaughtered rather than stalked. Without it a
-  corralled Red Deer would withhold every kit but the spear line.
+- **A PEN IS FOUGHT, so the weapon rule runs on one exactly as it runs on the range**
+  (`docs/plan_standing_upkeep.md` §4.9 item 12b). The take resolves engage → retreat → fight at every
+  rung, at the species' own `defense`, so containment solves the catching and weapons solve the
+  killing. A corralled Red Deer therefore *does* withhold every kit but the spear line — `defense 1`
+  against the bare hand's `attack 1` is `max(0, 1 − 1)`, and a trap is bounded off a deer by
+  `attack_max_body_mass` — and that is the point of the rule rather than the cost of it. The client
+  exempted a pen from this until the same item, quoting a bare-handed band a real take on a fenced
+  aurochs the sim pays nothing for.
+  > ⛔ **THE PREDICATE IS `SourceForecast.quarry_is_fought`, NOT `has_engagement_stage`, and the
+  > difference is a live wire defect.** `core_sim/src/snapshot/subsistence.rs` still filters the
+  > published `engage_rate` on `is_corralled()` and ships `NO_ENGAGEMENT_STAGE` for a pen —
+  > deliberately, and against the sim's own behaviour, so as not to flip the gate other readers use to
+  > route pens away from the hunt paths; its own comment says the `0` is no longer the truth and
+  > **issue #572** tracks closing it. So the client reads the CORRALLED flag for the pen arm and the
+  > engagement stage for everything else (the plant web, and a species the roster cannot resolve). It
+  > is an `or`: the day #572 lands the first arm already answers `true` and the clause can be deleted
+  > with no behaviour change.
+  >
+  > **FOUR SURFACES TAKE IT, WHICH IS WHY IT LIVES IN THE SHARED LAYER RATHER THAN IN `KitRoster`** —
+  > the kit picker's offer test and the priced gate behind the sheet's numbers (`KitRoster`), the
+  > sheet's own refusal line (`DrawerComposeController`), and the crew cap the Work board's `+` reads
+  > (`SourceForecast.with_published_useful_crew`, whose other argument is a LABOR ROW carrying no herd
+  > fields — which is why `forecast_inputs` copies `corralled` onto the composed forecast beside
+  > `engage_rate`). All four asked the engagement field directly until §4.9 item 12b, and a fix that
+  > moved only some of them would put the picker's greying and the board's `+` back into the
+  > disagreement this arc exists to close.
+  >
+  > **ONE READING ON A PEN IS OUT OF SCOPE AND STAYS THE MANAGED MODEL'S**: `max_useful_workers`
+  > spends a published PLATEAU inside its `whole_animal` branch, and a pen is not whole-animal by
+  > construction, so a pen still caps on the production it pays. Carrying the sim's answer onto a pen
+  > therefore moves exactly one reading — the `NO_USEFUL_CREW` refusal — which is the reading the
+  > fight opened.
 - **The pen rule is asked before the weapon rule**, so a kit that trips it states the same reason on
   every quarry: *"what it adds is only used on a penned herd"* is a fact about the KIT, where
   *"nothing it carries can bring down a Red Deer"* is a fact about the deer and would go unsaid on a
-  rabbit. **The husbandry kit is not that kit any more** — it carries a sled, so it reaches a wild
-  hunt on the haul axis and is greyed on a Red Deer by the WEAPON rule, which is what
-  `equipment.json`'s `_comment_kits` has always said of a bundle with no `attack`.
+  rabbit. **No SHIPPED kit is that kit** — `docs/plan_standing_upkeep.md` §4.9 item 12b deleted the
+  `husbandry` kit, the last hunt bundle with no `attack`, so every kit a hunt picker lists carries a
+  sled and reaches a wild hunt on the haul axis. A weaponless hunt kit is greyed on a Red Deer by the
+  WEAPON rule instead, and that shape survives only as `ui_preview`'s synthetic roster entry
+  (`compose_rungs.gd` → `HANDLING_KIT_ID`), which is what keeps this branch provable.
 > #### A SLED IS NOT PEN GEAR, AND FOR ONE RELEASE THE PICKER SAID IT WAS
 >
 > Reported from play: the ASSIGN HUNTERS sheet on a wild Red Deer greyed **all three** hunt kits with
@@ -2612,21 +2656,30 @@ something the source already publishes:**
 > is `default_kit_for` and reads the ROSTER rather than the selection. Correcting the predicate
 > restores the opening selection; nothing else moved.
 >
-> ⛔ **THE RULE NOW MATCHES NO KIT ON THE SHIPPED ROSTER, and that is a fact about the roster rather
-> than dead code.** `big_game` (spears + sled), `trapping` (traps + sled) and `husbandry` (sled) all
-> reach a wild hunt, so none of them trips it; what would is a kit supplying the pen axis and nothing
-> the range can read, which is what the retired hurdles bundle was and what item 12b's reshaped roster
-> may be again. Against a wild Red Deer the three now read: `big_game` **offered**, `trapping`
-> **withheld — cannot hurt** (a trap clears no defence), `husbandry` **withheld — cannot hurt** (no
-> weapon at all).
+> ⛔ **THE RULE MATCHES NO KIT ON THE SHIPPED ROSTER, and that is a fact about the roster rather
+> than dead code.** The animal web's hunt pair is `big_game` (spears + sled) and `trapping` (traps +
+> sled) since §4.9 item 12b, and both reach a wild hunt, so neither trips it; what would is a kit
+> supplying the pen axis and nothing the range can read, which is what the retired hurdles bundle was.
+> Against a wild Red Deer the two read: `big_game` **offered**, `trapping` **withheld — cannot hurt**
+> (a trap clears no defence). The third reading the fix has to keep honest — a sled and no weapon,
+> **withheld — cannot hurt** — is the deleted `husbandry` kit's shape, and `ui_preview` stages it
+> synthetically (`HANDLING_KIT_ID`) precisely because no shipped roster can produce it any more.
 >
 > **Pinned with the contrast, because a picker that offers everything everywhere is as wrong as one
 > that offers nothing** (`ui_preview`, `compose_rungs` → `_assert_a_sled_does_not_make_a_hunt_kit_pen_only`):
 > a roster whose sled kits carry the equipped pen tier, one **wild Red Deer** frame with the popup open
 > asserting the spear line selectable AND the other two greyed with the weapon's reason AND the pen
-> reason on no entry at all, then a **corralled Wild Boar** — defended and pennable — greying nothing
-> and priced on `pen_carry`. Falsified by restoring the old predicate: **six** of those claims fail,
-> including the reported face verbatim.
+> reason on no entry at all, then a **corralled Wild Boar** — defended and pennable — priced on
+> `pen_carry`. Falsified by restoring the old predicate: **six** of those claims fail, including the
+> reported face verbatim.
+>
+> ⛔ **THE BOAR'S CLAIM INVERTED AT §4.9 item 12b.** It used to be *"a corralled herd greys nothing —
+> a pen is collected, not fought"*, which was true of a sim that paid a fence-holding band whatever it
+> carried. The fight runs at every rung now, so the frame asserts the trap **greyed at the pen with
+> the weapon's reason** and the spear line **still selectable** — and the handling kit still offered,
+> on the BUILD axis, since this pen has a rung left to climb. The **penned Rabbit Warren** beside it
+> (`defense 0`, cleared by the bare hand) greys nothing on the identical roster, and it is what stops
+> the boar's greying being read as "a pen greys everything": the animal decides, never the fence.
 
 - **Greyed, NOT hidden, and it states its reason on its own face.** *"A snare cannot hold a Red Deer"*
   is a fact about the world worth teaching once, and invisibility is exactly what let this ship
@@ -2682,7 +2735,7 @@ of what it brings down, and this one brings nothing down.
   `max(0, 1 − 1)`, which is exactly the state the constraint above insists stays selectable.
 
 **Coverage** — `compose_rungs.gd`'s `_kit_offer_states`, over a locally-built roster (the shared
-`BandFx.kit_roster_fixture()` carries neither a trapping nor a husbandry kit, and adding them would
+`BandFx.kit_roster_fixture()` carries neither a trapping nor a pen-axis kit, and adding them would
 re-list every hunt picker in both harnesses). Three frames — `herd_kit_offer_red_deer`, the same sheet
 with the picker OPEN (the closed face names the selected kit alone, so only the popup can show a
 withheld row and its reason), and `herd_kit_offer_rabbit` — plus nine assertions. **The pair of
@@ -2731,15 +2784,15 @@ the "absent terms render no line" convention `hunt_gate_model` already takes.
 **The carry axis is a property of the SOURCE, not of the job**, and `KitRoster.carry_axis_for(job,
 src)` is the one place that is decided. A corralled herd is worked from a Hunt row, so the job-keyed
 `JOB_CARRY_AXES` priced a pen on the SLED's tier while the sim collects one on
-`EquipmentStat::PenCarry`, which only the husbandry kit supplies. A sled drags a carcass in off the
-range; a pen stands at the camp.
+`EquipmentStat::PenCarry`, a stat of its own and not the hunt haul's. A sled drags a carcass in off
+the range; a pen stands at the camp.
 
-**Neither half of that error was visible, because on the shipped roster they CANCEL.** Husbandry and
-stalking both carry a sled, so both sat at the sled's equipped tier and every hunt kit quoted a pen
-the same number — under-stating the kit the pen exists for and over-stating every kit that carries a
-sled and no handling gear, into one plausible-looking sheet. Only a driven assertion can hold it;
+**Neither half of that error was visible, because on a roster whose hunt kits all carry a sled they
+CANCEL.** Each one sat at the sled's equipped tier, so every hunt kit quoted a pen the same number —
+under-stating the kit the pen exists for and over-stating every kit that carries a sled and no
+handling gear, into one plausible-looking sheet. Only a driven assertion can hold it;
 `ui_preview`'s `chapters/compose_rungs.gd` states the claim as a triple (the wild reading unmoved, the
-husbandry kit at the reference, the sled-only kit at the bare keeper's tier), because the pen pair
+synthetic handling kit at the reference, the sled-only kit at the bare keeper's tier), because the pen pair
 alone is satisfied by pricing everything on the pen axis and the wild reading alone by no fix at all.
 
 - **The corral state comes off `src`, and that is not a reach for state** — on the hunt job `src` IS
@@ -2762,11 +2815,21 @@ the handling gear's condition and the SLED's.
   appears under one and not the other.** Only `pen_carry` sets the rate, but the sim charges a pen
   slaughter over TWO quanta — the handling gear for what was butchered, the sled for what was hauled
   home — so the sled's TIER is a number nothing on the sheet will read while the sled's CONDITION is
-  wear the player is paying. No attack and no spears: a penned beast is slaughtered rather than
-  stalked, it publishes no engagement stage (the predicate the gate LINE is mounted behind), and the
-  sim charges no weapon for the kill.
+  wear the player is paying.
+  > ⛔ **AND THE WEAPON IS NOW ONE OF THEM.** This bullet used to end *"No attack and no spears: a
+  > penned beast is slaughtered rather than stalked, it publishes no engagement stage, and the sim
+  > charges no weapon for the kill."* **Two of those three clauses died with §4.9 item 12b**: a
+  > penned herd resolves the **ordinary fight**, so the take is gated on the party's `attack`
+  > against the species' `defense` at every rung, and the pen tend branch charges the swing through
+  > `outcome.fight.charge_strike_wear` (`core_sim/src/systems/labor.rs`). **Containment solves
+  > catching; weapons solve killing — no weapons, no beef.** A bare-handed band can pen an aurochs
+  > (`defense 6`) and never butcher one. The engagement-stage clause is a separate question about
+  > what the SNAPSHOT publishes and is answered where that field is documented, not here. The
+  > sentence is quoted rather than deleted because it was the stated rationale for the client's own
+  > pen exemption in `KitRoster.kit_offer` / `hunt_gate_closes`, and a reader who finds only its
+  > absence is one step from writing that exemption back.
 - **The pen line is gated on the SOURCE, not on the KIT, and the difference is the point.** Gating it
-  on the kit printed a pen tier for a husbandry kit against a wild herd — a tier nothing would read —
+  on the kit printed a pen tier for a handling kit against a wild herd — a tier nothing would read —
   and withheld it from a sled-only kit at a pen, which is the one place a player needs it: at a pen,
   `pen 12.0 per keeper` beside `pen 40.0 per keeper` is the whole visible difference the handling gear
   buys. The condition CLAUSES are the kit's own `item_ids` list and are not gated on the source at all
@@ -2799,7 +2862,8 @@ the handling gear's condition and the SLED's.
 
 Reported from play: the Builders card offered the **Husbandry kit** to raise a Cultivate. The roster
 now carries **two builders kits, one per web** — `hurdling` (hurdles, `animal`) and `tillage` (hoes,
-`plant`) — `husbandry` has given up the `builders` job entirely, and which kit a queue entry gets is
+`plant`) — and the `husbandry` KIT that used to list `builders` is gone entirely (§4.9 item 12b; the
+husbandry JOB is untouched and load-bearing). Which kit a queue entry gets is
 DERIVED from that entry's own branch (`equipment.md` → "THE BUILDERS' KIT IS DERIVED PER QUEUE
 ENTRY"). Three client consequences, and the first is a defect the sheets shipped:
 
@@ -4629,16 +4693,24 @@ alone. **The A/B is staged on a SHORT-KEPT patch now** (`_short_kept_food_tile`,
 rots at nothing and every staffed builder on it climbs — which is the model working, and would have
 asserted the `∞` away had the fixture not moved with it.
 
-**A JOB THE GEAR ALONE PAYS OFF IS `BUILD_FINISHES_IN_ONE_TURN`, NOT "no estimate"** — the client's
-transcription of `intensification::BUILD_FINISHES_IN_ONE_TURN`, which the sim returns for the same two
-states: the work is already banked, or the crew's gear covers the job outright
-(`LadderConfig::effective_build_cost` is unfloored, so a well-equipped crew drives the bar to or below
-zero). Both finish on the first worked turn (`docs/plan_unit_costed_work.md` §6.2), which is an
-ANSWER — and the two constants must not be conflated, because withholding the line broke this arc's
-own headline claim at exactly the crew that demonstrates it: **it is reachable on shipped config**, a
-start-stocked band's 26 `hurdles` at 8.5 apiece covering a 50-unit Tame at six keepers,
-so the estimate fell 25 → 13 → 4 → 2 → *nothing* as hands were added, beside a tile card correctly
-reading `≈1 turn at this crew`.
+**A JOB THE CREW FINISHES ON ITS FIRST WORKED TURN IS `BUILD_FINISHES_IN_ONE_TURN`, NOT "no
+estimate"** — the client's transcription of `intensification::BUILD_FINISHES_IN_ONE_TURN`, which the
+sim returns for two states: the work is **already banked**, or the pool's **supply covers the whole
+job in one turn**. Both are an ANSWER (`docs/plan_unit_costed_work.md` §6.2), and the two constants
+must not be conflated — withholding the line broke this arc's own headline claim at exactly the crew
+that demonstrates it.
+
+> ⛔ **ONE TURN IS REACHED BY OUT-PRODUCING THE JOB, NEVER BY ARITHMETIC — and this paragraph used to
+> say the opposite.** It read *"the crew's gear covers the job outright (`LadderConfig::effective_build_cost`
+> is unfloored, so a well-equipped crew drives the bar to or below zero)"*, illustrated by a
+> start-stocked band's *"26 `hurdles` at 8.5 apiece covering a 50-unit Tame at six keepers"*. **Every
+> load-bearing noun in that sentence is retired**: `effective_build_cost` is gone (§4.8), `hurdles`
+> became a MATERIAL and the build kit's item is the **crook** (§4.9 item 12), and `8.5` was the
+> SUBTRACTION form's figure — the crook declares **0.5**, an addend. **A job's work requirement never
+> changes**, so gear cannot pay a job off; it raises what each worker DELIVERS, and a big enough pool
+> finishes in one turn the same way fifty bare hands do. The fixture that encoded the old reading was
+> re-aimed rather than deleted and now pins both halves —
+> `intensification::tests::one_turn_is_reached_by_out_producing_the_job_not_by_the_gear_paying_it_off`.
 
 **And the count is SPELLED in one place, for both faces** — `DetailFormat.build_turns_clause`, which
 forks the singular (`≈1 turn` / `≈25 turns`). The two faces quote one estimate about one job, so a
@@ -6629,13 +6701,25 @@ can compute. What was genuinely missing is `durability`, which is what turns *"y
 - **`defense` and `durability` must not be blurred**: defense is whether a hit counts at all,
   durability is how many counting hits it takes. The first decides the refusal, the second the effort.
 
-### The engagement stage is the gate on BOTH lines, and that is the byte-identity
+### The FIGHT is the gate on both lines, and the plant web is what it excludes
 
-A **pen** and the whole **plant web** publish `NO_ENGAGEMENT_STAGE` — a penned animal is not stalked
-and a berry does not fight back — so `SourceForecast.has_engagement_stage` suppresses the pair and
-neither sheet moves. The negative is asserted on a pen fixture that carries a REAL `defense` and
-`durability` (`chapters/hunt.gd` `_combat_gate_pen`), so the silence is demonstrably the engagement
-gate's doing rather than a fixture that omitted the terms.
+The whole **plant web** publishes `NO_ENGAGEMENT_STAGE` — a berry does not fight back — so
+`SourceForecast.quarry_is_fought` suppresses both lines there and no forage sheet moves. A **pen** is
+on the other side of that gate: it resolves the ordinary fight, so a party that cannot hurt what is
+behind the fence reads the refusal. Pinned as a pairing on two pens carrying the SAME real `defense`
+machinery (`chapters/hunt.gd`): `_combat_gate_pen` at the mammoth's `defense 12` is **blocked** and
+names both terms, `_combat_gate_pen_gentle` at `defense 0` is **silent** for the same bare party — so
+neither a blanket suppression nor a blanket refusal passes.
+
+> ⛔ **THE OLD HEADING WAS "The engagement stage is the gate on BOTH lines, and that is the
+> byte-identity"**, and its argument was that *"a pen and the whole plant web publish
+> `NO_ENGAGEMENT_STAGE` — a penned animal is not stalked and a berry does not fight back — so
+> `has_engagement_stage` suppresses the pair and neither sheet moves."* The byte-identity with forage
+> was the part worth keeping and it survives; what died is the pen belonging inside it. **The pen's
+> `NO_ENGAGEMENT_STAGE` is still what the wire publishes** — `core_sim/src/snapshot/subsistence.rs`
+> filters the field on `is_corralled()` against the sim's own behaviour, its own comment says the `0`
+> is no longer the truth, and issue #572 tracks closing it — which is precisely why the predicate had
+> to stop being the engagement field and start being `quarry_is_fought`.
 
 ### KNOWN GAP — the local per-turn readout does not carry the gate
 

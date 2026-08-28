@@ -24,9 +24,9 @@ fn equipped_haul_rate() -> f32 {
 }
 
 use core_sim::{
-    animals_engaged, herd_capacity, hunt_take, quantise_animal_take, resolve_hunt_fight,
-    BandEquipment, CombatConfig, CombatStats, CreaturesConfig, DamageLedger, EquipmentConfig,
-    FaunaConfig, FaunaConfigHandle, Herd, HuntDraw, HuntingParty, QuarryFight, SizeClass,
+    animals_engaged, herd_capacity, hunt_take, resolve_hunt_fight, BandEquipment, CombatConfig,
+    CombatStats, CreaturesConfig, DamageLedger, EquipmentConfig, FaunaConfig, FaunaConfigHandle,
+    Herd, HuntDraw, HuntingParty, QuarryFight, SizeClass,
 };
 
 /// Standing stock far above anything a party can take, so **the escapement never binds** and the take
@@ -692,57 +692,113 @@ fn wounds_decay_out_of_contact_but_not_instantly() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// §10 — the pen is untouched, and replay is order-independent
+// §10 — the pen fights too, and replay is order-independent
 // ---------------------------------------------------------------------------------------------
 
-/// **A penned animal is not stalked, not fought and not wary** (§10). No pen path reaches
-/// [`resolve_hunt_fight`] at all any more — the tend branch, the forecast and both projections fork
-/// on `is_corralled()` — so this pins the resolver's own no-fight arm, on a species that would
-/// otherwise be the deadliest fight on the map, and then walks the pen's real collection stage
-/// beside it.
+/// **A PENNED ANIMAL FIGHTS EXACTLY AS A WILD ONE DOES** (`docs/plan_standing_upkeep.md` §4.9 item
+/// 12b) — the claim that inverts this file's old `a_pen_has_no_fight_at_all`.
+///
+/// Every pen path used to fork on `is_corralled()` and skip the resolver outright, so the ladder was
+/// a **mode switch**: a bare-handed band butchered a penned mammoth a stalking party could not
+/// scratch. The rung tunes the take's first two stages and only those — the reach
+/// (`husbandry.pen_engage_gain`) and the retreat (`husbandry.pen_wariness`) — while `defense`,
+/// `durability` and `attack` are the species' own at every rung. Containment solves catching;
+/// weapons solve killing.
+///
+/// Asserted through [`core_sim::herd_quarry_fight`], **the** seam every take path resolves its
+/// quarry through, on one herd read twice: wild, then fenced. Three halves, each of which fails on a
+/// different way of getting this wrong:
+///
+/// 1. the **combat body is bit-identical** across the fence — a pen that discounted `defense` would
+///    move it;
+/// 2. the **wariness is strictly lower** behind the fence — a pen that ran no retreat at all, or one
+///    that changed nothing, both fail it;
+/// 3. and the fight the two bodies resolve against one party is **the same number**, which is what
+///    "no weapons, no beef" means in the arithmetic.
 #[test]
-fn a_pen_has_no_fight_at_all() {
-    let fauna = deterministic_fauna();
+fn a_penned_animal_fights_exactly_as_a_wild_one_does() {
+    // The SHIPPED roster, deliberately not `deterministic_fauna()`: this test is about the wariness
+    // the rungs scale, and `without_retreat` zeroes the very term half of it measures.
+    let fauna = FaunaConfig::builtin();
     let party = HuntingParty::builtin_equipped();
-    let mammoth = fauna.quarry_fight_for(MAMMOTH);
+    let wild = herd_of(&fauna, MAMMOTH);
+    let mut penned = wild.clone();
     assert!(
-        mammoth.effective_attack() > 0.0,
-        "the fixture's species must be one that WOULD fight, or this asserts nothing"
+        penned.corral_at(
+            bevy::math::UVec2::new(1, 1),
+            &core_sim::LadderConfig::builtin()
+        ),
+        "fixture: the quarry must be pennable, or there is no fenced reading to take"
     );
 
-    let penned = resolve_hunt_fight(f32::INFINITY, 1.0, &party, &mammoth, FIXED_SEED);
-    assert_eq!(penned.brought_down, f32::INFINITY);
-    assert_eq!(penned.casualties.killed, 0.0);
-    assert_eq!(penned.casualties.wounded, 0.0);
-    assert!(!penned.fought);
+    let wild_fight = core_sim::herd_quarry_fight(&wild, &fauna);
+    let penned_fight = core_sim::herd_quarry_fight(&penned, &fauna);
 
-    // ...and the pen therefore pays exactly what it paid before the fight existed: production
-    // against the keeper's collection, with no fight in between. **The production bound is spent in
-    // the pen's own collection stage** (`animals_handled`, `systems::labor`'s tend branch) rather
-    // than inside the quantiser, which bounds a take and no longer rounds one.
-    /// One body's worth and a little over, so the pen can spare exactly one animal.
-    const PRODUCTION: f32 = 900.0;
-    /// Less than one body — the keeper cannot haul the whole beast, which is where `max(1, carryable)`
-    /// lives. That rule is untouched by this slice and the pen is where it stays reachable.
-    const COLLECTION: f32 = 120.0;
-    let body = fauna
-        .species_by_display(MAMMOTH)
-        .expect("shipped species")
-        .body_mass;
-    let collected = core_sim::animals_handled(penned.brought_down, PRODUCTION, body);
+    // 1. THE FIGHT IS NOT ON THE LADDER.
     assert_eq!(
-        collected, 1.0,
-        "the pen's collection stage spends the room: one whole animal of the 900 it produced"
+        (
+            penned_fight.profile.defense,
+            penned_fight.profile.durability,
+            penned_fight.profile.attack,
+            penned_fight.ferocity
+        ),
+        (
+            wild_fight.profile.defense,
+            wild_fight.profile.durability,
+            wild_fight.profile.attack,
+            wild_fight.ferocity
+        ),
+        "a fence changes where the animal stands, not what it is made of"
     );
-    let take = quantise_animal_take(
-        COLLECTION,
-        body,
-        collected,
-        core_sim::EngagementStop::WhenPackFull,
+    assert!(
+        wild_fight.profile.defense > 0.0 && wild_fight.effective_attack() > 0.0,
+        "liveness: the fixture's species must be one that WOULD fight, or the equality above is two \
+         zeroes agreeing"
     );
-    assert_eq!(take.killed, 1, "the keeper butchers what the pen produced");
-    assert_eq!(take.carried, COLLECTION);
-    assert_eq!(take.wasted, body - COLLECTION);
+
+    // 2. THE RETREAT IS.
+    assert!(
+        core_sim::herd_wariness(&penned, &fauna) < core_sim::herd_wariness(&wild, &fauna),
+        "a fence CALMS the animals: {} penned against {} wild",
+        core_sim::herd_wariness(&penned, &fauna),
+        core_sim::herd_wariness(&wild, &fauna)
+    );
+    assert!(
+        core_sim::herd_wariness(&penned, &fauna) > 0.0,
+        "…but it does not DELETE the stage — a zero would be the blanket exemption under another \
+         name"
+    );
+    // **AND THE QUARRY THE FORECAST HOLDS CARRIES IT.** `forecast_production_and_take_at` has no
+    // herd — it retreats off `SourceYieldForecast::fight`'s own `profile.wariness` — so if this seam
+    // handed back the species-table row the quote would retreat a penned herd's animals at the WILD
+    // rate while the take retreated them at the fence's, and a pen's quote and its payout would
+    // silently part.
+    for (rung, fight, herd) in [
+        ("wild", wild_fight, &wild),
+        ("penned", penned_fight, &penned),
+    ] {
+        assert_eq!(
+            fight.profile.wariness,
+            core_sim::herd_wariness(herd, &fauna),
+            "the {rung} quarry a forecast holds must carry the rung's own retreat"
+        );
+    }
+
+    // 3. AND THE SAME PARTY RESOLVES THE SAME FIGHT AT BOTH RUNGS.
+    /// Animals standing to be fought — the retreat's output, handed in identically at both rungs so
+    /// this reads the fight alone.
+    const STAYED: f32 = 4.0;
+    /// The crew swinging at them.
+    const HUNTERS: f32 = 8.0;
+    let fight_at = |quarry: &QuarryFight| {
+        resolve_hunt_fight(STAYED, HUNTERS, &party, quarry, FIXED_SEED).brought_down
+    };
+    assert_eq!(
+        fight_at(&penned_fight),
+        fight_at(&wild_fight),
+        "the kit that kills a mammoth on the range is the kit that kills it in a pen — NO WEAPONS, \
+         NO BEEF"
+    );
 }
 
 /// **Replay determinism ACROSS HUNT ORDERING** (§6.2) — the assertion that per-event seeding is real

@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 191
+const EXPECTED_CHECKPOINTS := 204
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -120,6 +120,22 @@ const REVERTING_METER_PROGRESS := 0.96
 ## The tile the band works INSTEAD in the reverting frame — any tile that is not the one being judged.
 ## The patch under test is then improved, owned and unworked, which is the whole condition.
 const METER_AWAY_TILE_X := 64
+
+## **THE MEASURED METER OF THE FERAL FIELD AT (78, 20)** — `field_work_done 49.612083` over
+## `field_work_cost 49.624060`, twelve thousandths of a work unit short of done. It is the number that
+## made `round()` print `100` on an unfinished rung, so it is stated to its published precision rather
+## than tidied: a rounder fraction would not reach the boundary the floor claim is about.
+const FERAL_FIELD_METER := 0.9997586
+
+## …and what it must READ as: `99`, the floor of 99.97586%. Written out rather than composed through
+## `HudFormat.progress_percent`, because that is the producer under test and an expectation asked of
+## it could only agree with itself.
+const FERAL_FIELD_PERCENT := 99
+
+## …and the percent a GENUINELY complete meter still prints, which is the half that makes flooring
+## safe. `clampf` pins a source publishing `>= 1.0` to exactly 1.0, so `100%` stays reachable — at a
+## true completion and nowhere else.
+const COMPLETE_METER_PERCENT := 100
 
 ## The tile card's cultivation ROW key, for the run-log excerpt. Not an assertion input: the assertions
 ## match the rendered VALUE markup, which no other row can produce.
@@ -287,9 +303,26 @@ func _rung_value_markup(value: String, hex: String) -> String:
 ## **ONE RUNG ROW'S VALUE AT A GIVEN PUBLISHED TURN ANSWER**, asked of the producer over a source
 ## dict carrying nothing but that answer and this chapter's meter — the shape that reaches the states
 ## no frame here stages (a stall, an unrecognised sentinel) without building a fixture for each.
+##
+## **THE ENTRY IS AT THE HEAD OF A QUEUE, and that is now part of what the shape MEANS.** `-1` forks
+## on the queue position: an entry still in a queue whose gate refuses is `⚠ Stalled`, and the same
+## `-1` on a source no band has queued is `⚠ Lapsed` (`_rung_value_lapsed` below). A dict that left
+## the position absent would default to the sentinel and quietly move every claim here onto the other
+## side of that fork.
 func _rung_value_for_turns(turns: int) -> String:
+	return _rung_value_at(turns, SourceForecast.BUILD_QUEUE_HEAD)
+
+## …and the SAME shape with the entry gone — `-1` on a source in no band's queue, which is the lapsed
+## rung. Written as its own name rather than as a bare argument at the call site, so the two sides of
+## the fork read as two states rather than as one call with a magic number in it.
+func _rung_value_lapsed() -> String:
+	return _rung_value_at(SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+		SourceForecast.NOT_IN_ANY_BUILD_QUEUE)
+
+func _rung_value_at(turns: int, queue_position: int) -> String:
 	return DetailFormat.rung_row_value({
 		SourceForecast.FORECAST_BUILD_TURNS_KEY: turns,
+		SourceForecast.FORECAST_BUILD_QUEUE_POSITION_KEY: queue_position,
 		SourceForecast.FORECAST_BUILD_WORK_COST_KEYS[SourceForecast.IMPROVEMENT_TAME]:
 			BaseFx.PLANT_CULTIVATE_WORK_COST,
 		# **THE METER RIDES THE DICT, not only the `progress` argument** — `rung_row_value` asks
@@ -540,6 +573,37 @@ func _under_kept_hover(src: Dictionary,
 	DetailFormat.note_under_kept_hover(ctx, HOVER_PROBE_ROW, src,
 		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE, improvement)
 	return String(ctx.row_tooltips.get(HOVER_PROBE_ROW, ""))
+
+## …and the LAPSED row's hover, read back the same way. It takes the COMPOSED VALUE rather than the
+## source, because that is the producer's own seam: `build_sentinel_value` reaches the verdict once
+## and the hover is routed off the word the row printed.
+func _lapsed_hover(value: String) -> String:
+	var ctx := DetailFormat.Context.new()
+	DetailFormat.note_lapsed_hover(ctx, HOVER_PROBE_ROW, value)
+	return String(ctx.row_tooltips.get(HOVER_PROBE_ROW, ""))
+
+## **THE FIELD THAT COMPLETED AND WENT FERAL THE NEXT TURN — the measured shape, from the live export
+## at tile (78, 20).** `Field sown` completed on tick 88; on tick 89 the sim logged *"the field at
+## (78,20) has gone feral — untended, the ground is reverting"*, which retired the standing rung back
+## to `plant:tended` and left the meter a hair short of full. The queue entry had already retired at
+## completion, so by tick 93 nothing existed that could finish the last sliver.
+##
+## **THE KEEPING IS PAID AND THE METER IS NOT MOVING, and both facts are the fixture's claim.** The
+## export published `upkeepShortfall 0` and `meterRotPerTurn 0`: this rung is not *Reverting*, it is
+## stable and stranded, which is precisely why the two neighbouring words were both wrong for it.
+func _feral_field_patch() -> Dictionary:
+	var tile := BaseFx.food_tile_fixture()
+	tile["patch_is_cultivated"] = true
+	tile["patch_cultivation_progress"] = SourceForecast.BUILD_METER_FULL
+	tile["patch_is_field"] = false
+	tile["patch_field_progress"] = FERAL_FIELD_METER
+	tile["patch_upkeep_shortfall"] = 0.0
+	tile["patch_upkeep_supplied"] = float(tile.get("patch_upkeep_demand", 0.0))
+	tile = BaseFx.price_plant_build(tile, SourceForecast.BUILD_TURNS_NO_ESTIMATE)
+	# Set AFTER the pricing, which stamps the head position every priced build gets: the whole point
+	# of this shape is a countdown with no entry left behind it.
+	tile["patch_build_queue_position"] = SourceForecast.NOT_IN_ANY_BUILD_QUEUE
+	return RungFx.stamp_patch(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 ## **THE REFERENCE PATCH WITH ITS KEEPING SHORT, so its half-built Cultivate is BLEEDING**
 ## (`docs/plan_standing_upkeep.md` §2.4) — the turn-estimate A/B's own tile, and the only shape on the
@@ -1571,6 +1635,83 @@ func run(harness) -> void:
 			SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.BUILD_CREW_NONE,
 			SourceForecast.FLOOR_FOOD_PEAK, NO_BUILD_GEAR)
 			!= SourceForecast.BUILD_TURNS_HOLDS)
+
+	#   (e2) **LAPSED — the same `-1`, on a source NO BAND HAS QUEUED.** Reported from play at tile
+	#   (78, 20): a Field completed on tick 88, went feral on tick 89, and its queue entry had already
+	#   retired at completion — so at tick 93 it sat at 49.612 of 49.624 work with `-1` on the
+	#   countdown, `NOT_IN_ANY_BUILD_QUEUE` on the position, its keeping fully paid and its rot at
+	#   zero. The card read `⚠ Stalled 100%`, which was wrong in both halves, and the player had no
+	#   way to learn from it that re-queuing the Sow was the remedy.
+	#
+	#   **THE PAIRING IS THE CLAIM.** *Stalled* is documented as *builders are on it and the meter is
+	#   not moving anyway*, and that state still exists and still needs the word — so the lapsed face
+	#   is asserted BESIDE the queued gate-refused one, and a rule that simply renamed *Stalled*
+	#   everywhere fails on the sibling.
+	var feral := _feral_field_patch()
+	h._hud._band_labor._player_band = BandFx.cultivating_forage_band_fixture(
+		METER_AWAY_TILE_X, int(feral["y"]))
+	h._hud._band_labor._player_bands = [h._hud._band_labor.player_band()]
+	h._hud.clear_selection()
+	h._show_tile(feral)
+	await h._settle()
+	await h._save("tile_meter_lapsed")
+	var feral_row = h._hud.tile_detail.text
+	print("ui_preview: meter lapsed  %s" % Readout.detail_excerpt(feral_row,
+		HudFloraVocab.FIELD_ROW))
+	# THE PRECONDITION, or the frame is about some other shape entirely: nothing is billing this rung
+	# and nothing is eating it, which is what rules out both neighbouring words before the card speaks.
+	h._assert_hud("the feral field's keeping really IS paid — it is stranded, not reverting",
+		not SourceForecast.is_under_kept(feral, HudComposeVocab.FORAGE_FORECAST_PREFIX))
+	h._assert_hud("…and its entry really is gone — the countdown has no queue behind it",
+		SourceForecast.build_queue_position(feral, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+			== SourceForecast.NOT_IN_ANY_BUILD_QUEUE)
+	# **THE FLOOR, ON THE READING THAT PRODUCED IT.** 99.97586% is not done, and a card that says it
+	# is leaves the player with no reason to look for the twelve thousandths of work still missing.
+	h._assert_hud("the meter a hair short of full reads 99%%, never 100%% (got %d)"
+			% HudFormat.progress_percent(FERAL_FIELD_METER),
+		HudFormat.progress_percent(FERAL_FIELD_METER) == FERAL_FIELD_PERCENT)
+	# …and the PAIRED claim that keeps flooring honest at the top: the clamp pins a genuinely complete
+	# source to 1.0, so `100%` is still reachable — at a true completion and nowhere else.
+	h._assert_hud("…while a genuinely complete meter still prints 100% — the clamp is what allows it",
+		HudFormat.progress_percent(SourceForecast.BUILD_METER_FULL) == COMPLETE_METER_PERCENT)
+	# **THE WORD, ON THE CARD, IN THE HAZARD INK.** It is a loss the player has already taken, so it
+	# wears the mark; the tint falls out of the mark rather than being painted on separately.
+	var lapsed_value := HudSelectionVocab.RUNG_LAPSED_FORMAT % [
+		HudSelectionVocab.RUNG_HAZARD_GLYPH, FERAL_FIELD_PERCENT]
+	h._assert_hud("the stranded Field row states LAPSED, marked and in WARN ink",
+		feral_row.contains(_rung_value_markup(lapsed_value, HudStyle.WARN_HEX)))
+	# **AND THE NEGATIVE THAT NAMES THE DEFECT.** `⚠ Stalled 100%` is exactly what shipped, so both
+	# halves of it must be absent from this frame.
+	h._assert_hud("…and NOT *Stalled*, which names builders standing on it and a gate that refuses",
+		not feral_row.contains(HudSelectionVocab.RUNG_STALLED_FORMAT % [
+			HudSelectionVocab.RUNG_HAZARD_GLYPH, FERAL_FIELD_PERCENT]))
+	h._assert_hud("…and nowhere on the card does the unfinished Field claim to be 100%",
+		not Readout.detail_excerpt(feral_row, HudFloraVocab.FIELD_ROW).contains(
+			"%d%%" % COMPLETE_METER_PERCENT))
+	# **THE SIBLING, which is what stops a blanket rename passing.** Same `-1`, same meter, an entry
+	# still in the queue: that is the stall the word was written for, and it must keep it.
+	h._assert_hud("…while the SAME -1 on a queued entry still reads STALLED — the word keeps its case",
+		_rung_value_for_turns(SourceForecast.BUILD_TURNS_NO_ESTIMATE)
+			== HudSelectionVocab.RUNG_STALLED_FORMAT % [
+				HudSelectionVocab.RUNG_HAZARD_GLYPH,
+				HudFormat.progress_percent(REVERTING_METER_PROGRESS)])
+	h._assert_hud("…and the two faces are genuinely different strings, one fork apart",
+		_rung_value_lapsed() != _rung_value_for_turns(SourceForecast.BUILD_TURNS_NO_ESTIMATE))
+	# **THE HOVER CARRIES THE SENTENCE, the mark being two words on a ~245px card.** It has to say the
+	# work survived and where the click is, or the word names a loss without a remedy.
+	h._assert_hud("the lapsed row's hover states the part-built rung, the banked work and the re-queue",
+		_lapsed_hover(lapsed_value) == HudSelectionVocab.RUNG_LAPSED_TOOLTIP)
+	# ⛔ **AND IT NAMES NO CAUSE, which is a claim about every row this hover is registered on.**
+	# `DetailFormat.note_lapsed_hover` mounts it on `HUSBANDRY_ROW` and `CORRAL_ROW` as well as the two
+	# plant rows, and it opened *"The ground went feral…"* — ground a HERD does not have. The three
+	# conjuncts behind the mark are also satisfied by a plainly CANCELLED queue entry with work banked,
+	# where nothing went feral at all. The word `Lapsed` is right in all three; a cause would be a
+	# guess, so the sentence asserts none.
+	h._assert_hud("…and it blames no cause it cannot know — no ground, no feralness, on a hover herds share",
+		not HudSelectionVocab.RUNG_LAPSED_TOOLTIP.to_lower().contains("feral")
+			and not HudSelectionVocab.RUNG_LAPSED_TOOLTIP.to_lower().contains("ground"))
+	h._assert_hud("…and a row that is NOT lapsed registers no such hover",
+		_lapsed_hover(_rung_value_for_turns(SourceForecast.BUILD_TURNS_NO_ESTIMATE)) == "")
 
 	# ---- THE TURN ESTIMATE FOLLOWS THE STEPPER (docs/plan_unit_costed_work.md §11) ----------------
 	# **ONE PATCH, ONE FLOOR, TWO CREWS — and a frame set that renders only one crew proves nothing

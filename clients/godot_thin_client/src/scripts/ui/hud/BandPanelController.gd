@@ -2994,9 +2994,16 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     var is_ring := String(model.get("improvement", "")) == SourceForecast.BUILD_JOB_EXTEND_PEN
     var percent := HudFormat.progress_percent(float(model.get(
         "build_ring_progress" if is_ring else "building_progress", 0.0)))
+    # **THE QUEUE POSITION THIS COLUMN ANSWERS WITH IS THE ROW'S OWN RANK, not the source's
+    # `build_queue_position`** — the same substitution every other reader of this block's meta makes
+    # (§4.9 item 9a): that field is the WINNING band's answer, and this block draws THIS band's queue.
+    # It feeds `build_sentinel_value`'s lapsed fork, which is by construction unreachable from here —
+    # a drawn row is an entry, so its rank is a real place in the line — and that is the correct
+    # reading rather than a suppression: a rung with an entry still funding it has not lapsed.
     var value := FoodIcons.for_status(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS) if pending \
         else DetailFormat.build_completion_value(turns, builders, percent,
-            _band_labor.current_turn(), String(model.get("building_policy", "")))
+            _band_labor.current_turn(), _build_queue_row_rank(model),
+            String(model.get("building_policy", "")))
     var date := Label.new()
     date.set_meta(HudWorkVocab.BUILD_QUEUE_DATE_META, value)
     date.text = value
@@ -3017,7 +3024,8 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # column states the date and the hover adds the span, so a player weighing a reorder does not have
     # to subtract. A SENTINEL has no span to state and keeps its single face.
     var date_tooltip := value
-    if not pending and DetailFormat.build_sentinel_value(turns, builders, percent) == "":
+    if not pending and DetailFormat.build_sentinel_value(turns, builders, percent,
+            _build_queue_row_rank(model)) == "":
         date_tooltip = HudWorkVocab.BUILD_QUEUE_ROW_SPAN_FORMAT % [value, turns]
     # **THE CAUSE OF A BLOCK RIDES THE HOVER, AND IT IS THE CARD'S OWN SENTENCE**
     # (`docs/plan_standing_upkeep.md` §4.6b). The date column can only ever say `⚠ Blocked 32%`,

@@ -789,7 +789,11 @@ pub fn advance_expeditions(
                         // The quarry's engagement/retreat/fight dials, and the per-event seed —
                         // composed BEFORE the mutable borrow, exactly as the scout replenish does.
                         let engage_rate = fauna.engage_rate_for(&herds.herds[idx].species);
-                        let wariness = fauna.wariness_for(&herds.herds[idx].species);
+                        // **The retreat at the herd's OWN rung** ([`fauna::herd_wariness`]) — an
+                        // identity on a wild quarry, and the same term the `quarry_fight` below
+                        // carries, so a raid on a managed herd cannot retreat one set of animals and
+                        // fight another.
+                        let wariness = fauna::herd_wariness(&herds.herds[idx], &fauna);
                         // The herd's own accumulated wounds ride in with the species body, so a raid
                         // spanning turns wears the quarry down (`fauna::herd_quarry_fight`).
                         let quarry_fight = fauna::herd_quarry_fight(&herds.herds[idx], &fauna);
@@ -2132,7 +2136,8 @@ fn hunt_trip_forecast_seeded(
     // mid-projection and the quarry is never re-speciated. The retreat is read at its expectation
     // rather than drawn — see [`RAID_FORECAST_DRAW`] for why a projection cannot draw it at all.
     let engage_rate = fauna.engage_rate_for(&quarry.species);
-    let wariness = fauna.wariness_for(&quarry.species);
+    // The rung's own retreat ([`fauna::herd_wariness`]) — an identity on a wild quarry.
+    let wariness = fauna::herd_wariness(&quarry, fauna);
     // **The wounds are NOT resolved once** — they are the one term that changes every projected turn,
     // and a projection that froze them could not see a multi-turn kill at all (§4.2). Seeded from the
     // live herd, then re-carried from each simulated turn's result below.
@@ -2551,7 +2556,8 @@ fn denial_projection_at(
     let ecology = herd_ecology(&quarry, fauna);
     let capacity = herd_capacity(&quarry, fauna);
     let engage_rate = fauna.engage_rate_for(&quarry.species);
-    let wariness = fauna.wariness_for(&quarry.species);
+    // The rung's own retreat ([`fauna::herd_wariness`]) — an identity on a wild quarry.
+    let wariness = fauna::herd_wariness(&quarry, fauna);
     // The one term that changes every projected turn (§4.2) — a raid spanning turns wears the quarry
     // down, and a projection that froze the wounds could not see a multi-turn kill at all.
     let mut quarry_fight = fauna::herd_quarry_fight(&quarry, fauna);

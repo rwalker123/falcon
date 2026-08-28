@@ -918,8 +918,8 @@ vantage`, `▲ Clubs 22 — attack 6 defending the camp`.
   `KIT_VANTAGE_DECIMALS` and the `%s-tile sight per vantage` phrasing, which also sidesteps the
   `sight 1 tiles` a bare-handed scout would otherwise print.
 - **An item is a CLOCK and its axis is a TIER, and the two are read from different places** — which
-  is why a live item can sit beside a bare tier. The shared roster equips no husbandry kit, so a band
-  on the stalking kit collects its pen at 12 with its handling gear at 45; the row is honest, and the
+  is why a live item can sit beside a bare tier. The shared roster equips no kit on the pen axis, so a
+  band on the stalking kit collects its pen at 12 with its handling gear at 45; the row is honest, and the
   fixture is built that way deliberately so the pen row cannot pass by quoting the sled's 40.
 
 **Frames + assertions (`band_panel_preview`):** `band_panel_kit_expanded` — the dock's own gear
@@ -938,10 +938,18 @@ roster's own display name cannot disagree about one item; `hoes` joined `KIT_ITE
 and deliberately has **no breakdown row**, the build axis having no flat per-band field for a row to
 pair it with (`labor-ui.md` → "THE BUILDERS' KIT IS DERIVED PER QUEUE ENTRY" on the client side).
 
-`hurdles` bound a slaughter at a pen **and** take work off the `Tame` and `Corral` builds
-(issue #515, `.claude/rules/core_sim/equipment.md` → "The build axis"), so a row quoting only the pen
-rate describes the payoff at the top of the ladder and says nothing about the climb that produces it.
-It reads `pen collection 40.0 per keeper · 8.5 work off a tame or a pen, per keeper`.
+The handling gear binds a slaughter at a pen **and** raises what a worker delivers to the `Tame` and
+`Corral` builds (issue #515, `.claude/rules/core_sim/equipment.md` → "The build axis"), so a row
+quoting only the pen rate describes the payoff at the top of the ladder and says nothing about the
+climb that produces it. It reads
+`pen collection 40.0 per keeper · +0.5 work a turn per keeper on a tame or a pen`.
+
+> ⛔ **THE CLAUSE READ `8.5 work off a tame or a pen, per keeper` AND BOTH HALVES OF THAT ARE
+> RETIRED.** `build_work` is an ADDEND on what an equipped worker DELIVERS per turn, never units off
+> the job — a job's work requirement never changes (`docs/plan_standing_upkeep.md` §4.8) — and the
+> magnitude moved with the meaning, `8.5` being the old subtraction's units and `0.5` the rate's
+> (`core_sim/src/data/equipment.json` → `_comment_durability` owns the round trip). The item is the
+> **crook** too: `hurdles` became a MATERIAL at §4.9 item 12.
 
 - **IT IS WORK UNITS, NOT A MULTIPLIER, and the wire field changed with the wording.**
   `EquipmentStat::BuildRate` is retired (`docs/plan_unit_costed_work.md` §6): a multiplier on the
@@ -950,7 +958,8 @@ It reads `pen collection 40.0 per keeper · 8.5 work off a tame or a pen, per ke
   (`buildWorkPerWorker`) is what the row reads, and the old `buildRate` is **frozen at its neutral
   `1` on the wire and no longer decoded at all**. That is not tidiness: a reader left on it renders
   `> 1.0` for no kit in the game, so the clause silently disappears **and** `KitRoster.kit_offer`
-  stops offering the husbandry kit on a herd being tamed, which is the one job the gear is for.
+  stops offering the kit that carries the handling gear on a herd being tamed, which is the one job
+  that gear is for.
   **The gear's worth is now qualified by a `build_work_branch`** — hurdles serve the ANIMAL web and
   hoes the PLANT one — and this row is unaffected, being about a herd either way; what reads the pair
   is `KitRoster.build_kit_for_branch`, which the Builders card and the build queue's header both

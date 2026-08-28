@@ -1868,11 +1868,56 @@ static func yield_range_clause(m: Dictionary) -> String:
 # wounds are not exported, so a per-party turn count here would be a second, always-pessimistic
 # duration model competing with the raid forecast the sim answers when asked.
 
-## Whether the pre-launch fight lines have anything to say about this source. A PEN and the whole
-## PLANT web publish no engagement stage (`NO_ENGAGEMENT_STAGE`), which is exactly the byte-identity
-## this gate buys: a penned animal is not stalked and a berry does not fight back.
+## Whether this source publishes an engagement stage at all. The whole PLANT web does not
+## (`NO_ENGAGEMENT_STAGE` — a berry does not fight back), nor does a species the roster cannot resolve.
+##
+## ⛔ **THIS IS NOT THE TEST FOR "IS THERE A FIGHT HERE?" — `quarry_is_fought` IS.** It used to be, on
+## the strength of a pen publishing `NO_ENGAGEMENT_STAGE` too, and that reading is now a lie one source
+## kind wide; every caller that meant *fought* has moved. See `quarry_is_fought` for the wire defect
+## and for why the two questions had to come apart.
 static func has_engagement_stage(engage_rate: float) -> bool:
     return not is_inf(engagement_per_worker(engage_rate))
+
+## The wire's own flag for a herd held behind a fence. Named here, in the layer both the forecast and
+## the kit roster read through, so `KitRoster.QUARRY_CORRALLED_KEY` can alias it exactly as
+## `SOURCE_ENGAGE_RATE` aliases `FORECAST_ENGAGE_RATE_KEY` — one spelling of one wire key.
+const SOURCE_CORRALLED_KEY := "corralled"
+
+## **IS THERE A FIGHT TO LOSE AT THIS SOURCE?** — the ONE predicate every fight-shaped surface takes:
+## the kit picker's offer test, the priced gate behind the sheet's numbers, the sheet's own refusal
+## line, and the crew cap the Work board's `+` reads. Four surfaces, one answer, so they cannot come to
+## disagree about whether the fight is even asked.
+##
+## **THE ENGAGEMENT STAGE IS THE HONEST HALF, and it covers everything but the pen.** The whole PLANT
+## web publishes `NO_ENGAGEMENT_STAGE` — a berry does not fight back, and a patch states no
+## `durability` for `hunt_gate_model_at` to be `stated` about — as does a species the roster cannot
+## resolve, and refusing a hunt on either would refuse one the sim allows.
+##
+## ⛔ **THE CORRALLED FLAG IS THE OTHER HALF, BECAUSE THE WIRE'S `engage_rate` IS STILL WRONG ABOUT A
+## PEN.** Since `docs/plan_standing_upkeep.md` §4.9 item 12b a penned herd is engaged, retreats and
+## fights through the very same take the range runs, at a reach of the species' rate × the pen's
+## handling gain — but `core_sim/src/snapshot/subsistence.rs` still filters the published field on
+## `is_corralled()` and ships `NO_ENGAGEMENT_STAGE`, deliberately and against its own behaviour, so as
+## not to flip the gate other readers use to route pens away from the hunt paths. Its own comment says
+## the `0` is no longer the truth, and **issue #572** tracks closing it. Reading that field alone here
+## leaves a bare-handed party quoted a real take on a fenced aurochs (`defense 6`) the sim pays nothing
+## for — the exact forecast-vs-readout split this predicate exists to close.
+##
+## **IT IS AN `or`, NOT A FORK, so #572 makes it redundant rather than wrong**: the day a pen publishes
+## its real reach the first arm already answers `true` and this clause can be deleted with no change in
+## behaviour. `corralled` is decoded on every herd source (`native/src/dict/subsistence.rs`) and is
+## absent — so `false` — on every plant one, which is what keeps the plant web out of the pen arm.
+static func quarry_is_fought(src: Dictionary, prefix: String) -> bool:
+    return is_fought(float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
+        bool(src.get(SOURCE_CORRALLED_KEY, false)))
+
+## The same verdict for a caller holding the two terms already RESOLVED rather than a source and a
+## prefix — a COMPOSED forecast, whose keys carry no prefix at all (`forecast_inputs` copies both terms
+## onto it side by side for exactly this reader). Spelling the disjunction at the call site instead
+## would be a second producer for one rule, which is how a pen came to answer two different ways on
+## two surfaces for a release.
+static func is_fought(engage_rate: float, corralled: bool) -> bool:
+    return corralled or has_engagement_stage(engage_rate)
 
 # THE GATE's ONE verdict. It names both terms, because "you cannot" without the arithmetic is a
 # tooltip the player has no way to act on: knowing it is the WEAPON and not the headcount is the whole
@@ -4002,6 +4047,12 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # mirror of the sim's arithmetic. A forage patch publishes no such field, so it reads
         # `NO_ENGAGEMENT_STAGE` and both consumers drop the term.
         "engage_rate": float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
+        # **THE FENCE, CARRIED BESIDE THE REACH BECAUSE THE TWO ARE ONE QUESTION** — `quarry_is_fought`
+        # needs both terms, and a downstream reader holding only a composed forecast (the Work board's
+        # `with_published_useful_crew`, whose other argument is a LABOR ROW and carries no herd fields)
+        # could otherwise reach neither. Copied raw, exactly as `engage_rate` is, so the verdict stays
+        # in the one function that owns it. `false` on every plant source, which never publishes it.
+        SOURCE_CORRALLED_KEY: bool(src.get(prefix + SOURCE_CORRALLED_KEY, false)),
         # **THE RETREAT — the take's OWN term, and the ONE the kit's `dispersion` reaches the sheet
         # through.** `KitRoster.repriced_source` has already folded the kit into the source's
         # `stay_fraction` (the wire's own `clamp(1 - (1 - stay) x dispersion)`), so what arrives here is
@@ -5356,12 +5407,23 @@ const PUBLISHED_NO_USEFUL_CREW := 0
 static func with_published_useful_crew(forecast: Dictionary, source: Dictionary) -> Dictionary:
     if not source.has(ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY):
         return forecast
-    # **THE ENGAGEMENT STAGE IS THE GATE, exactly as it is on the sheet's fight lines.** The wire
-    # publishes this field on every `Hunt` row, and a PEN is a hunt row — but a penned beast is
-    # collected rather than stalked, so it states `NO_ENGAGEMENT_STAGE` and its cap was never the
-    # fightless quotient this replaces. Letting the plateau of a stalking curve bind a pen would let
-    # a `0` on a defended species kill the `+` on a herd the keepers simply walk up to.
-    if not has_engagement_stage(float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE))):
+    # **THE FIGHT IS THE GATE, exactly as it is on the sheet's fight lines** — one predicate, four
+    # surfaces (`quarry_is_fought`). The wire publishes this field on every `Hunt` row, and a PEN is a
+    # hunt row; what is dropped here is the PLANT web, whose rows carry no such cap to copy.
+    #
+    # ⛔ **THIS READ `has_engagement_stage` AND SO DISCARDED THE SIM'S ANSWER AT EVERY PEN.** The
+    # stated reason was that *"a penned beast is collected rather than stalked, so it states
+    # `NO_ENGAGEMENT_STAGE` and its cap was never the fightless quotient this replaces"* — true while a
+    # pen resolved no fight, and false the moment §4.9 item 12b made it resolve the ordinary one. The
+    # sim now publishes `NO_USEFUL_CREW` for a bare-handed pen it will pay nothing for
+    # (`core_sim/tests/hunt_useful_crew_on_the_wire.rs` →
+    # `a_penned_rows_cap_is_its_own_curve_and_the_fight_gates_it_too`), and throwing that answer away
+    # left the Work board's `+` offering hands the sim had just called useless. The cap is READ from
+    # the wire here, never derived, so keeping it for a pen adopts the sim's own curve — the room above
+    # the floor, the keepers' reach and calmed retreat, the fight, and their haul — rather than binding
+    # a pen to a stalking plateau, which is what the retired sentence was rightly afraid of.
+    if not is_fought(float(forecast.get(FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
+            bool(forecast.get(SOURCE_CORRALLED_KEY, false))):
         return forecast
     var out := forecast.duplicate()
     out[FORECAST_PUBLISHED_USEFUL_CREW_KEY] = maxi(

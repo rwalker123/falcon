@@ -600,22 +600,26 @@ client's compose-time "Expected yield" row promises. Shape:
   chance now yields the **expectation** instead of one arbitrary sample. See "THE INVARIANT IS
   RESTATED" below.
 
-  > **⛔ A PEN FORECASTS NO FIGHT, BECAUSE ITS PAYOUT RESOLVES NONE.** A corralled herd never reaches
-  > `systems::hunt_take`: the Hunt arm's tend branch `continue`s before it and walks the animal out
-  > (`fauna::animals_handled`). So `hunt_forecast` builds `fight: NO_FIGHT_STAGE` for it, and the three
-  > readings that price a pen — `forecast_production_and_take_at`, `project_realized_hunt`,
-  > `project_arrivals_hunt` — each fork on `Herd::is_corralled()` and run the tend branch's own three
-  > terms: the room above the floor, the keepers' handling, the crew's carry. `fight: Some(..)` for
-  > **every** herd ran an engagement, a retreat and a fight the pen does not, gated on the quarry's
-  > `defense` and the crew's *hunting* kit — so a bare-handed band with a penned **Wild Aurochs**
-  > (`defense 6`) was quoted `0`, projected a steady `0` and an empty arrival schedule, and was then
-  > paid a real take on the turn. The quantised readings call `animals_handled` itself rather than
-  > re-composing it, so the quote and the payout are one expression; the smooth one
-  > (`project_realized_hunt`) drops only the whole-animal floor, as it does on the wild arm.
+  > **⛔ A PEN FORECASTS A FIGHT, BECAUSE ITS PAYOUT RESOLVES ONE** (`docs/plan_standing_upkeep.md`
+  > §4.9 item 12b). The quote and the payout disagreed on a pen — a bare-handed band with a penned
+  > **Wild Aurochs** (`defense 6`) was quoted `0`, projected a steady `0` and an empty arrival
+  > schedule, and was then paid a real take — and the gap was closed **from the take's side**. The
+  > corral-tend branch calls `systems::hunt_take` now, so `hunt_forecast` builds `fight: Some(..)` for
+  > **every** herd unconditionally and the three readings that price a pen
+  > (`forecast_production_and_take_at`, `project_realized_hunt`, `project_arrivals_hunt`) carry no
+  > `is_corralled()` fork at all.
+  >
+  > **Exempting the QUOTE would have been the wrong repair**, which is why it was not taken: it would
+  > have made the husbandry ladder a mode switch, buying nothing at the kill, and let containment
+  > substitute for weapons. What the rung buys is the reach (`husbandry.pen_engage_gain`) and the
+  > retreat (`husbandry.pen_wariness`) — never the fight (`husbandry.md` → "THE TAKE RUNS ITS THREE
+  > STAGES AT EVERY RUNG").
+  >
   > Guarded on the exported wire by `hunt_useful_crew_on_the_wire.rs`
-  > (`a_bare_handed_pen_is_quoted_the_take_the_turn_pays`,
+  > (`a_bare_handed_pen_is_quoted_nothing_and_paid_nothing`,
   > `a_pens_quote_is_its_payout_at_every_keeper_count`,
-  > `a_bare_handed_pen_projects_a_steady_income_and_a_delivery`), with the wild arm's fight gate pinned
+  > `a_bare_handed_pen_projects_no_income_and_a_kitted_one_projects_both`,
+  > `a_pens_take_blunts_the_spear_and_costs_the_keepers`), with the wild arm's fight gate pinned
   > beside them by `a_wild_row_is_still_gated_by_the_fight`.
 - **Only the source the command touched** is seeded (other sources keep their real actuals), and only
   where the turn would actually pay: out of `band_work_range` / past the hunt leash, an unseeded patch

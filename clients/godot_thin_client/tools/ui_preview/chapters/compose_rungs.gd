@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 85
+const EXPECTED_CHECKPOINTS := 90
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -555,7 +555,7 @@ func run(harness) -> void:
 	# because half of what the trapping line must get right is what it does NOT say.
 	_assert_kit_hint_names_the_kits_own_items()
 
-	_assert_husbandry_hint_states_the_pen()
+	_assert_handling_hint_states_the_pen()
 	_assert_the_appended_axes_read_the_band()
 	_assert_a_pen_prices_on_the_keepers_carry()
 
@@ -624,8 +624,8 @@ func _assert_kit_hint_names_the_kits_own_items() -> void:
 # =====================================================================================
 #  A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED, AND THE TAKE IT WOULD HAVE QUOTED IS ZERO
 # =====================================================================================
-# Reported from play on the expanded roster. The compose sheet offered Trapping and Husbandry against
-# a Red Deer as ordinary choices — pricing the trap's `dispersion 0` (nothing flees, so the take looks
+# Reported from play on the expanded roster. The compose sheet offered the trapping kit and a
+# weaponless handling kit against a Red Deer as ordinary choices — pricing the trap's `dispersion 0` (nothing flees, so the take looks
 # BETTER) while never applying its `attackMaxBodyMass 1.0` — and quoted a real take for a hunt that
 # brings home exactly nothing: above the bound the snare grants no attack, the party falls back to the
 # bare hand's 1, and the sim's `max(0, attack − defense)` refuses the hunt.
@@ -668,8 +668,10 @@ const OFFER_PROVISIONS_PER_BIOMASS := 0.02
 const OFFER_HUNTERS := 3
 
 ## The shared roster plus the two kits the offer test needs — the passive device (mass-bounded, silent)
-## and the husbandry kit (the pen axis). Both are absent from `BandFx.kit_roster_fixture()`, and adding
-## them there would change what every hunt picker in both harnesses lists.
+## and the SYNTHETIC handling kit (the pen axis, `HANDLING_KIT_ID`; no shipped kit has that shape since
+## §4.9 item 12b, and its docstring is where the reason lives). Both are absent from
+## `BandFx.kit_roster_fixture()`, and adding them there would change what every hunt picker in both
+## harnesses lists.
 func _offer_roster() -> Array:
 	var kits := _pen_axis_roster()
 	kits.insert(kits.size() - 1, {
@@ -778,7 +780,10 @@ func _kit_offer_states() -> void:
 		bool(deer_trapping.get("disabled", false))
 			and String(deer_trapping.get("text", "")).contains(
 				HudComposeVocab.KIT_WITHHELD_REASON_CANNOT_HURT % "Red Deer"))
-	var deer_husbandry := _picker_entry(deer_sheet, "Husbandry kit")
+	# **THE SYNTHETIC ENTRY, not a shipped kit** — since §4.9 item 12b deleted the `husbandry` kit no
+	# shipped roster carries this shape (a hunt kit that hauls and cannot hurt anything), and the two
+	# claims it is here for are still live rules. See `HANDLING_KIT_ID`.
+	var deer_handling := _picker_entry(deer_sheet, HANDLING_KIT_LABEL)
 	# **A RED DEER NEVER CLIMBS**, so neither of the handling kit's axes can reach it: its pen tier
 	# wants a pen this species can never have, and its build axis wants a rung it can never stand on.
 	# That is what keeps the withholding honest now that the build axis exists — see the warren below,
@@ -786,12 +791,12 @@ func _kit_offer_states() -> void:
 	#
 	# **AND THE REASON IT STATES IS THE WEAPON'S, not the pen's.** The kit carries a sled, so it
 	# supplies the haul a wild hunt reads and the pen rule declines it (`kit_reaches_a_wild_hunt`);
-	# what refuses it here is that it carries no weapon, which is what `equipment.json`'s
-	# `_comment_kits` has always said would happen on a wild herd.
-	h._assert_hud("…and Husbandry is greyed on a wild-ceiling herd, for the WEAPON's reason — \"%s\""
-			% String(deer_husbandry.get("text", "")),
-		bool(deer_husbandry.get("disabled", false))
-			and String(deer_husbandry.get("text", "")).contains(
+	# what refuses it here is that it carries no weapon, and a wild herd is FOUGHT — the sim's
+	# `max(0, attack − defense)` refuses the hunt outright, so the row must grey and say so.
+	h._assert_hud("…and the handling kit is greyed on a wild-ceiling herd, for the WEAPON's reason — \"%s\""
+			% String(deer_handling.get("text", "")),
+		bool(deer_handling.get("disabled", false))
+			and String(deer_handling.get("text", "")).contains(
 				HudComposeVocab.KIT_WITHHELD_REASON_CANNOT_HURT % "Red Deer"))
 	# **THE TWO POSITIVES ARE NOT DECORATION.** A rule that greyed every kit satisfies both claims
 	# above, and `none` staying selectable is what keeps the bare-handed comparison free to run.
@@ -819,8 +824,8 @@ func _kit_offer_states() -> void:
 	#
 	# **THE PAIRING IS THE CLAIM.** The deer above is still withheld on the same roster in the same
 	# run, so a rule that simply stopped greying anything fails there rather than passing here.
-	h._assert_hud("…while Husbandry is OFFERED on a warren, whose rungs its gear can still speed",
-		not bool(_picker_entry(rabbit_sheet, "Husbandry kit").get("disabled", true)))
+	h._assert_hud("…while the handling kit is OFFERED on a warren, whose rungs its gear can still speed",
+		not bool(_picker_entry(rabbit_sheet, HANDLING_KIT_LABEL).get("disabled", true)))
 
 	_assert_a_closed_gate_quotes_zero(deer)
 	await _assert_a_sled_does_not_make_a_hunt_kit_pen_only()
@@ -970,6 +975,11 @@ const SLED_ROSTER_DEER_ID := "game_deer_sled_roster"
 ## fixture's id renders against that herd instead.
 const SLED_ROSTER_PEN_ID := "game_boar_sled_roster_pen"
 
+## The penned twin's own CONTROL — a corralled Rabbit Warren, on its own id for the same two reasons.
+## It is what stops "a pen greys the weaponless kits" from being read as "a pen greys everything": the
+## warren's `defense 0` is cleared by the bare hand, so the identical roster greys nothing on it.
+const SLED_ROSTER_PEN_WARREN_ID := "game_rabbit_sled_roster_pen"
+
 ## The penned twin's species terms, at the shipped `fauna_config.json` numbers — a **Wild Boar**
 ## (12 kg, `defense 2`, husbandry ceiling `pen`). Both halves are load-bearing: the defence is what
 ## makes the weapon rule grey the trap and the handling kit out on the range, and the ceiling is what
@@ -978,8 +988,8 @@ const PEN_BOAR_BODY_MASS := 12.0
 
 const PEN_BOAR_DEFENSE := 2.0
 
-## The four entries a hunt picker lists off `_sled_roster()` — Stalking, Trapping, Husbandry and the
-## null kit. Named because both sheets below assert it as a PRECONDITION: every claim about a greyed
+## The four entries a hunt picker lists off `_sled_roster()` — Stalking, Trapping, the synthetic
+## handling kit and the null kit. Named because both sheets below assert it as a PRECONDITION: every claim about a greyed
 ## row or an absent reason passes on a picker that listed nothing at all.
 const SLED_ROSTER_HUNT_KITS := 4
 
@@ -1081,11 +1091,11 @@ func _assert_a_sled_does_not_make_a_hunt_kit_pen_only() -> void:
 		bool(trapping_row.get("disabled", false))
 			and String(trapping_row.get("text", "")).contains(
 				HudComposeVocab.KIT_WITHHELD_REASON_CANNOT_HURT % "Red Deer"))
-	var husbandry_row := _picker_entry(sheet, "Husbandry kit")
-	h._assert_hud("…and so is Husbandry, which carries a sled and no weapon — \"%s\""
-			% String(husbandry_row.get("text", "")),
-		bool(husbandry_row.get("disabled", false))
-			and String(husbandry_row.get("text", "")).contains(
+	var handling_row := _picker_entry(sheet, HANDLING_KIT_LABEL)
+	h._assert_hud("…and so is the handling kit, which carries a sled and no weapon — \"%s\""
+			% String(handling_row.get("text", "")),
+		bool(handling_row.get("disabled", false))
+			and String(handling_row.get("text", "")).contains(
 				HudComposeVocab.KIT_WITHHELD_REASON_CANNOT_HURT % "Red Deer"))
 	var pen_reasons := 0
 	for row_variant in rows:
@@ -1107,8 +1117,11 @@ func _assert_a_sled_does_not_make_a_hunt_kit_pen_only() -> void:
 	var pen := _offer_quarry(SLED_ROSTER_PEN_ID, "Wild Boar", "big", PEN_BOAR_BODY_MASS,
 		PEN_BOAR_DEFENSE, SourceForecast.HUSBANDRY_CEILING_PEN)
 	pen[KitRoster.QUARRY_CORRALLED_KEY] = true
-	# A pen is slaughtered rather than stalked and publishes no engagement stage, which is the sim's
-	# own reading — see `KitRoster.kit_offer`, where it is the second of the two pen guards.
+	# ⛔ **`NO_ENGAGEMENT_STAGE` IS WHAT THE WIRE ACTUALLY PUBLISHES FOR A PEN, and this fixture keeps
+	# it deliberately.** `core_sim/src/snapshot/subsistence.rs` still filters the field on
+	# `is_corralled()`, against the sim's own behaviour, until issue #572 closes it — so a fixture that
+	# quietly stated a real reach here would prove the greying below against a frame no live client
+	# ever receives. `KitRoster.quarry_is_fought` reads the CORRALLED flag for exactly this reason.
 	pen["engage_rate"] = SourceForecast.NO_ENGAGEMENT_STAGE
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(pen)
@@ -1127,25 +1140,80 @@ func _assert_a_sled_does_not_make_a_hunt_kit_pen_only() -> void:
 	var pen_rows := _picker_entries(pen_sheet)
 	h._assert_hud("precondition: the corralled twin lists the same kits (%d)" % pen_rows.size(),
 		pen_rows.size() == SLED_ROSTER_HUNT_KITS)
-	var pen_greyed := 0
-	for row_variant in pen_rows:
-		if bool((row_variant as Dictionary)["disabled"]):
-			pen_greyed += 1
-	h._assert_hud("a corralled herd greys nothing — a pen is collected, not fought (%d greyed)"
-		% pen_greyed, pen_greyed == 0)
+	# ⛔ **THIS BLOCK INVERTED AT §4.9 item 12b, and the old claim was that a corralled herd greys
+	# NOTHING.** It was true of a sim that quoted a fence-holding band a take whatever it carried; the
+	# take resolves engage → retreat → fight at every rung now, at the species' own `defense`, so a
+	# bare-handed party at a pen is quoted nothing and paid nothing
+	# (`core_sim/tests/hunt_useful_crew_on_the_wire.rs`). **Containment solves the catching, weapons
+	# solve the killing** — and the picker has to say so before the crew is sent.
+	var pen_trapping := _picker_entry(pen_sheet, "Trapping kit")
+	h._assert_hud("a fence does not kill the boar: Trapping is greyed at the PEN too, for the WEAPON's reason — \"%s\""
+			% String(pen_trapping.get("text", "")),
+		bool(pen_trapping.get("disabled", false))
+			and String(pen_trapping.get("text", "")).contains(
+				HudComposeVocab.KIT_WITHHELD_REASON_CANNOT_HURT % "Wild Boar"))
+	# **THE SPEAR LINE IS THE OTHER HALF OF THE CLAIM.** A rule that greyed everything on a pen would
+	# satisfy the line above on its own, and it would be the old defect pointing the other way.
+	var pen_stalking := _picker_entry(pen_sheet, "Stalking kit")
+	h._assert_hud("…while the spear line clears the same defence and stays selectable — \"%s\""
+			% String(pen_stalking.get("text", "")),
+		not bool(pen_stalking.get("disabled", true)))
+	# **AND THE HANDLING KIT IS STILL OFFERED, on the BUILD axis rather than on the weapon.** It
+	# carries no weapon and could not bring the boar down, but this pen has a rung left to climb and
+	# the axis that speeds that climb is asked BEFORE the fight — a crook does not have to kill a beast
+	# to be the right thing to carry while you are gentling one. Out on the range the same kit on the
+	# same roster IS greyed (the wild twin above), because a wild boar offers no rung to build.
+	var pen_handling := _picker_entry(pen_sheet, HANDLING_KIT_LABEL)
+	h._assert_hud("…and the handling kit stays offered on the rung its gear can still speed — \"%s\""
+			% String(pen_handling.get("text", "")),
+		not bool(pen_handling.get("disabled", true))
+			and RungGates.hunt_rung_remains(pen, HudComposeVocab.BARE_FORECAST_PREFIX))
 	h._assert_hud("…and the PEN is the axis it is priced on",
 		KitRoster.carry_axis_for(KitRoster.JOB_HUNT, pen) == KitRoster.KIT_PEN_CARRY_KEY)
 	h._assert_hud("…where the wild twin is priced on the hunt haul",
 		KitRoster.carry_axis_for(KitRoster.JOB_HUNT, deer) == KitRoster.KIT_HUNT_CARRY_KEY)
 
-## **THE HUSBANDRY KIT'S HINT NAMES THE PEN, AND AN ORDINARY HUNT KIT'S DOES NOT.**
+	# --- THE PENNED ANIMAL THE PARTY CAN ACTUALLY KILL: nothing is greyed -------------------------
+	# **THE PAIRING IS THE CLAIM, and without this half the boar's greying proves only that a pen
+	# greys things.** A Rabbit Warren states `defense 0`, so the bare hand's `attack 1` clears it,
+	# `max(0, 1 − 0)` is positive and the gate is open for every kit on the roster — penned exactly as
+	# it is wild. What decides the greying is the ANIMAL, never the fence.
+	var pen_warren := _offer_quarry(SLED_ROSTER_PEN_WARREN_ID, "Rabbit Warren", "small",
+		OFFER_RABBIT_BODY_MASS, OFFER_RABBIT_DEFENSE, SourceForecast.HUSBANDRY_CEILING_PEN)
+	pen_warren[KitRoster.QUARRY_CORRALLED_KEY] = true
+	pen_warren["engage_rate"] = SourceForecast.NO_ENGAGEMENT_STAGE
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(pen_warren)
+	h._compose_herd(pen_warren, OFFER_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	var warren_sheet: Control = h._hud._drawercompose._compose_sheet
+	var warren_picker := Q.find_meta_node(warren_sheet, KitRoster.KIT_PICKER_META) as OptionButton
+	if warren_picker != null:
+		warren_picker.get_popup().position = Vector2i(
+			warren_picker.get_screen_position() + Vector2(0.0, warren_picker.size.y))
+		warren_picker.get_popup().popup()
+	await h._settle()
+	await h._save("herd_kit_offer_sled_roster_pen_warren")
+	if warren_picker != null:
+		warren_picker.get_popup().hide()
+	var warren_rows := _picker_entries(warren_sheet)
+	h._assert_hud("precondition: the penned warren lists the same kits (%d)" % warren_rows.size(),
+		warren_rows.size() == SLED_ROSTER_HUNT_KITS)
+	var warren_greyed := 0
+	for row_variant in warren_rows:
+		if bool((row_variant as Dictionary)["disabled"]):
+			warren_greyed += 1
+	h._assert_hud("a penned warren greys NOTHING — every kit clears a `defense 0` (%d greyed)"
+		% warren_greyed, warren_greyed == 0)
+
+## **A HANDLING KIT'S HINT NAMES THE PEN, AND AN ORDINARY HUNT KIT'S DOES NOT.**
 ##
-## The pen axis reached the roster with no hint-line reader, so a player selecting Husbandry on a hunt sheet
-## read `attack 1.0 · carry 40.0 per hunter · sled NN` — the SLED's condition, no pen tier at all, and
-## nothing about the one item the kit exists to carry.
+## The pen axis reached the roster with no hint-line reader, so a player selecting a pen-axis kit on a
+## hunt sheet read `attack 1.0 · carry 40.0 per hunter · sled NN` — the SLED's condition, no pen tier at
+## all, and nothing about the one item the kit exists to carry.
 ##
 ## **IT IS A 2×2 NOW, BECAUSE THE PEN LINE IS GATED ON THE SOURCE RATHER THAN ON THE KIT.** Gating it
-## on the KIT printed a pen tier for a husbandry kit against a WILD herd — a tier nothing would
+## on the KIT printed a pen tier for a handling kit against a WILD herd — a tier nothing would
 ## read — and withheld it from a sled-only kit at a PEN, which is the one place a player needs it. So
 ## both kits are asked against both sources, and each of the four is an EQUALITY: half of every claim
 ## is what the line must NOT also say, and a `contains` would pass on a hint that stated every tier.
@@ -1155,20 +1223,23 @@ func _assert_a_sled_does_not_make_a_hunt_kit_pen_only() -> void:
 ## the handling gear for what it butchered AND the sled for what it hauled home.
 ##
 ## **DRIVEN OVER A LOCALLY-BUILT ROSTER, and it has to be** — `BandFx.kit_roster_fixture()` carries no
-## `husbandry` kit (adding one would change what every hunt picker in both harnesses lists), so no
-## entry there equips the pen axis and the roster's max would equal its bare tier: a kit compared
-## against itself. It is also a SENTENCE, which a frame cannot judge — the sheet renders a perfectly
-## plausible hint whichever component it quotes.
+## pen-axis kit (adding one would change what every hunt picker in both harnesses lists), so no entry
+## there equips the pen axis and the roster's max would equal its bare tier: a kit compared against
+## itself. The entry it stages is the SYNTHETIC `HANDLING_KIT_ID`, no shipped kit having had this shape
+## since §4.9 item 12b deleted the `husbandry` one.
+##
+## It is also a SENTENCE, which a frame cannot judge — the sheet renders a perfectly plausible hint
+## whichever component it quotes.
 ##
 ## The expectations are spelled out here rather than recomposed through `KitRoster.tier_hint`: an
 ## expectation re-derived through the function under test asserts nothing.
-func _assert_husbandry_hint_states_the_pen() -> void:
+func _assert_handling_hint_states_the_pen() -> void:
 	var kits := _pen_axis_roster()
 	# The shared fixture states a condition for EVERY item the roster ships, handling gear included,
 	# so this no longer grafts one on — a second row for the same item would shadow the fixture's.
 	var band := _pen_axis_band({})
 	var stalking := KitRoster.kit_by_id(kits, BandFx.KIT_ID_BIG_GAME)
-	var handling := KitRoster.kit_by_id(kits, HUSBANDRY_KIT_ID)
+	var handling := KitRoster.kit_by_id(kits, HANDLING_KIT_ID)
 	var wild := _corral_twin(false)
 	var pen := _corral_twin(true)
 	var sep := HudComposeVocab.KIT_HINT_SEPARATOR
@@ -1195,9 +1266,9 @@ func _assert_husbandry_hint_states_the_pen() -> void:
 	var wild_handling := KitRoster.tier_hint(kits, handling, band, KitRoster.JOB_HUNT, wild)
 	h._assert_hud("a stalking kit against a WILD herd states attack and the sled — \"%s\""
 		% wild_stalking, wild_stalking == sep.join([attack_equipped, hunt_carry, spears, sled]))
-	# The husbandry kit carries no spears, so it takes the bare-handed attack and states no spear
+	# The handling kit carries no spears, so it takes the bare-handed attack and states no spear
 	# condition — and states NO pen tier out here, the pen being what would read one.
-	h._assert_hud("…and a husbandry kit out there states no pen tier at all — \"%s\"" % wild_handling,
+	h._assert_hud("…and a handling kit out there states no pen tier at all — \"%s\"" % wild_handling,
 		wild_handling == sep.join([attack_bare, hunt_carry, handling_gear, sled]))
 	# --- the PEN column: the keeper's carry, and no fight ------------------------------------------
 	var pen_stalking := KitRoster.tier_hint(kits, stalking, band, KitRoster.JOB_HUNT, pen)
@@ -1210,7 +1281,7 @@ func _assert_husbandry_hint_states_the_pen() -> void:
 	# survive is a claim that reads as though the shipped stalking kit collects at the keeper's bare rate.
 	h._assert_hud("a kit whose pen tier is BARE quotes the bare keeper's rate — \"%s\"" % pen_stalking,
 		pen_stalking == sep.join([pen_carry_bare, spears, sled]))
-	h._assert_hud("…and the husbandry kit states the pen AND its handling gear — \"%s\"" % pen_handling,
+	h._assert_hud("…and the handling kit states the pen AND its handling gear — \"%s\"" % pen_handling,
 		pen_handling == sep.join([pen_carry_equipped, handling_gear, sled]))
 
 ## **THE PEN AND THE VANTAGE STEP DOWN WITH THE BAND'S OWN WEAR — the pair that would have caught the
@@ -1234,7 +1305,7 @@ func _assert_husbandry_hint_states_the_pen() -> void:
 ## `role_gear`'s tier, the value the Scout card is built from.
 func _assert_the_appended_axes_read_the_band() -> void:
 	var pen_kits := _pen_axis_roster()
-	var handling := KitRoster.kit_by_id(pen_kits, HUSBANDRY_KIT_ID)
+	var handling := KitRoster.kit_by_id(pen_kits, HANDLING_KIT_ID)
 	var pen := _corral_twin(true)
 	var fresh_pen := float(KitRoster.effective_tiers(pen_kits, handling,
 		_pen_axis_band({}))[KitRoster.KIT_PEN_CARRY_KEY])
@@ -1268,15 +1339,16 @@ func _assert_the_appended_axes_read_the_band() -> void:
 ##
 ## Reported as a gap in the sim's own notes: a corralled herd is worked from a Hunt row, so an axis
 ## keyed by JOB priced a pen on the SLED's tier while the sim collects one on `EquipmentStat::PenCarry`.
-## **On the shipped roster the two errors CANCEL** — husbandry and stalking both carry a sled, so both
-## sat at the sled's equipped tier and every hunt kit quoted a pen the same number. That is why the
-## claim is a TRIPLE and not a single: the pen pair alone would be satisfied by a fix that priced
+## **ON A ROSTER WHERE EVERY HUNT KIT CARRIES A SLED THE TWO ERRORS CANCEL** — each one sat at the
+## sled's equipped tier, so every hunt kit quoted a pen the same number, which is exactly the shipped
+## roster since §4.9 item 12b left `big_game` and `trapping` as the animal web's whole hunt pair.
+## That is why the claim is a TRIPLE and not a single: the pen pair alone would be satisfied by a fix that priced
 ## everything on the pen axis, and the wild reading alone by no fix at all.
 ##
 ## **DRIVEN THROUGH `DrawerComposeController._hunt_priced_herd`, the real seam**, for the reason the
 ## kit-liveness block above records: the two deaths this feature has had were both in the FEED, and a
 ## direct `KitRoster` call exercises the arithmetic without ever reaching it. The roster is installed
-## and restored around the block, `BandFx.kit_roster_fixture()` carrying no husbandry kit, so no frame
+## and restored around the block, `BandFx.kit_roster_fixture()` carrying no pen-axis kit, so no frame
 ## after it renders a picker this block put there.
 func _assert_a_pen_prices_on_the_keepers_carry() -> void:
 	var kits_before: Array = h._hud._band_labor.kits()
@@ -1292,7 +1364,7 @@ func _assert_a_pen_prices_on_the_keepers_carry() -> void:
 		SourceForecast.FORECAST_PER_WORKER_KEY, 0.0))
 	var sled_at_the_pen := float(h._hud._drawercompose._hunt_priced_herd(pen, band).get(
 		SourceForecast.FORECAST_PER_WORKER_KEY, 0.0))
-	h._hud._compose.set_hunt_kit_id(HUSBANDRY_KIT_ID)
+	h._hud._compose.set_hunt_kit_id(HANDLING_KIT_ID)
 	var handling_at_the_pen := float(h._hud._drawercompose._hunt_priced_herd(pen, band).get(
 		SourceForecast.FORECAST_PER_WORKER_KEY, 0.0))
 	h._hud._compose.set_hunt_kit_id(kit_before)
@@ -1305,7 +1377,7 @@ func _assert_a_pen_prices_on_the_keepers_carry() -> void:
 		% [str(sled_in_the_wild), str(published)], is_equal_approx(sled_in_the_wild, published))
 	# …AND THE PEN IS PRICED ON THE KEEPER'S. Stated as the roster's own ratio rather than as two
 	# magnitudes, so a re-tuned `equipment.json` moves the fixture and the expectation together.
-	h._assert_hud("the husbandry kit collects the PEN at the reference (%s of %s)"
+	h._assert_hud("the handling kit collects the PEN at the reference (%s of %s)"
 		% [str(handling_at_the_pen), str(published)],
 		is_equal_approx(handling_at_the_pen, published))
 	h._assert_hud("…and a sled-only kit collects the same pen at the BARE keeper's tier (%s against %s)"
@@ -1330,7 +1402,7 @@ func _assert_the_gear_row_states_the_build_it_speeds(band: Dictionary) -> void:
 	var clause := DetailFormat.KIT_ROLE_BUILD_WORK_SUFFIX % String.num(
 		BandFx.KIT_BUILD_WORK_HANDLING, DetailFormat.KIT_BUILD_WORK_DECIMALS)
 	var on_handling := band.duplicate(true)
-	on_handling[DetailFormat.BAND_QUOTED_KIT_ID_KEY] = HUSBANDRY_KIT_ID
+	on_handling[DetailFormat.BAND_QUOTED_KIT_ID_KEY] = HANDLING_KIT_ID
 	var geared_line := _gear_row(on_handling)
 	h._assert_hud("the handling gear's row states the build it speeds (%s) — \"%s\""
 		% [clause, geared_line], geared_line.contains(clause))
@@ -1340,7 +1412,7 @@ func _assert_the_gear_row_states_the_build_it_speeds(band: Dictionary) -> void:
 	h._assert_hud("…and NOT on a band whose hunt job left the gear at camp — \"%s\"" % bare_line,
 		not bare_line.contains(clause))
 	var dry := _pen_axis_band(BandFx.hunt_preview_local_band(), true)
-	dry[DetailFormat.BAND_QUOTED_KIT_ID_KEY] = HUSBANDRY_KIT_ID
+	dry[DetailFormat.BAND_QUOTED_KIT_ID_KEY] = HANDLING_KIT_ID
 	var dry_line := _gear_row(dry)
 	h._assert_hud("…nor once the gear is spent, which takes no work off any job — \"%s\""
 		% dry_line, not dry_line.contains(clause))
@@ -1363,17 +1435,29 @@ func _corral_twin(corralled: bool) -> Dictionary:
 	herd[KitRoster.QUARRY_CORRALLED_KEY] = corralled
 	return herd
 
-## The shipped `husbandry` kit's id (`equipment.json`). The item behind the pen axis rides the shared
-## band fixture now, so this chapter no longer names it.
-const HUSBANDRY_KIT_ID := "husbandry"
+## ⛔ **A SYNTHETIC KIT, NAMED SO THAT IT CANNOT BE MISTAKEN FOR A SHIPPED ONE.** No id in
+## `equipment.json` is `handling`, and that is deliberate: `docs/plan_standing_upkeep.md` §4.9 item 12b
+## deleted the `husbandry` kit, which was the last shipped entry of this SHAPE — a hunt kit that
+## supplies a haul and no attack. The picker rules that shape still has to obey did not go with it (a
+## weaponless hunt kit is greyed on a wild-ceiling herd for the WEAPON's reason, and offered on a herd
+## with a rung left to climb, issue #515), and no shipped roster can prove them any more. So this
+## chapter stages the shape itself.
+##
+## The entry exists FOR that proof — it is not stale content left behind by the deletion, and deleting
+## it takes the only coverage those two rules have with it.
+const HANDLING_KIT_ID := "handling"
 
-## The shared roster plus the `husbandry` kit the harness's own picker states must not see: the ONE
-## entry that equips the pen axis, so `KitRoster.equipped_tier` answers 40 and the offer test's own
+## What the synthetic entry's row reads in a picker. Spelled once, because every claim below finds its
+## row by this prefix and a second spelling is how a lookup comes to miss silently and assert `{}`.
+const HANDLING_KIT_LABEL := "Handling kit"
+
+## The shared roster plus the synthetic handling kit the harness's own picker states must not see: the
+## ONE entry that equips the pen axis, so `KitRoster.equipped_tier` answers 40 and the offer test's own
 ## `kit_uses` axis-supply check can tell the two hunt kits apart. Every other axis on it is the roster's own bare tier, the wire's shape.
 func _pen_axis_roster() -> Array:
 	var kits := BandFx.kit_roster_fixture()
 	kits.insert(kits.size() - 1, {
-		"id": HUSBANDRY_KIT_ID, "display_name": "Husbandry kit", "jobs": ["hunt"],
+		"id": HANDLING_KIT_ID, "display_name": HANDLING_KIT_LABEL, "jobs": ["hunt"],
 		"attack": BandFx.KIT_ATTACK_BARE,
 		"hunt_carry_per_worker_biomass": BandFx.KIT_HUNT_CARRY_EQUIPPED,
 		"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_BARE,
@@ -1394,7 +1478,7 @@ func _pen_axis_roster() -> Array:
 	return kits
 
 ## The band both pen blocks are asked about: the shared kitted fixture PLUS a `kit_tiers` row for the
-## husbandry kit, which `BandFx` cannot state because no roster it ships offers that kit.
+## synthetic handling kit, which `BandFx` cannot state because no roster it ships offers that kit.
 ##
 ## **A KIT WITH NO ROW READS AS `stated == false`**, and then `KitRoster.effective_tiers` falls back to
 ## the roster's fresh tiers and the hint prints NO condition clause — so without this the handling
@@ -1418,7 +1502,7 @@ func _pen_axis_band(band: Dictionary, handling_gear_dry: bool = false,
 	var kitted := BandFx.with_equipped_kit(band)
 	var rows: Array = kitted.get(KitRoster.BAND_KIT_TIERS_KEY, [])
 	rows.append({
-		KitRoster.BAND_KIT_TIERS_ID_KEY: HUSBANDRY_KIT_ID,
+		KitRoster.BAND_KIT_TIERS_ID_KEY: HANDLING_KIT_ID,
 		KitRoster.KIT_ATTACK_KEY: BandFx.KIT_ATTACK_BARE,
 		KitRoster.KIT_HUNT_CARRY_KEY: BandFx.KIT_HUNT_CARRY_EQUIPPED,
 		KitRoster.KIT_FORAGE_CARRY_KEY: BandFx.KIT_FORAGE_CARRY_BARE,
@@ -1661,7 +1745,7 @@ func _kit_swap_turn_estimate_states() -> void:
 
 	#   (b) THE HANDLING KIT — the SAME herd, the SAME crew, the SAME floor, the SAME hunt kit under
 	# the stepper. Only the BUILDERS row moved, which is the row a build's gear comes off.
-	BandFx.staff_builders(h._hud._band_labor, KIT_SWAP_KEEPERS, HUSBANDRY_KIT_ID)
+	BandFx.staff_builders(h._hud._band_labor, KIT_SWAP_KEEPERS, HANDLING_KIT_ID)
 	h._compose_herd(warren)
 	await h._settle()
 	await h._save("herd_kit_swap_geared_build")
@@ -1690,7 +1774,7 @@ func _kit_swap_turn_estimate_states() -> void:
 	# **THE `min` IS ON THE HEAD COUNT, and it is asked of the PRODUCER** — a crew above the gear's own
 	# saturating crew cannot be staged on a frame without putting the claim at the mercy of the
 	# stepper's cap. A fourth keeper carries no hurdles, so the gear term does not grow with them.
-	var geared := KitRoster.build_gear(keepers, HUSBANDRY_KIT_ID, KitRoster.BUILD_BRANCH_ANIMAL)
+	var geared := KitRoster.build_gear(keepers, HANDLING_KIT_ID, KitRoster.BUILD_BRANCH_ANIMAL)
 	var overstaffed := SourceForecast.build_turns_at(warren, HudComposeVocab.BARE_FORECAST_PREFIX,
 		SourceForecast.IMPROVEMENT_TAME, KIT_SWAP_KEEPERS + 1, SourceForecast.FLOOR_FOOD_PEAK,
 		geared)
@@ -1728,7 +1812,7 @@ func _kit_swap_turn_estimate_states() -> void:
 	h._compose_herd(stocked_warren, OVER_GEARED_KEEPERS, SourceForecast.FLOOR_FOOD_PEAK)
 	# The BUILD's crew AND its kit, dialled after the open — see (a) above. The gear is resolved over
 	# these hands, so the "gear alone pays the job off" regime is a claim about the BUILDERS' coverage.
-	BandFx.staff_builders(h._hud._band_labor, OVER_GEARED_KEEPERS, HUSBANDRY_KIT_ID)
+	BandFx.staff_builders(h._hud._band_labor, OVER_GEARED_KEEPERS, HANDLING_KIT_ID)
 	h._compose_herd(stocked_warren)
 	await h._settle()
 	await h._save("herd_kit_swap_armed_crew")

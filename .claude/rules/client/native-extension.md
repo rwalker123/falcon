@@ -562,8 +562,8 @@ term in the same estimate. **The estimate's GEAR terms are not source fields at 
   `BandKitTiers`). The wire keeps the slot frozen at its neutral `1` so a client still compiles, and
   `buildWorkPerWorker` supersedes it — the work units one equipped worker takes off a build. Leaving
   the old key decoded is the trap rather than the safe option: every kit then reads "changes no
-  build", which silently strips the husbandry kit's own clause AND withholds it from the herd being
-  tamed (`KitRoster.kit_offer` asks that axis first).
+  build", which silently strips the handling gear's own clause AND withholds the kit carrying it from
+  the herd being tamed (`KitRoster.kit_offer` asks that axis first).
 - **The plant seven are TWO wirings, and the guard is what says so.** A patch does not travel whole:
   `MapView._tile_info_at` copies it key by key, so every one of them also needs the `patch_`-prefixed
   cross-ref and a `FOW_DISCOVERED_HIDDEN_KEYS` entry. `tools/patch_crossref_guard.gd` caught exactly

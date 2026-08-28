@@ -13541,8 +13541,8 @@ mod tests {
     /// compares tools, so a silent substitution answers a different question than the one asked.
     #[test]
     fn build_kit_refuses_an_unqueued_source_and_a_kit_that_cannot_build() {
-        /// A roster kit that lists no `builders` job — collecting from a pen is all it can do.
-        const NOT_A_BUILD_KIT: &str = "husbandry";
+        /// A roster kit that lists no `builders` job — gathering is all it can do.
+        const NOT_A_BUILD_KIT: &str = "gathering";
         /// An id no roster entry carries.
         const NO_SUCH_KIT: &str = "adamantine_trowel";
 

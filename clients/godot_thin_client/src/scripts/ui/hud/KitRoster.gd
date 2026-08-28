@@ -87,8 +87,8 @@ const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 ## to escape. Stated as a per-worker QUANTITY of work instead, the job's own size decides what the
 ## tool is worth. The wire still carries `buildRate`, frozen at its neutral `1`, and this client no
 ## longer decodes it: a reader left on it reads "changes no build" for every kit in the game, which
-## silently drops the husbandry kit's own clause AND withholds it from a herd being tamed (see
-## `kit_offer`).
+## silently drops the handling gear's own clause AND withholds the kit carrying it from a herd being
+## tamed (see `kit_offer`).
 ##
 ## **IT IS NOT A TIER AND HAS NO HINT-LINE HOME.** The four axes above are rates a readout can quote
 ## per worker; this one prices a build the sheet is not otherwise talking about, and the surface that
@@ -191,7 +191,9 @@ const MASS_BOUND_UNBOUNDED := 0.0
 ## `durability` are NOT spelled here: `SourceForecast.hunt_gate_model_at` owns that pair, and asking it
 ## is how the offer test and the gate line cannot come to disagree about what a closed gate is.
 const QUARRY_BODY_MASS_KEY := "body_mass"
-const QUARRY_CORRALLED_KEY := "corralled"
+## Aliased off the shared layer, not re-spelled: `SourceForecast.quarry_is_fought` reads the same wire
+## key, and two spellings of one field is how two surfaces come to disagree about a pen.
+const QUARRY_CORRALLED_KEY := SourceForecast.SOURCE_CORRALLED_KEY
 
 ## The BAND's remaining condition per ITEM — one row per item the server's config carries, as
 ## `{item_id, remaining}` on `equipment.json`'s 0-100 scale (`0` = dry). A dry item steps its role
@@ -272,12 +274,12 @@ const JOB_WARRIOR := "warrior"
 ## read off this role's own row now that the build crew has left the tile.
 ##
 ## **THERE ARE TWO BUILDERS KITS, ONE PER WEB — `hurdling` (hurdles) and `tillage` (hoes)** — and
-## `husbandry` is not one of them any more: it kept `hunt`, the one job it can actually do, and gave
-## up `builders` (`equipment.md` → "THE TWO BUILDERS KITS CARRY NO CARRY GEAR"). The claim this
-## comment used to carry — *`husbandry` is the ONE kit whose items declare `build_work`* — was the
-## whole reason an animal-handling bundle was offered for a Cultivate, and it is false in two
-## directions now: `hoes` declare the axis too, and the husbandry kit still declares it (it carries
-## hurdles) while being unable to take the builders job at all.
+## `husbandry` is not one of them, and since `docs/plan_standing_upkeep.md` §4.9 item 12b it is not a
+## kit at all — the weaponless hunt bundle was deleted, `big_game` being a strict superset of it. (The
+## `husbandry` JOB is untouched: `hurdling` lists it, and `keeping_kit_for_branch` maps the animal
+## branch to it.) The claim this comment used to carry — *`husbandry` is the ONE kit whose items
+## declare `build_work`* — was the whole reason an animal-handling bundle was offered for a Cultivate,
+## and `hoes` declare the axis too.
 ##
 ## ⚠ **THE WIRE NAMES NO DEFAULT FOR IT, AND THE ROW STATES THE DERIVED ANSWER INSTEAD.**
 ## `SubsistenceSection` publishes `defaultHunt` / `Forage` / `Scout` / `WarriorKitId` and no builders
@@ -609,9 +611,9 @@ static func repriced_source(src: Dictionary, prefix: String, carry: float, refer
 ##
 ## **THE AXIS IS A PROPERTY OF THE SOURCE, AND A JOB-KEYED TABLE ALONE COULD NOT SAY SO.** A corralled
 ## herd is worked from a Hunt row, so pricing it by job read the SLED's tier — while the sim collects
-## a pen on `EquipmentStat::PenCarry`, which only the husbandry kit supplies. That UNDER-stated the
-## very kit the pen exists for and OVER-stated every kit carrying a sled and no handling gear, and on
-## the shipped roster (where husbandry and stalking both carry a sled) the two errors cancelled into
+## a pen on `EquipmentStat::PenCarry`, a stat of its own and not the hunt haul's. That UNDER-stated
+## the very kit the pen exists for and OVER-stated every kit carrying a sled and no handling gear, and
+## on a roster whose hunt kits all carry a sled the two errors cancelled into
 ## *every hunt kit quotes a pen the same number* — a perfectly plausible sheet, which is why only a
 ## driven assertion can hold it. A sled drags a carcass in off the range; a pen stands at the camp.
 ##
@@ -769,6 +771,13 @@ static func kit_supplies_any(kit: Dictionary) -> bool:
 static func kit_reaches_a_wild_hunt(kits: Array, kit: Dictionary) -> bool:
 	return kit_uses(kits, kit, KIT_ATTACK_KEY) or kit_uses(kits, kit, KIT_HUNT_CARRY_KEY)
 
+## **THE FIGHT PREDICATE LIVES IN `SourceForecast.quarry_is_fought`, NOT HERE.** Four surfaces ask it
+## — this file's offer test and priced gate, the compose sheet's refusal line, and the crew cap the
+## Work board's `+` reads — and the two lower ones cannot reach up into this module, so the shared
+## layer is the only home that all four can share. Its docstring owns the reason the test is not
+## `has_engagement_stage`: the wire still publishes `NO_ENGAGEMENT_STAGE` for a pen, against the sim's
+## own behaviour, until issue #572.
+
 ## **THE OFFER TEST — `{offered, reason}` for ONE kit against ONE source.**
 ##
 ## > Offer a kit as selectable only if something it declares can change this source's outcome.
@@ -800,16 +809,30 @@ static func kit_reaches_a_wild_hunt(kits: Array, kit: Dictionary) -> bool:
 ## *"it cannot bring one down"* is a fact about the animal and would go unsaid on a rabbit.
 ##
 ## ⛔ **IT MATCHES NO KIT ON THE SHIPPED ROSTER, and that is a fact about the roster rather than dead
-## code.** Every hunt kit carries a **sled**, and the sled supplies `hunt_carry` — so all three reach
-## a wild hunt and the rule declines to withhold any of them. What still trips it is a kit supplying
-## the pen axis and nothing the range can read, which is exactly what the retired `hurdles` bundle
-## was; `docs/plan_standing_upkeep.md` §4.9 item 12b reshapes this roster next. The husbandry kit is
-## therefore withheld on a Red Deer by the WEAPON rule below (it carries no weapon), which is what
-## `equipment.json`'s `_comment_kits` has always said of it.
+## code.** Every hunt kit carries a **sled**, and the sled supplies `hunt_carry` — so all of them
+## reach a wild hunt and the rule declines to withhold any of them. What still trips it is a kit
+## supplying the pen axis and nothing the range can read, which is exactly what the retired `hurdles`
+## bundle was. A kit carrying a sled and NO weapon is withheld on a Red Deer by the WEAPON rule below
+## instead: `docs/plan_standing_upkeep.md` §4.9 item 12b deleted the last shipped kit of that shape
+## (`husbandry`), so `ui_preview`'s `compose_rungs.gd` stages one synthetically to keep the branch
+## provable.
 ##
-## **A PEN IS NOT FOUGHT, so rule 1 does not run on one.** A penned animal is slaughtered rather than
-## stalked and publishes no engagement stage — the same predicate the gate LINE is mounted behind —
-## and without that guard a corralled Red Deer would withhold every kit but the spear line.
+## **A PEN IS FOUGHT NOW, so rule 1 runs on one exactly as it runs on the range**
+## (`docs/plan_standing_upkeep.md` §4.9 item 12b). The take resolves engage → retreat → fight at every
+## rung and the fight is the species' own `defense` against the party's `attack`, unchanged by the
+## fence: **containment solves the catching, weapons solve the killing.** This guard used to read *"a
+## penned animal is slaughtered rather than stalked"* and spared a pen the weapon rule entirely, which
+## was right for a sim that let a bare-handed band butcher a fenced aurochs; the sim quotes that band
+## nothing and pays it nothing now (`core_sim/tests/hunt_useful_crew_on_the_wire.rs`).
+##
+## **So a corralled Red Deer DOES withhold every kit but the spear line, and that is the point rather
+## than the cost.** Its `defense 1` against the bare hand's `attack 1` is `max(0, 1 − 1)`, and a trap's
+## attack is bounded off a deer by `max_body_mass` — so only the spear line can bring one down, penned
+## or not, and a picker that hid that would be quoting a take the sim refuses.
+##
+## ⛔ **THE WIRE'S `engage_rate` CANNOT ANSWER "IS THERE A FIGHT HERE?" FOR A PEN** — it still
+## publishes `NO_ENGAGEMENT_STAGE` there. `quarry_is_fought` owns that reading; both this test and the
+## priced gate take it, and nothing here may re-derive it from the engagement field alone.
 ##
 ## **RESOLVED AT THE FRESH TIER, AND THAT IS THE LOAD-BEARING CONSTRAINT.** Which kits are offered and
 ## which is default are properties of (kit × quarry); the band's wear moves the QUOTED number and the
@@ -821,10 +844,10 @@ static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Diction
 		prefix: String, build_branch: String = BUILD_BRANCH_NONE) -> Dictionary:
 	# **THE BUILDERS ROW HAS ITS OWN APPLICABILITY QUESTION, and it is the same one asked of a snare
 	# against a Red Deer**: can what this kit carries change the outcome of the job in front of it? A
-	# hoe takes nothing off a `Tame` and hurdles take nothing off a `Cultivate`, so a builders kit
-	# serving the other web is greyed WITH ITS REASON rather than hidden — a player should learn that
-	# a hoe is not for stock, and invisibility is what let the wrong tool be offered in the first
-	# place. `none` is never withheld here for the reason it is never withheld anywhere: it carries
+	# hoe adds nothing to a `Tame` and a crook nothing to a `Cultivate` — the axis is the EXTRA work a
+	# worker delivers, never units off the job — so a builders kit serving the other web is greyed WITH
+	# ITS REASON rather than hidden: a player should learn that a hoe is not for stock, and
+	# invisibility is what let the wrong tool be offered in the first place. `none` is never withheld here for the reason it is never withheld anywhere: it carries
 	# nothing, so there is no job it can be inapplicable *to*.
 	if job == JOB_BUILDERS:
 		if kit.is_empty() or build_branch == BUILD_BRANCH_NONE or not kit_supplies_any(kit):
@@ -853,10 +876,7 @@ static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Diction
 	if kit_uses(kits, kit, KIT_PEN_CARRY_KEY) and not penned \
 			and not kit_reaches_a_wild_hunt(kits, kit):
 		return _kit_withheld(HudComposeVocab.KIT_WITHHELD_REASON_PEN_ONLY)
-	if penned:
-		return _kit_offered()
-	if not SourceForecast.has_engagement_stage(
-			float(quarry.get(prefix + SOURCE_ENGAGE_RATE, SourceForecast.NO_ENGAGEMENT_STAGE))):
+	if not SourceForecast.quarry_is_fought(quarry, prefix):
 		return _kit_offered()
 	var bare := unequipped_tier(kits, KIT_ATTACK_KEY)
 	if is_inf(bare):
@@ -903,14 +923,16 @@ static func _kit_withheld(reason: String) -> Dictionary:
 ## band's own WORN tier rather than at the fresh one, because this one decides a NUMBER rather than a
 ## choice. A dry-speared band against a Red Deer kills nothing, and the sheet must say zero.
 ##
-## The pen and the plant web are excluded by the same engagement-stage guard `kit_offer` takes: there
-## is no fight to lose at a pen, and a patch states no `durability` for the gate to be `stated` about.
+## **THE PLANT WEB IS EXCLUDED AND THE PEN IS NOT, by the same `quarry_is_fought` test `kit_offer`
+## takes** — a patch states no `durability` for the gate to be `stated` about, but a penned herd
+## resolves the ordinary fight (`docs/plan_standing_upkeep.md` §4.9 item 12b). Skipping a pen here is
+## what let the ASSIGN HUNTERS sheet reprice a real `per_worker` and a real crew target for a party
+## the sim pays nothing, one surface over from the greying `kit_offer` had already stopped doing.
 static func hunt_gate_closes(kits: Array, kit: Dictionary, band: Dictionary, quarry: Dictionary,
 		prefix: String) -> bool:
-	if kit.is_empty() or quarry.is_empty() or bool(quarry.get(QUARRY_CORRALLED_KEY, false)):
+	if kit.is_empty() or quarry.is_empty():
 		return false
-	if not SourceForecast.has_engagement_stage(
-			float(quarry.get(prefix + SOURCE_ENGAGE_RATE, SourceForecast.NO_ENGAGEMENT_STAGE))):
+	if not SourceForecast.quarry_is_fought(quarry, prefix):
 		return false
 	var gate := SourceForecast.hunt_gate_model_at(effective_attack_against(kits, kit, band,
 		float(quarry.get(QUARRY_BODY_MASS_KEY, 0.0))), quarry, "")
@@ -1069,8 +1091,8 @@ const ROLE_GEAR_STATED_KEY := "stated"
 ## **THE BRANCH IS PART OF THE READING, NOT A FILTER ON TOP OF IT.** A row whose
 ## `build_work_branch` disagrees with the build being priced contributes the neutral `0.0`, exactly
 ## as the sim's `EquipmentEffect::serves_branch` does — so a sheet handed the wrong web's kit quotes
-## an ungeared build rather than the hurdles' 8.5 against a garden. `BUILD_BRANCH_NONE` asks for no
-## branch test at all, which is what a caller with no build in front of it wants.
+## an ungeared build rather than the crook's `0.5` per worker against a garden. `BUILD_BRANCH_NONE`
+## asks for no branch test at all, which is what a caller with no build in front of it wants.
 ##
 ## `{}` for a kit this band publishes no row for, which `SourceForecast.build_turns_at` reads as the
 ## ungeared case — the same direction `TIER_ABSENT` errs in, and the honest answer for a wire this
@@ -1243,7 +1265,7 @@ static func kit_item_ids(kit: Dictionary) -> Array:
 ##   mounted behind), and the sim charges no weapon for the kill.
 ##
 ## **THE PEN ARM IS GATED ON THE SOURCE, NOT ON THE KIT, AND THE DIFFERENCE IS THE POINT.** Gating it
-## on the kit printed a pen tier for a husbandry kit selected against a *wild* herd — a number that
+## on the kit printed a pen tier for a handling kit selected against a *wild* herd — a number that
 ## would never be read — while withholding it from the sled-only kit at a pen, which is the one place
 ## the player needs to see it: at a pen, `pen 12.0 per keeper` beside `pen 40.0 per keeper` is the
 ## whole visible difference the handling gear buys.

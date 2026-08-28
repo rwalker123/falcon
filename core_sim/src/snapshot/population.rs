@@ -369,8 +369,8 @@ pub(crate) struct HuntCrewLevers<'a> {
     pub(crate) combat: &'a crate::combat_config::CombatConfig,
     /// `labor_config.hunt.per_worker_biomass_capacity`, the bare carry rate both animal collection
     /// tiers are resolved against. **A CORRALLED row needs it and a stalked one does not** — a pen
-    /// is collected rather than fought, so its curve's crew term is the keepers' throughput; see
-    /// `fauna::pen_crew_take_curve`.
+    /// fights exactly as the range does since §4.9 item 12b, and the keepers' *haul* is the one term
+    /// its curve carries that a stalking row's does not; see `fauna::hunt_crew_take_curve`.
     pub(crate) baseline_haul_rate: f32,
 }
 

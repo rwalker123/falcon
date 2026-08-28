@@ -1409,11 +1409,17 @@ fn the_wayfinding_tier_steps_down_when_the_kit_runs_dry() {
 /// `EquipmentStat::shares_equipped_rate_with`, so the stat now has both sides on one item.
 ///
 /// **The consequence is real and is what this test measures**: every hunt kit carrying a sled
-/// collects a pen at the equipped rate, so `big_game` and `husbandry` read alike and the bare rate
-/// belongs to a kit with **no sled at all**. The mistake the roster used to punish — bringing a drag
-/// harness to a pen — is no longer a mistake.
+/// collects a pen at the equipped rate, and the bare rate belongs to a kit with **no sled at all**.
+/// The mistake the roster used to punish — bringing a drag harness to a pen — is no longer a
+/// mistake.
+///
+/// ⛔ **AND THE `husbandry` KIT IS GONE ENTIRELY** (`docs/plan_standing_upkeep.md` §4.9 item 12b): a
+/// pen resolves the ordinary fight now, so a weaponless hunt bundle is the wrong thing to send to
+/// one. `big_game` is a strict superset of what it granted — spears *plus* the same sled — which is
+/// why a penned herd's default kit resolves there unchanged, and is what this test's first
+/// assertion pins.
 #[test]
-fn only_the_husbandry_kit_collects_a_pen_at_the_shipped_rate() {
+fn any_kit_carrying_a_sled_collects_a_pen_at_the_shipped_rate() {
     let equipment = equipment();
     // The **baseline** a keeper without handling gear collects at; the equipped side is the hunt
     // haul's own tier, which `pen_per_worker_biomass_capacity` resolves internally so the number
@@ -1421,24 +1427,31 @@ fn only_the_husbandry_kit_collects_a_pen_at_the_shipped_rate() {
     let baseline_rate = LaborConfig::builtin().hunt.per_worker_biomass_capacity;
     let fresh = outfitted();
 
-    let husbandry = equipment
-        .kit("husbandry")
-        .expect("the shipped roster carries the husbandry kit");
     let big_game = equipment
         .kit("big_game")
         .expect("the shipped roster carries the big-game kit");
 
     assert_eq!(
-        equipment.pen_per_worker_biomass_capacity(baseline_rate, &husbandry, &fresh),
-        equipped_carry(&equipment, SLED),
-        "a keeper with handling gear collects a pen at exactly the rate a pen has always collected \
-         at — the hunt haul's own tier, shared rather than restated"
+        equipment.default_kit(core_sim::KitJob::Hunt).id(),
+        "big_game",
+        "the pen's take resolves the HUNT job's default, so deleting the `husbandry` kit must leave \
+         a penned herd's crew on the stalking kit rather than on nothing"
+    );
+    assert_eq!(
+        equipment
+            .kit_supplying(core_sim::KitJob::Hunt, EquipmentStat::PenCarry)
+            .expect("some hunt kit supplies `pen_carry`")
+            .id(),
+        "big_game",
+        "…and a penned herd's DERIVED default (`fauna::herd_default_hunt_kit`) resolves there too: \
+         the deleted kit was never the roster's first answer for this stat, so the answer did not \
+         move"
     );
     assert_eq!(
         equipment.pen_per_worker_biomass_capacity(baseline_rate, &big_game, &fresh),
         equipped_carry(&equipment, SLED),
-        "a crew that brought spears AND A SLED collects at the equipped rate too — the sled carries \
-         both sides of `pen_carry` now"
+        "a crew that brought spears AND A SLED collects a pen at exactly the rate a pen has always \
+         collected at — the hunt haul's own tier, shared rather than restated"
     );
     // **The bare rate belongs to a kit with no sled**, which is where the two tiers still part.
     let gathering = equipment
@@ -1449,12 +1462,12 @@ fn only_the_husbandry_kit_collects_a_pen_at_the_shipped_rate() {
         unequipped_of(&equipment, SLED, EquipmentStat::PenCarry),
         "…and a crew that brought baskets to a pen collects at the bare rate"
     );
-    // ...and the two carry stats genuinely cannot reach each other: the husbandry kit still carries
-    // a sled (a keeper hauls the meat home), so this is the discriminating direction.
+    // ...and the two carry stats genuinely cannot reach each other: the same kit hauls on the
+    // range with the same sled, so this is the discriminating direction.
     assert_eq!(
-        equipment.hunt_per_worker_biomass_capacity(baseline_rate, &husbandry, &fresh),
+        equipment.hunt_per_worker_biomass_capacity(baseline_rate, &big_game, &fresh),
         equipped_carry(&equipment, SLED),
-        "the husbandry kit carries a sled too, so its RANGE haul is untouched"
+        "the stalking kit carries a sled, so its RANGE haul reads the equipped tier too"
     );
     assert!(
         equipment.pen_per_worker_biomass_capacity(baseline_rate, &gathering, &fresh)
@@ -1477,13 +1490,13 @@ fn a_pen_short_of_handling_gear_collects_between_the_bare_and_the_geared() {
 
     let equipment = equipment();
     let baseline_rate = LaborConfig::builtin().hunt.per_worker_biomass_capacity;
-    let husbandry = equipment
-        .kit("husbandry")
-        .expect("the shipped roster carries the husbandry kit");
+    let pen_kit = equipment
+        .kit("big_game")
+        .expect("the shipped roster carries the big-game kit");
 
     let pen_rate = |wear: &BandEquipment| {
         equipment
-            .coverage(&husbandry, KEEPERS, wear)
+            .coverage(&pen_kit, KEEPERS, wear)
             .weighted_rate(|kit| {
                 equipment.pen_per_worker_biomass_capacity(baseline_rate, kit, wear)
             })
@@ -1628,8 +1641,10 @@ fn each_kit_wears_on_a_use_quantum_of_its_own_job() {
         "big_game",
         "trapping",
         "gathering",
-        "husbandry",
+        "hurdling",
+        "tillage",
         "wayfinding",
+        "none",
     ] {
         let kit = equipment
             .kit(kit_id)
