@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 137
+const EXPECTED_CHECKPOINTS := 143
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -65,6 +65,17 @@ const TWO_TIER_CLUBS_POOR := 4
 
 ## The sim's own resolved note for a band carrying the older tier — rendered VERBATIM, never composed.
 const TWO_TIER_CLUBS_NOTE := "carrying flint · poor"
+
+## **THE CRAFTED PILE THE STOCK ROW REPORTS, AND WHAT ONE PASS OF IT YIELDS.** Named because the
+## claims below are arithmetic about these three and a literal typed twice is a claim nobody can
+## re-derive. **Both amounts are deliberately un-whole**: a material is measured, not counted, and an
+## Owned cell that reached for the equipment column's `×n` would round 6.5 to `×7` — the assertion
+## reads them back through the rail's own `BATCH_AMOUNT_FORMAT`, so a cell that counts fails it.
+const STOCK_CORDAGE_STOUT := 6.5
+const STOCK_CORDAGE_SLACK := 2.8
+## The yield is WHOLE, so the cost cell's `_amount_text` prints `6` rather than `6.0` — the same
+## whole-where-it-is-whole rule the input clauses beside it follow.
+const STOCK_CORDAGE_YIELD := 6.0
 
 ## Where each of the three crafts stands. Weaving is DONE (this band gathers), Tanning is climbing (it
 ## hunts deer) and Bone-working is stalled at 12% — which is not an error state but a band standing in
@@ -641,7 +652,12 @@ func _crafting_states() -> void:
 	h._hud.open_crafting_panel(_crafting_band())
 	await h._settle()
 	_assert_panel_renders()
+	_assert_a_stock_row_reads_its_pile_and_its_yield()
 	await h._save("crafting_panel")
+
+	# **THE EMPTY-STORE HALF OF THAT PILE CLAIM — PNG-less, and between two saves on purpose.** It
+	# re-opens the same band with its store emptied, which is a payload no picture needs.
+	await _assert_a_material_the_band_lacks_says_so()
 
 	# State 2 — the IDLE bench, which is a different statement from a blocked one, on a band that has
 	# banked no materials at all. It is the first turn of a world, and the panel must say so rather
@@ -716,6 +732,70 @@ func _two_tier_states() -> void:
 
 	h._hud.close_crafting_panel()
 	await h._settle()
+
+## **A MATERIAL ROW REPORTS THE BAND'S PILE OF IT, AND THE YIELD SITS WITH THE COST.** Four claims,
+## three of them halves of a pair, because every one-sided version passes on a panel that lost the
+## join entirely:
+##
+## - **The pile, batch by batch, in the rail's own amounts** — paired with the row the band banks
+##   NONE of, which is what says the cell joined on the material rather than printing amounts
+##   unconditionally. Read back through `BATCH_AMOUNT_FORMAT`, so a cell reaching for the equipment
+##   column's `×n` fails on the rounding rather than passing on a number that looks close.
+## - **Both ratings get a line**, which a cell collapsing the pile to a total satisfies neither half of.
+## - **The yield is in the COST cell and NOT in the Owned cell** — asserted as both, since a panel that
+##   never moved it satisfies the first and one that simply dropped it satisfies the second.
+func _assert_a_stock_row_reads_its_pile_and_its_yield() -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting — the stock-row panel is open", false)
+		return
+	var cordage := _owned_cell_texts(panel, "Cordage")
+	h._assert_hud("crafting — a material row reports the band's own pile of it, batch by batch (%s)"
+			% [cordage],
+		cordage.has(HudCraftingVocab.BATCH_AMOUNT_FORMAT % STOCK_CORDAGE_STOUT)
+			and cordage.has(HudCraftingVocab.BATCH_AMOUNT_FORMAT % STOCK_CORDAGE_SLACK))
+	# …and each batch brings its own ratings, which is what makes those two lines and not one total.
+	h._assert_hud("crafting — …each batch carrying the rating it is held at (%s)" % [cordage],
+		_count_matching(cordage, HudCraftingVocab.CHARACTERISTIC_CHIP_FORMAT % ["stout", "good"]) == 1
+			and _count_matching(cordage,
+				HudCraftingVocab.CHARACTERISTIC_CHIP_FORMAT % ["span", "good"]) == 1)
+	# **THE YIELD MOVED TO THE COST CELL, AND LEFT THE OWNED ONE.** Both halves: a panel that never
+	# moved it passes the first, and one that dropped it on the floor passes the second.
+	var yielded := HudCraftingVocab.COST_YIELD_FORMAT % [
+		str(int(STOCK_CORDAGE_YIELD)), "cordage"]
+	var row := _ledger_row(panel, "Cordage")
+	h._assert_hud("crafting — a pass's yield closes the rebuild-costs cell (%s)" % [yielded],
+		row != null and _label_texts(row).has(yielded))
+	h._assert_hud("crafting — …and no arrow is left in the Owned cell (%s)" % [cordage],
+		_count_starting_with(cordage, "→") == 0)
+
+## **THE OTHER HALF OF THE PILE CLAIM, PNG-LESS: a material the band banks NONE of says so.** Without
+## it every claim in `_assert_a_stock_row_reads_its_pile_and_its_yield` is satisfied by a cell that
+## prints amounts for whatever row it is handed, and with a second stock RECIPE it would be satisfied
+## by a fixture — so the pairing is made by emptying the STORE under the same recipe instead. It earns
+## no frame twice over: the picture is one chip, and a second stock row in the ledger would put the
+## `crafting_panel_band_dock_collapsed` state (which stages the ledger FITTING its room) one row over
+## the line it exists to sit under.
+func _assert_a_material_the_band_lacks_says_so() -> void:
+	var emptied := _crafting_band()
+	emptied["material_batches"] = []
+	h._hud.update_band_alerts([emptied])
+	h._hud.open_crafting_panel(emptied)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting — the emptied-store panel is open", false)
+		return
+	var cordage := _owned_cell_texts(panel, "Cordage")
+	h._assert_hud("crafting — a material the band holds none of states that, rather than 0.0 (%s)"
+			% [cordage],
+		cordage == [HudCraftingVocab.OWNED_STOCK_NONE])
+	# …and the row still states what a pass would YIELD, which is the fact the cost cell now owns: an
+	# empty store is a reason to make the thing, so the arrow must survive having nothing to report.
+	var row := _ledger_row(panel, "Cordage")
+	h._assert_hud("crafting — …while the cost cell still names the yield on an empty store",
+		row != null and _label_texts(row).has(
+			HudCraftingVocab.COST_YIELD_FORMAT % [str(int(STOCK_CORDAGE_YIELD)), "cordage"]))
 
 ## **THE GRADE LINES AND THE NOTE, EACH AS A PAIR.** A one-sided claim passes on a panel that lost the
 ## thing entirely: "two lines" is satisfied by a cell that lists every batch, so the single-grade row
@@ -1418,6 +1498,11 @@ func _materials() -> Array:
 			"hand_workable": true, "tool_item_id": ""},
 		{"id": "bone", "craft": "bone_working", "axes": ["dense", "long"],
 			"hand_workable": true, "tool_item_id": "bone_awl"},
+		# **A CRAFTED MATERIAL IS STILL A MATERIAL** — it heads a rail group and is banked in
+		# `material_batches` exactly as a gathered one is, which is the fact the stock row's Owned cell
+		# reads. TWO axes on purpose: one would never show whether the 172px cell wraps its chips.
+		{"id": "cordage", "craft": "weaving", "axes": ["stout", "span"],
+			"hand_workable": true, "tool_item_id": ""},
 	]
 
 ## The shared rating vocabulary, ascending — the panel reads only its two ENDS, to decide which chips
@@ -1465,7 +1550,8 @@ func _recipes() -> Array:
 			"id": "cordage", "display_name": "Cordage", "craft": "weaving",
 			"group": HudCraftingVocab.GROUP_STOCK, "work": 3.0, "requires_knowledge": [],
 			"inputs": [{"material_id": "fibre", "amount": 12.0, "reads_axis": "strong"}],
-			"outputs": [{"equipment_id": "", "material_id": "cordage", "amount": 6.0}],
+			"outputs": [{"equipment_id": "", "material_id": "cordage",
+				"amount": STOCK_CORDAGE_YIELD}],
 		},
 	]
 
@@ -1624,6 +1710,12 @@ func _material_batches() -> Array:
 		_batch("hide", 14.2, [["tough", 0.45, "fair"], ["supple", 0.58, "good"]]),
 		_batch("hide", 2.6, [["tough", 0.90, "excellent"], ["supple", 0.15, "poor"]]),
 		_batch("bone", 3.1, [["dense", 0.82, "excellent"], ["long", 0.35, "fair"]]),
+		# **THE CRAFTED PILE, AT TWO RATINGS.** Two batches rather than one because a material is held at
+		# a rating the way a kit is held at a grade, and a cell collapsing them to a single line passes
+		# every one-batch claim. The amounts are FRACTIONAL — an Owned cell reading `×n` here renders
+		# `×7` for 6.5 and `×3` for 2.8, which is the defect this shape is chosen to expose.
+		_batch("cordage", STOCK_CORDAGE_STOUT, [["stout", 0.62, "good"], ["span", 0.20, "poor"]]),
+		_batch("cordage", STOCK_CORDAGE_SLACK, [["stout", 0.28, "poor"], ["span", 0.71, "good"]]),
 	]
 
 func _batch(material_id: String, amount: float, readings: Array) -> Dictionary:
