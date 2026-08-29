@@ -32,5 +32,14 @@
   },
   "bone_working": {
     "discovery_id": 2010
+  },
+  "trailcraft": {
+    "discovery_id": 2011
+  },
+  "roadbuilding": {
+    "discovery_id": 2012
+  },
+  "paving": {
+    "discovery_id": 2013
   }
 }

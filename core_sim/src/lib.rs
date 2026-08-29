@@ -63,6 +63,7 @@ mod power;
 mod provinces;
 mod recipes_config;
 mod resources;
+pub mod routes;
 mod scalar;
 mod sedentarization;
 mod sedentarization_config;

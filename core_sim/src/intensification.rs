@@ -1047,11 +1047,41 @@ pub enum RungBranch {
     Plant,
     /// The **animal** food web: herds (`fauna.rs`).
     Animal,
+    /// **Roads** (`routes.rs`) — the third branch, and the one that is not a food web
+    /// (`docs/plan_standing_upkeep.md` §4.13). It differs from the two above in three ways that every
+    /// sweep has to know about, which is why [`ALL_BRANCHES`] forced this file's call sites open:
+    ///
+    /// 1. **Its build is paid by TRAFFIC, not by a crew** — so a route rung declares no `verb`, takes
+    ///    no [`crate::components::BuildQueueEntry`], and draws nothing from the builders' pool. There
+    ///    is no builders' *kit* for it either, which is what [`FOOD_WEB_BRANCHES`] is for.
+    /// 2. **Its improvement is owned by nobody.** A road is a thing in the world with a fixed tile
+    ///    path; the bands standing on it are who *use* it. A road that followed its camp would cost
+    ///    nothing to leave, and an improvement that is free to abandon cannot weigh on move-or-stay.
+    /// 3. **Its upkeep scales on its own geometry** ([`UpkeepScale::RouteSpan`]) rather than on a
+    ///    source's load, because there is no source under it.
+    Route,
 }
 
-/// **Both food webs, in ladder order** — the one list a caller sweeping the branches iterates, so a
-/// third web could not be added without every sweep seeing it.
-pub const BOTH_BRANCHES: [RungBranch; 2] = [RungBranch::Plant, RungBranch::Animal];
+/// **EVERY LADDER, in branch order** — the one list a caller sweeping the branches iterates.
+///
+/// **It was `BOTH_BRANCHES` and the rename is the point.** That constant's own doc promised *"a third
+/// web could not be added without every sweep seeing it"*, and leaving it at two while adding
+/// [`RungBranch::Route`] would have quietly broken exactly that promise: every existing sweep would
+/// have gone on iterating two branches and silently skipping roads. Renaming breaks each call site at
+/// compile time, which is what forces the choice between this and [`FOOD_WEB_BRANCHES`] to be made
+/// rather than defaulted.
+pub const ALL_BRANCHES: [RungBranch; 3] =
+    [RungBranch::Plant, RungBranch::Animal, RungBranch::Route];
+
+/// **The two FOOD WEBS**, for the sweeps that mean *"a ladder a crew builds with tools"* rather than
+/// *"a ladder"*.
+///
+/// The distinction is real and not a convenience: a builders' kit serves a web whose rungs a band's
+/// `builders` pool raises, and **no kit can serve the route branch**, whose rungs are raised by
+/// traffic and whose work therefore has no crew to hold a tool. A route rung appearing in
+/// `every_branch_of_the_ladder_has_a_builders_kit_that_serves_only_it` would demand a kit for a job
+/// nobody does.
+pub const FOOD_WEB_BRANCHES: [RungBranch; 2] = [RungBranch::Plant, RungBranch::Animal];
 
 impl RungBranch {
     /// Stable key (the JSON `branch` value), used in validation messages.
@@ -1059,6 +1089,17 @@ impl RungBranch {
         match self {
             RungBranch::Plant => "plant",
             RungBranch::Animal => "animal",
+            RungBranch::Route => "route",
+        }
+    }
+
+    /// **Does a band's `builders` pool raise this branch's rungs?** `false` for
+    /// [`RungBranch::Route`] alone — traffic is the crew — and it is the one predicate the build
+    /// engine, the queue and the kit resolution all ask instead of naming the route branch by hand.
+    pub fn is_crew_built(self) -> bool {
+        match self {
+            RungBranch::Plant | RungBranch::Animal => true,
+            RungBranch::Route => false,
         }
     }
 
@@ -1074,6 +1115,10 @@ impl RungBranch {
         match self {
             RungBranch::Plant => RungKey::PlantWild,
             RungBranch::Animal => RungKey::AnimalWild,
+            // A **game trail** is what traffic leaves without anybody deciding anything — the first
+            // roads are the ones the animals made (#215). It costs nothing to reach and buys nothing,
+            // exactly as a wild patch does.
+            RungBranch::Route => RungKey::RouteGameTrail,
         }
     }
 }
@@ -1099,17 +1144,30 @@ pub enum RungKey {
     AnimalPastoral,
     /// A **penned** herd — the `Corral` investment (`Herd::corral_progress`).
     AnimalPen,
+    /// **A GAME TRAIL** — the route branch's floor. Costs nothing, buys nothing, and is what traffic
+    /// leaves behind before anyone decides to make a road (#215).
+    RouteGameTrail,
+    /// **A TRAIL** — worn in and kept. The first rung a band pays for.
+    RouteTrail,
+    /// **A DIRT ROAD.**
+    RouteDirtRoad,
+    /// **A PAVED ROAD** — the top of the branch, and the only rung that swallows stone.
+    RoutePavedRoad,
 }
 
 impl RungKey {
     /// Every rung a system names today — what `validate` requires the config to define.
-    pub const ALL: [RungKey; 6] = [
+    pub const ALL: [RungKey; 10] = [
         RungKey::PlantWild,
         RungKey::PlantTended,
         RungKey::PlantField,
         RungKey::AnimalWild,
         RungKey::AnimalPastoral,
         RungKey::AnimalPen,
+        RungKey::RouteGameTrail,
+        RungKey::RouteTrail,
+        RungKey::RouteDirtRoad,
+        RungKey::RoutePavedRoad,
     ];
 
     pub fn branch(self) -> RungBranch {
@@ -1118,6 +1176,10 @@ impl RungKey {
             RungKey::AnimalWild | RungKey::AnimalPastoral | RungKey::AnimalPen => {
                 RungBranch::Animal
             }
+            RungKey::RouteGameTrail
+            | RungKey::RouteTrail
+            | RungKey::RouteDirtRoad
+            | RungKey::RoutePavedRoad => RungBranch::Route,
         }
     }
 
@@ -1129,6 +1191,13 @@ impl RungKey {
             RungKey::PlantField => "field",
             RungKey::AnimalPastoral => "pastoral",
             RungKey::AnimalPen => "pen",
+            // **Not `wild`.** The route floor is a *game trail* rather than "no road", because it is a
+            // real thing traffic made — and giving it the two food webs' shared `wild` spelling would
+            // put a third rung under one id for no gain.
+            RungKey::RouteGameTrail => "game_trail",
+            RungKey::RouteTrail => "trail",
+            RungKey::RouteDirtRoad => "dirt_road",
+            RungKey::RoutePavedRoad => "paved_road",
         }
     }
 
@@ -1176,6 +1245,10 @@ impl RungKey {
             RungKey::AnimalWild => Some(RungKey::AnimalPastoral),
             RungKey::AnimalPastoral => Some(RungKey::AnimalPen),
             RungKey::AnimalPen => None,
+            RungKey::RouteGameTrail => Some(RungKey::RouteTrail),
+            RungKey::RouteTrail => Some(RungKey::RouteDirtRoad),
+            RungKey::RouteDirtRoad => Some(RungKey::RoutePavedRoad),
+            RungKey::RoutePavedRoad => None,
         }
     }
 
@@ -1201,6 +1274,14 @@ impl RungKey {
             RungKey::PlantField => Some(Improvement::Sow),
             RungKey::AnimalPastoral => Some(Improvement::Tame),
             RungKey::AnimalPen => Some(Improvement::Corral),
+            // ⛔ **NO ROUTE RUNG HAS A VERB, INCLUDING THE THREE THAT ARE BUILT.** Traffic wears a
+            // road in, so there is no command to name a job and no crew to staff one — which is why
+            // this branch adds no `Improvement` variant and why `RungKey::built_by` needed no new
+            // arm. `None` here is *"nothing builds this on purpose"*, not *"nothing builds this"*.
+            RungKey::RouteGameTrail
+            | RungKey::RouteTrail
+            | RungKey::RouteDirtRoad
+            | RungKey::RoutePavedRoad => None,
         }
     }
 
@@ -1895,13 +1976,13 @@ pub struct RungBuild {
 /// chosen from here — adding a primitive is coding one thing once, after which using it is a config
 /// edit.
 ///
-/// **`source_load` is the only shipped variant today**, and both webs declare it: an animal rung
-/// quotes its rate per keeper-load, a plant rung per tender-load. The **retired** variant was `flat`,
-/// the rate as declared — it survived only on the two plant rungs, on the reading that "a patch is
-/// one tile, so there is no count for the rate to ride", and that reading was wrong: a tile's own `K`
-/// *is* the count, which is what `forage::patch_tender_loads` measures. The enum and the `scaled_by`
-/// config key stay for the route branch, whose `length × terrain` scale is the next primitive to land
-/// in here.
+/// **Two shipped variants.** Both food webs declare `source_load` — an animal rung quotes its rate
+/// per keeper-load, a plant rung per tender-load — and every route rung declares
+/// [`Self::RouteSpan`]. The **retired** variant was `flat`, the rate as declared: it survived only on
+/// the two plant rungs, on the reading that "a patch is one tile, so there is no count for the rate to
+/// ride", and that reading was wrong — a tile's own `K` *is* the count, which is what
+/// `forage::patch_tender_loads` measures. The `scaled_by` key was kept open through that deletion for
+/// exactly the variant below.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UpkeepScale {
@@ -1920,6 +2001,29 @@ pub enum UpkeepScale {
     /// so the web's own ratio is folded in before the ladder ever sees it and there is still exactly
     /// one definition of it.
     SourceLoad,
+    /// **× THE ROAD'S OWN GEOMETRY — `length × terrain`, as ONE SUM** (`docs/plan_standing_upkeep.md`
+    /// §2.6, §4.13):
+    ///
+    /// ```text
+    /// measure = Σ over the tiles the route crosses of infrastructure_cost(that tile's terrain)
+    /// ```
+    ///
+    /// **It is a sum, not a product, and that is what makes it fit here.** Length falls out of the
+    /// *number* of terms and terrain out of each term's *value*, so "length × terrain" is a single
+    /// `f32` through the same seam [`Self::SourceLoad`] uses rather than two factors a caller would
+    /// have to multiply in the right order.
+    ///
+    /// **Summed per tile crossed, never averaged.** Three tiles of marsh cost three tiles of marsh;
+    /// averaging would price a long road and a short one through the same country identically, which
+    /// deletes the length half of the term outright.
+    ///
+    /// **This is the first reader `TerrainDefinition::infrastructure_cost` has ever had.** It is
+    /// authored for all 37 terrains and was dead data until this rung; `routes::route_span` is the one
+    /// place it is summed, so the bill, the quote and the wire cannot read three different geometries.
+    ///
+    /// **It reads the improvement, not a source under it** — which is the whole reason it is a second
+    /// variant rather than a per-branch reading of the first. There is no source under a road.
+    RouteSpan,
 }
 
 impl UpkeepScale {
@@ -1927,14 +2031,20 @@ impl UpkeepScale {
     pub fn as_str(self) -> &'static str {
         match self {
             UpkeepScale::SourceLoad => "source_load",
+            UpkeepScale::RouteSpan => "route_span",
         }
     }
 
-    /// **The scale term this primitive reads**, given the source's own measure — the load reading for
-    /// [`Self::SourceLoad`], floored at zero so a source presenting nothing owes nothing.
+    /// **The scale term this primitive reads**, given the improvement's own measure — the source's
+    /// load reading for [`Self::SourceLoad`], the summed span for [`Self::RouteSpan`]. Floored at zero
+    /// in both cases, so an improvement presenting nothing owes nothing.
+    ///
+    /// **Both arms take the same argument and that is deliberate**: the caller supplies the reading,
+    /// so the web's own ratio (or the road's own path) is folded in before the ladder ever sees it and
+    /// there is still exactly one definition of each.
     pub fn factor(self, source_measure: f32) -> f32 {
         match self {
-            UpkeepScale::SourceLoad => source_measure.max(0.0),
+            UpkeepScale::SourceLoad | UpkeepScale::RouteSpan => source_measure.max(0.0),
         }
     }
 }
@@ -2122,6 +2232,45 @@ pub struct RungDef {
     /// The coded primitives this rung recombines ([`RungBehavior`] — `movement`, which
     /// `fauna::advance_herds` reads).
     pub behavior: RungBehavior,
+    /// **WHAT THIS RUNG BUYS**, on the route branch ([`RungRoutePayoff`]).
+    ///
+    /// **`Some` on every `route` rung and `None` on every other**, enforced at load — the payoff is
+    /// meaningless on a patch or a herd, and a route rung without one would be a rung that costs and
+    /// gives nothing, which is the *"a tax, not a ladder"* failure this branch exists to avoid.
+    #[serde(default)]
+    pub route_payoff: Option<RungRoutePayoff>,
+}
+
+/// **WHAT A ROUTE RUNG BUYS** (`docs/plan_standing_upkeep.md` §4.13). The *cheaper to travel* half of
+/// the ladder's claim, against `RungUpkeep`'s *dearer to keep*.
+///
+/// **Both terms are purely additive**, which is what preserves §Q4's "no early-game regression, by
+/// construction" guarantee: a rung can only widen the set of links and lower a loss, never the
+/// reverse. The third payoff — `Seen` along a kept road — is not here because it is not a number: it
+/// is `routes::Route::grants_sight`, a yes/no that the **game trail** answers no to.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RungRoutePayoff {
+    /// **HOW FAR THIS ROAD HOLDS A POOLING LINK OPEN, in tiles.** A logistics link forms within
+    /// `SupplyNetworkConfig::reach_tiles` **or** where a road of this rung spans it.
+    ///
+    /// **A capability, not a discount** — and the top rungs' whole point. Without a road two bands six
+    /// tiles apart cannot pool at all; with a dirt road they can. `reach_tiles`' own shipped doc says
+    /// so: *"beyond it a link needs a route to hold it open"*.
+    ///
+    /// **`0` on the game trail is a live reading, not a parked dial**: a trail the animals made holds
+    /// nothing open, which is exactly what makes that rung free.
+    pub holds_link_to_tiles: u32,
+    /// **WHAT FRACTION OF THE BASE FRICTION A ROUTED LINK PAYS** — multiplies
+    /// `SupplyNetworkConfig::friction`. `1.0` = no help.
+    ///
+    /// It exists because [`Self::holds_link_to_tiles`] pays **nothing** to a road between two
+    /// neighbours already inside `reach_tiles` — the commonest road in the game, worn in by their own
+    /// pooling — and a road that buys nothing is not a rung.
+    ///
+    /// Validated finite and in `0.0..=1.0`: above `1.0` a road would make a haul *worse*, which is not
+    /// a rung on this ladder.
+    pub friction_multiplier: f32,
 }
 
 impl RungDef {
@@ -3013,9 +3162,15 @@ impl LadderConfig {
             self.validate_upkeep_climbs(rung, &where_)?;
             validate_partial_credit(rung, &where_)?;
             validate_site_requirement(rung, &where_)?;
+            validate_route_payoff(rung, &where_)?;
+            self.validate_route_payoff_climbs(rung, &where_)?;
         }
 
-        for branch in [RungBranch::Plant, RungBranch::Animal] {
+        // ⛔ **`ALL_BRANCHES`, NOT A HAND-WRITTEN LIST.** This read `[RungBranch::Plant,
+        // RungBranch::Animal]` — an array literal, so adding the route branch left it silently
+        // sweeping two of three and the new branch's root rung unchecked. That is precisely the
+        // failure the constant's rename exists to make impossible; a literal here re-opens it.
+        for branch in ALL_BRANCHES {
             let roots = self
                 .rungs
                 .iter()
@@ -3141,6 +3296,65 @@ impl LadderConfig {
     ///
     /// A rung with **no upkeep** costs [`NO_UPKEEP_DEMAND`] to hold, which nothing can be below, so
     /// the two wild rungs pass by construction.
+    /// **A ROUTE RUNG MAY NEVER BUY LESS THAN THE RUNG BELOW IT** — the payoff twin of
+    /// [`Self::validate_upkeep_climbs`], and what keeps the *cheaper to travel* half of the ladder's
+    /// claim honest.
+    ///
+    /// Both terms are checked in the direction that makes a rung better:
+    /// [`RungRoutePayoff::holds_link_to_tiles`] must not fall, and
+    /// [`RungRoutePayoff::friction_multiplier`] must not rise. A rung that cost more per turn and
+    /// held a shorter link would be **strictly worse** than the road under it — a rung nobody could
+    /// ever have a reason to raise — and the upkeep check would wave it straight through, since
+    /// costing more is exactly what *that* check demands. The two guards are opposite halves of one
+    /// claim and neither is redundant.
+    ///
+    /// Cross-branch pairs cannot arise: `requires_rung` resolves within a branch, and only route
+    /// rungs carry a payoff at all.
+    fn validate_route_payoff_climbs(
+        &self,
+        rung: &RungDef,
+        where_: &str,
+    ) -> Result<(), LadderConfigError> {
+        let (Some(payoff), Some(requires)) =
+            (rung.route_payoff.as_ref(), rung.requires_rung.as_deref())
+        else {
+            return Ok(());
+        };
+        let Some(below) = self
+            .find(rung.branch, requires)
+            .and_then(|below| below.route_payoff.as_ref())
+        else {
+            return Ok(());
+        };
+        if payoff.holds_link_to_tiles < below.holds_link_to_tiles {
+            return Err(LadderConfigError::Invalid {
+                field: where_.to_string(),
+                constraint: "hold a link at least as far as the rung below it — a dearer road \
+                             reaching less far would be strictly worse than the one under it, and \
+                             nothing would ever raise it"
+                    .to_string(),
+                value: format!(
+                    "holds_link_to_tiles {} below {}'s {}",
+                    payoff.holds_link_to_tiles, requires, below.holds_link_to_tiles
+                ),
+            });
+        }
+        if payoff.friction_multiplier > below.friction_multiplier {
+            return Err(LadderConfigError::Invalid {
+                field: where_.to_string(),
+                constraint: "lose no more in transit than the rung below it — a dearer road \
+                             spilling more of what crossed it would be strictly worse than the one \
+                             under it"
+                    .to_string(),
+                value: format!(
+                    "friction_multiplier {} above {}'s {}",
+                    payoff.friction_multiplier, requires, below.friction_multiplier
+                ),
+            });
+        }
+        Ok(())
+    }
+
     fn validate_upkeep_climbs(
         &self,
         rung: &RungDef,
@@ -3268,6 +3482,13 @@ fn discovery_id_for(name: &str) -> Option<u32> {
         // Flora Roster F3 — the `animal:pen` rung's `earns_knowledge`. Running a pen teaches
         // Foddering, which unlocks the fodder-draw (feed + `K_pen` term); it gates no rung of its own.
         "foddering" => Some(FODDERING_DISCOVERY_ID),
+        // **The route branch's three lessons** (`docs/plan_standing_upkeep.md` §4.13). Walking a game
+        // trail teaches you to wear a trail in; keeping a trail teaches you to lay a road; keeping a
+        // road teaches you to pave one. They are earned exactly as the food webs' are — by the rung
+        // being *practised*, which on this branch means the road carrying traffic.
+        "trailcraft" => Some(crate::routes::TRAILCRAFT_DISCOVERY_ID),
+        "roadbuilding" => Some(crate::routes::ROADBUILDING_DISCOVERY_ID),
+        "paving" => Some(crate::routes::PAVING_DISCOVERY_ID),
         // **The three CRAFTS** (`crafting.rs`). They are not ladder rungs and nothing here earns
         // them — a bench does, per item completed. They are named in this lookup for the same
         // reason the ladder's five are: it is the sim's one bounded set of knowledge names, and a
@@ -3369,6 +3590,64 @@ fn validate_links(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError>
 /// — the rung parses, and then either it can be placed on ground it was meant to refuse, or on none at
 /// all. Since scarcity is the whole point of the rule, a requirement that quietly stops constraining is
 /// exactly the bug this catches.
+/// **A `route_payoff` on every route rung, and on nothing else.**
+///
+/// The presence rule is the important half. A route rung *without* one is a rung that costs work
+/// every turn and buys nothing — **a tax, not a ladder**, which is the exact failure the whole branch
+/// was designed around (`docs/plan_standing_upkeep.md` §4.13: `infrastructure_cost` sat authored and
+/// unread for 37 terrains precisely because nothing consumed the payoff). Making its absence a load
+/// failure is what stops that being re-introduced by a config edit.
+///
+/// The converse — a payoff on a patch or a herd — is rejected rather than ignored, on
+/// `partial_credit`'s rule: a key that parses and does nothing reads to a designer as the seam that
+/// would carry a fix.
+fn validate_route_payoff(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError> {
+    let is_route = rung.branch == RungBranch::Route;
+    let Some(payoff) = rung.route_payoff.as_ref() else {
+        if is_route {
+            return Err(LadderConfigError::Invalid {
+                field: where_.to_string(),
+                constraint: "state what this route rung BUYS (`route_payoff`) — a rung with a \
+                             standing cost and no payoff is a tax rather than a ladder, which is \
+                             the failure the route branch exists to avoid"
+                    .to_string(),
+                value: "missing".to_string(),
+            });
+        }
+        return Ok(());
+    };
+    if !is_route {
+        return Err(LadderConfigError::Invalid {
+            field: where_.to_string(),
+            constraint: "declare `route_payoff` on route rungs only — reach and friction are \
+                         properties of a road, and a key that parses and does nothing reads as the \
+                         seam that would carry a fix"
+                .to_string(),
+            value: format!("branch '{}'", rung.branch.as_str()),
+        });
+    }
+    if !payoff.friction_multiplier.is_finite()
+        || !(NO_FRICTION_LEFT..=FRICTION_UNCHANGED).contains(&payoff.friction_multiplier)
+    {
+        return Err(LadderConfigError::Invalid {
+            field: format!("{where_}.route_payoff.friction_multiplier"),
+            constraint: format!(
+                "keep the friction multiplier finite and within \
+                 {NO_FRICTION_LEFT}..={FRICTION_UNCHANGED} — above {FRICTION_UNCHANGED} a road \
+                 would make a haul WORSE than no road, which is not a rung on this ladder"
+            ),
+            value: payoff.friction_multiplier.to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// A road that spills nothing in transit — [`RungRoutePayoff::friction_multiplier`]'s floor.
+pub const NO_FRICTION_LEFT: f32 = 0.0;
+/// A road that takes nothing off the base friction — the multiplier's ceiling, and the **game
+/// trail**'s live reading rather than a parked dial.
+pub const FRICTION_UNCHANGED: f32 = 1.0;
+
 fn validate_site_requirement(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError> {
     let Some(site) = rung.site_requirement.as_ref() else {
         return Ok(());
@@ -6050,7 +6329,7 @@ mod tests {
     #[test]
     fn the_coded_root_is_the_shipped_ladders_own_first_rung() {
         let ladder = LadderConfig::builtin();
-        for branch in BOTH_BRANCHES {
+        for branch in ALL_BRANCHES {
             let root = branch.root_rung();
             assert_eq!(root.branch(), branch, "a branch's root is its own rung");
             assert_eq!(

@@ -369,9 +369,28 @@ impl BuildersGear {
         }
     }
 
+    /// ⛔ **THE ROUTE BRANCH IS UNREACHABLE HERE, BY CONSTRUCTION** — and the arm states that rather
+    /// than inventing a third gear.
+    ///
+    /// This resolves the **builders' pool's** gear for a queued entry's web, and a route rung is
+    /// never queued: its build is paid by traffic, so it appends no `BuildQueueEntry` and
+    /// [`BuildSource`] has no route variant for [`source_branch`] to answer `Route` from. There is no
+    /// road-building kit either — [`crate::equipment_config::KitJob::Roadwork`] is the *keeping*
+    /// job, and a road's keepers are not builders.
+    ///
+    /// It falls back to the plant web's gear rather than panicking because this seam only ever
+    /// **prices** work; a panic would turn a would-be mispricing into a crashed turn, and the
+    /// `debug_assert` catches the real fault — someone giving a route rung a queue entry — in every
+    /// test run.
     fn on(&self, branch: crate::intensification::RungBranch) -> &BuildersBranchGear {
+        debug_assert!(
+            branch.is_crew_built(),
+            "a route rung reached the builders' gear: routes are worn in by traffic and take no \
+             queue entry, so nothing should be pricing one against a builders' pool"
+        );
         match branch {
-            crate::intensification::RungBranch::Plant => &self.plant,
+            crate::intensification::RungBranch::Plant
+            | crate::intensification::RungBranch::Route => &self.plant,
             crate::intensification::RungBranch::Animal => &self.animal,
         }
     }

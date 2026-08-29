@@ -899,12 +899,24 @@ pub enum KitJob {
     /// **One job for both webs**, matching the role: a build is a job rather than a standing charge,
     /// and the queue already says which web is being worked.
     Builders,
+    /// **THE BAND'S ROAD KEEPERS** — the `roadwork` role's job, the route branch's twin of
+    /// [`KitJob::Agriculture`] and [`KitJob::Husbandry`] (`docs/plan_standing_upkeep.md` §4.13).
+    ///
+    /// **There is deliberately no BUILD job beside it**, where the two food webs share
+    /// [`KitJob::Builders`]: a route's build is paid by **traffic**, not by a crew, so there is no
+    /// pool for a build tool to equip and no worker to carry one. The keeping is the only route work
+    /// hands actually do.
+    ///
+    /// **The shipped roster declares no road gear, so `default_kits.roadwork` is the empty `none`
+    /// kit** — the same opening the two keeping roles have. The day a barrow or a paving maul
+    /// declares a stat, this job is what it names.
+    Roadwork,
 }
 
 impl KitJob {
     /// Every job, for the validations and the wire — one list, so a new job cannot be validated in
     /// three places and forgotten in a fourth.
-    pub const ALL: [KitJob; 7] = [
+    pub const ALL: [KitJob; 8] = [
         KitJob::Hunt,
         KitJob::Forage,
         KitJob::Scout,
@@ -912,6 +924,7 @@ impl KitJob {
         KitJob::Agriculture,
         KitJob::Husbandry,
         KitJob::Builders,
+        KitJob::Roadwork,
     ];
 
     /// The wire/command token for this job — the same string `assign_labor`'s role token uses (and
@@ -926,6 +939,7 @@ impl KitJob {
             KitJob::Agriculture => "agriculture",
             KitJob::Husbandry => "husbandry",
             KitJob::Builders => "builders",
+            KitJob::Roadwork => "roadwork",
         }
     }
 }
@@ -969,6 +983,10 @@ pub struct DefaultKitsConfig {
     /// the two keeping roles, and what the pool actually works with is derived per queue entry from
     /// the head's own branch ([`EquipmentConfig::build_kit_for_branch`]).
     pub builders: String,
+    /// **The road keepers' default: nothing.** The shipped roster declares no road gear, so the
+    /// `roadwork` role opens bare like the two keeping roles above it. There is no builders-style
+    /// per-branch derivation to fall back on here, because a route's build takes no crew at all.
+    pub roadwork: String,
 }
 
 /// **What the kit is being resolved AGAINST** — the argument a mass-bounded effect is tested on.
@@ -1429,6 +1447,7 @@ impl EquipmentConfig {
         match branch {
             crate::intensification::RungBranch::Plant => KitJob::Agriculture,
             crate::intensification::RungBranch::Animal => KitJob::Husbandry,
+            crate::intensification::RungBranch::Route => KitJob::Roadwork,
         }
     }
 
@@ -1786,6 +1805,7 @@ impl EquipmentConfig {
             KitJob::Agriculture => &self.default_kits.agriculture,
             KitJob::Husbandry => &self.default_kits.husbandry,
             KitJob::Builders => &self.default_kits.builders,
+            KitJob::Roadwork => &self.default_kits.roadwork,
         }
     }
 
@@ -2117,7 +2137,7 @@ impl EquipmentConfig {
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
     ) -> Option<(f32, crate::intensification::RungBranch)> {
-        crate::intensification::BOTH_BRANCHES
+        crate::intensification::FOOD_WEB_BRANCHES
             .iter()
             .filter_map(|branch| kit.best_build_work(wear, self, *branch))
             .fold(None::<(f32, _)>, |best, found| {
@@ -3798,7 +3818,7 @@ mod tests {
     fn every_branch_of_the_ladder_has_a_builders_kit_that_serves_only_it() {
         let config = EquipmentConfig::builtin();
         let fresh = crate::components::BandEquipment::start_stocked(&config);
-        for branch in crate::intensification::BOTH_BRANCHES {
+        for branch in crate::intensification::FOOD_WEB_BRANCHES {
             let kit = config.build_kit_for_branch(branch).unwrap_or_else(|| {
                 panic!(
                     "the shipped roster must carry a builders kit serving the {} web, or the pool \
@@ -3823,9 +3843,12 @@ mod tests {
                 kit.id(),
                 branch.as_str()
             );
+            // The **other food web**. The loop runs over `FOOD_WEB_BRANCHES`, so `Route` is
+            // unreachable here — and it could not be the answer in any case: a build kit serves a
+            // web whose rungs a crew raises, and a route's rungs are raised by traffic.
             let other = match branch {
                 RungBranch::Plant => RungBranch::Animal,
-                RungBranch::Animal => RungBranch::Plant,
+                RungBranch::Animal | RungBranch::Route => RungBranch::Plant,
             };
             assert_eq!(
                 config.build_work_per_worker(&kit, &fresh, other),
@@ -4088,7 +4111,7 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
                     { "id": "big_game", "display_name": "B", "jobs": ["hunt"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" },
+                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -4098,7 +4121,7 @@ mod tests {
                 r#""kits": [
                     { "id": "big_game", "display_name": "A", "jobs": [], "uses": [] }
                 ],
-                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" },
+                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -4108,7 +4131,7 @@ mod tests {
                 r#""kits": [
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" },
+                "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -4119,7 +4142,7 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
                     { "id": "gathering", "display_name": "B", "jobs": ["forage"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering", "agriculture": "gathering", "husbandry": "gathering", "builders": "gathering" },
+                "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering", "agriculture": "gathering", "husbandry": "gathering", "builders": "gathering" , "roadwork": "gathering" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -4149,7 +4172,7 @@ mod tests {
             r#""kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["net_kit"] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" },
+            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -4199,9 +4222,9 @@ mod tests {
             },
             "kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["spears"] },
-                { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout", "agriculture", "husbandry", "builders"], "uses": ["snares"] }
+                { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout", "agriculture", "husbandry", "builders", "roadwork"], "uses": ["snares"] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior", "agriculture": "warrior", "husbandry": "warrior", "builders": "warrior" },
+            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior", "agriculture": "warrior", "husbandry": "warrior", "builders": "warrior" , "roadwork": "warrior" },
             "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }
@@ -4223,7 +4246,7 @@ mod tests {
                 { "id": "gathering", "display_name": "Gathering kit", "jobs": ["forage"], "uses": ["baskets"] },
                 { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior", "agriculture", "husbandry", "builders"], "uses": [] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none", "builders": "none" },
+            "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none", "builders": "none" , "roadwork": "none" },
             "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#;
