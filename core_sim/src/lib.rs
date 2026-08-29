@@ -284,7 +284,10 @@ pub use recipes_config::{
     RecipeOutput, RecipesConfig, RecipesConfigError, RecipesConfigHandle, RecipesConfigMetadata,
     BUILTIN_RECIPES_CONFIG,
 };
-pub use routes::{advance_routes, Route, RouteId, RouteLedger, RouteTrafficLog};
+pub use routes::{
+    advance_routes, route_at_risk_rung, route_keeping_basis, route_span, route_upkeep_demand,
+    span_of_terrains, Route, RouteId, RouteLedger, RouteTrafficLog,
+};
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
 };
@@ -374,10 +377,10 @@ pub use systems::{
     advance_predator_raids, advance_tick, bench_material_rate, bench_tiers, denial_forecast,
     expedition_returned_event, expedition_take_provisions, fold_party_into_band,
     hunt_per_worker_provisions, hunt_report_event, hunt_take, hunt_trip_forecast,
-    output_multiplier, party_owes_a_report, simulate_power, source_has_a_meter_at_risk,
-    split_band_from_parent, split_refusals, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome,
-    HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams, SplitBand,
-    SplitRefusal, SplitRefusals, TradeDiffusionEvent,
+    output_multiplier, party_owes_a_report, settle_route_keeping, simulate_power,
+    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
+    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
+    PowerSimParams, SplitBand, SplitRefusal, SplitRefusals, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -975,6 +978,18 @@ pub fn build_headless_app() -> App {
                 // Pure telemetry: writes `TradeTelemetry`, which only `simulate_population`
                 // touches. It rides alongside the whole movement/labor run instead of tailing it.
                 systems::publish_trade_telemetry.after(systems::simulate_population),
+                // **The third keeping pool** (`.claude/rules/core_sim/routes.md`). Both edges are
+                // declared rather than left to the ambiguity gate:
+                //  - `.after(advance_labor_allocation)` — the `roadwork` head count it divides has
+                //    to be the one the shedding order left, not the one the player typed.
+                //  - `.before(advance_crafting)` — it charges this turn's keeping wear on the
+                //    band's gear, exactly as the other two pools do from inside the labour pass, so
+                //    it lands before the bench that may replace what it just wore. Being ahead of
+                //    the bench also puts it ahead of the raids and the migration that follow, which
+                //    is what keeps it reading the band where the labour pass left it.
+                systems::settle_route_keeping
+                    .after(systems::advance_labor_allocation)
+                    .before(systems::advance_crafting),
             )
                 .in_set(TurnStage::Population)
                 .run_if(capability_enabled(

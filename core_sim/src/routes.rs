@@ -81,8 +81,9 @@ use crate::{
     components::Tile,
     grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT},
     intensification::{
-        LadderConfig, RungBranch, RungKey, RungRoutePayoff, RungStanding, FRICTION_UNCHANGED,
-        RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        interpolate, upkeep_shortfall, upkeep_shortfall_fraction, LadderConfig, RungBranch,
+        RungKey, RungRoutePayoff, RungStanding, FRICTION_UNCHANGED, FULLY_SUPPLIED, NEGLECT_NONE,
+        NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
     resources::TileRegistry,
     terrain::terrain_definition,
@@ -143,7 +144,11 @@ pub struct Route {
     /// (`+=`), cleared once per turn by the decay pass — the §2.5 rule, unchanged.
     pub upkeep_supplied: f32,
     /// Consecutive turns of shortfall. Any turn the bill is met wipes it; it is not a lifetime budget.
-    pub neglect_turns: u32,
+    ///
+    /// **`u16`, and the exact twin of `ForagePatch::neglect_turns` / `Herd::neglect_turns`** — it is
+    /// handed straight to [`crate::intensification::RungDef::upkeep_decay`], which owns both the rate
+    /// and the *strictly greater than the grace* comparison, so all three webs count in one unit.
+    pub neglect_turns: u16,
     /// **Work units earned from traffic this turn**, banked into [`Self::position`] by the accrual
     /// pass and then cleared. Not persisted state in its own right — a within-turn accumulator across
     /// the several links that may cross one road.
@@ -160,8 +165,8 @@ impl Route {
             standing: route_standing_at(ladder, RUNG_UNSTARTED),
             payoff: route_payoff_at(ladder, RUNG_UNSTARTED),
             upkeep_demanded: None,
-            upkeep_supplied: 0.0,
-            neglect_turns: 0,
+            upkeep_supplied: NO_UPKEEP_DEMAND,
+            neglect_turns: NEGLECT_NONE,
             traffic_work: NO_TRAFFIC,
         }
     }
@@ -238,12 +243,23 @@ impl Route {
         }
     }
 
+    /// **THE BILL THIS ROAD WAS HANDED THIS TURN** — the stamped demand, and [`NO_UPKEEP_DEMAND`]
+    /// where nobody stamped one (§2.5). The plant web's `patch_keeping_basis` one branch over: every
+    /// reader of the keeping takes the stamp, because an interpolated demand moves *within* a turn
+    /// and the wire states `demand − supplied == shortfall` verbatim.
+    ///
+    /// **A road with no stamp owes nothing rather than owing its live cost.** That is honest here
+    /// and nowhere else on the ladder: [`crate::systems::settle_route_keeping`] stamps **every**
+    /// road in the ledger, not only the ones a band stands on, so an absent stamp means the keeping
+    /// pass has not run at all — a harness driving [`advance_routes`] alone, which must not decay
+    /// roads against a bill nobody was ever handed.
+    pub fn upkeep_basis(&self) -> f32 {
+        self.upkeep_demanded.unwrap_or(NO_UPKEEP_DEMAND)
+    }
+
     /// What this turn's bill left unpaid, off the **stamped** basis (§2.5), never the live demand.
     pub fn upkeep_shortfall(&self) -> f32 {
-        match self.upkeep_demanded {
-            Some(demand) => (demand - self.upkeep_supplied).max(0.0),
-            None => 0.0,
-        }
+        upkeep_shortfall(self.upkeep_basis(), self.upkeep_supplied)
     }
 }
 
@@ -446,6 +462,60 @@ pub fn span_of_terrains(terrains: impl IntoIterator<Item = TerrainType>) -> f32 
         .sum()
 }
 
+/// **WHAT THIS ROAD OWES EVERY TURN TO STAY WHERE IT IS**, in work units — the road's own
+/// `upkeep_demand`, *interpolated* on its standing and scaled by its [`route_span`].
+///
+/// It is `forage::patch_upkeep_demand`'s exact shape, with the span where the tender-loads are: the
+/// rung owns the rate, the branch owns the scale measure. **Interpolated rather than read off the
+/// held rung**, so a road part-way into a dirt road owes part of a dirt road — the same continuous
+/// bill the two food webs charge, and the reason a bill can never step within a turn.
+///
+/// ⛔ **THE GAME TRAIL FALLS OUT OF THE ARITHMETIC RATHER THAN BEING BRANCHED AROUND.** The floor
+/// declares no `upkeep`, so [`crate::intensification::RungDef::upkeep_demand`] answers
+/// [`NO_UPKEEP_DEMAND`] for it and a road holding only the trail interpolates to nothing owed. An
+/// `is_built()` guard here would be a second statement of *"nobody maintains a game trail"*, free to
+/// disagree with the ladder that already says it.
+pub fn route_upkeep_demand(route: &Route, span: f32, ladder: &LadderConfig) -> f32 {
+    interpolate(&route.standing(), |rung| {
+        ladder.rung(rung).upkeep_demand(span)
+    })
+}
+
+/// **THE BILL A CLAIM IS PRICED AT** — the **stamped** demand where this turn's keeping pass has
+/// already struck one, and the live [`route_upkeep_demand`] where it has not.
+///
+/// `forage::patch_keeping_basis`' rule exactly, and for its reason: a claim and the bill it is
+/// judged against must be one number, and an interpolated demand moves *within* a turn.
+///
+/// **The fallback is the only reading available to the SHED**, which counts a band's spare road
+/// keepers against this bill inside `advance_labor_allocation` — a whole system before
+/// [`crate::systems::settle_route_keeping`] stamps anything. Nothing moves a road's position between
+/// the two, so the two readings are the same number; what the fallback buys is that the count is not
+/// struck against a bill of zero and every road keeper shed as spare.
+pub fn route_keeping_basis(route: &Route, span: f32, ladder: &LadderConfig) -> f32 {
+    route
+        .upkeep_demanded
+        .unwrap_or_else(|| route_upkeep_demand(route, span, ladder))
+}
+
+/// **THE RUNG AT RISK ON THIS ROAD** — the newest rung carrying work, which is the rung a decay eats
+/// and the rung whose grace and rot rate govern.
+///
+/// **One helper because three readers must agree**: the bill above interpolates *through* it, the
+/// grace lookup asks it how long neglect is forgiven, and [`advance_routes`] bleeds it. A road that
+/// billed one rung and decayed another is exactly the drift `forage::patch_unwinding_key` exists to
+/// prevent one branch over.
+///
+/// It answers a rung rather than an `Option`, unlike the plant web's: a route position always holds
+/// **something** ([`RungKey::RouteGameTrail`] is the floor), and that rung declares no upkeep — so
+/// *"a road with nothing built on it is at risk of nothing"* is already the arithmetic's own answer.
+pub fn route_at_risk_rung(standing: &RungStanding) -> RungKey {
+    standing
+        .raising
+        .filter(|_| standing.banked > NO_RUNG_WORK_BANKED)
+        .unwrap_or(standing.held)
+}
+
 /// **What a route rung costs to raise.** `None` for the game-trail floor, which is nothing to build.
 ///
 /// **Routes take no per-source price multiplier** — a mile of road is a mile of road — so every rung
@@ -514,8 +584,34 @@ pub fn trace_path(from: UVec2, to: UVec2, width: u32, height: u32, wrap: bool) -
     path
 }
 
-/// **TRAFFIC WEARS THE ROADS IN** — the route branch's build accrual, and the counterpart of
-/// `advance_labor_allocation`'s build arm on the two food webs.
+/// **TRAFFIC WEARS THE ROADS IN, AND NEGLECT WEARS THEM OUT** — the route branch's build accrual and
+/// its decay pass in one system, the counterpart of `forage::advance_cultivation` and
+/// `fauna::advance_husbandry` on the two food webs.
+///
+/// # THE FOUR PHASES, IN THIS ORDER
+///
+/// 1. **Judge last turn's keeping.** The shortfall against the **stamped** bill
+///    ([`Route::upkeep_basis`]) arms or wipes [`Route::neglect_turns`] — *consecutive* turns short,
+///    never a lifetime budget, which is the rule both food webs already follow.
+/// 2. **Bleed the rung at risk** ([`route_at_risk_rung`]) at
+///    `shortfall_fraction × meter_decay.per_turn`, once the neglect has outlasted that rung's own
+///    `grace_turns`. [`crate::intensification::RungDef::upkeep_decay`] owns both the rate and the
+///    strictly-greater comparison, so this system never restates either.
+/// 3. **Clear the bill** for the coming turn's stamp — the `advance_cultivation` cycle exactly:
+///    `upkeep_demanded` back to `None` and `upkeep_supplied` back to [`NO_UPKEEP_DEMAND`], so next
+///    turn's shortfall is the whole demand again unless somebody restates it.
+/// 4. **Bank this turn's traffic** onto the position.
+///
+/// Then the ledger is **pruned** of every road back at [`RUNG_UNSTARTED`] — see the callout at the
+/// foot of the body for why that must happen *after* the banking.
+///
+/// # ⛔ THE ONE-TURN CARRY IS THE ARRANGEMENT, NOT A DEFECT TO FIX
+///
+/// Logistics runs **before** Population, so the [`Route::upkeep_supplied`] phase 1 judges was
+/// stamped by *last* turn's [`crate::systems::settle_route_keeping`]. That is the same lag
+/// `forage::advance_cultivation` and `fauna::advance_husbandry` already run on, and it is what makes
+/// the keeping a carry-across-turns signal rather than a within-turn one. **Do not reorder a stage
+/// for it.**
 ///
 /// It runs in `TurnStage::Logistics` **after `balance_supply_networks`**, which is what lets it see
 /// this turn's links. The consequence is that the *payoff* is read at the standing as of the
@@ -542,6 +638,46 @@ pub fn advance_routes(
     let (width, height) = (tile_registry.width, tile_registry.height);
     let wrap = sim_config.map_topology.wrap_horizontal;
 
+    // ## Phases 1-3, over every road that already existed when this turn began.
+    //
+    // A road the drain below is about to lay is deliberately not here: it carries no stamped bill
+    // and no neglect, so judging it would compare two zeroes and clearing it would clear nothing.
+    for (_, route) in ledger.iter_mut() {
+        // **1 — HOW SHORT, as a fraction of what was asked**, off the stamped basis and through the
+        // ladder's own seam, so the three branches share one reading of *"how short"* and supply
+        // only their own rate. A road nobody billed reads [`FULLY_SUPPLIED`] and is forgiven.
+        let shortfall_fraction =
+            upkeep_shortfall_fraction(route.upkeep_basis(), route.upkeep_supplied);
+        if shortfall_fraction > FULLY_SUPPLIED {
+            route.neglect_turns = route.neglect_turns.saturating_add(1);
+        } else {
+            // Any turn the bill is met wipes the counter outright: the grace is about *consecutive*
+            // shortfall rather than a lifetime budget, which is the rule both food webs follow.
+            route.neglect_turns = NEGLECT_NONE;
+        }
+        // **2 — THE BLEED, at the at-risk rung's own rate, past that rung's own grace.** Three
+        // dials answering three questions, and `upkeep_decay` owns the `>` that decides whether the
+        // penalty is biting — so nothing here restates the grace comparison.
+        let at_risk = route_at_risk_rung(&route.standing());
+        let decay = ladder
+            .rung(at_risk)
+            .upkeep_decay(shortfall_fraction, route.neglect_turns);
+        if decay > NO_UPKEEP_DECAY {
+            // `set_position` floors at `RUNG_UNSTARTED`, so a road cannot bleed past the game trail
+            // — and it re-stamps the standing and the payoff, which is what keeps a decaying road's
+            // friction reading honest without a second producer.
+            let bled = route.position() - decay;
+            route.set_position(bled, &ladder);
+        }
+        // **3 — the bill and this turn's payment, cleared on the one-turn cycle.** Both describe
+        // the keepers that held this road, so a road whose keepers have gone must stop reporting
+        // what they paid; clearing is also what re-arms phase 1 next turn.
+        route.upkeep_demanded = None;
+        route.upkeep_supplied = NO_UPKEEP_DEMAND;
+    }
+
+    // ## Phase 4 — bank this turn's traffic.
+    //
     // Drained rather than read: this turn's traffic is spent once, and a turn with no pooling must
     // wear nothing rather than re-wearing last turn's links.
     for (from, to) in std::mem::take(&mut traffic.links) {
@@ -575,6 +711,28 @@ pub fn advance_routes(
         let banked = route.position() + route.traffic_work;
         route.traffic_work = NO_TRAFFIC;
         route.set_position(banked, &ladder);
+    }
+
+    // ## ⛔ THE PRUNE, AND IT MUST COME AFTER THE BANKING
+    //
+    // **A game trail with no work in it is indistinguishable from no road at all** — it holds the
+    // free floor, buys nothing, lights nothing and owes nothing — so a ledger that kept every road
+    // it ever laid would grow without bound on reverted trails, and every one of them would be a
+    // live answer to `routes_on_tile` that carried no traffic and no payoff.
+    //
+    // **After the banking, because a road laid THIS turn is at `RUNG_UNSTARTED` until its first
+    // traffic lands.** Pruning before phase 4 would delete every road on the turn it formed, which
+    // is the whole feature.
+    //
+    // Remembering that animals once walked there is **issue #215's concern, not this ledger's**: the
+    // game trail is a rung, and #215 is about seeding the world with them.
+    let reverted: Vec<RouteId> = ledger
+        .iter()
+        .filter(|(_, route)| route.position() <= RUNG_UNSTARTED)
+        .map(|(id, _)| id)
+        .collect();
+    for id in reverted {
+        ledger.remove(id);
     }
 }
 

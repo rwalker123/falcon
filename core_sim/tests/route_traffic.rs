@@ -1,10 +1,17 @@
 //! **Roads form under the traffic that was already there, and a kept road pays**
 //! (`docs/plan_standing_upkeep.md` §4.13, issue #532).
 //!
-//! These drive the two systems in **stage order** — `balance_supply_networks`, then
-//! `routes::advance_routes` — because that ordering is load-bearing: the supply pass records the
-//! links, the route pass spends them, and the payoff is therefore read at the *previous* turn's
-//! standing. A fixture that ran them the other way round would measure a road reading itself.
+//! These drive the turn's three route systems in **stage order** — `balance_supply_networks` and
+//! `routes::advance_routes` in Logistics, then `settle_route_keeping` in Population — because that
+//! ordering is load-bearing twice over:
+//!
+//! - the supply pass records the links and the route pass spends them, so the payoff is read at the
+//!   *previous* turn's standing. A fixture that ran those two the other way round would measure a
+//!   road reading itself.
+//! - the keeping pass stamps and pays **after** the decay pass has judged and cleared, so the
+//!   supply `advance_routes` weighs was stamped by **last** turn's Population — the one-turn carry
+//!   `forage::advance_cultivation` and `fauna::advance_husbandry` already run on. **A test that
+//!   expects a decay on the turn the keepers left is wrong about the arrangement, not the code.**
 //!
 //! The harness mirrors `supply_network.rs`, which owns the pooling half of this fixture shape.
 
@@ -17,14 +24,16 @@ use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_routes, balance_supply_networks, scalar_zero, spawn_initial_world, BandId,
-    ConnectionKey, ConnectionLedger, ConnectionsConfig, CultureManager, DiscoveryProgressLedger,
-    FactionId, FactionInventory, GenerationId, GenerationRegistry, LadderConfig, LocalStore,
-    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, RouteLedger,
+    advance_routes, balance_supply_networks, route_at_risk_rung, route_upkeep_demand, scalar_zero,
+    settle_route_keeping, span_of_terrains, spawn_initial_world, BandId, ConnectionKey,
+    ConnectionLedger, ConnectionsConfig, CultureManager, DiscoveryProgressLedger,
+    EquipmentConfigHandle, FactionId, FactionInventory, GenerationId, GenerationRegistry,
+    LaborAllocation, LaborTarget, LadderConfig, LadderConfigHandle, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Route, RouteId, RouteLedger,
     RouteTrafficLog, RungKey, Scalar, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, SupplyNetworkConfigHandle, SupplyNetworkMembership, Tile,
-    TileRegistry, FOOD, FULL_TIE,
+    TileRegistry, FOOD, FULL_TIE, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, WHOLLY_UNSUPPLIED,
 };
 
 const TEST_FACTION: FactionId = FactionId(7);
@@ -74,8 +83,10 @@ fn spawn_world() -> App {
     app.world.insert_resource(ConnectionLedger::default());
     app.world.insert_resource(RouteLedger::default());
     app.world.insert_resource(RouteTrafficLog::default());
-    app.world
-        .insert_resource(core_sim::LadderConfigHandle::default());
+    app.world.insert_resource(LadderConfigHandle::default());
+    // The keeping pass resolves the road keepers' kit off the roster. The shipped
+    // `default_kits.roadwork` is the bare `none` kit, so they work bare — intended, not a gap.
+    app.world.insert_resource(EquipmentConfigHandle::default());
 
     app.add_systems(bevy::app::Startup, spawn_initial_world);
     app.update();
@@ -171,10 +182,17 @@ fn set_food(app: &mut App, band: Entity, food: i64) {
         .set(FOOD, Scalar::from_i64(food));
 }
 
-/// One turn, in stage order.
+/// One turn, in stage order: the two Logistics passes, then the Population one.
 fn resolve_turn(app: &mut App) {
     app.world.run_system_once(balance_supply_networks);
     app.world.run_system_once(advance_routes);
+    app.world.run_system_once(settle_route_keeping);
+}
+
+fn resolve_turns(app: &mut App, turns: u32) {
+    for _ in 0..turns {
+        resolve_turn(app);
+    }
 }
 
 /// A pair of neighbouring camps of one people who have met — the commonest arrangement in the game.
@@ -328,5 +346,376 @@ fn a_road_only_one_camp_stands_on_buys_that_network_nothing() {
         "one camp on a road is a camp BESIDE a road — it carries none of this network's pooling \
          ({} vs the unrouted {unrouted_delivery})",
         food_of(&app, b)
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The `Roadwork` keeping pool, and the decay it pays for.
+//
+// Every fixture below seats a road by hand at the **trail** rung rather than wearing one in, so the
+// measurement is about the keeping and not about the climb the first test in this file owns. A road
+// seated under a lone camp earns no traffic at all (there is nobody to pool with), which is what
+// makes the position a clean reading of the decay.
+// ---------------------------------------------------------------------------------------------
+
+/// The trail rung's own three dials, read from the shipped ladder rather than restated — a retune of
+/// `intensification_ladder.json` must move these tests' arithmetic with it, not break it.
+fn trail_dials() -> (f32, f32, u16) {
+    let ladder = LadderConfig::builtin();
+    let rung = ladder.rung(RungKey::RouteTrail);
+    let build = rung.build.as_ref().expect("the trail rung is built");
+    let upkeep = rung.upkeep.as_ref().expect("the trail rung is kept");
+    let decay = upkeep
+        .meter_decay
+        .as_ref()
+        .expect("the trail rung bleeds its meter");
+    (build.work_cost, decay.per_turn, upkeep.grace_turns as u16)
+}
+
+/// Lay a road along `path` and seat it exactly at the top of the **trail** rung — the rung whose
+/// grace and rot rate every assertion below is quoted against.
+fn seat_a_trail(app: &mut App, path: Vec<UVec2>) -> RouteId {
+    let ladder = LadderConfig::builtin();
+    let (trail_cost, _, _) = trail_dials();
+    let mut routes = app.world.resource_mut::<RouteLedger>();
+    let id = routes.insert(path, &ladder);
+    routes
+        .get_mut(id)
+        .expect("the road was just laid")
+        .set_position(trail_cost, &ladder);
+    id
+}
+
+/// A straight run of `tiles` tiles starting at the band's own tile, so the band stands on it (rule 2)
+/// and the road is long enough that its bill wants more than one pair of hands.
+fn road_under(app: &App, band: Entity, tiles: u32) -> Vec<UVec2> {
+    let head = position_of(app, band);
+    (0..tiles)
+        .map(|step| UVec2::new(head.x + step, head.y))
+        .collect()
+}
+
+fn route(app: &App, id: RouteId) -> &Route {
+    app.world
+        .resource::<RouteLedger>()
+        .get(id)
+        .expect("the road is still in the ledger")
+}
+
+fn staff_roadwork(app: &mut App, band: Entity, workers: u32) {
+    let mut allocation = LaborAllocation::default();
+    allocation.set_assignment(LaborTarget::Roadwork, workers, workers.max(1), None);
+    app.world.entity_mut(band).insert(allocation);
+}
+
+/// **HOW MANY BARE HANDS COVER THIS ROAD'S BILL IN FULL** — `ceil(demand / PER_WORKER_OUTPUT)`, the
+/// same count `RungDef::upkeep_crew_needed` publishes one branch over. Read off the sim's own
+/// interpolated demand rather than hard-coded, because the span is whatever the generated map's
+/// terrain under the road happens to cost.
+fn keepers_the_bill_wants(app: &App, id: RouteId) -> u32 {
+    let ladder = LadderConfig::builtin();
+    let route = route(app, id);
+    let registry = app.world.resource::<TileRegistry>();
+    let span = span_of_terrains(route.path.iter().filter_map(|pos| {
+        registry
+            .index(pos.x, pos.y)
+            .and_then(|entity| app.world.get::<Tile>(entity))
+            .map(|tile| tile.terrain)
+    }));
+    let demand = route_upkeep_demand(route, span, &ladder);
+    assert!(
+        demand > NO_UPKEEP_DEMAND,
+        "precondition: a seated trail really does owe something ({demand})"
+    );
+    (demand / PER_WORKER_OUTPUT).ceil() as u32
+}
+
+/// ⛔ **THE HEADLINE, AND BOTH HALVES ARE LOAD-BEARING.** A road with keepers on it holds exactly
+/// where it stands; the same road with the role empty loses its rung once its grace runs out.
+///
+/// **The kept half is the liveness assertion.** Without it the neglected half passes just as well on
+/// a sim where roads never hold anything at all — a position pinned at the floor decays to nothing
+/// and reports the same "it fell" the real mechanism reports.
+#[test]
+fn a_road_with_keepers_holds_and_the_same_road_without_them_loses_its_rung() {
+    const ROAD_TILES: u32 = 4;
+    let (trail_cost, _, grace) = trail_dials();
+    let turns = u32::from(grace) + 2;
+
+    // ① Kept.
+    let mut kept = spawn_world();
+    let band = spawn_band(&mut kept, CAMP_A, 100);
+    let path = road_under(&kept, band, ROAD_TILES);
+    let road = seat_a_trail(&mut kept, path);
+    let wanted = keepers_the_bill_wants(&kept, road);
+    staff_roadwork(&mut kept, band, wanted);
+    resolve_turns(&mut kept, turns);
+    assert_eq!(
+        route(&kept, road).position(),
+        trail_cost,
+        "a road whose bill is met holds exactly where it stands, however long nobody walks it"
+    );
+    assert_eq!(
+        route(&kept, road).held_rung(),
+        RungKey::RouteTrail,
+        "and it still holds the rung it was seated at"
+    );
+
+    // ② The same road, with nobody on the role.
+    let mut lost = spawn_world();
+    let band = spawn_band(&mut lost, CAMP_A, 100);
+    let path = road_under(&lost, band, ROAD_TILES);
+    let road = seat_a_trail(&mut lost, path);
+    staff_roadwork(&mut lost, band, 0);
+    resolve_turns(&mut lost, turns);
+    assert!(
+        route(&lost, road).position() < trail_cost,
+        "an unkept road loses ground once its grace is spent ({} of {trail_cost})",
+        route(&lost, road).position()
+    );
+}
+
+/// **THE DECAY IS PROPORTIONAL TO HOW SHORT YOU ARE.** Half a road's bill funded loses half the
+/// rung's rate — the shape both food webs pin, and the whole reason `shortfall` stopped *being* the
+/// decay.
+///
+/// Exactly **one** decaying turn is measured, so the demand cannot have moved under the reading: the
+/// bill interpolates on the position, and a second decaying turn would be judged against a bill
+/// struck at a position the first one had already lowered.
+#[test]
+fn half_a_roads_bill_funded_loses_half_the_rungs_rate() {
+    const ROAD_TILES: u32 = 12;
+    const EPSILON: f32 = 1.0e-3;
+    let (trail_cost, rate, grace) = trail_dials();
+
+    let mut app = spawn_world();
+    let band = spawn_band(&mut app, CAMP_A, 100);
+    let path = road_under(&app, band, ROAD_TILES);
+    let road = seat_a_trail(&mut app, path);
+    let wanted = keepers_the_bill_wants(&app, road);
+    assert!(
+        wanted >= 2,
+        "precondition: the fixture's road wants more than one pair of hands ({wanted}), or \
+         'half the keepers' is not a state it can be in"
+    );
+    staff_roadwork(&mut app, band, wanted / 2);
+
+    // Up to the last turn the grace still forgives; the next one is the one that bites.
+    resolve_turns(&mut app, u32::from(grace) + 1);
+    let (demand, supplied, before) = {
+        let route = route(&app, road);
+        (
+            route.upkeep_demanded.expect("every road is billed"),
+            route.upkeep_supplied,
+            route.position(),
+        )
+    };
+    assert_eq!(
+        before, trail_cost,
+        "precondition: nothing has decayed yet — the grace is still forgiving"
+    );
+    let fraction = (demand - supplied) / demand;
+    assert!(
+        (0.3..0.7).contains(&fraction),
+        "precondition: the fixture really does fund about half the bill (short {fraction} of it)"
+    );
+
+    resolve_turn(&mut app);
+    let lost = before - route(&app, road).position();
+    assert!(
+        (lost - fraction * rate).abs() < EPSILON,
+        "the bleed is the shortfall FRACTION times the rung's own rate, not the rate flat: \
+         lost {lost} against {fraction} x {rate}"
+    );
+}
+
+/// **THE GRACE IS HONOURED, AND IT IS STRICTLY GREATER.** A road one turn into shortfall has not
+/// moved; a road past its rung's grace has.
+#[test]
+fn a_road_inside_its_grace_has_not_moved_and_one_past_it_has() {
+    const ROAD_TILES: u32 = 4;
+    let (trail_cost, _, grace) = trail_dials();
+
+    let mut app = spawn_world();
+    let band = spawn_band(&mut app, CAMP_A, 100);
+    let path = road_under(&app, band, ROAD_TILES);
+    let road = seat_a_trail(&mut app, path);
+    staff_roadwork(&mut app, band, 0);
+
+    // The first turn stamps the bill; the grace then forgives that many consecutive short turns.
+    resolve_turns(&mut app, u32::from(grace) + 1);
+    assert_eq!(
+        route(&app, road).position(),
+        trail_cost,
+        "inside its grace the road has not moved at all"
+    );
+
+    resolve_turn(&mut app);
+    assert!(
+        route(&app, road).position() < trail_cost,
+        "one turn past the grace it is going backwards ({})",
+        route(&app, road).position()
+    );
+}
+
+/// ⛔ **AN ABANDONED ROAD DECAYS AND IS EVENTUALLY FORGOTTEN — AND THIS IS THE TEST THAT CATCHES A
+/// BILL STAMPED ONLY WHERE A BAND STANDS.**
+///
+/// `Route::keeping_is_met` answers `true` for a road with **no stamped bill**, so a keeping pass that
+/// visited only the roads under a band would leave this one reading as kept for ever: it would never
+/// arm its neglect counter, never decay, and never be pruned. With that bug this test does not
+/// measure a slower decay — it measures **none at all**, which is the route arc's rule 3 deleted.
+#[test]
+fn a_road_no_band_stands_on_decays_and_is_finally_forgotten() {
+    const ROAD_TILES: u32 = 3;
+    let (trail_cost, rate, grace) = trail_dials();
+    // Every work unit of the rung, at the full unmet rate, plus the grace that precedes the first
+    // one and the turn that stamps the first bill.
+    let turns_to_nothing = (trail_cost / rate).ceil() as u32 + u32::from(grace) + 2;
+
+    let mut app = spawn_world();
+    // A road out in open country, with no band anywhere near it and no camp on any of its tiles.
+    let lone = UVec2::new(CAMP_A.0, CAMP_A.1);
+    let road = seat_a_trail(
+        &mut app,
+        (0..ROAD_TILES)
+            .map(|step| UVec2::new(lone.x, lone.y + step))
+            .collect(),
+    );
+
+    resolve_turns(&mut app, u32::from(grace) + 2);
+    assert!(
+        route(&app, road).position() < trail_cost,
+        "a road nobody stands on is billed like any other, and nobody pays it ({} of {trail_cost})",
+        route(&app, road).position()
+    );
+
+    resolve_turns(&mut app, turns_to_nothing);
+    assert!(
+        app.world.resource::<RouteLedger>().get(road).is_none(),
+        "a road back at the floor with no work in it is indistinguishable from no road, so the \
+         ledger forgets it rather than growing without bound"
+    );
+}
+
+/// **A GAME TRAIL OWES NOTHING, OVER ANY TERRAIN, AND HAS NO RUNG TO LOSE.** That is the whole of
+/// what makes the branch's floor free: nobody maintains a game trail.
+///
+/// It is asserted on the **arithmetic** rather than through the ledger, and deliberately: a road at
+/// [`RUNG_UNSTARTED`] carries no work, so `advance_routes` prunes it on the turn it is laid — there
+/// is no persisted road in that state for a system-level fixture to watch. The claim being made is
+/// that the floor falls out of the interpolation rather than being branched around, and that is a
+/// statement about the numbers.
+///
+/// **Over the real map's terrains**, so *"any terrain"* is the shipped 37 rather than one the test
+/// chose: the span multiplies the demand, and a floor that owed anything would owe *more* over hard
+/// country.
+#[test]
+fn a_game_trail_owes_nothing_over_any_terrain_and_has_no_rung_to_lose() {
+    /// More consecutive short turns than any route rung's grace, so *"still inside the grace"*
+    /// cannot be what makes the decay below read zero.
+    const LONG_PAST_ANY_GRACE: u16 = 500;
+    let ladder = LadderConfig::builtin();
+    let app = spawn_world();
+
+    let terrains: Vec<_> = {
+        let registry = app.world.resource::<TileRegistry>();
+        let mut seen: Vec<_> = (0..registry.height)
+            .flat_map(|y| (0..registry.width).map(move |x| (x, y)))
+            .filter_map(|(x, y)| registry.index(x, y))
+            .filter_map(|entity| app.world.get::<Tile>(entity))
+            .map(|tile| tile.terrain)
+            .collect();
+        seen.sort_by_key(|terrain| format!("{terrain:?}"));
+        seen.dedup();
+        seen
+    };
+    assert!(
+        terrains.len() > 1,
+        "precondition: the generated map really does carry several terrains ({})",
+        terrains.len()
+    );
+
+    for terrain in terrains {
+        let span = span_of_terrains([terrain, terrain, terrain]);
+        let trail = Route::worn_in(vec![UVec2::new(1, 1)], &ladder);
+        assert_eq!(
+            trail.held_rung(),
+            RungKey::RouteGameTrail,
+            "precondition: a road with no work in it holds the branch's floor"
+        );
+        assert_eq!(
+            route_upkeep_demand(&trail, span, &ladder),
+            NO_UPKEEP_DEMAND,
+            "a game trail owes nothing over {terrain:?} (span {span}) — the floor declares no \
+             upkeep, so the interpolation answers zero rather than an `is_built` branch answering \
+             it"
+        );
+        let at_risk = route_at_risk_rung(&trail.standing());
+        assert_eq!(
+            at_risk,
+            RungKey::RouteGameTrail,
+            "with no work banked the rung at risk is the one it HOLDS, not the one above it"
+        );
+        assert_eq!(
+            ladder
+                .rung(at_risk)
+                .upkeep_decay(WHOLLY_UNSUPPLIED, LONG_PAST_ANY_GRACE),
+            0.0,
+            "and it can never decay: there is no rung under the floor to lose"
+        );
+    }
+}
+
+/// ⛔ **SEVERAL BANDS MAY PAY ONE ROAD, AND EACH PAYS A PART.** §2.5's rule, on the branch most
+/// exposed to it: a road has no owner, so *every* band standing on it draws the same bill.
+///
+/// **This is the test that catches `upkeep_supplied = ` in place of `+=`.** With an assignment the
+/// second band's share replaces the first's rather than adding to it, the road is short by exactly
+/// one band's worth for ever, and it bleeds with its whole keeping staffed — the plant web's own
+/// *"a crew gathering a patch a second crew is sowing overwrites the sowers' supply with its own"*,
+/// one branch over. Every other fixture in this file staffs one band, where the two spellings are
+/// indistinguishable.
+#[test]
+fn two_bands_on_one_road_each_pay_a_part_of_its_bill() {
+    /// Long enough that its bill wants more hands than either band brings on its own.
+    const ROAD_TILES: u32 = 12;
+    let (trail_cost, _, grace) = trail_dials();
+    let turns = u32::from(grace) + 2;
+
+    let mut app = spawn_world();
+    let a = spawn_band(&mut app, CAMP_A, 100);
+    // The neighbouring tile, which is the road's second tile — so both camps stand on one road
+    // (rule 2) without either standing on the other.
+    let b = spawn_band(&mut app, (CAMP_A.0 + 1, CAMP_A.1), 100);
+    let path = road_under(&app, a, ROAD_TILES);
+    let road = seat_a_trail(&mut app, path);
+    let wanted = keepers_the_bill_wants(&app, road);
+    assert!(
+        wanted >= 2,
+        "precondition: the road's bill wants more than one band's worth of hands ({wanted})"
+    );
+    // Half each, rounded up, so the two together cover it and neither does alone.
+    let each = wanted.div_ceil(2);
+    staff_roadwork(&mut app, a, each);
+    staff_roadwork(&mut app, b, each);
+
+    resolve_turns(&mut app, turns);
+    assert_eq!(
+        route(&app, road).position(),
+        trail_cost,
+        "two bands' shares ADD, so between them the bill is met and the road holds"
+    );
+
+    // The negative half: one of them alone cannot cover it, so the same road bleeds.
+    let mut alone = spawn_world();
+    let a = spawn_band(&mut alone, CAMP_A, 100);
+    let path = road_under(&alone, a, ROAD_TILES);
+    let road = seat_a_trail(&mut alone, path);
+    staff_roadwork(&mut alone, a, each);
+    resolve_turns(&mut alone, turns);
+    assert!(
+        route(&alone, road).position() < trail_cost,
+        "and one band's share alone genuinely is short — otherwise the half above measured nothing"
     );
 }

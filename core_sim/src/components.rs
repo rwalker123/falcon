@@ -1754,6 +1754,21 @@ pub enum LaborTarget {
     /// [`LaborTarget::Agriculture`]: one pool against the summed
     /// [`crate::fauna::herd_upkeep_demand`] of every pastoral herd and pen this band works.
     Husbandry,
+    /// **KEEP THE ROADS THIS BAND STANDS ON** — the roadwork standing role, the route branch's
+    /// third keeping pool (`docs/plan_standing_upkeep.md` §4.13). One pool against the summed
+    /// [`crate::routes::route_upkeep_demand`] of every road under the band's own tile.
+    ///
+    /// # ⛔ IT KEEPS GROUND THE BAND DOES NOT OWN
+    ///
+    /// A road is a **shared public good** with no owner ([`crate::routes`] — rule 3), so unlike the
+    /// two food webs' pools there is no *source row* naming what this one funds. What it funds is
+    /// resolved from where the band is standing ([`crate::routes::RouteLedger::routes_on_tile`] —
+    /// rule 2, and there is no radius): step one tile off your own road and you stop paying for it,
+    /// which is the legible half of *a road is a reason to stay*.
+    ///
+    /// **Several bands may pay one road**, and each pays a part — the same `+=` accumulation §2.5
+    /// already requires of a source two bands work.
+    Roadwork,
     /// **RAISE WHATEVER THIS BAND HAS QUEUED** — the builders standing role
     /// (`docs/plan_standing_upkeep.md` §2.5). Its workers are a **pool** whose whole output goes on
     /// the **head** of [`LaborAllocation::build_queue`] until that entry's meter fills, then on the
@@ -1796,6 +1811,7 @@ impl LaborTarget {
             LaborTarget::Warrior => "warrior",
             LaborTarget::Agriculture => "agriculture",
             LaborTarget::Husbandry => "husbandry",
+            LaborTarget::Roadwork => "roadwork",
             LaborTarget::Builders => "builders",
         }
     }
@@ -1816,6 +1832,7 @@ impl LaborTarget {
             LaborTarget::Warrior => crate::equipment_config::KitJob::Warrior,
             LaborTarget::Agriculture => crate::equipment_config::KitJob::Agriculture,
             LaborTarget::Husbandry => crate::equipment_config::KitJob::Husbandry,
+            LaborTarget::Roadwork => crate::equipment_config::KitJob::Roadwork,
             LaborTarget::Builders => crate::equipment_config::KitJob::Builders,
         }
     }
@@ -1834,6 +1851,7 @@ impl LaborTarget {
             (LaborTarget::Warrior, LaborTarget::Warrior) => true,
             (LaborTarget::Agriculture, LaborTarget::Agriculture) => true,
             (LaborTarget::Husbandry, LaborTarget::Husbandry) => true,
+            (LaborTarget::Roadwork, LaborTarget::Roadwork) => true,
             (LaborTarget::Builders, LaborTarget::Builders) => true,
             _ => false,
         }
@@ -1857,6 +1875,7 @@ impl LaborTarget {
             | LaborTarget::Warrior
             | LaborTarget::Agriculture
             | LaborTarget::Husbandry
+            | LaborTarget::Roadwork
             | LaborTarget::Builders => false,
         }
     }
@@ -2198,6 +2217,10 @@ pub struct ShedFacts {
     /// twin of [`Self::spare_agriculture_keepers`], shed after it because step 3 walks Agriculture
     /// first.
     pub spare_husbandry_keepers: u32,
+    /// **Hands on [`LaborTarget::Roadwork`] the band's road keeping bill does not need** — the third
+    /// of the three, and shed **last** of them (see [`ShedStep::SpareKeeper`] for why a road is the
+    /// most recoverable thing a keeping role holds).
+    pub spare_roadwork_keepers: u32,
 }
 
 impl ShedFacts {
@@ -2329,8 +2352,16 @@ pub enum ShedStep {
     /// **2 — a warrior, while nothing threatens the band.** A guard against nothing is the cheapest
     /// hand in the allocation.
     UnthreatenedWarrior,
-    /// **3 — a keeper above the keeping demand**, Agriculture before Husbandry. The bill is still met
-    /// in full, so nothing rots.
+    /// **3 — a keeper above the keeping demand**, Agriculture before Husbandry before Roadwork. The
+    /// bill is still met in full, so nothing rots.
+    ///
+    /// ⛔ **ROADWORK IS THE LAST OF THE THREE, AND IT IS THE RECOVERABILITY THAT DECIDES IT.** A road
+    /// carries the longest graces on the ladder (`route:paved_road` forgives twelve consecutive short
+    /// turns against `plant:tended`'s), and **a lost road is re-earned by traffic alone** — the bands
+    /// that walk it wear it back in with no command typed and no crew staffed. A lost patch or a lost
+    /// flock is not: a feral patch wants a `Cultivate` and the builders behind it, and a shed herd is
+    /// gone. So of the three keeping roles it is the one whose loss costs least to undo, and it gives
+    /// last.
     SpareKeeper,
     /// **4 — a builder the pool is not spending.** With something queued, every builder above the
     /// last one: the queue slows and no job stops. With **nothing** queued, every builder there is,
@@ -2372,7 +2403,8 @@ pub enum ShedStep {
     /// can cost people, which is worse than losing a row that had nothing invested in it.
     Warrior,
     /// **8 — a keeper below the demand.** Improvements begin to rot, which is gradual and
-    /// recoverable.
+    /// recoverable. Walked in step 3's order — Agriculture, Husbandry, then Roadwork — for step 3's
+    /// reason.
     NeededKeeper,
     /// **9 — empty the least-productive improved source with no queued build.** Worse than step 8:
     /// an improved source with no take crew still owes its upkeep and now pays nothing, where rot is
@@ -3579,6 +3611,7 @@ impl BuildSource {
             | LaborTarget::Warrior
             | LaborTarget::Agriculture
             | LaborTarget::Husbandry
+            | LaborTarget::Roadwork
             | LaborTarget::Builders => None,
         }
     }
@@ -4278,13 +4311,19 @@ impl LaborAllocation {
             // spare, and the next pass of the walk has to see that.
             if step == ShedStep::SpareKeeper {
                 if let ShedPick::Row(index) = pick {
-                    match self.assignments[index].target {
-                        LaborTarget::Agriculture => {
-                            facts.spare_agriculture_keepers -= 1;
-                        }
-                        _ => {
-                            facts.spare_husbandry_keepers -= 1;
-                        }
+                    // **Each of the three pools spends its OWN surplus down**, named rather than
+                    // caught by a `_`: with a wildcard here a `Roadwork` hand decremented the
+                    // *husbandry* count, which underflows a `u32` the moment the band has road
+                    // keepers to spare and no herd ones. Step 3 is the only step that reads these,
+                    // so the arms are the three roles it walks and nothing else.
+                    let spare = match self.assignments[index].target {
+                        LaborTarget::Agriculture => Some(&mut facts.spare_agriculture_keepers),
+                        LaborTarget::Husbandry => Some(&mut facts.spare_husbandry_keepers),
+                        LaborTarget::Roadwork => Some(&mut facts.spare_roadwork_keepers),
+                        _ => None,
+                    };
+                    if let Some(spare) = spare {
+                        *spare = spare.saturating_sub(1);
                     }
                 }
             }
@@ -4356,10 +4395,11 @@ impl LaborAllocation {
                 return Some((ShedPick::Row(index), ShedStep::UnthreatenedWarrior));
             }
         }
-        // 3. A keeper above the keeping demand — Agriculture first, then Husbandry.
+        // 3. A keeper above the keeping demand — Agriculture first, then Husbandry, then Roadwork.
         for (role, spare) in [
             (LaborTarget::Agriculture, facts.spare_agriculture_keepers),
             (LaborTarget::Husbandry, facts.spare_husbandry_keepers),
+            (LaborTarget::Roadwork, facts.spare_roadwork_keepers),
         ] {
             if spare > NO_SPARE_KEEPERS {
                 if let Some(index) = self.staffed_role_row(&role) {
@@ -4442,7 +4482,11 @@ impl LaborAllocation {
             return Some((ShedPick::Row(index), ShedStep::Warrior));
         }
         // 8. A keeper below the demand — improvements begin to rot. Agriculture first, as step 3.
-        for role in [LaborTarget::Agriculture, LaborTarget::Husbandry] {
+        for role in [
+            LaborTarget::Agriculture,
+            LaborTarget::Husbandry,
+            LaborTarget::Roadwork,
+        ] {
             if let Some(index) = self.staffed_role_row(&role) {
                 return Some((ShedPick::Row(index), ShedStep::NeededKeeper));
             }
@@ -5526,13 +5570,21 @@ mod tests {
         );
     }
 
-    /// **STEP 3 — A KEEPER ABOVE THE DEMAND GIVES BEFORE A BUILDER**, and Agriculture before
-    /// Husbandry. Nothing rots either way: the bill is still met in full.
+    /// **STEP 3 — A KEEPER ABOVE THE DEMAND GIVES BEFORE A BUILDER**, and the three keeping roles
+    /// give in their stated order: Agriculture, then Husbandry, then Roadwork. Nothing rots either
+    /// way: every bill is still met in full.
+    ///
+    /// **Roadwork last of the three is the claim with a reason behind it** — see
+    /// [`ShedStep::SpareKeeper`]: a road carries the longest graces on the ladder and a lost road is
+    /// re-earned by traffic alone, where a feral patch wants a `Cultivate` and a shed flock is gone.
     #[test]
-    fn a_spare_keeper_gives_before_a_builder_and_agriculture_gives_before_husbandry() {
+    fn a_spare_keeper_gives_before_a_builder_and_the_three_pools_give_in_order() {
         let mut allocation = LaborAllocation {
             assignments: vec![
                 staffed_forage(PATCH_A, 3),
+                // Deliberately declared out of the shedding order, so the walk cannot be passing by
+                // reading list position — the defect `normalize`'s own callout exists for.
+                staffed_role(LaborTarget::Roadwork, 2),
                 staffed_role(LaborTarget::Husbandry, 2),
                 staffed_role(LaborTarget::Agriculture, 2),
                 staffed_role(LaborTarget::Builders, 2),
@@ -5542,17 +5594,23 @@ mod tests {
         };
         let shed = allocation.normalize(
             None,
-            7,
+            8,
             ShedFacts {
                 spare_agriculture_keepers: 1,
                 spare_husbandry_keepers: 1,
+                spare_roadwork_keepers: 1,
                 ..Default::default()
             },
         );
         assert_eq!(
             shed_targets(&shed),
-            vec![LaborTarget::Agriculture, LaborTarget::Husbandry],
-            "the plant pool is walked first, and only then the animal one — both ahead of the queue"
+            vec![
+                LaborTarget::Agriculture,
+                LaborTarget::Husbandry,
+                LaborTarget::Roadwork
+            ],
+            "the plant pool is walked first, then the animal one, then the roads — all three ahead \
+             of the queue"
         );
         assert_eq!(
             allocation.workers_on(&LaborTarget::Builders),

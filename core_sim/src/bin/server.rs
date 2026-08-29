@@ -2098,6 +2098,7 @@ fn seed_source_yield(
         | LaborTarget::Warrior
         | LaborTarget::Agriculture
         | LaborTarget::Husbandry
+        | LaborTarget::Roadwork
         | LaborTarget::Builders => return,
     };
     band_allocation_mut(app, band).set_source_yield(target, seeded);
@@ -2196,6 +2197,7 @@ fn validate_labor_policy(
         | LaborTarget::Warrior
         | LaborTarget::Agriculture
         | LaborTarget::Husbandry
+        | LaborTarget::Roadwork
         | LaborTarget::Builders => Ok(()),
     }
 }
@@ -2247,6 +2249,7 @@ fn validate_improvement(
         | LaborTarget::Warrior
         | LaborTarget::Agriculture
         | LaborTarget::Husbandry
+        | LaborTarget::Roadwork
         | LaborTarget::Builders => Err(format!(
             "There is nothing to {} on a standing role.",
             improvement.as_str()
@@ -2968,6 +2971,10 @@ fn handle_assign_labor(
         // upkeep of everything this band holds on that web, and `0` stops maintaining the whole web.
         "agriculture" => LaborTarget::Agriculture,
         "husbandry" => LaborTarget::Husbandry,
+        // **The third keeping role** (`docs/plan_standing_upkeep.md` §4.13) — the route branch's,
+        // staffed exactly like the two above it. What its hands hold is not a source row but the
+        // roads under the band's own tile (`routes` rule 2), and `0` stops keeping roads at all.
+        "roadwork" => LaborTarget::Roadwork,
         // **The builders** (`docs/plan_standing_upkeep.md` §2.5) — one pool for both webs, whose
         // whole output goes on the head of this band's build queue. A verb declares what to raise;
         // this is what raises it, and `0` stops building altogether.
@@ -2992,6 +2999,10 @@ fn handle_assign_labor(
         // line sees the hands that hold it move.
         LaborTarget::Agriculture => CommandEventKind::Cultivate,
         LaborTarget::Husbandry => CommandEventKind::Corral,
+        // **The road keepers have no web's channel to ride**, because the route branch declares no
+        // verb at all — traffic is the crew — so they report on the generic one, as the builders and
+        // the warriors do.
+        LaborTarget::Roadwork => CommandEventKind::CancelOrder,
         // The builders serve both webs, so they have no web's channel to ride and report on the
         // generic one, as the warriors do.
         LaborTarget::Builders => CommandEventKind::CancelOrder,
@@ -3092,18 +3103,31 @@ fn handle_assign_labor(
     let unstaffing = workers == 0;
     let staffing_a_standing_pool = matches!(
         target,
-        LaborTarget::Builders | LaborTarget::Agriculture | LaborTarget::Husbandry
+        LaborTarget::Builders
+            | LaborTarget::Agriculture
+            | LaborTarget::Husbandry
+            | LaborTarget::Roadwork
     );
     if staffing_a_standing_pool && kit_id.is_some() {
-        let (pool, verb) = match target {
-            LaborTarget::Builders => ("builders kit is set per queue entry", "build_kit"),
-            _ => ("keeping kit is set per work site", "upkeep_kit"),
+        // **AND THE ROAD KEEPERS ARE THE SAME RULE WITH NO OVERRIDE TO POINT AT.** A road is not a
+        // work site the player holds — it is owned by nobody — so there is no `upkeep_kit <source…>`
+        // that could name one, and the kit is derived from the roster alone
+        // (`EquipmentConfig::keeping_kit_for` at `RungBranch::Route`, today the bare `none`).
+        // **Refused rather than ignored**, for the builders row's reason: a token the command
+        // silently drops is the same class of defect as the one this rule replaces.
+        let refusal = match target {
+            LaborTarget::Builders => "the builders kit is set per queue entry — use `build_kit                                       <faction> <source…> kit <id>`"
+                .to_string(),
+            LaborTarget::Roadwork => "a road has no keeper's kit to name — the roadwork kit is                                       derived from the roster"
+                .to_string(),
+            _ => "the keeping kit is set per work site — use `upkeep_kit <faction> <source…> kit                   <id>`"
+                .to_string(),
         };
         emit_command_failure(
             app,
             event_kind,
             faction,
-            format!("assign_labor: the {pool} — use `{verb} <faction> <source…> kit <id>`."),
+            format!("assign_labor: {refusal}."),
         );
         return;
     }

@@ -204,15 +204,101 @@ rung that can **never be held**, which is a harder failure than one that is chea
 is the crafting arc's. When a stone material lands, the rung takes `build.materials {stone: 30}` and
 `upkeep.materials {stone: 0.08}` and nothing else changes: the engine half already ships.
 
+## The keeping — the `Roadwork` pool, and the decay it pays for
+
+They landed **together**, and had to: a decay with no pool to fund it reverts every road on the map,
+and a pool with nothing to fund is a dial nothing reads.
+
+`LaborTarget::Roadwork` is an ordinary band-wide standing role — `assign_labor <faction> <band>
+roadwork <n>`, published as a `laborAssignments` row with `kind: "roadwork"`, shed by `normalize`,
+checkpointed. Its TOE job is `KitJob::Roadwork` and `default_kits.roadwork` is the bare `none` kit,
+so **road keepers work bare today**; that is intended, and the day a barrow declares a `build_work`
+stat serving `route` the existing seam picks it up with no code change.
+
+### ⛔ THE BILL IS STAMPED ON EVERY ROAD, NOT ONLY THE ONES A BAND STANDS ON
+
+`systems::settle_route_keeping` runs in `TurnStage::Population`, `.after(advance_labor_allocation)`
+and `.before(advance_crafting)` — both edges declared, not left to the ambiguity gate — and it does
+two things in order:
+
+1. **stamps the interpolated bill on every road in the ledger**, first-write-wins
+   (`routes::route_upkeep_demand`, scaled by `route_span`);
+2. **pays**, from every band whose `roadwork` row is staffed, against the roads under **its own
+   tile** (`routes_on_tile` — rule 2, and there is no radius).
+
+**Step 1 is the load-bearing half, and its scope is the trap.** `Route::keeping_is_met` answers
+`true` for a road with **no stamped bill** — an honest *"it has not been judged this turn"* — so a
+pass that stamped only where a band stands would leave an abandoned road reading as kept **for
+ever**: never arming its neglect counter, never decaying, never pruned. That is rule 3 deleted, and
+it fails as *no decay at all* rather than as a slow one. `route_traffic::a_road_no_band_stands_on_
+decays_and_is_finally_forgotten` is the pin.
+
+**The game trail falls out of the arithmetic rather than being branched around.** The floor declares
+no `upkeep`, so `RungDef::upkeep_demand` answers `NO_UPKEEP_DEMAND` for it and a road holding only
+the trail owes nothing. An `is_built()` guard would be a second statement of *"nobody maintains a
+game trail"*, free to disagree with the ladder that already says it.
+
+### A route keeper is funded exactly as a field or a flock keeper is
+
+`route_keeping_claims` builds ordinary `KeepingClaim`s and hands them to the same
+`keeping_rates` → `KeepingRate::worker_need` → `intensification::distribute_upkeep_pool` chain the
+two food webs use, under the band's own `upkeep_fund_mode`. **There is deliberately no second supply
+expression.** The one structural difference is that a claim carries no assignment index: a road is a
+shared public good that no row of `assignments` names, so the index points at the claim's own id
+vector instead. `Priority` funds most-invested first on the road's **position** — which *is* the
+accumulator on this branch, so there is no separate stored cost to read — tie-broken on `RouteId`.
+
+**`upkeep_supplied` accumulates (`+=`), never assigns**, because several bands may stand on one road
+and each pays a part. Pinned by `route_traffic::two_bands_on_one_road_each_pay_a_part_of_its_bill`,
+which is the only fixture in the file with two payers — every single-band fixture cannot tell the two
+spellings apart.
+
+### `advance_routes` is four phases, and the order is the whole of it
+
+1. **judge last turn's keeping** — `upkeep_shortfall_fraction` off the **stamped** basis arms or
+   wipes `Route::neglect_turns` (consecutive turns, never a lifetime budget);
+2. **bleed the rung at risk** at `shortfall_fraction x meter_decay.per_turn`, past that rung's own
+   `grace_turns`. `RungDef::upkeep_decay` owns both the rate and the strictly-greater comparison, so
+   this system restates neither;
+3. **clear** `upkeep_demanded` / `upkeep_supplied` for the coming turn's stamp;
+4. **bank this turn's traffic**.
+
+**`routes::route_at_risk_rung` is the one answer to *which rung is at risk*** — `standing.raising`
+where anything is banked in it, else `standing.held` — because the bill interpolates through it, the
+grace lookup asks it, and the decay bleeds it. Three readers that disagreed is exactly what
+`forage::patch_unwinding_key` exists to prevent one branch over. It returns a rung rather than an
+`Option`, unlike the plant web's: a route position always holds *something*, and that something
+declares no upkeep at the floor.
+
+**Then the ledger is PRUNED of every road back at `RUNG_UNSTARTED`, and the prune runs AFTER the
+banking.** A game trail with no work in it is indistinguishable from no road — it buys nothing,
+lights nothing and owes nothing — and an unbounded ledger of empty trails is a leak whose entries
+still answer `routes_on_tile`. Pruning *before* phase 4 would delete every road on the turn it
+formed, which is the whole feature. Remembering that animals once walked there is **#215's concern,
+not this ledger's**.
+
+**The one-turn carry is the arrangement and must not be "fixed".** Logistics runs before Population,
+so the supply this pass judges was stamped by *last* turn's Population — the same lag
+`forage::advance_cultivation` and `fauna::advance_husbandry` already run on.
+
+### The shed takes a road keeper LAST of the three
+
+`ShedStep::SpareKeeper` (step 3) and `ShedStep::NeededKeeper` (step 8) walk Agriculture, then
+Husbandry, then Roadwork. **The reason is recoverability**: a road carries the longest graces on the
+ladder, and a lost road is re-earned by **traffic alone** — the bands that walk it wear it back in
+with no command typed and no crew staffed. A feral patch wants a `Cultivate` and the builders behind
+it; a shed flock is gone.
+
+`ShedFacts::spare_roadwork_keepers` is struck in `advance_labor_allocation` off the **same**
+`route_keeping_claims` the payment uses, which is why that system now takes `Res<RouteLedger>`
+read-only. Its bill is priced through `routes::route_keeping_basis` — the stamp where one exists,
+the live demand where it does not — because the shed runs a whole system *before* anything is
+stamped, and a count struck against a bill of zero would shed every road keeper as spare.
+
 ## What is NOT wired yet
 
 Stated because a reader will otherwise look for it, and because `Route` carries the fields:
 
-- **The keeping.** `Route::upkeep_demanded` / `upkeep_supplied` / `neglect_turns` exist and are
-  stamped by nobody, so `keeping_is_met` answers `true` and no road decays. The `Roadwork` keeping
-  pool (`LaborTarget`), `route_claims_keeping` / `route_keeping_basis` and the decay pass land
-  together, because a decay without the pool that pays it would revert every road on the map.
-  `KitJob::Roadwork` and `default_kits.roadwork` (the bare `none` kit) are already in place for it.
 - **The visibility grant.** `Route::grants_sight` is resolved and read by the friction payoff; nothing
   hands it to the visibility sweep. When it is wired it must be **its own visibility source beside a
   band's own presence, never routed through the connection grant** — see the callout below.
@@ -253,13 +339,19 @@ decays** — the honest early warning that the road is being lost.
 
 `core_sim/src/routes.rs`'s own module — the ladder liveness (which every other claim in the file rests
 on), the span's two failure modes, the bill, rules 2 and 4, the three sight states, and the traced
-path. `core_sim/tests/route_traffic.rs` drives the two systems in **stage order** through real turns:
-a road forming under pooling nobody ordered, the friction payoff paired against an unrouted run, and
-the one-camp negative control.
+path. `core_sim/tests/route_traffic.rs` drives the three systems in **stage order** through real
+turns (`balance_supply_networks` + `advance_routes` in Logistics, `settle_route_keeping` in
+Population): a road forming under pooling nobody ordered, the friction payoff paired against an
+unrouted run, the one-camp negative control, and the keeping — a road that holds beside the same road
+that loses its rung, the proportional bleed, the grace, the abandoned road, the two payers, and the
+free floor.
 
-**Both live claims were falsified in isolation**: making the span an average, and ungating the sight
+**Every live claim was falsified in isolation**: making the span an average, and ungating the sight
 from the bill, each fail their own test; removing the friction term and removing the traffic recording
-each fail theirs. A harness that stands `balance_supply_networks` up must insert `RouteLedger` and
+each fail theirs. On the keeping half — ignoring the grace, stamping the bill only where a band
+stands, dropping the `+=` to an assignment, taking the decay at the flat rate instead of the shortfall
+fraction, removing the prune, and reading the at-risk rung without the banked-work test — each fails a
+different one, and the last fails six. A harness that stands `balance_supply_networks` up must insert `RouteLedger` and
 `RouteTrafficLog` — five test files do, and an empty ledger is the shipped turn-1 state, which is what
 makes those files' pooling numbers the **unrouted** reading they have always been.
 

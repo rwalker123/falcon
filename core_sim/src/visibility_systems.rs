@@ -358,10 +358,15 @@ pub fn calculate_visibility(
                         LaborTarget::Hunt { fauna_id, .. } => {
                             herds.find(fauna_id).map(|herd| herd.position())
                         }
+                        // A band-wide role stands on no tile of its own. **`Roadwork` included** —
+                        // a kept road lights its own tiles through `routes::Route::grants_sight`,
+                        // which is the *road's* grant beside a band's presence and not the keeping
+                        // role's, and it is not wired to this sweep yet.
                         LaborTarget::Scout
                         | LaborTarget::Warrior
                         | LaborTarget::Agriculture
                         | LaborTarget::Husbandry
+                        | LaborTarget::Roadwork
                         | LaborTarget::Builders => None,
                     };
                     // A Forage assignment carries raw command-supplied coords (see

@@ -124,12 +124,13 @@ pub(crate) fn labor_assignment_to_state(
             state.fauna_id = fauna_id.clone();
             state.floor = *floor;
         }
-        // The five band-wide roles carry no source and no floor: their whole content is the head
+        // The six band-wide roles carry no source and no floor: their whole content is the head
         // count already on the row.
         LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Agriculture
         | LaborTarget::Husbandry
+        | LaborTarget::Roadwork
         | LaborTarget::Builders => {}
     }
     state
