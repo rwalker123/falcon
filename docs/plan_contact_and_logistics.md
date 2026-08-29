@@ -206,11 +206,26 @@ pace in the game is tuned in ONE file"* — so a route branch is paced against t
 
 **One known gap remains. The second is CLOSED, by the standing-upkeep arc:**
 
-1. **A route is an edge, not a source.** Every shipped rung sits on a *thing* — a patch, a herd —
-   with a `site_requirement` about the tile it stands on. A route spans many tiles and belongs to a
-   connection. The meter machinery ports; the site and behavior primitives are source-shaped and
-   need route-shaped siblings. **This is the real work of the slice, and it is designed in
-   `docs/plan_standing_upkeep.md` §4.13.**
+1. **A route is not a source.** Every shipped rung sits on a *thing* — a patch, a herd — with a
+   `site_requirement` about the tile it stands on. A route spans many tiles. The meter machinery
+   ports; the site and behavior primitives are source-shaped and need route-shaped siblings.
+   **This is the real work of the slice, and it is designed in `docs/plan_standing_upkeep.md` §4.13.**
+
+> **⛔ AND THE OTHER HALF OF THAT SENTENCE — *"a route is an EDGE… and BELONGS TO A CONNECTION"* — IS
+> ALSO WRONG.** §4.13's design pass rejected it on Ray's call. **A road is in the ground.** Ray:
+> *"How would a road follow a camp? That makes no sense and is in fact a factor in moving vs staying.
+> Roads can't follow camps."*
+>
+> A route defined as *"the road between band A and band B"* moves when A moves, and **a road that
+> follows its camp deletes a decision** — a road you paid to build and pay to hold is one of the
+> strongest reasons the game can give you to **stay**, and it can only weigh on move/stay/fork if
+> leaving it costs you it.
+>
+> **So a route is a world object with a fixed tile path and its own identity**; the band pair is who
+> *uses* it, never what it *is*. A band is served by a road when it is **standing on one of its
+> tiles** — the road's own path is the catchment, so there is no radius constant — and a road nobody
+> stands on reverts. **This also makes a road a shared public good**: a band that camps where another
+> band left inherits the road, because the road never belonged to the first one.
 
 > **⛔ GAP 2 IS CLOSED — DO NOT REBUILD IT.** This section read: *"**Upkeep is a standing cost, and
 > the ladder only has a build cost.** `crew_needed` is the crew that builds; a paved road costing
@@ -263,23 +278,34 @@ Each rider defines its own use of a connection. The connection does not know the
 
 | Rider | Sits on | Its own behaviour |
 |---|---|---|
-| **Logistics** | a connection | holds a route; climbs the ladder; **whether its tiles stay `Seen` is OPEN — see below** |
+| **Logistics** | a connection | holds a route; climbs the ladder; **its tiles stay `Seen` while the route is kept — confirmed, see below** |
 | **Culture** | a connection | **open — §Open items** |
 | **Knowledge** | a connection | **open** — the `openness → leak_timer → partial fragment` model is worth keeping (§As-built) |
 | **Cargo** (food, fodder, materials) | a **logistics link** | mass moves, throughput-limited, friction-lossy |
 
-> **⛔ THAT ROW USED TO SAY *"its tiles stay `Seen` while held"*, AND IT WALKS STRAIGHT INTO THE
-> KEYSTONE.** §Q3 and `connections.rs`'s module doc state it as the arc's one inviolable rule —
-> *"**Only presence makes a tile `Seen`. A connection can only ever grant `Discovered`.**"* — and name
-> **logistics** as the first rider that will be tempted to break it. The temptation was already
-> written into the design table.
+> **⛔ THAT ROW LOOKS LIKE IT WALKS INTO THE KEYSTONE, AND IT DOES NOT. CONFIRMED 2026-08-29.**
+> §Q3 and `connections.rs`'s module doc state the rule as inviolable — *"**Only presence makes a tile
+> `Seen`. A connection can only ever grant `Discovered`.**"* — and name **logistics** as the first
+> rider that will be tempted to break it. §4.13's design pass first read this row as that temptation
+> and proposed granting nothing.
 >
-> It is not obviously wrong: a road with people walking it arguably *is* presence. But the commonest
-> routed link in the game is a **pooling** link, where nobody physically walks — so *"held"* would
-> grant sight bought by an automatic transfer, which is exactly the keystone's failure mode.
-> **`plan_standing_upkeep.md` §4.13 grants no visibility from a route**, and this stays an open
-> question rather than a settled behaviour. `core_sim/tests/connections.rs` asserts the keystone
-> today; a route that lit tiles would have to break that test to ship.
+> **That was wrong, and the inference ran backwards.** Ray: *"If a road exists and is maintained, the
+> assumption is that there is traffic on it and it is seen."* **Maintenance is not free** — a kept
+> road bills a band every turn out of the `Roadwork` pool, and what those hands are doing is being on
+> the road. **Paying the upkeep IS the presence.** A road nobody walks is a road nobody pays for, and
+> it reverts.
+>
+> **So the keystone stands untouched**: the sight is granted by the **road** — maintained presence on
+> specific ground — and **not by the connection**, which still grants `Discovered` and nothing else.
+> A live tie to a people you have never travelled to shows you exactly what it shows you today, and
+> `core_sim/tests/connections.rs` keeps passing unchanged. **The route's grant must be written as its
+> own visibility source beside a band's own presence, never routed through the connection grant** —
+> otherwise the test is satisfied by plumbing rather than by the rule.
+>
+> **The condition is the PAID BILL, not the held rung**: a built rung (2 and up) with its keeping met.
+> The `game trail` floor lights nothing, because nobody maintains a game trail. A road in shortfall
+> goes dark before it decays, which is the honest early warning. Full model in
+> `plan_standing_upkeep.md` §4.13.
 
 Two structural properties belong to the rider, not the connection:
 
