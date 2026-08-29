@@ -4909,7 +4909,12 @@ table BenchState {
   shortfalls:[MaterialShortfall];
   itemsCompleted:uint;    // items finished on THIS job — the same count the wear and lesson charged
   drawn:bool;             // the pile for the pass in flight is already cut
-  outputGrade:string;     // the grade that pile FIXED, "" before the draw or on an ungraded recipe
+  // The grade that pile FIXED. "" before the draw, and "" on a recipe that resolves no grade — the
+  // same two cases as `CraftOffer.outputGrade` below (reads no characteristic, or outputs only
+  // materials). NOT "an ungraded recipe" in the sense of one declaring no `grades` map, which this
+  // line used to say: a recipe with no declared grades is still stamped with the band it was made
+  // at, because declaration governs the grade's EFFECTS and not its name.
+  outputGrade:string;
   // --- WHAT THE BENCH WILL SPEND AND WHAT IT ALREADY SPENT (appended last) ----------------------
   // WHAT THIS BENCH WILL ACCRUE NEXT TURN — `workers × progress_per_worker_turn × craft_speed`,
   // already resolved through the bounding tool (or the material's bare-handed rate, which is what
@@ -4982,6 +4987,10 @@ table BenchState {
 // The grade word in those two rows is a `characteristic_bands` name — "poor" / "fair" / "good" /
 // "excellent", the ONE quality ladder, the same vocabulary `outputGrade` below carries. There is no
 // second set of grade words anywhere on this wire.
+//
+// THE "→ grade" TAIL IS ABSENT WHENEVER `outputGrade` IS "" — the buildable row then reads
+// "Hide, no tanning frame" with no dangling arrow. That is not a degraded string: a recipe that
+// stamps no grade must not appear to promise one.
 table CraftOffer {
   recipeId:string;
   displayName:string;
@@ -4996,7 +5005,17 @@ table CraftOffer {
   // THE GRADE THE DRAW WOULD SELECT out of the band's stock right now, after the tool's quality
   // ceiling. IT IS A `characteristic_bands` NAME — "poor" / "fair" / "good" / "excellent" — because
   // there is ONE quality ladder for the whole game: the same four words rate the hide and the sled
-  // made out of it. "" on a recipe that reads no characteristic.
+  // made out of it.
+  //
+  // "" ON A RECIPE THAT RESOLVES NO GRADE, which is BROADER than the "" on a recipe that reads no
+  // characteristic this line used to claim. Two cases, one rule — a grade is a property of a
+  // piece of EQUIPMENT:
+  //   * the recipe reads no characteristic (an alloy has no quality to name), and
+  //   * the recipe's outputs are ALL MATERIALS. A material batch carries its own characteristics
+  //     and has nowhere to put a grade, so a quoted one would be a promise nothing stamps.
+  //     `hurdles` is the one such recipe the game ships. Such a recipe may still declare `reads`:
+  //     that word ALSO picks which batches of the input are spent first, and on a material-only
+  //     recipe only that half applies.
   outputGrade:string;
   onBench:bool;          // this recipe is the running job — the row's button is spent
   // --- THE LEDGER'S GROUP HEAD, AND WHAT THE BAND ACTUALLY CARRIES (appended last) --------------

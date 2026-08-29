@@ -181,6 +181,45 @@ Thunder Mammoth (`0.92 / 0.10`) makes an **excellent** sled and **poor** halters
 
 `validate` rejects a second `reads`, because one reading answers one question.
 
+### ⛔ `reads` IS OVERLOADED — it also picks WHICH BATCHES ARE SPENT
+
+`reads` says **two** things at once, and only one of them is about quality:
+
+1. **the axis the output's grade is read from** (`RecipeDef::grade_for`), and
+2. **the axis the input is spent WORST-FIRST on** (`systems::crafting::spend_axis`), which falls
+   back to the material's **first declared axis** when the row names none.
+
+The two are inseparable in the config because there is one word for both. **On a material-only
+recipe only the second applies** — there is no grade to read — and that is exactly the case where
+deleting `reads` looks harmless and is not: `hurdles` reads hide's `suppleness`, hide's first
+declared axis is `toughness`, so dropping the word would silently move the bench onto a different
+pile of hide. **The gate therefore lives on the grade, never on the config.**
+
+### A MATERIAL OUTPUT CARRIES NO GRADE, so a material-only recipe quotes none
+
+A grade is a property of a piece of **equipment**: `emit_outputs` stamps `BatchGrade` on the
+equipment branch only, and `MaterialBatch` has **no grade field** — a material output states its own
+`characteristics` verbatim instead. `validate_grades` has always rejected a recipe that declares
+`grades` and outputs only materials (*"a material carries its own characteristics, so the grade
+would be read by nothing"*), but a **grade is resolved whether or not the recipe declares one**, so
+the readouts quoted a band anyway.
+
+`RecipeDef::grade_for` returns `None` for such a recipe, gated on
+`RecipeDef::outputs_only_materials()` — **the same named predicate `validate_grades` calls**, because
+a second hand-written `.all(|output| output.material_id().is_some())` is how the loader and the wire
+come to disagree about one recipe. The gate sits on `grade_for` rather than on either publish site
+because every grade in the game is resolved through that one call: the offered row's preview
+(`preview_grade` → `CraftOffer.outputGrade`) **and** the drawn pile the bench stamps from
+(`DrawnInputs::grade` → `BandBench.outputGrade`, `last_output_grade`). Gating the offer alone would
+have left a *running* hurdles job still quoting a grade.
+
+- **`hurdles` is the game's only material-only recipe** (all twelve surveyed; every other one outputs
+  equipment), so this had exactly **one** visible instance: the panel's make-note read
+  `Hide, no tanning frame → poor` while every hurdle produced carried the recipe's hard-coded
+  `stoutness 0.6 / span 0.6`. It now reads `Hide, no tanning frame` — `snapshot::crafting::invitation`
+  already appends `→ {grade}` only for a non-empty one, so an empty grade leaves **no dangling
+  arrow**.
+
 ## ONE QUALITY LADDER — a grade key IS a `characteristic_bands` name
 
 The drawn reading never scales a resolved stat; it **selects** a grade, and a grade declares
@@ -200,8 +239,10 @@ than reading a "jumpy" flag, and `max_body_mass` reads `body_mass` rather than a
 - **A band a recipe does not declare INHERITS THE ONE BELOW IT** (`RecipeDef::grade_effects_for`), so
   a recipe wanting three steps writes three. **Declaration governs effects only** — the grade a batch
   is *stamped* with is always the band name, so a craft off excellent hide reads `excellent` even on
-  a recipe that declares nothing there; it simply buys no stat on that item. A recipe with **no
-  `reads`** still resolves no grade (`""`).
+  a recipe that declares nothing there; it simply buys no stat on that item. **A recipe resolves no
+  grade at all (`""`) in two cases**: it reads nothing, *or* its outputs are all materials (see
+  "A MATERIAL OUTPUT CARRIES NO GRADE" above). This bullet used to read *"a recipe with **no
+  `reads`** still resolves no grade"*, which named only the first.
 - **`validate_against` rejects a grade key that is not a declared band**, and **a recipe whose lowest
   declared grade is not the FIRST band** — inheritance only ever looks down, so something has to
   answer for a reading of `0.0`. Both are cross-config, because the book does not carry the

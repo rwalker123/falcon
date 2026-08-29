@@ -45,6 +45,20 @@ const FIBRE: &str = "fibre";
 const FINENESS: &str = "fineness";
 const STRENGTH: &str = "strength";
 const SLED: &str = "sled";
+/// **The game's only material-only recipe** — 4 wood + 2 hide, reading hide's `suppleness`.
+const HURDLES: &str = "hurdles";
+/// [`HURDLES`]' other input and its two axes.
+const WOOD: &str = "wood";
+const HARDNESS: &str = "hardness";
+const PLIANCY: &str = "pliancy";
+/// **One pass of [`HURDLES`]' hide**, per `recipes.json` — stocked as a whole pile so *"that pile is
+/// gone"* is the observation, rather than a partial draw off two.
+const ONE_HURDLES_PASS_OF_HIDE: f32 = 2.0;
+/// Wood enough for several passes; the wood row names no `reads`, so its own spend order is the
+/// fallback and nothing here is about it.
+const WOOD_TO_SPARE: f32 = 40.0;
+/// **The pile that must be left alone**, large enough that a draw off it would be unmistakable.
+const THE_UNTOUCHED_PILE: f32 = 60.0;
 /// The tier every shipped item's one quality rung carries — the flint age.
 const FLINT_TIER: &str = "flint";
 
@@ -203,6 +217,25 @@ impl Bench {
             .get::<BandEquipment>(self.band)
             .expect("the band has a ledger")
             .remaining(item, &equipment)
+    }
+
+    /// **Every batch of `material` as `(its reading on `axis`, its amount)`.** [`Self::stock_of`]
+    /// sums the batches and therefore cannot tell two piles apart, which is the entire distinction a
+    /// claim about *which pile was spent* rests on.
+    fn batches_by(&self, material: &str, axis: &str) -> Vec<(f32, f32)> {
+        self.app
+            .world
+            .get::<PopulationCohort>(self.band)
+            .expect("the band has a cohort")
+            .stores
+            .material_batches(material)
+            .map(|(_, batch)| {
+                (
+                    batch.characteristics.get(axis).copied().unwrap_or_default(),
+                    batch.amount.to_f32(),
+                )
+            })
+            .collect()
     }
 
     fn stock_of(&self, material: &str) -> Scalar {
@@ -479,6 +512,56 @@ fn the_draw_spends_the_poor_stock_before_the_good() {
         Some(POOR),
         "the poor hide must be spent first, or the player's best stock is silently burned on the \
          first thing they make"
+    );
+}
+
+/// **THE SPEND ORDER DID NOT MOVE WHEN THE GRADE STOPPED BEING PUBLISHED.**
+///
+/// `reads` says **two** things: the axis the output's grade is read from, and the axis the input is
+/// spent worst-first on (`systems::crafting::spend_axis`, which otherwise falls back to the
+/// material's **first declared axis**). `hurdles` makes only a material and so is stamped with no
+/// grade — but it still declares `reads: "suppleness"`, and that half is load-bearing. Deleting the
+/// word to silence the grade would move the bench off hide's `suppleness` and onto its first
+/// declared axis, `toughness`, and quietly eat a different pile.
+///
+/// This is asserted directly rather than through the grade, because the grade the sibling test pins
+/// through is exactly what a material-only recipe no longer has. Two piles that are opposites on the
+/// two axes: **suppleness decides which one goes**, and toughness would pick the other.
+#[test]
+fn the_hurdles_draw_still_spends_hide_by_suppleness_and_not_by_its_first_axis() {
+    let mut bench = Bench::shipped();
+    bench
+        // Worst on SUPPLENESS, best on toughness — what `reads` picks, and exactly one pass of it.
+        .stock(
+            HIDE,
+            ONE_HURDLES_PASS_OF_HIDE,
+            &[(TOUGHNESS, 0.95), (SUPPLENESS, 0.05)],
+        )
+        // Worst on TOUGHNESS — what the fallback would pick.
+        .stock(
+            HIDE,
+            THE_UNTOUCHED_PILE,
+            &[(TOUGHNESS, 0.05), (SUPPLENESS, 0.95)],
+        )
+        .stock(WOOD, WOOD_TO_SPARE, &[(HARDNESS, 0.5), (PLIANCY, 0.6)])
+        .start(HURDLES, CREW)
+        .turns(1);
+
+    assert!(
+        bench.bench().drawn.is_some(),
+        "fixture: the pass must have drawn its pile, or nothing has been spent to have an order"
+    );
+    assert_eq!(
+        bench.bench().drawn.as_ref().and_then(|d| d.grade.as_deref()),
+        None,
+        "a material-only recipe stamps no grade - which is why this test observes the piles instead"
+    );
+    let remaining = bench.batches_by(HIDE, SUPPLENESS);
+    assert_eq!(
+        remaining,
+        vec![(0.95, THE_UNTOUCHED_PILE)],
+        "the suppleness-poor pile is spent WHOLE and the suppleness-good one is untouched - a draw \
+         ordered by hide's first declared axis (toughness) would have taken the other one"
     );
 }
 

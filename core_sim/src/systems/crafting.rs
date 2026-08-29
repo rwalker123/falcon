@@ -249,6 +249,12 @@ pub fn rate_per_turn(
 /// Either way the poor stock goes before the good, which is the only ordering that does not silently
 /// burn the player's best hide on the first thing they make. The fallback decides only *which pile*,
 /// never how much, so it has to be deterministic rather than right.
+///
+/// ⛔ **`reads` IS OVERLOADED, and this is the half that survives everywhere.** It names the grade's
+/// axis *and* this spend order. Deleting `reads` from a recipe to stop it quoting a grade would
+/// silently move the spend order onto the material's first declared axis — for `hurdles` that is
+/// hide by `toughness` instead of `suppleness`, a different pile eaten. The grade is gated in
+/// [`RecipeDef::grade_for`] for exactly that reason.
 fn spend_axis<'a>(
     input: &'a crate::recipes_config::RecipeInput,
     materials: &'a MaterialsConfig,
@@ -283,6 +289,13 @@ fn weighted_reading(draws: &[crate::components::MaterialDraw], axis: &str) -> Op
 ///
 /// `None` for a recipe that reads nothing, and for a band whose store holds none of the read
 /// material: an offer that is short quotes no grade rather than quoting the grade of nothing.
+///
+/// **Also `None` for a recipe whose outputs are all materials**, via [`RecipeDef::grade_for`] — the
+/// offer would otherwise quote a grade the bench never stamps, because a material batch has no
+/// grade field. Such a recipe still declares `reads`, and it still means something: `reads` is
+/// **overloaded**, naming both the axis a grade is read from *and* the axis the input is spent
+/// worst-first on ([`spend_axis`]). Only the second half applies here, so the gate lives on the
+/// grade and not on the config.
 pub fn preview_grade(
     store: &LocalStore,
     recipe: &RecipeDef,
