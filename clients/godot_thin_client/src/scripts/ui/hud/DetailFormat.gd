@@ -288,10 +288,12 @@ const KIT_LABEL_TRAPS := "Traps"
 
 # The three items the expanded roster added, and **they have breakdown rows of their own now**. They
 # were label-only for exactly one reason — the popover pairs each item with the resolved tier it
-# sets, and the cohort published `hunterAttack` / `huntCarry…` / `forageCarry…` and nothing for a pen
-# keeper, a scout's vantage or a warrior — so a row could only have quoted a number the sim never
-# sent. The wire carries all three now (see `KIT_TIER_KEY_PEN_CARRY` and its two neighbours), so the
+# sets, and the cohort published `hunterAttack` / `huntCarry…` / `forageCarry…` and nothing for a
+# scout's vantage or a warrior — so a row could only have quoted a number the sim never sent. The
+# wire carries them now (see `KIT_TIER_KEY_SCOUT_VANTAGE` and `KIT_TIER_KEY_WARRIOR_ATTACK`), so the
 # player can finally see a scout kit and a warrior kit dying instead of only its consequences.
+# A pen keeper was the third of that set and is not one any more: a pen is collected on
+# `KIT_TIER_KEY_HUNT_CARRY`, which the popover already states (issue #543).
 ## **THE ANIMAL WEB'S ITEM IS THE `crook`** (`docs/plan_standing_upkeep.md` §4.9 item 12) — a long
 ## bone staff with the halters a keeper works a beast with. It was `hurdles`, and before that
 ## `husbandry_gear`; **hurdles are a crafted MATERIAL now** and no item of that id is on the roster at
@@ -357,15 +359,20 @@ const KIT_TIER_KEY_ATTACK := "hunter_attack"
 const KIT_TIER_KEY_HUNT_CARRY := "hunt_carry_per_worker_biomass"
 const KIT_TIER_KEY_FORAGE_CARRY := "forage_carry_per_worker_biomass"
 
-# The three the expanded roster added, resolved off this band's own wear exactly like the three
+# The two the expanded roster added, resolved off this band's own wear exactly like the three
 # above. **EACH IS QUOTED AT A DIFFERENT KIT, AND THE COHORT'S `kit_id` ANSWERS FOR ONLY ONE OF
 # THEM** (`snapshot.fbs`, `PopulationCohortState.kitId`): on a resident band `kit_id` names the HUNT
-# job's default, so it answers for `hunter_attack`, `hunt_carry…` and `pen_carry…` (a pen is worked
-# from a Hunt row) — while the vantage and the warrior's attack resolve through the SCOUT and
-# WARRIOR defaults, the same asymmetry `forage_carry…` already has with the FORAGE default. Nothing
-# in this readout may look one of them up against `kit_id`: the sim has already resolved every tier
-# here, so a row states the number the band GETS and never re-derives it from a kit id.
-const KIT_TIER_KEY_PEN_CARRY := "pen_carry_per_worker_biomass"
+# job's default, so it answers for `hunter_attack` and `hunt_carry…` (a pen is worked from a Hunt row
+# and is collected on that same haul) — while the vantage and the warrior's attack resolve through
+# the SCOUT and WARRIOR defaults, the same asymmetry `forage_carry…` already has with the FORAGE
+# default. Nothing in this readout may look one of them up against `kit_id`: the sim has already
+# resolved every tier here, so a row states the number the band GETS and never re-derives it from a
+# kit id.
+#
+# ⛔ A `KIT_TIER_KEY_PEN_CARRY := "pen_carry_per_worker_biomass"` led this group and is GONE
+# (issue #543): `EquipmentStat::PenCarry` and all three of its wire fields were deleted, because what
+# a worker can carry is a fact about the people and their gear and never about the ground they stand
+# on. It was *"the three the expanded roster added"* while it lived.
 const KIT_TIER_KEY_SCOUT_VANTAGE := "scout_vantage_range"
 const KIT_TIER_KEY_WARRIOR_ATTACK := "warrior_attack"
 
@@ -381,7 +388,7 @@ const KIT_DRY_FACE := "dry"
 # The condition's own rounding — it is a 0-100 scale, so a whole number is its full resolution.
 const KIT_CONDITION_DECIMALS := 0
 
-# The THREE carry tiers are biomass per worker per turn; one decimal, because the bare-handed forage
+# The carry tiers are biomass per worker per turn; one decimal, because the bare-handed forage
 # tier is `1.6` and an integer would print it as `2` beside an equipped `8`.
 const KIT_CARRY_DECIMALS := 1
 
@@ -400,19 +407,20 @@ const KIT_VANTAGE_DECIMALS := 0
 # 6 defending the camp — so a bare `attack 6` beside a bare `attack 20` would read as one of them
 # being wrong rather than as two answers to two questions.
 ## **THE JOINER BETWEEN TWO CLAUSES ON ONE ROW**, typed once. Two items on this ledger state more
-## than one thing — the sled's two carries, the crook's job and its build rate — and a second spelling
-## of the separator is how one row comes to punctuate differently from the other.
+## than one thing — the crook's job and its build rate — and a second spelling of the separator is
+## how one row comes to punctuate differently from the other. It read *"the sled's two carries, the
+## crook's job and its build rate"* while the sled stated a pen collection rate beside its haul.
 const KIT_ROLE_CLAUSE_SEPARATOR := " · "
 const KIT_ROLE_ATTACK_FORMAT := "attack %s"
 const KIT_ROLE_HUNT_CARRY_FORMAT := "hunt carry %s per hunter"
 const KIT_ROLE_FORAGE_CARRY_FORMAT := "gathering %s per forager"
-## **THE PEN'S COLLECTION RATE RIDES THE SLED'S ROW, BECAUSE THE SLED IS WHAT SETS IT.**
-## `equipment.json` puts BOTH sides of `pen_carry` on the sled — the unequipped 12 outright and the
-## equipped side through `shares_equipped_rate_with` — since the item that used to declare the bare
-## side left the roster with the hurdles. So this is a SECOND CLAUSE on one row rather than a row of
-## its own: two tiers, one item. Pairing it with the crook instead would be the mis-pairing this
-## ledger's own note warns about, one item further on.
-const KIT_ROLE_PEN_CARRY_SUFFIX := KIT_ROLE_CLAUSE_SEPARATOR + "pen collection %s per keeper"
+## ⛔ **THE SLED'S ROW STATES ONE CARRY, NOT TWO** (issue #543). A
+## `KIT_ROLE_PEN_CARRY_SUFFIX := " · pen collection %s per keeper"` hung off the hunt-carry clause,
+## on the argument that *"`equipment.json` puts BOTH sides of `pen_carry` on the sled … so this is a
+## SECOND CLAUSE on one row rather than a row of its own: two tiers, one item."* Two tiers on one item
+## is exactly what made the axis redundant: with `EquipmentStat::PenCarry` deleted a pen is collected
+## on `KIT_ROLE_HUNT_CARRY_FORMAT`'s own number, so the suffix was printing the SAME figure a second
+## time under a second name. One item, one clause.
 # **THE HANDLING GEAR DOES TWO JOBS, AND ITS ROW HAS TO SAY BOTH** (issue #515). Hurdles, halters and
 # a butchering stone bound a slaughter at a pen *and* speed the `Tame` and `Corral` builds — so a row
 # quoting only the pen rate describes the gear's payoff at the top of the ladder and says nothing
@@ -1294,10 +1302,16 @@ static func build_meter_value(verb: String, progress: float,
 ## > in flight* (`build_verb`'s own answer, which honours a declaration only at a zero meter). Two
 ## > separately-passed bools could disagree; one string cannot.
 ##
-## **`built` IS THE ACHIEVEMENT FLAG, NEVER `progress >= 1`**, and the two genuinely differ: a rung
-## that has eroded to 92% is still tended AND is being repaired, which is why fullness and achievement
-## stay orthogonal (`SourceForecast.build_verb`'s own note). Passing the meter here would make a
-## rung's LOSS and a rung's REPAIR one edge.
+## **`built` IS THE STANDING'S VERDICT, NEVER `progress >= 1`.** The caller passes what the source
+## STANDS on; this row never reconstructs it from the float. The two now agree by construction — the
+## sim publishes a held rung's meter as exactly full — and that is precisely why the float must not be
+## the test: an equality against `1.0` is a reading of arithmetic, and it was one ULP of `f32` that
+## made a finished Field publish `0.99999994` and read as 99%.
+##
+## ⛔ **RETIRED JUSTIFICATION — *"the two genuinely differ: a rung eroded to 92% is still tended AND
+## is being repaired"*.** A rung short of its cost is a rung the source no longer holds; the decay
+## re-derives the standing on the same call that moves the position, so the erosion story is told on
+## the rung ABOVE the one being stood on, never on a built row wearing a partial number.
 ##
 ## **THE BUILT ROW'S `⚠` IS ROUTED TO THE AT-RISK RUNG, NOT PAINTED ON EVERY BUILT ONE** (§4.6a).
 ## The shortfalls answer for the SOURCE — one pool, one work shortfall, one stamped material bill —
@@ -1379,8 +1393,10 @@ static func rung_built_label(improvement: String) -> String:
 ## **A METER THE WIRE DOES NOT STATE READS FULL, NOT ZERO.** `improvement_progress` answers `0.0` for
 ## an unstated key — indistinguishable from a meter eroded to nothing — and a built corral states no
 ## meter at all, which is why the tile card's own built-corral row passes `CORRAL_PROGRESS_COMPLETE` by
-## hand. The `> BUILD_METER_UNSTARTED` test is `rung_needs_repair`'s, reused rather than re-invented:
-## a stated meter is the erosion story (`🌾 Tended 92%`) and an unstated one is simply complete.
+## hand. The `> BUILD_METER_UNSTARTED` test is what separates the two: a stated meter is the erosion
+## story (`🌾 Tended 92%`) and an unstated one is simply complete. (It was inherited from the
+## retired `SourceForecast.rung_needs_repair`; the distinction outlived that test, which asked whether
+## a full meter and a held rung could disagree — they cannot.)
 ## **IT TAKES NO `declared_rung` AND NO `build_crew`, and that is a statement about `rung_row_value`
 ## rather than an omission.** Both are countdown terms, and a rung that is STANDING never reaches the
 ## countdown: `built` returns on the first branch. Accepting them would advertise a dependency this

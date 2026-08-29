@@ -1062,15 +1062,22 @@ pub fn patch_build_legs(
     legs
 }
 
-/// **THE WORK BANKED ON ONE RUNG**, in work units — this patch's position clamped into that rung's
-/// own span. It is what lets the **wire** keep publishing two per-rung meters off one position:
-/// `cultivationWorkDone` is this at `plant:tended`, `fieldWorkDone` at `plant:field`.
+/// **THE WORK BANKED ON ONE RUNG**, in work units — this patch's position read into that rung's own
+/// span **through its standing** ([`crate::intensification::rung_work_done`]). It is what lets the
+/// **wire** keep publishing two per-rung meters off one position: `cultivationWorkDone` is this at
+/// `plant:tended`, `fieldWorkDone` at `plant:field`.
 ///
-/// **A readout, not a second authority.** Nothing in the sim branches on it; the position and its
-/// standing decide everything, and this only restates them in the shape the client already reads.
+/// **A readout, not a second authority** — and that is why it asks [`ForagePatch::standing`] rather
+/// than subtracting: a rung the patch *holds* reads full here because it is held, so the meter
+/// cannot contradict `is_field()` by a rounding. Nothing in the sim branches on it; the position and
+/// its standing decide everything, and this only restates them in the shape the client already reads.
 pub fn patch_rung_work_done(patch: &ForagePatch, rung: RungKey, ladder: &LadderConfig) -> f32 {
-    let (base, width) = patch_rung_span(patch, rung, ladder);
-    (patch.ladder_position() - base).clamp(RUNG_UNSTARTED, width)
+    crate::intensification::rung_work_done(
+        patch.standing(),
+        rung,
+        patch.ladder_position(),
+        patch_rung_span(patch, rung, ladder),
+    )
 }
 
 #[derive(Resource, Debug, Clone, Default)]
@@ -1103,8 +1110,14 @@ impl ForageRegistry {
     /// `HerdRegistry::domesticated_count`.
     ///
     /// It counts Fields deliberately: a Field is rung **3**, so reading it as *less* domesticated
-    /// than the rung-2 patch below it would invert the signal (and a bare-ground Field carries no
-    /// cultivation meter at all — see `ForagePatch::field_progress`).
+    /// than the rung-2 patch below it would invert the signal.
+    ///
+    /// **RETIRED reasoning: *"a bare-ground Field carries no cultivation meter at all"*.** That was
+    /// true of the two independent meters, where `Sow` on wild ground left `cultivation_progress` at
+    /// zero forever. There is one position now and a Field's range begins where the tended rung's
+    /// ends, so a Field *always* publishes a full `cultivationProgress` however it was reached
+    /// ([`patch_rung_work_done`]) — the count is right for the reason above and no longer needs the
+    /// second one.
     pub fn cultivated_count(&self, faction: FactionId) -> usize {
         self.patches
             .values()
@@ -3631,9 +3644,13 @@ pub fn forage_take_overdraws(
 /// and a bare-handed one at `equipment.json`'s `basket_kit.unequipped_per_worker_biomass_capacity`,
 /// resolved once per band per turn through
 /// [`crate::equipment_config::EquipmentConfig::forage_per_worker_biomass_capacity`]. Sites with no
-/// band to resolve against (a tile's telemetry, a Field's managed collection cap) pass the shipped
-/// *equipped reference* rate, exactly as `HerdTelemetryState::per_worker_biomass` does on the animal
-/// web.
+/// band to resolve against (a tile's telemetry) pass the shipped *equipped reference* rate, exactly
+/// as `HerdTelemetryState::per_worker_biomass` does on the animal web.
+///
+/// ⛔ **A FIELD IS NOT ONE OF THEM, and this doc used to say it was** — *"a Field's managed collection
+/// cap"* stood in that list. The rung-3 managed harvest was retired (see "RETIRED: the whole rung-3
+/// MANAGED HARVEST" below): a Field is drawn down through the ordinary `forage_take` path, so it is
+/// **band-resolved** like every other rung. Every plant rung is basket-resolved.
 pub fn forage_per_worker_biomass(per_worker_biomass_capacity: f32, seasonal: f32) -> f32 {
     per_worker_biomass_capacity * seasonal.max(0.0)
 }
@@ -3660,7 +3677,10 @@ pub fn forage_provisions(
 /// forecast's `managed_yield` — the "then Y" of Cultivate's *"preparing X → then Y"* pair — and the
 /// wire's `ForagePatchState.tendedYield`.
 ///
-/// The rung-3 twin, [`field_provisions`], **stays** a managed rate: a Field is yours.
+/// **Rung 3 went the same way, one slice later.** Its twin `field_provisions` was left a managed
+/// rate here on the grounds that *"a Field is yours"*; `docs/plan_standing_upkeep.md` §4.10 retired
+/// the whole rung-3 managed harvest, so a Field is drawn down through `forage_take` like every rung
+/// beneath it and `rung_payoff` quotes all three from one expression.
 pub(crate) fn tended_provisions(
     patch: &ForagePatch,
     tile_composition: &[FloraShare],
@@ -4186,9 +4206,9 @@ pub(crate) fn forage_forecast(
 /// divides only by the turns that actually delivered.
 ///
 /// **Provisions-space, which is why it is not [`crate::fauna::REALIZED_PROJECTION_TAKE_EPSILON`]**:
-/// the animal twin breaks on a *biomass* take, while both branches here are already converted
-/// (`field_provisions`, `forage_take`), so the two thresholds justify their magnitudes on different
-/// scales and each gets its own constant rather than sharing one whose doc only covers biomass.
+/// the animal twin breaks on a *biomass* take, while this side is already converted (`forage_take`
+/// pays in provisions), so the two thresholds justify their magnitudes on different scales and each
+/// gets its own constant rather than sharing one whose doc only covers biomass.
 ///
 /// The magnitude is deliberately far below any live patch's one-turn gather: the smallest is a wild
 /// Sustain skim, `r·K/4 × provisions_per_biomass` — ~0.61 provisions on the measured K=195
@@ -4204,10 +4224,11 @@ const REALIZED_PROJECTION_PROVISIONS_EPSILON: f32 = 1e-4;
 /// assign-time seed and the resolved row compute the identical number (exact forecast == actual).
 ///
 /// Foraging was never lumpy — `forage_take` is already rate-based (no kill-credit bank) — so the
-/// projection just reuses the *same* take path the real turn runs each simulated turn: a **Field**
-/// (rung 3) pays its managed `field_provisions` capped by the crew's throughput and never draws down;
-/// every other patch pays `forage_take`'s drawn-down policy gather. So the projection is exactly the
-/// forward average of what the source really pays, computed through one shared take path.
+/// projection just reuses the *same* take path the real turn runs each simulated turn — **every
+/// rung, a Field included**, pays `forage_take`'s drawn-down policy gather. (This read *"a Field
+/// (rung 3) pays its managed `field_provisions` capped by the crew's throughput and never draws
+/// down"* until §4.10 retired the rung-3 managed harvest.) So the projection is exactly the forward
+/// average of what the source really pays, computed through one shared take path.
 // The projection needs the full take context (source, config, ladder, season, multiplier, crew,
 // policy, horizon) — the same shape `forage_source_yield_preview` already carries.
 #[allow(clippy::too_many_arguments)]
@@ -4718,6 +4739,102 @@ mod tests {
         assert!(
             (here - declared).abs() < SAME_JOB,
             "and therefore the same span in work units: {here} against {declared}"
+        );
+    }
+
+    /// **A METER IS FULL WHEN THE PATCH IS FULL, AND `1.0` IS THE ONLY FULL THERE IS.**
+    const A_FULL_METER: f32 = 1.0;
+
+    /// What a floor-to-integer percent readout prints for [`A_FULL_METER`] — the client's
+    /// `HudFormat.progress_percent` **floors** deliberately, so this is the number the tile card
+    /// shows and `99` is the defect.
+    const A_FULL_METER_PERCENT: f32 = 100.0;
+
+    /// **HOW MANY SOW PRICES THE SWEEP BELOW WALKS.** The whole legal span of
+    /// `field_cost_multiplier_at_share` in even steps of the crop share that produces it: enough to
+    /// straddle every `f32` rounding boundary in the span many times over (measured: ~38% of prices
+    /// in the range round, in both directions), and cheap enough to be an ordinary unit test. The
+    /// test asserts it actually caught some, so a sample that stopped covering them fails loudly
+    /// rather than passing vacuously.
+    const SOW_PRICE_SAMPLES: u32 = 512;
+
+    /// **A CREW THAT FINISHES THE FIELD IN ONE CALL** — far more work than the dearest legal Sow, so
+    /// the accrual lands on its cap, which is the state this test is about.
+    const WORK_ENOUGH_FOR_ANY_FIELD: f32 = 10_000.0;
+
+    /// ⛔ **A RUNG THE PATCH *HOLDS* PUBLISHES A FULL METER — AT EVERY PRICE THE GAME CAN QUOTE.**
+    ///
+    /// `is_field()` and `fieldProgress` answer the same question, so they may never disagree. They
+    /// did: the accrual caps the position at `base + width`, `RungStanding::at` calls the rung
+    /// complete at that same sum, and the meter was published as `position − base` — and
+    /// `fl(base + width) − base` is **not** `width` whenever that addition rounds. On the shipped
+    /// ladder it rounds for **most** Sow prices, so a finished Field published `0.99999994`, the
+    /// client floored it, and the tile card read *"Field 99%"* beside a `⌃` mark offering to build
+    /// the Field the patch was already standing on.
+    ///
+    /// # THE SWEEP IS THE TEST — ONE PRICE WOULD HAVE PASSED
+    ///
+    /// A hand-picked multiplier is exactly how this survived: roughly three prices in five are
+    /// exact, and the defect is invisible at every one of them. So the claim is made over the whole
+    /// legal span of the shipped price curve, walked through
+    /// [`field_cost_multiplier_at_share`] — the game's own producer of the number — rather than off
+    /// copied literals, and the rounding it is about is asserted to have actually occurred.
+    ///
+    /// **And it drives the real accrual.** `accrue_to` is the seam a Sow banks through, so the
+    /// position under test is the one play produces, cap and all, rather than a figure written into
+    /// the meter by the test.
+    #[test]
+    fn a_field_the_patch_holds_publishes_a_full_meter_at_every_legal_price() {
+        let cultivation = &test_forage_config().cultivation;
+        let ladder = LadderConfig::builtin();
+        let faction = FactionId(1);
+        let mut prices_that_round = 0_u32;
+
+        for sample in 0..SOW_PRICE_SAMPLES {
+            // The crop share is what the game varies; the multiplier is what it derives from it, and
+            // sweeping the share end to end sweeps the multiplier across both its clamps.
+            let share = sample as f32 / (SOW_PRICE_SAMPLES - 1) as f32;
+            let multiplier = field_cost_multiplier_at_share(share, cultivation);
+
+            let mut patch = reference_patch(RUNG_UNSTARTED, &ladder);
+            patch.price_field_rung(multiplier, &ladder);
+            let (base, width) = patch_rung_span(&patch, RungKey::PlantField, &ladder);
+            if base + width - base != width {
+                prices_that_round += 1;
+            }
+            patch.accrue_to(
+                faction,
+                WORK_ENOUGH_FOR_ANY_FIELD,
+                RungKey::PlantField,
+                &ladder,
+            );
+
+            assert!(
+                patch.is_field(),
+                "PRECONDITION at share {share}: a crew with {WORK_ENOUGH_FOR_ANY_FIELD} work \
+                 must finish a Field costing {width}"
+            );
+            let done = patch_rung_work_done(&patch, RungKey::PlantField, &ladder);
+            let fraction = intensification::build_fraction(done, width);
+            assert_eq!(
+                fraction,
+                A_FULL_METER,
+                "a Field the patch HOLDS must publish a full meter: share {share} prices the \
+                 rung at {width} work units, the position stands at {} and the meter read \
+                 {done}",
+                patch.ladder_position()
+            );
+            assert_eq!(
+                (fraction * A_FULL_METER_PERCENT).floor(),
+                A_FULL_METER_PERCENT,
+                "and a floor-to-integer percent readout must print {A_FULL_METER_PERCENT}, not 99"
+            );
+        }
+
+        assert!(
+            prices_that_round > 0,
+            "PRECONDITION: the sweep must contain prices where `fl(base + width) − base` is not \
+             `width`, or it cannot tell the defect from the fix"
         );
     }
 

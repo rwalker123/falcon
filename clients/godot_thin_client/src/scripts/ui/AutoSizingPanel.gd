@@ -96,9 +96,21 @@ func fit_width(content_width: float, extra_width: float = 0.0) -> void:
 func available_room(margin: float = 0.0) -> Rect2:
     return _bounds_rect().grow(-margin)
 
+## **THE ROOM'S CEILING OUTRANKS `min_height`, AND THAT PRECEDENCE IS WRITTEN OUT RATHER THAN LEFT TO
+## `clamp`'S ARGUMENT ORDER.** `min_height` above the ceiling is not a mistake and not rare — a card
+## whose content genuinely wants more than the room has is the ordinary short-window case
+## (`WorkInspectorDialog` reaches it on a 1152x720 bottom dock: a 298px minimum against a 291px room),
+## and the answer there must be the ROOM, with the internal scroll carrying the rest. That is what
+## keeps *"a free-floating card never covers what it was cut back off"* structural.
+##
+## `clamp(v, lo, hi)` with `lo > hi` happens to return `hi` in Godot, so this is bit-identical to the
+## expression it replaces — which is exactly the problem with the old form: the one case where the two
+## bounds disagree was decided by which comparison Godot writes first, on a card whose whole
+## containment claim rests on the answer.
 func fit_to_content(content_height: float, extra_height: float = 0.0, scroll: ScrollContainer = null) -> void:
     var desired_height: float = max(content_height + extra_height, min_height)
-    var clamped_height: float = clamp(desired_height, min_height, min(max_height, _height_ceiling()))
+    var ceiling: float = min(max_height, _height_ceiling())
+    var clamped_height: float = min(desired_height, ceiling)
 
     if target_width > 0.0:
         _apply_width(max(_fitted_width, target_width))

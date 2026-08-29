@@ -916,12 +916,20 @@ impl Herd {
         })
     }
 
-    /// **WHAT THIS HERD'S `rung` METER READS**, in work units — the position clamped into that rung's
-    /// own span, the animal twin of `forage::patch_rung_work_done`. This is what the two retired
-    /// `*_progress` fields stored, now derived from the one position so they cannot drift apart.
+    /// **WHAT THIS HERD'S `rung` METER READS**, in work units — the position read into that rung's
+    /// own span **through this herd's standing**
+    /// ([`crate::intensification::rung_work_done`]), the animal twin of
+    /// `forage::patch_rung_work_done`. This is what the two retired `*_progress` fields stored, now
+    /// derived from the one position so they cannot drift apart — and asked of the standing rather
+    /// than subtracted, so a **held** rung's meter cannot read short of full by a rounding while
+    /// `is_corralled()` says the fence is closed.
     pub fn rung_work_done(&self, rung: RungKey, ladder: &LadderConfig) -> f32 {
-        let (base, width) = self.rung_span(rung, ladder);
-        (self.ladder_position - base).clamp(RUNG_UNSTARTED, width)
+        crate::intensification::rung_work_done(
+            self.standing,
+            rung,
+            self.ladder_position,
+            self.rung_span(rung, ladder),
+        )
     }
 
     /// **WHAT THIS HERD'S `rung` COSTS**, in work units — its width on this herd's own price list.
@@ -6838,20 +6846,25 @@ pub fn quarry_default_hunt_kit(
 ///
 /// # A pen is a SOURCE AXIS, not a score
 ///
-/// A corralled herd is collected at [`crate::equipment_config::EquipmentStat::PenCarry`], and the
-/// only kit that supplies it is the handling gear — so *"which kit does a pen want"* has a
-/// **structural** answer, and [`quarry_default_hunt_kit`] structurally cannot give it: a pen has no
-/// fight stage, so [`per_hunter_take_biomass`] scores every kit on a quarry the party never stalks
-/// and hands back the *range* winner. That is how a corralled Rabbit Warren came to publish
-/// `trapping` — a kit whose contribution at a pen is nil.
+/// A corralled herd has **no fight stage**, so the only thing a kit can still do for it is carry the
+/// meat home — and [`quarry_default_hunt_kit`] structurally cannot say that: it scores every kit
+/// through [`per_hunter_take_biomass`] on a quarry the party never stalks and hands back the *range*
+/// winner. That is how a corralled Rabbit Warren came to publish `trapping` — a kit whose
+/// contribution at a pen is nil.
+///
+/// So the pen's default is a **lookup** for the kit that supplies
+/// [`crate::equipment_config::EquipmentStat::HuntCarry`], which is the one axis it can still be
+/// scored on. **It is a SUGGESTION and not a rate** — the player may send any hunt kit at a pen, and
+/// whichever they send is resolved through the ordinary band-wide carry like everywhere else (issue
+/// #543); this only decides what the compose sheet opens on.
 ///
 /// It is the same source-axis rule the client's picker greys on and `KitRoster.priced_source`
 /// prices on, asked of the **roster** rather than answered with an id
 /// ([`crate::equipment_config::EquipmentConfig::kit_supplying`]).
 ///
-/// **A roster with no `PenCarry` hunt kit falls through to the score**, which is the honest answer:
-/// nothing can work a pen properly, so the herd keeps whatever the range comparison chose rather
-/// than publishing an empty selection.
+/// **A roster with no carrying hunt kit falls through to the score**, which is the honest answer:
+/// nothing on it helps a pen, so the herd keeps whatever the range comparison chose rather than
+/// publishing an empty selection.
 pub fn herd_default_hunt_kit(
     equipment: &crate::equipment_config::EquipmentConfig,
     person: CombatStats,
@@ -6861,7 +6874,7 @@ pub fn herd_default_hunt_kit(
     let job = crate::equipment_config::KitJob::Hunt;
     if corralled {
         if let Some(kit) =
-            equipment.kit_supplying(job, crate::equipment_config::EquipmentStat::PenCarry)
+            equipment.kit_supplying(job, crate::equipment_config::EquipmentStat::HuntCarry)
         {
             return kit;
         }
@@ -8122,7 +8135,7 @@ pub struct HuntCrewCurveInputs<'a> {
     pub floor: f32,
     /// `labor_config.hunt.per_worker_biomass_capacity` — what a **bare-handed** worker carries, the
     /// baseline both animal carry tiers are resolved against
-    /// ([`crate::equipment_config::EquipmentConfig::pen_per_worker_biomass_capacity`]).
+    /// ([`crate::equipment_config::EquipmentConfig::hunt_per_worker_biomass_capacity`]).
     ///
     /// **The stalking rows do not read it** — they are a *kill* rate, and the haul is a separate
     /// bound the take applies afterwards. **The PEN rows do**, and since §4.9 item 12b that is the
@@ -8225,10 +8238,14 @@ pub fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
 pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTake> {
     let quarry = next_turns_quarry(inputs.herd, inputs.fauna);
     let sigmas = inputs.range_sigmas.abs();
-    // **THE PEN'S ONE SURVIVING DIFFERENCE, AND IT IS THE HAUL** — see the doc above. Resolved once
-    // as a predicate because the *rate* is per crew size (coverage stretches a band's sleds
-    // differently over four keepers than over twelve), while *whether there is a carry bound at all*
-    // is a fact about the rung.
+    // **THE PEN'S ONE SURVIVING DIFFERENCE, AND IT IS WHERE THE HAUL BINDS** — see the doc above.
+    // It selects no rate: what a keeper carries is the band's own `hunt_carry`, the same number a
+    // stalking party hauls at (issue #543). What the predicate decides is *whether this curve
+    // carries a carry bound at all* — a fact about the rung, since a wild party's carry limit is
+    // expressed downstream through the waste path
+    // (`a_sledless_party_wastes_the_kill_it_cannot_carry`) instead of as a term of the kill rate.
+    // Resolved once, out here, because the *rate* is per crew size (coverage stretches a band's
+    // sleds differently over four keepers than over twelve).
     let keepers_haul_it_home = quarry.is_corralled();
     (1..=inputs.max_workers)
         .map(|workers| {
@@ -8250,7 +8267,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
             //
             // ⛔ **THE SHIPPED ROSTER DOES NOT REACH IT**, and that is a measurement rather than an
             // assumption: this arm binds only where `body_mass × (attack − defense) ÷ durability`
-            // exceeds the crew's `pen_carry` tier, and the largest per-worker kill on any of the
+            // exceeds the crew's `hunt_carry` tier, and the largest per-worker kill on any of the
             // seven `husbandry_ceiling: "pen"` species is the aurochs' `120 × 14 ÷ 150 = 11.2`
             // biomass a turn — under the **bare** tier's `12`, let alone the equipped `40`. It is
             // kept because it is the honest model (a keeper still has to carry the meat home, and it
@@ -8261,7 +8278,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
             // `husbandry.pen_engage_gain`'s handling arm is.
             let carry = keepers_haul_it_home.then(|| {
                 let per_worker = coverage.weighted_rate(|kit| {
-                    inputs.equipment.pen_per_worker_biomass_capacity(
+                    inputs.equipment.hunt_per_worker_biomass_capacity(
                         inputs.baseline_haul_rate,
                         kit,
                         inputs.wear,
@@ -10665,6 +10682,99 @@ mod tests {
         assert!(
             half_r > wild_r && half_r < tame_r,
             "…and so does its breeding rate: {half_r} in ({wild_r}, {tame_r})"
+        );
+    }
+
+    /// What a full meter reads, and the only full there is — the animal twin of the plant web's own
+    /// [`WHOLE_RUNG`].
+    const A_FULL_METER: f32 = 1.0;
+
+    /// **HOW MANY TAMING PRICES THE SWEEP BELOW WALKS**, between the shipped roster's own cheapest
+    /// and dearest species. Enough to straddle every `f32` rounding boundary in that span many times
+    /// over (measured: ~29% of multipliers in it round); the test asserts it actually caught some, so
+    /// it cannot pass vacuously.
+    const TAMING_PRICE_SAMPLES: u32 = 512;
+
+    /// **A CREW THAT CLOSES THE FENCE IN ONE CALL** — more work than the dearest legal climb, so the
+    /// accrual lands on its cap, which is the state this test is about.
+    const WORK_ENOUGH_FOR_ANY_PEN: f32 = 10_000.0;
+
+    /// ⛔ **A RUNG THE HERD *HOLDS* PUBLISHES A FULL METER — THE ANIMAL TWIN, AND IT IS LATENT
+    /// RATHER THAN LIVE.**
+    ///
+    /// `animal:pen` has exactly the plant Field's shape: its `base` is the herd's *taming* price, so
+    /// the meter was `position − base` against a completion test of `position >= base + width`, and
+    /// `fl(base + width) − base` is not `width` whenever that addition rounds. The plant web shipped
+    /// the defect (a finished Field reading 99%); the animal web did **not**, because every taming
+    /// multiplier in the shipped roster (`1.0`, `1.25`, `2.0`, `5.0`) makes `base` exactly
+    /// representable. `taming_cost_multiplier` is a per-species playtest dial validated only as
+    /// *positive and finite*, so that is luck rather than a property — retune one species to `1.06`
+    /// and a closed pen reads 99%.
+    ///
+    /// So this sweeps the **shipped roster's own span** rather than the four values in it: the claim
+    /// is about what the dial may be moved to, and pinning only today's four would pass with the
+    /// meter wired to anything.
+    #[test]
+    fn a_pen_the_herd_holds_publishes_a_full_meter_at_every_taming_price() {
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        // The dial's own shipped span — read off the roster rather than copied, so a retune that
+        // widens it widens the sweep.
+        let cheapest = fauna
+            .species
+            .values()
+            .map(|def| def.taming_cost_multiplier)
+            .fold(f32::INFINITY, f32::min);
+        let dearest = fauna
+            .species
+            .values()
+            .map(|def| def.taming_cost_multiplier)
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(
+            dearest > cheapest,
+            "PRECONDITION: the roster must price taming at more than one figure, or there is no \
+             span to sweep"
+        );
+
+        let mut prices_that_round = 0_u32;
+        for sample in 0..TAMING_PRICE_SAMPLES {
+            let multiplier =
+                cheapest + (dearest - cheapest) * sample as f32 / (TAMING_PRICE_SAMPLES - 1) as f32;
+            let (mut herd, _, _) = herd_at(WILD);
+            herd.taming_cost_multiplier = multiplier;
+            // The price is a field the standing derives from, so the position is re-seated through
+            // the one mutator after it moves.
+            herd.set_ladder_position(RUNG_UNSTARTED, &ladder);
+            let (base, width) = herd.rung_span(RungKey::AnimalPen, &ladder);
+            if base + width - base != width {
+                prices_that_round += 1;
+            }
+            herd.accrue_corral(
+                FactionId(0),
+                WORK_ENOUGH_FOR_ANY_PEN,
+                &ladder,
+                herd.position(),
+            );
+
+            assert!(
+                herd.corral_meter_full(),
+                "PRECONDITION at taming price {multiplier}: {WORK_ENOUGH_FOR_ANY_PEN} work must \
+                 close a fence costing {width}"
+            );
+            let done = herd.rung_work_done(RungKey::AnimalPen, &ladder);
+            assert_eq!(
+                crate::intensification::build_fraction(done, width),
+                A_FULL_METER,
+                "a pen the herd HOLDS must publish a full meter: taming price {multiplier} puts \
+                 the rung's base at {base}, the position stands at {} and the meter read {done}",
+                herd.ladder_position()
+            );
+        }
+
+        assert!(
+            prices_that_round > 0,
+            "PRECONDITION: the sweep must contain prices where `fl(base + width) − base` is not \
+             `width`, or it cannot tell the defect from the fix"
         );
     }
 

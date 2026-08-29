@@ -282,10 +282,21 @@ pub fn gear_work_supply(per_worker: f32, workers: u32) -> f32 {
 /// type, meaning and range every shipped readout already renders. **The sim divides at capture**; the
 /// client does no arithmetic (`docs/plan_unit_costed_work.md` §8).
 ///
-/// **It divides by the SOURCE'S OWN stamped cost, not the ladder's live one**, which is what makes a
-/// finished source read exactly `1.0` beside an `is_cultivated()` that is already `true` — a later
-/// retune moves the *price* on the wire (`workCost`) without contradicting the rung the player has
-/// already paid for. `RUNG_UNSTARTED` on a source nobody has started, where the ratio is `0/0`.
+/// **It divides by the SOURCE'S OWN stamped cost, not the ladder's live one** — a later retune moves
+/// the *price* on the wire (`workCost`) without contradicting the rung the player has already paid
+/// for. `RUNG_UNSTARTED` on a source nobody has started, where the ratio is `0/0`.
+///
+/// # ⛔ THE DENOMINATOR WAS NEVER WHAT MADE A FINISHED SOURCE READ `1.0`
+///
+/// This said the stamped cost *"is what makes a finished source read exactly `1.0` beside an
+/// `is_cultivated()` that is already `true`"*. **It did not, and a completed Field shipped reading
+/// `0.99999994`.** Matching the denominator to the source's own price is necessary and was never
+/// sufficient: the *numerator* was a second reading of the same question — `position − base` against
+/// a completion test of `position >= base + width` — and in `f32` the two disagree by a ULP.
+///
+/// What makes a finished source read `1.0` is [`rung_work_done`], which publishes `width` for a rung
+/// the standing **holds** rather than subtracting toward it. This does the division and nothing
+/// else.
 pub fn build_fraction(done: f32, cost: f32) -> f32 {
     if cost <= RUNG_UNSTARTED {
         return RUNG_UNSTARTED;
@@ -1398,6 +1409,43 @@ pub fn rung_span<F: Fn(RungKey) -> Option<f32>>(rung: RungKey, cost_at: &F) -> (
         cursor = next;
     }
     (base, NO_RUNG_WIDTH)
+}
+
+/// **WHAT A SOURCE'S `rung` METER READS, IN WORK UNITS — A *PUBLICATION* OF THE STANDING, NEVER A
+/// SECOND READING OF IT.** `span` is that rung's `(base, width)` on **this source's own** price list
+/// ([`rung_span`]), `position` the source's cumulative work.
+///
+/// A rung the standing already **holds** (or stands above) reads its full `width`, full stop. Below
+/// that it is how far into the rung's own span the position has come. Both webs' meters
+/// (`forage::patch_rung_work_done`, `fauna::Herd::rung_work_done`) — and therefore every `0..1`
+/// fraction [`build_fraction`] divides out of them — are this one expression.
+///
+/// # ⛔ THE SUBTRACTION ALONE IS NOT THE VERDICT, AND IN `f32` IT CONTRADICTS IT
+///
+/// The accrual caps the position at `base + width` and [`RungStanding::at`] tests completion against
+/// that same sum — but `fl(base + width) − base` is **not** `width` whenever that addition rounds,
+/// and on the shipped ladder it rounds for **most** Field prices: a completed Field published
+/// `0.99999994`, the client floored it, and a finished Field's card read *"Field 99%"* beside a
+/// `⌃` mark offering to build the Field it was already standing on. The error runs both ways — the
+/// same rounding can put `fl(base + width) − base` **above** `width` — so no one-sided epsilon is
+/// the fix either. **Asking `held` is**: the meter then says what the completion test said, by
+/// construction rather than to within a tolerance somebody has to keep in sync.
+///
+/// It bites exactly on the rungs whose `base` is non-zero and whose price is scaled — `plant:field`
+/// (its base is the tended rung's width, its width the patch's quoted Sow price) and `animal:pen`
+/// (its base is the herd's taming price). A branch's first investment rung has `base == 0`, where
+/// `fl(0 + width) − 0` is `width` exactly and the two readings never parted.
+pub fn rung_work_done(
+    standing: RungStanding,
+    rung: RungKey,
+    position: f32,
+    span: (f32, f32),
+) -> f32 {
+    let (base, width) = span;
+    if standing.held.is_at_or_above(rung) {
+        return width;
+    }
+    (position - base).clamp(RUNG_UNSTARTED, width)
 }
 
 /// **A PER-RUNG QUANTITY AT A SOURCE'S STANDING — THE DELTA FORM, STATED ONCE.** `value_at` answers

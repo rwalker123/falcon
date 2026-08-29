@@ -431,8 +431,12 @@ pub struct HerdTelemetryState {
     pub fodder_per_biomass: f32,
     // **RETIRED: `trade_per_biomass`** (arc #527). The wire slot `tradePerBiomass` on this table is
     // `(deprecated)` in place.
-    /// **What ONE hunter moves this turn, in BIOMASS** — `labor_config.hunt.per_worker_biomass_capacity`,
-    /// the term `systems::hunt_take`'s collection multiplies by the head-count. No seasonal factor
+    /// **What ONE hunter moves this turn, in BIOMASS** — the **EQUIPPED REFERENCE** haul rate
+    /// (`EquipmentConfig::equipped_reference(HuntCarry)`, the sled's own tier, `40`), the term
+    /// `systems::hunt_take`'s collection multiplies by the head-count. **NOT**
+    /// `labor_config.hunt.per_worker_biomass_capacity`, which is the *sledless* baseline (`12`)
+    /// since the carries moved onto their tiers: a herd row is a fact about the herd and a herd has
+    /// no band to resolve a kit against, so it quotes what a kitted party hauls. No seasonal factor
     /// (the animal web has none), so it is never `0` for a live source.
     ///
     /// It is what turns a ceiling into a **crew count**, and it is deliberately not derived from
@@ -886,6 +890,25 @@ pub struct HerdTelemetryState {
     /// The rung-3 twin of [`Self::tame_upkeep_material_demand`], and the one that carries `hurdles`.
     #[serde(default)]
     pub corral_upkeep_material_demand: Vec<MaterialPayoff>,
+    /// **THE WHOLE PILE A PEN RING SWALLOWS TO RAISE** — the material twin of
+    /// [`Self::corral_work_cost`], resolved live off the **ladder** at capture and published
+    /// whether or not a build is in flight, because the ring card quotes a price before the player
+    /// commits.
+    ///
+    /// ⛔ **IT EXISTS FOR WORD-FOR-WORD THE REASON [`Self::corral_upkeep_material_demand`] DOES.**
+    /// That field exists because a *pastoral* herd is the only source the `⌃` track ever offers the
+    /// Pen rung from, and its own rung declares no material. This one exists because a *corralled*
+    /// herd is the only source a **ring** is ever offered from, `animal:pen` is the top of its
+    /// branch, and [`Self::build_material_cost`] — which publishes the rung *above* — is therefore
+    /// empty on exactly the row the player is deciding on.
+    ///
+    /// **UNSCALED**, because the labor arm prices a ring's width at the pen rung's own unscaled
+    /// build cost: penning takes no per-species multiplier, and a scaled quote would show one price
+    /// and charge another. On a **pastoral** herd this equals [`Self::build_material_cost`] by
+    /// construction — the same rung's pile reached through two selectors, never a second reading of
+    /// the ladder.
+    #[serde(default)]
+    pub corral_build_material_cost: Vec<MaterialPayoff>,
     /// The animal twin of [`ForagePatchState::upkeep_kit_id`] — see it for the whole rationale.
     #[serde(default)]
     pub upkeep_kit_id: String,
@@ -994,6 +1017,7 @@ impl Default for HerdTelemetryState {
             upkeep_material_supplied: Vec::new(),
             tame_upkeep_material_demand: Vec::new(),
             corral_upkeep_material_demand: Vec::new(),
+            corral_build_material_cost: Vec::new(),
             upkeep_kit_id: String::new(),
             upkeep_kit_named: false,
             corral_material: Vec::new(),
@@ -1968,11 +1992,6 @@ pub struct KitOptionState {
     /// Per-gatherer throughput (biomass/turn, **before** the tile's seasonal weight) under this kit —
     /// the baskets' tier.
     pub forage_carry_per_worker_biomass: f32,
-    /// Per-keeper **PEN** collection rate (biomass/turn) under this kit — the husbandry gear's tier.
-    /// **Not [`Self::hunt_carry_per_worker_biomass`]**: a sled drags a carcass in off the range and
-    /// a pen stands at the camp, so a kit carrying only a sled collects a pen at the bare rate.
-    #[serde(default)]
-    pub pen_carry_per_worker_biomass: f32,
     /// The sight range each posted scout vantage reveals at under this kit — the wayfinding gear's
     /// tier. How far the vantages are *posted* is not a kit axis.
     #[serde(default)]
@@ -2019,10 +2038,9 @@ pub struct KitOptionState {
     /// rather than removed because the FlatBuffers `(deprecated)` keyword drops the accessor and a
     /// client still calls it.
     ///
-    /// **ITS SUCCESSOR IS WHAT MAKES THE HUSBANDRY KIT APPLICABLE BEFORE A PEN EXISTS**, and that
-    /// argument transfers verbatim. The kit's other axis,
-    /// [`Self::pen_carry_per_worker_biomass`], is read on a corralled herd and nowhere else, so a
-    /// picker testing that axis alone withholds the kit on the very herd the player is taming —
+    /// **ITS SUCCESSOR IS WHY A PICKER MUST ASK ACROSS EVERY AXIS**, and that argument transfers
+    /// verbatim. The husbandry gear's other axis was read on a corralled herd and nowhere else, so a
+    /// picker testing that axis alone withheld the kit on the very herd the player was taming —
     /// which is the work hurdles and halters are physically for. A consumer deciding whether to
     /// offer a kit must ask what the kit can change on *this* source across **every** axis it
     /// declares, never off one hardcoded key — and this is the axis it must now read as
@@ -2072,7 +2090,6 @@ impl Default for KitOptionState {
             attack: 0.0,
             hunt_carry_per_worker_biomass: 0.0,
             forage_carry_per_worker_biomass: 0.0,
-            pen_carry_per_worker_biomass: 0.0,
             scout_vantage_range: 0.0,
             // `0` is the *sentinel* on these two — "unbounded", the schema's own default and what
             // every weapon but the passive device ships. Not a multiplier, so not neutral-at-one.

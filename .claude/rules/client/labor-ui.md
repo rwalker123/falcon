@@ -27,7 +27,7 @@ paths:
 | `ui/hud/RungLadder.gd` | **All-`static`, stateless** shared LADDER-TRACK layer (`docs/plan_standing_upkeep.md` §2.8) — the one answer to *"what does this source's branch hold, where does it stand on it, and how far may the player send it?"*. `RungGates` answers *may this source climb its NEXT rung*, which is the right question for a MARK; a queue entry names a **destination** now and lays every rung between where the source stands and there, so the picker has to state the WHOLE branch and `next_rung_ready` structurally cannot. `track(kind, source, prefix, improvement, knowledge, band)` walks `SourceForecast.rung_branch_for_kind` bottom rung first and puts every rung in exactly one of six states — `banked` (already paid for, and it contributes NO figure: a previous improvement is a RECEIPT, NOT A DISCOUNT) · `standing` · `path` · `target` · `locked` · `open` — beside its own owing and its own chained date; `has_track` is the *is there anything to offer* test a caller asks before floating a card, and `build_track(rows, on_pick)` renders it, a **`Button` where the rung may be picked and a `Label` where it may not** (the improvement control's own shape-is-the-statement rule — a greyed button on a locked rung offers an act the sim refuses). ⛔ **IT RE-DERIVES NEITHER THE WORK NOR THE TURNS**: a leg's owing and its chained date are `SourceForecast.build_legs`' rows, read where the queued entry publishes them, and a rung NO entry covers has no leg — its owing is the per-rung `workCost − workDone` pair the wire publishes for exactly that pre-commit question (the same two numbers `forage::plant_build_legs` subtracts), and it states **no date at all**, a chain being computed against a build queue this client cannot see. **STATELESS IS THE INVARIANT** — faction knowledge is a `knowledge` PARAMETER and the press handler a `Callable`, `RungGates`'s own treatment. Its two OUTRIGHT bars (`HudFloraVocab.GATE_REASON_SPECIES_NEVER_TAMED` / `_PENNED` / `GATE_REASON_CROP_CANNOT_CLIMB_FORMAT`) are the one place a rung `RungGates` WITHHOLDS is rendered instead: a mark promises the verb is available, a track says what the branch holds, and a rung silently missing from it reads as a shorter ladder. A rung barred from BELOW takes the blocking rung's own reason (`GATE_REASON_PATH_BLOCKED_FORMAT`), because a climb lays every leg and offering a destination whose path is refused is a job that queues and then blocks. **It owns the card's SECOND PAGE too** (§4.15) — `rung_commits_a_crop` (the plant/animal fork: `tame` and `corral` name no species and stay one click), `crop_choices` (one row per legally sowable plant, each stating what ITS OWN Sow would cost and what THIS rung would then pay it, with `Sim picks` last naming the plant it would resolve to) and `build_crop_step`. ⛔ **EVERY FIGURE ON A CROP ROW IS QUOTED AS PUBLISHED and none is derived from another**: the per-crop price is `FloraShareInfo.sowWorkCost` (carried onto the basket entry by `SourceForecast.flora_basket_entries` with its own presence key) while the patch's own Field-row price is `fieldWorkCost`, and a committed patch's published `share` is its REWEIGHTED one where the price is struck on the tile's basket — so the client re-derives neither the price from the share nor either price from the other. **An ABSENT `sowWorkCost` renders NO ROW**, that being the wire's "this plant cannot climb to a Field here" (the tile-specific legality the species-global `can_sow` ceiling cannot express, and the same predicate `default_species_for_rung` filters on) — which is also what keeps `Sim picks` naming the plant the sim would really settle on. The Field row states its price and **no reason**: the per-crop figures are the cause, made visible |
 | `ui/hud/HarvestFloorChart.gd` | The compose sheet's **floor instrument** (`docs/plan_harvest_floor.md` §7.3) — a custom-drawn `Control` (the `FoodOutlookChart` / `ArrivalStrip` idiom) putting the standing stock, the draggable floor line, the projection and the food peak on ONE y-axis of `B/K`, with the `learn_multiplier` gradient rail down the right edge. **IT DRAWS; IT DOES NOT MODEL** — every number comes from `SourceForecast.floor_chart_model`, the projection walks the sim's own `regrowthSamples`, the peak is the argmax of those samples rather than `FLOOR_FOOD_PEAK` restated beside them, and negative samples are carried through as decline. It emits ONE signal, `floor_changed(floor, committed)`, and the second argument is the whole contract: a committed change rebuilds the compose controls (which frees this node), a live one must not, or the drag in flight dies with it — see "THE CHART" below. Keyboard-accessible (`FOCUS_ALL`; arrows / Shift-arrows / Home / End), because the floor is the primary control of the panel. Palette through `HudStyle` only — plus `DetailFormat.ecology_tier_color` for the standing-stock band and the **phase zones** behind it (`_draw_phase_zones`, the furthest-back layer: the source's own `collapseFraction` / `stressedFraction` as horizontal Collapsing/Stressed/Thriving bands, so the floor is dragged against the ecology rather than against a remembered number) |
 | `ui/hud/ForecastQuery.gd` | **The client's half of the command socket's SECOND direction** (`sim_runtime/proto/command.proto` -> "THE QUERY CHANNEL") — a `RefCounted` seam owning the request-id sequence, the SUBJECT/KEY split (`subject_of` = kind + band + herd, `key_of` = that plus the kit, party and floor), the `{state, answer, error}` a sheet renders off (`view`), the stale-answer window (`STALE_AFTER_MSEC`), the settled test the crew one-shots gate on (`answer_settled`) and the `answered(subject)` signal every consumer redraws from. **It owns NO socket**: `Main` injects the sender and pumps `CommandBridge.poll_query_replies` in through `deliver` / `expire_stale`, so the HUD asks questions without reaching the network and every state is drivable from a harness with no server. **Its own object because THREE sheets across TWO controllers compose a raid** and each needs the same four things — an id, a rule for which reply is still wanted, a rule for what to show while waiting, and a re-render when the answer lands; two copies would drift the moment one learned to keep its last answer and the other did not. `Hud` holds the ONE instance and fans `answered` out to `_drawercompose` / `_bandpanel` / `_drawer`. **`reset()` is a WORLD-BOUNDARY cache clear and `HudLayer.reset_world_state` is its only production caller** — a subject is kind + band + herd, and a new world hands out both handles again (band ids restart low, herd ids are species + index), so a held answer matches the new world's composed key exactly and renders the previous world's numbers as `STATE_READY`; the shape and the reset contract are `.claude/rules/core_sim/world-handoff.md`. **The no-retry rule is scoped to the SERVER's token class** (`TRANSPORT_RETRY_AFTER_MSEC`): a `query_error` names something wrong with the QUESTION, which the sheet composed itself, so it is never re-asked — but `QUERY_ERROR_TRANSPORT` names a dead socket, which heals, so it is re-askable once the backoff has elapsed (not on the next render, which `ask` reaches once per render and would spin the socket; not never, which strands a sheet on `No forecast available (transport)` for the session after a server restart). The failure keeps rendering through the retry, so a server coming back is ONE transition rather than a flicker. See "THE RAID'S NUMBERS ARE ASKED FOR" below |
-| `ui/hud/KitRoster.gd` | **All-`static`, stateless** shared KIT layer (`docs/plan_denial_raid.md`) — the read over `SubsistenceSection.kits` (`kits_for_job` / `kit_by_id` / `kit_display_name` / `display_name_for_id` / `default_kit_for` / `resolve_selection`), the EFFECTIVE tier a given band gets under a given kit — **READ off the band's own `kitTiers` row, never re-derived** (`band_kit_tiers` / `effective_tiers` / `_resolved_tier` / `unequipped_tier` / `equipped_tier` / `kit_item_ids` / `condition_of` / `tier_hint`) — the BAND-WIDE ROLE cards' own tier and gear line (`ROLE_AXES` / `is_band_wide_role` / `role_axis` / `role_gear` / `role_hint`), the OFFER test that decides which kits a quarry may be worked with (`attack_reaches` / `attack_against` / `effective_attack_against` / `kit_uses` / `kit_supplies_any` / `kit_offer` / `kit_is_offered` / `hunt_gate_closes` / `gate_closed_source` — see "A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED"), the resolve-then-reprice seam and the CARRY AXIS it prices on (`carry_axis_for` / `priced_source` / `repriced_source` — the axis is the SOURCE's, a penned herd overriding its job's; see "A PENNED herd is priced — and described — on the KEEPER'S carry"), and the picker ROW itself (`build_kit_row`). **The honesty trio `estimates_quoted_kit` / `estimates_apply_to` / `estimates_quoted_note` is RETIRED with the per-herd estimate tables**: a forecast is a query answered for the composed kit, so there is no other kit's numbers to disown. **`attack_reaches` takes the ROW the attack is read from** — the roster entry for the fresh offer test, the band's `kitTiers` row for the worn gate — so a kit's size window and its attack can never come from two different rows. **Its own file because the control appears on FOUR sheets across TWO controllers** — the Band panel's hunting-party and denial forms, the herd drawer's assign-hunters block, the land drawer's assign-foragers block — **and on the WORKFORCE zone's two band-wide role CARDS** — and a row that has to read identically in six places must have one implementation; the same measurement that produced `SourceForecast` and `HudWidgets`. The ROSTER is snapshot data and lives on `HudBandLaborState` (`kits()` / `default_kit_id(job)`, ingested by `Hud.update_kit_roster` off `Main`'s `kits` + the four job defaults), threaded in as a parameter — this layer holds nothing. **Dependency direction: it reads `SourceForecast` / `HudWidgets` / `HudStyle` / `DetailFormat` (for `role_hint` alone, from inside a function body) / the vocab leaves and none of them may read it back** (a `const` cycle between two `class_name`d scripts fails to load the whole client) |
+| `ui/hud/KitRoster.gd` | **All-`static`, stateless** shared KIT layer (`docs/plan_denial_raid.md`) — the read over `SubsistenceSection.kits` (`kits_for_job` / `kit_by_id` / `kit_display_name` / `display_name_for_id` / `default_kit_for` / `resolve_selection`), the EFFECTIVE tier a given band gets under a given kit — **READ off the band's own `kitTiers` row, never re-derived** (`band_kit_tiers` / `effective_tiers` / `_resolved_tier` / `unequipped_tier` / `equipped_tier` / `kit_item_ids` / `condition_of` / `tier_hint`) — the BAND-WIDE ROLE cards' own tier and gear line (`ROLE_AXES` / `is_band_wide_role` / `role_axis` / `role_gear` / `role_hint`), the OFFER test that decides which kits a quarry may be worked with (`attack_reaches` / `attack_against` / `effective_attack_against` / `kit_uses` / `kit_supplies_any` / `kit_offer` / `kit_is_offered` / `hunt_gate_closes` / `gate_closed_source` — see "A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED"), the resolve-then-reprice seam and the CARRY AXIS it prices on (`carry_axis_for` / `priced_source` / `repriced_source` — the axis is the JOB's, a pen collected on the hunt's own haul since `EquipmentStat::PenCarry` was deleted; see "A PENNED herd is priced — and described — on the band's ONE carry"), and the picker ROW itself (`build_kit_row`). **The honesty trio `estimates_quoted_kit` / `estimates_apply_to` / `estimates_quoted_note` is RETIRED with the per-herd estimate tables**: a forecast is a query answered for the composed kit, so there is no other kit's numbers to disown. **`attack_reaches` takes the ROW the attack is read from** — the roster entry for the fresh offer test, the band's `kitTiers` row for the worn gate — so a kit's size window and its attack can never come from two different rows. **Its own file because the control appears on FOUR sheets across TWO controllers** — the Band panel's hunting-party and denial forms, the herd drawer's assign-hunters block, the land drawer's assign-foragers block — **and on the WORKFORCE zone's two band-wide role CARDS** — and a row that has to read identically in six places must have one implementation; the same measurement that produced `SourceForecast` and `HudWidgets`. The ROSTER is snapshot data and lives on `HudBandLaborState` (`kits()` / `default_kit_id(job)`, ingested by `Hud.update_kit_roster` off `Main`'s `kits` + the four job defaults), threaded in as a parameter — this layer holds nothing. **Dependency direction: it reads `SourceForecast` / `HudWidgets` / `HudStyle` / `DetailFormat` (for `role_hint` alone, from inside a function body) / the vocab leaves and none of them may read it back** (a `const` cycle between two `class_name`d scripts fails to load the whole client) |
 | `ui/hud/SourceForecast.gd` | **All-`static`, stateless** shared forecast/estimate layer (HUD decomposition, phase 2c-2 precursor) — the pure "what will this source give me?" math THREE consumers ask for: the drawer's compose blocks, the Band panel's WORK zone, and its PARTIES zone. Three families: POST-HOC `source_yield_readout` (what a worked source actually produced, incl. the ⚠ overdraw + overstaff/wasted notes) · PRE-COMMIT `forecast_inputs` / `max_useful_workers` / **`source_worker_cap_state`** (the CONFIRMED-row twin of that cap: `(forecast, workers, idle, useful_floor = 0) → {can_add, note}`, beside the ceiling it reads so a worked row and a compose stepper can never gate differently — the trailing floor is what makes that true rather than merely stated, and `herd_crew_floor` is its one definition; the *hold it after* crew is a floor on BOTH twins and therefore lives inside `max_useful_workers`, carried on the forecast as `hold_crew`) / `expected_yield` / `hunt_policy_ceiling` · THE RAID `hunt_trip_forecast` → `hunt_forecast_line_bbcode` / `hunt_trip_returns_empty` / `hunt_empty_refusal` / `hunt_empty_refusal_reason` / `expedition_party_cap` (the SUPPLY side — the band's idle workforce, and NOT `max_expedition_party_size`, which is the LAST RUNG of the estimate tables' sampled party axis rather than a rules cap) / `expedition_engage_crew` / `expedition_useful_cap` (the DEMAND side, untouched) / `expedition_policy_takes` / `style_send_hunt_button` (`style_send_hunt_button` styles a Button off the raid verdict, so it lives WITH the verdict). Plus **THE DENIAL RAID's own layer** (`docs/plan_denial_raid.md`) — `denial_forecast` / `denial_verdict` / `denial_turns_phrase` / `denial_verdict_text` / `denial_verdict_bbcode` / `denial_take_bbcode` / `denial_party_needed` (a read of the REPLY, not of a table) / `denial_refusal_reason` / `denial_is_short_handed` / `denial_short_handed_reason` / `style_send_denial_button`, over the `DENIAL_VERDICTS` table — which is composed from the QUERY's reply row (`denialEstimates` is retired) and shares NONE of the raid vocabulary above: denial carries no floor and no delivery ETA, so its readout is a collapse verdict and its Send disables in exactly one case (`denial_is_short_handed` / `denial_short_handed_reason` — the band cannot field the party the herd REQUIRES; a party the player under-sized still launches). The rationale lives in `band-city-panel.md` → "DENIAL is a third MISSION on the parties footer". Plus the shared leaves those need — `format_magnitude`/`format_signed`/`format_yield`/`extractive_take`, `band_tile`/`hex_distance_wrapped`, `herd_display_name`, `is_managed_hunt_source`, and the two one-off leaks into the read-only detail layer, `flora_basket_entries` / `husbandry_ceiling`. **WHY ITS OWN FILE:** the next phase lifts a `DrawerComposeController` out of `Hud.gd`, but this layer is called by the work + parties zones too, so it cannot travel with the drawer; pure injection was measured at **54 Callables** and a `_hud` back-ref would weld an already-pure layer to the god object (and the band-panel extraction would then need a SECOND back-ref to the same place). All three consumers depend on THIS instead. **STATELESS IS THE INVARIANT** — no node, no `_hud`, no snapshot cache; if a new function needs HUD state, pass it in. The one non-plain-value is the grid-wrap pair (`grid_width`, `wrap_horizontal`), threaded as EXPLICIT PARAMETERS through `hex_distance_wrapped` → `round_trip_travel_turns` → `hunt_trip_forecast` / `expedition_policy_takes` so a stale grid can never be captured; `HudLayer._hex_distance_wrapped` is a one-line pass-through supplying the pair off `_band_labor`, so there is ONE hex implementation (`DrawerComposeController` calls the module directly with the same pair). The **forecast vocabulary constants moved here with the math** (`LABOR_KIND_*` / `LABOR_HUNT_POLICIES` / `DEFAULT_HUNT_POLICY` / `SOURCE_KIND_*` / `FORECAST_*` / `MAX_USEFUL_*` / `HUNT_FORECAST_*` / `SEND_HUNT_*` / `HUSBANDRY_CEILING_*` …) and `HudLayer` **re-exports the still-used ones as aliases** (`const X = SourceForecast.X`, one commented block) rather than redefining them — ONE definition, and every HudLayer call site reads unchanged |
 
 ## THE HARVEST AXIS IS AN ESCAPEMENT FLOOR, NOT A STANCE (`docs/plan_harvest_floor.md`, issue #455)
@@ -1254,34 +1254,40 @@ press-only) fails exactly the three negatives while the positive stays green.
 > control is the whole value of that state, and this repo has been bitten by a faked signal passing
 > through a dead picker.
 
-### A RUNG ERODED BELOW ITS COST OFFERS THE `⌃` AGAIN (§4.7)
+### THE OFFER TEST AND THE TRACK TEST ASK ONE QUESTION (§4.7)
 
-A Tended patch that decayed even slightly below its cost could never be repaired. `§2.4` says it
-should be — *"repairing it is a fresh decision the player makes by putting it back in the queue"* — and
-the sim's locks are open now (`intensification.md` → "A RUNG ACHIEVED BUT SHORT IS REPAIRABLE"). The
-client's own two suppressions were the last lock: `next_rung_ready` filtered on `improvement_is_done`,
-which reads the achieved FLAG (true at 99%), and the work row forced `ready` empty whenever
-`rung_in_progress` answered, which it does at any partial meter. **The row read the rung as *done* and
-*in progress* at once, and each suppression hid the other.**
+`RungGates.rung_has_room` is a bare `not SourceForecast.improvement_is_done(...)`, and
+`RungLadder.track` banks every rung at or below the standing one through that same call. So a rung
+admitted for a `⌃` is a rung the destination track will offer, and **a mark can never be drawn over a
+card with no rungs left** — which is what makes `_open_rung_track`'s empty-track branch unreachable
+rather than merely unlikely. That branch now warns instead of returning in silence; the silence is
+what made the defect below cost a day.
 
-`RungGates.rung_has_room` replaces the bare done test, and `_rung_is_an_unordered_repair` clears
-`building` for a repair that is undeclared and unqueued — so the existing `⌃` path is restored whole,
-with no new glyph and no new slot. **A repair is a climb**; the mark already means *this source can
-climb*.
+**Reported from play: a completed Field drew its standing glyph AND a `⌃` offering to build a Field,
+and the press did nothing at all.** An enabled `Button` with `MOUSE_FILTER_STOP`, so the click was
+consumed and did not even fall through to the inspector.
 
-**Two guards the first cut needed, both found by the harness rather than by review:**
+> #### ⛔ RETIRED — the 99% repair (`rung_needs_repair`, `_rung_is_an_unordered_repair`)
+>
+> `rung_has_room` used to be `not improvement_is_done(...) or rung_needs_repair(...)`: a rung whose own
+> stamped flag was true beside a meter short of its cost was *achieved and slipped*, and offering it
+> re-opened the sim's `cultivate`/`sow`/`corral` locks, which refuse on the METER. **The sim publishes
+> a per-rung meter as a publication of the standing verdict now** (`intensification.md`), so a held
+> rung reads exactly its width and *achieved* implies *full*: the state has no representation left.
+>
+> **Its only live trigger was a float artifact**, which is the whole reason the deletion closes a
+> class rather than tidying one function. The meter was `(position − base) / width` against a
+> completion test of `position >= base + width`, and in `f32` those disagree by one ULP for most Field
+> prices — a finished Field published `0.99999994`, the percent formatter floored it to 99, the repair
+> test read *achieved and short*, and the offer was drawn over a track that had nothing to offer.
+> Two readings of one question is the defect; one reading is the fix.
+>
+> The plant/animal asymmetry that block was written around is gone with it: it was plant-only because
+> `Tame` has no stamped flag to fall through to, which is now a fact about a table nothing reads.
 
-- **`improvement_is_done` is also true when a HIGHER rung retires this one.** It compares the rung the
-  source STANDS on at-or-above, so a Field answers *built* for Cultivate too; a Field sown from wild
-  ground carries `cultivation_progress == 0` forever, so a naive test re-offered Cultivate on every
-  finished Field. The repair test reads the rung's **own** stamped flag (`FORECAST_DONE_FLAG_KEYS`),
-  which is the only thing that table is still for.
-- **An absent meter reads 0 and is indistinguishable from "eroded to nothing"**, which put a spurious
-  `⌃` on an unimproved patch. It requires `progress > BUILD_METER_UNSTARTED`.
-
-**Plant-only, and the fixture says why**: taming's achievement IS its meter — the sim stamps
-`animal:pastoral` at exactly `DOMESTICATION_COMPLETE`, and `Tame` has no stamped flag of its own to
-fall through to — so done-and-short is a contradiction there and no honest fixture can produce one.
+**`FORECAST_DONE_FLAG_KEYS` survives with no shipped reader.** `fixtures_rung.gd` and `map_preview`
+use it to DERIVE a fixture's `current_rung` from its flags, so a fixture cannot state a standing its
+own flags contradict — which is also why the retired repair fixture could not simply be re-pointed.
 
 > **RETIRED BEFORE IT SHIPPED — a `build_crew == 0` fork on the `-1` face.** An eroded unqueued source
 > now publishes no estimate, and it was tempting to render that as *"No estimate"* rather than
@@ -2568,14 +2574,23 @@ something the source already publishes:**
 | rule | what it reads | who it withholds |
 |---|---|---|
 | **the weapon cannot reach the quarry** | `attack_against(kit, body_mass, bare)` through `SourceForecast.hunt_gate_model_at` | a snare against a Red Deer; anything bare-handed against a defended species |
-| **the kit's contribution is an axis this source cannot read** | `kit_uses(…, pen_carry)` against the herd's `corralled` **and** `kit_reaches_a_wild_hunt` (does it beat bare on `attack` or `hunt_carry`?), plus `kit_uses(…, build_work_per_worker)` against `RungGates.hunt_rung_remains` | **nothing on the shipped roster** — see "A SLED IS NOT PEN GEAR" below |
+| **a BUILDERS kit whose tool serves the other web** | the entry's `build_branch` against the kit's `build_work_branch` | `tillage` in front of a `Tame` |
+
+> ⛔ **A THIRD RULE — the PEN rule — IS DELETED** (issue #543). Its row read *"the kit's contribution
+> is an axis this source cannot read: `kit_uses(…, pen_carry)` against the herd's `corralled` **and**
+> `kit_reaches_a_wild_hunt`"*, and it withheld a kit whose only payload was `pen_carry` from a wild
+> quarry with *"what it adds is only used on a penned herd"*. `EquipmentStat::PenCarry` no longer
+> exists — **carry is carry, and a pen is collected on `hunt_carry`** — so no kit can be pen-only and
+> the rule could only ever answer false. `kit_reaches_a_wild_hunt` went with it; its only caller was
+> that rule. What survives is the BUILD-axis arm, kept as its own bullet below, and the weapon rule,
+> which is where a sled-and-no-weapon kit was always going to land.
 
 - **`none` is NEVER greyed, and nothing spells its id to arrange that.** `kit_supplies_any` asks
   whether the kit beats the roster's bare-handed tier on *any* axis; a kit that beats none of them
   grants nothing anywhere, so there is no source it can be inapplicable *to*. It is the free
   bare-handed comparison the whole wear model exists to protect, and a future `fishing` kit with an
   empty `uses` inherits the treatment — which is the test of whether `none` has been special-cased.
-> #### THE BUILD AXIS IS ASKED FIRST, and it is what stopped the pen rule from LYING (issue #515)
+> #### THE BUILD AXIS IS ASKED FIRST, and it is what stopped the (now retired) pen rule from LYING (issue #515)
 >
 > The rule the doc stated was *"offer a kit only if something it declares can change this source's
 > outcome"*; the rule the code ran was `kit_uses(pen_carry) and not penned`. Those agreed only while
@@ -2636,15 +2651,21 @@ something the source already publishes:**
   > construction, so a pen still caps on the production it pays. Carrying the sim's answer onto a pen
   > therefore moves exactly one reading — the `NO_USEFUL_CREW` refusal — which is the reading the
   > fight opened.
-- **The pen rule is asked before the weapon rule**, so a kit that trips it states the same reason on
-  every quarry: *"what it adds is only used on a penned herd"* is a fact about the KIT, where
-  *"nothing it carries can bring down a Red Deer"* is a fact about the deer and would go unsaid on a
-  rabbit. **No SHIPPED kit is that kit** — `docs/plan_standing_upkeep.md` §4.9 item 12b deleted the
-  `husbandry` kit, the last hunt bundle with no `attack`, so every kit a hunt picker lists carries a
-  sled and reaches a wild hunt on the haul axis. A weaponless hunt kit is greyed on a Red Deer by the
-  WEAPON rule instead, and that shape survives only as `ui_preview`'s synthetic roster entry
-  (`compose_rungs.gd` → `HANDLING_KIT_ID`), which is what keeps this branch provable.
-> #### A SLED IS NOT PEN GEAR, AND FOR ONE RELEASE THE PICKER SAID IT WAS
+- ⛔ **The pen rule was asked before the weapon rule**, *"so a kit that trips it states the same
+  reason on every quarry: 'what it adds is only used on a penned herd' is a fact about the KIT, where
+  'nothing it carries can bring down a Red Deer' is a fact about the deer and would go unsaid on a
+  rabbit."* The rule is deleted (issue #543) and the ordering question with it. **No SHIPPED kit was
+  ever that kit** — `docs/plan_standing_upkeep.md` §4.9 item 12b deleted the `husbandry` kit, the last
+  hunt bundle with no `attack` — and a weaponless hunt kit is greyed on a Red Deer by the WEAPON rule,
+  where that case always belonged. That shape survives only as `ui_preview`'s synthetic roster entry
+  (`compose_rungs.gd` → `HANDLING_KIT_ID`), which is what keeps the weapon branch provable.
+> #### A SLED IS NOT PEN GEAR, AND FOR ONE RELEASE THE PICKER SAID IT WAS — then the axis was deleted
+>
+> ⛔ **THE RULE THIS SECTION IS ABOUT NO LONGER EXISTS** (issue #543), and the history is kept because
+> it cost a shipped feature and the shape of the mistake outlives the stat. `EquipmentStat::PenCarry`
+> is deleted: what a worker can carry is a fact about the people and their gear and never about the
+> ground they stand on, so a pen is collected on the band's one `hunt_carry`. Nothing greys on a pen
+> axis any more, because there is no pen axis.
 >
 > Reported from play: the ASSIGN HUNTERS sheet on a wild Red Deer greyed **all three** hunt kits with
 > one sentence — *"what it adds is only used on a penned herd"* — leaving `No kit` the only selectable
@@ -2675,12 +2696,12 @@ something the source already publishes:**
 > synthetically (`HANDLING_KIT_ID`) precisely because no shipped roster can produce it any more.
 >
 > **Pinned with the contrast, because a picker that offers everything everywhere is as wrong as one
-> that offers nothing** (`ui_preview`, `compose_rungs` → `_assert_a_sled_does_not_make_a_hunt_kit_pen_only`):
-> a roster whose sled kits carry the equipped pen tier, one **wild Red Deer** frame with the popup open
-> asserting the spear line selectable AND the other two greyed with the weapon's reason AND the pen
-> reason on no entry at all, then a **corralled Wild Boar** — defended and pennable — priced on
-> `pen_carry`. Falsified by restoring the old predicate: **six** of those claims fail, including the
-> reported face verbatim.
+> that offers nothing** (`ui_preview`, `compose_rungs` → `_assert_the_greying_follows_the_animal`,
+> which is what `_assert_a_sled_does_not_make_a_hunt_kit_pen_only` became): one **wild Red Deer** frame
+> with the popup open asserting the spear line selectable AND the other two greyed with the weapon's
+> reason, then a **corralled Wild Boar** — defended and pennable — and a **penned Rabbit Warren** that
+> greys nothing. The claims that counted the pen reason and asserted a pen's own carry axis went with
+> the axis; what replaced them is `carry_axis_for(JOB_HUNT)` answering `hunt_carry` for both twins.
 >
 > ⛔ **THE BOAR'S CLAIM INVERTED AT §4.9 item 12b.** It used to be *"a corralled herd greys nothing —
 > a pen is collected, not fought"*, which was true of a sim that paid a fence-holding band whatever it
@@ -2788,43 +2809,54 @@ in.
 zero, `0` being a real reading meaning DRY. The fresh tiers then stand and no condition clause prints,
 the "absent terms render no line" convention `hunt_gate_model` already takes.
 
-#### A PENNED herd is priced — and described — on the KEEPER'S carry
+#### A PENNED herd is priced — and described — on the band's ONE carry
 
-**The carry axis is a property of the SOURCE, not of the job**, and `KitRoster.carry_axis_for(job,
-src)` is the one place that is decided. A corralled herd is worked from a Hunt row, so the job-keyed
-`JOB_CARRY_AXES` priced a pen on the SLED's tier while the sim collects one on
-`EquipmentStat::PenCarry`, a stat of its own and not the hunt haul's. A sled drags a carcass in off
-the range; a pen stands at the camp.
+**A pen is collected on `hunt_carry`, at the same number a wild hunt hauls at**, and
+`KitRoster.carry_axis_for(job)` is where that is decided: a lookup into `JOB_CARRY_AXES` and no longer
+a rule. Carry is a fact about the people and their gear; the fence does not enter it.
 
-**Neither half of that error was visible, because on a roster whose hunt kits all carry a sled they
-CANCEL.** Each one sat at the sled's equipped tier, so every hunt kit quoted a pen the same number —
-under-stating the kit the pen exists for and over-stating every kit that carries a sled and no
-handling gear, into one plausible-looking sheet. Only a driven assertion can hold it;
-`ui_preview`'s `chapters/compose_rungs.gd` states the claim as a triple (the wild reading unmoved, the
-synthetic handling kit at the reference, the sled-only kit at the bare keeper's tier), because the pen pair
-alone is satisfied by pricing everything on the pen axis and the wild reading alone by no fix at all.
+> ⛔ **THIS SECTION ARGUED THE OPPOSITE FOR A RELEASE, AND THE ARGUMENT WAS SOUND WHEN IT WAS
+> WRITTEN.** It read: *"the carry axis is a property of the SOURCE, not of the job … a corralled herd
+> is worked from a Hunt row, so the job-keyed `JOB_CARRY_AXES` priced a pen on the SLED's tier while
+> the sim collects one on `EquipmentStat::PenCarry`, a stat of its own and not the hunt haul's. A sled
+> drags a carcass in off the range; a pen stands at the camp."* The two rates were genuinely different
+> then: the **hurdles** were an ITEM, so a crew that brought handling gear to a pen collected 40 where
+> a drag-harness crew collected 12. `docs/plan_standing_upkeep.md` §4.9 item 12 made hurdles a
+> **material** and deleted the item; both sides of the pair landed on the sled, leaving two names for
+> one number, and issue #543 deleted the stat, `carry_axis_for`'s corralled fork, the three wire
+> fields and `tier_hint`'s `quarry` parameter with it.
+>
+> **ONE BEHAVIOUR CHANGED, NOT JUST A NAME.** `recipes.json` grades `hunt_carry`
+> (poor 30 / fair 34 / good 40 / excellent 46) and never graded `pen_carry`, so a pen used to collect
+> a **flat 40** whatever the sled was actually made at. It tracks the grade now: no client text may
+> promise a pen a fixed rate.
 
-- **The corral state comes off `src`, and that is not a reach for state** — on the hunt job `src` IS
-  the herd, handed in as a parameter exactly like the body mass the weapon's size window is tested
-  against, and read through the same `QUARRY_CORRALLED_KEY` the offer test and the fight's gate use.
 - **The reference tier moves with the axis, in one expression.** `equipped_tier(kits, carry_key)` is
   the denominator; switching the axis without switching the reference resolves it to `0` off a roster
   that states nothing there, the repricing short-circuits, and every kit quotes identical numbers —
   which is exactly how the forage spelling bug shipped.
+- **Pinned on the seam that carries it** (`ui_preview`, `compose_rungs` →
+  `_assert_a_pen_prices_on_the_hunters_carry`, the inverted
+  `_assert_a_pen_prices_on_the_keepers_carry`): the same kit prices a herd and its corralled twin at
+  the **same** number through `DrawerComposeController._hunt_priced_herd`, and a **bare-handed** party
+  comes in strictly under the reference at both — the liveness half, without which "the fence moves
+  nothing" passes on a seam that has stopped repricing at all.
 
-#### …so the hunt HINT is gated on the source too
+#### …so the hunt HINT does not vary with the fence either
 
-A hunt row works two different things through one verb, and they read disjoint axes, so `tier_hint`
-takes the quarry (`build_kit_row` already had it, for the greying) and states what will actually be
-read. A WILD herd is stalked and hauled — `attack`, the sled's carry, spears and sled — byte-identical
-to what the line rendered before the pen axis existed. A PEN is collected: `pen 40.0 per keeper`, then
-the handling gear's condition and the SLED's.
+`tier_hint` states the weapon and the haul on every hunt row, penned or wild: `attack 20.0 · carry
+40.0 per hunter`, then the kit's own item conditions. It no longer takes a quarry.
 
-- **The tier line and the condition clauses answer different questions at a pen, which is why the sled
-  appears under one and not the other.** Only `pen_carry` sets the rate, but the sim charges a pen
-  slaughter over TWO quanta — the handling gear for what was butchered, the sled for what was hauled
-  home — so the sled's TIER is a number nothing on the sheet will read while the sled's CONDITION is
-  wear the player is paying.
+> ⛔ **IT DID, AND BOTH REASONS DIED.** The line was gated on the source — *"a hunt row works two
+> different things through one verb, and they read disjoint axes … a WILD herd is stalked and hauled;
+> a PEN is collected: `pen 40.0 per keeper`"* — with a bullet arguing that the tier line and the
+> condition clauses answer different questions at a pen *"because only `pen_carry` sets the rate,
+> while the sim charges a pen slaughter over TWO quanta."* §4.9 item 12b made a pen resolve the
+> ordinary FIGHT (so the weapon clause belongs there) and issue #543 deleted the pen rate (so the haul
+> clause is the sled's there). The 2×2 over (kit × fence) is kept in `compose_rungs` with its
+> expectation inverted — the four readings must be EQUAL across the fence and DIFFERENT across the two
+> kits, which is what stops "the pen states the hunt pair" passing on a client that reads no source at
+> all.
   > ⛔ **AND THE WEAPON IS NOW ONE OF THEM.** This bullet used to end *"No attack and no spears: a
   > penned beast is slaughtered rather than stalked, it publishes no engagement stage, and the sim
   > charges no weapon for the kill."* **Two of those three clauses died with §4.9 item 12b**: a
@@ -2837,19 +2869,18 @@ the handling gear's condition and the SLED's.
   > sentence is quoted rather than deleted because it was the stated rationale for the client's own
   > pen exemption in `KitRoster.kit_offer` / `hunt_gate_closes`, and a reader who finds only its
   > absence is one step from writing that exemption back.
-- **The pen line is gated on the SOURCE, not on the KIT, and the difference is the point.** Gating it
-  on the kit printed a pen tier for a handling kit against a wild herd — a tier nothing would read —
-  and withheld it from a sled-only kit at a pen, which is the one place a player needs it: at a pen,
-  `pen 12.0 per keeper` beside `pen 40.0 per keeper` is the whole visible difference the handling gear
-  buys. The condition CLAUSES are the kit's own `item_ids` list and are not gated on the source at all
-  — see "THE HINT NAMES THE KIT'S OWN ITEMS" below.
-- **The pen carry is read off the band's row like every other tier**, `BandKitTiers` carrying
-  `penCarryPerWorkerBiomass` and `scoutVantageRange` alongside the fought, hauled and gathered axes.
-  Those two arrived on the table last and were the two the client had to answer off the ROSTER's fresh
-  tier in the meantime — so a band whose handling gear had run dry read `pen 40.0 per keeper` while the
-  sim collected 12, wrong in the reassuring direction. The per-key fall-through that stood in for them
-  is gone with the gap: `_row_tier` reads the row and nothing else, and a whole-row absence (a band the
-  wire has not described yet) is the only case the roster still answers.
+- **The condition CLAUSES are the kit's own `item_ids` list** and were never gated on the source — see
+  "THE HINT NAMES THE KIT'S OWN ITEMS" below. They are what still separates the two kits' lines now
+  that the tiers agree at a pen.
+- **Every tier is read off the band's row**, `BandKitTiers` carrying `scoutVantageRange` alongside the
+  fought, hauled and gathered axes. The vantage arrived on the table last and was one the client had
+  to answer off the ROSTER's fresh tier in the meantime — a Scout card reading `2-tile sight` while
+  `calculate_visibility` revealed at 1, wrong in the reassuring direction. The per-key fall-through
+  that stood in for it is gone with the gap: `_row_tier` reads the row and nothing else, and a
+  whole-row absence (a band the wire has not described yet) is the only case the roster still answers.
+  > ⛔ `penCarryPerWorkerBiomass` was the other field of that pair, and its symptom was *"a band whose
+  > handling gear had run dry read `pen 40.0 per keeper` while the sim collected 12."* It is deleted
+  > from `BandKitTiers`, `KitOption` and `PopulationCohortState` alike (issue #543).
 - **`KIT_SCOUT_VANTAGE_KEY` HAS a consumer now** — the WORKFORCE zone's role CARDS, which carry a
   picker and a gear line each (`band-city-panel.md` → "The role cards carry the band's OTHER two
   kits"). `role_gear` reads the same row, so the WARRIOR card reads the band's sim-resolved `attack`

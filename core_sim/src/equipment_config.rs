@@ -113,23 +113,6 @@ pub enum EquipmentStat {
     /// **Multiplies the hunt's baseline injury hazard** (`fauna::hunt_injuries`). Neutral at `1.0`; a
     /// stand-off instrument ships `0.0` and wears out instead of its users getting hurt.
     Exposure,
-    /// **The per-keeper rate a PEN is collected at.** Declared **unequipped**; the equipped side is
-    /// **shared with [`Self::HuntCarry`]** ([`Self::shares_equipped_rate_with`]) — the number the pen
-    /// harvest has always run on, so a keeper carrying husbandry gear collects exactly what it
-    /// always did, and that number keeps its single home on the sled's tier.
-    ///
-    /// **A separate stat from [`Self::HuntCarry`]**, because a pen and a range are different
-    /// places: a sled drags a carcass in off the range, and a pen stands at the camp.
-    ///
-    /// ⛔ **IT NO LONGER DISCRIMINATES BETWEEN THE HUNT KITS, and that is a fact about the roster
-    /// rather than about this stat.** It used to — the *unequipped* side lived on `hurdles`, so a
-    /// crew that brought a drag harness to a pen collected at `12` where the handling gear collected
-    /// at `40`. **The hurdles became a MATERIAL** (`docs/plan_standing_upkeep.md` §4.9 item 12) and
-    /// the whole pair moved to the **sled**, which already owned the equipped side through
-    /// [`Self::shares_equipped_rate_with`]. So **any** kit carrying a sled now collects a pen at the
-    /// equipped tier, and what the two tiers still separate is the **sledless** crew — a gathering,
-    /// hurdling or bare party at a pen. The discriminating item was deleted, not the stat.
-    PenCarry,
     /// **The sight range each posted scout vantage reveals at.** Declared **unequipped**; the
     /// equipped `2` is `labor_config.json`'s `scout.vantage_range`.
     ///
@@ -236,7 +219,6 @@ impl EquipmentStat {
             EquipmentStat::Attack
             | EquipmentStat::HuntCarry
             | EquipmentStat::ForageCarry
-            | EquipmentStat::PenCarry
             | EquipmentStat::ScoutVantageRange
             | EquipmentStat::CraftSpeed
             | EquipmentStat::CraftQualityCeiling
@@ -252,31 +234,14 @@ impl EquipmentStat {
     ///
     /// **They do not all declare the same SIDE, and that is one-home-per-fact rather than an
     /// inconsistency.** The two carries declare the **equipped** side on the item's tier (that is
-    /// what the material buys) and fall back to `labor_config.json`'s no-equipment baseline; the pen
-    /// and the vantage declare the **unequipped** side on the item, because their equipped value
-    /// already has a home elsewhere — the hunt haul's tier for the pen
-    /// ([`Self::shares_equipped_rate_with`]), `labor_config.scout.vantage_range` for the vantage.
-    pub const TWO_TIER: [EquipmentStat; 4] = [
+    /// what the material buys) and fall back to `labor_config.json`'s no-equipment baseline; the
+    /// vantage declares the **unequipped** side on the item, because its equipped value already has
+    /// a home elsewhere — `labor_config.scout.vantage_range`.
+    pub const TWO_TIER: [EquipmentStat; 3] = [
         EquipmentStat::HuntCarry,
         EquipmentStat::ForageCarry,
-        EquipmentStat::PenCarry,
         EquipmentStat::ScoutVantageRange,
     ];
-
-    /// **The stat whose EQUIPPED rate this one borrows**, when its equipped side is deliberately not
-    /// its own number.
-    ///
-    /// A pen has always been collected at the hunt haul's equipped rate, and it keeps sharing it:
-    /// the number lives once, on the sled's tier, and both the range and the camp read it there. It
-    /// is a link rather than a copy because a copy is a second home to drift from — which is the
-    /// whole reason this stat pair was authored the way it was
-    /// (`.claude/rules/core_sim/equipment.md` → "A pen is collected on `pen_carry`").
-    pub fn shares_equipped_rate_with(self) -> Option<EquipmentStat> {
-        match self {
-            EquipmentStat::PenCarry => Some(EquipmentStat::HuntCarry),
-            _ => None,
-        }
-    }
 
     /// **The stats only a bench TOOL may declare** — a tool bounds one material and grants nothing
     /// outside it, the shape `max_body_mass` already runs on.
@@ -661,7 +626,7 @@ pub struct ItemDefinition {
     /// ([`WearQuantum::BiomassCollected`]) *and* on the animals being gentled during a `Tame` or
     /// fenced during a `Corral` ([`WearQuantum::BuildProgress`], issue #515) — the same physical
     /// bundle, two kinds of work. **The SLED carries the shape now**, having taken the butchering
-    /// quantum with the `pen_carry` pair, and the **crook** beside it is on two as well
+    /// quantum when the hurdles left the roster, and the **crook** beside it is on two as well
     /// (`BuildProgress` and `UpkeepWork`). With one slot the second was unbillable, and
     /// leaving it uncharged would have let a band tame every herd on the map for free, which is the
     /// whole thing *wear follows the work actually done* exists to prevent.
@@ -1422,9 +1387,9 @@ impl EquipmentConfig {
     /// caller keeps whatever default it already had.
     ///
     /// **The source-axis question, asked of the roster rather than answered by an id.** A pen is
-    /// collected on [`EquipmentStat::PenCarry`] and only handling gear supplies it, so *"which kit
-    /// does a penned herd want"* is a lookup, not a score — and asking it here keeps the husbandry
-    /// kit's id out of the sim, exactly as `hunter_profile` keeps the spear's out (see
+    /// collected on [`EquipmentStat::HuntCarry`] and only a haul aid supplies it, so *"which kit
+    /// does a penned herd want"* is a lookup, not a score — and asking it here keeps the sled's id
+    /// out of the sim, exactly as `hunter_profile` keeps the spear's out (see
     /// `.claude/rules/core_sim/equipment.md` → *"Nothing resolves a stat by naming an item"*).
     ///
     /// **Fresh, like every other default resolution**: a kit's *identity* as the one that supplies
@@ -1981,24 +1946,6 @@ impl EquipmentConfig {
         self.rate_tier(EquipmentStat::ForageCarry, baseline_rate, kit, wear)
     }
 
-    /// **A band's per-keeper PEN collection rate** — resolved against the **no-equipment baseline**
-    /// the caller already holds. Its equipped side is the **hunt haul's**, resolved through
-    /// [`Self::equipped_reference`] rather than declared again here, so a keeper carrying husbandry
-    /// gear collects **exactly what a pen always collected** and that number keeps its one home.
-    ///
-    /// **The sled cannot reach this by construction**, and that is the deliberate consequence: a
-    /// hunting party that has corralled a herd and left its assignment on the big-game kit is
-    /// working the pen with a drag harness and no handling gear, and collects at the bare rate. That
-    /// is the same shape as bringing baskets to a deer — see [`EquipmentStat::PenCarry`].
-    pub fn pen_per_worker_biomass_capacity(
-        &self,
-        baseline_rate: f32,
-        kit: &KitChoice,
-        wear: &crate::components::BandEquipment,
-    ) -> f32 {
-        self.rate_tier(EquipmentStat::PenCarry, baseline_rate, kit, wear)
-    }
-
     /// **The sight range a band's posted scout vantages reveal at** — resolved against the equipped
     /// range the caller already holds (`labor_config.scout.vantage_range`).
     ///
@@ -2035,20 +1982,43 @@ impl EquipmentConfig {
         self.hunter_profile_for(intrinsic, kit, wear, Quarry::Any)
     }
 
-    /// **The four two-sided rates' shared resolution.** `baseline` is the **no-equipment** rate the
-    /// caller already holds (`labor_config.json`'s), and the gear's own declaration is what lifts it.
+    /// **The three two-sided rates' shared resolution** — [`EquipmentStat::TWO_TIER`] is the count
+    /// and the roster. `baseline` is the **no-equipment** rate the caller already holds
+    /// (`labor_config.json`'s), and the gear's own declaration is what lifts it.
+    ///
+    /// > ⛔ **This opened *"The FOUR two-sided rates' shared resolution"***, and the fourth was
+    /// > `EquipmentStat::PenCarry`, deleted by issue #543 once both sides of it landed on the `sled`
+    /// > and a pen became something collected on `hunt_carry` itself. `TWO_TIER` is `3` and has been
+    /// > since; it is named once so a stale count here cannot outlive it again.
     ///
     /// Three arms, and which one runs is one-home-per-fact rather than free choice:
     ///
     /// - a live item declaring the **equipped** side (the two carries, on their tier) *is* the
     ///   answer — that is what the material bought;
-    /// - a live item declaring the **unequipped** side (the pen, the vantage) means the *equipped*
-    ///   rate applies, and that rate is looked up through [`Self::equipped_reference`] because it
-    ///   lives somewhere else;
-    /// - nothing live ⇒ [`Self::declared_tier`] over the **whole item table**, because a party with
-    ///   no handling gear still has to know what a bare-handed pen collects and that number lives on
-    ///   the gear it is not carrying. With nothing declaring an unequipped side either, the
-    ///   `baseline` stands.
+    /// - a live item declaring the **unequipped** side — **the vantage, and on the shipped roster
+    ///   only the vantage** — means the *equipped* rate applies, and that rate is looked up through
+    ///   [`Self::equipped_reference`] because it lives somewhere else. For
+    ///   [`EquipmentStat::ScoutVantageRange`] nothing in the item table declares an equipped side at
+    ///   all, so that lookup falls through to the `baseline` the caller is already holding, which is
+    ///   `labor_config.scout.vantage_range` — exactly the "somewhere else" it means;
+    /// - nothing live ⇒ [`Self::declared_tier`] over the **whole item table**, because a band
+    ///   carrying no scouting gear still has to know what an unaided vantage makes out and that
+    ///   number lives on the gear it is not carrying (`wayfinding`'s item-level
+    ///   `scout_vantage_range`). `declared_tier` reads `shared_effect`, i.e. **item-level**
+    ///   declarations only, so it never answers for the two carries — their equipped side sits on a
+    ///   **tier** — and for them the `baseline` stands.
+    ///
+    /// **The last two arms are both live, and both of them are the vantage's.** `wayfinding` is the
+    /// only item on the shipped roster declaring an unequipped side at all, so it alone reaches
+    /// them: a fresh wayfinding kit takes the second arm and a spent one takes the third, which is
+    /// what `equipment_toe::the_wayfinding_tier_steps_down_when_the_kit_runs_dry` pins.
+    ///
+    /// > ⛔ **The third arm was justified as *"a party with no handling gear still has to know what a
+    /// > bare-handed pen collects and that number lives on the gear it is not carrying"***, and both
+    /// > halves of that are now false: the `crook`'s item-level `effects` is `[]`, and no item
+    /// > declares an unequipped `hunt_carry` anywhere. **Do not repair the sentence by making it
+    /// > true** — adding a `pen_carry`-shaped unequipped line to the crook or the sled would put a
+    /// > second producer back on the one carry rate, which is precisely what #543 deleted.
     fn rate_tier(
         &self,
         stat: EquipmentStat,
@@ -2073,12 +2043,7 @@ impl EquipmentConfig {
     /// of a carry now lives; `baseline` (the caller's `labor_config.json` no-equipment rate) is the
     /// honest answer when nothing in the table lifts the stat at all, since then there is no
     /// equipped tier to be at.
-    ///
-    /// **A stat may BORROW another's equipped rate rather than own one**
-    /// ([`EquipmentStat::shares_equipped_rate_with`]): a pen is collected at the hunt haul's rate and
-    /// keeps being, so the number stays on the sled's tier and both readers resolve it here.
     pub fn equipped_reference(&self, stat: EquipmentStat, baseline: f32) -> f32 {
-        let source = stat.shares_equipped_rate_with().unwrap_or(stat);
         self.items
             .values()
             .find_map(|item| {
@@ -2086,7 +2051,7 @@ impl EquipmentConfig {
                     .effects
                     .iter()
                     .find(|effect| {
-                        effect.stat == source && matches!(effect.tier, EffectTier::Equipped(_))
+                        effect.stat == stat && matches!(effect.tier, EffectTier::Equipped(_))
                     })
                     .map(|effect| effect.tier.value())
             })
@@ -2330,16 +2295,6 @@ impl EquipmentConfig {
             ),
             forage_carry_per_worker_biomass: self.forage_per_worker_biomass_capacity(
                 baseline_gather_rate,
-                kit,
-                wear,
-            ),
-            // **The pen shares the HUNT haul's equipped rate**, resolved off the sled's own tier
-            // through `EquipmentStat::shares_equipped_rate_with` so that number keeps its one home —
-            // but it resolves through `EquipmentStat::PenCarry`, so a kit with a sled and no handling
-            // gear reads the bare rate here beside the sledded rate above. Both sides fall back to
-            // the same `labor_config.hunt.per_worker_biomass_capacity` baseline.
-            pen_carry_per_worker_biomass: self.pen_per_worker_biomass_capacity(
-                baseline_haul_rate,
                 kit,
                 wear,
             ),
@@ -3095,14 +3050,12 @@ pub struct ResolvedKitTiers {
     /// A hunter's combat `attack` under this kit — what the gate `max(0, attack − defense)` compares
     /// against a herd's `defense`. **Unbounded**: see [`Self::attack_min_body_mass`].
     pub attack: f32,
-    /// Per-hunter HUNT haul rate (biomass/turn) — the sled's tier.
+    /// Per-hunter HUNT haul rate (biomass/turn) — the sled's tier. **A PEN IS COLLECTED ON THIS
+    /// ONE TOO**: carry is a fact about the people and their gear, not about the ground they stand
+    /// on (issue #543), so a keeper and a stalker with the same kit haul the same.
     pub hunt_carry_per_worker_biomass: f32,
     /// Per-gatherer throughput (biomass/turn, **before** the tile's seasonal weight) — the baskets'.
     pub forage_carry_per_worker_biomass: f32,
-    /// Per-keeper PEN collection rate (biomass/turn) — the handling gear's, and **not**
-    /// [`Self::hunt_carry_per_worker_biomass`]. A sled drags a carcass in off the range and a pen
-    /// stands at the camp, so a kit with a sled and no handling gear reads the bare rate here.
-    pub pen_carry_per_worker_biomass: f32,
     /// The sight range each posted scout vantage reveals at — the wayfinding gear's. A distance in
     /// tiles, carried as `f32` because the effects axis is continuous; the reveal path rounds.
     pub scout_vantage_range: f32,
@@ -3623,7 +3576,7 @@ mod tests {
     /// **AN ITEM MAY WEAR ON SEVERAL QUANTA, and each is charged over its own number** (issue #515).
     /// The **sled** is the case since the material half of the ladder landed: it is dragged on the
     /// range (`biomass_hauled`) and worked on the beast brought out of a pen and killed
-    /// (`biomass_collected`), the second quantum having moved here with the `pen_carry` pair when
+    /// (`biomass_collected`), the second quantum having moved here when
     /// the hurdles became a material (`docs/plan_standing_upkeep.md` §2.7). The **crook** beside it
     /// is on two as well (`build_progress` and `upkeep_work`), so the shape has two exercisers.
     #[test]

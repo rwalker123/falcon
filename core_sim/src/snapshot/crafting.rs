@@ -1227,8 +1227,8 @@ mod tests {
     /// quotes (`ItemDefinition::headline_wear`), and the order is the model.
     ///
     /// Pinned because it is a **readout** decision a config reorder would silently make. It used to
-    /// be asked of `hurdles`, whose `biomass_collected` entry moved onto the sled with the
-    /// `pen_carry` pair when the fence panels became a **material**
+    /// be asked of `hurdles`, whose `biomass_collected` entry moved onto the sled when the fence
+    /// panels became a **material**
     /// (`docs/plan_standing_upkeep.md` §2.7); the new entry was **appended**, precisely so the
     /// sled's gauge goes on reading *"biomass hauled"* and no shipped item's life meter changed
     /// units. **The hoes beside it are an item that leads with the build**, and the second arm pins

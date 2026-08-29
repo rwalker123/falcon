@@ -866,9 +866,10 @@ table PopulationCohortState {
   // perWorkerBiomass stays the EQUIPPED reference rate (a patch has no band to resolve against).
   forageCarryPerWorkerBiomass:float = 0;
   // --- THE KIT THIS COHORT IS QUOTED AT (appended last) -----------------------------------------
-  // The `equipment.json` roster id THE HUNT-JOB TIERS on this row are resolved through — hunterAttack,
-  // huntCarryPerWorkerBiomass, and the appended penCarryPerWorkerBiomass (a pen is worked from a Hunt
-  // row, so it is quoted at the same kit).
+  // The `equipment.json` roster id THE HUNT-JOB TIERS on this row are resolved through — hunterAttack
+  // and huntCarryPerWorkerBiomass. A PEN IS QUOTED ON THE SAME huntCarryPerWorkerBiomass (issue #543):
+  // carry is a fact about the people and their gear and never about the ground they stand on, so
+  // there is no second pen field to look up.
   //   - AN IN-FLIGHT PARTY: the kit it was SENT OUT WITH, decided at launch and carried for its
   //     whole life. A party has ONE kit, so this names what EVERY tier on the row is quoted at,
   //     the three band-wide ones included. This is the drawer's answer to "what did I send them
@@ -927,21 +928,24 @@ table PopulationCohortState {
   // (which is the fresh-kit reference) by reading kitItemConditions above - that derivation is what
   // this field exists to stop, and it cannot be done correctly from the wire at all.
   kitTiers:[BandKitTiers];
-  // --- THE REMAINING THREE RESOLVED TIERS (appended last) ---------------------------------------
-  // The roster grew husbandry gear, wayfinding gear and clubs, and the three tiers they lift were
-  // published PER KIT (KitOption) but not PER BAND — so no readout could state a keeper's pen rate,
-  // a scout's vantage reach or a warrior's fighting tier, nor the cliff when any of them runs dry.
+  // --- THE REMAINING RESOLVED TIERS (appended last) ---------------------------------------------
+  // The roster grew wayfinding gear and clubs, and the tiers they lift were published PER KIT
+  // (KitOption) but not PER BAND — so no readout could state a scout's vantage reach or a warrior's
+  // fighting tier, nor the cliff when either of them runs dry.
   // Same shape as the three tiers above: resolved off this band's own wear, FLAT until expiry.
   //
   // WHICH KIT EACH IS QUOTED AT IS NOT kitId — see the kitId note above. On a resident band each
   // resolves through ITS OWN job's default; on an in-flight party they all resolve through the one
   // kit the party carries.
   //
-  //   - penCarryPerWorkerBiomass: this band's per-KEEPER pen collection rate (biomass/turn), the
-  //     term a corralled herd's harvest is capped by. It is NOT huntCarryPerWorkerBiomass: a sled
-  //     drags a carcass in off the range and a pen stands at the camp, so a band on the stalking
-  //     kit collects a pen at the bare rate (12) rather than the sledded 40. Quoted at the HUNT
-  //     default, which is what kitId names.
+  // A THIRD FIELD, penCarryPerWorkerBiomass, RODE HERE AND IS DELETED (issue #543). It said "this
+  // band's per-KEEPER pen collection rate, which is NOT huntCarryPerWorkerBiomass — a band on the
+  // stalking kit collects a pen at the bare rate rather than the sledded 40". THAT IS FALSE: carry
+  // is a fact about the people and their gear, blind to whether the animal is penned or wild, so a
+  // keeper's rate IS huntCarryPerWorkerBiomass and a second field could only republish it under a
+  // second name. Slots after it renumbered; nothing persists a snapshot buffer, so the field went
+  // rather than being deprecated in place.
+  //
   //   - scoutVantageRange: the sight range each posted scout vantage reveals at. How far the
   //     vantages are POSTED is not a kit axis (three labor_config dials); this is only how far each
   //     one sees. The sim ROUNDS it to whole tiles when it reveals — a float here because the
@@ -950,7 +954,6 @@ table PopulationCohortState {
   //     predator raid. Same `attack` stat and same seam a hunter's resolves through — what keeps a
   //     spear out of a raid is the kit's `jobs` list, not the stat — so it is 1 bare-handed and 6
   //     with clubs, and it is NOT hunterAttack.
-  penCarryPerWorkerBiomass:float = 0;
   scoutVantageRange:float = 0;
   warriorAttack:float = 0;
   // settle.min_founding_workers — the working-age floor the NEW band must clear when a band splits
@@ -1329,15 +1332,15 @@ table BandKitTiers {
   // default, which is what a readout with no kit selected needs. These answer "what would THIS kit
   // grant me", for every kit the picker offers.
   //
-  //   - penCarryPerWorkerBiomass: per-KEEPER pen collection rate (biomass/turn) under this kit. It is
-  //     NOT huntCarryPerWorkerBiomass: a sled drags a carcass in off the range and a pen stands at
-  //     the camp, so a kit with a sled and no handling gear reads the bare rate (12) here while its
-  //     haul tier is the sledded 40.
+  // A penCarryPerWorkerBiomass rode here too and is DELETED (issue #543). It claimed a pen was
+  // collected on a rate of its own, so a kit with a sled and no handling gear read a bare 12 here
+  // while its haul tier was the sledded 40. There is ONE carry rate: huntCarryPerWorkerBiomass above
+  // answers for a pen as well.
+  //
   //   - scoutVantageRange: the sight range each posted vantage reveals at under this kit. How far the
   //     vantages are POSTED is not a kit axis (three labor_config dials); this is only how far each
   //     one sees. The sim ROUNDS it to whole tiles when it reveals - a float here because the effects
   //     axis is continuous and a designer must be able to tune it so.
-  penCarryPerWorkerBiomass:float = 0;
   scoutVantageRange:float = 0;
   // --- THE BUILD AXIS (appended last, issue #515) -----------------------------------------------
   // What THIS kit would do to a rung's build meter for THIS band, at its live wear. A MULTIPLIER,
@@ -4381,6 +4384,49 @@ table HerdTelemetryState {
   // containing "husbandry").
   upkeepKitId:string;
   upkeepKitNamed:bool = false;
+  // --- THE PRE-COMMIT MATERIAL QUOTE FOR A **RING** (appended last, append-only wire) ------------
+  // Conceptually this belongs with `corralUpkeepMaterialDemand` above; it sits at the end of the
+  // table because field slots are positional and this wire is append-only. Read it there.
+  //
+  // THE WHOLE PILE THE `animal:pen` RUNG SWALLOWS TO RAISE, at full coverage, UNSCALED - the
+  // material twin of `corralWorkCost` beside it, resolved LIVE off the LADDER at capture and
+  // published WHETHER OR NOT A BUILD IS IN FLIGHT, because the card quotes a price before the
+  // player commits. That is the rule `corralWorkCost` and `buildMaterialCost` both already state.
+  //
+  // *** IT EXISTS FOR WORD-FOR-WORD THE REASON `corralUpkeepMaterialDemand` DOES. *** That field
+  // exists because a PASTORAL herd is the only source the `⌃` track ever offers the Pen rung from,
+  // its CURRENT rung declares no material, and the stamped `upkeepMaterialDemand` is therefore
+  // empty on exactly the row the player is deciding on. THIS field exists because a CORRALLED herd
+  // is the only source a RING is ever offered from, `animal:pen` is the top of its branch so the
+  // rung above it is NONE, and `buildMaterialCost` is therefore empty on exactly the row the player
+  // is deciding on. A ring is not free: the labor arm prices a ring's width at the pen rung's own
+  // unscaled build cost and draws that rung's pile in proportion to the work banked, so a whole
+  // ring swallows this whole list.
+  //
+  // UNSCALED IS NOT AN OVERSIGHT, IT IS WHAT A RING COSTS. Penning takes no per-species multiplier
+  // (`corralWorkCost`'s own comment: a fence is a fence, whatever it holds) and the ring's width is
+  // priced at that same unscaled cost, so a scaled quote here would show one price and charge
+  // another.
+  //
+  // IT READS TWO WAYS, BY THE RUNG THE HERD STANDS ON, and that is `corralWorkCost`'s existing
+  // behaviour rather than a new ambiguity. On a PASTORAL herd it prices the CLIMB to the Pen rung;
+  // on a CORRALLED herd it prices ANOTHER RING - the same rung, again. The client disambiguates
+  // with `currentRung`, exactly as it already does for the work half.
+  //
+  // ON A PASTORAL HERD IT AGREES WITH `buildMaterialCost` ABOVE, BY CONSTRUCTION: the two are the
+  // same pile of the same rung reached through two selectors, not a second reading of the ladder.
+  // That agreement is not a redundancy to collapse - it holds on that one rung only, and it is the
+  // DISAGREEMENT on a corralled herd (empty there, the pen's pile here) that the ring card needs.
+  //
+  // *** THERE IS DELIBERATELY NO `tameBuildMaterialCost`. *** The tame rung has no repeatable
+  // increment - nothing rings a Tame - so nothing would read one, and `buildMaterialCost` already
+  // publishes the tame pile on the only row that can climb to it (a WILD herd). The asymmetry
+  // against the `tameUpkeepMaterialDemand`/`corralUpkeepMaterialDemand` pair is exactly that: that
+  // pair prices two rungs a source can STAND ON, this prices the one job a source can REPEAT.
+  //
+  // The three standing MaterialPayoff rules hold unchanged - NEVER SUMMED, EMPTY MEANS "no row" and
+  // never zero, and the key is always present.
+  corralBuildMaterialCost:[MaterialPayoff];
 }
 
 table CommandEventState {
@@ -4613,7 +4659,7 @@ table KitItemCondition {
   //
   // *** WHICH JOB IT IS QUOTED AT ***
   // The job whose quoted kit carries this item, and — for an item several jobs' kits carry — the one
-  // `PopulationCohortState.kitId` names, exactly as `penCarryPerWorkerBiomass` is. So `spears` and
+  // `PopulationCohortState.kitId` names, exactly as `huntCarryPerWorkerBiomass` is. So `spears` and
   // `sled` are quoted at the hunt row, `baskets` at the forage default, `clubs` at the warrior
   // default, `wayfinding` at the scout default. An item NO quoted kit carries reads 0 — including a
   // bench tool, which no kit may name at all.
@@ -4731,11 +4777,12 @@ table KitOption {
   // Order is meaningful (weapon first, haul aid after) and is preserved. An EMPTY vector is a real
   // answer - "none" carries nothing and wears nothing - never "unknown".
   itemIds:[string];
-  // --- THE BAND-WIDE AND PEN TIERS (appended) ----------------------------------------------------
-  // Per-keeper PEN collection rate (biomass/turn) under this kit — the husbandry gear's tier. It is
-  // NOT huntCarryPerWorkerBiomass: a sled drags a carcass in off the range and a pen stands at the
-  // camp, so a kit carrying only a sled collects a pen at the bare rate.
-  penCarryPerWorkerBiomass:float = 0;
+  // --- THE BAND-WIDE TIERS (appended) -----------------------------------------------------------
+  // A penCarryPerWorkerBiomass rode here and is DELETED (issue #543). It said "per-keeper PEN
+  // collection rate under this kit, NOT huntCarryPerWorkerBiomass — a kit carrying only a sled
+  // collects a pen at the bare rate". A PEN IS COLLECTED ON huntCarryPerWorkerBiomass: carry is
+  // decided by the people and their gear, never by what they are standing on.
+  //
   // The sight range each posted scout vantage reveals at under this kit — the wayfinding gear's
   // tier. How far the vantages are POSTED is not a kit axis (it is three labor_config dials).
   scoutVantageRange:float = 0;
@@ -4744,9 +4791,9 @@ table KitOption {
   // FRESH tier. A MULTIPLIER, neutral at 1.0 - a kit declaring nothing that helps reads 1.0 and
   // changes no build at all.
   //
-  // IT IS WHAT MAKES THE HUSBANDRY KIT APPLICABLE BEFORE A PEN EXISTS. Its other axis, penCarry, is
-  // read on a corralled herd and nowhere else, so a picker testing that axis alone withholds the kit
-  // on the very herd the player is taming - which is the work the gear is physically for. A client
+  // IT IS WHY A PICKER MUST ASK ACROSS EVERY AXIS A KIT DECLARES. The husbandry gear's other axis was
+  // read on a corralled herd and nowhere else, so a picker testing that axis alone withheld the kit
+  // on the very herd the player was taming - which is the work the gear is physically for. A client
   // deciding whether to offer a kit must ask what the kit can change on THIS source across EVERY
   // axis it declares, never off one hardcoded key.
   buildRate:float = 1;
@@ -4862,7 +4909,12 @@ table BenchState {
   shortfalls:[MaterialShortfall];
   itemsCompleted:uint;    // items finished on THIS job — the same count the wear and lesson charged
   drawn:bool;             // the pile for the pass in flight is already cut
-  outputGrade:string;     // the grade that pile FIXED, "" before the draw or on an ungraded recipe
+  // The grade that pile FIXED. "" before the draw, and "" on a recipe that resolves no grade — the
+  // same two cases as `CraftOffer.outputGrade` below (reads no characteristic, or outputs only
+  // materials). NOT "an ungraded recipe" in the sense of one declaring no `grades` map, which this
+  // line used to say: a recipe with no declared grades is still stamped with the band it was made
+  // at, because declaration governs the grade's EFFECTS and not its name.
+  outputGrade:string;
   // --- WHAT THE BENCH WILL SPEND AND WHAT IT ALREADY SPENT (appended last) ----------------------
   // WHAT THIS BENCH WILL ACCRUE NEXT TURN — `workers × progress_per_worker_turn × craft_speed`,
   // already resolved through the bounding tool (or the material's bare-handed rate, which is what
@@ -4935,6 +4987,10 @@ table BenchState {
 // The grade word in those two rows is a `characteristic_bands` name — "poor" / "fair" / "good" /
 // "excellent", the ONE quality ladder, the same vocabulary `outputGrade` below carries. There is no
 // second set of grade words anywhere on this wire.
+//
+// THE "→ grade" TAIL IS ABSENT WHENEVER `outputGrade` IS "" — the buildable row then reads
+// "Hide, no tanning frame" with no dangling arrow. That is not a degraded string: a recipe that
+// stamps no grade must not appear to promise one.
 table CraftOffer {
   recipeId:string;
   displayName:string;
@@ -4949,7 +5005,17 @@ table CraftOffer {
   // THE GRADE THE DRAW WOULD SELECT out of the band's stock right now, after the tool's quality
   // ceiling. IT IS A `characteristic_bands` NAME — "poor" / "fair" / "good" / "excellent" — because
   // there is ONE quality ladder for the whole game: the same four words rate the hide and the sled
-  // made out of it. "" on a recipe that reads no characteristic.
+  // made out of it.
+  //
+  // "" ON A RECIPE THAT RESOLVES NO GRADE, which is BROADER than the "" on a recipe that reads no
+  // characteristic this line used to claim. Two cases, one rule — a grade is a property of a
+  // piece of EQUIPMENT:
+  //   * the recipe reads no characteristic (an alloy has no quality to name), and
+  //   * the recipe's outputs are ALL MATERIALS. A material batch carries its own characteristics
+  //     and has nowhere to put a grade, so a quoted one would be a promise nothing stamps.
+  //     `hurdles` is the one such recipe the game ships. Such a recipe may still declare `reads`:
+  //     that word ALSO picks which batches of the input are spent first, and on a material-only
+  //     recipe only that half applies.
   outputGrade:string;
   onBench:bool;          // this recipe is the running job — the row's button is spent
   // --- THE LEDGER'S GROUP HEAD, AND WHAT THE BAND ACTUALLY CARRIES (appended last) --------------

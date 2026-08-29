@@ -1043,8 +1043,14 @@ func _build_item_cell(offer: Dictionary, payload: Dictionary) -> Control:
 	return column
 
 ## What this row IS, joined out of published fields: a TOOL names the material it bounds, a STOCK
-## recipe names the characteristic its input is judged on, and a KIT row names the craft that makes
-## it. A join that finds nothing renders no second line rather than an invented one.
+## recipe names the characteristic its input is SPENT worst-first on, and a KIT row names the craft
+## that makes it. A join that finds nothing renders no second line rather than an invented one.
+##
+## **THE STOCK BRANCH IS ALREADY THE MATERIAL-ONLY GATE.** `group == "stock"` is the wire's own
+## `"this recipe makes a material"` — derived sim-side as `output_equipment_id().is_none()`, the same
+## predicate behind `outputs_only_materials()` and behind an empty `outputItemId` — so a recipe
+## reaching here can never stamp a grade, and the axis it names is a SPEND ORDER. See
+## `HudCraftingVocab.ROLE_STOCK_FORMAT` for why the clause survived the quality claim that did not.
 func _role_line(offer: Dictionary, payload: Dictionary) -> String:
 	var group := String(offer.get(HudCraftingVocab.OFFER_GROUP_KEY, ""))
 	var recipe := _recipe_of(String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, "")), payload)
@@ -1069,7 +1075,9 @@ func _role_line(offer: Dictionary, payload: Dictionary) -> String:
 				continue
 			# **THE CRAFT LEADS AND THE MATERIAL IS ABSENT.** The material is named twice already on
 			# this row — the cost cell and the sim's own refusal — so the axis is the only fact this
-			# line adds, and leading with the craft keeps line two a category on every row.
+			# line adds, and leading with the craft keeps line two a category on every row. What the
+			# axis buys the player here is the DRAW ORDER: the bench spends his worst stock on it
+			# first and leaves the good stock standing.
 			if craft_name == "":
 				return HudCraftingVocab.ROLE_STOCK_NO_CRAFT_FORMAT % axis
 			return HudCraftingVocab.ROLE_STOCK_FORMAT % [craft_name, axis]

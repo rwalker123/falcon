@@ -1548,12 +1548,17 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
 ## zero, which is exactly the case the sim cannot guess (a wild patch could climb to tended *or* be
 ## sown). Everything else the meters answer for themselves, newest first.
 ##
-## **THAT IS WHAT PUTS A REPAIR ON SCREEN.** A completed rung whose meter has eroded back below its
-## cost is BUILDING again with nothing declared — the state the player has to see, since the remedy is
-## hands — and the old test (`composed != NONE and not improvement_is_done`) rendered the DONE label
-## there and offered no way back. **The meter's fullness and the rung's achievement stay orthogonal**:
-## this reads fullness, `improvement_is_done` reads the rung the source STANDS on, so a patch at 90%
-## shows as *Cultivating* while the ground it stands on is still tended.
+## **THAT IS WHAT PUTS A REPAIR ON SCREEN.** A rung whose meter has eroded back below its cost is
+## BUILDING again with nothing declared — the state the player has to see, since the remedy is hands —
+## and the old test (`composed != NONE and not improvement_is_done`) rendered the DONE label there and
+## offered no way back.
+##
+## ⛔ **RETIRED CLAIM — *"the meter's fullness and the rung's achievement stay orthogonal, so a patch
+## at 90% shows as Cultivating while the ground it stands on is still tended"*.** The decay
+## re-derives the standing on the same call that moves the position, so the eroding rung is one the
+## source has DROPPED OUT OF rather than one it holds at 90%: the meter and `improvement_is_done`
+## cannot contradict each other on the same rung. Reading fullness here is still right — a rung short
+## of its cost is a rung being raised — but it is no longer a second opinion.
 ##
 ## The states and their precedence (see `HudWidgets.build_improvement_control` for the shape):
 ##   RUNNING first — something is being built here, so nothing else is on offer. Its face carries

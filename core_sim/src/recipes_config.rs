@@ -189,7 +189,7 @@ pub struct RecipeDef {
     /// `validate_against` rejects a key that is not a rung.
     ///
     /// **Absent is a real statement**, not a missing value: it says this item's payload is not
-    /// tier-bought (the husbandry gear's `pen_carry`, the wayfinding gear's vantage) or is a bench
+    /// tier-bought (the wayfinding gear's vantage, a build tool's `build_work`) or is a bench
     /// stat nothing yet grades. The output is still stamped with the band it was made at.
     #[serde(default)]
     pub grades: BTreeMap<String, RecipeGrade>,
@@ -222,6 +222,22 @@ impl RecipeDef {
         self.outputs.iter().find_map(|output| output.equipment_id())
     }
 
+    /// **This recipe makes nothing a grade can be stamped on** — every output row is a material.
+    ///
+    /// A grade is a property of a piece of *equipment*: it is carried on the batch
+    /// ([`crate::components::BatchGrade`]) and read back off it. A material output carries its own
+    /// `characteristics` instead and [`crate::components::MaterialBatch`] has nowhere to put a
+    /// grade, so on a material-only recipe there is no grade to stamp and none to quote.
+    ///
+    /// **One predicate, two callers**: `validate_grades` rejects declared grades here, and
+    /// [`crate::systems::preview_grade`] publishes none. A second hand-written copy of the same
+    /// `.all(...)` is how the loader and the wire come to disagree about the same recipe.
+    pub fn outputs_only_materials(&self) -> bool {
+        self.outputs
+            .iter()
+            .all(|output| output.material_id().is_some())
+    }
+
     /// **The declared grades in BAND order, lowest first**, each with the rung index it names. A key
     /// the band table does not carry is dropped, which `validate_against` makes unreachable.
     pub fn grades_by_band<'a>(
@@ -245,10 +261,24 @@ impl RecipeDef {
     /// toughness and the sled made out of it, so a reading of `.55` is *good* in both places.
     ///
     /// The name is a property of the object whether or not this recipe declares that band —
-    /// declaration governs *effects* only. `None` for a recipe that reads no characteristic, which is
-    /// a real answer: an alloy has no quality to name.
+    /// declaration governs *effects* only.
+    ///
+    /// **`None` on two recipes, for the same reason: there is nothing for the word to be a property
+    /// of.**
+    /// - One that **reads no characteristic** — an alloy has no quality to name.
+    /// - One whose outputs are **all materials** ([`Self::outputs_only_materials`]) — a material
+    ///   batch carries its own characteristics and has no grade field, so a grade resolved here
+    ///   would be stamped on nothing. `reads` is still meaningful on such a recipe, because it also
+    ///   picks the spend order (see [`crate::systems::preview_grade`]); it just cannot mean a grade.
+    ///
+    /// This is the ONE gate, deliberately: every grade in the game is resolved through this call —
+    /// the offered row's preview and the drawn pile the bench stamps a batch from — so a recipe that
+    /// can carry no grade quotes none in either place.
     pub fn grade_for<'a>(&self, reading: f32, materials: &'a MaterialsConfig) -> Option<&'a str> {
         self.reads_axis()?;
+        if self.outputs_only_materials() {
+            return None;
+        }
         materials.band_name(materials.band_index(reading))
     }
 
@@ -520,11 +550,7 @@ impl RecipesConfig {
         }
         // **A grade is a property of a piece of equipment.** A material output carries its own
         // characteristics instead, so grading one would be two answers to the same question.
-        if recipe
-            .outputs
-            .iter()
-            .all(|output| output.material_id().is_some())
-        {
+        if recipe.outputs_only_materials() {
             return Err(RecipesConfigError::InvalidBook {
                 reason: format!(
                     "recipe '{id}' declares grades but outputs only materials - a material carries \
@@ -790,8 +816,8 @@ impl RecipesConfig {
     ///
     /// - **Only a stat the item's own tiers declare.** What the material buys sits on the tier; a
     ///   grade *replaces* one of those values and may never introduce a stat the item does not
-    ///   otherwise have. A grade naming `pen_carry` — whose equipped side is the hunt haul's —
-    ///   would be exactly the second home.
+    ///   otherwise have. A grade naming `scout_vantage_range` on the sled — a stat that item never
+    ///   declares — would be exactly the second home.
     /// - **The mass bounds are restated verbatim.** A grade's effect is what
     ///   [`crate::equipment_config::LiveItem::effect_entry`] answers with, bounds included, so an
     ///   excellent snare that dropped `max_body_mass` would quietly become a mammoth trap.
@@ -1032,14 +1058,44 @@ mod tests {
         for (id, recipe) in recipes.recipes() {
             assert!(
                 recipe.reads_axis().is_some(),
-                "recipe '{id}' reads no characteristic - every shipped recipe makes equipment, and \
-                 a graded output needs a reading"
+                "recipe '{id}' reads no characteristic - every shipped recipe names one, whether to \
+                 grade what it makes or (on a material-only recipe) only to fix the spend order"
             );
-            assert!(
-                recipe.grade_for(READING_MIN, &materials).is_some(),
-                "recipe '{id}' leaves the bottom of the reading range ungraded"
-            );
+            // **A GRADE IS GATED ON WHAT THE RECIPE MAKES, not only on what it reads.** This arm was
+            // once unconditional, on the claim that *"every shipped recipe makes equipment, and a
+            // graded output needs a reading"* — `hurdles` does not make equipment, and a material
+            // batch has nowhere to carry a grade.
+            if recipe.outputs_only_materials() {
+                assert_eq!(
+                    recipe.grade_for(READING_MIN, &materials),
+                    None,
+                    "recipe '{id}' makes only materials, so there is nothing for a grade to be a \
+                     property of - quoting one would promise an outcome no batch can carry"
+                );
+            } else {
+                assert!(
+                    recipe.grade_for(READING_MIN, &materials).is_some(),
+                    "recipe '{id}' leaves the bottom of the reading range ungraded"
+                );
+            }
         }
+        // **LIVENESS: both arms are exercised by the shipped book.** With no material-only recipe the
+        // first arm is vacuous and nothing pins the gate; with every recipe material-only the second
+        // is, and a build that stopped grading altogether would pass.
+        let material_only: Vec<&str> = recipes
+            .recipes()
+            .filter(|(_, recipe)| recipe.outputs_only_materials())
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(
+            material_only,
+            vec!["hurdles"],
+            "the shipped book's ONE material-only recipe"
+        );
+        assert!(
+            recipes.recipes().count() > material_only.len(),
+            "…and the rest make equipment, or the graded arm above proves nothing"
+        );
     }
 
     /// **THE ANCHOR GRADE IS THE SHIPPED NUMBER**, and the anchor is *derived*: the band the recipe's

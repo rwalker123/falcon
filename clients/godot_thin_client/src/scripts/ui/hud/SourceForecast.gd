@@ -1113,9 +1113,20 @@ const FORECAST_NEGLECT_GRACE_KEY := "neglect_grace_remaining"
 # eats badly.
 #
 # `FORECAST_BUILD_MATERIAL_COST_KEY` prices **ONE rung** — the one DIRECTLY ABOVE where the source
-# stands, which is the only pile the wire quotes. A track row two rungs up therefore has no pile to
-# state and states none, exactly as a rung the wire prices no work for renders no figure.
+# stands. A track row two rungs up therefore has no pile to state and states none, exactly as a rung
+# the wire prices no work for renders no figure.
+#
+# ⛔ It was once *"the only pile the wire quotes"*, and that clause is now false: the wire also
+# publishes `FORECAST_CORRAL_BUILD_MATERIAL_COST_KEY` below, the pen rung's OWN pile, which is what a
+# RING is priced from. Reading the above-selector as universal is what left the ring card quoting no
+# pile at all through a whole slice.
 const FORECAST_BUILD_MATERIAL_COST_KEY := "build_material_cost"
+# …and the pile `animal:pen` swallows to raise, read at THAT rung rather than at the one above the
+# source. The one field a RING can be priced from: `animal:pen` is the top of the animal branch, so
+# the key above answers `[]` on every corralled herd, which is exactly the row a ring is offered on.
+# On a PASTORAL herd the two carry the same pile by construction — same rung, two selectors — and it
+# is their DISAGREEMENT on a penned herd that earns this key its place.
+const FORECAST_CORRAL_BUILD_MATERIAL_COST_KEY := "corral_build_material_cost"
 # What holding this source's OWN current rung swallows per turn (the STAMPED bill, `upkeep_demand`'s
 # per-good twin) and what the band's store actually paid toward it. The sim publishes both terms
 # rather than their difference, for the reason the work trio does: a client renders and subtracts
@@ -1346,23 +1357,23 @@ const BUILD_NO_ESCAPEMENT_ROOM := 0.0
 ## cycle between two `class_name`d scripts fails to load the whole client.
 const BUILD_GEAR_PER_WORKER := "per_worker"
 const BUILD_GEAR_SATURATING_CREW := "saturating_crew"
-## **THE STAMPED RETENTION BAR OF EACH PLANT RUNG** — the per-web bool that says the rung was
-## ACHIEVED, which a plant rung keeps while its meter erodes beneath it. Read by `rung_needs_repair`
-## and by nothing else in the client, which is the whole of its remaining job: *achieved and short of
-## its cost* is the one question the source's standing rung cannot answer, because a rung eroded to
-## 99% is still the rung the source stands on. (The test tree's `fixtures_rung.gd` reads it too — off
-## the same table, to DERIVE a fixture's standing rung rather than to spell one by hand.)
+## **THE PER-WEB *ACHIEVED* BOOL OF EACH RUNG THAT HAS ONE** — `is_cultivated` / `is_field` on the
+## plant web, `corralled` on the animal one; `Tame` has never had one, its achievement being its
+## meter. **No shipped reader in this client asks them.** The table survives for the test tree
+## (`fixtures_rung.gd`, `map_preview`), which reads it to DERIVE a fixture's standing rung rather than
+## spell one by hand — one table, so a fixture's flags and its `current_rung` cannot disagree.
 ##
-## ⛔ **IT IS NOT THE *IS THIS BUILT* TEST ANY MORE, AND MUST NOT BE READ AS ONE.** That question is
+## ⛔ **IT IS NOT THE *IS THIS BUILT* TEST, AND MUST NOT BE READ AS ONE.** That question is
 ## `improvement_is_done`, which reads the wire's `current_rung` — one field, both webs, and no
-## cross-rung table to keep in step (`RETIRED: FORECAST_RETIRED_BY_HIGHER_RUNG`, below). Reading these
-## bools for *built* is what needed that table: a Field sown from wild ground carries `is_cultivated`
-## false FOREVER, so the bare flag offered `Cultivate this patch` on ground the sim treats as already
-## cultivated. A standing rung of `plant:field` is at or above `plant:tended` and says so for free.
+## cross-rung table to keep in step (`RETIRED: FORECAST_RETIRED_BY_HIGHER_RUNG`, below).
 ##
-## **THE ANIMAL WEB HAS NO ENTRY FOR `Tame`, WHICH IS WHY IT CANNOT BE REPAIRED.** Taming has no bool
-## of its own — its achievement IS its meter — so `rung_needs_repair` answers `false` there by falling
-## through this table, and *done* and *short* stay the contradiction they are on that rung.
+## ⛔ **RETIRED CLAIM — *"a Field sown from wild ground carries `is_cultivated` false FOREVER"*.**
+## That was the two-independent-meters model, and it is why reading these bools for *built* once
+## needed a cross-rung table. There is ONE ladder position now and the Field rung's range begins where
+## the tended rung's ends, so `is_cultivated()` is `held.is_at_or_above(PlantTended)` and a Field
+## answers it TRUE however it was reached. These bools and `current_rung` are two spellings of one
+## standing rather than two facts that happen to agree — which is what makes the retired
+## `rung_needs_repair` (its epitaph is beside `improvement_progress`) unanswerable.
 const FORECAST_DONE_FLAG_KEYS := {
     IMPROVEMENT_CULTIVATE: "is_cultivated",
     IMPROVEMENT_SOW: "is_field",
@@ -4172,10 +4183,16 @@ static func improvement_forecast(src: Dictionary, kind: String, prefix: String, 
 ## which existed to clear a stored verb; taking the hands off is what the grammar offers now, and it
 ## leaves the declaration standing (`labor-ui.md` → "RETIRED — `abandon_improvement`").
 ##
-## **THE METER'S FULLNESS AND THE RUNG'S ACHIEVEMENT ARE TWO FACTS AND MUST STAY ORTHOGONAL.** This
-## reads fullness (`improvement_progress` against its own cost); `improvement_is_done` reads the rung's
-## stamped retention bar. A patch at 99% is **building** — a repair its build crew may run — and
-## **still tended**, so folding the two would make a rung's loss and a rung's repair one edge.
+## ⛔ **RETIRED CLAIM — *"the meter's fullness and the rung's achievement are two facts and must stay
+## orthogonal: a patch at 99% is building AND still tended"*.** They are ONE fact now. The sim
+## publishes each per-rung meter as a publication of the standing verdict, so a rung the source holds
+## reads exactly full and a rung short of its cost is a rung the source does not hold — which is why
+## `RungGates.rung_has_room` is a bare `not improvement_is_done` and the repair test that stood on the
+## disagreement is retired (see its epitaph, beside `improvement_progress`).
+##
+## **THE READING HERE IS UNCHANGED AND STILL RIGHT**: a meter strictly between zero and its cost is a
+## rung being RAISED, which is exactly the rung the standing has not reached. What is gone is the
+## claim that this could contradict `improvement_is_done` on the same rung.
 ##
 ## `kind` is a SOURCE kind (`SOURCE_KIND_*`); a caller holding a labor kind converts through
 ## `source_kind_for_labor`.
@@ -4468,44 +4485,31 @@ static func standing_improvement(src: Dictionary, prefix: String) -> String:
             return String(improvement)
     return IMPROVEMENT_NONE
 
-## **HAS THIS SOURCE ACHIEVED THIS RUNG AND THEN LET IT SLIP?** — the two facts `build_verb`'s own
-## docstring insists stay orthogonal, asked TOGETHER for the one question that needs both: the rung is
-## stamped BUILT and its meter is short of its cost, so there is room to put work back into it.
+## ⛔ **RETIRED — `rung_needs_repair`.** It asked *"has this source ACHIEVED this rung and then let it
+## SLIP?"* — the rung's own stamped flag true beside a meter short of its cost — and it was the client
+## half of the 99% repair: the sim's `cultivate` / `sow` / `corral` locks refuse on the METER rather
+## than on the achieved rung, so an eroded-but-achieved rung was legal to re-queue while the offer test
+## filtered it out as *built*, and the row said DONE and BUILDING at once while offering nothing.
 ##
-## **IT IS THE CLIENT HALF OF THE 99% REPAIR.** The sim's `cultivate` / `sow` / `corral` locks refuse
-## on the METER's fullness rather than on the achieved rung, so an eroded-but-achieved rung is legal to
-## re-queue — and the client offered no way to do it, the offer test filtering on the stamped flag
-## (true at 99%) and the work row reading the same source as *in progress*, so a row said DONE and
-## BUILDING at once and offered nothing. This is the seam both of those now consult.
+## **THE STATE IT NAMED IS NOW UNREPRESENTABLE, WHICH IS WHY THE TEST IS GONE RATHER THAN FIXED.**
+## The sim publishes each per-rung meter as a PUBLICATION of the standing verdict instead of a second
+## reading of it (`intensification::rung_work_done`): a rung the standing HOLDS reads its full width,
+## full stop, and the wire's fraction divides that width by the very cost it came from. Every flag in
+## `FORECAST_DONE_FLAG_KEYS` implies that holding — `is_cultivated()` is
+## `held.is_at_or_above(PlantTended)`, `is_field()` is `held == PlantField`, and `corral_at` seats the
+## position at the top of `animal:pen`, which nothing on the animal web ever lowers. So *achieved*
+## implies *meter exactly full*, by construction. Plant decay re-derives the standing on the same call
+## that moves the position, so a Field slipping does not sit under `plant:field` wearing its flag; and
+## `Tame` never had a row in that table to fall through.
 ##
-## **THE ANIMAL WEB CANNOT REACH IT TODAY, and that is a property of the ladder rather than of this
-## test.** Taming's achievement IS its meter — the sim stamps `animal:pastoral` at exactly
-## `DOMESTICATION_COMPLETE` — so *done* and *short* are contradictory there, which is why `Tame` has
-## no `FORECAST_DONE_FLAG_KEYS` row to fall through; and no animal rung declares decay, so a corral's
-## meter does not fall back below its flag. It is written per-rung anyway because the asymmetry is the
-## LADDER's and could move.
-##
-## ⛔ **IT READS THE RUNG'S OWN STAMPED FLAG, NEVER `improvement_is_done`, and that is not a shortcut —
-## the broader test answers TRUE for the wrong reason.** `improvement_is_done` compares the source's
-## STANDING rung at-or-above, so a Field answers *built* for Cultivate too (`plant:field` sits above
-## `plant:tended`) — and a Field sown straight from wild ground carries `cultivation_progress == 0`
-## **forever**, Sow needing no prior patch, so through that door every finished Field in the game reads
-## as a Cultivate at 0% waiting to be repaired and the client re-offers a rung the sim calls built. That exact defect was reported from
-## play once and is pinned by `ui_preview`'s `forage_field_from_wild`; a rung a higher one stands on
-## has nothing to repair, because the higher rung is what is holding the ground.
-## ⛔ **AND THE METER MUST CARRY WORK, not merely read below its cost.** `improvement_progress` answers
-## `0.0` for a key the wire does not state, which is indistinguishable from a meter eroded to nothing —
-## so a bare `< BUILD_METER_FULL` reads every achieved rung whose meter is UNSTATED as a repair waiting
-## to be ordered, and puts a `⌃` on it. Measured on the harness's own keeping-pool patch, which states
-## `is_cultivated` and no `cultivationProgress`. **A repair is work partly banked and short of its
-## cost**, which is what the state actually is: `BUILD_METER_UNSTARTED < progress < BUILD_METER_FULL`.
-static func rung_needs_repair(src: Dictionary, prefix: String, improvement: String) -> bool:
-    if not FORECAST_DONE_FLAG_KEYS.has(improvement):
-        return false
-    if not bool(src.get(prefix + String(FORECAST_DONE_FLAG_KEYS[improvement]), false)):
-        return false
-    var progress := improvement_progress(src, prefix, improvement)
-    return progress > BUILD_METER_UNSTARTED and progress < BUILD_METER_FULL
+## ⛔ **ITS ONLY LIVE TRIGGER WAS A FLOAT ARTIFACT, WHICH IS THE CLASS THIS DELETION CLOSES.** The
+## meter used to be published as `(position − base) / width` against a completion test of
+## `position >= base + width`, and in `f32` those disagree by one ULP for most Field prices: a
+## finished Field published `0.99999994`, this test read it as *achieved and short*, and the work row
+## drew a `⌃` offering to build the Field it was already standing on — over a destination track with
+## no rung above the standing one, so the press did nothing at all. **The offer test and the track
+## test ask ONE question now** (`RungGates.rung_has_room`, which is `not improvement_is_done`), so a
+## `⌃` cannot be drawn for a track with no rows however the two readings drift.
 
 ## How far along this improvement's build meter is, 0..1. Clamped, so a wire value that overshoots
 ## cannot render a >100% meter. See `FORECAST_BUILD_METER_KEYS` for which meter each verb fills.
@@ -4817,9 +4821,12 @@ static func rung_branch_for_kind(source_kind: String) -> Array:
 ## and safe, while `true` would call every source on that branch improved — its untouched FLOOR
 ## included — which is exactly the defect this test exists to remove.
 ##
-## **IT IS NOT `_standing_rung_index`, AND MUST NOT BE FOLDED INTO IT.** That one reads the STAMPED
-## achievement flags and carries repair semantics (a Field eroded to 99% is still stamped done); this
-## one reads the position the sim publishes. Two questions, two readings.
+## **IT IS NOT `_standing_rung_index`, AND MUST NOT BE FOLDED INTO IT.** That one asks *how far up its
+## own web's ladder has this SOURCE come*, and needs a source to ask it of; this one asks whether a
+## RUNG KEY names anything above its branch's floor, and needs only the key. Two questions.
+## (Its own retired reasoning — *"that one reads the stamped achievement flags and carries repair
+## semantics"* — died twice over: `_standing_rung_index` reads `improvement_is_done`, i.e. the very
+## position the sim publishes, and there are no repair semantics left to carry.)
 static func rung_above_branch_floor(rung_key: String) -> bool:
     var key := rung_key.strip_edges()
     if key == "":
@@ -4941,6 +4948,20 @@ static func upkeep_is_short(state: Dictionary) -> bool:
 ## only attach it to the rung directly above where the source stands.
 static func build_material_cost(src: Dictionary, prefix: String) -> Array[Dictionary]:
     return material_payoff_rows(src.get(prefix + FORECAST_BUILD_MATERIAL_COST_KEY, []))
+
+## **THE PILE `animal:pen` ITSELF SWALLOWS TO RAISE** — one row per good, `[]` when the wire quotes
+## none. Published at every position, unscaled, exactly as `corral_work_cost` beside it is, so it
+## prices the CLIMB to the pen on a pastoral herd and ANOTHER RING on one already penned. The caller
+## disambiguates with `current_rung`, as it already does for the work half.
+##
+## ⛔ **THIS IS NOT `build_material_cost` ABOVE, AND THE TWO MUST NOT BE COLLAPSED.** That one prices
+## the rung DIRECTLY ABOVE where the source stands. `animal:pen` is the top of the animal branch, so
+## on a CORRALLED herd — the only source a ring is ever offered from — it is empty, correctly and by
+## design. A ring priced from it would state no pile at all, which is precisely the gap this key
+## closes. On a pastoral herd the two agree by construction, which is why the difference is easy to
+## miss and easier to "simplify" away.
+static func corral_build_material_cost(src: Dictionary, prefix: String) -> Array[Dictionary]:
+    return material_payoff_rows(src.get(prefix + FORECAST_CORRAL_BUILD_MATERIAL_COST_KEY, []))
 
 ## **WHAT HOLDING THE OFFERED RUNG WOULD COST IN GOODS, PER TURN** — the material half of
 ## `build_upkeep_demand`, read at the rung being PRICED rather than at the rung the source is billed

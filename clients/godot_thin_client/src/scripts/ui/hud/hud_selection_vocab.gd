@@ -326,8 +326,9 @@ const RUNG_QUEUED_FORMAT := "Queued %d%%"
 # it was REVERTED: `RungDef::build_accrual`'s `eligible` takes no crew count, so the sim publishes
 # `-1` for a refused gate at any staffing, and `chapters/improvements.gd`'s `tile_meter_stalled` pins
 # that the card must say so. **The eroded rung the repair is about never reaches this format anyway**
-# — `DetailFormat.rung_row_value` answers on the `built` branch first, so a 90% Tended patch reads
-# `🌾 Tended 90%` and its slipping, not a countdown.
+# — `DetailFormat.rung_row_value` answers on the `built` branch first, and a rung whose meter has
+# slipped is one the source has dropped out of, so the slide is told on THAT rung's row (`🌾
+# Tended 90%`, not built) rather than as a countdown.
 
 # **HAZARD: THE QUEUE IS STUCK HERE** (`SourceForecast.BUILD_TURNS_QUEUE_BLOCKED`, the wire's own
 # `-4`, `docs/plan_standing_upkeep.md` §4.6b). The band's builders are staffed and standing on this

@@ -29,7 +29,8 @@ use core_sim::{
 /// The crew every fixture in this file staffs, so two arms are only ever comparable to each other.
 const CREW: u32 = 4;
 
-/// **A roster entry that CARRIES A SLED**, which is what supplies `pen_carry` on both its sides.
+/// **A roster entry that CARRIES A SLED**, which is what supplies `hunt_carry` — the one carry rate
+/// a pen and a range are both collected on (issue #543).
 /// Named rather than spelled so the pen assertions read as the claim.
 ///
 /// It was the `husbandry` kit — a sled and nothing else — until §4.9 item 12b deleted it: a pen
@@ -848,7 +849,6 @@ fn a_bands_published_tiers_step_down_per_kit_by_which_item_that_kit_actually_use
 /// The axes [`published_kit_tiers`] reads off one **encoded** `BandKitTiers` row.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct PublishedKitRow {
-    pen_carry_per_worker_biomass: f32,
     scout_vantage_range: f32,
     hunt_carry_per_worker_biomass: f32,
     attack: f32,
@@ -893,7 +893,6 @@ fn published_kit_tiers(
                     .expect("every published row names its kit")
                     .to_string(),
                 PublishedKitRow {
-                    pen_carry_per_worker_biomass: row.penCarryPerWorkerBiomass(),
                     scout_vantage_range: row.scoutVantageRange(),
                     hunt_carry_per_worker_biomass: row.huntCarryPerWorkerBiomass(),
                     attack: row.attack(),
@@ -933,14 +932,14 @@ fn wear_to_the_cliff(app: &mut App, band: bevy::prelude::Entity, item_id: &str) 
     }
 }
 
-/// **THE PEN AND THE VANTAGE STEP DOWN PER KIT TOO — the twin of the test above for the two axes
+/// **THE CARRY AND THE VANTAGE STEP DOWN PER KIT TOO — the twin of the test above for the axes
 /// `BandKitTiers` did not carry.**
 ///
-/// Those two rode the wire per band only at that band's **job default**
-/// (`PopulationCohortState.penCarryPerWorkerBiomass` / `scoutVantageRange`), so a picker asking what
+/// These rode the wire per band only at that band's **job default**
+/// (`PopulationCohortState.scoutVantageRange` and a since-deleted pen twin), so a picker asking what
 /// the kit *under the cursor* would grant had nothing to read and fell back to the ROSTER's **fresh**
 /// tier. The two live readings that produced: a pen compose sheet quoting **40 per keeper** while the
-/// sim collected **12** with the handling gear dry, and a Scout role card quoting **2 tiles** of sight
+/// sim collected **12** with the sled dry, and a Scout role card quoting **2 tiles** of sight
 /// while `calculate_visibility` revealed at **1**. Both wrong in the reassuring direction.
 ///
 /// The band wears its **sled** and its **wayfinding gear** out and touches nothing else, so each
@@ -948,13 +947,11 @@ fn wear_to_the_cliff(app: &mut App, band: bevy::prelude::Entity, item_id: &str) 
 /// all is unmoved, and the **spears** beside the sled keep their attack tier — which is what a naive
 /// "any item in this kit is dry" rule would break.
 ///
-/// ⛔ **THE PEN'S SUPPLIER IS THE SLED NOW, NOT THE HANDLING GEAR.** `pen_carry`'s unequipped side
-/// moved there when the hurdles became a **material**
-/// (`docs/plan_standing_upkeep.md` §4.9 item 12), which put both sides of the stat on one item — the
-/// sled already owned the equipped side through `shares_equipped_rate_with`. The consequence is
-/// real and is what this fixture now measures: **every kit carrying a sled collects a pen at the
-/// equipped rate**, so [`SLED_KIT`] reads the pen and the range alike and the control is a kit with
-/// no sled at all.
+/// ⛔ **THE PEN'S RATE IS THE CARRY, AND THERE IS ONLY ONE** (issue #543). A `pen_carry` stat used to
+/// answer here; carry is a fact about the people and their gear, blind to whether the animal is
+/// penned or wild, so the pen half of this fixture is asserted on
+/// `hunt_carry_per_worker_biomass` — the number a keeper and a stalker both haul at. [`SLED_KIT`]
+/// reads it and the control is a kit with no sled at all.
 ///
 /// **Every assertion is paired against the FRESH reading of the same row**, taken before the wear:
 /// *"the pen rate is 12"* passes on a table that publishes 12 for everything, and *"it is unmoved"*
@@ -963,7 +960,7 @@ fn wear_to_the_cliff(app: &mut App, band: bevy::prelude::Entity, item_id: &str) 
 /// Read off the **encoded envelope** — a field that never reached the codec still satisfies an
 /// in-process assertion.
 #[test]
-fn a_bands_published_pen_and_vantage_tiers_step_down_per_kit_at_the_item_that_supplies_them() {
+fn a_bands_published_carry_and_vantage_tiers_step_down_per_kit_at_the_item_that_supplies_them() {
     let mut app = placid_world();
     let band = app
         .world
@@ -983,10 +980,10 @@ fn a_bands_published_pen_and_vantage_tiers_step_down_per_kit_at_the_item_that_su
     // LIVENESS, before anything is worn: the two axes genuinely vary by kit on this roster, or every
     // equality below would be the trivial truth about a table of one number.
     assert!(
-        row(&fresh, SLED_KIT).pen_carry_per_worker_biomass
-            > row(&fresh, "gathering").pen_carry_per_worker_biomass,
-        "the SLED supplies `pen_carry`, so a fresh kit carrying one must out-collect a kit that \
-         carries none at the pen"
+        row(&fresh, SLED_KIT).hunt_carry_per_worker_biomass
+            > row(&fresh, "gathering").hunt_carry_per_worker_biomass,
+        "the SLED supplies `hunt_carry`, so a fresh kit carrying one must out-carry a kit that \
+         carries none — at a pen exactly as on the range"
     );
     assert!(
         row(&fresh, "wayfinding").scout_vantage_range > row(&fresh, "none").scout_vantage_range,
@@ -999,22 +996,22 @@ fn a_bands_published_pen_and_vantage_tiers_step_down_per_kit_at_the_item_that_su
     recapture_snapshot_in_place(&mut app.world);
     let worn = published_kit_tiers(&app, band);
 
-    // --- the PEN -------------------------------------------------------------------------------
+    // --- the CARRY (a pen's rate and a range's, one number) -------------------------------------
     assert!(
-        row(&worn, SLED_KIT).pen_carry_per_worker_biomass
-            < row(&fresh, SLED_KIT).pen_carry_per_worker_biomass,
-        "the sled is dry, so a sled kit's published pen rate must fall — this is the readout that \
+        row(&worn, SLED_KIT).hunt_carry_per_worker_biomass
+            < row(&fresh, SLED_KIT).hunt_carry_per_worker_biomass,
+        "the sled is dry, so a sled kit's published carry must fall — this is the readout that \
          quoted 40 per keeper against a sim collecting 12"
     );
     assert_eq!(
-        row(&worn, SLED_KIT).pen_carry_per_worker_biomass,
-        row(&fresh, "gathering").pen_carry_per_worker_biomass,
+        row(&worn, SLED_KIT).hunt_carry_per_worker_biomass,
+        row(&fresh, "gathering").hunt_carry_per_worker_biomass,
         "…all the way to the bare rate, which is what a kit with no sled reads at every state of \
          wear"
     );
     assert_eq!(
-        row(&worn, "gathering").pen_carry_per_worker_biomass,
-        row(&fresh, "gathering").pen_carry_per_worker_biomass,
+        row(&worn, "gathering").hunt_carry_per_worker_biomass,
+        row(&fresh, "gathering").hunt_carry_per_worker_biomass,
         "a kit that carries no sled is UNMOVED by wearing one out — the pairing that stops this \
          passing on a sim which steps every kit down together"
     );
@@ -1088,15 +1085,18 @@ fn a_warren_defaults_to_the_trap_and_a_deer_to_the_spear_on_the_wire() {
     );
 }
 
-/// **A CORRALLED herd wants the handling gear, and a wild one of the same species does not.**
+/// **A CORRALLED herd wants the carrying kit, and a wild one of the same species does not.**
 ///
 /// The score is a function of the *species*, so it answers the same kit for a warren on the range
 /// and a warren in a pen — and a pen has no fight stage for it to score, so it never could answer
 /// otherwise. A corralled Rabbit Warren therefore published `trapping`, a kit whose contribution at
-/// a pen is nil: a pen is collected on `EquipmentStat::PenCarry`, and the derived answer is
-/// **whichever hunt kit supplies that stat first in roster order** — the **SLED** since the material
-/// half of the standing upkeep moved `pen_carry`'s unequipped side there
-/// (`docs/plan_standing_upkeep.md` §4.9 item 12), so `big_game` rather than `husbandry`.
+/// a pen is nil: with no fight to resolve, the one axis a pen can still be scored on is
+/// `EquipmentStat::HuntCarry`, and the derived answer is **whichever hunt kit supplies that stat
+/// first in roster order** — the **SLED**, so `big_game`.
+///
+/// ⛔ **IT IS A SUGGESTION AND NOT A RATE** (issue #543). The player may send any hunt kit to a pen,
+/// and whichever they send is resolved through the one band-wide carry; this only decides what the
+/// compose sheet opens on.
 /// ⛔ **The claim under test is the AXIS, never the id**: the resolver asks the roster which kit
 /// supplies the stat rather than naming one, so the expected value is read off
 /// `EquipmentConfig::kit_supplying` rather than written down here. It is a **source-axis** question, the same one the picker's greying and
@@ -1138,14 +1138,15 @@ fn a_corralled_herd_defaults_to_the_pen_kit_and_a_wild_one_of_the_same_species_d
     let ranging_kit = published_default_kit(&app, &ranging);
     let penned_kit = published_default_kit(&app, &penned);
 
-    let supplies_pen_carry = equipment(&app)
-        .kit_supplying(KitJob::Hunt, core_sim::EquipmentStat::PenCarry)
-        .expect("some hunt kit on the shipped roster supplies `pen_carry`")
+    let supplies_carry = equipment(&app)
+        .kit_supplying(KitJob::Hunt, core_sim::EquipmentStat::HuntCarry)
+        .expect("some hunt kit on the shipped roster supplies `hunt_carry`")
         .id()
         .to_string();
     assert_eq!(
-        penned_kit, supplies_pen_carry,
-        "a pen is collected on `PenCarry`, so its default is the roster's own answer for that stat"
+        penned_kit, supplies_carry,
+        "a pen's one remaining axis is the carry, so its default is the roster's own answer for \
+         that stat"
     );
     assert_eq!(
         ranging_kit, TRAPPING_KIT,
@@ -1523,14 +1524,14 @@ fn a_resident_bands_published_kit_answers_for_the_hunt_tiers_only() {
     );
 }
 
-/// **Each of the three appended tiers answers for its OWN job's default** — the direct twin of the
-/// test above, for `penCarryPerWorkerBiomass` / `scoutVantageRange` / `warriorAttack`.
+/// **Each of the appended tiers answers for its OWN job's default** — the direct twin of the test
+/// above, for `scoutVantageRange` / `warriorAttack`.
 ///
-/// The roster gave husbandry gear, wayfinding gear and clubs a kit each, so a resident band now
-/// resolves **four** different kits across one cohort row: the hunt default for the two hunt tiers
-/// *and the pen* (a pen is worked from a Hunt row), the forage default for the gather tier, and the
-/// scout and warrior defaults for the two band-wide roles. Only the first rides the wire, as
-/// `kitId`.
+/// The roster gave wayfinding gear and clubs a kit each, so a resident band now resolves **four**
+/// different kits across one cohort row: the hunt default for the hunt tiers — a pen's carry
+/// included, a pen being worked from a Hunt row on the one band-wide carry rate (issue #543) — the
+/// forage default for the gather tier, and the scout and warrior defaults for the two band-wide
+/// roles. Only the first rides the wire, as `kitId`.
 ///
 /// **It fails if someone resolves all of them through `kitId`.** The scout and warrior asserts are
 /// each paired with an `assert_ne!` against the kit `kitId` actually names — a wayfinding vantage
@@ -1573,22 +1574,23 @@ fn a_resident_bands_appended_tiers_each_answer_for_their_own_jobs_default() {
     };
     let named = roster(&state.kit_id);
 
-    // --- the pen: quoted at the HUNT default, which IS what `kitId` names ---------------------
+    // --- the carry: quoted at the HUNT default, which IS what `kitId` names ---------------------
+    // A pen is worked from a Hunt row and on this very number (issue #543), so this one assertion
+    // answers for the range and the camp alike.
     assert_eq!(
-        state.pen_carry_per_worker_biomass,
-        roster(cfg.default_kit_id(KitJob::Hunt)).pen_carry_per_worker_biomass,
-        "a pen is worked from a Hunt row, so its tier is the hunt job's default — the one job \
-         `kitId` does answer for"
+        state.hunt_carry_per_worker_biomass,
+        roster(cfg.default_kit_id(KitJob::Hunt)).hunt_carry_per_worker_biomass,
+        "the carry tier is the hunt job's default — the one job `kitId` does answer for"
     );
     // …and it is a real resolution rather than the equipped rate handed back unchanged: some kit on
-    // the roster grants a *different* pen tier, so the hunt default's is genuinely a resolved one.
+    // the roster grants a *different* carry tier, so the hunt default's is genuinely a resolved one.
     assert!(
         snapshot
             .kits
             .iter()
-            .any(|option| option.pen_carry_per_worker_biomass
-                != state.pen_carry_per_worker_biomass),
-        "if every kit granted the same pen tier this assertion could not tell a resolution from a \
+            .any(|option| option.hunt_carry_per_worker_biomass
+                != state.hunt_carry_per_worker_biomass),
+        "if every kit granted the same carry tier this assertion could not tell a resolution from a \
          constant"
     );
 
@@ -1637,11 +1639,10 @@ fn an_in_flight_partys_appended_tiers_are_all_quoted_at_the_kit_it_was_sent_with
     // clubs. So a resolution that reached for a job default instead of the party's own kit fails
     // all three asserts, not one.
     //
-    // ⛔ **The PEN tier is no longer one of the three, and that is a fact rather than an omission.**
-    // `pen_carry`'s unequipped side moved onto the sled when the hurdles became a material
-    // (`docs/plan_standing_upkeep.md` §4.9 item 12), so every sled kit reads the same pen rate and
-    // the pairing could not discriminate. Its *equality* against the party's own kit is still
-    // asserted below.
+    // ⛔ **There is no PEN tier among them, and that is a fact rather than an omission.** A pen is
+    // collected on the band's own `hunt_carry` (issue #543) — carry is decided by the people and
+    // their gear, never by the ground — so there is no second field for the pairing to discriminate
+    // on.
     let sent_with = kit(&app, SLED_KIT);
     let party = spawn_party(&mut app, home, pos, &fauna_id, sent_with.clone());
     recapture_snapshot_in_place(&mut app.world);
@@ -1669,8 +1670,8 @@ fn an_in_flight_partys_appended_tiers_are_all_quoted_at_the_kit_it_was_sent_with
         "a party's row names the kit it was SENT OUT WITH, not any job's default"
     );
     assert_eq!(
-        state.pen_carry_per_worker_biomass,
-        named.pen_carry_per_worker_biomass
+        state.hunt_carry_per_worker_biomass,
+        named.hunt_carry_per_worker_biomass
     );
     assert_eq!(state.scout_vantage_range, named.scout_vantage_range);
     assert_eq!(state.warrior_attack, named.attack);

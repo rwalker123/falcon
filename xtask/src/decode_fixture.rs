@@ -1137,6 +1137,10 @@ fn seed_snapshot() -> WorldSnapshot {
         // bill above and therefore a different pair of nested repeated fields.
         herd.tame_upkeep_material_demand = rows();
         herd.corral_upkeep_material_demand = rows();
+        // …and the ring's own pile, which is the BUILD twin of that pair: `build_material_cost`
+        // above prices the rung *above* a source, and a ring is only ever offered on a herd already
+        // at the top of its branch.
+        herd.corral_build_material_cost = rows();
         // The animal twin of `ForagePatchState.build_legs` — one leg on this web today, and seeded
         // for the same reason: a repeated field the fixture leaves empty is a field the decode guard
         // cannot exercise.

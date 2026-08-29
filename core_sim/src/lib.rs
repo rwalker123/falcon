@@ -252,14 +252,15 @@ pub use influencers::{
 pub use intensification::{
     activity_work, build_fraction, build_turns_estimate, build_turns_remaining,
     build_work_per_worker_turn, distribute_upkeep_pool, gear_work_supply, interpolate, knows,
-    learn_multiplier, load_intensification_ladder_from_env, pool_work_supply, upkeep_shortfall,
-    upkeep_shortfall_fraction, BuildGate, BuildTurns, LadderConfig, LadderConfigHandle,
-    LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungKey, RungMeterDecay,
-    RungMovement, RungPartialCredit, RungSiteRequirement, RungStanding, RungUpkeep, SiteRefusal,
-    UpkeepFundMode, UpkeepScale, BUILTIN_INTENSIFICATION_LADDER, FABRICATED_BUILD_COST,
-    FULLY_SUPPLIED, NOTHING_IN_FLIGHT, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_CREDIT,
-    NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED,
-    RUNG_UNSTARTED, SITE_ACCEPTED, WHOLLY_UNSUPPLIED,
+    learn_multiplier, load_intensification_ladder_from_env, pool_work_supply, rung_work_done,
+    upkeep_shortfall, upkeep_shortfall_fraction, BuildGate, BuildTurns, LadderConfig,
+    LadderConfigHandle, LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef,
+    RungKey, RungMeterDecay, RungMovement, RungPartialCredit, RungSiteRequirement, RungStanding,
+    RungUpkeep, SiteRefusal, UpkeepFundMode, UpkeepScale, BUILTIN_INTENSIFICATION_LADDER,
+    FABRICATED_BUILD_COST, FULLY_SUPPLIED, NOTHING_IN_FLIGHT, NO_BUILD_GEAR,
+    NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_CREDIT, NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY,
+    NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
+    WHOLLY_UNSUPPLIED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,

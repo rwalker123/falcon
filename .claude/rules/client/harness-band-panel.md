@@ -468,36 +468,38 @@ the widest one: at this tier the row is MERGED, so what it renders is ` · 128.4
 tally did not move** (805 `PASS`, no frame count change) — the merged clause is the same width it
 was, which is the check that the widening did not reach the SHORT tier's measured column.
 
-**The PER-SOURCE CARRY AXIS contributes SEVEN `PASS` to `ui_preview`, ZERO frames and nothing at all
-to `band_panel_preview`.** Two of the seven are the husbandry-hint pair becoming a 2×2 (both kits
-against both a wild herd and a pen, since the pen tier is gated on the SOURCE now); the other five
-are `_assert_a_pen_prices_on_the_keepers_carry`, driven through `DrawerComposeController`'s real
-seam over the chapter's locally-built pen-axis roster.
-
-**The dock harness is untouched because no quarry in it is corralled.** In `ui_preview` exactly FIVE
-frames move and they are precisely the corralled-herd compose sheets — `hunt_crew_herders` ·
-`herd_pen_self_feeding` · `herd_pen_extending` · `herd_pen_foddered` · `improvement_done_penned` —
-each in the Kit hint alone, now `pen 12.0 per keeper` where it read the stalking kit's attack and
-sled.
-
-**Their NUMBERS are unchanged**, because `BandFx.kit_roster_fixture()` carries no pen-axis kit: the
-roster's max on the pen axis equals its bare tier, so the ratio is 1 and the repricing
-short-circuits. Measured by rendering HEAD's two files and diffing by SHA-256 in both directions — 5
-of 279 differ, and restoring the change reproduces the post-change set byte-for-byte.
-Sabotage-verified by reverting the axis to the job's: exactly the four discriminating claims fail,
-two naming `0.3 against 0.3` (the two kits quoting one pen the same number — the cancellation the
-defect hid behind) and two naming the wild hint rendered at a pen. The other three are the "must not
-move" guards and correctly stay green.
-
-**THE PEN AND THE VANTAGE JOINED `BandKitTiers`, and that contributes FOUR `PASS` to `ui_preview`,
-ZERO frames and nothing at all to `band_panel_preview`.** Those two axes were the ones a per-kit
-readout had to answer off the ROSTER's fresh tier, so a dry-`hurdles` band's pen compose
-sheet read `pen 40.0 per keeper` against a sim collecting 12 and a Scout card read 2 tiles of sight
-against a reveal at 1. `BandFx.kit_tiers_rows` states all five axes now (it stated three, and a row
-that omits an axis exercises the absence path rather than the real one), and
-`chapters/compose_rungs.gd::_assert_the_appended_axes_read_the_band` drives the pair each axis
-needs: the fresh tier AND the worn one, since a client stuck on the roster passes the first alone
-and one that had stopped resolving passes the second alone.
+> ⛔ **THE PER-SOURCE CARRY AXIS IS DELETED, AND THIS BLOCK RECORDED ITS ARRIVAL** (issue #543). It
+> read: *"the PER-SOURCE CARRY AXIS contributes SEVEN `PASS` to `ui_preview` … two of the seven are
+> the husbandry-hint pair becoming a 2×2 (both kits against both a wild herd and a pen, since the pen
+> tier is gated on the SOURCE now); the other five are `_assert_a_pen_prices_on_the_keepers_carry` …
+> in `ui_preview` exactly FIVE frames move and they are precisely the corralled-herd compose sheets —
+> `hunt_crew_herders` · `herd_pen_self_feeding` · `herd_pen_extending` · `herd_pen_foddered` ·
+> `improvement_done_penned` — each in the Kit hint alone, now `pen 12.0 per keeper` where it read the
+> stalking kit's attack and sled."* `EquipmentStat::PenCarry` is gone — **carry is carry** — so those
+> five hints read the stalking kit's attack and sled again, which is where they started.
+>
+> **THE PRICING BLOCK SURVIVES WITH ITS EXPECTATION INVERTED; THE 2×2 DID NOT SURVIVE AT ALL.**
+> `_assert_a_pen_prices_on_the_hunters_carry` still drives `DrawerComposeController`'s real seam and
+> now requires a herd and its corralled twin to price identically, with a **bare-handed** party under
+> the reference at both as the liveness half. **Net +2 `PASS` on `ui_preview`** (1589 → 1591): 14
+> pen-axis claims removed, 16 added.
+>
+> ⛔ **THE 2×2's PEN COLUMN WAS A TAUTOLOGY AND IS DELETED** (1597 → 1594 `PASS`, no frame moved).
+> This paragraph read *"`_assert_the_hint_reads_the_same_at_a_pen` still takes four readings and now
+> requires the fence to move NOTHING while the KIT moves the line"*, and the code did not: deleting
+> `EquipmentStat::PenCarry` also took `tier_hint`'s source parameter, so its two "penned" readings
+> were the BYTE-IDENTICAL call the wild pair makes and the corralled twins were handed nowhere. Two
+> claims that cannot fail unless the two above them already have assert that a control is PRESENT,
+> not RIGHT. What is left is `_assert_the_hint_states_each_kits_own_items` — the two WILD readings,
+> which are real — and **"the fence moves nothing" is now STRUCTURAL for the hint**: `tier_hint` has
+> no argument a pen could arrive through, so a penned reading is not expressible and rebuilding one
+> means re-adding the parameter #543 deleted. The fence still reaches real code through the PRICING
+> block, which takes the herd. Rationale at the assertion, in `chapters/compose_rungs.gd`.
+>
+> **THE PEN AND THE VANTAGE JOINED `BandKitTiers`** and the vantage half of that still stands — a
+> Scout card read 2 tiles of sight against a reveal at 1 while the client answered off the ROSTER's
+> fresh tier. The pen half is deleted with the axis; `_assert_the_appended_axes_read_the_band` keeps
+> its fresh/worn PAIR shape, re-aimed so a DRY crook shows as dry beside an untouched sled's own haul.
 
 **The dock harness is untouched because its own `_band_fixture` publishes no `kit_tiers` at all** —
 the whole-row absence, which is the one case the roster still answers and the reason that branch
@@ -2260,3 +2262,49 @@ defaults: it is lit, its face names the derivation, and the entry it lit wears t
 | the pending overlay drops `kit_id` | **4** — both webs' *"the take picker names the kit the PLAYER sent"* (`"Harvesting kit"` / `"Stalking kit"` against `"No kit"`) and both crew-edit vacuity guards. **The face and LIT claims stay GREEN**, which is the demonstration that the picker's fallback alone hides the blank face while leaving the silent re-kit live |
 | the take picker measures its default against `source.get("default_kit_id")` | **6** — the LIT and FACE claims on `band_panel_work_kits_picker` / `_kept_patch` / `_kept_herd`, each reading `index -1 of 2` and `""`. The two PENDING states stay green (their rows carry a real kit), and so do the two WILD ones (their band is `_band_fixture()`, now stamped) |
 | the upkeep picker's fall-through removed | **3** — the driven block alone, naming `index -1 of 2` and `"" want "Tillage kit"` |
+
+## Every `⌃` opens a track with a rung on it — the run-wide claim, and its liveness half
+
+**The defect it pins is a DEAD BUTTON, which no PNG can show.** A completed Field drew its standing
+glyph *and* a `⌃` offering to build a Field; the press reached `_open_rung_track`, `has_track`
+answered false over a source at the top of its branch, and the handler returned in silence — an
+enabled `Button` with `MOUSE_FILTER_STOP`, so the click did not even fall through to the inspector.
+The frame is a perfectly ordinary board.
+
+`_guard_frame_rung_offers` runs from `_save`, beside `_guard_frame_herd_fields` and for the same
+reason: a slot that would open nothing fails against the state it drew in. For every slot whose
+`WORK_ROW_BUILD_KIND_META` is `OFFER` it re-asks `RungLadder.track` + `has_track` **through the
+slot's own model** (`WORK_ROW_MODEL_META`, set beside the build-kind meta), which is the same pair of
+calls `_open_rung_track` makes on that model. It presses nothing: a press would float a popup into
+the next state's frame, and this file's state order is load-bearing.
+
+**THE FIXTURE THAT WOULD HAVE PINNED THE BUG WAS NOT WRITTEN, DELIBERATELY.** The trigger was a
+published meter one `f32` ULP short of the published standing, and the sim can no longer emit it — so
+a hand-stamped two-marks snapshot would assert an impossible state. The claim is the *relation* the
+fix rests on instead, over the fixtures the run already walks.
+
+**The liveness half is part of the claim.** `_assert_rung_offers_open_tracks` FAILS when the count of
+tracks actually opened is zero, because "no row ever contradicted it" passes on a board that never
+offers anything, and it prints all four counts either way — currently `68 offer slots over 162
+frames, 68 tracks opened, 0 empty`.
+
+### The falsification
+
+| Restored defect | Failures |
+|---|---|
+| `RungGates.rung_has_room` forced to `true`, so the offer test admits a rung the track has banked | **13** — twelve per-frame failures naming the row and the rung it stands on (all `corral`, `animal:pen` being the top of the animal branch, so a corralled herd is where the empty track lives) plus the run-wide verdict, `12 of 80 rendered ⌃ offer(s) open a destination track with no rung on it`. The offer count rising from 68 to 80 is itself the tell |
+
+### RETIRED — the 99% repair's two states
+
+`_render_repair_and_declare_states` opened by staging a patch with `is_cultivated` true beside a 90%
+meter and asserting the board offered `cultivate` on it. That snapshot is one no server can send now
+(`labor-ui.md` → "THE OFFER TEST AND THE TRACK TEST ASK ONE QUESTION"), so **the eroded state is gone
+and the CONTROL survives**: a rung standing at its cost offers nothing, which is the reported
+defect's own shape. `_assert_repair_offer(where, want_offer)` lost its flag and is
+`_assert_no_repair_offer(where)`.
+
+`_repair_patch_fixture` takes `cultivated` beside `progress` so the standing and the meter travel
+together — `RUNG_FX.stamp_patch` derives `current_rung` from the flag, so the two halves of a fixture
+cannot be set apart. `_assert_repair_card_states_no_countdown` asks its BUILT row at a full meter and
+its unbuilt row on a patch that really is short of the rung; the claim (the fork on `built` happens
+before the countdown is read) is unchanged by the correction.

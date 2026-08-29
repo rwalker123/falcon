@@ -19,10 +19,17 @@ cumulative work units** — the exact twin of `ForagePatch::ladder_position` (`c
 PLANT WEB IS ONE POSITION"; `docs/plan_standing_upkeep.md` §2.8, landed for plants in §4.10 and for
 animals in §4.11). `domestication_progress` / `domestication_cost` and `corral_progress` /
 `corral_cost` — **four fields, two unconnected meters** — are gone. Prose below that names them is
-describing the retired shape; the seam it points at is `fauna::rung_work_done`, the position clamped
-into a rung's own span, which is what the wire's `domestication` and `corralProgress` meters are still
-published from (**the raw meter fraction** — `partial_credit` governs what a half-built pen is *worth*,
-never what its progress bar reads).
+describing the retired shape; the seam it points at is `Herd::rung_work_done`, the position read into
+a rung's own span **through the herd's standing**, which is what the wire's `domestication` and
+`corralProgress` meters are still published from (**the raw meter fraction** — `partial_credit`
+governs what a half-built pen is *worth*, never what its progress bar reads).
+
+**A rung the standing HOLDS reads FULL, and on `animal:pen` that is load-bearing rather than
+cosmetic**: the pen's base is this herd's *taming* price, so the bare subtraction
+`position − base` is a rival answer to `corral_meter_full()` that `f32` can make disagree with it.
+Live on the plant web (a finished Field published `0.99999994`); latent here only because every
+shipped `taming_cost_multiplier` happens to be exactly representable. `intensification.md` → "A
+RUNG'S METER IS A **PUBLICATION** OF THE STANDING" owns the mechanism and the measurements.
 
 - **`Herd::standing` is derived and re-stamped on every write**, and `set_ladder_position` is the only
   mutator, so the pair cannot drift. `is_domesticated()` and `is_corralled()` keep their signatures and
@@ -50,7 +57,9 @@ never what its progress bar reads).
   `fauna::hunt_crew_take_curve` is **one function** since §4.9 item 12b: every row is
   `resolve_hunt_engagement(..).fight.expected_brought_down` — the room, the reach, the retreat and
   the fight, at the rung the herd stands on — and a **corralled** row then takes `.min(keepers'
-  carry)` at the `pen_carry` tier. So *"would another pair of hands buy me more"* has a real answer
+  carry)` at the band's own `hunt_carry` tier — the same number a stalking party hauls at (issue
+  #543); what the `is_corralled()` predicate decides is *where* the bound is applied, never *which
+  rate*. So *"would another pair of hands buy me more"* has a real answer
   for a pen, and a pen row carries a real `low <= likely <= high` band like every other row.
   > **⛔ `pen_crew_take_curve` IS RETIRED, AND IT WAS THE LAST PEN EXEMPTION.** It priced the room,
   > the handling and the carry with **no retreat and no fight**, and published
@@ -64,7 +73,7 @@ never what its progress bar reads).
   >
   > **The carry `.min()` is UNREACHABLE on the shipped roster**, and that is measured rather than
   > assumed: it binds only where `body_mass × (attack − defense) ÷ durability` beats the crew's
-  > `pen_carry` tier, and the largest per-worker kill across all seven pennable species is the
+  > `hunt_carry` tier, and the largest per-worker kill across all seven pennable species is the
   > aurochs' `120 × 14 ÷ 150 = 11.2` biomass a turn — under the **bare** tier's `12`, let alone the
   > equipped `40`. It is kept because it is the honest model and a retune can walk into it, and it is
   > exercised by an authored fixture
@@ -573,6 +582,25 @@ is here.
   VERB** — a ring fills no rung meter, so it names none; the pile is laid off the ring's own
   `pen_extending` gate instead. Deciding both questions there is what made widening a pen materially
   free while raising one cost six panels.
+- **AND THE WIRE STATES THAT PILE ON THE ONE ROW A RING IS OFFERED FROM** —
+  `HerdTelemetryState.corralBuildMaterialCost`, the material twin of `corralWorkCost` and the build
+  twin of `corralUpkeepMaterialDemand`. It exists because `buildMaterialCost` beside it prices the
+  rung **directly above** where a herd stands, and a ring is only ever offered on a herd already
+  standing on `animal:pen` — the **top of its branch**, where that field is deliberately empty
+  (*"the honest reading rather than a repeat of the pen's own"*). So a ring price card could state
+  the ring's 75 work and its standing bill and **not the six hurdles it swallows**, which is the
+  number a player short of panels is deciding on. Published off the ladder rung alone, **unscaled
+  and with no herd term**, because `head_ring_leg` prices a ring's width at
+  `build_cost(RUNG_COST_UNSCALED)` — a scaled quote would show one price and charge another. On a
+  **pastoral** herd it equals `buildMaterialCost` by construction (one
+  `rung_material_pile(ladder, AnimalPen)` reached through two selectors); on a **corralled** one it
+  is the only reading of the pile there is. `core_sim/tests/rung_material_quote.rs` pins both, and
+  pins the published pile against what a **completed ring actually takes off the band's shelf**.
+  ⛔ **THERE IS NO `tameBuildMaterialCost`**: the tame rung has no repeatable increment, and
+  `buildMaterialCost` already carries the tame pile on the only row that can climb to it — a wild
+  herd. The asymmetry against the `tameUpkeepMaterialDemand`/`corralUpkeepMaterialDemand` pair is
+  that that pair prices two rungs a source can **stand on**, where this prices the one job a source
+  can **repeat**.
 - **THE SHORTFALL SHEDS ANIMALS, and no new penalty was added.** `uncontained_overage` reads
   `intensification::keeping_shortfall_fraction` now — the worst of the work fraction and each good's
   — so a pen fully staffed with no hurdles to mend the fence sheds at the hurdles' rate, one with

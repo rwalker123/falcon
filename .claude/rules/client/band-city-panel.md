@@ -3492,12 +3492,12 @@ design question. `band_panel_queue_hidden_entry` is the frame.
 > `Cultivating 0 / 50 work (0%)` with no way back off it. A band whose entry stands third in its own
 > line hit exactly that face whenever another band had the source at ITS head.
 
-**WHAT STILL READS `buildQueuePosition`, and why each is legitimately SOURCE-addressed.** The
-`MapView` → `tile_info` passthrough behind the tile card and the map's queue badge, and
-`_rung_is_an_unordered_repair`'s *"is anything queued on this source at all"* — the meter belongs to
-the **source**, so if any band is raising the rung it is being raised and a second declaration would
-queue the same climb twice. Both name no band. **Anything band-scoped must not read it**, which is the
-whole of the rule.
+**WHAT STILL READS `buildQueuePosition`, and why it is legitimately SOURCE-addressed.** The `MapView`
+→ `tile_info` passthrough behind the tile card and the map's queue badge — the meter belongs to the
+**source**, so if any band is raising the rung it is being raised. It names no band. **Anything
+band-scoped must not read it**, which is the whole of the rule. (`_rung_is_an_unordered_repair` asked
+the same question and is retired with the 99% repair — `labor-ui.md` → "THE OFFER TEST AND THE TRACK
+TEST ASK ONE QUESTION".)
 
 > **THE ESTIMATE STILL RIDES THE WINNER, DELIBERATELY.** `build_turns`, the legs, the gear and the
 > blocked cause are source-addressed fields and keep the sooner-estimate rule they were designed with
@@ -4039,6 +4039,62 @@ deleted** — a claim quietly guarding retired behaviour is worse than no claim:
 
 `_press_work_inspector_link` is **deleted** — there is no link left that opens anything, and its last
 caller went with the swap frame it drove.
+
+### …AND IT SOMETIMES DREW AT FULL ROOM HEIGHT AROUND 300px OF CONTENT
+
+Reported from play: *"sometimes the job panel is displaying full height, it doesn't always do this when
+I bring it up, but I've seen no real pattern."* On a ~1263px window the card spanned ~1178px — the whole
+room it may use — while the head line, POLICY, PRIORITY, KITS, the kept-at line and the actions row
+occupied the top ~300px, **with no scrollbar and the content not stretched**.
+
+That last detail is what names the cause. A body whose combined minimum were genuinely huge would draw
+tall or engage the scroll; it did neither. The card was sized from a measurement that was wrong at fit
+time and then never corrected.
+
+**A `VBoxContainer` WHOSE CHILDREN HAVE NOT BEEN SORTED REPORTS ITS AUTOWRAP LABELS AT A WRAP WIDTH OF
+ZERO** — one word per line — so the number `refit` reads at the instant of a mount is not the previous
+content's wrapping, it is nobody's. Measured on this very body: **736 where it settles at 278**, and
+**3773 against 408** on the fullest strip in `band_panel_preview`. 31 of the 51 fits in one harness run
+had a same-frame reading that differed materially from the settled one.
+
+**THE ORDERING THAT SHIPS IT.** `refit` coalesces across a frame. A re-mount landing after a fit is
+armed and before it resumes leaves that fit measuring a body which has just been replaced; it asks
+`fit_to_content` for more than the room has, the room's ceiling wins, the internal scroll is set AUTO
+over content that then fits (so no bar draws), and the re-mount's own fit — **the one thing that would
+ever have measured the new body — was DISCARDED by the coalescing guard**. Nothing re-fits until some
+unrelated event re-mounts, which is the "no real pattern". Reproduced to the pixel in the harness:
+card **638 of a 638px room** around 278px of strip.
+
+**THREE CHANGES, AND NONE OF THEM IS A FRAME COUNT** — all three are `ComposeSheet`'s, which had solved
+this and which this card was written without:
+
+- **The coalescing DEFERS rather than DISCARDS** (`_fit_requested`, cleared at the start of the run that
+  honours it, re-run at the end). One coalesced re-run, never a queue.
+- **The height is read a frame AFTER the width is applied**, not in the same pass — Godot's container
+  sort is deferred, so a combined minimum read in the pass that just moved the card's width reports the
+  previous width's wrapping.
+- **`_body.minimum_size_changed` asks for the fit**, wired in `_ready`. This is the one that makes a
+  wrong fit RECOVERABLE rather than permanent: every fit is a measurement taken at one instant and the
+  card does not choose that instant, so the body says so whenever the number it reports moves, and a fit
+  taken mid-rebuild is corrected on the frame it settles. The coalescer collapses the burst a rebuild
+  emits, and a re-run that measures the same value applies the same size, so it converges.
+
+**THE CLAIM THAT CATCHES IT IS ABOUT THE CARD'S HEIGHT AGAINST ITS CONTENT'S, AND THAT DISTINCTION IS
+THE WHOLE OF WHY THE DEFECT REACHED A PLAYER THROUGH A GREEN HARNESS.**
+`_assert_dialog_fits_its_room` passes on a card that IS the room — it printed `386x638 of 1896x638`
+against the defect, in the same run that reported it. `band_panel_work_inspector_dialog_remount` drives
+the ordering deliberately (the re-mount connected to `process_frame` FIRST, so it runs ahead of the
+armed fit's resume — which is where every live re-mount runs, input and applied snapshots both
+preceding a handler armed a frame earlier) and asserts the DRAWN height against the strip's, paired
+with `_assert_work_inspector_is_a_dialog` and a non-degenerate strip rect, since a card drawing nothing
+is trivially not too tall. **The plain mount is measured first as the negative control**, or the claim
+says nothing about the re-mount having been the trigger. Sabotage-verified: with the three changes
+reverted the plain mount still passes at 298 and the re-mount fails at `638 drawn, content 278 + chrome
+20, room 638`.
+
+**The bound is an UPPER one, deliberately** — the card is legitimately SHORTER than its content in a
+room too small for it (`band_panel_work_inspector_dialog_tight`), where its scroll carries the rest;
+the defect is only ever taller.
 
 ## THE ROW IS TWO LINES, AND THE INSPECTOR'S SENTENCE PAID FOR THE SECOND ONE
 
@@ -5724,7 +5780,8 @@ advertise a dependency the face does not have.
 **A METER THE WIRE DOES NOT STATE READS FULL, NOT ZERO.** `improvement_progress` answers `0.0` for an
 unstated key — indistinguishable from a meter eroded to nothing — and a built corral states no meter
 at all, which is why the tile card's own built-corral row passes `CORRAL_PROGRESS_COMPLETE` by hand.
-The `> BUILD_METER_UNSTARTED` test is `rung_needs_repair`'s, reused rather than re-invented.
+The `> BUILD_METER_UNSTARTED` test is what separates the two; it was inherited from the retired
+`SourceForecast.rung_needs_repair`, and the distinction outlived that test.
 
 ### `extend_pen` is declared from the standing-rung mark, and it opens a price
 
@@ -5733,7 +5790,15 @@ entry** — the one queue entry in the game declared from somewhere other than t
 
 > **THE MECHANICAL REASON IT ENDED UP THERE:** `RungLadder.has_track` is FALSE when nothing sits above
 > the standing rung, and `animal:pen` is the top of the animal branch — so a corralled herd's row
-> renders **no `⌃` in the ready slot at all**. Extending a pen is precisely what you do *after* the
+> renders **no `⌃` in the ready slot at all**.
+>
+> > **That same falsehood used to be reachable with the mark still drawn, and the press did NOTHING.**
+> > `_open_rung_track` answered it with a bare `return` on an enabled `Button` carrying
+> > `MOUSE_FILTER_STOP`, so the click was consumed and did not even fall through to opening the
+> > inspector — reported from play on a completed Field. The offer test is the track test now
+> > (`labor-ui.md` → "THE OFFER TEST AND THE TRACK TEST ASK ONE QUESTION"), which makes that branch
+> > unreachable, and it `push_warning`s rather than returning in silence: a state that can only arrive
+> > as a bug should say so where a harness or a dev session sees it. Extending a pen is precisely what you do *after* the
 > ladder is finished. `selection-card.md` blamed it on being *"a one-click standing action, not a
 > compose flow"*, which was true and was the second reason.
 
@@ -5756,35 +5821,48 @@ thing on every mark that wears it.
 > card. Its price is `animal:pen`'s own rung cost — **not** the herd's `pen_extend_cost`, which the sim
 > stamps only once a ring is accruing and which is therefore the in-flight meter's denominator.
 
-> #### ⛔ KNOWN GAP — THE CARD QUOTES THE WORK AND THE STANDING BILL, AND NO PILE
+> #### THE CARD QUOTES THE PILE, THE WORK AND THE STANDING BILL — off `corralBuildMaterialCost`
 >
-> `ring_row` builds its build-price asides from `SourceForecast.build_material_cost`, and **that field
-> prices exactly ONE rung: the one DIRECTLY ABOVE where the source stands.** The card only opens on a
-> herd already standing on `animal:pen` (`ring_offered` tests `standing_improvement ==
-> IMPROVEMENT_CORRAL`), `RungKey::AnimalPen.above()` is `None`, and `core_sim`'s herd capture publishes
-> an empty pile there deliberately — *"Empty at the top of the branch, which is the honest reading
-> rather than a repeat of the pen's own"*. So `_build_price_asides` returns `[]` on its first line and
-> the card draws **neither the hurdle pile a ring eats nor the WARN stall aside**.
+> On screen: **`Extend the pen` / `Another ring` · `75 work` / `+ 6 hurdles to raise it` / `then 1
+> work · 0.05 hurdles a turn to hold`**, and the WARN stall aside beneath the pile where the shelf
+> cannot cover it.
 >
-> The sim does charge the pile — `systems::labor::head_ring_leg` lays the ring as a leg through the
-> same `build_material_wants` every rung leg goes through, and the ladder's own config note says *"a
-> ring costs 6 hurdles exactly as the work_cost beside it charges a ring the full 75 work units"*.
-> **The gap is publication, not model**: no field on the herd carries `animal:pen`'s own build pile to
-> a herd standing on it, and closing it is a sim-side field (the material twin of `corralWorkCost`,
-> which IS published at every position and is why the card can state `75 work` at all). Until it lands,
-> the card states the ring's WORK price and its standing bill.
+> ⛔ **THE PILE LINE IS THE ONE FACT THE CARD'S OWN ARGUMENT NAMES, AND IT SHIPPED WITHOUT IT.** The
+> dead claim, kept so its absence is not re-derived a fourth time: *"KNOWN GAP — the card quotes the
+> work and the standing bill, and no pile. `ring_row` builds its build-price asides from
+> `SourceForecast.build_material_cost`, and that field prices exactly ONE rung: the one DIRECTLY ABOVE
+> where the source stands … so `_build_price_asides` returns `[]` on its first line and the card draws
+> neither the hurdle pile a ring eats nor the WARN stall aside."* Every clause of that was true;
+> **the gap was publication, not model** — `systems::labor::head_ring_leg` was charging the pile all
+> along.
 >
-> **THE CARD HAD NO CLAIM ON IT AT ALL, which is how that shipped.** The caret's assertion proves the
-> mark is pressable and stops one press short. `_assert_ring_card_prices_the_ring` presses it — the
+> **THE FIELD THAT CLOSED IT IS `HerdTelemetryState.corralBuildMaterialCost`** — the whole `animal:pen`
+> build pile, unscaled, published at **every** position (on a pastoral herd it equals
+> `buildMaterialCost` by construction; on a corralled one it is the only reading of the pile there is),
+> pinned by `core_sim/tests/rung_material_quote.rs`. The client half is
+> `native/src/dict/subsistence.rs` → `corral_build_material_cost`,
+> `SourceForecast.corral_build_material_cost`, and `ring_row` composing `ROW_BUILD_ASIDES_KEY` from it.
+>
+> ⛔ **`build_material_cost` IS STILL THE WRONG FIELD HERE AND MUST NOT BE PUT BACK.** `AnimalPen` is
+> the top of its branch, `above()` is `None`, and `core_sim` publishes an empty pile there
+> deliberately — *"Empty at the top of the branch, which is the honest reading rather than a repeat of
+> the pen's own"*. The two agree on a pastoral herd, which is exactly what makes them look
+> interchangeable; it is their DISAGREEMENT on a corralled one that this card needs.
+>
+> **THE CARD HAD NO CLAIM ON IT AT ALL, which is how the gap shipped.** The caret's assertion proves
+> the mark is pressable and stops one press short. `_assert_ring_card_prices_the_ring` presses it — the
 > real control, so the meta, the mouse filter and the handler are in the path — and claims liveness (a
-> pressable row named `Another ring`) before the figures: the row's face is `75 work` and the hold
-> aside states both currencies. It makes **no claim about the pile**: asserting its absence would
-> cement the gap, asserting its presence would fail on shipped behaviour, so the asides are printed
-> into the run's log instead. **Frame:** `band_panel_ring_price`.
+> pressable row named `Another ring`) before the figures: the row's face is `75 work`, the hold aside
+> states both currencies, and the pile aside states its **good and amount** against the fixture's own
+> numbers, in the quiet ink with no stall warning on a shelf that covers it. That last pair was written
+> deliberately partial while the field was missing — asserting the absence would have cemented the gap,
+> asserting the presence would have failed on shipped behaviour — and the asides were printed to the
+> log so the day the field landed the run said what changed. **Frame:** `band_panel_ring_price`.
 >
-> ⛔ **THE FIXTURE ERASES `build_material_cost` ON THE PENNED HERD**, derived from the track's own
-> pastoral fixture. Leaving the pastoral row's pile stamped would prop the card up with a list the game
-> never sends to a herd in that position, and the frame would show a price no player can see.
+> ⛔ **THE FIXTURE STILL ERASES `build_material_cost` ON THE PENNED HERD**, and stamps
+> `corral_build_material_cost` beside the erasure. `buildMaterialCost` genuinely IS empty on a
+> corralled herd, so dropping the erase would model a snapshot the sim never sends — and would let a
+> card that regressed to the above-selector pass.
 
 **A RING IN FLIGHT WEARS NO CARET**, which is what stops a second being declared over the first
 (`Herd::pen_extending` is the sim's gate and needs no client twin). The gate is

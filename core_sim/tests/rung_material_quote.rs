@@ -21,6 +21,14 @@
 //! that quoted a *penned* herd would prove nothing: there the stamp and the quote agree, and the
 //! defect hides.
 //!
+//! # ⛔ AND THE BUILD HALF HAS THE SAME HOLE, ONE RUNG UP
+//!
+//! `buildMaterialCost` publishes the pile of the rung **above** the one a source stands on, so on a
+//! **corralled** herd — the top of its branch — it is empty. That is the honest reading of *"what
+//! would you climb to next"*, and it is the wrong answer to *"what does another fence RING eat"*,
+//! which is a job a penned herd can repeat forever. `corralBuildMaterialCost` answers that one, and
+//! the fixtures below pin it against what a ring is actually charged.
+//!
 //! Every assertion is off the **encoded envelope** — a field that never reached the codec still
 //! satisfies an in-process one.
 
@@ -28,9 +36,14 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
+use bevy::prelude::Entity;
+
 use core_sim::{
-    advance_labor_allocation, build_test_app, recapture_snapshot_in_place, FactionId, Herd,
-    HerdRegistry, SizeClass, SnapshotHistory,
+    advance_labor_allocation, build_test_app, recapture_snapshot_in_place, scalar_from_f32,
+    BuildJob, BuildSource, EquipmentConfig, FactionId, FaunaConfigHandle, Herd, HerdRegistry,
+    KitChoice, LaborAllocation, LaborAssignment, LaborTarget, LadderConfig, MaterialsConfig,
+    PopulationCohort, RecipesConfig, RungKey, SizeClass, SnapshotHistory, SourcePriority,
+    TileRegistry, RUNG_COST_UNSCALED,
 };
 
 /// The keeper faction — the capture's default viewer, so its own herds are on the wire whatever the
@@ -353,4 +366,347 @@ fn published_wild_herd_id(app: &App) -> String {
         .find(|herd| herd.domestication() <= 0.0 && !herd.corralled())
         .map(|herd| herd.id().unwrap_or_default().to_string())
         .expect("the harness map seeds wild herds the viewer can see")
+}
+
+// ---------------------------------------------------------------------------------------------
+// **THE RING'S OWN PILE** (`docs/plan_standing_upkeep.md` §4.9 item 12c)
+// ---------------------------------------------------------------------------------------------
+//
+// The ring price card opens on a **corralled** herd and nowhere else, and `buildMaterialCost`
+// publishes the rung *above* the one the herd stands on — which, at the top of the animal branch,
+// is none. So the card could state a work price and a standing bill and **not the pile the ring
+// eats**, which is the one number a player short of hurdles needs.
+
+/// One herd, penned — the only row a ring is ever offered from, and the row where
+/// `buildMaterialCost` is honestly empty.
+const CORRALLED_HERD: &str = "herd_penned";
+
+/// The escapement floor a keeper row carries, matching `pen_material_priority.rs`'s fixture.
+const KEEPER_FLOOR: f32 = 0.5;
+
+/// A builders crew large enough to close a whole ring in **one turn**, so the fixture can compare
+/// the published pile against a *completed* ring rather than against a fraction of one. A bare
+/// builder banks `PER_WORKER_OUTPUT` work units a turn at full discipline and the pen rung's span is
+/// a few dozen of them, so this carries a wide margin for a floor's worth of slack — and the fixture
+/// asserts the ring really did close rather than trusting the margin.
+const RING_BUILDERS: u32 = 400;
+
+/// The band's working head-count, sized past every row this fixture hands it so `normalize` sheds
+/// nobody — a trimmed builders row would bank a fraction and the ring would not close.
+const BAND_WORKERS: f32 = 5_000.0;
+
+/// A store no claim on it can bind, so the turn measures the **ring** rather than the shelf.
+const AMPLE_MATERIAL: f32 = 10_000.0;
+
+/// The slack a claim routed through the **store** costs: a `LocalStore` holds fixed-point `Scalar`
+/// batches, so stating an amount and reading it back quantises twice. [`EPSILON`] is the right bar
+/// for the exact arithmetic; this is the right one for a figure measured as a fall in the shelf.
+const STORE_QUANTUM_SLACK: f32 = 1e-2;
+
+/// The `animal:pen` rung's whole build **pile** of the good, read off the shipped ladder — never a
+/// number copied out of the JSON, so a retune moves the fixture with the game.
+fn pen_build_pile() -> f32 {
+    LadderConfig::builtin()
+        .rung(RungKey::AnimalPen)
+        .build_materials()
+        .find(|(id, _)| *id == PEN_MATERIAL)
+        .map(|(_, amount)| amount)
+        .expect("the shipped pen rung declares the good on its build pile")
+}
+
+/// The `animal:pen` rung's work span, **unscaled** — the width `head_ring_leg` prices a ring at.
+fn pen_build_cost() -> f32 {
+    LadderConfig::builtin()
+        .rung(RungKey::AnimalPen)
+        .build_cost(RUNG_COST_UNSCALED)
+        .expect("the shipped pen rung carries a build meter")
+}
+
+/// **Seat one CORRALLED herd** — the rung a ring is offered from, and the top of its branch.
+fn seat_a_corralled_herd(app: &mut App, tile: UVec2) {
+    let ladder = LadderConfig::builtin();
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    registry.herds.clear();
+    let mut herd = Herd::new(
+        CORRALLED_HERD.to_string(),
+        format!("Fixture {CORRALLED_HERD}"),
+        SizeClass::Small,
+        vec![tile],
+        BIG_BIOMASS,
+        CAPACITY,
+        FODDER_RATE,
+        WILD_R,
+        BODY_MASS,
+    );
+    herd.tame_outright(FACTION, &ladder);
+    assert!(
+        herd.corral_at(tile, &ladder),
+        "fixture: the herd must be PENNED — a pastoral one is the row where `buildMaterialCost` \
+         already carries the pen's pile and the gap hides"
+    );
+    registry.herds.push(herd);
+}
+
+/// The harness world's own band, moved onto `tile` and widened past every row this fixture hands
+/// it. Reusing worldgen's band rather than spawning one keeps the fixture to the state under test.
+fn the_band_on(app: &mut App, tile: UVec2) -> Entity {
+    let tile_entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(tile.x, tile.y)
+        .expect("the fixture tile resolves");
+    let mut bands = app.world.query::<(Entity, &mut PopulationCohort)>();
+    let (entity, mut cohort) = bands
+        .iter_mut(&mut app.world)
+        .next()
+        .expect("the harness campaign seats a band");
+    cohort.home = tile_entity;
+    cohort.current_tile = tile_entity;
+    cohort.working = scalar_from_f32(BAND_WORKERS);
+    entity
+}
+
+/// The empty kit, so the ring's pace is the pool's own and no start-stocked tool moves it.
+fn bare_builders() -> KitChoice {
+    EquipmentConfig::builtin()
+        .kit("none")
+        .expect("the shipped roster carries the empty kit")
+}
+
+/// Put a ring in flight on the penned herd and staff it, with a keeper row beside it so the pen is
+/// held exactly as a played one is.
+fn begin_a_ring(app: &mut App, band: Entity) {
+    let radius_max = app
+        .world
+        .resource::<FaunaConfigHandle>()
+        .get()
+        .husbandry
+        .pen_radius_max;
+    let began = app
+        .world
+        .resource_mut::<HerdRegistry>()
+        .herds
+        .iter_mut()
+        .find(|herd| herd.id == CORRALLED_HERD)
+        .expect("the pen is seated")
+        .begin_pen_extension(radius_max);
+    assert!(began, "a built pen below the radius cap may begin a ring");
+
+    let source = BuildSource::Herd(CORRALLED_HERD.to_string());
+    let mut allocation = app
+        .world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation");
+    allocation.assignments.clear();
+    allocation.assignments.push(LaborAssignment {
+        target: LaborTarget::Hunt {
+            fauna_id: CORRALLED_HERD.to_string(),
+            floor: KEEPER_FLOOR,
+        },
+        workers: RING_BUILDERS,
+        kit: None,
+        priority: SourcePriority::default(),
+        upkeep_kit: None,
+    });
+    allocation.assignments.push(LaborAssignment {
+        target: LaborTarget::Builders,
+        workers: RING_BUILDERS,
+        kit: None,
+        priority: SourcePriority::default(),
+        upkeep_kit: None,
+    });
+    allocation.build_queue.clear();
+    assert!(
+        allocation.enqueue_build(source.clone(), BuildJob::ExtendPen),
+        "the band works the pen it is ringing"
+    );
+    assert!(
+        allocation.set_build_entry_kit(&source, Some(bare_builders())),
+        "the entry just declared takes the bare kit"
+    );
+}
+
+/// Stock the band with the pen's good, in the band and characteristics the shipped book makes it in.
+fn stock_hurdles(app: &mut App, band: Entity, units: f32) {
+    let materials = MaterialsConfig::builtin();
+    let recipes = RecipesConfig::builtin();
+    let characteristics = recipes
+        .recipes()
+        .find_map(|(_, recipe)| {
+            recipe
+                .outputs
+                .iter()
+                .find(|output| output.material_id() == Some(PEN_MATERIAL))
+                .map(|output| output.characteristics.clone())
+        })
+        .expect("the shipped book makes the pen's material");
+    let band_key = materials
+        .band_key(PEN_MATERIAL, &characteristics)
+        .expect("the shipped roster rates the pen's material");
+    let mut cohort = app
+        .world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band persists");
+    cohort.stores.deposit_material(
+        PEN_MATERIAL,
+        band_key,
+        scalar_from_f32(units),
+        &characteristics,
+    );
+}
+
+/// What the band still holds of the good.
+fn store_holds(app: &App, band: Entity) -> f32 {
+    app.world
+        .get::<PopulationCohort>(band)
+        .expect("the band persists")
+        .stores
+        .material_total(PEN_MATERIAL)
+        .to_f32()
+}
+
+/// What the pen was **paid** of the good toward its standing keeping this turn — the only other
+/// claim on the shelf in this fixture, and therefore the only term to net off the fall.
+fn upkeep_paid(app: &App) -> f32 {
+    app.world
+        .resource::<HerdRegistry>()
+        .find(CORRALLED_HERD)
+        .expect("the pen is still seated")
+        .upkeep_materials_supplied
+        .get(PEN_MATERIAL)
+        .copied()
+        .unwrap_or(0.0)
+}
+
+/// ⛔ **A CORRALLED HERD IS QUOTED THE RING'S PILE, THOUGH ITS BUILD COST IS EMPTY.**
+///
+/// The two halves are the whole claim and each is vacuous alone: the emptiness passes on a wire that
+/// publishes nothing at all, and the quote passes on one that merely echoes `buildMaterialCost`.
+/// **They must disagree**, and on a penned herd they do — one says *what you would climb to next*
+/// (nothing; this is the top of the branch), the other *what another ring eats*.
+#[test]
+fn a_corralled_herd_is_quoted_the_rings_pile_though_its_build_cost_is_empty() {
+    let mut app = a_world();
+    let tile = a_tile(&app);
+    seat_a_corralled_herd(&mut app, tile);
+    resolve_and_publish(&mut app);
+
+    let quoted = published_herd_field(&app, CORRALLED_HERD, |row| {
+        payoffs(row.corralBuildMaterialCost())
+    });
+    let hurdles = amount_of(&quoted, PEN_MATERIAL).unwrap_or_else(|| {
+        panic!(
+            "a penned herd is the only row a RING is ever offered from, so the pen rung's own pile \
+             has to be quoted there, got {quoted:?}"
+        )
+    });
+    assert!(
+        (hurdles - pen_build_pile()).abs() < EPSILON,
+        "…and it is the LADDER's whole pile for that rung, unscaled: {hurdles} against {}",
+        pen_build_pile()
+    );
+
+    // **THE PAIRING**: the field a client used to read is empty on this same row, the same turn.
+    // Without it the claim above passes on a fixture where the two are indistinguishable and proves
+    // nothing about the gap it closes.
+    let above = published_herd_field(&app, CORRALLED_HERD, |row| payoffs(row.buildMaterialCost()));
+    assert!(
+        above.is_empty(),
+        "**`animal:pen` IS THE TOP OF ITS BRANCH** — the rung above it is none, so the pile of the \
+         rung the `⌃` track would offer is honestly EMPTY here, which is why a ring card cannot be \
+         built out of it: {above:?}"
+    );
+
+    // **LIVENESS**: the WORK half of the same card is a real number on the same row, so the
+    // emptiness above is a statement about that field and not about a row the capture never filled.
+    assert!(
+        published_herd_field(&app, CORRALLED_HERD, |row| row.corralWorkCost()) > 0.0,
+        "fixture: the ring's work price must be live, or neither claim above is about anything"
+    );
+}
+
+/// **THE PUBLISHED PILE IS WHAT A RING IS ACTUALLY CHARGED** — the claim a presence-check misses,
+/// and the reason this slice publishes the pile rather than letting a client re-derive it.
+///
+/// This drives the **strong** form of the claim: a real `ExtendPen` job with a crew big enough to
+/// close the ring in one turn, and the good genuinely taken off the band's shelf over that completed
+/// ring compared against the published quote. The narrower alternative — asserting the quote equals
+/// `head_ring_leg`'s width put through `build_material_wants` — was not needed, because the harness
+/// world already carries a band and clearing the herd registry leaves the pen as the **only** claim
+/// on the good, so the fall in the shelf is directly measurable. `pen_material_priority.rs` pins the
+/// *partial* form of the same charge, turn by turn.
+#[test]
+fn the_published_pile_is_what_a_completed_ring_actually_eats() {
+    let mut app = a_world();
+    let tile = a_tile(&app);
+    seat_a_corralled_herd(&mut app, tile);
+    let band = the_band_on(&mut app, tile);
+    begin_a_ring(&mut app, band);
+    stock_hurdles(&mut app, band, AMPLE_MATERIAL);
+    resolve_and_publish(&mut app);
+
+    let quoted = amount_of(
+        &published_herd_field(&app, CORRALLED_HERD, |row| {
+            payoffs(row.corralBuildMaterialCost())
+        }),
+        PEN_MATERIAL,
+    )
+    .expect("the penned herd is quoted the ring's pile");
+
+    let (extending, banked) = {
+        let herd = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(CORRALLED_HERD)
+            .expect("the pen is still seated");
+        (herd.pen_extending, herd.pen_extend_progress)
+    };
+    assert!(
+        !extending,
+        "fixture: the crew must CLOSE the ring this turn, or this measures a fraction of one \
+         (banked {banked} of {})",
+        pen_build_cost()
+    );
+
+    // The fall in the shelf, less the pen's own standing keeping — the only other claim on the good
+    // in this world, because the herd registry was cleared and no plant rung declares a material.
+    let drawn = AMPLE_MATERIAL - store_holds(&app, band) - upkeep_paid(&app);
+    assert!(
+        (drawn - quoted).abs() < STORE_QUANTUM_SLACK,
+        "a whole ring swallows exactly the quoted pile: drew {drawn} against a quote of {quoted}"
+    );
+    // **LIVENESS**: both sides are real quantities, so the equality is not two zeroes agreeing.
+    assert!(
+        drawn > STORE_QUANTUM_SLACK && quoted > STORE_QUANTUM_SLACK,
+        "a ring is not free and the quote is not empty: drew {drawn}, quoted {quoted}"
+    );
+}
+
+/// **ON A PASTORAL HERD THE TWO FIELDS AGREE, BY CONSTRUCTION** — the same rung's pile reached
+/// through two selectors, never a second reading of the ladder.
+///
+/// The schema comment claims exactly this and a client leans on it: the ring quote and the `⌃`
+/// track's pile aside state the same number on the one row where both are offered. If it ever
+/// diverges the comment has become a lie, and this says so.
+#[test]
+fn a_pastoral_herds_ring_quote_and_build_cost_are_the_same_pile() {
+    let mut app = a_world();
+    let tile = a_tile(&app);
+    seat_pastoral_herds(&mut app, tile);
+    resolve_and_publish(&mut app);
+
+    let ring = published_herd_field(&app, BIG_HERD, |row| payoffs(row.corralBuildMaterialCost()));
+    let climb = published_herd_field(&app, BIG_HERD, |row| payoffs(row.buildMaterialCost()));
+    assert_eq!(
+        ring, climb,
+        "the climb to the Pen rung and another ring of it are the SAME rung's pile"
+    );
+    // **LIVENESS**: they agree on a real pile rather than on two empty lists — the failure mode this
+    // whole file exists to catch.
+    assert!(
+        amount_of(&ring, PEN_MATERIAL)
+            .is_some_and(|amount| (amount - pen_build_pile()).abs() < EPSILON),
+        "…and that pile is the ladder's own for `animal:pen`: {ring:?} against {}",
+        pen_build_pile()
+    );
 }

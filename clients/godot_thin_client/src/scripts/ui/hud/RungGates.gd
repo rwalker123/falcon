@@ -265,21 +265,27 @@ static func hunt_rungs_admitted(source: Dictionary, prefix: String,
             admitted.append(rung)
     return admitted
 
-## **IS THERE WORK LEFT TO PUT INTO THIS RUNG?** — the admission test both webs' rung walks share, and
-## the one place *"already built"* and *"already full"* are distinguished.
+## **IS THERE WORK LEFT TO PUT INTO THIS RUNG?** — the admission test both webs' rung walks share.
 ##
-## It was a bare `not improvement_is_done(...)`, and that is the whole of why the 99% repair was
-## unreachable from the UI. The stamped flag is the rung's ACHIEVEMENT, which a plant rung keeps while
-## its meter erodes — so a Tended Patch that had slipped to 99% read as *built* and was filtered out of
-## every rung walk in the client, while the sim's own `cultivate` lock (which refuses on the METER)
-## would happily have accepted the order.
+## ⛔ **IT IS THE SAME QUESTION THE DESTINATION TRACK ASKS, AND THAT IDENTITY IS THE POINT.**
+## `RungLadder.track` marks every rung at or below the standing one BANKED or STANDING off this same
+## `improvement_is_done`, and `RungLadder.has_track` is *is there a row above those*. So a rung
+## admitted here is a rung the track will offer, and a `⌃` can never be drawn over a card with no
+## rungs left — the dead control reported from play, where a finished Field wore an offer mark whose
+## press did nothing at all.
 ##
-## **A FULL METER STILL ANSWERS FALSE, which is the half that must not move.** A rung standing at its
-## cost has nothing to put work into, and offering it would put a `⌃` on every finished improvement in
+## **IT USED TO BE `not improvement_is_done(...) or rung_needs_repair(...)`**, a second reading of
+## *is this rung done* laid beside the first: the flag-and-meter pair versus the published standing.
+## They could disagree by one `f32` ULP, and when they did this answered TRUE for a rung the track had
+## already banked. That test is RETIRED (`SourceForecast`, beside `improvement_progress`) — the meter
+## is a publication of the standing now, so *achieved* and *full* are one fact and there is nothing
+## left for a second term to add.
+##
+## **A RUNG THE SOURCE STANDS ON OR ABOVE ANSWERS FALSE, which is the half that must not move.** It
+## has nothing to put work into, and offering it would put a `⌃` on every finished improvement in
 ## the game.
 static func rung_has_room(source: Dictionary, prefix: String, rung: String) -> bool:
-    return not SourceForecast.improvement_is_done(source, prefix, rung) \
-        or SourceForecast.rung_needs_repair(source, prefix, rung)
+    return not SourceForecast.improvement_is_done(source, prefix, rung)
 
 ## **HAS THIS HERD ANY RUNG LEFT TO CLIMB?** — the question a build-speeding kit's applicability turns
 ## on, asked through the same seam the picker admits rungs with. Knowledge-blind by construction, like

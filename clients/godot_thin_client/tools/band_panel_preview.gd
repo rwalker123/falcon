@@ -2560,6 +2560,7 @@ func _ready() -> void:
 	await _assert_action_registry()
 
 	_assert_herd_field_pairs()
+	_assert_rung_offers_open_tracks()
 	_finish()
 
 ## **A BAND WITH NOTHING WORKED, ON A HORIZONTAL DOCK — the state a stretched empty view shipped in.**
@@ -7142,8 +7143,8 @@ func _assert_map_path_states_kit() -> void:
 ## likely to be mis-wired are the ones whose tiers resolve through a DIFFERENT job's default: a
 ## wayfinding row quoting the hunt kit and a clubs row quoting `hunter_attack` are both perfectly
 ## plausible-looking rows carrying another kit's number. The fixture's tiers are all distinct, so a
-## swap cannot pass — the pen collects at 12.0 where the sled hauls 40.0, and the camp is defended at
-## 6 where the hunt attacks at 20.
+## swap cannot pass — the camp is defended at 6 where the hunt attacks at 20, and a scout sees 2 tiles
+## where the sled hauls 40.0.
 ##
 ## Read per LINE, like `ui_preview`'s kit assertions: the rows share a shape, so a whole-popover
 ## `contains` would be satisfied by the WRONG row.
@@ -7153,27 +7154,26 @@ func _assert_map_path_states_kit() -> void:
 ## faction page, so there is no click left to cover; what survives is the COMPOSITION, which the
 ## crafting panel's kit ledger and the compose sheet's role hint both still read, and which is what
 ## every claim below was ever about.
+## ⛔ **THE WORDS OF A CLAUSE THAT MUST NO LONGER APPEAR** (issue #543), spelled HERE rather than
+## imported: `DetailFormat.KIT_ROLE_PEN_CARRY_SUFFIX` is deleted, and a claim that a deleted constant
+## is absent would be a tautology about this file. Written as the words a player would read, so it
+## fails if the clause comes back under any tier.
+const PEN_COLLECTION_CLAUSE := "pen collection"
+
 func _assert_gear_breakdown_states_every_kit(band: Dictionary) -> void:
 	var popover := "\n".join(_hud._disclosures.kit_breakdown_lines(band))
 	_assert_band_panel("the gear popover opened at all (%d chars)" % popover.length(),
 		popover.contains(DetailFormat.KIT_BREAKDOWN_CLIFF_NOTE))
-	# **THE SLED CARRIES BOTH RATES AND THEY ARE STILL TWO NUMBERS** (`docs/plan_standing_upkeep.md`
-	# §4.9 item 12). `equipment.json` puts both sides of `pen_carry` on the sled — the item that used to
-	# declare the bare side left the roster with the hurdles — so the pen clause rides the SLED's row
-	# now. What has to stay true is that the two figures do not collapse into each other: a band on a
-	# stalking kit hunts at 40 and collects its pen at 12, and a readout that let the hunt carry stand
-	# in for the pen would be the mis-pairing this ledger keeps reproducing.
-	var pen_role := DetailFormat.KIT_ROLE_PEN_CARRY_SUFFIX % String.num(
-		BandFx.KIT_PEN_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS)
-	var pen_at_the_sleds_rate := DetailFormat.KIT_ROLE_PEN_CARRY_SUFFIX % String.num(
-		BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS)
+	# ⛔ **THE SLED STATES ONE CARRY, AND IT STATED TWO** (issue #543). The claim here was that *"the
+	# SLED states the PEN's own collection rate, never its hunt carry"* — the two being separate numbers
+	# (40 hunting, 12 at a pen) while the hurdles were an ITEM. §4.9 item 12 made hurdles a material and
+	# put both sides of the pair on this one item, so the clause was restating the hunt figure under a
+	# second name; `EquipmentStat::PenCarry` has since been deleted outright. **What is claimed now is
+	# the absence**: the row states the haul once, and there is no keeper clause behind it — paired with
+	# the liveness claim at the tail of this function, which requires the haul itself to be there.
 	var sled_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_SLED)
-	_assert_band_panel("the SLED states the PEN's own collection rate (%s), never its hunt carry (%s) — \"%s\""
-			% [pen_role, pen_at_the_sleds_rate, sled_line],
-		sled_line.contains(pen_role) and not sled_line.contains(pen_at_the_sleds_rate))
-	# …and the HUNT half is on the same row, which the tail of this function already asserts against
-	# `sled_line` — the pairing that stops either clause being satisfied by a row that dropped the
-	# other, so the claim is made once and read against one line.
+	_assert_band_panel("the SLED states its haul ONCE, with no second keeper clause — \"%s\"" % sled_line,
+		not sled_line.contains(PEN_COLLECTION_CLAUSE))
 	# **AND THE CROOK IS THE ANIMAL WEB'S ITEM NOW** — `hurdles` are a crafted MATERIAL and no item of
 	# that id is on the roster, so a ledger still keyed on it read `— bare hands` over an item every
 	# band carries. The row states its JOB rather than a carry rate, the crook's one effect being
@@ -7182,7 +7182,7 @@ func _assert_gear_breakdown_states_every_kit(band: Dictionary) -> void:
 	_assert_band_panel("the CROOK's row states what it is for (%s), and no carry rate — \"%s\""
 			% [DetailFormat.KIT_ROLE_CROOK, gear_line],
 		gear_line.contains(DetailFormat.KIT_ROLE_CROOK)
-			and not gear_line.contains(pen_role))
+			and not gear_line.contains(PEN_COLLECTION_CLAUSE))
 	_assert_band_panel("…beside its own condition (%s)" % String.num(
 			BandFx.KIT_CONDITION_CROOK, DetailFormat.KIT_CONDITION_DECIMALS),
 		gear_line.contains(String.num(BandFx.KIT_CONDITION_CROOK,
@@ -11031,7 +11031,16 @@ func _pen_price_herd_fixtures() -> Array:
 ## penned herd (`snapshot/subsistence.rs`: *"Empty at the top of the branch, which is the honest
 ## reading rather than a repeat of the pen's own"*). Leaving the pastoral row's pile stamped here would
 ## prop the ring card up with a list the game never sends to a herd in this position, and the frame
-## would show a price the player cannot see.
+## would show a price the player cannot see. **THE ERASE STAYS** now that the pile reaches the card by
+## another key: `buildMaterialCost` genuinely IS empty on a corralled herd, so dropping the erase would
+## model a snapshot the sim never sends — and would let a card that regressed to the above-selector
+## pass.
+##
+## **`corral_build_material_cost` CARRIES THE PILE INSTEAD** — `animal:pen`'s OWN, which the sim
+## publishes at every position precisely because the above-selector cannot answer at the top of a
+## branch. It is the one field a ring can be priced from, and stamping it BESIDE an erased
+## `build_material_cost` is what makes this fixture the shipped shape of a corralled herd rather than a
+## convenient one.
 ##
 ## `corral_work_cost` is stamped BECAUSE the wire does publish it unconditionally, at every position —
 ## `FORECAST_BUILD_WORK_COST_KEYS`' own rule — and it is the ring's whole price in work.
@@ -11043,6 +11052,8 @@ func _ring_price_herd_fixtures() -> Array:
 			continue
 		herd["corralled"] = true
 		herd.erase("build_material_cost")
+		herd["corral_build_material_cost"] = [
+			{"material_id": PEN_MATERIAL, "amount": PEN_BUILD_PILE}]
 		herd["corral_work_cost"] = RING_PRICE_WORK
 	return RUNG_FX.stamp_herds(herds)
 
@@ -11052,6 +11063,12 @@ func _ring_price_herd_fixtures() -> Array:
 ## named apart from the build-queue row's `RING_WORK_COST` (a ring already in FLIGHT, a different
 ## fixture and a different question) so the two can never be read as one number.
 const RING_PRICE_WORK := 75.0
+
+## What a ring's card says, counted: the pile it eats to raise and the bill to hold it, and nothing
+## else. The stall warning is the third aside the `⌃` track can carry and it is absent HERE by
+## construction — this state's band holds `PEN_STORE_COVERED`, the whole pile — so the count is what
+## turns "no warning" into a claim instead of an assumption.
+const RING_CARD_ASIDE_COUNT := 2
 
 ## GUARD: **THE RING CARD STATES A PRICE — opened from the mark, not from the controller.**
 ##
@@ -11065,13 +11082,18 @@ const RING_PRICE_WORK := 75.0
 ## does not say, so the row is required to be a PRESSABLE line carrying the ring's own name before its
 ## figures are read at all.
 ##
-## ⛔ **KNOWN GAP — THE HURDLE PILE IS NOT ON THE WIRE FOR A PENNED HERD, so no claim is made about it
-## here.** The sim charges a ring `animal:pen`'s own 6 hurdles (`head_ring_leg` lays the leg through
-## the same `build_material_wants` every rung leg goes through), but the only field that publishes a
-## pile — `buildMaterialCost` — answers for the rung ABOVE the source, and there is no rung above
-## `animal:pen`. So the card states the ring's WORK price and its standing bill and no pile, and the
-## asides are PRINTED here so the day the field lands the frame's log says what changed. Asserting the
-## absence would cement it; asserting the presence would fail on shipped behaviour.
+## ⛔ **AND THE PILE, WHICH THIS CLAIM WAS DELIBERATELY SILENT ABOUT UNTIL THE FIELD LANDED.** The
+## claim used to record a *"KNOWN GAP — the hurdle pile is not on the wire for a penned herd, so no
+## claim is made about it here"*, because the only field that published a pile (`buildMaterialCost`)
+## answers for the rung ABOVE the source and there is no rung above `animal:pen`. Asserting the
+## absence would have cemented the defect; asserting the presence would have failed on shipped
+## behaviour. `corralBuildMaterialCost` closed that gap, so the pile is asserted now — by its rendered
+## TEXT, amount and material both, against the fixture's own published numbers rather than through
+## `_build_price_asides`, or the claim would agree with the producer by construction.
+##
+## **NO STALL WARNING IS EXPECTED HERE** and that is asserted too: this state's band holds
+## `PEN_STORE_COVERED`, which covers the pile outright. Without that half, a card that warned on every
+## ring would pass.
 func _assert_ring_card_prices_the_ring() -> void:
 	var mark: Button = null
 	for node in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_RING_META, []):
@@ -11113,6 +11135,20 @@ func _assert_ring_card_prices_the_ring() -> void:
 	_assert_band_panel("ring card — …and what holding it costs every turn, in both currencies: \"%s\" (asides %s)"
 			% [hold, str(_rung_track_asides())],
 		_rung_track_asides().has(hold))
+	# **AND THE PILE A RING SWALLOWS TO RAISE** — item 12c's *"what it eats to raise"*, the clause the
+	# card could not state until `corralBuildMaterialCost` existed. Composed from the format and the
+	# fixture's own amount and material, so the claim fails if the card quotes the wrong good, the wrong
+	# number, or nothing at all.
+	var pile := HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT % (HudWorkVocab.RUNG_TRACK_MATERIAL_TERM
+		% [DetailFormat.format_trimmed(PEN_BUILD_PILE, HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
+			PEN_MATERIAL])
+	_assert_band_panel("ring card — …and what a ring EATS to raise, by good and amount: \"%s\" (asides %s)"
+			% [pile, str(_rung_track_asides())],
+		_rung_track_asides().has(pile))
+	# …and it is the QUIET aside, not the stall warning: this band's shelf covers the pile outright, so a
+	# card that warned unconditionally would otherwise read as correct.
+	_assert_band_panel("ring card — …stated in the quiet ink, with no stall warning on a shelf that covers it",
+		not _rung_track_aside_is_warn(pile) and _rung_track_asides().size() == RING_CARD_ASIDE_COUNT)
 	print("band_panel_preview: ring card asides as shipped — %s" % str(_rung_track_asides()))
 
 ## The declare band holding `store` hurdles on its shelf — the one thing on that card the SOURCE
@@ -12658,6 +12694,9 @@ func _save(name: String) -> void:
 	# Check the herd fixtures RENDERING IN THIS FRAME, so a half-set field pair fails against the state
 	# it silently mis-renders rather than against nothing at all.
 	_guard_frame_herd_fields(name)
+	# …and the ⌃ offers in it, for the same reason: a slot whose press opens nothing must fail
+	# against the state that drew it.
+	_guard_frame_rung_offers(name)
 	var image: Image = await _capture(name)
 	if image == null:
 		return
@@ -12817,6 +12856,90 @@ func _assert_herd_field_pairs() -> void:
 		return
 	print("band_panel_preview: assert OK — every herd fixture keeps the herders_needed pair consistent (%d herd dicts scanned)"
 		% _herd_pair_scans)
+
+# ---- THE OFFER TEST AND THE TRACK TEST MUST ASK ONE QUESTION -------------------------------------
+#
+# **THE DEFECT THIS PINS IS A DEAD BUTTON, WHICH NO PNG CAN SHOW.** A completed Field drew its
+# standing glyph AND a `⌃` offering to build the Field it was already standing on; the press
+# opened `_open_rung_track`, `RungLadder.has_track` answered false over a source at the top of its
+# branch, and the handler returned in silence — an enabled `Button` with `MOUSE_FILTER_STOP`, so the
+# click did not even fall through to the inspector. The frame looks perfectly ordinary.
+#
+# **THE CLAIM IS THE INVARIANT, NOT THE OLD SNAPSHOT.** The trigger was a published meter that
+# disagreed with the published standing by one `f32` ULP, and the sim can no longer emit it — so a
+# fixture forcing that state would assert an impossible snapshot and pin the bug rather than the fix.
+# What is worth holding is the relation the fix rests on: **every rendered `⌃` opens a
+# destination track with at least one rung left on it.** It is asked off the SLOT'S OWN model
+# (`WORK_ROW_MODEL_META`), through the very calls `_open_rung_track` makes, so it re-runs the press's
+# decision without pressing — a press here would float a popup into the next state's frame, and this
+# harness's order is load-bearing.
+#
+# **THE LIVENESS HALF IS PART OF THE CLAIM.** "No row ever contradicted it" passes on a board that
+# never offers anything, so the run's verdict fails when the count of tracks actually opened is zero
+# and states both counts either way.
+
+## The run's tally: frames scanned, `⌃` slots found in them, tracks that opened with a rung left,
+## and slots whose track was empty. All four are stated in the verdict, because the first three are
+## what say the claim was exercised and the fourth is the claim itself.
+var _rung_offer_frames := 0
+var _rung_offer_slots := 0
+var _rung_offer_tracks := 0
+var _rung_offer_dead := 0
+
+## Re-ask the press's own question of every `⌃` rendered in THIS frame, so a slot that would open
+## nothing fails against the state it drew in rather than against the run as a whole.
+func _guard_frame_rung_offers(state: String) -> void:
+	if _panel == null or _hud == null:
+		return
+	var controller = _hud._bandpanel
+	if controller == null:
+		return
+	_rung_offer_frames += 1
+	for slot in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_BUILD_KIND_META, []):
+		# **THE SLOT'S OWN KIND, NEVER ITS NODE TYPE** — a running build's face is a `Button` too, and
+		# it opens the same track; the claim is about the OFFER, which is the state the dead press was
+		# reported in.
+		if String(slot.get_meta(HudWorkVocab.WORK_ROW_BUILD_KIND_META,
+				HudWorkVocab.WORK_ROW_BUILD_KIND_NONE)) != HudWorkVocab.WORK_ROW_BUILD_KIND_OFFER:
+			continue
+		_rung_offer_slots += 1
+		var model: Dictionary = slot.get_meta(HudWorkVocab.WORK_ROW_MODEL_META, {})
+		var kind := String(model.get("kind", ""))
+		var rows := RungLadder.track(kind, controller._rung_track_source(model),
+			HudComposeVocab.BARE_FORECAST_PREFIX, String(model.get("improvement", "")),
+			# **THE PANEL'S OWN BAND, for fidelity with `_open_rung_track` rather than out of
+			# necessity** — `has_track` is a function of the SOURCE's standing alone; the band is read
+			# only for the material asides on the rows above it.
+			controller._player_knowledge(), _hud._band_labor._panel_band)
+		if RungLadder.has_track(rows):
+			_rung_offer_tracks += 1
+			continue
+		_rung_offer_dead += 1
+		_fail(("%s — a ⌃ is drawn on the %s row at (%d, %d) whose destination track has no rung "
+			+ "above the one it stands on (%s), so the press opens nothing at all. The offer test "
+			+ "(`RungGates.rung_has_room`) and the track test (`RungLadder.has_track`) have come apart "
+			+ "— they are one `improvement_is_done` and must stay so.") % [state, kind,
+			int(model.get("x", -1)), int(model.get("y", -1)),
+			SourceForecast.standing_improvement(controller._rung_track_source(model),
+				HudComposeVocab.BARE_FORECAST_PREFIX)])
+
+## The guard's verdict, ONE line for the whole run — the same shape `_assert_herd_field_pairs` takes,
+## and for the same reason: each dead slot has already failed against its own frame, so this states
+## the totals. **BOTH counts are the claim.** A run where nothing is ever offered would satisfy "no
+## ⌃ opened an empty track" without exercising it once, so a zero opened-track count is a
+## FAILURE and the numbers are printed either way.
+func _assert_rung_offers_open_tracks() -> void:
+	if _rung_offer_dead > 0:
+		_fail("%d of %d rendered ⌃ offer(s) open a destination track with no rung on it"
+			% [_rung_offer_dead, _rung_offer_slots])
+		return
+	if _rung_offer_tracks == 0:
+		_fail(("no frame in this run drew a ⌃ at all (%d frames scanned) — the offer/track claim "
+			+ "passed vacuously, which is not a pass") % _rung_offer_frames)
+		return
+	print(("band_panel_preview: assert OK — every ⌃ opens a destination track with a rung left "
+		+ "on it (%d offer slots over %d frames, %d tracks opened, %d empty)")
+		% [_rung_offer_slots, _rung_offer_frames, _rung_offer_tracks, _rung_offer_dead])
 
 ## The snapshot's herd list (shape `Hud.update_herds` / `MapView._rebuild_herd_markers` consume).
 ## The hunted herd sits at (68, 15) — NOT the (70, 17) its hunt assignment was launched at — so the
@@ -14116,12 +14239,14 @@ func _map_path_snapshot() -> Dictionary:
 ## **THE EXPANDED ROSTER'S THREE ITEMS AND THEIR THREE TIERS RIDE IT TOO**, because the claim this
 ## fixture backs is that the map marker carries the WHOLE cohort — a key it never states is a key the
 ## partition assertion says nothing about. Every value below is DISTINCT from every other tier on the
-## band, so the gear popover's rows cannot pass with two of them swapped: the pen's rate is not the
+## band, so the gear popover's rows cannot pass with two of them swapped: the scout's range is not the
 ## sled's 2.5, and the warriors' attack is not the hunters' 2.
+##
+## ⛔ A `MAP_PATH_PEN_CARRY := 3.5` rode this set for `pen_carry_per_worker_biomass`, deleted with
+## `EquipmentStat::PenCarry` (issue #543) — a pen is collected on the sled's own 2.5 here.
 const MAP_PATH_HURDLES_CONDITION := 45.0
 const MAP_PATH_WAYFINDING_CONDITION := 66.0
 const MAP_PATH_CLUBS_CONDITION := 22.0
-const MAP_PATH_PEN_CARRY := 3.5
 ## Whole tiles, because that is what a posted vantage reveals at; the popover states it in tiles and
 ## never at the carries' one decimal.
 const MAP_PATH_SCOUT_VANTAGE := 2.0
@@ -14133,7 +14258,6 @@ func _kit_band_fixture() -> Dictionary:
 	band["hunter_attack"] = 2.0
 	band["hunt_carry_per_worker_biomass"] = 2.5
 	band["forage_carry_per_worker_biomass"] = 1.75
-	band["pen_carry_per_worker_biomass"] = MAP_PATH_PEN_CARRY
 	band["scout_vantage_range"] = MAP_PATH_SCOUT_VANTAGE
 	band["warrior_attack"] = MAP_PATH_WARRIOR_ATTACK
 	return band
@@ -14302,12 +14426,12 @@ func _band_fixture() -> Dictionary:
 		"hunter_attack": BandFx.KIT_ATTACK_EQUIPPED,
 		"hunt_carry_per_worker_biomass": BandFx.KIT_HUNT_CARRY_EQUIPPED,
 		"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_EQUIPPED,
-		# The expanded roster's three, resolved through the SAME job defaults `BandFx.with_equipped_kit`
+		# The expanded roster's two, resolved through the SAME job defaults `BandFx.with_equipped_kit`
 		# resolves them through — one shared roster, so a band in this harness and a band in
-		# `ui_preview` cannot get different answers off the same kits. The pen tier is the BARE one
-		# because no entry of that roster equips husbandry gear (its own note records why), which is
-		# also what keeps the pen row assertable against the sled's 40.
-		"pen_carry_per_worker_biomass": BandFx.KIT_PEN_CARRY_BARE,
+		# `ui_preview` cannot get different answers off the same kits. A third,
+		# `pen_carry_per_worker_biomass`, was stamped at the BARE tier here *"because no entry of that
+		# roster equips husbandry gear"*; it is deleted with `EquipmentStat::PenCarry` (issue #543) and a
+		# pen reads the sled's own equipped haul above.
 		"scout_vantage_range": BandFx.KIT_SCOUT_VANTAGE_EQUIPPED,
 		"warrior_attack": BandFx.KIT_ATTACK_CLUBS,
 		# The raid-forecast levers the sim echoes on every cohort: the slow-raid warn line and the
@@ -18473,30 +18597,41 @@ func _assert_no_pending_queue_row() -> void:
 		marked == 0)
 
 # =====================================================================================
-#  THE 99% REPAIR, AND THE KEEPING WARNING THAT USED TO ARRIVE A TURN LATE
+#  A FINISHED RUNG OFFERS NOTHING, AND THE KEEPING WARNING THAT USED TO ARRIVE A TURN LATE
 # =====================================================================================
 #
-# Two client-only repairs, both PNG-LESS and both for the same reason: every state either of them can
+# Two client-only claims, both PNG-LESS and both for the same reason: every state either of them can
 # be in renders as a perfectly ordinary board. A row offering `⌃` and a row reporting `🌱99%` are one
 # glyph apart in a thumbnail; a pool card marked and a pool card unmarked are the same card; and the
-# whole point of the second repair is that NOTHING CHANGES on the following turn, which is a claim
-# about two frames and no picture can carry it.
+# whole point of the second is that NOTHING CHANGES on the following turn, which is a claim about two
+# frames and no picture can carry it.
 #
-# **THEY SHARE A BLOCK BECAUSE THEY SHARE A FIXTURE FAMILY, not a mechanism.** The repair is about a
-# rung that has slipped; the warning is about a rung that has not started. Both need a band whose
+# ⛔ **RETIRED — *the 99% repair*, which is what the first half of this block used to stage.** It put
+# a `⌃` on a rung stamped BUILT whose meter was short of its cost, so a Tended patch that had slipped
+# could be re-queued from the board. **The sim publishes a per-rung meter as a publication of its
+# standing verdict now**, so *achieved* and *full* are one fact and the state cannot be reached — see
+# `SourceForecast`'s epitaph for `rung_needs_repair`. The fixture that staged it hand-stamped
+# `is_cultivated` beside a 90% meter, which is a snapshot no server can send; keeping it would have
+# pinned the bug rather than the fix.
+#
+# **WHAT SURVIVES IS THE CONTROL HALF, and it is the reported defect's own shape**: a rung standing at
+# its cost offers NOTHING. That is the claim a finished Field violated when it wore a `⌃` whose press
+# did nothing at all, and it is now paired with the run-wide `_assert_rung_offers_open_tracks`.
+#
+# **THEY SHARE A BLOCK BECAUSE THEY SHARE A FIXTURE FAMILY, not a mechanism.** Both need a band whose
 # keeping pools the harness controls exactly, which is what makes staging them together cheaper than
 # staging them apart — and the block restores the reference band on the way out, this file's own rule.
 
-## The eroded rung both repair claims are staged at. **A patch, never a herd**: an eroded-but-achieved
-## ANIMAL rung is unreachable today (`domestication_progress` is monotone and no animal rung declares
-## decay, so `improvement_is_done` and *the meter is short* are contradictory there), and a fixture
-## staging one would assert against a state the sim cannot produce.
+## The rung these claims are staged at. **A patch, never a herd**: the plant web is the one that
+## declares decay, so it is where a meter can be part-way up a rung with nobody on it.
 const REPAIR_PATCH_TILE := Vector2i(64, 21)
-## 90% — **achieved and short**, which is the whole state. The exact figure is arbitrary; what matters
-## is that it is strictly between `BUILD_METER_UNSTARTED` and `BUILD_METER_FULL`.
+## 90% — a meter part-way up a rung the patch does NOT hold, which is what erosion looks like now that
+## the standing is re-derived with the position. The exact figure is arbitrary; what matters is that
+## it is strictly between `BUILD_METER_UNSTARTED` and `BUILD_METER_FULL`.
 const REPAIR_ERODED_PROGRESS := 0.9
-## …and the CONTROL's meter, standing exactly at its cost. A rung with nothing left to put work into
-## must offer nothing, or the `⌃` would appear on every finished improvement in the game.
+## …and a meter standing exactly at its cost, on a rung the patch DOES hold. A rung with nothing left
+## to put work into must offer nothing, or the `⌃` would appear on every finished improvement in the
+## game — which is exactly what the reported dead button was.
 const REPAIR_FULL_PROGRESS := 1.0
 const REPAIR_WORK_COST := 50.0
 ## What the rung costs to HOLD, per turn.
@@ -18534,22 +18669,15 @@ const KEEPING_DECLARE_PER_WORKER_TURN := 1.0
 const KEEPING_DECLARE_LIVE_SHORTFALL := KEEPING_DECLARE_UPKEEP
 
 func _render_repair_and_declare_states() -> void:
-	# ---- (1) THE 99% REPAIR: an achieved rung whose meter has room offers the `⌃` ---------------
+	# ---- (1) A RUNG STANDING AT ITS COST OFFERS NOTHING -----------------------------------------
 	# The faction knows every craft, so nothing here is knowledge-gated and the offer test's answer is
-	# about the METER alone — which is the axis under test.
+	# about the rung's own standing — which is the axis under test.
 	_hud.update_intensification([_standing_knowledge_row()])
 	_set_world_herds([])
-	_set_forage_patches([_repair_patch_fixture(REPAIR_ERODED_PROGRESS)])
-	_push_bands([_repair_band_fixture()])
-	await _settle()
-	_assert_repair_offer("a Tended patch eroded below its cost", true)
-
-	# …and the CONTROL, one number apart: the SAME patch at a full meter. Without it "offer the repair"
-	# is satisfied by a client that puts a `⌃` on every tended patch on the map.
 	_set_forage_patches([_repair_patch_fixture(REPAIR_FULL_PROGRESS)])
 	_push_bands([_repair_band_fixture()])
 	await _settle()
-	_assert_repair_offer("the same patch at a FULL meter", false)
+	_assert_no_repair_offer("a Tended patch standing at its cost")
 
 	# **AND THE SENTINEL IS NOT THIS REPAIR'S PROBLEM, which was checked rather than assumed.** An
 	# eroded, unqueued source publishes `-1`, and the two surfaces that could call it a stall do not:
@@ -18637,10 +18765,14 @@ func _render_repair_and_declare_states() -> void:
 ## `can_sow` is FALSE so the offer test's highest-rung-first walk cannot answer `Sow` instead — the
 ## claim is about the CULTIVATE repair, and a patch that could also be sown would be offered a real
 ## climb and prove nothing about the eroded rung beneath it.
-func _repair_patch_fixture(progress: float) -> Dictionary:
+func _repair_patch_fixture(progress: float, cultivated: bool = true) -> Dictionary:
 	return RUNG_FX.stamp_patch({
 		"x": REPAIR_PATCH_TILE.x, "y": REPAIR_PATCH_TILE.y, "ecology_phase": "thriving",
-		"is_cultivated": true, "is_field": false, "sow_site_refusal": "",
+		# **THE STANDING AND THE METER TRAVEL TOGETHER, and the caller may not set them apart.** A
+		# patch that HOLDS the tended rung publishes a full meter and one that does not publishes a
+		# partial one; `RUNG_FX.stamp_patch` derives `current_rung` from this flag, so a caller passing
+		# `true` beside a 90% meter would be stamping a snapshot no server can send.
+		"is_cultivated": cultivated, "is_field": false, "sow_site_refusal": "",
 		"cultivation_progress": progress,
 		"cultivation_work_cost": REPAIR_WORK_COST,
 		"cultivation_work_done": progress * REPAIR_WORK_COST,
@@ -18668,12 +18800,15 @@ func _repair_band_fixture() -> Dictionary:
 	]
 	return band
 
-## GUARD: **the eroded rung is OFFERED as a repair, and a full one is not** — asserted on the MODEL
-## (which rung the board resolved) and on the RENDERED slot (a `Button`, i.e. actually pressable),
-## because either alone passes on half the fix. The model answering `cultivate` with the slot still a
-## `Label` is the state that shipped: the row read the rung as done AND in progress at once, so the
-## only way to order the repair was to type the command.
-func _assert_repair_offer(where: String, want_offer: bool) -> void:
+## GUARD: **a rung standing at its cost is offered NOTHING, and nothing is reported as building on it
+## either** — asserted on the MODEL (which rung the board resolved) and on the RENDERED slot, because
+## either alone passes on half the claim. A model naming no rung under a slot that still drew a
+## pressable `⌃` is exactly the dead button reported from play.
+##
+## ⛔ **IT USED TO TAKE A `want_offer` FLAG, and the `true` arm is retired with the state it staged**
+## — an achieved rung short of its cost, which the sim can no longer publish (see this block's
+## header). What remains is the negative, which is the half that was actually violated.
+func _assert_no_repair_offer(where: String) -> void:
 	var models: Array = _hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0)
 	if models.is_empty():
 		_fail("%s — no work row to read" % where)
@@ -18681,16 +18816,15 @@ func _assert_repair_offer(where: String, want_offer: bool) -> void:
 	var model: Dictionary = models[0]
 	var offered := String(model.get("ready_policy", ""))
 	var building := String(model.get("building_policy", ""))
-	_assert_band_panel("%s: the board offers %s (ready=%s, building=%s)"
-			% [where, SourceForecast.IMPROVEMENT_CULTIVATE if want_offer else "nothing",
-				offered, building],
-		offered == (SourceForecast.IMPROVEMENT_CULTIVATE if want_offer else "") and building == "")
-	# …and the slot is a real control rather than a reported percentage. `_ready_mark_buttons` counts
-	# Buttons only, so a row still rendering the BUILDING face answers zero here.
+	_assert_band_panel("%s: the board offers nothing (ready=%s, building=%s)"
+			% [where, offered, building],
+		offered == "" and building == "")
+	# …and the slot is not a pressable mark either. `_ready_mark_buttons` counts OFFER slots only, so a
+	# row rendering the BUILDING face answers zero here too — which is why the model claim above is
+	# stated beside it rather than instead of it.
 	var buttons := _ready_mark_buttons()
-	_assert_band_panel("%s: …and the offer slot is a pressable Button (found %d)"
-			% [where, buttons.size()],
-		buttons.size() == (1 if want_offer else 0))
+	_assert_band_panel("%s: …and no offer slot is drawn at all (found %d)"
+			% [where, buttons.size()], buttons.is_empty())
 
 ## GUARD: **the eroded rung's CARD row states its badge, not the sim's `-1`.** The claim is that the
 ## sentinel never reaches this row at all — `rung_row_value` forks on `built` before it reads the
@@ -18702,11 +18836,15 @@ func _assert_repair_offer(where: String, want_offer: bool) -> void:
 ## countdown on must still render that countdown, or "never states the sentinel" is satisfied by a row
 ## that has stopped reading the wire.
 func _assert_repair_card_states_no_countdown() -> void:
-	var patch := _repair_patch_fixture(REPAIR_ERODED_PROGRESS)
+	# **THE BUILT ROW IS ASKED AT A FULL METER, WHICH IS THE ONLY WAY A BUILT ROW COMES.** It used to
+	# be asked at 90% beside `built = true` — the pairing the sim can no longer publish — and the claim
+	# is unchanged by the correction: the fork on `built` happens BEFORE the countdown is read, so the
+	# sentinel this fixture carries never reaches the row.
+	var patch := _repair_patch_fixture(REPAIR_FULL_PROGRESS)
 	var percent := HudFormat.progress_percent(REPAIR_ERODED_PROGRESS)
 	var row := DetailFormat.rung_row_value(patch, HudComposeVocab.BARE_FORECAST_PREFIX,
 		SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.SOURCE_KIND_FORAGE,
-		DetailFormat.cultivation_built_label(), true, REPAIR_ERODED_PROGRESS,
+		DetailFormat.cultivation_built_label(), true, REPAIR_FULL_PROGRESS,
 		SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
 	# **THE SENTINEL THIS SHAPE RENDERS IS `Lapsed`, NOT `Stalled`.** The fixture's own note says it:
 	# nothing queued and no builders, which is the queue-position half of `build_sentinel_value`'s
@@ -18722,7 +18860,11 @@ func _assert_repair_card_states_no_countdown() -> void:
 			and not row.contains(lapsed) and not row.contains(stalled))
 	# …and the row that is NOT built still reads the wire, or the claim above is about a producer that
 	# ignores the countdown everywhere.
-	var unbuilt := DetailFormat.rung_row_value(patch, HudComposeVocab.BARE_FORECAST_PREFIX,
+	# **…on the patch that really is short of the rung** — same tile, same sentinel, standing on wild
+	# ground with 90% banked, which is what an eroded plant rung looks like once the standing is
+	# re-derived with the position.
+	var unbuilt := DetailFormat.rung_row_value(
+		_repair_patch_fixture(REPAIR_ERODED_PROGRESS, false), HudComposeVocab.BARE_FORECAST_PREFIX,
 		SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.SOURCE_KIND_FORAGE,
 		DetailFormat.cultivation_built_label(), false, REPAIR_ERODED_PROGRESS,
 		SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
@@ -19949,10 +20091,93 @@ func _render_work_inspector_dialog_states() -> void:
 
 	await _render_pending_row_kit_states()
 
+	await _render_dialog_remount_state()
+
 	_set_forage_patches([])
 	_set_world_herds(_herd_fixtures())
 	_push_bands([_band_fixture()])
 	await _settle()
+
+## GUARD: **THE CARD IS AS TALL AS ITS CONTENT, NOT AS TALL AS ITS ROOM — driven through the ORDERING
+## that made it the room.** Reported from play as *"sometimes the job panel is displaying full height,
+## it doesn't always do this when I bring it up … no real pattern"*: on a ~1263px window the card
+## spanned ~1178px around ~300px of content, with the content drawn compactly at the top and NO
+## scrollbar.
+##
+## **THE MECHANISM, MEASURED.** `WorkInspectorDialog.refit` coalesces across a frame, and a
+## `VBoxContainer` whose children have not been SORTED reports its autowrap labels at a wrap width of
+## zero — one word per line. Measured on this very body: **736 where it settles at 278**, and 3773
+## against 408 on the fullest strip in this file. So a fit armed before a re-mount, and resuming after
+## it, asks `fit_to_content` for more than the room has; the room's ceiling wins, the card is left
+## spanning the WHOLE room, the internal scroll goes AUTO over content that then fits (so no bar
+## draws), and the re-mount's own fit — the one thing that would ever measure the new body — was
+## DISCARDED by the coalescing guard.
+##
+## ⛔ **`_assert_dialog_fits_its_room` CANNOT SEE THIS, WHICH IS WHY THE DEFECT REACHED A PLAYER
+## THROUGH A GREEN HARNESS.** *"The card fits its room"* is satisfied by a card that IS the room —
+## exactly the bug. The claim here is the card's DRAWN height against its CONTENT's.
+##
+## **STATED AS AN UPPER BOUND, deliberately.** The card is legitimately SHORTER than its content on a
+## room too small for it (`band_panel_work_inspector_dialog_tight`), where the internal scroll carries
+## the rest; the defect is only ever TALLER. The slack is `ZONE_BOUNDS_TOLERANCE` — the sub-pixel
+## disagreement between a height computed from two floats and a rect Godot lays out in whole pixels,
+## which is the same quantity every other rect-against-rect claim in this file allows for.
+##
+## **PAIRED WITH LIVENESS AND WITH A NEGATIVE.** A card drawing nothing is trivially not too tall, so
+## `_assert_work_inspector_is_a_dialog` runs beside it (the strip is held, its head, its actions, its
+## close glyph and its section headers are all drawn) and the strip's own rect is required
+## non-degenerate; and the ORDINARY mount is measured first, or the claim proves nothing about the
+## re-mount having been the thing that broke it.
+func _render_dialog_remount_state() -> void:
+	await _pin_canvas(DOCKROW_CANVAS)
+	_panel.set_dock(SIDE_BOTTOM)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	_open_first_work_inspector()
+	await _settle()
+	await _settle()
+	_assert_dialog_is_as_tall_as_its_content("band_panel_work_inspector_dialog_remount (plain mount)")
+	# **THE ORDERING, ARMED RATHER THAN HOPED FOR.** The re-mount has to land EARLIER in a frame than
+	# the armed fit's resume — which is every re-mount the live client makes, input and applied
+	# snapshots both running ahead of a `process_frame` handler armed a frame before. Connecting the
+	# re-mount FIRST is what puts it first; the re-render below is what arms the fit it races.
+	get_tree().process_frame.connect(_remount_work_inspector, CONNECT_ONE_SHOT)
+	_hud._bandpanel._repage_work_zone()
+	await _settle()
+	await _settle()
+	await _save("band_panel_work_inspector_dialog_remount")
+	_assert_work_inspector_is_a_dialog("band_panel_work_inspector_dialog_remount")
+	_assert_dialog_is_as_tall_as_its_content("band_panel_work_inspector_dialog_remount")
+	_assert_dialog_is_centred_over_the_map("band_panel_work_inspector_dialog_remount")
+	_assert_dialog_fits_its_room("band_panel_work_inspector_dialog_remount")
+	_hud._bandpanel.close_work_inspector()
+	await _settle()
+
+## The re-mount the state above races the armed fit against — the work zone's ordinary re-render, which
+## ends on `_sync_work_inspector_dialog` and so rebuilds the card's body.
+func _remount_work_inspector() -> void:
+	_hud._bandpanel._repage_work_zone()
+
+## The height half of the claim above, so the plain mount and the re-mount are judged identically.
+func _assert_dialog_is_as_tall_as_its_content(where: String) -> void:
+	var dialog := _work_inspector_dialog()
+	if dialog == null or not dialog.is_open():
+		_fail("%s — no inspector card to measure" % where)
+		return
+	var strip := dialog.mounted_strip()
+	if strip == null:
+		_fail("%s — the inspector card is holding no strip" % where)
+		return
+	# The chrome is read off the stylebox the card actually DRAWS with — `BandCityPanel`'s own, the
+	# single expression `WorkInspectorDialog._card_chrome` reads — rather than restated as a number
+	# here, which would agree with the card by coincidence and drift with its padding.
+	var chrome: float = BandCityPanel.panel_card_stylebox().get_minimum_size().y
+	var content: float = strip.size.y
+	_assert_band_panel("%s: the card is its CONTENT's height, not its room's (%.0f drawn, content %.0f + chrome %.0f, room %.0f)"
+			% [where, dialog.size.y, content, chrome, dialog.room().size.y],
+		content > 0.0 and strip.size.x > 0.0
+			and dialog.size.y <= content + chrome + ZONE_BOUNDS_TOLERANCE)
+
 
 ## **THE FORK THE KITS SECTION MAKES, PHOTOGRAPHED ON BOTH WEBS.** Four frames, because the defect was
 ## one card drawn on four kinds of source and the two that were wrong looked exactly like the two that

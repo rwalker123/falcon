@@ -42,6 +42,12 @@ const CLUBS_RECIPE: &str = "clubs";
 const SLED_ITEM: &str = "sled";
 const SPEARS_ITEM: &str = "spears";
 const TANNING_FRAME_ITEM: &str = "tanning_frame";
+/// **The game's only MATERIAL-ONLY recipe** — every other one of the twelve makes equipment. It
+/// reads hide's `suppleness`, which is why it is also the only place `reads`' second meaning (the
+/// spend order) can be observed apart from its first (the grade).
+const HURDLES_RECIPE: &str = "hurdles";
+/// The other input to [`HURDLES_RECIPE`]; the roster's one spawn-stocked material.
+const WOOD: &str = "wood";
 /// The one tier every shipped item ships, and the fixture's two metal ones.
 const FLINT_TIER: &str = "flint";
 const BRONZE_TIER: &str = "bronze";
@@ -2558,5 +2564,80 @@ fn a_bench_that_cannot_draw_its_pile_publishes_no_income() {
     assert!(
         promised > 0.0,
         "…and it is a real rate rather than a row of zero: {promised}"
+    );
+}
+
+/// **A MATERIAL-ONLY RECIPE PUBLISHES NO GRADE, AND ITS NOTE CARRIES NO ARROW.**
+///
+/// A grade is a property of a piece of **equipment** — `emit_outputs` stamps it on the batch, and
+/// `MaterialBatch` has no grade field at all. So `hurdles`, which makes only a material, is stamped
+/// with nothing whatever the hide reads: every hurdle the bench delivers carries the recipe's own
+/// `stoutness 0.6 / span 0.6`. A published `→ poor` there was a promise of an outcome that cannot
+/// occur, and the gate is `RecipeDef::grade_for` resolving `None` for such a recipe.
+///
+/// **The pairing is the test.** *"the material recipe publishes no grade"* passes on a build that
+/// stopped publishing grades entirely, so the **sled** — same bench material, same missing tool,
+/// same frame — asserts the grade AND the arrow are still there.
+///
+/// Both notes are compared by **equality**, never `contains`: a dangling `Hide, no tanning frame →`
+/// contains the right prefix and is exactly the defect.
+#[test]
+fn a_material_only_recipe_publishes_no_grade_while_an_equipment_one_still_does() {
+    let (mut app, band) = world();
+    // A spawned band's sled is untouched, which publishes the shrug rather than the invitation — and
+    // the invitation is the string under test.
+    wear_out(&mut app, band, SLED_ITEM);
+    strip(&mut app, band, HIDE);
+    // **Poor on BOTH axes**, so the two recipes' different read axes cannot be the reason one of
+    // them quotes a grade and the other does not.
+    deposit(
+        &mut app,
+        band,
+        HIDE,
+        PLENTY,
+        &[(TOUGHNESS, 0.14), (SUPPLENESS, 0.14)],
+    );
+    deposit(
+        &mut app,
+        band,
+        "fibre",
+        PLENTY,
+        &[("fineness", 0.5), ("strength", 0.5)],
+    );
+    deposit(
+        &mut app,
+        band,
+        WOOD,
+        PLENTY,
+        &[("hardness", 0.5), ("pliancy", 0.6)],
+    );
+    let published = publish(&mut app, band);
+
+    let hurdles = offer(&published, HURDLES_RECIPE);
+    assert!(
+        hurdles.available,
+        "fixture: the hurdles row must be buildable, or its note is a refusal and not the \
+         invitation under test - got {hurdles:?}"
+    );
+    assert_eq!(
+        hurdles.output_grade, "",
+        "a recipe whose outputs are all materials stamps no grade, so it must quote none"
+    );
+    assert_eq!(
+        hurdles.reason, "Hide, no tanning frame",
+        "an empty grade must leave NO dangling arrow - the note ends at the tool clause"
+    );
+
+    // LIVENESS: the same frame, the same hide, an EQUIPMENT recipe — the grade and the arrow are
+    // both still published.
+    let sled = offer(&published, SLED_RECIPE);
+    assert_eq!(
+        sled.output_grade, "poor",
+        "an equipment recipe still quotes the band its draw would select"
+    );
+    assert_eq!(
+        sled.reason, "Hide, no tanning frame \u{2192} poor",
+        "and its note still carries the arrow - without this arm the claim above passes on a build \
+         that stopped publishing grades altogether"
     );
 }

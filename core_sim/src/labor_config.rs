@@ -477,15 +477,18 @@ pub struct HuntLaborConfig {
     /// > tier declares `hunt_carry equipped 40.0`, and what stands here is the `12.0` the item used
     /// > to declare as its `unequipped` side. The key's **role** changed and its name did not,
     /// > because every caller hands it to
-    /// > [`crate::equipment_config::EquipmentConfig::hunt_per_worker_biomass_capacity`] (or
-    /// > `::pen_per_worker_biomass_capacity`), whose argument is the fallback either way.
+    /// > [`crate::equipment_config::EquipmentConfig::hunt_per_worker_biomass_capacity`], whose
+    /// > argument is the fallback either way.
     /// >
-    /// > **A herd row, a patch row or a Field's managed collection cap must NOT quote this as "what
-    /// > a hunter hauls"** — none of them has a band to resolve a tier against, and the answer they
-    /// > want is [`crate::equipment_config::EquipmentConfig::equipped_reference`], which reads
-    /// > `40.0` off the item table. **A pen still shares this rate**, resolved off the sled's tier
-    /// > through [`crate::equipment_config::EquipmentStat::shares_equipped_rate_with`], so it keeps
-    /// > exactly one home.
+    /// > **A herd row or a patch row must NOT quote this as "what a hunter hauls"** — neither has a
+    /// > band to resolve a tier against, and the answer they want is
+    /// > [`crate::equipment_config::EquipmentConfig::equipped_reference`], which reads `40.0` off
+    /// > the item table.
+    /// >
+    /// > **A PEN IS COLLECTED ON THIS SAME KEY** (issue #543): carry is a fact about the people and
+    /// > their gear, never about the ground they stand on. The `PenCarry` stat that used to fork the
+    /// > two was deleted once the item discriminating them (the hurdles) became a material — see
+    /// > `.claude/rules/core_sim/equipment.md` → *"Carry is carry"*.
     pub per_worker_biomass_capacity: f32,
 }
 

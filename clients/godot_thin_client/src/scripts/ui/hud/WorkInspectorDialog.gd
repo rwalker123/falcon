@@ -91,7 +91,20 @@ var _reserved: float = 0.0
 ## terms `_room` cuts with. `BandComposeFloat` holds the identical pair for the identical reason.
 var _anchor: Rect2 = Rect2()
 var _edge: int = SIDE_TOP
+## A fit is in flight — see `refit`, which COALESCES on this rather than discarding.
 var _fit_pending: bool = false
+## …and a fit was asked for WHILE one was in flight, to be re-run once the in-flight one lands.
+##
+## ⛔ **A COALESCING GUARD MUST DEFER, NOT DISCARD** — `ComposeSheet._fit_requested`'s contract, which
+## this card was written without. `refit` used to `return` on `_fit_pending`, and the request it threw
+## away is the one that would have CORRECTED the fit: a re-mount landing after a fit was armed but
+## before it resumes leaves the armed fit measuring a body that has just been replaced, and the
+## re-mount's own fit — the only thing that would ever measure the new body — was the one dropped.
+##
+## **ONE COALESCED RE-RUN, NOT A QUEUE.** The flag records THAT a fit was wanted, never how many, so a
+## burst collapses to a single extra pass; it is cleared at the START of the run that honours it, so a
+## request arriving during that re-run is recorded afresh rather than lost in turn.
+var _fit_requested: bool = false
 
 func _ready() -> void:
 	# `target_width` is declared per mount, so the base class's `_ready` width application has nothing
@@ -134,6 +147,13 @@ func _ready() -> void:
 	_body = VBoxContainer.new()
 	_body.name = "WorkInspectorBody"
 	_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# **THE CONTENT ITSELF ASKS FOR THE FIT, WHICH IS WHAT MAKES A WRONG ONE RECOVERABLE**
+	# (`ComposeSheet`'s own hookup, and this card was written without it). Every fit above is a
+	# measurement taken at ONE instant, and the frame it is taken in is not something the card
+	# controls; this edge means the body says so whenever the number it reports changes, so a fit
+	# taken while the tree was mid-rebuild is corrected on the frame it settles instead of standing
+	# until some unrelated event re-mounts. The coalescer collapses the burst a rebuild emits.
+	_body.minimum_size_changed.connect(refit)
 	_scroll.add_child(_body)
 
 # ---- public API -------------------------------------------------------------
@@ -204,10 +224,34 @@ func room() -> Rect2:
 ## Re-fit the card to its content and re-centre it. Coalesced across one frame for the reason
 ## `BandComposeFloat.refit` is: the content's height is a function of the card's width, so a
 ## measurement taken in the same frame the body was rebuilt reports the PREVIOUS content's wrapping.
+##
+## ⛔ **THAT SENTENCE IS TRUE AND IT IS NOT THE WHOLE REASON, WHICH IS HOW THE CARD CAME TO DRAW AT
+## FULL ROOM HEIGHT AROUND 300px OF CONTENT.** It reads as though the frame's only job were to let a
+## wrap re-settle, i.e. as though a stale measurement were merely a line or two out. It is not: a
+## `VBoxContainer` whose children have not been SORTED reports its autowrap labels at a wrap width of
+## zero — one word per line — so the reading is not the previous content's, it is nobody's. Measured
+## on this very body at the instant of a mount: **736 against the 278 it settles at**, and 3773
+## against 408 on the fullest strip in the harness. A fit taken there asks `fit_to_content` for more
+## than the room has, the room's ceiling wins, and the card is left spanning the WHOLE room with its
+## content drawn compactly at the top and no scrollbar — the shipped defect, reported from play as
+## *"sometimes the job panel is displaying full height … no real pattern"*. The pattern was the
+## ordering: a mount landing between a fit being armed and that fit resuming.
+##
+## **THREE THINGS KEEP THAT FIT HONEST, and none of them is a frame count**: the request that would
+## have corrected it is deferred rather than dropped (`_fit_requested`), the height is read a frame
+## AFTER the width is applied rather than in the same pass (below), and the body itself asks for a
+## re-fit whenever its minimum moves (`_body.minimum_size_changed`, wired in `_ready`) — which is what
+## makes a fit taken at a bad instant recoverable rather than permanent.
 func refit() -> void:
-	if not visible or _fit_pending or _body == null:
+	if not visible or _body == null:
+		return
+	if _fit_pending:
+		_fit_requested = true
 		return
 	_fit_pending = true
+	# Cleared by the run that is about to honour it, so a request arriving DURING this pass is
+	# recorded afresh rather than being swallowed by the one already being served.
+	_fit_requested = false
 	await get_tree().process_frame
 	_fit_pending = false
 	if not visible or _body == null:
@@ -215,9 +259,25 @@ func refit() -> void:
 	var room := _room()
 	max_width = maxf(room.size.x, target_width)
 	fit_width(_body.get_combined_minimum_size().x, _card_chrome_width())
+	# **A SECOND FRAME, BECAUSE THE WIDTH FIT ABOVE INVALIDATES THE HEIGHT READING BELOW IT** —
+	# `ComposeSheet.refit`'s own wait, for its own measured reason. Godot's container sort is
+	# DEFERRED, so a combined minimum height read in the pass that just moved the card's width still
+	# reports the PREVIOUS width's wrapping. `_fit_pending` is already false here, so a request
+	# arriving during this second wait is not swallowed — it simply runs, and applies the LATER of the
+	# two measurements, which is the more settled one.
+	await get_tree().process_frame
+	if not visible or _body == null:
+		return
+	room = _room()
 	max_height = room.size.y
 	fit_to_content(_body.get_combined_minimum_size().y, _card_chrome().y, _scroll)
 	_place()
+	# The deferred request, honoured now that this pass has landed. Fire-and-forget, like every call
+	# site: nothing awaits `refit`, and awaiting our own re-run would only make this coroutine outlive
+	# the fit it was asked for.
+	if _fit_requested:
+		_fit_requested = false
+		refit()
 
 # ---- geometry ---------------------------------------------------------------
 

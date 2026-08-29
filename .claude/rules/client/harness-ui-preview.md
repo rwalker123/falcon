@@ -2159,3 +2159,57 @@ reported count, set it exactly.
 **`band_panel_queue_expanded_autoscroll.png` IS NON-DETERMINISTIC BETWEEN RUNS** and is not attributable
 to any change — measured directly: two consecutive runs of the unmodified tree agree with each other
 and differ from a third. Anything comparing frame sets across runs has to expect it.
+
+## The material-only row's two sentences (`chapters/crafting_bench.gd`)
+
+Six `PASS` and NO frame, all six riding the existing `crafting_panel` save. The behaviour and the
+claims' pairing are `crafting-panel.md`'s; what belongs here is the tally and the fixture correction.
+
+**MEASURED, BEFORE AND AFTER, ON THIS TREE**: `370 / 1591` → `370 / 1597`, exit 0 both. The
+before-figure was taken as a RUN on the merge base, not by subtracting six from the after — the
+"never sum a delta onto a recorded figure" rule above — and it happened to agree with the recorded
+`370 / 1589` to within the two `PASS`es that had drifted in un-recorded since, which is the usual
+outcome and still not evidence.
+
+**`crafting_bench`'s `EXPECTED_CHECKPOINTS` moved 143 → 149, RE-MEASURED rather than adjusted by the
+delta** — the const was raised to an impossible number, the run read back `reached 149 checkpoints`,
+and 149 was set exactly. Six claims added to a floor of 143 happens to be 149 here; that arithmetic
+is a coincidence to check, never a substitute for the read.
+
+**NO FRAME MOVED IN COUNT AND ELEVEN MOVED IN CONTENT** — every state built on `_crafting_band()` /
+`_two_tier_band()` renders the ledger's one stock row, whose second line and whose refusal both
+changed their wording. That is the shape of a copy fix: the same states, reading differently.
+
+⛔ **THE FIXTURE'S OWN CORDAGE REFUSAL WAS STAGING A PAYLOAD NO SIM CAN RESOLVE.** It read
+`Reed .70 → strong` — a `→ grade` tail on a material-only recipe — which `RecipeDef::grade_for` has
+stopped producing, so the chapter was asserting against a shape the server cannot send. It is
+`Reed, no loom` now, and the `baskets` KIT offer's existing `Reed, no loom → fair` became the
+vacuity guard beside it: same bench material, same absent loom, one word of difference.
+
+## The hint's pen column was a tautology (`chapters/compose_rungs.gd`, PR #589 review)
+
+Three `PASS` REMOVED and no frame moved: `370 / 1597` → `370 / 1594`, exit 0 both, each figure a run
+on this tree rather than a delta. The claims deleted were the two "penned" hint readings and the
+wild/penned precondition beside them; the two WILD readings, which are real, are kept, and the
+assertion is `_assert_the_hint_states_each_kits_own_items` — the name it now earns.
+
+⛔ **THE DELETED CLAIMS COULD NOT FAIL.** They evaluated `KitRoster.tier_hint(kits, kit, band,
+JOB_HUNT)` — the BYTE-IDENTICAL expression the wild pair uses, `tier_hint` having lost its source
+parameter when issue #543 deleted `EquipmentStat::PenCarry` — while the corralled twins they were
+named for were built and handed nowhere. A block whose stated purpose was *"the fence moves NOTHING"*
+would therefore have stayed green under exactly the regression it named: a source parameter re-added
+to `tier_hint`, or a `QUARRY_CORRALLED_KEY` read off the band dict.
+
+**FOR THE HINT, THE INVARIANT IS NOW STRUCTURAL RATHER THAN TESTED**, and that is the trade this
+records: restoring a real penned reading requires `tier_hint` to take a source again, which is the
+change the assertion was about. `tier_hint` has no argument a pen can arrive through, so a penned
+reading is not expressible; **a future source parameter on it is the signal to rebuild the
+wild/penned equality**, and the assertion's own docstring says so at the point of edit. The fence
+still crosses real code in `_assert_a_pen_prices_on_the_hunters_carry`, which drives
+`DrawerComposeController._hunt_priced_herd` over `_corral_twin`'s pair — that helper survives, with
+one caller instead of two.
+
+**`compose_rungs`'s `EXPECTED_CHECKPOINTS` moved 90 → 104, RE-MEASURED**: the const was raised to an
+impossible number, the run read back `reached 104 checkpoints`, and 104 was set. The declared 90 was
+a STALE floor — the chapter had been reaching 107 before this change, so subtracting the three
+removed claims from 90 would have left the guard 14 checkpoints slacker than the file it audits.

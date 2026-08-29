@@ -18,8 +18,11 @@ worked, in cumulative work units** (`docs/plan_standing_upkeep.md` §2.8). `plan
 and `plant:field` `50 → 125`, each rung's span being its own `build.work_cost`.
 `cultivation_progress`, `field_progress` and their four stamped companions (`*_cost`,
 `*_retain_bar`) are **gone**; prose below that names them is describing the retired shape, and the
-seam it points at is `forage::patch_rung_work_done` — the position clamped into a rung's own span,
-which is what the wire's two per-rung meters are still published from.
+seam it points at is `forage::patch_rung_work_done` — the position read into a rung's own span
+**through the patch's standing**, which is what the wire's two per-rung meters are still published
+from. It is deliberately not the bare subtraction that phrase used to describe: see
+`intensification.md` → "A RUNG'S METER IS A **PUBLICATION** OF THE STANDING" for the `f32` reason a
+completed Field once published `0.99999994` and a finished Field's card read *"Field 99%"*.
 
 - **`ForagePatch::standing` is derived and re-stamped on every write**, and
   `ForagePatch::set_ladder_position(position, ladder)` is the **only** mutator — it writes both fields

@@ -474,8 +474,9 @@ func _tile_terrain_lines(tile_info: Dictionary,
         # **THE ROW TAKES THE REAL BUILD CREW, NOT A *THIS RUNG IS IN FLIGHT* BOOL**
         # (`docs/plan_standing_upkeep.md` §4.6a). It was `building_rung == CULTIVATE and not declared`,
         # which says *this rung is the one being built* and was being read as *there are builders on
-        # it*. The two part on a state this arc built a whole readout for: a completed Cultivate that
-        # later erodes below its retention bar carries NO declared improvement (completion clears it),
+        # it*. The two part on a state this arc built a whole readout for: a Cultivate that has been
+        # completed and has since eroded back below its cost carries NO declared improvement (completion
+        # clears it; the sim's retention BAR this used to name is retired with the cliff it patched),
         # so the bool answered `true` on a meter nobody is touching and the row wore the amber
         # `⚠ ∞ turns` where the deliberate-hold `Held at 92%` belongs. **The crew is what
         # `BUILD_METER_HOLDS` cannot carry**, so the crew is what the row is given.

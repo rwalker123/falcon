@@ -634,6 +634,27 @@ pub(crate) fn herds_to_array(
             "corral_upkeep_material_demand",
             &material_payoffs_to_array(herd.corralUpkeepMaterialDemand()),
         );
+        // **THE PILE `animal:pen` ITSELF SWALLOWS TO RAISE** — the material twin of `corral_work_cost`
+        // above, UNSCALED, resolved live off the ladder and published at every position exactly as that
+        // work figure is.
+        //
+        // ⛔ **IT IS NOT `build_material_cost`, AND COLLAPSING THE TWO WOULD RE-OPEN THE GAP IT CLOSES.**
+        // That field prices the rung DIRECTLY ABOVE where the source stands; `animal:pen` is the top of
+        // the animal branch, so on a CORRALLED herd — the only source a ring is ever offered from — it is
+        // empty, correctly and on purpose. This field is the pen's OWN pile, so it is the one a ring can
+        // be quoted from. On a PASTORAL herd the two agree by construction (same rung, two selectors),
+        // and it is the DISAGREEMENT on a penned herd that the ring price card needs.
+        //
+        // It exists for word-for-word the reason `corral_upkeep_material_demand` above does: the rung
+        // the player is deciding on is not the rung the stamped/above-selected field answers for.
+        // Read it beside `current_rung`, exactly as the work half is: on a pastoral herd it prices the
+        // CLIMB to the pen, on a penned herd it prices ANOTHER RING — the same rung, again. The three
+        // standing `MaterialPayoff` rules hold: NEVER SUMMED, EMPTY MEANS "no row" and never zero, and
+        // the key is always present.
+        let _ = dict.insert(
+            "corral_build_material_cost",
+            &material_payoffs_to_array(herd.corralBuildMaterialCost()),
+        );
         // **WHAT THE AT-RISK METER IS LOSING PER TURN** — the term the build's closed form actually
         // nets (`net = crew work − rot`), per SOURCE rather than per rung. Always meaningful, never a
         // sentinel: `0` when the keeping covers this herd, when it is inside its rung's grace, and —
@@ -753,13 +774,10 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
             "forage_carry_per_worker_biomass",
             kit.forageCarryPerWorkerBiomass() as f64,
         );
-        // The PEN's and the SCOUT VANTAGE's tiers. `pen_carry_per_worker_biomass` is deliberately
-        // NOT `hunt_carry_per_worker_biomass`: a sled drags a carcass in off the range and a pen
-        // stands at the camp, so a kit carrying only a sled collects a pen at the bare rate.
-        let _ = dict.insert(
-            "pen_carry_per_worker_biomass",
-            kit.penCarryPerWorkerBiomass() as f64,
-        );
+        // The SCOUT VANTAGE's tier. A `pen_carry_per_worker_biomass` rode beside it claiming to be
+        // deliberately NOT `hunt_carry_per_worker_biomass`; it is GONE (issue #543), because carry
+        // is decided by the people and their gear and never by what they are standing on, so a pen
+        // is collected on `hunt_carry_per_worker_biomass` above.
         let _ = dict.insert("scout_vantage_range", kit.scoutVantageRange() as f64);
         // **THE BUILD AXIS, IN WORK UNITS** — the EXTRA work ONE equipped worker DELIVERS per turn,
         // summed over the equipped crew. Neutral `0`; the shipped crook declares **0.5**, so an
@@ -892,10 +910,19 @@ pub(crate) fn forage_patches_to_array(
         // The Sow INVESTMENT rung + the FIELD — plant RUNG 3, the twin of the herd's Corral block
         // (docs/plan_intensification_ladder.md §2). The plant branch carries TWO build meters on ONE
         // source and both ship: `cultivation_progress`/`is_cultivated` (rung 2, above) and these.
-        // They are independent — `Sow` needs no prior patch, so a Field may stand on ground that was
-        // never tended. Read `is_field` (the BOOL) for the completed rung; never infer a rung from
-        // the float. MapView cross-refs all five onto `tile_info` (as `patch_*`) exactly as the
-        // Cultivate pair above.
+        //
+        // ⛔ **RETIRED CLAIM — *"they are independent: `Sow` needs no prior patch, so a Field may
+        // stand on ground that was never tended"*.** That was the two-independent-meters model. A
+        // patch keeps ONE ladder position now and the Field rung's range begins where the tended
+        // rung's ends, so a `sow` ordered on wild ground lays the tended leg first and a standing
+        // Field publishes `is_cultivated` true beside a FULL `cultivation_progress`, however it was
+        // reached. The pairs are two windows onto one position, not two facts.
+        //
+        // Read `is_field` (the BOOL) for the completed rung; never infer a rung from the float —
+        // and never read a float BELOW 1.0 as *the rung slipped*, because each meter is published as
+        // a publication of the standing verdict (`intensification::rung_work_done`) and a held rung
+        // reads exactly full. MapView cross-refs all five onto `tile_info` (as `patch_*`) exactly as
+        // the Cultivate pair above.
         let _ = dict.insert("field_progress", patch.fieldProgress());
         let _ = dict.insert("is_field", patch.isField());
         // Sow's "preparing X → then Y" pre-commit pair, mirroring `ceiling_cultivate`/`tended_yield`.

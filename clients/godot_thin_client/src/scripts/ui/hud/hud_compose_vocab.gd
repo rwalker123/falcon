@@ -1363,10 +1363,11 @@ const KIT_WITHHELD_ENTRY_FORMAT := "%s — %s"
 ## clear its defence. `%s` the quarry. It names the ANIMAL rather than the weapon because what the
 ## player is choosing between is kits, and the animal is the term that changes under them.
 const KIT_WITHHELD_REASON_CANNOT_HURT := "nothing it carries can bring down a %s"
-## The PEN rule's reason — the kit's contribution is `pen_carry`, which only a corralled herd is
-## collected on. Worded for the AXIS rather than for any one kit by name: the rule is that the source
-## cannot read the stat, and a second kit supplying it tomorrow gets the same sentence.
-const KIT_WITHHELD_REASON_PEN_ONLY := "what it adds is only used on a penned herd"
+## ⛔ **THE PEN RULE'S REASON IS GONE WITH THE RULE** (issue #543). It read
+## *"what it adds is only used on a penned herd"* and fired on a kit whose only contribution was
+## `pen_carry`, an `EquipmentStat` that no longer exists — a pen is collected on the hunt's haul, so
+## no kit can be pen-only. `KitRoster.kit_offer` owns what the deletion cost and why the rule was
+## right to exist while the hurdles were an item.
 ## The BUILD-BRANCH rule's reason — this kit's tool serves the other food web, so on the build in
 ## front of it the contribution is the neutral zero. `%s` is the web the entry is on, as a noun a
 ## player recognises from the ladder rather than as the wire's `plant` / `animal` token.
@@ -1395,11 +1396,14 @@ const KIT_HINT_SEPARATOR := " · "
 const KIT_HINT_ATTACK_FORMAT := "attack %s"
 const KIT_HINT_HUNT_CARRY_FORMAT := "carry %s per hunter"
 const KIT_HINT_FORAGE_CARRY_FORMAT := "carry %s per gatherer"
-## **THE PEN'S OWN CARRY, AND IT IS NOT THE SLED'S.** A sled drags a carcass in off the range; a pen
-## stands at the camp, and what bounds a slaughter there is handling gear — so a kit carrying only a
-## sled collects a pen at the bare rate. It prints on a hunt sheet BESIDE the sled's line rather than
-## instead of it (a handling kit carries both), and only for a kit that actually supplies the axis.
-const KIT_HINT_PEN_CARRY_FORMAT := "pen %s per keeper"
+## ⛔ **THERE IS NO PEN CLAUSE ON THE HINT LINE ANY MORE** (issue #543). A
+## `KIT_HINT_PEN_CARRY_FORMAT := "pen %s per keeper"` stood here arguing *"a sled drags a carcass in
+## off the range; a pen stands at the camp, and what bounds a slaughter there is handling gear — so a
+## kit carrying only a sled collects a pen at the bare rate."* Handling gear left the roster when
+## hurdles became a material, both sides of the rate landed on the sled, and `EquipmentStat::PenCarry`
+## was deleted. A penned herd's hint states `KIT_HINT_ATTACK_FORMAT` and `KIT_HINT_HUNT_CARRY_FORMAT`
+## like any other hunt row — the same haul number the pen clause used to print, plus the weapon,
+## because a pen is fought.
 ## **HOW MANY OF THE COMPOSED CREW THIS KIT ACTUALLY REACHES** — `3 of 8 equipped`, printed after the
 ## tier clauses and before the item conditions.
 ##

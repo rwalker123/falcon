@@ -45,8 +45,8 @@ const KIT_JOBS_KEY := "jobs"
 ## for a band with fresh traps and dry spears.
 const KIT_ITEM_IDS_KEY := "item_ids"
 
-## The three tier axes a kit publishes, and the ONE mapping from each to the consumable component
-## behind it (`equipment.json` "One kit, one job"): spears raise ATTACK, a SLED raises the HUNT's
+## The three CARRY/FIGHT tier axes a kit publishes, and the ONE mapping from each to the consumable
+## component behind it (`equipment.json` "One kit, one job"): spears raise ATTACK, a SLED raises the HUNT's
 ## carry, BASKETS raise the FORAGE web's. **The two carry tiers are not two readings of one number** —
 ## a band can be out of baskets with its sled untouched — and rendering one on the other's row is the
 ## defect the three-kit split corrected sim-side.
@@ -54,11 +54,16 @@ const KIT_ATTACK_KEY := "attack"
 const KIT_HUNT_CARRY_KEY := "hunt_carry_per_worker_biomass"
 const KIT_FORAGE_CARRY_KEY := "forage_carry_per_worker_biomass"
 
-## The two axes the expanded roster added. **`pen_carry` is NOT a second reading of `hunt_carry`** —
-## a sled drags a carcass in off the range and a pen stands at the camp, so a kit carrying only a
-## sled collects a pen at the bare rate. `scout_vantage_range` is what a posted scout vantage can
-## make out; how far out it is POSTED is not a kit axis at all (it is three `labor_config` dials).
-const KIT_PEN_CARRY_KEY := "pen_carry_per_worker_biomass"
+## ⛔ **THERE IS ONE CARRY RATE AND A PEN IS COLLECTED ON IT** (issue #543). A `KIT_PEN_CARRY_KEY`
+## stood here reading *"**`pen_carry` is NOT a second reading of `hunt_carry`** — a sled drags a
+## carcass in off the range and a pen stands at the camp, so a kit carrying only a sled collects a
+## pen at the bare rate"*. That was true while the bare side lived on the **hurdles**: a handling
+## crew collected 40 at a pen where a drag-harness crew collected 12. `docs/plan_standing_upkeep.md`
+## §4.9 item 12 turned hurdles into a MATERIAL and deleted the item, which put BOTH sides of the pair
+## on the sled — two names for one number — so `EquipmentStat::PenCarry` and its three wire fields
+## are gone. **What a worker can carry is a fact about the people and their gear, never about the
+## ground they stand on**, so a penned herd is priced on `KIT_HUNT_CARRY_KEY` above like any other
+## hunt row. Nothing here may reintroduce a pen axis to "restore" the distinction: it does not exist.
 ## **THE SCOUT'S AXIS, AND IT HAS A SURFACE NOW.** It was declared for the roster's axis vocabulary
 ## with no hint-line consumer — `tier_hint` was written for the two COMPOSE sheets, which are hunt and
 ## forage only — and the WORKFORCE zone's role CARDS are the surface that comment said to wait for:
@@ -209,8 +214,7 @@ const ITEM_CONDITION_REMAINING_KEY := "remaining"
 ## **WHAT EVERY OFFERED KIT WOULD GRANT *THIS* BAND, RIGHT NOW** — one row per roster kit on the
 ## band's own cohort (`PopulationCohortState.kitTiers`), resolved by the sim against this band's LIVE
 ## wear. `{kit_id, attack, hunt_carry_per_worker_biomass, forage_carry_per_worker_biomass,
-## pen_carry_per_worker_biomass, scout_vantage_range, attack_min_body_mass, attack_max_body_mass,
-## dispersion, exposure}`.
+## scout_vantage_range, attack_min_body_mass, attack_max_body_mass, dispersion, exposure}`.
 ##
 ## **IT IS THE ANSWER, AND NOTHING HERE MAY RE-DERIVE IT.** This layer used to step a fresh tier down
 ## by asking whether the item behind an axis still had condition — which needs to know WHICH ITEM
@@ -222,18 +226,19 @@ const ITEM_CONDITION_REMAINING_KEY := "remaining"
 ## hand under `trapping` — same root cause as the pre-launch estimate tables this arc retired, a fact
 ## the sim knew that the wire did not carry, and the same fix: publish the answer.
 ##
-## **IT STATES ALL FIVE AXES — the fought, hauled, gathered, COLLECTED and SEEN ones.** `pen_carry`
-## and `scout_vantage_range` were the two it did not carry, and they were the two every reader had to
-## take off the ROSTER's fresh tier instead: a pen's compose sheet read `pen 40.0 per keeper` for a
-## band whose handling gear was dry while the sim collected 12, and a Scout card read `2-tile sight
-## per vantage` while `calculate_visibility` revealed at 1 — both wrong in the reassuring direction.
-## They ride the row now, so every axis this layer quotes is the band's own answer.
+## **IT STATES ALL FOUR AXES — the fought, hauled, gathered and SEEN ones.** This doc said *"ALL FIVE
+## … the fought, hauled, gathered, COLLECTED and SEEN"*, the COLLECTED one being `pen_carry`, which is
+## deleted (issue #543): a pen is collected on the hauled one. `scout_vantage_range` is the axis the
+## row's original argument still turns on — it was taken off the ROSTER's fresh tier before the row
+## carried it, so a Scout card read `2-tile sight per vantage` while `calculate_visibility` revealed
+## at 1, wrong in the reassuring direction.
 ##
-## **THE COHORT'S FLAT `pen_carry_per_worker_biomass` / `scout_vantage_range` STAY, and they are not
-## redundant with the row.** Those two answer *this band at its JOB DEFAULT* — the question a readout
-## with no kit selected asks (the Gear popover's rows) — and this table answers *what the kit under
-## the cursor would grant*, which is the picker's. Neither is derivable from the other: the job
-## default is one kit and the picker offers all of them.
+## **THE COHORT'S FLAT `scout_vantage_range` STAYS, and it is not redundant with the row.** It answers
+## *this band at its JOB DEFAULT* — the question a readout with no kit selected asks (the Gear
+## popover's rows) — and this table answers *what the kit under the cursor would grant*, which is the
+## picker's. Neither is derivable from the other: the job default is one kit and the picker offers all
+## of them. The cohort's flat `pen_carry_per_worker_biomass` was the second half of that pair and went
+## with the axis.
 const BAND_KIT_TIERS_KEY := "kit_tiers"
 const BAND_KIT_TIERS_ID_KEY := "kit_id"
 
@@ -293,8 +298,8 @@ const JOB_BUILDERS := "builders"
 
 ## **THE AXIS EACH BAND-WIDE ROLE IS PRICED ON** — a Scout's kit buys what a posted vantage can make
 ## out, a Warrior's buys the `attack` the camp is defended at. Only the two roles with no source to
-## work appear: a hunt or forage crew's carry axis is a property of the SOURCE (`carry_axis_for`)
-## rather than of the job alone, and the two questions must not collapse into one table.
+## work appear: a hunt or forage crew is priced on a CARRY axis instead (`JOB_CARRY_AXES`), and a
+## role axis and a carry axis must not collapse into one table.
 ##
 ## **THE BUILDERS ARE ABSENT AGAIN, AND THIS TABLE FOLLOWS ITS READERS.** `KIT_BUILD_WORK_KEY` had an
 ## entry here for exactly as long as the Builders card carried a read-only gear line
@@ -326,8 +331,12 @@ static func role_axis(job: String) -> String:
 ## and every kit on every sheet quoted identical numbers with only the hint line moving. Reported from
 ## play. A job is what a call site actually knows; the axis is this layer's business.
 ##
-## **IT IS THE JOB'S ANSWER, NOT THE LAST WORD** — a penned herd overrides it. `carry_axis_for` is the
-## whole of that rule and the only thing anything should ask; nothing outside it reads this table.
+## ⛔ **IT IS THE WHOLE ANSWER NOW.** This doc read *"IT IS THE JOB'S ANSWER, NOT THE LAST WORD — a
+## penned herd overrides it"*, and `carry_axis_for` carried that override to a `pen_carry` axis of its
+## own. The axis is deleted (issue #543): **a pen is collected on the hunt's haul**, so the job
+## decides and the source has nothing to say about it. `carry_axis_for` is still the only thing
+## anything should ask — a caller that spells an axis can spell the wrong one, which is the bug
+## `priced_source` documents — but it is now a lookup and no longer a rule.
 const JOB_CARRY_AXES := {
 	JOB_HUNT: KIT_HUNT_CARRY_KEY,
 	JOB_FORAGE: KIT_FORAGE_CARRY_KEY,
@@ -605,26 +614,24 @@ static func repriced_source(src: Dictionary, prefix: String, carry: float, refer
 		out[stay_key] = clampf(1.0 - (1.0 - stay) * maxf(dispersion, 0.0), 0.0, 1.0)
 	return out
 
-## **THE CARRY AXIS THIS SOURCE IS COLLECTED ON — the job's answer (`JOB_CARRY_AXES`), overridden by
-## a PENNED herd.** `""` for a job with no carry axis at all, which `priced_source` reads as "nothing
-## to price against".
+## **THE CARRY AXIS THIS JOB IS COLLECTED ON** (`JOB_CARRY_AXES`). `""` for a job with no carry axis
+## at all, which `priced_source` reads as "nothing to price against".
 ##
-## **THE AXIS IS A PROPERTY OF THE SOURCE, AND A JOB-KEYED TABLE ALONE COULD NOT SAY SO.** A corralled
-## herd is worked from a Hunt row, so pricing it by job read the SLED's tier — while the sim collects
-## a pen on `EquipmentStat::PenCarry`, a stat of its own and not the hunt haul's. That UNDER-stated
-## the very kit the pen exists for and OVER-stated every kit carrying a sled and no handling gear, and
-## on a roster whose hunt kits all carry a sled the two errors cancelled into
-## *every hunt kit quotes a pen the same number* — a perfectly plausible sheet, which is why only a
-## driven assertion can hold it. A sled drags a carcass in off the range; a pen stands at the camp.
+## ⛔ **IT TOOK THE SOURCE AND FORKED ON A PENNED HERD, AND IT DOES NOT ANY MORE** (issue #543). The
+## dead rule: *"the job's answer, overridden by a PENNED herd … a corralled herd is worked from a Hunt
+## row, so pricing it by job read the SLED's tier — while the sim collects a pen on
+## `EquipmentStat::PenCarry`, a stat of its own and not the hunt haul's."* That stat is deleted. The
+## fork it corrected was real while the hurdles were an ITEM (handling gear collected 40, a
+## drag-harness crew 12); §4.9 item 12 made hurdles a material and put both sides on the sled, so the
+## two axes became two names for one number. **A pen is collected on the hunt's haul, at the sled's
+## own graded rate** — `recipes.json` grades `hunt_carry` (poor 30 / fair 34 / good 40 / excellent
+## 46), which the flat pen rate never tracked — so a keeper and a stalker on the same kit haul the
+## same and neither is quoted a fixed 40.
 ##
-## **THE CORRAL STATE COMES OFF `src`, AND THAT IS NOT A REACH FOR STATE** — on the hunt job `src` IS
-## the herd, handed in as a parameter exactly like the body mass the weapon's size window is tested
-## against, and read through the same `QUARRY_CORRALLED_KEY` the offer test and the fight's gate use.
-##
-## The forage web has one carry and no override: a patch is a patch.
-static func carry_axis_for(job: String, src: Dictionary) -> String:
-	if job == JOB_HUNT and bool(src.get(QUARRY_CORRALLED_KEY, false)):
-		return KIT_PEN_CARRY_KEY
+## It keeps its own name rather than being folded into `JOB_CARRY_AXES.get`, because `priced_source`
+## and `tier_hint` must ask ONE question: a caller that can spell an axis can spell the wrong one, and
+## one did (see `JOB_CARRY_AXES`).
+static func carry_axis_for(job: String) -> String:
 	return String(JOB_CARRY_AXES.get(job, ""))
 
 ## **THE COMPOSE SHEETS' ONE PRICING SEAM — resolve the kit, then reprice the source at it.**
@@ -638,8 +645,8 @@ static func carry_axis_for(job: String, src: Dictionary) -> String:
 ## **STATELESS, so the roster and the job default arrive as PARAMETERS** — they are snapshot data and
 ## live on `HudBandLaborState`, which this layer must never reach for.
 ##
-## **The AXIS is derived from the job AND the source** (`carry_axis_for`), so a caller cannot hand it
-## a key no roster entry carries — see that function and `JOB_CARRY_AXES` for the two bugs this closes.
+## **The AXIS is derived from the job** (`carry_axis_for`), so a caller cannot hand it a key no roster
+## entry carries — see that function and `JOB_CARRY_AXES` for the two bugs this closes.
 ##
 ## **THE REFERENCE TIER IS READ ON THE SAME AXIS AS THE CREW'S**, in one expression below, because
 ## they are the numerator and the denominator of one ratio: switching the axis without switching the
@@ -663,7 +670,7 @@ static func carry_axis_for(job: String, src: Dictionary) -> String:
 ## guess, and never a partial substitution.
 static func priced_source(src: Dictionary, prefix: String, kits: Array, job: String,
 		default_kit_id: String, composed_kit_id: String, band: Dictionary) -> Dictionary:
-	var carry_key := carry_axis_for(job, src)
+	var carry_key := carry_axis_for(job)
 	if carry_key.is_empty():
 		return src
 	var kit := kit_by_id(kits, resolve_selection(kits, job, default_kit_id, composed_kit_id,
@@ -751,25 +758,19 @@ const OFFER_REASON_KEY := "reason"
 static func kit_supplies_any(kit: Dictionary) -> bool:
 	return not kit_item_ids(kit).is_empty()
 
-## **CAN A WILD HUNT READ ANYTHING THIS KIT CARRIES?** — the two axes a hunt out on the range is
-## resolved on: the weapon that has to reach the animal (`attack`) and the haul that has to get it
-## home (`hunt_carry`). A kit beating the bare-handed tier on either can change the outcome of the
-## hunt in front of it, whatever else it also supplies.
+## ⛔ **THE PEN RULE AND ITS `kit_reaches_a_wild_hunt` HELPER ARE BOTH GONE** (issue #543), because
+## the axis they were asked about is. The rule withheld a kit whose only contribution was `pen_carry`
+## from a WILD quarry — *"what it adds is only used on a penned herd"* — and its history is worth
+## keeping because it cost a shipped feature twice: it first asked the proxy
+## `kit_uses(pen_carry) and not penned`, reading *"supplies the pen axis"* as *"contributes nothing a
+## wild hunt can read"*, and when `hurdles` left the roster and both sides of the axis landed on the
+## **sled** that proxy became true of every hunt kit — all three greyed on every wild quarry, the
+## sheet falling through to the null kit while the picker still marked the stalking kit `(default)`.
+## A wild hunt could not be equipped at all. The helper was the direct question that repaired it.
 ##
-## **IT EXISTS BECAUSE THE PEN RULE USED TO ASK A PROXY.** That rule withheld on
-## `kit_uses(pen_carry) and not penned` alone, reading *"this kit supplies the pen axis"* as *"this
-## kit contributes nothing a wild hunt can read"* — an equivalence that held only while the ONE item
-## declaring `pen_carry` was pen-only gear. `hurdles` left the roster as equipment and both sides of
-## that axis moved onto the **sled** (`docs/plan_standing_upkeep.md` §4.9 item 12), which every hunt
-## kit carries, so the proxy became true of SPEARS: all three hunt kits were greyed on every wild
-## quarry with *"what it adds is only used on a penned herd"*, and — `resolve_selection` skipping a
-## withheld kit at every step — the sheet fell through to the null kit while the picker went on
-## marking the stalking kit `(default)`. A wild hunt could not be equipped at all.
-##
-## The rule's INTENT was never wrong, only its proxy: it is asked directly now, so the pen rule fires
-## only on a kit that supplies `pen_carry` **and** nothing the range can use.
-static func kit_reaches_a_wild_hunt(kits: Array, kit: Dictionary) -> bool:
-	return kit_uses(kits, kit, KIT_ATTACK_KEY) or kit_uses(kits, kit, KIT_HUNT_CARRY_KEY)
+## With `EquipmentStat::PenCarry` deleted no kit supplies a pen-only axis, so the rule could only ever
+## answer false: **there is no kit that is useful at a pen and useless on the range**, and a
+## sled-and-no-weapon kit is withheld from a fought quarry by the WEAPON rule as it always was.
 
 ## **THE FIGHT PREDICATE LIVES IN `SourceForecast.quarry_is_fought`, NOT HERE.** Four surfaces ask it
 ## — this file's offer test and priced gate, the compose sheet's refusal line, and the crew cap the
@@ -789,12 +790,7 @@ static func kit_reaches_a_wild_hunt(kits: Array, kit: Dictionary) -> bool:
 ##    resolved against this animal's mass. A trap rated to hold a hare grants nothing against a Red
 ##    Deer, so the party is bare-handed, `max(0, 1 − 1)` is zero, and the sim refuses the hunt — the
 ##    sheet used to price that party a real take, and it brought home exactly nothing.
-## 2. **A kit whose contribution is an axis this source cannot read.** `pen_carry` is read on a
-##    CORRALLED herd and nowhere else — but supplying it is not the same sentence as supplying
-##    NOTHING ELSE, so the rule asks both halves (`kit_reaches_a_wild_hunt`). Reading the first half
-##    as the whole rule is what greyed every hunt kit on every wild herd the day the sled took the
-##    pen axis over; see that helper for the mechanism.
-## 3. **A BUILDERS kit whose tool serves the other web.** `build_branch` is the entry's own web and a
+## 2. **A BUILDERS kit whose tool serves the other web.** `build_branch` is the entry's own web and a
 ##    kit's `build_work_branch` is its tool's; outside its branch the contribution is the neutral
 ##    `0.0`, so the kit is exactly as inapplicable as a snare on a Red Deer. This rule needs no
 ##    quarry — a builders row stands on no source — which is why it is answered before the two above
@@ -804,18 +800,13 @@ static func kit_reaches_a_wild_hunt(kits: Array, kit: Dictionary) -> bool:
 ##    entry's web cannot use. The withheld REASON it composes has no display surface until the
 ##    per-entry picker lands on the queue row.
 ##
-## **THE PEN RULE IS ASKED BEFORE THE WEAPON RULE, so a kit that trips it reads the same reason on
-## every quarry** — *"what it adds is only used on a penned herd"* is a fact about the KIT, where
-## *"it cannot bring one down"* is a fact about the animal and would go unsaid on a rabbit.
-##
-## ⛔ **IT MATCHES NO KIT ON THE SHIPPED ROSTER, and that is a fact about the roster rather than dead
-## code.** Every hunt kit carries a **sled**, and the sled supplies `hunt_carry` — so all of them
-## reach a wild hunt and the rule declines to withhold any of them. What still trips it is a kit
-## supplying the pen axis and nothing the range can read, which is exactly what the retired `hurdles`
-## bundle was. A kit carrying a sled and NO weapon is withheld on a Red Deer by the WEAPON rule below
-## instead: `docs/plan_standing_upkeep.md` §4.9 item 12b deleted the last shipped kit of that shape
-## (`husbandry`), so `ui_preview`'s `compose_rungs.gd` stages one synthetically to keep the branch
-## provable.
+## ⛔ **THERE WAS A THIRD RULE — the PEN rule — AND IT IS DELETED** (issue #543). It withheld a kit
+## whose only contribution was `pen_carry` from a wild quarry, and it was asked BEFORE the weapon rule
+## *"so a kit that trips it reads the same reason on every quarry"*. Its own note already recorded
+## that it *"matches no kit on the shipped roster"*; with the axis itself gone it can match nothing at
+## all, on any roster. A kit carrying a sled and NO weapon is withheld from a fought quarry by the
+## WEAPON rule below, which is where that case belonged. See `kit_supplies_any` above for the full
+## history of what the rule cost.
 ##
 ## **A PEN IS FOUGHT NOW, so rule 1 runs on one exactly as it runs on the range**
 ## (`docs/plan_standing_upkeep.md` §4.9 item 12b). The take resolves engage → retreat → fight at every
@@ -862,8 +853,7 @@ static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Diction
 		return _kit_offered()
 	if not kit_supplies_any(kit):
 		return _kit_offered()
-	var penned := bool(quarry.get(QUARRY_CORRALLED_KEY, false))
-	# **THE BUILD AXIS IS ASKED FIRST, and it is what stopped the pen rule from lying.** Gear that
+	# **THE BUILD AXIS IS ASKED FIRST, and it is what stopped the retired pen rule from lying.** Gear that
 	# speeds a rung's build meter is applicable to any herd with a rung left to climb — which is
 	# exactly the climb the handling kit was being withheld from, on the strength of its OTHER axis
 	# being pen-only. A kit that can change this source's outcome is offered whatever else it lacks,
@@ -873,9 +863,6 @@ static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Diction
 	# what this arm serves today is a build-capable hunt kit the roster does not currently carry.
 	if kit_uses(kits, kit, KIT_BUILD_WORK_KEY) and RungGates.hunt_rung_remains(quarry, prefix):
 		return _kit_offered()
-	if kit_uses(kits, kit, KIT_PEN_CARRY_KEY) and not penned \
-			and not kit_reaches_a_wild_hunt(kits, kit):
-		return _kit_withheld(HudComposeVocab.KIT_WITHHELD_REASON_PEN_ONLY)
 	if not SourceForecast.quarry_is_fought(quarry, prefix):
 		return _kit_offered()
 	var bare := unequipped_tier(kits, KIT_ATTACK_KEY)
@@ -971,8 +958,9 @@ static func gate_closed_source(src: Dictionary, prefix: String) -> Dictionary:
 ## every kit on every compose sheet quoted identical numbers. Reported from play.
 ##
 ## **EVERY AXIS COMES OFF THE ROW, AND THE ONLY FALL-BACK LEFT IS THE WHOLE-ROW ONE.** A per-KEY
-## fall-through to the roster used to stand in for `pen_carry` and `scout_vantage_range`, which the
-## wire's table did not carry; it does now (see `BAND_KIT_TIERS_KEY`), so a fall-through per key would
+## fall-through to the roster used to stand in for `scout_vantage_range` (and, until issue #543
+## deleted it, `pen_carry`), which the wire's table did not carry; it does now (see
+## `BAND_KIT_TIERS_KEY`), so a fall-through per key would
 ## be a path no live frame can reach that quietly re-quotes the FRESH tier the moment a row is
 ## malformed — which is the exact reading this field exists to remove. What must not happen either way
 ## is a client-side step-down from `kit_item_conditions`: which item supplies which axis is per kit,
@@ -984,14 +972,12 @@ static func effective_tiers(kits: Array, kit: Dictionary, band: Dictionary) -> D
 			KIT_ATTACK_KEY: float(kit.get(KIT_ATTACK_KEY, TIER_ABSENT)),
 			KIT_HUNT_CARRY_KEY: float(kit.get(KIT_HUNT_CARRY_KEY, TIER_ABSENT)),
 			KIT_FORAGE_CARRY_KEY: float(kit.get(KIT_FORAGE_CARRY_KEY, TIER_ABSENT)),
-			KIT_PEN_CARRY_KEY: float(kit.get(KIT_PEN_CARRY_KEY, TIER_ABSENT)),
 			"stated": false,
 		}
 	return {
 		KIT_ATTACK_KEY: _row_tier(resolved, KIT_ATTACK_KEY),
 		KIT_HUNT_CARRY_KEY: _row_tier(resolved, KIT_HUNT_CARRY_KEY),
 		KIT_FORAGE_CARRY_KEY: _row_tier(resolved, KIT_FORAGE_CARRY_KEY),
-		KIT_PEN_CARRY_KEY: _row_tier(resolved, KIT_PEN_CARRY_KEY),
 		"stated": true,
 	}
 
@@ -1256,22 +1242,19 @@ static func kit_item_ids(kit: Dictionary) -> Array:
 ## The number of clauses therefore follows the KIT rather than the job: `big_game` and `trapping` state
 ## two, `gathering` one, `none` none at all.
 ##
-## **THE TIER ARM STATES WHAT THIS SOURCE WILL ACTUALLY READ, WHICH IS WHY IT TAKES THE QUARRY.**
-## A hunt row works two different things through one verb, and they read disjoint axes:
+## ⛔ **THE TIER ARM TOOK THE QUARRY AND FORKED ON A PEN, AND IT DOES NEITHER NOW** (issue #543). The
+## dead reading: *"a hunt row works two different things through one verb, and they read disjoint
+## axes — a WILD herd is stalked and hauled (`attack` and the sled's carry); a PEN is collected
+## (`pen 40.0 per keeper`, **no attack**)"*, with a `quarry` parameter carried the whole way down so
+## the arm could be gated on the SOURCE.
 ##
-## - **A WILD herd is stalked and hauled** — `attack` and the sled's carry.
-## - **A PEN is collected** — `pen 40.0 per keeper`. **No attack**: a penned beast is slaughtered
-##   rather than stalked, it publishes no engagement stage (the same predicate the gate LINE is
-##   mounted behind), and the sim charges no weapon for the kill.
-##
-## **THE PEN ARM IS GATED ON THE SOURCE, NOT ON THE KIT, AND THE DIFFERENCE IS THE POINT.** Gating it
-## on the kit printed a pen tier for a handling kit selected against a *wild* herd — a number that
-## would never be read — while withholding it from the sled-only kit at a pen, which is the one place
-## the player needs to see it: at a pen, `pen 12.0 per keeper` beside `pen 40.0 per keeper` is the
-## whole visible difference the handling gear buys.
-##
-## `quarry` is optional and absent means WILD: a sheet composed before the wire named a source, and
-## both forage sheets, render exactly as they did.
+## **BOTH HALVES OF THAT ARE FALSE NOW.** A pen resolves the ordinary fight (`docs/plan_standing_
+## upkeep.md` §4.9 item 12b — containment solves the catching, weapons solve the killing), so the
+## weapon clause belongs on a pen; and `EquipmentStat::PenCarry` is deleted, so the haul clause is the
+## sled's on a pen exactly as on the range. The arm's own justification — *"at a pen, `pen 12.0 per
+## keeper` beside `pen 40.0 per keeper` is the whole visible difference the handling gear buys"* — was
+## the hurdles-vs-sled split, which §4.9 item 12 ended by making hurdles a material. **A hunt row now
+## states one pair of clauses at every rung**, so the parameter went with the fork.
 ##
 ## **`crew` IS THE PARTY BEING COMPOSED, AND IT IS WHAT KEEPS THE TIERS FROM SPEAKING FOR IT.** The
 ## tiers above describe ONE person; a band holding one spear and composing eight hunters read
@@ -1280,7 +1263,7 @@ static func kit_item_ids(kit: Dictionary) -> Array:
 ## — see `_append_coverage` for where the count comes from and what it may not be used for. A caller
 ## with no party (`KIT_CREW_UNCOMPOSED`) renders exactly as it did before the clause existed.
 static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: String,
-		quarry: Dictionary = {}, crew: int = KIT_CREW_UNCOMPOSED) -> String:
+		crew: int = KIT_CREW_UNCOMPOSED) -> String:
 	if kit.is_empty():
 		return ""
 	# **A BAND-WIDE ROLE READS ONE AXIS AND ITS OWN ITEM**, and it takes a branch of its own rather
@@ -1293,10 +1276,12 @@ static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 	if job == JOB_FORAGE:
 		parts.append(HudComposeVocab.KIT_HINT_FORAGE_CARRY_FORMAT % _tier_face(
 			float(tiers[KIT_FORAGE_CARRY_KEY])))
-	elif carry_axis_for(job, quarry) == KIT_PEN_CARRY_KEY:
-		parts.append(HudComposeVocab.KIT_HINT_PEN_CARRY_FORMAT % _tier_face(
-			float(tiers[KIT_PEN_CARRY_KEY])))
 	else:
+		# ⛔ **A PENNED HERD TAKES THIS ARM TOO** (issue #543). A third arm stood above it, keyed by
+		# `carry_axis_for(job, quarry) == KIT_PEN_CARRY_KEY`, and it printed ONE clause — `pen 40.0 per
+		# keeper` — in place of the two below. The axis is deleted, so a pen is a hunt row like any
+		# other: it states the weapon AND the haul, which is strictly more than the pen clause said and
+		# is the same haul number the pen was collected at.
 		parts.append(HudComposeVocab.KIT_HINT_ATTACK_FORMAT % _tier_face(
 			float(tiers[KIT_ATTACK_KEY])))
 		parts.append(HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % _tier_face(
@@ -1515,7 +1500,7 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 			HudWorkVocab.WORK_STEPPER_PADDING_V)
 	row.add_child(picker)
 	block.add_child(row)
-	var hint_text := tier_hint(kits, selected, band, job, quarry, crew)
+	var hint_text := tier_hint(kits, selected, band, job, crew)
 	if hint_text != "":
 		var hint := HudWidgets.alloc_hint_label(hint_text)
 		hint.set_meta(KIT_HINT_META, true)

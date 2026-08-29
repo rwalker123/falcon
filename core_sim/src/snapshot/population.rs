@@ -640,8 +640,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     };
     let hunt_coverage = coverage_for(crate::equipment_config::KitJob::Hunt, &hunt_choice);
     // **All four, HUNT FIRST** — an item is quoted at the job whose kit carries it, and at the
-    // hunt's for an item several of them carry (`kit_id`'s tie-break, the same one
-    // `pen_carry_per_worker_biomass` follows).
+    // hunt's for an item several of them carry (`kit_id`'s tie-break).
     let quoted_coverages = [
         &hunt_coverage,
         &coverage_for(crate::equipment_config::KitJob::Forage, &forage_choice),
@@ -722,14 +721,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         &forage_choice,
         &kit,
     );
-    // **The pen collects against the HUNT haul's equipped rate** — the number `advance_labor_allocation`
-    // has always capped a pen harvest by — but through the `PenCarry` stat, so a Hunt row on the
-    // stalking kit works the pen bare-handed rather than at the sled's tier.
-    let pen_carry_per_worker_biomass = kit_levers.config.pen_per_worker_biomass_capacity(
-        kit_levers.baseline_haul_rate,
-        &hunt_choice,
-        &kit,
-    );
     let scout_vantage_range = kit_levers.config.scout_vantage_range(
         kit_levers.equipped_vantage_range,
         &scout_choice,
@@ -776,11 +767,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 attack_max_body_mass: tiers.attack_max_body_mass,
                 dispersion: tiers.dispersion,
                 exposure: tiers.exposure,
-                // **The two axes the flat fields answer only at the JOB DEFAULT.** They ride here per
-                // kit as well, because a picker asks about the kit under the cursor and a readout
-                // that fell back to the roster's FRESH tier for them quoted a pen 40/keeper while the
-                // sim collected 12, and a vantage of 2 tiles against a reveal at 1.
-                pen_carry_per_worker_biomass: tiers.pen_carry_per_worker_biomass,
+                // **The axis the flat field answers only at the JOB DEFAULT.** It rides here per kit
+                // as well, because a picker asks about the kit under the cursor and a readout that
+                // fell back to the roster's FRESH tier quoted a vantage of 2 tiles against a reveal
+                // at 1.
                 scout_vantage_range: tiers.scout_vantage_range,
                 // **The retired multiplier's slot, held at its neutral** — the stat is an
                 // additive per-worker contribution now (`buildWorkPerWorker` beside it), and a
@@ -1229,8 +1219,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         forage_carry_per_worker_biomass,
         // **Which roster kit the HUNT tiers above are quoted at** — the party's own for an
         // expedition (a party has one kit, so it covers every tier on the row), the **hunt** job's
-        // default for a resident band. `pen_carry_per_worker_biomass` below is a Hunt-row tier and
-        // so is quoted at this id too.
+        // default for a resident band.
         //
         // **It deliberately does not answer for the other three tiers.** `forage_choice` /
         // `scout_choice` / `warrior_choice` above are *different* kits for a band, so pairing
@@ -1242,9 +1231,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // assignment row's own `kit_id`, so a per-cohort copy would be a third home for a fact that
         // has two. The `.fbs` states the narrowed scope for readers.
         kit_id: hunt_choice.id().to_string(),
-        // The three tiers the expanded roster added, each resolved above through its own job's
-        // default (the pen through the hunt's — see `job_choice`).
-        pen_carry_per_worker_biomass,
+        // The two band-wide tiers the expanded roster added, each resolved above through its own
+        // job's default (see `job_choice`).
         scout_vantage_range,
         warrior_attack,
         // **The two split floors, echoed off config.** The sheet composes its own forecast from
