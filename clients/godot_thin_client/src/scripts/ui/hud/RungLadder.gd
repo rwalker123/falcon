@@ -254,6 +254,67 @@ static func build_track(rows: Array[Dictionary], on_pick: Callable) -> VBoxConta
                 bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
     return column
 
+## **THE RING'S OWN SMALL CARD — what another ring eats to raise, what it costs to hold, and where it
+## will stall** (`docs/plan_standing_upkeep.md` §4.9 item 12c).
+##
+## ⛔ **A RING IS NOT A TRACK ROW, AND GIVING IT ONE WOULD BE A LIE ABOUT THE LADDER.** The track is
+## ONE POSITION ON A BRANCH — every row is a rung you are standing on, have banked, or may climb to.
+## A ring is a **repeatable increment with no position**: it widens the `animal:pen` rung the herd
+## already stands on, so it has no place in that list and `has_track` is correctly FALSE on a
+## corralled herd (`animal:pen` being the top of the animal branch). That falsity is the mechanical
+## reason extending a pen ended up as a button on the tile card in the first place.
+##
+## **IT REUSES THE TRACK'S OWN ASIDE COMPOSERS, which is the whole point of it living here.** The
+## pile, the stall warning and the standing bill are composed by `_build_price_asides` /
+## `_hold_price_asides` — the same three sentences in the same order the `⌃` opens on every other
+## rung — so the caret means ONE thing on every mark that wears it.
+##
+## **THE PRICE IS `animal:pen`'s OWN**, because that is what a ring is: the same rung, again. The
+## herd's `pen_extend_cost` is NOT read here — the sim stamps it only once a ring is accruing, so it
+## is the in-flight meter's denominator and says nothing about a ring nobody has declared.
+##
+## `band` rides in for the shelf, exactly as `track` takes it: the stall warning weighs the pile
+## against what this band actually holds, which the SOURCE cannot answer for.
+static func ring_row(source: Dictionary, prefix: String, band: Dictionary) -> Dictionary:
+    var verb := SourceForecast.IMPROVEMENT_CORRAL
+    return {
+        ROW_IMPROVEMENT_KEY: verb,
+        ROW_NAME_KEY: HudWorkVocab.RING_CARD_ROW_NAME,
+        ROW_WORK_KEY: SourceForecast.build_work_cost(source, prefix, verb),
+        ROW_TURNS_KEY: SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+        ROW_BUILD_ASIDES_KEY: _build_price_asides(
+            SourceForecast.build_material_cost(source, prefix), _material_store(band)),
+        ROW_HOLD_ASIDES_KEY: _hold_price_asides(source, prefix, verb),
+    }
+
+## …and the ring card as CONTROLS — a title, one priced button, and the same asides in the same order
+## the track puts them in. Deliberately NOT `build_track`: that walks a branch and states a position,
+## and this states neither.
+static func build_ring_card(row: Dictionary, on_declare: Callable) -> VBoxContainer:
+    var column := VBoxContainer.new()
+    column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
+    column.custom_minimum_size = Vector2(HudWorkVocab.RUNG_TRACK_WIDTH, 0.0)
+    var title := Label.new()
+    title.text = HudWorkVocab.RING_CARD_TITLE
+    title.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    title.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_TITLE_FONT_SIZE)
+    column.add_child(title)
+    # **THE ROW IS THE TRACK'S OWN ROW BUILDER**, given a selectable row, so the ring's line and a
+    # rung's line cannot come out at two type sizes or two paddings on cards a player reads one after
+    # the other.
+    var line := row.duplicate()
+    line[ROW_STATE_KEY] = STATE_OPEN
+    line[ROW_SELECTABLE_KEY] = true
+    line[ROW_REASONS_KEY] = [] as Array[String]
+    column.add_child(_build_row(line, func(_verb: String) -> void: on_declare.call()))
+    for aside in (row.get(ROW_BUILD_ASIDES_KEY, []) as Array):
+        column.add_child(_build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
+            bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
+    for aside in (row.get(ROW_HOLD_ASIDES_KEY, []) as Array):
+        column.add_child(_build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
+            bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
+    return column
+
 ## One rung's line: its name on the left, its state or its price on the right.
 static func _build_row(row: Dictionary, on_pick: Callable) -> Control:
     var state := String(row.get(ROW_STATE_KEY, ""))
@@ -383,13 +444,9 @@ static func _build_price_asides(pile: Array[Dictionary],
 static func _hold_price_asides(source: Dictionary, prefix: String,
         improvement: String) -> Array[Dictionary]:
     var asides: Array[Dictionary] = []
-    var terms: Array[String] = []
-    var work := SourceForecast.build_upkeep_demand(source, prefix, improvement)
-    if work >= SourceForecast.UPKEEP_WORK_MIN:
-        terms.append(HudWorkVocab.RUNG_TRACK_HOLD_WORK_TERM % DetailFormat.format_work_units(work))
-    var goods := _material_term_list(
+    var terms := _price_terms(
+        SourceForecast.build_upkeep_demand(source, prefix, improvement),
         SourceForecast.build_upkeep_material_demand(source, prefix, improvement))
-    terms.append_array(goods)
     if terms.is_empty():
         return asides
     asides.append({
@@ -398,6 +455,49 @@ static func _hold_price_asides(source: Dictionary, prefix: String,
         RUNG_ASIDE_WARN_KEY: false,
     })
     return asides
+
+## **WHAT THIS SOURCE IS BILLED TO STAND, PER TURN, AS TERMS** — `["1 work", "0.05 hurdles"]`, `[]`
+## for a source that owes nothing at all. **`[]` IS THE WILD ANSWER AND IT IS THE GATE**: a source on
+## no standing rung has no improvement to keep, so the work board inspector draws no Upkeep picker and
+## no bill rather than a picker over a job that does not exist.
+##
+## ⛔ **ONE PRODUCER FOR *DOES THIS SITE OWE UPKEEP* AND FOR *WHAT DOES IT OWE*, deliberately.** The
+## gate is `is_empty()` on the very list the line renders, so the picker cannot draw beside a bill that
+## says nothing, nor a bill sit under a picker that did not draw. A re-derived rung test (`is_field`,
+## `corralled`, a `domestication` threshold) would be a SECOND authority over a question
+## `SourceForecast` already answers — and would additionally get the mid-climb case wrong: a source
+## raising its FIRST rung stands on `wild` and is already billed, which is exactly what the stamped
+## terms say and a rung word cannot.
+##
+## ⛔ **BOTH CURRENCIES, AND EITHER ONE ALONE IS ENOUGH.** A rung may owe work, goods, or both; a
+## keeping kit speeds the work half even where the material half is zero, so the disjunction is what
+## decides whether the picker is worth offering. The material half is `[]` on every shipped rung but
+## `animal:pen` (`SourceForecast.FORECAST_UPKEEP_MATERIAL_DEMAND_KEY`), which is why reading only the
+## work account would still have been right today and wrong on the next rung that eats a good.
+##
+## ⛔ **THE STAMPED PAIR, NEVER THE PER-RUNG QUOTE.** `_hold_price_asides` above answers *what would
+## this rung cost to hold* for a rung nobody has started, and `SourceForecast.upkeep_state`'s own ⛔
+## forbids reading one as the other — on a source mid-climb the two disagree by design. This one
+## answers *what is this source billed right now*, which is the present-tense question the inspector's
+## line asks and the only one a site already standing can be asked.
+static func upkeep_price_terms(source: Dictionary, prefix: String) -> Array[String]:
+    return _price_terms(
+        float(SourceForecast.upkeep_state(source, prefix).get(
+            "demand", SourceForecast.NO_UPKEEP_DEMAND)),
+        SourceForecast.upkeep_material_demand(source, prefix))
+
+## The work term and the goods terms of ONE bill, in that order — the shape both price readings take,
+## so a rate quoted on the track and the same rate quoted on the work board cannot be worded two ways.
+##
+## ⛔ **A ZERO WORK RATE STATES NO WORK TERM AND AN EMPTY GOODS LIST STATES NO GOODS TERM** — the
+## `MaterialPayoff` contract's own rule, one scope up: `0 work a turn` reads as a defect, and a bill
+## that costs nothing in a currency should say nothing rather than say nothing twice.
+static func _price_terms(work: float, goods: Array[Dictionary]) -> Array[String]:
+    var terms: Array[String] = []
+    if work >= SourceForecast.UPKEEP_WORK_MIN:
+        terms.append(HudWorkVocab.RUNG_TRACK_HOLD_WORK_TERM % DetailFormat.format_work_units(work))
+    terms.append_array(_material_term_list(goods))
+    return terms
 
 ## The band's shelf as `{material_id: amount}` — the ONE place `material_store` is turned into a
 ## lookup, so the stall test reads a good's own stock and never a total across goods.

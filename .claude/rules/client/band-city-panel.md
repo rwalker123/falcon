@@ -2,6 +2,7 @@
 paths:
   - "clients/godot_thin_client/src/scripts/ui/{BandCityPanel,BandFoodStatus,PenStatus}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/BandPanelController.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/{BandComposeFloat,WorkInspectorDialog}.gd"
   - "clients/godot_thin_client/tools/band_panel_preview.gd"
 ---
 
@@ -17,8 +18,9 @@ paths:
 | Script | Purpose |
 |--------|---------|
 | `ui/hud/BandPanelController.gd` | `RefCounted` controller (HUD decomposition Phase 2d, `docs/plan_hud_decomposition.md`) owning the **BAND/CITY PANEL's whole render path** — the last big mass to leave `Hud.gd`. It holds the panel HANDLE (`_panel`), the three public **zone builders** `build_band_zone` / `build_work_zone` / `build_parties_zone` and everything under them (the band zone's vitals/PEOPLE/food-outlook/WORKFORCE + role cards; the work zone's paged board, filter chips, pager, inspector strip and source models; the parties zone's rows, inspector strip, footer and the mission compose sheet), the panel's **cycler + snapshot refresh** (`render_band` / `refresh_snapshot` / `rerender` / `cycle_band` / `focus_band` / `select_expedition` / `focus_labor_source` / `confirm_recall_expedition` / `_push_zone_badges`), and the **zone state that survives a snapshot** — `_work_filter` / `_work_sort` / `_work_page` / `_work_open_key` / `_work_policy_open` / `_work_zone_host` / `_work_zone_band` / `_band_zone_tier` / `_party_open_key` / `_party_compose_open` / `_party_compose_mission` / `_send_expedition_count` / `_send_hunt_policy` — ~1,580 lines, 72 moved functions. **`_band_zone_tier` is why the band and work halves are ONE controller**: it is a bare `int` written by `build_band_zone` and read by `_on_zones_resized`, so splitting them would have straddled it. Hud holds it as `_bandpanel`, constructed in `_ready` after `_disclosures` (the vitals row wires its carets through it). **THE PANEL HANDLE IS PRIVATE** — the two non-moving `HudLayer` readers (`_refresh_disclosure_hosts`, `_render_occupant_drawer`) only ever asked "is a panel injected?", so they ask **`has_panel()`** instead of holding the node. **The injection surface is TWO Callables** (it was nine, then six; the three detail-line ones went with `BandDetailLines`, and the four send-expedition/quarry targeting ones went with `TargetingController`), each retained on HudLayer by the "an injection you still have to hold is relocated, not eliminated" test: `_emit_assign_labor` (owns the `assign_labor_requested` emit + optimistic pending write, so `assign_labor` stays INDIRECT) · `_herd_label_for_id`. Each is reached through a **typed adapter**. The parties zone's send-expedition + quarry verbs (`begin_send_expedition` / `begin_pick_quarry` / `cancel_pick_quarry` / `is_expedition_quarry`) are a typed **`TargetingController`** collaborator now, not four Callables. `_is_player_unit` is a trivial private COPY (the `SelectionCardController` precedent). Collaborators: the SAME `_band_labor` / `_compose` model instances BY REFERENCE, `_selectioncard` (roster lookup + map pinning, for the cycler / labor-source / party jump routing, **plus `selected_terrain_label()`** — the one selection read the vitals rows need), `_disclosures` for `wire_label` ONLY, **`_banddetail` (a typed `BandDetailLines` ref — the vitals label and the parties inspector strip render through it; the three `*_fn` members `_unit_summary_lines_fn` / `_expedition_summary_lines_fn` / `_expedition_row_tooltip_fn` and their adapter wrappers are DELETED, the tooltip being a static `DetailFormat.expedition_row_tooltip` call now)**, and the HUD CanvasLayer as the **host** it `add_child`s its `ConfirmationDialog` into (a `RefCounted` cannot parent — the `TurnOrbController` pattern). **It emits SIX signals, all RELAYED by HudLayer** (the controller never emits a HudLayer signal): `cancel_order_requested` · `send_hunt_expedition_requested` · `recall_expedition_requested` · **`split_band_requested`** · `alert_focus_requested` · `roster_occupant_selected`. **`set_band_city_panel` / `cycle_panel_band` / `focus_panel_band` MUST stay callable on the HUD node** — `Main._wire_band_city_panel` probes all three with `has_method` and binds the latter two to `BandCityPanel`'s `cycle_requested` / `subject_activated`, and a failed probe fails SILENTLY — so HudLayer keeps them as thin delegators. **`_build_allocation_panel` does NOT live on this controller**: it writes the drawer's `%AllocationPanel` node, so it stays with the drawer render dispatch (it moved to `SubjectDrawerController` with that dispatch in Phase 2c-3, still a thin function stacking this controller's three public zone builders; its two siblings on that host, `_build_band_move_actions` / `_build_expedition_panel`, are branches of `_render_occupant_drawer` and travelled with it for the same reason). Word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the `HudWidgets`/`HudFormat`/`SelectionCardController`/`DrawerComposeController` convention. Behaviour identical to the old inlined band-panel code |
-| `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail (the rail runs along the dock's PLENTIFUL axis — stacked on L/R, one line with the restore toggle right-justified on T/B — and `COLLAPSED_SIZE` is a FLOOR on the strip it reserves, not an answer; see "The collapsed rail runs along the dock's plentiful axis"). Header (stage glyph/name/label + the band's hex coordinates + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse) plus an **ACTION REGISTRY** — a registration seam (`register_action` / `action_invoked`) holding every verb the panel offers, the `⚒` included, rendered on its own BAR row under the header on a vertical dock, on the SUBJECT ROW itself on a horizontal one and on the COLLAPSED RAIL in either, taking zero height wherever it is not the live mount; see "The action registry is ONE list with THREE mount points" — body hosts **AN ORDERED LIST OF NAMED ZONES AT A FIXED CROSS-AXIS SIZE**, declared by the SUBJECT via **`set_zone_layout(specs)`** and filled by **`set_zones(contents)`** (keys `&"band"`/`&"work"`/`&"knowledge"`/`&"parties"`; the panel OWNS and frees them, and frees a content handed in for a zone the layout does not declare). A band declares three, the faction page four — see "THE BODY IS AN ORDERED LIST OF ZONES". Two shells, chosen by the panel's own **WIDTH** (`wide_shell_min_width()` — never a dock-edge test, so a resizable dock needs no special case). **That threshold is DERIVED FROM THE LIVE ZONE LIST, never hand-picked and never a fixed set of terms**: it sums each declared zone's flank (an EXPANDING zone contributing `ZONE_WORK_MIN_WIDTH`, the one readable board column the test exists to protect) plus **one `RAIL_SEPARATOR_SPAN` per GAP** plus `PANEL_CHROME_H` — so a band's three come to 380 + 380 + 354 + 2×25 + 26 = **1190** and the faction page's four to 380 + 380 + 354 + 354 + 3×25 + 26 = **1569**. **It is therefore PER-SUBJECT**: on a window between the two the faction page correctly tabs while a band's page stays abreast, which is also why `set_zone_layout` is called BEFORE the zone contents are built. `ZONE_WORK_MIN_WIDTH` (380) MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` — one readable board column — exactly as `ZONE_WORK_MAX_WIDTH` (1520) mirrors `WORK_COLUMN_MIN_WIDTH × WORK_MAX_COLUMNS`; the two are a PAIR with Hud's column consts and move with them. The chrome term is load-bearing because the threshold is tested against the panel's OUTER `_panel_extent().x` while the zones live in `_interior_size()`. It shipped hand-picked at **900**, which broke the whole 900–1055 band (the derived threshold was 1056 then, before the flanks widened): the work zone came out 224px, Hud clamped to one column, its labels clipped — and the NARROW shell would have given the board the full 874px, so flipping wide early made it ~4× narrower, degrading the thing the wide shell exists to improve. `PANEL_CHROME_H` is a `const`; `_wide_separator_span()` and `_fixed_zone_span()` are FUNCTIONS over `_zone_layout`, shared by `wide_shell_min_width()`, `_card_width()`, `_affordable_work_columns()` and `zone_size()` so none of them can disagree about how much width the chrome eats. (`WIDE_SEPARATOR_SPAN`, the `const` that hard-wired TWO gaps, is deleted — it was the one term a fourth column could not have been added around.) **wide** (in practice T/B) = every declared zone side by side, the flanks fixed at `ZONE_BAND_WIDTH` (380) / `ZONE_PARTY_WIDTH` (`PANEL_WIDTH − PANEL_CHROME_H` = 354 — see "The wide shell's flanks are never narrower than the narrow shell's zone") / `ZONE_KNOWLEDGE_WIDTH` (the same 354, taking the same floor for the same rule), work EXPAND_FILL, `LINE_SOFT` hairlines in every gap, no tab bar; **narrow** (in practice L/R) = the subject's own tab bar under the header + exactly one zone beneath it (active tab = SIGNAL ink + a 2px SIGNAL underline, badges via `set_tab_badge(zone, text, hot)`, selection persisted as `CONFIG_KEY_TAB`). **The cross-axis size is FIXED** — `PANEL_WIDTH` 380 (L/R) / `_horizontal_panel_height()` = the body budget (`PANEL_HEIGHT_WIDE` 360 at one band column, `PANEL_HEIGHT_WIDE_TWO_COLUMN` 335 at two) **plus the active shell's own chrome** (`_shell_chrome_height()`: 0 wide, the tab bar narrow), clamped to `MAX_WIDE_HEIGHT_FRACTION` of the window (T/B) — see "The strip's height is 360 at ONE band column and 335 at two" — so `current_reservation_size()` changes ONLY on dock/collapse/hide/viewport-resize and a content edit can no longer re-emit `reservation_changed` → `MapView.set_reserved_inset` → cache invalidation (the map flicker on every `+` press). **TWO sanctioned `ScrollContainer`s exist in the panel — the PARTIES list and the BAND zone** — and the harness asserts both halves for each: that it exists, and that no OTHER zone has grown one (`_assert_scroll_only_where_sanctioned`, a table of `(node name, owning zone)` pairs, so a scroll under the wrong zone still fails). Everything else is no-scroll by design; the work zone pages itself against **`work_zone_size()`** — a named reader of the KEYED **`zone_size(zone)`**, which is one answer with one parameter rather than a named accessor per zone that a fourth zone would have to add a fifth of — the zone's interior after chrome — e.g. 354×1107 in a 380 L dock, 789×300 in a 1920 bottom dock with the chrome rail sharing that row — and re-pages on the **`zones_resized`** signal). **Zone hosts are plain `Control`s, not containers**, so an over-wide zone content cannot push the card past its fixed cross-axis size; `clip_contents` keeps overflow inside its own zone. Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`, which since issue #377 fans a HORIZONTAL dock's reservation to the map at 0 (the card floats over live map) and a TOP dock's to the HUD at 0 as well (its readouts belong beside the card, not below the strip). On a **BOTTOM** dock the strip also carries **a trailing CHROME RAIL** the HUD parks its stacked bottom-bar chrome into (`rail_slot_host` / `set_rail_width`, issue #324) — a SIBLING of the card, not a cell of its row, and bottom-only since #377 (a top dock never displaces `BottomBar`, so its chrome stays home). See "Band/City dockable panel". See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
+| `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail (the rail runs along the dock's PLENTIFUL axis — stacked on L/R, one line with the restore toggle right-justified on T/B — and `COLLAPSED_SIZE` is a FLOOR on the strip it reserves, not an answer; see "The collapsed rail runs along the dock's plentiful axis"). Header (stage glyph/name/label + the band's hex coordinates + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse) plus an **ACTION REGISTRY** — a registration seam (`register_action` / `action_invoked`) holding every verb the panel offers, the `⚒` included, rendered on its own BAR row under the header on a vertical dock, on the SUBJECT ROW itself on a horizontal one and on the COLLAPSED RAIL in either, taking zero height wherever it is not the live mount; see "The action registry is ONE list with THREE mount points" — body hosts **AN ORDERED LIST OF NAMED ZONES AT A FIXED CROSS-AXIS SIZE**, declared by the SUBJECT via **`set_zone_layout(specs)`** and filled by **`set_zones(contents)`** (keys `&"band"`/`&"work"`/`&"knowledge"`/`&"parties"`; the panel OWNS and frees them, and frees a content handed in for a zone the layout does not declare). A band declares three, the faction page four — see "THE BODY IS AN ORDERED LIST OF ZONES". Two shells, chosen by the panel's own **WIDTH** (`wide_shell_min_width()` — never a dock-edge test, so a resizable dock needs no special case). **That threshold is DERIVED FROM THE LIVE ZONE LIST, never hand-picked and never a fixed set of terms**: it sums each declared zone's flank (an EXPANDING zone contributing `ZONE_WORK_MIN_WIDTH`, the one readable board column the test exists to protect) plus **one `RAIL_SEPARATOR_SPAN` per GAP** plus `PANEL_CHROME_H` — so a band's three come to 380 + 380 + 354 + 2×25 + 26 = **1190** and the faction page's four to 380 + 380 + 354 + 354 + 3×25 + 26 = **1569**. **It is therefore PER-SUBJECT**: on a window between the two the faction page correctly tabs while a band's page stays abreast, which is also why `set_zone_layout` is called BEFORE the zone contents are built. `ZONE_WORK_MIN_WIDTH` (380) MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` — one readable board column — exactly as `ZONE_WORK_MAX_WIDTH` (1520) mirrors `WORK_COLUMN_MIN_WIDTH × WORK_MAX_COLUMNS`; the two are a PAIR with Hud's column consts and move with them. The chrome term is load-bearing because the threshold is tested against the panel's OUTER `_panel_extent().x` while the zones live in `_interior_size()`. It shipped hand-picked at **900**, which broke the whole 900–1055 band (the derived threshold was 1056 then, before the flanks widened): the work zone came out 224px, Hud clamped to one column, its labels clipped — and the NARROW shell would have given the board the full 874px, so flipping wide early made it ~4× narrower, degrading the thing the wide shell exists to improve. `PANEL_CHROME_H` is a `const`; `_wide_separator_span()` and `_fixed_zone_span()` are FUNCTIONS over `_zone_layout`, shared by `wide_shell_min_width()`, `_card_width()`, `_affordable_work_columns()` and `zone_size()` so none of them can disagree about how much width the chrome eats. (`WIDE_SEPARATOR_SPAN`, the `const` that hard-wired TWO gaps, is deleted — it was the one term a fourth column could not have been added around.) **wide** (in practice T/B) = every declared zone side by side, the flanks fixed at `ZONE_BAND_WIDTH` (380) / `ZONE_PARTY_WIDTH` (`PANEL_WIDTH − PANEL_CHROME_H` = 354 — see "The wide shell's flanks are never narrower than the narrow shell's zone") / `ZONE_KNOWLEDGE_WIDTH` (the same 354, taking the same floor for the same rule), work EXPAND_FILL, `LINE_SOFT` hairlines in every gap, no tab bar; **narrow** (in practice L/R) = the subject's own tab bar under the header + exactly one zone beneath it (active tab = SIGNAL ink + a 2px SIGNAL underline, badges via `set_tab_badge(zone, text, hot)`, selection persisted as `CONFIG_KEY_TAB`). **The cross-axis size is FIXED** — `PANEL_WIDTH` 380 (L/R) / `_horizontal_panel_height()` = the body budget (`PANEL_HEIGHT_WIDE` 418 at one band column, `PANEL_HEIGHT_WIDE_TWO_COLUMN` 335 at two, the `maxf` making 418 the live answer at both) **plus the active shell's own chrome** (`_shell_chrome_height()`: 0 wide, the tab bar narrow), clamped to `MAX_WIDE_HEIGHT_FRACTION` of the window (T/B) — see "The strip's height is 418 at ONE band column and 335 at two" — so `current_reservation_size()` changes ONLY on dock/collapse/hide/viewport-resize and a content edit can no longer re-emit `reservation_changed` → `MapView.set_reserved_inset` → cache invalidation (the map flicker on every `+` press). **TWO sanctioned `ScrollContainer`s exist in the panel — the PARTIES list and the BAND zone** — and the harness asserts both halves for each: that it exists, and that no OTHER zone has grown one (`_assert_scroll_only_where_sanctioned`, a table of `(node name, owning zone)` pairs, so a scroll under the wrong zone still fails). Everything else is no-scroll by design; the work zone pages itself against **`work_zone_size()`** — a named reader of the KEYED **`zone_size(zone)`**, which is one answer with one parameter rather than a named accessor per zone that a fourth zone would have to add a fifth of — the zone's interior after chrome — e.g. 354×1107 in a 380 L dock, 789×300 in a 1920 bottom dock with the chrome rail sharing that row — and re-pages on the **`zones_resized`** signal). **Zone hosts are plain `Control`s, not containers**, so an over-wide zone content cannot push the card past its fixed cross-axis size; `clip_contents` keeps overflow inside its own zone. Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`, which since issue #377 fans a HORIZONTAL dock's reservation to the map at 0 (the card floats over live map) and a TOP dock's to the HUD at 0 as well (its readouts belong beside the card, not below the strip). On a **BOTTOM** dock the strip also carries **a trailing CHROME RAIL** the HUD parks its stacked bottom-bar chrome into (`rail_slot_host` / `set_rail_width`, issue #324) — a SIBLING of the card, not a cell of its row, and bottom-only since #377 (a top dock never displaces `BottomBar`, so its chrome stays home). See "Band/City dockable panel". See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
 | `ui/hud/BandComposeFloat.gd` | **The parties compose sheet, floated off the panel when its zone cannot hold it** — see "A COMPOSE SHEET THE ZONE CANNOT HOLD LEAVES THE ZONE" for the trigger. An **`AutoSizingPanel`**, not `PanelCard` + `DockScrollFit`: this card is measured against the VIEWPORT rather than against a dock's remaining height, which is the free-floating half of that pair (`panel-framework.md`). Both axes are fitted explicitly, because the node is a plain `Control` and no child minimum ever reaches it. **It is the card and NOTHING more — there is deliberately no full-screen catcher.** `ComposeSheet`, the herd drawer's floating sheet, is a catcher with a card inside it so a click anywhere outside dismisses; that is exactly wrong here, because the DOCK's sheet stays open through a map pick — the targeting banner and the herd glow ride on the sheet still being open while the player clicks a herd — and a catcher would eat that click. `PanelRoot`'s autopsy applies in reverse: a `STOP` control the pointer finds makes the Viewport mark the press handled before `MapView._unhandled_input` sees it, so every pixel this node claims is a pixel of dead map, and it claims only its own rect (`band_panel_preview._assert_float_leaves_the_map_clickable` drives that through `Viewport.push_input`, never off a `mouse_filter` value). **It never overlaps the card it came from, structurally rather than by a clamp**: `_room()` is the viewport inside `VIEWPORT_MARGIN` cut back to the MAP-FACING side of the panel card (`MAP_FACING_SIDE`, the opposite of the docked edge) with `ANCHOR_GAP` of clearance, and the width fit, the height fit and the placement all read that ONE rect — a card too tall for it scrolls, it does not creep back across the seam. **`target_width` is the ZONE width plus this card's own chrome**, never the zone width itself: `AutoSizingPanel`'s width is the OUTER one, and a sheet handed the zone width minus a border, two content margins and a scroll gutter re-wraps, which would falsify the very measurement that floated it. `mount` applies that width BEFORE the frame `refit` waits, or the height fit reads the previous width's wrapping and leaves the card ~100px taller than its content (measured). Its ONE `ScrollContainer` is not a breach of the panel's no-scroll rule — that rule is about content whose height feeds back into a FIXED reservation, and this ceiling is real viewport room — and it stays DISABLED unless `fit_to_content` finds the content taller than the room. It draws in `BandCityPanel.panel_card_stylebox()`, the panel's own, so it reads as the panel's surface rather than a second kind of card |
+| `ui/hud/WorkInspectorDialog.gd` | **The work board's inspector, rehosted OUT of the work zone** (`docs/plan_standing_upkeep.md` §4.9 item 12d) — see "THE WORK INSPECTOR IS A DIALOG" below. An **`AutoSizingPanel`** on its OWN `CanvasLayer` (`HudLayer.work_inspector_host()`, `WORK_INSPECTOR_LAYER_INDEX` = 105), holding the `PanelContainer` `BandPanelController._build_work_inspector` still builds — the head line, the conditional notes, the arrivals strip, and (since item 12d's SECOND pass) the POLICY / PRIORITY / KITS **sections** with their controls drawn, over a two-button actions row. **A `Control` on a layer and never a `Popup`**: `Popup` auto-hides on an outside click and on parent focus loss, which is precisely the dismissal this surface forbids (it RE-TARGETS when another board row is selected, so a stepper press elsewhere is ordinary use). **NON-MODAL — no catcher, no scrim**, `BandComposeFloat`'s rule for the same reason one layer down: every pixel it claims is a pixel of dead map, so it claims only the card. **Centred in the ROOM the dock leaves — one placement for all four dock edges**, no `room_bounds` (it is a surface you WRITE INTO, so it takes a layer above the docked ones rather than dodging them — `panel-framework.md`'s table). `_room()` is the viewport inside `VIEWPORT_MARGIN` cut back to the panel card's MAP-FACING side, `BandComposeFloat`'s own rect through `BandComposeFloat.map_facing_side`. It was centred in the raw viewport for one slice, which held only while the card was ~104–156px tall; the sections took it to 340 and a viewport centre then ran straight through a bottom dock's panel. `mount(strip, reserved, card_rect, map_facing)` is the whole API: `reserved` is `BandPanelController._work_inspector_height`'s answer for the same model and becomes the card's `min_height`, which is how *reserved ≥ drawn* survived the move. Rebuilt per render, never patched (the rung track's rule — every figure on the strip moves per snapshot), and the re-mount IS the re-target |
 | `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's FOUR zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed PEOPLE bar + the band page's own vitals rows — Food / **Fodder** / **Upkeep** / Morale / Growth; a sixth, Trade, went with arc #527's retired account, and the `Kit` row it sat beside went with `docs/plan_standing_upkeep.md` §4.9 item 12 — durabilities never aggregated, so that row was an alert and a drill-down, and the CRAFTING panel's kit ledger already states the items in full. The **`Upkeep`** row is the standing MATERIAL bill, folded PER BAND out of `DetailFormat.band_material_bill` and rendering only where some band on the roster owes a good — see `band-readouts.md` → "THE STANDING MATERIAL BILL". The `Fodder` row is the Food row beat for beat, sums the same way, and has the band row's DORMANT form on the same gate folded across the roster — see `band-readouts.md` → "THE FACTION PAGE'S `Fodder:` ROW". `build_band_zone` takes the faction's `{track: progress}` row as a sixth parameter for that row's hover alone, and `_build_vitals_label` CLEARS the previous render's carets before building, which this page did not do until a dormant row inherited one), `build_work_zone` (the whole workforce as one bar and the per-band roster), **`build_knowledge_zone`** (SETTLING, the craft tracks, DISCOVERIES — the fourth column the panel's ordered-list body exists to hold, with a `full` HEIGHT TIER that drops the last of the three in a height-capped horizontal dock) and `build_parties_zone` (every party and the band it left, its NAME jumping to that band — see "THE PARTIES ROW NAMES THE HOME BAND" for why `_summary_row` binds a separate `jump_owner`), plus the `_stat_row` leaf they are built from. Its two new inputs are threaded in as PARAMETERS like every other: the player faction's sedentarization entry and its discovered-site array, read off `FactionReadouts` (`faction_sedentarization` / `faction_discovered_sites`), which is where the PLAYER-FACTION FILTER over those two per-faction wire arrays already lives — a second walk looking for `PLAYER_FACTION_ID` is a second chance to disagree about whose faction is being reported. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the faction's `{track: progress}` row and the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions` / `band_fodder_store` / `band_net_fodder` / `band_material_bill`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `FactionReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `FactionReadouts`' track table, and none of them may read it back |
 | `ui/PenStatus.gd` | Single source of truth for **"is this pen's herd starving?"** — `FULLY_FED` / `FED_EPSILON` + `fed_fraction(herd)` / `is_starving(fed)`, reading `HerdTelemetryState.penFedFraction` (`< 1` ⇒ the pen's own pasture plus the fodder carried in did not cover its demand, so the herd is SHRINKING every turn — it is never a bill the keeper failed to pay, human food not being animal feed). Plus `herd_is_starving(herd)` for a caller holding only the herd dict. The ONE test all three surfaces ask — the herd drawer's **`Fed:`** row (`DetailFormat.pen_feed_value`, which carries the mark, the fed share, the pasture/fodder split and the shortfall; the CORRAL row states the rung alone, see `herd-readouts.md`), the map's distress badge (`MapView._draw_herd`) and the turn orb's `starving_pen` producer — so they can never disagree about which pen is dying |
 ## Band/City dockable panel
@@ -358,11 +360,44 @@ command center**: shown whenever ≥1 player band exists, always displaying a
     `_fixed_zone_span()`, a sum over the LIVE zone list), and the column count arrives through
     **`set_work_columns`** from `BandPanelController`, which is the only thing that knows how many
     sources there are. That is the `set_rail_width` contract again — DECLARED, never measured here.
-    - **It is acyclic because the count comes from the zone's HEIGHT.** `_work_board_capacity` derives
-      `rows` from the box's height (which a horizontal dock fixes), then `cols = ceil(count / rows)`.
-      Width follows count; count never follows width. The SHELL is still chosen from the room the
-      *strip* has (`_shell_is_wide`), never from the card, so nothing can feed back into the choice
-      that produced it.
+    - **It is acyclic because the count comes from the zone's HEIGHT and from a CONSTANT — never from
+      a width.** `_work_board_capacity` derives `rows` from the box's height (which a horizontal dock
+      fixes) and `_declare_work_layout` turns that into `cols = ceil(count / rows_per_col)`. Width
+      follows count; count never follows width. The SHELL is still chosen from the room the *strip*
+      has (`_shell_is_wide`), never from the card, so nothing can feed back into the choice that
+      produced it. (This bullet read `cols = ceil(count / rows)` flat until the rows-per-column
+      preference below split "how tall a column CAN be" from "how tall it SHOULD be".)
+    - **THE COLUMN BREAKS AT THREE ROWS BY PREFERENCE, AND THE PREFERENCE YIELDS TO THE AFFORDANCE.**
+      `HudWorkVocab.WORK_PREFERRED_ROWS_PER_COLUMN` (3) is what the board ASKS at, not what it is
+      capped to. Filling a column to whatever the height afforded is what made six sources on a bottom
+      dock read **5 + 1**: `ceil(6/5)` asks for two columns and the column-major fill drops one lonely
+      row into the second. Asking at three asks for the same two columns and fills them **3 + 3**.
+      - **The test for taking the shorter column is SOURCES SHOWN, not page size** —
+        `min(page, count)` against the height-derived layout's, both costed against the SAME
+        `work_columns_affordable()`. That distinction is the whole feature rather than a detail of it:
+        compared on raw page size, a 2 × 5 board (10 slots, four of them unfillable by a six-source
+        band) beats a 2 × 3 one, so the preference would lose in exactly the configuration it was
+        written for and the board would go on drawing 5 + 1. Where the page actually BINDS — a band
+        past what its columns can hold, or a strip that affords one column — the two readings agree
+        and the taller column is kept.
+      - **What that buys is the guarantee the design exists for: no source ever falls off the page for
+        this, and `pages` never rises.** A 380px side dock affords one column, so a 3-row fill there
+        would drop a 1 × 5 page to 1 × 3 and push two sources onto a second page. The affordance
+        refuses the ask, the fallback keeps the full height, and nothing moves — **which is also why
+        there is no dock-edge test**: a vertical dock disables the preference by affording one column,
+        not by being asked what edge it is on.
+      - **The affordance is READ, not discovered by declaring.** `BandCityPanel.work_columns_affordable()`
+        publishes the cap `set_work_columns` applies, so the controller costs both candidates and makes
+        exactly ONE declaration per pass. Declaring twice to find out would resize the card mid-build
+        to a width it then hands back. It does not invert the declare direction — the affordance is
+        geometry (strip, edge, shell, lateral bounds), the same kind of thing `work_zone_size()` already
+        reports, and none of it depends on the source count.
+      - **Measured across the whole dock/viewport matrix** (`band_panel_preview`'s
+        `_probe_work_board_layout`, 11 configurations × 5 source counts × 2 queue depths): the only
+        boards that moved are the ones that were lopsided. A bottom dock affording two columns goes
+        6 sources 2 × 5 → 2 × 3 and 4 sources 1 × 5 → 2 × 3; 8 and 12 sources keep their tall columns
+        because there the page binds; every vertical dock and every one-column bottom dock is
+        unchanged; the 34-source board is unchanged to the pixel.
     - **`set_work_columns` RETURNS the count it granted, and the board must build to that.** A want is
       not a grant: `_affordable_work_columns()` caps it at what the strip can actually pay for, and a
       board built to the want overflows its CLIPPING zone host silently — measured at ~190px in a 380px
@@ -542,7 +577,9 @@ stretch, and widening it into that gap would put it over a live HUD column.
   box where its host silently clips it.
 - **Zone `work` — THE PAGED BOARD** (`BandPanelController.build_work_zone` / `_fill_work_zone`). Header (`WORK` ·
   n sources · total /turn · the fodder total when non-zero · **`Output 62%` when the band is below
-  full productivity** · a `⋯` `MenuButton`) · filter CHIPS · the board · pager · inspector strip.
+  full productivity** · a `⋯` `MenuButton`) · filter CHIPS · the board · pager. **The inspector strip
+  is NOT in that stack any more** — §4.9 item 12d hosts it as a viewport-centred `WorkInspectorDialog`
+  off the panel entirely; see "THE WORK INSPECTOR IS A DIALOG".
   **The Output item QUALIFIES the two totals beside it rather than adding to them**, which is why it
   trails them and why it lives here at all: `output_multiplier` is the discontent modifier every rate
   on this board is already scaled by, so the head is where its consequence is visible — a vitals row
@@ -572,18 +609,22 @@ stretch, and widening it into that gap would put it over a live HUD column.
   `WORK_COLUMN_MIN_WIDTH` column is ~20px narrower than the marks column alone would suggest (spec in
   `labor-ui.md` → "The work row carries TWO axes"). **Capacity is derived ENTIRELY from
   `work_zone_size()`** (`_work_board_capacity`): `cols = clamp(w / WORK_COLUMN_MIN_WIDTH, 1,
-  WORK_MAX_COLUMNS)`, `rows = (h − head − chips − inspector − pager) / WORK_ROW_TWO_LINE_HEIGHT`, filled
+  WORK_MAX_COLUMNS)`, `rows = (h − head − chips − pager) / WORK_ROW_TWO_LINE_HEIGHT` (the `− inspector`
+  term retired with §4.9 item 12d), filled
   **column-major** with a hairline between columns; the pager is resolved in **two passes** because it
   only exists when one page cannot hold everything yet costs a row. **EVERY reserved height must be
   what the element actually draws at** — the default `HudStyle` button chrome pads 9px top and bottom,
   which alone makes a stepper ~40px and pushes the page off the bottom of the zone, so the board's
   buttons take `HudWidgets.compact`'s squeeze. Clicking a row opens the **inspector strip**: the row's
   old second/third lines in one place (yield/policy/status in words, warning lines, the `ArrivalStrip`)
-  plus three inline links — `Jump to source` · `Change policy` (an inline picker, the four EXTRACTIVE
-  rungs only — the investment rungs are ladder commitments made at the source's own compose control,
-  where their gates and payoff forecasts live) · **`Unassign`**. That is the per-source removal: a
+  plus, since §4.9 item 12d's second pass, the POLICY / PRIORITY / KITS **sections** with their
+  controls drawn (the policy grid is the four EXTRACTIVE rungs only — the investment rungs are ladder
+  commitments made at the source's own compose control, where their gates and payoff forecasts live)
+  and a two-button actions row: `Jump to source` · **`Unassign`**. That is the per-source removal: a
   hover `✕` beside the `−` stepper would be a mis-click hazard, this is the labelled version. One row
-  open at a time, and it COSTS board rows, which is why the capacity maths subtracts it.
+  open at a time, and since §4.9 item 12d it COSTS THE BOARD NOTHING — the strip is the body of a
+  viewport-centred dialog, so the capacity maths has no term for it to subtract. The retired reading
+  was *"it COSTS board rows, which is why the capacity maths subtracts it."*
   **THAT WHOLE SPECIAL CASE IS GONE** (issue #442). `model["policy"]` could legitimately be
   `corral`/`cultivate`/`tame`/`sow`, none of which the picker offered — so the radio highlighted
   nothing and a press silently discarded a ~25-turn ladder build. The fix then was a WARN standing
@@ -1863,7 +1904,13 @@ columns, where it lost one before. What is left of the trade sits just above 187
 yields. The flip is at roughly `ui_scale` 1.15 there. Printed each run rather than asserted — it is the
 interaction of two independent constants, not a contract.
 
-## The strip's height is 360 at ONE band column and 335 at two
+## The strip's height is 418 at ONE band column and 335 at two
+
+> ⛔ **THE HEADLINE NUMBER WAS 360 WHEN THIS SECTION WAS WRITTEN AND IS 418 TODAY** — it went 360 → 440
+> → 456 and then, for the first time, DOWN to 418 (see "…AND 456 CAME BACK DOWN TO 418"). Every
+> measurement below is quoted against the 360/275 boxes of its own day and is kept as the record of how
+> the two-column budget was DERIVED; the derivation is unchanged and `PANEL_HEIGHT_WIDE_TWO_COLUMN` is
+> still 335, which `_horizontal_panel_height()`'s `maxf` still makes inert against the one-column budget.
 
 `PANEL_HEIGHT_WIDE_TWO_COLUMN` is **derived, not authored**: `263` (the charted band flank, measured)
 `+ 12` slack (one `ZONE_SEPARATION`) `+ 60` chrome (header 38 + card 22) = **335**. `_body_budget()`
@@ -1900,6 +1947,221 @@ its strip.
 
 The width work's recovered 151px still has nowhere to go on the strip; it is spent **inside** the zone
 (below). And the tile-column clipping a horizontal dock causes is reduced only by the 25px, not solved.
+
+## AN EMPTY WORK BOARD STILL DECLARES ITS WIDTH, or the zone keeps the LAST band's
+
+Reported from play, on a horizontal dock: *"the empty view is too wide at the work tab, everything is
+stretched."* The three POOLS cards were spread across the full span with enormous internal padding, above
+the `HudWorkVocab.WORK_EMPTY_HINT` line — measured on a 3440 bottom dock, **1520px of work zone holding
+one hint line**, against the 380 a board of one column wants.
+
+**THE MECHANISM IS AN EARLY RETURN, NOT A SIZING RULE.** Since issue #377 the wide shell's card is built
+UP from a declared column count (`BandCityPanel._card_width()` reads `_work_columns`), and the ONLY thing
+that ever sets that count is `set_work_columns`, reached through `_declare_work_columns` ←
+`_declare_work_layout` ← **`_work_board_capacity`**. `BandPanelController._fill_work_zone_column` returns
+at its `filtered.is_empty()` branch *before* reaching it, so a band with nothing worked never declared
+anything and `_work_columns` kept whatever the previous render left: `WORK_MAX_COLUMNS` (4) on a fresh
+panel, and the previous BAND's count after a cycle. The zone was then drawn that many columns wide with no
+board in it, and every child of it — the pools cards, the chips, the hint — stretched to fill.
+
+**THE FIX IS ONE DECLARATION ON THAT BRANCH**, `_declare_work_columns(filtered.size(), …)`, whose answer
+for a zero-length board is ONE (`_wanted_work_columns` clamps `ceil(0 / rows)` up). No new rule, no new
+constant, and still exactly ONE declaration per pass — the branch returns, so it can never run beside
+`_work_board_capacity`'s. **Clamping the pools block instead was refused and would have been the wrong
+seam**: the width is the defect and the cards are only what shows it, so the chips, the hint and the board
+would all still have been sitting in an over-wide zone.
+
+⛔ **IT IS NOT THE ROWS-PER-COLUMN PREFERENCE, AND THE ARITHMETIC SAYS SO.** `_wanted_work_columns(0, rows)`
+clamps to 1 with or without the preference, and `_declare_work_layout` takes its `short` branch to the same
+answer — the declared count was always going to be 1 if anything had declared at all.
+
+**HOW IT SQUARES WITH THE MATRIX'S "zone w 380 at 1920 BOTTOM".** That measurement was right and could not
+see this: every state in it stages a band WITH sources, which reaches `_work_board_capacity` and declares
+correctly. The stale count only survives on the path that returns early, and **nothing in
+`band_panel_preview` had ever rendered `WORK_EMPTY_HINT`** — the nearest state,
+`band_panel_dockrow_ultrawide_empty`, is called empty and is not: its band works no sources of its own but
+the world still holds patches and herds, so the board draws.
+
+**THE STATE THAT CLOSES IT IS `band_panel_work_empty_wide`**, and the ORDERING is the reproduction: it
+opens the busy 34-source band on an ULTRAWIDE bottom dock, asserts as a PRECONDITION that it earned more
+than one column, and only then pushes the unworked band. A state that opened straight onto the empty band
+passes with the defect in — which is what a first cut of it did at `DOCKROW_CANVAS`, where the panel
+already held one column. The claim is the zone's WIDTH against `ZONE_WORK_MIN_WIDTH`, which is the one an
+over-wide zone cannot pass by accident: every pre-existing width assertion in the harness
+(`_assert_work_zone_readable`, the content-width walk) asks whether the zone is wide ENOUGH and is
+satisfied by one far too wide. It is **paired with liveness** — the hint renders, the POOLS block renders,
+and the board really drew zero rows — since a zone rendering nothing is trivially not stretched.
+
+**The `_queue_expanded` branch two lines above returns without declaring too, and is left alone
+deliberately.** It inherits the count from the SAME band's previous render (the expanded queue is entered
+from a board that had just declared), so every shipped frame reads one column and no stretch is
+observable; what the right width for a full-queue list is, is a design question rather than this defect.
+
+## The bottom row SPLITS its chrome to both ends where it fits, and stacks it where it does not
+
+Ray, on a bottom dock: put the minimap at the leading end and the turn orb at the trailing end, the way
+they sit when the panel is docked at the TOP and `BottomBar` stays intact. His reasoning — *"there was a
+reason for that when the horizontal band was first done. However, now the band panel doesn't take up the
+entire space"* — is correct, and the re-measurement below says by how much.
+
+**THE RECORDED REJECTION, QUOTED, because it was right when it was made**: *"A gutter at each end was
+built first and rejected on sight with a real minimap in it: the left rail is ~300px, so two opposite
+gutters pushed the band zone inward AND stranded dead space around the orb, costing ~562px of row. One
+column costs `max(nav, turn)` ≈ 296–302 … That hands the zones ~240px back and drops the wide→narrow flip
+from ~1605px of window width to ~1377px."*
+
+**RE-MEASURED, THE SPLIT COSTS 141px OF ROW, NOT 562.** Two things moved:
+
+| | then | now |
+|---|---|---|
+| nav cluster (`NavBacking`) width | ~296 | 296 (Standard) / 308 (Large) |
+| turn cluster width | **260** | **116** — the `Turn N` caption moved into the orb face |
+| stacked span | 296 + 25 gutter = **321** | **321** |
+| split span | 296 + 260 + 2 gutters = **~606** | 296 + 116 + 2 gutters = **462** |
+| **extra cost of splitting** | ~285 | **141** |
+
+The other half of the old objection — *"pushed the band zone inward"* — expired with issue #377: the card
+is sized to its CONTENT and floats as an island, so room beside it is slack over live map rather than
+width taken off the zones.
+
+### The gate, and what it is measured against
+
+`BandCityPanel._rail_split()` — split iff `viewport − split span − lateral bounds >= wide_shell_min_width()`.
+**Existing vocabulary, no new tunable.** Below it the old rejection still governs: two islands plus a card
+cannot fit an arbitrarily narrow window, and the chrome stacks exactly as before. **What the `lateral
+bounds` term MEANS was the defect** — see "it needed 2012px" below.
+
+It is the shell's MINIMUM rather than `_card_width()`'s current answer **deliberately**: the declared card
+width follows the work board's column count, so gating on it would move the minimap to the other end of
+the screen when a band gains a source — and it would be a cycle besides (`_card_width` ← `_work_columns` ←
+`set_work_columns` ← `_affordable_work_columns` ← `_available_card_span` ← `_rail_span` ← the verdict).
+
+**Measured flip widths** (Standard map, 3-zone band subject, `wide_shell_min_width()` = 1190):
+
+| state | window | leading bound | verdict |
+|---|---|---|---|
+| `band_panel_dockrow_bottom` | 1920×1080 | **0** — the left column is not in the row | **split** |
+| `band_panel_dockrow_column_reaches` | 1920×**540** | **360** — the tile card really does reach the row | **stacked** — 1098 of room, 92 short |
+| `band_panel_dockrow_bottom_yield` | 2560 | 0 (HUD yields) | **split** |
+| `band_panel_dockrow_ultrawide` | 3440 | 360 → **0** | **split** |
+
+So the split needs **≥ 1652px** of window (1190 + 462), and ≥ 2012 in the one case where the left
+column's card really does descend into the strip. `band_panel_preview` prints the live threshold beside
+the state (`chrome split threshold — 1652px of window … 1920 splits, 2000 splits`).
+
+#### ⛔ IT NEEDED 2012px, AND THE FEATURE DID NOT EXIST ON THE HARDWARE IT WAS BUILT FOR
+
+The retired reading of the table above was: *"the split needs ≥ 2012px of window while the HUD keeps its
+left column (1190 + 462 + 360) … **A 1920 monitor therefore still stacks** — there is genuinely no room
+for two ~300px islands beside a 1190px card and a 360px HUD column."* Reported from play on a ~2000px
+window: minimap and turn orb still stacked bottom-right. **2000 − 462 − 360 = 1178 against a minimum of
+1190 — it failed by 12px**, and a feature that needs 2012px on a 2000px monitor is a feature that does
+not exist.
+
+**THE 360 WAS THE LEFT COLUMN'S WIDTH CHARGED AT A HEIGHT THE COLUMN IS EMPTY AT.** `LeftDock` is
+`SIZE_EXPAND_FILL` in `ContentRow`, so its REGION runs the window's full height — but the region is not
+what a player sees. The dock holds exactly ONE card (`left_dock.add(tile_panel, 10)`, the only
+registration there is), and measured on a 1920×1080 bottom dock it stops at **224** against a strip whose
+top edge is **662**. The bottom-left of that screen is open map: the chrome was being held off an
+obstruction that was 438px away.
+
+**IT IS THE SAME MISTAKE `348e5c09` MADE ON THE TRAILING COLUMN**, which is why the fix is the shape that
+one already has. That commit bounded the chrome rail against the right column's reserved REGION and left
+a visible band of dead map beside it; the rail is flush now and the right dock's CARDS are held above the
+strip instead. `band_panel_preview._right_dock_content_reach`'s own header states the rule —
+*"Never `right_dock_region`, whose rect spans the whole row whether or not anything is painted in it"* —
+and every word of it was true of the left column too.
+
+**THE FIX IS AT THE BOUND, NOT AT THE GATE OR THE THRESHOLD.** `_rail_split()` is unchanged;
+`Main.band_panel_lateral_bounds` (a `static` beside `band_dock_overlays_hud`, so the harnesses call it
+rather than restate it) drops the leading term on a BOTTOM dock wherever
+`Hud.left_column_content_reach()` — the painted bottom of the left dock's cards, clipped to `LeftScroll`
+— stops above the strip. Every consumer of the bound gets the honest number at once: the gate, the
+leading island's `offset_left`, the card's centring and `_available_card_span()`. Lowering
+`wide_shell_min_width()` or a rail span to clear 2000 would have been tuning a measured quantity to pass
+a test.
+
+**IT IS LIVE, AND IT HAS TO BE — the column is ALLOWED to grow into the strip.** Only the RIGHT column
+yields its bottom on a bottom dock (`Main._update_right_column_bottom_clearance`: a bottom inset on
+`LayoutRoot` would shorten BOTH, and the left column's full height IS the defect that inset exists to
+fix). So this is not a worst case to assume away: where the tile card really reaches the row, the bound
+comes straight back and the chrome stacks. `band_panel_dockrow_column_reaches` stages exactly that with a
+pure window resize — the strip's top edge is 0.4 of the window's height, so a 540-tall window raises it
+to 216, under the same card's 224 — and `_assert_leading_bound_matches_the_column` asserts BOTH
+directions. With only the tall state, *"the leading bound is 0"* is satisfied by a client that never
+charges it, which is a band card drawn straight through the tile card the day one grows.
+
+**ONLY THE BOTTOM EDGE ASKS THE QUESTION.** On a TOP dock the strip is at the top of the window and the
+left column's content STARTS there, so the column is always in the card's band; asking there would zero a
+bound that is genuinely owed.
+
+**THE WIDE→NARROW SHELL FLIP DID NOT MOVE.** It is 1331 before and after (`shell threshold probes at
+1330 / 1331`), and the honest bound cannot move it: below the yield fork (1871) `Main` pushes zeroes
+anyway, so the shell's own arithmetic at 1331 never saw a leading bound to drop. The old two-gutter
+shape's ~1605 is not approached.
+
+⛔ **WHAT IT DOES COST, MEASURED AND ACCEPTED**: on a 3440 bottom dock with 34 sources and a TWO-column
+band flank, the extra 141px takes the work board from four columns to three (`band_panel_dockrow_ultrawide`,
+zone 1522 → 1142), with 648px of open map still beside the card. A gate that could refuse *that* would have
+to cost both arrangements in board columns, which needs `_fixed_zone_span()` — the flanks at their CURRENT
+counts — and that call chain is the verdict again (measured as a 1000-frame stack overflow, not a
+theoretical cycle). Restating it through `wide_shell_min_width()` terminates but silently answers a
+different question: that sum is the flanks at ONE column each, so where the flank has two it over-counts
+the room by 380 and never fires. It was written, measured, and removed rather than left in looking useful.
+
+### The seam
+
+**The panel decides the ARRANGEMENT; the HUD still owns and measures the chrome.** `DockRowController`
+declares both clusters' widths (`set_rail_widths(nav, turn)` replacing `set_rail_width(max)`) and parks
+into `RAIL_SLOT_TOP` / `RAIL_SLOT_BOTTOM` exactly as it always did; `BandCityPanel` moves the nav cluster's
+SLOT HOST between a new leading island and the trailing one, with the parked cluster still inside it. So
+the split is invisible to the controller and no ownership rule changed.
+
+`DockRowController._measured_rail_width()` still reports the STACKED width, and that is sound rather than
+stale: its one reader is `rail_width_for` → `affords_wide_shell_with_bounds`, the stacked span is the
+SMALLER of the two arrangements, and the panel splits only where the LARGER one still clears the shell
+minimum — so wherever that predicate says "affords", the arrangement actually chosen affords it too.
+
+The slot ids still read `RAIL_SLOT_TOP` / `RAIL_SLOT_BOTTOM` and now mean "nav" / "turn"; they are kept
+rather than renamed because the HUD parks by them and renaming would touch every call site to say the
+same thing.
+
+### What the harness had to relearn
+
+Five claims were written against a row with exactly one chrome island, and each failed on a *correct*
+split layout:
+
+* **`_assert_parked_chrome_fits`** measured both clusters against the trailing rail — reported the nav
+  cluster spilling by ~2,000px. Now each cluster is measured against the island it is actually in (found
+  by ancestry), with per-island centring, plus a new liveness claim on the island COUNT: one when stacked,
+  two when split.
+* **`_assert_card_is_centred`** measured the gap's leading edge from the HUD bound, so a correctly centred
+  card read as off-centre by exactly the leading island's span. The leading edge is now measured off
+  whatever really stands there — the same rule the trailing edge already followed.
+* **`_assert_open_strip_reaches_the_map`** probed from the bound (i.e. into the new island, which is
+  supposed to eat clicks) and subtracted the whole rail span from the trailing gap (double-counting the
+  leading island, giving a −141px gap). Both edges now come from the shared `_card_gap_lead_edge()` /
+  `_card_gap_trail_edge()`, and every island is probed for click-eating, not just the trailing one.
+* **`_assert_card_clears_lateral_columns`**'s negative control asked whether the UNBOUND card collides
+  with the left column. Where the row splits, the leading island stands in front of the card, so the
+  control went vacuous. It now tests the leading-MOST furniture, and the leading island is separately
+  asserted to clear the column.
+* **Both shell-threshold probes** read `_rail_span()` live at an ULTRAWIDE canvas and then pinned a canvas
+  `threshold + span` wide. That span is canvas-dependent now: read where the row splits, it is 141px too
+  big, and the probe landed on a window where the row does NOT split, kept the 141px, and came out WIDE
+  one pixel below the threshold it was meant to be under. They read the STACKED span now — which is the
+  honest term, since the row never splits below the threshold.
+
+**New claim: `_assert_chrome_ends`**, on all three parked states. Split ⇒ the nav cluster is wholly
+LEADING of the card and the turn cluster wholly TRAILING of it, in different islands; stacked ⇒ same
+island, nav above turn. Order along the axis that matters for each, so neither arrangement passes on the
+other's layout, and paired with liveness (both clusters visible with a non-degenerate rect) because chrome
+that never rendered is at no end at all.
+
+**And the leak check**: `_assert_chrome_parked(false, …)` now also requires the leading island to be
+retired — hidden and zero-width. It is a `_root` child of the PANEL, not of `BottomBar`, so
+`DockRowController._home` cannot restore it and nothing else would have noticed a 296px band of chrome
+left standing over the map on a vertical dock.
 
 ## The band zone's tier reads the whole STACKING BUDGET, and the split is authored
 
@@ -2119,19 +2381,28 @@ much taller and text can't be cut off"*) and accepted the wide dock's queue stay
 `+N more`**. The alternative measured **540**, which restores the queue's three rows and flips the band
 flank to TALL, and was declined as half the screen.
 
-> **⛔ THERE IS NO ROOM LEFT. The next block added to this zone overflows it.** The height has been the
-> lever three times in one arc and is out of travel; the structural answer — the inspector replacing the
-> board rather than stacking under it, or the tab splitting — is unbuilt and is what the next addition
-> should force, not a fourth raise.
+> **⛔ THE STRUCTURAL ANSWER WAS BUILT, AND IT WAS THE CHEAPER OF THE TWO THIS CALLOUT NAMED**
+> (`docs/plan_standing_upkeep.md` §4.9 item 12d — see "THE WORK INSPECTOR IS A DIALOG" below). **The
+> retired demand is quoted rather than deleted, because every measurement in it was right**: *"THERE IS
+> NO ROOM LEFT. The next block added to this zone overflows it. The height has been the lever three
+> times in one arc and is out of travel; the structural answer — the inspector replacing the board
+> rather than stacking under it, or the tab splitting — is unbuilt and is what the next addition should
+> force, not a fourth raise. The two-line board row is the worked example of what "out of travel"
+> costs. It needed 16px, the height could not give them, and what paid was DELETING A READOUT — the
+> inspector's whole sentence, possible only because the row had taken over every clause of it. The zone
+> reads 396 of 396 again; there is no second sentence to spend."*
 >
-> **The two-line board row is the worked example of what "out of travel" costs.** It needed 16px, the
-> height could not give them, and what paid was DELETING A READOUT — the inspector's whole sentence,
-> possible only because the row had taken over every clause of it. The zone reads 396 of 396 again;
-> there is no second sentence to spend.
+> **What forced it was the next addition, exactly as predicted.** Item 12c's kit pair measured the
+> zone and found FOUR pixels of spare — and found that the *shipped* priority picker had been asking
+> 444 of a 396px box since §4.9 item 9b, unrendered. The answer taken was neither of the two named: the
+> inspector left the zone for a **viewport-centred dialog**, which is a third option both of those were
+> reaching past. `PANEL_HEIGHT_WIDE` did not move for it and no config value was retuned.
 
 **Why no harness caught it:** the worst-case zone frames were a BOTTOM dock with **nothing selected**,
 and every inspector-open frame was a TALL LEFT dock with room to spare. Two frame families, disjoint,
-and the defect lived exactly in the gap. `band_panel_pools_wide_selected` is the frame that closes it.
+and the defect lived exactly in the gap. `band_panel_pools_wide_selected` is the frame that closes it,
+and item 12d's dock/viewport MATRIX (`_render_work_inspector_dialog_states`) is what stops the shape
+recurring: eleven configurations × every picker, so no gap between two families is left to hide in.
 
 **A latent scale defect surfaced with the raise and is fixed.** At `ui_scale` 1.35 the new budget
 crosses `MAX_WIDE_HEIGHT_FRACTION`, and a band zone BUILT before the header settles baked a 394px
@@ -2152,6 +2423,71 @@ there.
 32%, so nothing clears 0.75 and the floor may not rise. `BAND_FLANK_FILL_FLOOR` went **0.60 → 0.50**, and
 the ROOM is what moved, not the content: the same 430px of blocks now sits in 760px rather than 550. It
 still fails a flank that lost a block (23% / 49%), which is what keeps it a real assertion.
+
+### …AND 456 CAME BACK DOWN TO 418 — the first time this budget has ever SHRUNK
+
+Reported from play: the bottom strip is too tall. The band flank, the workforce and the work column all
+end well above the bottom of it, and only the parties column reaches it — its action grid being
+bottom-anchored. Asking for three board rows per column does not answer it and cannot: the budget is a
+fixed constant and the board is ELASTIC, so fewer rows becomes empty space rather than a shorter strip.
+
+**THE INSPECTOR'S RAISE WAS ONLY PARTLY RE-CLAIMED, WHICH IS WHY THERE WAS ROOM TO GIVE.** §4.9 item 12d
+took the strip out of the zone entirely, so the 396-with-a-row-selected measurement that bought 440 → 456
+describes a zone that no longer exists — no inspector term survives in `_work_board_capacity` or in
+`HudWorkVocab.build_queue_rows_max`. What moved into the space it left is **one** term, not all of it:
+`BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` (56), the queue's own settings strip, which the retiring inspector
+reservation had been covering by accident. So the over-provision was **38px**, not the ~104 the retired
+strip suggests.
+
+**THE WORK ZONE BINDS ALONE, AND ITS FLOOR IS 358px** — derived and measured agreeing to the pixel:
+
+| term | px |
+|---|---|
+| `ZONE_HEAD_HEIGHT` + `WORK_CHIPS_HEIGHT` | 20 + 26 |
+| POOLS block (`pools_block_height(false)`) | 82 |
+| BUILD QUEUE at its floor, settings strip open — head 20 + one entry row and the overflow (2 × `WORK_ROW_HEIGHT`) + `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` 56 | 132 |
+| one un-droppable board row (`WORK_ROW_TWO_LINE_HEIGHT`; the board floors at `maxi(1, …)`) | 44 |
+| `WORK_PAGER_HEIGHT` | 24 |
+| five `ZONE_BLOCK_SEPARATION` gaps | 30 |
+| **total** | **358** |
+
+`PANEL_HEIGHT_WIDE` is **418** = 358 + `HORIZONTAL_BODY_CHROME`. **Swept rather than reasoned**: the whole
+harness was run at twelve values of the constant and judged by exit status. **416** hands the zones a 356px
+box and `band_panel_build_queue_wide` fails with `needs 358px … short by 2`; 418 clips nothing at any dock
+or viewport in the matrix. Fund mode does not raise the floor — its 110px pools block buys the queue fewer
+rows, so the two move against each other.
+
+**WHAT THE 38px COSTS IS ONE BUILD QUEUE ENTRY ROW, and nothing else.** A wide dock draws one entry and
+`+3 more` where it drew two and `+2 more` (`band_panel_preview.WIDE_DOCK_QUEUE_ROWS` 2 → 1, which is
+`BUILD_QUEUE_ROWS_MIN`, i.e. the floor). The board's row count is unchanged at every configuration —
+2 rows at 1920/1600/1024, 4 at 1440/1366/1280/1152 — and the tall LEFT dock still draws all three entries.
+
+**NO TIER BOUNDARY IS CROSSED ON THE WAY DOWN, which is what makes it cheap.** `_band_zone_tier_height()`
+is the box times the COLUMN COUNT, so a one-column flank was already COMPACT at 396
+(`BAND_ZONE_TALL_MIN_HEIGHT` is 420, which a one-column horizontal dock never reached) and a two-column one
+stays TALL until the box halves. `BAND_ZONE_CHART_MIN_HEIGHT` (340) is crossed at a budget of **402** —
+BELOW the 418 floor, so the work zone clips before the flank can re-tier. And a tier drops no content in
+any case: *"A TIER NEVER DROPS A BLOCK — the zone scrolls, so content that outgrows the box is reached
+rather than lost."*
+
+**THE OTHER THREE ZONES CANNOT BIND, MEASURED.** The band flank SCROLLS — its one-column content is
+**442px invariant** at every budget, over its box at 456 and at 418 alike — the two-column flank is 256
+(290 charted), and the parties zone's floor is **226px** (head 20 + `PARTIES_LIST_MIN_HEIGHT` 84 + gaps +
+a ~110px bottom-anchored mission grid, i.e. roughly half that minimum is the grid).
+
+⛔ **THE ELASTIC BOARD DOES NOT DEFEAT THE EXERCISE, AND THE "396 of 396" READING IS WHY IT LOOKS LIKE IT
+MIGHT.** The reserved strip IS this budget plus the shell's chrome, so lowering it genuinely shrinks the
+panel and re-insets the map; the zone reporting zero spare is the board REFILLING the smaller box
+afterwards, not the panel refusing to shrink. What stops it going lower is the fixed blocks above the
+board — pools, queue, chips, pager — which is the 358.
+
+**THE LATENT SMALL-VIEWPORT CLIP THIS WAS EXPECTED TO EXPOSE DOES NOT EXIST.** 1152×720 was suspected of
+already clipping at 456, its box being clamped to 337 against the 358 worst case. It does not: at that
+viewport the panel picks the NARROW tabbed shell, whose one zone is the whole card, and the state measures
+**337 of a 337px box**. `band_panel_queue_settings_tight` is the frame that says so — the matrix walks
+every configuration with the INSPECTOR open and never the queue, while the queue-control states open the
+strip only at `DOCKROW_CANVAS`, so this was the gap between two disjoint frame families for the fourth
+time in this file's history.
 
 ## RETIRED — THE KEEPING BLOCK on the band tab, and the rules that outlived its mount point
 
@@ -2566,9 +2902,13 @@ zero.
   `_work_source_models` where the live herd dict is already in hand — beside the six other build fields
   and for their reason. `PEN_EXTEND_EMPTY_METER` on every entry that is not a ring: the field is
   meaningful only under the branch `improvement` selects.
-- **IT IS THE SAME DIVISION THE HERD DRAWER'S BADGE QUOTES.** The queue row and the `Fencing N%` pill
-  read one ring through one helper, so they cannot state it two ways — see `labor-ui.md` → "The fence
-  ring's meter is a work pair" for the units and the zero-denominator rule.
+- ⛔ **IT WAS THE SAME DIVISION THE HERD DRAWER'S BADGE QUOTED, AND THIS ROW IS THE LAST READER LEFT**
+  (`docs/plan_standing_upkeep.md` §4.9 item 12c). The dead claim: *"The queue row and the `Fencing N%`
+  pill read one ring through one helper, so they cannot state it two ways."* The pill retired with the
+  tile card's `Extend pen` button, being a third statement of a meter this row already dates and
+  withdraws — so `pen_extend_fraction` now has exactly one caller and the drift it was written against
+  is structural rather than disciplinary. See `labor-ui.md` → "The fence ring's meter is a work pair"
+  for the units and the zero-denominator rule.
 
 Asserted in `band_panel_preview` as `band_panel_queue_ring` on three claims, the first being the
 precondition without which the other two pass for free: that the pen rung is FULL with no rung in
@@ -2597,8 +2937,11 @@ marker · mark · face · date · `✕` until the date column learned a verb —
   beside the crop here. A row that could not hold five columns was never going to hold six.
 - **The height is open-only** and rides the same one expression
   (`build_queue_block_height(entries, rows_max, settings_open)`) that `_work_board_capacity` charges. An
-  open strip does not overflow the zone — the BOARD absorbs it and pages one row shorter, the identical
-  trade the work inspector already makes.
+  open strip does not overflow the zone — the BOARD absorbs it and pages one row shorter. **It is the
+  LAST expansion in this zone that makes that trade**: §4.9 item 12d took the work inspector's twin
+  term out, and the headroom the board needs for THIS strip is now `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT`,
+  reserved by `build_queue_rows_max` where the inspector's own reservation had been covering it by
+  accident.
 - **The face's width is asserted as a MEASUREMENT, not a look** — its laid-out width against the font's
   own width for its string — because that is the one thing that moves when a control takes width off the
   row's single expanding child.
@@ -2828,6 +3171,12 @@ the same dock reads **396 of 396 — zero spare, and no overflow**. `band_panel_
 is the frame, asserting the exclusion BOTH ways (a builder that never opens the strip would pass one
 half) beside `_assert_zone_content_fits`; sabotage-verified by disabling the exclusion, which prints
 the 460 above.
+
+**⛔ THE ARITHMETIC HALF OF THAT RULE RETIRED WITH §4.9 item 12d, and the rule is kept for its reading
+half.** The 460-into-396 measurement above is HISTORY: the inspector is a viewport-centred dialog and
+takes no zone height at all, so the two expansions can no longer overflow anything together. What
+survives is that a board row and a queue row are two different subjects, and expanding both states
+neither clearly.
 
 #### TWO CONSTANTS THAT READ LOWER THAN THEY DRAW, corrected here
 
@@ -3288,6 +3637,409 @@ means — equal dates would pass a "the dates render" check while proving nothin
 PNG-less, driven through the real handler and read back off `Main.format_unqueue` on BOTH webs, since
 either alone passes on a builder that gets the grammar backwards.
 
+## THE WORK INSPECTOR IS A DIALOG, AND THE ZONE STOPS PAYING FOR IT (§4.9 item 12d)
+
+`docs/plan_standing_upkeep.md` §4.9 item 12d. The board's inspector strip is a **persistent,
+viewport-centred, NON-MODAL `WorkInspectorDialog`** on its own `CanvasLayer`. It is a **rehost, not a
+redesign**: `BandPanelController._build_work_inspector` builds exactly what it built before — the head
+line, the conditional notes, the arrivals strip, the links row and whichever of the three pickers is
+open — and the only thing that changed is who hosts it and who pays for it.
+
+**THE ZONE HAD FOUR PIXELS AND EVERY EXPANSION OVERFLOWED IT.** Measured on a 1920 bottom dock with a
+row selected: the box is **396** and the closed strip asked **392**. Open the *shipped* priority
+picker and it asked **444** — over by 48. Open item 12c's kits picker and it asked 436, over by 40.
+There was no expansion small enough: `_work_board_capacity` is floored at `maxi(1, …)`, so the board
+could give back 4px of `int()` truncation and **zero rows**. Two small bottom docks — **1152×720** and
+**1024×768** — already overflowed with nothing expanded at all, against boxes
+`MAX_WIDE_HEIGHT_FRACTION` had clamped. **Those measurements are HISTORY now, not live constraints**:
+they describe a zone that charged itself for a strip it no longer draws, and none of them can recur,
+because no selection and no picker takes a pixel off the zone.
+
+**A WINDOW CANNOT CHANGE A ZONE'S HEIGHT, and that is the whole fix.** `_open_rung_track`'s own
+docstring had been making the argument for a smaller piece of content in this same zone — *"the detail
+breakdowns are popovers and the destructive confirms are `ConfirmationDialog`s. It costs the zone
+nothing at all."* The inspector was the piece it was never applied to. Hosting it off the zone makes
+the overflow **impossible** rather than made to fit.
+
+### Four properties, each load-bearing
+
+- **CENTRED OVER THE MAP**, not centred on the panel and not anchored to the row. On a bottom dock
+  the panel is a strip with a screen of map above it; on a side dock a column with map beside it — so
+  one centre lands over the MAP on every edge and the board stays visible. Floating it off the panel's
+  map-facing edge aligned to the selected row reads better and was **declined**: four dock edges means
+  four placements plus clamping. **It centred in the raw VIEWPORT until the sections made the card
+  340px tall** — see "…AND IT STOPPED PRETENDING TO BE A CRAMPED STRIP" for the measurement that moved
+  it onto the room.
+- ⛔ **NON-MODAL — no catcher, no scrim.** The card re-targets when another board row is selected,
+  which is only possible if the board stays live underneath. `ComposeSheet` IS its own full-viewport
+  `MOUSE_FILTER_STOP` catcher; this card covers its own rect and nothing else, `BandComposeFloat`'s
+  rule for the same reason (`PanelRoot`'s autopsy in reverse — every pixel it claims is dead map).
+- **PERSISTENT, with an explicit dismiss.** It does not close on an outside click; a stepper press on
+  a different row is ordinary use. The `✕` in the head closes it, and so does **ESC**.
+- **EVERY DOCK, not the horizontal one.** The vertical dock does not need it — its box is the full
+  window height less chrome — but a fork means two layouts and two frame families, which is exactly
+  the shape that hid both defects above. One behaviour, one code path, one matrix. The vertical dock
+  gets the freed rows too.
+
+### ⛔ A `Control` ON A `CanvasLayer`, NEVER A `Popup`
+
+**`Popup` auto-hides on an outside click and on parent focus loss**, which is precisely the dismissal
+semantics item 12d forbids. `_open_rung_track` is a `PopupPanel` because it is *transient* (open,
+pick, gone); a persistent non-modal surface fighting `Popup`'s auto-hide is the wrong node. The layer
+gives the one property the slice needs — **it does not participate in any zone's layout** — with no
+focus semantics to fight and no scrim by default.
+
+**`HudLayer.WORK_INSPECTOR_LAYER_INDEX` is 105 and the ladder is stated as relations**:
+`BandCityPanel.LAYER_INDEX` (103) → `EventDockPanel.LAYER_INDEX` (104) → this → `COMPOSE_LAYER_INDEX`
+(106, now defined as `WORK_INSPECTOR_LAYER_INDEX + 1`) → `Main`'s `PauseLayer` (200). **Above the
+event bar** because the bar is `MOUSE_FILTER_STOP` and a picker drawn under it is unreachable rather
+than merely obscured — `COMPOSE_LAYER_INDEX`'s own autopsy. **Below the compose layer** because
+`ComposeSheet` is a catcher with its card centred inside it, and a centred dialog drawn OVER that
+would take the clicks meant for the sheet; so with a sheet open the first click on this card is a
+dismissal, exactly the trade already accepted for the Band/City panel itself.
+
+**The rung track and the ring price card still come up over it**, and it is structural rather than
+lucky: both are `PopupPanel`s, i.e. embedded SUBWINDOWS, and Godot composites those above every
+`CanvasLayer` of the parent viewport. `band_panel_work_inspector_dialog_over_track` is the frame, with
+the node kinds asserted beside it — a price card opening behind the surface that spawned it is exactly
+the kind of thing that ships.
+
+### The height arithmetic MOVED, it did not die
+
+`BandPanelController._work_inspector_height` keeps its job and changes **consumer**: it stopped being
+a term in the ZONE's budget and became the **dialog's own `min_height`**. That is what keeps
+*reserved ≥ drawn* a claim anybody can still make — deleting it would have made the rehost
+unfalsifiable rather than free. The strip keeps its `WORK_INSPECTOR_META` and its
+`custom_minimum_size`, so `_assert_work_inspector_fits` reads exactly what it always read.
+
+**Three terms retired from the zone's budget, and a fourth arrived to replace one of them** (the
+inspector's OWN arithmetic then became a sum over three sections — see the section below):
+
+| term | before | after |
+|---|---|---|
+| `_work_board_capacity`'s `inspector_h` | `_work_inspector_height(inspected)`, and an `inspected` parameter to carry the model | **gone, parameter and all** — so it cannot return as a `0.0` that later grows |
+| `WORK_ZONE_GAP_COUNT` | 3 (head→chips, chips→board, board→inspector) | **2** — there is no board→inspector seam |
+| `BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT` + its gap in `BUILD_QUEUE_ROOM_GAP_COUNT` | `WORK_INSPECTOR_HEIGHT` (84) + one separation | **gone**; the gap count is 5 |
+| `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` | — | **the wrapped settings strip (56)**, which the retiring inspector term had been paying for by accident |
+
+**THAT LAST ROW IS THE ONE THAT BIT.** A queue row's SETTINGS strip is charged to the BOARD, and the
+board is floored at `maxi(1, …)` — so once the queue has claimed enough rows to leave the board at
+that floor, an opened strip has nothing to come out of. It never showed while `build_queue_rows_max`
+reserved 84px of inspector the queue could not use: the settings strip fitted in its shadow. Taking
+the inspector out of that reservation is what exposed it — measured, `Zone_work` drew **414 into its
+396px box** the moment a strip opened on a 1920 bottom dock. The replacement is stated as the strip's
+own worst case (the wrapped control pair) rather than as a cushion, and **legs are deliberately not
+counted**: a multi-leg climb is the rarer entry, and reserving for it would shrink the block on every
+dock for a state most bands never reach.
+
+**`WIDE_DOCK_QUEUE_ROWS` IS 2, AND NOT ONE PIXEL OF THE STRIP MOVED TO BUY IT.** The zone's allocation
+rule is unchanged, so the freed room goes where it always went: the queue claims up to its authored
+cap and the board takes the remainder.
+
+### The lifecycle, and what happens when the row stops existing
+
+The key is `_work_open_key`, exactly as before, and every render reconciles the card against it —
+`_fill_work_zone` records what the column builder resolved (`_work_inspected`) and syncs on the way
+out, which is what makes the reconcile total across that builder's three exits (an empty board, the
+expanded queue, the ordinary path). **Opening a second row RE-MOUNTS rather than closing and
+reopening**, so the card stays up and its body changes; a close-and-reopen would blink the surface the
+player is working in and throw away the fit it had settled on.
+
+**The card comes down when its row stops existing, and "stops existing" is read widely.** Unassigned
+to 0, filtered off the board, the band switched by the cycler, the faction page pinned, the panel
+hidden with no bands left, the narrow shell tabbed away from Work, the panel collapsed — every one of
+those closes it. Closing is the right answer in all of them for one reason: this card is a surface for
+acting on a row, and a card floating over the map with nothing behind it to act on is worse than no
+card. `BandCityPanel.shows_zone(zone)` is the seam for the tab/collapse half — `zone_size()` cannot
+answer it, being the box a zone's content is BUILT against, and every zone is built on every render
+whichever tab is up.
+
+**ESC closes it, fourth in `Main.escape_claimant`'s chain**: pause-resume → compose sheet → targeting
+→ **work inspector** → pause. Behind the sheet and behind targeting because it is the OUTERMOST
+working surface of the three (the sheet is transient and modal; targeting is a question the client has
+asked and is waiting on; this one is still there afterwards, so it yields). Ahead of the pause menu
+because a surface with an explicit dismiss must answer ESC before ESC means *leave the game*.
+
+> #### ⛔ A TAB SWITCH IS NOT A RESIZE, AND `zones_resized` COULD NOT CARRY IT
+>
+> `_sync_work_inspector_dialog` runs only from `_fill_work_zone`, and off the snapshot the only thing
+> that reaches it is `BandCityPanel.zones_resized`. **That signal fires on a real move of
+> `work_zone_size()` — and `zone_size()` never reads `_effective_tab()`**, every zone being built
+> against the same box whichever tab is up, so a tab click moved neither term of
+> `_notify_zones_resized`' test and it early-returned. A collapse and a hide genuinely did close the
+> card (they zero the box); **the tab was the hole**, and on a side dock it left the card floating over
+> the map, anchored to a board that was no longer drawn, until the next snapshot re-render.
+>
+> **THE FIX IS A SECOND SIGNAL, NOT AN UNCONDITIONAL EMIT OF THE FIRST.** `shown_zone_changed` fires
+> from `set_active_tab` when `_shown_zones()` — `shows_zone` asked for every declared zone, in
+> `ZONE_KEYS` order — comes back different across the swap. Emitting `zones_resized` instead would have
+> re-paged the whole work zone on every tab click, a re-render storm traded for a bug, and the boards
+> do not need it: every zone is BUILT on every render, so they are already correct for the new tab.
+> **The handler reconciles the float and pages nothing** (`_on_shown_zone_changed` →
+> `_sync_work_inspector_dialog`), which is also what brings the card back on the tab back.
+>
+> **IT IS `shows_zone` IN A LOOP RATHER THAN A SECOND READING OF `_effective_tab`.** The listener asks
+> `shows_zone` through `_work_zone_is_on_screen()`; a privately re-derived test on the emitting side
+> would be free to disagree with it, which is the one way the signal could announce a swap the listener
+> cannot see. The wide shell therefore reports nothing on its own (it draws every zone whatever the tab
+> is), and so does a tab the current subject does not declare.
+
+> #### ⛔ …AND THE KEY OUTLIVED THE CARD, SO ESC WAS SWALLOWED
+>
+> `is_work_inspector_open()` answered `_work_open_key != ""`, and the retired reason is quoted because
+> it names a real hazard: *"IT ANSWERS THE KEY, NOT THE NODE. The key is what every render reconciles
+> the card against, so a reading taken off `visible` would disagree with it for exactly the one frame
+> between a selection and the fill that mounts for it — and ESC arriving in that frame would open the
+> pause menu instead."* **That trade bought a one-frame window and paid with a state that persists**:
+> every dismiss branch of `_sync_work_inspector_dialog` leaves the key set, so after a collapse, a hide
+> or the tab switch above, `Main.escape_claimant` kept returning `ESC_WORK_INSPECTOR`,
+> `_unhandled_input` kept calling `set_input_as_handled()`, and the first ESC did nothing visible — the
+> pause menu needed a second press.
+>
+> **BOTH TERMS NOW, AND EACH ANSWERS ITS OWN HALF**: the key is the board row's SELECTION (what
+> `close_work_inspector` clears and what a re-render re-mounts from), and `WorkInspectorDialog.is_open()`
+> is whether the card is on screen, which is the only thing ESC can take down. The one-frame window is
+> not reachable through the toggle — `_toggle_work_inspector` sets the key and mounts inside one call
+> stack — and where a fill genuinely cannot mount (no host, a queue drag in flight) no card is drawn and
+> the pause menu is the honest claimant.
+>
+> **BOTH CLAIMS ARE PAIRED, AND THE OLD ONE WAS DRIVING ITS OWN PROOF.** `band_panel_preview`'s
+> tab-switch state called `rerender()` immediately after `set_active_tab` — a re-render runs
+> `_fill_work_zone`, which ends on the reconcile — so the card came down on the HARNESS's push and the
+> claim passed while the real tab click did not. Nothing but `set_active_tab` is called there now, and
+> three claims stand on the one state: the card is down, the shell really has swapped (work zone not
+> shown, band zone shown), and ESC falls through to `ESC_PAUSE`. **Frame:**
+> `band_panel_work_inspector_tab_away`.
+
+### What the matrix asserts, and why it is a matrix
+
+`band_panel_preview._render_work_inspector_dialog_states` walks **eleven dock/viewport
+configurations** — LEFT at 1080/900/768/720 and BOTTOM at 1920×1080, 1600×900, 1440×900, 1366×768,
+1280×800, 1152×720, 1024×768 — on the file's fullest band (the POOLS block, a four-entry BUILD QUEUE
+and a board stacked together; the reference band would report hundreds of pixels of spare and prove
+nothing). Both shipped overflows are gone.
+
+**It walked FOUR PICKER STATES per configuration until item 12d's second pass retired them**, and the
+loop went with them: there is no expansion left that a click could change, so the zone figure is taken
+once and the interesting number moved to the CARD's height against the room it is centred in. That is
+a stronger reading of the same property, not a weaker one.
+
+The claims that cannot rot, each paired with its liveness half:
+
+- **the strip is outside every zone and inside the dialog** — the containment claim INVERTED, so it is
+  paired with the card really drawing its head, its links row and its close `✕`
+  (`_assert_work_inspector_is_a_dialog`);
+- **the zone's budget contains no inspector term at all** — `_work_board_capacity` is called with a
+  row SELECTED and again with none, and the two answers must be identical, paired with the rendered
+  row count not moving and being non-zero. Sabotage-verified: with the retired terms restored the
+  claim fails at `rows [2, 1, 1, 1]` (it walked the four picker states then);
+- **the board's row capacity went UP** — the 1920 bottom dock draws 1 → **2** rows with a row selected,
+  and the small bottom docks 2 → **4**;
+- **the dialog is non-modal** — its layer holds the card and nothing else (no catcher), its rect is a
+  fraction of the viewport, paired with the board underneath really drawing rows;
+- **it survives a re-select** — the SAME card instance holding a DIFFERENT strip, paired with the same
+  key still closing it;
+- **it is centred over the map** — the card's centre is the ROOM's and its rect does not intersect
+  `BandCityPanel.card_rect()`, which is the one claim no arithmetic can make, and the one that caught
+  the 340px card running through a bottom dock's panel.
+
+`_assert_work_inspector_worst_case_fits` was the ONE state that ever tested the strip's ceiling and it
+tested the bottom dock; it is **kept and retargeted** — the worst-case model is mounted into the real
+card, and the ceiling is now asserted to FIT the viewport it is centred in rather than to be an
+unreserved 106px risk against a 396px box.
+
+### …AND IT STOPPED PRETENDING TO BE A CRAMPED STRIP — the three SECTIONS
+
+`docs/plan_standing_upkeep.md` §4.9 item 12d, second pass. The card shows **everything at once**:
+
+```
+ 🌾 Harvest (70, 17)                    ✕      the readout — notes, arrivals, unchanged
+ ────────────────────────────────────────
+ POLICY      [Everything] [Best] [Learning]
+ ────────────────────────────────────────
+ PRIORITY    [High] [Normal] [Low]
+             <the rank hint>
+ ────────────────────────────────────────
+ KITS        Harvesters [Harvesting kit ▾]
+             Upkeep     [Tillage kit ▾]        ← only where the site OWES upkeep
+             Kept at 2 work a turn.            ← ditto; the terms, not the rung word
+ ────────────────────────────────────────
+ Jump to source                  Unassign
+```
+
+**POLICY, PRIORITY and KITS are SECTIONS with their content shown; `Jump to source` and `Unassign`
+are pure ACTIONS with no content, so they are the only two buttons left.** That is the whole
+distinction the card now draws, and it is what the assertions test: a section reappearing as a link
+fails, and a link demoted to a header fails.
+
+#### ⛔ `_work_picker_open` RETIRED ENTIRELY
+
+The state (`WORK_PICKER_NONE`/`_FLOOR`/`_PRIORITY`/`_KITS`), `_toggle_work_picker`, and the
+`Change policy` / `Priority` / `Kits` links that toggled them existed **only** because the strip paid
+for the tallest picker and could afford exactly one. The dialog competes for no zone height, so the
+whole mechanism was rent-control for rent no longer charged. Removing it also deletes a defect class —
+a picker left open when the row changed — and makes the card stateless about what it is showing.
+`_work_open_key` is now the inspector's only state.
+
+**`WORK_INSPECT_POLICY` ("Change policy") retired with them**: a header names what is below it, so the
+POLICY section takes `WORK_INSPECT_POLICY_SECTION` ("Policy"). `WORK_INSPECT_PRIORITY` and
+`WORK_INSPECT_KITS` were already nouns and are reused unchanged — the former is also the CRAFTING
+panel's bench-link face, which is why it stays a shared const.
+
+#### The height is a SUM now, and the retired MAX is the claim that had to be inverted
+
+| term | value | note |
+|---|---|---|
+| base `WORK_INSPECTOR_HEIGHT` | 64 | head + actions row + gaps + card padding, unchanged |
+| conditional notes ×3 | 20 each | overdraw, `note`, `muted_note` |
+| `ArrivalStrip` | 14 | when the schedule has a gap |
+| `WORK_INSPECTOR_SECTION_HEAD_HEIGHT` | **27** | rule (1) + gap (6) + label line (14) + gap (6) |
+| POLICY section | **59** | head + the floor picker's 32 |
+| PRIORITY section | **79** | head + the rank picker's 52 (grid + hint) |
+| KITS section | **49** | head + the TAKE control line (22) — every row that has kits |
+| …its UPKEEP half | **42** | the second control line (22) + the standing bill (20) — only where the site owes one |
+| `WORK_INSPECTOR_ACTIONS_RULE_HEIGHT` | **7** | the hairline above the two actions and its gap |
+| a WRAPPED line, each after the first | **17** | `WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT`, added per line the sentence takes beyond one |
+| **`WORK_INSPECTOR_CEILING_HEIGHT`** | **374** | every conditional child at ONE LINE EACH, on a row with kits — a **floor** on the worst case since the notes started wrapping |
+
+An ordinary KEPT row with no conditional notes measures **300** and a WILD one **258**; the rendered
+card is **298** at the fixture's width, on the wild queue row the dialog frames open (the priority hint
+and the note it carries). It read *"the rendered card is 340"* while a wild row still drew an Upkeep
+picker it had no bill for. **The section rule is
+`HudStyle.LINE_SOFT` at `BandCityPanel._make_zone_separator`'s thickness** — the panel's own hairline
+vocabulary, turned on its side — and the headers are `HudWidgets.alloc_section_label`, which is what
+the allocation panel already heads its sections with. Nothing was invented.
+
+**`WORK_INSPECTOR_SECTION_RULE_THICKNESS` is a TWIN of `BandCityPanel.ZONE_SEPARATOR_THICKNESS`, not a
+read of it** — a vocab leaf reaching for a `class_name`d panel script at class load is a cycle waiting
+to happen, the same rule `WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT` follows against `ArrivalStrip`.
+
+#### ⛔ THE CARD'S PROSE WRAPS NOW — the elide was the STRIP's constraint, not the card's
+
+Reported from play, on the shipped card: the material-shortfall note read
+
+```
+Short of hurdles — 0.03 of the 0.05 a turn it needs. The bench or a trad…
+```
+
+— cut off one word into the only clause that says what to DO about it. **The elide was correct for
+every day the inspector was a strip inside the work zone** and is stated in `HudWidgets.
+build_status_part`: the zone's box is reserved and `clip_contents`, so an unwrapped `Label` reporting
+its whole text as a minimum width clamps the entire tab's column and slices the POOLS readout, the
+Builders card's `+` and every board row's stepper off the right edge. Item 12d moved the inspector into
+`WorkInspectorDialog` — a card on its own `CanvasLayer`, in no zone's layout, clipping on neither axis
+— and the elide simply stayed behind, exactly like the mutually-exclusive pickers the same item
+retired.
+
+**FOUR LINES WRAP, AND THE HEAD LINE STILL CLIPS.** The overdraw warning, the `note`, the `muted_note`
+and the KITS section's standing bill are sentences a player reads to act, and they take
+`HudWidgets.build_wrapping_status_part`. The title keeps `clip_text` — it is an identity, its rung
+clause is *designed* to be the first thing to go, and a wrapping title would move every control below
+it whenever a species name ran long.
+
+**A SECOND BUILDER, NEVER A WIDER DEFAULT.** `build_status_part`'s `elide` flag is chosen by *can this
+host grow?*; wrapping is chosen by *is this line prose?*. Folding them into one tri-state would let a
+caller pass "wrap" to a host that clips — and the tile card's flow, the drawer's standing summary, the
+parties inspector's detail lines and the build queue's tooltip are all still in reserved-width boxes
+that need the elide. `band_panel_work_inspector_width` / `_assert_zone_content_width_fits` still hold
+them to it, and `band_panel_parties_inspector_narrow` is the frame that shows one still eliding.
+
+**THE HEIGHT FOLLOWS THE WRAP, MEASURED RATHER THAN ALLOWED FOR.** `_work_inspector_wrap_overflow`
+asks the FONT — through `HudWidgets.wrapped_status_part_lines`, at the card's real column width, with
+the drawn label's own break flags — how many lines the sentence takes, and adds
+`WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT` for each one past the first. A fixed "notes get two lines"
+allowance was the alternative and was declined: it is right until the first sentence that needs three
+and nothing says so. Three properties make the measurement safe to trust:
+
+- **The width is a LOWER BOUND on the drawn column.** `_work_inspector_note_width` is
+  `WorkInspectorDialog.CONTENT_WIDTH` less the strip's own padding (**342**), while the card really
+  lays the note out at **350** — `AutoSizingPanel.fit_width` never goes BELOW `target_width` and may go
+  above. Measuring narrow over-counts lines, which is the safe direction; the drawn rect is asserted
+  against that column so the two cannot drift apart.
+- **A wrapped line costs 17, not 14, and that is the trap.** `WORK_INSPECTOR_NOTE_LINE_HEIGHT` is a
+  ONE-line label's measured height; a `Label` spends its theme `line_spacing` BETWEEN lines, so a
+  two-line note draws **31**. The first cut priced wrapped lines at 14 and under-reserved by 3px a
+  line — caught by the harness on two states (402 reserved against 407 drawn at the worst case, 334
+  against 336 on a kept herd), which is exactly why `reserved >= drawn` is asserted against a
+  laid-out label rather than against the arithmetic that produced it.
+- **The ceiling stayed a constant and changed meaning.** `WORK_INSPECTOR_CEILING_HEIGHT` is the total
+  AT ONE LINE PER NOTE, so it is now a floor rather than the worst case. The equality assertion split
+  in two: the reservation is above the ceiling, and the excess is WHOLE wrapped lines and nothing else
+  — which still fails on a fifth conditional child of any other height, the structural question the
+  equality was really asking.
+
+**THE CARD WAS NOT WIDENED, AND THE MEASUREMENT IS WHY.** The shortfall sentence takes exactly **2**
+lines at the shipped column, and the priority hint and the standing bill still fit on one; a wider card
+would buy one line back at the cost of the width the head line, the two 3-cell grids and the kit
+pickers were all laid out at. `CONTENT_WIDTH` stays `BandCityPanel.ZONE_PARTY_WIDTH`. If a sentence
+ever reaches three or four lines the width is the lever to reach for — the card is free-floating and no
+zone constrains it — but nothing measured today asks for it.
+
+**AND THE WORST CASE STAGES A WRAP, OR THE CLAIM IS VACUOUS.**
+`_assert_work_inspector_worst_case_fits`'s fixture note was `"Animals are drifting off."` — one line,
+which makes *"reserved >= drawn with a wrapped note in it"* the old claim under a new name. It is the
+shipped shortfall sentence's own shape now, and the harness asserts `Label.get_line_count() >= 2` on
+the DRAWN label before it measures anything. Frames: `band_panel_work_material_short` (the sentence
+whole, over two lines, in DANGER ink) and `band_panel_work_kits_kept_herd`.
+
+#### The kits hint came back, and the tooltips lost the half it duplicates
+
+It was cut for one reason: *"two kit lines plus a hint would be 64 — 12 over the current max, which
+busts the wide shell by 8."* That arithmetic was about a 396px zone box. **The tooltips keep what only
+they say** — which of the two pickers this is (the crew's tool against the site's) and the upkeep
+one's per-site scope — and lose the `none` sentence the visible line now carries. Deleting them
+outright would have lost the distinguishing half.
+
+**The hint is SHORTER than `WORK_PRIORITY_HINT`, and that is a measurement.** The first draft ran seven
+characters past it and rendered **ellipsised** in the frame — a hint the card reserved one line for and
+could not fit. It names the picker's own face (`No kit`) rather than the wire token, so the line and
+the entry read as one thing.
+
+#### ⛔ THE PLACEMENT MOVED FROM THE VIEWPORT TO THE ROOM, and the sections are what forced it
+
+The card was **viewport-centred** for one slice, which was safe while it was 104–156px tall: the
+viewport's centre was always over map. At **340** it is not. Measured on a 1920×1080 bottom dock: a
+viewport-centred card spans y=370…710 while the panel card starts at **624** — it covered the header
+and the top of the very board the rehost exists to free.
+
+**`WorkInspectorDialog._room()` is the viewport inside `VIEWPORT_MARGIN`, cut back to the MAP-FACING
+side of the panel card with `ANCHOR_GAP` of clearance** — `BandComposeFloat`'s own rect, and
+`BandComposeFloat.map_facing_side` is the ONE table naming which side of a docked card faces the map.
+The placement rule is unchanged in KIND: one centre, one rect, no dock-edge fork. What changed is that
+*"the board stays visible"* is now structural rather than a consequence of the card being small.
+
+**The cost is a scroll on the four smallest BOTTOM docks.** The room a bottom dock leaves is the map
+band above it, and at 1366×768 / 1280×800 / 1152×720 / 1024×768 that is 264–296px against a **298px**
+card — the WILD queue row those frames open; a KEPT row is 340 — so `fit_to_content` clamps the card
+and its own `ScrollContainer` carries the rest. `band_panel_work_inspector_dialog_tight` is the frame,
+and on it the KITS take row and both actions are below the fold. It read *"the KITS upkeep row and
+both actions are below the fold"*, which was written while a wild source still drew an Upkeep picker
+it had no bill for; that row has no upkeep row to push under the fold at all. **Against the raw
+VIEWPORT the card fits every configuration** (298–340 of the 696px a 720-high window leaves, a margin
+of 356 or better), so this is a cost of not covering the board rather than of the card being too tall.
+A vertical dock has 356–716px of margin everywhere.
+
+⛔ **THE WILD ROW IS SHORTER AND THAT IS NOT A FIX FOR THE CLAMP.** Dropping the Upkeep row takes 42px
+off a wild card, which eases the four smallest bottom docks by exactly that much and changes nothing
+about the mechanism: a KEPT row on the same dock still scrolls. The clamp is a property of the room a
+bottom dock leaves, not of the KITS section.
+
+#### The assertions that had to be inverted, and why they were kept
+
+Three claims on this branch asserted properties the slice then deleted. **Each was inverted, not
+deleted** — a claim quietly guarding retired behaviour is worse than no claim:
+
+| was | is |
+|---|---|
+| `_assert_kits_picker_is_exclusive_and_costs_the_max` — the three pickers are mutually exclusive and the strip reserves the MAX | `_assert_sections_are_drawn_and_cost_the_sum` — all three sections draw on one render and the card reserves the SUM, term for term against the producer, plus *"more than the tallest section alone"* |
+| *"with the expansion CLOSED the strip draws neither picker"* | `_assert_kits_section_draws_both_controls` — both pickers, their rosters, `none` on both and the site's BILL, with **no click at all**, staged on a source that stands on a rung. It asserted *"and the HINT"* until the hint retired; `_assert_wild_source_offers_no_upkeep` is its other arm, and neither is worth anything without the other |
+| *"the pick CLOSES the picker"* | the PRIORITY section is still drawn after a pick, which is what lets the three levels be pressed in sequence the way a player does |
+| *"`Change policy` swapped the strip to the FLOOR picker … the priority picker is GONE with it"* | both grids are on the card at once, each under its own header |
+| *"the card is centred in the VIEWPORT"* | the card is centred in the ROOM the dock leaves |
+
+`_press_work_inspector_link` is **deleted** — there is no link left that opens anything, and its last
+caller went with the swap frame it drove.
+
 ## THE ROW IS TWO LINES, AND THE INSPECTOR'S SENTENCE PAID FOR THE SECOND ONE
 
 **Line one is IDENTITY AND CONTROLS** — stripe · glyph · name · the SOURCE-RUNG mark · the
@@ -3330,9 +4082,11 @@ readout, and the name column measures **146px**.
 > the chart's caption use, so one number is never worded two ways.
 >
 > **What the strip still carries:** its head (icon + name + `✕`), the overdraw line, the under-kept
-> `note`, the `muted_note`, the `ArrivalStrip` when the schedule is gappy, the FOUR links
-> (Jump to source / Change policy / **Priority** / **Unassign**) and, when open, exactly ONE of the
-> two pickers. Every one of those is either a control or a warning the row has no room for.
+> `note`, the `muted_note`, the `ArrivalStrip` when the schedule is gappy, the three SECTIONS with
+> their controls, and a TWO-button actions row (`Jump to source` / **`Unassign`**). Every one of those
+> is either a control or a warning the row has no room for. **It read "the FOUR links (Jump to source
+> / Change policy / Priority / Unassign) and, when open, exactly ONE of the two pickers"** until §4.9
+> item 12d's second pass drew every picker at once and demoted three of those links to headers.
 
 **A HUNT ROW'S FODDER IS A STRUCTURAL ZERO** (no animal is harvested for feed) and renders no term;
 the material terms read the assignment's **RESOLVED `material_yield`** — what the source actually
@@ -3425,13 +4179,16 @@ the pending row, exactly as it does the published crew ceiling and the improveme
 mark would blank for the one frame the `+` is being clicked in, and the player would watch their own
 prefix flicker off their own press.
 
-### …AND THE CONTROL IS A FOURTH LINK, WITH THE TWO PICKERS MUTUALLY EXCLUSIVE
+### …AND THE CONTROL IS ITS OWN SECTION (it was a fourth LINK, with the two pickers exclusive)
 
-The work inspector's links row is **Jump to source · Change policy · Priority · Unassign** —
-the rank beside the floor because the two are the same kind of control (a standing property of this
-row, picked from three buttons), and ahead of the destructive one, which stays last. Measured: the
-four-link row asks **289px of the 356px side-dock zone**, and the zone's widest content is unmoved at
-**354 of 356** (`_report_work_links_row_width`, `_assert_zone_content_width_fits`).
+⛔ **THE LINK RETIRED WITH `_work_picker_open`** (§4.9 item 12d, second pass) — see "…AND IT STOPPED
+PRETENDING TO BE A CRAMPED STRIP". The retired shape: *"The work inspector's links row is Jump to
+source · Change policy · Priority · Unassign — the rank beside the floor because the two are the same
+kind of control (a standing property of this row, picked from three buttons), and ahead of the
+destructive one, which stays last. Measured: the four-link row asks 289px of the 356px side-dock zone,
+and the zone's widest content is unmoved at 354 of 356."* The rank is a SECTION now, drawn on every
+open card; the row is two pure actions and `Unassign` still stays last. **The control itself did not
+change at all**, which is why everything below still holds.
 
 `HudWidgets.build_work_priority_picker` is `build_floor_picker`'s shape down to the shared
 `_policy_rung_cell`: three equal cells — **High · Normal · Low**, the current one wearing the primary
@@ -3443,21 +4200,35 @@ treatment — under a single hint line, `WORK_PRIORITY_HINT`:
 and the pen-feed split as of the same slice; a per-consumer list would have to grow every time
 another scarcity handler learns to read it.
 
-> #### ⛔ `_work_picker_open` IS A THREE-VALUED STATE, NOT TWO BOOLS
+> #### ⛔ RETIRED — `_work_picker_open`, the three-valued state, and the whole exclusion it enforced
 >
-> It was `_work_floor_open: bool`. Two bools would admit a fourth state — **both pickers open** —
-> that `_work_inspector_height` would have to reserve for, and the strip's tallest state is what the
-> work zone's box is sized against (`band_panel_pools_wide_selected` reads its box with nothing
-> spare). A three-valued state cannot express it: opening either picker CLOSES the other by
-> assignment, through the one `_toggle_work_picker`, so the exclusion is structural rather than a
-> discipline two link handlers have to keep.
+> §4.9 item 12d, second pass. **Quoted rather than deleted, because every word of it was true of a
+> strip inside a fixed zone**: *"`_work_picker_open` IS A THREE-VALUED STATE, NOT TWO BOOLS. It was
+> `_work_floor_open: bool`. Two bools would admit a fourth state — both pickers open — that
+> `_work_inspector_height` would have to reserve for, and the strip's tallest state is what the work
+> zone's box is sized against. A three-valued state cannot express it: opening either picker CLOSES
+> the other by assignment, through the one `_toggle_work_picker`, so the exclusion is structural
+> rather than a discipline two link handlers have to keep."*
+>
+> **BOTH pickers open is the SPECIFICATION now**, so the state, its toggle and the three links that
+> drove it are gone and the card is stateless about what it is showing. The one clause that outlived
+> the rest is the diagnosis under it — that the tallest state is what a fixed box is sized against —
+> and the answer to it was to stop having a fixed box.
 >
 > **The base extent is unmoved** — the links row gained a fourth link, not a line, so
-> `WORK_INSPECTOR_EXTENT` is still 58. What moved is the picker term: the priority picker is
+> `WORK_INSPECTOR_EXTENT` is still 58, and it survived the demotion of three of those links to
+> section headers for the same reason. The priority picker is
 > `WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT` = the floor picker's three cells **plus one hint line and
-> its block gap** (52 against 32), so it is the taller of the two and
-> `WORK_INSPECTOR_CEILING_HEIGHT` counts IT — the ceiling is a max over the pair, never a sum.
-> Measured: 116 reserved / 109 drawn with the priority picker open, 96 / 90 with the floor picker.
+> its block gap** (52 against 32). It was the taller of the two, and *"`WORK_INSPECTOR_CEILING_HEIGHT`
+> counts IT — the ceiling is a max over the pair, never a sum"* was the point of saying so; the
+> ceiling is a SUM over all three sections now (374), so the comparison is history and the 52 is
+> simply one term of it.
+>
+> **THE 444-of-396 THAT PICKER ASKED OF A WIDE DOCK WAS NEVER RENDERED, and item 12c's measurement is
+> what found it.** It had overrun the horizontal dock since this slice shipped, for the reason this
+> file records twice: every picker-open frame was a tall dock and every wide-dock frame had the
+> expansion closed. §4.9 item 12d fixed it BY CONSTRUCTION rather than by a patch — the strip stopped
+> competing for zone height — and the dock/viewport matrix is what closes the frame-family gap.
 
 **THE COMMAND IS `work_priority <faction> <band> <x> <y> <level>` / `… <herd_id> <level>`**, emitted
 as `BandPanelController.work_priority_requested`, relayed by `HudLayer` and formatted by
@@ -3534,15 +4305,26 @@ asks for a live ranking gets one, and live re-ranking under an edit is arguably 
 
 **It sorts KIND first, then label, then `key` — and the kind term is load-bearing, not tidiness.**
 `Sort by name` is still one sort with one name; what it orders on is kind-major. The tempting
-simplification is that the label prefixes already group by kind, so alphabetical order would do:
-`"Forage (%d, %d)"` sorts above `"Hunt %s"`. **That is false, and it is the trap this term exists to
-close.** A plant row's label is resolved through `WORK_ROW_PLANT_FORMATS`, keyed on the crew noun
-`HudFormat.plant_crew_label` returns — so a source whose Cultivate improvement is done renders
-**`WORK_ROW_TEND_FORMAT`, `"Tend (%d, %d)"`**, while its `kind` stays `forage` (the format is DISPLAY
-ONLY). Alphabetically `Forage < Hunt < Tend`, so a label-only sort renders a band working a wild
-patch, a herd and a Tended Patch as **Forage → Hunt → Tend**: the forage kind split in two with the
-hunt block wedged between. `WORK_FILTER_FORAGE` selects on `kind == "forage"` — *both* labels — so
-that board contradicts the very chips above it. `band_panel_rung_ready` already stages this mix.
+simplification is that the label prefixes already group by kind, so alphabetical order would do — and
+that is a claim about today's WORDS rather than about the model. `WORK_FILTER_FORAGE` selects on
+`kind == "forage"`, so a board ordered by label alone stops matching the chips above it the moment the
+two orders part.
+
+> ⛔ **THEY PARTED UNTIL `docs/plan_standing_upkeep.md` §4.9 item 12c, AND THEY NO LONGER DO — so the
+> shipped vocabulary has stopped being the witness.** The dead claim, verbatim: *"A plant row's label
+> is resolved through `WORK_ROW_PLANT_FORMATS`, keyed on the crew noun `HudFormat.plant_crew_label`
+> returns — so a source whose Cultivate improvement is done renders `WORK_ROW_TEND_FORMAT`,
+> `"Tend (%d, %d)"`, while its `kind` stays `forage` (the format is DISPLAY ONLY). Alphabetically
+> `Forage < Hunt < Tend`, so a label-only sort renders a band working a wild patch, a herd and a
+> Tended Patch as Forage → Hunt → Tend: the forage kind split in two with the hunt block wedged
+> between."*
+>
+> Item 12c collapsed both plant formats into `WORK_ROW_PLANT_FORMAT` (`Harvest (%d, %d)`) and
+> **`"Harvest" < "Hunt"`**, so on every board the shipped roster can produce the label order and the
+> kind order coincide. **The rule is unchanged; its FALSIFIER had to be re-staged.** Measured:
+> dropping the comparator's kind term fails exactly ONE assertion, and it is the synthetic pair
+> (`_assert_work_sort_groups_by_kind`, whose labels run opposite to their kinds, marked as synthetic)
+> rather than the mixed-rung board this paragraph used to point at.
 
 Sorting on `kind` means no third label prefix can break it. The kind test is a **boolean tier**, which
 is exact for the two kinds that exist; a third kind would need an explicit rank, since a boolean
@@ -4907,3 +5689,264 @@ LIST above it gives up (it is the `EXPAND_FILL` child).
 **Frames:** `trade_footer` (all five buttons, and the frame that proves the glyph DRAWS — a mark
 missing from this client's fallback font renders as an invisible gap that no assertion catches),
 `trade_picker_empty`, `trade_picker_destination`, `trade_cargo_loaded`, `trade_cargo_over_cap`.
+
+
+## The work row states its RUNG in two registers, and the ring is declared from the mark
+
+`docs/plan_standing_upkeep.md` §4.9 item 12c. **`SourceForecast.standing_improvement` is the ONE fork**
+answering *what is this source standing on*, read off the wire's own `current_rung` (`<branch>:<id>`).
+Three readers go through it: the board row's rung MARK, the inspector strip's head-line FACE, and the
+ring caret's offer test.
+
+> ### ⛔ THE MARK USED TO REASSEMBLE THE POSITION OUT OF EACH WEB'S PRIVATE FLAGS
+>
+> `_work_source_rung` forked on `is_field` / `is_cultivated` / `corralled` / a
+> `domestication >= HUSBANDRY_PROGRESS_COMPLETE` threshold — the very reassembly
+> `SourceForecast.improvement_is_done`'s own ⛔ records the sim having replaced with a published
+> position. It was harmless while the mark was the only reader. It stopped being harmless the moment
+> the strip stated the same rung's FACE: a mark forking one way and a face forking another is two
+> answers to one question, drawn on one row.
+>
+> **`standing_improvement` is an EXACT match, never at-or-above** — that is what makes it different
+> from `improvement_is_done`, which answers `true` for Cultivate on a Field. Neither can stand in for
+> the other.
+
+**THE HEAD LINE COSTS +0 AND ASKS RATHER THAN COMPOSES.** `Harvest (28, 16) · ▦ Field 100%` rides the
+title `Label` that was already there, so the strip's reservation does not move; the label CLIPS, this
+zone's standing rule, and the clause is appended rather than given its own child precisely so it is
+the first thing to go. `DetailFormat.standing_rung_face` routes through **`rung_row_value`**, the same
+fork the tile card's rung row goes through — so the hazard mark, `slipping`/`drifting`, `Lapsed`,
+`Held`, `Reverting` and the floored percent all arrive already decided, and the two surfaces cannot
+word one rung differently. It takes **no `declared_rung` and no `build_crew`**: both are countdown
+terms and a STANDING rung returns on `rung_row_value`'s first branch, so accepting them would
+advertise a dependency the face does not have.
+
+**A METER THE WIRE DOES NOT STATE READS FULL, NOT ZERO.** `improvement_progress` answers `0.0` for an
+unstated key — indistinguishable from a meter eroded to nothing — and a built corral states no meter
+at all, which is why the tile card's own built-corral row passes `CORRAL_PROGRESS_COMPLETE` by hand.
+The `> BUILD_METER_UNSTARTED` test is `rung_needs_repair`'s, reused rather than re-invented.
+
+### `extend_pen` is declared from the standing-rung mark, and it opens a price
+
+**Reported from play**: extending a pen was a button on the TILE card producing a **build queue
+entry** — the one queue entry in the game declared from somewhere other than the work tab.
+
+> **THE MECHANICAL REASON IT ENDED UP THERE:** `RungLadder.has_track` is FALSE when nothing sits above
+> the standing rung, and `animal:pen` is the top of the animal branch — so a corralled herd's row
+> renders **no `⌃` in the ready slot at all**. Extending a pen is precisely what you do *after* the
+> ladder is finished. `selection-card.md` blamed it on being *"a one-click standing action, not a
+> compose flow"*, which was true and was the second reason.
+
+**IT RIDES THE MARK SLOT, NOT THE READY SLOT.** That slot is already a four-way — `⌃▦` offers a rung,
+`▦45%` reports one climbing, `⚠▦` reports one stuck, and a fourth reports one lapsed — and a fifth
+meaning on the one control for *what could this be* would collapse a distinction the whole feature
+draws. The mark sits on **the thing the job acts on**: a ring extends the pen the mark denotes. **A
+row already carries two marks and that is the precedent** — a mid-Sow patch reads `🌾` *what it is*
+beside `▦ 28%` *what is being built on it*.
+
+**IT OPENS A PRICE, NOT A BARE COMMIT, and item 12 is what made that necessary.** A ring draws
+`animal:pen`'s own hurdle pile since §2.7, so a one-click button stated a cost nowhere. `_open_ring_card`
+opens the same shape the track's `⌃` opens — what it eats to raise, what it costs to hold, and where
+it will stall — through **`RungLadder.ring_row` + `build_ring_card`, which reuse the track's own
+`_build_price_asides` / `_hold_price_asides` / `_build_row`**. That is what keeps the caret meaning ONE
+thing on every mark that wears it.
+
+> **A RING IS NOT A TRACK ROW, and giving it one would be a lie about the ladder.** The track is one
+> POSITION on a branch; a ring is a **repeatable increment with no position**. It is its own small
+> card. Its price is `animal:pen`'s own rung cost — **not** the herd's `pen_extend_cost`, which the sim
+> stamps only once a ring is accruing and which is therefore the in-flight meter's denominator.
+
+> #### ⛔ KNOWN GAP — THE CARD QUOTES THE WORK AND THE STANDING BILL, AND NO PILE
+>
+> `ring_row` builds its build-price asides from `SourceForecast.build_material_cost`, and **that field
+> prices exactly ONE rung: the one DIRECTLY ABOVE where the source stands.** The card only opens on a
+> herd already standing on `animal:pen` (`ring_offered` tests `standing_improvement ==
+> IMPROVEMENT_CORRAL`), `RungKey::AnimalPen.above()` is `None`, and `core_sim`'s herd capture publishes
+> an empty pile there deliberately — *"Empty at the top of the branch, which is the honest reading
+> rather than a repeat of the pen's own"*. So `_build_price_asides` returns `[]` on its first line and
+> the card draws **neither the hurdle pile a ring eats nor the WARN stall aside**.
+>
+> The sim does charge the pile — `systems::labor::head_ring_leg` lays the ring as a leg through the
+> same `build_material_wants` every rung leg goes through, and the ladder's own config note says *"a
+> ring costs 6 hurdles exactly as the work_cost beside it charges a ring the full 75 work units"*.
+> **The gap is publication, not model**: no field on the herd carries `animal:pen`'s own build pile to
+> a herd standing on it, and closing it is a sim-side field (the material twin of `corralWorkCost`,
+> which IS published at every position and is why the card can state `75 work` at all). Until it lands,
+> the card states the ring's WORK price and its standing bill.
+>
+> **THE CARD HAD NO CLAIM ON IT AT ALL, which is how that shipped.** The caret's assertion proves the
+> mark is pressable and stops one press short. `_assert_ring_card_prices_the_ring` presses it — the
+> real control, so the meta, the mouse filter and the handler are in the path — and claims liveness (a
+> pressable row named `Another ring`) before the figures: the row's face is `75 work` and the hold
+> aside states both currencies. It makes **no claim about the pile**: asserting its absence would
+> cement the gap, asserting its presence would fail on shipped behaviour, so the asides are printed
+> into the run's log instead. **Frame:** `band_panel_ring_price`.
+>
+> ⛔ **THE FIXTURE ERASES `build_material_cost` ON THE PENNED HERD**, derived from the track's own
+> pastoral fixture. Leaving the pastoral row's pile stamped would prop the card up with a list the game
+> never sends to a herd in that position, and the frame would show a price no player can see.
+
+**A RING IN FLIGHT WEARS NO CARET**, which is what stops a second being declared over the first
+(`Herd::pen_extending` is the sim's gate and needs no client twin). The gate is
+`SourceForecast.pen_ring_is_in_flight` — **the NUMERATOR, not the fraction**: `begin_pen_extension`
+sets the flag and `accrue_pen_extension` stamps the cost, so a ring declared this turn has both fields
+at zero, and a fraction test would render it as stalled at `0%`. The **percentage** lives on the build
+queue row, which is the surface that dates and withdraws the ring.
+
+**THE MARK'S MOUSE FILTER FORKS WITH ITS SHAPE.** A read-only mark takes `PASS` — the only value that
+both shows a `Label`'s tooltip and lets the row's click through to the inspector — and the ring mark
+takes `STOP`, or the press that opens the card would also open the inspector under it. The ready slot
+has forked exactly this way since it gained a pressable face.
+
+> #### ⛔ AND THE HOVERABILITY GUARD SILENTLY STOPPED COVERING THAT ROW
+>
+> `_assert_rung_labels_are_hoverable` walked `Label`s (`_collect_rung_labels`), so the penned herd's
+> mark dropped out of it the moment it became a `Button`: **4 marks became 3 and nothing failed.**
+> It walks `_collect_meta_controls` on the shared meta now — which is what the meta was for — counts
+> the pressable one separately, and FAILS when a board carrying a penned herd draws none.
+
+### The kit pair is its own SECTION (it was a THIRD PICKER, and that is what made it free)
+
+Item 12c's second half — the take crew's kit beside the SITE's upkeep kit.
+
+⛔ **IT IS DRAWN ALWAYS NOW, on any row that HAS kits** (§4.9 item 12d, second pass). The retired
+shape, quoted because the argument is exactly the kind that gets written back: *"It is a picker opened
+from the strip's `Kits` link, exactly as `Change policy` and `Priority` are, and the exclusivity is
+what pays for it: `_work_picker_open` holds ONE value, the builder's `if/elif` chain draws at most one
+expansion, and `_work_inspector_height`'s matching chain reserves the MAX rather than the sum."* Every
+figure in the table below is still the control's real height; what expired is that the pair had to be
+free. The card competes for no zone height, so all three are terms in a sum and the pair pays for
+itself — with the HINT line the exclusivity had cost it.
+
+| picker | costs |
+|---|---|
+| `WORK_INSPECTOR_POLICY_PICKER_HEIGHT` (floor) | 32 |
+| one kit control line | 22 (`WORK_COMPACT_PICKER_LINE_HEIGHT`) |
+| `WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT` | 52 (32 + a hint line) |
+
+⛔ **`WORK_INSPECTOR_KITS_PICKER_HEIGHT` (`44`, `2 × WORK_COMPACT_PICKER_LINE_HEIGHT`) AND
+`WORK_INSPECTOR_KIT_LINES` (`2.0`) ARE RETIRED, and the flat two is what shipped the defect.** The
+retired claim read *"At 44 the kit pair is shorter than the priority picker — which mattered while the
+ceiling was a MAX and matters no longer … `WORK_INSPECTOR_KITS_SECTION_HEIGHT` wraps this 44 in a
+header and a hint, for 91."* The arithmetic was right and the SHAPE was wrong: the section has two
+shapes, and a constant that folds both rows into one number cannot be asked how tall the one-row shape
+is. The section is `27 + 22 = 49` at its floor and `+ 42` where the site owes upkeep, and **374 is
+unchanged** — `27 + 44 + 20` and `27 + 22 + 22 + 20` are the same 91, so the ceiling did not move.
+
+#### ⛔ THE UPKEEP ROW DREW ON WILD SOURCES, ON BOTH WEBS — reported in play
+
+A **wild** source has no standing rung and therefore **nothing to keep**; upkeep is a property of a
+rung (a pen has hurdles to mend, a Tended Patch and a Field have their own bills, a wild stand and a
+wild herd have no improvement at all). The card drew `Upkeep [Hurdling kit ▾]` / `Upkeep [Tillage kit
+▾]` on them anyway, silently defaulted to a kit, and stood a hint line under it saying *"\"No kit\" is
+a real choice — the site worked bare-handed."* — an answer to a question that was itself the defect.
+**Both webs behaved identically**; the plant half was not a separate bug.
+
+**The gate is the SITE's published bill and not a re-derived rung test.**
+`RungLadder.upkeep_price_terms(source, prefix)` composes the STAMPED pair — `upkeepDemand` (work) and
+`upkeepMaterialDemand` (goods) — into terms, and **`[]` is the wild answer**. That list is the ONE
+producer: `BandPanelController._work_inspector_has_upkeep` reads its emptiness as the gate and the
+card renders its terms as the bill, so a picker cannot draw beside a bill that says nothing. Reaching
+for `is_field` / `corralled` / a `domestication` threshold would be a second authority over a question
+`SourceForecast` already answers — and would get the mid-climb case WRONG, a source raising its FIRST
+rung standing on `wild` while already being billed.
+
+**Either currency alone is enough.** A rung may owe work, goods or both, and a keeping kit speeds the
+work half even where the material half is zero — so the gate is a disjunction. `upkeepMaterialDemand`
+is empty on every shipped rung but `animal:pen`, which is why reading only the work account would have
+been right today and wrong on the next rung that eats a good.
+
+**The line states the TERMS and not the rung word** (`WORK_INSPECT_KITS_UPKEEP_FORMAT`, *"Kept at %s a
+turn."*): the head line already names the rung through `DetailFormat.standing_rung_face`
+(`Hunt Aurochs · 🐄 Corralled 100%`), and one rung worded twice on one card is how two surfaces come to
+disagree about one source. On a wild source the head line states no rung at all, which is the same
+verdict read through the other producer — the harness asserts both together.
+
+**The take row (`Hunters` / `Herders` / `Harvesters`) is unconditional**, and
+`_work_inspector_has_kits` is now a test on the TAKE job alone. It used to be a conjunction over both
+jobs, which additionally meant a roster with no keeping tool suppressed the take picker as well.
+
+#### ⛔ AND NEITHER PICKER MAY RENDER WITHOUT A SELECTION — a blank face is a DEAD CONTROL
+
+Reported in play on a PENDING harvest crew: the `Harvesters` picker showed nothing, and picking from
+it changed nothing either. `HudWidgets.build_option_picker` takes the lit INDEX and the FACE as two
+separate arguments, so an unresolved kit id produces `select(NO_ENTRY_SELECTED)` over a face
+`KitRoster.display_name_for_id` answers `""` for — a perfectly findable, perfectly populated,
+perfectly useless control that photographs as an ordinary card.
+
+- **The TAKE picker's fallback is the JOB's default, not a field off the source.** The full autopsy —
+  the pending overlay's dropped `kit_id`, the plant web's absent `default_kit_id`, and why the hunt
+  web only looked immune — is in `labor-ui.md` → "THE KIT RIDES EVERY CREW EDIT".
+- **The UPKEEP picker falls through to `KitRoster.keeping_kit_for`, and the state it answers for is
+  REACHABLE.** `resolve_upkeep_kits` walks the BANDS' LABOR ROWS, so a source no band works yet is
+  absent from that map and publishes `""` — while the BILL this row is gated on comes off the
+  source's own RUNG and is there regardless. A brand-new PENDING assignment on a kept source
+  therefore drew the Upkeep row blank. **That fall-through is not a missing-field guard**: it is the
+  client's own copy of the derivation the sim applies the moment the assignment lands, and it is
+  already what a NAMED row's `(default)` mark is measured against. With nothing stated the derivation
+  IS both the selection and the default, which is exactly what an UNNAMED row means — so the ⛔ above
+  about the mark coming off `upkeep_kit_named` still holds and no second derivation was introduced.
+- **Every kit assertion in `band_panel_preview` asked whether a picker EXISTED and what its ROSTER
+  held; none asked what it was SHOWING**, which is why a dead control passed every claim the harness
+  had. `_assert_kit_pickers_state_a_selection` is the one that was missing — entries, a lit index and
+  a non-empty face, on every state that draws a picker.
+
+> #### ⛔ IT WAS A PERMANENT BLOCK FIRST, AND THAT COST 50px UNCONDITIONALLY
+>
+> On top of whichever picker was open, on every strip, open or not. Measured on the wide dock with a
+> row selected: **442 into a 396px box, over by 46**, plus 5–55px over at every narrow-shell viewport
+> the `MAX_WIDE_HEIGHT_FRACTION` clamp binds at.
+>
+> **The board could not absorb it.** `_work_board_capacity` floors at `maxi(1, …)` and a row is
+> `WORK_ROW_TWO_LINE_HEIGHT` = 44px; the strip grew 50 and the zone grew 46, so the board gave back
+> 4px of `int()` truncation and **zero rows**. The strip's own `reserved ≥ drawn` passed throughout —
+> it was never an under-reserve, it was the zone having nowhere to put an honest reservation.
+>
+> **The dead reasoning, quoted rather than deleted**: *"THE PAIR IS ONE FLEX-WRAP ROW, NOT TWO
+> HAND-PLACED ONES, and that INVERTS the usual trap. A wrapped line normally costs back the row it
+> saved invisibly; here the wrap is the INTENDED behaviour, so the height to reserve is the STACKED
+> one and the single line is the saving."* Every measurement in it is correct, and the conclusion it
+> supports is what killed the shape: **the pair never rode one line on any dock the game ships** (472px
+> needed against a widest shipped work zone of 382), so the "saving" was hypothetical while the 50px
+> was charged to every strip.
+>
+> **A picker body has the strip's whole width**, so it stacks unconditionally — which removed the wrap
+> predicate, its `one_line` argument, the pickers' declared 168px column and the drift surface between
+> a reservation that computed the wrap and a container that performed it.
+
+**TWO PLAN FIGURES WERE WRONG, both re-measured.** A picker in this zone is **22px**, not the plan's
+`32 + 6`: that is the COMPOSE SHEET's control, and the block gap is charged once per BLOCK rather than
+per line (`WORK_COMPACT_PICKER_LINE_HEIGHT`, the one measured figure the queue settings strip and the
+inspector pair both name). And the pair never rides one line, above.
+
+**NO HINT LINE, and the arithmetic is why.** The priority picker's 52 is 32 + a 20px hint; two kit
+rows plus a hint is 64 — 12 over the current max, which busts the wide shell by 8. What a hint would
+have said (`none` is a real choice, not an empty one — it is how a site is worked bare-handed to
+conserve the tool) is in BOTH pickers' tooltips instead, since `none` means the same on either kit.
+
+> #### ⛔ AND AN OPEN PICKER OVERFLOWS THE WIDE DOCK TODAY — ALL THREE OF THEM
+>
+> Measured with a row selected, wide shell, one board column: the zone reads **396 of 396 with the
+> expansion CLOSED**, so it has **4px of spare** and no expansion fits in it.
+>
+> | open picker | zone needs | over by |
+> |---|---|---|
+> | kits (44) | 436 | **40** |
+> | priority (52) | 444 | **48** |
+>
+> **This is not the kit pair's defect and predates it**: the priority picker has been overrunning the
+> same budget since §4.9 item 9b, and the kit pair is the SHORTEST of the three. No frame had ever
+> rendered it, for the reason this file has now recorded three times — **every picker-open frame is a
+> TALL dock and every wide-dock frame has the expansion closed**, two disjoint families with the
+> defect living in the gap. `WORK_INSPECTOR_CEILING_HEIGHT`'s own note already said the ceiling is
+> *"stated because it is UNMEASURED rather than because it is reserved"* and that *"if one is ever
+> observed, this is the figure both of that constant's levers move by."* One has now been observed, at
+> a single open picker rather than at the full combination.
+>
+> `band_panel_work_kits_picker` is the frame — its second picker row is visibly clipped by the zone's
+> bottom edge — and it REPORTS its extent rather than asserting it (`band_panel_vitals_worst_case`'s
+> rule: a red line here asks for a decision, not a failing run).
+>
+> **The vertical dock is unaffected at every viewport measured** (1080 / 900 / 768 / 720): its zone box
+> is the window height less chrome — 939 / 759 / 627 / 579 — against a strip that reserves 128 with the
+> pair open.

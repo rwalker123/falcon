@@ -585,7 +585,7 @@ static func kit_roster_fixture() -> Array:
 			"item_ids": [KIT_ITEM_SPEARS, KIT_ITEM_SLED],
 		},
 		{
-			"id": KIT_ID_GATHERING, "display_name": "Gathering kit", "jobs": ["forage"],
+			"id": KIT_ID_GATHERING, "display_name": "Harvesting kit", "jobs": ["forage"],
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_EQUIPPED,
@@ -640,7 +640,15 @@ static func kit_roster_fixture() -> Array:
 			# tier is the crook's and the only thing that differs is the branch. That mirroring is what
 			# makes the greying claim legible: a kit greyed here is greyed for its WEB and never for a
 			# weaker number.
-			"id": KIT_ID_TILLAGE, "display_name": "Tillage kit", "jobs": ["builders"],
+			# ⛔ **`agriculture` IS ON THIS LIST BECAUSE THE SHIPPED ROSTER PUTS IT THERE** — it read
+			# `["builders"]` alone, which is a roster the sim does not ship (`equipment.json`'s
+			# `tillage` lists `["builders", "agriculture"]`, the hurdling entry above its
+			# `["builders", "husbandry"]` twin). While no client surface offered a KEEPING kit the gap
+			# was invisible; §4.9 item 12c's inspector pair asks `kits_for_job(kits, "agriculture")`
+			# and a stale roster answers EMPTY — which draws no picker and passes every claim about
+			# one vacuously.
+			"id": KIT_ID_TILLAGE, "display_name": "Tillage kit",
+			"jobs": ["builders", KitRoster.JOB_AGRICULTURE],
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
@@ -656,7 +664,13 @@ static func kit_roster_fixture() -> Array:
 			# (`equipment.json`'s `none` lists every job, and `default_kits.builders` IS `none`). It is
 			# what a player picks to send the pool out bare-handed, and — being the one entry carrying
 			# nothing — it is the one the branch greying may never withhold.
-			"jobs": ["hunt", "forage", "scout", "warrior", "builders"],
+			# …and so are the two KEEPING roles, for the same reason and against the same config: the
+			# comment above says `none` lists every job and the list named five of the seven. `none`
+			# is the bare-handed pick on a keeping row too — how a player conserves the tool on one
+			# site while its neighbour goes on using it — and `default_kits.agriculture` /
+			# `.husbandry` are BOTH `none`, so the roster was contradicting the defaults it ships with.
+			"jobs": ["hunt", "forage", "scout", "warrior", "builders",
+				KitRoster.JOB_AGRICULTURE, KitRoster.JOB_HUSBANDRY],
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,

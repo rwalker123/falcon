@@ -1601,6 +1601,17 @@ picker only means what it looks like once the kit belongs to the site.
 > because the crew never changed. **The hunt sheet is NOT renamed**: `Hunters` is specific and
 > collides with nothing.
 >
+> **THE WORD LANDS IN TWO GRAMMATICAL SLOTS AND TAKES TWO FORMS: the crew NOUN is `Harvesters`, the
+> VERB is `Harvest`.** *"Replaces both"* above names the noun pair `Foragers`/`Tenders`; the row label
+> and the commit button are a **verb** slot (`Forage (27, 26)` / `Tend`), and one string cannot fill
+> both — `Assign harvest` and `♻ 3 harvest` are the readings that proves it. The existing noun→verb
+> tables already do exactly this job (`WORK_ROW_PLANT_FORMATS`, `PLANT_ASSIGN_BUTTONS` are keyed off
+> the resolved noun), so they simply collapse from two entries to one. So: `Harvest (28, 16)` on the
+> board and the strip head line as drawn in the prototype, `Harvesters [Gathering kit ▾]` on the kit
+> line beside the animal web's `Hunters`, `Assign harvesters` on the sheet, `♻ 3 harvesters` on the
+> standing summary, and *"send at least one harvester"* on the dead button. Ray's call, taken against
+> the prototype, which drew only the verb slot and so left the noun open.
+>
 > **`HudFormat.plant_crew_label` is the seam** — the one place the Foragers/Tenders fork is spelled.
 > The one mismatch the choice costs is harvesters holding a *Gathering kit*; the kit's **id** stays
 > `gathering` and only its `display_name` is player-facing, so closing it is a one-field config edit
@@ -1618,18 +1629,43 @@ picker only means what it looks like once the kit belongs to the site.
 > conserve the tool. Reasoning from today's thin roster is what nearly made the upkeep one read-only;
 > the roster is early and will not stay thin.
 >
-> **THE PAIR IS ONE `flex-wrap` ROW, NOT TWO HAND-PLACED ONES.** It rides one line where there is
-> room and drops the second onto its own line where there is not, so a narrow dock tier costs a row
-> instead of clipping a control and the strip needs no width branch. That also inverts the usual
-> trap: a wrapped line normally costs back the row it saved, *invisibly* — here the wrap is the
-> intended behaviour, so the height to reserve is the stacked one and the single line is the saving.
+> **AND AN ANIMAL ROW GETS BOTH PICKERS TOO — the paragraphs above are written in plant vocabulary,
+> which is not the same as being plant-only.** The strip is the one place the rung is known on
+> **either** web, and `upkeepKitId` is already published for herds as well as patches
+> (`snapshot/subsistence.rs` → `upkeep_kits.herd(...)`), so the pair mounts on a herd row from the
+> same producer. **What differs is only the LEFT picker's word**: the rename below is the PLANT web's
+> crew, so an animal row's take crew is still `Hunters` and the pair reads
+> `Hunters [Stalking kit ▾]  Upkeep [Hurdling kit ▾]`. The right-hand picker is the same control on
+> both webs, and `upkeep_kit`'s own grammar already carries both source shapes
+> (`upkeep_kit <faction> <x> <y> [kit <id>]` / `upkeep_kit <faction> <herd_id> [kit <id>]`).
 >
-> **The metrics are the shipped ones** and the arithmetic is unmeasured until it renders: the strip
-> is 356px, its base `WORK_INSPECTOR_EXTENT` 58 + `WORK_INSPECTOR_SLACK` 6 = **64px**, a text line
-> `14 + 6 = 20px`, a picker `32 + 6 = 38px`. The rung costs **+0** (it rides a line already there)
-> and the kit line **+38**. Both pickers measure ~307 of the 336 usable width. `WORK_INSPECTOR_EXTENT`'s
-> own note says to re-measure after touching the strip's base children — do that rather than trusting
-> the sum.
+> ⛔ **SUPERSEDED BY ITEM 12d — THE PAIR IS A PICKER, NOT A PERMANENTLY DRAWN LINE.** The two
+> paragraphs quoted below were written against the inspector as a block inside the work zone, and both
+> are wrong about the shipped client. They are kept because a reader who finds only an absence will
+> re-derive them:
+>
+> > *"THE PAIR IS ONE `flex-wrap` ROW, NOT TWO HAND-PLACED ONES. It rides one line where there is room
+> > and drops the second onto its own line where there is not … the height to reserve is the stacked
+> > one and the single line is the saving."*
+> >
+> > *"The metrics are the shipped ones … the strip is 356px, its base `WORK_INSPECTOR_EXTENT` 58 +
+> > `WORK_INSPECTOR_SLACK` 6 = 64px, a text line 14 + 6 = 20px, a picker 32 + 6 = 38px. The rung costs
+> > +0 … and the kit line +38."*
+>
+> **Three of those figures were wrong when measured, and the fourth held.** A picker in the WORK zone
+> is **22px**, not 38 — the 32 is the *compose sheet's* control, and the block gap is charged once per
+> block rather than per line. The pair **never rides one line at any shipped dock width**: one line
+> needs 472px against a widest-ever work zone of 382, so the wrap is not a saving, it is the only
+> case. And the strip had **4px of spare**, so a `+38` line — or a `+22` one, or any line at all —
+> overflowed it; item 12d has the measurements. The rung's **+0** is the one figure that survived, and
+> it shipped exactly as written.
+>
+> **WHAT SHIPPED:** the rung state on the head line (+0, as promised), and the pair as a **`Kits`
+> picker** beside `Change policy` and `Priority`, opened on demand. Ray's, on being shown the
+> overflow: `_work_picker_open` was already three-valued so the strip *"pays for AT MOST ONE picker by
+> construction rather than by discipline"*, so the reservation takes the **max, not the sum**, and a
+> fourth value shorter than the tallest existing picker costs the panel **nothing**. Item 12d then
+> moved the whole inspector out of the zone and the sections became always-drawn; see there.
 >
 > ⛔ **THREE THINGS THE DESIGN REJECTED, so they are not re-proposed.** A **second picker on the
 > Agriculture pool card** — redundant once upkeep is settable on the row, and two controls writing one
@@ -1702,6 +1738,112 @@ picker only means what it looks like once the kit belongs to the site.
 >
 > **UX prototype**, drawn against the shipped surfaces at their real metrics:
 > `https://claude.ai/code/artifact/9ea539e6-9a65-4ca2-9fc1-32dda77d2d14`
+>
+> ⛔ **THAT PROTOTYPE DRAWS THE SUPERSEDED BLOCK FORM** — a permanently mounted kit line in the strip,
+> at the 38px picker that measurement later disproved. It is the record of the design as decided, not
+> as built. The measured one, drawn 1:1 against the real geometry and showing why the block form could
+> not fit, is `https://claude.ai/code/artifact/cb21b3d1-e2c6-4579-b72f-fbb4eaaff890`.
+
+**12d — THE WORK INSPECTOR BECOMES A DIALOG, AND THE ZONE STOPS PAYING FOR IT.** Ray's, decided
+against the measurements item 12c forced. Not a readout slice: it is the structural answer
+`band-city-panel.md` has been asking for, in a cheaper form than either shape that file names.
+
+> **THE ZONE HAS FOUR PIXELS AND EVERY EXPANSION OVERFLOWS IT.** Measured on a 1920 bottom dock with
+> a row selected: the box is **396** and the strip closed asks **392**. Open the *shipped* priority
+> picker and it asks **444** — over by **48**. Open item 12c's kits picker and it asks 436, over by
+> 40. There is no expansion small enough: `_work_board_capacity` is already floored at `maxi(1, …)`,
+> so the board gives back 4px of `int()` truncation and **zero rows**.
+>
+> **THE PRIORITY PICKER HAS OVERRUN THAT DOCK SINCE §4.9 ITEM 9b and no frame ever rendered it**, for
+> the reason `band-city-panel.md` records twice: *every picker-open frame is a tall dock, and every
+> wide-dock frame has the expansion closed*. Two disjoint frame families with the defect living in
+> the gap — the same shape as the bug that raised `PANEL_HEIGHT_WIDE` to 456 in the first place. Item
+> 12c's own measurement is what finally rendered it.
+>
+> **AND TWO SMALL BOTTOM DOCKS ALREADY OVERFLOW WITH NOTHING EXPANDED** — `1152×720` by **25** and
+> `1024×768` by **27**, on shipped code with no kit pair, both against boxes `MAX_WIDE_HEIGHT_FRACTION`
+> has clamped. So the horizontal dock's height is not short by one control; it is short.
+>
+> **A WINDOW CANNOT CHANGE A ZONE'S HEIGHT, and that is the whole fix.** `_open_rung_track`'s own
+> docstring already argues it for a smaller piece of content in this same zone — *"the detail
+> breakdowns are popovers and the destructive confirms are `ConfirmationDialog`s. It costs the zone
+> nothing at all."* The inspector is the piece the argument was never applied to. Hosting it as a
+> window makes the overflow **impossible** rather than made to fit, and hands the board back the
+> **84–190px** the strip reserves — two to four rows on a dock floored at one.
+>
+> **IT IS A DIALOG, NOT A POPOVER, AND THE PAIRING IS THE POINT.** Anchored-and-transient is one
+> coherent thing (the rung track: open, pick, gone); persistent-and-placed is the other. The
+> inspector is a WORKING surface — open a picker, change the policy, change the rank, then reach for
+> a stepper — so it stays open until dismissed, and an anchored control that never goes away is the
+> incoherent combination. Four properties, and each is load-bearing:
+>
+>   * **CENTRED IN THE ROOM THE DOCK LEAVES**, not centred on the panel and not anchored to the row.
+>     On a bottom dock the panel is a strip with a screen of map above it; on a side dock a column with
+>     the map beside it — so the dialog lands **over the MAP** on every edge and the board stays fully
+>     visible. Centring on the panel would only move the occlusion onto the rows being compared.
+>
+>     ⛔ **IT SAID *VIEWPORT*-CENTRED AND THAT DID NOT SURVIVE THE SECTIONS.** Quoted, because the
+>     reasoning is still right and only the frame of reference moved: *"VIEWPORT-CENTRED … so a
+>     viewport-centred dialog lands over the MAP in both."* True while the card was 104–156px tall;
+>     once POLICY / PRIORITY / KITS were all drawn it measured **340**, and on a 1920×1080 bottom dock
+>     a viewport-centred card spanned y=370…710 through a panel starting at 624 — covering the board
+>     this item exists to free. The dialog's own assertion caught it. Cutting the room back off the
+>     panel's map-facing edge keeps **one centre and no dock-edge fork**, which is the property the
+>     bullet was defending.
+>   * ⛔ **NON-MODAL — NO INPUT-BLOCKING SCRIM.** It re-targets when another row is selected, which is
+>     only possible if the board stays live underneath. This is the property most likely to be built
+>     wrong from the word *dialog*, and a scrim would delete the workflow the persistence exists for.
+>   * **PERSISTENT, with an explicit dismiss.** It does not close on an outside click; a stepper press
+>     on a different row is ordinary use, not a dismissal gesture.
+>   * **EVERY DOCK, not the horizontal one.** The vertical dock does not need it — its box is the full
+>     window height less chrome (939 at 1080 against a strip reserving 134) — but a fork means two
+>     layouts and two frame families, which is precisely the shape that hid both defects above. One
+>     behaviour, one code path, one test matrix. The vertical dock gets the freed rows too.
+>
+> **AND ONE PLACEMENT RATHER THAN FOUR.** Floating it off the panel's map-facing edge aligned to the
+> selected row reads better and travels the eye less, and it was rejected: four dock edges means four
+> placements plus clamping, against the same one-behaviour argument that settled the fork above.
+>
+> **WHAT THIS SLICE DOES NOT DO:** it does not raise `PANEL_HEIGHT_WIDE` (ruled out — the horizontal
+> dock may not get taller), and it retunes no config value. The two shipped overflows above are FIXED
+> BY CONSTRUCTION once the strip stops competing for zone height, so neither needs its own patch.
+>
+> #### WHAT THE DIALOG BECAME ONCE IT WAS ONE — three things decided after the above was written
+>
+> **THE SECTIONS ARE ALWAYS DRAWN, and `_work_picker_open` is gone.** Ray, on seeing the dialog: now
+> that it is its own surface it does not need the strip's layout. **POLICY, PRIORITY and KITS are
+> sections with their content shown**; `Jump to source` and `Unassign` carry no content and are the
+> only two buttons. That state — and `WORK_PICKER_NONE` / `_FLOOR` / `_PRIORITY` and
+> `_toggle_work_picker` with it — existed for exactly one reason, that the strip paid for the tallest
+> picker and could afford one at a time. It was rent control for rent the dialog no longer pays, and
+> removing it also deletes a bug class: a picker left open when the row changes.
+>
+> ⛔ **SO THE RESERVATION IS A SUM, WHICH INVERTS ITEM 12c's OWN PROPERTY.** *"The strip pays for at
+> most one picker"* was the whole argument that made the `Kits` picker free; one slice later it is the
+> wrong shape, and the assertion that pinned it had to be inverted rather than deleted. Worth keeping
+> in view: a claim can be exactly right and become exactly wrong without the code around it being
+> wrong at any point.
+>
+> **THE UPKEEP ROW DRAWS ONLY WHERE THE SITE OWES UPKEEP.** Reported from play, on both webs: a WILD
+> source was offered an Upkeep picker and silently defaulted it to a kit — a hurdling kit for a wild
+> aurochs. Upkeep is a property of a standing rung and a wild source has no improvement at all, so the
+> row offered a tool for a job that does not exist. **The gate is the site's PUBLISHED BILL**
+> (`upkeepDemand` ∨ `upkeepMaterialDemand`), never a re-derived rung test: it is a disjunction, so a
+> rung owing only work still draws the row; and it gets mid-climb right, which a rung word cannot,
+> since a source raising its first rung stands on `wild` and is already billed. In its place the
+> section states the bill itself — `Kept at 1 work · 0.05 hurdles a turn.` — **terms only, no rung
+> word**, the head line already stating the rung through the same `rung_row_value`.
+>
+> **AND THE `none` HINT LINE DIED HERE.** It was added when the sections gained room, on the theory
+> that a visible sentence beats two tooltips, and Ray's word for it was *nonsense*: it explained a
+> control that, on the surface where it read worst, should not have been drawn at all. The `none`
+> CHOICE is untouched and is still what item 12c describes — only the on-screen line went.
+>
+> **EVERY ONE OF THOSE CAME FROM PLAYING A TURN, not from the suite.** The harness was green through
+> all of them, because its claims asserted the pair was PRESENT and never that it was RIGHT: no
+> fixture opened the dialog on a wild source, none on a pending row, and none asserted a picker's face
+> or its lit index. That is the shape to design tests against on the next slice — presence is not
+> correctness, and a dead control passes every claim that only counts children.
 
 13. **The route branch (#532 proper).** Routes as the ladder's third branch, `infrastructure_cost`
     wired for the first time, traversal-driven progress from supply links, shipments and movement.

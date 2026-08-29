@@ -21,6 +21,54 @@ paths:
 
 The Band/City dockable-panel PNG harness, and the arcs whose frames ride it.
 
+## The leading bound is asserted in BOTH directions, and one of them is a window resize
+
+`_assert_leading_bound_matches_the_column` is the claim whose absence shipped a chrome split that did not
+exist on the hardware it was built for. `BandCityPanel._rail_split` charges the card's leading bound, and
+that bound was the left column's authored **360** applied unconditionally — so the split needed **2012px**
+of window and a 2000px monitor stacked the minimap and the turn orb at one end. **Nothing failed**: every
+frame in this file that asserted the split was taken on a 3440 ultrawide, where 360px of over-charge is
+affordable, and the two 1920 states asserted the STACKED arm as if it were the design.
+
+**The pair is the whole assertion.** On `band_panel_dockrow_bottom` (1920×1080) the left dock's one card
+stops at 224 against a strip starting at 662, so the bound must be **0** and the chrome splits; on
+`band_panel_dockrow_column_reaches` — **the same 1920 width, a 540-tall window** — the strip's top edge
+rises to 216, the same card is genuinely in the row, the bound must be **360** and the chrome stacks. A
+client that always zeroed the bound passes the first and fails the second; the old client passes the
+second and fails the first.
+
+**IT IS A PURE WINDOW RESIZE, NOT A STAGED FIXTURE.** The strip's top edge sits at 0.4 of the window's
+height, so shrinking the window walks it under the card the rule reads — no invented content, and the same
+producer under test in both frames. `DOCKROW_COLUMN_REACHES_HEIGHT` is 540 because under ~520 the chrome
+stops parking at all and the state would be testing a different rule.
+
+**THE EXPECTATION IS THE HARNESS'S OWN MEASUREMENT.** `_left_dock_content_reach` walks `LeftStack` and
+clips to `LeftScroll` — the shape `_right_dock_content_reach` already had for the other column — rather
+than asking `Hud.left_column_content_reach`, which is the producer the bound is derived from and would
+agree with it whatever either answered.
+
+### `_assert_card_clears_lateral_columns` measures the LEFT column as drawn content now
+
+It bounded the left dock as a REGION, on the reasoning that the region really is full-height. The region
+is; the one card in it is not, and a region-shaped claim there forbids the card room the HUD is not using
+— which is precisely the argument this same function already made for the RIGHT column and the reserve
+`348e5c09` was fixed out of. Both halves read painted content, with a liveness conjunct (`cards > 0`) so
+"the card clears the column" cannot pass on an empty dock.
+
+**Its negative control moved to the column's WIDTH.** Where the column stops above the strip there is
+nothing in the row for an unbound island to hit, so a control asked against the painted rect would be
+unsatisfiable rather than merely vacuous. What it still answers is the question the bound is about: would
+the leading furniture, unbound, be inside the column's width at all?
+
+### Every probe that clears the bounds must put `Main`'s back, not `lateral_column_widths()`'s
+
+`_main_lateral_bounds` exists because three probes restored the bounds by pushing
+`Hud.lateral_column_widths()` straight onto the panel. That was `Main`'s behaviour once; it is not now
+(`Main.band_panel_lateral_bounds` drops the leading term where the column is not in the row), and a probe
+that restores the old shape leaves the panel bounded by a rule the live client does not have — measured,
+it silently un-split the chrome for every state that ran after it, so the frame and the assertions
+disagreed about the same panel. The rule is a `static` for exactly this reason; ask it, never restate it.
+
 ## The faction page's `Fodder:` row and its open drill-down
 
 **One frame and twelve `: PASS`** — measured `138 / 803` → `139 / 815` on one windowed run, `assert
@@ -1775,6 +1823,43 @@ the two by its hint line. The two are mutually exclusive, so the strip's documen
 over the pair rather than a sum; staging the floor picker there would understate it by that line and
 leave `WORK_INSPECTOR_CEILING_HEIGHT` describing a state that is no longer the worst one.
 
+**AND THERE IS NO PICKER TO STAGE ANY MORE.** It set `_work_picker_open = WORK_PICKER_PRIORITY` for
+one slice, because the ceiling was a MAX and the priority arm was the tallest of three; item 12d's
+second pass draws every section unconditionally, so the worst case is a property of the MODEL alone
+and the conditional children are the whole of what makes it worse than the board's own rows.
+
+**IT IS MEASURED AGAINST THE DIALOG SINCE `docs/plan_standing_upkeep.md` §4.9 item 12d, and it is the
+one state that ever tested this.** It used to add the built strip to the harness offscreen and compare
+the reservation against the strip's own column — a claim about a strip no zone hosts any more. The
+worst case is MOUNTED into the real `WorkInspectorDialog` now, and five things are asked of it: the
+reservation covers what the strip draws, the CARD was fitted to that reservation plus its own chrome,
+the card FITS the viewport it is centred in, the note really WRAPS, and the reservation is the
+documented ceiling plus whole wrapped lines and nothing else. The middle pair is what turned a 106px
+unreserved risk into a rect that either fits or does not.
+
+**⛔ ITS NOTE HAD TO STOP BEING A SHORT SENTENCE, and the fixture's own comment said the words were
+irrelevant.** They were, until the card's prose lines started WRAPPING: with
+`"Animals are drifting off."` on it the wrap term is zero, and *"reserved >= drawn with a wrapped note
+in it"* is the pre-wrap claim wearing a new label — the same vacuous shape that has bitten twice on
+this branch. The fixture states the shipped shortfall sentence's shape now, and the assertion reads
+`Label.get_line_count()` off the DRAWN label before it measures anything, so a copy edit that shortens
+it fails loudly rather than quietly stopping testing the thing.
+
+**AND THE CEILING EQUALITY SPLIT IN TWO** — `is_equal_approx(reserved, WORK_INSPECTOR_CEILING_HEIGHT)`
+cannot survive a reservation that legitimately varies with the sentence. The structural question it
+was really asking (*has a fifth conditional child appeared without moving the constant?*) is asked as:
+the reservation is at or above the ceiling, and the whole excess is an integer number of
+`WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT`s. A new child of any other height lands off that grid.
+
+**`_assert_note_renders_in_full` is the claim whose absence let the elided sentence ship.**
+`_find_aside_label` matches on `Label.text`, and `text` is the WHOLE sentence even when the label draws
+an `…` — elision is a render property, not a text one — so every existing claim about that note passed
+over the defect. What is asked instead: the overrun behaviour is `OVERRUN_NO_TRIMMING` and autowrap is
+on, every line the label has is VISIBLE (`get_visible_line_count() == get_line_count()`, and at least
+`WRAPPED_NOTE_MIN_LINES` of them), and the drawn rect is at least the label's own minimum height AND at
+least the column `_work_inspector_note_width` measured the wrap against — which is the one number a
+label laid out narrower than it was priced would break.
+
 **Falsified, four ways, and every one of them failed loudly.** Baseline before the slice: **761 PASS,
 0 FAIL**; after: **789 PASS, 0 FAIL** (exit 0 both times — and the exit STATUS is the verdict, since a
 scene that fails to parse exits 0 with no assertions run at all, which is exactly what the first draft
@@ -1900,3 +1985,278 @@ the case the alert clause exists for.
 | `material_short_note` → `""` | 4 (the sentence, the DANGER severity, the hover, the drawn ink) |
 | `band_has_material_upkeep` → `false` | 9 band-page (2 row, 2 caret-never-clicked, 5 popover) |
 | `FactionRollup._upkeep_line` → `""` | 5 (the sum, the rate, the drill-down size, the per-band runway, the jump) |
+
+## The HARVEST rename's half here (`docs/plan_standing_upkeep.md` §4.9 item 12c)
+
+**MEASURED, BEFORE AND AFTER, ON THIS TREE**: `855 : PASS / 448 assert OK` → `858 / 448`, exit 0 both
+times. **NO FRAME ADDED AND NONE RETIRED**; the board's plant rows and the pen row's shortfall
+sentence read differently inside the frames they already had.
+
+The three `: PASS` are the material note's two new claims (it does not say the source EATS the good;
+it names the remedy) and `_assert_work_sort_groups_by_kind`.
+
+> ### ⛔ CLAIM 4 OF `_assert_work_sort_stable` LOST ITS FALSIFIER TO THE RENAME
+>
+> *The DEFAULT sort groups by KIND* was made to bite by a managed plant row reading `Tend (…)`, which
+> sorts AFTER every `Hunt …` row while its `kind` is still `forage`. Every plant row reads
+> `Harvest (…)` now and **`"Harvest" < "Hunt"`**, so label order and kind order COINCIDE on every
+> board the shipped vocabulary can produce and a label-only comparator satisfies the claim.
+>
+> **Measured rather than reasoned**: dropping the kind term from `_work_name_sorts_before` fails
+> **exactly one** assertion, and it is `_assert_work_sort_groups_by_kind` — the new synthetic pair
+> whose labels run opposite to their kinds — not the mixed-rung fixture that used to carry it. The
+> fixture's labels are composed from `WORK_ROW_PLANT_FORMAT` so it still describes a board the game can
+> draw; what it can no longer do is falsify.
+>
+> **THE SYNTHETIC LABELS ARE MARKED AS SYNTHETIC AND MUST STAY SO.** They are the one place in this
+> harness where a work row's label is not a string the client can produce, and the reason is written
+> at the constants: no shipped label can express the disagreement any more.
+
+**`_material_short_sentence` DROPPED ITS SOURCE-NOUN ARGUMENT and kept its shape.** The ⛔ at its head
+— composed from the FORMAT and the fixture's own numbers, **never** through `material_short_note` —
+is unchanged and is why the rename could not launder itself through the expectation.
+
+**A RETIRED THING NEEDS A TEST THAT IT IS GONE**, so the retired tail is spelled as a needle
+(`MATERIAL_SHORT_RETIRED_EATS_NEEDLE`, `" eats."`) rather than reached through a const that no longer
+exists — and it is asserted as a PAIR with the remedy's presence, or *"the sentence lost a clause"*
+passes.
+
+**Falsification counts, each defect restored on its own:**
+
+| Defect restored | Failures |
+|---|---|
+| the retired `a turn this pen eats` tail | **2** here — the EATS needle and the remedy — naming the played sentence |
+| `_work_name_sorts_before` drops its kind term | **1** here — the synthetic pair, `(hunt, forage)` |
+| `plant_crew_label` → `""` | **0** here, **30** in `ui_preview` (the five states' four surfaces, their agreement claims, the five liveness claims and both rung-blind claims) |
+| the card-side material sentence restored | **0** here, **4** in `ui_preview`'s `improvements` |
+
+
+## The ring caret and the strip's head line (§4.9 item 12c, Stage B)
+
+**MEASURED, BEFORE AND AFTER**: `858 : PASS / 448 assert OK` → `864 / 445`. **No frame added and none
+retired.**
+
+The six `: PASS` are `_assert_ring_caret_rides_the_standing_mark`. The `assert OK` figure falls by
+**three, and all three are the parked kit pair** — `every zone renders inside its zone rect` plus the
+two `content fits its zone box` lines for `band_panel_pools_wide_selected` and
+`band_panel_queue_settings_exclusive`, which FAIL rather than passing while that pair is mounted. **No
+assertion was lost**; the run's only failures are those three.
+
+> ### ⛔ AND ONE GUARD SILENTLY STOPPED COVERING THE ROW THE NEW CONTROL IS ON
+>
+> `_assert_rung_labels_are_hoverable` walked `Label`s through `_collect_rung_labels`. The penned
+> herd's rung mark is a `Button` now, so it dropped straight out: the line read **`4 rung marks are
+> hoverable` → `3`** and nothing failed. Caught by diffing the `assert OK` LINES against the baseline
+> rather than by the exit status or the count, which is what that diff is for.
+>
+> It walks `_collect_meta_controls` on the shared meta now — which is what the meta was always for —
+> and it **forks the filter test with the shape**: `PASS` on a read-only mark (the only value that
+> both shows a Label's tooltip and lets the row's click through), `STOP` on the ring mark, or the
+> press that opens the card would also open the inspector under it. It counts the pressable one
+> separately and FAILS when a board carrying a penned herd draws none, so the coverage cannot go
+> quiet the same way twice.
+
+**THE A/B IS THE CLAIM, three ways.** A caret on every mark satisfies a bare presence check, so the
+PASTORAL row is asserted to carry none; the READY slot is asserted EMPTY on the penned row, which is
+the mechanical reason the control is on the mark at all (`RungLadder.has_track` is false at the top of
+the animal branch) and would silently stop being true if that slot ever grew an offer; and the same
+penned herd with a ring already banked is asserted to lose the caret — **driven, not staged**: the
+fixture is mutated and the models re-derived, so no frame's subject moves.
+
+**`herd_graze_pen`'s `herd_pen_extending` is the inverted twin.** It asserted the badge's NUMBER on
+both render paths; it asserts the badge and the `Extend pen` button are GONE, against a
+**precondition** that the fixture really has a ring 60% banked (or "no badge" is free on a pen with no
+ring) and a **liveness** claim that the drawer still draws its action row (`["Assign herders ▸"]`).
+Net `-1` on `ui_preview`: four claims became three, then the precondition put it back.
+
+## The inspector DIALOG's matrix, and why it is a matrix (§4.9 item 12d)
+
+`_render_work_inspector_dialog_states`, appended last in the run order. The behaviour it covers is in
+`band-city-panel.md` → "THE WORK INSPECTOR IS A DIALOG"; what belongs here is the shape of the walk and
+what would have been missed without it.
+
+**IT IS ELEVEN CONFIGURATIONS, not a frame.** The defect it exists to stop lived in the gap between
+two frame families this file had built for years — *every picker-open frame was a tall dock and every
+wide-dock frame had the expansion closed* — so a twelfth frame in either family would have proved
+nothing. LEFT at 1080/900/768/720 and BOTTOM at 1920×1080, 1600×900, 1440×900, 1366×768, 1280×800,
+1152×720, 1024×768. (It read *"ELEVEN CONFIGURATIONS × FOUR PICKER STATES … with
+`none`/`floor`/`priority`/`kits` walked at each"* until item 12d's second pass retired
+`_work_picker_open` outright; the card draws POLICY, PRIORITY and KITS at once, so there is nothing
+left to walk and each configuration measures ONE card. `DIALOG_PROBE_PICKERS` is a ⛔ RETIRED comment
+in the harness for the same reason.)
+
+**AND THE MATRIX IS NOW THE HOME OF THE BOARD-LAYOUT CLAIM TOO** (`_probe_work_board_layout`), which
+is a reuse rather than a new walk: the rows-per-column preference is decided against a dock's
+AFFORDANCE, and this is already the one place that enumerates docks and viewports. Per configuration
+it walks `BOARD_LAYOUT_PROBE_COUNTS` (3, 4, 6, 8, 12 — the preference exactly, the 5 + 1 board it
+exists to rebalance, the two counts either side, and one past every affordable column) at two queue
+depths, and asserts the page still SHOWS every source the height-derived layout would have and takes
+no more pages to do it. See `band-city-panel.md` → "THE COLUMN BREAKS AT THREE ROWS BY PREFERENCE".
+- **BOTH QUEUE DEPTHS, because the queue is what decides how tall a column can be.** The matrix's
+  fixture is the fullest band in this file, whose four-entry BUILD QUEUE leaves a bottom dock about
+  three board rows — so at the staged depth the preference has nothing to shorten and the probe would
+  have reported "no change" everywhere while proving nothing. The board the change is about is the
+  same dock with NOTHING queued, where the height affords five. Walking both is what makes it a probe
+  of the RULE rather than of one fixture's queue depth.
+- **It asserts `min(page, count)`, never `page`.** Slots a band cannot fill are not worth protecting,
+  and a raw-page assertion would forbid the change's whole purpose — a six-source band would have to
+  keep a 10-slot 2 × 5 page with four slots empty and go on drawing 5 + 1. The two readings coincide
+  wherever the page binds, which is wherever a source could actually be lost.
+- **THE SWEEP DECLARES, so it hands the card back.** `_work_board_capacity` is not a pure reader — it
+  calls `set_work_columns`, which resizes the card — so the probe re-renders at the end to restore the
+  count the REAL band declares. Without it every configuration after the first is measured against a
+  card sized for twelve synthetic sources.
+- **Paired with liveness**, the rule this whole section runs on: a board that draws no rows satisfies
+  every inequality above, so the live board's own row count is asserted non-zero beside them.
+
+**THE FIXTURE IS THE FULLEST BAND IN THIS FILE, and that is the choice the matrix stands on.** It runs
+on `_build_queue_band_fixture(4)` with `_build_queue_patches(4)` — the POOLS block, a four-entry BUILD
+QUEUE and a board stacked together, which is the state the four pixels of spare were measured in. On
+the reference band the same walk reports 400–700px of spare on every row and asserts nothing about the
+arithmetic that mattered.
+
+**Three frames, and the third is the one item 12c never got**:
+`band_panel_work_inspector_dialog_bottom` (the card centred over a wide dock's map, the board whole
+underneath it), `…_left` (the SAME card on a vertical dock — the fork the slice refused to make, so
+there is one code path and one frame family), and `…_kits` (the kit pair open on a WIDE dock).
+`band_panel_work_inspector_dialog_over_track` is the fourth: the rung track opened from a board row
+while the card is up.
+
+**WHAT IT ASSERTS THAT A FRAME CANNOT.** Each of these is paired with a liveness half, because every
+one of them is an ABSENCE claim and an absence claim passes on a surface that was never built:
+
+| claim | its liveness half |
+|---|---|
+| no inspector strip is left anywhere inside the panel | the card is up, and really draws its head, its links row and its close `✕` |
+| `_work_board_capacity` answers identically for all four pickers | the rendered row count does not move either, and is non-zero |
+| the card's layer holds no dismiss catcher | the card is `MOUSE_FILTER_STOP` over a board that really drew rows |
+| the card does not intersect `BandCityPanel.card_rect()` | its centre is the viewport's, and its rect has area |
+| tabbing away from Work takes the card down | it was up on the Work tab first |
+
+**The re-select claim captures the NODE, not the state.** *"Still open"* is satisfied by a card that
+was freed and rebuilt, so `_assert_dialog_survives_a_reselect` holds the instance across the switch and
+requires the SAME card holding a DIFFERENT strip — plus the same key still closing it, which is what
+keeps the toggle a toggle.
+
+**The stacking claim is structural and says so.** `_assert_rung_track_opens_over_the_dialog` asserts
+the node KINDS — a `PopupPanel` (an embedded subwindow, which Godot composites above every
+`CanvasLayer` of the parent viewport) over a `Control` on a `CanvasLayer` — plus the state that makes
+the question live, both up at once. No comparison of two rects could establish it on a frame where
+they happen not to overlap, and a price card opening behind the surface that spawned it is exactly the
+kind of thing that ships.
+
+**Sabotage-verified by restoring the retired terms** (`_work_board_capacity`'s `inspector_h`,
+`WORK_ZONE_GAP_COUNT` 3, `BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT`): 2 failures, and the informative one is
+`the board's capacity does not move for ANY picker … (rows [2, 1, 1, 1], drawn [1, 1, 1, 1])`. The
+matrix's own printout shows the same thing as a measurement — LEFT 1440×720 drops from 3 board rows to
+2 the moment a picker opens.
+
+**Every strip-finding assertion in this file moved off `_panel`.** `_work_inspector_root()` is
+`HudLayer.work_inspector_host()` — the LAYER rather than the dialog node, because it is never null once
+the HUD is up and every recursive finder rooted at it is also used for a NEGATIVE claim, where a `null`
+root would crash instead of answering *not there*.
+
+## The three claims this branch had to INVERT rather than delete (§4.9 item 12d, second pass)
+
+An assertion that outlives the property it was written for does not go red — it goes on passing, and
+what it now guards is retired behaviour. Three of them on one branch, each inverted with its liveness
+half kept:
+
+| the assertion | asserted | asserts now |
+|---|---|---|
+| `_assert_kits_picker_is_exclusive_and_costs_the_max` → **`_assert_sections_are_drawn_and_cost_the_sum`** | the three pickers are mutually exclusive and the strip reserves the MAX | all three sections draw on ONE render and the card reserves the **SUM**, term for term against the producer, and that sum is more than its tallest term |
+| `_assert_kits_picker_draws_both_controls` → **`_assert_kits_section_draws_both_controls`** | *"with the expansion CLOSED the strip draws neither picker"*, driven by writing `_work_picker_open` and pressing a `Kits` link | both pickers, their rosters, `none` on both and the HINT — with **no click at all** |
+| the priority frame's swap pair | *"`Change policy` swapped the strip to the FLOOR picker … the priority picker is GONE with it, not merely covered"* | both grids are on the card at once, each under its own header |
+
+Two more went with them: *"the pick CLOSES the picker"* became *"the PRIORITY section is still drawn
+after the pick"* — which is what lets the three levels be pressed in sequence the way a player does —
+and *"the card is centred in the VIEWPORT"* became *"…in the ROOM the dock leaves"*, which is the one
+that caught a 340px card running straight through a bottom dock's panel.
+
+**`_press_work_inspector_link` is deleted.** Its whole job was pressing a link that opened an
+expansion, and there is no such link; its last caller went with the swap frame it drove.
+
+**The matrix stopped walking four picker states per configuration**, and that is a stronger reading of
+the same property rather than a weaker one: with `_work_picker_open` retired there is nothing a click
+could change about the zone, so the zone figure is taken once and the interesting number moved to the
+CARD's height against the room it is centred in. `band_panel_work_inspector_dialog_tight` is the frame
+for the tightest room any shipped configuration leaves (a 1152×720 bottom dock: 264px against a 340px
+card, so the card's own scroll carries the rest).
+
+## The PENDING row's kit pickers — the state a live game found and this file did not cover
+
+**MEASURED, BEFORE AND AFTER, ON THIS TREE**: `154 frames / 983 : PASS / 479 assert OK` →
+`156 / 1030 / 479`, exit 0 both times. `ui_preview` is unchanged in every figure (370 frames /
+1589 `PASS`, exit 0), which is what says the client half moved no HUD render.
+
+**The `assert OK` tally does not move for a new frame here, and that is not a miscount.** These two
+states call `_assert_work_inspector_fits` (which reports through `_assert_band_panel`, i.e. `PASS`)
+and neither `_assert_zones_within_bounds` nor `_assert_zone_content_fits` — the card is a
+viewport-centred dialog and takes no zone height, so the zone pair those two states would report is
+the pair the *previous* state already reported.
+
+**TWO FRAMES, ONE PER WEB** — `band_panel_work_kits_pending_patch` and `_pending_herd` — appended
+after `_render_kits_upkeep_gate_states`, each a **BRAND-NEW** assignment on a source the band does not
+work (`QUEUE_SECOND_PATCH` carries a patch and no row; `PENDING_KIT_HERD` is the roster's second
+deer). That is the harder half of the case on purpose: with no confirmed row behind it the only
+honest answer is the kit the command itself carried, so a repair that preserved the SETTLED row's kit
+passes on an edit and fails here.
+
+**The kit sent is deliberately the NON-DEFAULT `none`.** A picker falling back to the job default
+reads `Harvesting kit` / `Stalking kit` and satisfies every presence and liveness claim, so the face
+is asserted by EQUALITY against `No kit`.
+
+**`_assert_crew_edit_keeps_the_kit` is PNG-less and driven**, because the silent re-kit is a value on
+a command line and the card it happens under is byte-identical either way. It drives the REAL
+`_emit_work_assign` and requires both the kit AND the count to move correctly — the count half is
+what catches an emit that returned at its own guard.
+
+> ### ⛔ THE BAND IS STAMPED LOCALLY, NEVER READ OFF `_panel_band`
+>
+> `Hud._after_pending_change` re-renders the SELECTED unit into the panel, and an earlier state in
+> this file leaves an UNSTAMPED `_band_fixture()` in the selection — so `_panel_band` comes back
+> carrying `entity` and no `band_id`, and the next `_emit_assign_labor` returns at its own guard.
+> **Measured: the first emit landed and the crew edit after it silently did nothing** (`2 → 2`), with
+> the kit claim beside it still green because the old record was still there. It is the same trap
+> `_assert_crew_edit_keeps_improvement` records; the overlay is keyed by `entity`, which is unchanged,
+> so the row the inspector opens on is still the right one.
+
+### `_assert_kit_pickers_state_a_selection` — the claim whose absence let a dead control ship
+
+Every kit assertion in this file asked whether a picker EXISTED and whether it carried entries. None
+asked what it was SHOWING, so `select(NO_ENTRY_SELECTED)` over an empty face passed all of them. It
+walks `KIT_PICKER_METAS` and makes three claims per drawn picker — a roster, a LIT index, a non-empty
+FACE — paired with the liveness half that a TAKE picker was drawn at all (the loop SKIPS a picker
+that is not there, the Upkeep one being conditional by design, so without it "no picker is blank" is
+satisfied by a card that drew none). **The face and the index are separate claims because
+`build_option_picker` takes them as separate arguments** and writes the face AFTER the select.
+
+It is called from all three existing kit guards (`_assert_kits_section_draws_both_controls`,
+`_assert_wild_source_offers_no_upkeep`, `_assert_kept_source_offers_upkeep`) and from both pending
+states, i.e. every state in this file that draws one.
+
+### Two fixture repairs, both describing a source no server can produce
+
+- **`_band_fixture()`'s forage and hunt rows state a `kit_id`.** `LaborAssignment.kitId` is always a
+  real roster id on a source row, so a fixture omitting it left the take picker resolving through its
+  FALLBACK on every frame in this file. Each row states its own job's DEFAULT, so **no frame moved**;
+  what it buys is that "the picker names the row's kit" is a claim about the row.
+- **The three KEPT fixtures state `upkeep_kit_id` + `upkeep_kit_named`.** `resolve_upkeep_kits`
+  answers a real id for every source a band works, so the same argument holds one account over, and
+  without it all three kept states would have been testing the client's fall-through rather than the
+  wire path. `KEEPING_POOL_PATCH_UPKEEP_KIT` / `_HERD_UPKEEP_KIT` are the two webs' derivations,
+  spelled from the shared roster's ids.
+
+**`_assert_unstated_upkeep_kit_falls_through` is PNG-LESS and DRIVEN because no fixture here can
+render its state.** The wire states `""` only for a source no band works, and every kept source in
+this harness is one its band works — so the BUILDER is called directly with the model the wire would
+produce. Three claims, the third being what stops the first two passing on a picker that merely
+defaults: it is lit, its face names the derivation, and the entry it lit wears the `(default)` mark.
+
+### The three falsifications, each failing a DISJOINT set
+
+| Restored defect | Failures |
+|---|---|
+| the pending overlay drops `kit_id` | **4** — both webs' *"the take picker names the kit the PLAYER sent"* (`"Harvesting kit"` / `"Stalking kit"` against `"No kit"`) and both crew-edit vacuity guards. **The face and LIT claims stay GREEN**, which is the demonstration that the picker's fallback alone hides the blank face while leaving the silent re-kit live |
+| the take picker measures its default against `source.get("default_kit_id")` | **6** — the LIT and FACE claims on `band_panel_work_kits_picker` / `_kept_patch` / `_kept_herd`, each reading `index -1 of 2` and `""`. The two PENDING states stay green (their rows carry a real kit), and so do the two WILD ones (their band is `_band_fixture()`, now stamped) |
+| the upkeep picker's fall-through removed | **3** — the driven block alone, naming `index -1 of 2` and `"" want "Tillage kit"` |

@@ -438,42 +438,73 @@ func _extending_pen_herd_fixture() -> Dictionary:
 	return fixture
 
 
-## **THE BADGE QUOTES THE PAIR, NOT THE NUMERATOR.** Reported from play as `Fencing 6900%`: the ring
-## meter moved from a normalized `0..1` fraction to WORK UNITS and the badge kept scaling the raw field
-## by 100. The claim is the NUMBER, on both the pill and its hover — a presence check would have passed
-## throughout the defect's life.
-func _assert_fencing_badge_quotes_the_work_pair() -> void:
-	# **BOTH SITES, and that is why the claim is made twice.** The builder and the in-place patch
-	# (`_update_extend_pen_control`, taken on a re-render of the SAME shape) are a known drift pair —
-	# they were two open-coded copies of the same wrong multiplication — so the second render is what
-	# says the patch path goes through the same helper.
-	_assert_fencing_badge_reads(PEN_RING_PERCENT)
-	h._hud._drawercompose.build_herd_drawer_actions(_extending_pen_herd_fixture())
-	_assert_fencing_badge_reads(PEN_RING_PERCENT)
-
-func _assert_fencing_badge_reads(percent: int) -> void:
-	var badge := _fencing_badge()
-	if badge == null:
-		h._fail("no Fencing badge rendered on the extending pen — nothing to judge")
+## ⛔ **THIS CLAIM IS INVERTED, NOT DELETED** (`docs/plan_standing_upkeep.md` §4.9 item 12c). It read
+## *"THE BADGE QUOTES THE PAIR, NOT THE NUMERATOR"* — reported from play as `Fencing 6900%`, the ring
+## meter having moved from a normalized `0..1` fraction to WORK UNITS while the badge went on scaling
+## the raw field by 100 — and it asserted the NUMBER on both the pill and its hover, at both the
+## builder and the in-place patch (`_update_extend_pen_control`, a known drift pair).
+##
+## **The tile card draws NEITHER control now.** The `Extend pen` button moved to the work row's
+## standing-rung mark and the `Fencing N%` badge retired outright, being a third statement of a meter
+## the build queue row already dates and withdraws. So what this asserts is that they are GONE.
+##
+## ⛔ **PAIRED WITH A LIVENESS CLAIM, or it passes on a drawer that renders nothing.** The herd's
+## action row still has to draw what it always drew beside them — the standing summary and the
+## `Assign …  ▸` button — and a containment test alone cannot tell "the badge retired" from "the whole
+## drawer broke". `band_panel_preview` carries the positive half: that the ring is declarable from the
+## work row's mark.
+func _assert_pen_controls_left_the_tile_card() -> void:
+	var host: Node = h._hud._drawercompose._herd_assign_controls
+	if host == null:
+		h._fail("the herd drawer has no action row at all — nothing to judge")
 		return
-	h._assert_hud("the fence ring's badge divides banked work by the ring's cost (\"%s\")" % badge.text,
-		badge.text == HudComposeVocab.PEN_FENCING_LABEL % percent)
-	h._assert_hud("…and its hover spends the room the pill has not got on the WORK PAIR (\"%s\")"
-			% badge.tooltip_text,
-		badge.tooltip_text == HudSelectionVocab.BUILD_METER_WORK_FORMAT % [
-			HudComposeVocab.PEN_FENCING_VERB,
-			DetailFormat.format_work_units(PEN_RING_WORK_DONE),
-			DetailFormat.format_work_units(PEN_RING_WORK_COST), percent])
+	var faces: Array[String] = []
+	for child in host.get_children():
+		if child is Label:
+			faces.append((child as Label).text)
+		elif child is Button:
+			faces.append((child as Button).text)
+	# ⛔ **THE PRECONDITION, and without it both negatives below are free.** "No `Fencing` badge" is
+	# trivially true of a pen with no ring going up, so the fixture is asserted to really BE
+	# mid-extension first — through `pen_extend_fraction`, the one division that meter has ever had.
+	var fixture := _extending_pen_herd_fixture()
+	h._assert_hud("the pen under test really has a ring mid-flight (%d%% of its work banked)"
+			% PEN_RING_PERCENT,
+		SourceForecast.pen_ring_is_in_flight(fixture)
+			and HudFormat.progress_percent(SourceForecast.pen_extend_fraction(fixture))
+				== PEN_RING_PERCENT)
+	# THE LIVENESS HALF, so the two negatives below cannot pass on an empty drawer.
+	h._assert_hud("the extending pen's herd drawer still draws its action row (%s)" % str(faces),
+		not host.get_children().is_empty())
+	h._assert_hud("…and the `Fencing N%` badge is gone from it — the build queue row dates the ring now",
+		_fencing_badge() == null)
+	h._assert_hud("…and so is the `Extend pen` button, which is a `⌃` on the work row's mark now",
+		_extend_pen_button() == null)
 
-## The WARN-amber pill `_build_extend_pen_control` puts in the herd drawer's action row, or `null`
-## while the pen offers its "Extend pen" button instead.
+## The retired WARN-amber pill, still searched for BY ITS OWN WORDS. `PEN_FENCING_LABEL` retired with
+## it, so the needle is spelled here: **a retired thing needs a test that it is gone**, and a needle
+## reached through a const that no longer exists is a test that cannot fail.
+const RETIRED_FENCING_BADGE_NEEDLE := "Fencing"
+
+## …and the retired button, the same way. `PEN_EXTEND_LABEL` is gone too.
+const RETIRED_EXTEND_PEN_NEEDLE := "Extend pen"
+
 func _fencing_badge() -> Label:
 	var host: Node = h._hud._drawercompose._herd_assign_controls
 	if host == null:
 		return null
 	for child in host.get_children():
-		if child is Label and (child as Label).text.begins_with(HudComposeVocab.PEN_FENCING_VERB):
+		if child is Label and (child as Label).text.begins_with(RETIRED_FENCING_BADGE_NEEDLE):
 			return child as Label
+	return null
+
+func _extend_pen_button() -> Button:
+	var host: Node = h._hud._drawercompose._herd_assign_controls
+	if host == null:
+		return null
+	for child in host.get_children():
+		if child is Button and (child as Button).text == RETIRED_EXTEND_PEN_NEEDLE:
+			return child as Button
 	return null
 
 ## A FODDERED pen (Flora roster F3): the pen knows Foddering, its own footprint grazes most of the
@@ -766,25 +797,27 @@ func run(harness) -> void:
 
 	# State 2d-γ self-feeding pen — a radius-2 pen (19 fenced tiles) on lush land: the fenced footprint
 	# grazes the WHOLE feed and no fodder is carried in, so the `Fed:` row reads "100% — all pasture" —
-	# no second term and no shortfall. With no ring in flight, `_build_herd_assign_controls`
-	# shows the "Extend pen" button (issues extend_pen at the pen anchor). Also carries the
-	# "Pen: radius 2 · 19 tiles" footprint row.
+	# no second term and no shortfall. Also carries the "Pen: radius 2 · 19 tiles" footprint row.
+	# ⛔ It also showed an "Extend pen" BUTTON here until §4.9 item 12c; the ring is declared from the
+	# work row's standing-rung mark now, so this drawer states the pen and offers nothing about its size.
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(_self_feeding_pen_herd_fixture())
 	h._compose_herd(_self_feeding_pen_herd_fixture())
 	await h._settle()
 	await h._save("herd_pen_self_feeding")
 
-	# State 2d-γ extending pen — the SAME pen mid-extension (42 of 70 work banked toward the ring): the
-	# keeper is fencing the next ring, so the "Extend pen" button is replaced by a WARN-amber
-	# "Fencing 60%" badge (the pen twin of the corral-build "Building N%" meter). Partial pasture with
-	# the fodder share topping it up → "Fed: 100% — 60% pasture · 40% fodder".
+	# State 2d-γ extending pen — the SAME pen mid-extension (42 of 70 work banked toward the ring).
+	# Partial pasture with the fodder share topping it up → "Fed: 100% — 60% pasture · 40% fodder".
+	# ⛔ This frame's SUBJECT used to be the WARN-amber "Fencing 60%" badge that replaced the
+	# "Extend pen" button here; both retired with §4.9 item 12c and the assertion below is that they
+	# are gone. The ring's meter is the BUILD QUEUE row's now — the surface that also dates and
+	# withdraws it — so the fixture's banked pair is still what makes this pen mid-extension.
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(_extending_pen_herd_fixture())
 	h._compose_herd(_extending_pen_herd_fixture())
 	await h._settle()
 	await h._save("herd_pen_extending")
-	_assert_fencing_badge_quotes_the_work_pair()
+	_assert_pen_controls_left_the_tile_card()
 
 	# State F3 foddered pen — the pen's TWO feed sources, both stated as SHARES of the one demand:
 	# "Fed: 100% — 88% pasture · 12% fodder", the 12% being `pen_fed_fraction` less

@@ -492,8 +492,24 @@ func pending_improvement_for(band: Dictionary, kind: String, x: int, y: int,
 ## a sheet that just ticked one on, else whatever it was already building. It is recorded because
 ## `assign_labor` deliberately does NOT touch that axis (issue #442), so an optimistic overlay that
 ## dropped it would flash a running build off the board for one turn.
+##
+## ⛔ **`kit_id` RIDES THE RECORD FOR THE OPPOSITE REASON, AND ITS ABSENCE WAS A DEAD CONTROL.**
+## `assign_labor` DOES state the take kit, so the optimistic row must state the kit the command just
+## carried — never the CONFIRMED row's, which on a brand-new assignment does not exist. It was not
+## recorded at all, and `effective_worker_map`'s pending branch REPLACES the merged row rather than
+## patching it, so every pending row rebuilt with `kit_id == ""`. Two things followed. The work
+## inspector's `Harvesters` picker opened on NOTHING — no selected entry, an EMPTY FACE, since `""`
+## resolves through `KitRoster.display_name_for_id` to `""` — and picking a kit from it re-sent
+## `assign_labor`, which re-recorded the row with no kit again, so the face never filled and the
+## control read as dead. Worse, `BandPanelController._emit_work_assign` RESTATES `model.kit_id` on
+## every `+`/`−` and `Main._kit_token` OMITS an empty one, so a crew edit on a pending row silently
+## re-kitted the crew back to the job default — the exact failure that restate exists to prevent.
+##
+## **THE HUNT WEB ONLY LOOKED IMMUNE.** A herd publishes `default_kit_id`, so the picker's fallback
+## resolved a real face there and the blank face never showed; the SILENT RE-KIT was live on both webs.
 func record_pending_assign(entity: int, kind: String, workers: int, x: int, y: int, herd_id: String,
-		floor: float, improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
+		floor: float, improvement: String = SourceForecast.IMPROVEMENT_NONE,
+		kit_id: String = KitRoster.NO_KIT_ID) -> void:
 	if entity < 0:
 		return
 	var entry: Dictionary = _pending_labor.get(entity, {})
@@ -502,6 +518,7 @@ func record_pending_assign(entity: int, kind: String, workers: int, x: int, y: i
 	assigns[pending_key(kind, x, y, herd_id)] = {
 		"kind": kind, "workers": max(0, workers), "x": x, "y": y, "herd_id": herd_id,
 		"floor": SourceForecast.clamp_floor(floor), "improvement": improvement,
+		"kit_id": kit_id,
 	}
 	entry["assign"] = assigns
 	_pending_labor[entity] = entry
@@ -717,6 +734,13 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 			# beside the floor everywhere the map is read, so no consumer has to go back to the raw
 			# assignment for it.
 			"improvement": String(a.get("improvement", "")), "pending": false,
+			# **WHAT THIS CREW CARRIES WHEN IT WORKS THE SOURCE** (`docs/plan_standing_upkeep.md`
+			# §4.9 item 12c) — the TAKE kit, the left half of the work inspector's kit pair. It is
+			# the assignment's own `kit_id`, already resolved by the sim, and it rides this map for
+			# the reason every other key here does: **this map is a hand-listed allowlist**, so a key
+			# not copied here does not exist as far as the work board is concerned. (That is exactly
+			# how the good-shortfall pair below came out empty on a row whose wire carried it.)
+			"kit_id": String(a.get("kit_id", "")),
 			# **WHERE THE PLAYER PUT THIS ROW WHEN THE BAND RUNS SHORT** (`docs/plan_standing_upkeep.md`
 			# §4.9 item 9b) — one of the three WORDS the decoder writes, normalized here so no reader
 			# downstream has to decide what an unrecognised token means. It rides beside the floor for
@@ -812,6 +836,13 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 			# on a cultivating patch must keep showing the build, not blank it for one turn.
 			"improvement": String(pd.get("improvement", "")), "pending": true,
 			"priority": settled_priority,
+			# **THE KIT THE COMMAND JUST CARRIED, not the one the confirmed row states.** This is the
+			# opposite treatment to `priority` above and to the ceiling above that, and the difference
+			# is whether `assign_labor` states the field: it does not state a rank, so a rank is read
+			# off the settled row; it DOES state the take kit, so the optimistic row states what was
+			# sent. On a brand-new assignment there is no settled row to fall back to anyway, which
+			# is the case the work inspector's blank, unselectable kit picker was reported on.
+			"kit_id": String(pd.get("kit_id", KitRoster.NO_KIT_ID)),
 			# A pending (optimistic) assign has no confirmed yield yet — render no yield number.
 			# Likewise no confirmed workers_needed, so 0 ⇒ "unknown" ⇒ no overstaffing note until
 			# the next snapshot resolves what the source actually used.

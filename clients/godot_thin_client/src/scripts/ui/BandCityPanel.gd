@@ -76,27 +76,64 @@ const PANEL_WIDTH := 380.0
 ##
 ## 440 handed the zones a 380px box, which cleared both with 4px of slack.
 ##
-## **IT IS 456, AND THE WORK INSPECTOR IS WHAT RAISED IT — the same trade a third time.** The pools
-## block took the strip 360 → 440; selecting a work row opens the inspector strip, a FOURTH fixed-height
-## block in that zone, and the worst case with a row selected measured **396px of the 380px box** — the
-## panel visibly running past the bottom of the screen, reported from play as happening *only when
-## something is selected in the work list*. Everything inside the zone that could give had already
-## given (the board is floored at one row, the queue at one entry row plus its overflow, and the
-## strip's own reservation was re-measured off what it draws), so the remaining lever was this budget.
-## **456 hands the zones a 396px box**, which is the measurement exactly — see
-## `PANEL_HEIGHT_WIDE_TWO_COLUMN`'s work-zone bullet, where the terms are enumerated.
+## **IT WAS 456, AND THE WORK INSPECTOR IS WHAT RAISED IT — the same trade a third time.** ⛔ **That
+## justification is DEAD, and it is quoted rather than deleted because it is the record of why the number
+## moved a third time**: *"The pools block took the strip 360 → 440; selecting a work row opens the
+## inspector strip, a FOURTH fixed-height block in that zone, and the worst case with a row selected
+## measured 396px of the 380px box — the panel visibly running past the bottom of the screen, reported
+## from play as happening only when something is selected in the work list. Everything inside the zone
+## that could give had already given (the board is floored at one row, the queue at one entry row plus its
+## overflow, and the strip's own reservation was re-measured off what it draws), so the remaining lever
+## was this budget. 456 hands the zones a 396px box, which is the measurement exactly."*
+## `docs/plan_standing_upkeep.md` §4.9 item 12d rehosted that strip as a viewport-centred
+## `WorkInspectorDialog`, so **NO inspector term survives anywhere in this zone's budget** — not in
+## `BandPanelController._work_board_capacity`, not in `HudWorkVocab.build_queue_rows_max`, and
+## `WORK_ZONE_GAP_COUNT` and `BUILD_QUEUE_ROOM_GAP_COUNT` each lost the gap that went with it. The 396 the
+## paragraph above was measured against describes a zone that no longer exists.
 ##
-## **IT IS DELIBERATELY STILL SHORT OF `HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` (420), and that is what
-## made 456 the minimal move rather than a round one.** A one-column flank's tier is the box times one,
-## so a box at or over 420 flips the band zone to TALL — which would restore the food-outlook chart and
-## the role-card hints on a horizontal dock, and costs another 40px of strip on top of this. 396 clears
-## 380 with 24px to spare before that flip; the NEXT raise in this zone has that much room and no more.
-## **The raise crosses `BAND_ZONE_CHART_MIN_HEIGHT` (340) either way**, so a one-column horizontal dock
-## renders at COMPACT rather than SHORT and the vitals rows do not merge there.
+## **IT IS 418, AND THIS IS THE FIRST TIME THIS CONSTANT HAS GONE DOWN.** Reported from play: the bottom
+## strip is too tall — the band flank, the workforce and the work column all end well above the bottom of
+## it, and only the parties column reaches it, its action grid being bottom-anchored. Item 12d's rehost is
+## why there was room to give: the raise the inspector had paid for was only PARTLY re-claimed by what
+## replaced it, leaving the budget over-provisioned by 38px.
 ##
-## At a 1080-high viewport the strip is **42% of the window** against the old 33%, inside
+## **THE BINDING TERM IS THE BUILD QUEUE'S SETTINGS STRIP NOW, NOT THE INSPECTOR** — which is why this is
+## a 38px correction rather than the ~104 the retired strip would suggest. Taking the inspector out of
+## `build_queue_rows_max` exposed a defect one block over: the queue had been claiming rows the zone could
+## only afford while that reservation covered the settings strip by accident, so
+## `HudWorkVocab.BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` (56, the strip's WRAPPED control pair) arrived to pay
+## for it honestly. The work zone's floor is therefore **358px**, and it decomposes exactly:
+##
+##   * `HudWorkVocab.ZONE_HEAD_HEIGHT` 20 + `WORK_CHIPS_HEIGHT` 26
+##   * the POOLS block **82** (`pools_block_height(false)`; fund mode's 110 buys the queue fewer rows and
+##     does not raise the floor)
+##   * the BUILD QUEUE at its floor with a settings strip open — **132** = its own head 20 + one entry row
+##     and the overflow row (2 × `WORK_ROW_HEIGHT`) + `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` 56
+##   * one un-droppable board row **44** (`WORK_ROW_TWO_LINE_HEIGHT`; `_work_board_capacity` floors at
+##     `maxi(1, …)`)
+##   * `WORK_PAGER_HEIGHT` 24, and five `ZONE_BLOCK_SEPARATION` gaps **30**
+##
+## **418 = 358 + `HORIZONTAL_BODY_CHROME`**, and it is MEASURED rather than derived: swept against the
+## whole `band_panel_preview` run, **416** hands the zones a 356px box and `band_panel_build_queue_wide`
+## fails with `needs 358px … short by 2`, while 418 clips nothing at any dock or viewport in the matrix.
+## **What the 38px costs is one BUILD QUEUE entry row** — a wide dock draws one entry and `+3 more` where
+## it drew two and `+2 more`. The board's row count does not move (2 rows at 1920/1600/1024, 4 at
+## 1440/1366/1280/1152), and no other zone binds: the band flank SCROLLS (its one-column content is 442px
+## at any budget) and the parties zone's floor is 226.
+##
+## **NO TIER BOUNDARY IS CROSSED ON THE WAY DOWN, which is what makes the drop cheap.**
+## `BandPanelController._band_zone_tier_height()` is the box times the COLUMN COUNT, so a ONE-column flank
+## was already COMPACT at 396 (`HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` is 420 and nothing here ever
+## reached it) and a two-column one stays TALL until the box halves. `BAND_ZONE_CHART_MIN_HEIGHT` (340) is
+## crossed at a budget of **402** — BELOW this floor, so the work zone clips before the flank can re-tier.
+## And a tier drops no content in any case: that constant's own note is that the zone scrolls instead.
+##
+## **IT IS STILL ABOVE `PANEL_HEIGHT_WIDE_TWO_COLUMN` (335)**, so `_horizontal_panel_height()`'s `maxf`
+## resolves to this budget at both column counts and the two-column branch stays inert.
+##
+## At a 1080-high viewport the strip is **39% of the window** against the 42% 456 took, inside
 ## `MAX_WIDE_HEIGHT_FRACTION` (0.6) with room.
-const PANEL_HEIGHT_WIDE := 456.0
+const PANEL_HEIGHT_WIDE := 418.0
 ## FLOOR on the cross-axis size when collapsed to a thin rail (both orientations) — the rail is at
 ## least this thin, and thicker when its own chrome needs more (`_collapsed_cross_axis_size`).
 const COLLAPSED_SIZE := 46.0
@@ -480,11 +517,14 @@ static var config_path_override: String = ""
 ## The four dock edges, in the prototype's 2×2 chooser order (row-major:
 ## left/top on the first row, bottom/right on the second).
 const DOCK_EDGES: Array[int] = [SIDE_LEFT, SIDE_TOP, SIDE_BOTTOM, SIDE_RIGHT]
-## The two SLOTS of the row's trailing chrome rail (issue #324), stacked top-to-bottom: the HUD parks
-## its nav cluster in the top one and its turn cluster in the bottom one. ONE column at the trailing
-## end, never a gutter at each end — two opposite gutters cost ~562px of row, pushed the band zone
-## inward AND stranded dead space around the orb; one column costs `max(nav, turn)` ≈ 296–302 depending
-## on map aspect (296 Standard, 302 Large) instead.
+## The two SLOTS the HUD parks its bottom-bar chrome into (issue #324): the nav cluster (minimap + zoom
+## rail) in `RAIL_SLOT_TOP`, the turn cluster in `RAIL_SLOT_BOTTOM`.
+##
+## ⛔ **THE NAMES ARE HISTORICAL — THEY SAY "top/bottom" AND MEAN "nav/turn".** They named positions in
+## the one stacked column that was the only arrangement; the row now SPLITS the two clusters to opposite
+## ends where there is room for it (`_rail_split()`), and the pair still identifies which cluster goes
+## where. They are kept rather than renamed because the HUD parks by these ids and the panel decides the
+## arrangement — renaming would touch every call site to say the same thing.
 const RAIL_SLOT_TOP := 0
 const RAIL_SLOT_BOTTOM := 1
 ## Slot order, top-to-bottom — also what `_apply_rail` and the HUD's restore iterate.
@@ -524,6 +564,19 @@ signal action_invoked(id: StringName)
 ## `work_zone_size()` changed — a shell flip, dock change, collapse or viewport resize. Hud re-pages
 ## its work board on this rather than re-rendering everything.
 signal zones_resized
+## **WHICH ZONES ARE ON SCREEN CHANGED** — the narrow shell swapped the one zone its body draws.
+##
+## ⛔ **`zones_resized` CANNOT CARRY THIS, AND A TAB SWITCH IS THE HOLE IT LEFT.** That signal fires on
+## a real move of `work_zone_size()`, and `zone_size()` never reads `_effective_tab()` — every zone is
+## built against the same box whichever tab is up — so a tab click moves neither term of
+## `_notify_zones_resized`' test and it early-returns. A collapse and a hide DO fire it (they zero the
+## box), which is why those two paths took the floating inspector card down while the tab did not.
+##
+## **IT IS NOT `zones_resized` EMITTED UNCONDITIONALLY.** That would re-render the whole work zone on
+## every tab click — a re-page storm traded for the bug — where the only thing a tab switch actually
+## invalidates is the surface drawn OUTSIDE the panel. Listeners reconcile their own float and page
+## nothing.
+signal shown_zone_changed
 
 var _dock_edge: int = SIDE_LEFT
 var _collapsed: bool = false
@@ -624,8 +677,15 @@ var _rail: Control
 ## container's job and not anchor arithmetic).
 var _rail_stack: VBoxContainer
 var _rail_slots: Dictionary = {}          # slot:int (RAIL_SLOT_*) -> Control host
-## The rail column's width, DECLARED by the HUD (`set_rail_width`) — never measured from the content.
-var _rail_declared_width: float = 0.0
+## The row's LEADING chrome island, and its own centred stack. Empty (and zero-width, hence hidden)
+## unless `_rail_split()` says the strip can afford a gutter at each end; the nav cluster's slot host
+## moves into it when it can, which is what puts the minimap at the row's leading end.
+var _rail_lead: Control
+var _rail_lead_stack: VBoxContainer
+## The two clusters' own widths, DECLARED by the HUD (`set_rail_widths`) — never measured from the
+## content. The panel stores what it is told and decides the ARRANGEMENT; the HUD owns the measurement.
+var _rail_nav_width: float = 0.0
+var _rail_turn_width: float = 0.0
 ## What the card must LEAVE at each end of a horizontal strip, declared by `Main` (`set_lateral_bounds`)
 ## — the HUD's left and right column widths. An edge has bounds exactly when the HUD does NOT yield its
 ## strip there (`Main._reserver_overlays_hud`): always on a TOP dock, and on a BOTTOM dock whenever the
@@ -822,6 +882,37 @@ func zone_size(zone: StringName) -> Vector2:
 ## the only one that moves with the card, which makes it the box worth watching.
 func work_zone_size() -> Vector2:
 	return zone_size(ZONE_WORK)
+
+## **IS `zone` ACTUALLY ON SCREEN RIGHT NOW?** — the panel shown and uncollapsed, and, in the NARROW
+## shell, the tab the body is showing. The wide shell draws every declared zone side by side, so it
+## answers `true` for all of them.
+##
+## `zone_size()` cannot answer this: it is the box a zone's content is BUILT against, and every zone is
+## built on every render whichever tab is up (the narrow shell keeps the others detached but owned, so
+## a tab switch is a reparent rather than a re-render). The reader is
+## `BandPanelController._sync_work_inspector_dialog`, whose card lives OUTSIDE the panel and must come
+## down when the board it belongs to is not being drawn (`docs/plan_standing_upkeep.md` §4.9 item 12d);
+## `_shown_zones()` below asks it for every zone so the panel can SAY when that answer moved.
+func shows_zone(zone: StringName) -> bool:
+	if _collapsed or not _shown:
+		return false
+	if _shell_is_wide():
+		return _zones.get(zone) is Control
+	return _effective_tab() == zone
+
+## …and the same answer for every declared zone at once, in `ZONE_KEYS` order — what `set_active_tab`
+## compares across the swap so `shown_zone_changed` fires on a real change of what is drawn and never
+## on a tab that changed only the preference.
+##
+## **IT IS `shows_zone` IN A LOOP, deliberately.** A second reading of `_effective_tab()` and
+## `_shell_is_wide()` here would be free to disagree with the accessor the listener then asks, which
+## is the one way this signal could report a swap that `_work_zone_is_on_screen()` cannot see.
+func _shown_zones() -> Array[StringName]:
+	var shown: Array[StringName] = []
+	for key in ZONE_KEYS:
+		if shows_zone(key):
+			shown.append(key)
+	return shown
 
 ## The CARD's global rect — the island the strip holds, not the strip (`_root`) itself. Published for
 ## the free-floating compose card, which anchors itself to the card's map-facing edge and must never
@@ -1640,6 +1731,20 @@ func _position_card_and_rail() -> void:
 		_rail.offset_right = 0.0
 		_rail.offset_top = 0.0
 		_rail.offset_bottom = 0.0
+	# The LEADING island, when the row splits: flush to the strip's leading end PAST `_bound_leading`.
+	# **It pays that bound where the trailing island does not pay its own**, and the asymmetry is the
+	# same one `_trailing_bound_for` states: the HUD's left column runs to the window's bottom edge
+	# wherever the HUD keeps its strip, so a leading island pinned to the screen edge would sit under it.
+	var rail_lead_width := _rail_lead_width()
+	if _rail_lead != null:
+		_rail_lead.anchor_left = 0.0
+		_rail_lead.anchor_right = 0.0
+		_rail_lead.anchor_top = 0.0
+		_rail_lead.anchor_bottom = 1.0
+		_rail_lead.offset_left = maxf(_bound_leading, 0.0)
+		_rail_lead.offset_right = maxf(_bound_leading, 0.0) + rail_lead_width
+		_rail_lead.offset_top = 0.0
+		_rail_lead.offset_bottom = 0.0
 	# The card: its content width, centred in what the chrome leaves. Clamped to the available room so a
 	# window narrower than the content can never slide the card under the chrome.
 	# Centred in the room the chrome cluster and the HUD columns leave — and OFFSET past the leading
@@ -1654,7 +1759,8 @@ func _position_card_and_rail() -> void:
 	# in this block had to change for it.
 	var available: float = _available_card_span()
 	var card_width: float = minf(_card_width(), available)
-	var lead: float = _bound_leading + 0.5 * maxf(available - card_width, 0.0)
+	var lead: float = _bound_leading + _rail_span_of(rail_lead_width) \
+		+ 0.5 * maxf(available - card_width, 0.0)
 	_panel.anchor_left = 0.0
 	_panel.anchor_right = 0.0
 	_panel.anchor_top = 0.0
@@ -1886,6 +1992,17 @@ func set_work_columns(columns: int) -> int:
 		_apply_dock_layout()
 		_last_work_zone_size = work_zone_size()
 	return _work_columns
+
+## How many board columns the strip can pay for RIGHT NOW — the cap `set_work_columns` applies to a
+## declaration, published so the controller can weigh two candidate layouts against the same number
+## instead of declaring twice to find out what it would be cut to.
+##
+## **It does NOT invert the declare direction.** This is GEOMETRY — the strip, the dock edge, the
+## shell, the lateral bounds — none of which depend on the source count, exactly like `work_zone_size()`
+## which the controller already reads. The controller still owns "how many columns do I want"; this only
+## says what a want above the affordance would become.
+func work_columns_affordable() -> int:
+	return _affordable_work_columns()
 
 ## The most board columns the STRIP can pay for, whatever the source count wants. The card grows to fit
 ## its content, but only up to the room it actually has — past that the board has to page instead.
@@ -2214,10 +2331,11 @@ func _make_zone_host(host_name: String, fixed_width: float) -> Control:
 		host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return host
 
-# ---- the trailing chrome rail (the HUD's bottom-bar chrome shares the row) ----
+# ---- the chrome rails (the HUD's bottom-bar chrome shares the row) ----
 
-## Build the row's trailing rail: a plain clipping `Control` holding a centred vertical stack of the two
-## slot hosts. THREE deliberate choices, each load-bearing:
+## Build the row's chrome rails: plain clipping `Control`s, each holding a centred vertical stack. The
+## TRAILING one carries both slot hosts by default; `_apply_rail` moves the nav host into the LEADING one
+## wherever `_rail_split()` says the row can afford a gutter at each end. THREE deliberate choices, each load-bearing:
 ## 1. `_rail` is a PLAIN `Control`, not a container, for the same reason `_make_zone_host` is one — a
 ##    container reports its children's combined minimum size, so the HUD's chrome could push the card
 ##    past its FIXED cross-axis size. Its width is DECLARED by the HUD (`set_rail_width`), never
@@ -2250,6 +2368,21 @@ func _build_rail() -> void:
 	# It keeps `NavBacking`'s own backing panel, so it reads as chrome floating over the map exactly as
 	# the top-bar readouts do.
 	_root.add_child(_rail)
+
+	# The LEADING island, built identically and by the same three rules. It carries no slot until
+	# `_apply_rail` moves one in, so it is zero-width and hidden on every dock that cannot split.
+	_rail_lead = Control.new()
+	_rail_lead.name = "ChromeRailLeading"
+	_rail_lead.clip_contents = true
+	_rail_lead.visible = false
+	_rail_lead.mouse_filter = Control.MOUSE_FILTER_STOP
+	_root.add_child(_rail_lead)
+	_rail_lead_stack = VBoxContainer.new()
+	_rail_lead_stack.name = "ChromeRailLeadingStack"
+	_rail_lead_stack.alignment = BoxContainer.ALIGNMENT_CENTER
+	_rail_lead_stack.add_theme_constant_override("separation", RAIL_SLOT_SEPARATION)
+	_rail_lead_stack.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_rail_lead.add_child(_rail_lead_stack)
 
 	_rail_stack = VBoxContainer.new()
 	_rail_stack.name = "ChromeRailStack"
@@ -2288,11 +2421,13 @@ func rail_slot_host(slot: int) -> Control:
 ## than its letter: the loop it prevented (HUD pushes a width -> panel relayouts -> emit -> `Main` fan-out
 ## -> HUD reflow -> pushes a width) still terminates, because that second push lands on the same number
 ## and is dropped by the early-out above, and the republish itself is silent on an unchanged size.
-func set_rail_width(width: float) -> void:
-	var declared: float = maxf(width, 0.0)
-	if is_equal_approx(declared, _rail_declared_width):
+func set_rail_widths(nav_width: float, turn_width: float) -> void:
+	var nav: float = maxf(nav_width, 0.0)
+	var turn: float = maxf(turn_width, 0.0)
+	if is_equal_approx(nav, _rail_nav_width) and is_equal_approx(turn, _rail_turn_width):
 		return
-	_rail_declared_width = declared
+	_rail_nav_width = nav
+	_rail_turn_width = turn
 	# The FULL dock layout, not just the rail: since issue #377 the rail's own rect is written by
 	# `_position_card_and_rail` (it is anchored, not laid out by a container), and the CARD's width and
 	# centring are both computed against `_rail_span()`. Calling `_apply_rail` alone left the cluster
@@ -2308,9 +2443,25 @@ func set_rail_width(width: float) -> void:
 func _apply_rail() -> void:
 	if _rail == null:
 		return
+	# The ARRANGEMENT first: the nav cluster's slot host lives in whichever island this dock affords,
+	# and the HUD's parked cluster travels inside it. That is what keeps the split invisible to
+	# `DockRowController` — it parks into `rail_slot_host(RAIL_SLOT_TOP)` exactly as it always did.
+	var nav_host: Control = _rail_slots.get(RAIL_SLOT_TOP)
+	var want_stack: VBoxContainer = _rail_lead_stack if _rail_split() else _rail_stack
+	if nav_host != null and want_stack != null and nav_host.get_parent() != want_stack:
+		var previous := nav_host.get_parent()
+		if previous != null:
+			previous.remove_child(nav_host)
+		want_stack.add_child(nav_host)
+		# The nav cluster is the FIRST of the two wherever they share a stack.
+		want_stack.move_child(nav_host, 0)
 	var width := _rail_width()
 	_rail.custom_minimum_size.x = width
 	_rail.visible = width > 0.0
+	if _rail_lead != null:
+		var lead_width := _rail_lead_width()
+		_rail_lead.custom_minimum_size.x = lead_width
+		_rail_lead.visible = lead_width > 0.0
 
 ## The rail's effective width: the declared value on a horizontal dock, 0 on a vertical one. Forcing 0 by
 ## EDGE rather than trusting the declared value keeps the panel correct whatever order the dock change
@@ -2322,7 +2473,69 @@ func _apply_rail() -> void:
 func _rail_width() -> float:
 	if _dock_edge != SIDE_BOTTOM:
 		return 0.0
-	return maxf(_rail_declared_width, 0.0)
+	if _rail_split():
+		return _rail_turn_width
+	return maxf(_rail_nav_width, _rail_turn_width)
+
+## The LEADING island's width — the nav cluster's own, and 0 whenever the row cannot afford to split.
+func _rail_lead_width() -> float:
+	if _dock_edge != SIDE_BOTTOM or not _rail_split():
+		return 0.0
+	return _rail_nav_width
+
+## **DOES THIS ROW SPLIT THE CHROME TO ITS TWO ENDS, or stack it in one column at the trailing end?**
+##
+## ⛔ **A GUTTER AT EACH END WAS BUILT FIRST AND REJECTED, AND THE REJECTION IS QUOTED HERE BECAUSE IT
+## WAS RIGHT AT THE TIME**: *"A gutter at each end was built first and rejected on sight with a real
+## minimap in it: the left rail is ~300px, so two opposite gutters pushed the band zone inward AND
+## stranded dead space around the orb, costing ~562px of row."* **Two things moved since.** The card
+## stopped wanting the whole row (issue #377 builds its width up from the declared column count and
+## floats it as an island), so room beside it is no longer room taken off the zones; and the TURN
+## cluster shrank from 260 wide to 116 when its `Turn N` caption moved into the orb face, so the second
+## gutter is no longer a second ~300px rail. Re-measured, the split costs the row the turn cluster plus
+## one `RAIL_SEPARATOR_SPAN` MORE than the stack does — not a second nav rail.
+##
+## **THE GATE IS `wide_shell_min_width()`, WHICH IS EXISTING VOCABULARY RATHER THAN A NEW TUNABLE**: the
+## row splits exactly while doing so still leaves the card enough strip to stand in its THREE-ZONE
+## shell. Below that the old rejection is still true — two rails plus a card cannot fit an arbitrarily
+## narrow window — and the chrome stacks as before. Because the split is refused whenever it would cost
+## the wide shell, the wide→narrow flip width is UNMOVED by this feature.
+##
+## **IT IS THE SHELL'S MINIMUM, NOT `_card_width()`'s CURRENT ANSWER, AND THAT IS DELIBERATE.** The
+## declared card width follows the work board's column count, so gating on it would move the minimap to
+## the other end of the screen when a band gains a source. The minimum is geometric and per-subject
+## (it is a sum over the live zone list), so the arrangement changes only when the WINDOW or the SUBJECT
+## does.
+##
+## ⛔ **AND IT DELIBERATELY DOES NOT TRY TO PROTECT THE BOARD'S COLUMN COUNT, WHICH WAS TRIED AND
+## REMOVED.** The original rejection's real complaint was that two gutters "pushed the band zone
+## inward", so the obvious stronger gate is to cost both arrangements in BOARD COLUMNS and split only
+## where the count is unchanged. It cannot be written honestly here. The columns a span affords depend
+## on `_fixed_zone_span()`, which is the flanks at their CURRENT column counts — and
+## `_zone_span()` → `zone_columns()` → `_shell_is_wide()` → `_available_card_span()` → `_rail_span()`
+## is this verdict again (measured, as a 1000-frame stack overflow on the first bottom dock of the run).
+## Restating it through `wide_shell_min_width()` compiles and terminates but silently answers a
+## DIFFERENT question — that sum is the flanks at ONE column each, so on the wide docks where the band
+## flank has two it over-counts the room by 380 and the gate never fires.
+##
+## **So the cost is REAL, MEASURED AND ACCEPTED rather than gated away**: on a 3440 bottom dock with 34
+## sources and a two-column band flank, the extra span costs the work board one of its four columns
+## (`band_panel_dockrow_ultrawide`, zone 1522 → 1142), against 648px of open map still beside the card.
+## Every narrower dock is unaffected — the flank is one column there and the split is refused long
+## before the board is squeezed. A gate that could see the flank's real width would need the settled
+## layout's span cached from the previous pass, and a verdict that reads the previous pass is the
+## oscillation `band_panel_preview._assert_band_columns_converge` exists to catch.
+##
+## Acyclic by construction: every term is the viewport, the two declared cluster widths and the lateral
+## bounds. It must not read `_available_card_span()`, which is defined in terms of `_rail_span()` and
+## therefore of this.
+func _rail_split() -> bool:
+	if _dock_edge != SIDE_BOTTOM or _rail_nav_width <= 0.0 or _rail_turn_width <= 0.0:
+		return false
+	var split_span: float = _rail_span_of(_rail_nav_width) + _rail_span_of(_rail_turn_width)
+	var room: float = _panel_width_extent() - split_span - maxf(_bound_leading, 0.0) \
+		- _trailing_bound_for(_dock_edge, _bound_trailing)
+	return room >= wide_shell_min_width()
 
 ## What the rail takes off the strip ALTOGETHER — its declared width PLUS the gutter beside it.
 ## The long-axis twin of `_wide_separator_span()`, and the value the width maths must use: subtracting
@@ -2333,7 +2546,7 @@ func _rail_width() -> float:
 ## between two regions of one card. The `ChromeRailSeparator` `ColorRect` went with the merged bar; a
 ## rule down the gap between the card and the chrome would re-assert the very join that was removed.
 func _rail_span() -> float:
-	return _rail_span_of(_rail_width())
+	return _rail_span_of(_rail_lead_width()) + _rail_span_of(_rail_width())
 
 ## What a rail of `width` would take off the strip. Split out so `affords_wide_shell_with_bounds` can ask
 ## the question about a width that has not been declared yet without restating the "+ gutter, or zero"
@@ -2466,11 +2679,18 @@ func _tab_badge_stylebox(hot: bool) -> StyleBoxFlat:
 func set_active_tab(zone: StringName) -> void:
 	if not ZONE_KEYS.has(zone) or zone == _active_tab:
 		return
+	var was_shown := _shown_zones()
 	_active_tab = zone
 	_save_prefs()
 	_rebuild_tab_bar()
 	_reparent_zones()
 	_notify_zones_resized()
+	# **AND THE SWAP ITSELF IS REPORTED, because the line above cannot see it** — see
+	# `shown_zone_changed`. Asked through `shows_zone` rather than through `_active_tab`, so the WIDE
+	# shell (which draws every zone whatever the tab is) reports nothing, and so does a tab the current
+	# subject does not declare (`_effective_tab` falls back, so the body did not move).
+	if _shown_zones() != was_shown:
+		shown_zone_changed.emit()
 
 ## A window resize changes the T/B panel width (hence the shell) and the clamped wide height, so
 ## re-choose the shell, re-anchor and re-report both the reservation and the work-zone box.

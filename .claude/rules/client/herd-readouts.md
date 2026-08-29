@@ -361,32 +361,31 @@ paths:
     carried in (7%), 12.79 owed by the land and 11.30 still owed after the draw. Its shares and its
     draw are deliberately set apart so a division-based fodder share answers 12% where the subtraction
     answers 7% — an assertion both arithmetics satisfied would be vacuous.
-  - **Extend affordance** (`_build_extend_pen_control`, in the herd `%HerdAssignControls`): on a built
-    pen with no ring in flight (`pen_extend_progress == 0`) a **`Fencers` stepper** over an
-    **"Extend pen"** button, emitting `extend_pen_requested{faction,x,y,workers}` →
-    `Main._on_hud_extend_pen` → **`extend_pen <faction> <x> <y>`** at the pen anchor (a penned
-    herd sits AT `corralled_at`, so its own tile). **The command names no crew** since
-    `docs/plan_standing_upkeep.md` §2.5 — it queues the ring, and the band's `builders` pool raises it
-    when it reaches the head.
-    **THE RING GAINED A CREW IN §2.2 AND LOST IT AGAIN IN §2.5.** It rides the same `animal:pen` rung
-    as the pen it widens, so it cannot be the one build in the game that is free — but what it costs is
-    the band's `builders` POOL, not a crew named on the verb. `extend_pen <faction> <x> <y>` is closed
-    at three tokens (a fourth is a parse error), so the stepper, its `idleWorkers` clamp and the
-    disabled-at-zero button are all gone and the control is a plain button again. `_pen_extend_crew` is
-    retired with them; there was never a composition for it to be part of, and now there is no count.
-    **What the pen is waiting on is the QUEUE**, which the button's tooltip says and no control here
-    can move. While a ring is being fenced
-    (`pen_extend_progress > 0`) the button is replaced by a WARN-amber **"Fencing N%"** badge — the pen
-    twin of the corral-build "Building N%" meter. The server rejects an extend at max radius / unowned /
-    Herding-unknown with a feed message; the client does not pre-gate (max radius is not on the wire).
+  - ⛔ **THE EXTEND AFFORDANCE IS NOT ON THIS CARD** (`docs/plan_standing_upkeep.md` §4.9 item 12c).
+    `_build_extend_pen_control` and its `Fencing N%` badge retired; the ring is declared from the work
+    row's standing-rung mark, and `band-city-panel.md` → "`extend_pen` is declared from the
+    standing-rung mark" owns the whole of it. **The command did not move** —
+    `extend_pen <faction> <x> <y>` at the pen anchor (a penned herd sits AT `corralled_at`, so its own
+    tile), `Main.format_extend_pen` untouched — only its entry point did.
+    **What survives here is the history the control accumulated**, which is about the COMMAND rather
+    than about the button: the ring gained a crew in §2.2 and lost it again in §2.5. It rides the same
+    `animal:pen` rung as the pen it widens, so it cannot be the one build in the game that is free —
+    but what it costs is the band's `builders` POOL, not a crew named on the verb, and the grammar is
+    **closed at three tokens** (a fourth is a parse error). The stepper, its `idleWorkers` clamp, the
+    disabled-at-zero button and `_pen_extend_crew` all went with that. The server still rejects an
+    extend at max radius / unowned / Herding-unknown with a feed message, and the client still does not
+    pre-gate — max radius is not on the wire.
   - **Map footprint highlight** (`BandOverlayRenderer.draw_pen_footprint_highlight`, drawn under the herd markers
     when a corralled herd is selected): the fenced hex disk of radius `pen_radius` around the pen anchor,
     in a distinct **enclosure-green** tint (`PEN_FOOTPRINT_FILL`/`_OUTLINE`) — deliberately NOT the gold
     of the roam-range ring, so a fenced footprint reads as a different thing. Reuses the range ring's
     wrapped-column / `_hex_distance` / `_fill_hex` / `_outline_hex` primitives (bounds-clamped by the
     loop). A corralled herd draws no roam-range, so exactly one of the two ever renders.
-  ui_preview: `herd_pen_self_feeding` (radius 2 · 19 tiles, `Fed: 100% — all pasture`, Extend-pen
-  button) / `herd_pen_extending` (mid-extension → "Fencing 60%" badge) / `herd_pen_foddered`
+  ui_preview: `herd_pen_self_feeding` (radius 2 · 19 tiles, `Fed: 100% — all pasture`) /
+  `herd_pen_extending` (mid-extension; ⛔ its subject WAS the `Fencing 60%` badge and is now that the
+  badge and the `Extend pen` button are GONE from the card, asserted against a precondition that the
+  fixture really has a ring 60% banked and a liveness claim that the action row still draws
+  `Assign herders ▸`) / `herd_pen_foddered`
   (`Fed: 100% — 88% pasture · 12% fodder`) / `herd_pen_no_fodder` (the `no fodder` state, appended
   last in its chapter) / `herd_domesticated` (radius 1 · 7 tiles, `Fed: 100% — 0% pasture · 100%
   fodder` — the barren footprint fodder carries outright); map_preview:

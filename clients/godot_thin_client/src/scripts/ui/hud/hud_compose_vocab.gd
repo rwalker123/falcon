@@ -288,28 +288,40 @@ const POLICY_TOOLTIP_NAME_FORMAT := "%s — %s"
 #     `fodder_draw` it is not gated on Foddering), because a fixed footprint under a growing herd is a
 #     RISING need and that is the one thing a player must learn before an animal dies of it.
 # The Extend-pen affordance (Grazing 2d-γ; command `extend_pen <faction> <x> <y>` at the pen anchor).
-# On a built pen with no ring in flight it offers "Extend pen"; while a ring is being worked off
-# (`pen_extend_progress > 0`) it is replaced by a "Fencing N%" badge — the pen twin of the corral-build
-# "Building N%" meter. The server rejects an extend at max radius / unowned / Herding-unknown with a
-# feed message, so the client does not pre-gate on those (max radius is not on the wire).
+# ⛔ THE TILE-CARD CONTROL IT DESCRIBED IS RETIRED, and the dead claim is quoted rather than deleted
+# because it reads like a live spec: *"On a built pen with no ring in flight it offers \"Extend pen\";
+# while a ring is being worked off (`pen_extend_progress > 0`) it is replaced by a \"Fencing N%\" badge
+# — the pen twin of the corral-build \"Building N%\" meter."* §4.9 item 12c moved the declaration to the
+# work row's standing-rung mark, where it opens a PRICE card instead of committing on the click. The
+# server still rejects an extend at max radius / unowned / Herding-unknown with a feed message, so the
+# client still does not pre-gate on those (max radius is not on the wire).
 #
 # **`pen_extend_progress` IS WORK, NOT A FRACTION**, banked against `pen_extend_cost` on the same herd
-# dict, so the badge's percentage is `SourceForecast.pen_extend_fraction` and never the bare field
-# scaled by `PROGRESS_PERCENT_SCALE` — 69 banked work units read as `Fencing 6900%` that way.
-const PEN_EXTEND_LABEL := "Extend pen"
+# dict, so every percentage of it is `SourceForecast.pen_extend_fraction` — the build queue row's and
+# the work row's mark hover — and never the bare field scaled by `PROGRESS_PERCENT_SCALE`, which reads
+# 69 banked work units as `6900%`.
+# ⛔ RETIRED — **`PEN_EXTEND_LABEL` (`Extend pen`), `PEN_EXTEND_TOOLTIP` AND `PEN_FENCING_LABEL`**
+# (`docs/plan_standing_upkeep.md` §4.9 item 12c), with the tile-card control that wore them
+# (`DrawerComposeController`, where the whole retirement is recorded). The button was the one build
+# declared from somewhere other than the work tab; it is a `⌃` on the work row's standing-rung mark
+# now, and it opens a PRICE rather than committing on the click, a ring drawing `animal:pen`'s own
+# hurdle pile since §2.7.
+#
+# The dead tooltip, quoted because it is the only place the ring's MECHANICS were ever written down
+# for the player: *"Queue another ring around the pen. A ring is the same job as the pen it widens, so
+# it joins the band's build queue like any other job and its builders raise it when it reaches the
+# head. Then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum."*
+# The ring card states the first two sentences as PRICES now; the pen-radius refusal is still the
+# server's feed message, max radius not being on the wire.
+#
+# `PEN_EXTEND_CREW_LABEL` (`Fencers`) went earlier: the verb took a trailing worker count for one
+# slice, and `extend_pen <faction> <x> <y>` is closed at three tokens again (§2.5).
 
-const PEN_EXTEND_TOOLTIP := "Queue another ring around the pen. A ring is the same job as the pen it widens, so it joins the band's build queue like any other job and its builders raise it when it reaches the head. Then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum."
-# RETIRED — **`PEN_EXTEND_CREW_LABEL`** (`Fencers`), the ring's own crew row-label. The verb took a
-# trailing worker count for one slice; `extend_pen <faction> <x> <y>` is closed at three tokens again
-# (`docs/plan_standing_upkeep.md` §2.5), so there is no crew to name.
-
-# **THE BADGE STAYS A PERCENTAGE and the work pair rides its HOVER.** It is a compact WARN-amber pill
-# in a drawer column; `Fencing 42 / 70 work (60%)` bursts it. The hover states the pair through
-# `DetailFormat.build_meter_value` — the house form every other build meter uses — rather than a
-# second spelling of the same idea.
-const PEN_FENCING_VERB := "Fencing"
-
-const PEN_FENCING_LABEL := PEN_FENCING_VERB + " %d%%"
+# …and **`PEN_FENCING_VERB` (`Fencing`) RETIRES WITH THEM**, which was worth checking rather than
+# assuming: the badge's face and its `DetailFormat.build_meter_value` hover were its only readers, and
+# the BUILD QUEUE row — the one surface that quotes a ring's meter now — states a bare percentage
+# beside the rung's own verb (`Corral <herd>`, a ring deriving the verb of the rung it widens). No
+# surface left needs a word for the ring's meter.
 
 # WHAT COMMITTING TO AN IMPROVEMENT BUYS AND COSTS — the improvement control's tooltip, one entry per
 # rung, BOTH webs in one table.
@@ -775,19 +787,25 @@ const ASSIGN_LOCAL_HUNT_BUTTON := "Hunt Here"
 # which is why it survives on this web and appears on neither plant verb.
 const ASSIGN_LOCAL_HERD_BUTTON := "Herd Here"
 
-# Range-aware forage assign: foraging is stationary gathering (NO expedition fallback), so a tile
-# beyond the selected band's `work_range` disables the button rather than offering an alternative.
-const FORAGE_ASSIGN_BUTTON := "Forage"
-
-# The plant web's SECOND commit verb, for a crew that is not gathering. A managed source — a Tended
-# Patch or a Field — is never gather-drawn (the sim's `is_managed()` branch), and the ladder config
-# says so in its own vocabulary: the `wild` rung's harvest primitive is `worker_take` while `tended`
-# and `field` both declare `worker_tend`. So the button follows the rung the source STANDS on. See
-# `PLANT_ASSIGN_BUTTONS`, which keys the pair off the ONE resolved noun so a header saying `Tenders`
-# can never sit over a button saying `Forage`. (This comment once said the hunt web already worked
-# that way. It did not — only its noun did, and its button was hard-coded until `HUNT_ASSIGN_BUTTONS`
-# below; the animal web now keys its verb the same way, from the same kind of table.)
-const TEND_ASSIGN_BUTTON := "Tend"
+# **THE PLANT WEB'S ONE COMMIT VERB, AT EVERY RUNG** (`docs/plan_standing_upkeep.md` §4.9 item 12c).
+# Range-aware: taking from a stand is stationary work (NO expedition fallback), so a tile beyond the
+# selected band's `work_range` disables the button rather than offering an alternative.
+#
+# ⛔ **IT WAS A PAIR — `FORAGE_ASSIGN_BUTTON` (`"Forage"`) AND `TEND_ASSIGN_BUTTON` (`"Tend"`) — AND
+# THE FORK IS RETIRED, NOT MISLAID.** The dead claim, verbatim: *"A managed source — a Tended Patch
+# or a Field — is never gather-drawn (the sim's `is_managed()` branch), and the ladder config says so
+# in its own vocabulary: the `wild` rung's harvest primitive is `worker_take` while `tended` and
+# `field` both declare `worker_tend`. So the button follows the rung the source STANDS on."* All of
+# that is still true of the SIM and none of it needed a second player-facing word: on a Field the
+# sheet read `ASSIGN TENDERS` and then offered the *Gathering* kit, which looks like a bug and is not
+# — the tending is the AGRICULTURE pool's, and a hoe does nothing for a harvest. Reported from play by
+# Ray, who knows how it works and was still caught by it in the moment. `Harvest` is neutral between
+# wild and cultivated, which is the whole defect, and the rung MARK on the row still says which
+# ground it is.
+#
+# **THE HUNT WEB KEEPS ITS PAIR** (`HUNT_ASSIGN_BUTTONS`): `Hunters`/`Herders` is specific and
+# collides with nothing.
+const HARVEST_ASSIGN_BUTTON := "Harvest"
 
 # `workers == 0` IS THE SIM'S UNASSIGN (server.rs: "Unassigning (workers == 0) is always allowed — a
 # player must be able to abandon a source"), and the Work zone's unassign paths depend on it. So the
@@ -822,41 +840,48 @@ const HUNT_NOOP_HINTS := {
 # Composing is modal by nature — open, decide, commit, done — so the two ~270px compose blocks live
 # in a floating sheet (`ui/hud/ComposeSheet.gd`) rather than permanently in the drawer. The drawer
 # keeps the detail rows, gains a one-line STANDING-ASSIGNMENT summary, and ends in the button below.
-const FORAGE_CREW_LABEL := "Foragers"
-
-# The plant web's MANAGED crew noun — the twin of `HERD_CREW_LABEL` on the animal side, and resolved
-# by the ONE function `SourceForecast.plant_crew_label`. A wild stand is drawn down by FORAGERS; a
-# Tended Patch or a Field is kept by TENDERS, the ladder's own `worker_tend` harvest primitive put
-# into words. `Tenders` deliberately spans BOTH upper rungs: `Farmers` reads right on a Field and
-# wrong on a Tended Patch, and two nouns to learn is better than three.
+# **THE PLANT WEB'S CREW NOUN, AND THERE IS ONLY ONE** (`docs/plan_standing_upkeep.md` §4.9 item
+# 12c) — the twin of `HUNT_CREW_LABEL` on the animal side, still resolved through the ONE function
+# `HudFormat.plant_crew_label` so every surface reads the word from one place.
 #
-# **A BUILD IN FLIGHT DOES NOT MOVE THE NOUN** — a crew part-way through a Cultivate or a Sow is
-# foraging the wild stand *and* clearing ground (which is exactly what the build dip charges them
-# for), so the word changes only when the rung COMPLETES. This is where the plant web parts from the
-# animal one: `_herd_crew_noun` reads the composed improvement axis, because a herd being penned owes
-# keepers before the pen exists. A patch owes nobody anything until it is managed.
-const TEND_CREW_LABEL := "Tenders"
+# **THE WORD LANDS IN TWO GRAMMATICAL SLOTS AND TAKES TWO FORMS.** This NOUN names the crew — the
+# sheet eyebrow `Assign harvesters`, the stepper's row, the drawer's open button, the standing
+# summary `♻ 3 harvesters` — while `HARVEST_ASSIGN_BUTTON` above is the VERB the row label and the
+# commit button take. One string cannot fill both: `Assign harvest` and `♻ 3 harvest` are the
+# readings that prove it. That is why the noun→verb tables below SURVIVE the collapse rather than
+# retiring with the fork they used to hold.
+#
+# ⛔ **IT WAS A PAIR — `FORAGE_CREW_LABEL` (`"Foragers"`) AND `TEND_CREW_LABEL` (`"Tenders"`).** The
+# dead claim, verbatim: *"A wild stand is drawn down by FORAGERS; a Tended Patch or a Field is kept
+# by TENDERS, the ladder's own `worker_tend` harvest primitive put into words"*, and *"a build in
+# flight does not move the noun"* — a crew part-way through a Cultivate or a Sow stayed `Foragers`
+# until the rung COMPLETED. Item 12c retired the fork because the second word was already taken: a
+# Field's sheet read `ASSIGN TENDERS` and then offered the *Gathering* kit, the tending being the
+# Agriculture pool's. `Harvesters` is neutral between wild and cultivated and survives the tech
+# ladder where `gatherers` would not — and the crew never changed, only the ground did, which the
+# rung mark on the row already says.
+const HARVEST_CREW_LABEL := "Harvesters"
 
 # The COMMIT VERB and the dead-button hint per plant crew noun, in the hunt web's own idiom
 # (`HUNT_NOOP_HINTS`): keyed by the label the sheet has ALREADY resolved, so the stepper's noun, the
-# button's verb and the hint's singular are three readings of one answer and cannot disagree.
+# button's verb and the hint's singular are three readings of one answer and cannot disagree. **ONE
+# ENTRY EACH NOW** — these tables are the noun→verb seam, not the rung fork, so collapsing the noun
+# collapses them without touching their shape.
 const PLANT_ASSIGN_BUTTONS := {
-    FORAGE_CREW_LABEL: FORAGE_ASSIGN_BUTTON,
-    TEND_CREW_LABEL: TEND_ASSIGN_BUTTON,
+    HARVEST_CREW_LABEL: HARVEST_ASSIGN_BUTTON,
 }
 
 const PLANT_NOOP_HINTS := {
-    FORAGE_CREW_LABEL: "Nobody assigned yet — send at least one forager.",
-    TEND_CREW_LABEL: "Nobody assigned yet — send at least one tender.",
+    HARVEST_CREW_LABEL: "Nobody assigned yet — send at least one harvester.",
 }
 
-# `Assign foragers ▸` / `Assign hunters ▸` / `Assign herders ▸` — the noun is the same one the
+# `Assign harvesters ▸` / `Assign hunters ▸` / `Assign herders ▸` — the noun is the same one the
 # sheet's stepper uses, so the drawer and the sheet can never disagree about who is being staffed.
 const COMPOSE_OPEN_BUTTON_FORMAT := "Assign %s ▸"
 
 const COMPOSE_SHEET_EYEBROW_FORMAT := "Assign %s"
 
-# The drawer's one-line summary of what is ALREADY standing on this source: `♻ 3 foragers · +2.74
+# The drawer's one-line summary of what is ALREADY standing on this source: `♻ 3 harvesters · +2.74
 # /turn`. The rate comes from `SourceForecast.source_yield_readout` — never recomputed here.
 const STANDING_SUMMARY_FORMAT := "%s %d %s"
 
@@ -1234,8 +1259,9 @@ const COMPOSE_DENY_QUARRY_HINT := "Choose a herd to break — the collapse estim
 ## **The two obvious alternatives were both measured and both lose.** A key at its natural width puts
 ## each control against its own word (`Kit` is 22px, `Quarry` 55), which is the ragged edge this
 ## exists to remove. A key at `SIZE_EXPAND_FILL` splits the row 50/50 — the shape the Kit and Quarry
-## rows shipped with — and on a ~245px sheet that leaves the control ~119px, which `🧺 Gathering kit`
-## plus a themed arrow does not fit: the fix for a clipped affordance would have clipped the name
+## rows shipped with — and on a ~245px sheet that leaves the control ~119px, which `🧺 Harvesting
+## kit` plus a themed arrow does not fit (it read `Gathering kit` when the width was measured, one
+## character shorter, so the conclusion holds a fortiori): the fix for a clipped affordance would have clipped the name
 ## instead. A declared floor gives the key exactly what the longest key needs and hands the whole
 ## remainder to the control, which is the axis that has something to lose.
 ##
@@ -1299,7 +1325,8 @@ const COMPOSE_FIELD_KIT := "Kit"
 ##
 ## **THE CARET IS NOT IN THIS STRING, AND PUTTING ONE BACK RE-CREATES THE DEFECT IT WAS TAKEN OUT
 ## FOR.** The face used to end in a `⌄` text glyph, because a `MenuButton` draws no arrow of its own.
-## `Gathering kit` is long enough to reach the button's edge, so on the forage sheet the caret was
+## `Harvesting kit` is long enough to reach the button's edge (it read `Gathering kit` when this was
+## measured, one character shorter), so on the forage sheet the caret was
 ## clipped away entirely — present in the string, never drawn — while on the hunt sheet it rendered as
 ## a small low-baseline mark that read as a stray comma beside the `Band:` picker's themed arrow one
 ## row above. An `OptionButton` draws the arrow as an ICON in reserved right-hand margin that

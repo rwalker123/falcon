@@ -65,6 +65,25 @@ signal unqueue_requested(payload: Dictionary)
 # outright. `{ faction, x, y, herd_id, kit_id, default_kit_id }`: the last pair is `_kit_token`'s, so
 # picking the DERIVED answer omits the token and CLEARS the override rather than pinning it.
 signal build_kit_requested(payload: Dictionary)
+# The KIT one WORK SITE is kept with was picked (`docs/plan_standing_upkeep.md` §2.7, surfaced by
+# §4.9 item 12c) — relayed to HudLayer.upkeep_kit_requested and formatted by `Main.format_upkeep_kit`.
+#
+# **ITS OWN SIGNAL BECAUSE ITS OWN SCOPE, one step wider than the one above.** `build_kit` sets a
+# property of a source's QUEUE ENTRY; this sets a property of the SITE, on every band of the faction
+# that works it — a keeping bill is owed by everyone holding the ground. Same payload shape
+# (`{ faction, x, y, herd_id, kit_id, default_kit_id }`) because a source has one grammar whichever
+# control names it, and the last pair is `_kit_token`'s: picking the DERIVED answer omits the token
+# and clears the site back to its own web derivation, while `none` is bare-handed and is a real
+# selection that survives the round trip.
+signal upkeep_kit_requested(payload: Dictionary)
+# Another ring was declared around a pen (`docs/plan_standing_upkeep.md` §4.9 item 12c) — relayed to
+# HudLayer.extend_pen_requested and formatted by `Main.format_extend_pen`, both unchanged.
+#
+# **THE COMMAND DID NOT MOVE; ITS ENTRY POINT DID.** It was emitted by `DrawerComposeController` from
+# an `Extend pen` button on the tile card — the one build-queue entry in the game declared from
+# somewhere other than the work tab — and it is emitted from the work row's standing-rung mark now.
+# `{ faction, x, y }`, the pen's ANCHOR tile, which is the herd's own.
+signal extend_pen_requested(payload: Dictionary)
 # The band's build queue was DRAGGED into a new order (`docs/plan_standing_upkeep.md` §4.7b ③) —
 # relayed to HudLayer.build_order_requested and formatted by `Main.format_build_order`.
 #
@@ -169,16 +188,37 @@ var _panel: BandCityPanel = null
 var _work_filter: StringName = HudWorkVocab.WORK_FILTER_ALL
 var _work_sort: StringName = HudWorkVocab.WORK_SORT_NAME
 var _work_page: int = 0
-## The source key open in the work inspector strip ("" = none), and WHICH of its expansions is out.
-## One row at a time — the strip costs board rows, which `_work_board_capacity` subtracts.
+## The source key open in the work inspector ("" = none), and WHICH of its expansions is out.
+## One row at a time — the dialog shows ONE source, and opening a second re-targets it.
 ##
-## ⛔ **THE TWO PICKERS ARE MUTUALLY EXCLUSIVE, AND THIS IS WHAT MAKES THEM SO.** The strip offers a
-## floor picker and a priority picker one link apart; two bools would admit a fourth state — both
-## open — that `_work_inspector_height` would have to reserve for, growing the zone's tallest state
-## for a combination no reading needs (a floor and a rank answer different questions and are set one
-## at a time). A three-valued state cannot express it: opening either CLOSES the other by assignment.
+## ⛔ **IT COSTS THE BOARD NOTHING NOW** (`docs/plan_standing_upkeep.md` §4.9 item 12d). It used to
+## read *"the strip costs board rows, which `_work_board_capacity` subtracts"*, and that is exactly the
+## coupling the rehost deleted: the inspector is a viewport-centred `WorkInspectorDialog`, so this key
+## decides what a WINDOW shows and no longer takes a pixel off the zone.
+##
+## ⛔ **AND IT IS THE ONLY STATE THE INSPECTOR HAS.** `_work_picker_open` sat beside it and is retired
+## (`docs/plan_standing_upkeep.md` §4.9 item 12d, second pass) — the card draws POLICY, PRIORITY and
+## KITS as SECTIONS, all three at once, so there is nothing left to remember about which one is
+## showing. **The retired reasoning is quoted rather than deleted**: *"THE TWO PICKERS ARE MUTUALLY
+## EXCLUSIVE, AND THIS IS WHAT MAKES THEM SO. The strip offers a floor picker and a priority picker
+## one link apart; two bools would admit a fourth state — both open — that `_work_inspector_height`
+## would have to reserve for, growing the tallest state for a combination no reading needs."* True of
+## a strip that had to fit a 396px zone box and could afford exactly one expansion; the card competes
+## with no zone, so the exclusion bought nothing and cost a defect class — a picker left open when the
+## row changed.
 var _work_open_key: String = ""
-var _work_picker_open: StringName = HudWorkVocab.WORK_PICKER_NONE
+## The board model the work zone last resolved `_work_open_key` to, `{}` when none — written by the
+## fill and read by `_sync_work_inspector_dialog` one step later.
+##
+## **IT EXISTS BECAUSE THE FILL HAS EARLY RETURNS AND GDScript HAS NO `defer`.** The dialog must be
+## reconciled on EVERY path through the zone (an empty board, the expanded queue, the ordinary board),
+## and re-deriving the model at the reconcile point would mean filtering and sorting the sources a
+## second time — two derivations free to disagree about which row is open.
+var _work_inspected: Dictionary = {}
+## The inspector's own card, built on first use and reused (`docs/plan_standing_upkeep.md` §4.9 item
+## 12d). **IT IS A WINDOW-LIKE SURFACE AND SO IS NOT ZONE STATE**, exactly as `_rung_track` is not: it
+## holds a node that renders over the map and changes no zone's layout at all.
+var _work_inspector_dialog: WorkInspectorDialog = null
 ## The party (expedition entity, as a string) whose parties-zone inspector strip is open ("" = none),
 ## the parties twin of `_work_open_key`. One at a time — clicking a row body toggles it.
 var _party_open_key: String = ""
@@ -1637,6 +1677,18 @@ func _on_zones_resized() -> void:
     _sync_band_zone_scroll()
     _repage_work_zone()
 
+## The panel's `shown_zone_changed` handler — the narrow shell swapped the zone its body draws.
+##
+## ⛔ **IT RECONCILES THE FLOAT AND PAGES NOTHING.** Every zone is BUILT on every render whichever tab
+## is up (the narrow shell keeps the others detached but owned), so the boards are already correct for
+## the new tab and a re-page here would rebuild the work zone on every tab click for no change in what
+## it draws. What a tab switch really invalidates is the one surface drawn OUTSIDE the panel: the
+## inspector card, anchored to a board the player has just tabbed away from and left floating over the
+## map until the next snapshot. `_sync_work_inspector_dialog` is the same reconcile every fill ends
+## on, so the card comes down (and comes back on the tab back) by exactly one rule.
+func _on_shown_zone_changed() -> void:
+    _sync_work_inspector_dialog(_work_zone_band)
+
 ## The height the band zone's TIER is chosen against: the box times the number of columns the flank
 ## lays out across.
 ##
@@ -1694,7 +1746,19 @@ func _repage_work_zone() -> void:
 func _queue_drag_in_flight() -> bool:
     return _queue_drag_key != ""
 
+## The work zone's fill, plus the one thing that is no longer IN the zone: the inspector dialog.
+##
+## ⛔ **THE RECONCILE IS HERE RATHER THAN INSIDE THE COLUMN BUILDER, and that is what makes it total.**
+## `_fill_work_zone_column` has three exits (an empty board, the expanded queue, the ordinary path)
+## and a dialog left up over a board that no longer lists its row is the worst outcome available. So
+## the column builder records what it resolved (`_work_inspected`) and this function — the ONE door
+## every fill goes through — mounts or dismisses on the way out.
 func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
+    _work_inspected = {}
+    _fill_work_zone_column(col, band)
+    _sync_work_inspector_dialog(band)
+
+func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     _ensure_queue_drag_watcher()
     # ⛔ **THE PLAYER'S PLACE IN THE LIST IS TAKEN OFF THE OUTGOING NODE, HERE, BECAUSE THIS IS THE
     # LAST MOMENT IT EXISTS.** Both fill paths reach this line with the previous list still readable —
@@ -1761,8 +1825,28 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     var inspected := _find_work_model(filtered, _work_open_key)
     if inspected.is_empty():
         _work_open_key = ""
-        _work_picker_open = HudWorkVocab.WORK_PICKER_NONE
+    _work_inspected = inspected
     if filtered.is_empty():
+        # ⛔ **AN EMPTY BOARD STILL HAS TO DECLARE ITS WIDTH, AND THIS RETURN IS WHY IT DID NOT.**
+        # `BandCityPanel._card_width()` builds the wide shell's card UP from `_work_columns`, and the
+        # ONLY thing that ever sets it is `set_work_columns`, reached from `_work_board_capacity` —
+        # which is below this branch. So a band with nothing worked left the previous band's count
+        # standing and the panel drew a zone that many columns wide with no board in it: measured on a
+        # 3440 bottom dock, **1520px of work zone (4 × `ZONE_WORK_MIN_WIDTH`) holding one hint line**,
+        # with the POOLS cards stretched across the whole of it. Reported from play as *"the empty view
+        # is too wide at the work tab, everything is stretched."*
+        #
+        # **It is a DECLARATION here rather than a clamp on any child**, because the width is the
+        # defect and the pools block is only what shows it — the chips, the hint and the board would
+        # all still be sitting in an over-wide zone if the cards alone were pinned. The count is
+        # `_declare_work_columns`' own answer for a zero-length board, i.e. ONE (`_wanted_work_columns`
+        # clamps `ceil(0 / rows)` up), so this states the same thing the drawn path would and adds no
+        # second rule. The rows argument cannot move that answer; it is named rather than spelled so it
+        # reads as the board's own unit.
+        #
+        # **It is still exactly ONE declaration per pass** — this branch returns, so it can never run
+        # beside `_work_board_capacity`'s.
+        _declare_work_columns(filtered.size(), HudWorkVocab.WORK_PREFERRED_ROWS_PER_COLUMN)
         var hint := HudWidgets.alloc_hint_label(HudWorkVocab.WORK_EMPTY_HINT)
         hint.size_flags_vertical = Control.SIZE_EXPAND_FILL
         col.add_child(hint)
@@ -1770,11 +1854,12 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     # The pools block's own reserved height is read back off the block it just built, so the number
     # subtracted here and the number drawn cannot come from two different answers to "is the fund-mode
     # row rendering?" — `_build_upkeep_mode_row` is the one decider and the meta is its record.
-    # **THE SETTINGS STRIP IS CHARGED TO THE BOARD, exactly as the work inspector is.** It is asked
-    # of the SAME resolver the block builds from, so the height reserved here and the height drawn
-    # there are one decision; asking twice is idempotent (it only prunes a stale key).
+    # **THE SETTINGS STRIP IS CHARGED TO THE BOARD — and it is the LAST expansion in this zone that
+    # is** (`docs/plan_standing_upkeep.md` §4.9 item 12d retired the work inspector's twin term). It is
+    # asked of the SAME resolver the block builds from, so the height reserved here and the height
+    # drawn there are one decision; asking twice is idempotent (it only prunes a stale key).
     var queue_settings := _queue_settings_state(band, queued, mini(queued.size(), queue_rows_max))
-    var capacity := _work_board_capacity(filtered.size(), inspected, queued.size(),
+    var capacity := _work_board_capacity(filtered.size(), queued.size(),
         queue_rows_max, pools_fund_mode,
         int(queue_settings["legs"]), bool(queue_settings["crop"]),
         bool(queue_settings["kit"]), bool(queue_settings["one_line"]))
@@ -1786,16 +1871,27 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
         int(capacity["cols"]), int(capacity["rows_per_col"])))
     if pages > 1:
         col.add_child(_build_work_pager(pages, start, mini(start + page_size, filtered.size()), filtered.size()))
-    if not inspected.is_empty():
-        col.add_child(_build_work_inspector(band, inspected))
 
-## Board capacity, derived ENTIRELY from the fixed zone box:
-##   cols        = zone width / WORK_COLUMN_MIN_WIDTH, clamped to 1..WORK_MAX_COLUMNS
-##   rows_per_col = remaining height / WORK_ROW_TWO_LINE_HEIGHT, after the head, chips, inspector and (when it
-##                  is actually needed) the pager — each of which reserves the very height it draws at.
+## Board capacity. The zone box fixes the HEIGHT this can spend:
+##   rows        = remaining height / WORK_ROW_TWO_LINE_HEIGHT, after the head, chips and (when it
+##                 is actually needed) the pager — each of which reserves the very height it draws at.
+##   cols, rows_per_col = `_declare_work_layout`, which asks the panel for the columns a
+##                 `WORK_PREFERRED_ROWS_PER_COLUMN` column implies and falls back to the full `rows`
+##                 where that ask is not granted enough columns to pay for itself.
 ## The pager is circular (it only exists when one page cannot hold everything, but it costs a row), so
 ## it is resolved in two passes: measure without it, and if that still needs more than one page, remeasure.
-## `inspected` is the open inspector's model, EMPTY when none is open.
+##
+## ⛔ **`cols` IS NOT `zone width / WORK_COLUMN_MIN_WIDTH` — that direction inverted with issue #377**
+## and this header claimed it long after it stopped being true. Width FOLLOWS the column count now; see
+## `_declare_work_columns`. Only the HEIGHT is read off the box here, which is what keeps it acyclic.
+##
+## ⛔ **THERE IS NO INSPECTOR TERM HERE, AND A LATER CHANGE MUST NOT ADD ONE BACK**
+## (`docs/plan_standing_upkeep.md` §4.9 item 12d). The signature used to open with an `inspected`
+## model and subtract `_work_inspector_height(inspected)`; the strip is a viewport-centred
+## `WorkInspectorDialog` now, so a selection changes this answer by nothing at all. That is where the
+## reclaimed rows come from — the parameter is gone rather than passed and ignored, so the term cannot
+## quietly return as a `0.0` that later grows, and `band_panel_preview` asserts the budget against a
+## re-derivation that names every term it may contain.
 ##
 ## **THE BUILD QUEUE BLOCK IS PAID FOR HERE OR IT SLICES THE BOARD** (§4.6b). This zone
 ## `clip_contents`, so a block that draws without being subtracted from the board's room takes its
@@ -1807,28 +1903,29 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
 ## **AND SO IS THE POOLS BLOCK** (§4.7), through the identical arrangement —
 ## `HudWorkVocab.pools_block_height` is both the block's own `custom_minimum_size` and this term, plus
 ## one more separation for the gap. Unlike the queue's it is ALWAYS charged: the block always renders.
-func _work_board_capacity(count: int, inspected: Dictionary, queue_rows: int, queue_rows_max: int,
+func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
         pools_fund_mode: bool, queue_settings_legs: int = 0,
         queue_settings_crop: bool = false, queue_settings_kit: bool = false,
         queue_settings_one_line: bool = true) -> Dictionary:
     var box := _zone_box()
-    var inspector_h := 0.0 if inspected.is_empty() else _work_inspector_height(inspected)
     var queue_h := HudWorkVocab.build_queue_block_height(queue_rows, queue_rows_max,
         queue_settings_legs, queue_settings_crop, queue_settings_kit, queue_settings_one_line)
     var pools_h := HudWorkVocab.pools_block_height(pools_fund_mode)
     var gaps := HudWorkVocab.WORK_ZONE_GAP_COUNT + 1.0
     if queue_h > 0.0:
         gaps += 1.0
-    var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT + inspector_h \
+    var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT \
         + queue_h + pools_h + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * gaps
     var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT))
-    var cols := _declare_work_columns(count, rows)
-    var pages := ceili(float(count) / float(maxi(cols * rows, 1)))
+    var layout := _declare_work_layout(count, rows)
+    var pages := ceili(float(count) / float(maxi(int(layout["page_size"]), 1)))
     if pages > 1:
         rows = maxi(1, int((box.y - chrome - HudWorkVocab.WORK_PAGER_HEIGHT - float(HudWorkVocab.ZONE_BLOCK_SEPARATION)) / HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT))
-        cols = _declare_work_columns(count, rows)
-        pages = ceili(float(count) / float(maxi(cols * rows, 1)))
-    return {"cols": cols, "rows_per_col": rows, "page_size": cols * rows, "pages": maxi(pages, 1)}
+        layout = _declare_work_layout(count, rows)
+        pages = ceili(float(count) / float(maxi(int(layout["page_size"]), 1)))
+    return {"cols": int(layout["cols"]), "rows_per_col": int(layout["rows_per_col"]),
+        "page_size": int(layout["page_size"]),
+        "baseline_page_size": int(layout["baseline_page_size"]), "pages": maxi(pages, 1)}
 
 ## How many board columns this band's sources actually WANT, declared to the panel so the card can be
 ## drawn that wide (issue #377), and answered back for the board to fill.
@@ -1839,8 +1936,9 @@ func _work_board_capacity(count: int, inspected: Dictionary, queue_rows: int, qu
 ## across two feet of screen. It is now derived from the SOURCE COUNT and the rows a column holds, and
 ## the panel sizes its card to the answer.
 ##
-## **It stays acyclic because `rows` comes from the zone's HEIGHT**, which a horizontal dock fixes and
-## which nothing here can move. Width follows count; count never follows width.
+## **It stays acyclic because the rows-per-column it is handed never came from the WIDTH** — it is
+## either the zone's HEIGHT, which a horizontal dock fixes and which nothing here can move, or the
+## `WORK_PREFERRED_ROWS_PER_COLUMN` constant. Width follows count; count never follows width.
 ##
 ## Without a panel (the `ui_preview` no-dock fallback) there is nobody to declare to, so it falls back
 ## to measuring the box exactly as before — that host is a fixed-width card with no card to resize.
@@ -1850,8 +1948,73 @@ func _work_board_capacity(count: int, inspected: Dictionary, queue_rows: int, qu
 func _declare_work_columns(count: int, rows: int) -> int:
     if _panel == null:
         return clampi(int(_zone_box().x / HudWorkVocab.WORK_COLUMN_MIN_WIDTH), 1, HudWorkVocab.WORK_MAX_COLUMNS)
-    var wanted := clampi(ceili(float(count) / float(maxi(rows, 1))), 1, HudWorkVocab.WORK_MAX_COLUMNS)
-    return _panel.set_work_columns(wanted)
+    return _panel.set_work_columns(_wanted_work_columns(count, rows))
+
+## The column count a given rows-per-column implies, which is the WANT `_declare_work_columns` states
+## and the same expression `_declare_work_layout` costs its two candidates with — one arithmetic, so a
+## layout can never be chosen against a want the declaration would not have made.
+func _wanted_work_columns(count: int, rows: int) -> int:
+    return clampi(ceili(float(count) / float(maxi(rows, 1))), 1, HudWorkVocab.WORK_MAX_COLUMNS)
+
+## The board's shape for one page: how many columns, and how many rows each of them holds.
+##
+## **THE COLUMN IS SHORTER THAN THE ZONE AFFORDS WHEN THAT BUYS A BETTER-BALANCED BOARD.** Filling to
+## the height-derived `rows` is what put six sources on a bottom dock into a 5 + 1 column-major board:
+## `ceil(6/5)` asks for two columns and the second one holds a single row, which reads as an accident.
+## So the board asks at `HudWorkVocab.WORK_PREFERRED_ROWS_PER_COLUMN` instead — the column count a
+## 3-row column implies — and six sources come out 3 + 3.
+##
+## ⛔ **AND IT TAKES THE SHORTER COLUMN ONLY WHERE NO SOURCE FALLS OFF THE PAGE FOR IT** — the trap in
+## this whole change. `set_work_columns` grants `min(want, affordable)`, so on a strip that cannot pay
+## for the extra column a 3-row fill would answer the SAME column count as the tall one and drop the
+## page from 1 x 5 to 1 x 3, pushing two sources onto a second page. So both candidates are costed and
+## the preference is taken only when it still shows every source the height-derived page would have.
+##
+## **THE TEST IS `min(page, count)`, NOT `page` — and that distinction is the whole feature.** A page
+## measured on its own says a 2 x 5 board beats a 2 x 3 one, so a six-source band on a bottom dock that
+## affords two columns would keep its 10-slot page and go on drawing 5 + 1 with four slots empty: the
+## exact board this change exists to rebalance, refused to protect room nothing can occupy. Compared in
+## SOURCES SHOWN both hold all six, the preference wins, and the board reads 3 + 3. Where the page is
+## the binding constraint — a band past what the columns can hold, or an affordance of one — the two
+## readings agree and the taller column is kept, so the guard against a source falling off is intact.
+## `pages` therefore never rises either: a page that shows every source it used to needs no more of them.
+##
+## **THE AFFORDANCE IS READ, NOT DISCOVERED BY DECLARING** (`BandCityPanel.work_columns_affordable`), so
+## this still makes exactly ONE declaration per pass, as it did when it was a bare `_declare_work_columns`
+## call — declaring twice to find out would resize the card mid-build to a width it then gives back.
+## The panel's ANSWER to that one declaration is still what gets built.
+##
+## **WHICH IS ALSO WHY THERE IS NO DOCK-EDGE TEST HERE.** A narrow vertical dock affords ONE column, so
+## the preferred layout costs 1 x 3 against the height-derived 1 x n, loses, and the tall single column
+## is kept untouched. The affordance answers the question a dock-edge fork would have hard-coded.
+func _declare_work_layout(count: int, rows: int) -> Dictionary:
+    var tall := maxi(rows, 1)
+    var short := mini(tall, HudWorkVocab.WORK_PREFERRED_ROWS_PER_COLUMN)
+    var rows_per_col := tall
+    # **THE HEIGHT-DERIVED PAGE, KEPT AS THE FLOOR THE ANSWER IS HELD TO** rather than only as the
+    # branch condition. It is what this returned before the preference existed, so `band_panel_preview`
+    # can assert the shipped page against it across the whole dock/viewport matrix — the one regression
+    # this design exists to prevent, and the one a later edit to the constant could reintroduce.
+    var baseline := 0
+    # No panel is the `ui_preview` fallback host, where the column count is MEASURED off a fixed-width
+    # card and does not follow the want at all — so there is no extra column to be granted there and a
+    # shorter column could only ever shrink the page. Skipped outright rather than costed.
+    if _panel != null and short < tall:
+        var afford := maxi(_panel.work_columns_affordable(), 1)
+        baseline = mini(_wanted_work_columns(count, tall), afford) * tall
+        var short_page := mini(_wanted_work_columns(count, short), afford) * short
+        # **THE TEST IS SOURCES SHOWN, NOT PAGE SIZE** — see the docstring: a page bigger than the band
+        # is spare room, and refusing to rebalance for spare room is what leaves 5 + 1 on the screen.
+        if mini(short_page, count) >= mini(baseline, count):
+            rows_per_col = short
+    var cols := _declare_work_columns(count, rows_per_col)
+    var page_size := cols * rows_per_col
+    # Where the preference never applied, the answer IS the height-derived one — read off the grant
+    # rather than predicted, so the floor is never stated above what actually got built.
+    if baseline == 0:
+        baseline = page_size
+    return {"cols": cols, "rows_per_col": rows_per_col, "page_size": page_size,
+        "baseline_page_size": baseline}
 
 ## The board itself: `cols` column VBoxes filled COLUMN-MAJOR (top of column 1 to its bottom, then
 ## column 2), separated by a hairline rule. Fixed-height rows, no scroll — the page IS the limit.
@@ -2546,7 +2709,6 @@ func _toggle_queue_expanded() -> void:
     _queue_expanded = not _queue_expanded
     if _queue_expanded:
         _work_open_key = ""
-        _work_picker_open = HudWorkVocab.WORK_PICKER_NONE
         _queue_expanded_scroll_offset = 0
     _repage_work_zone()
 
@@ -2659,7 +2821,6 @@ func _toggle_queue_settings(key: String) -> void:
     # (`docs/plan_standing_upkeep.md` §4.7b). See `_toggle_work_inspector` for the defect this closes.
     if _queue_open_key != "":
         _work_open_key = ""
-        _work_picker_open = HudWorkVocab.WORK_PICKER_NONE
     _repage_work_zone()
 
 ## **THE OPEN ENTRY'S SETTINGS — the crop today, the KIT beside it in §4.7a ②.** That is the reason
@@ -2986,8 +3147,12 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # two — `resolved_build_job` publishes `extend_pen` rather than a rung verb, because a built pen
     # carries no meter for a verb to name — so the branch is on the token the model already holds, and
     # the number it swaps in is `SourceForecast.pen_extend_fraction`'s, the same division the herd
-    # drawer's "Fencing N%" badge quotes. The FACE is untouched: a ring derives the verb of the rung it
-    # widens, which is why the row is still titled `Corral <herd>`. The DATE is untouched too — the sim
+    # drawer's retired "Fencing N%" badge quoted. The FACE is untouched: a ring derives the verb of the rung it
+    # widens, which is why the row is still titled `Corral <herd>`. **This row is the surface that
+    # DATES and withdraws the ring**, and the only other one quoting the meter is the work row's mark
+    # hover, which states the percentage and points here for the date
+    # (`HudWorkVocab.WORK_ROW_RING_BUILDING_TOOLTIP_FORMAT`); the herd drawer's `Fencing N%` badge
+    # retired with the tile card's `Extend pen` button (§4.9 item 12c). The DATE is untouched too — the sim
     # publishes a dedicated ring countdown, and only the percentage was ever missing.
     var pending := _build_queue_row_is_pending(model)
     var turns := int(model.get("build_turns", SourceForecast.BUILD_TURNS_NO_ESTIMATE))
@@ -3725,6 +3890,10 @@ func _emit_ready_declaration(band: Dictionary, model: Dictionary, rung: String) 
         # row the declaration is about.
         "workers": int(model.get("workers", 0)),
         "floor": float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)),
+        # …and the row's TAKE KIT, for the crew's and the floor's reason. The overlay entry REPLACES
+        # the merged row, so a declaration that omitted it would blank the kit of a row nobody
+        # re-kitted — and the work inspector's take picker reads exactly that field.
+        "kit_id": String(model.get("kit_id", KitRoster.NO_KIT_ID)),
         "pending_entity": int(band.get("entity", -1)),
     })
 
@@ -3817,6 +3986,60 @@ func _open_crop_step(band: Dictionary, model: Dictionary, source: Dictionary, ru
         func() -> void: _open_rung_track(band, model, anchor),
         rung))
     track.popup(_rung_track_anchor_rect(anchor))
+
+## **THE RING'S PRICE CARD, OPENED FROM THE STANDING-RUNG MARK** (`docs/plan_standing_upkeep.md` §4.9
+## item 12c).
+##
+## ⛔ **IT OPENS A PRICE, NOT A BARE COMMIT, AND ITEM 12 IS WHAT MADE THAT NECESSARY.** A ring draws
+## `animal:pen`'s own hurdle pile now (§2.7 — it drew none until the defect was fixed alongside item
+## 12), so a one-click button states a cost nowhere. Opening the same shape the track's `⌃` opens —
+## what it eats to raise, what it costs to hold, and where it will stall — keeps the caret meaning ONE
+## thing on every mark that wears it, and puts the goods cost at the point of decision rather than in
+## the queue afterwards.
+##
+## **IT REUSES THE TRACK'S WINDOW, AND THAT IS WHAT KEEPS IT FREE.** The work zone reads 396 of 396 in
+## height and 354 of 356 in width with a row selected, and both budgets ASSERT rather than clip — so a
+## card drawn as a block would slice the board. A `PopupPanel` costs the zone nothing. Its CONTENT is
+## rebuilt per open, never patched, for the track's own reason: the herd's position, the band's shelf
+## and whatever is queued all move per snapshot.
+func _open_ring_card(band: Dictionary, model: Dictionary, anchor: Control) -> void:
+    var source := _rung_track_source(model)
+    if source.is_empty():
+        return
+    var card := _ensure_rung_track()
+    var margin := _rung_track_body
+    HudWidgets.clear_children(margin)
+    var body := RungLadder.build_ring_card(
+        RungLadder.ring_row(source, HudComposeVocab.BARE_FORECAST_PREFIX, band),
+        func() -> void:
+            # The press closes the card BEFORE it emits, the track's own rule: the declaration
+            # re-renders the whole zone and frees the row this card is anchored to.
+            _dismiss_rung_track()
+            _emit_extend_pen(band, source))
+    body.set_meta(HudWorkVocab.RING_CARD_META, true)
+    margin.add_child(body)
+    card.popup(_rung_track_anchor_rect(anchor))
+
+## **DECLARE ANOTHER RING — `extend_pen <faction> <x> <y>`, and the command has not moved.** Only its
+## entry point has: the tile card's button and its `Fencing N%` badge retired with this, both being
+## duplicates of what the row and the build queue now state.
+##
+## ⛔ **IT TARGETS THE PEN'S ANCHOR TILE, WHICH IS THE HERD'S OWN, and it names no band.** A penned
+## herd sits AT `corralled_at`, so the herd's live tile is the anchor; the verb appends an entry to the
+## build queue of every band keeping the pen, and the grammar is closed at three tokens (a trailing
+## crew is a parse error). The model's `x`/`y` are the ASSIGNMENT's launch-time target, which for a
+## migrating herd is not where the animal stands — so the anchor comes off the live herd dict, the
+## same one `_rung_track_source` resolves.
+func _emit_extend_pen(band: Dictionary, herd: Dictionary) -> void:
+    var x := int(herd.get("x", -1))
+    var y := int(herd.get("y", -1))
+    if x < 0 or y < 0:
+        return
+    emit_signal("extend_pen_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "x": x,
+        "y": y,
+    })
 
 ## Take the track down, if one is up. Idempotent, and safe before the card has ever been built.
 func _dismiss_rung_track() -> void:
@@ -4026,18 +4249,59 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     # give it in the detail readouts; that colour is also what keeps the two glyph families from
     # reading as one compound mark at this size. Empty text on a wild source — the slot stays reserved
     # so the right-anchored furniture lines up down the board.
-    var rung := Label.new()
-    rung.text = String(model.get("rung_glyph", ""))
+    var rung_glyph := String(model.get("rung_glyph", ""))
+    # **AND ON A PENNED HERD THE MARK CARRIES A `⌃`** (`docs/plan_standing_upkeep.md` §4.9 item 12c) —
+    # extending the pen is declared from the thing the job acts on, a ring widening the pen this mark
+    # denotes. It is NOT in the ready slot beside it: that slot's `⌃▦` / `▦45%` / `⚠▦` / lapsed
+    # four-way is about CLIMBING, and `RungLadder.has_track` is false at the top of the animal branch,
+    # so it renders nothing at all on exactly this row. A row already carries two marks — a mid-Sow
+    # patch reads `🌾` what it is beside `▦ 28%` what is being built on it — and this is that precedent
+    # read one slot to the left.
+    var ring_offered := bool(model.get("ring_offered", false))
+    var rung: Control
+    if ring_offered:
+        var ring_btn := Button.new()
+        ring_btn.text = HudWorkVocab.WORK_ROW_RING_FORMAT % rung_glyph
+        ring_btn.focus_mode = Control.FOCUS_NONE
+        ring_btn.tooltip_text = HudWorkVocab.WORK_ROW_RING_TOOLTIP
+        HudStyle.apply_button(ring_btn, "ghost")
+        HudWidgets.compact(ring_btn, HudWorkVocab.WORK_ROW_FONT_SIZE,
+            HudWorkVocab.WORK_PAGER_PADDING_V)
+        # AFTER `apply_button`, which writes its own `font_color`: the mark keeps the SIGNAL ink a
+        # standing rung wears everywhere, and the hover brightening stays as the affordance.
+        ring_btn.add_theme_color_override("font_color", HudStyle.SIGNAL)
+        ring_btn.pressed.connect(func() -> void: _open_ring_card(band, model, ring_btn))
+        rung = ring_btn
+    else:
+        var rung_label := Label.new()
+        rung_label.text = rung_glyph
+        rung_label.add_theme_color_override("font_color", HudStyle.SIGNAL)
+        rung_label.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+        # PASS, not IGNORE: a Label needs a non-IGNORE filter for its own `tooltip_text` to ever show.
+        # Deliberately NOT `HudWidgets.set_label_tooltip`, which sets STOP — the whole row is a click
+        # target, and STOP here would make the rung slot a dead 16px hole in it. PASS shows the
+        # tooltip AND lets the press bubble to the row's `gui_input`.
+        rung_label.mouse_filter = Control.MOUSE_FILTER_PASS if rung_glyph != "" \
+            else Control.MOUSE_FILTER_IGNORE
+        # **A RING IN FLIGHT SAYS SO HERE AND CARRIES NO CARET**, which is what stops a second being
+        # declared over the first (`Herd::pen_extending` is the sim's own gate and needs no client
+        # twin). The PERCENTAGE is the build queue row's, which is the surface that dates and
+        # withdraws the ring; the tile card's `Fencing N%` badge retired rather than becoming a third
+        # statement of one meter.
+        rung_label.tooltip_text = HudWorkVocab.WORK_ROW_RING_BUILDING_TOOLTIP_FORMAT % \
+            HudFormat.progress_percent(float(model.get("ring_progress", 0.0))) \
+            if bool(model.get("ring_in_flight", false)) \
+            else String(model.get("rung_tooltip", ""))
+        rung = rung_label
     rung.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_RUNG_WIDTH, 0.0)
-    rung.add_theme_color_override("font_color", HudStyle.SIGNAL)
-    rung.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    # PASS, not IGNORE: a Label needs a non-IGNORE filter for its own `tooltip_text` to ever show.
-    # Deliberately NOT `HudWidgets.set_label_tooltip`, which sets STOP — the whole row is a click
-    # target, and STOP here would make the rung slot a dead 16px hole in it. PASS shows the tooltip
-    # AND lets the press bubble to the row's `gui_input`.
-    rung.mouse_filter = Control.MOUSE_FILTER_PASS if rung.text != "" else Control.MOUSE_FILTER_IGNORE
-    rung.tooltip_text = String(model.get("rung_tooltip", ""))
-    rung.set_meta(HudWorkVocab.WORK_ROW_RUNG_META, String(model.get("rung_glyph", "")))
+    rung.set_meta(HudWorkVocab.WORK_ROW_RUNG_META, rung_glyph)
+    # …and whether this mark is the pressable ring one, on its own handle: the two shapes differ by a
+    # glyph, so a harness reading the text would be asserting the string it had already composed.
+    rung.set_meta(HudWorkVocab.WORK_ROW_RING_META, ring_offered)
+    # STOP on the button so the press does not ALSO bubble to the row's `gui_input` and open the
+    # inspector under the card the click just opened — the ready slot's own rule one slot over.
+    if ring_offered:
+        rung.mouse_filter = Control.MOUSE_FILTER_STOP
     line.add_child(rung)
     # THE RUNG ON OFFER — the third and last glyph axis on a row, and it is deliberately a SEPARATE
     # slot from the two beside it: `rung_glyph` is what the source IS, `marks` is what the band is
@@ -4273,11 +4537,19 @@ func _build_work_pager(pages: int, start: int, shown_end: int, total: int) -> HB
     pager.add_child(range_label)
     return pager
 
-## The inspector strip — the row's SECOND and THIRD lines, relocated to one place at the bottom of the
-## zone so the board itself stays one line per source. Spells the yield/policy/status out in words,
-## carries the warning lines and the arrival strip, and offers the three inline actions.
-## `Unassign` lives HERE (not as a hover `✕` on the row) — a destructive control beside the `−`
-## stepper would be a mis-click hazard; this is the labelled version.
+## The inspector strip — the row's SECOND and THIRD lines, relocated to one place so the board itself
+## stays one line per source. Spells the yield/policy/status out in words, carries the warning lines
+## and the arrival strip, and offers the three inline actions. `Unassign` lives HERE (not as a hover
+## `✕` on the row) — a destructive control beside the `−` stepper would be a mis-click hazard; this is
+## the labelled version.
+##
+## ⛔ **THE CONTENT IS UNCHANGED AND THE HOST IS NOT** (`docs/plan_standing_upkeep.md` §4.9 item 12d).
+## This built the last child of the work COLUMN — *"one place at the bottom of the zone"* — and now
+## builds the body of a viewport-centred `WorkInspectorDialog`. **It is a rehost, not a redesign**: the
+## head line, the conditional notes, the arrivals strip, the links row and whichever picker is open are
+## the same children in the same order, the strip keeps its `WORK_INSPECTOR_META` and its
+## `custom_minimum_size`, and `_work_inspector_height` still answers for both — what moved is who pays.
+## `_sync_work_inspector_dialog` is the only caller.
 func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContainer:
     var strip := PanelContainer.new()
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -4301,7 +4573,19 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
         model.get("icon_texture") as Texture2D, String(model.get("icon", "")),
         HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
     var title := Label.new()
+    # **THE HEAD LINE STATES THE RUNG, AND IT COSTS NOTHING** (`docs/plan_standing_upkeep.md` §4.9 item
+    # 12c) — `Harvest (28, 16) · ▦ Field 100%`. It rides a line that is already there, so the strip's
+    # reservation does not move; the label CLIPS, which is this zone's standing rule, and the clause is
+    # appended rather than given its own child precisely so it is the first thing to go when it must.
+    #
+    # ⛔ **THE FACE IS ASKED, NEVER COMPOSED HERE.** `DetailFormat.standing_rung_face` routes through
+    # the same `rung_row_value` the tile card's rung row goes through, so the two surfaces cannot word
+    # one rung differently — the hazard mark, the state word and the floored percent all arrive
+    # decided. `""` on a wild source, which appends nothing at all.
     title.text = String(model.get("label", ""))
+    var rung_face := String(model.get("rung_face", ""))
+    if rung_face != "":
+        title.text += HudWorkVocab.WORK_INSPECT_RUNG_SEPARATOR + rung_face
     title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     title.clip_text = true
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -4322,72 +4606,409 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     # this zone — dropping only the accounts clause freed NOTHING, a line surviving three of its four
     # clauses — and it is why the floor travelled with them rather than staying behind.
     #
-    # **EVERY SURVIVING LINE STILL ELIDES, and that is a WIDTH decision the zone forces.** The zone's
-    # box is reserved (`PANEL_WIDTH` less chrome, 356px on a side dock) and its content is anchored
-    # full-rect into a host that clips — so a line reporting its whole text as a minimum width clamps
-    # the entire tab's column up to that width, and the POOLS readout, the Builders card's `+`, the
-    # BUILD QUEUE head's kit name and every board row's stepper are sliced off the right edge by a
-    # line none of them can see. `band_panel_work_inspector_width` is the frame, and
-    # `_assert_zone_content_width_fits` the claim.
+    # ⛔ **THE FOUR PROSE LINES WRAP NOW, AND THE ELIDE THEY LOST WAS THE STRIP'S, NOT THE CARD'S**
+    # (§4.9 item 12d, third pass). Reported from play: the shortfall sentence read *"Short of hurdles —
+    # 0.03 of the 0.05 a turn it needs. The bench or a trad…"*, a sentence cut off exactly where it
+    # names the remedy. The retired reading was *"EVERY SURVIVING LINE STILL ELIDES, and that is a
+    # WIDTH decision the zone forces. The zone's box is reserved (`PANEL_WIDTH` less chrome, 356px on a
+    # side dock) and its content is anchored full-rect into a host that clips — so a line reporting its
+    # whole text as a minimum width clamps the entire tab's column up to that width, and the POOLS
+    # readout, the Builders card's `+`, the BUILD QUEUE head's kit name and every board row's stepper
+    # are sliced off the right edge by a line none of them can see."* Every word of that was about a
+    # strip INSIDE the work zone. This strip is the body of a `WorkInspectorDialog` — a card on its own
+    # `CanvasLayer` that participates in no zone's layout and clips on neither axis — so there is no
+    # column for a long line to clamp and nothing off any edge for it to slice. The elide is a leftover
+    # of the cramped host, exactly like the mutually-exclusive pickers item 12d retired.
+    #
+    # **THE OTHER HOSTS KEEP IT, WHICH IS WHY THIS IS A SECOND BUILDER AND NOT A CHANGED DEFAULT.** The
+    # tile card's flow, the drawer's standing summary, the parties inspector's detail lines and the
+    # build queue's tooltip are all still in reserved-width boxes, and `band_panel_work_inspector_width`
+    # / `_assert_zone_content_width_fits` still hold them to it.
+    #
+    # **AND THE HEIGHT FOLLOWS THE WRAP** — `_work_inspector_wrap_overflow` measures each of these
+    # sentences at the card's real column width and adds the lines beyond the first to the
+    # reservation, so `reserved >= drawn` survives a two-line note.
     if bool(model.get("warn", false)):
-        col.add_child(HudWidgets.build_status_part(HudWorkVocab.WORK_INSPECT_OVERDRAW_LINE, HudStyle.WARN, true))
+        col.add_child(HudWidgets.build_wrapping_status_part(
+            HudWorkVocab.WORK_INSPECT_OVERDRAW_LINE, HudStyle.WARN))
     if String(model.get("note", "")) != "":
         # **THE INK COMES OFF THE MODEL** (§2.7) — DANGER where the missing thing is a good, WARN where
         # it is hands. One table (`HudWorkVocab.note_color`), read here and at the drawer's twin, so
         # the two surfaces cannot colour one note two ways.
-        col.add_child(HudWidgets.build_status_part(String(model.get("note", "")),
+        col.add_child(HudWidgets.build_wrapping_status_part(String(model.get("note", "")),
             HudWorkVocab.note_color(String(model.get("note_severity",
-                HudWorkVocab.NOTE_SEVERITY_WARN))), true))
+                HudWorkVocab.NOTE_SEVERITY_WARN)))))
     if String(model.get("muted_note", "")) != "":
-        col.add_child(HudWidgets.build_status_part(String(model.get("muted_note", "")), HudStyle.INK_FAINT, true))
+        col.add_child(HudWidgets.build_wrapping_status_part(
+            String(model.get("muted_note", "")), HudStyle.INK_FAINT))
     var schedule: PackedFloat32Array = model.get("schedule", PackedFloat32Array())
     if ArrivalStrip.has_gap(schedule):
         var arrivals := ArrivalStrip.new()
         arrivals.set_schedule(schedule, _band_labor.current_turn())
         col.add_child(arrivals)
-    var links := HBoxContainer.new()
-    links.add_theme_constant_override("separation", HudWorkVocab.COMPOSITION_KEY_SEPARATION)
-    links.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_JUMP, HudStyle.INK, func() -> void:
-        _focus_work_source(model)))
-    links.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_POLICY, HudStyle.INK, func() -> void:
-        _toggle_work_picker(HudWorkVocab.WORK_PICKER_FLOOR)))
-    # **THE RANK, BETWEEN THE FLOOR AND THE WITHDRAWAL** (§4.9 item 9b). Placed beside `Change policy`
-    # because the two are the same kind of control — a standing property of this row, picked from three
-    # buttons — and ahead of `Unassign`, which is the destructive one and stays last.
-    links.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_PRIORITY, HudStyle.INK, func() -> void:
-        _toggle_work_picker(HudWorkVocab.WORK_PICKER_PRIORITY)))
-    links.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_UNASSIGN, HudStyle.DANGER, func() -> void:
-        _work_open_key = ""
-        _work_picker_open = HudWorkVocab.WORK_PICKER_NONE
-        _emit_work_assign(band, model, 0)))
-    col.add_child(links)
-    if _work_picker_open == HudWorkVocab.WORK_PICKER_PRIORITY:
-        # THE THREE LEVELS AND THE ONE SENTENCE THAT SAYS WHAT THEY DO. Same shape as the floor picker
-        # below, deliberately: they are one link apart in one strip, and a second layout for three
-        # buttons in a row would be a new thing to learn for no new meaning.
-        col.add_child(HudWidgets.build_work_priority_picker(func(level: String) -> void:
-            _commit_work_priority(band, model, level),
-            String(model.get("priority", HudWorkVocab.WORK_PRIORITY_NORMAL))))
-    if _work_picker_open == HudWorkVocab.WORK_PICKER_FLOOR:
-        # THE THREE FLOOR PRESETS, and nothing else to say about them. **DELIBERATELY NO SLIDER HERE**:
-        # this zone is a fixed-width box the compose sheet is not, and re-pointing a standing crew from
-        # the board is a coarse decision — the fine dial lives on the source's own compose sheet, where
-        # the forecast that would justify a 5% move renders beside it.
-        col.add_child(HudWidgets.build_floor_picker(func(floor: float) -> void:
-            _commit_work_floor(band, model, floor),
-            float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), {}))
+    # **THE THREE SECTIONS, ALL DRAWN, IN THE ORDER A PLAYER READS THEM** — what this row is set to
+    # take (POLICY), how it is ranked when something runs short (PRIORITY), and what it is worked and
+    # held with (KITS). Each is a rule, a header and its controls; none of them is behind a click.
+    _build_work_inspector_section(col, HudWorkVocab.WORK_INSPECT_POLICY_SECTION)
+    # **DELIBERATELY NO SLIDER HERE**: re-pointing a standing crew from the board is a coarse
+    # decision, and the fine dial lives on the source's own compose sheet, where the forecast that
+    # would justify a 5% move renders beside it.
+    col.add_child(HudWidgets.build_floor_picker(func(floor: float) -> void:
+        _commit_work_floor(band, model, floor),
+        float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), {}))
+    _build_work_inspector_section(col, HudWorkVocab.WORK_INSPECT_PRIORITY)
+    # THE THREE LEVELS AND THE ONE SENTENCE THAT SAYS WHAT THEY DO — the same three-cell grid the
+    # floor presets use, deliberately: they are one section apart on one card, and a second layout for
+    # three buttons in a row would be a new thing to learn for no new meaning.
+    col.add_child(HudWidgets.build_work_priority_picker(func(level: String) -> void:
+        _commit_work_priority(band, model, level),
+        String(model.get("priority", HudWorkVocab.WORK_PRIORITY_NORMAL))))
+    # **THE ONLY SECTION A ROW CAN LACK.** A section whose pickers have nothing to offer is a control
+    # that answers nothing — the queue row's own rule — and `_work_inspector_has_kits` is the ONE
+    # predicate, asked here and by the reservation, so the two cannot disagree about whether it drew.
+    if _work_inspector_has_kits(model):
+        _build_work_inspector_section(col, HudWorkVocab.WORK_INSPECT_KITS)
+        col.add_child(_build_work_inspector_kits(band, model))
+        # **AND THE SITE'S OWN BILL, WITH THE UPKEEP PICKER AND ONLY WITH IT.** A keeping tool is
+        # meaningless without what is being kept, and a rate is unactionable without the control that
+        # speeds it — so the two are one term (`WORK_INSPECTOR_KITS_UPKEEP_HEIGHT`) behind one
+        # predicate. On a wild source neither draws: nothing stands there to keep.
+        #
+        # ⛔ **THE RETIRED LINE SAID THE OPPOSITE OF WHAT THE SECTION NEEDED**, and it is quoted
+        # rather than deleted: *"\"No kit\" is a real choice — the site worked bare-handed."* It drew
+        # on every kitted row including the wild ones, where it explained that going without a keeping
+        # tool was fine for a site that had nothing to keep in the first place. The `none` caveat is
+        # back in the two pickers' tooltips, which is the per-control place it belongs.
+        if _work_inspector_has_upkeep(model):
+            col.add_child(HudWidgets.build_wrapping_status_part(
+                _work_inspector_upkeep_bill(model), HudStyle.INK_FAINT))
+    # **THE TWO PURE ACTIONS, and they are buttons because they have no content to show.** Everything
+    # above is a section — a standing property of the row with its controls drawn — while these two
+    # do something and are gone. `Unassign` is destructive, so it keeps its DANGER ink and is pushed to
+    # the far end by an expanding spacer rather than sitting a comma away from `Jump to source`.
+    _build_work_inspector_rule(col)
+    var actions := HBoxContainer.new()
+    actions.add_theme_constant_override("separation", HudWorkVocab.COMPOSITION_KEY_SEPARATION)
+    actions.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_JUMP, HudStyle.INK,
+        func() -> void: _focus_work_source(model)))
+    var gap := Control.new()
+    gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    actions.add_child(gap)
+    actions.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_UNASSIGN, HudStyle.DANGER,
+        func() -> void:
+            _work_open_key = ""
+            _emit_work_assign(band, model, 0)))
+    col.add_child(actions)
     return strip
 
-func _commit_work_floor(band: Dictionary, model: Dictionary, floor: float) -> void:
-    _work_picker_open = HudWorkVocab.WORK_PICKER_NONE
-    _emit_work_assign(band, model, int(model.get("workers", 0)), floor)
+## A SECTION HEADER — the hairline, then the dim uppercase word — in the Band panel's own vocabulary
+## rather than a style invented for this card: `HudWidgets.alloc_section_label` is what the allocation
+## panel and the role blocks already head their sections with, and the rule is
+## `BandCityPanel._make_zone_separator`'s colour and thickness turned on its side.
+##
+## The two gaps around it are the column's own `ZONE_BLOCK_SEPARATION`, spent once each by the
+## `VBoxContainer` — which is exactly what `WORK_INSPECTOR_SECTION_HEAD_HEIGHT` counts.
+func _build_work_inspector_section(col: VBoxContainer, title: String) -> void:
+    _build_work_inspector_rule(col)
+    var head := HudWidgets.alloc_section_label(title)
+    head.set_meta(HudWorkVocab.WORK_INSPECTOR_SECTION_META, title)
+    col.add_child(head)
 
-## Open `which`, or close it if it is already the one showing — and close whatever else was open in
-## the same assignment. **The mutual exclusion is HERE and only here**: both links route through this,
-## so neither can grow a path that leaves the other picker standing.
-func _toggle_work_picker(which: StringName) -> void:
-    _work_picker_open = HudWorkVocab.WORK_PICKER_NONE if _work_picker_open == which else which
+## The rule itself, also used bare above the actions row — which has no header, being two verbs rather
+## than a section.
+func _build_work_inspector_rule(col: VBoxContainer) -> void:
+    var rule := ColorRect.new()
+    rule.color = HudStyle.LINE_SOFT
+    rule.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_INSPECTOR_SECTION_RULE_THICKNESS)
+    rule.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    col.add_child(rule)
+
+## **THE STRIP'S KITS — the take crew's tool always, and the SITE's keeping tool only where there is a
+## site to keep.**
+##
+## ⛔ **AN UPKEEP PICKER ON A WILD SOURCE WAS A CONTROL FOR A JOB THAT DOES NOT EXIST, ON BOTH WEBS.**
+## Reported from play: a wild herd and a wild patch each drew `Upkeep [Hurdling kit ▾]` /
+## `Upkeep [Tillage kit ▾]`, silently defaulted to a kit, and the sim accepted the resulting
+## `upkeep_kit` command for a site with no standing rung at all. **Upkeep is a property of a STANDING
+## RUNG** — a pen has hurdles to mend, a Tended Patch and a Field have their own bills, a wild stand
+## and a wild herd have no improvement — so the row is gated on the SITE's published bill
+## (`_work_inspector_has_upkeep`, through `RungLadder.upkeep_price_terms`) and not on a re-derived rung
+## test.
+##
+## ⛔ **AN ANIMAL ROW GETS BOTH PICKERS TOO, and only the LEFT WORD differs.** §4.9 item 12c's strip
+## section is written in plant vocabulary, which is not the same as being plant-only: the strip is the
+## one place the RUNG is known on either web, and `upkeepKitId` is published for herds as well as
+## patches. So a FIELD row reads `Harvesters [Harvesting kit ▾]  Upkeep [Tillage kit ▾]` and a PENNED
+## one `Hunters [Stalking kit ▾]  Upkeep [Hurdling kit ▾]`, while a wild row of either web reads its
+## take picker and nothing else.
+##
+## ⛔ **A PEN ROW'S LEFT PICKER IS A WEAPON PICKER, because item 12b made it one.** It is the
+## `Hunters` / hunt-kit control and never a *Harvest* one — the §4.9 item 12c rename is PLANT-ONLY, so
+## nothing on an animal row says *Harvest*. A penned herd resolves the ordinary fight now, so *no
+## weapons, no beef* is discoverable only if the picker says so; `KitRoster.kit_entries` greys and
+## explains through `SourceForecast.is_fought`, the one seam that answers it, and nothing here
+## re-derives that verdict.
+func _build_work_inspector_kits(band: Dictionary, model: Dictionary) -> VBoxContainer:
+    var column := VBoxContainer.new()
+    # ZERO separation, the queue settings strip's own: the second line costs a CONTROL and not a
+    # block, so the gap above the picker is the column's and is charged exactly once.
+    column.add_theme_constant_override("separation", 0)
+    # **THE TAKE ROW IS UNCONDITIONAL AND THE UPKEEP ROW IS NOT, AND NO WRAP PREDICATE EITHER WAY.** A
+    # picker body has the strip's whole width and one control to place per row, so there is no width
+    # branch to state — which is what removed the predicate, its `one_line` argument and the drift
+    # surface between a reservation that computed the wrap and a container that performed it. Both
+    # keys take `WORK_INSPECTOR_KIT_KEY_WIDTH`, so the two pickers share a left edge on the shape that
+    # draws both.
+    var take := _build_work_inspector_kit_line(column, _work_inspector_take_key(model))
+    take.add_child(_build_work_inspector_take_kit_picker(band, model))
+    if _work_inspector_has_upkeep(model):
+        var upkeep := _build_work_inspector_kit_line(column, HudWorkVocab.WORK_INSPECT_UPKEEP_KEY)
+        upkeep.add_child(_build_work_inspector_upkeep_kit_picker(band, model))
+    return column
+
+## One control line of the pair, at the height the reservation counted it at.
+func _build_work_inspector_kit_line(column: VBoxContainer, key_text: String) -> HBoxContainer:
+    var line := HBoxContainer.new()
+    line.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_COMPACT_PICKER_LINE_HEIGHT)
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    column.add_child(line)
+    line.add_child(_build_work_inspector_kit_key(key_text))
+    return line
+
+## A key at the ONE declared width both take, so the two pickers share a left edge whether they sit
+## side by side or stack — `_build_queue_settings_key`'s rule, one host over.
+func _build_work_inspector_kit_key(key_text: String) -> Label:
+    var key := Label.new()
+    key.text = key_text
+    key.custom_minimum_size = Vector2(HudWorkVocab.WORK_INSPECTOR_KIT_KEY_WIDTH, 0.0)
+    key.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+    key.add_theme_font_size_override("font_size", HudWorkVocab.WORK_CHIP_FONT_SIZE)
+    key.clip_text = true
+    key.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    return key
+
+## **THE LEFT KEY IS THE CREW NOUN, THROUGH THE EXISTING RESOLVERS AND NEVER A THIRD ONE.** The plant
+## web has one word since §4.9 item 12c (`HudFormat.plant_crew_label`); the animal web still forks
+## Hunters/Herders off the standing rung, which is `SourceForecast.is_managed_hunt_source` — the same
+## predicate `DrawerComposeController._herd_crew_noun` asks. Asking it here rather than reaching into
+## that controller is what keeps this zone free of a cross-panel dependency; the PREDICATE is shared,
+## which is what stops the two answers drifting.
+func _work_inspector_take_key(model: Dictionary) -> String:
+    if String(model.get("kind", "")) != SourceForecast.LABOR_KIND_HUNT:
+        return HudFormat.plant_crew_label(_work_inspector_source(model),
+            HudComposeVocab.BARE_FORECAST_PREFIX)
+    var herd := _work_inspector_source(model)
+    return HudComposeVocab.HERD_CREW_LABEL \
+        if SourceForecast.is_managed_hunt_source(herd, String(model.get("improvement", ""))) \
+        else HudComposeVocab.HUNT_CREW_LABEL
+
+## The raw wire SOURCE behind an inspector model — the patch or the herd, which is what the crew noun
+## and the take kit's own derivation read. `{}` for a model whose source the band's lookups do not
+## hold, which every reader below answers as "nothing to say".
+##
+## **A HERD IS READ LIVE, the model builder's own rule**: herds MIGRATE, so the assignment's
+## launch-time target is not where the animal is, and `find_world_herd` is the one lookup that answers
+## for where it actually stands.
+func _work_inspector_source(model: Dictionary) -> Dictionary:
+    var herd_id := String(model.get("herd_id", ""))
+    if herd_id != "":
+        return _band_labor.find_world_herd(herd_id)
+    return _band_labor.forage_patch_lookup().get(
+        Vector2i(int(model.get("x", -1)), int(model.get("y", -1))), {})
+
+## The TAKE job this row's crew works under — the same `LABOR_KIND_*` the row's own `kind` is, which
+## is what makes the picker offer exactly what the compose sheet offers.
+func _work_inspector_take_job(model: Dictionary) -> String:
+    return KitRoster.JOB_HUNT if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT \
+        else KitRoster.JOB_FORAGE
+
+## …and the KEEPING job, which is the web's rather than the crew's: `agriculture` keeps ground and
+## `husbandry` keeps animals, and the sim REFUSES a plant keeping kit named on a herd outright rather
+## than falling back — so the picker must offer only its own web's tools.
+func _work_inspector_upkeep_job(model: Dictionary) -> String:
+    return KitRoster.JOB_HUSBANDRY if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT \
+        else KitRoster.JOB_AGRICULTURE
+
+## Does the KITS section draw at all — true when the TAKE job lists a tool, which is the one row every
+## row has. Asked by the reservation and by the builder from one place, so the two cannot disagree
+## about whether the section was drawn.
+##
+## ⛔ **IT WAS A CONJUNCTION OVER BOTH JOBS AND THAT WAS WRONG IN BOTH DIRECTIONS.** It read *"true
+## when EITHER job lists a tool"* and was written `and` — so a roster with no KEEPING tool suppressed
+## the take picker as well, and, worse, a roster that had one drew an Upkeep picker on a wild source
+## with nothing to keep. The keeping half is `_work_inspector_has_upkeep` now, gated on the SITE's
+## bill as well as on the roster.
+func _work_inspector_has_kits(model: Dictionary) -> bool:
+    if model.is_empty():
+        return false
+    return not KitRoster.kits_for_job(
+        _band_labor.kits(), _work_inspector_take_job(model)).is_empty()
+
+## …and does the UPKEEP half of that section draw — the picker AND the bill line under it, which are
+## one term. **Two conjuncts, and both are necessary**: the SITE must owe something to keep
+## (`RungLadder.upkeep_price_terms`, `[]` on a wild source), and the web's keeping job must list a
+## tool to offer. Asked by the reservation and by the builder from one place, exactly as the section's
+## own gate is.
+func _work_inspector_has_upkeep(model: Dictionary) -> bool:
+    if model.is_empty() or _work_inspector_upkeep_terms(model).is_empty():
+        return false
+    return not KitRoster.kits_for_job(
+        _band_labor.kits(), _work_inspector_upkeep_job(model)).is_empty()
+
+## The site's standing bill as terms, off the model rather than re-read from the source: composed once
+## where the raw wire source was in hand, so the gate above and the line the builder renders are the
+## same list and cannot come apart.
+func _work_inspector_upkeep_terms(model: Dictionary) -> Array[String]:
+    var terms: Array[String] = []
+    for term in model.get("upkeep_price_terms", []) as Array:
+        terms.append(String(term))
+    return terms
+
+## **THE SITE'S BILL AS ONE SENTENCE — composed HERE and nowhere else**, because the builder draws it
+## and the reservation has to measure the same string to know how many lines it wraps to. Two
+## compositions of one sentence are two answers to *how tall is this line*, and the difference comes
+## off the bottom of the card.
+func _work_inspector_upkeep_bill(model: Dictionary) -> String:
+    return HudWorkVocab.WORK_INSPECT_KITS_UPKEEP_FORMAT % HudWorkVocab \
+        .RUNG_TRACK_PRICE_SEPARATOR.join(_work_inspector_upkeep_terms(model))
+
+## **THE COLUMN A WRAPPED NOTE REALLY LAYS OUT IN** — the dialog's content width less the inspector
+## card's own horizontal padding, which are the only two things between the card's outer edge and the
+## text. Derived from the two producers rather than restated, so a change to either cannot leave the
+## reservation measuring a column the note is not drawn in.
+##
+## **IT IS A LOWER BOUND ON THE DRAWN WIDTH, AND THAT DIRECTION IS THE SAFE ONE.**
+## `AutoSizingPanel.fit_width` never takes the card BELOW `target_width` (= `CONTENT_WIDTH` plus
+## chrome) and may take it above when some other child demands it — and a note measured at a narrower
+## column than it draws in reports MORE lines than it takes, i.e. over-reserves. The reverse would be
+## height nobody paid for.
+func _work_inspector_note_width() -> float:
+    return WorkInspectorDialog.CONTENT_WIDTH \
+        - HudStyle.work_inspector_stylebox().get_minimum_size().x
+
+## **THE TAKE PICKER — the crew's own tool, on the path the compose sheet already uses.** It sends
+## `assign_labor … kit <id>`, so this control adds no second command for a value that already has one;
+## the row's crew, floor and rank are re-sent unchanged beside it because that command states them all.
+##
+## ⛔ **THE JOB DEFAULT IS THE WIRE'S, NOT A SECOND READ OF THE SOURCE.** `KitRoster.default_kit_for`
+## takes the SOURCE — whose `default_kit_id` is the HERD's own per-quarry override, a field only a herd
+## publishes — AND the JOB's default; this passed `source.get("default_kit_id")` for **both**, so on
+## the plant web, where a patch carries no such field, the job default was `""` at every rung. It cost
+## two things: no forage entry ever wore the `(default)` mark, and a row whose assignment stated no
+## kit fell through to a BLANK, unselected face. `_band_labor.default_kit_id(job)` is the same answer
+## `Hud._emit_assign_labor` measures the command's omitted `kit` token against, so the mark this picker
+## draws and the omission that command makes cannot name two different kits.
+##
+## **IT IS THE FALLBACK, NOT THE FIX FOR A PENDING ROW.** A pending assignment's own kit rides the
+## optimistic overlay now (`HudBandLaborState.record_pending_assign`), so `selected` is a real id on
+## every row the board draws; this default is what marks the entry and what answers for a row the wire
+## somehow states no kit for.
+func _build_work_inspector_take_kit_picker(band: Dictionary, model: Dictionary) -> OptionButton:
+    var kits := _band_labor.kits()
+    var job := _work_inspector_take_job(model)
+    var source := _work_inspector_source(model)
+    var default_id := KitRoster.default_kit_for(job, source, _band_labor.default_kit_id(job))
+    var selected := String(model.get("kit_id", ""))
+    if selected == "":
+        selected = default_id
+    var listing := KitRoster.kit_entries(kits, job, selected, default_id,
+        func(kit_id: String) -> void: _emit_work_take_kit(band, model, kit_id, default_id),
+        source, HudComposeVocab.BARE_FORECAST_PREFIX)
+    return _build_work_inspector_picker(listing, kits, selected,
+        HudWorkVocab.WORK_INSPECT_TAKE_KIT_TOOLTIP, HudWorkVocab.WORK_INSPECT_TAKE_KIT_META)
+
+## **THE UPKEEP PICKER — what this SITE is held with, turn after turn.** Per site since §2.5, which is
+## why it needs no scope warning: there is no longer a scope to warn about.
+##
+## ⛔ **THE `(default)` MARK COMES OFF `upkeep_kit_named`, NEVER OFF A SECOND CLIENT DERIVATION.** The
+## wire states the RESOLVED kit and a separate flag for whether the player named it, precisely because
+## the id alone cannot say — a player may name the very kit the derivation would have picked. So an
+## UNNAMED row's default IS the id it is showing, and only a NAMED one has to ask
+## `KitRoster.keeping_kit_for` what the derivation would have been.
+##
+## ⛔ **AN UNSTATED KIT FALLS THROUGH TO THAT DERIVATION RATHER THAN RENDERING A BLANK CONTROL, and
+## the state it answers for is REACHABLE.** `resolve_upkeep_kits` walks the bands' LABOR ROWS, so a
+## source no band works yet is absent from that map and publishes `""` — while `upkeep_price_terms`
+## comes off the source's own RUNG, which exists regardless. A brand-new **pending** assignment on a
+## kept source therefore drew the Upkeep row with an empty face and nothing lit, the take picker's
+## reported defect arriving through the other control. The fall-through is not a missing-field guard:
+## `keeping_kit_for` is this client's own copy of the very derivation the sim will apply the moment
+## the assignment lands, and it is already what a NAMED row's `(default)` mark is measured against.
+##
+## **The mark stays honest across it.** With nothing stated the derivation IS both the selection and
+## the default, which is exactly what an UNNAMED row means — so the entry is marked `(default)` and
+## no second client derivation has been introduced.
+func _build_work_inspector_upkeep_kit_picker(band: Dictionary, model: Dictionary) -> OptionButton:
+    var kits := _band_labor.kits()
+    var job := _work_inspector_upkeep_job(model)
+    var selected := String(model.get("upkeep_kit_id", ""))
+    if selected == KitRoster.NO_KIT_ID:
+        selected = KitRoster.keeping_kit_for(kits, job)
+    var default_id := selected if not bool(model.get("upkeep_kit_named", false)) \
+        else KitRoster.keeping_kit_for(kits, job)
+    var listing := KitRoster.kit_entries(kits, job, selected, default_id,
+        func(kit_id: String) -> void: _emit_upkeep_kit(band, model, kit_id, default_id))
+    return _build_work_inspector_picker(listing, kits, selected,
+        HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_TOOLTIP, HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_META)
+
+## The chrome both pickers wear — one builder, so the pair cannot come out at two widths or two type
+## sizes on one line.
+func _build_work_inspector_picker(listing: Dictionary, kits: Array, chosen: String,
+        tooltip: String, meta: StringName) -> OptionButton:
+    var picker := HudWidgets.build_option_picker(
+        listing[KitRoster.KIT_ENTRIES_KEY] as Array,
+        int(listing[KitRoster.KIT_ENTRIES_SELECTED_KEY]),
+        KitRoster.display_name_for_id(kits, chosen), tooltip)
+    picker.set_meta(meta, chosen)
+    # **THE PICKER EXPANDS INTO WHAT THE KEY LEAVES**, rather than declaring a column: a picker BODY
+    # has the strip's whole width, so a fixed 168 would leave dead space on a wide dock and clip a kit
+    # name on a narrow one. The key is the row's only fixed child.
+    picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    HudWidgets.compact(picker, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
+    return picker
+
+## **THE TAKE KIT RIDES `assign_labor`, WHICH ALREADY CARRIES IT.** A second command for a value the
+## compose sheet's own path sets would be two writers of one field — the drift this arc keeps naming —
+## so the pick is re-sent as the row's standing assignment with its crew, floor, verb and take
+## selection unchanged. `_emit_work_assign` restates every one of those off the model, so the ONE
+## thing this override changes is the kit.
+##
+## ⛔ **`default_id` IS UNUSED HERE AND ITS ABSENCE IS THE POINT.** `assign_labor`'s parser reads an
+## omitted `kit` token as *the job's default*, so a pick equal to the default is expressed by sending
+## the id anyway — pinning it — rather than by dropping the token. That is the OPPOSITE of `build_kit`
+## and `upkeep_kit`, where an absent token clears an OVERRIDE back to a derivation; `assign_labor`
+## has no override to clear, and `_emit_work_assign`'s own ⛔ records what dropping the token costs.
+func _emit_work_take_kit(band: Dictionary, model: Dictionary, kit_id: String,
+        _default_id: String) -> void:
+    _emit_work_assign(band, model, int(model.get("workers", 0)),
+        RESTATE_STANDING_FLOOR, RESTATE_STANDING_SPECIES, kit_id)
+
+## **THE PER-SITE KEEPING KIT** (`docs/plan_standing_upkeep.md` §2.7) — `upkeep_kit`, naming a SOURCE
+## and setting a property of the SITE on every band of the faction that works it.
+##
+## ⛔ **PICKING THE DERIVED DEFAULT EMITS NO `kit` TOKEN, AND THAT IS WHAT CLEARS THE OVERRIDE** —
+## `_emit_build_kit`'s rule one scope out. `none` is a DIFFERENT statement (bare-handed, and how a
+## player conserves the tool on one site while its neighbour goes on using it) and survives the round
+## trip as the real selection it is.
+##
+## **NO OPTIMISTIC OVERLAY.** `upkeepKitId` is captured LIVE, so the recapture this command triggers
+## already carries the new value.
+func _emit_upkeep_kit(band: Dictionary, model: Dictionary, kit_id: String,
+        default_id: String) -> void:
+    emit_signal("upkeep_kit_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "x": int(model.get("x", -1)),
+        "y": int(model.get("y", -1)),
+        "herd_id": String(model.get("herd_id", "")),
+        "kit_id": kit_id,
+        "default_kit_id": default_id,
+    })
     _repage_work_zone()
+
+func _commit_work_floor(band: Dictionary, model: Dictionary, floor: float) -> void:
+    _emit_work_assign(band, model, int(model.get("workers", 0)), floor)
 
 ## **THE RANK COMMAND** — `work_priority <faction> <band> <source…> high|normal|low`
 ## (`docs/plan_standing_upkeep.md` §4.9 item 9b).
@@ -4401,7 +5022,6 @@ func _toggle_work_picker(which: StringName) -> void:
 ## The picker CLOSES on the pick, exactly as the floor picker does: the strip has said its piece, and
 ## a picker left open over a value that has not landed yet invites a second press at the same button.
 func _commit_work_priority(band: Dictionary, model: Dictionary, level: String) -> void:
-    _work_picker_open = HudWorkVocab.WORK_PICKER_NONE
     if model.is_empty():
         return
     emit_signal("work_priority_requested", {
@@ -4414,11 +5034,18 @@ func _commit_work_priority(band: Dictionary, model: Dictionary, level: String) -
     })
     _repage_work_zone()
 
-## The height the open inspector reserves — BOTH what `_work_board_capacity` subtracts from the board
-## and what the strip actually draws at, so the page can never overflow its zone (the work-board rule).
+## The height the open inspector reserves — BOTH the `WorkInspectorDialog`'s own `min_height` and what
+## the strip actually draws at, so the card can never be fitted shorter than its content.
+##
+## ⛔ **ITS CONSUMER CHANGED AND ITS JOB DID NOT** (`docs/plan_standing_upkeep.md` §4.9 item 12d). It
+## used to be *"what `_work_board_capacity` subtracts from the board … so the page can never overflow
+## its zone"*; the zone no longer has an inspector term to subtract, and the same number is now what
+## the dialog is fitted against. Keeping it is what keeps *reserved ≥ drawn* a claim anybody can still
+## make about this strip — deleting it would have made the rehost unfalsifiable rather than free.
 ##
 ## **IT READS THE MODEL, and for a long time it did not — the parameter was `_model`.** It forked on
-## one panel-state value (`_work_picker_open`) and answered one of two totals, while
+## one panel-state value (`_work_picker_open`, itself since retired by §4.9 item 12d) and answered
+## one of two totals, while
 ## `_build_work_inspector` draws FOUR children conditionally on the model: the overdraw line, the
 ## slipping `note`, the `muted_note` and the `ArrivalStrip`, each with its own
 ## `ZONE_BLOCK_SEPARATION` gap. Each of them could draw with nothing reserved for it — and the zone
@@ -4430,28 +5057,71 @@ func _commit_work_priority(band: Dictionary, model: Dictionary, level: String) -
 ## for a child that does not draw or misses one that does, and both fail silently.
 func _work_inspector_height(model: Dictionary) -> float:
     var height := HudWorkVocab.WORK_INSPECTOR_HEIGHT
+    # **EACH NOTE IS ONE LINE PLUS WHATEVER IT WRAPS TO** (§4.9 item 12d's third pass). The four prose
+    # lines on this card WRAP now rather than eliding — see `_work_inspector_wrap_overflow` for why the
+    # overflow is stated on top of the one-line term instead of replacing it.
     if bool(model.get("warn", false)):
-        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT
+        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT \
+            + _work_inspector_wrap_overflow(HudWorkVocab.WORK_INSPECT_OVERDRAW_LINE)
     if String(model.get("note", "")) != "":
-        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT
+        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT \
+            + _work_inspector_wrap_overflow(String(model.get("note", "")))
     if String(model.get("muted_note", "")) != "":
-        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT
+        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT \
+            + _work_inspector_wrap_overflow(String(model.get("muted_note", "")))
     var schedule: PackedFloat32Array = model.get("schedule", PackedFloat32Array())
     if ArrivalStrip.has_gap(schedule):
         height += HudWorkVocab.WORK_INSPECTOR_ARRIVALS_HEIGHT
-    # ONE open height for the picker: the standing-investment line the taller variant reserved room
-    # for is gone with the axis split (see `_build_work_inspector`), so every open picker is the same
-    # four rungs. It is panel state rather than model state, which is why it is the one term here that
-    # does not read the dict.
-    # ONE open height per picker, and AT MOST ONE of them is open (`_work_picker_open`). They are
-    # panel state rather than model state, which is why they are the terms here that do not read the
-    # dict; the priority one is the taller of the two by its hint line, and is what
-    # `WORK_INSPECTOR_CEILING_HEIGHT` therefore counts.
-    if _work_picker_open == HudWorkVocab.WORK_PICKER_FLOOR:
-        height += HudWorkVocab.WORK_INSPECTOR_POLICY_PICKER_HEIGHT
-    elif _work_picker_open == HudWorkVocab.WORK_PICKER_PRIORITY:
-        height += HudWorkVocab.WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT
+    # **THE THREE SECTIONS ARE A SUM, AND THE ONLY ONE THAT IS CONDITIONAL READS THE MODEL**
+    # (`docs/plan_standing_upkeep.md` §4.9 item 12d, second pass). POLICY and PRIORITY draw on every
+    # row; KITS draws where `_work_inspector_has_kits` says so — the builder's own test, verbatim,
+    # which is the whole of what makes reserved and drawn one answer.
+    #
+    # ⛔ **IT WAS AN `if/elif` CHAIN OVER `_work_picker_open` AND THE MAX WAS THE POINT.** The retired
+    # comment read: *"ONE OPEN HEIGHT PER PICKER, AND AT MOST ONE OF THEM IS OPEN. The `if/elif` chain
+    # is the max-not-sum property made STRUCTURAL — the builder's own chain matches it arm for arm, so
+    # the strip cannot draw two expansions or reserve for the wrong one. THE KIT PAIR IS AN ARM HERE
+    # AND NOT A TERM ABOVE, and that is the whole of why it is free … At 44 it is SHORTER than the
+    # priority picker it now competes with, so the worst case does not move at all."* Every word of
+    # that was about a strip fitting a 396px zone box. The card draws all three at once now, so the
+    # arms became terms and the max became a sum.
+    height += HudWorkVocab.WORK_INSPECTOR_POLICY_SECTION_HEIGHT
+    height += HudWorkVocab.WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT
+    if _work_inspector_has_kits(model):
+        height += HudWorkVocab.WORK_INSPECTOR_KITS_SECTION_HEIGHT
+        # …and the UPKEEP half on top, which a WILD source does not draw: the picker and the bill line
+        # under it are one term behind the builder's own second predicate, verbatim.
+        if _work_inspector_has_upkeep(model):
+            height += HudWorkVocab.WORK_INSPECTOR_KITS_UPKEEP_HEIGHT \
+                + _work_inspector_wrap_overflow(_work_inspector_upkeep_bill(model))
+    # …and the hairline that separates the two pure actions from the last section above them. The row
+    # itself has always been inside `WORK_INSPECTOR_EXTENT`; only its rule is new.
+    height += HudWorkVocab.WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
     return height
+
+## **WHAT ONE OF THE CARD'S PROSE LINES COSTS BEYOND THE FIRST LINE its term already charges for it** —
+## `0.0` for a sentence that fits, one `WORK_INSPECTOR_NOTE_LINE_HEIGHT` per wrapped line after that.
+##
+## ⛔ **THE ONE-LINE CLAIM DIED WITH THE ELIDE, AND IT IS QUOTED WHERE IT LIVED.**
+## `WORK_INSPECTOR_NOTE_LINE_HEIGHT` used to assert that the label *"is exactly ONE line whatever it
+## says"*, which was true only because every line on the strip elided; the card is free-floating and
+## its notes wrap now, so that sentence is corrected in place in `hud_work_vocab.gd` and this term is
+## what replaces the part of it that was load-bearing.
+##
+## **STATED AS AN OVERFLOW ON TOP OF THE EXISTING TERMS, NOT AS A REPLACEMENT FOR THEM.** Every
+## constant in the reservation — the note height, the section head, the kits/upkeep pair — charges
+## exactly one line of this type and goes on charging it, so `WORK_INSPECTOR_CEILING_HEIGHT` keeps
+## meaning what it says (the ceiling AT ONE LINE PER NOTE) and becomes a FLOOR on the wrapped worst
+## case rather than a number that quietly stopped describing anything.
+##
+## **AND IT CANNOT SILENTLY UNDER-RESERVE, because the count is MEASURED rather than allowed for.** A
+## fixed "notes get two lines" allowance would be right until the first sentence that needs three, and
+## nothing would say so — the card would simply draw past what it reserved. This asks the real font,
+## at the real column width, with the drawn label's own break flags, so a longer sentence reserves
+## more by construction; `band_panel_preview._assert_work_inspector_worst_case_fits` mounts a genuinely
+## wrapping worst case and pins `reserved >= drawn` against what the laid-out label really asks for.
+func _work_inspector_wrap_overflow(text: String) -> float:
+    return HudWidgets.wrapped_status_part_overflow(text, _work_inspector_note_width())
 
 ## **LINE TWO'S WHOLE STRING — every account this source pays, then the floor the player set it to.**
 ## The accounts go through `SourceForecast.yield_components`, which already carries the
@@ -4549,10 +5219,12 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # Held in a local because the RUNG mark reads it too — `forage_patch_lookup` spells its keys
             # BARE (`is_cultivated` / `is_field`), unlike the `patch_`-prefixed `tile_info` cross-ref.
             patch = _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
-            # THE ROW'S VERB FOLLOWS THE STANDING RUNG, through the same `HudFormat.plant_crew_label`
-            # the compose sheet's noun does: a crew on a Tended Patch or a Field is TENDING, not
-            # foraging, so `Forage (27, 26)` would name an activity the sim does not run there. The
-            # rung MARK beside it answers a different question (what the source IS) and both stay.
+            # THE ROW'S VERB IS `Harvest` AT EVERY RUNG, through the same `HudFormat.plant_crew_label`
+            # the compose sheet's noun goes through (§4.9 item 12c). ⛔ It used to FORK — *"a crew on a
+            # Tended Patch or a Field is TENDING, not foraging, so `Forage (27, 26)` would name an
+            # activity the sim does not run there"* — and the second word was already taken by the
+            # Agriculture pool, so the sheet read `ASSIGN TENDERS` over the *Gathering* kit. The rung
+            # MARK beside it answers a different question (what the source IS) and both stay.
             label = String(HudWorkVocab.WORK_ROW_PLANT_FORMATS.get(
                 HudFormat.plant_crew_label(patch, HudComposeVocab.BARE_FORECAST_PREFIX), "")) % [x, y]
             # **THE VERB NO LONGER MOVES THIS ROW'S CAP** (`docs/plan_standing_upkeep.md` §2.2). It
@@ -4725,7 +5397,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # keeping stepper cannot reach: twelve keepers do not mend a fence with no hurdles. The
         # countdown is unchanged, since either shortfall drives the same decay through the same
         # grace.
-        var material_note := HudWorkVocab.material_short_note(kind,
+        var material_note := HudWorkVocab.material_short_note(
             SourceForecast.material_payoff_rows(m.get(
                 SourceForecast.ASSIGNMENT_MATERIAL_UPKEEP_DEMAND_KEY, [])),
             SourceForecast.material_payoff_rows(m.get(
@@ -4790,6 +5462,28 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "muted_note": String(yld.get("muted_note", "")), "marks": marks,
             # The source's STANDING RUNG — orthogonal to `marks`, which carries the verb in flight.
             "rung_glyph": String(rung.get("glyph", "")), "rung_tooltip": String(rung.get("tooltip", "")),
+            # …and the same rung's FACE, for the inspector strip's head line (§4.9 item 12c). It rides
+            # the model beside the glyph because the two are one answer in two registers — a mark for
+            # the row, a face for the strip — and `SourceForecast.standing_improvement` is the single
+            # fork both go through. `""` on a wild source. **The board row does NOT draw this**: the
+            # row has a fixed mark column and 356px of zone, which is why the mark exists at all.
+            "rung_face": DetailFormat.standing_rung_face(rung_source,
+                HudComposeVocab.BARE_FORECAST_PREFIX,
+                SourceForecast.source_kind_for_labor(kind)),
+            # **WHETHER THIS ROW MAY DECLARE ANOTHER FENCED RING, AND WHETHER ONE IS ALREADY UP**
+            # (`docs/plan_standing_upkeep.md` §4.9 item 12c). Only a CORRALLED herd has a pen to widen,
+            # which is the standing rung rather than a flag of its own — one fork, the same
+            # `standing_improvement` the mark and the face already go through. The two are mutually
+            # exclusive by construction: a ring in flight withdraws the offer, which is what stops a
+            # second being declared over the first.
+            "ring_in_flight": SourceForecast.pen_ring_is_in_flight(live_herd),
+            "ring_offered": SourceForecast.standing_improvement(rung_source,
+                    HudComposeVocab.BARE_FORECAST_PREFIX) == SourceForecast.IMPROVEMENT_CORRAL \
+                and not SourceForecast.pen_ring_is_in_flight(live_herd),
+            # …and how far it has got, for the mark's hover alone. `pen_extend_fraction` is the ONE
+            # division of the ring's work pair, shared with the build queue row's percentage, so one
+            # ring can never be quoted two ways.
+            "ring_progress": SourceForecast.pen_extend_fraction(live_herd),
             # The rung this source could climb NOW ("" for none) — see `ready` above.
             "ready_policy": String(ready.get("policy", "")), "ready_glyph": String(ready.get("glyph", "")),
             # …and the hover BOTH the mark and the row state, resolved once above.
@@ -4806,9 +5500,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # climb, only more of the one the source is already on — so `building` above is empty, the
             # trio beside this reads `0%`, and it would read `0%` for the ring's whole life. The ring's
             # real meter is the herd's own `pen_extend_progress` / `pen_extend_cost` pair, in WORK
-            # UNITS, and `SourceForecast.pen_extend_fraction` is the same single division the herd
-            # drawer's "Fencing N%" badge comes through — so the badge and the queue row cannot quote
-            # one ring two ways. `PEN_EXTEND_EMPTY_METER` on every entry that is not a ring: the field
+            # UNITS, and `SourceForecast.pen_extend_fraction` is the same single division the work
+            # row's mark hover comes through — so the mark and the queue row cannot quote one ring two
+            # ways. (It was the herd drawer's `Fencing N%` badge that shared it until §4.9 item 12c
+            # retired the badge.) `PEN_EXTEND_EMPTY_METER` on every entry that is not a ring: the field
             # is meaningful only under the ring branch that `improvement` selects.
             "build_ring_progress": SourceForecast.pen_extend_fraction(live_herd) \
                 if improvement == SourceForecast.BUILD_JOB_EXTEND_PEN \
@@ -4881,6 +5576,31 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # hand, and because the five are one reading of one entry.
             "build_kit_id": SourceForecast.build_kit_id(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
+            # **THE SITE'S KEEPING KIT, WHICH IS NOT THE CREW'S** (`docs/plan_standing_upkeep.md`
+            # §4.9 item 12c). The strip's pair edits two kits and they come from two DIFFERENT places
+            # because they are properties of two different things: the TAKE kit is the ASSIGNMENT's
+            # (`kit_id` above — this band's crew on this source), while the UPKEEP kit is the
+            # SOURCE's, set per work site since §2.5 and therefore the same on every band that works
+            # it. Reading both off one of them is how the pair would come to state one band's take
+            # beside another band's keeping, or a site's keeping as if this band had chosen it.
+            "upkeep_kit_id": String(rung_source.get("upkeep_kit_id", "")),
+            # **WHAT THIS SITE IS BILLED TO STAND, PER TURN, AND WHETHER IT IS BILLED AT ALL.** One
+            # list, spent twice: `_work_inspector_has_upkeep` reads its EMPTINESS as the gate on the
+            # Upkeep picker, and the line under that picker renders its TERMS. `RungLadder
+            # .upkeep_price_terms` carries why one producer answers both, and why a wild source —
+            # standing on no rung, with no improvement to keep — answers `[]`.
+            #
+            # It rides the model beside the keeping kit because that is the pair: the kit is what the
+            # bill is paid WITH, and a picker for a bill that does not exist is the control this
+            # field exists to stop drawing. Composed here for the reason the five build fields above
+            # are — this is where the raw wire source is in hand.
+            "upkeep_price_terms": RungLadder.upkeep_price_terms(
+                rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
+            # **WHETHER THAT ID IS THE PLAYER'S WORD OR THE WEB'S DERIVATION**, which the id alone
+            # cannot say — a player may name the very kit the derivation would have picked. The
+            # picker draws its `(default)` mark off this rather than off a second client-side
+            # derivation, which is the decoder's own instruction.
+            "upkeep_kit_named": bool(rung_source.get("upkeep_kit_named", false)),
             # **WHY THE BUILDERS ARE HELD ON THIS ENTRY, THROUGH THE ONE PRODUCER THE SOURCE'S OWN
             # CARD USES** (`docs/plan_standing_upkeep.md` §4.6b). The countdown above says the pool is
             # stuck; these say which conjunct of the rung's gate refused, and — where the cause is the
@@ -4943,26 +5663,39 @@ func _rung_is_an_unordered_repair(source: Dictionary, improvement: String,
     return SourceForecast.rung_needs_repair(source,
         HudComposeVocab.BARE_FORECAST_PREFIX, building_rung)
 
+## ⛔ **THE POSITION COMES FROM `SourceForecast.standing_improvement`, NOT FROM EACH WEB'S PRIVATE
+## FLAGS** (`docs/plan_standing_upkeep.md` §4.9 item 12c). It forked on `is_field` / `is_cultivated` /
+## `corralled` / a `domestication >= HUSBANDRY_PROGRESS_COMPLETE` threshold — a reassembly of the very
+## position the sim publishes outright as `current_rung`, which `improvement_is_done`'s own ⛔ records
+## having removed one seam over. It mattered here the moment the INSPECTOR head line started stating
+## the same rung's face (`DetailFormat.standing_rung_face`): a mark forking one way and a face forking
+## another is two answers to *what is this source standing on*, and this row would draw both at once.
+##
+## **THE GLYPH AND THE HOVER STAY THIS FUNCTION'S**, because they are the MARK's — the face's glyph
+## comes welded into `rung_built_label` and the hover names the crop, which no rung badge carries.
 func _work_source_rung(kind: String, patch: Dictionary, herd: Dictionary) -> Dictionary:
-    if kind == SourceForecast.LABOR_KIND_FORAGE:
-        var crop := String(patch.get("committed_display_name", "")).strip_edges()
-        if bool(patch.get("is_field", false)):
+    var source: Dictionary = patch if kind == SourceForecast.LABOR_KIND_FORAGE else herd
+    match SourceForecast.standing_improvement(source, HudComposeVocab.BARE_FORECAST_PREFIX):
+        SourceForecast.IMPROVEMENT_SOW:
+            var field_crop := String(patch.get("committed_display_name", "")).strip_edges()
             return {
                 "glyph": DetailFormat.field_glyph(),
-                "tooltip": HudWorkVocab.WORK_ROW_RUNG_FIELD_TOOLTIP if crop == "" \
-                    else HudWorkVocab.WORK_ROW_RUNG_FIELD_CROP_FORMAT % crop,
+                "tooltip": HudWorkVocab.WORK_ROW_RUNG_FIELD_TOOLTIP if field_crop == "" \
+                    else HudWorkVocab.WORK_ROW_RUNG_FIELD_CROP_FORMAT % field_crop,
             }
-        if bool(patch.get("is_cultivated", false)):
+        SourceForecast.IMPROVEMENT_CULTIVATE:
+            var crop := String(patch.get("committed_display_name", "")).strip_edges()
             return {
                 "glyph": DetailFormat.CULTIVATION_GLYPH,
                 "tooltip": HudWorkVocab.WORK_ROW_RUNG_TENDED_TOOLTIP if crop == "" \
                     else HudWorkVocab.WORK_ROW_RUNG_TENDED_CROP_FORMAT % crop,
             }
-        return {}
-    if bool(herd.get("corralled", false)):
-        return {"glyph": DetailFormat.CORRAL_GLYPH, "tooltip": HudWorkVocab.WORK_ROW_RUNG_PENNED_TOOLTIP}
-    if float(herd.get("domestication", 0.0)) >= DetailFormat.HUSBANDRY_PROGRESS_COMPLETE:
-        return {"glyph": DetailFormat.pastoral_glyph(), "tooltip": HudWorkVocab.WORK_ROW_RUNG_PASTORAL_TOOLTIP}
+        SourceForecast.IMPROVEMENT_CORRAL:
+            return {"glyph": DetailFormat.CORRAL_GLYPH,
+                "tooltip": HudWorkVocab.WORK_ROW_RUNG_PENNED_TOOLTIP}
+        SourceForecast.IMPROVEMENT_TAME:
+            return {"glyph": DetailFormat.pastoral_glyph(),
+                "tooltip": HudWorkVocab.WORK_ROW_RUNG_PASTORAL_TOOLTIP}
     return {}
 
 ## Reset a filter that now selects nothing back to `All`. A kind/attention chip is hidden once its set
@@ -4997,14 +5730,20 @@ func _sort_work_models(models: Array) -> void:
 
 ## "Sort by name" — KIND FIRST, then label, then `key`.
 ##
-## **THE LABEL PREFIX IS NOT A PROXY FOR THE KIND, so alphabetical order alone SPLITS A KIND IN TWO.**
-## A forage row whose Cultivate improvement is done renders through `WORK_ROW_TEND_FORMAT`
-## ("Tend (%d, %d)"), which is display only — its `kind` is still `forage`. With three live prefixes
-## and "Forage" < "Hunt" < "Tend", a band working a wild patch, a herd and a Tended Patch would read
-## Forage → Hunt → Tend, i.e. the forage block interrupted by the hunt block. The `Forage`/`Hunt`
-## filter chips select on `kind` (`_work_models_matching`), so the unsorted-by-kind board would not
-## match the blocks those chips name. Leading with the kind makes the board agree with the chips
-## whatever a row's label says.
+## **THE LABEL PREFIX IS NOT A PROXY FOR THE KIND**, and the sort leads with the kind for that reason
+## rather than because today's words happen to disagree. The `Forage`/`Hunt` filter chips select on
+## `kind` (`_work_models_matching`), so a board ordered by label alone would not match the blocks
+## those chips name whenever the two orders part.
+##
+## ⛔ **THEY PARTED UNTIL §4.9 item 12c AND THEY NO LONGER DO — the shipped vocabulary stopped being
+## the witness.** The dead claim, verbatim: *"A forage row whose Cultivate improvement is done renders
+## through `WORK_ROW_TEND_FORMAT` ("Tend (%d, %d)"), which is display only — its `kind` is still
+## `forage`. With three live prefixes and "Forage" < "Hunt" < "Tend", a band working a wild patch, a
+## herd and a Tended Patch would read Forage → Hunt → Tend, i.e. the forage block interrupted by the
+## hunt block."* Every plant row reads `Harvest (…)` now and `"Harvest" < "Hunt"`, so label order and
+## kind order coincide on every board the game can produce. **The rule is unchanged and the guard has
+## to be synthetic**: `band_panel_preview` asserts the kind grouping over a hand-built pair whose
+## labels run OPPOSITE to their kinds, because no shipped label can express that disagreement.
 ##
 ## The `key` tiebreak makes it a TOTAL ORDER. `sort_custom` is NOT stable in Godot and a label tie is
 ## genuinely reachable — two herds of the same species render the identical `WORK_ROW_HUNT_FORMAT`
@@ -5098,9 +5837,21 @@ const RESTATE_STANDING_FLOOR := -1.0
 ## crop, exactly as it restates the improvement and the kit; only the QUEUE ROW's picker states one.
 const RESTATE_STANDING_SPECIES := "￿"
 
+## **AND `kit_id`'s OWN SENTINEL, for the crop's exact reason** (`docs/plan_standing_upkeep.md` §4.9
+## item 12c). `""` is a REAL instruction on this axis too — `assign_labor`'s parser reads an omitted
+## `kit` token as *the job's default* — so it cannot double as *leave the kit alone*. Every caller but
+## the inspector strip's TAKE picker leaves it alone; that one picker is the only control on this zone
+## that states a kit, and it states it by overriding this.
+##
+## It shares the crop's non-character sentinel rather than declaring a second one: both mean the same
+## thing (*this caller is not speaking to this axis*) and a second value to recognise is a second
+## thing that can be got wrong.
+const RESTATE_STANDING_KIT := RESTATE_STANDING_SPECIES
+
 func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int,
         floor: float = RESTATE_STANDING_FLOOR,
-        species: String = RESTATE_STANDING_SPECIES) -> void:
+        species: String = RESTATE_STANDING_SPECIES,
+        kit_id: String = RESTATE_STANDING_KIT) -> void:
     var kind := String(model.get("kind", ""))
     var standing := float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
     _emit_assign_labor(band, kind, workers, int(model.get("x", -1)), int(model.get("y", -1)),
@@ -5113,7 +5864,8 @@ func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int,
         # means "the job's default" to the parser, so a `+`/`−` that dropped it would re-kit a crew
         # the player deliberately sent out bare-handed. Restated from the row model, which carries the
         # assignment's own `kit_id`.
-        String(model.get("kit_id", KitRoster.NO_KIT_ID)),
+        String(model.get("kit_id", KitRoster.NO_KIT_ID)) if kit_id == RESTATE_STANDING_KIT \
+            else kit_id,
         # **AND THE TAKE SELECTION RIDES IT TOO, for the identical reason one axis over.** An omitted
         # `take:` token means *the whole basket* to the parser and CLEARS whatever the row carried, so
         # a `+`/`−` on the board that dropped it would silently widen a crew the player had narrowed
@@ -5129,23 +5881,105 @@ func _focus_work_source(model: Dictionary) -> void:
     else:
         focus_labor_source(int(model.get("x", -1)), int(model.get("y", -1)))
 
-## One inspector row at a time — opening a second closes the first (and opening one costs the board
-## rows, which is why `_work_board_capacity` subtracts the strip's height).
-## ⛔ **ONE EXPANSION OPEN AT A TIME IN THE WORK ZONE — the queue's strip and the board's inspector
-## are MUTUALLY EXCLUSIVE** (`docs/plan_standing_upkeep.md` §4.7b).
+## One inspector row at a time — opening a second RE-TARGETS the dialog rather than closing it, the
+## same key press being what closes it.
 ##
-## **THE DEFECT IT CLOSES SHIPPED AND WAS REACHABLE IN ONE CLICK EACH.** Open a queue row's settings
-## AND a work row's inspector on a bottom dock and `Zone_work` drew 426 into a 396 box, with the board
-## already at its `maxi(1, …)` floor and nothing left to give back. No frame caught it because every
-## strip-open frame had no inspector and every inspector-open frame had no strip — two disjoint frame
-## families, the defect living in the gap, which is the same shape §4.7 found in the inspector's own
-## height. Each list already enforced this rule INTERNALLY; it is the same rule read one level up, and
-## it costs nothing.
+## ⛔ **ONE EXPANSION OPEN AT A TIME IN THE WORK ZONE — the queue's strip and the board's inspector
+## are MUTUALLY EXCLUSIVE** (`docs/plan_standing_upkeep.md` §4.7b). **Its ARITHMETIC half retired with
+## §4.9 item 12d and the rule is kept for its reading half**, so the reason it shipped for is quoted
+## rather than deleted: *"THE DEFECT IT CLOSES SHIPPED AND WAS REACHABLE IN ONE CLICK EACH. Open a
+## queue row's settings AND a work row's inspector on a bottom dock and `Zone_work` drew 426 into a
+## 396 box, with the board already at its `maxi(1, …)` floor and nothing left to give back. No frame
+## caught it because every strip-open frame had no inspector and every inspector-open frame had no
+## strip — two disjoint frame families, the defect living in the gap."* The inspector takes no zone
+## height at all now, so the two can no longer overflow anything together; what survives is that a
+## board row and a queue row are two different subjects and expanding both states neither clearly.
 func _toggle_work_inspector(key: String) -> void:
     _work_open_key = "" if _work_open_key == key else key
-    _work_picker_open = HudWorkVocab.WORK_PICKER_NONE
     if _work_open_key != "":
         _queue_open_key = ""
+    _repage_work_zone()
+
+## Mount, re-target or take down the inspector card against what the fill just resolved.
+##
+## **RE-MOUNTING IS THE RE-TARGET.** A second row selected while the card is up rebuilds its body and
+## leaves the card standing — never a dismiss followed by a fresh open, which would blink the surface
+## the player is working in and throw away the fit it had already settled on.
+func _sync_work_inspector_dialog(band: Dictionary) -> void:
+    if _work_inspected.is_empty() or not _work_zone_is_on_screen():
+        _dismiss_work_inspector_dialog()
+        return
+    var dialog := _ensure_work_inspector_dialog()
+    if dialog == null:
+        return
+    # **THE PANEL'S CARD RECT AND ITS MAP-FACING SIDE RIDE IN**, so the dialog centres itself in the
+    # room the dock leaves rather than in the raw viewport — see `WorkInspectorDialog._room` for the
+    # 340px card that made the difference visible. `BandComposeFloat.map_facing_side` is the ONE table
+    # naming which side of a docked card faces the map; a second copy here would be free to disagree
+    # with the float about the same geometry.
+    dialog.mount(_build_work_inspector(band, _work_inspected),
+        _work_inspector_height(_work_inspected), _panel.card_rect(),
+        BandComposeFloat.map_facing_side(_panel.get_dock()))
+
+## **IS THE BOARD THE CARD BELONGS TO ACTUALLY VISIBLE?** The narrow shell shows ONE tab, and the panel
+## can be collapsed or hidden outright — and a persistent card floating over the map for a board the
+## player has tabbed away from is a surface with nothing behind it to act on. The wide shell shows
+## every zone, so this only ever bites on a vertical dock.
+func _work_zone_is_on_screen() -> bool:
+    return _panel != null and _panel.shows_zone(BandCityPanel.ZONE_WORK)
+
+## The card, built on first use and reused. `null` while the HUD cannot name a host — the same honest
+## answer `_mount_compose_float` gives, and for the same reason: a `RefCounted` cannot parent.
+func _ensure_work_inspector_dialog() -> WorkInspectorDialog:
+    if _work_inspector_dialog != null and is_instance_valid(_work_inspector_dialog):
+        return _work_inspector_dialog
+    if _host == null or not _host.has_method("work_inspector_host"):
+        return null
+    var host: Node = _host.work_inspector_host()
+    if host == null:
+        return null
+    _work_inspector_dialog = WorkInspectorDialog.new()
+    host.add_child(_work_inspector_dialog)
+    return _work_inspector_dialog
+
+func _dismiss_work_inspector_dialog() -> void:
+    if _work_inspector_dialog != null and is_instance_valid(_work_inspector_dialog):
+        _work_inspector_dialog.dismiss()
+
+## Is the inspector card up? Relayed by `HudLayer.is_work_inspector_open` for `Main`'s ESC chain.
+##
+## ⛔ **IT ANSWERED THE KEY ALONE, AND THE KEY OUTLIVES THE CARD.** The retired reasoning, quoted
+## because it names a real hazard and simply does not settle this question: *"IT ANSWERS THE KEY, NOT
+## THE NODE. The key is what every render reconciles the card against, so a reading taken off `visible`
+## would disagree with it for exactly the one frame between a selection and the fill that mounts for
+## it — and ESC arriving in that frame would open the pause menu instead."* The trade bought a
+## one-frame window and paid for it with a state that PERSISTS: `_sync_work_inspector_dialog` dismisses
+## the card without touching the key — on a collapse, a hide, a narrow-shell tab switch and a selected
+## row leaving the board — so `Main.escape_claimant` kept answering `ESC_WORK_INSPECTOR`,
+## `_unhandled_input` kept calling `set_input_as_handled()`, and the first ESC did nothing visible.
+##
+## **BOTH TERMS, AND EACH ANSWERS ITS OWN HALF.** The key is the board row's SELECTION, which is what
+## `close_work_inspector` clears and what a re-render re-mounts from; `WorkInspectorDialog.is_open()`
+## is whether the card is on screen, which is the only thing ESC can take down. The one-frame window
+## the retired note guards is not reachable through the toggle — `_toggle_work_inspector` sets the key
+## and mounts inside one call stack — and where a fill genuinely could not mount (no host, a queue drag
+## in flight), no card is drawn and the honest answer is the pause menu's.
+func is_work_inspector_open() -> bool:
+    return _work_open_key != "" and _work_inspector_dialog != null \
+        and is_instance_valid(_work_inspector_dialog) and _work_inspector_dialog.is_open()
+
+## Put the card away. The `✕`'s path in everything but its entry point, and ESC's
+## (`Main.escape_claimant` → `HudLayer.close_work_inspector`).
+##
+## **THE NODE IS DISMISSED HERE AS WELL AS THROUGH THE RENDER.** `_repage_work_zone` no-ops while a
+## queue row is being dragged or while the zone has no host, and a card left up after the player asked
+## for it to go is the one outcome an explicit dismiss exists to rule out.
+func close_work_inspector() -> void:
+    if _work_open_key == "":
+        return
+    _work_open_key = ""
+    _work_inspected = {}
+    _dismiss_work_inspector_dialog()
     _repage_work_zone()
 
 func _set_work_filter(filter: StringName) -> void:
@@ -7019,6 +7853,9 @@ func render_faction() -> void:
     _dismiss_compose_float()
     # This page builds no work BOARD, so the re-page path must have nothing to re-page: `_on_zones_resized`
     # would otherwise rebuild the previous band's board into a host `set_zones` is about to free.
+    # **AND THE INSPECTOR'S CARD COMES DOWN WITH IT, the float's own rule** — it lives outside the panel,
+    # it is pinned to a row of the band being left, and no zone rebuild on this page would reach it.
+    close_work_inspector()
     _work_zone_host = null
     _work_zone_band = {}
     _parties_zone_col = null
@@ -7274,8 +8111,10 @@ func refresh_snapshot() -> void:
         _panel_is_faction = false
         _panel.set_band_present(false)
         _panel.set_shown(false)
-        # No band ⇒ no zones are rebuilt, so the footer builder's teardown never runs. The float is
-        # the one piece of this panel that lives OUTSIDE it, and it must go down with the panel.
+        # No band ⇒ no zones are rebuilt, so the footer builder's teardown never runs. The float and
+        # the work inspector's card are the two pieces of this panel that live OUTSIDE it, and both
+        # must go down with the panel.
+        close_work_inspector()
         _party_compose_open = false
         _party_compose_mission = ""
         _split_workers = 1
@@ -7328,6 +8167,11 @@ func set_panel(panel: BandCityPanel) -> void:
     # Re-PAGE the work board on it — the other two zones are unaffected by a box change.
     if panel != null and not panel.zones_resized.is_connected(_on_zones_resized):
         panel.zones_resized.connect(_on_zones_resized)
+    # …and the narrow shell's TAB, which moves what is on screen without moving any box — the one
+    # thing the line above cannot see. Only the floating card is reconciled on it; see
+    # `_on_shown_zone_changed`.
+    if panel != null and not panel.shown_zone_changed.is_connected(_on_shown_zone_changed):
+        panel.shown_zone_changed.connect(_on_shown_zone_changed)
     # The header's `⚒` carries no subject — the header is subject-independent chrome — so WHICH band
     # it opens on is answered here: the panel band. **`render_faction` never touches `_panel_band`**,
     # which is what makes "the last band loaded" already sitting there rather than state this had to

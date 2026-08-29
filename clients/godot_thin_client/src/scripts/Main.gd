@@ -297,6 +297,8 @@ func _ready() -> void:
             hud.connect("unqueue_requested", Callable(self, "_on_hud_unqueue"))
         if hud.has_signal("build_kit_requested") and not hud.is_connected("build_kit_requested", Callable(self, "_on_hud_build_kit")):
             hud.connect("build_kit_requested", Callable(self, "_on_hud_build_kit"))
+        if hud.has_signal("upkeep_kit_requested") and not hud.is_connected("upkeep_kit_requested", Callable(self, "_on_hud_upkeep_kit")):
+            hud.connect("upkeep_kit_requested", Callable(self, "_on_hud_upkeep_kit"))
         if hud.has_signal("build_order_requested") and not hud.is_connected("build_order_requested", Callable(self, "_on_hud_build_order")):
             hud.connect("build_order_requested", Callable(self, "_on_hud_build_order"))
         if hud.has_signal("work_priority_requested") and not hud.is_connected("work_priority_requested", Callable(self, "_on_hud_work_priority")):
@@ -1399,6 +1401,52 @@ static func format_build_kit(payload: Dictionary) -> Dictionary:
 ## back, and *"with "* followed by nothing states nothing at all.
 const BUILD_KIT_DERIVED_NOTE := "the tools this job derives for itself"
 
+## **`upkeep_kit <faction> <x> <y> [kit <id>]` | `upkeep_kit <faction> <herd_id> [kit <id>]` — THE
+## PER-SITE KEEPING KIT** (`docs/plan_standing_upkeep.md` §2.7, surfaced by §4.9 item 12c). It names a
+## SOURCE and sets that site's keeping tool on every band of the faction that works it — a WIDER reach
+## than `build_kit`'s, because a keeping bill is owed by every band holding the ground and not only by
+## whoever queued a build on it. The take crew, its own kit, the queue entry and the meter are
+## untouched.
+##
+## **THE BAND IS THE POOL, NOT THE DECISION.** A kit stored on the band's `agriculture` / `husbandry`
+## role row — where this lived until §2.7 — is the one thing a per-site derivation cannot express: one
+## pick put the same tool on every site that band kept, with no way back. That is also why the strip's
+## picker needs no scope warning: there is no longer a scope to warn about.
+##
+## ⛔ **`none` AND "NO SELECTION" ARE DIFFERENT STATES, AND GETTING IT BACKWARDS IS SILENT.** An
+## ABSENT `kit` token clears the site back to its own web derivation; **`kit none` is bare-handed and
+## is a real selection**, which is how a player conserves the tool on one site while its neighbour
+## goes on using it. `_kit_token`'s standing rule produces both: it omits the token when the pick
+## equals the default, and `none` is an ordinary roster member whose id is never equal to a derived
+## kit's. `KitRoster.NO_KIT_ID` (`""`) is the third thing — *nothing to say* — and also omits.
+##
+## The two source shapes are told apart exactly as `format_build_kit` tells them apart, which is how
+## the sim's own parser does it: a non-empty herd id is the herd form, else two integers are a tile.
+static func format_upkeep_kit(payload: Dictionary) -> Dictionary:
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var kit_face := String(payload.get("kit_id", "")).strip_edges()
+    var token := _kit_token(payload)
+    var message_kit := kit_face if token != "" else UPKEEP_KIT_DERIVED_NOTE
+    var herd_id := String(payload.get("herd_id", "")).strip_edges()
+    if herd_id != "":
+        return {
+            "line": "upkeep_kit %d %s%s" % [faction, herd_id, token],
+            "message": "Keep %s with %s." % [herd_id, message_kit],
+        }
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if x < 0 or y < 0:
+        return {}
+    return {
+        "line": "upkeep_kit %d %d %d%s" % [faction, x, y, token],
+        "message": "Keep (%d, %d) with %s." % [x, y, message_kit],
+    }
+
+## The keeping twin of `BUILD_KIT_DERIVED_NOTE`, and its own string because the two sentences say
+## different things about the same absence: a build derives its kit from the ENTRY's food web, a site
+## from the SITE's.
+const UPKEEP_KIT_DERIVED_NOTE := "the tools this site derives for itself"
+
 ## **WHAT THE PLAYER CALLS THE FIRST SLOT OF A QUEUE.** The wire's `position` is a 0-based INDEX and
 ## stays one; the sim's own reply spells the landed slot `#{landed + 1}`, so the echo beside it adds
 ## the same one. Named because the two bases are a real distinction here — the token and the sentence
@@ -1703,6 +1751,17 @@ func _on_hud_unqueue(payload: Dictionary) -> void:
 func _on_hud_build_kit(payload: Dictionary) -> void:
     _send_formatted_command(format_build_kit(payload))
 
+## NAME THE KIT one WORK SITE is kept with (`docs/plan_standing_upkeep.md` §2.7, surfaced by §4.9 item
+## 12c) — its own handler because its own command and its own scope: it names a SOURCE and sets a
+## property of that SITE, where `build_kit` sets a property of that site's queue entry and
+## `assign_labor` names a band and a role.
+##
+## **NO ROLLBACK, because there is no optimistic write to roll back** — `_on_hud_build_kit`'s rule.
+## `upkeepKitId` is captured LIVE rather than turn-written, so the recapture this command triggers
+## already carries the new value.
+func _on_hud_upkeep_kit(payload: Dictionary) -> void:
+    _send_formatted_command(format_upkeep_kit(payload))
+
 ## RE-ORDER a band's build queue (`docs/plan_standing_upkeep.md` §4.7b ③).
 ##
 ## **NO ROLLBACK, because there is no optimistic write to roll back** — `_on_hud_build_kit`'s rule,
@@ -1814,21 +1873,35 @@ func _send_runtime_command(line: String, message: String,
 ##   (2) an open COMPOSE SHEET closes — it is the innermost working surface, so it claims ESC ahead
 ##       of targeting (docs/plan_tile_panel_layout.md §15);
 ##   (3) active targeting keeps ESC for MapView's targeting-cancel path (we must NOT consume it);
-##   (4) otherwise the pause menu opens.
+##   (4) the Band panel's WORK INSPECTOR dialog closes;
+##   (5) otherwise the pause menu opens.
 ## Extracted as a pure static so the ORDER can be asserted without standing up the whole app scene
 ## (ui_preview drives it with the real HUD's own `is_compose_sheet_open` / `is_targeting_active`).
+##
+## **THE WORK INSPECTOR SITS FOURTH, AND EACH NEIGHBOUR IS A DECISION**
+## (`docs/plan_standing_upkeep.md` §4.9 item 12d). It is behind the compose sheet and behind targeting
+## because it is the OUTERMOST working surface of the three: the sheet is transient and modal and the
+## targeting flow is a question the client has asked and is waiting on, while this dialog is
+## PERSISTENT — the one that is still there afterwards, so it is the one that yields. It is ahead of
+## the pause menu because a surface with an explicit dismiss must answer ESC before ESC means "leave
+## the game"; a persistent card that ignored the key would be the only dismissible surface in the
+## client that does.
 const ESC_RESUME := "resume"
 const ESC_COMPOSE_SHEET := "compose_sheet"
 const ESC_TARGETING := "targeting"
+const ESC_WORK_INSPECTOR := "work_inspector"
 const ESC_PAUSE := "pause"
 
-static func escape_claimant(pause_open: bool, compose_open: bool, targeting: bool) -> String:
+static func escape_claimant(pause_open: bool, compose_open: bool, targeting: bool,
+        work_inspector_open: bool) -> String:
     if pause_open:
         return ESC_RESUME
     if compose_open:
         return ESC_COMPOSE_SHEET
     if targeting:
         return ESC_TARGETING
+    if work_inspector_open:
+        return ESC_WORK_INSPECTOR
     return ESC_PAUSE
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1836,7 +1909,8 @@ func _unhandled_input(event: InputEvent) -> void:
         var claimant := escape_claimant(
             pause_layer != null and pause_layer.visible,
             hud != null and hud.has_method("is_compose_sheet_open") and bool(hud.call("is_compose_sheet_open")),
-            hud != null and hud.has_method("is_targeting_active") and bool(hud.call("is_targeting_active")))
+            hud != null and hud.has_method("is_targeting_active") and bool(hud.call("is_targeting_active")),
+            hud != null and hud.has_method("is_work_inspector_open") and bool(hud.call("is_work_inspector_open")))
         match claimant:
             ESC_RESUME:
                 _hide_pause_menu()
@@ -1846,6 +1920,9 @@ func _unhandled_input(event: InputEvent) -> void:
                 get_viewport().set_input_as_handled()
             ESC_TARGETING:
                 return
+            ESC_WORK_INSPECTOR:
+                hud.call("close_work_inspector")
+                get_viewport().set_input_as_handled()
             _:
                 _show_pause_menu()
                 get_viewport().set_input_as_handled()
@@ -2093,8 +2170,51 @@ func _update_band_panel_lateral_bounds() -> void:
     if not _reserver_overlays_hud(BAND_PANEL_RESERVER, edge, size):
         band_city_panel.call("set_lateral_bounds", 0.0, 0.0)
         return
-    var columns: Vector2 = hud.call("lateral_column_widths")
-    band_city_panel.call("set_lateral_bounds", columns.x, columns.y)
+    var bounds: Vector2 = band_panel_lateral_bounds(edge, size, hud)
+    band_city_panel.call("set_lateral_bounds", bounds.x, bounds.y)
+
+## **WHAT THE CARD MUST KEEP CLEAR OF, AS `(leading, trailing)`** — the columns' live widths, with the
+## LEADING term dropped wherever that column is not actually THERE at the strip's height.
+##
+## **A `static` beside `band_dock_overlays_hud` for the same reason that one is**: the offline harnesses
+## fan a reservation out by hand, and a harness that restates this rule renders a card the live client
+## bounds differently (and vice versa).
+##
+## ⛔ **THE LEADING TERM WAS THE COLUMN'S WIDTH CHARGED AT A HEIGHT THE COLUMN IS EMPTY AT, AND IT COST
+## A FEATURE.** `BandCityPanel._rail_split` gates the bottom dock's chrome on
+## `viewport − split_span − leading >= wide_shell_min_width()`; with the leading term at its authored
+## **360** that needs **2012px**, so a 2000px monitor stacked the minimap and the turn orb at one end and
+## the split *did not exist on the hardware it was built for*. What is at the leading end of a bottom
+## dock's row is not the left column — it is whatever the left column PAINTS there, and measured on a
+## 1920x1080 bottom dock its one card stops at **224** against a strip whose top edge is **662**. The
+## region spans the row; the card does not. `Hud.left_column_content_reach` is the drawn-content read,
+## and it is the same distinction `348e5c09` got the wrong side of on the trailing column.
+##
+## **IT IS LIVE, NOT A WORST CASE, AND IT HAS TO BE.** The left column keeps its full height on a bottom
+## dock deliberately (`_update_right_column_bottom_clearance` — only the RIGHT column yields), so a tile
+## card really may descend into the strip; where it does, the bound comes straight back and the row
+## stacks. The threshold is 438px away from the shipped card's reach, so this is a subject-scale change
+## and not a flicker.
+##
+## **ONLY THE BOTTOM EDGE ASKS IT.** On a TOP dock the strip is at the top of the window and the left
+## column's content STARTS there, so the column is always in the card's band and the question has one
+## answer; asking it there would zero a bound that is genuinely owed.
+##
+## **THE TRAILING TERM IS NOT TREATED THE SAME WAY HERE, and must not be** — the panel already drops it
+## for a bottom dock in `BandCityPanel._trailing_bound_for`, because that column is FORCED clear of the
+## strip by `set_right_column_bottom_clearance` rather than merely observed to be. One decision per
+## column, each where its reason lives.
+static func band_panel_lateral_bounds(edge: int, size: float, hud_layer: Node) -> Vector2:
+    if hud_layer == null or not hud_layer.has_method("lateral_column_widths"):
+        return Vector2.ZERO
+    var columns: Vector2 = hud_layer.call("lateral_column_widths")
+    if edge != SIDE_BOTTOM or not hud_layer.has_method("left_column_content_reach"):
+        return columns
+    var strip_top: float = hud_layer.get_viewport().get_visible_rect().size.y - size
+    if float(hud_layer.call("left_column_content_reach")) <= strip_top:
+        # Nothing is painted in the column at the strip's height, so there is nothing there to clear.
+        return Vector2(0.0, columns.y)
+    return columns
 
 ## Tell the HUD how far above the window's bottom edge its RIGHT column must stop.
 ##

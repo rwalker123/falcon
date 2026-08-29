@@ -38,8 +38,10 @@ extends RefCounted
 # --- The controller's OWN signals (HudLayer connects + relays each; see the class header) ---
 # A hunting party was dispatched — relayed to HudLayer.send_hunt_expedition_requested.
 signal send_hunt_expedition_requested(payload: Dictionary)
-# Another ring was fenced around a pen — relayed to HudLayer.extend_pen_requested.
-signal extend_pen_requested(payload: Dictionary)
+# ⛔ RETIRED — **`extend_pen_requested` on THIS controller.** The signal itself lives on
+# `BandPanelController` now (`docs/plan_standing_upkeep.md` §4.9 item 12c): the ring is declared from
+# the work row's standing-rung mark, not from a button on the tile card. `HudLayer` still carries the
+# outbound signal of the same name and `Main.format_extend_pen` is untouched — only the emitter moved.
 
 ## **RETIRED — `improvement_requested` AND `unqueue_requested`, THIS SHEET'S WHOLE COMMITTING HALF**
 ## (`docs/plan_standing_upkeep.md` §4.7a ①). The pair was the second axis's command
@@ -2100,53 +2102,27 @@ func _payoff_terms(deal: Dictionary, band: Dictionary) -> String:
         float(deal["payoff_fodder"]) * output, SourceForecast.YIELD_ACCOUNT_FOOD,
         SourceForecast.scaled_material_rows(deal.get("payoff_material", []), output))
 
-## The Extend-pen affordance on a selected PENNED herd (Grazing 2d-γ). While no ring is in flight
-## (`pen_extend_progress == 0`) it offers an "Extend pen" button that issues `extend_pen <faction>
-## <x> <y>` at the pen's anchor (a penned herd sits AT `corralled_at`, so the herd's own tile is the
-## anchor). While a ring is being worked off (`pen_extend_progress > 0`) the button is replaced by a
-## WARN-amber "Fencing N%" badge — the pen twin of the corral-build "Building N%" meter. The server
-## rejects an extend at max radius / unowned / Herding-unknown with a feed message; the client does
-## not pre-gate on those (max radius is not on the wire).
+## ⛔ RETIRED — **`_build_extend_pen_control`, THE TILE CARD'S `Extend pen` BUTTON AND ITS
+## `Fencing N%` BADGE** (`docs/plan_standing_upkeep.md` §4.9 item 12c). Reported from play: extending
+## a pen was a button on the TILE card, and it produced a **build queue entry** — so it was the one
+## queue entry in the game declared from somewhere other than the work tab.
 ##
-## **THE RING'S METER IS IN WORK UNITS**, banked against `pen_extend_cost` on the same herd dict, so
-## the badge's percentage comes from `SourceForecast.pen_extend_fraction` and never from the raw
-## field. The gate below is still on the NUMERATOR, which is what keeps a declared-but-unaccrued ring
-## (both fields at zero — `begin_pen_extension` sets the flag, `accrue_pen_extension` stamps the cost)
-## out of the badge entirely rather than rendering it as `0%`.
-func _build_extend_pen_control(herd: Dictionary, target: VBoxContainer) -> void:
-    if SourceForecast.pen_extend_work_done(herd) > 0.0:
-        var badge := Label.new()
-        _apply_fencing_badge(badge, herd)
-        badge.add_theme_color_override("font_color", HudStyle.WARN)
-        target.add_child(badge)
-        return
-    var x := int(herd.get("x", -1))
-    var y := int(herd.get("y", -1))
-    if x < 0 or y < 0:
-        return
-    # **THE RING QUEUES; IT DOES NOT STAFF** (`docs/plan_standing_upkeep.md` §2.5). A ring rides the
-    # same `animal:pen` rung as the pen it widens, so it is funded exactly like every other build: the
-    # press appends an entry to the build queue of every band keeping the pen, and the band's
-    # `builders` pool raises it when it reaches the head. It carried a CREW STEPPER for one slice,
-    # because the verb took a trailing worker count; that token is a parse error now, so the control
-    # is back to the one-click standing action it always was.
-    var extend_btn := Button.new()
-    extend_btn.text = HudComposeVocab.PEN_EXTEND_LABEL
-    extend_btn.tooltip_text = HudComposeVocab.PEN_EXTEND_TOOLTIP
-    HudStyle.apply_button(extend_btn, "ghost")
-    extend_btn.pressed.connect(func() -> void:
-        _emit_extend_pen(x, y))
-    target.add_child(extend_btn)
-
-## Emit the extend-pen request for the pen anchored at (x, y). Main formats
-## `extend_pen <faction> <x> <y>` — **no worker count**: the verb declares and the `builders` pool
-## raises whatever is at the head of the band's queue.
-func _emit_extend_pen(x: int, y: int) -> void:
-    emit_signal("extend_pen_requested", {
-        "faction": HudConst.PLAYER_FACTION_ID,
-        "x": x,
-        "y": y,
-    })
+## **THE MECHANICAL REASON IT ENDED UP HERE** was that `RungLadder.has_track` is FALSE when nothing
+## sits above the standing rung, and `animal:pen` is the top of the animal branch — so a corralled
+## herd's work row rendered **no `⌃` at all** and there was no affordance to hang it on. Extending a
+## pen is precisely what you do *after* the ladder is finished. `selection-card.md` blamed it on being
+## *"a one-click standing action, not a compose flow"*, which was true and was the second reason.
+##
+## **IT IS A `⌃` ON THE STANDING-RUNG MARK NOW** (`BandPanelController._open_ring_card`) — the mark
+## sits on the thing the job acts on, a ring widening the pen the mark denotes, and the track stays
+## one position on a ladder. It opens a PRICE rather than committing on the click, because a ring
+## draws `animal:pen`'s own hurdle pile since §2.7 and a one-click button stated that cost nowhere.
+##
+## **THE BADGE WENT WITH IT, being a THIRD statement of one meter**: the build queue row dates and
+## withdraws the ring, and the work row's mark says one is up on its hover.
+## `PEN_EXTEND_LABEL` / `PEN_EXTEND_TOOLTIP` / `PEN_FENCING_LABEL` retired with the control; the
+## `extend_pen_requested` signal and `Main.format_extend_pen` did NOT — the command is unchanged and
+## only its entry point moved.
 
 # ---- THE FLOOR'S LIVE READINGS (docs/plan_harvest_floor.md §7.3, §7.1, §7.6) --------------------
 #
@@ -4177,7 +4153,7 @@ func refresh_drawer_actions() -> void:
         build_forage_drawer_actions(_selection.tile_info())
 
 ## The LAND drawer's read state: the standing forage summary (when the player already works this
-## patch) and the `Assign foragers ▸` button that opens the sheet. Fills `%ForageAssignControls`,
+## patch) and the `Assign harvesters ▸` button that opens the sheet. Fills `%ForageAssignControls`,
 ## which is why that node keeps its name and its place in the drawer — the compose block MOVED out
 ## of it, the node did not move.
 func build_forage_drawer_actions(tile_info: Dictionary) -> void:
@@ -4249,7 +4225,6 @@ func build_herd_drawer_actions(herd: Dictionary) -> void:
     if not (available or corralled):
         _clear_herd_drawer()
         return
-    var extending := corralled and SourceForecast.pen_extend_work_done(herd) > 0.0
     var herd_id := String(herd.get("id", ""))
     var noun := _herd_crew_noun(herd)
     var summary_model: Dictionary = {}
@@ -4257,15 +4232,12 @@ func build_herd_drawer_actions(herd: Dictionary) -> void:
         var standing := _standing_assignment(SourceForecast.LABOR_KIND_HUNT, -1, -1, herd_id)
         if not standing.is_empty():
             summary_model = _standing_summary_model(standing, SourceForecast.LABOR_KIND_HUNT, noun.to_lower())
-    var shape := _herd_actions_shape(herd_id, corralled, extending, available, summary_model)
+    var shape := _herd_actions_shape(herd_id, corralled, available, summary_model)
     var expected_children := (1 if corralled else 0) + (1 if not summary_model.is_empty() else 0) + (1 if available else 0)
     # Same shape (extend kind + summary structure + compose button presence) → patch each part in
     # place, so a per-snapshot restate never tears the herd drawer down.
     if shape == _herd_drawer_shape and _herd_assign_controls.get_child_count() == expected_children:
         var idx := 0
-        if corralled:
-            _update_extend_pen_control(_herd_assign_controls.get_child(idx), herd)
-            idx += 1
         if not summary_model.is_empty():
             _update_standing_summary(_herd_assign_controls.get_child(idx) as HFlowContainer, summary_model)
             idx += 1
@@ -4273,8 +4245,6 @@ func build_herd_drawer_actions(herd: Dictionary) -> void:
             _update_compose_open_button(_herd_assign_controls.get_child(idx) as Button, noun, herd_id)
         return
     _clear_herd_drawer()
-    if corralled:
-        _build_extend_pen_control(herd, _herd_assign_controls)
     if not summary_model.is_empty():
         _herd_assign_controls.add_child(_build_standing_summary_from_model(summary_model))
     if available:
@@ -4314,30 +4284,17 @@ func _standing_actions_shape(summary_model: Dictionary) -> Array:
 ## compose-open button's `pressed` closure must not capture a herd dict either: it re-resolves the
 ## live herd through `_live_herd(herd_id, …)` when pressed, which is what stops the sheet quoting a
 ## pre-tame herd the turn taming starts (see `_live_herd`).
-func _herd_actions_shape(herd_id: String, corralled: bool, extending: bool, available: bool, summary_model: Dictionary) -> Array:
-    return [herd_id, corralled, extending, available] + _standing_actions_shape(summary_model)
+## ⛔ **`extending` LEFT THIS SIGNATURE WITH THE CONTROL IT SWITCHED** (§4.9 item 12c). It existed to
+## tell the `Extend pen` BUTTON from the `Fencing N%` BADGE, which are different node kinds and so had
+## to force a rebuild rather than a patch; the drawer draws neither now. `corralled` stays — it still
+## decides whether a pen exists at all, which the rows below it read.
+func _herd_actions_shape(herd_id: String, corralled: bool, available: bool, summary_model: Dictionary) -> Array:
+    return [herd_id, corralled, available] + _standing_actions_shape(summary_model)
 
-## Patch an extend-pen control in place. It is a Fencing-N% BADGE while a ring is in flight, else a
-## plain button; WHICH one rides the shape signature (`extending`), so here it is only ever the same
-## kind — only the badge carries a live number to refresh.
-func _update_extend_pen_control(node: Node, herd: Dictionary) -> void:
-    var badge := node as Label
-    if badge != null:
-        _apply_fencing_badge(badge, herd)
-
-## **THE BADGE'S WORDS, WRITTEN ONCE FOR THE BUILD PATH AND THE PATCH PATH.** The two are a known
-## drift pair — the builder above and `_update_extend_pen_control` both state the same ring — so the
-## quotient and the hover live here rather than being spelled at each site.
-##
-## **THE FACE IS A PERCENTAGE AND THE HOVER IS THE PAIR.** `SourceForecast.pen_extend_fraction` is the
-## one division of `pen_extend_progress / pen_extend_cost` (both WORK UNITS); the hover states the
-## absolutes through `DetailFormat.build_meter_value`, which is the house form of a build meter, so a
-## ring reads like every other job the player is paying for.
-func _apply_fencing_badge(badge: Label, herd: Dictionary) -> void:
-    var fraction := SourceForecast.pen_extend_fraction(herd)
-    badge.text = HudComposeVocab.PEN_FENCING_LABEL % HudFormat.progress_percent(fraction)
-    badge.tooltip_text = DetailFormat.build_meter_value(HudComposeVocab.PEN_FENCING_VERB,
-        fraction, SourceForecast.pen_extend_work_done(herd), SourceForecast.pen_extend_cost(herd))
+## ⛔ RETIRED — **`_update_extend_pen_control` and `_apply_fencing_badge`**, the in-place patch for the
+## `Fencing N%` badge and the words it wrote. They went with the badge itself (§4.9 item 12c); the
+## ring's meter is quoted by the build queue row, through the same `SourceForecast.pen_extend_fraction`
+## that division has always had exactly one home in.
 
 ## Patch the `Assign … ▸` button in place: its noun (herders vs hunters can flip as a herd is tamed)
 ## and its primary/ghost lit-while-composing state, without freeing the button (whose `pressed`
@@ -4376,7 +4333,7 @@ func _standing_assignment(kind: String, x: int, y: int, herd_id: String) -> Dict
             return found
     return {}
 
-## The drawer's one-line standing-assignment summary: `♻ 3 foragers · +2.74 /turn`, with the SAME
+## The drawer's one-line standing-assignment summary: `♻ 3 harvesters · +2.74 /turn`, with the SAME
 ## warn/overdraw and overstaff/wasted flags the Band panel's Current-actions rows render, from the
 ## SAME `SourceForecast.source_yield_readout` call. The rate is never recomputed here.
 ## The standing-summary's display model — the values `_build_standing_summary_from_model` renders,
@@ -4403,7 +4360,7 @@ func _standing_summary_model(assignment: Dictionary, kind: String, noun: String)
     # the same `note` / `muted_note` pair, so a third arm added to one and not the other is exactly the
     # drift this repo keeps paying for. `material_short_note` supersedes whatever the readout put in
     # the slot, for the reason it does there: it names a remedy no stepper on this sheet can reach.
-    var material_note := HudWorkVocab.material_short_note(kind,
+    var material_note := HudWorkVocab.material_short_note(
         SourceForecast.material_payoff_rows(assignment.get(
             SourceForecast.ASSIGNMENT_MATERIAL_UPKEEP_DEMAND_KEY, [])),
         SourceForecast.material_payoff_rows(assignment.get(
@@ -4419,7 +4376,7 @@ func _standing_summary_model(assignment: Dictionary, kind: String, noun: String)
         "muted_note": String(readout["muted_note"]),
     }
 
-## Build the drawer's one-line standing-assignment summary (`♻ 3 foragers · +2.74 /turn`) from a
+## Build the drawer's one-line standing-assignment summary (`♻ 3 harvesters · +2.74 /turn`) from a
 ## precomputed model. Same warn/overdraw + overstaff/wasted flags a Band-panel Current-actions row
 ## renders, same three colours.
 func _build_standing_summary_from_model(model: Dictionary) -> Control:

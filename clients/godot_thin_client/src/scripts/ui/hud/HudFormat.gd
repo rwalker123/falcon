@@ -178,32 +178,37 @@ static func bbcode_link(text: String, meta: String, hex: String) -> String:
 static func policy_face(policy: String) -> String:
     return "%s%s" % [source_icon_prefix(FoodIcons.for_policy(policy)), policy.capitalize()]
 
-## **THE PLANT WEB'S CREW NOUN, AND THE ONE PLACE IT IS DECIDED.** A wild stand is drawn down by
-## FORAGERS; a Tended Patch or a Field is kept by TENDERS. The authority is the ladder config itself
-## (`core_sim/src/data/intensification_ladder.json`), where the `wild` rung declares the harvest
-## primitive `worker_take` and both upper rungs declare `worker_tend` — a managed source is never
-## gather-drawn (the sim's `is_managed()` branch), so a crew standing on one is not foraging at all.
+## **THE PLANT WEB'S CREW NOUN, AND THE ONE PLACE IT IS DECIDED.** It is `Harvesters` at every rung —
+## wild stand, Tended Patch, Field — because the crew never changes; only the ground does, and the
+## row's rung MARK already says which ground it is (`docs/plan_standing_upkeep.md` §4.9 item 12c).
 ##
-## **ONE TEST ANSWERS BOTH UPPER RUNGS.** `improvement_is_done(…, CULTIVATE)` asks whether the patch
-## STANDS at or above `plant:tended` — a completed Field does, even though `is_cultivated` is honestly
-## false on it because `Sow` needs no prior patch — so it is true on a Tended Patch AND on a Field sown
-## straight from wild ground, and a separate `SOW` test would only be a second spelling of the same
-## answer, free to drift. That at-or-above reading is what is relied on here.
+## **IT STAYS A FUNCTION THOUGH IT NO LONGER FORKS.** Four code call sites and this docstring are the
+## documented seam for the plant web's crew word; inlining the const would scatter it across the
+## drawer, the sheet and the work board, which is exactly the shape the seam was built to prevent.
 ##
-## **A BUILD IN FLIGHT KEEPS THE WILD NOUN**, deliberately: this reads the rung the patch STANDS on and
-## never a composed improvement, so people part-way through a Cultivate or a Sow — who really are
-## foraging the stand while they clear ground, which is what the build dip charges them for — stay
-## Foragers until the rung COMPLETES. The animal web's `_herd_crew_noun` does read the composed axis,
-## because a herd being penned owes keepers before the pen exists; a patch owes nobody anything.
+## ⛔ **THE RUNG-KEYED FORK IS RETIRED, AND HERE IS WHAT IT CLAIMED.** Verbatim: *"A wild stand is
+## drawn down by FORAGERS; a Tended Patch or a Field is kept by TENDERS. The authority is the ladder
+## config itself … where the `wild` rung declares the harvest primitive `worker_take` and both upper
+## rungs declare `worker_tend`"*; the test was `improvement_is_done(…, CULTIVATE)`, i.e. *does this
+## patch STAND at or above `plant:tended`* — true on a Tended Patch and on a Field sown straight from
+## wild ground; and *"A BUILD IN FLIGHT KEEPS THE WILD NOUN, deliberately … people part-way through a
+## Cultivate or a Sow — who really are foraging the stand while they clear ground — stay Foragers
+## until the rung COMPLETES."* Every one of those statements is still true of the SIM. What retired
+## them is that the second player-facing word was already taken: a Field's sheet read `ASSIGN TENDERS`
+## and then offered the *Gathering* kit, which looks like a bug and is not — the tending is the
+## AGRICULTURE pool's, and a hoe does nothing for a harvest. Reported from play by Ray, who knows how
+## it works and was still caught by it in the moment.
+##
+## **THE VERB IS A SEPARATE SLOT** — `HudComposeVocab.HARVEST_ASSIGN_BUTTON` (`Harvest`) — and the
+## noun→verb tables (`PLANT_ASSIGN_BUTTONS` / `PLANT_NOOP_HINTS`) still key off what this returns.
 ##
 ## **DISPLAY ONLY.** The command is still `assign_labor` with kind `forage`
 ## (`SourceForecast.LABOR_KIND_FORAGE`); nothing on the wire moves with this word.
 ##
-## `prefix` spells the keys, so a `patch_`-prefixed `tile_info` and a bare wire patch both work.
-static func plant_crew_label(src: Dictionary, prefix: String) -> String:
-    return HudComposeVocab.TEND_CREW_LABEL \
-        if SourceForecast.improvement_is_done(src, prefix, SourceForecast.IMPROVEMENT_CULTIVATE) \
-        else HudComposeVocab.FORAGE_CREW_LABEL
+## `src` / `prefix` are kept so every caller keeps reading the SOURCE it is naming a crew for — the
+## day a rung earns its own noun again, the answer is already in hand.
+static func plant_crew_label(_src: Dictionary, _prefix: String) -> String:
+    return HudComposeVocab.HARVEST_CREW_LABEL
 
 # ---- The escapement floor, in words --------------------------------------------------------------
 

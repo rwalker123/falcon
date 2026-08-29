@@ -639,6 +639,24 @@ const WORK_COLUMN_MIN_WIDTH := 380.0
 
 const WORK_MAX_COLUMNS := 4
 
+## How many rows a board column PREFERS to hold before the board reaches for another column.
+##
+## The height-derived row count is what a column CAN hold; this is what it SHOULD hold. Six sources in
+## a bottom dock affording five rows fill COLUMN-MAJOR as 5 + 1 — a second column holding one row reads
+## as an accident rather than as a second column. At three they read as a balanced 3 + 3.
+##
+## ⛔ **A PREFERENCE, NOT A CAP: it yields to the affordance and can never cost a visible source.** All
+## it changes is the column count `BandPanelController._declare_work_layout` asks the panel for. The
+## panel still answers with what the strip can actually pay for, and the shorter column is taken ONLY
+## where that answer holds at least as many sources per page as the height-derived layout would have.
+## Where the extra column is refused the board falls back to the full height and nothing moves — which
+## is also why this needs no dock-edge test: a narrow vertical dock affords one column, refuses, and
+## keeps its tall single column.
+##
+## THREE, because it is the largest count that still reads as a balanced pair at the six sources a
+## typical band's board carries — at four, six sources are 4 + 2 again.
+const WORK_PREFERRED_ROWS_PER_COLUMN := 3
+
 const WORK_CHIPS_HEIGHT := 26.0
 
 const WORK_PAGER_HEIGHT := 24.0
@@ -676,12 +694,50 @@ const WORK_INSPECTOR_SLACK := float(ZONE_BLOCK_SEPARATION)
 
 const WORK_INSPECTOR_HEIGHT := WORK_INSPECTOR_EXTENT + WORK_INSPECTOR_SLACK
 
-## What ONE conditional `HudWidgets.build_status_part` line costs the strip — the overdraw line, the
-## slipping `note`, the `muted_note`. The label is a bare `Label` at `ALLOC_SECTION_FONT_SIZE` with no
-## autowrap, so it is exactly ONE line whatever it says; **14px is measured at that size**, not
-## guessed, and the gap is the one the column puts above every block.
+## What ONE LINE of this zone's small type costs — the overdraw line, the slipping `note`, the
+## `muted_note`, a section header, the board row's second line. **14px is measured at
+## `ALLOC_SECTION_FONT_SIZE`**, not guessed, and it includes the `line_spacing` a drawn `Label` adds
+## per line, which is the whole reason a wrapped line is priced at this number rather than at what
+## `Font.get_multiline_string_size` reports.
+##
+## ⛔ **IT SAID "ONE LINE WHATEVER IT SAYS", AND THAT STOPPED BEING TRUE WHEN THE NOTES STARTED
+## WRAPPING** (`docs/plan_standing_upkeep.md` §4.9 item 12d, third pass). The retired sentence read:
+## *"The label is a bare `Label` at `ALLOC_SECTION_FONT_SIZE` with no autowrap, so it is exactly ONE
+## line whatever it says."* It was true of a strip inside the work zone, where every line elided
+## because the zone's width was reserved. The strip is the `WorkInspectorDialog`'s body now, its four
+## prose lines are `HudWidgets.build_wrapping_status_part` and a note that runs long takes a second
+## line — which `BandPanelController._work_inspector_wrap_overflow` measures and charges at exactly
+## this number, per line beyond the first. **What the constant states is the price of a line; what it
+## no longer states is how many there are.**
 const WORK_INSPECTOR_NOTE_LINE_HEIGHT := 14.0
 
+## …and what EACH LINE AFTER THE FIRST costs, which is **NOT the same number**: a wrapped note draws
+## **31px at two lines against 14 at one**, measured on the card itself
+## (`band_panel_preview`'s worst-case probe). The difference is Godot's `Label` `line_spacing`, which
+## is spent BETWEEN lines and so is not in a one-line label's height at all.
+##
+## ⛔ **CHARGING WRAPPED LINES AT `WORK_INSPECTOR_NOTE_LINE_HEIGHT` UNDER-RESERVES BY 3px A LINE, AND
+## THAT IS HOW THIS CONSTANT WAS FOUND.** The first cut of the wrap did exactly that and the harness
+## caught it on two states — 402 reserved against 407 drawn at the worst case, 334 against 336 on a
+## kept herd — which is the whole reason `reserved >= drawn` is asserted against a laid-out label
+## rather than against the arithmetic that produced it.
+const WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT := 17.0
+
+## **ONE CONTROL LINE — a `compact` `OptionButton` at this zone's type size, MEASURED.** Two blocks
+## draw it: the BUILD QUEUE row's settings strip (`BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT`) and the work
+## inspector's kit pair (`WORK_INSPECTOR_KIT_LINE_HEIGHT`), and they name this rather than each
+## carrying a literal — two measurements of one control are two answers to one question, free to drift
+## by a pixel this zone pays for by clipping the board.
+##
+## **IT IS NOT THE PLAN'S 38.** `docs/plan_standing_upkeep.md` §4.9 item 12c costs a picker at
+## `32 + 6`; that is the COMPOSE SHEET's, a free-standing form with a whole column to spend. In this
+## zone the shipped control is 22 and the block gap is charged once per BLOCK rather than per line.
+const WORK_COMPACT_PICKER_LINE_HEIGHT := 22.0
+
+## What one conditional prose line costs the card: its FIRST line and the gap the column puts above
+## every block. A second and third line, where the sentence wraps to them, are added on top by
+## `BandPanelController._work_inspector_wrap_overflow` — the gap is charged once per BLOCK, so it is
+## right here and must not be inside the per-line overflow.
 const WORK_INSPECTOR_NOTE_HEIGHT := WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(ZONE_BLOCK_SEPARATION)
 
 ## **WHAT ONE BOARD ROW COSTS, and it is TWO LINES.** A source row holds a name, a variable-length
@@ -736,33 +792,136 @@ const WORK_INSPECTOR_POLICY_PICKER_HEIGHT := 32.0
 ## other conditional line in this strip is measured at — so it is stated as the pair rather than as a
 ## fresh number of its own, and moving the grid moves both.
 ##
-## **THE TWO PICKERS ARE MUTUALLY EXCLUSIVE, so the strip pays for AT MOST ONE** — `_work_picker_open`
-## is a three-valued state precisely so that this is true by construction rather than by discipline.
+## ⛔ **IT IS A TERM IN A SUM NOW, NOT AN ARM OF A MAX.** The retired reading was *"THE TWO PICKERS ARE
+## MUTUALLY EXCLUSIVE, so the strip pays for AT MOST ONE — `_work_picker_open` is a three-valued state
+## precisely so that this is true by construction rather than by discipline."* §4.9 item 12d's second
+## pass draws POLICY, PRIORITY and KITS as sections at once, so the exclusion is gone and
+## `WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT` wraps this in a header.
 const WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT := WORK_INSPECTOR_POLICY_PICKER_HEIGHT \
     + WORK_INSPECTOR_NOTE_HEIGHT
 
-## **THE CEILING THESE TERMS ADD UP TO, stated because it is UNMEASURED rather than because it is
-## reserved.** A model carrying every conditional child at once — the overdraw line, the `note`, the
-## `muted_note`, the `ArrivalStrip` and an open picker — reserves **210px** (84 + 3×20 + 14 + 52)
-## against the 104 the tallest row any fixture produces asks for. **The picker term is the TALLER of
-## the two**, the priority one: they cannot both be open (`_work_picker_open`), so the ceiling is a
-## max rather than a sum, and taking the floor picker's 32 here would understate it by the hint line.
-## `BandCityPanel.PANEL_HEIGHT_WIDE` is sized against that 104, so a row reaching this ceiling would
-## take the work zone 106px past its box on a horizontal dock.
+## **THE RULE ABOVE EVERY SECTION HEADER** (`docs/plan_standing_upkeep.md` §4.9 item 12d, second
+## pass). A `ColorRect` at `HudStyle.LINE_SOFT`, which is the Band panel\'s OWN hairline vocabulary —
+## `BandCityPanel._make_zone_separator` draws the wide shell\'s inter-zone rules with exactly this
+## colour and thickness — rather than a style invented for this card.
 ##
-## **NOTHING PADS FOR IT, DELIBERATELY.** No fixture produces the combination and it is not known to be
-## reachable in play — `warn` and `note` are near-exclusive on the board's own rows, and the picker is
-## panel state a player opens — so the zone is not made 106px taller for a state nobody has seen. A
-## KNOWN unmeasured worst case is the cheaper thing to carry; if one is ever observed, this is the
-## figure both of that constant's levers move by.
-## `band_panel_preview._assert_work_inspector_worst_case_fits` builds it and pins the strip's own
-## arithmetic, which is what keeps the number above honest even though no zone reserves it.
+## **A TWIN of `BandCityPanel.ZONE_SEPARATOR_THICKNESS`, deliberately not a read of it.** A `const`
+## initializer evaluates at class load, so a vocab leaf reaching for a `class_name`d panel script is a
+## load cycle waiting to happen (`hud-modules.md` → the `const` direction), which is the same reason
+## `WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT` twins `ArrivalStrip.STRIP_HEIGHT` in prose. Change one and
+## change the other.
+const WORK_INSPECTOR_SECTION_RULE_THICKNESS := 1.0
+
+## What one SECTION HEADER costs the card: the rule, the gap under it, the header label\'s own line,
+## and the gap under that. The label is `HudWidgets.alloc_section_label` — a bare `Label` at
+## `ALLOC_SECTION_FONT_SIZE` with no autowrap, so it is exactly one line, and 14px is the measured
+## height of that type (`WORK_INSPECTOR_NOTE_LINE_HEIGHT`) rather than a guess. Both gaps are the
+## column\'s own `ZONE_BLOCK_SEPARATION`, spent once each by the `VBoxContainer`.
+##
+## **THE ONE-LINE CLAIM SURVIVES *HERE* AND DIED FOR THE NOTES**, and the difference is what the label
+## holds: a section header is a single uppercase WORD (`POLICY`, `PRIORITY`, `KITS`) that cannot reach
+## the column's width, while the notes are sentences and now wrap. Only the prose lines take
+## `build_wrapping_status_part`.
+const WORK_INSPECTOR_SECTION_HEAD_HEIGHT := WORK_INSPECTOR_SECTION_RULE_THICKNESS \
+    + float(ZONE_BLOCK_SEPARATION) + WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(ZONE_BLOCK_SEPARATION)
+
+## …and what the ACTIONS row costs ON TOP of the base extent, which is only its rule and that rule\'s
+## gap. The row itself (`Jump to source` … `Unassign`) has always been inside `WORK_INSPECTOR_EXTENT`;
+## what the sectioning added is the hairline that separates the two pure actions from the last
+## section above them.
+const WORK_INSPECTOR_ACTIONS_RULE_HEIGHT := WORK_INSPECTOR_SECTION_RULE_THICKNESS \
+    + float(ZONE_BLOCK_SEPARATION)
+
+## The three SECTIONS, each its header plus the controls under it. **They are terms in a SUM now, not
+## arms of a max** — the card draws all three at once, which is the whole of §4.9 item 12d\'s second
+## pass.
+const WORK_INSPECTOR_POLICY_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
+    + WORK_INSPECTOR_POLICY_PICKER_HEIGHT
+
+const WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
+    + WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT
+
+## …and the KITS section AT ITS FLOOR: its header and the ONE control line every row draws — the take
+## crew's tool. **It is the only section a row can LACK** — `_work_inspector_has_kits` gates it, a
+## section with an empty picker in it being a control that answers nothing.
+##
+## ⛔ **THE UPKEEP ROW IS NOT IN HERE, AND THAT IS THE FIX** (issue: the wild source's Upkeep row).
+## The retired reading was *"the one that grew: its header, its two control lines, and the HINT line
+## the strip could not afford"* — a flat two-row price, which is what let the card draw an Upkeep
+## picker on a source that stands on no rung and therefore has nothing to keep. The second row and the
+## line under it are `WORK_INSPECTOR_KITS_UPKEEP_HEIGHT`, added only where the site really owes a bill.
+const WORK_INSPECTOR_KITS_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
+    + WORK_COMPACT_PICKER_LINE_HEIGHT
+
+## …and what the UPKEEP half costs ON TOP of that floor: its own control line, and the line beneath
+## that states what the site is billed per turn (`WORK_INSPECT_KITS_UPKEEP_FORMAT`).
+##
+## **BOTH ARE GATED ON ONE ANSWER AND THE PAIR IS INDIVISIBLE.** An Upkeep picker with no bill beside
+## it is the control this constant exists to stop drawing, and a bill with no picker beside it is a
+## number the player cannot act on — so the two are one term, added by `_work_inspector_has_upkeep`
+## and by nothing else.
+const WORK_INSPECTOR_KITS_UPKEEP_HEIGHT := WORK_COMPACT_PICKER_LINE_HEIGHT \
+    + WORK_INSPECTOR_NOTE_HEIGHT
+
+## **THE CEILING THESE TERMS ADD UP TO, AND IT IS A SUM OVER THREE SECTIONS — AT ONE LINE PER NOTE.**
+##
+## ⛔ **IT IS A FLOOR ON THE WORST CASE NOW RATHER THAN THE WORST CASE ITSELF** (§4.9 item 12d, third
+## pass). The card's four prose lines WRAP, so a model whose sentences run long reserves this plus one
+## `WORK_INSPECTOR_NOTE_LINE_HEIGHT` per wrapped line — `BandPanelController.
+## _work_inspector_wrap_overflow`, measured at the card's real column width. Stating the ceiling at one
+## line each is deliberate: it keeps every term below a constant anybody can add up, and it keeps the
+## structural claim (*no fifth conditional child has appeared*) separable from the typographic one
+## (*this sentence is long*). `band_panel_preview._assert_work_inspector_worst_case_fits` asks both —
+## that the reservation exceeds this ceiling by whole note lines and by nothing else, and that a
+## genuinely wrapping worst case still reserves what it draws.
+##
+## (`docs/plan_standing_upkeep.md` §4.9 item 12d). A model carrying every conditional child at once —
+## the overdraw line, the `note`, the `muted_note` and the `ArrivalStrip` — on a row that HAS kits
+## reserves **374px**: the base 64, three note lines at 20, the arrivals at 14, the actions rule at 7,
+## and the POLICY / PRIORITY / KITS sections at 59 / 79 / 91. That figure is the
+## `WorkInspectorDialog`\'s own `min_height` at that model rather than a debt anybody owes the work
+## zone. **It clears the shortest viewport this client renders at with room to spare** — 374 of the
+## 696px a 720-high window leaves inside `WorkInspectorDialog.VIEWPORT_MARGIN`, a margin of 322 — and
+## where a window ever is too short, the card\'s own scroll carries the remainder instead of a zone
+## clipping the board.
+##
+## ⛔ **A SUM, NOT A MAX, AND THE MAX IS THE RETIRED CLAIM — quoted rather than deleted.** It read:
+## *"The picker term is the TALLER of the two, the priority one: they cannot both be open
+## (`_work_picker_open`), so the ceiling is a max rather than a sum, and taking the floor picker\'s 32
+## here would understate it by the hint line."* and, of the kit pair, *"THE KIT PAIR IS NOT A TERM
+## HERE, AND THAT IS THE POINT OF THE THIRD PICKER. It rides the `max` with the other two —
+## `WORK_INSPECTOR_KITS_PICKER_HEIGHT` is 44 against the priority picker\'s 52 — so it cannot be the
+## worst case and this constant does not move for it."* Both were exactly right while the strip
+## competed for a 396px zone box and could afford one expansion. The card competes with nothing, so
+## all three sections draw at once and every one of them is a term.
+##
+## ⛔ **AND THE OLDER RETIREMENT STANDS, quoted for the same reason**: *"THE CEILING THESE TERMS ADD UP
+## TO, stated because it is UNMEASURED rather than because it is reserved. … `BandCityPanel.
+## PANEL_HEIGHT_WIDE` is sized against that 104, so a row reaching this ceiling would take the work
+## zone 106px past its box on a horizontal dock. NOTHING PADS FOR IT, DELIBERATELY. No fixture
+## produces the combination and it is not known to be reachable in play … A KNOWN unmeasured worst
+## case is the cheaper thing to carry; if one is ever observed, this is the figure both of that
+## constant\'s levers move by."* The zone budget carries no inspector term at all now, so this height
+## cannot take anything past any box, `PANEL_HEIGHT_WIDE` is not the lever it would move, and the
+## combination is no longer unmeasured: `band_panel_preview._assert_work_inspector_worst_case_fits`
+## builds it, mounts it in the real card and pins it against the viewport it is centred in.
 const WORK_INSPECTOR_CEILING_HEIGHT := WORK_INSPECTOR_HEIGHT \
     + 3.0 * WORK_INSPECTOR_NOTE_HEIGHT \
-    + WORK_INSPECTOR_ARRIVALS_HEIGHT + WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT
+    + WORK_INSPECTOR_ARRIVALS_HEIGHT \
+    + WORK_INSPECTOR_POLICY_SECTION_HEIGHT \
+    + WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT \
+    + WORK_INSPECTOR_KITS_SECTION_HEIGHT \
+    + WORK_INSPECTOR_KITS_UPKEEP_HEIGHT \
+    + WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
 
-## Gaps the work column always spends: head→chips, chips→board, board→(inspector | nothing).
-const WORK_ZONE_GAP_COUNT := 3.0
+## Gaps the work column always spends: head→chips, chips→board.
+##
+## ⛔ **IT WAS 3, AND THE THIRD WAS THE INSPECTOR'S** (`docs/plan_standing_upkeep.md` §4.9 item 12d).
+## The retired reading was *"head→chips, chips→board, board→(inspector | nothing)"* — a gap charged to
+## every render whether or not a row was selected, because the strip could appear on any of them. The
+## strip is a viewport-centred dialog now (`WorkInspectorDialog`), so there is no board→inspector seam
+## in this column at all and the gap retires with the term beside it in `_work_board_capacity`.
+const WORK_ZONE_GAP_COUNT := 2.0
 
 const WORK_COLUMN_RULE_WIDTH := 1.0
 
@@ -876,6 +1035,45 @@ const WORK_CHIP_READY_FORMAT := "⌃ %d ready"
 ## so the glyph alone would read as *done* rather than *available*.
 const WORK_ROW_READY_FORMAT := "⌃%s"
 
+## ---- THE RING'S CARET, ON THE STANDING-RUNG MARK (`docs/plan_standing_upkeep.md` §4.9 item 12c) ---
+##
+## **THE MARK WEARS THE SAME `⌃` THE READY SLOT DOES, AND IT MUST MEAN THE SAME THING** — press it and
+## a card opens stating what the job eats, what it costs to hold, and where it will stall. That is why
+## the ring opens a PRICE rather than committing on the click: a caret that sometimes declared outright
+## and sometimes opened a card would be one glyph with two meanings.
+##
+## ⛔ **IT IS NOT IN THE READY SLOT, and that slot's own four-way is the reason.** `⌃▦` offers a rung,
+## `▦45%` reports one climbing, `⚠▦` reports one stuck and a fourth state reports one lapsed — and
+## `RungLadder.has_track` is FALSE on a corralled herd (`animal:pen` is the top of the animal branch),
+## so that slot renders NOTHING at all on the very row this control belongs to. Extending a pen is
+## what you do AFTER the ladder is finished; the mark is what the job acts on, a ring widening the pen
+## the mark denotes.
+const WORK_ROW_RING_FORMAT := "%s⌃"
+
+## …and its hover, which has to say what the mark alone cannot: that the caret is about the PEN's size
+## rather than about climbing anything.
+const WORK_ROW_RING_TOOLTIP := "Penned — press to price another fenced ring around this pen."
+
+## **A RING IN FLIGHT WEARS NO CARET, so a second cannot be declared over the first.** The mark falls
+## back to its plain glyph and states the ring on its hover; the PERCENTAGE lives on the build queue
+## row, which is the surface that dates and withdraws it. The tile card's `Fencing N%` badge retired
+## with the move for exactly that reason — it was a third statement of one meter.
+const WORK_ROW_RING_BUILDING_TOOLTIP_FORMAT := "Penned — another ring is going up, %d%% done. The build queue carries its date."
+
+## The ring card's heading, in `RUNG_TRACK_TITLE`'s register because it is the same kind of card one
+## mark over.
+const RING_CARD_TITLE := "Extend the pen"
+
+## The ring's own line on that card. It names the THING rather than a rung, because a ring is not one:
+## the track's rows are positions on a branch and this is a repeatable increment with no position.
+const RING_CARD_ROW_NAME := "Another ring"
+
+## The stable handle on the ring card, and on the mark that opens it — read by name, never by glyph,
+## for `WORK_ROW_RUNG_META`'s own reason (a site icon can be the same character as a rung mark).
+const RING_CARD_META := &"ring_card"
+
+const WORK_ROW_RING_META := &"work_row_ring"
+
 ## **THE `⌃` IS THE CONTROL THAT QUEUES THE JOB** (`docs/plan_standing_upkeep.md` §4.7a ①), so its
 ## hover says the rung's word AND what the click does. Spelled out here, where there is room for
 ## words; the mark itself is two glyphs.
@@ -971,17 +1169,22 @@ const WORK_UNASSIGN_CONFIRM_FORMAT := "Return all %d sources' workers to idle? S
 
 const WORK_UNASSIGN_CONFIRM_OK := "Unassign all"
 
-const WORK_ROW_FORAGE_FORMAT := "Forage (%d, %d)"
-
-# The MANAGED plant row's twin. A Tended Patch or a Field is never gather-drawn, so its crew tends it;
-# the board says so in the same two nouns the compose sheet uses. Keyed by the crew label
-# `HudFormat.plant_crew_label` resolves, so the board row and the sheet it opens cannot disagree about
-# what the people on that tile are doing. DISPLAY ONLY — the row's `kind` is still `forage`.
-const WORK_ROW_TEND_FORMAT := "Tend (%d, %d)"
+# **THE PLANT ROW'S VERB, AT EVERY RUNG** (`docs/plan_standing_upkeep.md` §4.9 item 12c). Keyed by
+# the crew label `HudFormat.plant_crew_label` resolves, so the board row and the sheet it opens cannot
+# disagree about what the people on that tile are doing. DISPLAY ONLY — the row's `kind` is still
+# `forage`.
+#
+# ⛔ **IT WAS A PAIR — `WORK_ROW_FORAGE_FORMAT` (`"Forage (%d, %d)"`) AND `WORK_ROW_TEND_FORMAT`
+# (`"Tend (%d, %d)"`), THE SECOND OF WHICH CLAIMED**, verbatim: *"The MANAGED plant row's twin. A
+# Tended Patch or a Field is never gather-drawn, so its crew tends it; the board says so in the same
+# two nouns the compose sheet uses."* Still true of the SIM, and item 12c retired the second word
+# anyway: a Field's sheet read `ASSIGN TENDERS` and then offered the *Gathering* kit, the tending
+# being the Agriculture pool's rather than the harvest crew's. The rung MARK on the row still says
+# which ground it is; what stops changing is the verb, because the job never changed.
+const WORK_ROW_PLANT_FORMAT := "Harvest (%d, %d)"
 
 const WORK_ROW_PLANT_FORMATS := {
-    HudComposeVocab.FORAGE_CREW_LABEL: WORK_ROW_FORAGE_FORMAT,
-    HudComposeVocab.TEND_CREW_LABEL: WORK_ROW_TEND_FORMAT,
+    HudComposeVocab.HARVEST_CREW_LABEL: WORK_ROW_PLANT_FORMAT,
 }
 
 const WORK_ROW_HUNT_FORMAT := "Hunt %s"
@@ -1097,22 +1300,43 @@ const UNDER_KEPT_LOST_NOW := "%s is being lost now."
 ##   • a DEAD KIT — the FAINT ink, quiet. It costs hands and takes nothing away, and it is the event
 ##     dock's `kit_life` line rather than a note on this row at all.
 ##
-## **IT STATES BOTH TERMS, NEVER THEIR DIFFERENCE** — `Short of hurdles — 0.03 of the 0.05 a turn this
-## pen eats` — because the sim publishes both precisely so this sentence needs no client arithmetic.
-## The noun at the end is the SOURCE, so the sentence says what is eating the good as well as which
-## good it is.
+## **THE REMEDY, IN THE BLOCKED-BUILD FAMILY'S OWN WORDS**, and its own const so the two families'
+## wording has ONE visible relationship: `HudSelectionVocab.BUILD_BLOCKED_MATERIALS_FORMAT` reads
+## *"Short of %s — the bench or a trade, not more builders."* — the same two levers, refusing the same
+## lever.
+##
+## **`hands`, NOT `builders`.** Upkeep is staffed by KEEPERS (`agriculture` / `husbandry`), not by the
+## builders pool, so naming builders here would send the player to the one role card that cannot move
+## this number. Its two siblings on this row — `WORK_ROW_UNDER_KEPT_NOTE` / `WORK_ROW_UNDER_HERDED_NOTE`
+## — name a role to RAISE; this one exists to say no head count helps, which is what the row's own
+## `SourcePriority` rank is for instead (the sim's `settle_scarce_store` decides which pen the hurdles
+## reach when there are not enough).
+##
+## **IT IS WEB-INDEPENDENT BY DESIGN.** A bench and a trade are the answer on both webs, which is why
+## the sentence needs no source kind at all.
+const MATERIAL_SHORT_REMEDY := "The bench or a trade, not more hands."
+
+## **IT STATES BOTH TERMS, NEVER THEIR DIFFERENCE** — `Short of hurdles — 0.40 of the 0.58 a turn it
+## needs. The bench or a trade, not more hands.` — because the sim publishes both precisely so this
+## sentence needs no client arithmetic.
+##
+## ⛔ **IT SAID `a turn this pen eats` AND A PEN GENUINELY DOES EAT** (`docs/plan_standing_upkeep.md`
+## §4.9 item 12c). It ate grass and hay, and §2.7's whole argument is that **hay is FEED, not
+## upkeep** — #578 retired a defect that billed a pen's shortfall to the keepers' food larder — so the
+## retired tail (`"%s — %s of the %s a turn this %s eats."`, filled from a `pen`/`patch` noun pair) put
+## feed and upkeep back under one verb, two lines below a `Fed: 100% — all pasture` row. The readout
+## undoing the model is a defect, not a preference. `it needs` names the obligation without naming an
+## appetite, and the source noun retires with the clause that consumed it — see
+## `MATERIAL_SHORT_REMEDY`.
+##
 ## **THE LEAD-IN IS SHARED WITH THE BLOCKED-BUILD CAUSE, and that is what makes both red.**
 ## `HudSelectionVocab.BUILD_BLOCKED_MATERIAL_SHORT_LEAD` is the one prefix in this client that means
 ## *a good is missing*, and `DetailFormat.detail_bbcode` tints an indented sub-line DANGER on it — so
 ## the work row's note and the queue's stuck reason take one ink from one string, and neither can drift
-## into the amber that means *missing hands*.
+## into the amber that means *missing hands*. ⛔ It may not carry BBCode: both hosts draw this note as a
+## plain `Label`.
 const WORK_ROW_MATERIAL_SHORT_FORMAT := HudSelectionVocab.BUILD_BLOCKED_MATERIAL_SHORT_LEAD \
-    + "%s — %s of the %s a turn this %s eats."
-
-## The two source nouns the sentence ends on, keyed by web the way every other pair in this file is —
-## one picker, so the plant and animal wordings cannot drift.
-const MATERIAL_SHORT_NOUN_HERD := "pen"
-const MATERIAL_SHORT_NOUN_PATCH := "patch"
+    + "%s — %s of the %s a turn it needs. " + MATERIAL_SHORT_REMEDY
 
 ## **THE NOTE'S SEVERITY, CARRIED ON THE MODEL RATHER THAN GUESSED AT THE RENDER SITE.** The work
 ## inspector and the drawer's standing summary both drew this note in a hard-coded `HudStyle.WARN`,
@@ -1136,7 +1360,13 @@ static func note_color(severity: String) -> Color:
 ## `materialUpkeepSupplied`); the WORST good is the one named, because a note has one sentence and the
 ## good furthest behind is the one to act on. **Never a total across goods** — that is the currency
 ## this model does not have.
-static func material_short_note(kind: String, demand: Array[Dictionary],
+##
+## ⛔ **IT TOOK A `kind` AND NO LONGER DOES.** That argument filled the retired `a turn this %s eats`
+## tail from the `MATERIAL_SHORT_NOUN_HERD`/`_PATCH` pair and was used for nothing else, so the web is
+## no longer a term of this sentence at all — see `MATERIAL_SHORT_REMEDY`, which is the same answer on
+## both. `material_short_note_for_source` retired with it: its whole job was translating a SOURCE kind
+## into the labor kind this function no longer wants.
+static func material_short_note(demand: Array[Dictionary],
         supplied: Array[Dictionary]) -> String:
     var worst := _worst_material_shortfall(demand, supplied)
     if worst.is_empty():
@@ -1146,9 +1376,16 @@ static func material_short_note(kind: String, demand: Array[Dictionary],
         DetailFormat.format_trimmed(float(worst[SourceForecast.MATERIAL_UPKEEP_SUPPLIED_KEY]),
             RUNG_TRACK_MATERIAL_DECIMALS),
         DetailFormat.format_trimmed(float(worst[SourceForecast.MATERIAL_UPKEEP_DEMAND_KEY]),
-            RUNG_TRACK_MATERIAL_DECIMALS),
-        MATERIAL_SHORT_NOUN_HERD if kind == SourceForecast.LABOR_KIND_HUNT \
-            else MATERIAL_SHORT_NOUN_PATCH]
+            RUNG_TRACK_MATERIAL_DECIMALS)]
+
+## **IS THIS SOURCE SHORT OF A GOOD AT ALL** — the BOOLEAN the card side's ⚠ gate asks, over the same
+## `_worst_material_shortfall` walk and therefore the same `MATERIAL_FLOW_MIN` threshold the sentence
+## uses. `DetailFormat.rung_is_at_risk` used to ask by testing the SENTENCE for emptiness; once the
+## card stopped printing that sentence (§4.9 item 12c, §4.7's *the board is where staffing is decided*)
+## composing prose in order to test it would be the one coupling holding the retired readout in place.
+static func has_material_shortfall(demand: Array[Dictionary],
+        supplied: Array[Dictionary]) -> bool:
+    return not _worst_material_shortfall(demand, supplied).is_empty()
 
 ## The good furthest behind its bill, by the SHARE paid rather than the raw gap: a rung wanting 6 of
 ## one good and 0.05 of another is not worse off for the larger number, it is worse off for the one it
@@ -1210,13 +1447,20 @@ static func under_kept_note_for_source(source_kind: String,
         material_note: String = "") -> String:
     return under_kept_note(_labor_kind_of(source_kind), material_note)
 
-## **THE CARD-SIDE GOOD-SHORTFALL SENTENCE**, asked with a SOURCE kind — `SOURCE_KIND_HERD` is
-## `"herd"` while `LABOR_KIND_HUNT` is `"hunt"`, so handing one straight to the labor-keyed producer
-## silently words an animal source's note for the plant web. It delegates rather than re-spelling, the
-## same shape the note and tooltip pair above already have.
-static func material_short_note_for_source(source_kind: String, demand: Array[Dictionary],
-        supplied: Array[Dictionary]) -> String:
-    return material_short_note(_labor_kind_of(source_kind), demand, supplied)
+## ⛔ **RETIRED — `material_short_note_for_source(source_kind, demand, supplied)`**, the card-side
+## entry point onto the sentence above. It existed for one reason — `SOURCE_KIND_HERD` is `"herd"`
+## while `LABOR_KIND_HUNT` is `"hunt"`, so a card handing its own kind straight to the labor-keyed
+## producer would silently word an animal source's note for the plant web — and BOTH halves of that
+## reason are gone: the sentence takes no kind any more, and the card does not state it at all
+## (`docs/plan_standing_upkeep.md` §4.9 item 12c). §4.7 set that shape and item 12 regressed against
+## it by shipping the full sentence to both entry points: **the board is where staffing is decided
+## this turn, and on the tile card it is a number you cannot act on.** The staffing half of that
+## argument does not carry over — no head count fixes a missing good — and a better one replaces it:
+## what this UI offers against a scarce good is the row's own `SourcePriority` rank, and that control
+## sits in the work row's strip. The tile card has nothing to press.
+##
+## What the card keeps is the ⚠ and its short state word, which `DetailFormat.rung_is_at_risk` still
+## routes through `has_material_shortfall` above — the mark, not the sentence.
 
 ## …and the HOVER asked the same way, which is the form both source CARDS use. It supplies no
 ## countdown by construction: the card states no figure at all, and the one surface that does states
@@ -1249,15 +1493,44 @@ const WORK_EMPTY_HINT := ALLOC_NO_SOURCES_HINT
 ## re-deriving it and agreeing with the builder by construction, the `POOLS_BLOCK_META` idiom.
 const WORK_INSPECTOR_META := "work_inspector"
 
+## …and the DIALOG that hosts it (`docs/plan_standing_upkeep.md` §4.9 item 12d). Its own handle rather
+## than the strip's, because the two claims a harness makes about them are opposites: the strip must
+## be found OUTSIDE every zone now, and the card around it must be found centred in the viewport. One
+## meta answering both would make "the zone no longer contains the strip" and "the dialog is up" the
+## same question.
+const WORK_INSPECTOR_DIALOG_META := "work_inspector_dialog"
+
+## …and the stable handle on ONE SECTION HEADER, valued the title it states (§4.9 item 12d, second
+## pass). The three sections have nothing else findable — their controls are the same widgets other
+## surfaces build — and the claim a harness has to make is that ALL THREE draw on ONE render, which is
+## a count of these and not a search for a string.
+const WORK_INSPECTOR_SECTION_META := "work_inspector_section"
+
 const INSPECTOR_CLOSE_GLYPH := "✕"
 
 const INSPECTOR_CLOSE_TOOLTIP := "Close detail"
 
+## **WHAT JOINS THE HEAD LINE'S TWO FACTS** — `Harvest (28, 16) · ▦ Field 100%`
+## (`docs/plan_standing_upkeep.md` §4.9 item 12c). The row's own second line already separates its
+## accounts with this character (`STANDING_SUMMARY_SEPARATOR`'s register), so the strip joining *what
+## is being done here* to *what this ground IS* reads as one more clause of the same kind rather than
+## as a new punctuation to learn.
+const WORK_INSPECT_RUNG_SEPARATOR := " · "
+
+## **THE TWO PURE ACTIONS, which is why they are the only two buttons left on this card**
+## (`docs/plan_standing_upkeep.md` §4.9 item 12d, second pass). `Jump to source` moves the map and
+## `Unassign` withdraws the crew; neither has CONTENT to show, so neither can be a section. Everything
+## that did have content — the floor, the rank, the kits — is a section with its controls drawn.
 const WORK_INSPECT_JUMP := "Jump to source"
 
-const WORK_INSPECT_POLICY := "Change policy"
-
 const WORK_INSPECT_UNASSIGN := "Unassign"
+
+## The POLICY section\'s header. **A NOUN, where the retired link face was a verb** — it read
+## *"Change policy"*, which is what you press, and a header names what is below it. The other two
+## headers are `WORK_INSPECT_PRIORITY` and `WORK_INSPECT_KITS`, which were already nouns and are
+## reused as-is; `HudWidgets.alloc_section_label` uppercases all three, so the case is not spelled
+## here.
+const WORK_INSPECT_POLICY_SECTION := "Policy"
 
 const WORK_INSPECT_OVERDRAW_LINE := "⚠ Overdraws the source at this policy."
 
@@ -1321,6 +1594,15 @@ const WORK_PRIORITY_HINT := "When something runs short, the band spends it on hi
 ## spelling in `hud_crafting_vocab.gd` would be free to drift from this one.
 const WORK_INSPECT_PRIORITY := "Priority"
 
+## The strip's FIFTH inline link, between `Priority` and `Unassign` — the kit pair, opened on demand
+## (`docs/plan_standing_upkeep.md` §4.9 item 12c). The three pickers are the same kind of control (a
+## standing property of this row) and `Unassign` stays last, being the destructive one.
+##
+## **PLURAL, because it opens TWO pickers.** `Kit` would name the take crew's alone, which is the half
+## a player already meets on the compose sheet — and the whole point of the pair is that the SITE has
+## one too.
+const WORK_INSPECT_KITS := "Kits"
+
 ## The stable handle on ONE picker button, valued the LEVEL it would send — `POLICY_RUNG_META`'s twin
 ## one control over, and for its reason: the face is presentation (`WORK_PRIORITY_FACES`), so a
 ## harness identifying a button by `text` would be asserting the string it had already composed.
@@ -1338,15 +1620,28 @@ const WORK_ROW_PRIORITY_META := &"work_row_priority"
 ## read as two different sentences depending on which clause you looked at.
 const WORK_ROW_PRIORITY_SEPARATION := 0
 
-## **WHICH EXPANSION THE OPEN INSPECTOR IS SHOWING — a state with THREE values, not two bools.** The
-## floor picker and the priority picker are mutually exclusive: two bools would admit a fourth state
-## (both open) that reserves neither height, and the strip's tallest state is what the work zone's box
-## is sized against. Opening either therefore SETS this, which closes the other by construction.
-const WORK_PICKER_NONE := &"none"
-
-const WORK_PICKER_FLOOR := &"floor"
-
-const WORK_PICKER_PRIORITY := &"priority"
+## ⛔ **RETIRED — `WORK_PICKER_NONE` / `_FLOOR` / `_PRIORITY` / `_KITS`, and with them
+## `BandPanelController._work_picker_open` and `_toggle_work_picker`**
+## (`docs/plan_standing_upkeep.md` §4.9 item 12d, second pass). The inspector draws POLICY, PRIORITY
+## and KITS as SECTIONS, all three at once, so there is no "which one is showing" left to hold.
+##
+## **The retired reasoning is quoted rather than deleted, because every word of it was true of a strip
+## inside the zone**: *"WHICH EXPANSION THE OPEN INSPECTOR IS SHOWING — ONE state with FOUR values,
+## never three bools. The pickers are mutually exclusive: bools would admit combinations that reserve
+## no height at all, and the strip's tallest state is what the work zone's box is sized against.
+## Opening any of them therefore SETS this, which closes the others by construction rather than by
+## discipline — and `_work_inspector_height` adds ONE picker term through a matching `if/elif` chain,
+## so the strip pays the MAX and never the sum. THAT PROPERTY IS WHAT MADE THE KIT PAIR FREE. The pair
+## was drawn as a permanent block first and cost the zone 50px unconditionally, on top of whichever
+## picker was open — measured at 442 into a 396px box on a wide dock. As a picker it costs
+## `WORK_INSPECTOR_KITS_PICKER_HEIGHT` (44) instead of, not beside, the priority picker\'s 52 — so the
+## worst case does not move at all."*
+##
+## **IT WAS RENT-CONTROL FOR RENT THAT IS NO LONGER CHARGED.** Every clause above is an argument about
+## a fixed 396px zone box; the dialog is measured against the viewport and competes with no zone, so
+## the reservation is a **SUM** over three sections and the mutual exclusion buys nothing. Deleting the
+## state also deletes a class of defect it could not avoid — a picker left open when the row changed —
+## and makes the dialog stateless about what it is showing.
 
 ## The level a value that is not one of the three tokens reads as — `upkeep_fund_mode`'s rule, and for
 ## its reason: the control that renders this offers exactly three choices, so a fourth token would
@@ -1479,18 +1774,24 @@ const BUILD_QUEUE_ROWS_MAX := 3
 const BUILD_QUEUE_ROWS_MIN := 1
 
 ## The gaps the queue's own room has to clear before it may claim a row: head→pools, pools→queue,
-## queue→chips, chips→board, board→pager, and the inspector gap `_work_board_capacity` reserves
-## unconditionally. Named rather than spelled, since it is the one term of the reservation that is a
-## COUNT rather than a height.
-const BUILD_QUEUE_ROOM_GAP_COUNT := 6.0
+## queue→chips, chips→board, board→pager. Named rather than spelled, since it is the one term of the
+## reservation that is a COUNT rather than a height.
+##
+## ⛔ **IT WAS 6, AND THE SIXTH WAS THE INSPECTOR'S GAP** (`docs/plan_standing_upkeep.md` §4.9 item
+## 12d), beside a `BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT` term that is retired with it. **The retired
+## reasoning is quoted rather than deleted**: *"AND THE INSPECTOR'S OWN HEIGHT BESIDE THAT GAP. The
+## reservation below budgeted the STRIP'S GAP and not the strip, so the queue claimed rows the zone
+## could only afford while nothing was selected — and selecting a row is one click, after which the
+## board (floored at one row) has nothing left to give back. It is the BASE height rather than a worst
+## case on purpose: the conditional lines and the policy picker are the board's to pay for, and a
+## queue cap sized on the tallest strip a model could ever produce would shrink the block on every
+## dock for a state most bands never reach."* Every word of that was true while the strip lived in
+## this column. It does not: the inspector is a viewport-centred `WorkInspectorDialog` and no
+## selection can take a pixel off this zone, so **the whole point is that NO inspector term survives
+## anywhere in the zone's budget** — one left here would go on charging the queue for a strip that
+## cannot appear.
+const BUILD_QUEUE_ROOM_GAP_COUNT := 5.0
 
-## **AND THE INSPECTOR'S OWN HEIGHT BESIDE THAT GAP.** The reservation below budgeted the STRIP'S GAP
-## and not the strip, so the queue claimed rows the zone could only afford while nothing was selected
-## — and selecting a row is one click, after which the board (floored at one row) has nothing left to
-## give back. It is the BASE height rather than a worst case on purpose: the conditional lines and the
-## policy picker are the board's to pay for, and a queue cap sized on the tallest strip a model could
-## ever produce would shrink the block on every dock for a state most bands never reach.
-const BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT := WORK_INSPECTOR_HEIGHT
 
 ## **HOW MANY ENTRY ROWS THIS ZONE CAN AFFORD**, clamped into `[BUILD_QUEUE_ROWS_MIN,
 ## BUILD_QUEUE_ROWS_MAX]`. It reserves everything the zone owes whatever the queue does — its head,
@@ -1506,7 +1807,7 @@ static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, entri
     # divides for are QUEUE rows, which are one line each.
     var reserved := ZONE_HEAD_HEIGHT + WORK_CHIPS_HEIGHT + pools_block_height(pools_fund_mode) \
         + ZONE_HEAD_HEIGHT + WORK_ROW_TWO_LINE_HEIGHT + WORK_PAGER_HEIGHT \
-        + BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT \
+        + BUILD_QUEUE_ROOM_SETTINGS_HEIGHT \
         + float(ZONE_BLOCK_SEPARATION) * BUILD_QUEUE_ROOM_GAP_COUNT
     var afforded := int((box_height - reserved) / WORK_ROW_HEIGHT)
     if entries > afforded:
@@ -1718,7 +2019,7 @@ const BUILD_QUEUE_CROP_WIDTH := 168.0
 ## `_build_queue_settings_line` also declares as its minimum so the drawn line and the reserved one
 ## are one number. It is the term the WRAP multiplies, and the reason the strip's height below is a
 ## SUM rather than a literal: a second line costs another control and no more chrome.
-const BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT := 22.0
+const BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT := WORK_COMPACT_PICKER_LINE_HEIGHT
 
 ## **THE STRIP'S OWN CHROME, CHARGED EXACTLY ONCE** — `HudStyle.ROLE_CARD_PADDING` above and below
 ## (6 + 6), from the single `work_inspector_stylebox` the strip wears however many lines open inside
@@ -1736,6 +2037,27 @@ const BUILD_QUEUE_SETTINGS_CHROME := 12.0
 const BUILD_QUEUE_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_CHROME \
     + BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
 
+## **THE HEADROOM `build_queue_rows_max` KEEPS FOR THIS STRIP, and it is what the retired
+## `BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT` was paying for by accident** (`docs/plan_standing_upkeep.md`
+## §4.9 item 12d). An open settings strip is charged to the BOARD, and the board is floored at
+## `maxi(1, …)` — so once the queue has claimed enough rows to leave the board at that floor, an
+## opened strip has nothing to come out of and the zone simply overflows. It never showed while the
+## queue's reservation carried 84px of inspector the queue could not use: the strip fitted in its
+## shadow. Taking the inspector out of that reservation is exactly what exposed it — measured on a
+## 1920 bottom dock, the queue claimed 3 rows instead of 1 and `Zone_work` drew **414 into its 396px
+## box** the moment a strip opened.
+##
+## **STATED AS THE STRIP'S OWN WORST CASE rather than as a cushion**: the WRAPPED control pair, which
+## is what an entry carrying both a crop and a kit draws wherever the strip is too narrow for one
+## line. **LEGS ARE DELIBERATELY NOT COUNTED** — a multi-leg climb is the rarer entry, and reserving
+## for it would shrink the block on every dock for a state most bands never reach, which is the same
+## trade the retired constant's own comment made.
+##
+## ⛔ **IT IS DECLARED HERE, NOT BESIDE `BUILD_QUEUE_ROOM_GAP_COUNT` WHERE IT IS READ**, because a
+## GDScript `const` may not read one declared below it and both of its terms are on the lines above.
+const BUILD_QUEUE_ROOM_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_HEIGHT \
+    + BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
+
 ## **THE KEY COLUMN BOTH SETTINGS KEYS DECLARE — `CROP` and `KIT` alike.** One constant, because the
 ## whole point of a stacked layout is that the two keys line up: two independently-measured widths
 ## would put the pickers on two different left edges the moment the strip wraps, and a reader would
@@ -1749,6 +2071,123 @@ const BUILD_QUEUE_KIT_WIDTH := 168.0
 
 ## The kit half's key, in the CROP key's register.
 const BUILD_QUEUE_SETTINGS_KIT_KEY := "KIT"
+
+## ---- THE INSPECTOR STRIP'S KIT PAIR (`docs/plan_standing_upkeep.md` §4.9 item 12c) --------------
+##
+## **THE STRIP IS THE SURFACE BECAUSE IT IS THE ONE PLACE THE RUNG IS KNOWN.** That is item 12's own
+## phrase, used when it declined a kit line on the Agriculture and Husbandry cards. The board's
+## inspector already knows which source is selected and stated neither kit.
+##
+## ⛔ **IT IS A SECTION NOW, DRAWN ALWAYS (where the row has kits), and the retired middle step is
+## quoted rather than deleted**: *"IT IS A PICKER, OPENED ON DEMAND — not a block the strip draws all
+## the time. That is the whole of why it is free: `_work_picker_open` is a four-valued state, so the
+## strip pays for AT MOST ONE expansion and `_work_inspector_height` takes the MAX rather than the
+## sum."* That freedom was bought against a 396px zone box, and §4.9 item 12d's second pass no longer
+## needs it — the card is measured against the viewport, so the pair is simply paid for.
+##
+## ⛔ **IT WAS A PERMANENT BLOCK FIRST, AND THAT COST 50px UNCONDITIONALLY** — on top of whichever
+## picker was open. Measured: **442 into a 396px box on a wide dock, over by 46**, and over at every
+## viewport where the narrow shell is height-clamped too. The dead reasoning, quoted because it is
+## exactly the kind that gets written back if it merely vanishes: *"THE PAIR IS ONE FLEX-WRAP ROW, NOT
+## TWO HAND-PLACED ONES, and that INVERTS the usual trap. A wrapped line normally costs back the row it
+## saved invisibly; here the wrap is the INTENDED behaviour, so the height to reserve is the STACKED
+## one and the single line is the saving."* The inversion was real and the reservation was honest; what
+## was wrong was drawing the pair at all times. **Measured against it**: the pair needs 472px to ride
+## one line and the WIDEST shipped work zone on a horizontal dock is 382 — the wide shell gives the
+## board ONE 380px column at 1920, the flanks and the lateral bounds having taken the rest — so the
+## "single line is the saving" case never occurred on any dock the game ships.
+##
+## **ONE CONTROL LINE IS THE QUEUE SETTINGS STRIP'S OWN MEASURED HEIGHT.** The two hosts draw the same
+## control — a `compact` `OptionButton` in this zone — so a second measurement would be a second answer
+## to one question, free to drift by a pixel this zone pays for by clipping the board. **The plan's
+## arithmetic said 38px** (`32 + 6`); that is the COMPOSE SHEET's picker, a free-standing form with a
+## whole column to spend. In this zone the shipped figure is 22.
+##
+## **ONE LINE PER KIT ROW, AND NO WRAP PREDICATE.** A picker body has the strip's full width and one
+## control to place per row, so it stacks them — which removes the width branch, the `one_line`
+## argument and the drift surface between a predicate and a container that the block form needed.
+## `WORK_INSPECTOR_KIT_KEY_WIDTH` still lines the keys up.
+##
+## ⛔ RETIRED — **`WORK_INSPECTOR_KIT_LINES` (`2.0`) and `WORK_INSPECTOR_KITS_PICKER_HEIGHT`**, the
+## pair that priced the section as *always two control lines*. Their note read: *"AND THE PICKER\'S
+## HEIGHT, WHICH IS THE TERM THE `max` COMPETES ON — two control lines and no chrome of its own … 44
+## against the priority picker\'s 52"* and *"THE HINT LINE IS BACK, AND IT IS NOT COUNTED HERE — this
+## term is the two CONTROL lines, and `WORK_INSPECTOR_KITS_SECTION_HEIGHT` adds the header and
+## `WORK_INSPECT_KITS_HINT` around them"*. **The second row is CONDITIONAL now** — a wild source has no
+## standing rung and therefore nothing to keep — so a constant that folds two rows into one figure
+## cannot be asked how tall the section is on the shape that has one. The take row rides
+## `WORK_INSPECTOR_KITS_SECTION_HEIGHT` and the upkeep row rides
+## `WORK_INSPECTOR_KITS_UPKEEP_HEIGHT`, which is what makes *reserved ≥ drawn* hold on BOTH shapes.
+
+## The crew key's declared width — wider than the queue strip's `CROP`/`KIT` because this key is a
+## crew NOUN (`Harvesters` / `Hunters` / `Herders`) rather than a three-letter tag, and both keys in
+## the picker take it so the two rows share a left edge.
+const WORK_INSPECTOR_KIT_KEY_WIDTH := 62.0
+
+## ⛔ RETIRED — **`WORK_INSPECTOR_KIT_PICKER_WIDTH`**, a declared 168px column borrowed from the queue
+## settings strip. That strip places two controls SIDE BY SIDE and must column them; a picker body has
+## the strip's whole width and one control per row, so the picker expands into whatever the key leaves
+## and a fixed column would be dead space on a wide dock and a clipped kit name on a narrow one.
+
+## The RIGHT key. One word, and deliberately not the role's name (`Agriculture` / `Husbandry`): the
+## pair is *what this crew carries* beside *what holds the site*, and naming a band ROLE here would
+## read as a control over that role's pool — which this is not, the kit being per SITE since §2.5.
+const WORK_INSPECT_UPKEEP_KEY := "Upkeep"
+
+## ⛔ RETIRED — **`WORK_INSPECT_KITS_HINT`**, which read *"\"No kit\" is a real choice — the site worked
+## bare-handed."* and sat under the pair on every kitted row. **It said nothing the section needed and
+## it drew where the section had a hole**: on a WILD source the card rendered an Upkeep picker over a
+## site with no standing rung to keep, and this line stood under it explaining that going without a
+## tool was fine — an answer to a question that was itself the defect. The `none` rule went BACK into
+## the two tooltips it was taken out of, which is where a per-control caveat belongs; what the line\'s
+## slot carries now is `WORK_INSPECT_KITS_UPKEEP_FORMAT`, the site\'s actual bill, which is the fact an
+## Upkeep picker is meaningless without.
+##
+## The measurement in its own retired note stays true of its replacement and is why the format below
+## is short: *"IT IS SHORTER THAN `WORK_PRIORITY_HINT`, and that is a MEASUREMENT rather than a
+## preference: that sentence is the longest this card renders on one line, and the first draft of this
+## one ran seven characters past it and was drawn ELLIPSISED in the frame."*
+
+## **WHAT THIS SITE IS BILLED TO STAND, PER TURN — the one thing the Upkeep picker cannot be read
+## without.** `Kept at 1 work · 0.05 hurdles a turn.` It draws with the Upkeep row and only with it, so
+## the picker and the bill it speeds arrive together or not at all.
+##
+## ⛔ **IT STATES THE TERMS AND NOT THE RUNG WORD, because the card\'s HEAD LINE already states the
+## rung** (`Hunt Aurochs · 🐄 Corralled 100%`, through `DetailFormat.standing_rung_face`). One rung
+## worded twice on one card is how two surfaces come to disagree about one source, and the head line
+## is the producer this card already asks — so what is missing here is the PRICE, which no line on the
+## card said at all.
+##
+## **PRESENT TENSE, DELIBERATELY.** The terms are the source\'s STAMPED bill
+## (`SourceForecast.upkeep_state`\'s `demand` and `upkeep_material_demand`), which answers *what is
+## this source billed right now* — the question this line asks. It is NOT the per-rung
+## `build_upkeep_demand` quote, which answers *what would a rung cost to hold* for a rung nobody has
+## started; that producer\'s own ⛔ forbids reading one as the other, and on a source mid-climb the two
+## disagree by design.
+const WORK_INSPECT_KITS_UPKEEP_FORMAT := "Kept at %s a turn."
+
+## ⛔ **THE `none` RULE IS BACK IN BOTH TOOLTIPS, WHICH IS WHERE IT CAME FROM.** It was moved out to a
+## shared hint line for one slice; that line is retired above, and a caveat about what ONE control\'s
+## `No kit` entry means is a per-control fact rather than a section-wide one. What each tooltip carries
+## besides is the half a shared line never could — which of the two this picker IS (the crew\'s tool
+## against the site\'s) and the upkeep one\'s SCOPE.
+const WORK_INSPECT_TAKE_KIT_TOOLTIP := "What this crew carries when it works the source. `none` is a real choice, not an empty one — it is how a site is worked bare-handed to conserve the tool."
+
+const WORK_INSPECT_UPKEEP_KIT_TOOLTIP := "What this SITE is held with, turn after turn — the keeping tool, not the take one. Set per site, so a pick here moves this row and no other. `none` is a real choice, not an empty one — it is how a site is held bare-handed to conserve the tool."
+
+## ⛔ RETIRED — **`work_inspector_kits_one_line_width` / `work_inspector_kits_one_line` /
+## `work_inspector_kits_height(has_kits, one_line)`**, the block form's width predicate and its
+## always-on height term. A picker body has the strip's full width and stacks its two rows
+## unconditionally, so there is no width branch left to state — and the height is a plain constant in
+## the `max` above rather than a term added to every strip whether or not anyone asked for it.
+
+## The stable handle on each picker, valued the kit id it currently states — `BUILD_QUEUE_KIT_PICKER_META`'s
+## twin one host over, and for its reason: the face is presentation, so a harness identifying the
+## control by `text` would be asserting the string it had already composed.
+const WORK_INSPECT_TAKE_KIT_META := &"work_inspect_take_kit"
+
+const WORK_INSPECT_UPKEEP_KIT_META := &"work_inspect_upkeep_kit"
+
 
 ## **WHY THE JOB HAS A TOOL AT ALL, AND HOW FAR THIS PICK REACHES**
 ## (`docs/plan_standing_upkeep.md` §4.7a ②). Both sentences are load-bearing: the derivation is the
@@ -1927,8 +2366,9 @@ const BUILD_QUEUE_SETTINGS_META := "build_queue_settings"
 ##
 ## **`settings_legs` / `settings_crop` ARE THE ROW EXPANSION, AND IT COSTS NOTHING CLOSED**
 ## (§4.7a ②, ③). The strip is open-only and one-at-a-time, so it adds its height exactly when it
-## draws — the work board's own inspector term (`_work_board_capacity`'s `inspector_h`) in this
-## block's arithmetic.
+## draws — the shape the work board's own inspector term used to have in this block's arithmetic,
+## before §4.9 item 12d took that strip out of the zone entirely and left this the only expansion in
+## the column that costs it anything.
 ##
 ## **THEY ARE THE STRIP'S TWO INPUTS RATHER THAN ITS HEIGHT, so the number still lives in one place.**
 ## It was a lone BOOL for exactly that reason — a caller passing a float could pass a different one

@@ -110,6 +110,17 @@ signal unqueue_requested(payload: Dictionary)
 ## is a real selection.
 signal build_kit_requested(payload: Dictionary)
 
+## The KIT one WORK SITE is kept with — { faction, x, y, herd_id, kit_id, default_kit_id }, Main
+## formatting `upkeep_kit <faction> <x> <y> [kit <id>]` / `upkeep_kit <faction> <herd_id> [kit <id>]`
+## (`docs/plan_standing_upkeep.md` §2.7, surfaced by §4.9 item 12c).
+##
+## **THE SAME PAYLOAD AS THE SIGNAL ABOVE AND A WIDER REACH.** A queue entry belongs to the band that
+## declared it; a site's keeping tool is owed by every band of the faction working that site, which is
+## the sim's own `bands_working_source`. `default_kit_id` is `_kit_token`'s, so picking the
+## `(default)` entry omits the token and hands the site back to its derivation; `none` is bare-handed
+## and is a real selection.
+signal upkeep_kit_requested(payload: Dictionary)
+
 ## The band's build queue was DRAGGED into a new order — { faction, band_id, x, y, herd_id, position },
 ## Main formatting `build_order <faction> <band> <x> <y> <position>` /
 ## `build_order <faction> <band> <herd_id> <position>` (`docs/plan_standing_upkeep.md` §4.7b ③).
@@ -480,12 +491,13 @@ var _right_column_bottom_clearance: float = 0.0
 ##
 ## **ONE LAYER ABOVE THE DOCK, STATED AS THAT RELATION rather than as the number it evaluates to.**
 ## The ladder it joins is `BandCityPanel.LAYER_INDEX` (103) → `EventDockPanel.LAYER_INDEX` (104) →
-## this → `Main`'s `PauseLayer` (200), which still covers everything. No cycle: `EventDockPanel`
+## `WORK_INSPECTOR_LAYER_INDEX` (105) → this → `Main`'s `PauseLayer` (200), which still covers
+## everything. No cycle: `EventDockPanel`
 ## references nothing on `HudLayer` at class-load time, so the `const` direction runs one way only
 ## (see `.claude/rules/client/hud-modules.md`).
 ##
 ## ⛔ **THE BAND/CITY PANEL CHANGED SIDES, AND THAT IS A DECISION RATHER THAN A SIDE EFFECT.** The
-## sheet used to sit at `HUD_LAYER` (101), i.e. UNDER the panel's 103; at 105 it is over it, and
+## sheet used to sit at `HUD_LAYER` (101), i.e. UNDER the panel's 103; at 106 it is over it, and
 ## `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` dismiss catcher. So with a sheet open, the
 ## first click anywhere on the Band/City panel is swallowed as a dismissal instead of reaching the
 ## panel. **Intended, and not to be re-litigated**: no integer is both above 104 and below 103, a
@@ -494,7 +506,27 @@ var _right_column_bottom_clearance: float = 0.0
 ## sheet would be sabotaging its own affordance — its `Work tab` link, which sends the player to a
 ## board on 103 — is closed by `DrawerComposeController._navigate_to_work_tab` closing the sheet as
 ## it navigates. `.claude/rules/client/panel-framework.md` carries the long form.
-const COMPOSE_LAYER_INDEX := EventDockPanel.LAYER_INDEX + 1
+## **THE WORK INSPECTOR'S OWN LAYER, ONE ABOVE THE EVENT DOCK** (`docs/plan_standing_upkeep.md` §4.9
+## item 12d). The Band panel's work-board inspector is a persistent, NON-MODAL, viewport-centred
+## `WorkInspectorDialog` now rather than a strip inside the work zone, and it takes a layer for the one
+## property that makes the rehost work: a `CanvasLayer` child does not participate in any zone's
+## layout, so no expansion of that card can ever cost the board a row again.
+##
+## **ABOVE THE BAR (104) BECAUSE IT IS A SURFACE YOU WRITE INTO** — the bar is `MOUSE_FILTER_STOP` by
+## design, so a picker drawn under it is not merely obscured but unreachable, which is the same
+## autopsy `COMPOSE_LAYER_INDEX` below carries.
+##
+## ⛔ **AND BELOW THE COMPOSE LAYER, WHICH IS WHY THAT CONST IS NOW RELATIVE TO THIS ONE.**
+## `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` dismiss catcher with its card centred inside
+## it; a centred dialog drawn OVER it would take the clicks meant for that card and leave a modal sheet
+## partly unreachable. So the sheet stays on top and a click on this dialog with a sheet open is a
+## dismissal — exactly the trade already accepted for the Band/City panel itself.
+const WORK_INSPECTOR_LAYER_INDEX := EventDockPanel.LAYER_INDEX + 1
+## The node the const names, created in `_ready` (see `work_inspector_host`).
+const WORK_INSPECTOR_LAYER_NAME := &"WorkInspectorLayer"
+var _work_inspector_layer: CanvasLayer = null
+
+const COMPOSE_LAYER_INDEX := WORK_INSPECTOR_LAYER_INDEX + 1
 ## The node the const names, created in `_ready` (see `compose_host`).
 const COMPOSE_LAYER_NAME := &"ComposeLayer"
 var _compose_layer: CanvasLayer = null
@@ -514,10 +546,31 @@ var _compose_layer: CanvasLayer = null
 func compose_host() -> Node:
     return _compose_layer
 
+## The host the Band panel's work inspector parents its dialog into — see `WORK_INSPECTOR_LAYER_INDEX`
+## for the ladder and for why it is neither `self` nor the compose layer.
+func work_inspector_host() -> Node:
+    return _work_inspector_layer
+
+## Is the Band panel's work inspector dialog up? Reached BY NAME from `Main._unhandled_input` for the
+## ESC chain (`Main.escape_claimant`), the `is_compose_sheet_open` idiom — a `has_method` probe that
+## fails SILENTLY, so this method must stay callable on the HUD node.
+func is_work_inspector_open() -> bool:
+    return _bandpanel != null and _bandpanel.is_work_inspector_open()
+
+## …and put it away. ESC's handler, and the twin of `close_compose_sheet`.
+func close_work_inspector() -> void:
+    if _bandpanel != null:
+        _bandpanel.close_work_inspector()
+
 func _ready() -> void:
     # FIRST, before any controller is constructed: each is handed `self` as its host and reads
-    # `compose_host()` back off it lazily, and a null here would silently re-parent a sheet onto the
-    # HUD — the exact bug this layer exists to close, and one that shows only when a bar is docked.
+    # `compose_host()` / `work_inspector_host()` back off it lazily, and a null here would silently
+    # re-parent a sheet onto the HUD — the exact bug these layers exist to close, and one that shows
+    # only when a bar is docked.
+    _work_inspector_layer = CanvasLayer.new()
+    _work_inspector_layer.name = WORK_INSPECTOR_LAYER_NAME
+    _work_inspector_layer.layer = WORK_INSPECTOR_LAYER_INDEX
+    add_child(_work_inspector_layer)
     _compose_layer = CanvasLayer.new()
     _compose_layer.name = COMPOSE_LAYER_NAME
     _compose_layer.layer = COMPOSE_LAYER_INDEX
@@ -567,8 +620,6 @@ func _ready() -> void:
         _resolve_assign_band, _herd_label_for_id, _emit_assign_labor)
     _drawercompose.send_hunt_expedition_requested.connect(
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
-    _drawercompose.extend_pen_requested.connect(
-        func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
     # **THE COMPOSE SHEET ASKS FOR THE WORK TAB; THE PANEL IS REACHED ONLY FROM HERE** (§4.7a ①).
     # `_bandpanel` is constructed BELOW this line, so the relay is a lambda rather than a direct
     # connection to its method — by the time a link can be clicked it is populated, which is the same
@@ -631,6 +682,16 @@ func _ready() -> void:
     # beside the ordering it is about.
     _bandpanel.build_kit_requested.connect(
         func(payload: Dictionary) -> void: build_kit_requested.emit(payload))
+    # The inspector strip's UPKEEP picker, straight through for the queue picker's reason:
+    # `upkeepKitId` is captured LIVE, so the recapture the command triggers already carries the pick
+    # and there is no optimistic write on this layer to roll back.
+    _bandpanel.upkeep_kit_requested.connect(
+        func(payload: Dictionary) -> void: upkeep_kit_requested.emit(payload))
+    # …and the ring, whose entry point moved to the work row's standing-rung mark (§4.9 item 12c).
+    # Straight through: `extend_pen` declares a build-queue entry and the recapture it triggers is
+    # what draws it, so there is no optimistic write on this layer.
+    _bandpanel.extend_pen_requested.connect(
+        func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
     _bandpanel.build_order_requested.connect(
         func(payload: Dictionary) -> void: build_order_requested.emit(payload))
     _bandpanel.work_priority_requested.connect(
@@ -1223,7 +1284,12 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
     #
     # **THE WORK ROW'S `⌃` FOLLOWS THE SAME ORDER** (`_on_work_row_improvement_requested`), so there
     # is ONE rule for every optimistic write on this layer rather than two orderings to reason about.
-    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, floor, improvement)
+    # **THE KIT TRAVELS WITH THE OPTIMISTIC WRITE, because this command STATES it.** The overlay row
+    # REPLACES the confirmed one, so a kit left off here is a pending row with no kit at all — which
+    # blanks the work inspector's take picker and, through `_emit_work_assign`'s restate, re-kits the
+    # crew to the job default on the next `+`. `record_pending_assign` carries the long form.
+    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, floor, improvement,
+        kit_id)
     _after_pending_change()
     emit_signal("assign_labor_requested", {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -1293,7 +1359,12 @@ func _on_work_row_improvement_requested(payload: Dictionary) -> void:
             int(payload.get("workers", 0)), int(payload.get("x", -1)), int(payload.get("y", -1)),
             String(payload.get("herd_id", "")), float(payload.get("floor",
                 SourceForecast.DEFAULT_HARVEST_FLOOR)),
-            String(payload.get("improvement", "")))
+            String(payload.get("improvement", "")),
+            # **THE ROW'S OWN KIT, RESTATED LIKE ITS CREW AND ITS FLOOR.** The `⌃` sends no
+            # `assign_labor`, so nothing here changes the take kit — but the overlay entry REPLACES
+            # the merged row, so omitting it would blank the kit of a row the player only declared a
+            # rung on, exactly as omitting the crew would blank the crew.
+            String(payload.get("kit_id", KitRoster.NO_KIT_ID)))
         _after_pending_change()
         # …and an OPEN compose sheet on that source flips OFFERED → DECLARED on the same frame. It
         # reads the declaration through the overlay (`build_verb`'s `composed` argument), and
@@ -2215,6 +2286,49 @@ func lateral_column_widths() -> Vector2:
     if right_dock_region != null:
         trail = maxf(trail, right_dock_region.get_global_rect().size.x)
     return Vector2(lead, trail)
+
+## **HOW FAR DOWN THE WINDOW THE LEFT COLUMN ACTUALLY *DRAWS*** — the bottom edge of its painted cards,
+## in global coordinates. `NOTHING_PAINTED` where the column is empty.
+##
+## ⛔ **NEVER `left_dock_region`, WHOSE RECT SPANS THE WHOLE ROW WHETHER OR NOT ANYTHING IS PAINTED IN
+## IT**, and that distinction is a defect this client has already had once, one column over:
+## `348e5c09` bounded the chrome rail against the right column's reserved REGION rather than against its
+## drawn content and left a visible band of dead map beside it.
+## `lateral_column_widths` above answers *how WIDE is the column*, which the region is the honest source
+## for; this answers *is the column THERE, at this height*, which it is not — measured on a 1920x1080
+## bottom dock, the region runs 0→1080 while the one card in it (`TilePanel`, the only card
+## `left_dock.add` ever registers) stops at **224**, with the strip's top edge at 662. Charging a
+## 360px column at the row's height on that evidence reserves clearance against nothing.
+##
+## **CLIPPED TO `LeftScroll`, because a card taller than the box hangs out of the bottom of it** and
+## what the player sees is the clip. That is `band_panel_preview._right_dock_content_reach`'s rule for
+## the other column, and the two must answer the same kind of question or the pair of bounds means two
+## different things.
+##
+## **IT IS A LIVE READ, AND THE COLUMN IS ALLOWED TO GROW INTO THE STRIP** — the left column keeps its
+## full height on a bottom dock by design (`set_right_column_bottom_clearance`: only the RIGHT column
+## yields, because a bottom inset on `LayoutRoot` would shorten both and that is the clipping the
+## conditional inset exists to fix). So this is not a worst case to be assumed away; it is the question
+## asked per push, and a tile card that really does descend into the strip charges the bound again.
+func left_column_content_reach() -> float:
+    if left_stack == null or left_dock_scroll == null:
+        return NOTHING_PAINTED
+    var clip := left_dock_scroll.get_global_rect()
+    var bottom := NOTHING_PAINTED
+    for child in left_stack.get_children():
+        var card := child as Control
+        if card == null or not card.visible:
+            continue
+        var drawn := card.get_global_rect().intersection(clip)
+        if drawn.size.x <= 0.0 or drawn.size.y <= 0.0:
+            continue
+        bottom = maxf(bottom, drawn.end.y)
+    return bottom
+
+## What `left_column_content_reach` answers for a column with nothing painted in it. `-INF` rather than
+## `0`: a global y of 0 is the TOP of the window, which every strip is below, so a zero sentinel would
+## read as *the column reaches everywhere* — the wrong direction for a bound.
+const NOTHING_PAINTED := -INF
 
 ## A CLIENT-SIDE note — a refusal, a nudge, a knowledge unlock. It used to land in the left-dock
 ## command feed; it is a System-channel event on the event dock now, which is `Main`'s panel, so the

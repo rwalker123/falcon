@@ -132,10 +132,12 @@ var _folded: Dictionary = {}
 ## of the scroll offset: it is not on the wire, it survives the per-snapshot rebuild, and `render` is
 ## still the whole of this panel's data input.
 ##
-## A plain `bool` rather than the work inspector's three-valued `_work_picker_open`, because this well
-## has no second expansion to be mutually exclusive WITH — that state exists over there to keep the
-## floor picker and the rank picker from both reserving height in one fixed-size zone, and this card
-## refits to its content instead.
+## A plain `bool`, and the work inspector's three-valued `_work_picker_open` — which this used to be
+## contrasted against — is retired outright (`docs/plan_standing_upkeep.md` §4.9 item 12d): that state
+## existed only to keep the floor picker and the rank picker from both reserving height in one
+## fixed-size zone, and the inspector is a viewport-measured card that draws both at once now. This
+## well keeps its `bool` because it has no second expansion to be exclusive WITH, which was always the
+## real reason.
 var _priority_open: bool = false
 
 func _ready() -> void:

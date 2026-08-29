@@ -1879,12 +1879,21 @@ compose sheet parented onto the HUD was therefore **under** a top-docked event b
 screenshots.
 
 **`HudLayer.compose_host()` is a `CanvasLayer` at `COMPOSE_LAYER_INDEX`, and the const is the
-RELATION rather than the number** — `EventDockPanel.LAYER_INDEX + 1`, which states the invariant the
-next reader has to preserve instead of restating a 105 they would have to go and check. There is no
-load cycle to fear: `EventDockPanel` references nothing on `HudLayer` at class-load time, so the
-`const` direction runs one way only (`hud-modules.md` → the `const` direction rule). The ladder it
-joins is `BandCityPanel.LAYER_INDEX` 103 → `EventDockPanel.LAYER_INDEX` 104 → compose → `Main`'s
-`PauseLayer` 200.
+RELATION rather than the number** — which states the invariant the next reader has to preserve instead
+of restating a number they would have to go and check. **That is what let a fourth rung be inserted
+UNDER it without touching a digit anywhere**: `docs/plan_standing_upkeep.md` §4.9 item 12d put the
+Band panel's work-inspector dialog on its own layer between the bar and the sheet, so the const reads
+`WORK_INSPECTOR_LAYER_INDEX + 1` now and resolves to 106. There is no load cycle to fear:
+`EventDockPanel` references nothing on `HudLayer` at class-load time, so the `const` direction runs
+one way only (`hud-modules.md` → the `const` direction rule). The ladder it joins is
+`BandCityPanel.LAYER_INDEX` 103 → `EventDockPanel.LAYER_INDEX` 104 →
+`HudLayer.WORK_INSPECTOR_LAYER_INDEX` 105 → compose → `Main`'s `PauseLayer` 200.
+
+**The sheet stays ON TOP of the work-inspector dialog, and that is the decision rather than the
+accident.** `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` catcher with its card centred inside
+it; a centred non-modal dialog drawn OVER it would take the clicks meant for that card and leave a
+modal sheet partly unreachable. So a click on the inspector card with a sheet open is a dismissal —
+the same trade already accepted for the Band/City panel itself.
 
 - **It is created IN CODE, in `_ready`, not in `HudLayer.tscn`.** Every offline harness stands the HUD
   up differently and several instance it without `Main`, so a node that exists only in the scene is a
@@ -3144,6 +3153,36 @@ default", so a `+`/`−` on the work board that dropped it would silently re-kit
 deliberately sent out bare-handed. A band-wide role (scout / warrior) carries `""` and emits nothing —
 it consumes no component and has no kit axis, which is "no selection to make", never "no kit".
 
+> #### ⛔ …AND THE OPTIMISTIC OVERLAY HAS TO CARRY IT, OR THE RESTATE RESTATES NOTHING
+>
+> `effective_worker_map`'s pending branch **REPLACES** the merged row rather than patching it, and
+> `record_pending_assign` recorded no `kit_id` at all — so every PENDING row carried `""` and the
+> guard above became the very substitution it was written to prevent: a second `+` on a row the
+> player had just staffed emitted no `kit` token, and the sim resolved the job default. **Live on
+> BOTH webs**, with nothing on screen saying so.
+>
+> **It is the OPPOSITE treatment to `improvement` and `priority`, and which one a field takes is
+> decided by whether `assign_labor` STATES it.** A rank is not on that command, so the overlay reads
+> the SETTLED row's; the take kit is, so the overlay states what the command just carried. On a
+> brand-new assignment there is no settled row to inherit from anyway, which is the case this was
+> reported on — so "preserve the confirmed kit" is a repair that passes on an EDIT and fails on the
+> reported state.
+>
+> **`Hud._emit_assign_labor` passes its own `kit_id` through**, and the work row's `⌃` payload gained
+> one (`_emit_work_row_improvement`) for the reason it already restates the crew and the floor: it
+> sends no `assign_labor`, but its overlay entry REPLACES the row, so omitting the kit would blank
+> the kit of a row nobody re-kitted.
+>
+> **The second, VISIBLE half was the work inspector's take picker**, which resolved through
+> `KitRoster.default_kit_for(job, source, source.get("default_kit_id"))` — the SOURCE's own field for
+> both arguments, where the third is the JOB's default. Only a HERD publishes `default_kit_id`, so on
+> the plant web the fallback was `""` at every rung: the picker opened on nothing, showed an empty
+> face, and re-picking from it re-recorded a pending row with no kit, so the face never filled and
+> the control read as dead. It is `_band_labor.default_kit_id(job)` now — the same answer
+> `_emit_assign_labor` measures the command's omitted token against, so the `(default)` mark and the
+> omission cannot name two different kits. **The hunt web only LOOKED immune**: a herd's per-quarry
+> default hid the blank face there, and the silent re-kit was live on both.
+
 ---
 
 ## An assignment has TWO axes: the STANCE and the IMPROVEMENT (issue #442)
@@ -3236,7 +3275,8 @@ retires, so no rung of that picker can be disabled.
 >   clickable. `work_tab_requested(band_entity)` is a `DrawerComposeController` signal relayed by
 >   `HudLayer` to the panel — **the compose sheet never reaches the dock itself**.
 >   - **THE SHEET CLOSES AS THE LINK NAVIGATES** (`_navigate_to_work_tab`), and that is not tidiness.
->     The compose surfaces moved to `HudLayer.COMPOSE_LAYER_INDEX` (105), above `BandCityPanel`'s 103,
+>     The compose surfaces moved to `HudLayer.COMPOSE_LAYER_INDEX` (106 since §4.9 item 12d inserted a
+>     rung beneath it; 105 when this shipped), above `BandCityPanel`'s 103,
 >     and `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` dismiss catcher — so a sheet left open
 >     lands the player on the board this sentence sent them to and swallows their first press, the `⌃`
 >     it just told them to use. It is the only control inside a compose surface that navigates to
@@ -4476,26 +4516,36 @@ until `docs/plan_unit_costed_work.md` §4.8, and its readers were not moved with
 units scaled by `PROGRESS_PERCENT_SCALE` rendered as **`Fencing 6900%`**, reported from play.
 
 - **`SourceForecast.pen_extend_fraction(herd)` IS THE ONLY PLACE THAT DIVISION IS WRITTEN**, with
-  `pen_extend_work_done` / `pen_extend_cost` beside it for the absolutes. Two surfaces quote a ring —
-  the herd drawer's WARN-amber `Fencing N%` pill (built by `_build_extend_pen_control`, patched in
-  place by `_update_extend_pen_control`, both through `_apply_fencing_badge`) and the build queue's
-  percentage for a ring entry — and they were two open-coded copies of the same wrong multiplication.
+  `pen_extend_work_done` / `pen_extend_cost` beside it for the absolutes. It was written twice —
+  two open-coded copies of the same wrong multiplication — for the two surfaces that quoted a ring.
+  ⛔ **ONE OF THOSE TWO IS GONE** (§4.9 item 12c): the herd drawer's WARN-amber `Fencing N%` pill, its
+  in-place patch and `_apply_fencing_badge` retired with the tile card's `Extend pen` button, and
+  `PEN_FENCING_VERB` retired too — the BUILD QUEUE row states a bare percentage beside the rung's own
+  verb (`Corral <herd>`, a ring deriving the verb of the rung it widens), so no surface left needs a
+  word for it. ⛔ **THAT IS NOT THE SAME AS "the queue row is the only surface quoting a ring's
+  meter"**, which is what this bullet said for a release: the work row's standing-rung MARK states the
+  percentage on its hover (`HudWorkVocab.WORK_ROW_RING_BUILDING_TOOLTIP_FORMAT`) and points at the
+  queue row for the DATE. Two surfaces, one division — which is the reason the helper exists.
 - **A ZERO DENOMINATOR IS AN UNPRICED RING, NOT A FULL ONE.** `begin_pen_extension` leaves both fields
   at zero and the accrual seam is what stamps the cost, so `0 / 0` is *no ring*: the helper answers an
-  empty meter rather than dividing. The drawer's own gate is on the NUMERATOR
-  (`pen_extend_work_done(herd) > 0`), which is what keeps a declared-but-unaccrued ring out of the
-  badge entirely instead of rendering it as `0%`.
+  empty meter rather than dividing. **The gate is on the NUMERATOR**, which is what keeps a
+  declared-but-unaccrued ring out of the readout entirely instead of rendering it as `0%` — it is
+  `SourceForecast.pen_ring_is_in_flight` now, named rather than open-coded, because the work row's
+  standing-rung mark asks it to decide whether to draw the ring `⌃` at all.
 - **NO `FORECAST_BUILD_*_KEYS` ROW, AND `build_verb` ANSWERS NOTHING FOR IT.** A ring widens the pen
   rung its herd already stands on, so the herd reads `Corralled 100%` for the ring's whole life and
   the rung ladder has no meter in flight to report. `extend_pen` is therefore not an
   `IMPROVEMENT_*` — it is `BUILD_JOB_EXTEND_PEN`, the token
   `snapshot::population::resolved_build_job` publishes in the wire's `improvement` slot for a ring
   entry, and the one thing that tells a ring from a rung with what is already on the wire.
-- **THE BADGE STAYS A PERCENTAGE AND THE PAIR RIDES ITS HOVER.** `Fencing 42 / 70 work (60%)` bursts a
-  compact pill in a drawer column, so the hover carries it — through
-  `DetailFormat.build_meter_value`, the house form every other build meter uses, rather than a second
-  spelling. Frame: `herd_pen_extending` (42 of 70 work banked → `Fencing 60%`), asserted on the NUMBER
-  and on both render paths, since a presence check passes throughout the defect's life.
+- ⛔ **THE BADGE AND ITS HOVER ARE RETIRED** (§4.9 item 12c). The dead claim: *"`Fencing 42 / 70 work
+  (60%)` bursts a compact pill in a drawer column, so the hover carries it — through
+  `DetailFormat.build_meter_value`, the house form every other build meter uses."* True while the pill
+  existed; it was a THIRD statement of a meter the build queue row already dates and withdraws.
+  **The frame survives with its claim inverted**: `herd_pen_extending` still stages 42 of 70 work
+  banked, and asserts the badge and the `Extend pen` button are GONE — paired with a precondition that
+  the fixture really is mid-extension (or "no badge" is free) and a liveness claim that the drawer
+  still draws its action row (or "no badge" is satisfied by a broken drawer).
 
 ### CLOSED — the build's PRICE and its turn estimate are on the wire now
 
@@ -6419,7 +6469,81 @@ reason once before the render — exactly that one assertion fails, and only it.
 fixture repair rather than a convenience: every meadow in it is WILD, so at the ladder's default dial
 the frames that exist to show three live accounts would mute the third.
 
-## The plant web's crew noun follows the STANDING RUNG
+## The plant web's crew is `Harvesters`, and it HARVESTS — one word at every rung
+
+> ### ⛔ THE HEADING WAS "The plant web's crew noun follows the STANDING RUNG", AND THE FORK IS RETIRED
+>
+> `docs/plan_standing_upkeep.md` §4.9 item 12c. Everything below records why the fork was built and
+> what it cost; **where a passage says a managed source's crew are `Tenders` or that its commit verb
+> is `Tend`, read it against this.** Nothing about the SIM's model changed — the ladder config still
+> declares `worker_take` on `wild` and `worker_tend` on both upper rungs, and a managed source is
+> still never gather-drawn — and none of that needed a second player-facing word.
+>
+> **THE SECOND WORD WAS ALREADY TAKEN.** On a Field the sheet read `ASSIGN TENDERS` and then offered
+> the *Gathering* kit, which looks like a bug and is not: the tending is the AGRICULTURE pool's, and
+> a hoe does nothing for a harvest. **Reported from play by Ray, who knows how it works and was still
+> caught by it in the moment** — which is the whole argument, since a reading that catches the person
+> who built the model is not a reading a player recovers from.
+>
+> **`Harvest` IS ALREADY THIS REPO'S CROSS-WEB WORD** for taking from a source (a *pen harvest*, the
+> *harvest floor*), it is neutral between wild and cultivated — which IS the defect — and it survives
+> the tech ladder where *gatherers* would not. What stops changing is the CREW's name, because the
+> crew never changed; the rung MARK on the row still says which ground it is.
+>
+> **THE HUNT SHEET IS NOT RENAMED.** `Hunters` / `Herders` is specific and collides with nothing, so
+> `HUNT_ASSIGN_BUTTONS`, `HUNT_NOOP_HINTS`, `_herd_crew_noun` and `HERD_CREW_LABEL` are untouched —
+> and the animal web is now the ONE web whose crew noun still follows its rung.
+>
+> #### The word lands in TWO grammatical slots and takes TWO forms
+>
+> | slot | form | reads |
+> |---|---|---|
+> | work row / strip head | VERB | `Harvest (28, 16)` |
+> | commit button | VERB | `Harvest` |
+> | sheet eyebrow | NOUN | `Assign harvesters` |
+> | drawer open button | NOUN | `Assign harvesters ▸` |
+> | standing summary | NOUN | `♻ 3 harvesters · +2.74 /turn` |
+> | dead-button hint | NOUN (singular) | `Nobody assigned yet — send at least one harvester.` |
+>
+> **ONE STRING CANNOT FILL BOTH** — `Assign harvest` and `♻ 3 harvest` are the readings that prove
+> it — so the noun→verb tables SURVIVE the collapse rather than retiring with the fork they held:
+> `PLANT_ASSIGN_BUTTONS` and `PLANT_NOOP_HINTS` go from two entries to one each,
+> `WORK_ROW_PLANT_FORMATS` likewise, and `WORK_ROW_FORAGE_FORMAT` / `WORK_ROW_TEND_FORMAT` collapse
+> into `WORK_ROW_PLANT_FORMAT`. **Do not add a second fork to carry the verb.**
+>
+> #### `plant_crew_label` STAYS A FUNCTION though it no longer forks
+>
+> Four code call sites and its docstring are the documented seam for this word; inlining the const
+> scatters it across the drawer, the sheet and the work board — which is the shape the seam exists to
+> prevent. Its `src` / `prefix` parameters are kept so every caller still reads the SOURCE it is
+> naming a crew for.
+>
+> #### The `gathering` kit's DISPLAY NAME is now `Harvesting kit` — its ID is unchanged
+>
+> One field in `core_sim/src/data/equipment.json`. The id stays `gathering`, so no sim code, test or
+> wire contract moves, and `BandFx.kit_roster_fixture()`'s copy of the roster follows it. The two
+> as-built WIDTH measurements that name the old string (`hud_compose_vocab.gd`'s field-key derivation,
+> `HudWidgets.build_option_picker`'s caret autopsy) are corrected in place: `Harvesting kit` is one
+> character LONGER, so both conclusions hold a fortiori.
+>
+> #### What the collapse cost the harness, and what pays for it
+>
+> **THE FIVE `plant_crew_*` STATES NOW ALL EXPECT ONE NOUN, WHICH IS A WEAKER SET.**
+> `_assert_plant_crew_noun` gained a LIVENESS half — the resolved noun AND the verb its table yields
+> must both be non-empty — because five equalities against one const are otherwise satisfied by a
+> resolver answering `""` (and by a `PLANT_ASSIGN_BUTTONS` lookup missing its one key, which also
+> answers `""`). `_assert_plant_crew_noun_is_rung_blind` beside them asks the resolver directly over
+> the three rungs the fork used to split, which is the COLLAPSE itself: five separate equalities
+> against one const cannot say that the rungs agree.
+>
+> **AND `band_panel_preview`'s CLAIM 4 LOST ITS FALSIFIER TO THE RENAME.** That claim — the default
+> sort groups by KIND — was made to bite by a managed plant row reading `Tend (…)`, which sorts AFTER
+> `Hunt`; every plant row reads `Harvest (…)` now and **`"Harvest" < "Hunt"`**, so on every board the
+> shipped vocabulary can produce the label order and the kind order COINCIDE and a label-only
+> comparator passes. Measured: dropping the comparator's kind term fails **exactly one** assertion,
+> and it is not that one. `_assert_work_sort_groups_by_kind` carries the falsifier on a SYNTHETIC pair
+> whose labels run opposite to their kinds, marked as synthetic, because no shipped label can express
+> that disagreement any more.
 
 Every surface for a sown Field said *forage* / *Foragers* — the wrong verb, not merely an awkward
 one. Reported from play.
@@ -6502,6 +6626,83 @@ thing every assertion here is ABOUT: finding one by text could only confirm the 
 already assumed. The three `ui_preview` sites that reached the forage commit / open button by face were
 repointed at it, and the bare `assert` beside one of them became `_assert_hud` — under sabotage it broke
 the headless run into the debugger and hung the suite, which is the hazard that rule already records.
+
+## `hud_work_vocab`'s INSPECTOR TERMS after §4.9 item 12d — the zone pays none, the card sums three
+
+The work board's inspector strip is a viewport-centred `WorkInspectorDialog` now, not the last child
+of the work column — the whole decision, its four load-bearing properties and the dock/viewport matrix
+that guards it live in `band-city-panel.md` → "THE WORK INSPECTOR IS A DIALOG". What lands in **this**
+file is the arithmetic, because it is this file's constants that moved and a reader editing them may
+never load that one:
+
+- **`WORK_ZONE_GAP_COUNT` is 2**, not 3. The retired third was *"board→(inspector | nothing)"* — a gap
+  charged on every render whether or not a row was selected, because the strip could appear on any of
+  them. There is no board→inspector seam in this column at all.
+- **`BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT` is gone and `BUILD_QUEUE_ROOM_GAP_COUNT` is 5.** The queue's
+  own room reserved `WORK_INSPECTOR_HEIGHT` plus a separation against a strip that can no longer
+  appear.
+- **`BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` replaced it, and it is a different quantity with a real name.**
+  A queue row's settings strip is charged to the BOARD, and the board is floored at `maxi(1, …)` — so
+  once the queue has claimed enough rows to leave the board at that floor, an opened strip has nothing
+  to come out of. That never showed while the inspector's 84px sat in the queue's reservation: the
+  settings strip fitted in its shadow. Removing the inspector term is exactly what exposed it
+  (measured: `Zone_work` drew **414 into its 396px box** the moment a strip opened on a 1920 bottom
+  dock). It is stated as the strip's own worst case — the WRAPPED control pair — and **legs are
+  deliberately not counted**, a multi-leg climb being the rarer entry.
+- **`WORK_INSPECTOR_HEIGHT` and the conditional terms under it are UNCHANGED, and that is the point.**
+  `BandPanelController._work_inspector_height` still sums them per model; only its consumer moved,
+  from the zone's budget to the dialog's `min_height`. That is what keeps *reserved ≥ drawn* a claim
+  anybody can still make about this strip.
+- **`WORK_INSPECTOR_CEILING_HEIGHT` stopped being a risk and became a size.** It was *"stated because
+  it is UNMEASURED rather than because it is reserved"*, and a row reaching it would have taken the
+  work zone 106px past its box; the card can simply be that tall against a viewport whose shortest
+  shipped height is 720. `BandCityPanel.PANEL_HEIGHT_WIDE` is no longer the lever it would move.
+
+⛔ **AND THE PICKER TERMS BECAME SECTION TERMS — the ceiling is a SUM** (§4.9 item 12d, second pass).
+`WORK_PICKER_NONE`/`_FLOOR`/`_PRIORITY`/`_KITS` are retired outright with
+`BandPanelController._work_picker_open` and `_toggle_work_picker`: the card draws POLICY, PRIORITY and
+KITS at once, so `_work_inspector_height` adds all three rather than one, and the ceiling is **374**
+(base 64 + 3×20 notes + 14 arrivals + 59 + 79 + [49 + 42] + a 7px actions rule) rather than 210. The
+KITS term is TWO terms since the wild-source fix below — 49 at its floor, plus 42 where the site owes
+upkeep — and 374 did not move, `27 + 44 + 20` and `27 + 22 + 22 + 20` being the same 91.
+
+- **`WORK_INSPECTOR_SECTION_HEAD_HEIGHT` (27)** is what one header costs: the rule (1), the gap under
+  it (6), the label's own measured line (14) and the gap under that (6). The label is
+  `HudWidgets.alloc_section_label`, the allocation panel's own dim-uppercase header, and the rule is
+  `HudStyle.LINE_SOFT` at `BandCityPanel._make_zone_separator`'s thickness. Neither is new chrome.
+- **`WORK_INSPECTOR_SECTION_RULE_THICKNESS` is a TWIN of `BandCityPanel.ZONE_SEPARATOR_THICKNESS`**,
+  deliberately not a read of it: a vocab leaf reaching for a `class_name`d panel script at class load
+  is a cycle waiting to happen, which is the rule `WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT` already
+  follows against `ArrivalStrip.STRIP_HEIGHT`. Change one and change the other.
+- ⛔ **`WORK_INSPECT_KITS_HINT` IS RETIRED AND THE `none` SENTENCE IS BACK IN BOTH TOOLTIPS.** The
+  retired claim read: *"`WORK_INSPECT_KITS_HINT` came back and the two kit TOOLTIPS lost the sentence
+  it duplicates. It was cut because 'two kit lines plus a hint would be 64 — 12 over the current max,
+  which busts the wide shell by 8', which was arithmetic about a 396px zone box."* The height argument
+  was sound; the LINE was not. It read *"\"No kit\" is a real choice — the site worked bare-handed."*
+  and drew under an Upkeep picker that, on a wild source, should never have been there — explaining
+  that going toolless was fine for a site with nothing to keep. What its slot carries now is
+  `WORK_INSPECT_KITS_UPKEEP_FORMAT`, the site's own standing bill; a caveat about what ONE control's
+  `No kit` entry means is per-control and lives in that control's tooltip. **The width measurement
+  survives its subject and is why the replacement is short**: *"the hint is shorter than
+  `WORK_PRIORITY_HINT` as a MEASUREMENT — that sentence is the longest this card renders on one line,
+  and the first draft of this one ran seven characters past it and drew ellipsised."*
+- **`WORK_INSPECT_KITS_UPKEEP_FORMAT` ("Kept at %s a turn.") is composed from the STAMPED pair.**
+  `RungLadder.upkeep_price_terms` joins `upkeepDemand` (work) and `upkeepMaterialDemand` (goods) into
+  terms — `Kept at 1 work · 0.05 hurdles a turn.` — and its EMPTINESS is the gate on the Upkeep row.
+  It is deliberately NOT `build_upkeep_demand`'s per-rung quote: that answers *what would a rung cost
+  to hold* for a rung nobody has started, this answers *what is this source billed right now*, and
+  `SourceForecast.upkeep_state`'s own ⛔ forbids reading one as the other. The full rationale for the
+  gate is in `band-city-panel.md` → "THE UPKEEP ROW DREW ON WILD SOURCES, ON BOTH WEBS".
+- **`WORK_INSPECT_POLICY` ("Change policy") is retired**, a header naming what is below it rather than
+  what you press; `WORK_INSPECT_POLICY_SECTION` ("Policy") replaces it. `WORK_INSPECT_PRIORITY` and
+  `WORK_INSPECT_KITS` were already nouns and are reused unchanged — the former is also the CRAFTING
+  panel's bench-link face, which is why it stays a shared const.
+
+⛔ **A LATER CHANGE MUST NOT PUT AN INSPECTOR TERM BACK**, and it is asserted rather than asked for:
+`band_panel_preview._assert_zone_budget_has_no_inspector_term` calls `_work_board_capacity` once per
+picker state and requires every answer to be identical, paired with the rendered row count not moving
+and being non-zero. Sabotage-verified — with the retired terms restored it fails at `rows
+[2, 1, 1, 1]`.
 
 ## The work row carries TWO axes — the standing RUNG and the verb in flight
 
@@ -7186,9 +7387,38 @@ aside and states the price alone, which is the honest half.
 ⛔ **`WORK_ROW_UNDER_KEPT_NOTE`'s *"raise this band's Agriculture role"* is wrong advice the moment the
 missing thing is a material.** Twelve keepers do not mend a fence with no hurdles; it points the player
 at a stepper that cannot help. `HudWorkVocab.material_short_note` is the third arm —
-`Short of hurdles — 0.03 of the 0.05 a turn this pen eats.` — built from the row's own published pair
-(`LaborAssignment.materialUpkeepDemand` / `materialUpkeepSupplied`), **both terms and never their
-difference**, so the sentence needs no client arithmetic.
+`Short of hurdles — 0.40 of the 0.58 a turn it needs. The bench or a trade, not more hands.` — built
+from the row's own published pair (`LaborAssignment.materialUpkeepDemand` / `materialUpkeepSupplied`),
+**both terms and never their difference**, so the sentence needs no client arithmetic.
+
+> #### ⛔ IT SAID `a turn this pen eats`, AND A PEN GENUINELY DOES EAT (§4.9 item 12c)
+>
+> It eats GRASS and HAY, and §2.7's whole argument is that **hay is FEED, not upkeep** — #578 retired
+> a defect that billed a pen's shortfall to the keepers' FOOD larder. So the retired tail put feed and
+> upkeep back under one verb, two lines below a `Fed: 100% — all pasture` row on the same surface.
+> **A readout that undoes the model is a defect, not a preference.**
+>
+> `it needs` names the obligation without naming an appetite, and the **`MATERIAL_SHORT_NOUN_HERD` /
+> `_PATCH` pair retires with the clause that consumed it** — the `pen` / `patch` nouns filled that
+> tail and were used for nothing else. `material_short_note`'s `kind` parameter went with them
+> (`material_short_note(demand, supplied)`), and so did `material_short_note_for_source`, whose only
+> job was translating a SOURCE kind into the labor kind the sentence no longer wants.
+>
+> **THE REMEDY IS ITS OWN CONST, `MATERIAL_SHORT_REMEDY`**, so the two families' wording has one
+> visible relationship: `HudSelectionVocab.BUILD_BLOCKED_MATERIALS_FORMAT` reads *"the bench or a
+> trade, not more builders."* and this reads *"The bench or a trade, not more hands."* — the same two
+> levers, refusing the same lever. **`hands`, NOT `builders`**: upkeep is staffed by KEEPERS
+> (`agriculture` / `husbandry`), so naming builders would send the player to the one role card that
+> cannot move this number. Its two siblings on this row (`WORK_ROW_UNDER_KEPT_NOTE` /
+> `WORK_ROW_UNDER_HERDED_NOTE`) name a role to RAISE; this one exists to say no head count helps.
+>
+> **IT IS WEB-INDEPENDENT BY DESIGN**, which is what let the `kind` go: a bench and a trade are the
+> answer on both webs.
+>
+> **THE SHARED LEAD-IN IS UNCHANGED AND IS LOAD-BEARING.**
+> `HudSelectionVocab.BUILD_BLOCKED_MATERIAL_SHORT_LEAD` is what `DetailFormat.detail_bbcode` tints an
+> indented sub-line DANGER on, which is what makes a missing GOOD red where missing hands are amber.
+> ⛔ It may not carry BBCode.
 
 **THREE SHORTFALLS, THREE REGISTERS**: a missing GOOD is DANGER (no stepper fixes it); missing HANDS
 are WARN and keep the role sentence (the stepper IS the lever); a dead KIT is quiet and is the event
@@ -7217,9 +7447,44 @@ sentence wearing the staffing amber.
 > there explicitly (they are ARRAYS, so they cannot ride the `float()`-coerced `OPTIONAL_YIELD_KEYS`
 > list) — until they were, the board's note came out empty on a row whose wire carried both terms.
 
-**THE CARD SIDE TAKES THE SAME ARM**, off the SOURCE's own `upkeepMaterialDemand` /
-`upkeepMaterialSupplied` rather than a labor row's copy, because a card has no assignment in hand
-(`DetailFormat.note_under_kept_hover`). That is what gives the source-row pair a production reader.
+### …AND THE SENTENCE IS THE WORK ROW'S ALONE — the card keeps the MARK (§4.9 item 12c)
+
+⛔ **THE CARD SIDE TOOK THE SAME ARM FOR A RELEASE, AND THAT REGRESSED AGAINST §4.7.** The retired
+claim was *"the card side takes the same arm, off the SOURCE's own `upkeepMaterialDemand` /
+`upkeepMaterialSupplied` rather than a labor row's copy, because a card has no assignment in hand"* —
+a good reason for WHERE the figures come from and no reason at all for the card to state them. §4.7
+had already settled that: it pulled the `At risk:` block off the tile card for being *"way too
+wordy"*, left one state word on the rung row, and kept the countdown on the work board **and nowhere
+else**, because *"the board is where staffing is decided this turn … on the tile card it is a number
+you cannot act on."* Item 12 shipped the full sentence to BOTH entry points.
+
+**THE STAFFING HALF OF §4.7's REASON DOES NOT CARRY OVER, AND A BETTER ONE REPLACES IT.** No head
+count fixes a missing good, so *"staffing is decided on the board"* is not why this sentence belongs
+there. What this UI offers against a SCARCE good is the row's own **`SourcePriority` rank** —
+`High`/`Normal`/`Low` is precisely what decides which pen the hurdles reach when there are not enough
+(the sim's `settle_scarce_store`) — and that control sits in the work row's own inspector strip. **The
+tile card has nothing to press.**
+
+**SO `DetailFormat.rung_material_short_note` IS RETIRED AND `rung_material_is_short` REPLACES IT** — a
+BOOLEAN, over `HudWorkVocab.has_material_shortfall`, which walks the same `_worst_material_shortfall`
+and therefore the same `MATERIAL_FLOW_MIN` threshold the sentence uses. Composing prose in order to
+test it for emptiness is the one coupling that would hold the retired readout in place.
+
+**THE ⚠ GATE STAYS LIVE, AND THAT IS NOT A HALF-MEASURE.** `rung_is_at_risk`'s own ⛔ records that
+reading only the WORK account left a pen whose hurdles had run out wearing no mark at all while the
+work board's row already said the rung was being lost — two surfaces, one source, opposite statements.
+So the card keeps the mark and the short state word `rung_row_value` already draws, and
+`note_under_kept_hover` falls back to the role sentence every other short source on that card shows.
+
+**THAT FALLBACK IS THE ONE THING GIVEN UP HERE, STATED PLAINLY**: on a source short of a GOOD alone,
+the card's hover names a role that will not fix it. It is the same sentence the card gives every other
+short source, one hover away from a board that says exactly what is missing — against a card that
+repeated the board's whole sentence in a register with no control to act on.
+
+**ASSERT IT AS A PAIR, or "the card does not state it" passes on a card that renders nothing.**
+`ui_preview`'s `improvements` chapter inverts the two claims it used to make and adds the LIVENESS
+half — the hover must equal the role sentence — beside the unchanged mark-and-state-word claims that
+say the card still draws its rung row.
 
 ### The blocked-build cause that names a good
 

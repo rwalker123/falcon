@@ -212,10 +212,18 @@ static func build_row_note_label(text: String, color: Color, row_tooltip: String
 ## `HFlowContainer` that WRAPS between parts, inside a surface with width to spare; eliding there
 ## would shorten prose that fits today. A caller passes `true` when its host cannot grow.
 ##
-## **AUTOWRAP IS THE WRONG TOOL HERE and is not an alternative.** Both inspector strips reserve their
-## height as an exact number of ONE-line parts (`HudWorkVocab.WORK_INSPECTOR_NOTE_LINE_HEIGHT`), and
-## the zone clips vertically too — so a line that wrapped would take its second row off the bottom of
-## the board, trading a width overflow for a height one.
+## ⛔ **AUTOWRAP IS THE WRONG TOOL *FOR AN ELIDING HOST*, AND IT USED TO BE THE WRONG TOOL FULL STOP.**
+## The retired claim read: *"AUTOWRAP IS THE WRONG TOOL HERE and is not an alternative. Both inspector
+## strips reserve their height as an exact number of ONE-line parts (`HudWorkVocab.
+## WORK_INSPECTOR_NOTE_LINE_HEIGHT`), and the zone clips vertically too — so a line that wrapped would
+## take its second row off the bottom of the board, trading a width overflow for a height one."* Both
+## halves of that were true of a strip living INSIDE the work zone. The work inspector is a
+## viewport-centred `WorkInspectorDialog` now (`docs/plan_standing_upkeep.md` §4.9 item 12d) — no
+## zone's box clips it, and its reservation is measured per wrapped line rather than counted in
+## one-line parts — so `build_wrapping_status_part` below is the tool for THAT host. Every host still
+## inside a reserved-width box (the tile card's flow, the drawer's standing summary, the parties
+## inspector's detail lines, the build queue's tooltip) keeps this builder and keeps the elide: for
+## them the retired paragraph is still exactly right.
 static func build_status_part(text: String, color: Color, elide: bool = false) -> Label:
     var label := Label.new()
     label.text = text
@@ -225,6 +233,92 @@ static func build_status_part(text: String, color: Color, elide: bool = false) -
         label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
         set_label_tooltip(label, text)
     return label
+
+## **THE SAME STATUS PART, WRAPPED INSTEAD OF ELIDED — for a host whose width is EARNED rather than
+## reserved.** One caller today: `BandPanelController._build_work_inspector`, whose prose lines
+## (the overdraw warning, the slipping `note`, the `muted_note`, the site's standing bill) are
+## sentences a player has to read to act on, and whose host — the free-floating `WorkInspectorDialog`
+## — participates in no zone's layout and clips on neither axis.
+##
+## ⛔ **A THIRD BUILDER RATHER THAN A THIRD STATE OF `elide`.** The two behaviours are chosen by
+## different questions — *can this host grow?* and *is this line prose or a figure?* — and folding
+## them into one tri-state parameter would let a caller pass "wrap" to a host that clips, which is the
+## defect the elide flag exists to prevent. Widening `build_status_part`'s DEFAULT was the other
+## option and is the one thing that must not happen: every other caller sits in a fixed-width box.
+##
+## **AUTOWRAP KILLS THE MINIMUM WIDTH, WHICH IS WHY IT IS SAFE HERE AND ONLY HERE.** A `Label` with
+## autowrap on reports a one-pixel minimum width (Godot's own behaviour) and its full WRAPPED height —
+## the exact inverse of the unwrapped form. In a growable host that is what a sentence should ask for;
+## in a reserved-width one it would trade a clipped tail for a clipped bottom, which is the retired
+## paragraph above.
+##
+## `WORD_SMART` rather than `WORD`, matching `wrapped_status_part_overflow`'s break flags term for
+## term: a `0.05 hurdles` figure longer than the column would OVERFLOW the card under `WORD`, and the
+## adaptive break is what keeps it inside.
+static func build_wrapping_status_part(text: String, color: Color) -> Label:
+    var label := build_status_part(text, color)
+    label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    # …and it takes the column's whole width rather than its own natural one, or a wrapped label lays
+    # its text out against a rect nobody sized and reports a height measured at a different width than
+    # it draws at.
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    return label
+
+## **THE LINE-BREAK RULE `build_wrapping_status_part` DRAWS WITH, spelled so the MEASUREMENT can use
+## the identical one.** `Label` composes these internally from `autowrap_mode` and adds
+## `BREAK_TRIM_EDGE_SPACES`; `Font.get_multiline_string_size` takes them as an argument and defaults
+## to `BREAK_MANDATORY | BREAK_WORD_BOUND` — i.e. WITHOUT the adaptive break. A measurement taken at
+## the default flags therefore under-counts the lines of any text the drawn label breaks adaptively,
+## and an under-counted line is height nobody reserved. Stated once, here, so the two cannot drift.
+const WRAPPING_STATUS_PART_BREAK_FLAGS := TextServer.BREAK_MANDATORY \
+    | TextServer.BREAK_WORD_BOUND | TextServer.BREAK_ADAPTIVE | TextServer.BREAK_TRIM_EDGE_SPACES
+
+## **WHAT A WRAPPED STATUS PART COSTS *BEYOND* THE ONE LINE ITS HOST'S CONSTANTS ALREADY CHARGE FOR
+## IT** — `(lines − 1) × HudWorkVocab.WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT`, and `0.0` for the ordinary
+## sentence that fits on one line. **The second line costs MORE than the first (17 against 14)**,
+## because a `Label`'s `line_spacing` is spent between lines and a one-line label has no between — see
+## that constant, which was found by this under-reserving by exactly 3px a line.
+##
+## **STATED AS AN OVERFLOW, NOT AS A HEIGHT, so no existing reservation constant has to change its
+## meaning.** `WORK_INSPECTOR_NOTE_HEIGHT`, `WORK_INSPECTOR_SECTION_HEAD_HEIGHT` and
+## `WORK_INSPECTOR_KITS_UPKEEP_HEIGHT` each charge exactly one line of this type and go on doing so;
+## a host that lets a line wrap adds this on top of the term it already had. `WORK_INSPECTOR_CEILING_
+## HEIGHT` stays the ceiling AT ONE LINE PER NOTE, which is a floor on the wrapped worst case rather
+## than a number that quietly stopped describing anything.
+##
+## ⛔ **THE FONT IS ASKED, NOT A DETACHED `Label`** — `EventDockPanel.natural_label_width`'s rule,
+## which cost a whole font size to learn: a `Label` that has never entered the tree shapes its text at
+## the DEFAULT theme's 16px whatever `add_theme_font_size_override` was handed, while `get_theme_font`
+## / `get_theme_font_size` resolve through the theme CHAIN and are correct while detached. The probe
+## is built through the real builder so the size, the font and the break flags are the drawn label's
+## own rather than a restatement of them.
+##
+## ⛔ **AND THE LINE COUNT IS A RATIO, NOT A DIVISION OF PIXEL HEIGHTS.**
+## `Font.get_multiline_string_size` sums the shaped lines' own heights and adds no line spacing, while
+## a drawn `Label` adds the theme's `line_spacing` to every line — so the measured `y` is NOT the
+## height to reserve. What it is good for is HOW MANY lines there are, and that count is then priced
+## at the measured per-line cost this zone already states, spacing included.
+static func wrapped_status_part_overflow(text: String, width: float) -> float:
+    return float(wrapped_status_part_lines(text, width) - 1) \
+        * HudWorkVocab.WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT
+
+## How many lines `build_wrapping_status_part(text)` draws in a column `width` px wide — at least one,
+## whatever the width. See `wrapped_status_part_overflow`, which is the only caller and carries the
+## reasons.
+static func wrapped_status_part_lines(text: String, width: float) -> int:
+    var probe := build_wrapping_status_part(text, HudStyle.INK)
+    var font: Font = probe.get_theme_font(&"font")
+    var font_size: int = probe.get_theme_font_size(&"font_size")
+    # Never entered the tree, so there is nothing deferred to wait for and `free` is the honest verb.
+    probe.free()
+    if font == null or width <= 0.0:
+        return 1
+    var line_height: float = font.get_height(font_size)
+    if line_height <= 0.0:
+        return 1
+    var wrapped := font.get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, width,
+        font_size, -1, WRAPPING_STATUS_PART_BREAK_FLAGS)
+    return maxi(1, int(round(wrapped.y / line_height)))
 
 ## THE SPECIES / SITE MARK ON A TEXT ROW — bundled art where the client has it, the emoji where it
 ## does not. One builder, so the HUD's text surfaces cannot drift apart from each other or from the
@@ -568,7 +662,8 @@ static func build_field_key(text: String) -> Label:
 ##
 ## **IT REPLACED A `MenuButton` WHOSE FACE CARRIED A `⌄` GLYPH, AND THE MECHANISM IS THE WHOLE POINT.**
 ## A `MenuButton` draws no arrow, so the affordance had to be baked into `text` — where `clip_text`
-## eats it the moment the label reaches the button's edge (`Gathering kit` did, so the forage sheet's
+## eats it the moment the label reaches the button's edge (`Harvesting kit` does — it read
+## `Gathering kit` when measured, one character shorter — so the forage sheet's
 ## kit picker showed no caret at all) and where it renders as a small low-baseline mark rather than as
 ## the themed arrow the `Band:` picker one row above already drew. An `OptionButton` reserves the
 ## arrow's width as an internal right margin, so the icon is drawn OUTSIDE the text's clip rect and no
