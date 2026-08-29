@@ -21,6 +21,54 @@ paths:
 
 The Band/City dockable-panel PNG harness, and the arcs whose frames ride it.
 
+## The leading bound is asserted in BOTH directions, and one of them is a window resize
+
+`_assert_leading_bound_matches_the_column` is the claim whose absence shipped a chrome split that did not
+exist on the hardware it was built for. `BandCityPanel._rail_split` charges the card's leading bound, and
+that bound was the left column's authored **360** applied unconditionally — so the split needed **2012px**
+of window and a 2000px monitor stacked the minimap and the turn orb at one end. **Nothing failed**: every
+frame in this file that asserted the split was taken on a 3440 ultrawide, where 360px of over-charge is
+affordable, and the two 1920 states asserted the STACKED arm as if it were the design.
+
+**The pair is the whole assertion.** On `band_panel_dockrow_bottom` (1920×1080) the left dock's one card
+stops at 224 against a strip starting at 662, so the bound must be **0** and the chrome splits; on
+`band_panel_dockrow_column_reaches` — **the same 1920 width, a 540-tall window** — the strip's top edge
+rises to 216, the same card is genuinely in the row, the bound must be **360** and the chrome stacks. A
+client that always zeroed the bound passes the first and fails the second; the old client passes the
+second and fails the first.
+
+**IT IS A PURE WINDOW RESIZE, NOT A STAGED FIXTURE.** The strip's top edge sits at 0.4 of the window's
+height, so shrinking the window walks it under the card the rule reads — no invented content, and the same
+producer under test in both frames. `DOCKROW_COLUMN_REACHES_HEIGHT` is 540 because under ~520 the chrome
+stops parking at all and the state would be testing a different rule.
+
+**THE EXPECTATION IS THE HARNESS'S OWN MEASUREMENT.** `_left_dock_content_reach` walks `LeftStack` and
+clips to `LeftScroll` — the shape `_right_dock_content_reach` already had for the other column — rather
+than asking `Hud.left_column_content_reach`, which is the producer the bound is derived from and would
+agree with it whatever either answered.
+
+### `_assert_card_clears_lateral_columns` measures the LEFT column as drawn content now
+
+It bounded the left dock as a REGION, on the reasoning that the region really is full-height. The region
+is; the one card in it is not, and a region-shaped claim there forbids the card room the HUD is not using
+— which is precisely the argument this same function already made for the RIGHT column and the reserve
+`348e5c09` was fixed out of. Both halves read painted content, with a liveness conjunct (`cards > 0`) so
+"the card clears the column" cannot pass on an empty dock.
+
+**Its negative control moved to the column's WIDTH.** Where the column stops above the strip there is
+nothing in the row for an unbound island to hit, so a control asked against the painted rect would be
+unsatisfiable rather than merely vacuous. What it still answers is the question the bound is about: would
+the leading furniture, unbound, be inside the column's width at all?
+
+### Every probe that clears the bounds must put `Main`'s back, not `lateral_column_widths()`'s
+
+`_main_lateral_bounds` exists because three probes restored the bounds by pushing
+`Hud.lateral_column_widths()` straight onto the panel. That was `Main`'s behaviour once; it is not now
+(`Main.band_panel_lateral_bounds` drops the leading term where the column is not in the row), and a probe
+that restores the old shape leaves the panel bounded by a rule the live client does not have — measured,
+it silently un-split the chrome for every state that ran after it, so the frame and the assertions
+disagreed about the same panel. The rule is a `static` for exactly this reason; ask it, never restate it.
+
 ## The faction page's `Fodder:` row and its open drill-down
 
 **One frame and twelve `: PASS`** — measured `138 / 803` → `139 / 815` on one windowed run, `assert
@@ -1783,10 +1831,34 @@ and the conditional children are the whole of what makes it worse than the board
 **IT IS MEASURED AGAINST THE DIALOG SINCE `docs/plan_standing_upkeep.md` §4.9 item 12d, and it is the
 one state that ever tested this.** It used to add the built strip to the harness offscreen and compare
 the reservation against the strip's own column — a claim about a strip no zone hosts any more. The
-worst case is MOUNTED into the real `WorkInspectorDialog` now, and four things are asked of it: the
+worst case is MOUNTED into the real `WorkInspectorDialog` now, and five things are asked of it: the
 reservation covers what the strip draws, the CARD was fitted to that reservation plus its own chrome,
-the card FITS the viewport it is centred in, and the reservation still IS the documented ceiling. The
-last two are the pair that turned a 106px unreserved risk into a rect that either fits or does not.
+the card FITS the viewport it is centred in, the note really WRAPS, and the reservation is the
+documented ceiling plus whole wrapped lines and nothing else. The middle pair is what turned a 106px
+unreserved risk into a rect that either fits or does not.
+
+**⛔ ITS NOTE HAD TO STOP BEING A SHORT SENTENCE, and the fixture's own comment said the words were
+irrelevant.** They were, until the card's prose lines started WRAPPING: with
+`"Animals are drifting off."` on it the wrap term is zero, and *"reserved >= drawn with a wrapped note
+in it"* is the pre-wrap claim wearing a new label — the same vacuous shape that has bitten twice on
+this branch. The fixture states the shipped shortfall sentence's shape now, and the assertion reads
+`Label.get_line_count()` off the DRAWN label before it measures anything, so a copy edit that shortens
+it fails loudly rather than quietly stopping testing the thing.
+
+**AND THE CEILING EQUALITY SPLIT IN TWO** — `is_equal_approx(reserved, WORK_INSPECTOR_CEILING_HEIGHT)`
+cannot survive a reservation that legitimately varies with the sentence. The structural question it
+was really asking (*has a fifth conditional child appeared without moving the constant?*) is asked as:
+the reservation is at or above the ceiling, and the whole excess is an integer number of
+`WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT`s. A new child of any other height lands off that grid.
+
+**`_assert_note_renders_in_full` is the claim whose absence let the elided sentence ship.**
+`_find_aside_label` matches on `Label.text`, and `text` is the WHOLE sentence even when the label draws
+an `…` — elision is a render property, not a text one — so every existing claim about that note passed
+over the defect. What is asked instead: the overrun behaviour is `OVERRUN_NO_TRIMMING` and autowrap is
+on, every line the label has is VISIBLE (`get_visible_line_count() == get_line_count()`, and at least
+`WRAPPED_NOTE_MIN_LINES` of them), and the drawn rect is at least the label's own minimum height AND at
+least the column `_work_inspector_note_width` measured the wrap against — which is the one number a
+label laid out narrower than it was priced would break.
 
 **Falsified, four ways, and every one of them failed loudly.** Baseline before the slice: **761 PASS,
 0 FAIL**; after: **789 PASS, 0 FAIL** (exit 0 both times — and the exit STATUS is the verdict, since a

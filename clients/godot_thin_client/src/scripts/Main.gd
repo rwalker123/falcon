@@ -2170,8 +2170,51 @@ func _update_band_panel_lateral_bounds() -> void:
     if not _reserver_overlays_hud(BAND_PANEL_RESERVER, edge, size):
         band_city_panel.call("set_lateral_bounds", 0.0, 0.0)
         return
-    var columns: Vector2 = hud.call("lateral_column_widths")
-    band_city_panel.call("set_lateral_bounds", columns.x, columns.y)
+    var bounds: Vector2 = band_panel_lateral_bounds(edge, size, hud)
+    band_city_panel.call("set_lateral_bounds", bounds.x, bounds.y)
+
+## **WHAT THE CARD MUST KEEP CLEAR OF, AS `(leading, trailing)`** — the columns' live widths, with the
+## LEADING term dropped wherever that column is not actually THERE at the strip's height.
+##
+## **A `static` beside `band_dock_overlays_hud` for the same reason that one is**: the offline harnesses
+## fan a reservation out by hand, and a harness that restates this rule renders a card the live client
+## bounds differently (and vice versa).
+##
+## ⛔ **THE LEADING TERM WAS THE COLUMN'S WIDTH CHARGED AT A HEIGHT THE COLUMN IS EMPTY AT, AND IT COST
+## A FEATURE.** `BandCityPanel._rail_split` gates the bottom dock's chrome on
+## `viewport − split_span − leading >= wide_shell_min_width()`; with the leading term at its authored
+## **360** that needs **2012px**, so a 2000px monitor stacked the minimap and the turn orb at one end and
+## the split *did not exist on the hardware it was built for*. What is at the leading end of a bottom
+## dock's row is not the left column — it is whatever the left column PAINTS there, and measured on a
+## 1920x1080 bottom dock its one card stops at **224** against a strip whose top edge is **662**. The
+## region spans the row; the card does not. `Hud.left_column_content_reach` is the drawn-content read,
+## and it is the same distinction `348e5c09` got the wrong side of on the trailing column.
+##
+## **IT IS LIVE, NOT A WORST CASE, AND IT HAS TO BE.** The left column keeps its full height on a bottom
+## dock deliberately (`_update_right_column_bottom_clearance` — only the RIGHT column yields), so a tile
+## card really may descend into the strip; where it does, the bound comes straight back and the row
+## stacks. The threshold is 438px away from the shipped card's reach, so this is a subject-scale change
+## and not a flicker.
+##
+## **ONLY THE BOTTOM EDGE ASKS IT.** On a TOP dock the strip is at the top of the window and the left
+## column's content STARTS there, so the column is always in the card's band and the question has one
+## answer; asking it there would zero a bound that is genuinely owed.
+##
+## **THE TRAILING TERM IS NOT TREATED THE SAME WAY HERE, and must not be** — the panel already drops it
+## for a bottom dock in `BandCityPanel._trailing_bound_for`, because that column is FORCED clear of the
+## strip by `set_right_column_bottom_clearance` rather than merely observed to be. One decision per
+## column, each where its reason lives.
+static func band_panel_lateral_bounds(edge: int, size: float, hud_layer: Node) -> Vector2:
+    if hud_layer == null or not hud_layer.has_method("lateral_column_widths"):
+        return Vector2.ZERO
+    var columns: Vector2 = hud_layer.call("lateral_column_widths")
+    if edge != SIDE_BOTTOM or not hud_layer.has_method("left_column_content_reach"):
+        return columns
+    var strip_top: float = hud_layer.get_viewport().get_visible_rect().size.y - size
+    if float(hud_layer.call("left_column_content_reach")) <= strip_top:
+        # Nothing is painted in the column at the strip's height, so there is nothing there to clear.
+        return Vector2(0.0, columns.y)
+    return columns
 
 ## Tell the HUD how far above the window's bottom edge its RIGHT column must stop.
 ##

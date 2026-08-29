@@ -519,6 +519,15 @@ const FACTION_SHELL_MIN_WIDTH := BandCityPanel.ZONE_BAND_WIDTH + BandCityPanel.Z
 ## `canvas_items`, so a bare window pin renders at the 1920 base width whatever the window says.
 const DOCKROW_CANVAS := Vector2i(1920, 1080)
 
+## …and the window HEIGHT at which the left column stops being empty at the row's leading end.
+##
+## **DERIVED FROM A MEASUREMENT, and the measurement is the point of the state it stages**: the strip's
+## top edge sits at 0.4 of the window's height (the panel's own height cap), and the one card the left
+## dock holds ends at **224** — so the column is in the row below 560, and 540 clears that by a margin
+## no chrome drift can cross. Under ~520 the chrome stops parking at all and the state would be testing
+## a different rule.
+const DOCKROW_COLUMN_REACHES_HEIGHT := 540
+
 ## The map the dock-row states seed their minimap from — the DEFAULT size, resolved through the same
 ## registry the New Game pane and the inspector's Map tab use. The rail width the reflow declares is a
 ## function of the minimap's grid ASPECT (`MinimapPanel.resize_to_aspect`: `embedded_height × aspect`,
@@ -895,8 +904,13 @@ func _ready() -> void:
 		var keeps_bottom_strip: bool = hud_overlaid and edge == SIDE_BOTTOM
 		if _hud.has_method("set_right_column_bottom_clearance"):
 			_hud.set_right_column_bottom_clearance(size if keeps_bottom_strip else 0.0)
-		var columns: Vector2 = _hud.lateral_column_widths() if hud_overlaid else Vector2.ZERO
-		_panel.set_lateral_bounds(columns.x, columns.y)
+		# …and the BOUNDS themselves, through `Main`'s own rule rather than restated. It WAS restated
+		# here as `lateral_column_widths()` straight onto the panel, which is the version that charged
+		# the leading column at a height it is empty at — see `Main.band_panel_lateral_bounds`. A
+		# harness that composes the bound itself is a harness that cannot see that rule change.
+		var bounds: Vector2 = MAIN_SCRIPT.band_panel_lateral_bounds(edge, size, _hud) \
+			if hud_overlaid else Vector2.ZERO
+		_panel.set_lateral_bounds(bounds.x, bounds.y)
 	_panel.reservation_changed.connect(_reservation_listener)
 
 	await get_tree().process_frame
@@ -1473,6 +1487,7 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_assert_material_short_note()
 	_assert_material_note_ink(_material_short_sentence())
+	_assert_note_renders_in_full("band_panel_work_material_short", _material_short_sentence())
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
 	# THE RUNG-READY MARK ON THE WORK BOARD (issue #412) — the panel twin of the map badge. Three rows,
@@ -2677,11 +2692,40 @@ func _render_dock_row_states() -> void:
 	# rule keeps, so it is where the card comes closest to the right dock's x-range (65px into it) and
 	# where the clearance is doing the most work.
 	await _assert_right_dock_clears_the_parked_chrome("band_panel_dockrow_bottom")
+	# **AND THE LEADING BOUND IS NOT CHARGED HERE, WHICH IS WHY 1920 SPLITS AT ALL.** The one card the
+	# left dock holds stops 438px above this strip; the region under it is empty map.
+	_assert_leading_bound_matches_the_column("band_panel_dockrow_bottom")
+	_report_chrome_split_threshold()
 	print("band_panel_preview: dockrow bottom — rail %.0fpx + %.0f gutter = %.0f span (nav %.0f, turn %.0f), stack needs %.0f of a %.0f strip, work zone %.0fpx" % [
 		_panel._rail_width(), BandCityPanel.RAIL_SEPARATOR_SPAN, _panel._rail_span(),
 		_hud.nav_backing.get_combined_minimum_size().x, _hud.turn_orb.get_combined_minimum_size().x,
 		_hud._dockrow._required_height(), _panel.current_reservation_size(),
 		_panel.work_zone_size().x])
+
+	# ---- THE OTHER DIRECTION: A LEFT COLUMN THAT REALLY IS IN THE ROW ---------------------------
+	#
+	# **THE SAME 1920px WIDTH, A SHORT WINDOW, AND THE OPPOSITE ANSWER.** The strip's top edge is a
+	# fraction of the window's height, so shrinking the window raises it until it passes UNDER the tile
+	# card's bottom — at 540 the card ends at 224 against a strip starting at 216, so the column really
+	# is at the leading end of the row. The bound is charged, and with it charged 1920 cannot afford the
+	# split (1920 − 462 − 360 = 1098 against the 1190 the wide shell needs), so the chrome stacks.
+	#
+	# **IT IS THE PAIR THAT MAKES THE RULE A RULE.** With only the tall state, "the leading bound is 0"
+	# is satisfied by a client that never charges it — which is a card drawn straight through the tile
+	# card the moment one grows. Nothing about the WIDTH changes between the two frames.
+	#
+	# A pure window resize rather than a staged fixture: the card's own height is what the rule reads,
+	# and moving the strip to it tests the same producer without inventing content no board shows.
+	await _pin_canvas(Vector2i(DOCKROW_CANVAS.x, DOCKROW_COLUMN_REACHES_HEIGHT))
+	await _settle()
+	await _save("band_panel_dockrow_column_reaches")
+	_assert_hud_yields_the_strip(false, "band_panel_dockrow_column_reaches")
+	_assert_leading_bound_matches_the_column("band_panel_dockrow_column_reaches")
+	_assert_chrome_parked(true, "band_panel_dockrow_column_reaches")
+	_assert_chrome_ends("band_panel_dockrow_column_reaches")
+	_assert_card_clears_lateral_columns("band_panel_dockrow_column_reaches")
+	await _pin_canvas(DOCKROW_CANVAS)
+	await _settle()
 
 	# TOP — THE SECOND CONTROL, and it asserts the OPPOSITE of what it used to (issue #377). The chrome
 	# must stay HOME: the minimap bottom-left and the turn orb bottom-right, where they always live.
@@ -2928,6 +2972,15 @@ func _assert_lateral_columns_reach_the_bottom(expected: bool, state_name: String
 	for failure in failures:
 		_fail("%s — %s" % [state_name, failure])
 
+## What `Main` would push as the card's lateral bounds RIGHT NOW — its own `static`, asked rather than
+## restated. Every probe that clears the bounds for a control has to put THESE back, or it leaves the
+## panel bounded by a rule the live client does not have: the restore was `lateral_column_widths()`
+## straight onto the panel, which re-charged the leading column at a height it is empty at and silently
+## un-split the chrome for every state that followed.
+func _main_lateral_bounds() -> Vector2:
+	return MAIN_SCRIPT.band_panel_lateral_bounds(_panel.get_dock(),
+		_panel.current_reservation_size(), _hud)
+
 ## GUARD: **THE NEGATIVE — a full-height column and the card do not overlap.**
 ##
 ## `_assert_lateral_columns_reach_the_bottom` is satisfied by a column that grew straight through the
@@ -2942,16 +2995,28 @@ func _assert_lateral_columns_reach_the_bottom(expected: bool, state_name: String
 ## reservation listener has to come off the wire for that (it pushes the bounds straight back — `Main`'s
 ## behaviour, not an artifact).
 ##
-## **THE TWO COLUMNS ARE MEASURED DIFFERENTLY, AND THAT IS THE POINT.** The left dock is bounded as a
-## REGION, because it really is full-height and its cards may draw anywhere in it. The right dock is
-## bounded as its DRAWN CONTENT (`_right_dock_content_reach`, i.e. clipped to `RightScroll`), because its
-## region still spans the whole row while its cards stop above the strip — so a region-shaped claim there
-## would forbid the card room the HUD is not using, which is exactly the reserve the trailing bound was
-## and why it was dropped. The card is free to run under the right column's empty lower reach; what it
-## may not do is touch anything painted there.
+## ⛔ **BOTH COLUMNS ARE MEASURED AS DRAWN CONTENT NOW, AND THE LEFT ONE USED TO BE A REGION.** The
+## retired reading was: *"THE TWO COLUMNS ARE MEASURED DIFFERENTLY, AND THAT IS THE POINT. The left dock
+## is bounded as a REGION, because it really is full-height and its cards may draw anywhere in it. The
+## right dock is bounded as its DRAWN CONTENT (`_right_dock_content_reach`, i.e. clipped to
+## `RightScroll`), because its region still spans the whole row while its cards stop above the strip — so
+## a region-shaped claim there would forbid the card room the HUD is not using, which is exactly the
+## reserve the trailing bound was and why it was dropped."* **Every word of the RIGHT column's half is
+## true of the LEFT one**: its region spans the row too, and the one card `left_dock.add` ever registers
+## stops at 224 of a 1080 window against a strip whose top edge is 662. Charging the region there is the
+## same mistake `348e5c09` made on the trailing side, and it cost the chrome split 360px of gate — a
+## split that needed 2012px of window on a feature built for 1920 and 2000
+## (`Main.band_panel_lateral_bounds`). What the card may not touch is what is PAINTED; where nothing is
+## painted it may run under the empty column, on either side.
+##
+## **The column is still allowed to grow into the strip, and then the bound is owed again** — that
+## direction is `_assert_leading_bound_matches_the_column`'s, staged on a short window where the same
+## card really does reach the row. Without it this claim is satisfied by a rule that never charges the
+## leading bound at all.
 func _assert_card_clears_lateral_columns(state_name: String) -> void:
-	var left := _hud.left_dock_region.get_global_rect()
 	var card := _panel._panel.get_global_rect()
+	var left: Dictionary = _left_dock_content_reach()
+	var left_painted := Rect2(left["painted"])
 	_panel.reservation_changed.disconnect(_reservation_listener)
 	_panel.set_lateral_bounds(0.0, 0.0)
 	# ⛔ **THE CONTROL IS ON THE LEADING-MOST FURNITURE, WHICH IS NOT ALWAYS THE CARD.** Where the row
@@ -2964,32 +3029,123 @@ func _assert_card_clears_lateral_columns(state_name: String) -> void:
 	if _panel._rail_lead != null and _panel._rail_lead.visible:
 		unbound = _panel._rail_lead.get_global_rect()
 		unbound_what = "leading chrome island"
-	var would_collide: bool = unbound.intersects(left)
-	var live: Vector2 = _hud.lateral_column_widths()
+	# **THE CONTROL IS TAKEN AGAINST THE COLUMN'S WIDTH, NOT ITS PAINTED RECT.** Where the column stops
+	# above the strip there is nothing in the row for an unbound island to hit at all, and a control
+	# asked against the painted rect would then be unsatisfiable rather than merely vacuous. What it
+	# still answers is the question the bound is about: would the leading furniture, unbound, be inside
+	# the column's width? A card too narrow to reach it proves nothing and still fails here.
+	var left_band := Rect2(Vector2(Rect2(left["region"]).position.x, unbound.position.y),
+		Vector2(Rect2(left["region"]).size.x, unbound.size.y))
+	var would_collide: bool = unbound.intersects(left_band)
+	var live: Vector2 = _main_lateral_bounds()
 	_panel.set_lateral_bounds(live.x, live.y)
 	_panel.reservation_changed.connect(_reservation_listener)
 	var reach: Dictionary = _right_dock_content_reach()
 	var failures: Array[String] = []
 	if not would_collide:
-		failures.append("the UNBOUND %s %s clears the left column %s anyway, so this state proves nothing — stage a busier band or a narrower canvas" % [
-			unbound_what, unbound, left])
-	if card.intersects(left):
-		failures.append("the card %s is drawn over the left dock %s" % [card, left])
+		failures.append("the UNBOUND %s %s clears the left column's width %s anyway, so this state proves nothing — stage a busier band or a narrower canvas" % [
+			unbound_what, unbound, left_band])
+	if int(left["cards"]) <= 0:
+		failures.append("the left column paints NOTHING, so a claim that the card clears it is satisfied by an empty dock — stage a selection")
+	if card.intersects(left_painted):
+		failures.append("the card %s is drawn over the left dock's painted content %s" % [card, left_painted])
 	# …and the leading island is held off it by the same bound, or the card is merely hiding behind
 	# furniture that is itself drawn over the column.
 	if _panel._rail_lead != null and _panel._rail_lead.visible \
-			and _panel._rail_lead.get_global_rect().intersects(left):
-		failures.append("the leading chrome island %s is drawn over the left dock %s" % [
-			_panel._rail_lead.get_global_rect(), left])
+			and _panel._rail_lead.get_global_rect().intersects(left_painted):
+		failures.append("the leading chrome island %s is drawn over the left dock's painted content %s" % [
+			_panel._rail_lead.get_global_rect(), left_painted])
 	if int(reach["cards"]) > 0 and card.intersects(Rect2(reach["painted"])):
 		failures.append("the card %s is drawn over the right dock's painted content %s" % [
 			card, str(reach["painted"])])
 	if failures.is_empty():
-		print("band_panel_preview: assert OK — %s the card clears the full-height left column (and would collide unbound) and the right dock's drawn content, which stops at %.0f" % [
-			state_name, float(reach["bottom"])])
+		print("band_panel_preview: assert OK — %s the card clears BOTH columns' drawn content (left stops at %.0f, right at %.0f) and would collide unbound" % [
+			state_name, float(left["bottom"]), float(reach["bottom"])])
 		return
 	for failure in failures:
 		_fail("%s — %s" % [state_name, failure])
+
+## How far down the window the LEFT dock actually DRAWS, in the shape `_right_dock_content_reach`
+## already answers for the other column — a painted union, a card count and the clip box.
+##
+## ⛔ **MEASURED HERE RATHER THAN ASKED OF `Hud.left_column_content_reach`.** That producer is the thing
+## under test: `Main.band_panel_lateral_bounds` zeroes the leading bound off its answer, so an assertion
+## that re-read it would agree with the bound by construction and pass on a producer returning anything
+## at all. This walks the stack itself.
+func _left_dock_content_reach() -> Dictionary:
+	var clip := _hud.left_dock_scroll.get_global_rect()
+	var bottom := -INF
+	var cards := 0
+	var painted := Rect2()
+	for child in _hud.left_stack.get_children():
+		var card := child as Control
+		if card == null or not card.visible:
+			continue
+		var drawn := card.get_global_rect().intersection(clip)
+		if drawn.size.y <= 0.0 or drawn.size.x <= 0.0:
+			continue
+		painted = drawn if cards == 0 else painted.merge(drawn)
+		cards += 1
+		bottom = maxf(bottom, drawn.end.y)
+	return {"bottom": bottom, "cards": cards, "clip": clip, "painted": painted,
+		"region": _hud.left_dock_region.get_global_rect()}
+
+## REPORT (never an assertion): **the narrowest window whose bottom dock splits its chrome**, and where
+## the two monitors this feature was built for fall against it.
+##
+## PRINTED rather than asserted, exactly as `_report_bottom_yield_at_high_scale` is: the threshold is a
+## consequence of three independently-retunable quantities (the two cluster widths and the wide shell's
+## own minimum), and pinning it would fail here for a retune rather than for a defect. What it is FOR is
+## that the number was silently 2012 — 12px past a 2000px monitor — while every frame in this file that
+## asserted the split was taken on a 3440 ultrawide.
+##
+## Composed from the panel's own terms, never restated: the split span is `_rail_span_of` over both
+## declared clusters, and the leading bound is whatever `Main` has actually pushed.
+func _report_chrome_split_threshold() -> void:
+	var split_span: float = _panel._rail_span_of(_panel._rail_nav_width) \
+		+ _panel._rail_span_of(_panel._rail_turn_width)
+	var charged: float = maxf(_panel._bound_leading, 0.0) \
+		+ _panel._trailing_bound_for(_panel.get_dock(), _panel._bound_trailing)
+	var threshold: float = _panel.wide_shell_min_width() + split_span + charged
+	print("band_panel_preview: chrome split threshold — %.0fpx of window (wide shell %.0f + split span %.0f + bounds charged %.0f); 1920 %s, 2000 %s" % [
+		threshold, _panel.wide_shell_min_width(), split_span, charged,
+		"splits" if 1920.0 >= threshold else "STACKS",
+		"splits" if 2000.0 >= threshold else "STACKS"])
+
+## GUARD: **THE LEADING BOUND IS CHARGED EXACTLY WHERE THE LEFT COLUMN IS ACTUALLY IN THE ROW — BOTH
+## DIRECTIONS, OR IT IS TWO DIFFERENT VACUOUS CLAIMS.**
+##
+## ⛔ **THIS IS THE CLAIM WHOSE ABSENCE SHIPPED A FEATURE THAT DID NOT EXIST ON ITS OWN HARDWARE.**
+## `BandCityPanel._rail_split` needs `viewport − split_span − leading >= wide_shell_min_width()`; the
+## leading term was the left column's authored **360** charged unconditionally, so the chrome split
+## needed **2012px** and a 2000px monitor never saw it. Nothing failed — every assertion about the split
+## was made on a 3440 ultrawide, where 360px of over-charge is affordable.
+##
+## The pair is what makes it a rule rather than a constant: on a TALL window the column's one card stops
+## far above the strip and the bound must be **0**; on a SHORT one the same card reaches into the row
+## and the bound must be the column's full width. A client that always zeroed it would pass the first
+## and fail the second, and vice versa.
+##
+## **THE EXPECTATION IS DERIVED FROM THE HARNESS'S OWN MEASUREMENT**, never from
+## `Hud.left_column_content_reach` — that is the producer under test, and reading it would make the
+## claim agree with the bound whatever either of them answered.
+func _assert_leading_bound_matches_the_column(state_name: String) -> void:
+	var left: Dictionary = _left_dock_content_reach()
+	var strip := _panel._root.get_global_rect()
+	var reaches: bool = int(left["cards"]) > 0 \
+		and float(left["bottom"]) > strip.position.y + ZONE_BOUNDS_TOLERANCE
+	var want: float = _hud.lateral_column_widths().x if reaches else 0.0
+	_assert_band_panel("%s: the leading bound is %s, because the left column's cards stop at %.0f and the strip starts at %.0f (bound %.0f, want %.0f)"
+			% [state_name, "CHARGED" if reaches else "not charged", float(left["bottom"]),
+				strip.position.y, _panel._bound_leading, want],
+		is_equal_approx(_panel._bound_leading, want))
+	# …and the leading ISLAND is where that bound puts it, or the bound is a number nothing reads.
+	# Asserted only where the row splits: there is no leading island otherwise.
+	if _panel._rail_split() and _panel._rail_lead != null:
+		var island := _panel._rail_lead.get_global_rect()
+		_assert_band_panel("%s: …and the leading chrome island starts at that bound (%.0f of a wanted %.0f)"
+				% [state_name, island.position.x, want],
+			absf(island.position.x - want) <= ZONE_BOUNDS_TOLERANCE)
 
 ## GUARD: the yield rule is a FIXED POINT, and reaches it inside a bound.
 ##
@@ -4003,13 +4159,27 @@ func _assert_sections_are_drawn_and_cost_the_sum() -> void:
 	if kitted:
 		sections += HudWorkVocab.WORK_INSPECTOR_KITS_SECTION_HEIGHT
 		if kept:
-			sections += HudWorkVocab.WORK_INSPECTOR_KITS_UPKEEP_HEIGHT
+			# …and the bill line under the Upkeep picker wraps like the notes do, same reason.
+			sections += HudWorkVocab.WORK_INSPECTOR_KITS_UPKEEP_HEIGHT \
+				+ HudWidgets.wrapped_status_part_overflow(
+					_hud._bandpanel._work_inspector_upkeep_bill(model),
+					_hud._bandpanel._work_inspector_note_width())
 	var conditional := 0.0
+	# **THE NOTE TERM IS ONE LINE PLUS WHAT THE SENTENCE WRAPS TO** (§4.9 item 12d, third pass). The
+	# wrap overflow is asked of `HudWidgets` here rather than restated, deliberately: what this
+	# assertion pins is the SECTION sum — that the card reserves every section it draws — and a
+	# typographic term re-derived line by line would be a second implementation of the wrap, free to
+	# disagree with the drawn label in a way no frame would show. The claim that the wrap is charged
+	# CORRECTLY is `_assert_work_inspector_worst_case_fits`, which measures it against a laid-out label.
 	for key in ["warn", "note", "muted_note"]:
+		var text: String = HudWorkVocab.WORK_INSPECT_OVERDRAW_LINE if key == "warn" \
+			else String(model.get(key, ""))
 		var present := bool(model.get(key, false)) if key == "warn" \
 			else String(model.get(key, "")) != ""
 		if present:
-			conditional += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT
+			conditional += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT \
+				+ HudWidgets.wrapped_status_part_overflow(text,
+					_hud._bandpanel._work_inspector_note_width())
 	if ArrivalStrip.has_gap(model.get("schedule", PackedFloat32Array())):
 		conditional += HudWorkVocab.WORK_INSPECTOR_ARRIVALS_HEIGHT
 	var want := HudWorkVocab.WORK_INSPECTOR_HEIGHT + conditional + sections
@@ -4153,25 +4323,60 @@ func _assert_work_inspector_worst_case_fits(where: String) -> void:
 			% [where, dialog.size.y, room.size.y],
 		dialog.size.y <= room.size.y + ZONE_BOUNDS_TOLERANCE
 			and room.encloses(dialog.get_global_rect().grow(-ZONE_BOUNDS_TOLERANCE)))
+	# **AND THE WORST CASE REALLY STAGES A WRAPPED NOTE — read off the DRAWN label, not off the
+	# fixture** (§4.9 item 12d, third pass). `reserved >= drawn` with every sentence on one line is the
+	# claim this file already made before the notes wrapped; without this the wrap term is zero and the
+	# whole pass is re-asserted under a new name. `Label.get_line_count` is Godot's own count after
+	# shaping at the card's real width, so it cannot agree with the reservation by construction.
+	var note_label := _find_aside_label(strip, WORST_CASE_INSPECTOR_NOTE)
+	_assert_band_panel("%s: …and the worst case really WRAPS its note, so the claim above is not vacuous (%d lines)"
+			% [where, -1 if note_label == null else note_label.get_line_count()],
+		note_label != null and note_label.get_line_count() >= WRAPPED_NOTE_MIN_LINES)
 	# …and this staged model really IS the ceiling `HudWorkVocab.WORK_INSPECTOR_CEILING_HEIGHT`
 	# documents. A fifth conditional child would move the constant and leave this fixture behind, and
 	# the documented number would quietly stop describing the worst case.
-	_assert_band_panel("%s: …and that worst case IS the documented ceiling (%.0f of %.0f)"
+	#
+	# ⛔ **IT WAS AN EQUALITY AND THE WRAP BROKE IT — SPLIT, NOT LOOSENED.** The ceiling is stated AT ONE
+	# LINE PER NOTE, so a wrapping worst case reserves strictly more than it, and
+	# `is_equal_approx(reserved, ceiling)` would now fail for the right reason at the wrong claim. What
+	# replaces it is the same structural question asked in two halves: the reservation is ABOVE the
+	# ceiling (a wrapped card costs more than an unwrapped one), and the whole of the excess is WHOLE
+	# NOTE LINES — a fifth conditional child of any other height lands off the grid and fails here,
+	# exactly as a moved constant used to fail the equality.
+	var excess: float = reserved - HudWorkVocab.WORK_INSPECTOR_CEILING_HEIGHT
+	var excess_lines: float = excess / HudWorkVocab.WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT
+	_assert_band_panel("%s: …and that worst case is the documented ceiling plus WHOLE wrapped lines and nothing else (%.0f = %.0f + %.1f lines)"
+			% [where, reserved, HudWorkVocab.WORK_INSPECTOR_CEILING_HEIGHT, excess_lines],
+		excess >= 0.0 and is_equal_approx(excess_lines, roundf(excess_lines)))
+	_assert_band_panel("%s: …and it is STRICTLY above that ceiling, which is what says the wrap is charged at all (%.0f > %.0f)"
 			% [where, reserved, HudWorkVocab.WORK_INSPECTOR_CEILING_HEIGHT],
-		is_equal_approx(reserved, HudWorkVocab.WORK_INSPECTOR_CEILING_HEIGHT))
+		excess_lines >= 1.0)
 	# Put the player's own row back under the card.
 	_hud._bandpanel.rerender()
 	await _settle()
 
-## The three conditional lines and the gapped schedule the worst-case strip is built from. Their WORDS
-## are irrelevant — what is measured is that each mounts a line — but they are stated rather than
-## borrowed from the vocabulary so the fixture cannot change under a copy edit.
-const WORST_CASE_INSPECTOR_NOTE := "Animals are drifting off."
+## The three conditional lines and the gapped schedule the worst-case strip is built from. They are
+## stated rather than borrowed from the vocabulary so the fixture cannot change under a copy edit.
+##
+## ⛔ **THE WORDS STOPPED BEING IRRELEVANT WHEN THE NOTES STARTED WRAPPING** (§4.9 item 12d, third
+## pass). The retired reading was *"Their WORDS are irrelevant — what is measured is that each mounts a
+## line"*, and the note itself was `"Animals are drifting off."` — one short line, on a card whose
+## prose now takes as many lines as the sentence needs. A worst case built from a sentence that fits on
+## one line makes *"reserved >= drawn WITH A WRAPPED NOTE in it"* vacuous: the wrap term is zero and
+## the claim is the old one under a new name. **This sentence is the shipped shortfall note's own
+## shape** — the one reported from play as elided — and `_assert_work_inspector_worst_case_fits` asserts
+## it really does wrap before it measures anything.
+const WORST_CASE_INSPECTOR_NOTE := \
+    "Short of hurdles — 0.03 of the 0.05 a turn it needs. The bench or a trade, not more hands."
 
 ## …and the standing bill that makes the KITS section draw its Upkeep row and the line under it. Both
 ## currencies, because the worst case is the shape that states both terms.
 const WORST_CASE_INSPECTOR_UPKEEP_TERMS: Array[String] = ["1 work", "0.05 hurdles"]
-const WORST_CASE_INSPECTOR_MUTED_NOTE := "Some of the take went to waste."
+## …and the muted line, also long enough to wrap: the worst case is the shape where EVERY prose line
+## takes its second row, and a card that reserved for one wrap and drew three is exactly the failure
+## the measured term exists to make impossible.
+const WORST_CASE_INSPECTOR_MUTED_NOTE := \
+    "Some of the take went to waste — the shelf was already full when the party came home."
 const WORST_CASE_INSPECTOR_SCHEDULE: Array[float] = [1.0, 0.0, 1.0]
 
 ## The fund-mode row's whole content: `Spread` and `Priority`.
@@ -4641,6 +4846,53 @@ func _assert_material_note_ink(note: String) -> void:
 		return
 	_assert_band_panel("work note — the drawn note takes the DANGER ink, not the staffing amber",
 		label.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.DANGER))
+
+## The fewest lines a sentence has to take for *"it wrapped"* to be a claim rather than a hope. Two —
+## a note that fits on one line satisfies every wrap assertion in this file trivially, which is exactly
+## how an elided sentence sat on the card unnoticed.
+const WRAPPED_NOTE_MIN_LINES := 2
+
+## GUARD: **THE SHORTFALL SENTENCE IS DRAWN IN FULL, ON MORE THAN ONE LINE, IN A RECT THAT HOLDS IT.**
+##
+## ⛔ **THIS IS THE CLAIM WHOSE ABSENCE LET AN ELIDED SENTENCE SHIP.** Reported from play: the work
+## inspector read *"Short of hurdles — 0.03 of the 0.05 a turn it needs. The bench or a trad…"* — cut
+## off one word into the remedy, which is the only actionable clause it has. Every claim this file made
+## about that note asked what the MODEL said and what INK the label took; none asked whether the player
+## could read it. `_find_aside_label` matches on `Label.text`, and `text` is the WHOLE sentence even
+## when the label draws an `…` — elision is a render property, not a text one — so "the note is drawn"
+## passes over the defect and the three claims below are what do not.
+##
+## **THE RECT IS THE HALF THAT CANNOT BE FAKED.** A label may be wrapped, untrimmed and still cut off
+## by a host that gave it less height than it asked for or a one-pixel column; so the drawn rect is
+## asked for at least the label's own minimum, and for the full column the RESERVATION measured its
+## line count against — the one number a wrap that draws differently than it was priced would break.
+func _assert_note_renders_in_full(where: String, note: String) -> void:
+	var label := _find_aside_label(_work_inspector_root(), note)
+	# LIVENESS FIRST: the sentence really is on the card, verbatim, or every claim below is about
+	# nothing. `_find_aside_label` matches the whole string, so a note that lost a clause is not found.
+	_assert_band_panel("%s: the shortfall sentence is drawn on the card, whole: \"%s\"" % [where, note],
+		label != null)
+	if label == null:
+		return
+	# …and NOTHING is trimmed off it: no ellipsis behaviour, and the wrap that replaced it really on.
+	_assert_band_panel("%s: …and it is WRAPPED rather than elided (overrun %d, autowrap %d)"
+			% [where, label.text_overrun_behavior, label.autowrap_mode],
+		label.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING
+			and label.autowrap_mode != TextServer.AUTOWRAP_OFF)
+	# …and it takes the second line it needs, with every line it has actually on screen.
+	_assert_band_panel("%s: …and every line it needs is VISIBLE (%d of %d lines shown)"
+			% [where, label.get_visible_line_count(), label.get_line_count()],
+		label.get_line_count() >= WRAPPED_NOTE_MIN_LINES
+			and label.get_visible_line_count() == label.get_line_count())
+	# …in a rect that holds it, and that is the COLUMN the reservation measured the wrap at. A label
+	# laid out narrower than that wraps to more lines than were paid for, which is the one way this
+	# whole mechanism can under-reserve.
+	var rect := label.get_global_rect()
+	var column: float = _hud._bandpanel._work_inspector_note_width()
+	_assert_band_panel("%s: …in a rect that holds it, at the column the reservation measured (%.0fx%.0f, want %.0f wide and %.0f tall)"
+			% [where, rect.size.x, rect.size.y, column, label.get_minimum_size().y],
+		rect.size.x + ZONE_BOUNDS_TOLERANCE >= column
+			and rect.size.y + ZONE_BOUNDS_TOLERANCE >= label.get_minimum_size().y)
 
 
 ## GUARD: **a HALF-BUILT rung whose keeping is short wears the SAME ⚠ and the SAME note as a held one**
@@ -5197,7 +5449,7 @@ func _assert_declared_input_republishes() -> void:
 	# The per-snapshot push (`Main._update_band_panel_lateral_bounds`). The harness's own reservation
 	# listener re-pushes these too, so what settles is the loop's fixed point — which is the whole
 	# point: the invariant has to hold there, not at some instant inside it.
-	var columns: Vector2 = _hud.lateral_column_widths()
+	var columns: Vector2 = _main_lateral_bounds()
 	_panel.set_lateral_bounds(columns.x, columns.y)
 	await _settle()
 	var drawn: float = _panel._root.get_global_rect().size.y
@@ -5656,7 +5908,7 @@ func _assert_card_clears_hud_columns(state_name: String) -> void:  # coroutine: 
 	for rect_variant in columns.values():
 		if unbound.intersects(rect_variant):
 			would_collide = true
-	var live: Vector2 = _hud.lateral_column_widths()
+	var live: Vector2 = _main_lateral_bounds()
 	_panel.reservation_changed.connect(_reservation_listener)
 	_hud._bandpanel.rerender()
 	await _settle()
@@ -20162,3 +20414,4 @@ func _assert_rung_track_opens_over_the_dialog() -> void:
 	_hud._bandpanel._rung_track.hide()
 	_hud._bandpanel.close_work_inspector()
 	await _settle()
+

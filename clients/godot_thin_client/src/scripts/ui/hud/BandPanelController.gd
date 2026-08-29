@@ -4592,24 +4592,41 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     # this zone — dropping only the accounts clause freed NOTHING, a line surviving three of its four
     # clauses — and it is why the floor travelled with them rather than staying behind.
     #
-    # **EVERY SURVIVING LINE STILL ELIDES, and that is a WIDTH decision the zone forces.** The zone's
-    # box is reserved (`PANEL_WIDTH` less chrome, 356px on a side dock) and its content is anchored
-    # full-rect into a host that clips — so a line reporting its whole text as a minimum width clamps
-    # the entire tab's column up to that width, and the POOLS readout, the Builders card's `+`, the
-    # BUILD QUEUE head's kit name and every board row's stepper are sliced off the right edge by a
-    # line none of them can see. `band_panel_work_inspector_width` is the frame, and
-    # `_assert_zone_content_width_fits` the claim.
+    # ⛔ **THE FOUR PROSE LINES WRAP NOW, AND THE ELIDE THEY LOST WAS THE STRIP'S, NOT THE CARD'S**
+    # (§4.9 item 12d, third pass). Reported from play: the shortfall sentence read *"Short of hurdles —
+    # 0.03 of the 0.05 a turn it needs. The bench or a trad…"*, a sentence cut off exactly where it
+    # names the remedy. The retired reading was *"EVERY SURVIVING LINE STILL ELIDES, and that is a
+    # WIDTH decision the zone forces. The zone's box is reserved (`PANEL_WIDTH` less chrome, 356px on a
+    # side dock) and its content is anchored full-rect into a host that clips — so a line reporting its
+    # whole text as a minimum width clamps the entire tab's column up to that width, and the POOLS
+    # readout, the Builders card's `+`, the BUILD QUEUE head's kit name and every board row's stepper
+    # are sliced off the right edge by a line none of them can see."* Every word of that was about a
+    # strip INSIDE the work zone. This strip is the body of a `WorkInspectorDialog` — a card on its own
+    # `CanvasLayer` that participates in no zone's layout and clips on neither axis — so there is no
+    # column for a long line to clamp and nothing off any edge for it to slice. The elide is a leftover
+    # of the cramped host, exactly like the mutually-exclusive pickers item 12d retired.
+    #
+    # **THE OTHER HOSTS KEEP IT, WHICH IS WHY THIS IS A SECOND BUILDER AND NOT A CHANGED DEFAULT.** The
+    # tile card's flow, the drawer's standing summary, the parties inspector's detail lines and the
+    # build queue's tooltip are all still in reserved-width boxes, and `band_panel_work_inspector_width`
+    # / `_assert_zone_content_width_fits` still hold them to it.
+    #
+    # **AND THE HEIGHT FOLLOWS THE WRAP** — `_work_inspector_wrap_overflow` measures each of these
+    # sentences at the card's real column width and adds the lines beyond the first to the
+    # reservation, so `reserved >= drawn` survives a two-line note.
     if bool(model.get("warn", false)):
-        col.add_child(HudWidgets.build_status_part(HudWorkVocab.WORK_INSPECT_OVERDRAW_LINE, HudStyle.WARN, true))
+        col.add_child(HudWidgets.build_wrapping_status_part(
+            HudWorkVocab.WORK_INSPECT_OVERDRAW_LINE, HudStyle.WARN))
     if String(model.get("note", "")) != "":
         # **THE INK COMES OFF THE MODEL** (§2.7) — DANGER where the missing thing is a good, WARN where
         # it is hands. One table (`HudWorkVocab.note_color`), read here and at the drawer's twin, so
         # the two surfaces cannot colour one note two ways.
-        col.add_child(HudWidgets.build_status_part(String(model.get("note", "")),
+        col.add_child(HudWidgets.build_wrapping_status_part(String(model.get("note", "")),
             HudWorkVocab.note_color(String(model.get("note_severity",
-                HudWorkVocab.NOTE_SEVERITY_WARN))), true))
+                HudWorkVocab.NOTE_SEVERITY_WARN)))))
     if String(model.get("muted_note", "")) != "":
-        col.add_child(HudWidgets.build_status_part(String(model.get("muted_note", "")), HudStyle.INK_FAINT, true))
+        col.add_child(HudWidgets.build_wrapping_status_part(
+            String(model.get("muted_note", "")), HudStyle.INK_FAINT))
     var schedule: PackedFloat32Array = model.get("schedule", PackedFloat32Array())
     if ArrivalStrip.has_gap(schedule):
         var arrivals := ArrivalStrip.new()
@@ -4649,10 +4666,8 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
         # tool was fine for a site that had nothing to keep in the first place. The `none` caveat is
         # back in the two pickers' tooltips, which is the per-control place it belongs.
         if _work_inspector_has_upkeep(model):
-            col.add_child(HudWidgets.build_status_part(
-                HudWorkVocab.WORK_INSPECT_KITS_UPKEEP_FORMAT % HudWorkVocab
-                    .RUNG_TRACK_PRICE_SEPARATOR.join(_work_inspector_upkeep_terms(model)),
-                HudStyle.INK_FAINT, true))
+            col.add_child(HudWidgets.build_wrapping_status_part(
+                _work_inspector_upkeep_bill(model), HudStyle.INK_FAINT))
     # **THE TWO PURE ACTIONS, and they are buttons because they have no content to show.** Everything
     # above is a section — a standing property of the row with its controls drawn — while these two
     # do something and are gone. `Unassign` is destructive, so it keeps its DANGER ink and is pushed to
@@ -4837,6 +4852,28 @@ func _work_inspector_upkeep_terms(model: Dictionary) -> Array[String]:
         terms.append(String(term))
     return terms
 
+## **THE SITE'S BILL AS ONE SENTENCE — composed HERE and nowhere else**, because the builder draws it
+## and the reservation has to measure the same string to know how many lines it wraps to. Two
+## compositions of one sentence are two answers to *how tall is this line*, and the difference comes
+## off the bottom of the card.
+func _work_inspector_upkeep_bill(model: Dictionary) -> String:
+    return HudWorkVocab.WORK_INSPECT_KITS_UPKEEP_FORMAT % HudWorkVocab \
+        .RUNG_TRACK_PRICE_SEPARATOR.join(_work_inspector_upkeep_terms(model))
+
+## **THE COLUMN A WRAPPED NOTE REALLY LAYS OUT IN** — the dialog's content width less the inspector
+## card's own horizontal padding, which are the only two things between the card's outer edge and the
+## text. Derived from the two producers rather than restated, so a change to either cannot leave the
+## reservation measuring a column the note is not drawn in.
+##
+## **IT IS A LOWER BOUND ON THE DRAWN WIDTH, AND THAT DIRECTION IS THE SAFE ONE.**
+## `AutoSizingPanel.fit_width` never takes the card BELOW `target_width` (= `CONTENT_WIDTH` plus
+## chrome) and may take it above when some other child demands it — and a note measured at a narrower
+## column than it draws in reports MORE lines than it takes, i.e. over-reserves. The reverse would be
+## height nobody paid for.
+func _work_inspector_note_width() -> float:
+    return WorkInspectorDialog.CONTENT_WIDTH \
+        - HudStyle.work_inspector_stylebox().get_minimum_size().x
+
 ## **THE TAKE PICKER — the crew's own tool, on the path the compose sheet already uses.** It sends
 ## `assign_labor … kit <id>`, so this control adds no second command for a value that already has one;
 ## the row's crew, floor and rank are re-sent unchanged beside it because that command states them all.
@@ -5006,12 +5043,18 @@ func _commit_work_priority(band: Dictionary, model: Dictionary, level: String) -
 ## for a child that does not draw or misses one that does, and both fail silently.
 func _work_inspector_height(model: Dictionary) -> float:
     var height := HudWorkVocab.WORK_INSPECTOR_HEIGHT
+    # **EACH NOTE IS ONE LINE PLUS WHATEVER IT WRAPS TO** (§4.9 item 12d's third pass). The four prose
+    # lines on this card WRAP now rather than eliding — see `_work_inspector_wrap_overflow` for why the
+    # overflow is stated on top of the one-line term instead of replacing it.
     if bool(model.get("warn", false)):
-        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT
+        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT \
+            + _work_inspector_wrap_overflow(HudWorkVocab.WORK_INSPECT_OVERDRAW_LINE)
     if String(model.get("note", "")) != "":
-        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT
+        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT \
+            + _work_inspector_wrap_overflow(String(model.get("note", "")))
     if String(model.get("muted_note", "")) != "":
-        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT
+        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT \
+            + _work_inspector_wrap_overflow(String(model.get("muted_note", "")))
     var schedule: PackedFloat32Array = model.get("schedule", PackedFloat32Array())
     if ArrivalStrip.has_gap(schedule):
         height += HudWorkVocab.WORK_INSPECTOR_ARRIVALS_HEIGHT
@@ -5035,11 +5078,36 @@ func _work_inspector_height(model: Dictionary) -> float:
         # …and the UPKEEP half on top, which a WILD source does not draw: the picker and the bill line
         # under it are one term behind the builder's own second predicate, verbatim.
         if _work_inspector_has_upkeep(model):
-            height += HudWorkVocab.WORK_INSPECTOR_KITS_UPKEEP_HEIGHT
+            height += HudWorkVocab.WORK_INSPECTOR_KITS_UPKEEP_HEIGHT \
+                + _work_inspector_wrap_overflow(_work_inspector_upkeep_bill(model))
     # …and the hairline that separates the two pure actions from the last section above them. The row
     # itself has always been inside `WORK_INSPECTOR_EXTENT`; only its rule is new.
     height += HudWorkVocab.WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
     return height
+
+## **WHAT ONE OF THE CARD'S PROSE LINES COSTS BEYOND THE FIRST LINE its term already charges for it** —
+## `0.0` for a sentence that fits, one `WORK_INSPECTOR_NOTE_LINE_HEIGHT` per wrapped line after that.
+##
+## ⛔ **THE ONE-LINE CLAIM DIED WITH THE ELIDE, AND IT IS QUOTED WHERE IT LIVED.**
+## `WORK_INSPECTOR_NOTE_LINE_HEIGHT` used to assert that the label *"is exactly ONE line whatever it
+## says"*, which was true only because every line on the strip elided; the card is free-floating and
+## its notes wrap now, so that sentence is corrected in place in `hud_work_vocab.gd` and this term is
+## what replaces the part of it that was load-bearing.
+##
+## **STATED AS AN OVERFLOW ON TOP OF THE EXISTING TERMS, NOT AS A REPLACEMENT FOR THEM.** Every
+## constant in the reservation — the note height, the section head, the kits/upkeep pair — charges
+## exactly one line of this type and goes on charging it, so `WORK_INSPECTOR_CEILING_HEIGHT` keeps
+## meaning what it says (the ceiling AT ONE LINE PER NOTE) and becomes a FLOOR on the wrapped worst
+## case rather than a number that quietly stopped describing anything.
+##
+## **AND IT CANNOT SILENTLY UNDER-RESERVE, because the count is MEASURED rather than allowed for.** A
+## fixed "notes get two lines" allowance would be right until the first sentence that needs three, and
+## nothing would say so — the card would simply draw past what it reserved. This asks the real font,
+## at the real column width, with the drawn label's own break flags, so a longer sentence reserves
+## more by construction; `band_panel_preview._assert_work_inspector_worst_case_fits` mounts a genuinely
+## wrapping worst case and pins `reserved >= drawn` against what the laid-out label really asks for.
+func _work_inspector_wrap_overflow(text: String) -> float:
+    return HudWidgets.wrapped_status_part_overflow(text, _work_inspector_note_width())
 
 ## **LINE TWO'S WHOLE STRING — every account this source pays, then the floor the player set it to.**
 ## The accounts go through `SourceForecast.yield_components`, which already carries the

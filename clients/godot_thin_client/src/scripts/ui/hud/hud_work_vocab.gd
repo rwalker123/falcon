@@ -694,11 +694,34 @@ const WORK_INSPECTOR_SLACK := float(ZONE_BLOCK_SEPARATION)
 
 const WORK_INSPECTOR_HEIGHT := WORK_INSPECTOR_EXTENT + WORK_INSPECTOR_SLACK
 
-## What ONE conditional `HudWidgets.build_status_part` line costs the strip — the overdraw line, the
-## slipping `note`, the `muted_note`. The label is a bare `Label` at `ALLOC_SECTION_FONT_SIZE` with no
-## autowrap, so it is exactly ONE line whatever it says; **14px is measured at that size**, not
-## guessed, and the gap is the one the column puts above every block.
+## What ONE LINE of this zone's small type costs — the overdraw line, the slipping `note`, the
+## `muted_note`, a section header, the board row's second line. **14px is measured at
+## `ALLOC_SECTION_FONT_SIZE`**, not guessed, and it includes the `line_spacing` a drawn `Label` adds
+## per line, which is the whole reason a wrapped line is priced at this number rather than at what
+## `Font.get_multiline_string_size` reports.
+##
+## ⛔ **IT SAID "ONE LINE WHATEVER IT SAYS", AND THAT STOPPED BEING TRUE WHEN THE NOTES STARTED
+## WRAPPING** (`docs/plan_standing_upkeep.md` §4.9 item 12d, third pass). The retired sentence read:
+## *"The label is a bare `Label` at `ALLOC_SECTION_FONT_SIZE` with no autowrap, so it is exactly ONE
+## line whatever it says."* It was true of a strip inside the work zone, where every line elided
+## because the zone's width was reserved. The strip is the `WorkInspectorDialog`'s body now, its four
+## prose lines are `HudWidgets.build_wrapping_status_part` and a note that runs long takes a second
+## line — which `BandPanelController._work_inspector_wrap_overflow` measures and charges at exactly
+## this number, per line beyond the first. **What the constant states is the price of a line; what it
+## no longer states is how many there are.**
 const WORK_INSPECTOR_NOTE_LINE_HEIGHT := 14.0
+
+## …and what EACH LINE AFTER THE FIRST costs, which is **NOT the same number**: a wrapped note draws
+## **31px at two lines against 14 at one**, measured on the card itself
+## (`band_panel_preview`'s worst-case probe). The difference is Godot's `Label` `line_spacing`, which
+## is spent BETWEEN lines and so is not in a one-line label's height at all.
+##
+## ⛔ **CHARGING WRAPPED LINES AT `WORK_INSPECTOR_NOTE_LINE_HEIGHT` UNDER-RESERVES BY 3px A LINE, AND
+## THAT IS HOW THIS CONSTANT WAS FOUND.** The first cut of the wrap did exactly that and the harness
+## caught it on two states — 402 reserved against 407 drawn at the worst case, 334 against 336 on a
+## kept herd — which is the whole reason `reserved >= drawn` is asserted against a laid-out label
+## rather than against the arithmetic that produced it.
+const WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT := 17.0
 
 ## **ONE CONTROL LINE — a `compact` `OptionButton` at this zone's type size, MEASURED.** Two blocks
 ## draw it: the BUILD QUEUE row's settings strip (`BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT`) and the work
@@ -711,6 +734,10 @@ const WORK_INSPECTOR_NOTE_LINE_HEIGHT := 14.0
 ## zone the shipped control is 22 and the block gap is charged once per BLOCK rather than per line.
 const WORK_COMPACT_PICKER_LINE_HEIGHT := 22.0
 
+## What one conditional prose line costs the card: its FIRST line and the gap the column puts above
+## every block. A second and third line, where the sentence wraps to them, are added on top by
+## `BandPanelController._work_inspector_wrap_overflow` — the gap is charged once per BLOCK, so it is
+## right here and must not be inside the per-line overflow.
 const WORK_INSPECTOR_NOTE_HEIGHT := WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(ZONE_BLOCK_SEPARATION)
 
 ## **WHAT ONE BOARD ROW COSTS, and it is TWO LINES.** A source row holds a name, a variable-length
@@ -787,9 +814,14 @@ const WORK_INSPECTOR_SECTION_RULE_THICKNESS := 1.0
 
 ## What one SECTION HEADER costs the card: the rule, the gap under it, the header label\'s own line,
 ## and the gap under that. The label is `HudWidgets.alloc_section_label` — a bare `Label` at
-## `ALLOC_SECTION_FONT_SIZE` with no autowrap, so it is exactly one line whatever it says, and 14px is
-## the measured height of that type (`WORK_INSPECTOR_NOTE_LINE_HEIGHT`) rather than a guess. Both gaps
-## are the column\'s own `ZONE_BLOCK_SEPARATION`, spent once each by the `VBoxContainer`.
+## `ALLOC_SECTION_FONT_SIZE` with no autowrap, so it is exactly one line, and 14px is the measured
+## height of that type (`WORK_INSPECTOR_NOTE_LINE_HEIGHT`) rather than a guess. Both gaps are the
+## column\'s own `ZONE_BLOCK_SEPARATION`, spent once each by the `VBoxContainer`.
+##
+## **THE ONE-LINE CLAIM SURVIVES *HERE* AND DIED FOR THE NOTES**, and the difference is what the label
+## holds: a section header is a single uppercase WORD (`POLICY`, `PRIORITY`, `KITS`) that cannot reach
+## the column's width, while the notes are sentences and now wrap. Only the prose lines take
+## `build_wrapping_status_part`.
 const WORK_INSPECTOR_SECTION_HEAD_HEIGHT := WORK_INSPECTOR_SECTION_RULE_THICKNESS \
     + float(ZONE_BLOCK_SEPARATION) + WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(ZONE_BLOCK_SEPARATION)
 
@@ -831,7 +863,18 @@ const WORK_INSPECTOR_KITS_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
 const WORK_INSPECTOR_KITS_UPKEEP_HEIGHT := WORK_COMPACT_PICKER_LINE_HEIGHT \
     + WORK_INSPECTOR_NOTE_HEIGHT
 
-## **THE CEILING THESE TERMS ADD UP TO, AND IT IS A SUM OVER THREE SECTIONS**
+## **THE CEILING THESE TERMS ADD UP TO, AND IT IS A SUM OVER THREE SECTIONS — AT ONE LINE PER NOTE.**
+##
+## ⛔ **IT IS A FLOOR ON THE WORST CASE NOW RATHER THAN THE WORST CASE ITSELF** (§4.9 item 12d, third
+## pass). The card's four prose lines WRAP, so a model whose sentences run long reserves this plus one
+## `WORK_INSPECTOR_NOTE_LINE_HEIGHT` per wrapped line — `BandPanelController.
+## _work_inspector_wrap_overflow`, measured at the card's real column width. Stating the ceiling at one
+## line each is deliberate: it keeps every term below a constant anybody can add up, and it keeps the
+## structural claim (*no fifth conditional child has appeared*) separable from the typographic one
+## (*this sentence is long*). `band_panel_preview._assert_work_inspector_worst_case_fits` asks both —
+## that the reservation exceeds this ceiling by whole note lines and by nothing else, and that a
+## genuinely wrapping worst case still reserves what it draws.
+##
 ## (`docs/plan_standing_upkeep.md` §4.9 item 12d). A model carrying every conditional child at once —
 ## the overdraw line, the `note`, the `muted_note` and the `ArrivalStrip` — on a row that HAS kits
 ## reserves **374px**: the base 64, three note lines at 20, the arrivals at 14, the actions rule at 7,

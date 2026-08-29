@@ -2028,7 +2028,8 @@ width taken off the zones.
 
 `BandCityPanel._rail_split()` — split iff `viewport − split span − lateral bounds >= wide_shell_min_width()`.
 **Existing vocabulary, no new tunable.** Below it the old rejection still governs: two islands plus a card
-cannot fit an arbitrarily narrow window, and the chrome stacks exactly as before.
+cannot fit an arbitrarily narrow window, and the chrome stacks exactly as before. **What the `lateral
+bounds` term MEANS was the defect** — see "it needed 2012px" below.
 
 It is the shell's MINIMUM rather than `_card_width()`'s current answer **deliberately**: the declared card
 width follows the work board's column count, so gating on it would move the minimap to the other end of
@@ -2039,17 +2040,65 @@ the screen when a band gains a source — and it would be a cycle besides (`_car
 
 | state | window | leading bound | verdict |
 |---|---|---|---|
-| `band_panel_dockrow_bottom` | 1920 | 360 (HUD keeps its column) | **stacked** — 1098 of room, 92 short |
+| `band_panel_dockrow_bottom` | 1920×1080 | **0** — the left column is not in the row | **split** |
+| `band_panel_dockrow_column_reaches` | 1920×**540** | **360** — the tile card really does reach the row | **stacked** — 1098 of room, 92 short |
 | `band_panel_dockrow_bottom_yield` | 2560 | 0 (HUD yields) | **split** |
-| `band_panel_dockrow_ultrawide` | 3440 | 360 | **split** |
+| `band_panel_dockrow_ultrawide` | 3440 | 360 → **0** | **split** |
 
-So the split needs **≥ 2012px** of window while the HUD keeps its left column (1190 + 462 + 360), and
-**≥ 1652px** where it yields. **A 1920 monitor therefore still stacks** — there is genuinely no room for
-two ~300px islands beside a 1190px card and a 360px HUD column.
+So the split needs **≥ 1652px** of window (1190 + 462), and ≥ 2012 in the one case where the left
+column's card really does descend into the strip. `band_panel_preview` prints the live threshold beside
+the state (`chrome split threshold — 1652px of window … 1920 splits, 2000 splits`).
+
+#### ⛔ IT NEEDED 2012px, AND THE FEATURE DID NOT EXIST ON THE HARDWARE IT WAS BUILT FOR
+
+The retired reading of the table above was: *"the split needs ≥ 2012px of window while the HUD keeps its
+left column (1190 + 462 + 360) … **A 1920 monitor therefore still stacks** — there is genuinely no room
+for two ~300px islands beside a 1190px card and a 360px HUD column."* Reported from play on a ~2000px
+window: minimap and turn orb still stacked bottom-right. **2000 − 462 − 360 = 1178 against a minimum of
+1190 — it failed by 12px**, and a feature that needs 2012px on a 2000px monitor is a feature that does
+not exist.
+
+**THE 360 WAS THE LEFT COLUMN'S WIDTH CHARGED AT A HEIGHT THE COLUMN IS EMPTY AT.** `LeftDock` is
+`SIZE_EXPAND_FILL` in `ContentRow`, so its REGION runs the window's full height — but the region is not
+what a player sees. The dock holds exactly ONE card (`left_dock.add(tile_panel, 10)`, the only
+registration there is), and measured on a 1920×1080 bottom dock it stops at **224** against a strip whose
+top edge is **662**. The bottom-left of that screen is open map: the chrome was being held off an
+obstruction that was 438px away.
+
+**IT IS THE SAME MISTAKE `348e5c09` MADE ON THE TRAILING COLUMN**, which is why the fix is the shape that
+one already has. That commit bounded the chrome rail against the right column's reserved REGION and left
+a visible band of dead map beside it; the rail is flush now and the right dock's CARDS are held above the
+strip instead. `band_panel_preview._right_dock_content_reach`'s own header states the rule —
+*"Never `right_dock_region`, whose rect spans the whole row whether or not anything is painted in it"* —
+and every word of it was true of the left column too.
+
+**THE FIX IS AT THE BOUND, NOT AT THE GATE OR THE THRESHOLD.** `_rail_split()` is unchanged;
+`Main.band_panel_lateral_bounds` (a `static` beside `band_dock_overlays_hud`, so the harnesses call it
+rather than restate it) drops the leading term on a BOTTOM dock wherever
+`Hud.left_column_content_reach()` — the painted bottom of the left dock's cards, clipped to `LeftScroll`
+— stops above the strip. Every consumer of the bound gets the honest number at once: the gate, the
+leading island's `offset_left`, the card's centring and `_available_card_span()`. Lowering
+`wide_shell_min_width()` or a rail span to clear 2000 would have been tuning a measured quantity to pass
+a test.
+
+**IT IS LIVE, AND IT HAS TO BE — the column is ALLOWED to grow into the strip.** Only the RIGHT column
+yields its bottom on a bottom dock (`Main._update_right_column_bottom_clearance`: a bottom inset on
+`LayoutRoot` would shorten BOTH, and the left column's full height IS the defect that inset exists to
+fix). So this is not a worst case to assume away: where the tile card really reaches the row, the bound
+comes straight back and the chrome stacks. `band_panel_dockrow_column_reaches` stages exactly that with a
+pure window resize — the strip's top edge is 0.4 of the window's height, so a 540-tall window raises it
+to 216, under the same card's 224 — and `_assert_leading_bound_matches_the_column` asserts BOTH
+directions. With only the tall state, *"the leading bound is 0"* is satisfied by a client that never
+charges it, which is a band card drawn straight through the tile card the day one grows.
+
+**ONLY THE BOTTOM EDGE ASKS THE QUESTION.** On a TOP dock the strip is at the top of the window and the
+left column's content STARTS there, so the column is always in the card's band; asking there would zero a
+bound that is genuinely owed.
 
 **THE WIDE→NARROW SHELL FLIP DID NOT MOVE.** It is 1331 before and after (`shell threshold probes at
-1330 / 1331`), because the split is refused exactly where it would cost the wide shell. The old
-two-gutter shape's ~1605 is not approached.
+1330 / 1331`), and the honest bound cannot move it: below the yield fork (1871) `Main` pushes zeroes
+anyway, so the shell's own arithmetic at 1331 never saw a leading bound to drop. The old two-gutter
+shape's ~1605 is not approached.
 
 ⛔ **WHAT IT DOES COST, MEASURED AND ACCEPTED**: on a 3440 bottom dock with 34 sources and a TWO-column
 band flank, the extra 141px takes the work board from four columns to three (`band_panel_dockrow_ultrawide`,
@@ -3799,7 +3848,8 @@ panel's bench-link face, which is why it stays a shared const.
 | KITS section | **49** | head + the TAKE control line (22) — every row that has kits |
 | …its UPKEEP half | **42** | the second control line (22) + the standing bill (20) — only where the site owes one |
 | `WORK_INSPECTOR_ACTIONS_RULE_HEIGHT` | **7** | the hairline above the two actions and its gap |
-| **`WORK_INSPECTOR_CEILING_HEIGHT`** | **374** | every conditional child, on a row with kits |
+| a WRAPPED line, each after the first | **17** | `WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT`, added per line the sentence takes beyond one |
+| **`WORK_INSPECTOR_CEILING_HEIGHT`** | **374** | every conditional child at ONE LINE EACH, on a row with kits — a **floor** on the worst case since the notes started wrapping |
 
 An ordinary KEPT row with no conditional notes measures **300** and a WILD one **258**; the rendered
 card is **298** at the fixture's width, on the wild queue row the dialog frames open (the priority hint
@@ -3812,6 +3862,74 @@ the allocation panel already heads its sections with. Nothing was invented.
 **`WORK_INSPECTOR_SECTION_RULE_THICKNESS` is a TWIN of `BandCityPanel.ZONE_SEPARATOR_THICKNESS`, not a
 read of it** — a vocab leaf reaching for a `class_name`d panel script at class load is a cycle waiting
 to happen, the same rule `WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT` follows against `ArrivalStrip`.
+
+#### ⛔ THE CARD'S PROSE WRAPS NOW — the elide was the STRIP's constraint, not the card's
+
+Reported from play, on the shipped card: the material-shortfall note read
+
+```
+Short of hurdles — 0.03 of the 0.05 a turn it needs. The bench or a trad…
+```
+
+— cut off one word into the only clause that says what to DO about it. **The elide was correct for
+every day the inspector was a strip inside the work zone** and is stated in `HudWidgets.
+build_status_part`: the zone's box is reserved and `clip_contents`, so an unwrapped `Label` reporting
+its whole text as a minimum width clamps the entire tab's column and slices the POOLS readout, the
+Builders card's `+` and every board row's stepper off the right edge. Item 12d moved the inspector into
+`WorkInspectorDialog` — a card on its own `CanvasLayer`, in no zone's layout, clipping on neither axis
+— and the elide simply stayed behind, exactly like the mutually-exclusive pickers the same item
+retired.
+
+**FOUR LINES WRAP, AND THE HEAD LINE STILL CLIPS.** The overdraw warning, the `note`, the `muted_note`
+and the KITS section's standing bill are sentences a player reads to act, and they take
+`HudWidgets.build_wrapping_status_part`. The title keeps `clip_text` — it is an identity, its rung
+clause is *designed* to be the first thing to go, and a wrapping title would move every control below
+it whenever a species name ran long.
+
+**A SECOND BUILDER, NEVER A WIDER DEFAULT.** `build_status_part`'s `elide` flag is chosen by *can this
+host grow?*; wrapping is chosen by *is this line prose?*. Folding them into one tri-state would let a
+caller pass "wrap" to a host that clips — and the tile card's flow, the drawer's standing summary, the
+parties inspector's detail lines and the build queue's tooltip are all still in reserved-width boxes
+that need the elide. `band_panel_work_inspector_width` / `_assert_zone_content_width_fits` still hold
+them to it, and `band_panel_parties_inspector_narrow` is the frame that shows one still eliding.
+
+**THE HEIGHT FOLLOWS THE WRAP, MEASURED RATHER THAN ALLOWED FOR.** `_work_inspector_wrap_overflow`
+asks the FONT — through `HudWidgets.wrapped_status_part_lines`, at the card's real column width, with
+the drawn label's own break flags — how many lines the sentence takes, and adds
+`WORK_INSPECTOR_NOTE_WRAP_LINE_HEIGHT` for each one past the first. A fixed "notes get two lines"
+allowance was the alternative and was declined: it is right until the first sentence that needs three
+and nothing says so. Three properties make the measurement safe to trust:
+
+- **The width is a LOWER BOUND on the drawn column.** `_work_inspector_note_width` is
+  `WorkInspectorDialog.CONTENT_WIDTH` less the strip's own padding (**342**), while the card really
+  lays the note out at **350** — `AutoSizingPanel.fit_width` never goes BELOW `target_width` and may go
+  above. Measuring narrow over-counts lines, which is the safe direction; the drawn rect is asserted
+  against that column so the two cannot drift apart.
+- **A wrapped line costs 17, not 14, and that is the trap.** `WORK_INSPECTOR_NOTE_LINE_HEIGHT` is a
+  ONE-line label's measured height; a `Label` spends its theme `line_spacing` BETWEEN lines, so a
+  two-line note draws **31**. The first cut priced wrapped lines at 14 and under-reserved by 3px a
+  line — caught by the harness on two states (402 reserved against 407 drawn at the worst case, 334
+  against 336 on a kept herd), which is exactly why `reserved >= drawn` is asserted against a
+  laid-out label rather than against the arithmetic that produced it.
+- **The ceiling stayed a constant and changed meaning.** `WORK_INSPECTOR_CEILING_HEIGHT` is the total
+  AT ONE LINE PER NOTE, so it is now a floor rather than the worst case. The equality assertion split
+  in two: the reservation is above the ceiling, and the excess is WHOLE wrapped lines and nothing else
+  — which still fails on a fifth conditional child of any other height, the structural question the
+  equality was really asking.
+
+**THE CARD WAS NOT WIDENED, AND THE MEASUREMENT IS WHY.** The shortfall sentence takes exactly **2**
+lines at the shipped column, and the priority hint and the standing bill still fit on one; a wider card
+would buy one line back at the cost of the width the head line, the two 3-cell grids and the kit
+pickers were all laid out at. `CONTENT_WIDTH` stays `BandCityPanel.ZONE_PARTY_WIDTH`. If a sentence
+ever reaches three or four lines the width is the lever to reach for — the card is free-floating and no
+zone constrains it — but nothing measured today asks for it.
+
+**AND THE WORST CASE STAGES A WRAP, OR THE CLAIM IS VACUOUS.**
+`_assert_work_inspector_worst_case_fits`'s fixture note was `"Animals are drifting off."` — one line,
+which makes *"reserved >= drawn with a wrapped note in it"* the old claim under a new name. It is the
+shipped shortfall sentence's own shape now, and the harness asserts `Label.get_line_count() >= 2` on
+the DRAWN label before it measures anything. Frames: `band_panel_work_material_short` (the sentence
+whole, over two lines, in DANGER ink) and `band_panel_work_kits_kept_herd`.
 
 #### The kits hint came back, and the tooltips lost the half it duplicates
 

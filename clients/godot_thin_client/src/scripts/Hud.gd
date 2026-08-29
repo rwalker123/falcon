@@ -2287,6 +2287,49 @@ func lateral_column_widths() -> Vector2:
         trail = maxf(trail, right_dock_region.get_global_rect().size.x)
     return Vector2(lead, trail)
 
+## **HOW FAR DOWN THE WINDOW THE LEFT COLUMN ACTUALLY *DRAWS*** — the bottom edge of its painted cards,
+## in global coordinates. `NOTHING_PAINTED` where the column is empty.
+##
+## ⛔ **NEVER `left_dock_region`, WHOSE RECT SPANS THE WHOLE ROW WHETHER OR NOT ANYTHING IS PAINTED IN
+## IT**, and that distinction is a defect this client has already had once, one column over:
+## `348e5c09` bounded the chrome rail against the right column's reserved REGION rather than against its
+## drawn content and left a visible band of dead map beside it.
+## `lateral_column_widths` above answers *how WIDE is the column*, which the region is the honest source
+## for; this answers *is the column THERE, at this height*, which it is not — measured on a 1920x1080
+## bottom dock, the region runs 0→1080 while the one card in it (`TilePanel`, the only card
+## `left_dock.add` ever registers) stops at **224**, with the strip's top edge at 662. Charging a
+## 360px column at the row's height on that evidence reserves clearance against nothing.
+##
+## **CLIPPED TO `LeftScroll`, because a card taller than the box hangs out of the bottom of it** and
+## what the player sees is the clip. That is `band_panel_preview._right_dock_content_reach`'s rule for
+## the other column, and the two must answer the same kind of question or the pair of bounds means two
+## different things.
+##
+## **IT IS A LIVE READ, AND THE COLUMN IS ALLOWED TO GROW INTO THE STRIP** — the left column keeps its
+## full height on a bottom dock by design (`set_right_column_bottom_clearance`: only the RIGHT column
+## yields, because a bottom inset on `LayoutRoot` would shorten both and that is the clipping the
+## conditional inset exists to fix). So this is not a worst case to be assumed away; it is the question
+## asked per push, and a tile card that really does descend into the strip charges the bound again.
+func left_column_content_reach() -> float:
+    if left_stack == null or left_dock_scroll == null:
+        return NOTHING_PAINTED
+    var clip := left_dock_scroll.get_global_rect()
+    var bottom := NOTHING_PAINTED
+    for child in left_stack.get_children():
+        var card := child as Control
+        if card == null or not card.visible:
+            continue
+        var drawn := card.get_global_rect().intersection(clip)
+        if drawn.size.x <= 0.0 or drawn.size.y <= 0.0:
+            continue
+        bottom = maxf(bottom, drawn.end.y)
+    return bottom
+
+## What `left_column_content_reach` answers for a column with nothing painted in it. `-INF` rather than
+## `0`: a global y of 0 is the TOP of the window, which every strip is below, so a zero sentinel would
+## read as *the column reaches everywhere* — the wrong direction for a bound.
+const NOTHING_PAINTED := -INF
+
 ## A CLIENT-SIDE note — a refusal, a nudge, a knowledge unlock. It used to land in the left-dock
 ## command feed; it is a System-channel event on the event dock now, which is `Main`'s panel, so the
 ## HUD EMITS rather than reaching for it. `_note_sink` is the Callable the three controllers that
