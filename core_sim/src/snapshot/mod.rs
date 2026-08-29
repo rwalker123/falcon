@@ -27,8 +27,8 @@ use sim_runtime::{
     MountainKind, PendingForkState, PendingForksState, PendingMigrationState,
     PopulationCohortState, PopulationDemographicsState as SchemaPopulationDemographicsState,
     PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState, RecipeDefState,
-    ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
-    SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
+    RouteState, ScalarRasterState, SedentarizationState as SchemaSedentarizationState,
+    SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, SourcePriorityState, StanceAxisState, StanceState,
     StartMarkerState, TerrainOverlayState, TerrainSample, TileState, VictoryModeSnapshotState,
     VictoryResultState, VictorySnapshotState, VoiceLineState, VoiceMediumState, WorldDelta,
@@ -120,6 +120,7 @@ mod knowledge;
 mod map;
 mod population;
 mod publish;
+mod routes;
 mod subsistence;
 mod vision;
 
@@ -1128,6 +1129,7 @@ mod tests {
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
             connections: Vec::new(),
+            routes: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),
@@ -1199,6 +1201,7 @@ mod tests {
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
             connections: Vec::new(),
+            routes: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),
@@ -1265,6 +1268,7 @@ mod tests {
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
             connections: Vec::new(),
+            routes: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),
@@ -1460,6 +1464,8 @@ mod tests {
                 },
             ],
             last_raid_forfeit: 0.0,
+            last_roadwork_demand: 0.0,
+            last_roadwork_supplied: 0.0,
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
@@ -1567,6 +1573,8 @@ mod tests {
                 },
             ],
             last_raid_forfeit: 0.0,
+            last_roadwork_demand: 0.0,
+            last_roadwork_supplied: 0.0,
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
@@ -1626,6 +1634,8 @@ mod tests {
             build_queue: Vec::new(),
             last_yields: Vec::new(),
             last_raid_forfeit: 0.0,
+            last_roadwork_demand: 0.0,
+            last_roadwork_supplied: 0.0,
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,

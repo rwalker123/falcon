@@ -30,6 +30,7 @@ use crate::state::map::{
 use crate::state::population::{
     GenerationState, PopulationCohortState, PopulationDemographicsState,
 };
+use crate::state::routes::RouteState;
 use crate::state::subsistence::{
     CharacteristicBandState, CraftKnowledgeState, FoodModuleState, ForagePatchState,
     HerdTelemetryState, IntensificationKnowledgeState, KitOptionState, MaterialDefState,
@@ -257,6 +258,11 @@ pub struct WorldSnapshot {
     /// the viewer faction. Ordered by `(observer, subject)`, the ledger's own key order.
     #[serde(default)]
     pub connections: Vec<ConnectionState>,
+    /// **The roads in the ground the viewer can see** (`docs/plan_standing_upkeep.md` §4.13) — one
+    /// row per road, fog-filtered to roads at least one of whose path tiles the viewer faction has
+    /// explored. Ordered by `RouteId`, the ledger's own key order.
+    #[serde(default)]
+    pub routes: Vec<RouteState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -378,6 +384,8 @@ pub struct WorldDelta {
     /// `None` = unchanged this frame. A whole-vector diff like the other `Whole` sections; a
     /// section with no delta twin is permanently stale on a delta-fed client.
     pub connections: Option<Vec<ConnectionState>>,
+    /// `None` = unchanged this frame, on `connections`' own rules.
+    pub routes: Option<Vec<RouteState>>,
 }
 
 pub fn hash_snapshot(snapshot: &WorldSnapshot) -> u64 {

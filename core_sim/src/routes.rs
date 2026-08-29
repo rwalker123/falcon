@@ -81,9 +81,11 @@ use crate::{
     components::Tile,
     grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT},
     intensification::{
-        interpolate, upkeep_shortfall, upkeep_shortfall_fraction, LadderConfig, RungBranch,
-        RungKey, RungRoutePayoff, RungStanding, FRICTION_UNCHANGED, FULLY_SUPPLIED, NEGLECT_NONE,
-        NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        build_fraction, interpolate, neglect_grace_remaining, rung_work_done, upkeep_shortfall,
+        upkeep_shortfall_fraction, LadderConfig, RungBranch, RungKey, RungRoutePayoff,
+        RungStanding, FRICTION_UNCHANGED, FULLY_SUPPLIED, NEGLECT_NONE, NO_CREW_ON_THIS_ACTIVITY,
+        NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT,
+        RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
     resources::TileRegistry,
     terrain::terrain_definition,
@@ -514,6 +516,71 @@ pub fn route_at_risk_rung(standing: &RungStanding) -> RungKey {
         .raising
         .filter(|_| standing.banked > NO_RUNG_WORK_BANKED)
         .unwrap_or(standing.held)
+}
+
+/// **THE METER ON THE RUNG THIS ROAD IS ACTUALLY RAISING**, `0..=1` — the route branch's twin of
+/// `cultivationProgress` / `corralProgress`, and what `RouteState::buildFraction` publishes.
+///
+/// It is read at [`route_at_risk_rung`], the **same** seam the bill interpolates through, the grace
+/// counts down against and [`advance_routes`] bleeds — so a row cannot show one rung's meter beside
+/// another rung's countdown. A road that has just *completed* a rung has nothing banked in the next
+/// one, so the at-risk rung is the one it holds and this reads **exactly** [`METER_FULL`]; the turn
+/// its first traffic lands on the rung above, this becomes that rung's meter from zero.
+///
+/// ⛔ **IT GOES THROUGH [`rung_work_done`], NEVER THROUGH A SUBTRACTION.** That seam answers a rung
+/// the standing already holds with the rung's full `width` by construction rather than with
+/// `fl(base + width) − base`, which is the rounding that published a completed Field at *"99%"*
+/// (`intensification::rung_work_done`'s own callout).
+///
+/// A road at the top of the branch is raising nothing and reads [`METER_FULL`] — an honest *"there
+/// is no meter in flight here"* rather than a zero a client would draw as an empty bar.
+pub fn route_build_fraction(route: &Route, ladder: &LadderConfig) -> f32 {
+    let standing = route.standing();
+    let at_risk = route_at_risk_rung(&standing);
+    let span = route_rung_span(at_risk, ladder);
+    build_fraction(
+        rung_work_done(standing, at_risk, route.position(), span),
+        span.1,
+    )
+}
+
+/// **A meter with nothing left to raise** — what [`route_build_fraction`] answers at the top of the
+/// branch, and the value [`build_fraction`] returns for a rung the standing already holds.
+pub const METER_FULL: f32 = 1.0;
+
+/// **HOW MANY WHOLE ROAD KEEPERS THIS ROAD'S BILL WANTS** — `ceil(basis / PER_WORKER_OUTPUT)`, the
+/// route twin of `forage::patch_upkeep_workers_needed`, and the readout that makes a standing cost
+/// legible: *"this wants 1, you have 0"*.
+///
+/// Struck against the **same** [`route_keeping_basis`] the published demand, supplied and shortfall
+/// are, so the four numbers on a row describe one bill. [`NO_CREW_ON_THIS_ACTIVITY`] for a road that
+/// owes nothing — a game trail, which nobody maintains.
+pub fn route_upkeep_workers_needed(route: &Route, span: f32, ladder: &LadderConfig) -> u32 {
+    let demand = route_keeping_basis(route, span, ladder);
+    if demand <= NO_UPKEEP_DEMAND {
+        return NO_CREW_ON_THIS_ACTIVITY;
+    }
+    (demand / PER_WORKER_OUTPUT).ceil() as u32
+}
+
+/// **HOW MANY MORE TURNS OF SHORTFALL THIS ROAD CAN ABSORB BEFORE IT BLEEDS** — the countdown, not
+/// the counter, through [`crate::intensification::neglect_grace_remaining`] so all three webs and
+/// the wire mean one thing by a grace.
+///
+/// Resolved at [`route_at_risk_rung`], the same seam [`advance_routes`] bleeds through, so the wire
+/// cannot count down against a rung the sim is not touching.
+///
+/// **`None` = THERE IS NOTHING AT RISK HERE**, which is a road holding only the game trail with no
+/// traffic banked above it: that rung declares no `upkeep`, so there is no grace to count and no
+/// meter to lose. It falls out of the ladder rather than out of an `is_built()` guard, exactly as
+/// the bill does.
+pub fn route_neglect_grace_remaining(route: &Route, ladder: &LadderConfig) -> Option<u32> {
+    let rung = ladder.rung(route_at_risk_rung(&route.standing()));
+    rung.upkeep.as_ref()?;
+    Some(neglect_grace_remaining(
+        route.neglect_turns,
+        rung.upkeep_grace_turns(),
+    ))
 }
 
 /// **What a route rung costs to raise.** `None` for the game-trail floor, which is nothing to build.

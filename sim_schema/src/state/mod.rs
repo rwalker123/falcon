@@ -11,6 +11,7 @@ pub mod governance;
 pub mod knowledge;
 pub mod map;
 pub mod population;
+pub mod routes;
 pub mod subsistence;
 
 pub use campaign::*;
@@ -21,6 +22,7 @@ pub use governance::*;
 pub use knowledge::*;
 pub use map::*;
 pub use population::*;
+pub use routes::*;
 pub use subsistence::*;
 
 /// Hundredths, the precision the client stream is diffed at.

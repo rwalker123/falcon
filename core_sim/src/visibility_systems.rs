@@ -4,7 +4,8 @@
 //! 1. `clear_active_visibility` - Reset Active tiles to Discovered
 //! 2. `prune_sweep_tracker` - Forget sweep positions of despawned cohorts
 //! 3. `calculate_visibility` - Compute visibility from all sources
-//! 4. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
+//! 4. `light_kept_routes` - A KEPT ROAD holds its own path `Seen` for whoever stands on it
+//! 5. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
 
 use bevy::prelude::*;
 
@@ -52,7 +53,8 @@ use crate::{
     heightfield::ElevationField,
     labor_config::LaborConfigHandle,
     orders::FactionId,
-    resources::{SimulationConfig, SimulationTick},
+    resources::{SimulationConfig, SimulationTick, TileRegistry},
+    routes::RouteLedger,
     visibility::{VisibilityLedger, VisibilityState, VisibilitySweepTracker},
     visibility_config::{TerrainModifierConfig, VisibilityConfigHandle},
 };
@@ -522,6 +524,81 @@ pub fn calculate_visibility(
         target: "shadow_scale::visibility",
         "visibility.step2_calculate END"
     );
+}
+
+/// ⛔ **STEP 4: A KEPT ROAD HOLDS ITS OWN PATH `Seen`, AND IT IS ITS OWN VISIBILITY SOURCE.**
+///
+/// Ray: *"If a road exists and is maintained, the assumption is that there is traffic on it and it
+/// is seen."* [`crate::routes::Route::grants_sight`] already answers *which* roads — a road at a
+/// **built** rung whose **keeping bill is met** — and this is the pass that hands that answer to the
+/// fog.
+///
+/// # ⛔ THE CONNECTION KEYSTONE DOES NOT BEND, AND THAT IS WHY THIS IS A SEPARATE PASS
+///
+/// `connections.rs` states it as inviolable — *"Only presence makes a tile `Seen`. A connection can
+/// only ever grant `Discovered`."* — and names **logistics** as the first rider that will be tempted
+/// to break it. **This is not that temptation.** Maintenance is not free: a kept road bills a band
+/// every turn out of its `Roadwork` pool, and what those hands are doing is being on the road.
+/// **Paying the upkeep IS the presence**, so the grant comes from the *road* — maintained presence
+/// on specific ground — and never from an edge.
+///
+/// **It is therefore written here, beside a band's own presence, and NOT threaded through the
+/// connection grant.** Plumbing it through the ties would satisfy `core_sim/tests/connections.rs` by
+/// accident rather than by the rule, and would leave the next reader believing a connection can
+/// grant `Seen`. It grants the same `Active` a band's own camp grants, not `Discovered`.
+///
+/// # WHOSE FOG IT LIFTS
+///
+/// **A road belongs to nobody**, so the grant is scoped by *who is standing on it*: for every band
+/// on any tile of a kept road ([`RouteLedger::routes_on_tile`] at the band's own tile — the route
+/// arc's **rule 2**, and there is no radius), that band's **faction** sees **every** tile of that
+/// road's path, however far along it runs. A faction with nobody on a road sees nothing from it.
+///
+/// A detached party is excluded for the reason [`calculate_visibility`] excludes it: an expedition
+/// is deliberately not a live faction vision source, and a road it marched over must not light the
+/// faction map from wherever it stands.
+///
+/// # NO CONTACT RIDES THIS REVEAL
+///
+/// [`ContactSink`] hangs off the *sight sweep*, whose effective range this pass has no part in. A
+/// road grants ground, not a sighting: crediting contact from the far end of a road would let a band
+/// meet a people it never looked at, which is the second half of the keystone wearing a different
+/// coat.
+pub fn light_kept_routes(
+    mut ledger: ResMut<VisibilityLedger>,
+    routes: Res<RouteLedger>,
+    tile_registry: Res<TileRegistry>,
+    tick: Res<SimulationTick>,
+    tiles: Query<&Tile>,
+    bands: Query<(&PopulationCohort, &BandId), Without<Expedition>>,
+) {
+    if routes.is_empty() {
+        return;
+    }
+    let (width, height) = (tile_registry.width, tile_registry.height);
+    let current_turn = tick.0;
+    for (cohort, _) in bands.iter() {
+        let Ok(tile) = tiles.get(cohort.current_tile) else {
+            continue;
+        };
+        // Collected before the map is borrowed mutably: the ledger lookup and the reveal are two
+        // resources, and the ids are a handful per tile.
+        let lit: Vec<&crate::routes::Route> = routes
+            .routes_on_tile(tile.position)
+            .iter()
+            .filter_map(|id| routes.get(*id))
+            .filter(|route| route.grants_sight())
+            .collect();
+        if lit.is_empty() {
+            continue;
+        }
+        let map = ledger.ensure_faction(cohort.faction, width, height);
+        for route in lit {
+            for pos in &route.path {
+                map.mark_active(pos.x, pos.y, current_turn);
+            }
+        }
+    }
 }
 
 /// Tiles crossed by the straight offset-space segment from `from` to `to`,

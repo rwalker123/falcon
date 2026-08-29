@@ -1,7 +1,13 @@
 ---
 paths:
   - "core_sim/src/routes.rs"
+  - "core_sim/src/snapshot/routes.rs"
+  - "core_sim/src/visibility_systems.rs"
   - "core_sim/tests/route_traffic.rs"
+  - "core_sim/tests/route_sight.rs"
+  - "core_sim/tests/route_wire.rs"
+  - "sim_schema/src/state/routes.rs"
+  - "sim_schema/src/codec/routes.rs"
 ---
 
 # Roads — the intensification ladder's third branch
@@ -121,7 +127,7 @@ comment says *"beyond it a link needs a route to hold it open."*
 |---|---|---|
 | `RungRoutePayoff::friction_multiplier` | *how much of what is sent arrives?* Multiplies `SupplyNetworkConfig::friction` on a routed component | `balance_supply_networks`, via `routes::component_friction_multiplier` |
 | `RungRoutePayoff::holds_link_to_tiles` | *may these two bands pool at all?* — the **capability**, and what makes the top rungs about distance | **not yet read** — it is 13b's, and the branch's own config states it |
-| `Seen` along a kept road | *what can I watch?* | `Route::grants_sight` — **not yet wired to the visibility sweep**; 13a resolves the predicate, 13b's sibling grants on it |
+| `Seen` along a kept road | *what can I watch?* | `Route::grants_sight`, handed to the fog by `visibility_systems::light_kept_routes` — its **own** visibility source, never the connection grant |
 
 **All are purely additive**, which is what preserves §Q4's *"no early-game regression, by
 construction"*: an unrouted pair pools exactly as it does today, at exactly today's friction.
@@ -295,16 +301,15 @@ read-only. Its bill is priced through `routes::route_keeping_basis` — the stam
 the live demand where it does not — because the shed runs a whole system *before* anything is
 stamped, and a count struck against a bill of zero would shed every road keeper as spare.
 
-## What is NOT wired yet
+## The client has no route surface
 
-Stated because a reader will otherwise look for it, and because `Route` carries the fields:
+Stated because a reader will otherwise look for one. `RouteState` / `RouteSection` are published on
+**both** `WorldSnapshot` and `WorldDelta` and `PopulationCohortState` carries the band roll-up, but
+**no Godot script reads either**: there is no road drawn on the map and no `roadwork` row on the Work
+board.
 
-- **The visibility grant.** `Route::grants_sight` is resolved and read by the friction payoff; nothing
-  hands it to the visibility sweep. When it is wired it must be **its own visibility source beside a
-  band's own presence, never routed through the connection grant** — see the callout below.
-- **The wire and the client.** No route field is published and the client has no route surface.
-  `map_preview.gd`'s existing `"routes"` annotation state draws **order paths** and is a different
-  thing; **do not reuse that name.**
+`map_preview.gd`'s existing `"routes"` annotation state draws **order paths** and is a different
+thing; **do not reuse that name.**
 
 ## ⛔ A MAINTAINED ROAD IS TRAFFIC, SO ITS TILES ARE `Seen` — and the keystone is UNTOUCHED
 
@@ -326,7 +331,100 @@ band with a live tie to a people it has never travelled to sees exactly what it 
 `core_sim/tests/connections.rs` passes unchanged.
 
 **The condition is the PAID BILL, not the held rung**, so a road in shortfall **goes dark before it
-decays** — the honest early warning that the road is being lost.
+decays** — the honest early warning that the road is being lost. **And the rung gates too**: a game
+trail lights nothing even with its (interpolated) bill paid in full, because `grants_sight` is
+`is_built() && keeping_is_met()` and a path the animals made is not a road somebody keeps.
+
+### As built — `visibility_systems::light_kept_routes`
+
+It is **its own system**, chained in `TurnStage::Visibility` **after `calculate_visibility` and
+before `apply_visibility_decay`**, and it writes the same `FactionVisibilityMap::mark_active` a
+band's own camp writes. It is deliberately *not* a `VisionSource`: a source carries an effective
+range, an elevation bonus, LOS and a `ContactSink`, and a road grants none of those — it grants
+**exactly its own path tiles**.
+
+**Whose fog it lifts is scoped by who is standing on it.** For every band (`With<BandId>`,
+`Without<Expedition>`) on any tile of a kept road — `RouteLedger::routes_on_tile` at the band's own
+current tile, **rule 2**, no radius — that band's **faction** sees every tile of that road's path,
+however far along it runs. A faction with nobody on a road sees nothing from it.
+
+- **A detached party lights nothing**, for the reason `calculate_visibility` excludes it: an
+  expedition is not a live faction vision source, and a road it marched over must not light the
+  faction map from wherever the party stands.
+- **NO CONTACT RIDES THIS REVEAL.** `ContactSink` hangs off the *sight sweep*, whose geometry this
+  pass has no part in. Crediting contact from the far end of a road would let a band meet a people it
+  never looked at — the second half of the keystone in a different coat.
+- **Within one people, a kept road always has somebody on it**, because `settle_route_keeping` pays a
+  road only from the bands standing on it. So *"a faction with nobody on a kept road"* is only
+  reachable **across factions**, which is why `route_sight.rs`'s fixture for it plants a second
+  people on the far road — a same-faction fixture measures the shortfall, not the scoping.
+
+## The wire — `RouteState`, and the band's roll-up
+
+`RouteState` / `RouteSection`, appended after `connections` on **both** `WorldSnapshot` and
+`WorldDelta`. A section with no delta twin is permanently stale on a delta-fed client — the defect
+`campaign_profiles` actually was, and the one `core_sim/tests/delta_streaming.rs` exists to catch.
+Order is the ledger's `BTreeMap` order, so the section is stable frame to frame and diffs out when
+nothing moved.
+
+**The fog gate is `Discovered`, and that is the OPPOSITE of the herd list's.** A road is published to
+a faction that has explored **at least one** of its path tiles. `herd_is_visible` demands `Active`
+because ground you saw two hundred turns ago says nothing about where a herd is standing today; a
+road does not wander off, so remembering one is remembering something true. *"At least one tile"* is
+rule 2 read back — a band standing on any tile of a road is billed for its keeping, so a people that
+has stood on one tile demonstrably knows of the road, and its own `roadworkDemand` names that bill.
+A road on ground nobody of yours has ever stood on does not reach you at all, and the gate **fails
+closed** on an absent faction map.
+
+| Field | What it is |
+|---|---|
+| `id` | the `RouteId` — stable, never reused, what a client joins and diffs rows on |
+| `pathX` / `pathY` | the stamped path in path order, zipped (the `pendingRevealX`/`Y` convention) |
+| `rung` | the rung it **holds**, `RungKey::wire_key` — `"route:trail"`. **This string is the bool**; a rung is never inferred from the float beside it |
+| `buildFraction` | the meter on the rung being **raised**, through `routes::route_build_fraction` → `intensification::rung_work_done` / `build_fraction`, the seam both food webs publish theirs from |
+| `upkeepDemand` / `upkeepSupplied` / `upkeepShortfall` / `upkeepWorkersNeeded` | the standing bill, all four off the **stamped** `route_keeping_basis` |
+| `hasNeglectGrace` / `neglectGraceRemaining` | the **countdown**, through `routes::route_neglect_grace_remaining` at the at-risk rung |
+| `grantsSight` | the resolved *"is this road lighting its tiles"* |
+| `frictionMultiplier` / `holdsLinkToTiles` | what the rung is buying, off the road's stamped `payoff()` |
+
+**`holdsLinkToTiles` is authored and not yet consumed by the sim** — nothing in
+`balance_supply_networks` reads it; that is 13b's. It is published anyway because it is half of the
+client's *"what this road buys"* line, and an honest *"authored, not yet consumed"* beats a field a
+client has to guess at.
+
+### ⛔ THE FOUR RULES THE ROW IS WRITTEN UNDER
+
+- **`demand − supplied == shortfall` holds VERBATIM on the wire**, because all three read one local
+  struck from `route_keeping_basis` — never the live interpolated demand, which moves *within* a turn
+  as bands walk on and off a road. This branch is the most exposed to that defect and the arc has had
+  it twice. `upkeepWorkersNeeded` is `ceil` of the **same** number.
+- **`buildFraction` is never derived by subtraction.** `rung_work_done` answers a rung the standing
+  already holds with the rung's full `width` by construction rather than with `fl(base + width) −
+  base`, which is the rounding that published a completed Field at *"99%"*. It is read at
+  `route_at_risk_rung` — the same seam the bill interpolates through and the decay bleeds — so a road
+  that has just **completed** a rung reads exactly `1.0` rather than the next rung's zero.
+- **The countdown, not the counter.** `0` = reverting now; a road whose bill is met reads its rung's
+  full `grace_turns + 1`. `hasNeglectGrace: false` means *nothing at risk* — a road holding only the
+  game trail with no work banked above it, whose rung declares no `upkeep`.
+- **`grantsSight` is the resolved answer**, because a client cannot re-derive *"is the bill met"*:
+  that is a comparison against the stamped basis with the sim's own `KEEPING_EPSILON`.
+
+### The band roll-up — `roadworkDemand` / `roadworkSupplied` / `roadworkShortfall`
+
+On `PopulationCohortState`, summed by `settle_route_keeping` over the roads under the band's **own
+tile** (rule 2). ⛔ **THE SIM SUMS IT AND A CLIENT MUST NOT** — the identical rule `fodderNeed` is
+minted under, and load-bearing for the identical reason: **route rows are fog-filtered**, so a road
+out of sight would silently drop out of any client-side total while the band certainly still owes its
+keeping.
+
+- **The demand is summed BEFORE the head-count gate**, so a band with nobody on `roadwork` publishes
+  the bill it is failing to pay rather than a reassuring zero. It is the alarm — the hay need's own
+  rule.
+- **The supplied is this band's OWN contribution**, accumulated (`+=`) across the roads it stands on,
+  not the roads' totals: several bands may stand on one road and each pays a part.
+- **Both are cleared at the top of every band's iteration, ahead of the `continue`s** —
+  `advance_labor_allocation`'s rule, so a band that walks off its road stops republishing a bill it
+  no longer owes.
 
 ## Config files
 
@@ -339,15 +437,31 @@ decays** — the honest early warning that the road is being lost.
 
 `core_sim/src/routes.rs`'s own module — the ladder liveness (which every other claim in the file rests
 on), the span's two failure modes, the bill, rules 2 and 4, the three sight states, and the traced
-path. `core_sim/tests/route_traffic.rs` drives the three systems in **stage order** through real
-turns (`balance_supply_networks` + `advance_routes` in Logistics, `settle_route_keeping` in
+path.
+
+`core_sim/tests/route_sight.rs` and `core_sim/tests/route_wire.rs` both drive **whole turns** through
+`build_test_app`, deliberately: the thing under test in the first is that something *hands*
+`grants_sight` to the fog (a fixture running the sweep by hand would pass on a sim where the pass was
+never scheduled), and the second asserts on the **encoded envelope** through `root_as_envelope`,
+because a field that never reached the codec still passes an in-process assertion and the route
+section has no client reader yet to notice.
+
+`core_sim/tests/route_traffic.rs` drives the three systems in **stage order** through real turns (`balance_supply_networks` + `advance_routes` in Logistics, `settle_route_keeping` in
 Population): a road forming under pooling nobody ordered, the friction payoff paired against an
 unrouted run, the one-camp negative control, and the keeping — a road that holds beside the same road
 that loses its rung, the proportional bleed, the grace, the abandoned road, the two payers, and the
 free floor.
 
-**Every live claim was falsified in isolation**: making the span an average, and ungating the sight
-from the bill, each fail their own test; removing the friction term and removing the traffic recording
+**Every live claim was falsified in isolation.** On the sight grant: dropping `light_kept_routes`
+from the schedule fails all four of `route_sight.rs`, as does granting `Discovered` instead of
+`Active`; ungating the grant from `grants_sight` fails the shortfall and game-trail halves; lighting
+every road in the ledger rather than the ones under a band fails the cross-faction scoping test. On
+the wire: reading `buildFraction` off `standing.raising` instead of `route_at_risk_rung`, publishing
+the neglect **counter** in place of the countdown, copying one road's demand instead of summing the
+band's, assigning the roll-up's supplied instead of accumulating it, moving the roll-up's demand
+behind the head-count gate, dropping the fog gate, and publishing the gross demand as the shortfall
+each fail exactly one test in `route_wire.rs`. On the earlier slices: making the span an average, and
+ungating the sight from the bill, each fail their own test; removing the friction term and removing the traffic recording
 each fail theirs. On the keeping half — ignoring the grace, stamping the bill only where a band
 stands, dropping the `+=` to an assignment, taking the decay at the flat rate instead of the shortfall
 fraction, removing the prune, and reading the at-risk rung without the banked-work test — each fails a

@@ -57,6 +57,12 @@ pub struct SnapshotContext<'w> {
     /// The directed ties contact left behind. Published filtered to the viewer's own edges; the
     /// checkpoint carries the ledger itself.
     pub connections: Res<'w, crate::connections::ConnectionLedger>,
+    /// Every road in the world. Published filtered to the roads the viewer has explored; the
+    /// checkpoint carries the ledger itself.
+    pub routes: Res<'w, crate::routes::RouteLedger>,
+    /// Tile coords → tile entity, so a road's path can be priced through the same
+    /// `TerrainDefinition::infrastructure_cost` sum the bill and the decay read.
+    pub tile_registry: Res<'w, crate::resources::TileRegistry>,
     pub viewer_faction: Res<'w, crate::visibility::ViewerFaction>,
     pub demographics: Res<'w, DemographicsConfigHandle>,
     pub wellbeing: Res<'w, crate::wellbeing_config::WellbeingConfigHandle>,
@@ -234,6 +240,7 @@ pub(crate) struct PublishState {
     sedentarization: Whole<Vec<SchemaSedentarizationState>>,
     discovered_sites: Whole<Vec<SchemaDiscoveredSitesState>>,
     connections: Whole<Vec<ConnectionState>>,
+    routes: Whole<Vec<RouteState>>,
     demographics: Whole<Vec<SchemaPopulationDemographicsState>>,
     forage_patches: Whole<Vec<ForagePatchState>>,
     intensification_knowledge: Whole<Vec<IntensificationKnowledgeState>>,
@@ -563,6 +570,7 @@ struct CampaignParts {
     sedentarization: Option<Vec<SchemaSedentarizationState>>,
     discovered_sites: Option<Vec<SchemaDiscoveredSitesState>>,
     connections: Option<Vec<ConnectionState>>,
+    routes: Option<Vec<RouteState>>,
     demographics: Option<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
     start_marker: Option<StartMarkerState>,
@@ -580,6 +588,7 @@ struct CampaignBaselines<'a> {
     sedentarization: &'a mut Whole<Vec<SchemaSedentarizationState>>,
     discovered_sites: &'a mut Whole<Vec<SchemaDiscoveredSitesState>>,
     connections: &'a mut Whole<Vec<ConnectionState>>,
+    routes: &'a mut Whole<Vec<RouteState>>,
     demographics: &'a mut Whole<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: &'a mut Whole<Vec<IntensificationKnowledgeState>>,
     start_marker: &'a mut Whole<Option<StartMarkerState>>,
@@ -612,6 +621,7 @@ fn diff_campaign(
         sedentarization: diff_whole(baseline.sedentarization, &snapshot.sedentarization, write),
         discovered_sites: diff_whole(baseline.discovered_sites, &snapshot.discovered_sites, write),
         connections: diff_whole(baseline.connections, &snapshot.connections, write),
+        routes: diff_whole(baseline.routes, &snapshot.routes, write),
         demographics: diff_whole(baseline.demographics, &snapshot.demographics, write),
         intensification_knowledge: diff_whole(
             baseline.intensification_knowledge,
@@ -811,6 +821,7 @@ impl PublishState {
             sedentarization: Whole::default(),
             discovered_sites: Whole::default(),
             connections: Whole::default(),
+            routes: Whole::default(),
             demographics: Whole::default(),
             forage_patches: Whole::default(),
             intensification_knowledge: Whole::default(),
@@ -944,6 +955,7 @@ impl PublishState {
             sedentarization,
             discovered_sites,
             connections,
+            routes,
             demographics,
             intensification_knowledge,
             start_marker,
@@ -1050,6 +1062,7 @@ impl PublishState {
                             sedentarization,
                             discovered_sites,
                             connections,
+                            routes,
                             demographics,
                             intensification_knowledge,
                             start_marker,
@@ -1145,6 +1158,7 @@ impl PublishState {
             sedentarization: campaign_parts.sedentarization,
             discovered_sites: campaign_parts.discovered_sites,
             connections: campaign_parts.connections,
+            routes: campaign_parts.routes,
             demographics: campaign_parts.demographics,
             intensification_knowledge: campaign_parts.intensification_knowledge,
             start_marker: campaign_parts.start_marker,
@@ -1335,6 +1349,7 @@ impl PublishState {
         self.discovered_sites
             .reset(entry.snapshot.discovered_sites.clone());
         self.connections.reset(entry.snapshot.connections.clone());
+        self.routes.reset(entry.snapshot.routes.clone());
         self.demographics.reset(entry.snapshot.demographics.clone());
         self.forage_patches
             .reset(entry.snapshot.forage_patches.clone());
@@ -1539,6 +1554,7 @@ impl PublishState {
             sedentarization: None,
             discovered_sites: None,
             connections: None,
+            routes: None,
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
@@ -1674,6 +1690,7 @@ impl PublishState {
             sedentarization: None,
             discovered_sites: None,
             connections: None,
+            routes: None,
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
@@ -1793,6 +1810,7 @@ impl PublishState {
             sedentarization: None,
             discovered_sites: None,
             connections: None,
+            routes: None,
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
@@ -2112,6 +2130,8 @@ pub fn capture_snapshot(
         capability_flags,
         visibility_ledger,
         connections,
+        routes,
+        tile_registry,
         viewer_faction,
         demographics,
         wellbeing,
@@ -2958,6 +2978,21 @@ pub fn capture_snapshot(
         &band_factions,
         viewer_faction.0,
     );
+    // **THE ROADS THE VIEWER HAS EXPLORED** — fog-gated on `Discovered` rather than the herd list's
+    // `Active`, because a road does not wander off. See `snapshot::routes::route_states`.
+    let route_states = crate::snapshot::routes::route_states(
+        &routes,
+        &visibility_ledger,
+        viewer_faction.0,
+        config.fog_enabled,
+        &ladder_config,
+        |pos| {
+            tile_registry
+                .index(pos.x, pos.y)
+                .and_then(|entity| tiles.get(entity).ok())
+                .map(|(_, tile, _)| tile.terrain)
+        },
+    );
     let demographics_state = snapshot_demographics(&population_states);
     // Per forage patch — one per food-bearing tile — and every entry re-derives the rung ladder's
     // quotes for that patch, so this one is both map-sized and derivation-heavy.
@@ -3057,6 +3092,7 @@ pub fn capture_snapshot(
         sedentarization: sedentarization_state.clone(),
         discovered_sites: discovered_sites_state.clone(),
         connections: connections_state.clone(),
+        routes: route_states.clone(),
         demographics: demographics_state.clone(),
         forage_patches: forage_patches_state.clone(),
         intensification_knowledge: intensification_knowledge_state.clone(),

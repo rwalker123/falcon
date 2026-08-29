@@ -1242,6 +1242,16 @@ fn seed_snapshot() -> WorldSnapshot {
     // field here is: an empty vector is a field the decode guard cannot exercise.
     s.connections = rows();
 
+    // --- routes ----------------------------------------------------------
+    // The roads in the ground (arc #532). Seeded for the same reason, and each row's own zipped
+    // path halves are seeded too — a nested repeated field is exactly as invisible to the guard as
+    // a top-level one.
+    s.routes = rows();
+    for route in &mut s.routes {
+        route.path_x = rows();
+        route.path_y = rows();
+    }
+
     // --- knowledge -------------------------------------------------------
     s.discovered_sites = rows();
     for entry in &mut s.discovered_sites {

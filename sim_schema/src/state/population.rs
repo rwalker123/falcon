@@ -1286,6 +1286,25 @@ pub struct PopulationCohortState {
     /// carries the per-rating breakdown; this is the total the bill is judged against.
     #[serde(default)]
     pub material_store: Vec<MaterialPayoff>,
+    /// **WHAT THE ROADS THIS BAND STANDS ON COST IT THIS TURN**, in work units per turn — summed
+    /// over the roads under the band's **own tile** (the route arc's rule 2; the road's path is the
+    /// catchment and there is no radius).
+    ///
+    /// ⛔ **The sim sums it and a client must not** — [`Self::fodder_need`]'s own rule, and
+    /// load-bearing for its own reason: **route rows are fog-filtered**, so a road out of sight
+    /// would silently drop out of a client-side total while the band certainly still owes its
+    /// keeping.
+    ///
+    /// The demand is the summed **stamped** bill, published whether or not the band can pay it —
+    /// it is the alarm. The supplied is what *this* band's `roadwork` keepers paid into those roads,
+    /// not the roads' totals: several bands may stand on one road and each pays a part.
+    /// `demand − supplied == shortfall` holds verbatim, as it does on the `RouteState` row.
+    #[serde(default)]
+    pub roadwork_demand: f32,
+    #[serde(default)]
+    pub roadwork_supplied: f32,
+    #[serde(default)]
+    pub roadwork_shortfall: f32,
 }
 
 /// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],

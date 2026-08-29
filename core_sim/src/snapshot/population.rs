@@ -927,6 +927,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // **The need is the GAP the footprints leave, summed by the sim.** A client cannot sum it — herd
     // rows are fog-filtered, so a pen out of sight would silently leave a client-side total the band
     // still owes.
+    let roadwork_demand = allocation.map(|a| a.last_roadwork_demand).unwrap_or(0.0);
+    let roadwork_supplied = allocation.map(|a| a.last_roadwork_supplied).unwrap_or(0.0);
     let fodder_need = allocation.map(|a| a.last_fodder_need).unwrap_or(0.0);
     let fodder_income = allocation.map(|a| a.last_fodder_inflow).unwrap_or(0.0);
     // **The fodder runway, through the LARDER'S OWN function and the larder's own sentinel** — one
@@ -1347,6 +1349,18 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     .to_f32(),
             })
             .collect(),
+        // **THE BAND'S ROADWORK BILL** — the summed keeping of the roads under this band's own tile
+        // (route arc rule 2), struck by `settle_route_keeping` off the same stamped basis the
+        // per-road rows publish. **The sim sums it and a client must not**: route rows are
+        // fog-filtered, so a road out of sight would silently drop out of a client-side total the
+        // band certainly still owes. The shortfall is derived here from the pair, so the identity
+        // `demand − supplied == shortfall` holds on this row exactly as it does on `RouteState`.
+        roadwork_demand,
+        roadwork_supplied,
+        roadwork_shortfall: crate::intensification::upkeep_shortfall(
+            roadwork_demand,
+            roadwork_supplied,
+        ),
     }
 }
 

@@ -1285,6 +1285,31 @@ table PopulationCohortState {
   materialUpkeepNeed:[MaterialPayoff];
   materialUpkeepIncome:[MaterialPayoff];
   materialStore:[MaterialPayoff];
+
+  // --- THE BAND'S ROADWORK BILL (appended, beside the two ledgers above) -------------------------
+  // WHAT THE ROADS THIS BAND STANDS ON COST IT THIS TURN, in work units per turn - so the Work board
+  // can show the `roadwork` role's need the way it shows agriculture's and husbandry's.
+  //
+  // Summed over the roads under the band's OWN TILE (the route arc's rule 2 - the road's path is the
+  // catchment and there is no radius). A band that steps one tile off its road owes nothing on it
+  // and this reads 0.
+  //
+  // *** THE SIM SUMS IT, AND A CLIENT MUST NOT. *** The identical rule `fodderNeed` above is minted
+  // under, and load-bearing for the identical reason: ROUTE ROWS ARE FOG-FILTERED, so a road out of
+  // sight would silently drop out of any client-side total while the band certainly still owes its
+  // keeping.
+  //
+  // roadworkDemand    = the summed STAMPED bill of those roads (`routes::route_keeping_basis`),
+  //                     whether or not the band can pay it - `fodderNeed`'s own rule. It is the
+  //                     alarm.
+  // roadworkSupplied  = what THIS band's `roadwork` keepers paid into those roads this turn. It is
+  //                     this band's own contribution, not the roads' totals: several bands may stand
+  //                     on one road and each pays a part.
+  // roadworkShortfall = demand - supplied, and that identity holds verbatim here as it does on the
+  //                     RouteState row.
+  roadworkDemand:float = 0;
+  roadworkSupplied:float = 0;
+  roadworkShortfall:float = 0;
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of
@@ -5333,6 +5358,98 @@ table ConnectionSection {
   connections:[ConnectionState];
 }
 
+// --- Routes: the roads in the ground (arc #532, docs/plan_standing_upkeep.md 4.13) ---------------
+// ONE ROW PER ROAD. A road is a WORLD OBJECT with a fixed tile path and its own id - it is NOT an
+// edge between two bands and it does NOT follow a camp. The bands standing on it are who USES it,
+// never what it IS, so there is no band pair anywhere on this row.
+//
+// Published for roads the VIEWING FACTION CAN SEE: a road at least one of whose path tiles the
+// faction has explored (Discovered or Active). A road on ground nobody of yours has ever stood on
+// does not reach you. `Discovered` and not `Active` is right here where it would be wrong for a
+// herd: a road does not wander off, so remembering one is remembering something true.
+table RouteState {
+  // The RouteId. Stable for the life of the road, never reused, and what a client joins and diffs
+  // rows on.
+  id:ulong;
+  // THE TILES THIS ROAD RUNS OVER, IN PATH ORDER, zipped x/y (the `pendingRevealX`/`Y` convention).
+  // Stamped once from the path the first traffic walked and never re-derived, so a client may cache
+  // the polyline against `id` and redraw it only when the id is new.
+  pathX:[uint];
+  pathY:[uint];
+  // The rung this road HOLDS, as "<branch>:<id>" via RungKey::wire_key - "route:game_trail",
+  // "route:trail", "route:dirt_road", "route:paved_road".
+  //
+  // *** READ THE RUNG, NEVER INFER ONE FROM A FLOAT. *** `buildFraction` below is the meter on the
+  // rung being RAISED, which is a different rung; a client that thresholded the float would call a
+  // fully-worn trail a dirt road on the turn its first traffic banked. This string is the bool.
+  rung:string;
+  // The meter on the rung this road is actually raising, 0..1 - the route twin of
+  // `cultivationProgress` / `corralProgress`, off the same intensification::rung_work_done /
+  // build_fraction seam both food webs publish theirs from.
+  //
+  // *** NEVER DERIVED BY SUBTRACTION. *** `fl(base + width) - base` is not `width` when that
+  // addition rounds, which is the defect that published a completed Field as "Field 99%". A road
+  // that has just completed a rung reads EXACTLY 1.0 here, and so does one at the top of the ladder
+  // (there is nothing left to raise - draw a full bar, not an empty one).
+  buildFraction:float = 0;
+  // THE STANDING BILL, in work units per turn - the road twin of the patch and herd rows' identical
+  // four fields.
+  //
+  // *** demand - supplied == shortfall HOLDS VERBATIM ON THE WIRE. *** All three read the STAMPED
+  // basis (`routes::route_keeping_basis`), never the live interpolated demand, because a road's
+  // demand moves within a turn as bands walk on and off it. This branch has had that defect twice.
+  //
+  // upkeepDemand         = what this road was billed this turn. 0 for a road that owes nothing,
+  //                        which is a game trail - nobody maintains one, and that is the whole of
+  //                        what makes the floor free.
+  // upkeepSupplied       = what the bands standing on it actually paid. ACCUMULATES across them:
+  //                        several bands may stand on one road and each pays a part.
+  // upkeepShortfall      = what the bill left unpaid.
+  // upkeepWorkersNeeded  = whole `roadwork` keepers the bill wants, ceil(demand / per-worker
+  //                        output) - the readout that makes a standing cost legible ("wants 2, you
+  //                        have 0"). 0 for a road that owes nothing.
+  upkeepDemand:float = 0;
+  upkeepSupplied:float = 0;
+  upkeepShortfall:float = 0;
+  upkeepWorkersNeeded:uint = 0;
+  // THE NEGLECT COUNTDOWN, not the counter. `neglectGraceRemaining` is turns of shortfall left
+  // before the rung starts to bleed: 0 means IT IS REVERTING NOW, and a road whose bill is met reads
+  // its rung's full grace + 1 ("walk away and you have this long"). Resolved through the same
+  // at-risk-rung seam `advance_routes` bleeds through, so the wire cannot count down against a rung
+  // the sim is not touching.
+  //
+  // `hasNeglectGrace = false` means THERE IS NOTHING AT RISK HERE - a road holding only the game
+  // trail, which declares no upkeep and so has no meter to lose. Read the bool first;
+  // `neglectGraceRemaining` reuses the "biting now" 0 rather than inventing a sentinel.
+  hasNeglectGrace:bool = false;
+  neglectGraceRemaining:uint = 0;
+  // *** IS THIS ROAD LIGHTING ITS OWN TILES RIGHT NOW? *** The RESOLVED answer, because a client
+  // cannot re-derive "is the bill met" - that is a comparison against the stamped basis with the
+  // sim's own epsilon. True iff the road stands at a BUILT rung and its keeping was met, which is
+  // why a road in shortfall GOES DARK BEFORE IT DECAYS: the honest early warning that it is being
+  // lost. The tiles it lights are its own `pathX`/`pathY`, for the factions standing on it.
+  grantsSight:bool = false;
+  // WHAT THIS RUNG IS BUYING, off the road's own stamped payoff.
+  //
+  // frictionMultiplier = the fraction of the base pooling friction a network bound by this road
+  //                      pays. 1.0 = no help (the game trail). Read by `balance_supply_networks`
+  //                      today, through the BEST road binding a component.
+  // holdsLinkToTiles   = how far this rung holds a pooling link open, in tiles - the capability the
+  //                      top rungs are about. 0 on the game trail is a live reading, not a parked
+  //                      dial: a path the animals made holds nothing open.
+  //
+  // *** holdsLinkToTiles IS AUTHORED AND NOT YET CONSUMED BY THE SIM. *** Nothing in
+  // `balance_supply_networks` reads it yet (that is slice 13b); it is published now because it is
+  // half of the client's "what this road buys" line, and an honest "authored, not yet consumed"
+  // beats a field a client has to guess at.
+  frictionMultiplier:float = 1;
+  holdsLinkToTiles:uint = 0;
+}
+
+table RouteSection {
+  routes:[RouteState];
+}
+
 table WorldSnapshot {
   header:SnapshotHeader;
   capabilityFlags:uint;
@@ -5347,6 +5464,8 @@ table WorldSnapshot {
   campaign:CampaignSection;
   // Appended LAST (append-only schema discipline).
   connections:ConnectionSection;
+  // The roads in the ground, appended after connections and on the same rules.
+  routes:RouteSection;
 }
 
 table WorldDelta {
@@ -5365,6 +5484,7 @@ table WorldDelta {
   // a delta-fed client — the defect `campaign_profiles` actually was, and the one
   // `core_sim/tests/delta_streaming.rs` exists to catch.
   connections:ConnectionSection;
+  routes:RouteSection;
 }
 
 union SnapshotPayload {

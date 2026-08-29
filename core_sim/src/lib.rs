@@ -285,8 +285,10 @@ pub use recipes_config::{
     BUILTIN_RECIPES_CONFIG,
 };
 pub use routes::{
-    advance_routes, route_at_risk_rung, route_keeping_basis, route_span, route_upkeep_demand,
-    span_of_terrains, Route, RouteId, RouteLedger, RouteTrafficLog,
+    advance_routes, route_at_risk_rung, route_build_fraction, route_keeping_basis,
+    route_neglect_grace_remaining, route_rung_span, route_span, route_upkeep_demand,
+    route_upkeep_workers_needed, span_of_terrains, Route, RouteId, RouteLedger, RouteTrafficLog,
+    METER_FULL,
 };
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
@@ -1010,6 +1012,11 @@ pub fn build_headless_app() -> App {
                     // `ContactsThisTurn` (which `calculate_visibility` and the expedition flush
                     // both fill) and clears it, so the set is rebuilt from scratch every turn.
                     connections::advance_connections,
+                    // ⛔ **A KEPT ROAD IS ITS OWN VISIBILITY SOURCE, beside a band's presence and
+                    // never through the connection grant** — see `light_kept_routes`. It runs after
+                    // the sweep (the fog it writes into is the sweep's) and before the decay, so a
+                    // road's tiles are `Active` for the same turn a band's own camp is.
+                    visibility_systems::light_kept_routes,
                     visibility_systems::apply_visibility_decay,
                     sites::discover_sites,
                 )

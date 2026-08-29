@@ -22,6 +22,7 @@ mod governance;
 mod knowledge;
 mod map;
 mod population;
+mod routes;
 mod subsistence;
 mod vision;
 
@@ -36,6 +37,7 @@ use crate::codec::governance::{serialize_governance_section, serialize_governanc
 use crate::codec::knowledge::{serialize_knowledge_section, serialize_knowledge_section_delta};
 use crate::codec::map::{serialize_map_section, serialize_map_section_delta};
 use crate::codec::population::{serialize_population_section, serialize_population_section_delta};
+use crate::codec::routes::{serialize_route_section, serialize_route_section_delta};
 use crate::codec::subsistence::{
     serialize_subsistence_section, serialize_subsistence_section_delta,
 };
@@ -104,6 +106,7 @@ fn build_snapshot_flatbuffer<'a>(
     let vision = serialize_vision_section(builder, snapshot);
     let campaign = serialize_campaign_section(builder, snapshot, victory_state);
     let connections = serialize_connection_section(builder, snapshot);
+    let routes = serialize_route_section(builder, snapshot);
 
     let snapshot_table = fb::WorldSnapshot::create(
         builder,
@@ -120,6 +123,7 @@ fn build_snapshot_flatbuffer<'a>(
             vision: Some(vision),
             campaign: Some(campaign),
             connections: Some(connections),
+            routes: Some(routes),
         },
     );
 
@@ -179,6 +183,7 @@ fn build_delta_flatbuffer<'a>(
     let vision = serialize_vision_section_delta(builder, delta);
     let campaign = serialize_campaign_section_delta(builder, delta, victory_state);
     let connections = serialize_connection_section_delta(builder, delta);
+    let routes = serialize_route_section_delta(builder, delta);
 
     let delta_table = fb::WorldDelta::create(
         builder,
@@ -195,6 +200,7 @@ fn build_delta_flatbuffer<'a>(
             vision: Some(vision),
             campaign: Some(campaign),
             connections: Some(connections),
+            routes: Some(routes),
         },
     );
 

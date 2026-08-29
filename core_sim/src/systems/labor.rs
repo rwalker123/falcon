@@ -53,6 +53,12 @@ pub(crate) const FULLY_SERVED: f32 = 1.0;
 /// reading and not a small quantity of hay.
 const NO_FODDER_LEDGER: f32 = 0.0;
 
+/// **A BAND STANDING ON NO ROAD AT ALL** — what `LaborAllocation`'s two roadwork rates are cleared
+/// to at the top of every band's iteration in [`settle_route_keeping`], before the exits that can
+/// end it without reaching the sum. [`NO_FODDER_LEDGER`]'s twin, and named for its reason: this is
+/// the exact *"keeps no roads"* reading and not a small quantity of work.
+const NO_ROADWORK_LEDGER: f32 = 0.0;
+
 /// **"Is there anything here for this crew to work with?"** — THE eligibility term a **build** is
 /// gated on, asked of [`crate::fauna::take_room`]: the escapement room **or** the share of this
 /// turn's growth the player's own floor left takeable, whichever is larger.
@@ -1489,6 +1495,21 @@ fn route_keeping_claims(
 /// **`upkeep_supplied` ACCUMULATES (`+=`), never assigns.** Several bands may stand on one road and
 /// each pays a part — §2.5's stated rule, and the reason the field is cleared once per turn by
 /// [`crate::routes::advance_routes`] rather than here.
+///
+/// # (c) THE BAND'S OWN ROADWORK LEDGER, SUMMED HERE BECAUSE A CLIENT CANNOT
+///
+/// [`crate::components::LaborAllocation::last_roadwork_demand`] and its supplied twin are the
+/// band-level roll-up the Work board renders the `roadwork` role's need from — `fodderNeed`'s exact
+/// shape, minted under its exact rule: **route rows are fog-filtered**, so a road out of sight would
+/// silently drop out of any client-side total while the band certainly still owes its keeping.
+///
+/// **The demand is summed before the head-count gate**, so a band with nobody on the role publishes
+/// the bill it is failing to pay rather than a zero. That is the alarm, and it is the same reason
+/// the hay need is ungated by Foddering.
+///
+/// **Both are cleared at the top of every band's iteration, ahead of the `continue`s** — the
+/// `advance_labor_allocation` rule: a band that walks off its road must stop republishing last
+/// turn's bill for a road it no longer stands on.
 pub fn settle_route_keeping(
     mut ledger: ResMut<crate::routes::RouteLedger>,
     ladder: Res<LadderConfigHandle>,
@@ -1502,7 +1523,7 @@ pub fn settle_route_keeping(
     mut bands: Query<
         (
             &PopulationCohort,
-            &LaborAllocation,
+            &mut LaborAllocation,
             Option<&mut BandEquipment>,
         ),
         With<BandId>,
@@ -1518,24 +1539,16 @@ pub fn settle_route_keeping(
         route.upkeep_demanded.get_or_insert(demand);
     }
 
-    // ## (b) The payment, from the bands standing on them.
-    for (cohort, allocation, mut band_equipment) in bands.iter_mut() {
-        let keepers = allocation.workers_on(&LaborTarget::Roadwork);
-        if keepers == NO_CREW_ON_THIS_ACTIVITY {
-            continue;
-        }
+    // ## (b) The payment, from the bands standing on them, and (c) each band's own roll-up.
+    for (cohort, mut allocation, mut band_equipment) in bands.iter_mut() {
+        // **(c) cleared ahead of every exit below**, so a band that walked off its road stops
+        // republishing a bill it no longer owes.
+        allocation.last_roadwork_demand = NO_ROADWORK_LEDGER;
+        allocation.last_roadwork_supplied = NO_ROADWORK_LEDGER;
         let band_pos = tiles
             .get(cohort.current_tile)
             .map(|tile| tile.position)
             .ok();
-        // **Sized to the band's workers**, `advance_labor_allocation`'s own rule: an absent
-        // component means the gear ledger was never built, which reads as start-stocked.
-        let band_kit = band_equipment.as_deref().cloned().unwrap_or_else(|| {
-            BandEquipment::start_stocked_for(
-                &equipment_cfg,
-                available_workers(cohort.working) as f32,
-            )
-        });
         let (ids, claims) = route_keeping_claims(
             &ledger,
             band_pos,
@@ -1547,6 +1560,23 @@ pub fn settle_route_keeping(
         if claims.is_empty() {
             continue;
         }
+        // **(c) THE DEMAND IS SUMMED BEFORE THE HEAD-COUNT GATE.** A band with nobody on the role
+        // owes exactly this much and this is the field that says so — the hay need's own rule.
+        // Each claim is priced at `routes::route_keeping_basis`, which is the stamp step (a) has
+        // just struck, so the roll-up and the per-road rows quote one bill.
+        allocation.last_roadwork_demand = claims.iter().map(|claim| claim.demand).sum();
+        let keepers = allocation.workers_on(&LaborTarget::Roadwork);
+        if keepers == NO_CREW_ON_THIS_ACTIVITY {
+            continue;
+        }
+        // **Sized to the band's workers**, `advance_labor_allocation`'s own rule: an absent
+        // component means the gear ledger was never built, which reads as start-stocked.
+        let band_kit = band_equipment.as_deref().cloned().unwrap_or_else(|| {
+            BandEquipment::start_stocked_for(
+                &equipment_cfg,
+                available_workers(cohort.working) as f32,
+            )
+        });
         let rates = keeping_rates(
             &equipment_cfg,
             &band_kit,
@@ -1559,15 +1589,20 @@ pub fn settle_route_keeping(
             .zip(&rates)
             .map(|(claim, rate)| rate.worker_need(claim.demand))
             .collect();
-        for ((claim, rate), hands) in claims.iter().zip(&rates).zip(distribute_upkeep_pool(
-            keepers as f32,
-            &needs,
-            allocation.upkeep_fund_mode,
-        )) {
+        let fund_mode = allocation.upkeep_fund_mode;
+        for ((claim, rate), hands) in
+            claims
+                .iter()
+                .zip(&rates)
+                .zip(distribute_upkeep_pool(keepers as f32, &needs, fund_mode))
+        {
             let supplied = hands * rate.per_worker;
             if let Some(route) = ledger.get_mut(ids[claim.index]) {
                 route.upkeep_supplied += supplied;
             }
+            // **(c) this band's own contribution**, accumulated across the roads it stands on. Not
+            // the roads' totals: another band standing on the same road pays its own part.
+            allocation.last_roadwork_supplied += supplied;
             // **The keeper's tools are spent on exactly that work** — billed on what the pool
             // *supplied* to this road, never on what the rung demanded. Inert with the shipped bare
             // `none` kit, and wired so a future road kit is a config edit and nothing else.

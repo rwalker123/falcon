@@ -415,6 +415,7 @@ pub mod knowledge {
                 command_events: Vec::new(),
                 command_events_retention_turns: 0,
                 connections: Vec::new(),
+                routes: Vec::new(),
                 pending_forks: Vec::new(),
                 stance_axes: Vec::new(),
                 voice_medium: Vec::new(),

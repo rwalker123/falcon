@@ -3530,6 +3530,29 @@ pub struct LaborAllocation {
     /// [`Self::material_income`], which is the figure the wire publishes and the shortfall Alert
     /// judges against.
     pub last_material_income: std::collections::BTreeMap<String, f32>,
+    /// **WHAT THE ROADS THIS BAND STANDS ON WERE BILLED THIS TURN**, in work units — the summed
+    /// **stamped** keeping of every road under the band's own tile (the route arc's rule 2, and
+    /// there is no radius). Written by [`crate::systems::settle_route_keeping`] and exported as
+    /// `PopulationCohortState.roadwork_demand`.
+    ///
+    /// ⛔ **The sim sums it, not the client** — [`Self::last_fodder_need`]'s rule, and load-bearing
+    /// for its own reason: **route rows are fog-filtered**, so a road out of sight would silently
+    /// drop out of a client-side total while the band certainly still owes its keeping.
+    ///
+    /// **Published whether or not the band staffs the role**, exactly as the hay need is: a band
+    /// that has nobody on `roadwork` still owes exactly this much, and this is the field that says
+    /// so.
+    ///
+    /// Reset then re-summed every turn, and **excluded from equality** below, like the rest of the
+    /// per-turn telemetry.
+    pub last_roadwork_demand: f32,
+    /// **WHAT THIS BAND'S ROAD KEEPERS PAID INTO THOSE ROADS THIS TURN**, in work units — the
+    /// supply half of [`Self::last_roadwork_demand`], and this band's **own contribution** rather
+    /// than the roads' totals: several bands may stand on one road and each pays a part
+    /// (`docs/plan_standing_upkeep.md` §2.5).
+    ///
+    /// Reset then re-summed every turn, and **excluded from equality** below.
+    pub last_roadwork_supplied: f32,
     /// **THE MATERIALS THIS BAND HAS ALREADY BEEN WARNED ABOUT**, in id order — the edge gate on the
     /// `material_shortfall` alert, so a standing famine pushes one line rather than one a turn.
     ///
