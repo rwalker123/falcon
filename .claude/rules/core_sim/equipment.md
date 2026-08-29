@@ -1053,13 +1053,19 @@ speared party lands *exactly zero* on a defence it cannot clear. One averaged pr
 it borrow the spears. The one-sided fast path sums over the crews for the same reason, and the
 casualty loop already summed every non-quarry result.
 
-### EVERY per-worker rate is `Σ share × per-crew rate` — both webs, all three carries
+### EVERY per-worker rate is `Σ share × per-crew rate` — both webs, both carries
 
 `KitCoverage::weighted_rate` is the one inversion, and **`advance_labor_allocation` resolves ONE
-coverage per assignment and reads all four terms through it** (the hunt haul, the pen collection, the
-gather, and the party itself), because the crew, its kit and the band's ledger are the same three
-things for every stat. The assign-time seed (`seed_source_yield`), the live raid, the forecast query
-and the in-flight ETA each resolve the same coverage for the same reason.
+coverage per assignment and reads all three terms through it** (the hunt haul, the gather, and the
+party itself), because the crew, its kit and the band's ledger are the same three things for every
+stat. The assign-time seed (`seed_source_yield`), the live raid, the forecast query and the
+in-flight ETA each resolve the same coverage for the same reason.
+
+> This heading read **"all three carries"** and the sentence **"reads all four terms through it (the
+> hunt haul, *the pen collection*, the gather, and the party itself)"**. The pen collection was
+> `EquipmentStat::PenCarry`, deleted by issue #543 — a pen is collected on the hunt haul's own term
+> now, so it is not a term of its own to be covered separately. See "Carry is carry" above. **The
+> claim is unmoved**: the coverage that reads the haul is the coverage a pen reads.
 
 - **The mean is CREW-WEIGHTED, and that is what makes the cap correct.** Five sledded hunters and
   five sledless haul `5 × 40 + 5 × 12`, quoted as a rate of `26` — so `workers × rate` is the party's

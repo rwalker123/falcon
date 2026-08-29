@@ -1597,8 +1597,8 @@ fn each_kit_wears_on_a_use_quantum_of_its_own_job() {
             .per
     };
     assert_eq!(quantum(WAYFINDING), core_sim::WearQuantum::TileRevealed);
-    // **The crook's headline is the BUILD**, because the butchering quantum went to the sled with the
-    // when the hurdles became a material — the crook does no butchering.
+    // **The crook's headline is the BUILD**, because the butchering quantum went to the sled when the
+    // hurdles became a material — the crook does no butchering.
     assert_eq!(quantum(CROOK), core_sim::WearQuantum::BuildProgress);
     // …and the SLED is the item on two quanta now, leading with the haul because its second entry was
     // APPENDED: no shipped item's gauge changed units.

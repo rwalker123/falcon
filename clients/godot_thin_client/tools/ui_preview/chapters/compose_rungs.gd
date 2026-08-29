@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 90
+const EXPECTED_CHECKPOINTS := 104
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -555,7 +555,7 @@ func run(harness) -> void:
 	# because half of what the trapping line must get right is what it does NOT say.
 	_assert_kit_hint_names_the_kits_own_items()
 
-	_assert_the_hint_reads_the_same_at_a_pen()
+	_assert_the_hint_states_each_kits_own_items()
 	_assert_the_appended_axes_read_the_band()
 	_assert_a_pen_prices_on_the_hunters_carry()
 
@@ -1192,7 +1192,7 @@ func _assert_the_greying_follows_the_animal() -> void:
 	h._assert_hud("a penned warren greys NOTHING — every kit clears a `defense 0` (%d greyed)"
 		% warren_greyed, warren_greyed == 0)
 
-## **THE HINT LINE READS THE SAME AT A PEN AS ON THE RANGE, and each kit's own items are what differ.**
+## **THE HINT LINE STATES THE KIT'S OWN ATTACK, HAUL AND ITEMS — and the two kits differ in all three.**
 ##
 ## ⛔ **IT WAS `_assert_handling_hint_states_the_pen`, A 2×2 OVER (kit × fence)** — *"a handling kit's
 ## hint NAMES the pen and an ordinary hunt kit's does not … the pen column keeps the SLED's condition
@@ -1201,29 +1201,37 @@ func _assert_the_greying_follows_the_animal() -> void:
 ## weapon clause belongs there), and issue #543 deleted `EquipmentStat::PenCarry` (so the haul clause
 ## is the sled's there). `tier_hint` no longer takes a quarry at all.
 ##
-## **THE 2×2 IS KEPT AND ITS EXPECTATION INVERTED, which is worth more than deleting it.** The four
-## readings are still taken — two kits, and each asked with the corralled twin in hand — and the claim
-## is now that the fence moves NOTHING while the KIT moves the attack and the item clauses. A pair of
-## claims that merely said *"the pen states the hunt pair"* would pass on a client that had stopped
-## reading the source at all, which is exactly the state this arc is in; asserting the wild and penned
-## readings are EQUAL and that the two KITS are not is what keeps it honest.
+## ⛔ **IT WAS THEN `_assert_the_hint_reads_the_same_at_a_pen`, AND ITS PEN COLUMN WAS A TAUTOLOGY.**
+## That version claimed *"THE 2×2 IS KEPT AND ITS EXPECTATION INVERTED … asserting the wild and penned
+## readings are EQUAL and that the two KITS are not is what keeps it honest."* It did no such thing.
+## `tier_hint` had already lost its quarry parameter, so the two "penned" readings were the
+## BYTE-IDENTICAL call the wild pair makes, and the corralled twins were built and handed nowhere —
+## the trailing precondition compared the two fixture dicts only against each other. Two claims that
+## cannot fail unless the two above them already have assert that a control is PRESENT, not RIGHT.
+##
+## **SO "THE FENCE MOVES NOTHING" IS STRUCTURAL HERE NOW, NOT TESTED.** `tier_hint(kits, kit, band,
+## job, crew)` takes no source at all: there is no argument through which a pen could reach it, so a
+## penned READING of the hint is not expressible, and the invariant holds by construction. Restoring
+## one would mean re-adding the source parameter issue #543 deleted — which is the very change the
+## claim was about. **If `tier_hint` ever takes a source again, this block is where the wild/penned
+## equality has to be rebuilt**, and until then the arc's live pen claim is the PRICING one:
+## `_assert_a_pen_prices_on_the_hunters_carry` below drives `DrawerComposeController._hunt_priced_herd`,
+## which does take the herd, over `_corral_twin`'s pair.
 ##
 ## **DRIVEN OVER A LOCALLY-BUILT ROSTER, and it has to be**: the entry it stages is the SYNTHETIC
 ## `HANDLING_KIT_ID`, a hunt kit with a haul and no weapon, no shipped kit having had that shape since
 ## §4.9 item 12b deleted the `husbandry` one.
 ##
-## Each of the four is an EQUALITY against a string composed here, never recomposed through
+## Each of the two readings is an EQUALITY against a string composed here, never recomposed through
 ## `KitRoster.tier_hint`: an expectation re-derived through the function under test asserts nothing,
 ## and a `contains` would pass on a hint that stated every tier it knows.
-func _assert_the_hint_reads_the_same_at_a_pen() -> void:
+func _assert_the_hint_states_each_kits_own_items() -> void:
 	var kits := _pen_axis_roster()
 	# The shared fixture states a condition for EVERY item the roster ships, handling gear included,
 	# so this no longer grafts one on — a second row for the same item would shadow the fixture's.
 	var band := _pen_axis_band({})
 	var stalking := KitRoster.kit_by_id(kits, BandFx.KIT_ID_BIG_GAME)
 	var handling := KitRoster.kit_by_id(kits, HANDLING_KIT_ID)
-	var wild := _corral_twin(false)
-	var pen := _corral_twin(true)
 	var sep := HudComposeVocab.KIT_HINT_SEPARATOR
 	var attack_equipped := HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(
 		BandFx.KIT_ATTACK_EQUIPPED, HudComposeVocab.KIT_TIER_DECIMALS)
@@ -1239,32 +1247,18 @@ func _assert_the_hint_reads_the_same_at_a_pen() -> void:
 		BandFx.KIT_ITEM_SLED, int(BandFx.KIT_CONDITION_SLED)]
 	var handling_gear := HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [
 		BandFx.KIT_ITEM_CROOK, int(BandFx.KIT_CONDITION_CROOK)]
-	# --- the WILD column ---------------------------------------------------------------------------
-	var wild_stalking := KitRoster.tier_hint(kits, stalking, band, KitRoster.JOB_HUNT)
-	var wild_handling := KitRoster.tier_hint(kits, handling, band, KitRoster.JOB_HUNT)
-	h._assert_hud("a stalking kit against a WILD herd states attack, the haul and its own items — \"%s\""
-		% wild_stalking, wild_stalking == sep.join([attack_equipped, hunt_carry, spears, sled]))
+	# The hint is source-blind, so there is one column and it is the only one there can be — see the
+	# struck claim above for why a second, "penned" column here was a copy of this call, not a test.
+	var stalking_hint := KitRoster.tier_hint(kits, stalking, band, KitRoster.JOB_HUNT)
+	var handling_hint := KitRoster.tier_hint(kits, handling, band, KitRoster.JOB_HUNT)
+	h._assert_hud("a stalking kit states attack, the haul and its own items — \"%s\""
+		% stalking_hint, stalking_hint == sep.join([attack_equipped, hunt_carry, spears, sled]))
 	# The handling kit carries no spears, so it takes the bare-handed attack and names the crook it does
-	# carry — the ITEM half of the claim, which is what stops the two columns being one reading twice.
-	h._assert_hud("…and a handling kit states the BARE attack and names its crook — \"%s\"" % wild_handling,
-		wild_handling == sep.join([attack_bare, hunt_carry, handling_gear, sled]))
-	h._assert_hud("…so the KIT moves the line, which is what makes the pen claim below falsifiable",
-		wild_stalking != wild_handling)
-	# --- the PEN column: the same herd, corralled, and the same two sentences ----------------------
-	# **THE TWIN IS HELD IN HAND AND HANDED NOWHERE**, deliberately: `tier_hint` used to take it and
-	# fork on it, and the shape of this block is the record of that. `_corral_twin` is what the pricing
-	# claim below drives the fence through, where it still reaches real code.
-	var pen_stalking := KitRoster.tier_hint(kits, stalking, band, KitRoster.JOB_HUNT)
-	var pen_handling := KitRoster.tier_hint(kits, handling, band, KitRoster.JOB_HUNT)
-	h._assert_hud("a stalking kit at a PEN reads exactly as it does on the range — \"%s\"" % pen_stalking,
-		pen_stalking == sep.join([attack_equipped, hunt_carry, spears, sled]))
-	h._assert_hud("…and so does the handling kit: a fence is not a carry axis — \"%s\"" % pen_handling,
-		pen_handling == sep.join([attack_bare, hunt_carry, handling_gear, sled]))
-	h._assert_hud("…precondition: the two sources really are a wild/penned pair (%s against %s)"
-			% [str(wild.get(KitRoster.QUARRY_CORRALLED_KEY, false)),
-				str(pen.get(KitRoster.QUARRY_CORRALLED_KEY, false))],
-		not bool(wild.get(KitRoster.QUARRY_CORRALLED_KEY, false))
-			and bool(pen.get(KitRoster.QUARRY_CORRALLED_KEY, false)))
+	# carry — the ITEM half of the claim, which is what stops the two readings being one reading twice.
+	h._assert_hud("…and a handling kit states the BARE attack and names its crook — \"%s\"" % handling_hint,
+		handling_hint == sep.join([attack_bare, hunt_carry, handling_gear, sled]))
+	h._assert_hud("…so the KIT moves the line, and neither reading is a constant the other could be",
+		stalking_hint != handling_hint)
 
 ## **THE APPENDED AXES STEP DOWN WITH THE BAND'S OWN WEAR — a pair per axis, and neither half proves
 ## anything alone.**
@@ -1437,8 +1431,10 @@ func _gear_row(band: Dictionary) -> String:
 			return String(line)
 	return ""
 
-## The ONE herd both pen blocks are asked against, in its two states. `corralled` is the only
-## difference between the two dicts, so anything the sheet says differently about them is the pen's.
+## The herd the PRICING block is asked against, in its two states. `corralled` is the only difference
+## between the two dicts, so anything the sheet says differently about them is the pen's. It is used
+## by `_assert_a_pen_prices_on_the_hunters_carry` alone: the hint block above no longer takes a penned
+## reading, because `KitRoster.tier_hint` has no source parameter to hand this to.
 func _corral_twin(corralled: bool) -> Dictionary:
 	var herd := HerdFx.herd_fixture()
 	herd[KitRoster.QUARRY_CORRALLED_KEY] = corralled

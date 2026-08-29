@@ -2185,3 +2185,31 @@ changed their wording. That is the shape of a copy fix: the same states, reading
 stopped producing, so the chapter was asserting against a shape the server cannot send. It is
 `Reed, no loom` now, and the `baskets` KIT offer's existing `Reed, no loom → fair` became the
 vacuity guard beside it: same bench material, same absent loom, one word of difference.
+
+## The hint's pen column was a tautology (`chapters/compose_rungs.gd`, PR #589 review)
+
+Three `PASS` REMOVED and no frame moved: `370 / 1597` → `370 / 1594`, exit 0 both, each figure a run
+on this tree rather than a delta. The claims deleted were the two "penned" hint readings and the
+wild/penned precondition beside them; the two WILD readings, which are real, are kept, and the
+assertion is `_assert_the_hint_states_each_kits_own_items` — the name it now earns.
+
+⛔ **THE DELETED CLAIMS COULD NOT FAIL.** They evaluated `KitRoster.tier_hint(kits, kit, band,
+JOB_HUNT)` — the BYTE-IDENTICAL expression the wild pair uses, `tier_hint` having lost its source
+parameter when issue #543 deleted `EquipmentStat::PenCarry` — while the corralled twins they were
+named for were built and handed nowhere. A block whose stated purpose was *"the fence moves NOTHING"*
+would therefore have stayed green under exactly the regression it named: a source parameter re-added
+to `tier_hint`, or a `QUARRY_CORRALLED_KEY` read off the band dict.
+
+**FOR THE HINT, THE INVARIANT IS NOW STRUCTURAL RATHER THAN TESTED**, and that is the trade this
+records: restoring a real penned reading requires `tier_hint` to take a source again, which is the
+change the assertion was about. `tier_hint` has no argument a pen can arrive through, so a penned
+reading is not expressible; **a future source parameter on it is the signal to rebuild the
+wild/penned equality**, and the assertion's own docstring says so at the point of edit. The fence
+still crosses real code in `_assert_a_pen_prices_on_the_hunters_carry`, which drives
+`DrawerComposeController._hunt_priced_herd` over `_corral_twin`'s pair — that helper survives, with
+one caller instead of two.
+
+**`compose_rungs`'s `EXPECTED_CHECKPOINTS` moved 90 → 104, RE-MEASURED**: the const was raised to an
+impossible number, the run read back `reached 104 checkpoints`, and 104 was set. The declared 90 was
+a STALE floor — the chapter had been reaching 107 before this change, so subtracting the three
+removed claims from 90 would have left the guard 14 checkpoints slacker than the file it audits.

@@ -1982,20 +1982,43 @@ impl EquipmentConfig {
         self.hunter_profile_for(intrinsic, kit, wear, Quarry::Any)
     }
 
-    /// **The four two-sided rates' shared resolution.** `baseline` is the **no-equipment** rate the
-    /// caller already holds (`labor_config.json`'s), and the gear's own declaration is what lifts it.
+    /// **The three two-sided rates' shared resolution** — [`EquipmentStat::TWO_TIER`] is the count
+    /// and the roster. `baseline` is the **no-equipment** rate the caller already holds
+    /// (`labor_config.json`'s), and the gear's own declaration is what lifts it.
+    ///
+    /// > ⛔ **This opened *"The FOUR two-sided rates' shared resolution"***, and the fourth was
+    /// > `EquipmentStat::PenCarry`, deleted by issue #543 once both sides of it landed on the `sled`
+    /// > and a pen became something collected on `hunt_carry` itself. `TWO_TIER` is `3` and has been
+    /// > since; it is named once so a stale count here cannot outlive it again.
     ///
     /// Three arms, and which one runs is one-home-per-fact rather than free choice:
     ///
     /// - a live item declaring the **equipped** side (the two carries, on their tier) *is* the
     ///   answer — that is what the material bought;
-    /// - a live item declaring the **unequipped** side (the pen, the vantage) means the *equipped*
-    ///   rate applies, and that rate is looked up through [`Self::equipped_reference`] because it
-    ///   lives somewhere else;
-    /// - nothing live ⇒ [`Self::declared_tier`] over the **whole item table**, because a party with
-    ///   no handling gear still has to know what a bare-handed pen collects and that number lives on
-    ///   the gear it is not carrying. With nothing declaring an unequipped side either, the
-    ///   `baseline` stands.
+    /// - a live item declaring the **unequipped** side — **the vantage, and on the shipped roster
+    ///   only the vantage** — means the *equipped* rate applies, and that rate is looked up through
+    ///   [`Self::equipped_reference`] because it lives somewhere else. For
+    ///   [`EquipmentStat::ScoutVantageRange`] nothing in the item table declares an equipped side at
+    ///   all, so that lookup falls through to the `baseline` the caller is already holding, which is
+    ///   `labor_config.scout.vantage_range` — exactly the "somewhere else" it means;
+    /// - nothing live ⇒ [`Self::declared_tier`] over the **whole item table**, because a band
+    ///   carrying no scouting gear still has to know what an unaided vantage makes out and that
+    ///   number lives on the gear it is not carrying (`wayfinding`'s item-level
+    ///   `scout_vantage_range`). `declared_tier` reads `shared_effect`, i.e. **item-level**
+    ///   declarations only, so it never answers for the two carries — their equipped side sits on a
+    ///   **tier** — and for them the `baseline` stands.
+    ///
+    /// **The last two arms are both live, and both of them are the vantage's.** `wayfinding` is the
+    /// only item on the shipped roster declaring an unequipped side at all, so it alone reaches
+    /// them: a fresh wayfinding kit takes the second arm and a spent one takes the third, which is
+    /// what `equipment_toe::the_wayfinding_tier_steps_down_when_the_kit_runs_dry` pins.
+    ///
+    /// > ⛔ **The third arm was justified as *"a party with no handling gear still has to know what a
+    /// > bare-handed pen collects and that number lives on the gear it is not carrying"***, and both
+    /// > halves of that are now false: the `crook`'s item-level `effects` is `[]`, and no item
+    /// > declares an unequipped `hunt_carry` anywhere. **Do not repair the sentence by making it
+    /// > true** — adding a `pen_carry`-shaped unequipped line to the crook or the sled would put a
+    /// > second producer back on the one carry rate, which is precisely what #543 deleted.
     fn rate_tier(
         &self,
         stat: EquipmentStat,

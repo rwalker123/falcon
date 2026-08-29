@@ -478,12 +478,23 @@ was, which is the check that the widening did not reach the SHORT tier's measure
 > stalking kit's attack and sled."* `EquipmentStat::PenCarry` is gone — **carry is carry** — so those
 > five hints read the stalking kit's attack and sled again, which is where they started.
 >
-> **THE 2×2 AND THE PRICING BLOCK BOTH SURVIVE WITH THEIR EXPECTATIONS INVERTED.**
-> `_assert_the_hint_reads_the_same_at_a_pen` still takes four readings and now requires the fence to
-> move NOTHING while the KIT moves the line; `_assert_a_pen_prices_on_the_hunters_carry` still drives
-> `DrawerComposeController`'s real seam and now requires a herd and its corralled twin to price
-> identically, with a **bare-handed** party under the reference at both as the liveness half. **Net
-> +2 `PASS` on `ui_preview`** (1589 → 1591): 14 pen-axis claims removed, 16 added.
+> **THE PRICING BLOCK SURVIVES WITH ITS EXPECTATION INVERTED; THE 2×2 DID NOT SURVIVE AT ALL.**
+> `_assert_a_pen_prices_on_the_hunters_carry` still drives `DrawerComposeController`'s real seam and
+> now requires a herd and its corralled twin to price identically, with a **bare-handed** party under
+> the reference at both as the liveness half. **Net +2 `PASS` on `ui_preview`** (1589 → 1591): 14
+> pen-axis claims removed, 16 added.
+>
+> ⛔ **THE 2×2's PEN COLUMN WAS A TAUTOLOGY AND IS DELETED** (1597 → 1594 `PASS`, no frame moved).
+> This paragraph read *"`_assert_the_hint_reads_the_same_at_a_pen` still takes four readings and now
+> requires the fence to move NOTHING while the KIT moves the line"*, and the code did not: deleting
+> `EquipmentStat::PenCarry` also took `tier_hint`'s source parameter, so its two "penned" readings
+> were the BYTE-IDENTICAL call the wild pair makes and the corralled twins were handed nowhere. Two
+> claims that cannot fail unless the two above them already have assert that a control is PRESENT,
+> not RIGHT. What is left is `_assert_the_hint_states_each_kits_own_items` — the two WILD readings,
+> which are real — and **"the fence moves nothing" is now STRUCTURAL for the hint**: `tier_hint` has
+> no argument a pen could arrive through, so a penned reading is not expressible and rebuilding one
+> means re-adding the parameter #543 deleted. The fence still reaches real code through the PRICING
+> block, which takes the herd. Rationale at the assertion, in `chapters/compose_rungs.gd`.
 >
 > **THE PEN AND THE VANTAGE JOINED `BandKitTiers`** and the vantage half of that still stands — a
 > Scout card read 2 tiles of sight against a reveal at 1 while the client answered off the ROSTER's
