@@ -19985,10 +19985,93 @@ func _render_work_inspector_dialog_states() -> void:
 
 	await _render_pending_row_kit_states()
 
+	await _render_dialog_remount_state()
+
 	_set_forage_patches([])
 	_set_world_herds(_herd_fixtures())
 	_push_bands([_band_fixture()])
 	await _settle()
+
+## GUARD: **THE CARD IS AS TALL AS ITS CONTENT, NOT AS TALL AS ITS ROOM — driven through the ORDERING
+## that made it the room.** Reported from play as *"sometimes the job panel is displaying full height,
+## it doesn't always do this when I bring it up … no real pattern"*: on a ~1263px window the card
+## spanned ~1178px around ~300px of content, with the content drawn compactly at the top and NO
+## scrollbar.
+##
+## **THE MECHANISM, MEASURED.** `WorkInspectorDialog.refit` coalesces across a frame, and a
+## `VBoxContainer` whose children have not been SORTED reports its autowrap labels at a wrap width of
+## zero — one word per line. Measured on this very body: **736 where it settles at 278**, and 3773
+## against 408 on the fullest strip in this file. So a fit armed before a re-mount, and resuming after
+## it, asks `fit_to_content` for more than the room has; the room's ceiling wins, the card is left
+## spanning the WHOLE room, the internal scroll goes AUTO over content that then fits (so no bar
+## draws), and the re-mount's own fit — the one thing that would ever measure the new body — was
+## DISCARDED by the coalescing guard.
+##
+## ⛔ **`_assert_dialog_fits_its_room` CANNOT SEE THIS, WHICH IS WHY THE DEFECT REACHED A PLAYER
+## THROUGH A GREEN HARNESS.** *"The card fits its room"* is satisfied by a card that IS the room —
+## exactly the bug. The claim here is the card's DRAWN height against its CONTENT's.
+##
+## **STATED AS AN UPPER BOUND, deliberately.** The card is legitimately SHORTER than its content on a
+## room too small for it (`band_panel_work_inspector_dialog_tight`), where the internal scroll carries
+## the rest; the defect is only ever TALLER. The slack is `ZONE_BOUNDS_TOLERANCE` — the sub-pixel
+## disagreement between a height computed from two floats and a rect Godot lays out in whole pixels,
+## which is the same quantity every other rect-against-rect claim in this file allows for.
+##
+## **PAIRED WITH LIVENESS AND WITH A NEGATIVE.** A card drawing nothing is trivially not too tall, so
+## `_assert_work_inspector_is_a_dialog` runs beside it (the strip is held, its head, its actions, its
+## close glyph and its section headers are all drawn) and the strip's own rect is required
+## non-degenerate; and the ORDINARY mount is measured first, or the claim proves nothing about the
+## re-mount having been the thing that broke it.
+func _render_dialog_remount_state() -> void:
+	await _pin_canvas(DOCKROW_CANVAS)
+	_panel.set_dock(SIDE_BOTTOM)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	_open_first_work_inspector()
+	await _settle()
+	await _settle()
+	_assert_dialog_is_as_tall_as_its_content("band_panel_work_inspector_dialog_remount (plain mount)")
+	# **THE ORDERING, ARMED RATHER THAN HOPED FOR.** The re-mount has to land EARLIER in a frame than
+	# the armed fit's resume — which is every re-mount the live client makes, input and applied
+	# snapshots both running ahead of a `process_frame` handler armed a frame before. Connecting the
+	# re-mount FIRST is what puts it first; the re-render below is what arms the fit it races.
+	get_tree().process_frame.connect(_remount_work_inspector, CONNECT_ONE_SHOT)
+	_hud._bandpanel._repage_work_zone()
+	await _settle()
+	await _settle()
+	await _save("band_panel_work_inspector_dialog_remount")
+	_assert_work_inspector_is_a_dialog("band_panel_work_inspector_dialog_remount")
+	_assert_dialog_is_as_tall_as_its_content("band_panel_work_inspector_dialog_remount")
+	_assert_dialog_is_centred_over_the_map("band_panel_work_inspector_dialog_remount")
+	_assert_dialog_fits_its_room("band_panel_work_inspector_dialog_remount")
+	_hud._bandpanel.close_work_inspector()
+	await _settle()
+
+## The re-mount the state above races the armed fit against — the work zone's ordinary re-render, which
+## ends on `_sync_work_inspector_dialog` and so rebuilds the card's body.
+func _remount_work_inspector() -> void:
+	_hud._bandpanel._repage_work_zone()
+
+## The height half of the claim above, so the plain mount and the re-mount are judged identically.
+func _assert_dialog_is_as_tall_as_its_content(where: String) -> void:
+	var dialog := _work_inspector_dialog()
+	if dialog == null or not dialog.is_open():
+		_fail("%s — no inspector card to measure" % where)
+		return
+	var strip := dialog.mounted_strip()
+	if strip == null:
+		_fail("%s — the inspector card is holding no strip" % where)
+		return
+	# The chrome is read off the stylebox the card actually DRAWS with — `BandCityPanel`'s own, the
+	# single expression `WorkInspectorDialog._card_chrome` reads — rather than restated as a number
+	# here, which would agree with the card by coincidence and drift with its padding.
+	var chrome: float = BandCityPanel.panel_card_stylebox().get_minimum_size().y
+	var content: float = strip.size.y
+	_assert_band_panel("%s: the card is its CONTENT's height, not its room's (%.0f drawn, content %.0f + chrome %.0f, room %.0f)"
+			% [where, dialog.size.y, content, chrome, dialog.room().size.y],
+		content > 0.0 and strip.size.x > 0.0
+			and dialog.size.y <= content + chrome + ZONE_BOUNDS_TOLERANCE)
+
 
 ## **THE FORK THE KITS SECTION MAKES, PHOTOGRAPHED ON BOTH WEBS.** Four frames, because the defect was
 ## one card drawn on four kinds of source and the two that were wrong looked exactly like the two that

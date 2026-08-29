@@ -4040,6 +4040,62 @@ deleted** — a claim quietly guarding retired behaviour is worse than no claim:
 `_press_work_inspector_link` is **deleted** — there is no link left that opens anything, and its last
 caller went with the swap frame it drove.
 
+### …AND IT SOMETIMES DREW AT FULL ROOM HEIGHT AROUND 300px OF CONTENT
+
+Reported from play: *"sometimes the job panel is displaying full height, it doesn't always do this when
+I bring it up, but I've seen no real pattern."* On a ~1263px window the card spanned ~1178px — the whole
+room it may use — while the head line, POLICY, PRIORITY, KITS, the kept-at line and the actions row
+occupied the top ~300px, **with no scrollbar and the content not stretched**.
+
+That last detail is what names the cause. A body whose combined minimum were genuinely huge would draw
+tall or engage the scroll; it did neither. The card was sized from a measurement that was wrong at fit
+time and then never corrected.
+
+**A `VBoxContainer` WHOSE CHILDREN HAVE NOT BEEN SORTED REPORTS ITS AUTOWRAP LABELS AT A WRAP WIDTH OF
+ZERO** — one word per line — so the number `refit` reads at the instant of a mount is not the previous
+content's wrapping, it is nobody's. Measured on this very body: **736 where it settles at 278**, and
+**3773 against 408** on the fullest strip in `band_panel_preview`. 31 of the 51 fits in one harness run
+had a same-frame reading that differed materially from the settled one.
+
+**THE ORDERING THAT SHIPS IT.** `refit` coalesces across a frame. A re-mount landing after a fit is
+armed and before it resumes leaves that fit measuring a body which has just been replaced; it asks
+`fit_to_content` for more than the room has, the room's ceiling wins, the internal scroll is set AUTO
+over content that then fits (so no bar draws), and the re-mount's own fit — **the one thing that would
+ever have measured the new body — was DISCARDED by the coalescing guard**. Nothing re-fits until some
+unrelated event re-mounts, which is the "no real pattern". Reproduced to the pixel in the harness:
+card **638 of a 638px room** around 278px of strip.
+
+**THREE CHANGES, AND NONE OF THEM IS A FRAME COUNT** — all three are `ComposeSheet`'s, which had solved
+this and which this card was written without:
+
+- **The coalescing DEFERS rather than DISCARDS** (`_fit_requested`, cleared at the start of the run that
+  honours it, re-run at the end). One coalesced re-run, never a queue.
+- **The height is read a frame AFTER the width is applied**, not in the same pass — Godot's container
+  sort is deferred, so a combined minimum read in the pass that just moved the card's width reports the
+  previous width's wrapping.
+- **`_body.minimum_size_changed` asks for the fit**, wired in `_ready`. This is the one that makes a
+  wrong fit RECOVERABLE rather than permanent: every fit is a measurement taken at one instant and the
+  card does not choose that instant, so the body says so whenever the number it reports moves, and a fit
+  taken mid-rebuild is corrected on the frame it settles. The coalescer collapses the burst a rebuild
+  emits, and a re-run that measures the same value applies the same size, so it converges.
+
+**THE CLAIM THAT CATCHES IT IS ABOUT THE CARD'S HEIGHT AGAINST ITS CONTENT'S, AND THAT DISTINCTION IS
+THE WHOLE OF WHY THE DEFECT REACHED A PLAYER THROUGH A GREEN HARNESS.**
+`_assert_dialog_fits_its_room` passes on a card that IS the room — it printed `386x638 of 1896x638`
+against the defect, in the same run that reported it. `band_panel_work_inspector_dialog_remount` drives
+the ordering deliberately (the re-mount connected to `process_frame` FIRST, so it runs ahead of the
+armed fit's resume — which is where every live re-mount runs, input and applied snapshots both
+preceding a handler armed a frame earlier) and asserts the DRAWN height against the strip's, paired
+with `_assert_work_inspector_is_a_dialog` and a non-degenerate strip rect, since a card drawing nothing
+is trivially not too tall. **The plain mount is measured first as the negative control**, or the claim
+says nothing about the re-mount having been the trigger. Sabotage-verified: with the three changes
+reverted the plain mount still passes at 298 and the re-mount fails at `638 drawn, content 278 + chrome
+20, room 638`.
+
+**The bound is an UPPER one, deliberately** — the card is legitimately SHORTER than its content in a
+room too small for it (`band_panel_work_inspector_dialog_tight`), where its scroll carries the rest;
+the defect is only ever taller.
+
 ## THE ROW IS TWO LINES, AND THE INSPECTOR'S SENTENCE PAID FOR THE SECOND ONE
 
 **Line one is IDENTITY AND CONTROLS** — stripe · glyph · name · the SOURCE-RUNG mark · the

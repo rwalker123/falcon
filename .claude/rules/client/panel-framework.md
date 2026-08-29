@@ -53,6 +53,20 @@ own content, which is the same lie as a card fitted too short, upside down.
 width every pass, and re-asserting `target_width` there would silently undo `fit_width` on
 the next height fit.
 
+### THE ROOM'S CEILING OUTRANKS `min_height`, and that precedence is written out
+
+`fit_to_content` bounds the card by `min(max_height, _height_ceiling())` and by `min_height`, and the
+two can genuinely disagree: a card whose content wants more than the room has is the ordinary
+short-window case — `WorkInspectorDialog` reaches it on a 1152x720 bottom dock, a 298px minimum against
+a 291px room — and the answer there must be the ROOM, with the internal scroll carrying the rest. That
+is what keeps *"a free-floating card never covers what it was cut back off"* structural rather than
+incidental.
+
+It used to be `clamp(desired, min_height, min(max_height, ceiling))`, which returns the ceiling in
+Godot and is therefore bit-identical — **which is exactly the objection to it**: the one case where the
+card's whole containment claim is decided was decided by which comparison the engine happens to write
+first. The bounds are applied in order now and the ceiling plainly wins.
+
 ### "AGAINST THE VIEWPORT" MEANS AGAINST THE ROOM — `room_bounds`
 
 The reserved-edge registry below insets `MapView` and the HUD's `LayoutRoot` by every docked
