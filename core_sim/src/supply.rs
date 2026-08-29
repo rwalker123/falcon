@@ -46,6 +46,7 @@ use crate::{
     materials_config::BandKey,
     orders::FactionId,
     resources::{SimulationConfig, TileRegistry},
+    routes,
     scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar},
     supply_network_config::SupplyNetworkConfigHandle,
 };
@@ -241,6 +242,11 @@ type SupplyBands<'w, 's> = Query<
     With<ResidentBand>,
 >;
 
+// Every parameter is a distinct world resource or query this pass genuinely reads — the ECS's own
+// signature, not a call site anyone types. It crossed the threshold when the route branch added the
+// road ledger and the traffic log; the repo's convention for that is this allow, as on
+// `terrain::def` and `handle_send_trade_expedition`.
+#[allow(clippy::too_many_arguments)]
 pub fn balance_supply_networks(
     config: Res<SupplyNetworkConfigHandle>,
     sim_config: Res<SimulationConfig>,
@@ -255,6 +261,12 @@ pub fn balance_supply_networks(
     // alternative — supply seeding the ledger itself — would make a second producer of contact
     // that no sight sweep agrees with.
     ledger: Res<ConnectionLedger>,
+    // **The roads, read one stage early — the same lag, for the same reason.** `advance_routes` runs
+    // later in this stage, so the payoff below is read at each road's standing as of the *previous*
+    // turn, exactly as the connection ledger above is. Both are accepted rather than reordered: a
+    // supply pass that raised a road itself would be a second producer of a rung's position.
+    routes: Res<crate::routes::RouteLedger>,
+    mut route_traffic: ResMut<crate::routes::RouteTrafficLog>,
     // `With<ResidentBand>`: an expedition manages its own larder — its drop-off is the explicit
     // fold-back on arrival, not a passive supply-network leak — so it is excluded here.
     // **The food ledger's transfer terms ride here**, because this system is one of their writers:
@@ -364,6 +376,13 @@ pub fn balance_supply_networks(
                         && wrapped_distance_sq(nodes[i].pos, nodes[j].pos, width, wrap) <= reach_sq
                         && tie_is_live(&ledger, nodes[i].band, nodes[j].band)
                     {
+                        // **THE COMMONEST TRAFFIC IN THE GAME, recorded where it is known.** Two
+                        // camps pooling a larder are people walking between them, turn after turn —
+                        // #532's *"it must not be the one case that produces no trail because nobody
+                        // typed a command"*. The road is worn by `routes::advance_routes` later in
+                        // this stage rather than here, so this turn's pooling cannot read a road
+                        // this turn's pooling created.
+                        route_traffic.walked(nodes[i].pos, nodes[j].pos);
                         let (a, b) = (find(&mut parent, i), find(&mut parent, j));
                         if a != b {
                             parent[a] = b;
@@ -404,6 +423,18 @@ pub fn balance_supply_networks(
             continue;
         }
         let weights: Vec<Scalar> = members.iter().map(|&m| nodes[m].weight).collect();
+
+        // ⛔ **THE FIRST THING A ROUTE RUNG HAS EVER BOUGHT.** A network bound by kept roads spills
+        // less of what crosses it (`routes::component_friction_multiplier`,
+        // `docs/plan_standing_upkeep.md` §4.13). The multiplier is the **best** road two of these
+        // bands stand on, and `FRICTION_UNCHANGED` where there is none — so an unrouted component
+        // pools at exactly today's friction and there is no early-game regression, by construction.
+        let friction = friction
+            * scalar_from_f32(routes::component_friction_multiplier(
+                &routes,
+                members.iter().map(|&m| &nodes[m].pos),
+            ));
+
         let mut commodities: BTreeSet<&str> = BTreeSet::new();
         for &m in members {
             for (item, _) in &nodes[m].stores {

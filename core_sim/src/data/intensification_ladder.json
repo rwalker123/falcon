@@ -26,6 +26,10 @@
       "paving": 20.0
     }
   },
+  "_comment_route_traffic": "HOW FAST TRAFFIC WEARS A ROAD IN - the route branch's build pace, in the same work units build.work_cost is quoted in. IT IS THE LINK, NOT THE TONNAGE: a live pooling link banks this much per tile of road per turn whatever it happened to carry. balance_supply_networks drops sub-min_transfer moves, so a BALANCED network ships nothing - a mass-driven rate would leave two camps who have shared a larder for thirty turns with no path at all, which is exactly the case issue #532 says must not be the one that produces no trail. At 0.35 a two-tile link between neighbouring camps banks 0.7 a turn and reaches the trail rung's 40 in about 57 turns of unbroken neighbourhood - a road you notice having made rather than one you decide to make. PLAYTEST DIAL, section 4.14 owns the number.",
+  "route_traffic": {
+    "work_per_link_tile_per_turn": 0.35
+  },
   "rungs": [
     {
       "id": "wild",

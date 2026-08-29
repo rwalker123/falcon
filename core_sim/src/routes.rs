@@ -81,7 +81,8 @@ use crate::{
     components::Tile,
     grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT},
     intensification::{
-        LadderConfig, RungBranch, RungKey, RungStanding, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        LadderConfig, RungBranch, RungKey, RungRoutePayoff, RungStanding, FRICTION_UNCHANGED,
+        RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
     resources::TileRegistry,
     terrain::terrain_definition,
@@ -120,6 +121,17 @@ pub struct Route {
     /// The derived standing, re-stamped on every write to [`Self::position`] so the two cannot drift
     /// — the `ForagePatch::standing` / `Herd::standing` convention.
     standing: RungStanding,
+    /// **WHAT THIS ROAD BUYS, stamped beside the standing it is derived from.**
+    ///
+    /// Derived and re-stamped on every write to [`Self::position`], exactly as [`Self::standing`] is
+    /// — so a reader asking *what is this road worth* needs the road and nothing else.
+    ///
+    /// **That is what keeps the ladder out of `balance_supply_networks`.** The payoff is a pure
+    /// function of the held rung, so a supply pass that resolved it would be taking a config handle
+    /// to re-derive a number the road already knows — and every harness that stands the pooling up
+    /// would have to hand it one. A stamped reading has one producer, which is the rule the standing
+    /// beside it is stamped under.
+    payoff: RungRoutePayoff,
     /// **What this road's keeping was billed at, stamped once per turn, first-write-wins.** The wire
     /// states `demand − supplied == shortfall` verbatim, and an interpolated demand moves *within* a
     /// turn, so every reader must take the stamp rather than re-reading the live cost (§2.5).
@@ -146,6 +158,7 @@ impl Route {
             path,
             position: RUNG_UNSTARTED,
             standing: route_standing_at(ladder, RUNG_UNSTARTED),
+            payoff: route_payoff_at(ladder, RUNG_UNSTARTED),
             upkeep_demanded: None,
             upkeep_supplied: 0.0,
             neglect_turns: 0,
@@ -168,6 +181,12 @@ impl Route {
     pub fn set_position(&mut self, position: f32, ladder: &LadderConfig) {
         self.position = position.max(RUNG_UNSTARTED);
         self.standing = route_standing_at(ladder, self.position);
+        self.payoff = route_payoff_at(ladder, self.position);
+    }
+
+    /// **What this road buys**, at the rung it holds — the stamped reading, never a re-derivation.
+    pub fn payoff(&self) -> RungRoutePayoff {
+        self.payoff
     }
 
     /// The rung this road **holds** — what it is entitled to in full.
@@ -322,6 +341,75 @@ impl RouteLedger {
     }
 }
 
+/// **THIS TURN'S TRAFFIC, recorded where it happens and spent where roads are worn.**
+///
+/// `balance_supply_networks` knows which pairs pooled; it must not also be the thing that lays roads,
+/// because it runs **before** the accrual and laying a road mid-pass would let this turn's pooling
+/// read a road this turn's pooling created. So it writes the pairs here and
+/// [`advance_routes`] spends them — the same producer/consumer split `upkeep_supplied` uses across
+/// the Population→Logistics carry.
+///
+/// **Cleared by the accrual, every turn**, so a turn with no pooling wears nothing rather than
+/// re-wearing last turn's links.
+#[derive(Resource, Default, Debug, Clone)]
+pub struct RouteTrafficLog {
+    /// The tile pairs that carried traffic this turn. Unordered within a pair — a road has no
+    /// direction — and duplicates are meaningful: two links over one road are twice the traffic.
+    pub links: Vec<(UVec2, UVec2)>,
+}
+
+impl RouteTrafficLog {
+    /// Record one turn of traffic between two camps.
+    pub fn walked(&mut self, from: UVec2, to: UVec2) {
+        if from != to {
+            self.links.push((from, to));
+        }
+    }
+}
+
+/// **WHAT A COMPONENT'S POOLING LOSES IN TRANSIT, as a multiple of the base friction** — the payoff
+/// `balance_supply_networks` reads, and the first thing a route rung has ever bought.
+///
+/// **It is the BEST road binding the network, not the worst, and that is forced rather than
+/// generous.** The whole branch's safety argument is that a rung is **purely additive** — *"a rung
+/// can only widen the set of links and lower a loss, never the reverse"*, which is what preserves
+/// §Q4's *"no early-game regression, by construction"*. Under a worst-road reading, wearing a **new**
+/// poor trail into an existing network would **raise** that network's friction: a road would make
+/// things worse, and a band would be punished for having walked somewhere. Best-road cannot do that.
+///
+/// The balancer pools a whole component against **one** friction scalar — it has no path model — so
+/// either reading is an approximation of the same thing. This is the approximation that cannot
+/// regress.
+///
+/// **A road counts only if at least TWO members of the component stand on it** (rule 2): a road one
+/// band happens to be camped on carries none of that component's pooling, and crediting it would pay
+/// a network for a road nobody is using to reach anyone.
+///
+/// **And only if it is BUILT and KEPT** — the same condition [`Route::grants_sight`] reads, for the
+/// same reason: an unmaintained road is not carrying anything.
+pub fn component_friction_multiplier<'a>(
+    ledger: &RouteLedger,
+    member_tiles: impl IntoIterator<Item = &'a UVec2>,
+) -> f32 {
+    let mut standing_on: BTreeMap<RouteId, u32> = BTreeMap::new();
+    for tile in member_tiles {
+        for id in ledger.routes_on_tile(*tile) {
+            *standing_on.entry(*id).or_default() += 1;
+        }
+    }
+    standing_on
+        .into_iter()
+        .filter(|(_, members)| *members >= MEMBERS_TO_CARRY_A_LINK)
+        .filter_map(|(id, _)| ledger.get(id))
+        .filter(|route| route.grants_sight())
+        .map(|route| route.payoff().friction_multiplier)
+        .fold(FRICTION_UNCHANGED, f32::min)
+}
+
+/// **A road carries a component's pooling only once two of its bands stand on it** — one camp on a
+/// road is a camp beside a road, not a link over one.
+pub const MEMBERS_TO_CARRY_A_LINK: u32 = 2;
+
 /// **THE SCALE TERM — `length × terrain`, as one sum** (`UpkeepScale::RouteSpan`).
 ///
 /// ```text
@@ -369,6 +457,18 @@ fn route_rung_cost(rung: RungKey, ladder: &LadderConfig) -> Option<f32> {
     ladder.rung(rung).build_cost(RUNG_COST_UNSCALED)
 }
 
+/// **What a route standing at `position` buys.** Read off the rung it *holds*, so a half-worn dirt
+/// road buys exactly what the trail beneath it buys until the rung fills — the payoff is a property
+/// of the road you have, not of the one you are wearing in.
+pub fn route_payoff_at(ladder: &LadderConfig, position: f32) -> RungRoutePayoff {
+    let held = route_standing_at(ladder, position).held;
+    *ladder
+        .rung(held)
+        .route_payoff
+        .as_ref()
+        .expect("validate requires a route_payoff on every route rung")
+}
+
 /// Resolve a route position through the ladder — the one seam that answers *where does this road
 /// stand*, so no call site re-derives a standing from a meter.
 pub fn route_standing_at(ladder: &LadderConfig, position: f32) -> RungStanding {
@@ -412,6 +512,70 @@ pub fn trace_path(from: UVec2, to: UVec2, width: u32, height: u32, wrap: bool) -
         budget -= 1;
     }
     path
+}
+
+/// **TRAFFIC WEARS THE ROADS IN** — the route branch's build accrual, and the counterpart of
+/// `advance_labor_allocation`'s build arm on the two food webs.
+///
+/// It runs in `TurnStage::Logistics` **after `balance_supply_networks`**, which is what lets it see
+/// this turn's links. The consequence is that the *payoff* is read at the standing as of the
+/// **previous** turn — precisely the one-turn lag `balance_supply_networks` already accepts against
+/// `ConnectionLedger` (*"on the world's very first turn the ledger is empty, so nothing pools on turn
+/// 1"*). **Do not reorder a stage for it**, and do not let the supply pass raise a road itself: that
+/// would make a second producer of a rung's position, which is the failure this arc has had three of.
+///
+/// # Rules 1 and 4, in that order
+///
+/// For each link, the road that already joins both ends is the one that gets the work
+/// ([`RouteLedger::road_joining`] — **rule 4**, and why real networks consolidate). Only when there
+/// is none is a fresh path traced and **stamped once** (**rule 1**), which is also what puts both
+/// camps on it and makes rule 2 true of a road from the moment it exists.
+pub fn advance_routes(
+    mut ledger: ResMut<RouteLedger>,
+    mut traffic: ResMut<RouteTrafficLog>,
+    ladder: Res<crate::intensification::LadderConfigHandle>,
+    sim_config: Res<crate::resources::SimulationConfig>,
+    tile_registry: Res<TileRegistry>,
+) {
+    let ladder = ladder.get();
+    let rate = ladder.route_traffic.work_per_link_tile_per_turn;
+    let (width, height) = (tile_registry.width, tile_registry.height);
+    let wrap = sim_config.map_topology.wrap_horizontal;
+
+    // Drained rather than read: this turn's traffic is spent once, and a turn with no pooling must
+    // wear nothing rather than re-wearing last turn's links.
+    for (from, to) in std::mem::take(&mut traffic.links) {
+        let id = match ledger.road_joining(from, to) {
+            Some(id) => id,
+            None => {
+                let path = trace_path(from, to, width, height, wrap);
+                // A traced path always carries both ends, so this cannot be empty for `from != to` —
+                // and `walked` refuses a self-link, so the pair is never degenerate.
+                if path.len() < MEMBERS_TO_CARRY_A_LINK as usize {
+                    continue;
+                }
+                ledger.insert(path, &ladder)
+            }
+        };
+        let Some(route) = ledger.get_mut(id) else {
+            continue;
+        };
+        // **Per tile of road**, so a longer link banks proportionally more into the longer road it
+        // needs — which keeps a road's pace roughly independent of its length, exactly as the span
+        // keeps its cost proportional to it.
+        route.traffic_work += rate * route.path.len() as f32;
+    }
+
+    // **The position IS the accumulator** (§2.8), so the turn's traffic is banked straight onto it
+    // and no second meter exists to disagree with it.
+    for (_, route) in ledger.iter_mut() {
+        if route.traffic_work <= NO_TRAFFIC {
+            continue;
+        }
+        let banked = route.position() + route.traffic_work;
+        route.traffic_work = NO_TRAFFIC;
+        route.set_position(banked, &ladder);
+    }
 }
 
 #[cfg(test)]

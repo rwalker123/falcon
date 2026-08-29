@@ -344,6 +344,11 @@ fn pooling_a_material_between_bands_preserves_its_characteristics() {
         .insert_resource(SupplyNetworkMembership::default());
     // The pooling gate: bands pool only where the ledger holds a live tie between them.
     app.world.insert_resource(ConnectionLedger::default());
+    // The route branch's two resources. Both empty, which is the shipped turn-1 state: with no road
+    // bound to the component, the pooling below is the unrouted reading it has always been.
+    app.world.insert_resource(core_sim::RouteLedger::default());
+    app.world
+        .insert_resource(core_sim::RouteTrafficLog::default());
 
     let (width, height) = {
         let registry = app.world.resource::<TileRegistry>();

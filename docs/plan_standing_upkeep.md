@@ -2143,6 +2143,36 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > #### ⛔ THE THREE STEPS — **AGREED WITH RAY, ONE PR EACH.** Each is playable alone
     >
     > **13a — ROADS EXIST, AND THE FOOD-SHARING BETWEEN NEIGHBOURING CAMPS WEARS THEM IN.**
+    >
+    > > **⛔ LANDED SO FAR, AND TWO THINGS BELOW ARE CORRECTIONS TO THIS SECTION'S OWN SPEC.** The
+    > > branch, `RouteLedger`, `UpkeepScale::RouteSpan`, the traffic accrual off pooling links, the
+    > > **friction** payoff and the checkpoint are in; the `Roadwork` pool, the decay, the visibility
+    > > grant and the client readout are not. Rationale as built:
+    > > `.claude/rules/core_sim/routes.md`.
+    > >
+    > > **① THE TRAFFIC RATE IS THE LINK, NOT THE TONNAGE.** This section specified **mass-tiles**
+    > > — quantity moved × distance. **That is wrong for the case the branch exists to serve.**
+    > > `balance_supply_networks` drops sub-`min_transfer` moves, so a *balanced* network ships
+    > > nothing: a mass-driven rate leaves two camps who have shared a larder for thirty turns with
+    > > **no path at all**, which is exactly the case #532 forbids. A trail forms because they are
+    > > neighbours who walk to each other, not because of what they were carrying. One lever —
+    > > `route_traffic.work_per_link_tile_per_turn`, banked per tile of road per live turn — replaces
+    > > the two this section named.
+    > >
+    > > **② NO ROUTE RUNG DECLARES A MATERIAL, because `stone` does not exist.** The paved road was to
+    > > swallow stone on the pile and the rate. `materials.json` carries bone / fibre / grape / hide /
+    > > hurdles / tea / tobacco / wood, and the ladder's load-time check rightly rejects a rung naming
+    > > a material the table does not carry. **Adding a stone with no way to obtain one would ship a
+    > > rung that can never be HELD** — a harder failure than one that is cheap to hold — so quarrying
+    > > stays the crafting arc's. The engine half already ships; the rung takes its two lines when a
+    > > stone material lands.
+    > >
+    > > **③ THE COMPONENT'S FRICTION IS THE BEST ROAD BINDING IT, and that is forced rather than
+    > > generous.** `balance_commodity` pools a whole component against one friction scalar and has no
+    > > path model, so the reading is an approximation either way — but under a **worst**-road reading,
+    > > wearing a new poor trail into an existing network would **raise** its friction. A road would
+    > > make things worse, which breaks *"a rung can only widen the set of links and lower a loss"*
+    > > outright. A road counts only where **two** of a component's bands stand on it (rule 2).
     > - **Sim:** `RungBranch::Route` (and the `BOTH_BRANCHES` sweep it forces open — the const is
     >   deliberately exhaustive so no sweep can miss a third web), the four rungs in
     >   `intensification_ladder.json`, `UpkeepScale::RouteSpan`, the `RouteLedger` + `RouteId` + stamped

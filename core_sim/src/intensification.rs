@@ -2939,12 +2939,43 @@ impl LadderKnowledge {
     }
 }
 
+/// **HOW FAST TRAFFIC WEARS A ROAD IN** — the route branch's build pace
+/// (`docs/plan_standing_upkeep.md` §4.13).
+///
+/// **It lives on the LADDER rather than in a config file of its own**, for the reason the knowledge
+/// pacing does: *"every knowledge pace in the game is tuned in ONE file"*, and this is the same kind
+/// of number one branch over. A route's build is advanced by traffic exactly as a patch's is advanced
+/// by a crew, so *how fast does this branch climb* belongs beside the rungs it climbs.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RouteTraffic {
+    /// **WHAT ONE TURN OF A LIVE POOLING LINK BANKS, PER TILE OF ROAD**, in the same work units
+    /// `RungBuild::work_cost` is quoted in.
+    ///
+    /// ⛔ **IT IS THE LINK, NOT THE TONNAGE — and that is a correction to the design.** §4.13 first
+    /// specified this as **mass-tiles**, quantity moved × distance. That is wrong for the commonest
+    /// road in the game: `balance_supply_networks` drops sub-`min_transfer` moves so a **balanced**
+    /// network ships nothing, and a mass-driven rate would have two neighbouring camps who have shared
+    /// a larder for thirty turns wear **no path at all** — precisely the case #532 says must not be
+    /// the one that produces no trail. A trail between two camps forms because they are neighbours
+    /// who walk to each other, not because of what they happened to be carrying.
+    ///
+    /// **Per tile**, so a longer link banks proportionally more work into the longer road it needs —
+    /// which keeps the pace of a road roughly independent of its length, in the same way the span
+    /// keeps the *cost* proportional to it.
+    ///
+    /// Validated finite and `> 0`: a rate of zero means *"traffic never wears a road in"*, which
+    /// would leave the whole branch permanently at its floor while reading like a live dial.
+    pub work_per_link_tile_per_turn: f32,
+}
+
 /// The whole ladder: every rung of both branches, plus the pace they are learned at
 /// (`data/intensification_ladder.json`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct LadderConfig {
     /// The knowledge dials shared by **both** webs — see [`LadderKnowledge`].
     pub knowledge: LadderKnowledge,
+    /// How fast traffic raises the **route** branch — see [`RouteTraffic`].
+    pub route_traffic: RouteTraffic,
     pub rungs: Vec<RungDef>,
 }
 
@@ -3130,6 +3161,18 @@ impl LadderConfig {
     /// exactly the failure mode config validation exists to catch.
     pub fn validate(&self) -> Result<(), LadderConfigError> {
         validate_knowledge(&self.knowledge)?;
+        if !self.route_traffic.work_per_link_tile_per_turn.is_finite()
+            || self.route_traffic.work_per_link_tile_per_turn <= 0.0
+        {
+            return Err(LadderConfigError::Invalid {
+                field: "route_traffic.work_per_link_tile_per_turn".to_string(),
+                constraint: "wear a road in at a finite, positive rate — at zero, traffic never \
+                             raises a route and the whole branch sits at its floor for ever, while \
+                             the dial still reads live"
+                    .to_string(),
+                value: self.route_traffic.work_per_link_tile_per_turn.to_string(),
+            });
+        }
 
         let mut seen_ids: HashSet<(RungBranch, &str)> = HashSet::new();
         let mut seen_orders: HashSet<(RungBranch, u32)> = HashSet::new();

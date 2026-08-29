@@ -75,6 +75,13 @@ fn spawn_world() -> App {
         .insert_resource(SupplyNetworkMembership::default());
     // The pooling gate. Empty until a fixture seeds a tie — which is the shipped turn-1 state.
     app.world.insert_resource(ConnectionLedger::default());
+    // **The roads and this turn's traffic.** Empty, which is the shipped turn-1 state and the
+    // reading that makes every assertion in this file a statement about the UNROUTED network: with
+    // no road bound to a component, `component_friction_multiplier` answers `FRICTION_UNCHANGED` and
+    // the pooling numbers below are exactly the ones they were before the route branch existed.
+    app.world.insert_resource(core_sim::RouteLedger::default());
+    app.world
+        .insert_resource(core_sim::RouteTrafficLog::default());
 
     app.add_systems(bevy::app::Startup, spawn_initial_world);
     app.update();
