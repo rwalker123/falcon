@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 143
+const EXPECTED_CHECKPOINTS := 149
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -655,6 +655,7 @@ func _crafting_states() -> void:
 	await h._settle()
 	_assert_panel_renders()
 	_assert_a_stock_row_reads_its_pile_and_its_yield()
+	_assert_a_material_row_states_a_spend_order_not_a_grade()
 	await h._save("crafting_panel")
 
 	# **THE EMPTY-STORE HALF OF THAT PILE CLAIM — PNG-less, and between two saves on purpose.** It
@@ -772,6 +773,109 @@ func _assert_a_stock_row_reads_its_pile_and_its_yield() -> void:
 		row != null and _label_texts(row).has(yielded))
 	h._assert_hud("crafting — …and no arrow is left in the Owned cell (%s)" % [cordage],
 		_count_starting_with(cordage, "→") == 0)
+
+# ---- the material-only row's two sentences -------------------------------------------------------
+
+## The row names the claim below is made on. The stock row is the ONE material-only recipe in the
+## fixture book; `Baskets` is the equipment row that shares its bench material and its missing tool,
+## which is what makes the pair an A/B on the grade rather than on the wording; `Loom` is a bench tool,
+## the third `group` and the one whose second line the stock format must not have disturbed.
+const STOCK_ROW_NAME := "Cordage"
+const KIT_ROW_NAME := "Baskets"
+const TOOL_ROW_NAME := "Loom"
+
+## **EVERY EXPECTED SENTENCE IS SPELLED OUT, never recomposed through `HudCraftingVocab`.** A claim
+## built from the format under test can only agree with itself — the harness rule
+## `_assert_horizon_floor_is_the_whole_trip` records — and here it would be worse than usual: the
+## retired wording is the whole point of the negative, so composing it from the LIVE const would make
+## it un-nameable the moment the const changes, which is exactly the change being guarded.
+const STOCK_ROLE_LINE := "Weaving · worst strong spent first"
+## ⛔ **THE DEAD CLAIM, KEPT AS A LITERAL SO IT CAN BE DENIED BY NAME.** The row read
+## `Weaving · quality from strong` (shipped: `Tanning · quality from suppleness`) and no quality of a
+## material-only recipe's output comes from its input's axis — `MaterialBatch` has no grade field and
+## `RecipeDef::grade_for` resolves none, so every set of hurdles carries the recipe's own
+## `stoutness 0.6 / span 0.6` whatever hide went in. The axis survives on the line because `reads`
+## ALSO picks which batches are spent, worst-first (`systems/crafting.rs::spend_axis`).
+const RETIRED_STOCK_ROLE_LINE := "Weaving · quality from strong"
+## The word the retired sentence turned on, denied over the whole row rather than over that one
+## string: a rewording that kept the quality claim in other words is the same lie.
+const RETIRED_QUALITY_WORD := "quality"
+## The two refusals, which are the sim's half of the same A/B and arrive on the wire resolved. They
+## share every word up to the tail, so the tail is the only thing the pair can be reading.
+const STOCK_REASON := "Reed, no loom"
+const KIT_REASON := "Reed, no loom → fair"
+## The bench tool's own second line, untouched by any of this — `materials[].tool_item_id` names the
+## loom as fibre's tool, so the row states the material it stretches.
+const TOOL_ROLE_LINE := "Bench tool — fibre"
+
+## **A MATERIAL-ONLY ROW STATES A SPEND ORDER; THE EQUIPMENT ROW BESIDE IT STILL STATES A GRADE.**
+## Reported from play against the shipped `hurdles` row, which said `Hide, no tanning frame → poor`
+## under a second line reading `Tanning · quality from suppleness` — and neither the arrow nor the
+## quality was ever true of it. A grade is a property of EQUIPMENT: it is stamped on an equipment
+## batch and read back off it, while a `MaterialBatch` carries its own `characteristics` and has
+## nowhere to put one, so `RecipeDef::grade_for` resolves nothing here and `outputGrade` publishes
+## `""`.
+##
+## **EVERY CLAIM IS AN EQUALITY, and that is not fussiness** — the whole defect was a sentence that
+## was individually plausible, so `contains` would have passed on it. The one exception is the
+## `quality` negative, which is deliberately looser than the retired string it backs up: a rewording
+## that kept the claim in other words is the same lie.
+##
+## **AND EVERY CLAIM IS HALF OF A PAIR**, because a one-sided one passes on a panel that lost the
+## thing entirely:
+##
+## - The stock row's second line reads the spend-order sentence **and** the retired quality one is
+##   nowhere in the panel. The first alone passes on a panel printing both; the second alone on a
+##   panel that dropped line two from every stock row.
+## - The stock row's refusal has no `→ grade` tail **and** the KIT row's — same bench material, same
+##   missing loom, so the two differ in the tail and in nothing else — still has one. Without the
+##   second, the fix is indistinguishable from a build that stripped grade words everywhere.
+## - The TOOL row still names the material it bounds, which is the third `group` and says the stock
+##   branch's edit did not reach the ones beside it.
+func _assert_a_material_row_states_a_spend_order_not_a_grade() -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting — the spend-order panel is open", false)
+		return
+	var stock_row := _ledger_row(panel, STOCK_ROW_NAME)
+	var kit_row := _ledger_row(panel, KIT_ROW_NAME)
+	var tool_row := _ledger_row(panel, TOOL_ROW_NAME)
+	if stock_row == null or kit_row == null or tool_row == null:
+		h._assert_hud("crafting — the ledger carries a stock, a kit and a tool row", false)
+		return
+	var stock_texts := _label_texts(stock_row)
+	h._assert_hud("crafting — a material row's second line states the SPEND ORDER (%s) — got %s"
+			% [STOCK_ROLE_LINE, stock_texts],
+		stock_texts.has(STOCK_ROLE_LINE))
+	h._assert_hud("crafting — …and the retired quality claim (%s) is nowhere in the panel"
+			% [RETIRED_STOCK_ROLE_LINE],
+		not _label_texts(panel).has(RETIRED_STOCK_ROLE_LINE))
+	h._assert_hud("crafting — …and the word `%s` appears nowhere on that row (%s)"
+			% [RETIRED_QUALITY_WORD, stock_texts],
+		_count_containing_ci(stock_texts, RETIRED_QUALITY_WORD) == 0)
+	h._assert_hud("crafting — a material row's refusal carries no grade tail (%s) — got %s"
+			% [STOCK_REASON, stock_texts],
+		stock_texts.has(STOCK_REASON))
+	# **THE VACUITY GUARD.** Same material, same absent loom, one word of difference — so a build that
+	# stripped grade language everywhere fails HERE while every claim above stays green.
+	var kit_texts := _label_texts(kit_row)
+	h._assert_hud("crafting — …while an EQUIPMENT row's refusal still names the grade (%s) — got %s"
+			% [KIT_REASON, kit_texts],
+		kit_texts.has(KIT_REASON))
+	var tool_texts := _label_texts(tool_row)
+	h._assert_hud("crafting — …and a bench tool still names the material it bounds (%s) — got %s"
+			% [TOOL_ROLE_LINE, tool_texts],
+		tool_texts.has(TOOL_ROLE_LINE))
+
+## How many of `texts` contain `needle`, case-insensitively — a COUNT rather than a bool so a failure
+## says how many lines leaked the word rather than only that one did.
+func _count_containing_ci(texts: Array, needle: String) -> int:
+	var found := 0
+	var wanted := needle.to_lower()
+	for text in texts:
+		if String(text).to_lower().contains(wanted):
+			found += 1
+	return found
 
 ## **THE OTHER HALF OF THE PILE CLAIM, PNG-LESS: a material the band banks NONE of says so.** Without
 ## it every claim in `_assert_a_stock_row_reads_its_pile_and_its_yield` is satisfied by a cell that
@@ -1792,8 +1896,14 @@ func _craft_offers() -> Array:
 			"Unlocks excellent fibre work", HudCraftingVocab.SEVERITY_GOOD),
 		_offer("bone_awl", "Bone awl", HudCraftingVocab.GROUP_TOOL, "bone_awl", true,
 			"Bone costs −25%", HudCraftingVocab.SEVERITY_NEUTRAL),
+		# **THE ONE MATERIAL-ONLY ROW, AND ITS REFUSAL CARRIES NO `→ grade` TAIL.** It read
+		# `Reed .70 → strong`, which is a payload no sim can resolve: `RecipeDef::grade_for` returns
+		# `None` for a recipe whose outputs are all materials, so `outputGrade` is `""` and
+		# `invitation` appends nothing. The `baskets` row above stages the SAME left-hand clause WITH
+		# its tail (`Reed, no loom → fair`), which is what makes the pair a claim rather than a
+		# panel that lost grade words everywhere — the band owns no loom, so both read `no loom`.
 		_offer("cordage", "Cordage", HudCraftingVocab.GROUP_STOCK, "", true,
-			"Reed .70 → strong", HudCraftingVocab.SEVERITY_NEUTRAL),
+			"Reed, no loom", HudCraftingVocab.SEVERITY_NEUTRAL),
 	]
 
 ## **EVERY OFFER CARRIES ITS GROUP HEAD AND ITS OWNED NOTE**, both resolved sim-side. On the shipped

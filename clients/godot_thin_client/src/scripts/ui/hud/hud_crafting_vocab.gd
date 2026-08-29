@@ -524,23 +524,46 @@ const GROUP_HEAD_FONT_SIZE := 10
 
 ## The Item cell's second line — what this row IS, every one of them a JOIN of published fields
 ## rather than an authored table: a tool names the material it bounds (`materials[].tool_item_id`), a
-## stock recipe names the CRAFT and the characteristic its input is judged on (`inputs[].reads_axis`),
-## and a kit row names the craft that makes it (`RecipeDefState.craft`, whose display name is resolved
-## sim-side). A row whose join finds nothing simply shows no second line.
+## stock recipe names the CRAFT and the characteristic its input is SPENT worst-first on
+## (`inputs[].reads_axis`), and a kit row names the craft that makes it (`RecipeDefState.craft`, whose
+## display name is resolved sim-side). A row whose join finds nothing simply shows no second line.
 ##
 ## **THE STOCK LINE NAMES NO MATERIAL, and leads with the craft like every other row.** It read
 ## `Reads hide suppleness` until it was reported as meaningless, and both halves of that were wrong:
 ## two bare nouns collide with no separator between them, and the *material* is the one fact the row
 ## already states twice over — the Rebuild-costs cell beside it says `4 wood · 2 hide`, and the sim's
-## own refusal under the button says `Hide, no tanning frame → poor`. What is genuinely new on this
-## line is the AXIS, which is the whole of "there is no best hide": the same pelt makes a good sled
-## (reads toughness) and poor hurdles (reads suppleness). Leading with the craft is also what keeps
-## line two a CATEGORY on every row — the stock row was the only one whose line two was a sentence.
+## own refusal under the button says `Hide, no tanning frame`. Leading with the craft is also what
+## keeps line two a CATEGORY on every row — the stock row was the only one whose line two was a
+## sentence.
+##
+## **⛔ THE AXIS IS A SPEND ORDER HERE, NOT A QUALITY. THIS LINE SAID `%s · quality from %s` AND THE
+## CLAIM WAS FALSE ON EVERY ROW IT COULD EVER RENDER ON.** It was justified as "the whole of *there is
+## no best hide*: the same pelt makes a good sled (reads toughness) and poor hurdles (reads
+## suppleness)" — and *poor hurdles* is the dead claim. **A grade is a property of EQUIPMENT**: it is
+## stamped on an equipment batch and read back off it, while a `MaterialBatch` carries its own
+## `characteristics` and has nowhere to put one. So `RecipeDef::grade_for` resolves NO grade for a
+## recipe whose outputs are all materials, `CraftOffer.outputGrade` publishes `""`, and the refusal
+## renders `Hide, no tanning frame` with no dangling arrow. Every set of hurdles the bench ever makes
+## carries the recipe's own `stoutness 0.6 / span 0.6`, whatever hide went into it.
+##
+## **THE AXIS STAYS ON THE LINE BECAUSE IT STILL DOES SOMETHING REAL.** `reads` is OVERLOADED
+## sim-side: `systems/crafting.rs::spend_axis` falls through the same field to pick WHICH batches of
+## the input are consumed, worst-first on that axis. On a material-only recipe only that half
+## survives — the bench eats your least supple hide and leaves the supple one alone — and it is a fact
+## the player can learn nowhere else on this panel, so dropping the clause would cost him it. The line
+## states the half that is true.
+##
+## **THIS FORMAT RENDERS ONLY ON A MATERIAL-ONLY RECIPE, AND NEEDS NO GATE OF ITS OWN.** Its one
+## caller is `CraftingPanel._role_line`'s `group == GROUP_STOCK` branch, and `stock` is the wire's own
+## word for *"this recipe makes a material"* — the sim derives it as `output_equipment_id().is_none()`
+## (`snapshot/crafting.rs::group_of`), the same predicate as `outputs_only_materials()` and the same
+## one that makes `outputItemId` empty. A second test against `outputGrade == ""` would be BROADER
+## than the fact wanted, that field also emptying on a recipe that reads no characteristic at all.
 const ROLE_TOOL_FORMAT := "Bench tool — %s"
-const ROLE_STOCK_FORMAT := "%s · quality from %s"
-## The same line on a recipe whose craft the sim has not published — the axis alone, capitalized,
-## rather than a leading separator with nothing before it.
-const ROLE_STOCK_NO_CRAFT_FORMAT := "Quality from %s"
+const ROLE_STOCK_FORMAT := "%s · worst %s spent first"
+## The same line on a recipe whose craft the sim has not published — the axis clause alone,
+## capitalized, rather than a leading separator with nothing before it.
+const ROLE_STOCK_NO_CRAFT_FORMAT := "Worst %s spent first"
 
 ## The cost cell's per-material clause: the amount, then the material.
 const COST_CLAUSE_FORMAT := "%s %s"
