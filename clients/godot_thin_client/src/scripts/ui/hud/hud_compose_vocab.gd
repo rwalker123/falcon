@@ -288,14 +288,18 @@ const POLICY_TOOLTIP_NAME_FORMAT := "%s — %s"
 #     `fodder_draw` it is not gated on Foddering), because a fixed footprint under a growing herd is a
 #     RISING need and that is the one thing a player must learn before an animal dies of it.
 # The Extend-pen affordance (Grazing 2d-γ; command `extend_pen <faction> <x> <y>` at the pen anchor).
-# On a built pen with no ring in flight it offers "Extend pen"; while a ring is being worked off
-# (`pen_extend_progress > 0`) it is replaced by a "Fencing N%" badge — the pen twin of the corral-build
-# "Building N%" meter. The server rejects an extend at max radius / unowned / Herding-unknown with a
-# feed message, so the client does not pre-gate on those (max radius is not on the wire).
+# ⛔ THE TILE-CARD CONTROL IT DESCRIBED IS RETIRED, and the dead claim is quoted rather than deleted
+# because it reads like a live spec: *"On a built pen with no ring in flight it offers \"Extend pen\";
+# while a ring is being worked off (`pen_extend_progress > 0`) it is replaced by a \"Fencing N%\" badge
+# — the pen twin of the corral-build \"Building N%\" meter."* §4.9 item 12c moved the declaration to the
+# work row's standing-rung mark, where it opens a PRICE card instead of committing on the click. The
+# server still rejects an extend at max radius / unowned / Herding-unknown with a feed message, so the
+# client still does not pre-gate on those (max radius is not on the wire).
 #
 # **`pen_extend_progress` IS WORK, NOT A FRACTION**, banked against `pen_extend_cost` on the same herd
-# dict, so the badge's percentage is `SourceForecast.pen_extend_fraction` and never the bare field
-# scaled by `PROGRESS_PERCENT_SCALE` — 69 banked work units read as `Fencing 6900%` that way.
+# dict, so every percentage of it is `SourceForecast.pen_extend_fraction` — the build queue row's and
+# the work row's mark hover — and never the bare field scaled by `PROGRESS_PERCENT_SCALE`, which reads
+# 69 banked work units as `6900%`.
 # ⛔ RETIRED — **`PEN_EXTEND_LABEL` (`Extend pen`), `PEN_EXTEND_TOOLTIP` AND `PEN_FENCING_LABEL`**
 # (`docs/plan_standing_upkeep.md` §4.9 item 12c), with the tile-card control that wore them
 # (`DrawerComposeController`, where the whole retirement is recorded). The button was the one build

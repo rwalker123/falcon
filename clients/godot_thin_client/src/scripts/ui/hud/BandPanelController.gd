@@ -1677,6 +1677,18 @@ func _on_zones_resized() -> void:
     _sync_band_zone_scroll()
     _repage_work_zone()
 
+## The panel's `shown_zone_changed` handler — the narrow shell swapped the zone its body draws.
+##
+## ⛔ **IT RECONCILES THE FLOAT AND PAGES NOTHING.** Every zone is BUILT on every render whichever tab
+## is up (the narrow shell keeps the others detached but owned), so the boards are already correct for
+## the new tab and a re-page here would rebuild the work zone on every tab click for no change in what
+## it draws. What a tab switch really invalidates is the one surface drawn OUTSIDE the panel: the
+## inspector card, anchored to a board the player has just tabbed away from and left floating over the
+## map until the next snapshot. `_sync_work_inspector_dialog` is the same reconcile every fill ends
+## on, so the card comes down (and comes back on the tab back) by exactly one rule.
+func _on_shown_zone_changed() -> void:
+    _sync_work_inspector_dialog(_work_zone_band)
+
 ## The height the band zone's TIER is chosen against: the box times the number of columns the flank
 ## lays out across.
 ##
@@ -3136,9 +3148,11 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # carries no meter for a verb to name — so the branch is on the token the model already holds, and
     # the number it swaps in is `SourceForecast.pen_extend_fraction`'s, the same division the herd
     # drawer's retired "Fencing N%" badge quoted. The FACE is untouched: a ring derives the verb of the rung it
-    # widens, which is why the row is still titled `Corral <herd>`. **This row is now the ONLY surface
-    # quoting that meter** — the herd drawer's `Fencing N%` badge retired with the tile card's
-    # `Extend pen` button (§4.9 item 12c). The DATE is untouched too — the sim
+    # widens, which is why the row is still titled `Corral <herd>`. **This row is the surface that
+    # DATES and withdraws the ring**, and the only other one quoting the meter is the work row's mark
+    # hover, which states the percentage and points here for the date
+    # (`HudWorkVocab.WORK_ROW_RING_BUILDING_TOOLTIP_FORMAT`); the herd drawer's `Fencing N%` badge
+    # retired with the tile card's `Extend pen` button (§4.9 item 12c). The DATE is untouched too — the sim
     # publishes a dedicated ring countdown, and only the percentage was ever missing.
     var pending := _build_queue_row_is_pending(model)
     var turns := int(model.get("build_turns", SourceForecast.BUILD_TURNS_NO_ESTIMATE))
@@ -5486,9 +5500,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # climb, only more of the one the source is already on — so `building` above is empty, the
             # trio beside this reads `0%`, and it would read `0%` for the ring's whole life. The ring's
             # real meter is the herd's own `pen_extend_progress` / `pen_extend_cost` pair, in WORK
-            # UNITS, and `SourceForecast.pen_extend_fraction` is the same single division the herd
-            # drawer's "Fencing N%" badge comes through — so the badge and the queue row cannot quote
-            # one ring two ways. `PEN_EXTEND_EMPTY_METER` on every entry that is not a ring: the field
+            # UNITS, and `SourceForecast.pen_extend_fraction` is the same single division the work
+            # row's mark hover comes through — so the mark and the queue row cannot quote one ring two
+            # ways. (It was the herd drawer's `Fencing N%` badge that shared it until §4.9 item 12c
+            # retired the badge.) `PEN_EXTEND_EMPTY_METER` on every entry that is not a ring: the field
             # is meaningful only under the ring branch that `improvement` selects.
             "build_ring_progress": SourceForecast.pen_extend_fraction(live_herd) \
                 if improvement == SourceForecast.BUILD_JOB_EXTEND_PEN \
@@ -5933,11 +5948,25 @@ func _dismiss_work_inspector_dialog() -> void:
 
 ## Is the inspector card up? Relayed by `HudLayer.is_work_inspector_open` for `Main`'s ESC chain.
 ##
-## **IT ANSWERS THE KEY, NOT THE NODE.** The key is what every render reconciles the card against, so a
-## reading taken off `visible` would disagree with it for exactly the one frame between a selection and
-## the fill that mounts for it — and ESC arriving in that frame would open the pause menu instead.
+## ⛔ **IT ANSWERED THE KEY ALONE, AND THE KEY OUTLIVES THE CARD.** The retired reasoning, quoted
+## because it names a real hazard and simply does not settle this question: *"IT ANSWERS THE KEY, NOT
+## THE NODE. The key is what every render reconciles the card against, so a reading taken off `visible`
+## would disagree with it for exactly the one frame between a selection and the fill that mounts for
+## it — and ESC arriving in that frame would open the pause menu instead."* The trade bought a
+## one-frame window and paid for it with a state that PERSISTS: `_sync_work_inspector_dialog` dismisses
+## the card without touching the key — on a collapse, a hide, a narrow-shell tab switch and a selected
+## row leaving the board — so `Main.escape_claimant` kept answering `ESC_WORK_INSPECTOR`,
+## `_unhandled_input` kept calling `set_input_as_handled()`, and the first ESC did nothing visible.
+##
+## **BOTH TERMS, AND EACH ANSWERS ITS OWN HALF.** The key is the board row's SELECTION, which is what
+## `close_work_inspector` clears and what a re-render re-mounts from; `WorkInspectorDialog.is_open()`
+## is whether the card is on screen, which is the only thing ESC can take down. The one-frame window
+## the retired note guards is not reachable through the toggle — `_toggle_work_inspector` sets the key
+## and mounts inside one call stack — and where a fill genuinely could not mount (no host, a queue drag
+## in flight), no card is drawn and the honest answer is the pause menu's.
 func is_work_inspector_open() -> bool:
-    return _work_open_key != ""
+    return _work_open_key != "" and _work_inspector_dialog != null \
+        and is_instance_valid(_work_inspector_dialog) and _work_inspector_dialog.is_open()
 
 ## Put the card away. The `✕`'s path in everything but its entry point, and ESC's
 ## (`Main.escape_claimant` → `HudLayer.close_work_inspector`).
@@ -8138,6 +8167,11 @@ func set_panel(panel: BandCityPanel) -> void:
     # Re-PAGE the work board on it — the other two zones are unaffected by a box change.
     if panel != null and not panel.zones_resized.is_connected(_on_zones_resized):
         panel.zones_resized.connect(_on_zones_resized)
+    # …and the narrow shell's TAB, which moves what is on screen without moving any box — the one
+    # thing the line above cannot see. Only the floating card is reconciled on it; see
+    # `_on_shown_zone_changed`.
+    if panel != null and not panel.shown_zone_changed.is_connected(_on_shown_zone_changed):
+        panel.shown_zone_changed.connect(_on_shown_zone_changed)
     # The header's `⚒` carries no subject — the header is subject-independent chrome — so WHICH band
     # it opens on is answered here: the panel band. **`render_faction` never touches `_panel_band`**,
     # which is what makes "the last band loaded" already sitting there rather than state this had to

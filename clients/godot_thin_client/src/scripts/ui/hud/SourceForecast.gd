@@ -4573,9 +4573,16 @@ static func pen_ring_is_in_flight(herd: Dictionary) -> bool:
     return pen_extend_work_done(herd) > BUILD_WORK_COST_NONE
 
 ## **THE RING'S METER AS A FRACTION — the ONE place that division is written.** Two surfaces quote a
-## ring: the herd drawer's WARN-amber `Fencing N%` badge (and its in-place patch) and the build
-## queue's percentage for an `extend_pen` entry. All of them come through here, so one ring can never
-## be quoted two ways.
+## ring: the build queue's percentage for an `extend_pen` entry, and the work row's standing-rung mark,
+## whose hover states it (`HudWorkVocab.WORK_ROW_RING_BUILDING_TOOLTIP_FORMAT`). Both come through
+## here, so one ring can never be quoted two ways.
+##
+## ⛔ **THE THIRD SURFACE IS RETIRED.** The dead claim, quoted because it named a control that no longer
+## exists: *"Two surfaces quote a ring: the herd drawer's WARN-amber `Fencing N%` badge (and its
+## in-place patch) and the build queue's percentage."* §4.9 item 12c took the tile card's `Extend pen`
+## button and that badge out with it (`_build_extend_pen_control`, `_apply_fencing_badge`,
+## `PEN_FENCING_LABEL`) — a ring is declared from the work row's mark now, and the badge was a third
+## statement of one meter beside the queue row that dates it.
 ##
 ## **`pen_extend_progress` IS WORK, NOT A FRACTION.** It was normalized `0..1` until unit-costed work
 ## landed; a reader that still scales it by `PROGRESS_PERCENT_SCALE` prints `Fencing 6900%` off 69
@@ -4589,8 +4596,9 @@ static func pen_ring_is_in_flight(herd: Dictionary) -> bool:
 ## **A ZERO DENOMINATOR IS AN UNPRICED RING, NOT A FULL ONE.** `Herd::begin_pen_extension` leaves both
 ## fields at zero and `accrue_pen_extension` is what stamps the cost, so a ring that has banked no
 ## turn yet has no denominator to divide by: `0 / 0` is *no ring*, not `0%` and certainly not `100%`.
-## It answers `PEN_EXTEND_EMPTY_METER` there rather than dividing. The drawer badge additionally gates
-## on `pen_extend_progress > 0`, so it never renders that state at all.
+## It answers `PEN_EXTEND_EMPTY_METER` there rather than dividing. Both live readers additionally gate
+## on `pen_ring_is_in_flight` — the NUMERATOR — so neither renders that state at all. (The retired
+## drawer badge gated on the same `pen_extend_progress > 0` test, under its own name.)
 static func pen_extend_fraction(herd: Dictionary) -> float:
     var cost := pen_extend_cost(herd)
     if cost <= BUILD_WORK_COST_NONE:

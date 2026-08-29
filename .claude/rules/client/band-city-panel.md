@@ -3760,6 +3760,57 @@ working surface of the three (the sheet is transient and modal; targeting is a q
 asked and is waiting on; this one is still there afterwards, so it yields). Ahead of the pause menu
 because a surface with an explicit dismiss must answer ESC before ESC means *leave the game*.
 
+> #### ⛔ A TAB SWITCH IS NOT A RESIZE, AND `zones_resized` COULD NOT CARRY IT
+>
+> `_sync_work_inspector_dialog` runs only from `_fill_work_zone`, and off the snapshot the only thing
+> that reaches it is `BandCityPanel.zones_resized`. **That signal fires on a real move of
+> `work_zone_size()` — and `zone_size()` never reads `_effective_tab()`**, every zone being built
+> against the same box whichever tab is up, so a tab click moved neither term of
+> `_notify_zones_resized`' test and it early-returned. A collapse and a hide genuinely did close the
+> card (they zero the box); **the tab was the hole**, and on a side dock it left the card floating over
+> the map, anchored to a board that was no longer drawn, until the next snapshot re-render.
+>
+> **THE FIX IS A SECOND SIGNAL, NOT AN UNCONDITIONAL EMIT OF THE FIRST.** `shown_zone_changed` fires
+> from `set_active_tab` when `_shown_zones()` — `shows_zone` asked for every declared zone, in
+> `ZONE_KEYS` order — comes back different across the swap. Emitting `zones_resized` instead would have
+> re-paged the whole work zone on every tab click, a re-render storm traded for a bug, and the boards
+> do not need it: every zone is BUILT on every render, so they are already correct for the new tab.
+> **The handler reconciles the float and pages nothing** (`_on_shown_zone_changed` →
+> `_sync_work_inspector_dialog`), which is also what brings the card back on the tab back.
+>
+> **IT IS `shows_zone` IN A LOOP RATHER THAN A SECOND READING OF `_effective_tab`.** The listener asks
+> `shows_zone` through `_work_zone_is_on_screen()`; a privately re-derived test on the emitting side
+> would be free to disagree with it, which is the one way the signal could announce a swap the listener
+> cannot see. The wide shell therefore reports nothing on its own (it draws every zone whatever the tab
+> is), and so does a tab the current subject does not declare.
+
+> #### ⛔ …AND THE KEY OUTLIVED THE CARD, SO ESC WAS SWALLOWED
+>
+> `is_work_inspector_open()` answered `_work_open_key != ""`, and the retired reason is quoted because
+> it names a real hazard: *"IT ANSWERS THE KEY, NOT THE NODE. The key is what every render reconciles
+> the card against, so a reading taken off `visible` would disagree with it for exactly the one frame
+> between a selection and the fill that mounts for it — and ESC arriving in that frame would open the
+> pause menu instead."* **That trade bought a one-frame window and paid with a state that persists**:
+> every dismiss branch of `_sync_work_inspector_dialog` leaves the key set, so after a collapse, a hide
+> or the tab switch above, `Main.escape_claimant` kept returning `ESC_WORK_INSPECTOR`,
+> `_unhandled_input` kept calling `set_input_as_handled()`, and the first ESC did nothing visible — the
+> pause menu needed a second press.
+>
+> **BOTH TERMS NOW, AND EACH ANSWERS ITS OWN HALF**: the key is the board row's SELECTION (what
+> `close_work_inspector` clears and what a re-render re-mounts from), and `WorkInspectorDialog.is_open()`
+> is whether the card is on screen, which is the only thing ESC can take down. The one-frame window is
+> not reachable through the toggle — `_toggle_work_inspector` sets the key and mounts inside one call
+> stack — and where a fill genuinely cannot mount (no host, a queue drag in flight) no card is drawn and
+> the pause menu is the honest claimant.
+>
+> **BOTH CLAIMS ARE PAIRED, AND THE OLD ONE WAS DRIVING ITS OWN PROOF.** `band_panel_preview`'s
+> tab-switch state called `rerender()` immediately after `set_active_tab` — a re-render runs
+> `_fill_work_zone`, which ends on the reconcile — so the card came down on the HARNESS's push and the
+> claim passed while the real tab click did not. Nothing but `set_active_tab` is called there now, and
+> three claims stand on the one state: the card is down, the shell really has swapped (work zone not
+> shown, band zone shown), and ESC falls through to `ESC_PAUSE`. **Frame:**
+> `band_panel_work_inspector_tab_away`.
+
 ### What the matrix asserts, and why it is a matrix
 
 `band_panel_preview._render_work_inspector_dialog_states` walks **eleven dock/viewport
@@ -5704,6 +5755,36 @@ thing on every mark that wears it.
 > POSITION on a branch; a ring is a **repeatable increment with no position**. It is its own small
 > card. Its price is `animal:pen`'s own rung cost — **not** the herd's `pen_extend_cost`, which the sim
 > stamps only once a ring is accruing and which is therefore the in-flight meter's denominator.
+
+> #### ⛔ KNOWN GAP — THE CARD QUOTES THE WORK AND THE STANDING BILL, AND NO PILE
+>
+> `ring_row` builds its build-price asides from `SourceForecast.build_material_cost`, and **that field
+> prices exactly ONE rung: the one DIRECTLY ABOVE where the source stands.** The card only opens on a
+> herd already standing on `animal:pen` (`ring_offered` tests `standing_improvement ==
+> IMPROVEMENT_CORRAL`), `RungKey::AnimalPen.above()` is `None`, and `core_sim`'s herd capture publishes
+> an empty pile there deliberately — *"Empty at the top of the branch, which is the honest reading
+> rather than a repeat of the pen's own"*. So `_build_price_asides` returns `[]` on its first line and
+> the card draws **neither the hurdle pile a ring eats nor the WARN stall aside**.
+>
+> The sim does charge the pile — `systems::labor::head_ring_leg` lays the ring as a leg through the
+> same `build_material_wants` every rung leg goes through, and the ladder's own config note says *"a
+> ring costs 6 hurdles exactly as the work_cost beside it charges a ring the full 75 work units"*.
+> **The gap is publication, not model**: no field on the herd carries `animal:pen`'s own build pile to
+> a herd standing on it, and closing it is a sim-side field (the material twin of `corralWorkCost`,
+> which IS published at every position and is why the card can state `75 work` at all). Until it lands,
+> the card states the ring's WORK price and its standing bill.
+>
+> **THE CARD HAD NO CLAIM ON IT AT ALL, which is how that shipped.** The caret's assertion proves the
+> mark is pressable and stops one press short. `_assert_ring_card_prices_the_ring` presses it — the
+> real control, so the meta, the mouse filter and the handler are in the path — and claims liveness (a
+> pressable row named `Another ring`) before the figures: the row's face is `75 work` and the hold
+> aside states both currencies. It makes **no claim about the pile**: asserting its absence would
+> cement the gap, asserting its presence would fail on shipped behaviour, so the asides are printed
+> into the run's log instead. **Frame:** `band_panel_ring_price`.
+>
+> ⛔ **THE FIXTURE ERASES `build_material_cost` ON THE PENNED HERD**, derived from the track's own
+> pastoral fixture. Leaving the pastoral row's pile stamped would prop the card up with a list the game
+> never sends to a herd in that position, and the frame would show a price no player can see.
 
 **A RING IN FLIGHT WEARS NO CARET**, which is what stops a second being declared over the first
 (`Herd::pen_extending` is the sim's gate and needs no client twin). The gate is

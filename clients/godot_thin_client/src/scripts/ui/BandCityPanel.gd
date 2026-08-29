@@ -564,6 +564,19 @@ signal action_invoked(id: StringName)
 ## `work_zone_size()` changed — a shell flip, dock change, collapse or viewport resize. Hud re-pages
 ## its work board on this rather than re-rendering everything.
 signal zones_resized
+## **WHICH ZONES ARE ON SCREEN CHANGED** — the narrow shell swapped the one zone its body draws.
+##
+## ⛔ **`zones_resized` CANNOT CARRY THIS, AND A TAB SWITCH IS THE HOLE IT LEFT.** That signal fires on
+## a real move of `work_zone_size()`, and `zone_size()` never reads `_effective_tab()` — every zone is
+## built against the same box whichever tab is up — so a tab click moves neither term of
+## `_notify_zones_resized`' test and it early-returns. A collapse and a hide DO fire it (they zero the
+## box), which is why those two paths took the floating inspector card down while the tab did not.
+##
+## **IT IS NOT `zones_resized` EMITTED UNCONDITIONALLY.** That would re-render the whole work zone on
+## every tab click — a re-page storm traded for the bug — where the only thing a tab switch actually
+## invalidates is the surface drawn OUTSIDE the panel. Listeners reconcile their own float and page
+## nothing.
+signal shown_zone_changed
 
 var _dock_edge: int = SIDE_LEFT
 var _collapsed: bool = false
@@ -876,15 +889,30 @@ func work_zone_size() -> Vector2:
 ##
 ## `zone_size()` cannot answer this: it is the box a zone's content is BUILT against, and every zone is
 ## built on every render whichever tab is up (the narrow shell keeps the others detached but owned, so
-## a tab switch is a reparent rather than a re-render). The one caller is
+## a tab switch is a reparent rather than a re-render). The reader is
 ## `BandPanelController._sync_work_inspector_dialog`, whose card lives OUTSIDE the panel and must come
-## down when the board it belongs to is not being drawn (`docs/plan_standing_upkeep.md` §4.9 item 12d).
+## down when the board it belongs to is not being drawn (`docs/plan_standing_upkeep.md` §4.9 item 12d);
+## `_shown_zones()` below asks it for every zone so the panel can SAY when that answer moved.
 func shows_zone(zone: StringName) -> bool:
 	if _collapsed or not _shown:
 		return false
 	if _shell_is_wide():
 		return _zones.get(zone) is Control
 	return _effective_tab() == zone
+
+## …and the same answer for every declared zone at once, in `ZONE_KEYS` order — what `set_active_tab`
+## compares across the swap so `shown_zone_changed` fires on a real change of what is drawn and never
+## on a tab that changed only the preference.
+##
+## **IT IS `shows_zone` IN A LOOP, deliberately.** A second reading of `_effective_tab()` and
+## `_shell_is_wide()` here would be free to disagree with the accessor the listener then asks, which
+## is the one way this signal could report a swap that `_work_zone_is_on_screen()` cannot see.
+func _shown_zones() -> Array[StringName]:
+	var shown: Array[StringName] = []
+	for key in ZONE_KEYS:
+		if shows_zone(key):
+			shown.append(key)
+	return shown
 
 ## The CARD's global rect — the island the strip holds, not the strip (`_root`) itself. Published for
 ## the free-floating compose card, which anchors itself to the card's map-facing edge and must never
@@ -2651,11 +2679,18 @@ func _tab_badge_stylebox(hot: bool) -> StyleBoxFlat:
 func set_active_tab(zone: StringName) -> void:
 	if not ZONE_KEYS.has(zone) or zone == _active_tab:
 		return
+	var was_shown := _shown_zones()
 	_active_tab = zone
 	_save_prefs()
 	_rebuild_tab_bar()
 	_reparent_zones()
 	_notify_zones_resized()
+	# **AND THE SWAP ITSELF IS REPORTED, because the line above cannot see it** — see
+	# `shown_zone_changed`. Asked through `shows_zone` rather than through `_active_tab`, so the WIDE
+	# shell (which draws every zone whatever the tab is) reports nothing, and so does a tab the current
+	# subject does not declare (`_effective_tab` falls back, so the body did not move).
+	if _shown_zones() != was_shown:
+		shown_zone_changed.emit()
 
 ## A window resize changes the T/B panel width (hence the shell) and the clamped wide height, so
 ## re-choose the shell, re-anchor and re-report both the reservation and the work-zone box.

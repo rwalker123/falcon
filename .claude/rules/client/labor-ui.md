@@ -4519,10 +4519,13 @@ units scaled by `PROGRESS_PERCENT_SCALE` rendered as **`Fencing 6900%`**, report
   `pen_extend_work_done` / `pen_extend_cost` beside it for the absolutes. It was written twice —
   two open-coded copies of the same wrong multiplication — for the two surfaces that quoted a ring.
   ⛔ **ONE OF THOSE TWO IS GONE** (§4.9 item 12c): the herd drawer's WARN-amber `Fencing N%` pill, its
-  in-place patch and `_apply_fencing_badge` retired with the tile card's `Extend pen` button, so **the
-  BUILD QUEUE row is the only surface quoting a ring's meter now**, and `PEN_FENCING_VERB` retired too
-  — that row states a bare percentage beside the rung's own verb (`Corral <herd>`, a ring deriving the
-  verb of the rung it widens), so no surface left needs a word for it.
+  in-place patch and `_apply_fencing_badge` retired with the tile card's `Extend pen` button, and
+  `PEN_FENCING_VERB` retired too — the BUILD QUEUE row states a bare percentage beside the rung's own
+  verb (`Corral <herd>`, a ring deriving the verb of the rung it widens), so no surface left needs a
+  word for it. ⛔ **THAT IS NOT THE SAME AS "the queue row is the only surface quoting a ring's
+  meter"**, which is what this bullet said for a release: the work row's standing-rung MARK states the
+  percentage on its hover (`HudWorkVocab.WORK_ROW_RING_BUILDING_TOOLTIP_FORMAT`) and points at the
+  queue row for the DATE. Two surfaces, one division — which is the reason the helper exists.
 - **A ZERO DENOMINATOR IS AN UNPRICED RING, NOT A FULL ONE.** `begin_pen_extension` leaves both fields
   at zero and the accrual seam is what stamps the cost, so `0 / 0` is *no ring*: the helper answers an
   empty meter rather than dividing. **The gate is on the NUMERATOR**, which is what keeps a

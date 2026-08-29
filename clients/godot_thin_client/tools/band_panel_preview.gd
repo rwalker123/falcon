@@ -1563,6 +1563,22 @@ func _ready() -> void:
 	_hud._bandpanel._rung_track.hide()
 	await _settle()
 
+	# **THE RING'S PRICE CARD** (`docs/plan_standing_upkeep.md` §4.9 item 12c) — the same Aurochs one
+	# rung higher, standing ON the pen, where the ready slot offers nothing and the caret rides the
+	# standing-rung MARK instead. **NOTHING IN THIS FILE HAD EVER OPENED THIS CARD**: the caret's own
+	# claim asserts that the mark is pressable and stops there, so `ring_row` / `build_ring_card` and
+	# every aside they compose rendered under no claim at all. It is reached by PRESSING the mark, not by
+	# calling `_open_ring_card`, so the meta, the mouse filter and the handler are all in the path.
+	_set_world_herds(_ring_price_herd_fixtures())
+	_push_bands([_pen_price_band_fixture(PEN_STORE_COVERED)])
+	await _settle()
+	await _assert_ring_card_prices_the_ring()
+	await _save("band_panel_ring_price")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_hud._bandpanel._rung_track.hide()
+	await _settle()
+
 	# **THE DESTINATION TRACK** (`docs/plan_standing_upkeep.md` §2.8) — the `⌃`'s ladder card, rendered
 	# in the tall LEFT dock, the SHIPPED default edge. Two states and the PAIR is the claim: at rest
 	# the track states what the branch HOLDS (a banked rung, the rung the patch stands on, and a
@@ -11005,6 +11021,100 @@ func _pen_price_herd_fixtures() -> Array:
 		herd["corral_upkeep_demand"] = PEN_HOLD_WORK
 	return herds
 
+## **THE RING CARD'S SUBJECT — the same Aurochs, STOOD ON the pen it was being offered.** Derived from
+## the track's own fixture so only the position differs; `RUNG_FX.stamp_herds` re-reads `corralled` and
+## restamps `current_rung` to `animal:pen`, which is what makes the row wear the ring caret.
+##
+## ⛔ **`build_material_cost` IS ERASED, AND THAT IS THE HONEST FIXTURE RATHER THAN A GAP IN IT.** The
+## wire prices exactly ONE rung there — the one DIRECTLY ABOVE where the source stands — and
+## `RungKey::AnimalPen.above()` is `None`, so `core_sim`'s herd capture publishes an EMPTY pile for a
+## penned herd (`snapshot/subsistence.rs`: *"Empty at the top of the branch, which is the honest
+## reading rather than a repeat of the pen's own"*). Leaving the pastoral row's pile stamped here would
+## prop the ring card up with a list the game never sends to a herd in this position, and the frame
+## would show a price the player cannot see.
+##
+## `corral_work_cost` is stamped BECAUSE the wire does publish it unconditionally, at every position —
+## `FORECAST_BUILD_WORK_COST_KEYS`' own rule — and it is the ring's whole price in work.
+func _ring_price_herd_fixtures() -> Array:
+	var herds := _pen_price_herd_fixtures()
+	for herd_variant in herds:
+		var herd: Dictionary = herd_variant
+		if String(herd.get("id", "")) != DECLARE_CORRAL_HERD:
+			continue
+		herd["corralled"] = true
+		herd.erase("build_material_cost")
+		herd["corral_work_cost"] = RING_PRICE_WORK
+	return RUNG_FX.stamp_herds(herds)
+
+## What a ring costs in WORK — `animal:pen`'s own `work_cost` from the shipped
+## `intensification_ladder.json`, which is what the sim charges a ring (`systems::labor::head_ring_leg`
+## prices it at that rung's `build_cost`). Written down rather than asked of the code under test, and
+## named apart from the build-queue row's `RING_WORK_COST` (a ring already in FLIGHT, a different
+## fixture and a different question) so the two can never be read as one number.
+const RING_PRICE_WORK := 75.0
+
+## GUARD: **THE RING CARD STATES A PRICE — opened from the mark, not from the controller.**
+##
+## ⛔ **THE CARD SHIPPED WITH NO CLAIM ON IT AT ALL.** `_assert_ring_caret_rides_the_standing_mark`
+## proves the mark is there and pressable and stops one press short, so `RungLadder.ring_row`,
+## `build_ring_card`, `RING_CARD_META` and every aside they compose were unasserted — which is how a
+## card that quotes item 12c's whole reason for existing ("a one-click button states a cost nowhere")
+## could quote less than it claims.
+##
+## **LIVENESS FIRST, THEN THE PRICE.** A card that drew nothing satisfies every claim about what it
+## does not say, so the row is required to be a PRESSABLE line carrying the ring's own name before its
+## figures are read at all.
+##
+## ⛔ **KNOWN GAP — THE HURDLE PILE IS NOT ON THE WIRE FOR A PENNED HERD, so no claim is made about it
+## here.** The sim charges a ring `animal:pen`'s own 6 hurdles (`head_ring_leg` lays the leg through
+## the same `build_material_wants` every rung leg goes through), but the only field that publishes a
+## pile — `buildMaterialCost` — answers for the rung ABOVE the source, and there is no rung above
+## `animal:pen`. So the card states the ring's WORK price and its standing bill and no pile, and the
+## asides are PRINTED here so the day the field lands the frame's log says what changed. Asserting the
+## absence would cement it; asserting the presence would fail on shipped behaviour.
+func _assert_ring_card_prices_the_ring() -> void:
+	var mark: Button = null
+	for node in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_RING_META, []):
+		if node is Button:
+			mark = node as Button
+	if mark == null:
+		_fail("ring card — no penned row on the board offers a pressable ring mark")
+		return
+	mark.pressed.emit()
+	await _settle()
+	# LIVENESS: the card is up, and it is the RING card rather than the destination track reusing the
+	# same Window.
+	var card := _find_meta_control(_hud, HudWorkVocab.RING_CARD_META)
+	if card == null:
+		_fail("ring card — pressing the standing-rung mark opened no ring card")
+		return
+	var row: Button = null
+	for control in _collect_meta_controls(card, HudWorkVocab.RUNG_TRACK_ROW_META, []):
+		for child in control.get_children():
+			if child is Button:
+				row = child as Button
+	_assert_band_panel("ring card — it draws ONE pressable row, named for what is being bought (\"%s\")"
+			% HudWorkVocab.RING_CARD_ROW_NAME,
+		row != null and _has_label_containing(card, HudWorkVocab.RING_CARD_ROW_NAME))
+	# **AND THE ROW CARRIES THE RING'S PRICE IN WORK**, which is the half of item 12c's argument the wire
+	# can answer today: `corral_work_cost` is published at every position, so a card that lost this face
+	# would be the one-click button again under a heading.
+	var face := HudWorkVocab.RUNG_TRACK_COST_UNDATED_FORMAT % DetailFormat.format_work_units(RING_PRICE_WORK)
+	_assert_band_panel("ring card — …and that row states what the ring costs in WORK: \"%s\" (got \"%s\")"
+			% [face, "<none>" if row == null else row.text],
+		row != null and row.text == face)
+	# **AND WHAT HOLDING THE WIDER PEN COSTS, IN BOTH CURRENCIES.** Composed from the format and the
+	# fixture's own numbers, never through `_hold_price_asides`, or the claim would agree with the
+	# producer by construction.
+	var hold := HudWorkVocab.RUNG_TRACK_HOLD_FORMAT % HudWorkVocab.RUNG_TRACK_PRICE_SEPARATOR.join([
+		HudWorkVocab.RUNG_TRACK_HOLD_WORK_TERM % DetailFormat.format_work_units(PEN_HOLD_WORK),
+		HudWorkVocab.RUNG_TRACK_MATERIAL_TERM % [DetailFormat.format_trimmed(PEN_HOLD_RATE,
+			HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS), PEN_MATERIAL]])
+	_assert_band_panel("ring card — …and what holding it costs every turn, in both currencies: \"%s\" (asides %s)"
+			% [hold, str(_rung_track_asides())],
+		_rung_track_asides().has(hold))
+	print("band_panel_preview: ring card asides as shipped — %s" % str(_rung_track_asides()))
+
 ## The declare band holding `store` hurdles on its shelf — the one thing on that card the SOURCE
 ## cannot answer for, which is why `RungLadder.track` takes the band at all.
 func _pen_price_band_fixture(store: float) -> Dictionary:
@@ -19792,6 +19902,12 @@ func _render_work_inspector_dialog_states() -> void:
 	# **THE TAB SWITCH TAKES THE CARD DOWN**, which the wide shell can never show: a persistent card
 	# floating over the map for a board the player has tabbed away from has nothing behind it to act
 	# on. Paired with its precondition, or "the card is down" passes on a card that never opened.
+	#
+	# ⛔ **THE CLAIM USED TO DRIVE `rerender()` STRAIGHT AFTER THE TAB, AND THAT IS WHAT IT WAS PROVING.**
+	# A re-render runs `_fill_work_zone`, which ends on `_sync_work_inspector_dialog` — so the card came
+	# down on the HARNESS's own snapshot-shaped push and the claim passed while a real tab CLICK (which
+	# renders nothing: `zone_size()` does not read the tab, so `_notify_zones_resized` early-returns)
+	# left the card floating until the next turn. Nothing but `set_active_tab` is called here now.
 	await _pin_canvas(PREVIEW_SIZE)
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
@@ -19801,10 +19917,25 @@ func _render_work_inspector_dialog_states() -> void:
 	_assert_band_panel("precondition: the card is up on the narrow shell's work tab",
 		_work_inspector_dialog() != null and _work_inspector_dialog().is_open())
 	_panel.set_active_tab(&"band")
-	_hud._bandpanel.rerender()
 	await _settle()
+	await _save("band_panel_work_inspector_tab_away")
 	_assert_band_panel("tabbing away from the work board takes the inspector card down with it",
 		_work_inspector_dialog() == null or not _work_inspector_dialog().is_open())
+	# …AND THE BOARD BEHIND IT REALLY IS GONE, or "the card is down" is satisfied by a panel that drew
+	# nothing at all on either tab.
+	_assert_band_panel("…and the narrow shell really has swapped to the band tab (work zone shown: %s)"
+			% str(_panel.shows_zone(BandCityPanel.ZONE_WORK)),
+		not _panel.shows_zone(BandCityPanel.ZONE_WORK)
+			and _panel.shows_zone(BandCityPanel.ZONE_BAND))
+	# **AND ESC IS NOT SWALLOWED BY THE CARD IT JUST TOOK DOWN.** `is_work_inspector_open()` answered the
+	# SELECTION key alone, which `_sync_work_inspector_dialog` never clears on a dismiss — so `Main`
+	# claimed the key for a card that was not on screen and the first press did nothing visible.
+	var tabbed_away_script: GDScript = load(DIALOG_MAIN_SCRIPT_PATH)
+	_assert_band_panel("…and with the card gone ESC falls through to the pause menu rather than being swallowed",
+		not _hud.is_work_inspector_open()
+			and tabbed_away_script.escape_claimant(false, _hud.is_compose_sheet_open(),
+				_hud.is_targeting_active(), _hud.is_work_inspector_open())
+				== tabbed_away_script.ESC_PAUSE)
 
 	_panel.set_active_tab(&"work")
 	_hud._bandpanel.close_work_inspector()
