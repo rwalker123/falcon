@@ -2774,6 +2774,15 @@ const WORK_ROW_BUILD_KIND_BUILDING := "building"
 const WORK_ROW_BUILD_KIND_STALLED := "stalled"
 const WORK_ROW_BUILD_KIND_NONE := ""
 
+## **THE ROW MODEL THE SLOT'S PRESS WOULD OPEN THE DESTINATION TRACK WITH**, carried on the slot so a
+## harness can ask `RungLadder.track` the very question `_open_rung_track` asks — same model, same
+## source lookup — without pressing anything and disturbing the board's next frame.
+##
+## It exists for ONE claim, and that claim is the one the arc's dead `⌃` was: **a slot that draws an
+## offer always opens a track with a rung left on it.** Re-deriving the model in the harness would
+## test the harness's copy of the render's input, which is the copy that cannot be wrong.
+const WORK_ROW_MODEL_META := "work_row_model"
+
 ## The `⌃` mark's own hover, once the mark opens a track instead of declaring outright. It replaces
 ## `WORK_ROW_READY_QUEUE_TOOLTIP_FORMAT`'s promise of a one-click queue with what the press actually
 ## does; the PRICE line beneath it is unchanged, and is still `DetailFormat.build_price_clause`'s.

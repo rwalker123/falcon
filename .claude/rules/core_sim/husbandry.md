@@ -19,10 +19,17 @@ cumulative work units** — the exact twin of `ForagePatch::ladder_position` (`c
 PLANT WEB IS ONE POSITION"; `docs/plan_standing_upkeep.md` §2.8, landed for plants in §4.10 and for
 animals in §4.11). `domestication_progress` / `domestication_cost` and `corral_progress` /
 `corral_cost` — **four fields, two unconnected meters** — are gone. Prose below that names them is
-describing the retired shape; the seam it points at is `fauna::rung_work_done`, the position clamped
-into a rung's own span, which is what the wire's `domestication` and `corralProgress` meters are still
-published from (**the raw meter fraction** — `partial_credit` governs what a half-built pen is *worth*,
-never what its progress bar reads).
+describing the retired shape; the seam it points at is `Herd::rung_work_done`, the position read into
+a rung's own span **through the herd's standing**, which is what the wire's `domestication` and
+`corralProgress` meters are still published from (**the raw meter fraction** — `partial_credit`
+governs what a half-built pen is *worth*, never what its progress bar reads).
+
+**A rung the standing HOLDS reads FULL, and on `animal:pen` that is load-bearing rather than
+cosmetic**: the pen's base is this herd's *taming* price, so the bare subtraction
+`position − base` is a rival answer to `corral_meter_full()` that `f32` can make disagree with it.
+Live on the plant web (a finished Field published `0.99999994`); latent here only because every
+shipped `taming_cost_multiplier` happens to be exactly representable. `intensification.md` → "A
+RUNG'S METER IS A **PUBLICATION** OF THE STANDING" owns the mechanism and the measurements.
 
 - **`Herd::standing` is derived and re-stamped on every write**, and `set_ladder_position` is the only
   mutator, so the pair cannot drift. `is_domesticated()` and `is_corralled()` keep their signatures and

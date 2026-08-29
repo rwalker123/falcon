@@ -1254,34 +1254,40 @@ press-only) fails exactly the three negatives while the positive stays green.
 > control is the whole value of that state, and this repo has been bitten by a faked signal passing
 > through a dead picker.
 
-### A RUNG ERODED BELOW ITS COST OFFERS THE `⌃` AGAIN (§4.7)
+### THE OFFER TEST AND THE TRACK TEST ASK ONE QUESTION (§4.7)
 
-A Tended patch that decayed even slightly below its cost could never be repaired. `§2.4` says it
-should be — *"repairing it is a fresh decision the player makes by putting it back in the queue"* — and
-the sim's locks are open now (`intensification.md` → "A RUNG ACHIEVED BUT SHORT IS REPAIRABLE"). The
-client's own two suppressions were the last lock: `next_rung_ready` filtered on `improvement_is_done`,
-which reads the achieved FLAG (true at 99%), and the work row forced `ready` empty whenever
-`rung_in_progress` answered, which it does at any partial meter. **The row read the rung as *done* and
-*in progress* at once, and each suppression hid the other.**
+`RungGates.rung_has_room` is a bare `not SourceForecast.improvement_is_done(...)`, and
+`RungLadder.track` banks every rung at or below the standing one through that same call. So a rung
+admitted for a `⌃` is a rung the destination track will offer, and **a mark can never be drawn over a
+card with no rungs left** — which is what makes `_open_rung_track`'s empty-track branch unreachable
+rather than merely unlikely. That branch now warns instead of returning in silence; the silence is
+what made the defect below cost a day.
 
-`RungGates.rung_has_room` replaces the bare done test, and `_rung_is_an_unordered_repair` clears
-`building` for a repair that is undeclared and unqueued — so the existing `⌃` path is restored whole,
-with no new glyph and no new slot. **A repair is a climb**; the mark already means *this source can
-climb*.
+**Reported from play: a completed Field drew its standing glyph AND a `⌃` offering to build a Field,
+and the press did nothing at all.** An enabled `Button` with `MOUSE_FILTER_STOP`, so the click was
+consumed and did not even fall through to the inspector.
 
-**Two guards the first cut needed, both found by the harness rather than by review:**
+> #### ⛔ RETIRED — the 99% repair (`rung_needs_repair`, `_rung_is_an_unordered_repair`)
+>
+> `rung_has_room` used to be `not improvement_is_done(...) or rung_needs_repair(...)`: a rung whose own
+> stamped flag was true beside a meter short of its cost was *achieved and slipped*, and offering it
+> re-opened the sim's `cultivate`/`sow`/`corral` locks, which refuse on the METER. **The sim publishes
+> a per-rung meter as a publication of the standing verdict now** (`intensification.md`), so a held
+> rung reads exactly its width and *achieved* implies *full*: the state has no representation left.
+>
+> **Its only live trigger was a float artifact**, which is the whole reason the deletion closes a
+> class rather than tidying one function. The meter was `(position − base) / width` against a
+> completion test of `position >= base + width`, and in `f32` those disagree by one ULP for most Field
+> prices — a finished Field published `0.99999994`, the percent formatter floored it to 99, the repair
+> test read *achieved and short*, and the offer was drawn over a track that had nothing to offer.
+> Two readings of one question is the defect; one reading is the fix.
+>
+> The plant/animal asymmetry that block was written around is gone with it: it was plant-only because
+> `Tame` has no stamped flag to fall through to, which is now a fact about a table nothing reads.
 
-- **`improvement_is_done` is also true when a HIGHER rung retires this one.** It compares the rung the
-  source STANDS on at-or-above, so a Field answers *built* for Cultivate too; a Field sown from wild
-  ground carries `cultivation_progress == 0` forever, so a naive test re-offered Cultivate on every
-  finished Field. The repair test reads the rung's **own** stamped flag (`FORECAST_DONE_FLAG_KEYS`),
-  which is the only thing that table is still for.
-- **An absent meter reads 0 and is indistinguishable from "eroded to nothing"**, which put a spurious
-  `⌃` on an unimproved patch. It requires `progress > BUILD_METER_UNSTARTED`.
-
-**Plant-only, and the fixture says why**: taming's achievement IS its meter — the sim stamps
-`animal:pastoral` at exactly `DOMESTICATION_COMPLETE`, and `Tame` has no stamped flag of its own to
-fall through to — so done-and-short is a contradiction there and no honest fixture can produce one.
+**`FORECAST_DONE_FLAG_KEYS` survives with no shipped reader.** `fixtures_rung.gd` and `map_preview`
+use it to DERIVE a fixture's `current_rung` from its flags, so a fixture cannot state a standing its
+own flags contradict — which is also why the retired repair fixture could not simply be re-pointed.
 
 > **RETIRED BEFORE IT SHIPPED — a `build_crew == 0` fork on the `-1` face.** An eroded unqueued source
 > now publishes no estimate, and it was tempting to render that as *"No estimate"* rather than

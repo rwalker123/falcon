@@ -2251,3 +2251,49 @@ defaults: it is lit, its face names the derivation, and the entry it lit wears t
 | the pending overlay drops `kit_id` | **4** — both webs' *"the take picker names the kit the PLAYER sent"* (`"Harvesting kit"` / `"Stalking kit"` against `"No kit"`) and both crew-edit vacuity guards. **The face and LIT claims stay GREEN**, which is the demonstration that the picker's fallback alone hides the blank face while leaving the silent re-kit live |
 | the take picker measures its default against `source.get("default_kit_id")` | **6** — the LIT and FACE claims on `band_panel_work_kits_picker` / `_kept_patch` / `_kept_herd`, each reading `index -1 of 2` and `""`. The two PENDING states stay green (their rows carry a real kit), and so do the two WILD ones (their band is `_band_fixture()`, now stamped) |
 | the upkeep picker's fall-through removed | **3** — the driven block alone, naming `index -1 of 2` and `"" want "Tillage kit"` |
+
+## Every `⌃` opens a track with a rung on it — the run-wide claim, and its liveness half
+
+**The defect it pins is a DEAD BUTTON, which no PNG can show.** A completed Field drew its standing
+glyph *and* a `⌃` offering to build a Field; the press reached `_open_rung_track`, `has_track`
+answered false over a source at the top of its branch, and the handler returned in silence — an
+enabled `Button` with `MOUSE_FILTER_STOP`, so the click did not even fall through to the inspector.
+The frame is a perfectly ordinary board.
+
+`_guard_frame_rung_offers` runs from `_save`, beside `_guard_frame_herd_fields` and for the same
+reason: a slot that would open nothing fails against the state it drew in. For every slot whose
+`WORK_ROW_BUILD_KIND_META` is `OFFER` it re-asks `RungLadder.track` + `has_track` **through the
+slot's own model** (`WORK_ROW_MODEL_META`, set beside the build-kind meta), which is the same pair of
+calls `_open_rung_track` makes on that model. It presses nothing: a press would float a popup into
+the next state's frame, and this file's state order is load-bearing.
+
+**THE FIXTURE THAT WOULD HAVE PINNED THE BUG WAS NOT WRITTEN, DELIBERATELY.** The trigger was a
+published meter one `f32` ULP short of the published standing, and the sim can no longer emit it — so
+a hand-stamped two-marks snapshot would assert an impossible state. The claim is the *relation* the
+fix rests on instead, over the fixtures the run already walks.
+
+**The liveness half is part of the claim.** `_assert_rung_offers_open_tracks` FAILS when the count of
+tracks actually opened is zero, because "no row ever contradicted it" passes on a board that never
+offers anything, and it prints all four counts either way — currently `68 offer slots over 162
+frames, 68 tracks opened, 0 empty`.
+
+### The falsification
+
+| Restored defect | Failures |
+|---|---|
+| `RungGates.rung_has_room` forced to `true`, so the offer test admits a rung the track has banked | **13** — twelve per-frame failures naming the row and the rung it stands on (all `corral`, `animal:pen` being the top of the animal branch, so a corralled herd is where the empty track lives) plus the run-wide verdict, `12 of 80 rendered ⌃ offer(s) open a destination track with no rung on it`. The offer count rising from 68 to 80 is itself the tell |
+
+### RETIRED — the 99% repair's two states
+
+`_render_repair_and_declare_states` opened by staging a patch with `is_cultivated` true beside a 90%
+meter and asserting the board offered `cultivate` on it. That snapshot is one no server can send now
+(`labor-ui.md` → "THE OFFER TEST AND THE TRACK TEST ASK ONE QUESTION"), so **the eroded state is gone
+and the CONTROL survives**: a rung standing at its cost offers nothing, which is the reported
+defect's own shape. `_assert_repair_offer(where, want_offer)` lost its flag and is
+`_assert_no_repair_offer(where)`.
+
+`_repair_patch_fixture` takes `cultivated` beside `progress` so the standing and the meter travel
+together — `RUNG_FX.stamp_patch` derives `current_rung` from the flag, so the two halves of a fixture
+cannot be set apart. `_assert_repair_card_states_no_countdown` asks its BUILT row at a full meter and
+its unbuilt row on a patch that really is short of the rung; the claim (the fork on `built` happens
+before the countdown is read) is unchanged by the correction.

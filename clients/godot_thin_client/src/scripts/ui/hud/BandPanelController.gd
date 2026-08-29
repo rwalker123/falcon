@@ -3920,7 +3920,18 @@ func _open_rung_track(band: Dictionary, model: Dictionary, anchor: Control) -> v
     # cannot answer for.
     var rows := RungLadder.track(kind, source, HudComposeVocab.BARE_FORECAST_PREFIX,
         String(model.get("improvement", "")), _player_knowledge(), band)
+    # ⛔ **UNREACHABLE BY CONSTRUCTION, AND IT SAYS SO RATHER THAN RETURNING IN SILENCE.** The slot
+    # that reaches here is a `Button` only for a rung ON OFFER or a rung UNDER WAY, and both admit a
+    # rung through `RungGates.rung_has_room` — which is `not improvement_is_done`, the very test
+    # `RungLadder.track` banks a rung with. An admitted rung therefore sits ABOVE the standing one and
+    # `has_track` is true. **The bare `return` shipped here is what a completed Field's `⌃` did when
+    # the two tests disagreed by one `f32` ULP: an enabled button, `MOUSE_FILTER_STOP` so the press
+    # did not even fall through to the inspector, and nothing at all on screen.** A warning is the
+    # honest treatment of a state that can now only arrive as a bug — an empty popup would be worse,
+    # and silence is what took a day to diagnose.
     if not RungLadder.has_track(rows):
+        push_warning(("BandPanelController: a ⌃ was pressed on a source standing at the top of its " +
+            "branch (kind=%s) — the offer test and the destination track disagree") % kind)
         return
     var track := _ensure_rung_track()
     # **THE CARD'S MARGIN IS THE CHROME AND IS NEVER FREED — its CHILDREN are.** Clearing the Window's
@@ -4386,6 +4397,9 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     elif ready_glyph != "":
         build_kind = HudWorkVocab.WORK_ROW_BUILD_KIND_OFFER
     ready.set_meta(HudWorkVocab.WORK_ROW_BUILD_KIND_META, build_kind)
+    # …and the model the press would open the track with, so the offer test and the track test can be
+    # asked the SAME question off the rendered board (`WORK_ROW_MODEL_META`).
+    ready.set_meta(HudWorkVocab.WORK_ROW_MODEL_META, model)
     ready.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_READY_WIDTH, 0.0)
     # STOP on the button, so the press does not ALSO bubble to the row's `gui_input` and open the
     # inspector under the sheet the click just declared from; IGNORE on a Label, which is the slot's
@@ -5278,17 +5292,13 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # A rung UNDER WAY takes the slot from a rung on OFFER — they are one axis in two states, and
         # mutually exclusive by construction (`next_rung_ready` excludes the verb in flight).
         #
+        # ⛔ **RETIRED HERE — the *eroded rung nobody has ordered is an offer* re-route.** It dropped
+        # `building` when `_rung_is_an_unordered_repair` recognised a rung stamped BUILT whose meter
+        # was short of its cost, so the row wore a `⌃` instead of a `%` face. The sim publishes a
+        # per-rung meter as a publication of its standing verdict now, so *achieved* and *full* are
+        # one fact and that state cannot be reached — see `SourceForecast`'s epitaph for
+        # `rung_needs_repair`, which was the whole of the test.
         var building := RungGates.rung_in_progress(kind, rung_source, improvement)
-        # **AN ERODED RUNG NOBODY HAS ORDERED IS AN OFFER, NOT A BUILD UNDER WAY** — the client half of
-        # the 99% repair. `build_verb` answers for any meter between zero and its cost, so a Tended
-        # Patch that has slipped to 99% reads as *building* here while the offer test filtered it out
-        # as *built*: the row said both at once and offered nothing, and the only way to order the
-        # repair was to type the command. Dropping `building` on that one case restores the whole
-        # existing offer path — the `⌃` face, the button, the price tooltip — with no new glyph and no
-        # new slot.
-        if not building.is_empty() and _rung_is_an_unordered_repair(rung_source, improvement,
-                String(building.get("policy", ""))):
-            building = {}
         # **THE RUNG THE ENTRY IS HEADED FOR, HELD BEFORE THE READOUTS MOVE TO THE LEG.** A queue
         # entry's PRICE is the whole climb's, so the two cost fields below stay on the declared rung;
         # what follows the leg is the percentage and its verb. Keeping both is what stops one fix
@@ -5641,28 +5651,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
 ##
 ## The dicts are the RAW wire ones (`forage_patch_lookup` / `world_herds`), so every key is spelled
 ## BARE. Do NOT reach for the `patch_`-prefixed `tile_info` spellings here.
-## **IS THIS SOURCE'S IN-FLIGHT METER A REPAIR NOBODY HAS ORDERED?** — the one case in which the work
-## row shows the `⌃` OFFER over the `%` face, and the three terms are each load-bearing:
 ##
-##   * **the rung is achieved and its meter has room** (`SourceForecast.rung_needs_repair`). An
-##     ordinary part-built rung — a Cultivate at 45% that has never been finished — is a real build in
-##     flight and keeps its number and its stalled `⚠`; nothing about those rows moves.
-##   * **nothing is declared on it** — a press of the `⌃` writes the declaration into the optimistic
-##     overlay, and this reads that same effective `improvement`, so the mark leaves the slot on the
-##     frame it is pressed exactly as it does on an unbuilt rung.
-##   * **nothing is queued on it** — the confirmed half of the same fact, once the sim has placed the
-##     entry. Without it the row would keep offering a job the band is already funding, and a second
-##     press would queue it twice.
-func _rung_is_an_unordered_repair(source: Dictionary, improvement: String,
-        building_rung: String) -> bool:
-    if improvement.strip_edges() != "":
-        return false
-    if SourceForecast.build_queue_position(source,
-            HudComposeVocab.BARE_FORECAST_PREFIX) != SourceForecast.NOT_IN_ANY_BUILD_QUEUE:
-        return false
-    return SourceForecast.rung_needs_repair(source,
-        HudComposeVocab.BARE_FORECAST_PREFIX, building_rung)
-
 ## ⛔ **THE POSITION COMES FROM `SourceForecast.standing_improvement`, NOT FROM EACH WEB'S PRIVATE
 ## FLAGS** (`docs/plan_standing_upkeep.md` §4.9 item 12c). It forked on `is_field` / `is_cultivated` /
 ## `corralled` / a `domestication >= HUSBANDRY_PROGRESS_COMPLETE` threshold — a reassembly of the very

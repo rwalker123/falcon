@@ -910,10 +910,19 @@ pub(crate) fn forage_patches_to_array(
         // The Sow INVESTMENT rung + the FIELD — plant RUNG 3, the twin of the herd's Corral block
         // (docs/plan_intensification_ladder.md §2). The plant branch carries TWO build meters on ONE
         // source and both ship: `cultivation_progress`/`is_cultivated` (rung 2, above) and these.
-        // They are independent — `Sow` needs no prior patch, so a Field may stand on ground that was
-        // never tended. Read `is_field` (the BOOL) for the completed rung; never infer a rung from
-        // the float. MapView cross-refs all five onto `tile_info` (as `patch_*`) exactly as the
-        // Cultivate pair above.
+        //
+        // ⛔ **RETIRED CLAIM — *"they are independent: `Sow` needs no prior patch, so a Field may
+        // stand on ground that was never tended"*.** That was the two-independent-meters model. A
+        // patch keeps ONE ladder position now and the Field rung's range begins where the tended
+        // rung's ends, so a `sow` ordered on wild ground lays the tended leg first and a standing
+        // Field publishes `is_cultivated` true beside a FULL `cultivation_progress`, however it was
+        // reached. The pairs are two windows onto one position, not two facts.
+        //
+        // Read `is_field` (the BOOL) for the completed rung; never infer a rung from the float —
+        // and never read a float BELOW 1.0 as *the rung slipped*, because each meter is published as
+        // a publication of the standing verdict (`intensification::rung_work_done`) and a held rung
+        // reads exactly full. MapView cross-refs all five onto `tile_info` (as `patch_*`) exactly as
+        // the Cultivate pair above.
         let _ = dict.insert("field_progress", patch.fieldProgress());
         let _ = dict.insert("is_field", patch.isField());
         // Sow's "preparing X → then Y" pre-commit pair, mirroring `ceiling_cultivate`/`tended_yield`.

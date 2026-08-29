@@ -1302,10 +1302,16 @@ static func build_meter_value(verb: String, progress: float,
 ## > in flight* (`build_verb`'s own answer, which honours a declaration only at a zero meter). Two
 ## > separately-passed bools could disagree; one string cannot.
 ##
-## **`built` IS THE ACHIEVEMENT FLAG, NEVER `progress >= 1`**, and the two genuinely differ: a rung
-## that has eroded to 92% is still tended AND is being repaired, which is why fullness and achievement
-## stay orthogonal (`SourceForecast.build_verb`'s own note). Passing the meter here would make a
-## rung's LOSS and a rung's REPAIR one edge.
+## **`built` IS THE STANDING'S VERDICT, NEVER `progress >= 1`.** The caller passes what the source
+## STANDS on; this row never reconstructs it from the float. The two now agree by construction — the
+## sim publishes a held rung's meter as exactly full — and that is precisely why the float must not be
+## the test: an equality against `1.0` is a reading of arithmetic, and it was one ULP of `f32` that
+## made a finished Field publish `0.99999994` and read as 99%.
+##
+## ⛔ **RETIRED JUSTIFICATION — *"the two genuinely differ: a rung eroded to 92% is still tended AND
+## is being repaired"*.** A rung short of its cost is a rung the source no longer holds; the decay
+## re-derives the standing on the same call that moves the position, so the erosion story is told on
+## the rung ABOVE the one being stood on, never on a built row wearing a partial number.
 ##
 ## **THE BUILT ROW'S `⚠` IS ROUTED TO THE AT-RISK RUNG, NOT PAINTED ON EVERY BUILT ONE** (§4.6a).
 ## The shortfalls answer for the SOURCE — one pool, one work shortfall, one stamped material bill —
@@ -1387,8 +1393,10 @@ static func rung_built_label(improvement: String) -> String:
 ## **A METER THE WIRE DOES NOT STATE READS FULL, NOT ZERO.** `improvement_progress` answers `0.0` for
 ## an unstated key — indistinguishable from a meter eroded to nothing — and a built corral states no
 ## meter at all, which is why the tile card's own built-corral row passes `CORRAL_PROGRESS_COMPLETE` by
-## hand. The `> BUILD_METER_UNSTARTED` test is `rung_needs_repair`'s, reused rather than re-invented:
-## a stated meter is the erosion story (`🌾 Tended 92%`) and an unstated one is simply complete.
+## hand. The `> BUILD_METER_UNSTARTED` test is what separates the two: a stated meter is the erosion
+## story (`🌾 Tended 92%`) and an unstated one is simply complete. (It was inherited from the
+## retired `SourceForecast.rung_needs_repair`; the distinction outlived that test, which asked whether
+## a full meter and a held rung could disagree — they cannot.)
 ## **IT TAKES NO `declared_rung` AND NO `build_crew`, and that is a statement about `rung_row_value`
 ## rather than an omission.** Both are countdown terms, and a rung that is STANDING never reaches the
 ## countdown: `built` returns on the first branch. Accepting them would advertise a dependency this

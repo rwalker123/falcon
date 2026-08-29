@@ -1606,6 +1606,49 @@ it, `0.0..=1.0`).
   live queue entry fell through and reported **no verb at all**, where the retired
   `corral_progress > RUNG_UNSTARTED` walk answered `Corral`. `NO_RUNG_WORK_BANKED` is the sentinel.
 
+#### ⛔ A RUNG'S METER IS A **PUBLICATION** OF THE STANDING, NOT A SECOND READING OF IT
+
+`intensification::rung_work_done(standing, rung, position, span)` is the one expression both webs'
+meters come from (`forage::patch_rung_work_done`, `Herd::rung_work_done`), and every `0..1` fraction
+on the wire is `build_fraction` of it. **A rung the standing HOLDS reads its full `width`, full
+stop**; below that it is `position − base` clamped into the span.
+
+**Asking `held` is the fix; a tolerance is not.** The accrual caps the position at `base + width`
+and `RungStanding::at` calls the rung complete at that same sum — but `fl(base + width) − base` is
+**not** `width` whenever that addition rounds, so a meter derived by subtraction is a rival answer to
+`is_field()` and can contradict it. It did: a completed Field published `0.99999994`, the client's
+percent readout **floors**, and the tile card read *"Field 99%"* beside a `⌃` offering to build the
+Field the patch was already standing on. **Roughly two prices in five round**, in *both* directions
+(measured over the legal Sow multiplier span: 37 773 low, 37 766 high, of 200 001 samples) — so a
+one-sided epsilon would be both a second tolerance to keep in sync and wrong half the time. The clamp
+to `width` had been quietly absorbing the *high* half all along, which is why only one direction ever
+shipped.
+
+- **It bites where `base` is non-zero AND the price is per-source** — `plant:field` (base = the
+  tended rung's width, width = this patch's quoted Sow price) and `animal:pen` (base = this herd's
+  taming price). A branch's **first** investment rung has `base == 0`, where `fl(0 + w) − 0` is `w`
+  exactly, so `cultivationProgress` and `domestication` were never affected.
+- **The animal twin is LATENT, not live.** Every `taming_cost_multiplier` in the shipped roster
+  (`1.0`, `1.25`, `2.0`, `5.0`) makes `50 × m` exactly representable, so no pen has ever mis-read —
+  but the dial is validated only as *positive and finite*, and 29% of the values in the roster's own
+  `1.0 … 5.0` span would trigger it. Retune one species to `1.06` and a closed pen reads 99%.
+- **`RungStanding::credit` and `::banked` are safe and stay as they are.** Both are read only on the
+  rung being **raised**, where `position < base + width` holds by construction; nothing in the sim
+  compares either against a full rung (`credit` feeds `interpolate`; `banked` is tested against
+  `NO_RUNG_WORK_BANKED`), so neither is a completion verdict that could disagree with one.
+- **`build_turns_remaining` and the `-1 … -4` sentinels were never affected** — a `0` remainder and
+  a one-ULP remainder both answer *finishes in one turn*, and *no estimate* comes from a stalled
+  crew rather than from the meter.
+- **`head_build_legs` WAS affected and is fixed by the same seam** — it lays `owed = width − done`
+  per leg, so a held rung owing one ULP entered the material draw as a live leg. `patch_build_legs`
+  was already safe: it spells `base + width − position`, the *same* expression the cap and the
+  completion test use.
+- **The client's repair path loses its only live trigger.** `SourceForecast.rung_needs_repair` is
+  *achieved AND `0 < meter < 1`*, which "THE GAP THIS FIXED IS GONE RATHER THAN BRIDGED" (below)
+  already made unreachable in the sim — a position below a rung's top simply is not that rung. The
+  float artifact was manufacturing that state anyway. With the meter published from the verdict it
+  answers `false` for every state the sim can emit, on both webs.
+
 #### The delta form: `interpolate` states it, and validation guards it
 
 `intensification::interpolate(&standing, value_at)` is `held + credit × (value_at(raising) − held)`.

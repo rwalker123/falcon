@@ -3492,12 +3492,12 @@ design question. `band_panel_queue_hidden_entry` is the frame.
 > `Cultivating 0 / 50 work (0%)` with no way back off it. A band whose entry stands third in its own
 > line hit exactly that face whenever another band had the source at ITS head.
 
-**WHAT STILL READS `buildQueuePosition`, and why each is legitimately SOURCE-addressed.** The
-`MapView` → `tile_info` passthrough behind the tile card and the map's queue badge, and
-`_rung_is_an_unordered_repair`'s *"is anything queued on this source at all"* — the meter belongs to
-the **source**, so if any band is raising the rung it is being raised and a second declaration would
-queue the same climb twice. Both name no band. **Anything band-scoped must not read it**, which is the
-whole of the rule.
+**WHAT STILL READS `buildQueuePosition`, and why it is legitimately SOURCE-addressed.** The `MapView`
+→ `tile_info` passthrough behind the tile card and the map's queue badge — the meter belongs to the
+**source**, so if any band is raising the rung it is being raised. It names no band. **Anything
+band-scoped must not read it**, which is the whole of the rule. (`_rung_is_an_unordered_repair` asked
+the same question and is retired with the 99% repair — `labor-ui.md` → "THE OFFER TEST AND THE TRACK
+TEST ASK ONE QUESTION".)
 
 > **THE ESTIMATE STILL RIDES THE WINNER, DELIBERATELY.** `build_turns`, the legs, the gear and the
 > blocked cause are source-addressed fields and keep the sooner-estimate rule they were designed with
@@ -5780,7 +5780,8 @@ advertise a dependency the face does not have.
 **A METER THE WIRE DOES NOT STATE READS FULL, NOT ZERO.** `improvement_progress` answers `0.0` for an
 unstated key — indistinguishable from a meter eroded to nothing — and a built corral states no meter
 at all, which is why the tile card's own built-corral row passes `CORRAL_PROGRESS_COMPLETE` by hand.
-The `> BUILD_METER_UNSTARTED` test is `rung_needs_repair`'s, reused rather than re-invented.
+The `> BUILD_METER_UNSTARTED` test is what separates the two; it was inherited from the retired
+`SourceForecast.rung_needs_repair`, and the distinction outlived that test.
 
 ### `extend_pen` is declared from the standing-rung mark, and it opens a price
 
@@ -5789,7 +5790,15 @@ entry** — the one queue entry in the game declared from somewhere other than t
 
 > **THE MECHANICAL REASON IT ENDED UP THERE:** `RungLadder.has_track` is FALSE when nothing sits above
 > the standing rung, and `animal:pen` is the top of the animal branch — so a corralled herd's row
-> renders **no `⌃` in the ready slot at all**. Extending a pen is precisely what you do *after* the
+> renders **no `⌃` in the ready slot at all**.
+>
+> > **That same falsehood used to be reachable with the mark still drawn, and the press did NOTHING.**
+> > `_open_rung_track` answered it with a bare `return` on an enabled `Button` carrying
+> > `MOUSE_FILTER_STOP`, so the click was consumed and did not even fall through to opening the
+> > inspector — reported from play on a completed Field. The offer test is the track test now
+> > (`labor-ui.md` → "THE OFFER TEST AND THE TRACK TEST ASK ONE QUESTION"), which makes that branch
+> > unreachable, and it `push_warning`s rather than returning in silence: a state that can only arrive
+> > as a bug should say so where a harness or a dev session sees it. Extending a pen is precisely what you do *after* the
 > ladder is finished. `selection-card.md` blamed it on being *"a one-click standing action, not a
 > compose flow"*, which was true and was the second reason.
 

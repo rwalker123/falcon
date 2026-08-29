@@ -464,10 +464,11 @@ branch including its untouched floor.
 > `forage::patch_rung_key` IS `patch.standing().held` and `ForagePatch::is_cultivated` is
 > `standing.held.is_at_or_above(PlantTended)`, so the retention-bar divergence that would have made the
 > swap unsafe does not exist (`forage.rs`, "RETIRED: `cultivation_meter_full`"). `FORECAST_DONE_FLAG_KEYS`
-> survives for `rung_needs_repair` alone — *achieved and short of its cost* is the one question a
-> standing rung cannot answer, a rung eroded to 99% still being the rung the source stands on — and
-> `FORECAST_RETIRED_BY_HIGHER_RUNG` is deleted: *a higher rung retires the one below it* is the ORDER
-> of `RUNG_BRANCHES` now rather than a table beside it.
+> now has **no shipped reader at all** — it survived for `rung_needs_repair`, which is itself retired
+> (`labor-ui.md` → "THE OFFER TEST AND THE TRACK TEST ASK ONE QUESTION"), and the test tree keeps the
+> table to derive a fixture's `current_rung` from its flags. `FORECAST_RETIRED_BY_HIGHER_RUNG` is
+> deleted: *a higher rung retires the one below it* is the ORDER of `RUNG_BRANCHES` now rather than a
+> table beside it.
 >
 > **AN UNKNOWN OR EMPTY RUNG KEY ANSWERS `false` ON BOTH SIDES OF THE COMPARISON**, for the reason the
 > paragraph above gives for `rung_above_branch_floor`: a stale client and a fixture that never stated

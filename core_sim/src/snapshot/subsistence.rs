@@ -1450,11 +1450,20 @@ pub(crate) fn snapshot_forage_patches(
                 x: patch.tile.x,
                 y: patch.tile.y,
                 // **The wire keeps the 0..1 fraction; the source keeps ONE position** — the
-                // per-rung meter is that position clamped into the rung's own span
-                // (`forage::patch_rung_work_done`), divided by the rung's live cost. So a patch that
-                // holds the tended rung reads exactly `1.0` beside an `is_cultivated` that is
-                // already true, and a Field at 40% still reads its Cultivate as complete — which is
-                // the rung-ordering bug made unrepresentable rather than merely forbidden.
+                // per-rung meter is that position read into the rung's own span **through the
+                // patch's standing** (`forage::patch_rung_work_done`), divided by the rung's live
+                // cost. So a patch that holds the tended rung reads exactly `1.0` beside an
+                // `is_cultivated` that is already true, and a Field at 40% still reads its Cultivate
+                // as complete — which is the rung-ordering bug made unrepresentable rather than
+                // merely forbidden.
+                //
+                // ⛔ **"CLAMPED INTO THE RUNG'S OWN SPAN" IS WHAT THIS USED TO SAY, AND IT IS WHY A
+                // FINISHED FIELD READ 99%.** The clamp is `position − base` against a completion
+                // test of `position >= base + width`, and `fl(base + width) − base` is not `width`
+                // whenever that addition rounds — so `isField` and `fieldProgress` were two readings
+                // of one question and could contradict each other. The meter asks the standing now
+                // (`intensification::rung_work_done`); the equality above is a construction rather
+                // than a coincidence of the arithmetic.
                 cultivation_progress: build_fraction(
                     crate::forage::patch_rung_work_done(patch, RungKey::PlantTended, ladder),
                     cultivation_work_cost,

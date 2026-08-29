@@ -2560,6 +2560,7 @@ func _ready() -> void:
 	await _assert_action_registry()
 
 	_assert_herd_field_pairs()
+	_assert_rung_offers_open_tracks()
 	_finish()
 
 ## **A BAND WITH NOTHING WORKED, ON A HORIZONTAL DOCK — the state a stretched empty view shipped in.**
@@ -12693,6 +12694,9 @@ func _save(name: String) -> void:
 	# Check the herd fixtures RENDERING IN THIS FRAME, so a half-set field pair fails against the state
 	# it silently mis-renders rather than against nothing at all.
 	_guard_frame_herd_fields(name)
+	# …and the ⌃ offers in it, for the same reason: a slot whose press opens nothing must fail
+	# against the state that drew it.
+	_guard_frame_rung_offers(name)
 	var image: Image = await _capture(name)
 	if image == null:
 		return
@@ -12852,6 +12856,90 @@ func _assert_herd_field_pairs() -> void:
 		return
 	print("band_panel_preview: assert OK — every herd fixture keeps the herders_needed pair consistent (%d herd dicts scanned)"
 		% _herd_pair_scans)
+
+# ---- THE OFFER TEST AND THE TRACK TEST MUST ASK ONE QUESTION -------------------------------------
+#
+# **THE DEFECT THIS PINS IS A DEAD BUTTON, WHICH NO PNG CAN SHOW.** A completed Field drew its
+# standing glyph AND a `⌃` offering to build the Field it was already standing on; the press
+# opened `_open_rung_track`, `RungLadder.has_track` answered false over a source at the top of its
+# branch, and the handler returned in silence — an enabled `Button` with `MOUSE_FILTER_STOP`, so the
+# click did not even fall through to the inspector. The frame looks perfectly ordinary.
+#
+# **THE CLAIM IS THE INVARIANT, NOT THE OLD SNAPSHOT.** The trigger was a published meter that
+# disagreed with the published standing by one `f32` ULP, and the sim can no longer emit it — so a
+# fixture forcing that state would assert an impossible snapshot and pin the bug rather than the fix.
+# What is worth holding is the relation the fix rests on: **every rendered `⌃` opens a
+# destination track with at least one rung left on it.** It is asked off the SLOT'S OWN model
+# (`WORK_ROW_MODEL_META`), through the very calls `_open_rung_track` makes, so it re-runs the press's
+# decision without pressing — a press here would float a popup into the next state's frame, and this
+# harness's order is load-bearing.
+#
+# **THE LIVENESS HALF IS PART OF THE CLAIM.** "No row ever contradicted it" passes on a board that
+# never offers anything, so the run's verdict fails when the count of tracks actually opened is zero
+# and states both counts either way.
+
+## The run's tally: frames scanned, `⌃` slots found in them, tracks that opened with a rung left,
+## and slots whose track was empty. All four are stated in the verdict, because the first three are
+## what say the claim was exercised and the fourth is the claim itself.
+var _rung_offer_frames := 0
+var _rung_offer_slots := 0
+var _rung_offer_tracks := 0
+var _rung_offer_dead := 0
+
+## Re-ask the press's own question of every `⌃` rendered in THIS frame, so a slot that would open
+## nothing fails against the state it drew in rather than against the run as a whole.
+func _guard_frame_rung_offers(state: String) -> void:
+	if _panel == null or _hud == null:
+		return
+	var controller = _hud._bandpanel
+	if controller == null:
+		return
+	_rung_offer_frames += 1
+	for slot in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_BUILD_KIND_META, []):
+		# **THE SLOT'S OWN KIND, NEVER ITS NODE TYPE** — a running build's face is a `Button` too, and
+		# it opens the same track; the claim is about the OFFER, which is the state the dead press was
+		# reported in.
+		if String(slot.get_meta(HudWorkVocab.WORK_ROW_BUILD_KIND_META,
+				HudWorkVocab.WORK_ROW_BUILD_KIND_NONE)) != HudWorkVocab.WORK_ROW_BUILD_KIND_OFFER:
+			continue
+		_rung_offer_slots += 1
+		var model: Dictionary = slot.get_meta(HudWorkVocab.WORK_ROW_MODEL_META, {})
+		var kind := String(model.get("kind", ""))
+		var rows := RungLadder.track(kind, controller._rung_track_source(model),
+			HudComposeVocab.BARE_FORECAST_PREFIX, String(model.get("improvement", "")),
+			# **THE PANEL'S OWN BAND, for fidelity with `_open_rung_track` rather than out of
+			# necessity** — `has_track` is a function of the SOURCE's standing alone; the band is read
+			# only for the material asides on the rows above it.
+			controller._player_knowledge(), _hud._band_labor._panel_band)
+		if RungLadder.has_track(rows):
+			_rung_offer_tracks += 1
+			continue
+		_rung_offer_dead += 1
+		_fail(("%s — a ⌃ is drawn on the %s row at (%d, %d) whose destination track has no rung "
+			+ "above the one it stands on (%s), so the press opens nothing at all. The offer test "
+			+ "(`RungGates.rung_has_room`) and the track test (`RungLadder.has_track`) have come apart "
+			+ "— they are one `improvement_is_done` and must stay so.") % [state, kind,
+			int(model.get("x", -1)), int(model.get("y", -1)),
+			SourceForecast.standing_improvement(controller._rung_track_source(model),
+				HudComposeVocab.BARE_FORECAST_PREFIX)])
+
+## The guard's verdict, ONE line for the whole run — the same shape `_assert_herd_field_pairs` takes,
+## and for the same reason: each dead slot has already failed against its own frame, so this states
+## the totals. **BOTH counts are the claim.** A run where nothing is ever offered would satisfy "no
+## ⌃ opened an empty track" without exercising it once, so a zero opened-track count is a
+## FAILURE and the numbers are printed either way.
+func _assert_rung_offers_open_tracks() -> void:
+	if _rung_offer_dead > 0:
+		_fail("%d of %d rendered ⌃ offer(s) open a destination track with no rung on it"
+			% [_rung_offer_dead, _rung_offer_slots])
+		return
+	if _rung_offer_tracks == 0:
+		_fail(("no frame in this run drew a ⌃ at all (%d frames scanned) — the offer/track claim "
+			+ "passed vacuously, which is not a pass") % _rung_offer_frames)
+		return
+	print(("band_panel_preview: assert OK — every ⌃ opens a destination track with a rung left "
+		+ "on it (%d offer slots over %d frames, %d tracks opened, %d empty)")
+		% [_rung_offer_slots, _rung_offer_frames, _rung_offer_tracks, _rung_offer_dead])
 
 ## The snapshot's herd list (shape `Hud.update_herds` / `MapView._rebuild_herd_markers` consume).
 ## The hunted herd sits at (68, 15) — NOT the (70, 17) its hunt assignment was launched at — so the
@@ -18509,30 +18597,41 @@ func _assert_no_pending_queue_row() -> void:
 		marked == 0)
 
 # =====================================================================================
-#  THE 99% REPAIR, AND THE KEEPING WARNING THAT USED TO ARRIVE A TURN LATE
+#  A FINISHED RUNG OFFERS NOTHING, AND THE KEEPING WARNING THAT USED TO ARRIVE A TURN LATE
 # =====================================================================================
 #
-# Two client-only repairs, both PNG-LESS and both for the same reason: every state either of them can
+# Two client-only claims, both PNG-LESS and both for the same reason: every state either of them can
 # be in renders as a perfectly ordinary board. A row offering `⌃` and a row reporting `🌱99%` are one
 # glyph apart in a thumbnail; a pool card marked and a pool card unmarked are the same card; and the
-# whole point of the second repair is that NOTHING CHANGES on the following turn, which is a claim
-# about two frames and no picture can carry it.
+# whole point of the second is that NOTHING CHANGES on the following turn, which is a claim about two
+# frames and no picture can carry it.
 #
-# **THEY SHARE A BLOCK BECAUSE THEY SHARE A FIXTURE FAMILY, not a mechanism.** The repair is about a
-# rung that has slipped; the warning is about a rung that has not started. Both need a band whose
+# ⛔ **RETIRED — *the 99% repair*, which is what the first half of this block used to stage.** It put
+# a `⌃` on a rung stamped BUILT whose meter was short of its cost, so a Tended patch that had slipped
+# could be re-queued from the board. **The sim publishes a per-rung meter as a publication of its
+# standing verdict now**, so *achieved* and *full* are one fact and the state cannot be reached — see
+# `SourceForecast`'s epitaph for `rung_needs_repair`. The fixture that staged it hand-stamped
+# `is_cultivated` beside a 90% meter, which is a snapshot no server can send; keeping it would have
+# pinned the bug rather than the fix.
+#
+# **WHAT SURVIVES IS THE CONTROL HALF, and it is the reported defect's own shape**: a rung standing at
+# its cost offers NOTHING. That is the claim a finished Field violated when it wore a `⌃` whose press
+# did nothing at all, and it is now paired with the run-wide `_assert_rung_offers_open_tracks`.
+#
+# **THEY SHARE A BLOCK BECAUSE THEY SHARE A FIXTURE FAMILY, not a mechanism.** Both need a band whose
 # keeping pools the harness controls exactly, which is what makes staging them together cheaper than
 # staging them apart — and the block restores the reference band on the way out, this file's own rule.
 
-## The eroded rung both repair claims are staged at. **A patch, never a herd**: an eroded-but-achieved
-## ANIMAL rung is unreachable today (`domestication_progress` is monotone and no animal rung declares
-## decay, so `improvement_is_done` and *the meter is short* are contradictory there), and a fixture
-## staging one would assert against a state the sim cannot produce.
+## The rung these claims are staged at. **A patch, never a herd**: the plant web is the one that
+## declares decay, so it is where a meter can be part-way up a rung with nobody on it.
 const REPAIR_PATCH_TILE := Vector2i(64, 21)
-## 90% — **achieved and short**, which is the whole state. The exact figure is arbitrary; what matters
-## is that it is strictly between `BUILD_METER_UNSTARTED` and `BUILD_METER_FULL`.
+## 90% — a meter part-way up a rung the patch does NOT hold, which is what erosion looks like now that
+## the standing is re-derived with the position. The exact figure is arbitrary; what matters is that
+## it is strictly between `BUILD_METER_UNSTARTED` and `BUILD_METER_FULL`.
 const REPAIR_ERODED_PROGRESS := 0.9
-## …and the CONTROL's meter, standing exactly at its cost. A rung with nothing left to put work into
-## must offer nothing, or the `⌃` would appear on every finished improvement in the game.
+## …and a meter standing exactly at its cost, on a rung the patch DOES hold. A rung with nothing left
+## to put work into must offer nothing, or the `⌃` would appear on every finished improvement in the
+## game — which is exactly what the reported dead button was.
 const REPAIR_FULL_PROGRESS := 1.0
 const REPAIR_WORK_COST := 50.0
 ## What the rung costs to HOLD, per turn.
@@ -18570,22 +18669,15 @@ const KEEPING_DECLARE_PER_WORKER_TURN := 1.0
 const KEEPING_DECLARE_LIVE_SHORTFALL := KEEPING_DECLARE_UPKEEP
 
 func _render_repair_and_declare_states() -> void:
-	# ---- (1) THE 99% REPAIR: an achieved rung whose meter has room offers the `⌃` ---------------
+	# ---- (1) A RUNG STANDING AT ITS COST OFFERS NOTHING -----------------------------------------
 	# The faction knows every craft, so nothing here is knowledge-gated and the offer test's answer is
-	# about the METER alone — which is the axis under test.
+	# about the rung's own standing — which is the axis under test.
 	_hud.update_intensification([_standing_knowledge_row()])
 	_set_world_herds([])
-	_set_forage_patches([_repair_patch_fixture(REPAIR_ERODED_PROGRESS)])
-	_push_bands([_repair_band_fixture()])
-	await _settle()
-	_assert_repair_offer("a Tended patch eroded below its cost", true)
-
-	# …and the CONTROL, one number apart: the SAME patch at a full meter. Without it "offer the repair"
-	# is satisfied by a client that puts a `⌃` on every tended patch on the map.
 	_set_forage_patches([_repair_patch_fixture(REPAIR_FULL_PROGRESS)])
 	_push_bands([_repair_band_fixture()])
 	await _settle()
-	_assert_repair_offer("the same patch at a FULL meter", false)
+	_assert_no_repair_offer("a Tended patch standing at its cost")
 
 	# **AND THE SENTINEL IS NOT THIS REPAIR'S PROBLEM, which was checked rather than assumed.** An
 	# eroded, unqueued source publishes `-1`, and the two surfaces that could call it a stall do not:
@@ -18673,10 +18765,14 @@ func _render_repair_and_declare_states() -> void:
 ## `can_sow` is FALSE so the offer test's highest-rung-first walk cannot answer `Sow` instead — the
 ## claim is about the CULTIVATE repair, and a patch that could also be sown would be offered a real
 ## climb and prove nothing about the eroded rung beneath it.
-func _repair_patch_fixture(progress: float) -> Dictionary:
+func _repair_patch_fixture(progress: float, cultivated: bool = true) -> Dictionary:
 	return RUNG_FX.stamp_patch({
 		"x": REPAIR_PATCH_TILE.x, "y": REPAIR_PATCH_TILE.y, "ecology_phase": "thriving",
-		"is_cultivated": true, "is_field": false, "sow_site_refusal": "",
+		# **THE STANDING AND THE METER TRAVEL TOGETHER, and the caller may not set them apart.** A
+		# patch that HOLDS the tended rung publishes a full meter and one that does not publishes a
+		# partial one; `RUNG_FX.stamp_patch` derives `current_rung` from this flag, so a caller passing
+		# `true` beside a 90% meter would be stamping a snapshot no server can send.
+		"is_cultivated": cultivated, "is_field": false, "sow_site_refusal": "",
 		"cultivation_progress": progress,
 		"cultivation_work_cost": REPAIR_WORK_COST,
 		"cultivation_work_done": progress * REPAIR_WORK_COST,
@@ -18704,12 +18800,15 @@ func _repair_band_fixture() -> Dictionary:
 	]
 	return band
 
-## GUARD: **the eroded rung is OFFERED as a repair, and a full one is not** — asserted on the MODEL
-## (which rung the board resolved) and on the RENDERED slot (a `Button`, i.e. actually pressable),
-## because either alone passes on half the fix. The model answering `cultivate` with the slot still a
-## `Label` is the state that shipped: the row read the rung as done AND in progress at once, so the
-## only way to order the repair was to type the command.
-func _assert_repair_offer(where: String, want_offer: bool) -> void:
+## GUARD: **a rung standing at its cost is offered NOTHING, and nothing is reported as building on it
+## either** — asserted on the MODEL (which rung the board resolved) and on the RENDERED slot, because
+## either alone passes on half the claim. A model naming no rung under a slot that still drew a
+## pressable `⌃` is exactly the dead button reported from play.
+##
+## ⛔ **IT USED TO TAKE A `want_offer` FLAG, and the `true` arm is retired with the state it staged**
+## — an achieved rung short of its cost, which the sim can no longer publish (see this block's
+## header). What remains is the negative, which is the half that was actually violated.
+func _assert_no_repair_offer(where: String) -> void:
 	var models: Array = _hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0)
 	if models.is_empty():
 		_fail("%s — no work row to read" % where)
@@ -18717,16 +18816,15 @@ func _assert_repair_offer(where: String, want_offer: bool) -> void:
 	var model: Dictionary = models[0]
 	var offered := String(model.get("ready_policy", ""))
 	var building := String(model.get("building_policy", ""))
-	_assert_band_panel("%s: the board offers %s (ready=%s, building=%s)"
-			% [where, SourceForecast.IMPROVEMENT_CULTIVATE if want_offer else "nothing",
-				offered, building],
-		offered == (SourceForecast.IMPROVEMENT_CULTIVATE if want_offer else "") and building == "")
-	# …and the slot is a real control rather than a reported percentage. `_ready_mark_buttons` counts
-	# Buttons only, so a row still rendering the BUILDING face answers zero here.
+	_assert_band_panel("%s: the board offers nothing (ready=%s, building=%s)"
+			% [where, offered, building],
+		offered == "" and building == "")
+	# …and the slot is not a pressable mark either. `_ready_mark_buttons` counts OFFER slots only, so a
+	# row rendering the BUILDING face answers zero here too — which is why the model claim above is
+	# stated beside it rather than instead of it.
 	var buttons := _ready_mark_buttons()
-	_assert_band_panel("%s: …and the offer slot is a pressable Button (found %d)"
-			% [where, buttons.size()],
-		buttons.size() == (1 if want_offer else 0))
+	_assert_band_panel("%s: …and no offer slot is drawn at all (found %d)"
+			% [where, buttons.size()], buttons.is_empty())
 
 ## GUARD: **the eroded rung's CARD row states its badge, not the sim's `-1`.** The claim is that the
 ## sentinel never reaches this row at all — `rung_row_value` forks on `built` before it reads the
@@ -18738,11 +18836,15 @@ func _assert_repair_offer(where: String, want_offer: bool) -> void:
 ## countdown on must still render that countdown, or "never states the sentinel" is satisfied by a row
 ## that has stopped reading the wire.
 func _assert_repair_card_states_no_countdown() -> void:
-	var patch := _repair_patch_fixture(REPAIR_ERODED_PROGRESS)
+	# **THE BUILT ROW IS ASKED AT A FULL METER, WHICH IS THE ONLY WAY A BUILT ROW COMES.** It used to
+	# be asked at 90% beside `built = true` — the pairing the sim can no longer publish — and the claim
+	# is unchanged by the correction: the fork on `built` happens BEFORE the countdown is read, so the
+	# sentinel this fixture carries never reaches the row.
+	var patch := _repair_patch_fixture(REPAIR_FULL_PROGRESS)
 	var percent := HudFormat.progress_percent(REPAIR_ERODED_PROGRESS)
 	var row := DetailFormat.rung_row_value(patch, HudComposeVocab.BARE_FORECAST_PREFIX,
 		SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.SOURCE_KIND_FORAGE,
-		DetailFormat.cultivation_built_label(), true, REPAIR_ERODED_PROGRESS,
+		DetailFormat.cultivation_built_label(), true, REPAIR_FULL_PROGRESS,
 		SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
 	# **THE SENTINEL THIS SHAPE RENDERS IS `Lapsed`, NOT `Stalled`.** The fixture's own note says it:
 	# nothing queued and no builders, which is the queue-position half of `build_sentinel_value`'s
@@ -18758,7 +18860,11 @@ func _assert_repair_card_states_no_countdown() -> void:
 			and not row.contains(lapsed) and not row.contains(stalled))
 	# …and the row that is NOT built still reads the wire, or the claim above is about a producer that
 	# ignores the countdown everywhere.
-	var unbuilt := DetailFormat.rung_row_value(patch, HudComposeVocab.BARE_FORECAST_PREFIX,
+	# **…on the patch that really is short of the rung** — same tile, same sentinel, standing on wild
+	# ground with 90% banked, which is what an eroded plant rung looks like once the standing is
+	# re-derived with the position.
+	var unbuilt := DetailFormat.rung_row_value(
+		_repair_patch_fixture(REPAIR_ERODED_PROGRESS, false), HudComposeVocab.BARE_FORECAST_PREFIX,
 		SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.SOURCE_KIND_FORAGE,
 		DetailFormat.cultivation_built_label(), false, REPAIR_ERODED_PROGRESS,
 		SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
