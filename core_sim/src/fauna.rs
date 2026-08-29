@@ -6838,20 +6838,25 @@ pub fn quarry_default_hunt_kit(
 ///
 /// # A pen is a SOURCE AXIS, not a score
 ///
-/// A corralled herd is collected at [`crate::equipment_config::EquipmentStat::PenCarry`], and the
-/// only kit that supplies it is the handling gear — so *"which kit does a pen want"* has a
-/// **structural** answer, and [`quarry_default_hunt_kit`] structurally cannot give it: a pen has no
-/// fight stage, so [`per_hunter_take_biomass`] scores every kit on a quarry the party never stalks
-/// and hands back the *range* winner. That is how a corralled Rabbit Warren came to publish
-/// `trapping` — a kit whose contribution at a pen is nil.
+/// A corralled herd has **no fight stage**, so the only thing a kit can still do for it is carry the
+/// meat home — and [`quarry_default_hunt_kit`] structurally cannot say that: it scores every kit
+/// through [`per_hunter_take_biomass`] on a quarry the party never stalks and hands back the *range*
+/// winner. That is how a corralled Rabbit Warren came to publish `trapping` — a kit whose
+/// contribution at a pen is nil.
+///
+/// So the pen's default is a **lookup** for the kit that supplies
+/// [`crate::equipment_config::EquipmentStat::HuntCarry`], which is the one axis it can still be
+/// scored on. **It is a SUGGESTION and not a rate** — the player may send any hunt kit at a pen, and
+/// whichever they send is resolved through the ordinary band-wide carry like everywhere else (issue
+/// #543); this only decides what the compose sheet opens on.
 ///
 /// It is the same source-axis rule the client's picker greys on and `KitRoster.priced_source`
 /// prices on, asked of the **roster** rather than answered with an id
 /// ([`crate::equipment_config::EquipmentConfig::kit_supplying`]).
 ///
-/// **A roster with no `PenCarry` hunt kit falls through to the score**, which is the honest answer:
-/// nothing can work a pen properly, so the herd keeps whatever the range comparison chose rather
-/// than publishing an empty selection.
+/// **A roster with no carrying hunt kit falls through to the score**, which is the honest answer:
+/// nothing on it helps a pen, so the herd keeps whatever the range comparison chose rather than
+/// publishing an empty selection.
 pub fn herd_default_hunt_kit(
     equipment: &crate::equipment_config::EquipmentConfig,
     person: CombatStats,
@@ -6861,7 +6866,7 @@ pub fn herd_default_hunt_kit(
     let job = crate::equipment_config::KitJob::Hunt;
     if corralled {
         if let Some(kit) =
-            equipment.kit_supplying(job, crate::equipment_config::EquipmentStat::PenCarry)
+            equipment.kit_supplying(job, crate::equipment_config::EquipmentStat::HuntCarry)
         {
             return kit;
         }
@@ -8122,7 +8127,7 @@ pub struct HuntCrewCurveInputs<'a> {
     pub floor: f32,
     /// `labor_config.hunt.per_worker_biomass_capacity` — what a **bare-handed** worker carries, the
     /// baseline both animal carry tiers are resolved against
-    /// ([`crate::equipment_config::EquipmentConfig::pen_per_worker_biomass_capacity`]).
+    /// ([`crate::equipment_config::EquipmentConfig::hunt_per_worker_biomass_capacity`]).
     ///
     /// **The stalking rows do not read it** — they are a *kill* rate, and the haul is a separate
     /// bound the take applies afterwards. **The PEN rows do**, and since §4.9 item 12b that is the
@@ -8225,10 +8230,14 @@ pub fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
 pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTake> {
     let quarry = next_turns_quarry(inputs.herd, inputs.fauna);
     let sigmas = inputs.range_sigmas.abs();
-    // **THE PEN'S ONE SURVIVING DIFFERENCE, AND IT IS THE HAUL** — see the doc above. Resolved once
-    // as a predicate because the *rate* is per crew size (coverage stretches a band's sleds
-    // differently over four keepers than over twelve), while *whether there is a carry bound at all*
-    // is a fact about the rung.
+    // **THE PEN'S ONE SURVIVING DIFFERENCE, AND IT IS WHERE THE HAUL BINDS** — see the doc above.
+    // It selects no rate: what a keeper carries is the band's own `hunt_carry`, the same number a
+    // stalking party hauls at (issue #543). What the predicate decides is *whether this curve
+    // carries a carry bound at all* — a fact about the rung, since a wild party's carry limit is
+    // expressed downstream through the waste path
+    // (`a_sledless_party_wastes_the_kill_it_cannot_carry`) instead of as a term of the kill rate.
+    // Resolved once, out here, because the *rate* is per crew size (coverage stretches a band's
+    // sleds differently over four keepers than over twelve).
     let keepers_haul_it_home = quarry.is_corralled();
     (1..=inputs.max_workers)
         .map(|workers| {
@@ -8250,7 +8259,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
             //
             // ⛔ **THE SHIPPED ROSTER DOES NOT REACH IT**, and that is a measurement rather than an
             // assumption: this arm binds only where `body_mass × (attack − defense) ÷ durability`
-            // exceeds the crew's `pen_carry` tier, and the largest per-worker kill on any of the
+            // exceeds the crew's `hunt_carry` tier, and the largest per-worker kill on any of the
             // seven `husbandry_ceiling: "pen"` species is the aurochs' `120 × 14 ÷ 150 = 11.2`
             // biomass a turn — under the **bare** tier's `12`, let alone the equipped `40`. It is
             // kept because it is the honest model (a keeper still has to carry the meat home, and it
@@ -8261,7 +8270,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
             // `husbandry.pen_engage_gain`'s handling arm is.
             let carry = keepers_haul_it_home.then(|| {
                 let per_worker = coverage.weighted_rate(|kit| {
-                    inputs.equipment.pen_per_worker_biomass_capacity(
+                    inputs.equipment.hunt_per_worker_biomass_capacity(
                         inputs.baseline_haul_rate,
                         kit,
                         inputs.wear,

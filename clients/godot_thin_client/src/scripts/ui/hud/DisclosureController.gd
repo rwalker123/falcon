@@ -303,7 +303,7 @@ func material_upkeep_breakdown_lines(band: Dictionary) -> Array[String]:
 ## **THE TIERS ARE READ, NEVER RE-DERIVED, AND NOTHING HERE TOUCHES `kit_id`.** The sim has already
 ## resolved each one through its OWN job's default kit, and that cohort id answers for the hunt job
 ## alone — quoting the vantage or the warrior's attack against it would read a scout's reach and a
-## defender's fighting tier off the hunting kit (see `DetailFormat.KIT_TIER_KEY_PEN_CARRY`).
+## defender's fighting tier off the hunting kit (see `DetailFormat.KIT_TIER_KEY_SCOUT_VANTAGE`).
 ##
 ## **NOTHING HERE IS SCALED BY THE REMAINING CONDITION.** Performance is flat until expiry, so a kit
 ## at 3 quotes the same tier as one at 97 — the condition says how long, the tier says how well, and
@@ -316,18 +316,16 @@ func kit_breakdown_lines(band: Dictionary) -> Array[String]:
         DetailFormat.KIT_LABEL_SPEARS, DetailFormat.KIT_ROLE_ATTACK_FORMAT % String.num(
             float(band.get(DetailFormat.KIT_TIER_KEY_ATTACK, 0.0)),
             DetailFormat.KIT_CONDITION_DECIMALS)))
-    # **THE SLED CARRIES BOTH RATES, WHICH IS ONE ROW AND NOT TWO.** It drags a carcass in off the
-    # range AND it is what a pen is collected with: `equipment.json` puts both sides of `pen_carry` on
-    # this item, the item that used to declare the bare side having left the roster with the hurdles
-    # (`docs/plan_standing_upkeep.md` §4.9 item 12). The two figures stay DISTINCT — a band whose sled
-    # is spent collects its pen at the bare rate and hunts at the bare rate, and they are different
-    # numbers — so both are quoted rather than one standing in for the other.
+    # **THE SLED CARRIES ONE RATE AND THE PEN IS COLLECTED ON IT** (issue #543). This row appended a
+    # second clause — `· pen collection N per keeper` — on the argument that *"the two figures stay
+    # DISTINCT: a band whose sled is spent collects its pen at the bare rate and hunts at the bare
+    # rate, and they are different numbers."* They stopped being different numbers when hurdles became
+    # a MATERIAL (`docs/plan_standing_upkeep.md` §4.9 item 12) and both sides of `pen_carry` landed on
+    # this one item, and `EquipmentStat::PenCarry` has since been deleted outright. The clause was
+    # restating the hunt figure under a second name, so the row quotes the haul once.
     lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_SLED,
         DetailFormat.KIT_LABEL_SLED, DetailFormat.KIT_ROLE_HUNT_CARRY_FORMAT % String.num(
             float(band.get(DetailFormat.KIT_TIER_KEY_HUNT_CARRY, 0.0)),
-            DetailFormat.KIT_CARRY_DECIMALS)
-        + DetailFormat.KIT_ROLE_PEN_CARRY_SUFFIX % String.num(
-            float(band.get(DetailFormat.KIT_TIER_KEY_PEN_CARRY, 0.0)),
             DetailFormat.KIT_CARRY_DECIMALS)))
     lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_BASKETS,
         DetailFormat.KIT_LABEL_BASKETS, DetailFormat.KIT_ROLE_FORAGE_CARRY_FORMAT % String.num(

@@ -1400,18 +1400,20 @@ fn the_wayfinding_tier_steps_down_when_the_kit_runs_dry() {
     );
 }
 
-/// **A PEN IS COLLECTED ON `PenCarry`, AND BOTH SIDES OF THAT STAT NOW SIT ON THE SLED.**
+/// **CARRY IS CARRY — A PEN IS COLLECTED ON THE BAND'S OWN HUNT HAUL** (issue #543).
 ///
-/// This test used to read *"only the husbandry kit collects a pen at the shipped rate"*, and that is
-/// no longer true. `pen_carry`'s **unequipped** side lived on the `hurdles` item; the material half
-/// of the standing upkeep made hurdles a **material** (`docs/plan_standing_upkeep.md` §4.9 item 12),
-/// and the pair moved to the sled — which already owned the *equipped* side through
-/// `EquipmentStat::shares_equipped_rate_with`, so the stat now has both sides on one item.
+/// What one worker can carry is a fact about the people and their gear, asked once from the band's
+/// kit and blind to what they are standing on. There is therefore **one** carry rate on the animal
+/// web and this pins it: the pen and the range read the same
+/// `hunt_per_worker_biomass_capacity`, and the discrimination that survives is *sledded vs
+/// sledless*, not *penned vs wild*.
 ///
-/// **The consequence is real and is what this test measures**: every hunt kit carrying a sled
-/// collects a pen at the equipped rate, and the bare rate belongs to a kit with **no sled at all**.
-/// The mistake the roster used to punish — bringing a drag harness to a pen — is no longer a
-/// mistake.
+/// ⛔ **A SECOND STAT, `PenCarry`, USED TO FORK THEM AND IS DELETED.** Its *unequipped* side lived on
+/// the `hurdles` item, so a drag-harness crew collected the bare rate at a pen where handling gear
+/// collected the sledded one — a real distinction between two tools. The material half of the
+/// standing upkeep made hurdles a **material** (`docs/plan_standing_upkeep.md` §4.9 item 12) and both
+/// sides of the pair landed on the sled, which already owned the equipped side. The discriminating
+/// item was gone and only the two names survived it.
 ///
 /// ⛔ **AND THE `husbandry` KIT IS GONE ENTIRELY** (`docs/plan_standing_upkeep.md` §4.9 item 12b): a
 /// pen resolves the ordinary fight now, so a weaponless hunt bundle is the wrong thing to send to
@@ -1419,11 +1421,10 @@ fn the_wayfinding_tier_steps_down_when_the_kit_runs_dry() {
 /// why a penned herd's default kit resolves there unchanged, and is what this test's first
 /// assertion pins.
 #[test]
-fn any_kit_carrying_a_sled_collects_a_pen_at_the_shipped_rate() {
+fn a_pen_and_a_range_are_collected_on_the_one_band_carry_rate() {
     let equipment = equipment();
-    // The **baseline** a keeper without handling gear collects at; the equipped side is the hunt
-    // haul's own tier, which `pen_per_worker_biomass_capacity` resolves internally so the number
-    // keeps its one home.
+    // The **no-equipment baseline** a sledless crew drags at, penned or wild — read off config
+    // rather than restated, because it is the number `rate_tier` falls back to.
     let baseline_rate = LaborConfig::builtin().hunt.per_worker_biomass_capacity;
     let fresh = outfitted();
 
@@ -1439,52 +1440,46 @@ fn any_kit_carrying_a_sled_collects_a_pen_at_the_shipped_rate() {
     );
     assert_eq!(
         equipment
-            .kit_supplying(core_sim::KitJob::Hunt, EquipmentStat::PenCarry)
-            .expect("some hunt kit supplies `pen_carry`")
+            .kit_supplying(core_sim::KitJob::Hunt, EquipmentStat::HuntCarry)
+            .expect("some hunt kit supplies `hunt_carry`")
             .id(),
         "big_game",
-        "…and a penned herd's DERIVED default (`fauna::herd_default_hunt_kit`) resolves there too: \
-         the deleted kit was never the roster's first answer for this stat, so the answer did not \
-         move"
+        "…and a penned herd's DERIVED default (`fauna::herd_default_hunt_kit`) resolves there too — \
+         a pen has no fight stage, so the one axis left to score it on is the carry"
     );
+
+    // **ONE FUNCTION, BOTH GROUNDS.** There is no pen-side resolver to disagree with this one.
     assert_eq!(
-        equipment.pen_per_worker_biomass_capacity(baseline_rate, &big_game, &fresh),
+        equipment.hunt_per_worker_biomass_capacity(baseline_rate, &big_game, &fresh),
         equipped_carry(&equipment, SLED),
-        "a crew that brought spears AND A SLED collects a pen at exactly the rate a pen has always \
-         collected at — the hunt haul's own tier, shared rather than restated"
+        "a crew that brought spears AND A SLED hauls at the sled's own tier — at a pen exactly as \
+         on the range, because the gear is the same gear"
     );
-    // **The bare rate belongs to a kit with no sled**, which is where the two tiers still part.
+    // **The bare rate belongs to a crew with no sled**, which is where the tiers still part.
     let gathering = equipment
         .kit("gathering")
         .expect("the shipped roster carries the gathering kit");
     assert_eq!(
-        equipment.pen_per_worker_biomass_capacity(baseline_rate, &gathering, &fresh),
-        unequipped_of(&equipment, SLED, EquipmentStat::PenCarry),
-        "…and a crew that brought baskets to a pen collects at the bare rate"
-    );
-    // ...and the two carry stats genuinely cannot reach each other: the same kit hauls on the
-    // range with the same sled, so this is the discriminating direction.
-    assert_eq!(
-        equipment.hunt_per_worker_biomass_capacity(baseline_rate, &big_game, &fresh),
-        equipped_carry(&equipment, SLED),
-        "the stalking kit carries a sled, so its RANGE haul reads the equipped tier too"
+        equipment.hunt_per_worker_biomass_capacity(baseline_rate, &gathering, &fresh),
+        baseline_rate,
+        "…and a crew that brought only baskets carries at the no-equipment baseline, wherever it is \
+         standing"
     );
     assert!(
-        equipment.pen_per_worker_biomass_capacity(baseline_rate, &gathering, &fresh)
-            < equipped_carry(&equipment, SLED),
-        "liveness: the bare pen rate must actually be lower, or both branches assert the same thing"
+        baseline_rate < equipped_carry(&equipment, SLED),
+        "liveness: the sledless rate must actually be lower, or both branches assert the same thing"
     );
 }
 
-/// **A PEN SHORT OF HANDLING GEAR COLLECTS AT THE MIX OF THE TWO TIERS** (issue #520) — the twin of
-/// the basket test above, on the other stat.
+/// **A CREW SHORT OF SLEDS CARRIES AT THE MIX OF THE TWO TIERS** (issue #520) — the twin of the
+/// basket test above, on the haul.
 ///
-/// Hurdles and halters cover keepers one unit at a time exactly as a spear covers a hunter, so
-/// `advance_labor_allocation` and the assign-time seed both price a pen through
+/// A sled covers a carrier one unit at a time exactly as a spear covers a hunter, so
+/// `advance_labor_allocation` and the assign-time seed both price a herd row through
 /// `coverage(...).weighted_rate(...)`. This asserts that very expression, because the file carries no
 /// live corralled-herd world to run a pen through; the collection cap it feeds is `keepers × this`.
 #[test]
-fn a_pen_short_of_handling_gear_collects_between_the_bare_and_the_geared() {
+fn a_crew_short_of_sleds_carries_between_the_bare_and_the_geared() {
     const KEEPERS: f32 = 8.0;
     const GEAR_OWNED: u32 = 2;
 
@@ -1498,30 +1493,28 @@ fn a_pen_short_of_handling_gear_collects_between_the_bare_and_the_geared() {
         equipment
             .coverage(&pen_kit, KEEPERS, wear)
             .weighted_rate(|kit| {
-                equipment.pen_per_worker_biomass_capacity(baseline_rate, kit, wear)
+                equipment.hunt_per_worker_biomass_capacity(baseline_rate, kit, wear)
             })
     };
 
     let geared = pen_rate(&outfitted());
-    // **The SLED is what supplies `pen_carry` now** — both sides of it — since the hurdles became a
-    // material (`docs/plan_standing_upkeep.md` §4.9 item 12). So the item a pen crew runs short of is
-    // the sled, and the coverage mix this test measures is over that.
+    // **The SLED is the item a carrying crew runs short of**, penned or wild, and the coverage mix
+    // this test measures is over that.
     let partly = pen_rate(&short_of(SLED, GEAR_OWNED));
     let bare = pen_rate(&dry(SLED));
 
     assert_eq!(
         geared,
         equipped_carry(&equipment, SLED),
-        "a fully geared pen crew collects exactly what a pen has always collected"
+        "a fully sledded crew carries exactly what the sled's tier buys"
     );
     assert_eq!(
-        bare,
-        unequipped_of(&equipment, SLED, EquipmentStat::PenCarry),
-        "and a crew with none of it collects at the bare rate"
+        bare, baseline_rate,
+        "and a crew with none of it carries at the no-equipment baseline"
     );
     assert!(
         bare < partly && partly < geared,
-        "two sets of handling gear across {KEEPERS} keepers must land strictly between: \
+        "two sleds across {KEEPERS} keepers must land strictly between: \
          bare={bare} partly={partly} geared={geared}"
     );
     // The mix is the CREW-WEIGHTED mean, not an average of the two tiers — two keepers geared and
@@ -1605,7 +1598,7 @@ fn each_kit_wears_on_a_use_quantum_of_its_own_job() {
     };
     assert_eq!(quantum(WAYFINDING), core_sim::WearQuantum::TileRevealed);
     // **The crook's headline is the BUILD**, because the butchering quantum went to the sled with the
-    // `pen_carry` pair when the hurdles became a material — the crook does no butchering.
+    // when the hurdles became a material — the crook does no butchering.
     assert_eq!(quantum(CROOK), core_sim::WearQuantum::BuildProgress);
     // …and the SLED is the item on two quanta now, leading with the haul because its second entry was
     // APPENDED: no shipped item's gauge changed units.
@@ -1797,7 +1790,7 @@ fn the_reference_ledger_is_one_unit_and_the_shipped_lives_are_unchanged() {
     // **The crook's headline is the BUILD**, so its life reads in work units — 625, i.e. 12.5 of the
     // ladder's reference gardens, exactly what the hoes beside it buy. The `2500 biomass butchered`
     // this row used to state belonged to the retired `hurdles` item, and that quantum went to the
-    // **sled** with the `pen_carry` pair (`docs/plan_standing_upkeep.md` §4.9 item 12) — appended, so
+    // **sled** when the hurdles became a material (`docs/plan_standing_upkeep.md` §4.9 item 12) — appended, so
     // the sled's own headline life above is unmoved.
     assert_eq!(uses(CROOK), 625.0, "625 work units built");
     assert_eq!(uses(WAYFINDING), 2000.0, "2000 first sightings");
@@ -2036,5 +2029,153 @@ fn report_the_strike_wear_the_shipped_opening_pays() {
     assert!(
         total > 0.0,
         "the band must actually be landing blows, or the report is about a dead sim"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Carry is carry — the pen and the range on one rate (issue #543)
+// ---------------------------------------------------------------------------------------------
+
+/// **A PENNABLE species**, so the same fixture can be run fenced and loose. The herd carries its own
+/// [`WASTE_BODY_MASS`], so the *body* is the same on both grounds and only the ground differs.
+const PENNABLE: &str = "Wild Boar";
+
+/// **Enough hands that the CARRY is what binds a sledless crew on both grounds.** A sledless crew
+/// collects `crew × 12`; at four that is `48`, just under the `50`-unit body it puts down, so the
+/// haul — not the kill and not the room — is the term deciding what comes home. At two the range's
+/// kill has not yet reached a whole body and both arms read zero, which would make the equality
+/// below the trivial truth about two hunts that took nothing.
+const PEN_AND_RANGE_CREW: u32 = 4;
+
+/// **[`hunting_world_of`] with the herd FENCED before the turn runs** — the same band, the same
+/// crew, the same body, the same floor; the only difference is the ground.
+fn penned_world_of(crew: u32, kit: BandEquipment) -> (bevy::prelude::App, Entity) {
+    let (mut app, band) = hunting_world_of(PENNABLE, WASTE_BODY_MASS, Some(crew), kit);
+    {
+        let ladder = core_sim::LadderConfig::builtin();
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == HERD_ID)
+            .expect("the fixture herd is in the registry");
+        let anchor = herd.current_pos;
+        assert!(
+            herd.corral_at(anchor, &ladder),
+            "fixture: {PENNABLE} must be pennable, or there is no pen to work"
+        );
+    }
+    (app, band)
+}
+
+/// **CARRY IS CARRY — A PEN AND A RANGE ARE COLLECTED AT THE SAME PER-WORKER RATE** (issue #543).
+///
+/// *"No source may participate in deciding carry capacity, at any rung, on either food web. What one
+/// worker can carry is a fact about the people and their gear, asked once, answered from the band's
+/// kit, and completely blind to what it is standing on."* This is that claim measured end to end,
+/// through the turn rather than through the resolver, because a resolver assertion cannot see a
+/// caller that forks before reaching it.
+///
+/// ⛔ **A SECOND STAT, `EquipmentStat::PenCarry`, USED TO FORK IT.** It was real once — the
+/// *unequipped* side lived on the `hurdles` item, so a drag-harness crew collected the bare rate at a
+/// pen where handling gear collected the sledded one. The hurdles became a **material**
+/// (`docs/plan_standing_upkeep.md` §4.9 item 12), both sides of the pair landed on the sled, and what
+/// survived was two names for one number.
+///
+/// **Read in the carry-bound regime and nowhere else.** With the sled dry the crew kills a body it
+/// cannot lift ([`PEN_AND_RANGE_CREW`]), so the haul is the term deciding the outcome on *both*
+/// grounds and the equality is about the carry rather than about the fight. A sledded crew is not
+/// carry-bound — its kill binds first, and a pen's kill and a range's differ for reasons that are not
+/// this stat — so the sledded arm is asserted on the *direction* instead.
+///
+/// **Both halves are needed.** The equality alone passes on a sim that collects nothing anywhere, and
+/// the gear-tracking alone passes on a sim that still forks. So: every arm must have brought
+/// something home, the two sledless arms must agree exactly, and the sledded arm must out-collect the
+/// sledless one on the pen *and* on the range.
+#[test]
+fn a_penned_herd_and_a_wild_one_are_collected_at_the_one_band_carry_rate() {
+    let (mut penned_sledded, penned_sledded_band) =
+        penned_world_of(PEN_AND_RANGE_CREW, outfitted());
+    let (mut penned_sledless, penned_sledless_band) =
+        penned_world_of(PEN_AND_RANGE_CREW, dry_sled());
+    let (mut wild_sledded, wild_sledded_band) = hunting_world_of(
+        PENNABLE,
+        WASTE_BODY_MASS,
+        Some(PEN_AND_RANGE_CREW),
+        outfitted(),
+    );
+    let (mut wild_sledless, wild_sledless_band) = hunting_world_of(
+        PENNABLE,
+        WASTE_BODY_MASS,
+        Some(PEN_AND_RANGE_CREW),
+        dry_sled(),
+    );
+
+    run_turn(&mut penned_sledded);
+    run_turn(&mut penned_sledless);
+    run_turn(&mut wild_sledded);
+    run_turn(&mut wild_sledless);
+
+    let penned_sledded_row = exported(&penned_sledded, penned_sledded_band);
+    let penned_sledless_row = exported(&penned_sledless, penned_sledless_band);
+    let wild_sledded_row = exported(&wild_sledded, wild_sledded_band);
+    let wild_sledless_row = exported(&wild_sledless, wild_sledless_band);
+
+    // LIVENESS, first: four hunts that all took nothing agree perfectly and prove nothing.
+    for (label, income) in [
+        ("penned, sledded", penned_sledded_row.food_income),
+        ("penned, sledless", penned_sledless_row.food_income),
+        ("wild, sledded", wild_sledded_row.food_income),
+        ("wild, sledless", wild_sledless_row.food_income),
+    ] {
+        assert!(
+            income > 0.0,
+            "the {label} arm brought nothing home, so every comparison below is vacuous"
+        );
+    }
+
+    // **THE CLAIM.** Carry-bound on both grounds, so what comes home IS `crew × carry` — and the two
+    // grounds must land on the same number, to the meat left behind.
+    assert!(
+        (penned_sledless_row.food_income - wild_sledless_row.food_income).abs() < EPSILON,
+        "a pen and a range worked by the SAME band with the SAME crew must be collected at the same \
+         per-worker rate: penned={} wild={}",
+        penned_sledless_row.food_income,
+        wild_sledless_row.food_income
+    );
+    assert!(
+        (exported_waste(&penned_sledless, penned_sledless_band)
+            - exported_waste(&wild_sledless, wild_sledless_band))
+        .abs()
+            < EPSILON,
+        "…and leave the same shortfall behind, which is the same statement read from the other end"
+    );
+
+    // **AND THE RATE TRACKS THE BAND'S GEAR ON BOTH.** A pen blind to the sled would hold still here
+    // while the range moved.
+    assert!(
+        penned_sledded_row.food_income > penned_sledless_row.food_income,
+        "a sledded crew must out-collect a sledless one AT A PEN: {} vs {}",
+        penned_sledded_row.food_income,
+        penned_sledless_row.food_income
+    );
+    assert!(
+        wild_sledded_row.food_income > wild_sledless_row.food_income,
+        "…and on the range, which is the arm that always did: {} vs {}",
+        wild_sledded_row.food_income,
+        wild_sledless_row.food_income
+    );
+
+    // **AND THE PUBLISHED RATE IS THE ONE RATE**, so no readout can name a second one.
+    let equipment = equipment();
+    assert_eq!(
+        penned_sledded_row.hunt_carry_per_worker_biomass,
+        equipped_carry(&equipment, SLED),
+        "a keeper's published carry is the sled's own tier — there is no pen field beside it"
+    );
+    assert_eq!(
+        penned_sledless_row.hunt_carry_per_worker_biomass,
+        LaborConfig::builtin().hunt.per_worker_biomass_capacity,
+        "…and a sledless keeper's is the no-equipment baseline, exactly as a sledless stalker's is"
     );
 }

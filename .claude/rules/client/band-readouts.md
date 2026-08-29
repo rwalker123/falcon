@@ -894,22 +894,28 @@ baskets sit over a STAFFED forage job, so they read `Baskets dry (0/4)` and *"�
 your 4 workers carry one"* — the tier stepped down, and four people feel it, stated as the two facts
 they are. Their handling-gear row is the quiet zero in every one of them.
 
-### The other three tiers, and the kit each is quoted at (`.claude/rules/core_sim/equipment.md`)
+### The other tiers, and the kit each is quoted at (`.claude/rules/core_sim/equipment.md`)
 
 The roster grew **handling gear**, **wayfinding gear** and **clubs**, and those three items were
 label-only in this readout for one reason: the popover pairs an item with the resolved tier it sets,
-and the cohort published none for a pen keeper, a scout's vantage or a warrior. It publishes all
-three now (`pen_carry_per_worker_biomass` / `scout_vantage_range` / `warrior_attack`), so each has a
-row — `▲ Handling gear 45 — pen collection 12.0 per keeper`, `▲ Wayfinding 66 — 2-tile sight per
-vantage`, `▲ Clubs 22 — attack 6 defending the camp`.
+and the cohort published none for a scout's vantage or a warrior. It publishes them now
+(`scout_vantage_range` / `warrior_attack`), so each has a row — `▲ Wayfinding 66 — 2-tile sight per
+vantage`, `▲ Clubs 22 — attack 6 defending the camp`. The crook states its JOB rather than a tier
+(`▲ Crook 45 — keeping and raising animals`), the build axis having no flat per-band field.
+
+> ⛔ **A THIRD FIELD, `pen_carry_per_worker_biomass`, RODE THIS SET AND IS DELETED** (issue #543).
+> This section listed it beside the other two and quoted the row it drew:
+> `▲ Handling gear 45 — pen collection 12.0 per keeper`. **Carry is carry** — a fact about the people
+> and their gear, never about the ground they stand on — so a pen is collected on
+> `hunt_carry_per_worker_biomass`, which the SLED's row already states.
 
 - **`kit_id` ANSWERS FOR THE HUNT JOB ALONE, and pairing either of the last two with it quotes the
-  wrong kit's tier.** On a resident band that id is the HUNT default, so it covers `hunter_attack`,
-  `hunt_carry…` and `pen_carry…` (a pen is worked from a Hunt row); the vantage and the warrior's
-  attack resolve through `default_scout_kit_id` / `default_warrior_kit_id`, the same asymmetry
-  `forage_carry…` has always had with the forage default. Nothing in the popover reads a kit id at
-  all — the sim has already resolved every tier — which is what makes the trap unreachable rather
-  than merely avoided.
+  wrong kit's tier.** On a resident band that id is the HUNT default, so it covers `hunter_attack`
+  and `hunt_carry…` (a pen is worked from a Hunt row and collected on that same haul); the vantage and
+  the warrior's attack resolve through `default_scout_kit_id` / `default_warrior_kit_id`, the same
+  asymmetry `forage_carry…` has always had with the forage default. Nothing in the popover reads a kit
+  id at all — the sim has already resolved every tier — which is what makes the trap unreachable
+  rather than merely avoided.
 - **The two ATTACK rows say WHICH FIGHT they are for.** Spears and clubs set the same `attack` stat
   off different items, and a band really does hold two numbers for it — 20 on the hunt, 6 defending
   the camp — so a bare `attack 6` beside a bare `attack 20` would read as one of them being wrong.
@@ -918,16 +924,24 @@ vantage`, `▲ Clubs 22 — attack 6 defending the camp`.
   `KIT_VANTAGE_DECIMALS` and the `%s-tile sight per vantage` phrasing, which also sidesteps the
   `sight 1 tiles` a bare-handed scout would otherwise print.
 - **An item is a CLOCK and its axis is a TIER, and the two are read from different places** — which
-  is why a live item can sit beside a bare tier. The shared roster equips no kit on the pen axis, so a
-  band on the stalking kit collects its pen at 12 with its handling gear at 45; the row is honest, and the
-  fixture is built that way deliberately so the pen row cannot pass by quoting the sled's 40.
+  is why a live item can sit beside a bare tier: the crook's row states its job at condition 45 while
+  the band's build contribution is whatever its own `kit_tiers` row says.
+  > ⛔ It illustrated that with the pen: *"the shared roster equips no kit on the pen axis, so a band
+  > on the stalking kit collects its pen at 12 with its handling gear at 45 … so the pen row cannot
+  > pass by quoting the sled's 40."* With `EquipmentStat::PenCarry` deleted the pen row IS the sled's
+  > row, and the fixtures stamp no second carry.
 
-**Frames + assertions (`band_panel_preview`):** `band_panel_kit_expanded` — the dock's own gear
-popover, with `_assert_gear_breakdown_states_every_kit` asking each new row BOTH what it must say and
-what it must not (the pen never the sled's carry, the vantage never a per-worker rate, the clubs never
-`hunter_attack`), plus the sled's own pairing so the three cannot have been added by making every row
-quote one number. Sabotage-verified: pairing the clubs row with `hunter_attack` fails exactly the
-clubs assertion, naming `attack 20 defending the camp`.
+**Assertions (`band_panel_preview`, NO FRAME):** `_assert_gear_breakdown_states_every_kit` reads
+`DisclosureController.kit_breakdown_lines` off the producer and asks each row BOTH what it must say
+and what it must not (the vantage never a per-worker rate, the clubs never `hunter_attack`, the SLED
+its haul once and no `pen collection` clause behind it), plus the sled's own pairing so the rows
+cannot have been added by making every one quote one number. Sabotage-verified: pairing the clubs row
+with `hunter_attack` fails exactly the clubs assertion, naming `attack 20 defending the camp`.
+
+> ⛔ **THIS SAID `band_panel_kit_expanded` — the dock's own gear popover.** There is no such frame:
+> the `Gear` row that opened that popover is retired from both pages (§4.9 item 12, recorded above),
+> and `kit_breakdown_lines` has **no live UI caller** today — the composition is what is asserted, and
+> it is kept because the crafting panel's kit ledger is where these rows are headed.
 
 ### The HANDLING GEAR's row says BOTH the jobs it does
 
@@ -938,11 +952,19 @@ roster's own display name cannot disagree about one item; `hoes` joined `KIT_ITE
 and deliberately has **no breakdown row**, the build axis having no flat per-band field for a row to
 pair it with (`labor-ui.md` → "THE BUILDERS' KIT IS DERIVED PER QUEUE ENTRY" on the client side).
 
-The handling gear binds a slaughter at a pen **and** raises what a worker delivers to the `Tame` and
-`Corral` builds (issue #515, `.claude/rules/core_sim/equipment.md` → "The build axis"), so a row
-quoting only the pen rate describes the payoff at the top of the ladder and says nothing about the
-climb that produces it. It reads
-`pen collection 40.0 per keeper · +0.5 work a turn per keeper on a tame or a pen`.
+The crook raises what a worker delivers to the `Tame` and `Corral` builds (issue #515,
+`.claude/rules/core_sim/equipment.md` → "The build axis"). Its row states the job it does and, above
+neutral, that contribution: `keeping and raising animals · +0.5 work a turn per keeper on a tame or a
+pen`.
+
+> ⛔ **THE ROW LED WITH A PEN COLLECTION RATE AND NO LONGER DOES.** It read
+> `pen collection 40.0 per keeper · +0.5 work a turn per keeper on a tame or a pen`, the section
+> arguing that *"the handling gear binds a slaughter at a pen AND raises what a worker delivers …
+> so a row quoting only the pen rate describes the payoff at the top of the ladder and says nothing
+> about the climb."* The gear stopped binding the slaughter when hurdles became a MATERIAL (§4.9
+> item 12) and `EquipmentStat::PenCarry` was deleted outright (issue #543); what a pen collects is
+> the SLED's haul, on the sled's own row. The build clause — the half that argument was added for —
+> is what the row now leads with.
 
 > ⛔ **THE CLAUSE READ `8.5 work off a tame or a pen, per keeper` AND BOTH HALVES OF THAT ARE
 > RETIRED.** `build_work` is an ADDEND on what an equipped worker DELIVERS per turn, never units off
@@ -967,7 +989,8 @@ climb that produces it. It reads
 - **The clause is appended only ABOVE NEUTRAL, and its absence is a real reading.** A contribution of
   `0` means the gear is changing no build — because it is spent, or because this band's hunt job is
   on a kit that does not carry it — and `0 work` costs a line's width to say *no*. The row's own
-  condition and its stepped-down pen rate already carry that news.
+  condition already carries that news. (It used to say *"and its stepped-down pen rate"* too; there is
+  no pen rate on this row any more.)
 - **THE VALUE COMES OFF THE BAND'S OWN `kit_tiers` ROW, not a flat cohort field**, and there is no
   flat twin on the wire. The flat per-band fields answer for a readout with *no* kit selected; a build
   always has one (its job's default), so `KitRoster.band_kit_tiers(band, band.kit_id)` is the honest

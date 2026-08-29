@@ -369,7 +369,7 @@ pub struct KitItemConditionState {
     ///
     /// **Quoted at the job whose kit carries the item**, and at the one
     /// [`PopulationCohortState::kit_id`] names for an item several jobs' kits carry — the same
-    /// convention [`PopulationCohortState::pen_carry_per_worker_biomass`] already follows. An item
+    /// convention [`PopulationCohortState::hunt_carry_per_worker_biomass`] already follows. An item
     /// no quoted kit carries reads `0`, a bench tool included.
     #[serde(default)]
     pub workers_holding: f32,
@@ -435,12 +435,6 @@ pub struct BandKitTiersState {
     /// What this kit multiplies the hunt's injury hazard by, at this band's wear. Neutral `1.0`.
     #[serde(default = "kit_multiplier_neutral")]
     pub exposure: f32,
-    /// **This band's per-keeper PEN collection rate under this kit** (biomass/turn) — *not*
-    /// [`Self::hunt_carry_per_worker_biomass`]. A sled drags a carcass in off the range and a pen
-    /// stands at the camp, so a kit carrying a sled and no handling gear reads the bare rate here
-    /// while its haul tier is the sledded one.
-    #[serde(default)]
-    pub pen_carry_per_worker_biomass: f32,
     /// **The sight range each posted vantage reveals at under this kit.** How far the vantages are
     /// *posted* is not a kit axis (three `labor_config.scout.*` dials); this is only how far each one
     /// sees, and the reveal path rounds it to whole tiles.
@@ -550,7 +544,6 @@ impl Default for BandKitTiersState {
             attack_max_body_mass: 0.0,
             dispersion: kit_multiplier_neutral(),
             exposure: kit_multiplier_neutral(),
-            pen_carry_per_worker_biomass: 0.0,
             scout_vantage_range: 0.0,
             build_rate: kit_multiplier_neutral(),
             build_work_per_worker: 0.0,
@@ -944,9 +937,17 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub hunter_attack: f32,
     /// **This band's per-worker HUNT haul rate** (biomass/turn), sled resolved in — the term every
-    /// hunt take, crew-size figure and hunt forecast is capped by. Equipped it is
-    /// `labor_config.json`'s `hunt.per_worker_biomass_capacity`; sledless it is `equipment.json`'s
-    /// `sled_kit.unequipped_per_worker_biomass_capacity`.
+    /// hunt take, crew-size figure and hunt forecast is capped by. Equipped it is the sled's own
+    /// `flint` tier in `equipment.json` (`hunt_carry` 40); sledless it is `labor_config.json`'s
+    /// `hunt.per_worker_biomass_capacity` (12), which is the **no-equipment baseline** since the
+    /// carries moved onto their tiers.
+    ///
+    /// **A PEN IS COLLECTED ON THIS FIELD TOO** (issue #543). A `pen_carry_per_worker_biomass` rode
+    /// beside it saying *"not a second reading of this — a sled drags a carcass in off the range and
+    /// a pen stands at the camp, so a band on the stalking kit collects a pen at the bare rate"*.
+    /// **That is false**: carry is a fact about the people and their gear, blind to whether the
+    /// animal is penned or wild, so the field was deleted rather than left to republish this one
+    /// under a second name.
     ///
     /// **Band-scoped, unlike [`crate::state::HerdTelemetryState::per_worker_biomass`]**, which stays
     /// the *equipped reference* rate because a herd has no band to resolve a tier against. Appended
@@ -1003,17 +1004,6 @@ pub struct PopulationCohortState {
     /// (append-only).
     #[serde(default)]
     pub expedition_forecast_horizon_turns: u32,
-    /// **This band's per-KEEPER pen collection rate** (biomass/turn), husbandry gear resolved in —
-    /// the term a corralled herd's harvest is capped by. Equipped it is `labor_config.json`'s
-    /// `hunt.per_worker_biomass_capacity` (the rate a pen has always collected at); bare it is
-    /// `equipment.json`'s `hurdles` unequipped tier.
-    ///
-    /// **Not a second reading of [`Self::hunt_carry_per_worker_biomass`]**: a sled drags a carcass in
-    /// off the range and a pen stands at the camp, so a band whose Hunt row is on the stalking kit
-    /// collects a pen at the bare rate. Quoted at the **hunt** job's default, which is the one job
-    /// [`Self::kit_id`] answers for. Appended last (append-only).
-    #[serde(default)]
-    pub pen_carry_per_worker_biomass: f32,
     /// **The sight range each of this band's posted scout vantages reveals at**, wayfinding gear
     /// resolved in. Equipped it is `labor_config.json`'s `scout.vantage_range`; bare it is
     /// `equipment.json`'s `wayfinding` unequipped tier. **How far the vantages are *posted* is not a

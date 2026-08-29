@@ -2639,9 +2639,15 @@ const RUNG_TRACK_COST_UNDATED_FORMAT := "%s work"
 # on one surface.
 
 ## `+ 6 hurdles to raise it` — the WHOLE pile the rung swallows, at full coverage, drawn as the meter
-## climbs. Rendered only where the wire quotes a pile, which is the rung DIRECTLY ABOVE where the
-## source stands and no other: `buildMaterialCost` prices one rung, so a row two rungs up states
-## nothing rather than repeating the rung below it.
+## climbs. On the `⌃` TRACK it is rendered on one row only — the rung DIRECTLY ABOVE where the source
+## stands: `buildMaterialCost` prices one rung, so a row two rungs up states nothing rather than
+## repeating the rung below it.
+##
+## ⛔ The clause *"rendered only where the wire quotes a pile, which is the rung directly above where
+## the source stands **and no other**"* is no longer true, and reading it that way is what left the
+## RING price card quoting no pile. The ring card renders this same format from
+## `corralBuildMaterialCost` — the `animal:pen` rung's OWN pile — because a ring buys that rung
+## again, and the above-selector answers `[]` at the top of a branch.
 const RUNG_TRACK_BUILD_MATERIAL_FORMAT := "+ %s to raise it"
 
 ## `you have 2 hurdles — it will stall at about a third` — the store against the pile, on the good

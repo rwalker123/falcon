@@ -1905,15 +1905,6 @@ fn kit_roster_states(
                 attack: tiers.attack,
                 hunt_carry_per_worker_biomass: tiers.hunt_carry_per_worker_biomass,
                 forage_carry_per_worker_biomass: tiers.forage_carry_per_worker_biomass,
-                // **The pen's tier, resolved against the SAME equipped rate the hunt haul is** —
-                // `hunt.per_worker_biomass_capacity` is the number a pen harvest has always been
-                // capped by, and it keeps its one home. A kit carrying a sled and no handling gear
-                // reads the bare rate here, which is the whole point of the husbandry kit.
-                //
-                // **Off `resolve_kit_tiers` like the rest of the row**, since the per-band rows carry
-                // this axis too: resolved beside the call it would be one transcription per reading
-                // again, and the reading that got left behind is the one a picker quotes.
-                pen_carry_per_worker_biomass: tiers.pen_carry_per_worker_biomass,
                 // **The scout vantage's tier.** Not what a *band* currently sees — a fresh kit's
                 // reach, exactly like the three above, so the picker renders the kit and not the
                 // band that happens to be selected.

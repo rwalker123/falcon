@@ -211,7 +211,7 @@ than reading a "jumpy" flag, and `max_body_mass` reads `body_mass` rather than a
   dropped `max_body_mass` would quietly become a mammoth trap.
 - **A recipe with no `grades` block at all is a real statement**, not a missing value: five ship that
   way (`crook`, `hoes`, `wayfinding`, and the three bench tools), because their payload is *shared*
-  rather than tier-bought (the husbandry gear's `pen_carry`, the wayfinding gear's vantage) or is a
+  rather than tier-bought (the wayfinding gear's vantage, a build tool's `build_work`) or is a
   bench stat nothing yet grades. The old shape spelled that as three empty rungs each — fifteen inert
   config rows saying by convention what absence now says outright.
 
@@ -907,8 +907,8 @@ and a turns conversion would need a forecast of what the band is about to do.
 > `≈12 gardens' worth` and `≈2500 biomass butchered` are the same condition counted two ways, and
 > stating both would need the readout to know the usage mix it exists to let the player choose. The
 > item **declares** its headline by writing that quantum first, exactly as `tiers[0]` declares the
-> default tier. **The `sled` is the item on two quanta today**: it took `biomass_collected` with the
-> `pen_carry` pair when hurdles became a material, **appended**, so its row still reads the haul.
+> default tier. **The `sled` is the item on two quanta today**: it took `biomass_collected` when
+> hurdles became a material, **appended**, so its row still reads the haul.
 
 > #### THE BUILD QUANTUM IS THE ONE WHOSE UNIT IS NOT ITS NOUN
 >

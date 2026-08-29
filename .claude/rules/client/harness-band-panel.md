@@ -468,36 +468,27 @@ the widest one: at this tier the row is MERGED, so what it renders is ` · 128.4
 tally did not move** (805 `PASS`, no frame count change) — the merged clause is the same width it
 was, which is the check that the widening did not reach the SHORT tier's measured column.
 
-**The PER-SOURCE CARRY AXIS contributes SEVEN `PASS` to `ui_preview`, ZERO frames and nothing at all
-to `band_panel_preview`.** Two of the seven are the husbandry-hint pair becoming a 2×2 (both kits
-against both a wild herd and a pen, since the pen tier is gated on the SOURCE now); the other five
-are `_assert_a_pen_prices_on_the_keepers_carry`, driven through `DrawerComposeController`'s real
-seam over the chapter's locally-built pen-axis roster.
-
-**The dock harness is untouched because no quarry in it is corralled.** In `ui_preview` exactly FIVE
-frames move and they are precisely the corralled-herd compose sheets — `hunt_crew_herders` ·
-`herd_pen_self_feeding` · `herd_pen_extending` · `herd_pen_foddered` · `improvement_done_penned` —
-each in the Kit hint alone, now `pen 12.0 per keeper` where it read the stalking kit's attack and
-sled.
-
-**Their NUMBERS are unchanged**, because `BandFx.kit_roster_fixture()` carries no pen-axis kit: the
-roster's max on the pen axis equals its bare tier, so the ratio is 1 and the repricing
-short-circuits. Measured by rendering HEAD's two files and diffing by SHA-256 in both directions — 5
-of 279 differ, and restoring the change reproduces the post-change set byte-for-byte.
-Sabotage-verified by reverting the axis to the job's: exactly the four discriminating claims fail,
-two naming `0.3 against 0.3` (the two kits quoting one pen the same number — the cancellation the
-defect hid behind) and two naming the wild hint rendered at a pen. The other three are the "must not
-move" guards and correctly stay green.
-
-**THE PEN AND THE VANTAGE JOINED `BandKitTiers`, and that contributes FOUR `PASS` to `ui_preview`,
-ZERO frames and nothing at all to `band_panel_preview`.** Those two axes were the ones a per-kit
-readout had to answer off the ROSTER's fresh tier, so a dry-`hurdles` band's pen compose
-sheet read `pen 40.0 per keeper` against a sim collecting 12 and a Scout card read 2 tiles of sight
-against a reveal at 1. `BandFx.kit_tiers_rows` states all five axes now (it stated three, and a row
-that omits an axis exercises the absence path rather than the real one), and
-`chapters/compose_rungs.gd::_assert_the_appended_axes_read_the_band` drives the pair each axis
-needs: the fresh tier AND the worn one, since a client stuck on the roster passes the first alone
-and one that had stopped resolving passes the second alone.
+> ⛔ **THE PER-SOURCE CARRY AXIS IS DELETED, AND THIS BLOCK RECORDED ITS ARRIVAL** (issue #543). It
+> read: *"the PER-SOURCE CARRY AXIS contributes SEVEN `PASS` to `ui_preview` … two of the seven are
+> the husbandry-hint pair becoming a 2×2 (both kits against both a wild herd and a pen, since the pen
+> tier is gated on the SOURCE now); the other five are `_assert_a_pen_prices_on_the_keepers_carry` …
+> in `ui_preview` exactly FIVE frames move and they are precisely the corralled-herd compose sheets —
+> `hunt_crew_herders` · `herd_pen_self_feeding` · `herd_pen_extending` · `herd_pen_foddered` ·
+> `improvement_done_penned` — each in the Kit hint alone, now `pen 12.0 per keeper` where it read the
+> stalking kit's attack and sled."* `EquipmentStat::PenCarry` is gone — **carry is carry** — so those
+> five hints read the stalking kit's attack and sled again, which is where they started.
+>
+> **THE 2×2 AND THE PRICING BLOCK BOTH SURVIVE WITH THEIR EXPECTATIONS INVERTED.**
+> `_assert_the_hint_reads_the_same_at_a_pen` still takes four readings and now requires the fence to
+> move NOTHING while the KIT moves the line; `_assert_a_pen_prices_on_the_hunters_carry` still drives
+> `DrawerComposeController`'s real seam and now requires a herd and its corralled twin to price
+> identically, with a **bare-handed** party under the reference at both as the liveness half. **Net
+> +2 `PASS` on `ui_preview`** (1589 → 1591): 14 pen-axis claims removed, 16 added.
+>
+> **THE PEN AND THE VANTAGE JOINED `BandKitTiers`** and the vantage half of that still stands — a
+> Scout card read 2 tiles of sight against a reveal at 1 while the client answered off the ROSTER's
+> fresh tier. The pen half is deleted with the axis; `_assert_the_appended_axes_read_the_band` keeps
+> its fresh/worn PAIR shape, re-aimed so a DRY crook shows as dry beside an untouched sled's own haul.
 
 **The dock harness is untouched because its own `_band_fixture` publishes no `kit_tiers` at all** —
 the whole-row absence, which is the one case the roster still answers and the reason that branch

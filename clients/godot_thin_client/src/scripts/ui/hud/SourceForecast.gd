@@ -1113,9 +1113,20 @@ const FORECAST_NEGLECT_GRACE_KEY := "neglect_grace_remaining"
 # eats badly.
 #
 # `FORECAST_BUILD_MATERIAL_COST_KEY` prices **ONE rung** — the one DIRECTLY ABOVE where the source
-# stands, which is the only pile the wire quotes. A track row two rungs up therefore has no pile to
-# state and states none, exactly as a rung the wire prices no work for renders no figure.
+# stands. A track row two rungs up therefore has no pile to state and states none, exactly as a rung
+# the wire prices no work for renders no figure.
+#
+# ⛔ It was once *"the only pile the wire quotes"*, and that clause is now false: the wire also
+# publishes `FORECAST_CORRAL_BUILD_MATERIAL_COST_KEY` below, the pen rung's OWN pile, which is what a
+# RING is priced from. Reading the above-selector as universal is what left the ring card quoting no
+# pile at all through a whole slice.
 const FORECAST_BUILD_MATERIAL_COST_KEY := "build_material_cost"
+# …and the pile `animal:pen` swallows to raise, read at THAT rung rather than at the one above the
+# source. The one field a RING can be priced from: `animal:pen` is the top of the animal branch, so
+# the key above answers `[]` on every corralled herd, which is exactly the row a ring is offered on.
+# On a PASTORAL herd the two carry the same pile by construction — same rung, two selectors — and it
+# is their DISAGREEMENT on a penned herd that earns this key its place.
+const FORECAST_CORRAL_BUILD_MATERIAL_COST_KEY := "corral_build_material_cost"
 # What holding this source's OWN current rung swallows per turn (the STAMPED bill, `upkeep_demand`'s
 # per-good twin) and what the band's store actually paid toward it. The sim publishes both terms
 # rather than their difference, for the reason the work trio does: a client renders and subtracts
@@ -4941,6 +4952,20 @@ static func upkeep_is_short(state: Dictionary) -> bool:
 ## only attach it to the rung directly above where the source stands.
 static func build_material_cost(src: Dictionary, prefix: String) -> Array[Dictionary]:
     return material_payoff_rows(src.get(prefix + FORECAST_BUILD_MATERIAL_COST_KEY, []))
+
+## **THE PILE `animal:pen` ITSELF SWALLOWS TO RAISE** — one row per good, `[]` when the wire quotes
+## none. Published at every position, unscaled, exactly as `corral_work_cost` beside it is, so it
+## prices the CLIMB to the pen on a pastoral herd and ANOTHER RING on one already penned. The caller
+## disambiguates with `current_rung`, as it already does for the work half.
+##
+## ⛔ **THIS IS NOT `build_material_cost` ABOVE, AND THE TWO MUST NOT BE COLLAPSED.** That one prices
+## the rung DIRECTLY ABOVE where the source stands. `animal:pen` is the top of the animal branch, so
+## on a CORRALLED herd — the only source a ring is ever offered from — it is empty, correctly and by
+## design. A ring priced from it would state no pile at all, which is precisely the gap this key
+## closes. On a pastoral herd the two agree by construction, which is why the difference is easy to
+## miss and easier to "simplify" away.
+static func corral_build_material_cost(src: Dictionary, prefix: String) -> Array[Dictionary]:
+    return material_payoff_rows(src.get(prefix + FORECAST_CORRAL_BUILD_MATERIAL_COST_KEY, []))
 
 ## **WHAT HOLDING THE OFFERED RUNG WOULD COST IN GOODS, PER TURN** — the material half of
 ## `build_upkeep_demand`, read at the rung being PRICED rather than at the rung the source is billed

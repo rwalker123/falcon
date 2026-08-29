@@ -621,7 +621,7 @@ fn pen_plateau(app: &App, wear: &BandEquipment) -> u32 {
         .clone();
     let curve: Vec<(u32, f32)> = (1..=POOL)
         .map(|workers| {
-            let carry = (workers as f32 * pen_carry_per_worker(app, workers, wear)
+            let carry = (workers as f32 * hunt_carry_per_worker(app, workers, wear)
                 / herd.body_mass)
                 // A keeper who cannot haul a whole beast still walks one out and wastes the rest —
                 // a fact about the animal, not a rounding, so it survives the rate.
@@ -817,7 +817,10 @@ const CARRY_BOUND_DURABILITY: f32 = 10.0;
 ///
 /// The room, the reach, the retreat and the fight are all shared with the range now
 /// (`fauna::resolve_hunt_engagement`); what a pen adds is *"and then somebody has to carry it
-/// home"*, at the `pen_carry` tier rather than the hunt haul's. **The shipped roster cannot reach
+/// home"* **as a term of the kill rate**, where a wild party's carry limit is expressed downstream
+/// through the waste path instead. **The RATE is the band's own** — `hunt_carry`, the same number a
+/// stalking party hauls at (issue #543); what the `is_corralled()` predicate decides is *where the
+/// bound is applied*, never *which rate applies*. **The shipped roster cannot reach
 /// it** — see [`CARRY_BOUND_DURABILITY`] — so this fixture authors a quarry that can, exactly as
 /// `fauna_husbandry::a_fractional_pen_handling_rate_collects_whole_animals` authors a handling rate
 /// for the arm above it.
@@ -1079,25 +1082,13 @@ const YIELD_EPSILON: f32 = 1e-4;
 /// row beside it honestly still quotes.
 const NOTHING: f32 = 0.0;
 
-/// **The pen collection tier this crew works at** — the husbandry gear's, coverage-weighted, which
-/// is the rate `advance_labor_allocation` caps the tend branch's collection by and therefore the
-/// rate the seed has to be priced at (`server::seed_source_yield`).
-fn pen_carry_per_worker(app: &App, workers: u32, wear: &BandEquipment) -> f32 {
-    let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
-    let equipment = EquipmentConfig::builtin();
-    let kit = equipment.default_kit(core_sim::KitJob::Hunt);
-    equipment
-        .coverage(&kit, workers as f32, wear)
-        .weighted_rate(|kit| {
-            equipment.pen_per_worker_biomass_capacity(
-                labor.hunt.per_worker_biomass_capacity,
-                kit,
-                wear,
-            )
-        })
-}
-
-/// The range twin of [`pen_carry_per_worker`] — the **sled's** tier, which a wild row is capped by.
+/// **The carry tier this crew works at, PENNED OR WILD** — the sled's, coverage-weighted, which is
+/// the rate `advance_labor_allocation` caps a herd row's collection by and therefore the rate the
+/// seed has to be priced at (`server::seed_source_yield`).
+///
+/// **ONE HELPER, because the sim has one rate** (issue #543): what a worker can carry is a fact
+/// about the people and their gear, blind to whether the animal is penned or wild. A second helper
+/// here would let this file pass while the sim's two arms had drifted.
 fn hunt_carry_per_worker(app: &App, workers: u32, wear: &BandEquipment) -> f32 {
     let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
     let equipment = EquipmentConfig::builtin();
@@ -1136,22 +1127,16 @@ fn the_band(app: &mut App) -> Entity {
 }
 
 /// **Seed the row from its pre-commit forecast, exactly as `server::seed_source_yield` does** — the
-/// same carry tier (pen or sled, on the same `is_corralled()` predicate), the same party, the same
-/// output multiplier, through the same `hunt_source_yield_preview` entry point. A hand-rolled quote
-/// here would prove only that this file agrees with itself.
+/// same band-wide carry tier, the same party, the same output multiplier, through the same
+/// `hunt_source_yield_preview` entry point. A hand-rolled quote here would prove only that this file
+/// agrees with itself.
+///
+/// **NO `is_corralled()` FORK, because the seed no longer has one** (issue #543): the seed and the
+/// resolved row must stay exactly-equal, so a branch here that the sim does not make is precisely
+/// the drift this helper exists to rule out.
 fn seed_the_row(app: &mut App, band: Entity, keepers: u32, wear: &BandEquipment, floor: f32) {
     let party = party_of(app, keepers, wear);
-    let corralled = app
-        .world
-        .resource::<HerdRegistry>()
-        .find(HERD_ID)
-        .expect("the fixture herd is in the registry")
-        .is_corralled();
-    let per_worker = if corralled {
-        pen_carry_per_worker(app, keepers, wear)
-    } else {
-        hunt_carry_per_worker(app, keepers, wear)
-    };
+    let per_worker = hunt_carry_per_worker(app, keepers, wear);
     let seeded = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
@@ -1351,7 +1336,7 @@ fn a_pens_quote_is_its_payout_at_every_keeper_count() {
                 core_sim::herd_take_room(&herd, FLOOR, &fauna),
                 herd.body_mass,
             );
-            let carry = (keepers as f32 * pen_carry_per_worker(&app, keepers, &stocked())
+            let carry = (keepers as f32 * hunt_carry_per_worker(&app, keepers, &stocked())
                 / herd.body_mass)
                 .max(ONE_WHOLE_ANIMAL);
             (room, carry)

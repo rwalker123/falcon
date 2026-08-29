@@ -5756,35 +5756,48 @@ thing on every mark that wears it.
 > card. Its price is `animal:pen`'s own rung cost — **not** the herd's `pen_extend_cost`, which the sim
 > stamps only once a ring is accruing and which is therefore the in-flight meter's denominator.
 
-> #### ⛔ KNOWN GAP — THE CARD QUOTES THE WORK AND THE STANDING BILL, AND NO PILE
+> #### THE CARD QUOTES THE PILE, THE WORK AND THE STANDING BILL — off `corralBuildMaterialCost`
 >
-> `ring_row` builds its build-price asides from `SourceForecast.build_material_cost`, and **that field
-> prices exactly ONE rung: the one DIRECTLY ABOVE where the source stands.** The card only opens on a
-> herd already standing on `animal:pen` (`ring_offered` tests `standing_improvement ==
-> IMPROVEMENT_CORRAL`), `RungKey::AnimalPen.above()` is `None`, and `core_sim`'s herd capture publishes
-> an empty pile there deliberately — *"Empty at the top of the branch, which is the honest reading
-> rather than a repeat of the pen's own"*. So `_build_price_asides` returns `[]` on its first line and
-> the card draws **neither the hurdle pile a ring eats nor the WARN stall aside**.
+> On screen: **`Extend the pen` / `Another ring` · `75 work` / `+ 6 hurdles to raise it` / `then 1
+> work · 0.05 hurdles a turn to hold`**, and the WARN stall aside beneath the pile where the shelf
+> cannot cover it.
 >
-> The sim does charge the pile — `systems::labor::head_ring_leg` lays the ring as a leg through the
-> same `build_material_wants` every rung leg goes through, and the ladder's own config note says *"a
-> ring costs 6 hurdles exactly as the work_cost beside it charges a ring the full 75 work units"*.
-> **The gap is publication, not model**: no field on the herd carries `animal:pen`'s own build pile to
-> a herd standing on it, and closing it is a sim-side field (the material twin of `corralWorkCost`,
-> which IS published at every position and is why the card can state `75 work` at all). Until it lands,
-> the card states the ring's WORK price and its standing bill.
+> ⛔ **THE PILE LINE IS THE ONE FACT THE CARD'S OWN ARGUMENT NAMES, AND IT SHIPPED WITHOUT IT.** The
+> dead claim, kept so its absence is not re-derived a fourth time: *"KNOWN GAP — the card quotes the
+> work and the standing bill, and no pile. `ring_row` builds its build-price asides from
+> `SourceForecast.build_material_cost`, and that field prices exactly ONE rung: the one DIRECTLY ABOVE
+> where the source stands … so `_build_price_asides` returns `[]` on its first line and the card draws
+> neither the hurdle pile a ring eats nor the WARN stall aside."* Every clause of that was true;
+> **the gap was publication, not model** — `systems::labor::head_ring_leg` was charging the pile all
+> along.
 >
-> **THE CARD HAD NO CLAIM ON IT AT ALL, which is how that shipped.** The caret's assertion proves the
-> mark is pressable and stops one press short. `_assert_ring_card_prices_the_ring` presses it — the
+> **THE FIELD THAT CLOSED IT IS `HerdTelemetryState.corralBuildMaterialCost`** — the whole `animal:pen`
+> build pile, unscaled, published at **every** position (on a pastoral herd it equals
+> `buildMaterialCost` by construction; on a corralled one it is the only reading of the pile there is),
+> pinned by `core_sim/tests/rung_material_quote.rs`. The client half is
+> `native/src/dict/subsistence.rs` → `corral_build_material_cost`,
+> `SourceForecast.corral_build_material_cost`, and `ring_row` composing `ROW_BUILD_ASIDES_KEY` from it.
+>
+> ⛔ **`build_material_cost` IS STILL THE WRONG FIELD HERE AND MUST NOT BE PUT BACK.** `AnimalPen` is
+> the top of its branch, `above()` is `None`, and `core_sim` publishes an empty pile there
+> deliberately — *"Empty at the top of the branch, which is the honest reading rather than a repeat of
+> the pen's own"*. The two agree on a pastoral herd, which is exactly what makes them look
+> interchangeable; it is their DISAGREEMENT on a corralled one that this card needs.
+>
+> **THE CARD HAD NO CLAIM ON IT AT ALL, which is how the gap shipped.** The caret's assertion proves
+> the mark is pressable and stops one press short. `_assert_ring_card_prices_the_ring` presses it — the
 > real control, so the meta, the mouse filter and the handler are in the path — and claims liveness (a
-> pressable row named `Another ring`) before the figures: the row's face is `75 work` and the hold
-> aside states both currencies. It makes **no claim about the pile**: asserting its absence would
-> cement the gap, asserting its presence would fail on shipped behaviour, so the asides are printed
-> into the run's log instead. **Frame:** `band_panel_ring_price`.
+> pressable row named `Another ring`) before the figures: the row's face is `75 work`, the hold aside
+> states both currencies, and the pile aside states its **good and amount** against the fixture's own
+> numbers, in the quiet ink with no stall warning on a shelf that covers it. That last pair was written
+> deliberately partial while the field was missing — asserting the absence would have cemented the gap,
+> asserting the presence would have failed on shipped behaviour — and the asides were printed to the
+> log so the day the field landed the run said what changed. **Frame:** `band_panel_ring_price`.
 >
-> ⛔ **THE FIXTURE ERASES `build_material_cost` ON THE PENNED HERD**, derived from the track's own
-> pastoral fixture. Leaving the pastoral row's pile stamped would prop the card up with a list the game
-> never sends to a herd in that position, and the frame would show a price no player can see.
+> ⛔ **THE FIXTURE STILL ERASES `build_material_cost` ON THE PENNED HERD**, and stamps
+> `corral_build_material_cost` beside the erasure. `buildMaterialCost` genuinely IS empty on a
+> corralled herd, so dropping the erase would model a snapshot the sim never sends — and would let a
+> card that regressed to the above-selector pass.
 
 **A RING IN FLIGHT WEARS NO CARET**, which is what stops a second being declared over the first
 (`Herd::pen_extending` is the sim's gate and needs no client twin). The gate is

@@ -189,7 +189,7 @@ pub struct RecipeDef {
     /// `validate_against` rejects a key that is not a rung.
     ///
     /// **Absent is a real statement**, not a missing value: it says this item's payload is not
-    /// tier-bought (the husbandry gear's `pen_carry`, the wayfinding gear's vantage) or is a bench
+    /// tier-bought (the wayfinding gear's vantage, a build tool's `build_work`) or is a bench
     /// stat nothing yet grades. The output is still stamped with the band it was made at.
     #[serde(default)]
     pub grades: BTreeMap<String, RecipeGrade>,
@@ -790,8 +790,8 @@ impl RecipesConfig {
     ///
     /// - **Only a stat the item's own tiers declare.** What the material buys sits on the tier; a
     ///   grade *replaces* one of those values and may never introduce a stat the item does not
-    ///   otherwise have. A grade naming `pen_carry` — whose equipped side is the hunt haul's —
-    ///   would be exactly the second home.
+    ///   otherwise have. A grade naming `scout_vantage_range` on the sled — a stat that item never
+    ///   declares — would be exactly the second home.
     /// - **The mass bounds are restated verbatim.** A grade's effect is what
     ///   [`crate::equipment_config::LiveItem::effect_entry`] answers with, bounds included, so an
     ///   excellent snare that dropped `max_body_mass` would quietly become a mammoth trap.

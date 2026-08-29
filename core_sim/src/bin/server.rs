@@ -2049,33 +2049,23 @@ fn seed_source_yield(
                 .get::<BandEquipment>(band)
                 .cloned()
                 .unwrap_or_default();
-            // **A PENNED herd is priced at the husbandry gear's tier, a wild one at the sled's** —
-            // the same split `advance_labor_allocation` makes on the same predicate, and the seed has
-            // to reach `hunt_forecast` holding the rate the turn will pay it at. Pricing a pen at
-            // the sled's tier is `yield-forecast.md`'s invariant broken on the one surface the
-            // player commits from.
+            // **ONE CARRY RATE, PENNED OR WILD** (issue #543) — the same single rate
+            // `advance_labor_allocation` resolves, because the seed has to reach `hunt_forecast`
+            // holding the rate the turn will pay it at. A seed and a resolved row that priced a herd
+            // differently is `yield-forecast.md`'s invariant broken on the one surface the player
+            // commits from, so this must stay exactly-equal to the sim's arm.
             // **The same coverage the turn resolves** (`equipment.md` → "the partly-equipped
             // party"): `advance_labor_allocation` divides this crew by the gear the band actually
             // owns, so a seed priced at the whole party's best tier would promise a haul only the
             // armed half can make.
             let hunt_coverage = equipment_cfg.coverage(&crew_kit, workers as f32, &band_wear);
-            let per_worker_biomass = if herd.is_corralled() {
-                hunt_coverage.weighted_rate(|kit| {
-                    equipment_cfg.pen_per_worker_biomass_capacity(
-                        labor.hunt.per_worker_biomass_capacity,
-                        kit,
-                        &band_wear,
-                    )
-                })
-            } else {
-                hunt_coverage.weighted_rate(|kit| {
-                    equipment_cfg.hunt_per_worker_biomass_capacity(
-                        labor.hunt.per_worker_biomass_capacity,
-                        kit,
-                        &band_wear,
-                    )
-                })
-            };
+            let per_worker_biomass = hunt_coverage.weighted_rate(|kit| {
+                equipment_cfg.hunt_per_worker_biomass_capacity(
+                    labor.hunt.per_worker_biomass_capacity,
+                    kit,
+                    &band_wear,
+                )
+            });
             // **And at THIS band's FIGHTING tier**, for the same reason and through the same seam
             // (`docs/plan_hunt_through_combat.md` §4): the take now resolves through the combat
             // system, so a band whose spears are gone brings down less — or, past a quarry's

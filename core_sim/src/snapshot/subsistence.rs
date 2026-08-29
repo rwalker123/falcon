@@ -517,10 +517,11 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// that is *corralled*, which is a fact about the herd rather than the species and so cannot
     /// live in one map beside it.
     ///
-    /// A pen is collected on [`crate::equipment_config::EquipmentStat::PenCarry`], so its default is
-    /// the kit that supplies it and not the range scorer's winner — see
-    /// [`crate::fauna::herd_default_hunt_kit`]. With no such kit on the roster this map holds the
-    /// *same* choice the range map does, and a penned herd reads exactly as it did before.
+    /// A pen has no fight stage, so its default is the kit that can still carry the meat home and
+    /// not the range scorer's winner — see [`crate::fauna::herd_default_hunt_kit`]. It is a
+    /// suggestion, not a rate: the *carry* is band-wide either way (issue #543). With no carrying
+    /// kit on the roster this map holds the *same* choice the range map does, and a penned herd
+    /// reads exactly as it did before.
     pub(crate) penned_parties: &'a HashMap<String, QuotedParty>,
     /// **The party for a herd whose species the roster cannot resolve** — the hunt job's default,
     /// resolved unbounded, which is the same fallback every other unresolved field on the row gives.
@@ -613,8 +614,8 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
             let species_def = fauna.species_by_display(&entry.species);
             // **THIS HERD'S quoted party** — the kit the compose sheet opens on, memoized once per
             // species per source axis by the caller. **A corralled herd reads the PEN table**: a
-            // pen is collected on `EquipmentStat::PenCarry` and only the handling gear supplies it,
-            // which no score against the *species* can say (`fauna::herd_default_hunt_kit`). A
+            // pen has no fight stage, so the range score is meaningless there, which no score
+            // against the *species* can say (`fauna::herd_default_hunt_kit`). A
             // species the roster cannot resolve falls back to the hunt job's default, unbounded,
             // like every other unresolved field here.
             let axis = if herd.is_some_and(|herd| herd.is_corralled()) {
@@ -1149,6 +1150,24 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                         crate::fauna::herd_keeper_load(herd, fauna),
                     )
                 }),
+                // **THE BUILD TWIN OF THAT PAIR, AND THE ONLY PLACE A RING'S PILE IS PRICED** —
+                // the whole `animal:pen` build pile, at full coverage. It exists for word-for-word
+                // the reason `corral_upkeep_material_demand` above does: a **corralled** herd is the
+                // only source a ring is ever offered from, `RungKey::AnimalPen.above()` is `None`,
+                // and `build_material_cost` below is therefore empty on exactly the row the player
+                // is deciding on. `systems::labor::head_ring_leg` prices a ring's width at this same
+                // rung's `build_cost(RUNG_COST_UNSCALED)` and `build_material_wants` draws this same
+                // rung's pile against it, so a whole ring swallows exactly this list.
+                //
+                // **It takes NO herd**, unlike every neighbour here: those scale by
+                // `herd_keeper_load`, and this one must not. Penning carries no per-species
+                // multiplier and the ring's width is unscaled, so a scaled quote would show one
+                // price and charge another. The pile is a property of the ladder rung alone.
+                //
+                // On a **pastoral** herd this equals `build_material_cost` below **by
+                // construction** — the same `rung_material_pile(ladder, RungKey::AnimalPen)` reached
+                // through two selectors, never a second reading of the ladder.
+                corral_build_material_cost: rung_material_pile(ladder, RungKey::AnimalPen),
                 // **The plant twin's field**, so a client's build estimate is one expression across
                 // both webs — and **always `0` here**, because neither animal rung declares a
                 // `meter_decay`: an under-kept flock sheds animals instead. Nothing eats an animal
@@ -1186,7 +1205,10 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // The pile is the rung the `⌃` track would offer next — `RungKey::above` the one the
                 // herd stands on — resolved off the **ladder** at capture and published whether or
                 // not a build is in flight, exactly as `*WorkCost` beside it is. Empty at the top of
-                // the branch, which is the honest reading rather than a repeat of the pen's own.
+                // the branch, which is the honest reading rather than a repeat of the pen's own —
+                // **and the pen's own pile is published beside it as `corral_build_material_cost`**,
+                // which is the field a ring card reads. Without that name here the emptiness reads
+                // as "a ring is free", and the gap gets re-derived.
                 build_material_cost: herd
                     .map(|herd| {
                         crate::fauna::herd_rung_key(herd)
@@ -1307,7 +1329,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
 /// patch whose tile carries no food module forecasts at [`NO_FORAGE_SEASON`] — no per-worker gather at
 /// all, which is exactly what such a tile offers. **That is a reachable state since slice 5**: `Sow`
 /// places a Field on any ground the `plant:field` rung's `site_requirement` accepts — module or not —
-/// and a Field's managed harvest is biomass-based and seasonless, so it forecasts correctly regardless. Captured at
+/// and a Field is gathered through the same seasonless `forage_take` path as every rung beneath it, so it forecasts correctly regardless. Captured at
 /// `output_multiplier = 1.0`: the client scales by the acting band's `outputMultiplier`.
 ///
 /// `tile_quotes` answers **what grows there** — the named plants the tile's forage capacity is made
@@ -1455,8 +1477,8 @@ pub(crate) fn snapshot_forage_patches(
                 tended_yield: forecast.managed_yield.provisions,
                 // The Sow rung (plant 3): its own two meters — independent of cultivation's, since a
                 // Field may stand on ground that was never tended — and its own preparing/payoff
-                // pair. `field_provisions` is the same helper the labor arm pays a Field with, so the
-                // client's "then Y" is the number the sim will hand over.
+                // pair. `field_yield` below comes off the same `rung_payoff` seam the labor arm pays a
+                // Field with, so the client's "then Y" is the number the sim will hand over.
                 field_progress: build_fraction(
                     crate::forage::patch_rung_work_done(patch, RungKey::PlantField, ladder),
                     field_work_cost,

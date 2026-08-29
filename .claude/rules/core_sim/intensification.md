@@ -310,7 +310,7 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   (`docs/plan_standing_upkeep.md` §2.2). `build_work_per_worker` is a **rate per worker**, so the
   count it multiplies has to be the workers actually doing the job — which means
   `systems::labor` resolves a **second `KitCoverage`** over the builders, beside the take crew's.
-  Every other tier that coverage answers (the hunt haul, the pen collection, the gather carry) is a
+  Every other tier that coverage answers (the animal carry, the gather carry) is a
   *take* rate and is rightly averaged over the take crew; this one is a **sum off the job**, so the
   average and the count must be over the same people or the product is neither. Averaged over six
   gatherers and multiplied by two builders, one set of hurdles takes a third of what those two
@@ -1085,8 +1085,8 @@ worked; a second axis would ask the player to state the same thing twice.
     BUILDERS' KIT IS DERIVED PER QUEUE ENTRY" owns the seam; the guard is
     `equipment_config::tests::every_branch_of_the_ladder_has_a_builders_kit_that_serves_only_it`,
     which replaced *"every kit that supplies `build_work` offers the `builders` job"* — no longer the
-    invariant, since `husbandry` keeps its hurdles for the **hunt** (a pen is collected on
-    `pen_carry`) and gave the building up.
+    invariant, since `husbandry` keeps its hurdles for the **hunt** (a pen is worked from a Hunt
+    row) and gave the building up.
   - **`default_kits.builders` is `none`, as a FALL-BACK rather than the answer.** It is what the pool
     resolves when the row named nothing and either the queue is empty or no roster entry serves that
     web. **The shipped opening moves here**: a start-stocked band's builders are geared from turn one

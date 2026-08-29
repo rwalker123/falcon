@@ -2813,19 +2813,6 @@ pub fn advance_labor_allocation(
             let hunt_per_worker_biomass = crew_coverage.weighted_rate(|kit| {
                 equipment_cfg.hunt_per_worker_biomass_capacity(baseline_haul_rate, kit, &band_kit)
             });
-            // **And its PEN collection tier** — the **husbandry gear's**, resolved against the same
-            // shipped `baseline_haul_rate` a pen harvest has always been capped by, so a keeper who
-            // brought handling gear collects exactly what a pen always collected. A separate stat
-            // from the haul above because a sled drags a carcass in off the range and a pen stands
-            // at the camp: a crew that corralled its herd and stayed on the big-game kit is working
-            // the pen with the wrong tool, and collects at the bare rate.
-            //
-            // **Averaged over the crews too** — handling gear covers keepers one unit at a time
-            // exactly as a spear covers a hunter, so a pen worked by more keepers than the band has
-            // hurdles for collects at the mix of the two tiers.
-            let pen_per_worker_biomass = crew_coverage.weighted_rate(|kit| {
-                equipment_cfg.pen_per_worker_biomass_capacity(baseline_haul_rate, kit, &band_kit)
-            });
             // **And its GATHER tier** — the forage web's carry, which before §4.8's "one kit, one
             // job" correction had no kit at all. It is the undipped, pre-seasonal per-gatherer
             // throughput every `forage_take`, gather forecast and staffing inversion below is capped
@@ -3431,12 +3418,14 @@ pub fn advance_labor_allocation(
                     // **The FODDER account at rung 2** (issue #427). *A harvest* of `B` biomass pays
                     // `B × yield.*` into all three accounts (`docs/plan_flora_roster.md` §3) — that is
                     // unconditional, not a Field-only rule. So the SAME take `forage_take` just paid
-                    // food from is routed through the patch basket's fodder component here, exactly
-                    // as the Field arm routes its managed harvest. `0` for a basket with no fodder
-                    // crop in it, so this is commodity-generic with no `role` branch. **No second
-                    // collection cap**: unlike a Field's managed rate, the take is already
-                    // worker-capped inside `forage_take`, so the crop the crew carries home *is* the
-                    // take it made.
+                    // food from is routed through the patch basket's fodder component here. `0`
+                    // for a basket with no fodder crop in it, so this is commodity-generic with no
+                    // `role` branch. **No second collection cap**: the take is already worker-capped
+                    // inside `forage_take`, so the crop the crew carries home *is* the take it made.
+                    // (This used to add *"unlike a Field's managed rate"* and *"exactly as the Field
+                    // arm routes its managed harvest"* — there is no Field arm and no managed rate
+                    // since `docs/plan_standing_upkeep.md` §4.10; **every** plant rung is drawn down
+                    // and worker-capped through this one path.)
                     //
                     // **The WILD credit is gated on Foddering** (#433) — the same 2007 capability the
                     // pen's own hay draw reads. Since every rate is now the basket's average, a wild
@@ -3897,7 +3886,7 @@ pub fn advance_labor_allocation(
                         // The forward-projected steady headline (computed pre-take above).
                         realized: forage_realized,
                         arrivals,
-                        // Resolved: a fact, so the band is a point — see the Field arm above.
+                        // Resolved: a fact, so the band is a point.
                         range: YieldRange::certain(provisions.to_f32()),
                         wasted: forage_provisions(
                             (production - take).max(0.0),
@@ -3992,22 +3981,19 @@ pub fn advance_labor_allocation(
                         continue;
                     };
                     // **WHICH CARRY TIER THIS HERD IS WORKED AT — the pen's or the range's.**
-                    // `hunt_forecast` splits on exactly this predicate — for the carry rate here, and
-                    // for the fight the pen does not resolve — so **one** rate serves the whole arm:
-                    // the branch that runs is decided by the herd, and the other is never reached.
+                    // **ONE CARRY RATE, PENNED OR WILD** (issue #543). What a worker can carry is a
+                    // fact about the people and their gear, asked once from the band's kit and blind
+                    // to the ground they are standing on — so the pen reads the same
+                    // `hunt_per_worker_biomass` the range does. A `PenCarry` stat used to fork here;
+                    // it survived the item that discriminated (the hurdles, retired to a material by
+                    // `docs/plan_standing_upkeep.md` §4.9 item 12) with nothing left to say, and was
+                    // deleted. See `.claude/rules/core_sim/equipment.md` → "Carry is carry".
                     //
-                    // **It is resolved HERE, once, and every forecast, projection, crew inversion
+                    // **It is resolved once, above, and every forecast, projection, crew inversion
                     // and take below reads it** — because the forecast-equals-actual invariant
                     // (`yield-forecast.md`) is exactly the promise that the number the seed quoted
-                    // and the number the turn pays came from one place. A pen priced at the sled's
-                    // tier while it collected at the husbandry gear's is that invariant broken, and
-                    // it is what `a_field_and_a_pen_collapse_the_policy_axis_but_still_need_carrying_home`
-                    // caught the moment the two stats parted.
-                    let herd_carry_per_worker = if herd.is_corralled() {
-                        pen_per_worker_biomass
-                    } else {
-                        hunt_per_worker_biomass
-                    };
+                    // and the number the turn pays came from one place.
+                    let herd_carry_per_worker = hunt_per_worker_biomass;
                     // **THE LIVE VERB, DERIVED** — the animal twin of the Forage arm's: the
                     // declaration counts only where the meter it names is at zero, and both animal
                     // meters are monotone, so a part-built rung stays in flight until it completes.
@@ -4260,8 +4246,9 @@ pub fn advance_labor_allocation(
                         //   No weapons, no beef.
                         //
                         // So this is the *same call* the range arm makes below, with the pen's own
-                        // two terms handed in: the **husbandry** carry tier (`herd_carry_per_worker`,
-                        // off `pen_carry`) and this assignment's own floor. The band has no carry
+                        // two terms handed in: the band's own carry tier (`herd_carry_per_worker`,
+                        // off `hunt_carry` — carry is carry, issue #543) and this assignment's own
+                        // floor. The band has no carry
                         // room, so the cap is unbounded exactly as the Hunt row passes it.
                         //
                         // `hunt_take` does the room, the three stages, the wound store-back, the
@@ -4290,7 +4277,7 @@ pub fn advance_labor_allocation(
                         // it home — so `biomass_collected` rides [`AnimalTake::killed_biomass`] while
                         // `biomass_hauled` rides `carried`. Charging both over `carried` under-charged
                         // the handling gear for exactly the animal it did the most work on: waste in
-                        // this branch needs `workers × pen_carry < body_mass`, which a Wild Aurochs
+                        // this branch needs `workers × hunt_carry < body_mass`, which a Wild Aurochs
                         // (`body_mass 120`, one required keeper at `animals_per_herder 12`) reaches on
                         // every slaughter — 120 killed against 40 carried at the equipped tier.
                         //
@@ -5138,7 +5125,7 @@ pub fn advance_labor_allocation(
                         // so it is smooth where `actual` (the whole-animal kill) pulses.
                         realized: hunt_realized.provisions,
                         arrivals,
-                        // Resolved: a fact, so the band is a point — see the Field arm above. This is
+                        // Resolved: a fact, so the band is a point. This is
                         // the row whose *seeded* twin carries a real distribution once `wariness` or
                         // a sub-1 `hit_chance` is authored.
                         range: YieldRange::certain(provisions.to_f32()),
@@ -8414,9 +8401,9 @@ mod labor_yield_tests {
                     floor: 0.5,
                 },
                 workers: WORKERS,
-                // The keeper carries husbandry gear — the only kit supplying
-                // `EquipmentStat::PenCarry` — so the crew inversion below can be quoted at the
-                // shipped `hunt.per_worker_biomass_capacity` the pen has always collected at.
+                // The keeper carries the hunt job's own kit, which is what a pen is collected on
+                // (issue #543: carry is carry), so the crew inversion below can be quoted at the
+                // shipped haul tier the pen has always collected at.
                 kit: Some(
                     crate::equipment_config::EquipmentConfig::builtin()
                         .kit("big_game")
@@ -9663,14 +9650,15 @@ mod labor_yield_tests {
                     floor: 0.5,
                 },
                 workers: 1,
-                // **The keeper carries HUSBANDRY GEAR, and this row is why the kit exists.** A pen
-                // is collected at `EquipmentStat::PenCarry`, which only the husbandry kit supplies;
-                // the hunt job's default (`None` → `big_game`) carries a sled, which drags a carcass
-                // in off the range and does nothing for a pen at the camp. `herd_forecast` above is
-                // quoted at `equipped_haul_rate()` — the equipped rate on both
-                // stats — so naming the kit is what makes the forecast and the payout the same
-                // number. Leaving it `None` prices this crew bare-handed, which is a real reading
-                // and a different test.
+                // **The keeper is NAMED onto a sledded kit deliberately.** A pen is collected on
+                // `EquipmentStat::HuntCarry` — carry is a fact about the people and their gear and
+                // never about the ground (issue #543) — and `herd_forecast` above is quoted at
+                // `equipped_haul_rate()`, so naming a kit that carries a sled is what makes the
+                // forecast and the payout the same number. Leaving it `None` would still resolve
+                // `big_game`, which carries one; naming it keeps the fixture's claim independent of
+                // what `default_kits.hunt` happens to be. (This comment used to say the row existed
+                // because *"only the husbandry kit supplies"* the pen's rate — that kit and that stat
+                // are both gone.)
                 kit: Some(
                     crate::equipment_config::EquipmentConfig::builtin()
                         .kit("big_game")
@@ -9725,8 +9713,9 @@ mod labor_yield_tests {
     // its three fixture constants (`UNSEATABLE_BODY_MASS`, `UNSEATABLE_PEN_CAP`,
     // `PEN_STOCK_ABOVE_ESCAPEMENT`) with it — it asserted `butchered > hauled` across **two** items,
     // and the material half of the standing upkeep put both quanta on the **sled**
-    // (`docs/plan_standing_upkeep.md` §4.9 item 12): the hurdles became a material, so `pen_carry`
-    // and `biomass_collected` moved to the sled beside `biomass_hauled`. The comparison would now be
+    // (`docs/plan_standing_upkeep.md` §4.9 item 12): the hurdles became a material, so the pen's
+    // collection rate and `biomass_collected` moved to the sled beside `biomass_hauled` — and the
+    // rate was then deleted outright (issue #543). The comparison would now be
     // the sled against itself and would pass vacuously. What survives untested here is the two
     // BASES, which `equipment.md` still states: a pen charges `killed_biomass` on one quantum and
     // `carried` on the other.

@@ -1731,6 +1731,34 @@ picker only means what it looks like once the kit belongs to the site.
 > every mark that wears it, and puts the goods cost at the point of decision rather than in the queue
 > afterwards.
 >
+> ⛔ **AND THAT ARGUMENT NAMED A NUMBER THAT WAS NOT ON THE WIRE.** The card shipped stating the ring's
+> WORK price and its standing bill, and **not** the pile — the one fact the paragraph above argues it
+> exists to state. `RungLadder.ring_row` asked `buildMaterialCost`, whose field prices the rung
+> DIRECTLY ABOVE where the source stands; the card only ever opens on a herd on `animal:pen`,
+> `RungKey::AnimalPen.above()` is `None`, and the sim published an empty pile there **on purpose** —
+> *"Empty at the top of the branch, which is the honest reading rather than a repeat of the pen's
+> own"*. Every `MaterialPayoff` field on the herd table was searched: nothing carried `animal:pen`'s
+> own build pile to a herd standing on it, so this was a **sim-side gap**, and re-deriving the pile in
+> the client would have been the second producer this arc keeps deleting.
+>
+> **Closed by `corralBuildMaterialCost`** on the herd wire — the `animal:pen` rung's own pile,
+> UNSCALED (penning takes no per-species multiplier and `head_ring_leg` prices the ring's width at
+> `RUNG_COST_UNSCALED`, so a scaled quote would show one price and charge another), resolved live off
+> the ladder and published whether or not a ring is in flight. It is the **build** twin of
+> `corralUpkeepMaterialDemand`, which exists for the mirror-image reason one row down: a *pastoral*
+> herd is the only source the `⌃` offers the Pen rung from and its own rung declares no material, so
+> the stamped bill is empty on exactly the row the player is deciding on. On a pastoral herd the two
+> build fields agree **by construction** — one `rung_material_pile(ladder, AnimalPen)` call reached
+> through two selectors, not a second reading. There is deliberately no `tameBuildMaterialCost`: the
+> tame rung has no repeatable increment, so nothing would read it.
+>
+> **The reusable lesson, and it is the same one item 12d recorded:** a design argument can name a
+> quantity no published field carries, and a client slice can ship *around* the hole while every
+> assertion it makes passes — because those assertions said the card was PRESENT and never that it
+> said what the argument promised. The harness claim written at the time was deliberately partial
+> (liveness, the work price and the hold aside, and **nothing** about the pile) precisely so it would
+> neither cement the defect nor fail on shipped behaviour; the pile's claim lands with the field.
+>
 > **A ring in flight shows a BADGE, not a caret**, exactly as a queued build does, so a second ring
 > cannot be declared over the first — `Herd::pen_extending` is already the sim's gate for that and no
 > new one is needed. **The tile card's `Extend pen` button and its `Fencing N%` badge retire with the

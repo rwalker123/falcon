@@ -269,9 +269,16 @@ static func build_track(rows: Array[Dictionary], on_pick: Callable) -> VBoxConta
 ## `_hold_price_asides` — the same three sentences in the same order the `⌃` opens on every other
 ## rung — so the caret means ONE thing on every mark that wears it.
 ##
-## **THE PRICE IS `animal:pen`'s OWN**, because that is what a ring is: the same rung, again. The
-## herd's `pen_extend_cost` is NOT read here — the sim stamps it only once a ring is accruing, so it
-## is the in-flight meter's denominator and says nothing about a ring nobody has declared.
+## **THE PRICE IS `animal:pen`'s OWN, IN BOTH CURRENCIES**, because that is what a ring is: the same
+## rung, again. The work half is `corral_work_cost`; the pile is
+## `SourceForecast.corral_build_material_cost` — the pen rung's own, NOT `build_material_cost`, which
+## prices the rung DIRECTLY ABOVE the source and is therefore empty on every corralled herd
+## (`animal:pen` is the top of the animal branch, and the sim publishes nothing there on purpose).
+## The card shipped quoting `build_material_cost` and so stated no pile at all, which made this
+## paragraph's claim aspirational for a whole slice; the pen-rung key is what makes it true.
+##
+## The herd's `pen_extend_cost` is NOT read here — the sim stamps it only once a ring is accruing, so
+## it is the in-flight meter's denominator and says nothing about a ring nobody has declared.
 ##
 ## `band` rides in for the shelf, exactly as `track` takes it: the stall warning weighs the pile
 ## against what this band actually holds, which the SOURCE cannot answer for.
@@ -283,7 +290,7 @@ static func ring_row(source: Dictionary, prefix: String, band: Dictionary) -> Di
         ROW_WORK_KEY: SourceForecast.build_work_cost(source, prefix, verb),
         ROW_TURNS_KEY: SourceForecast.BUILD_TURNS_NO_ESTIMATE,
         ROW_BUILD_ASIDES_KEY: _build_price_asides(
-            SourceForecast.build_material_cost(source, prefix), _material_store(band)),
+            SourceForecast.corral_build_material_cost(source, prefix), _material_store(band)),
         ROW_HOLD_ASIDES_KEY: _hold_price_asides(source, prefix, verb),
     }
 

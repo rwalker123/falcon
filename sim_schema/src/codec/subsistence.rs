@@ -327,9 +327,7 @@ fn create_kits<'a>(
                 attack: state.attack,
                 huntCarryPerWorkerBiomass: state.hunt_carry_per_worker_biomass,
                 forageCarryPerWorkerBiomass: state.forage_carry_per_worker_biomass,
-                // The pen's and the scout vantage's tiers — the two roles the roster gained with
-                // husbandry gear and wayfinding gear.
-                penCarryPerWorkerBiomass: state.pen_carry_per_worker_biomass,
+                // The scout vantage's tier — the role the roster gained with wayfinding gear.
                 scoutVantageRange: state.scout_vantage_range,
                 // What the kit DOES beyond the tiers — all three neutral at 1.0, so a kit declaring
                 // none of them encodes exactly as it did before they existed.
@@ -443,6 +441,8 @@ fn create_herds<'a>(
             create_material_payoffs(builder, &herd.tame_upkeep_material_demand);
         let corral_upkeep_material_demand =
             create_material_payoffs(builder, &herd.corral_upkeep_material_demand);
+        let corral_build_material_cost =
+            create_material_payoffs(builder, &herd.corral_build_material_cost);
         let entry = fb::HerdTelemetryState::create(
             builder,
             &fb::HerdTelemetryStateArgs {
@@ -599,6 +599,10 @@ fn create_herds<'a>(
                 // **WHAT THIS SITE IS KEPT WITH** — the resolved kit, and whether a band stated it.
                 upkeepKitId: Some(upkeep_kit_id),
                 upkeepKitNamed: herd.upkeep_kit_named,
+                // **WHAT A PEN RING SWALLOWS TO RAISE** — appended last (append-only wire), and
+                // the material twin of `corralWorkCost`. It carries what `buildMaterialCost` above
+                // cannot on a CORRALLED herd, where the rung above the pen is none.
+                corralBuildMaterialCost: Some(corral_build_material_cost),
             },
         );
         entries.push(entry);

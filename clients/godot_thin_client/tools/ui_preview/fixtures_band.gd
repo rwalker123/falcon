@@ -320,16 +320,13 @@ const KIT_FORAGE_CARRY_EQUIPPED := 8.0
 
 const KIT_FORAGE_CARRY_BARE := 1.6
 
-## **THE PEN'S TIER, AND IT IS NOT THE SLED'S.** A sled drags a carcass in off the range and a pen
-## stands at the camp, so a kit carrying only a sled collects a pen at the bare rate. The equipped
-## side is `labor_config.hunt.per_worker_biomass_capacity` (the number a pen harvest has always been
-## capped by); the bare side is `equipment.json`'s `sled` declaration, which owns both sides of the
-## axis now that the hurdles have left the roster.
-##
-## **NO ENTRY OF `kit_roster_fixture()` EQUIPS IT**, deliberately — the shared roster carries no
-## `husbandry` kit, so adding one would change what every hunt picker in both harnesses lists. The
-## equipped tier is here for the chapters that build their OWN roster to exercise the axis.
-const KIT_PEN_CARRY_EQUIPPED := 40.0
+# ⛔ **THE PEN'S TIER IS THE SLED'S** (issue #543). A `KIT_PEN_CARRY_EQUIPPED := 40.0` and a
+# `KIT_PEN_CARRY_BARE := 12.0` stood here for a `pen_carry_per_worker_biomass` field, on the argument
+# that *"a sled drags a carcass in off the range and a pen stands at the camp, so a kit carrying only
+# a sled collects a pen at the bare rate."* The item that made that true — the hurdles — became a
+# MATERIAL, both sides of the rate landed on the sled, and `EquipmentStat::PenCarry` was deleted with
+# its three wire fields. A pen fixture states `KIT_HUNT_CARRY_EQUIPPED` / `KIT_HUNT_CARRY_BARE` above,
+# the same pair a wild hunt does; there is no second carry to stamp.
 
 ## **THE BUILD AXIS — WORK UNITS off the job per equipped worker, neutral at 0.0, never a tier**
 ## (issue #515; the multiplier it replaced retired with `docs/plan_unit_costed_work.md` §6). The
@@ -369,8 +366,6 @@ const KIT_BUILD_SATURATING_CREW_HANDLING := 2
 ## …and the neutral, which is every kit that carries nothing helping a build: nobody is armed for one,
 ## so the gear term is nothing at any crew size.
 const KIT_BUILD_SATURATING_CREW_NONE := 0
-
-const KIT_PEN_CARRY_BARE := 12.0
 
 ## **WHAT A POSTED SCOUT VANTAGE CAN MAKE OUT** — `labor_config.scout.vantage_range` equipped, the
 ## `wayfinding` item's own declaration bare. How far out the vantage is POSTED is not a kit axis at
@@ -578,7 +573,6 @@ static func kit_roster_fixture() -> Array:
 			"attack": KIT_ATTACK_EQUIPPED,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_EQUIPPED,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
-			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
 			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
@@ -589,7 +583,6 @@ static func kit_roster_fixture() -> Array:
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_EQUIPPED,
-			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
 			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
@@ -600,7 +593,6 @@ static func kit_roster_fixture() -> Array:
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
-			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_EQUIPPED,
 			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
@@ -611,7 +603,6 @@ static func kit_roster_fixture() -> Array:
 			"attack": KIT_ATTACK_CLUBS,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
-			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
 			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
@@ -629,7 +620,6 @@ static func kit_roster_fixture() -> Array:
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
-			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
 			"build_work_per_worker": KIT_BUILD_WORK_HANDLING,
 			"build_work_branch": KitRoster.BUILD_BRANCH_ANIMAL,
@@ -652,7 +642,6 @@ static func kit_roster_fixture() -> Array:
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
-			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
 			"build_work_per_worker": KIT_BUILD_WORK_HANDLING,
 			"build_work_branch": KitRoster.BUILD_BRANCH_PLANT,
@@ -674,7 +663,6 @@ static func kit_roster_fixture() -> Array:
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
-			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
 			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
@@ -698,12 +686,12 @@ static func kit_roster_fixture() -> Array:
 ##
 ## **EACH OF THE TWO IS SUPPLIED BY ONE ROSTER KIT, WHICH IS WHY ONLY THE VANTAGE TAKES AN ARGUMENT.**
 ## The wayfinding gear equips the vantage, so the `wayfinding` row moves with that item's condition and
-## every other row reads the bare tier — a scout's reach is not a thing a sled or a basket can buy. The
-## PEN is bare on every row here because **no kit `kit_roster_fixture()` offers equips it**: the axis
-## is equipped through the `husbandry` kit, which that roster does not carry (the one chapter that
-## needs it builds its own roster and its own row). A table that let the hunt carry stand in for the
-## pen would agree with a client that had put the roster fall-back back — the two are separate tiers on
-## one item, and a band can hold the bare one while the other is fresh.
+## every other row reads the bare tier — a scout's reach is not a thing a sled or a basket can buy.
+##
+## ⛔ **A `pen_carry_per_worker_biomass` RODE EVERY ROW AND IS GONE** (issue #543). Its note here read
+## *"a table that let the hunt carry stand in for the pen would agree with a client that had put the
+## roster fall-back back — the two are separate tiers on one item."* They are not two tiers any more:
+## the hunt carry IS what a pen is collected on, so the row states it once.
 ##
 ## `KIT_ID_TRAPPING` gets a row although `kit_roster_fixture()` does not offer it: the roster is the
 ## PICKER's list, this is the BAND's answer sheet, and the trapping kit is a shipped kit that one chapter
@@ -718,43 +706,36 @@ static func kit_tiers_rows(attack: float, hunt_carry: float, forage_carry: float
 		{"kit_id": KIT_ID_BIG_GAME, "attack": attack,
 			"hunt_carry_per_worker_biomass": hunt_carry,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
-			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE},
 		{"kit_id": KIT_ID_TRAPPING, "attack": attack,
 			"hunt_carry_per_worker_biomass": hunt_carry,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
-			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE},
 		{"kit_id": KIT_ID_GATHERING, "attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": forage_carry,
-			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE},
 		{"kit_id": KIT_ID_WAYFINDING, "attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
-			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": scout_vantage},
 		{"kit_id": KIT_ID_WARRIOR, "attack": warrior_attack,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
-			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE},
 		{"kit_id": KIT_ID_NONE, "attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
-			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE},
 	]
 
 ## A band carrying EVERY item the roster ships, each at its own condition and each role at the tier
 ## this band's own job defaults resolve to.
 ##
-## **THE PEN TIER IS THE BARE ONE, AND THAT IS THE FIXTURE BEING HONEST.** `kit_roster_fixture()`
-## carries no pen-axis kit, so the HUNT default (`big_game`) does not equip the pen axis and a
-## keeper collects at 12 however healthy the item is — which is also what makes the pen clause
-## assertable against the sled's own 40 rather than agreeing with it by construction. The per-kit rows
-## beside it say the same thing kit by kit, which is what a picker reads.
+## ⛔ **IT STATED A SEPARATE PEN TIER AND NO LONGER DOES** (issue #543). The note read *"THE PEN TIER
+## IS THE BARE ONE, AND THAT IS THE FIXTURE BEING HONEST … a keeper collects at 12 however healthy the
+## item is."* With `EquipmentStat::PenCarry` deleted a keeper collects at the sled's own rate, so this
+## band's `hunt_carry_per_worker_biomass` is what a pen reads and no second field is stamped.
 static func with_equipped_kit(band: Dictionary) -> Dictionary:
 	band["kit_item_conditions"] = kit_condition_rows()
 	# The uniform case, and it is the NORMAL one — every hunter on the same gear, so the band publishes
@@ -768,7 +749,6 @@ static func with_equipped_kit(band: Dictionary) -> Dictionary:
 	band["hunter_attack"] = KIT_ATTACK_EQUIPPED
 	band["hunt_carry_per_worker_biomass"] = KIT_HUNT_CARRY_EQUIPPED
 	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_EQUIPPED
-	band["pen_carry_per_worker_biomass"] = KIT_PEN_CARRY_BARE
 	band["scout_vantage_range"] = KIT_SCOUT_VANTAGE_EQUIPPED
 	band["warrior_attack"] = KIT_ATTACK_CLUBS
 	return band
@@ -815,7 +795,6 @@ static func with_bare_hands(band: Dictionary) -> Dictionary:
 	band["hunter_attack"] = KIT_ATTACK_BARE
 	band["hunt_carry_per_worker_biomass"] = KIT_HUNT_CARRY_BARE
 	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_BARE
-	band["pen_carry_per_worker_biomass"] = KIT_PEN_CARRY_BARE
 	band["scout_vantage_range"] = KIT_SCOUT_VANTAGE_BARE
 	# A camp with nothing left fights a raid with hands, i.e. the SAME creature `attack` a bare-handed
 	# hunter has — one number, reached from two roles, and the row must still name which fight it is.

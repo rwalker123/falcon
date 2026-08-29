@@ -403,8 +403,8 @@ Sow.
   committed to *that* plant** (slots 18/20), in `tendedYield`/`fieldYield`'s units so the client can
   substitute one for the other. The ratio **is those payoffs divided** (`forage::commit_yield_ratio`
   takes the two numbers, it does not re-derive them), and each payoff comes from `forage::rung_payoff`
-  — the *same* `tended_provisions`/`field_provisions`/Sustain-MSY functions the sim quotes and pays
-  with — against a hypothetical patch at this tile's own `K`, concentrated by the rung, at the
+  — the *same* Sustain-MSY expressions the sim quotes and pays with, `rung_payoff` asked about the
+  rung by name (the rung-3 `field_provisions` this once named went with the managed harvest, below) — against a hypothetical patch at this tile's own `K`, concentrated by the rung, at the
   standing crop that rung settles at. `> 1` beats gathering, `< 1` is a **loss the player stays free to
   choose** — never clamped, never hidden, never refused; that choice *is* the decision. `0` means
   *cannot climb this rung* (distinct from a real ratio of 0, which cannot occur). **The raw
@@ -442,11 +442,15 @@ second commodity key on the *same* `LocalStore` as `FOOD`, so it round-trips thr
 and the two stores **never convert**.
 
 - **The plant half — the yield vector finally routes by account.** A Field's harvest credits each yield
-  component to its own store with **no `role` branch**: `field_provisions` → `FOOD` (a grain Field), the
-  new `field_fodder` → `FODDER` (a hay Field), each capped by its own per-worker collection
-  (`managed_per_worker_yield` / `managed_per_worker_fodder`). A grain crop's `field_fodder` is `0` (its
-  vector pays no fodder); a hay crop's `field_provisions` is `0` (hay is no food) — the vector does the
-  routing. `hay_grass` (`flora_config.json`, `role: fodder`, `cultivation_ceiling: field`, `yield.fodder
+  component to its own store with **no `role` branch**: the food component → `FOOD` (a grain Field), the
+  fodder component → `FODDER` (a hay Field). A grain crop's fodder reading is `0` (its vector pays no
+  fodder); a hay crop's food reading is `0` (hay is no food) — the vector does the routing.
+  > **As written this named `field_provisions` / `field_fodder`, "each capped by its own per-worker
+  > collection (`managed_per_worker_yield` / `managed_per_worker_fodder`)".** All four went with the
+  > rung-3 **managed harvest** (`docs/plan_standing_upkeep.md` §4.10; `forage.rs` → "RETIRED: the whole
+  > rung-3 MANAGED HARVEST"). **The ROUTING claim above is what survived** — a Field is now drawn down
+  > through the ordinary `forage_take` path, worker-capped once inside it like every rung beneath it,
+  > so there are no per-account collection caps left to name. `hay_grass` (`flora_config.json`, `role: fodder`, `cultivation_ceiling: field`, `yield.fodder
   0.20`) hosts the good sowable farmland (AlluvialPlain/Floodplain/RiverDelta/PrairieSteppe/RollingHills),
   so it **competes with grain for the same scarce sowable tiles** — calories *or* herd-ceiling from one
   river-valley tile. Adding it dilutes those baskets (normalization) — economy-neutral at the wild rung,
@@ -518,14 +522,18 @@ same scarce sowable tile" is the land-use tension, and *cash* is now literally *
 > `docs/plan_contact_and_logistics.md` §Q5 carries the argument. The picker's cash quote came back as
 > `commit_material_payoff` — see "The crop picker's cash quote is PER MATERIAL" below.
 
-- **The plant half — the vector routes by account, no `role` branch.** A Field's managed harvest
-  credits each component to its own account, commodity-generically: `field_provisions` → the band's
-  `FOOD` store, `field_fodder` → its `FODDER` store, and `credit_material_yield` → its material
-  batches. A cash crop's `field_provisions` is `0` (worthless as food) and a grain's material list is
-  empty — the vector does the routing.
-- **The MATERIAL account reads the harvest in BIOMASS** (`forage::field_harvest_biomass`) rather than
-  scaling off one of the scalar currencies, because a cash Field's provisions are `0` and there would
-  be nothing to scale. A Field's basket is 100% its crop, so it credits exactly that crop's reading.
+- **The plant half — the vector routes by account, no `role` branch.** A Field's harvest credits each
+  component to its own account, commodity-generically: the food component → the band's `FOOD` store,
+  the fodder component → its `FODDER` store, and `credit_material_yield` → its material batches. A cash
+  crop's food reading is `0` (worthless as food) and a grain's material list is empty — the vector does
+  the routing. (**Written as *"a Field's MANAGED harvest… `field_provisions` → FOOD, `field_fodder` →
+  FODDER"***; the managed harvest and both helpers are retired — §4.10 — and a Field is drawn down
+  through `forage_take`. The routing is unchanged.)
+- **The MATERIAL account reads the harvest in BIOMASS** rather than scaling off one of the scalar
+  currencies, because a cash Field's provisions are `0` and there would be nothing to scale. A Field's
+  basket is 100% its crop, so it credits exactly that crop's reading. (The seam named here was
+  `forage::field_harvest_biomass`, retired with the rest; it is `patch_material_yields` off the
+  ordinary take now.)
 - **`provisions 0.0` is SAFE.** `patch_species_quality` divides by the **wild**
   `provisions_per_biomass`, never the species rate, so a 0-provisions cash crop yields exactly 0 food
   with no divide-by-zero — and `YieldVector::pays_something()` passes **because the species names
@@ -802,13 +810,13 @@ a restoration.
   `LocalStore::material_total`, which sums the same way. It carries **no quality reading**: a rating
   is a characteristic vector on the batch the harvest creates, and a picker row asks the flat
   question *"how much of what"*.
-- **Priced on each rung's OWN harvest**, through the same expressions the payout runs:
-  `field_harvest_production` at rung 3 and `tended_msy_take` at rung 2. `field_harvest_production` was
-  **split out of `field_harvest_biomass`** for exactly the reason `tended_msy_take` was extracted —
-  it is the `production` term of the payout's own `min(production, collection)`, so a Field staffed
-  past its collection cap quotes and pays the identical number, and there is no second copy of
-  the rung-3 harvest to drift. (Rung 3's flat managed rate is retired — `cultivation.md` → "What a
-  Field buys" — so what must not drift there is now the production gains.)
+- **Priced on each rung's OWN harvest**, through the same expression the payout runs — `rung_msy_take`
+  asked about the rung by name, at rung 3 exactly as at rung 2, so there is no second copy of a rung's
+  harvest to drift from the payout. (This named `field_harvest_production`, "split out of
+  `field_harvest_biomass`… the `production` term of the payout's own `min(production, collection)`".
+  Both went with the rung-3 managed harvest — `docs/plan_standing_upkeep.md` §4.10 — and with them the
+  `min(production, collection)` shape: a Field is worker-capped once inside `forage_take` like every
+  rung beneath it. What must not drift at rung 3 is now the production gains.)
 - **EMPTY MEANS "NO ROW", NEVER "ZERO"**, and this is the field's contract rather than a nicety: a
   client renders one row per entry, so an empty quote is *no row* while a `0`-valued entry would read
   as a cash crop that pays badly. Empty is what a plant paying no material reports **and** what a
@@ -867,7 +875,8 @@ dropped its crop's other accounts on the floor — a rung-2 cash crop (`provisio
 produced **nothing at all** while being drawn down at full MSY every turn (issue #427). The same take
 now feeds every account at rung 2:
 
-- **`tended_take_fodder`** (`forage.rs`) — the take-driven twin of `field_fodder`, resolving its rate
+- **`tended_take_fodder`** (`forage.rs`) — the take-driven twin of the rung-3 fodder credit (then the
+  retired `field_fodder`, a managed rate; rung 3 is take-driven too now), resolving its rate
   through `patch_fodder_per_biomass`, the fodder twin of the `patch_provisions_per_biomass`
   conversion seam. It reads `committed_species`, so both scalar accounts switch on together the turn
   the rung completes, and both read `0` for a crop whose vector does not pay them — commodity-generic,
@@ -888,8 +897,9 @@ now feeds every account at rung 2:
   `forage_tended_vector::a_deeper_floor_banks_more_material_off_a_tended_cash_crop`, which asserts the
   ordering as a **ratio against the biomass ratio**, so a per-depth bonus could not hide in it.
 - **No second collection cap.** `forage_take` already caps the take by `workers × per_worker_biomass ×
-  seasonal`, so unlike the Field arm's `managed_per_worker_fodder` there is nothing further to cap:
-  the crop the crew carries home *is* the take it made.
+  seasonal`, so there is nothing further to cap: the crop the crew carries home *is* the take it made.
+  (This read *"unlike the Field arm's `managed_per_worker_fodder`"* — there is no Field arm and no
+  per-account cap since §4.10; **every** plant rung is capped exactly here, once.)
 - **A mixed basket DECOMPOSES rather than averaging.** Food and fodder are interchangeable numbers, so
   a basket averages them into one rate; a material carries a characteristic vector, and averaging two
   species' would invent a plant that is not growing there. So a mixed tile pays one material credit
@@ -930,8 +940,9 @@ now feeds every account at rung 2:
   trade-account tests that sat beside them are deleted with the axis, and the file's own gravestone
   names each one and where its surviving claim moved to.
 - **The CROP PICKER quotes rung 2's FODDER account** (issue #419) — `commit_fodder_payoff` takes a
-  **`RungKey`**, exactly as `commit_payoff` does, and dispatches through `rung_fodder_payoff`:
-  `field_fodder` at rung 3, `tended_fodder` at rung 2, `0` below. On the wire as
+  **`RungKey`**, exactly as `commit_payoff` does, and dispatches through `rung_fodder_payoff`, which
+  asks the rung it is given for that rung's own fodder skim (at the time of writing, the retired
+  `field_fodder` at rung 3 and `tended_fodder` at rung 2; `0` below). On the wire as
   `FloraShareInfo.cultivateFodderPayoff`, the tended twin of `sowFodderPayoff`. Until then the seam
   hardcoded `RungKey::PlantField`, so a tended fodder crop was *paid* correctly (above) and
   *previewed* with a **Field's** number — a managed rate on the full standing crop standing in for an

@@ -7142,8 +7142,8 @@ func _assert_map_path_states_kit() -> void:
 ## likely to be mis-wired are the ones whose tiers resolve through a DIFFERENT job's default: a
 ## wayfinding row quoting the hunt kit and a clubs row quoting `hunter_attack` are both perfectly
 ## plausible-looking rows carrying another kit's number. The fixture's tiers are all distinct, so a
-## swap cannot pass — the pen collects at 12.0 where the sled hauls 40.0, and the camp is defended at
-## 6 where the hunt attacks at 20.
+## swap cannot pass — the camp is defended at 6 where the hunt attacks at 20, and a scout sees 2 tiles
+## where the sled hauls 40.0.
 ##
 ## Read per LINE, like `ui_preview`'s kit assertions: the rows share a shape, so a whole-popover
 ## `contains` would be satisfied by the WRONG row.
@@ -7153,27 +7153,26 @@ func _assert_map_path_states_kit() -> void:
 ## faction page, so there is no click left to cover; what survives is the COMPOSITION, which the
 ## crafting panel's kit ledger and the compose sheet's role hint both still read, and which is what
 ## every claim below was ever about.
+## ⛔ **THE WORDS OF A CLAUSE THAT MUST NO LONGER APPEAR** (issue #543), spelled HERE rather than
+## imported: `DetailFormat.KIT_ROLE_PEN_CARRY_SUFFIX` is deleted, and a claim that a deleted constant
+## is absent would be a tautology about this file. Written as the words a player would read, so it
+## fails if the clause comes back under any tier.
+const PEN_COLLECTION_CLAUSE := "pen collection"
+
 func _assert_gear_breakdown_states_every_kit(band: Dictionary) -> void:
 	var popover := "\n".join(_hud._disclosures.kit_breakdown_lines(band))
 	_assert_band_panel("the gear popover opened at all (%d chars)" % popover.length(),
 		popover.contains(DetailFormat.KIT_BREAKDOWN_CLIFF_NOTE))
-	# **THE SLED CARRIES BOTH RATES AND THEY ARE STILL TWO NUMBERS** (`docs/plan_standing_upkeep.md`
-	# §4.9 item 12). `equipment.json` puts both sides of `pen_carry` on the sled — the item that used to
-	# declare the bare side left the roster with the hurdles — so the pen clause rides the SLED's row
-	# now. What has to stay true is that the two figures do not collapse into each other: a band on a
-	# stalking kit hunts at 40 and collects its pen at 12, and a readout that let the hunt carry stand
-	# in for the pen would be the mis-pairing this ledger keeps reproducing.
-	var pen_role := DetailFormat.KIT_ROLE_PEN_CARRY_SUFFIX % String.num(
-		BandFx.KIT_PEN_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS)
-	var pen_at_the_sleds_rate := DetailFormat.KIT_ROLE_PEN_CARRY_SUFFIX % String.num(
-		BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS)
+	# ⛔ **THE SLED STATES ONE CARRY, AND IT STATED TWO** (issue #543). The claim here was that *"the
+	# SLED states the PEN's own collection rate, never its hunt carry"* — the two being separate numbers
+	# (40 hunting, 12 at a pen) while the hurdles were an ITEM. §4.9 item 12 made hurdles a material and
+	# put both sides of the pair on this one item, so the clause was restating the hunt figure under a
+	# second name; `EquipmentStat::PenCarry` has since been deleted outright. **What is claimed now is
+	# the absence**: the row states the haul once, and there is no keeper clause behind it — paired with
+	# the liveness claim at the tail of this function, which requires the haul itself to be there.
 	var sled_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_SLED)
-	_assert_band_panel("the SLED states the PEN's own collection rate (%s), never its hunt carry (%s) — \"%s\""
-			% [pen_role, pen_at_the_sleds_rate, sled_line],
-		sled_line.contains(pen_role) and not sled_line.contains(pen_at_the_sleds_rate))
-	# …and the HUNT half is on the same row, which the tail of this function already asserts against
-	# `sled_line` — the pairing that stops either clause being satisfied by a row that dropped the
-	# other, so the claim is made once and read against one line.
+	_assert_band_panel("the SLED states its haul ONCE, with no second keeper clause — \"%s\"" % sled_line,
+		not sled_line.contains(PEN_COLLECTION_CLAUSE))
 	# **AND THE CROOK IS THE ANIMAL WEB'S ITEM NOW** — `hurdles` are a crafted MATERIAL and no item of
 	# that id is on the roster, so a ledger still keyed on it read `— bare hands` over an item every
 	# band carries. The row states its JOB rather than a carry rate, the crook's one effect being
@@ -7182,7 +7181,7 @@ func _assert_gear_breakdown_states_every_kit(band: Dictionary) -> void:
 	_assert_band_panel("the CROOK's row states what it is for (%s), and no carry rate — \"%s\""
 			% [DetailFormat.KIT_ROLE_CROOK, gear_line],
 		gear_line.contains(DetailFormat.KIT_ROLE_CROOK)
-			and not gear_line.contains(pen_role))
+			and not gear_line.contains(PEN_COLLECTION_CLAUSE))
 	_assert_band_panel("…beside its own condition (%s)" % String.num(
 			BandFx.KIT_CONDITION_CROOK, DetailFormat.KIT_CONDITION_DECIMALS),
 		gear_line.contains(String.num(BandFx.KIT_CONDITION_CROOK,
@@ -11031,7 +11030,16 @@ func _pen_price_herd_fixtures() -> Array:
 ## penned herd (`snapshot/subsistence.rs`: *"Empty at the top of the branch, which is the honest
 ## reading rather than a repeat of the pen's own"*). Leaving the pastoral row's pile stamped here would
 ## prop the ring card up with a list the game never sends to a herd in this position, and the frame
-## would show a price the player cannot see.
+## would show a price the player cannot see. **THE ERASE STAYS** now that the pile reaches the card by
+## another key: `buildMaterialCost` genuinely IS empty on a corralled herd, so dropping the erase would
+## model a snapshot the sim never sends — and would let a card that regressed to the above-selector
+## pass.
+##
+## **`corral_build_material_cost` CARRIES THE PILE INSTEAD** — `animal:pen`'s OWN, which the sim
+## publishes at every position precisely because the above-selector cannot answer at the top of a
+## branch. It is the one field a ring can be priced from, and stamping it BESIDE an erased
+## `build_material_cost` is what makes this fixture the shipped shape of a corralled herd rather than a
+## convenient one.
 ##
 ## `corral_work_cost` is stamped BECAUSE the wire does publish it unconditionally, at every position —
 ## `FORECAST_BUILD_WORK_COST_KEYS`' own rule — and it is the ring's whole price in work.
@@ -11043,6 +11051,8 @@ func _ring_price_herd_fixtures() -> Array:
 			continue
 		herd["corralled"] = true
 		herd.erase("build_material_cost")
+		herd["corral_build_material_cost"] = [
+			{"material_id": PEN_MATERIAL, "amount": PEN_BUILD_PILE}]
 		herd["corral_work_cost"] = RING_PRICE_WORK
 	return RUNG_FX.stamp_herds(herds)
 
@@ -11052,6 +11062,12 @@ func _ring_price_herd_fixtures() -> Array:
 ## named apart from the build-queue row's `RING_WORK_COST` (a ring already in FLIGHT, a different
 ## fixture and a different question) so the two can never be read as one number.
 const RING_PRICE_WORK := 75.0
+
+## What a ring's card says, counted: the pile it eats to raise and the bill to hold it, and nothing
+## else. The stall warning is the third aside the `⌃` track can carry and it is absent HERE by
+## construction — this state's band holds `PEN_STORE_COVERED`, the whole pile — so the count is what
+## turns "no warning" into a claim instead of an assumption.
+const RING_CARD_ASIDE_COUNT := 2
 
 ## GUARD: **THE RING CARD STATES A PRICE — opened from the mark, not from the controller.**
 ##
@@ -11065,13 +11081,18 @@ const RING_PRICE_WORK := 75.0
 ## does not say, so the row is required to be a PRESSABLE line carrying the ring's own name before its
 ## figures are read at all.
 ##
-## ⛔ **KNOWN GAP — THE HURDLE PILE IS NOT ON THE WIRE FOR A PENNED HERD, so no claim is made about it
-## here.** The sim charges a ring `animal:pen`'s own 6 hurdles (`head_ring_leg` lays the leg through
-## the same `build_material_wants` every rung leg goes through), but the only field that publishes a
-## pile — `buildMaterialCost` — answers for the rung ABOVE the source, and there is no rung above
-## `animal:pen`. So the card states the ring's WORK price and its standing bill and no pile, and the
-## asides are PRINTED here so the day the field lands the frame's log says what changed. Asserting the
-## absence would cement it; asserting the presence would fail on shipped behaviour.
+## ⛔ **AND THE PILE, WHICH THIS CLAIM WAS DELIBERATELY SILENT ABOUT UNTIL THE FIELD LANDED.** The
+## claim used to record a *"KNOWN GAP — the hurdle pile is not on the wire for a penned herd, so no
+## claim is made about it here"*, because the only field that published a pile (`buildMaterialCost`)
+## answers for the rung ABOVE the source and there is no rung above `animal:pen`. Asserting the
+## absence would have cemented the defect; asserting the presence would have failed on shipped
+## behaviour. `corralBuildMaterialCost` closed that gap, so the pile is asserted now — by its rendered
+## TEXT, amount and material both, against the fixture's own published numbers rather than through
+## `_build_price_asides`, or the claim would agree with the producer by construction.
+##
+## **NO STALL WARNING IS EXPECTED HERE** and that is asserted too: this state's band holds
+## `PEN_STORE_COVERED`, which covers the pile outright. Without that half, a card that warned on every
+## ring would pass.
 func _assert_ring_card_prices_the_ring() -> void:
 	var mark: Button = null
 	for node in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_RING_META, []):
@@ -11113,6 +11134,20 @@ func _assert_ring_card_prices_the_ring() -> void:
 	_assert_band_panel("ring card — …and what holding it costs every turn, in both currencies: \"%s\" (asides %s)"
 			% [hold, str(_rung_track_asides())],
 		_rung_track_asides().has(hold))
+	# **AND THE PILE A RING SWALLOWS TO RAISE** — item 12c's *"what it eats to raise"*, the clause the
+	# card could not state until `corralBuildMaterialCost` existed. Composed from the format and the
+	# fixture's own amount and material, so the claim fails if the card quotes the wrong good, the wrong
+	# number, or nothing at all.
+	var pile := HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT % (HudWorkVocab.RUNG_TRACK_MATERIAL_TERM
+		% [DetailFormat.format_trimmed(PEN_BUILD_PILE, HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
+			PEN_MATERIAL])
+	_assert_band_panel("ring card — …and what a ring EATS to raise, by good and amount: \"%s\" (asides %s)"
+			% [pile, str(_rung_track_asides())],
+		_rung_track_asides().has(pile))
+	# …and it is the QUIET aside, not the stall warning: this band's shelf covers the pile outright, so a
+	# card that warned unconditionally would otherwise read as correct.
+	_assert_band_panel("ring card — …stated in the quiet ink, with no stall warning on a shelf that covers it",
+		not _rung_track_aside_is_warn(pile) and _rung_track_asides().size() == RING_CARD_ASIDE_COUNT)
 	print("band_panel_preview: ring card asides as shipped — %s" % str(_rung_track_asides()))
 
 ## The declare band holding `store` hurdles on its shelf — the one thing on that card the SOURCE
@@ -14116,12 +14151,14 @@ func _map_path_snapshot() -> Dictionary:
 ## **THE EXPANDED ROSTER'S THREE ITEMS AND THEIR THREE TIERS RIDE IT TOO**, because the claim this
 ## fixture backs is that the map marker carries the WHOLE cohort — a key it never states is a key the
 ## partition assertion says nothing about. Every value below is DISTINCT from every other tier on the
-## band, so the gear popover's rows cannot pass with two of them swapped: the pen's rate is not the
+## band, so the gear popover's rows cannot pass with two of them swapped: the scout's range is not the
 ## sled's 2.5, and the warriors' attack is not the hunters' 2.
+##
+## ⛔ A `MAP_PATH_PEN_CARRY := 3.5` rode this set for `pen_carry_per_worker_biomass`, deleted with
+## `EquipmentStat::PenCarry` (issue #543) — a pen is collected on the sled's own 2.5 here.
 const MAP_PATH_HURDLES_CONDITION := 45.0
 const MAP_PATH_WAYFINDING_CONDITION := 66.0
 const MAP_PATH_CLUBS_CONDITION := 22.0
-const MAP_PATH_PEN_CARRY := 3.5
 ## Whole tiles, because that is what a posted vantage reveals at; the popover states it in tiles and
 ## never at the carries' one decimal.
 const MAP_PATH_SCOUT_VANTAGE := 2.0
@@ -14133,7 +14170,6 @@ func _kit_band_fixture() -> Dictionary:
 	band["hunter_attack"] = 2.0
 	band["hunt_carry_per_worker_biomass"] = 2.5
 	band["forage_carry_per_worker_biomass"] = 1.75
-	band["pen_carry_per_worker_biomass"] = MAP_PATH_PEN_CARRY
 	band["scout_vantage_range"] = MAP_PATH_SCOUT_VANTAGE
 	band["warrior_attack"] = MAP_PATH_WARRIOR_ATTACK
 	return band
@@ -14302,12 +14338,12 @@ func _band_fixture() -> Dictionary:
 		"hunter_attack": BandFx.KIT_ATTACK_EQUIPPED,
 		"hunt_carry_per_worker_biomass": BandFx.KIT_HUNT_CARRY_EQUIPPED,
 		"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_EQUIPPED,
-		# The expanded roster's three, resolved through the SAME job defaults `BandFx.with_equipped_kit`
+		# The expanded roster's two, resolved through the SAME job defaults `BandFx.with_equipped_kit`
 		# resolves them through — one shared roster, so a band in this harness and a band in
-		# `ui_preview` cannot get different answers off the same kits. The pen tier is the BARE one
-		# because no entry of that roster equips husbandry gear (its own note records why), which is
-		# also what keeps the pen row assertable against the sled's 40.
-		"pen_carry_per_worker_biomass": BandFx.KIT_PEN_CARRY_BARE,
+		# `ui_preview` cannot get different answers off the same kits. A third,
+		# `pen_carry_per_worker_biomass`, was stamped at the BARE tier here *"because no entry of that
+		# roster equips husbandry gear"*; it is deleted with `EquipmentStat::PenCarry` (issue #543) and a
+		# pen reads the sled's own equipped haul above.
 		"scout_vantage_range": BandFx.KIT_SCOUT_VANTAGE_EQUIPPED,
 		"warrior_attack": BandFx.KIT_ATTACK_CLUBS,
 		# The raid-forecast levers the sim echoes on every cohort: the slow-raid warn line and the

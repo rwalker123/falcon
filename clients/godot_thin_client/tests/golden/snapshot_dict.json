@@ -1067,6 +1067,16 @@
       "build_work_per_worker_turn": 39.950001,
       "carrying_capacity": 59.91,
       "collapse_fraction": 9.08,
+      "corral_build_material_cost": [
+        {
+          "amount": 62.439999,
+          "material_id": "herds[0].corral_build_material_cost[0].material_id"
+        },
+        {
+          "amount": 101.650002,
+          "material_id": "herds[0].corral_build_material_cost[1].material_id"
+        }
+      ],
       "corral_material": [
         {
           "amount": 3.27,
@@ -1244,6 +1254,16 @@
       "build_work_per_worker_turn": 104.040001,
       "carrying_capacity": 52.919998,
       "collapse_fraction": 77.970001,
+      "corral_build_material_cost": [
+        {
+          "amount": 111.220001,
+          "material_id": "herds[1].corral_build_material_cost[0].material_id"
+        },
+        {
+          "amount": 64.629997,
+          "material_id": "herds[1].corral_build_material_cost[1].material_id"
+        }
+      ],
       "corral_material": [
         {
           "amount": 37.32,
@@ -1538,7 +1558,6 @@
         "kits[0].jobs[0]",
         "kits[0].jobs[1]"
       ],
-      "pen_carry_per_worker_biomass": 94.230003,
       "scout_vantage_range": 93.739998
     },
     {
@@ -1561,7 +1580,6 @@
         "kits[1].jobs[0]",
         "kits[1].jobs[1]"
       ],
-      "pen_carry_per_worker_biomass": 86.349998,
       "scout_vantage_range": 48.380001
     }
   ],
@@ -2342,7 +2360,6 @@
           "forage_carry_per_worker_biomass": 42.849998,
           "hunt_carry_per_worker_biomass": 73.699997,
           "kit_id": "big_game",
-          "pen_carry_per_worker_biomass": 89.699997,
           "scout_vantage_range": 46.830002
         },
         {
@@ -2357,7 +2374,6 @@
           "forage_carry_per_worker_biomass": 20.09,
           "hunt_carry_per_worker_biomass": 82.440002,
           "kit_id": "trapping",
-          "pen_carry_per_worker_biomass": 69.040001,
           "scout_vantage_range": 12.69
         },
         {
@@ -2372,7 +2388,6 @@
           "forage_carry_per_worker_biomass": 82.540001,
           "hunt_carry_per_worker_biomass": 23.040001,
           "kit_id": "gathering",
-          "pen_carry_per_worker_biomass": 103.190002,
           "scout_vantage_range": 107.400002
         },
         {
@@ -2387,7 +2402,6 @@
           "forage_carry_per_worker_biomass": 75.239998,
           "hunt_carry_per_worker_biomass": 0.8,
           "kit_id": "none",
-          "pen_carry_per_worker_biomass": 2.04,
           "scout_vantage_range": 20.26
         }
       ],
@@ -2689,7 +2703,6 @@
       "morale_terrain": 0.000096,
       "morale_unrest": 0.000088,
       "output_multiplier": 0.000001,
-      "pen_carry_per_worker_biomass": 24.940001,
       "pending_reveal_count": 2,
       "raid_forfeit": 89.769997,
       "raid_radius": 51,
@@ -3065,7 +3078,6 @@
           "forage_carry_per_worker_biomass": 13.06,
           "hunt_carry_per_worker_biomass": 10.58,
           "kit_id": "big_game",
-          "pen_carry_per_worker_biomass": 5.64,
           "scout_vantage_range": 9.84
         },
         {
@@ -3080,7 +3092,6 @@
           "forage_carry_per_worker_biomass": 51.84,
           "hunt_carry_per_worker_biomass": 32.560001,
           "kit_id": "trapping",
-          "pen_carry_per_worker_biomass": 74.610001,
           "scout_vantage_range": 44.200001
         },
         {
@@ -3095,7 +3106,6 @@
           "forage_carry_per_worker_biomass": 111.449997,
           "hunt_carry_per_worker_biomass": 89.0,
           "kit_id": "gathering",
-          "pen_carry_per_worker_biomass": 49.759998,
           "scout_vantage_range": 95.129997
         },
         {
@@ -3110,7 +3120,6 @@
           "forage_carry_per_worker_biomass": 13.81,
           "hunt_carry_per_worker_biomass": 29.91,
           "kit_id": "none",
-          "pen_carry_per_worker_biomass": 37.110001,
           "scout_vantage_range": 42.950001
         }
       ],
@@ -3412,7 +3421,6 @@
       "morale_terrain": 0.000157,
       "morale_unrest": 0.000139,
       "output_multiplier": 0.000118,
-      "pen_carry_per_worker_biomass": 4.73,
       "pending_reveal_count": 2,
       "raid_forfeit": 69.870003,
       "raid_radius": 80,

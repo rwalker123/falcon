@@ -3631,9 +3631,13 @@ pub fn forage_take_overdraws(
 /// and a bare-handed one at `equipment.json`'s `basket_kit.unequipped_per_worker_biomass_capacity`,
 /// resolved once per band per turn through
 /// [`crate::equipment_config::EquipmentConfig::forage_per_worker_biomass_capacity`]. Sites with no
-/// band to resolve against (a tile's telemetry, a Field's managed collection cap) pass the shipped
-/// *equipped reference* rate, exactly as `HerdTelemetryState::per_worker_biomass` does on the animal
-/// web.
+/// band to resolve against (a tile's telemetry) pass the shipped *equipped reference* rate, exactly
+/// as `HerdTelemetryState::per_worker_biomass` does on the animal web.
+///
+/// ⛔ **A FIELD IS NOT ONE OF THEM, and this doc used to say it was** — *"a Field's managed collection
+/// cap"* stood in that list. The rung-3 managed harvest was retired (see "RETIRED: the whole rung-3
+/// MANAGED HARVEST" below): a Field is drawn down through the ordinary `forage_take` path, so it is
+/// **band-resolved** like every other rung. Every plant rung is basket-resolved.
 pub fn forage_per_worker_biomass(per_worker_biomass_capacity: f32, seasonal: f32) -> f32 {
     per_worker_biomass_capacity * seasonal.max(0.0)
 }
@@ -3660,7 +3664,10 @@ pub fn forage_provisions(
 /// forecast's `managed_yield` — the "then Y" of Cultivate's *"preparing X → then Y"* pair — and the
 /// wire's `ForagePatchState.tendedYield`.
 ///
-/// The rung-3 twin, [`field_provisions`], **stays** a managed rate: a Field is yours.
+/// **Rung 3 went the same way, one slice later.** Its twin `field_provisions` was left a managed
+/// rate here on the grounds that *"a Field is yours"*; `docs/plan_standing_upkeep.md` §4.10 retired
+/// the whole rung-3 managed harvest, so a Field is drawn down through `forage_take` like every rung
+/// beneath it and `rung_payoff` quotes all three from one expression.
 pub(crate) fn tended_provisions(
     patch: &ForagePatch,
     tile_composition: &[FloraShare],
@@ -4186,9 +4193,9 @@ pub(crate) fn forage_forecast(
 /// divides only by the turns that actually delivered.
 ///
 /// **Provisions-space, which is why it is not [`crate::fauna::REALIZED_PROJECTION_TAKE_EPSILON`]**:
-/// the animal twin breaks on a *biomass* take, while both branches here are already converted
-/// (`field_provisions`, `forage_take`), so the two thresholds justify their magnitudes on different
-/// scales and each gets its own constant rather than sharing one whose doc only covers biomass.
+/// the animal twin breaks on a *biomass* take, while this side is already converted (`forage_take`
+/// pays in provisions), so the two thresholds justify their magnitudes on different scales and each
+/// gets its own constant rather than sharing one whose doc only covers biomass.
 ///
 /// The magnitude is deliberately far below any live patch's one-turn gather: the smallest is a wild
 /// Sustain skim, `r·K/4 × provisions_per_biomass` — ~0.61 provisions on the measured K=195
@@ -4204,10 +4211,11 @@ const REALIZED_PROJECTION_PROVISIONS_EPSILON: f32 = 1e-4;
 /// assign-time seed and the resolved row compute the identical number (exact forecast == actual).
 ///
 /// Foraging was never lumpy — `forage_take` is already rate-based (no kill-credit bank) — so the
-/// projection just reuses the *same* take path the real turn runs each simulated turn: a **Field**
-/// (rung 3) pays its managed `field_provisions` capped by the crew's throughput and never draws down;
-/// every other patch pays `forage_take`'s drawn-down policy gather. So the projection is exactly the
-/// forward average of what the source really pays, computed through one shared take path.
+/// projection just reuses the *same* take path the real turn runs each simulated turn — **every
+/// rung, a Field included**, pays `forage_take`'s drawn-down policy gather. (This read *"a Field
+/// (rung 3) pays its managed `field_provisions` capped by the crew's throughput and never draws
+/// down"* until §4.10 retired the rung-3 managed harvest.) So the projection is exactly the forward
+/// average of what the source really pays, computed through one shared take path.
 // The projection needs the full take context (source, config, ladder, season, multiplier, crew,
 // policy, horizon) — the same shape `forage_source_yield_preview` already carries.
 #[allow(clippy::too_many_arguments)]
