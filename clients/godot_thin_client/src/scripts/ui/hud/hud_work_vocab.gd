@@ -559,11 +559,25 @@ const UPKEEP_POOL_COVERAGE_PLANT_FORMAT := "This pool supplies %s work a turn; t
 
 const UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT := "This pool supplies %s work a turn; this band's tamed animals and queued jobs need %s."
 
-## …and the ROUTE web's (arc #532). **It names no QUEUE, and that is not an omission**: a route rung
-## takes no builder and appends no build-queue entry — traffic wears a road in — so there is no
-## declare-time half of this sentence to state. What it names instead is the ground the band is
-## standing on, which is the whole of what this pool is billed for.
-const UPKEEP_POOL_COVERAGE_ROUTE_FORMAT := "This pool supplies %s work a turn; the roads this band stands on need %s."
+## …and the ROUTE web's (arc #532).
+##
+## ⛔ **IT NAMES THE ROADS THIS BAND BUILT, NOT THE GROUND IT IS STANDING ON** — `ROADWORK_ROLE_HINT`
+## eighty lines up carries the long form of why, and this string was the copy that missed the
+## correction. A road tile's keeper is the band that graded or paved it, wherever that band has since
+## walked; `route_keeping_claims` never reads that band's position. *"The roads this band stands on"*
+## sends a player to move camp in order to stop a bill that follows them regardless — which is the
+## one remedy that cannot work.
+##
+## ⛔ **IT NAMES NO QUEUE, AND THE REASON IS THE FIGURE RATHER THAN THE LADDER.** It used to claim
+## that a route rung *"takes no builder and appends no build-queue entry"*, which is true of the free
+## floor alone: traffic wears a path and a trail in, and the two BUILT rungs are ordinary declarations
+## funded by the band's `builders` pool at the head of its queue, exactly like every rung on the other
+## two branches. What is actually true is that the number beside this sentence carries no queued
+## term — the road pool's `asked` is the cohort's published `roadwork_demand` verbatim
+## (`BandPanelController`'s road branch, which does NOT go through `_pool_coverage`), because the road
+## rows are fog-filtered and summing them client-side would understate a bill the band still owes. A
+## sentence promising a queued half the figure does not contain would be the worse error of the two.
+const UPKEEP_POOL_COVERAGE_ROUTE_FORMAT := "This pool supplies %s work a turn; the roads this band built need %s."
 
 ## Which of the pair a card takes, off the role it staffs — one picker, for `under_kept_note`'s reason:
 ## a card that reached for the wrong web's sentence would be a wrong answer that looks like a right one.
@@ -2689,7 +2703,7 @@ const RUNG_TRACK_STATE_OPEN := "open"
 ## The word lives here rather than in `HudRouteVocab` so the state enumeration stays ONE table: a
 ## state with no word in this block renders an empty face, which is the trap the block's own header
 ## records.
-const RUNG_TRACK_STATE_WORN_IN := "traffic wears it in"
+const RUNG_TRACK_STATE_WORN_IN := "wearing in"
 
 ## `75 work · ≈12 turns` — what a selectable destination's own leg still owes and when the sim says it
 ## lands. **The turns half renders only where the wire dates the leg**, which is when an entry is
@@ -2763,7 +2777,7 @@ const RUNG_TRACK_STALL_BARELY := "barely at all"
 ## the compose sheet's `BUILD_PRICE_UPKEEP_FORMAT` quotes, at every fullness, not the bill this source
 ## was handed this turn. It is rendered through `DetailFormat.format_work_units`, so the track and the
 ## sheet print one rate one way.
-const RUNG_TRACK_HOLD_FORMAT := "then %s a turn to hold"
+const RUNG_TRACK_HOLD_FORMAT := "then %s a turn"
 
 const RUNG_TRACK_HOLD_WORK_TERM := "%s work"
 

@@ -1258,19 +1258,31 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("equipment_batches", &equipment_batches);
 
     // **THE BAND'S ROAD-KEEPING BILL** (arc #532) — the `roadwork` twins of `fodder_need` and the
-    // material bill above, summed by the sim over the roads under this band's OWN tile (a band is
-    // served by a road while standing on one of its tiles, and there is no radius).
+    // material bill above, summed by the sim over the road tiles THIS BAND KEEPS.
+    //
+    // ⛔ **THE CATCHMENT IS THE JOB, NOT THE GROUND UNDER THE CAMP.** This block said the bill was
+    // summed *"over the roads under this band's OWN tile"*, and that a band was *"served by a road
+    // while standing on one of its tiles"* — the stored-path model the per-tile rebuild replaced. A
+    // tile's keeper is the band that GRADED OR PAVED it, wherever that band has since walked:
+    // `route_keeping_claims` walks `kept_by(band)` and never reads the band's position. Under the
+    // retired reading a player moves camp to escape a bill that follows them regardless.
+    //
+    // ⛔ **AND THERE IS NO CO-PAYMENT TO REPRESENT.** `Road::keeper` is ONE band and
+    // `road_verb_refusal` rejects `grade` / `pave` outright on a tile another band already keeps, so
+    // *"several bands may stand on one road and each pays a part"* describes a state the world cannot
+    // hold. What distance costs is a PRICE (`keeper_remoteness`), never a share.
     //
     // **THE SIM SUMS IT AND THE CLIENT MUST NOT.** `routes` rows are fog-filtered, so a road out of
     // sight would silently drop out of a client-side total the band still owes for — the identical
     // rule `fodder_need` carries, load-bearing for the identical reason.
     //
-    //   `roadwork_demand`    = the summed stamped bill of those roads. Summed BEFORE the head-count
-    //                          gate, so a band with nobody on `roadwork` publishes the bill it is
-    //                          FAILING to pay rather than a reassuring zero. It is the alarm.
-    //   `roadwork_supplied`  = what THIS band's keepers paid into those roads this turn — its own
-    //                          contribution, not the roads' totals: several bands may stand on one
-    //                          road and each pays a part.
+    //   `roadwork_demand`    = the summed stamped bill of the tiles this band keeps. Summed BEFORE
+    //                          the head-count gate, so a band with nobody on `roadwork` publishes the
+    //                          bill it is FAILING to pay rather than a reassuring zero. It is the
+    //                          alarm.
+    //   `roadwork_supplied`  = what this band's keepers paid into those tiles this turn. It is its
+    //                          own contribution and it is also the whole of each tile's, one band
+    //                          keeping a tile and never two.
     //   `roadwork_shortfall` = demand - supplied, and that identity holds verbatim here as it does
     //                          on the `RouteState` row, so nothing downstream re-derives it.
     let _ = dict.insert("roadwork_demand", cohort.roadworkDemand() as f64);

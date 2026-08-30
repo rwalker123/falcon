@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 112
+const EXPECTED_CHECKPOINTS := 119
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -787,6 +787,24 @@ func _road_keeper_band() -> int:
 		return ROAD_NO_KEEPER
 	return int((bands[0] as Dictionary).get("band_id", ROAD_NO_KEEPER))
 
+## **A SECOND PLAYER BAND, so a road can be kept by somebody who is not the actor.** It is the
+## fixture band with a different `entity` (and therefore a different derived `band_id`), which is the
+## whole of what the keeper comparison reads — every other field on it is irrelevant to this claim and
+## is left alone rather than invented.
+##
+## **THE ROSTER ORDER IS THE NAME.** `update_band_alerts` makes the FIRST player band the acting one,
+## and `band_label_for_id` names a band by its roster index — so staged second, this band is `Band 2`
+## and the actor is `Band 1`.
+func _second_band_fixture() -> Dictionary:
+	var band := BandFx.band_fixture()
+	band["entity"] = SECOND_BAND_ENTITY
+	return BandFx.with_band_id(band)
+
+## …and its `band_id`, read back off the fixture rather than recomputed here: the offset that derives
+## one from an entity is `fixtures_band.gd`'s and must be spelled in exactly one place.
+func _second_band_keeper_id() -> int:
+	return int(_second_band_fixture().get("band_id", ROAD_NO_KEEPER))
+
 ## ⛔ **THE ROAD FRAMES NEED A BAND ROSTER, AND IT IS PUT BACK ON THE WAY OUT.** A keeper is a BAND,
 ## and this client resolves a band's name through the roster `update_band_alerts` fills — so with no
 ## roster every road on screen reads *another people*, which is a true sentence about the wrong
@@ -873,10 +891,22 @@ func _assert_road_rows_are_conditional() -> void:
 				HudRouteVocab.ROAD_CLAUSE_SEPARATOR,
 				HudRouteVocab.ROAD_PROGRESS_FORMAT % [ROAD_METER_RISING_PERCENT,
 					String(HudRouteVocab.RUNG_LABELS[HudRouteVocab.RUNG_KEY_DIRT_ROAD]).to_lower()]])
-	h._assert_hud("…and its payoff names the loss it saves, the sight it grants and the span it will hold",
+	# ⛔ **THE PAYOFF ROW IS ONE CLAUSE — the loss it saves — AND THE REST IS ON THE HOVER.** The row
+	# printed all three axes and wrapped to three lines under a value that is itself one word;
+	# reported from play as *"way too much, maybe just 15% less loss is enough, the rest can be a tool
+	# tip"*. The loss figure is the one that moves a decision (it is the reason to pave rather than
+	# leave a trail), so it stays and the other two go one hover away.
+	h._assert_hud("…and its payoff row is ONE clause: the loss it saves",
 		Readout.detail_row_value(wearing_lines, HudRouteVocab.ROAD_BONUS_ROW)
+			== HudRouteVocab.ROAD_BONUS_FRICTION_FORMAT % ROAD_SAVING_TRAIL_PERCENT)
+	# **NOTHING WAS DELETED — the sight and the span are in `bonus_tooltip`**, which the drawer
+	# registers on the block's hover through `Context.row_tooltips`. Asserted because a rendered frame
+	# cannot see a tooltip, and a cut that lost the detail would pass the row claim above.
+	h._assert_hud("…with the sight and the span one hover away, not gone",
+		HudRouteVocab.bonus_tooltip(_road_fixture(
+			HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_RISING, ROAD_DEMAND_TRAIL, 0.0, 2,
+			ROAD_GRACE_TRAIL, true, ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL))
 			== HudRouteVocab.ROAD_CLAUSE_SEPARATOR.join([
-				HudRouteVocab.ROAD_BONUS_FRICTION_FORMAT % ROAD_SAVING_TRAIL_PERCENT,
 				HudRouteVocab.ROAD_BONUS_SIGHT,
 				HudRouteVocab.ROAD_BONUS_LINK_FORMAT % ROAD_LINK_TRAIL]))
 
@@ -894,7 +924,7 @@ func _assert_road_rows_are_conditional() -> void:
 		Readout.detail_row_value(dirt_lines, HudRouteVocab.ROAD_UPKEEP_ROW)
 			== HudRouteVocab.ROAD_UPKEEP_FORMAT % [
 				DetailFormat.format_work_units(ROAD_DEMAND_DIRT), ROAD_WANTS_DIRT])
-	h._assert_hud("…and it saves %d%% of what is lost between bands" % ROAD_SAVING_DIRT_PERCENT,
+	h._assert_hud("…and it saves %d%% of what is lost hauling" % ROAD_SAVING_DIRT_PERCENT,
 		Readout.detail_row_value(dirt_lines, HudRouteVocab.ROAD_BONUS_ROW).begins_with(
 			HudRouteVocab.ROAD_BONUS_FRICTION_FORMAT % ROAD_SAVING_DIRT_PERCENT))
 
@@ -905,13 +935,14 @@ func _assert_road_rows_are_conditional() -> void:
 	h._assert_hud("the top rung is DEARER to keep than the one below it, and says so",
 		Readout.detail_row_value(paved_lines, HudRouteVocab.ROAD_UPKEEP_ROW).begins_with(
 			DetailFormat.format_work_units(ROAD_DEMAND_PAVED)))
-	h._assert_hud("…and RICHER: %d%% saved and a %d-tile span, both above the dirt road's"
-			% [ROAD_SAVING_PAVED_PERCENT, ROAD_LINK_PAVED],
+	h._assert_hud("…and RICHER: %d%% saved, above the dirt road's" % ROAD_SAVING_PAVED_PERCENT,
 		Readout.detail_row_value(paved_lines, HudRouteVocab.ROAD_BONUS_ROW)
-			== HudRouteVocab.ROAD_CLAUSE_SEPARATOR.join([
-				HudRouteVocab.ROAD_BONUS_FRICTION_FORMAT % ROAD_SAVING_PAVED_PERCENT,
-				HudRouteVocab.ROAD_BONUS_SIGHT,
-				HudRouteVocab.ROAD_BONUS_LINK_FORMAT % ROAD_LINK_PAVED]))
+			== HudRouteVocab.ROAD_BONUS_FRICTION_FORMAT % ROAD_SAVING_PAVED_PERCENT)
+	h._assert_hud("…and its %d-tile span is stated on the hover, not lost" % ROAD_LINK_PAVED,
+		HudRouteVocab.bonus_tooltip(_road_fixture(
+			HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_PAVED, 0.0, 7,
+			ROAD_GRACE_PAVED, true, ROAD_FRICTION_PAVED, ROAD_LINK_PAVED)).contains(
+				HudRouteVocab.ROAD_BONUS_LINK_FORMAT % ROAD_LINK_PAVED))
 	# **AND THE TOP OF THE LADDER HAS NO RUNG ABOVE IT TO APPROACH.** `1.0` is what the wire states
 	# there, so the progress half is simply absent rather than reading `100% to` anything.
 	h._assert_hud("…and the top rung states no approach, there being nothing above it",
@@ -944,9 +975,16 @@ func _assert_road_rows_are_conditional() -> void:
 	# **THE ROAD GOES DARK BEFORE IT DECAYS** — `grants_sight` is the RESOLVED answer, and the clause
 	# says why the light went out rather than silently vanishing. It names the bill by the row's own
 	# word, `upkeep`, which is the whole point of the rename.
-	h._assert_hud("…and the payoff row says the road has gone DARK until its UPKEEP is paid",
-		Readout.detail_row_value(risk_lines, HudRouteVocab.ROAD_BONUS_ROW).contains(
-			HudRouteVocab.ROAD_BONUS_DARK))
+	#
+	# ⛔ **IT RODE THE SIGHT CLAUSE TO THE HOVER, and that is right rather than a demotion.** The row
+	# above it already states the SHORTFALL in amber and the `Reverting` row states the countdown, so
+	# on the row this was the same trouble said a third time; the fact itself is unchanged and one
+	# hover away.
+	h._assert_hud("…and the hover says the road has gone DARK until its UPKEEP is paid",
+		HudRouteVocab.bonus_tooltip(_road_fixture(
+			HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT,
+			ROAD_SHORTFALL_DIRT, ROAD_WANTS_DIRT, ROAD_GRACE_LEFT, false, ROAD_FRICTION_DIRT,
+			ROAD_LINK_DIRT)).contains(HudRouteVocab.ROAD_BONUS_DARK))
 
 	# ⛔ **THE COUNTDOWN, NOT THE COUNTER.** `0` means it is reverting NOW; rendering it through the
 	# same format as every other value would print `in 0 turns`, which reads as a turn of grace the
@@ -1302,12 +1340,11 @@ func run(harness) -> void:
 	h._assert_hud("a hex with no road offers no road action at all",
 		_road_ladder_action() == null and not h._hud.road_ladder_controls.visible)
 
-	# ⛔ **STATE road-ladder-gated — THE FLOOR, WITH EVERY RUNG ABOVE IT REFUSED, AND EACH FOR ITS OWN
-	# REASON.** This is the readout a player meets first: a path worn in by their own traffic, a trail
-	# rising above it that nobody orders, and two built rungs standing behind a craft and behind the
-	# ground itself. **A road cannot be built on bare ground** — a dirt road wants a trail beneath it
-	# and a trail is worn in only by traffic — and this frame is where that reads as a sentence rather
-	# than as a missing button.
+	# ⛔ **STATE road-ladder-gated — THE FLOOR, WITH EVERY RUNG ABOVE IT REFUSED, ONE LINE EACH.**
+	# This is the readout a player meets first: a path worn in by their own traffic, a trail rising
+	# above it that nobody orders, and two built rungs standing behind a craft. **A road cannot be
+	# built on bare ground** — a dirt road wants a trail beneath it and a trail is worn in only by
+	# traffic — and this frame is where that reads as a line rather than as a missing button.
 	h._hud.update_intensification([{"faction": 0, "knowledges": {
 		HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING: LADDER_ROADBUILDING_PART,
 		HudFloraVocab.KNOWLEDGE_TRACK_PAVING: 0.0}}])
@@ -1320,35 +1357,43 @@ func run(harness) -> void:
 	else:
 		var gated_states := _road_ladder_states()
 		var gated_faces := _road_ladder_faces()
-		var gated_text := _road_ladder_text()
+		var gated_tips := _road_ladder_tooltips()
 		h._assert_hud("the ladder states the WHOLE branch — one row per catalog rung, in climb order",
 			gated_states.size() == _route_rung_catalog().size())
 		h._assert_hud("the road HOLDS the floor, so the path row is where you are",
 			String(gated_states.get(HudRouteVocab.RUNG_KEY_PATH, "")) == RungLadder.STATE_STANDING)
 		# ⛔ **THE TRAIL IS NOT LOCKED, AND THAT DISTINCTION IS THE POINT.** Nothing refuses it; there
-		# is simply no order to give, and `locked` would read as *you may not* where the truth is
-		# *it is rising anyway*.
-		h._assert_hud("a rung nobody declares reads as traffic wearing it in, never as locked",
+		# is simply no order to give. It leads with its METER, the only figure it has.
+		h._assert_hud("a rung nobody orders reads `%s`, its meter and its cause" % ROW_TRAIL_FACE,
 			String(gated_states.get(HudRouteVocab.RUNG_KEY_TRAIL, "")) == RungLadder.STATE_UNORDERED
-				and String(gated_faces.get(HudRouteVocab.RUNG_KEY_TRAIL, ""))
-					== HudWorkVocab.RUNG_TRACK_STATE_WORN_IN)
-		h._assert_hud("…and it says what raises it instead of merely being inert",
-			gated_text.contains(HudRouteVocab.GATE_REASON_ROAD_WORN_IN))
-		# ⛔ **THE GROUND GATE IS THE ONE THIS BRANCH IS ABOUT.** It names what the rung needs AND
-		# what this ground actually carries, so the remedy is legible without a second sentence.
-		h._assert_hud("a dirt road on a path says it needs a trail beneath it, naming both rungs",
-			gated_text.contains(GATE_NEEDS_TRAIL_UNDER_PATH))
-		# …and the CRAFT gate beside it, with the discovery named from the ladder's own knowledge
-		# roster rather than from a table in this client.
-		h._assert_hud("…and states the craft it waits on, by the sim's own name for it, at its live %d%%"
-			% LADDER_ROADBUILDING_PERCENT, gated_text.contains(GATE_ROADBUILDING_PART))
-		# ⛔ **A REFUSED RUNG STILL STATES ITS PRICE.** Its face is spent on the refusal and this
-		# branch eats no material, so without the aside a rung the player is planning toward would
-		# carry no figure at all.
-		h._assert_hud("…and quotes what raising it would cost, on a row whose face says `locked`",
-			gated_text.contains(GATE_DIRT_PRICE_ASIDE)
-				and String(gated_faces.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, ""))
-					== HudWorkVocab.RUNG_TRACK_STATE_LOCKED)
+				and String(gated_faces.get(HudRouteVocab.RUNG_KEY_TRAIL, "")) == ROW_TRAIL_FACE)
+		# ⛔ **ONE REFUSAL ON THE ROW.** Both built rungs are gated on the craft AND on the ground, and
+		# each states the craft: the ground gate names a rung the ladder is already displaying two
+		# lines up, so it is the refusal worth least on a line that holds one clause.
+		h._assert_hud("a refused rung leads with its PRICE and states ONE refusal, the nearest",
+			String(gated_faces.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, "")) == ROW_DIRT_GATED_FACE
+				and String(gated_faces.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
+					== ROW_PAVED_GATED_FACE)
+		# ⛔ **AND THE WORD `locked` IS NOWHERE ON THE CARD.** A row reading `locked` above a reason
+		# said it twice; the reason alone IS the state.
+		h._assert_hud("no row anywhere on the ladder says `%s`" % LADDER_LOCKED_WORD,
+			not _road_ladder_text().contains(LADDER_LOCKED_WORD))
+		# ⛔ **NOTHING WAS DELETED — IT MOVED TO THE HOVER.** Every clause the rows stopped printing is
+		# asserted here, because a PNG cannot see a tooltip and a cut that lost the detail instead of
+		# relocating it would pass every claim above.
+		var dirt_tip := String(gated_tips.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, ""))
+		h._assert_hud("the hover pairs the price with the standing bill, which the row cannot",
+			dirt_tip.contains(TIP_DIRT_PRICE))
+		h._assert_hud("…states what the rung does, in plain English",
+			dirt_tip.contains(TIP_DIRT_PAYOFF))
+		h._assert_hud("…and lists BOTH refusals, including the one the row had no room for",
+			dirt_tip.contains(TIP_ROADBUILDING) and dirt_tip.contains(TIP_NEEDS_TRAIL))
+		h._assert_hud("…and the rung nobody orders explains itself there too",
+			String(gated_tips.get(HudRouteVocab.RUNG_KEY_TRAIL, "")).contains(TIP_WORN_IN))
+		var paved_tip := String(gated_tips.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
+		h._assert_hud("the top rung's hover carries its own price, payoff and both refusals",
+			paved_tip.contains(TIP_PAVED_PRICE) and paved_tip.contains(TIP_PAVED_PAYOFF)
+				and paved_tip.contains(TIP_PAVING) and paved_tip.contains(TIP_NEEDS_DIRT))
 		# ⛔ **AND NOT ONE ROW IS PRESSABLE.** The shape is the statement: a rung the branch offers is
 		# a `Button`, a rung it refuses is a `Label`, so this is the absence that matters most.
 		var pressable := 0
@@ -1363,7 +1408,7 @@ func run(harness) -> void:
 	# ⛔ **STATE road-ladder-grade — THE CRAFT IS LEARNED AND THE GROUND IS READY, so `grade` goes
 	# LIVE.** Only two things move between this frame and the one above: the road stands a rung
 	# higher, and the faction has finished Roadbuilding. That the dirt-road row turns from a refusal
-	# into a priced, pressable order is the whole of what the ladder is for.
+	# into a priced, pressable button is the whole of what the ladder is for.
 	h._hud.update_intensification([{"faction": 0, "knowledges": {
 		HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING: 1.0,
 		HudFloraVocab.KNOWLEDGE_TRACK_PAVING: 0.0}}])
@@ -1376,35 +1421,35 @@ func run(harness) -> void:
 	else:
 		var live_states := _road_ladder_states()
 		var live_faces := _road_ladder_faces()
-		var live_text := _road_ladder_text()
+		var live_tips := _road_ladder_tooltips()
 		h._assert_hud("a rung already paid for is BANKED — it is a receipt, never a discount",
 			String(live_states.get(HudRouteVocab.RUNG_KEY_PATH, "")) == RungLadder.STATE_BANKED)
-		h._assert_hud("with the craft learned and a trail beneath it, `grade` is OPEN and pressable",
+		# ⛔ **THE PRICE IS THE BUTTON, and there is no refusal beside it.**
+		h._assert_hud("with the craft learned and a trail beneath it, `grade` is a pressable `%s`"
+			% DIRT_PRICE_FACE,
 			String(live_states.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, "")) == RungLadder.STATE_OPEN
-				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_DIRT_ROAD) != null)
-		h._assert_hud("…quoting the rung's own BASE price on its face",
-			String(live_faces.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, "")) == DIRT_PRICE_FACE)
-		# ⛔ **AND THE PRICE IS STATED ONCE.** The locked row's aside is the face's stand-in, so a row
-		# that carries both says one fact twice.
-		h._assert_hud("…and not a second time as an aside beneath it",
-			not live_text.contains(GATE_DIRT_PRICE_ASIDE))
-		# **THE METER BELONGS TO THE RUNG BEING RAISED**, so it sits on the row directly above the
-		# one the road holds — the destination's side of the tile card's own `30% to dirt road`.
-		h._assert_hud("the rung being raised says how far traffic has already got toward it",
-			live_text.contains(LADDER_APPROACH_CLAUSE))
-		h._assert_hud("…what it buys, in the tile card's own three clauses",
-			live_text.contains(DIRT_BUYS_ASIDE))
-		h._assert_hud("…and what holding it will cost, every turn, in the ladder card's own words",
-			live_text.contains(DIRT_HOLD_ASIDE))
-		# The rung above it is refused for TWO reasons at once, and both are true and both actionable.
-		h._assert_hud("the rung above it is refused by the ground AND by the craft, and says so twice",
-			live_text.contains(GATE_NEEDS_DIRT_UNDER_TRAIL)
-				and live_text.contains(GATE_PAVING_NONE))
-		# ⛔ **ABSENCE — the keeper gate does NOT fire while a band is selected.** It is the one gate
-		# a player closes without leaving the card, and stating it here would be an alarm about
-		# nothing.
+				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_DIRT_ROAD) != null
+				and String(live_faces.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, "")) == DIRT_PRICE_FACE)
+		# ⛔ **ABSENCE — the meter does NOT ride a priced row.** It belongs to the rung being raised,
+		# and the tile card's `Road` line one block up already states it; repeating it beside a price
+		# is the duplication this cut removed. Here the first row above the standing rung is a PRICED
+		# one, so no row on the card shows a meter at all.
+		h._assert_hud("no priced row carries a meter clause — the tile card states it once",
+			not _road_ladder_text().contains(LADDER_METER_MARK))
+		# …and the rung above it is refused for TWO reasons and states one, with both on the hover.
+		h._assert_hud("the rung above it states its nearest refusal alone",
+			String(live_faces.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, "")) == ROW_PAVED_GATED_FACE)
+		h._assert_hud("…and its hover carries both, the craft and the ground",
+			String(live_tips.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, "")).contains(TIP_PAVING)
+				and String(live_tips.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
+					.contains(TIP_NEEDS_DIRT))
+		# ⛔ **ABSENCE — the keeper gate does NOT fire while a band is selected**, on the row or in the
+		# hover. It is the one gate a player closes without leaving the card, and stating it here
+		# would be an alarm about nothing.
 		h._assert_hud("…and nothing complains about a keeper, a band being selected",
-			not live_text.contains(HudRouteVocab.GATE_REASON_ROAD_NO_KEEPER))
+			not _road_ladder_text().contains(HudRouteVocab.GATE_SHORT_ROAD_NO_KEEPER)
+				and not String(live_tips.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
+					.contains(TIP_NO_KEEPER))
 		await h._save("road_ladder_grade")
 		# ⛔ **WHAT THE PRESS WOULD TRANSMIT, through the REAL formatter.** `grade` is
 		# `cultivate`/`sow`'s grammar PLUS a band token, and both handles are integers in a positional
@@ -1424,9 +1469,9 @@ func run(harness) -> void:
 
 	# ⛔ **STATE road-ladder-pave — THE TOP OF THE BRANCH, KEPT FROM FAR AWAY.** Paving is learned, the
 	# ground is a dirt road, and the row is live. The keeper is beyond the base keeping range, so the
-	# row states the rung's BASE price and the multiple distance charges as a SEPARATE clause: the
-	# client never multiplies the two, because that would put a copy of the sim's pricing formula
-	# where it can drift.
+	# ROW states the rung's BASE price and the HOVER states the multiple distance charges: the client
+	# never multiplies the two, because that would put a copy of the sim's pricing formula where it
+	# can drift.
 	h._hud.update_intensification([{"faction": 0, "knowledges": {
 		HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING: 1.0,
 		HudFloraVocab.KNOWLEDGE_TRACK_PAVING: 1.0}}])
@@ -1440,23 +1485,69 @@ func run(harness) -> void:
 	else:
 		var pave_states := _road_ladder_states()
 		var pave_faces := _road_ladder_faces()
-		var pave_text := _road_ladder_text()
-		h._assert_hud("with Paving learned on a dirt road, the top rung is OPEN and pressable",
+		var pave_tip := String(_road_ladder_tooltips().get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
+		h._assert_hud("with Paving learned on a dirt road, the top rung is a pressable `%s`"
+			% PAVED_PRICE_FACE,
 			String(pave_states.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, "")) == RungLadder.STATE_OPEN
-				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_PAVED_ROAD) != null)
-		h._assert_hud("…quoting the rung's BASE price, exactly as the catalog publishes it",
-			String(pave_faces.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, "")) == PAVED_PRICE_FACE)
-		h._assert_hud("…and stating what distance does to that price as its OWN clause, never folded in",
-			pave_text.contains(LADDER_REMOTE_CLAUSE))
+				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_PAVED_ROAD) != null
+				and String(pave_faces.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
+					== PAVED_PRICE_FACE)
+		h._assert_hud("…and the hover states what distance does to that price, never folded in",
+			pave_tip.contains(TIP_REMOTE))
 		h._assert_hud("…the richest payoff on the branch, and the dearest bill to hold",
-			pave_text.contains(PAVED_BUYS_ASIDE) and pave_text.contains(PAVED_HOLD_ASIDE))
-		# ⛔ **ABSENCE — the meter is exactly `1.0`, so nothing is rising and no approach is stated.**
+			pave_tip.contains(TIP_PAVED_PAYOFF) and pave_tip.contains(TIP_PAVED_PRICE))
+		# ⛔ **ABSENCE — the meter is exactly `1.0`, so nothing is rising and no row states one.**
 		# The wire publishes that `1.0` rather than leaving it to a subtraction, which is what makes
 		# this a plain comparison.
-		h._assert_hud("a road with nothing rising above it states no approach at all",
-			not pave_text.contains(LADDER_APPROACH_SUFFIX))
+		h._assert_hud("a road with nothing rising above it states no meter at all",
+			not _road_ladder_text().contains(LADDER_METER_MARK))
 		await h._save("road_ladder_pave")
 	_dismiss_road_ladder()
+
+	# ⛔ **STATE road-ladder-other-keeper — THE TILE IS ALREADY SOMEBODY ELSE'S JOB.**
+	#
+	# `road_verb_refusal` rejects `grade` / `pave` outright when `Road::keeper` names a band other
+	# than the one issuing the verb: **one band keeps a road tile, never two.** The ladder did not ask
+	# that question for a slice, so the row rendered READY, the player pressed it, and what came back
+	# was a command-failure event where a greyed row with a reason belonged.
+	#
+	# **A SECOND BAND IS STAGED FOR IT, because the claim is about NAMING the keeper.** With only the
+	# acting band on the roster every keeper is either itself or a stranger, and *another people* — a
+	# true sentence — would not prove the label plumbing works at all. Put back below.
+	var inherited_two_bands := _with_a_band_roster([BandFx.band_fixture(), _second_band_fixture()])
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT, 0.0,
+		ROAD_WANTS_DIRT, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT,
+		_second_band_keeper_id())))
+	await h._settle()
+	if not await _open_road_ladder():
+		h._assert_hud("the road ladder opens on a road another band keeps", false)
+	else:
+		var taken_states := _road_ladder_states()
+		var taken_faces := _road_ladder_faces()
+		var taken_tip := String(_road_ladder_tooltips().get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
+		h._assert_hud("a rung on a tile another band keeps is refused, not offered",
+			String(taken_states.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
+					== RungLadder.STATE_LOCKED
+				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_PAVED_ROAD) == null)
+		# ⛔ **THE ROW NAMES WHO, by the band's own name** — resolved through this client's one
+		# band-naming rule, the same one the tile card's `Kept by:` row above it uses, so a road's
+		# keeper cannot be called two different things on one card. **It OUTRANKS the craft gate**:
+		# no amount of learning helps a tile that is already somebody else's job.
+		h._assert_hud("…and the ROW leads with the price and names the band whose job it is",
+			String(taken_faces.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, "")) == ROW_PAVED_TAKEN_FACE)
+		h._assert_hud("…with what has to happen first on the hover",
+			taken_tip.contains(TIP_ANOTHER_KEEPER))
+		# ⛔ **ABSENCE — the OTHER keeper gate stays quiet.** A band IS selected here, so *pick a band
+		# first* would be an alarm about nothing and would hide the refusal that actually applies.
+		# The two gates are one word apart in the player's head and must never both fire.
+		h._assert_hud("…and does not also ask for a band, one being selected",
+			not _road_ladder_text().contains(HudRouteVocab.GATE_SHORT_ROAD_NO_KEEPER)
+				and not taken_tip.contains(TIP_NO_KEEPER))
+		await h._save("road_ladder_other_keeper")
+	_dismiss_road_ladder()
+	_restore_band_roster(inherited_two_bands)
+	await h._settle()
 
 	# ⛔ **STATE road-ladder-no-keeper — THE SAME ROAD WITH NOBODY TO NAME AS KEEPER.** `grade` and
 	# `pave` carry a band token and that token IS the keeper: issuing the verb declares the job and
@@ -1466,28 +1557,45 @@ func run(harness) -> void:
 	var held_bands: Array = h._hud._band_labor.player_bands().duplicate(true)
 	var held_acting: Dictionary = h._hud._band_labor.player_band().duplicate(true)
 	var held_panel: Dictionary = h._hud._band_labor.panel_band().duplicate(true)
+	# **THE KEEPER IS READ WHILE THERE IS STILL A ROSTER TO READ IT FROM.** Asked after the clear it
+	# answers `ROAD_NO_KEEPER`, and the frame would quietly become a road nobody keeps rather than the
+	# kept road this state is about.
+	var kept_by := _road_keeper_band()
 	h._hud.update_band_alerts([])
 	# **THE PANEL BAND IS CLEARED SEPARATELY, because `_resolve_assign_band` asks it SECOND.** An
 	# empty roster alone leaves the previous chapter's panel subject standing and the gate never
 	# fires — the state would render as its own opposite with nothing on screen to say so.
 	h._hud._band_labor.set_panel_band({})
+	# ⛔ **AND THE TILE IS RE-SHOWN RATHER THAN INHERITED.** This state used to lean on whatever hex
+	# the frame before it had left up, which was the remote dirt road — until the other-keeper state
+	# was inserted between them and it silently began asserting against THAT hex instead. The claim
+	# still held, but the frame was a road kept by Band 2 under a ladder saying `pick a band`, which
+	# is a confusing picture of a correct rule. Stating the tile makes the state independent of its
+	# neighbours, which is what every other state here already does.
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT_REMOTE, 0.0,
+		ROAD_WANTS_DIRT_REMOTE, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT,
+		kept_by, ROAD_REMOTENESS_REMOTE)))
 	await h._settle()
 	if not await _open_road_ladder():
 		h._assert_hud("the road ladder still opens with no band selected", false)
 	else:
 		var keeper_states := _road_ladder_states()
-		var keeper_text := _road_ladder_text()
+		var keeper_faces := _road_ladder_faces()
+		var keeper_tip := String(_road_ladder_tooltips().get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
 		h._assert_hud("with nobody to keep it, the top rung is refused rather than offered",
 			String(keeper_states.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
 					== RungLadder.STATE_LOCKED
 				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_PAVED_ROAD) == null)
-		h._assert_hud("…and says which band it wants and why, since whoever raises a road keeps it",
-			keeper_text.contains(HudRouteVocab.GATE_REASON_ROAD_NO_KEEPER))
+		h._assert_hud("…and the ROW asks for a band in three words, beside the price",
+			String(keeper_faces.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
+				== ROW_PAVED_NO_BAND_FACE)
+		h._assert_hud("…with WHY on the hover, since whoever builds a road keeps it",
+			keeper_tip.contains(TIP_NO_KEEPER))
 		# ⛔ **ABSENCE — nothing else is wrong here.** The craft is learned and the ground is ready, so
-		# a card that also stated the ground gate or the craft gate would be blaming the wrong thing.
+		# a card that also stated either would be blaming the wrong thing — on the row OR in the hover.
 		h._assert_hud("…and complains about nothing else, the craft and the ground both being ready",
-			not keeper_text.contains(GATE_PAVING_NONE)
-				and not keeper_text.contains(GATE_NEEDS_DIRT_UNDER_TRAIL))
+			not keeper_tip.contains(TIP_PAVING) and not keeper_tip.contains(TIP_NEEDS_DIRT))
 		await h._save("road_ladder_no_keeper")
 	_dismiss_road_ladder()
 	# ⛔ **THE CLAIM THE `earns_knowledge` FIELD EXISTS FOR — a catalog where the rung that TEACHES a
@@ -1513,15 +1621,17 @@ func run(harness) -> void:
 	if not await _open_road_ladder():
 		h._assert_hud("the road ladder opens against a catalog of its own", false)
 	else:
-		var twisted_text := _road_ladder_text()
+		# **THE CLAIM IS ON THE HOVER**, that being where a gate's remedy went when the row was cut
+		# to one clause — the row says `needs Paving` under either rule and cannot tell them apart.
+		var twisted_tip := String(_road_ladder_tooltips().get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
 		h._assert_hud("the craft gate names the rung that TEACHES it, wherever the config puts that rung",
-			twisted_text.contains(GATE_PAVING_TAUGHT_BY_TRAIL))
+			twisted_tip.contains(TIP_PAVING_BY_TRAIL))
 		# ⛔ **AND THIS IS THE HALF THAT FAILS UNDER THE OLD RULE.** `Dirt Road` is the rung directly
 		# beneath `Paved Road`, so an inference off `requires_rung` produces exactly this sentence —
 		# which is also the sentence the SHIPPED catalog produces, and therefore the sharpest possible
 		# discriminator between the two rules.
 		h._assert_hud("…and never the rung merely BENEATH it, which is what the retired inference read",
-			not twisted_text.contains(GATE_PAVING_NONE))
+			not twisted_tip.contains(TIP_PAVING))
 	_dismiss_road_ladder()
 	# The real catalog back, before anything else renders against it.
 	h._hud.update_route_rungs(_route_rung_catalog())
@@ -1561,55 +1671,79 @@ const LADDER_PAVED_UPKEEP := 0.95
 const LADDER_ROADBUILDING_PART := 0.4
 const LADDER_ROADBUILDING_PERCENT := 40
 
-## **THE SENTENCES, WRITTEN OUT.** An expectation recomposed from the same format string the producer
-## uses passes against a producer that has stopped composing it — which is the whole failure these
-## claims exist to catch. Every one of them names BOTH halves of its gate: what is missing, and what
-## the player does about it.
-const GATE_NEEDS_TRAIL_UNDER_PATH := "Needs a trail beneath it — this ground carries only a path"
-const GATE_NEEDS_DIRT_UNDER_TRAIL := "Needs a dirt road beneath it — this ground carries only a trail"
-## ⛔ **THE CRAFT IS NAMED FROM THE LADDER'S OWN KNOWLEDGE ROSTER**, not from a table in this client —
-## which is what lets a rung added to the config name its own unlock. The remedy names the rung
-## BENEATH, because that is the rung whose traffic teaches it.
-const GATE_ROADBUILDING_PART := "Your people know Roadbuilding 40% — keep a trail carrying traffic to learn it"
-const GATE_PAVING_NONE := "Your people know Paving 0% — keep a dirt road carrying traffic to learn it"
-## ⛔ **THE SAME GATE UNDER A CATALOG WHERE THE TRAIL TEACHES PAVING.** The head is identical and the
-## REMEDY names a different rung, which is the whole of the difference between reading the rung that
-## TEACHES a craft and inferring the rung merely BENEATH the one it gates. The const above is the
-## wrong answer, and the fixture asserts its ABSENCE.
-const GATE_PAVING_TAUGHT_BY_TRAIL := "Your people know Paving 0% — keep a trail carrying traffic to learn it"
+## ⛔ **THE STRINGS, WRITTEN OUT — AND THE ROW AND THE HOVER ARE ASSERTED SEPARATELY.** An expectation
+## recomposed from the same format the producer uses passes against a producer that has stopped
+## composing it, which is the whole failure these claims exist to catch.
+##
+## **The split is the point of this whole cut.** A ladder row now carries one clause and everything it
+## used to print is on its `tooltip_text`, so a change that DROPPED the detail instead of RELOCATING
+## it would leave every visible-row claim below passing and every `TIP_*` claim failing. A rendered
+## frame cannot see a tooltip; that is why they are asserted here.
 
-## The price a REFUSED rung states as an aside, its face being spent on the refusal…
-const GATE_DIRT_PRICE_ASIDE := "110 work to raise it"
-## …and the same price on an OPEN rung's face, where it belongs and where it is stated ONCE.
+# ---- WHAT A ROW SAYS: `<figure> · <nearest refusal>`, and nothing else --------------------------
+
+## The rung nobody orders leads with its METER, that being the only figure it has.
+const ROW_TRAIL_FACE := "30% · wearing in"
+## …and a refused rung leads with its PRICE. Both of these rungs have TWO unmet gates and state one:
+## the craft, because the ground gate names a rung the ladder is already showing two lines up.
+const ROW_DIRT_GATED_FACE := "110 work · needs Roadbuilding"
+const ROW_PAVED_GATED_FACE := "260 work · needs Paving"
+## …the keeper pair, which outrank the craft — no amount of learning helps a tile that is taken, and
+## picking a band is the one gate on the card closed with a click.
+const ROW_PAVED_TAKEN_FACE := "260 work · Band 2 keeps it"
+const ROW_PAVED_NO_BAND_FACE := "260 work · pick a band"
+## …and a BUILDABLE rung, whose price is the button and which has no refusal to state beside it.
 const DIRT_PRICE_FACE := "110 work"
 const PAVED_PRICE_FACE := "260 work"
 
-## What each built rung BUYS — the tile card's own three clauses, asked of a rung nobody has raised
-## yet and therefore all in the future tense.
-const DIRT_BUYS_ASIDE := "buys 40% less lost between bands · lights its own tiles · will hold a link 10 tiles out"
-const PAVED_BUYS_ASIDE := "buys 65% less lost between bands · lights its own tiles · will hold a link 16 tiles out"
+## ⛔ **THE MARKER FOR "THIS ROW SHOWS A METER"**, for the ABSENCE claim. A face is either
+## `NN% · <word>` or `<price> · <refusal>`, and only the first carries a percent — so this needle
+## finds the meter clause and nothing else.
+const LADDER_METER_MARK := "% · "
 
-## …and what holding it costs every turn. **The figures are ROUNDED BY THE SHIPPED FORMATTER**
-## (`DetailFormat.format_work_units` at one decimal), so 0.45 reads `0.5` and 0.95 reads `1.0` — a
-## display fact worth pinning, since a bill quoted at a different precision on one surface is how two
-## readouts of one number start disagreeing.
-const DIRT_HOLD_ASIDE := "then 0.5 work a turn to hold"
-## ⛔ **`0.9`, NOT `1.0` — the config's 0.95 arrives as an `f32` and rounds DOWN.** Written out as it
-## renders rather than as the config reads, because the claim is about the SHIPPED string; an
-## expectation "corrected" to the config's own digits would fail against a client doing nothing wrong.
-const PAVED_HOLD_ASIDE := "then 0.9 work a turn to hold"
+## ⛔ **THE WORD THAT MUST NOT APPEAR ON ANY ROW.** A row reading `locked` above a reason said it
+## twice; the reason alone is the state, and the row stays disabled by its ink and by being a Label.
+const LADDER_LOCKED_WORD := "locked"
 
-## How far traffic has already got toward the rung directly above the one the road HOLDS — the
-## destination's side of the tile card's own `30% to dirt road`.
-const LADDER_APPROACH_CLAUSE := "30% of the way there already"
-## …and the tail alone, for the ABSENCE claim: a road whose meter reads exactly `1.0` has nothing
-## rising above it and states no approach on any row.
-const LADDER_APPROACH_SUFFIX := "of the way there already"
+# ---- WHAT THE HOVER SAYS: everything the row stopped saying ------------------------------------
 
-## ⛔ **WHAT DISTANCE DOES TO THE PRICE, AS ITS OWN CLAUSE.** The figure beside it is the rung's BASE
-## price exactly as published; the multiple is stated separately because multiplying the two client-
-## side would put a copy of the sim's pricing formula where it can drift.
-const LADDER_REMOTE_CLAUSE := "far from them — ×2.0 the rung's price"
+## The price PAIRED with the standing bill, which is the decision the row's single figure cannot make.
+## **The figures are ROUNDED BY THE SHIPPED FORMATTER** (`DetailFormat.format_work_units`, one
+## decimal), so the config's 0.45 reads `0.5` and its 0.95 reads `0.9` — an `f32` rounding DOWN.
+## Written as they render, not as the config reads: an expectation "corrected" to the config's digits
+## would fail against a client doing nothing wrong.
+const TIP_DIRT_PRICE := "110 work to build, 0.5 work a turn to keep."
+const TIP_PAVED_PRICE := "260 work to build, 0.9 work a turn to keep."
+
+## What each rung does, in plain English — the jargon (`buys`, `lost hauling`, `lights its tiles`,
+## `links N tiles out`) is retired from every road surface.
+const TIP_DIRT_PAYOFF := "40% less loss · you can see along it · links camps up to 10 tiles apart"
+const TIP_PAVED_PAYOFF := "65% less loss · you can see along it · links camps up to 16 tiles apart"
+
+## Every refusal, as a sentence — including the ones the row had no room for.
+const TIP_WORN_IN := "Traffic wears this in. There is nothing to order."
+const TIP_NEEDS_TRAIL := "Needs a trail first."
+const TIP_NEEDS_DIRT := "Needs a dirt road first."
+## ⛔ **THE CRAFT IS NAMED FROM THE LADDER'S OWN KNOWLEDGE ROSTER**, and the remedy names the rung that
+## TEACHES it — never the rung merely beneath the one it gates.
+const TIP_ROADBUILDING := "Roadbuilding known 40%. Learn it from a busy trail."
+const TIP_PAVING := "Paving known 0%. Learn it from a busy dirt road."
+## …the same gate under a catalog where the TRAIL teaches Paving. The const above is then the wrong
+## answer, and the fixture asserts its absence — see `_twisted_teaching_catalog`.
+const TIP_PAVING_BY_TRAIL := "Paving known 0%. Learn it from a busy trail."
+## ⛔ **`Band 2` IS THE SECOND BAND ON THE STAGED ROSTER**, which `HudBandLaborState.band_label_for_id`
+## names by roster index — so this claim covers the label plumbing as well as the gate, and a keeper
+## resolved as `another people` (the honest fallback for a band outside the roster) would fail it.
+const TIP_ANOTHER_KEEPER := "Band 2 keeps it. They must give it up first."
+const TIP_NO_KEEPER := "Pick a band first. Whoever builds a road keeps it."
+## ⛔ **WHAT DISTANCE DOES TO THE PRICE**, stated APART from the base figure because multiplying the
+## two client-side would put a copy of the sim's pricing formula where it can drift.
+const TIP_REMOTE := "Far from your band, so it costs ×2.0."
+
+## The second staged band's `entity`, deliberately unlike the fixture band's 904 so its derived
+## `band_id` cannot collide with the acting band's — the collision would make the gate answer *this
+## is your own road* and pass every claim below for the wrong reason.
+const SECOND_BAND_ENTITY := 907
 
 ## **THE LINE A PRESS ON THE DIRT ROAD ROW WOULD TRANSMIT.** Composed from the FIXTURE's own values
 ## rather than read off the payload, so the claim is about the shipped grammar: `grade` is
@@ -1766,6 +1900,19 @@ func _road_ladder_faces() -> Dictionary:
 			elif child is Label and (child as Label).horizontal_alignment \
 					== HORIZONTAL_ALIGNMENT_RIGHT:
 				out[key] = (child as Label).text
+	return out
+
+## ⛔ **EACH ROW'S HOVER, keyed by rung** — where every clause the row stopped printing now lives. A
+## cut that DROPPED the detail rather than relocating it is the failure mode of this whole task, and a
+## rendered frame cannot see a tooltip, so these are asserted beside the visible faces.
+##
+## Read off the LINE (the `HBoxContainer` carrying the row metas). The face control carries the same
+## string — a `Button` answers a hover with its own tooltip, so both are set — and reading the line is
+## the one place that is true for a Label row and a Button row alike.
+func _road_ladder_tooltips() -> Dictionary:
+	var out: Dictionary = {}
+	for control in _collect_meta(h._hud, HudWorkVocab.RUNG_TRACK_RUNG_META, []):
+		out[String(control.get_meta(HudWorkVocab.RUNG_TRACK_RUNG_META))] = control.tooltip_text
 	return out
 
 ## The PRESSABLE row for one rung, or `null` where the ladder refuses it. **The shape IS the

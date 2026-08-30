@@ -55,12 +55,21 @@ const LABOR_KIND_AGRICULTURE := "agriculture"
 const LABOR_KIND_HUSBANDRY := "husbandry"
 
 # **THE THIRD KEEPING ROLE** (arc #532) — the same family again, staffed by the same
-# `assign_labor <faction> <band> roadwork <workers>`, and it keeps the ROADS the band stands on.
+# `assign_labor <faction> <band> roadwork <workers>`, and it keeps the ROAD TILES THIS BAND BUILT,
+# wherever the band has since walked.
 #
-# **A ROAD IS OWNED BY NOBODY, which is what makes this pool unlike the two above.** `agriculture`
-# and `husbandry` keep sources the band HOLDS; a road is a shared public good with a fixed path in
-# the ground, and a band pays for one simply by standing on it — so the same road may be paid into by
-# several bands at once, each covering a part.
+# ⛔ **ONE BAND KEEPS A ROAD TILE, NEVER TWO, AND NOTHING ABOUT IT IS SHARED.** `Road::keeper` is a
+# single band — the one that graded or paved the tile — `route_keeping_claims` walks the roads a band
+# keeps without ever reading that band's position, and `road_verb_refusal` rejects `grade` / `pave`
+# outright on a tile another band already keeps. So the catchment is the JOB, not the ground under
+# the camp, and distance is priced (`keeper_remoteness`) rather than gated.
+#
+# **THIS BLOCK ASSERTED THE OPPOSITE, AND BOTH HALVES WERE WRONG.** It said a road was *owned by
+# nobody*, that a band paid for one *simply by standing on it*, and that *several bands may pay into
+# one road, each covering a part*. Co-payment is unrepresentable — there is one keeper field and a
+# refusal defending it — and the standing reading sends a player to move camp in order to stop a bill
+# that follows them regardless. **The word `owned` is retired from this arc**: there is no owning a
+# road, there is the JOB OF KEEPING one, and a band takes that job on by building the tile.
 #
 # **THE BILL IS A COHORT FIELD, NOT A SUM OF ROWS.** `roadwork_demand` / `roadwork_supplied` /
 # `roadwork_shortfall` ride the band, and a readout reads them straight: the `routes` rows are

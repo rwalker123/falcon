@@ -92,7 +92,7 @@ const RUNG_LABELS := {
 const ROAD_ROW := "Road"
 
 ## ⛔ **THE PAYOFF ROW, AND IT IS DELIBERATELY UNLABELLED.** `Buys:` was a key doing no work: the
-## value (*40% less lost between bands*) already reads as a benefit, so the label only narrowed the
+## value (*40% less loss*) already reads as a benefit, so the label only narrowed the
 ## column the sentence had to live in.
 ##
 ## ⛔ **THE KEY IS A BLANK RATHER THAN ABSENT, AND THAT IS STRUCTURAL.** `DetailFormat.detail_bbcode`
@@ -207,23 +207,23 @@ const ROAD_REVERTING_IMMINENT := 0
 ## The payoff's friction clause, stated as what it SAVES. `friction_multiplier` is the fraction of the
 ## base loss a network bound by this road pays, so `0.6` is *40% less lost* — the conversion is a
 ## presentation of the published multiplier, never a re-derivation of a sim answer.
-const ROAD_BONUS_FRICTION_FORMAT := "%d%% less lost between bands"
+const ROAD_BONUS_FRICTION_FORMAT := "%d%% less loss"
 
 ## The sight clause — `grants_sight` is the RESOLVED answer, because a client cannot re-derive
 ## *"is the bill met"* (that is a comparison against the stamped basis with the sim's own epsilon).
-const ROAD_BONUS_SIGHT := "lights its own tiles"
+const ROAD_BONUS_SIGHT := "you can see along it"
 
 ## …and its other half: a BUILT road whose bill is unpaid goes dark BEFORE it decays, which is the
 ## honest early warning that it is being lost. Said out loud, because a clause that merely vanished
 ## would read as a rung that never lit anything. **It says `upkeep`, the row above it's own word.**
-const ROAD_BONUS_DARK := "dark until its upkeep is paid"
+const ROAD_BONUS_DARK := "dark until upkeep is paid"
 
 ## ⛔ **THE LINK SPAN IS FUTURE TENSE, AND THAT IS NOT A STYLE CHOICE.** `holds_link_to_tiles` is
 ## authored on every route rung and **not yet read by the sim** — nothing in `balance_supply_networks`
 ## consumes it (that is slice 13b). It is published now because it is half of this line, and an honest
 ## *"authored, not yet consumed"* beats a field the client has to guess at; rendering it in the
 ## present tense would state an effect that is not in play.
-const ROAD_BONUS_LINK_FORMAT := "will hold a link %d tiles out"
+const ROAD_BONUS_LINK_FORMAT := "links camps up to %d tiles apart"
 
 # RETIRED — `ROAD_BUYS_NOTHING` (`nothing — a path the animals made`), the sentence a rung buying
 # nothing on every axis used to print (issue #566).
@@ -382,32 +382,45 @@ static func road_row_value(road: Dictionary) -> String:
 			HudSelectionVocab.RUNG_HAZARD_GLYPH, ROAD_UNDER_KEPT_WORD])
 	return ROAD_CLAUSE_SEPARATOR.join(clauses)
 
-## ⛔ **THE PAYOFF, UNLABELLED — what this rung is BUYING, and the point of the whole readout.** Three
-## clauses, each off a published field:
+## ⛔ **THE PAYOFF, UNLABELLED — and it is now ONE CLAUSE, the loss figure.**
 ##
-## - the friction it saves, as a percentage of the base loss it takes off (`friction_multiplier`);
-## - whether it is lighting its own tiles right now (`grants_sight`, the RESOLVED answer) — and, on a
-##   built road whose bill is unpaid, that it has gone dark, which happens BEFORE the rung decays;
-## - the link span the rung will hold open (`holds_link_to_tiles`), in **future tense**, because the
-##   sim does not read that field yet.
+## The row printed all three axes (`40% less lost hauling · lights its tiles · links 10 tiles out`),
+## which on a 292px card wrapped to three lines under a value that is itself one word. Reported from
+## play: *"the description under Road: trail is way too much, maybe just 15% less loss is enough, the
+## rest can be a tool tip."*
 ##
-## ⛔ **A RUNG THAT BUYS NOTHING RENDERS NO ROW.** It used to print `nothing — a path the animals
-## made`, which was a row spent on saying no AND a false claim about where the tile's rung came from
-## (nothing in the sim models an animal's path; the meter is banked by whoever walks the ground). Both
-## free rungs land here, so this is the commonest road in the game rendering one row shorter.
+## **THE LOSS FIGURE IS THE ONE THAT MOVES A DECISION** — it is the reason to pave rather than to
+## leave a trail — so it stays on the card and the other two go to `bonus_tooltip` below. Nothing is
+## lost: the block's hover carries them, through the same `Context.row_tooltips` seam the rung rows'
+## own hazards use.
+##
+## ⛔ **A RUNG THAT SAVES NOTHING RENDERS NO ROW.** `friction_multiplier` at its neutral is both free
+## rungs, and the row's absence states that better than a sentence could.
 static func bonus_value(road: Dictionary) -> String:
-	var clauses: Array[String] = []
 	var multiplier := friction_multiplier_of(road)
-	if multiplier < ROAD_FRICTION_NO_HELP:
-		clauses.append(ROAD_BONUS_FRICTION_FORMAT % int(round(
-			(ROAD_FRICTION_NO_HELP - multiplier) * ROAD_PERCENT_SCALE)))
+	if multiplier >= ROAD_FRICTION_NO_HELP:
+		return ""
+	return ROAD_BONUS_FRICTION_FORMAT % int(round(
+		(ROAD_FRICTION_NO_HELP - multiplier) * ROAD_PERCENT_SCALE))
+
+## …and the rest of the payoff, for the block's HOVER — what the row above stopped saying.
+##
+## - whether the road is lighting its tiles right now (`grants_sight`, the RESOLVED answer, because a
+##   client cannot re-derive *is the bill met*), and, on a BUILT road whose bill is unpaid, that it
+##   has gone dark — which happens BEFORE the rung decays and is the honest early warning;
+## - the link span the rung will hold open (`holds_link_to_tiles`), in **future tense**, the sim not
+##   reading that field yet.
+##
+## `""` where there is nothing further to say, which leaves the hover empty rather than blank-lined.
+static func bonus_tooltip(road: Dictionary) -> String:
+	var clauses: Array[String] = []
 	if grants_sight(road):
 		clauses.append(ROAD_BONUS_SIGHT)
 	elif is_short(road):
 		# A road only goes dark for a reason, and the reason is the unpaid bill one row up. Gated on
-		# the shortfall rather than printed for every unlit road, because the PATH lights
-		# nothing even with its bill paid in full — a rung nobody keeps is not a road going dark —
-		# and telling the player to pay a bill that does not exist would be a wrong remedy.
+		# the shortfall rather than printed for every unlit road, because the PATH lights nothing even
+		# with its bill paid in full — a rung nobody keeps is not a road going dark — and telling the
+		# player to pay a bill that does not exist would be a wrong remedy.
 		clauses.append(ROAD_BONUS_DARK)
 	var span := holds_link_to_tiles_of(road)
 	if span > ROAD_LINK_NONE:
@@ -474,12 +487,23 @@ static func reverting_value(road: Dictionary) -> String:
 ## The rows in order: what it is · what it buys · what it costs · whose job it is · when it is lost.
 ## The payoff sits directly under the rung because it is what the rung IS FOR, and the keeper follows
 ## the bill because it is the answer to *who pays that*.
-static func road_lines(road: Dictionary, keeper_label: String = "") -> Array[String]:
+## `ctx` is the render's tint/hover context, and the payoff row's SPARE CLAUSES are registered on it
+## (`Context.row_tooltips`) rather than printed. A caller with none — the harness asserting the WORDS,
+## and any surface with no host label — simply gets the visible lines, which is the honest half.
+static func road_lines(road: Dictionary, keeper_label: String = "",
+		ctx: DetailFormat.Context = null) -> Array[String]:
 	var lines: Array[String] = []
 	lines.append("%s: %s" % [ROAD_ROW, road_row_value(road)])
 	var bonus := bonus_value(road)
 	if bonus != "":
 		lines.append("%s: %s" % [ROAD_BONUS_ROW, bonus])
+	# **THE REST OF THE PAYOFF GOES TO THE BLOCK'S HOVER**, keyed on the row that stopped saying it.
+	# `DetailFormat.block_tooltip` joins every registered hover into the one `tooltip_text` a
+	# `RichTextLabel` block can carry, `[hint=…]` not being parsed by this Godot build.
+	if ctx != null:
+		var spare := bonus_tooltip(road)
+		if spare != "":
+			ctx.row_tooltips[ROAD_BONUS_ROW] = spare
 	var upkeep := upkeep_value(road)
 	if upkeep != "":
 		lines.append("%s: %s" % [ROAD_UPKEEP_ROW, upkeep])
@@ -697,83 +721,165 @@ const ROAD_LADDER_META := &"road_ladder"
 ## branch's verb read as movement on a surface whose whole subject is a piece of ground.
 const ROAD_LADDER_TITLE := "RAISE IT TO…"
 
-## What a rung BUYS, as the aside beneath its price — `HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT`'s
-## shape, and it wraps the same three clauses the tile card's payoff row states.
-const ROAD_LADDER_BUYS_FORMAT := "buys %s"
+# ---- THE LADDER'S ROWS: ONE LINE EACH, AND THE REST ONE HOVER AWAY ------------------------------
+#
+# ⛔ **A RUNG IS ONE LINE.** The card printed up to SIX per rung — a state word, a price aside, an
+# approach, a remoteness clause, a payoff and a standing bill, plus one wrapped sentence per unmet
+# gate. Reported from play as *"the most wordy dialog I think I've ever seen"*, and the diagnosis was
+# right: none of it was wrong, all of it was at once, and the decision the row exists for (*can I
+# afford this yet*) was the hardest thing on it to find.
+#
+# **NOTHING IS DELETED, IT MOVES TO THE ROW'S `tooltip_text`.** The payoff, the standing bill, the
+# prerequisite chain and the *how do I learn this* sentence all survive one hover away. A cut that
+# loses the detail instead of relocating it is the failure this arrangement is built to avoid, which
+# is why the harness asserts the tooltips and not only the visible line.
+#
+# The face is `<figure> · <nearest refusal>`; where the rung is buildable the figure IS the button
+# and there is no refusal to state.
 
-## ⛔ **THE PRICE OF A RUNG THE LADDER REFUSES, WHICH ITS FACE CANNOT CARRY.** A row's right-hand slot
-## states the price where the rung may be ordered and the word `locked` where it may not — so on this
-## branch, which eats no material and therefore has no pile aside to fall back on, a refused rung
-## would state no price at all. **A rung a player may plan toward must be a rung they can plan
-## against**, which is `RungLadder`'s own rule for the material pile, arriving one currency over.
+## The row's two-clause face. **The figure leads** because it is what two rows of one ladder differ
+## by most, and because the eye that came here for a price should not have to read past a sentence.
+const ROAD_LADDER_FACE_FORMAT := "%s · %s"
+
+## The meter on the row DIRECTLY ABOVE the standing rung, and on no other — `build_fraction` is the
+## rung being RAISED. **It rides the `wearing in` row alone**: that row has no price of its own, so
+## without it the line states only a static fact about traffic, while every other row already leads
+## with a figure.
+const ROAD_LADDER_METER_FORMAT := "%d%%"
+
+# ⛔ RETIRED — **`ROAD_LADDER_BUYS_FORMAT`, `ROAD_LADDER_PRICE_FORMAT` and
+# `ROAD_LADDER_PROGRESS_FORMAT`**, the three ASIDES a ladder row used to stack beneath itself
+# (`buys …`, `costs 110 work`, `35% done`). The first is in the tooltip now, the second is the face,
+# the third is a clause of the face. **The word `buys` went with them** — a payoff already reads as a
+# benefit, so the label only narrowed the column the sentence had to live in.
+
+## ⛔ **WHAT DISTANCE DOES TO THE PRICE — tooltip only now.** The row's figure is the rung's BASE
+## price exactly as published and the multiple is stated apart from it, because multiplying the two
+## here would put a copy of the sim's pricing formula in the client, where it can drift.
+const ROAD_LADDER_TIP_REMOTE_FORMAT := "Far from your band, so it costs ×%s."
+
+## **THE PRICE PAIRED WITH THE STANDING BILL, which is the decision** — one-off against per-turn, the
+## two halves of what the player is agreeing to.
 ##
-## It renders ONLY where the face has been spent on a refusal: an open rung states its price once, on
-## the face, and a row saying `110 work` above an aside saying `110 work to raise it` is one fact
-## twice. `HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT`'s shape, so the two prices read alike.
-const ROAD_LADDER_PRICE_FORMAT := "%s work to raise it"
+## ⛔ **RENDERED ONLY WHERE THE RUNG OWES UPKEEP.** On a rung that is free to hold the line would
+## restate the face and add nothing, and a line that says nothing is the whole of what this cut
+## removed.
+const ROAD_LADDER_TIP_PRICE_FORMAT := "%s work to build, %s work a turn to keep."
 
-## ⛔ **HOW FAR TRAFFIC HAS GOT TOWARD THE ROW IT SITS ON.** `build_fraction` is the meter on the rung
-## being RAISED, so it belongs to the row DIRECTLY ABOVE the standing one and to no other — the same
-## rule the tile card's `25% to trail` follows, said from the destination's side rather than the
-## holder's.
-const ROAD_LADDER_PROGRESS_FORMAT := "%d%% of the way there already"
+## The tooltip's lines, one fact each. **Newline rather than a middot**, because these are sentences
+## and a hover has the room a 292px row does not.
+const ROAD_LADDER_TIP_SEPARATOR := "\n"
 
-## ⛔ **WHAT DISTANCE DOES TO THIS ROW'S PRICE, AS ITS OWN CLAUSE.** The figure beside it is the rung's
-## BASE price exactly as published; the multiple is stated separately because multiplying the two here
-## would put a copy of the sim's pricing formula in the client, where it can drift. Same sentence the
-## tile card's `Kept by:` row already carries, so the player meets one wording for one fact.
-const ROAD_LADDER_REMOTE_FORMAT := "far from them — ×%s the rung's price"
+## ⛔ **THE NAME COLUMN IS NARROWER ON THIS BRANCH, and the wrapping is why.** The shared
+## `HudWorkVocab.RUNG_TRACK_NAME_WIDTH` (150px) leaves 142px of a 292px card for the value, and
+## `110 work · needs Roadbuilding` does not fit in it — the row clipped, which was half of why the
+## card read badly. Route rung names are short (`Paved Road` is the longest the shipped ladder holds),
+## so the column gives the width back to the face. It rides the ROW rather than widening
+## `build_track`'s signature: the plant and animal tracks want the wider name column they have.
+const ROAD_LADDER_NAME_WIDTH := 96.0
 
-# ---- THE GATES, EACH WITH ITS OWN REMEDY -------------------------------------------------------
+# ---- THE GATES: A SHORT FORM FOR THE ROW, A SENTENCE FOR THE HOVER -----------------------------
 #
 # ⛔ **A GATED ROW IS SHOWN AND EXPLAINED, NEVER HIDDEN.** The sheet exists to say what the branch
-# HOLDS; a rung silently missing reads as a shorter ladder rather than as one this road cannot climb
-# — `RungLadder`'s own rule, and the reason the action is offered on every road rather than only on
-# the ones that can be raised today.
+# HOLDS; a rung silently missing reads as a shorter ladder rather than as one this road cannot climb.
+#
+# ⛔ **AND THE WORD `locked` IS GONE.** A row reading `locked` above a reason said it twice — the
+# reason alone IS the state. The row stays visibly disabled by its ink (`INK_DIM`) and by being a
+# `Label` rather than a `Button`, which is this client's standing rule for the improvement control.
+#
+# ⛔ **THE ROW SHOWS ONE GATE AND THE TOOLTIP SHOWS THEM ALL.** A rung two steps out of reach printed
+# every refusal it had, which was most of the six lines. Each gate therefore ships a SHORT form (a row
+# clause, lower case, no full stop) and a LONG form (a sentence for the hover).
 
-## The GROUND gate. `requires_rung` is the rung this one has to stand on, and a road cannot be built
-## on bare ground because of it: a dirt road wants a trail beneath it and a trail is worn in only by
-## traffic. Both halves are stated — what it needs, and what this ground actually carries.
-const GATE_REASON_ROAD_NEEDS_RUNG_FORMAT := "Needs a %s beneath it — this ground carries only a %s"
-
-## The rung nobody declares. It is not refused for want of anything; there is simply no order to give,
-## which the remedy says rather than leaving the row looking broken.
-const GATE_REASON_ROAD_WORN_IN := "Worn in by traffic — nothing to order; it rises as your bands pool food across this hex"
-
-## ⛔ **THE KNOWLEDGE GATE IS A HEAD PLUS AN OPTIONAL REMEDY, and the split is what makes all four
-## combinations reachable without a table.** Two facts arrive independently — whether the ladder's
-## knowledge roster NAMES this craft, and whether any rung on this branch TEACHES it — so a format per
-## sentence would need four consts and a fork to pick between them.
+## The gate KINDS, in the order a ROW prefers them — first match wins, and the tooltip keeps the rest.
 ##
-## The head, in `HudFloraVocab.GATE_REASON_*_KNOWLEDGE_FORMAT`'s voice, **with the craft named from the
-## ladder's own knowledge roster** rather than spelled here — so a rung added to the config names its
-## unlock with no client edit.
-const GATE_REASON_ROAD_KNOWLEDGE_HEAD_FORMAT := "Your people know %s %d%%"
+## ⛔ **THE GROUND GATE SINKS TO LAST, and that is not an ordering whim.** *Needs a trail first* names
+## a rung the ladder is already displaying two lines up under `where you are` — it is the one refusal
+## the player cannot miss, so it earns least on a line that holds one clause. Everything above it
+## names something that is NOT on screen.
+##
+## The two keeper gates outrank the craft because no amount of learning helps a tile that is already
+## somebody else's job; and `pick a band` outranks the craft because it is the only gate on this card
+## the player closes with a click rather than with a campaign.
+const GATE_KIND_WORN_IN := "worn_in"
+const GATE_KIND_ANOTHER_KEEPER := "another_keeper"
+const GATE_KIND_NO_KEEPER := "no_keeper"
+const GATE_KIND_CRAFT := "craft"
+const GATE_KIND_GROUND := "ground"
+const GATE_ROW_PRIORITY := [
+	GATE_KIND_WORN_IN,
+	GATE_KIND_ANOTHER_KEEPER,
+	GATE_KIND_NO_KEEPER,
+	GATE_KIND_CRAFT,
+	GATE_KIND_GROUND,
+]
 
-## …and the same head where the roster carries no name for the craft. **The PROGRESS is still the
-## news**, so it is stated: naming a discovery this client cannot vouch for would be worse than not
-## naming one, and dropping the number with the name would throw away the half that is known.
-const GATE_REASON_ROAD_KNOWLEDGE_HEAD_UNNAMED_FORMAT := "Your people know this craft %d%%"
+## The three fields one gate carries. **Named**, because producer and reader are different scripts and
+## a typo in a `get` here is a silently blank row rather than an error.
+const GATE_KIND_KEY := "kind"
+const GATE_SHORT_KEY := "short"
+const GATE_LONG_KEY := "long"
 
-## ⛔ **THE REMEDY, AND IT NAMES THE RUNG THAT TEACHES THE CRAFT — never the rung beneath the gated
-## one.** See `ladder_rung_teaching`: the two coincide on the shipped four rungs and the config is free
-## to break the pairing, at which point an inference would tell the player to go and stand on the wrong
-## ground. **Appended only where a rung on this branch teaches it**, because a remedy that named no
-## rung would be a dangling clause and one that guessed would be worse.
-const GATE_REASON_ROAD_KNOWLEDGE_REMEDY_FORMAT := " — keep a %s carrying traffic to learn it"
+## The GROUND gate — `requires_rung`. A road cannot be built on bare ground because of it: a dirt road
+## wants a trail beneath it and a trail is worn in only by traffic.
+const GATE_SHORT_ROAD_NEEDS_RUNG_FORMAT := "needs a %s"
+const GATE_LONG_ROAD_NEEDS_RUNG_FORMAT := "Needs a %s first."
+
+## The rung nobody declares. It is not refused for want of anything; there is simply no order to give.
+## **The row's own word is `HudWorkVocab.RUNG_TRACK_STATE_WORN_IN`** — one spelling, in the state table
+## with the other six — so this carries the hover's sentence alone.
+const GATE_LONG_ROAD_WORN_IN := "Traffic wears this in. There is nothing to order."
+
+## The CRAFT gate. **The discovery is named from the ladder's own knowledge roster**, so a rung added
+## to `intensification_ladder.json` names its unlock with no client edit; a roster carrying no name for
+## it yet says so plainly rather than printing a blank.
+const GATE_SHORT_ROAD_NEEDS_CRAFT_FORMAT := "needs %s"
+const GATE_SHORT_ROAD_NEEDS_CRAFT_UNNAMED := "needs a craft"
+
+## …and the hover's two halves. The head states what is missing and how far along it is; the remedy
+## names the rung that TEACHES it (`ladder_rung_teaching` — never the rung merely beneath, see there)
+## and is appended only where a rung on this branch does.
+const GATE_LONG_ROAD_KNOWLEDGE_HEAD_FORMAT := "%s known %d%%."
+const GATE_LONG_ROAD_KNOWLEDGE_HEAD_UNNAMED_FORMAT := "This craft is known %d%%."
+const GATE_LONG_ROAD_KNOWLEDGE_REMEDY_FORMAT := " Learn it from a busy %s."
 
 # ⛔ RETIRED — **`GATE_REASON_ROAD_KNOWLEDGE_FORMAT` and `GATE_REASON_ROAD_KNOWLEDGE_UNNAMED_FORMAT`**,
-# the two whole-sentence forms the pair above replaced. Their remedy clause was fed the rung BENEATH
-# the gated one (`requires_rung`), which is a different fact from the rung that teaches the craft; the
-# sentences they produced on the shipped ladder are byte-identical to what the head-plus-remedy pair
-# produces, which is precisely why the defect was invisible and why the fixture that catches it has to
-# state a catalog where the two rungs differ.
+# the whole-sentence forms an earlier cut replaced. Their remedy clause was fed the rung BENEATH the
+# gated one (`requires_rung`), which is a different fact from the rung that TEACHES the craft; the
+# sentences they produced on the shipped ladder were byte-identical to the pair above, which is
+# precisely why the defect was invisible and why the fixture that catches it states a catalog where
+# the two rungs differ.
 
 ## ⛔ **THE KEEPER GATE — a road really has to be somebody's job.** The band token IS the keeper:
 ## issuing the verb declares the work and names who is on the hook for the standing bill, which are one
 ## act. `Main.IMPROVEMENT_NO_BAND` refuses the command outright rather than guessing a band, so the
 ## row says so before the press rather than after it.
-const GATE_REASON_ROAD_NO_KEEPER := "No band to keep it — pick one of your bands first; whoever raises a road keeps it"
+const GATE_SHORT_ROAD_NO_KEEPER := "pick a band"
+const GATE_LONG_ROAD_NO_KEEPER := "Pick a band first. Whoever builds a road keeps it."
+
+## ⛔ **AND ITS TWIN — THE TILE IS ALREADY SOMEBODY ELSE'S JOB.** `road_verb_refusal` rejects
+## `grade`/`pave` outright when `Road::keeper` names a band other than the one issuing it: **ONE BAND
+## KEEPS A ROAD TILE, NEVER TWO**, and the refusal is what makes co-payment unrepresentable rather
+## than merely discouraged. Without this gate the row rendered READY, the press went out, and the
+## player got a command-failure event where a greyed row with a reason belonged.
+##
+## **The keeper is NAMED, and the name is resolved by the caller** — a road carries a `band_id` and
+## this client has exactly one band-naming rule (`HudBandLaborState.band_label_for_id`), so the label
+## is threaded in exactly as the tile card's `Kept by:` row threads it. A band outside the player's
+## roster reads `ROAD_KEEPER_FOREIGN`, which is a real state: a road may be kept by a people you
+## merely know of.
+##
+## **The remedy is the sim's own** — the keeping band has to put the tile down before another may take
+## it on. It deliberately does NOT name `abandon` as a control, that verb being command-line only in
+## this slice; what the clause promises is the ACT, which is true however it is reached.
+const GATE_SHORT_ROAD_ANOTHER_KEEPER_FORMAT := "%s keeps it"
+const GATE_LONG_ROAD_ANOTHER_KEEPER_FORMAT := "%s keeps it. They must give it up first."
+
+# ⛔ RETIRED — the five whole-sentence gate consts the SHORT/LONG pairs above replaced
+# (`GATE_REASON_ROAD_NEEDS_RUNG_FORMAT`, `_WORN_IN`, `_KNOWLEDGE_HEAD*`, `_NO_KEEPER`,
+# `_ANOTHER_KEEPER_FORMAT`). Each was one string doing two jobs at one length: long enough to wrap a
+# 292px row, short enough that the remedy had to be dropped to fit. The row and the hover each take
+# the form they have room for now.
 
 ## **WHAT A RUNG BUYS, OFF THE CATALOG RATHER THAN OFF A BUILT ROAD** — the same three clauses
 ## `bonus_value` composes for the tile card, asked of a rung nobody has raised yet.

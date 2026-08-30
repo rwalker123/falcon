@@ -9,10 +9,20 @@
 //! after that end", which is the ordinary case the moment two camps sit at either end of a long
 //! road. A link already knows its two endpoints, so the tiles between them are computable.
 //!
-//! ⛔ **THE GDScript SIDE HAS NOT BEEN RE-WRITTEN FOR THE PER-TILE SHAPE.** No Godot script reads
-//! this section yet (there is no road drawn on the map and no `roadwork` row on the Work board), so
-//! the rename below breaks nothing today — but a renderer written against it must join rows on
-//! `tile_x`/`tile_y` and draw a **tile**, never a polyline.
+//! ⛔ **THIS SECTION HAS CONSUMERS NOW, AND A CHANGE TO THE ROW SHAPE HAS TO VISIT THEM.** It read
+//! *"no Godot script reads this section yet"* for one slice, which was true when the per-tile rebuild
+//! landed and is a licence to change the row freely — exactly the wrong thing to leave behind. Four
+//! readers, all joining on `tile_x`/`tile_y`:
+//!
+//!   * `MapView._ingest_road_network` -> `MapView.road_network` / `road_tile_lookup`, the world-state
+//!     cache the other three read through;
+//!   * `AnnotationRenderer.draw_road_network`, which stamps ONE HEX per row -- **never a polyline**,
+//!     there being no stored path to draw;
+//!   * `SubjectDrawerController._tile_terrain_lines`, the tile card's road block, via
+//!     `MapView._tile_info_at`'s `roads` key;
+//!   * `DrawerComposeController`'s road ladder (`RungLadder.route_track` / `RungGates.route_gates`),
+//!     which reads `rung`, `build_fraction`, `keeper_remoteness` and the `has_keeper` /
+//!     `keeper_band_id` pair to decide what a player may order on the tile.
 //!
 //! Already fog-filtered SIM-SIDE, and the gate is `Discovered` rather than the herd list's `Active`
 //! -- a road does not wander off, so remembering one is remembering something true. A road on ground

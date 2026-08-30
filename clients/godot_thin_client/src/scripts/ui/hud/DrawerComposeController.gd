@@ -4403,8 +4403,16 @@ func _open_road_ladder(tile_info: Dictionary, index: int, anchor: Control) -> vo
             "the wire — the ladder cannot state a single rung")
         return
     var band := _resolve_assign_band()
+    # ⛔ **THE KEEPER'S NAME IS RESOLVED HERE AND NOWHERE ELSE**, the tile card's own rule one block
+    # up: a road carries a `band_id`, this client has exactly one band-naming rule, and the gate
+    # layer is stateless and holds no roster. `""` for a band outside the player's roster, which the
+    # gate reads as *another people* — a real state, since a road may be kept by a people you merely
+    # know of.
+    var keeper_label := ""
+    if HudRouteVocab.has_keeper(road):
+        keeper_label = _band_labor.band_label_for_id(HudRouteVocab.keeper_band_id_of(road))
     var rows := RungLadder.route_track(road, ladder, _player_knowledge(),
-        _topbar.knowledge_labels(), band)
+        _topbar.knowledge_labels(), band, keeper_label)
     var card := _ensure_road_ladder()
     var margin := _road_ladder_body
     HudWidgets.clear_children(margin)

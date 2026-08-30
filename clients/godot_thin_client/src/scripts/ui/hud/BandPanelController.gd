@@ -2162,11 +2162,17 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     var animal_cover := _pool_coverage(band, SourceForecast.LABOR_KIND_HUNT,
         HudConst.LABOR_KIND_HUSBANDRY, int(husbandry_eff.get("workers", 0)), animal_pool, queued)
     # **AND THE ROAD POOL'S, WHICH TAKES A DIFFERENT ROUTE TO THE SAME DICT** — `_pool_coverage`
-    # above prices a web off its SOURCE rows plus the band's build queue, and neither term exists
-    # here: a route rung takes no builder and appends no queue entry, and the road rows are
-    # fog-filtered so summing them would understate a bill the band still owes. All three figures are
-    # published on the cohort instead, and the SHORTFALL rides out beside them so the card's mark is
-    # the sim's own verdict rather than a subtraction taken here.
+    # above prices a web off its SOURCE rows plus the band's build queue, and the SOURCE term cannot
+    # be taken here: the road rows are fog-filtered, so summing them would understate a bill the band
+    # certainly still owes. All three figures are published on the cohort instead, and the SHORTFALL
+    # rides out beside them so the card's mark is the sim's own verdict rather than a subtraction
+    # taken here.
+    #
+    # ⛔ **NOT because a route rung takes no builder** — that claim was false and is retired with the
+    # tooltip that carried it. `grade` / `pave` append an ordinary `BuildQueueEntry` funded by the
+    # band's `builders` pool; it is only the FREE FLOOR that traffic wears in. The queued half is
+    # absent from this dict because the published demand carries none, and
+    # `HudWorkVocab.UPKEEP_POOL_COVERAGE_ROUTE_FORMAT` is worded to promise exactly what is here.
     var road_pool := _band_labor.roadwork_pool_state(band)
     var road_cover := {
         HudWorkVocab.POOL_COVERAGE_SUPPLY_KEY: float(road_pool.get("supplied",

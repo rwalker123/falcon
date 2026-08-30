@@ -29,8 +29,10 @@ here are its traps, arriving one layer out.
 `AnnotationRenderer._routes` — fed by `MapView`'s `snapshot["orders"]`, drawn by `draw_routes`, and
 covered by `map_preview`'s `"routes"` state — is the per-faction **ORDER PATH** overlay: the
 waypoints a player's own movement orders are following, coloured by FACTION, which vanish when the
-order does. A road is a world object IN THE GROUND — one tile, owned by nobody, outliving every band
-that walks it — and it is coloured by RUNG.
+order does. A road is a world object IN THE GROUND — one tile, belonging to no faction, outliving
+every band that walks it — and it is coloured by RUNG. (Belonging to no faction is not the same as
+having nobody on the hook: exactly one band KEEPS each tile, which is a JOB. **The word `owned` is
+retired from this arc.**)
 
 **So the client noun for this branch is `road` everywhere** — `MapView.road_network` /
 `road_tile_lookup`, `AnnotationRenderer.draw_road_network`, `HudRouteVocab`, `ui_preview`'s
@@ -142,7 +144,7 @@ row.
 | Row | Rendered when | Says | The trap it avoids |
 |---|---|---|---|
 | `Road` | a road exists on the tile — **the only unconditional row** | the rung it HOLDS, plus `N% to <next rung>` while something is rising above it, plus the branch's own hazard word `washing out` when short | ⛔ **THE PERCENTAGE MUST NOT READ AS "THIS ROAD IS 25% BUILT".** A path at 25% is a COMPLETE path a quarter of the way to becoming a trail, so the rung stands alone as the value and the meter is a qualifier naming where it is GOING. The retired `Wearing in: Trail 25%` row said the opposite, and `build_fraction` is a DIFFERENT rung's meter — a reader that thresholded it would call a fully-worn trail a dirt road on the turn its first traffic banked. **Rendered only below `1.0`**: the wire states exactly `1.0` for a rung just finished AND for the top of the ladder, so the test is a plain comparison |
-| *(the bonus)* | the rung buys something on any axis | ⛔ **what the rung is BUYING** | see below. **UNLABELLED** — `Buys:` was a key doing no work, the value already reading as a benefit |
+| *(the bonus)* | the rung saves something on the loss axis | ⛔ **what the rung is BUYING, in ONE clause** — the loss it saves | see below. **UNLABELLED** — `Buys:` was a key doing no work, the value already reading as a benefit. The sight and the span moved to the block's HOVER (`bonus_tooltip`): the row printed all three and wrapped to three lines under a one-word value |
 | `Upkeep` | the road actually owes something — **neither free rung does** | the bill, the SHORTFALL where there is one, and the keepers the bill wants | all three figures are published; `demand − supplied == shortfall` holds verbatim on the wire and the keeper count is the sim's own `ceil`. **The word is `Upkeep`** — see below |
 | `Kept by` | the road has a keeper, or owes a bill nobody is paying | ⛔ **WHOSE JOB THIS ROAD IS**, and what distance is charging them for it | see below |
 | `Reverting` | the road is at risk | the COUNTDOWN, and `now` at zero | `0` means it is reverting NOW. It renders only while the road is genuinely short, because a road whose bill is met reads its rung's full grace + 1 — *"walk away and you have this long"* — which is not news |
@@ -201,8 +203,9 @@ exists to create is invisible — §4.9 item 12's *"a tax, not a ladder"* trap, 
 the wire. It is the one row on the card that states a PAYOFF, which is why it is tinted rather than
 left in plain ink beside the bill below it.
 
-**`Buys:` was a key doing no work** — *40% less lost between bands* already reads as a benefit, and
-the label only narrowed the column the sentence had to live in. So the value renders bare.
+**`Buys:` was a key doing no work** — *40% less loss* already reads as a benefit, and the label only
+narrowed the column the sentence had to live in. So the value renders bare — and it is ONE clause,
+the loss figure, the sight and the span having moved to the block's hover.
 
 > #### ⛔ THE KEY IS A BLANK, NOT ABSENT, AND THAT IS STRUCTURAL
 >
@@ -229,7 +232,8 @@ Three clauses, each off a published field:
 - **the link span, in FUTURE TENSE, and that is not a style choice.** `holds_link_to_tiles` is
   authored on every route rung and **not yet read by the sim** — nothing in `balance_supply_networks`
   consumes it; that is slice 13b. Rendering it in the present tense would state an effect that is not
-  in play, so it reads *will hold a link N tiles out*.
+  in play, so it reads *links N tiles out* — future tense carried by *links … out* rather than by a
+  `will hold` the wording pass cut.
 
 **A rung buying nothing on every axis RENDERS NO ROW**, which is both free rungs. It used to say so in
 words — `nothing — a path the animals made`, in dim ink — and that sentence was **factually wrong, not
@@ -251,6 +255,23 @@ costs is priced into each road's own `keeper_remoteness` rather than into whethe
 hint said the opposite for a slice — *"the roads this band is standing on"*, which was true of the
 stored-path model — and under the per-tile model that reading sends a player to move camp in order to
 escape a bill that follows them regardless.
+
+> #### ⛔ AND THE CORRECTION LANDED IN THE HINT AND NOT IN THE TOOLTIP EIGHTY LINES BELOW IT
+>
+> `HudWorkVocab.UPKEEP_POOL_COVERAGE_ROUTE_FORMAT` — the card's own `tooltip_text` — went on reading
+> *"the roads this band stands on need %s"* for a slice after `ROADWORK_ROLE_HINT` directly above it
+> had been fixed AND had written down why. **One model, two player-facing strings, one of them
+> corrected**: the wrong one was the tooltip a player opens precisely when the bill surprises them.
+> Both name the roads the band BUILT now.
+>
+> ⛔ **ITS SECOND CLAIM WAS FALSE TOO** — that the route sentence names no queue *because a route rung
+> takes no builder and appends no build-queue entry*. That is the FREE FLOOR alone: `grade` / `pave`
+> append an ordinary `BuildQueueEntry` funded by the band's `builders` pool, exactly like every rung
+> on the other two branches. **The sentence still names no queue, and the true reason is the FIGURE**
+> — the road pool's `asked` is the cohort's published `roadwork_demand` verbatim, `BandPanelController`'s
+> road branch deliberately not going through `_pool_coverage` (the road rows are fog-filtered, so
+> summing them client-side would understate a bill the band still owes). A sentence promising a
+> queued half the number does not carry would be the worse of the two errors.
 
 > ### ⛔ AND `roadwork` COULD NOT BE STAFFED AT ALL, WHICH IS `builders`' DEFECT ONE ROLE LATER
 >
@@ -277,7 +298,7 @@ would read as *this pool covers everything* and clear the mark on every card in 
 
 The road bill also counts toward the fund-mode row's *"is there anything to fund"* gate: route
 keeping runs through the same `distribute_upkeep_pool` under the band's own `upkeep_fund_mode`, so a
-band whose only standing cost is a road it stands on must still be offered the split.
+band whose only standing cost is a road it KEEPS must still be offered the split.
 
 ### The row of four does not fit at the shared metrics, and the zone had no row to give
 
@@ -347,26 +368,65 @@ face, same asides in the same order — and a second render loop would drift.
 **Three of the six original states are unreachable here, structurally**: `path` and `target` name
 legs of a QUEUED entry and no road publishes one.
 
+> #### ⛔ A RUNG IS ONE LINE, AND EVERYTHING ELSE IS ONE HOVER AWAY
+>
+> The card printed up to SIX lines per rung — a state word, a price aside, an approach, a remoteness
+> clause, a payoff and a standing bill, plus one wrapped sentence per unmet gate. Reported from play
+> as *"the most wordy dialog I think I've ever seen"*, and the diagnosis was right: none of it was
+> wrong, all of it was at once, and the decision the row exists for — *can I afford this yet* — was
+> the hardest thing on it to find.
+>
+> ```text
+> RAISE IT TO…
+> Path          where you are
+> Trail         30% · wearing in
+> Dirt Road     110 work · needs Roadbuilding
+> Paved Road    260 work · needs Paving
+> ```
+>
+> **The face is `<figure> · <nearest refusal>`**, and where the rung is buildable the figure IS the
+> button with no refusal beside it. The row carries a finished `ROW_FACE_KEY` because only its
+> producer knows which refusal is nearest; `ROW_BUILD_ASIDES_KEY` / `ROW_HOLD_ASIDES_KEY` /
+> `ROW_REASONS_KEY` stay EMPTY, so `build_track`'s aside loops emit nothing without needing to know
+> the branch apart.
+>
+> ⛔ **NOTHING WAS DELETED — IT MOVED TO `ROW_TOOLTIP_KEY`.** The payoff, the standing bill, the
+> remoteness multiple and EVERY refusal are on the hover. **A cut that loses the detail instead of
+> relocating it is the failure mode here and a PNG cannot see it**, which is why the fixtures assert
+> tooltips beside faces.
+>
+> **The tooltip goes on the LINE and on the FACE both.** A `Button` is `MOUSE_FILTER_STOP` and
+> answers a hover with its own tooltip, so one left only on the row would never show over the single
+> control the pointer is actually aiming at.
+>
+> **THE METER RIDES THE `wearing in` ROW AND NO OTHER.** That row has no figure of its own; every
+> other leads with a price, and the tile card's `Road` line one block up already states the same
+> percentage — so repeating it beside a price is duplication rather than a second reading.
+>
+> ⛔ **AND THE NAME COLUMN IS NARROWER ON THIS BRANCH** (`ROAD_LADDER_NAME_WIDTH`, 96px against the
+> shared 150px). At the shared width the value column is 142px of a 292px card and
+> `110 work · needs Roadbuilding` does not fit — the row clipped, which was half of why the card read
+> badly. It rides the ROW (`ROW_NAME_WIDTH_KEY`) rather than widening `build_track`'s signature,
+> because the plant and animal tracks want the wider column they have.
+
 > #### ⛔ THE SEVENTH STATE — `STATE_UNORDERED`, and only the route branch can produce it
 >
 > A route rung may declare NO verb: the path and the trail above it are worn in by traffic and
 > nobody orders them. `locked` is a lie in the one direction that matters — it reads *you may not*,
 > where the truth is *there is nothing to order and it is rising anyway* — so the row takes its own
-> state, its own face word (`HudWorkVocab.RUNG_TRACK_STATE_WORN_IN`, *traffic wears it in*) and an
-> aside naming what raises it. **The word lives in `HudWorkVocab` beside the other six**, so the
+> state, its own face word (`HudWorkVocab.RUNG_TRACK_STATE_WORN_IN`, *wearing in*) and a hover
+> naming what raises it. **The word lives in `HudWorkVocab` beside the other six**, so the
 > state enumeration stays one table; that block's own header records what an unworded state costs.
 
-⛔ **A REFUSED ROW SPENDS ITS FACE ON THE REFUSAL, SO ITS PRICE MOVES TO AN ASIDE**
-(`HudRouteVocab.ROAD_LADDER_PRICE_FORMAT`, *110 work to raise it*). The plant and animal branches
-fall back to their material PILE there; this branch eats no material, so without it a locked rung
-would state **no price at all** — and a rung a player may plan toward has to be one they can plan
-against, which is `RungLadder`'s own rule for the pile arriving one currency over. It renders ONLY
-where the face is spent: an open rung states its price once, and `110 work` above `110 work to raise
-it` is one fact twice.
+⛔ **EVERY ORDERED RUNG LEADS WITH ITS PRICE, REFUSED OR NOT.** A rung a player may plan toward has
+to be one they can plan against, which is `RungLadder`'s own rule for the material pile arriving one
+currency over. The refusal is the face's SECOND clause rather than a replacement for it, which is
+what retired the price aside the row used to stack beneath itself.
 
-**THE ASIDE ORDER IS THE SENTENCE** — how far traffic has got, what it costs, what distance does to
-that cost, what it buys, then what it costs to hold. The last two are the tile card's own row order
-(what it is · what it buys · what it costs), so the two surfaces read the same way round.
+**THE HOVER'S ORDER IS THE SENTENCE** — what it costs to build AND to keep, what it does, what
+distance adds, then every refusal. The price line renders **only where the rung owes upkeep**: on a
+rung that is free to hold it would restate the face and add nothing, and a line that says nothing is
+what this cut removed.
 
 ### The gates, keyed on the RUNG and not on the verb
 
@@ -376,18 +436,62 @@ disagree about what is climbable.
 
 ⛔ **KEYED ON THE RUNG KEY, which is the one place this branch differs from the other two.** Two
 route rungs declare no verb, so a verb-keyed table would hold two entries spelling `""` and could not
-tell `path` from `trail`. Four gates, in the order a player reads them:
+tell `path` from `trail`.
+
+⛔ **A REFUSAL IS A `{kind, short, long}` RECORD, NOT A STRING.** A row has width for ONE clause and
+its hover has room for every sentence, and one string cannot be both — it was long enough to wrap a
+292px row and still too short to keep its remedy. `route_row_refusal` picks the row's clause off
+`GATE_ROW_PRIORITY`; `route_tooltip_refusals` hands the hover all of them.
+
+⛔ **AND THE WORD `locked` IS GONE.** A row reading `locked` above a reason said it twice — the
+reason alone IS the state, and the row stays disabled by its ink and by being a `Label` rather than a
+`Button`. The fixtures assert the word appears nowhere on the card.
+
+Five gates. **The APPEND order is `GATE_ROW_PRIORITY`**, so the row's pick is the first entry
+carrying a short form and the hover reads in the order the row chose from — one list, not two, which
+is what stops a row and its own tooltip disagreeing about what matters:
 
 | # | gate | reason names |
 |---|---|---|
-| 1 | **the ground** — `requiresRung` unmet | what it needs AND what this ground carries |
-| 2 | **nobody declares it** — `verb == ""` | that traffic raises it; there is no order to give |
-| 3 | **the craft** — `unlockKnowledge` below `KNOWLEDGE_COMPLETE` | the discovery's own `displayName`, its live %, and — as the remedy — the rung whose `earnsKnowledge` names it |
-| 4 | **the keeper** — no acting band | pick a band; whoever raises a road keeps it |
+| # | gate | row says | hover says |
+|---|---|---|---|
+| 1 | **nobody declares it** — `verb == ""` | *(the state's own word)* | traffic raises it; there is no order to give. **Stated ALONE** — a craft or a keeper beside it would read as a prerequisite for something not on offer |
+| 2 | **another band already keeps this tile** — `has_keeper` and a `keeper_band_id` that is not the actor's | `Band 2 keeps it` | …and they must give it up first |
+| 3 | **no keeper to name** — no acting band | `pick a band` | whoever builds a road keeps it |
+| 4 | **the craft** — `unlockKnowledge` below `KNOWLEDGE_COMPLETE` | `needs Paving` | the live %, and — as the remedy — the rung whose `earnsKnowledge` names it |
+| 5 | **the ground** — `requiresRung` unmet | `needs a trail` | `Needs a trail first.` |
 
-**THE GROUND GATE IS FIRST BECAUSE IT SUPERSEDES**: telling somebody to learn Paving while they stand
-on a path is a remedy for the wrong thing. **THE KEEPER GATE IS LAST** because it is the one gate the
-player closes without leaving the card — every reason above it is a thing to go and do.
+⛔ **THE GROUND GATE SINKS TO LAST, AND THAT IS NOT AN ORDERING WHIM.** *Needs a trail first* names a
+rung the ladder is already displaying two lines up under `where you are` — it is the one refusal the
+player cannot miss, so it earns least on a line that holds one clause. Everything above it names
+something that is NOT on screen.
+
+**The two keeper gates outrank the craft** because no amount of learning helps a tile that is already
+somebody else's job; and `pick a band` outranks the craft because it is the only gate on this card
+the player closes with a click rather than with a campaign.
+
+> #### ⛔ GATE 4 WAS MISSING, AND THE ROW RENDERED READY ON A TILE THE SIM ALWAYS REFUSES
+>
+> `road_verb_refusal` rejects `grade` / `pave` outright when `Road::keeper` names a band other than
+> the one issuing the verb — **one band keeps a road tile, never two**, and the refusal is what makes
+> co-payment unrepresentable rather than merely discouraged. The ladder asked the other four and not
+> this one, so the row was pressable, the command went out, and the player got a command-failure
+> event where a greyed row with a reason belonged.
+>
+> **It needed no wire change**: `has_keeper` and `keeper_band_id` are already on the `routes` row the
+> ladder reads, and reading the bool FIRST is load-bearing (`0` is a real `BandId`).
+>
+> **It is asked ONCE for the whole ladder**, being a fact about the TILE rather than about a rung —
+> and only when a band is actually selected, since with none picked there is no *another* to name and
+> gate 5 is the honest thing to say instead. The two must never both fire: they are one word apart in
+> the player's head, and *pick a band first* beside a named refusal reads as the card contradicting
+> itself.
+>
+> ⛔ **THE KEEPER'S NAME IS RESOLVED BY `DrawerComposeController`, never by the gate layer** — a road
+> carries a `band_id`, this client has exactly one band-naming rule
+> (`HudBandLaborState.band_label_for_id`), and `RungGates` is stateless and holds no roster. The label
+> is threaded in exactly as the tile card's `Kept by:` row threads it, and `""` reads
+> `ROAD_KEEPER_FOREIGN` — a real state, a road being keepable by a people you merely know of.
 
 ⛔ **AND THE CONSEQUENCE IS INTENDED: A ROAD CANNOT BE BUILT ON BARE GROUND.** `dirt_road` requires
 `trail` and a trail is reached only by traffic, so roads are upgraded where people already walk. Do
@@ -448,13 +552,23 @@ of view on the frame it opened; a Window changes no layout at all. Its CONTENT i
 and never patched — the rung, the meter, the knowledge and the acting band all move per snapshot —
 while the panel node is reused because a Window is expensive.
 
+### The words
+
+`buys`, `lost between bands` / `lost hauling`, `lights its tiles` and `links N tiles out` are retired
+from every road surface, row and hover alike. What the branch says now is **`40% less loss`**,
+**`you can see along it`** and **`links camps up to 10 tiles apart`** — and a payoff needs no label,
+because a benefit already reads as one.
+
 ### Remoteness is STATED, never multiplied
 
 Every row quotes the rung's **BASE** `workCost` as published. Where the road's own
-`keeper_remoteness` is above `ROAD_REMOTENESS_AT_HOME` the multiple rides its own clause —
-`far from them — ×2.0 the rung's price`, the same sentence the tile card's `Kept by` row carries — so
-the player meets one wording for one fact. **The client multiplies nothing**: folding the two would
-put a copy of the sim's pricing formula where it can drift.
+`keeper_remoteness` is above `ROAD_REMOTENESS_AT_HOME` the multiple rides the row's HOVER —
+`Far from your band, so it costs ×2.0.` **The client multiplies nothing**: folding the two would put
+a copy of the sim's pricing formula where it can drift.
+
+The tile card's `Kept by` row keeps its own wording (`far from them — ×2.0 the rung's price`), and
+the two are not a drift: that row states what the EXISTING keeper is being charged, this one states
+what the prospective builder would be. Different subject, different sentence.
 
 ### The command has not moved
 
@@ -471,26 +585,33 @@ therefore carries no `pending_entity` — the same shape as the `extend_pen` rel
 
 ### Tests
 
-`ui_preview`'s `land_readouts` chapter carries **four frames** and the claims a picture cannot make,
+`ui_preview`'s `land_readouts` chapter carries **five frames** and the claims a picture cannot make,
 driven through the REAL action and the REAL formatter. Read as a set they are the argument the
 feature exists to make: `road_ladder_gated` (a path, with every rung above it refused and each for
 its own reason — nothing on it pressable), `road_ladder_grade` (the same branch one rung up with
 Roadbuilding learned: `grade` OPEN, priced and pressable), `road_ladder_pave` (the top rung on a
-REMOTE dirt road, quoting the base price with the multiple as its own clause) and
-`road_ladder_no_keeper` (the same road with no band selected — the top rung refused, and refused for
-that reason ALONE).
+REMOTE dirt road, quoting the base price with the multiple as its own clause),
+`road_ladder_other_keeper` (a dirt road **a second band keeps**, with the actor selected — the top
+rung refused and the keeper NAMED) and `road_ladder_no_keeper` (the same road with no band selected
+— the top rung refused, and refused for that reason ALONE).
+
+**`road_ladder_other_keeper` STAGES A SECOND BAND, and that is what the claim needs.** With only the
+actor on the roster every keeper is either itself or a stranger, and *another people* — a true
+sentence — would prove nothing about the label plumbing. Staged second, the keeper resolves to
+`Band 2` through the roster index, so the frame tests the gate and the naming rule together.
 
 **Half the claims are ABSENCES**, which is what a rendered frame cannot carry: no action at all on a
 hex with no road; not one pressable row on a path's ladder; the price stated ONCE on an open row; no
-approach clause where the meter reads exactly `1.0`; no keeper complaint while a band is selected;
-and no ground or craft complaint on the keeper frame, where both are ready.
+approach clause where the meter reads exactly `1.0`; **no *pick a band* complaint on the frame where
+a band IS selected and another band holds the tile** — the discriminator between the two keeper
+gates; and no ground or craft complaint on the no-keeper frame, where both are ready.
 
 **The catalog fixture is a TRANSCRIPTION of the shipped ladder, deliberately not a derivation** — one
 that recomputed it would pass against a producer that had stopped producing one — and the expected
 sentences are written out for the same reason: an expectation recomposed from the producer's own
 format string passes against a producer that has stopped composing it.
 
-**`PAVED_HOLD_ASIDE` reads `then 0.9 work a turn to hold` against a config that says `0.95`**, and
+**`PAVED_HOLD_ASIDE` reads `then 0.9 work a turn` against a config that says `0.95`**, and
 that is the shipped string: the value arrives as an `f32` and `DetailFormat.format_work_units` rounds
 it down at one decimal. An expectation "corrected" to the config's digits fails against a client
 doing nothing wrong.
@@ -506,11 +627,15 @@ doing nothing wrong.
 > fixture rather than restating it, so a rung added to one arrives in the other and the two cannot
 > drift into testing different ladders. PNG-less: both rules render a perfectly plausible card.
 
-**Falsified, twice.** Disabling the KEEPER gate (`if false and band.is_empty()`) makes an unavailable
-rung render live and fails **exactly two** claims, both on `road_ladder_no_keeper`. Restoring the
-`requiresRung` inference in place of `ladder_rung_teaching` fails **exactly two** others, both on the
-twisted catalog — and *nothing on the shipped one*, which is the measurement that says the inference
-was undetectable without that fixture. Every other chapter stayed green through both.
+**Falsified, three times.** Disabling the *no band picked* gate (`if false and band.is_empty()`)
+makes an unavailable rung render live and fails **exactly two** claims, both on
+`road_ladder_no_keeper`. Restoring the `requiresRung` inference in place of `ladder_rung_teaching`
+fails **exactly two** others, both on the twisted catalog — and *nothing on the shipped one*, which
+is the measurement that says the inference was undetectable without that fixture. Dropping gate 4
+(`if false and taken_by_another`) fails **exactly two** on `road_ladder_other_keeper` — the row goes
+pressable and the keeper goes unnamed — while the third claim on that frame, the ABSENCE of the
+*pick a band* reason, correctly still passes: losing one gate must not make its neighbour fire.
+Every other chapter stayed green through all three.
 
 ## What is NOT wired, and is not an omission
 

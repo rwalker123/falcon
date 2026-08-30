@@ -106,7 +106,8 @@ const ROUTE_FALLBACK_COLOR := Color(0.95, 0.9, 0.6, 0.8)
 #
 # ⛔ **NOT the ROUTES family above.** That one draws ORDER PATHS — waypoints a player's own
 # movement orders are following, which vanish with the order. This draws roads: world objects in the
-# ground, owned by nobody, that outlive every band that walks them. The obvious name was taken by the
+# ground, belonging to no faction, that outlive every band that walks them — kept by one band each,
+# which is a JOB rather than ownership. The obvious name was taken by the
 # other thing first, so this family is spelled `ROAD_*` and its state lives on
 # `MapView.road_network` (world state, like `units` and `herds`) rather than here.
 #

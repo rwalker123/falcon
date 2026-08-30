@@ -348,9 +348,11 @@ func _tile_terrain_lines(tile_info: Dictionary,
         lines.append_array(RiverEdges.summary_lines(int(tile_info["river_edges"])))
     # THE ROADS CROSSING THIS HEX (arc #532) — **the tile card is the road's readout**, and this is
     # where it goes for the same reason the rivers do: a road is IN THE GROUND. It is a world object
-    # with a stamped path, owned by nobody, that outlives every band that walks it — so it is a
-    # property of the LAND, not of an occupant, and the land drawer is the one surface in the client
-    # whose subject is a piece of ground.
+    # belonging to no faction, that outlives every band that walks it — so it is a property of the
+    # LAND, not of an occupant, and the land drawer is the one surface in the client whose subject is
+    # a piece of ground. (It is not ownerless: exactly one band KEEPS each tile. What it has no
+    # owner in is the sense the order-path overlay does, which is coloured per faction. And it has no
+    # STAMPED PATH — that model went with the per-tile rebuild.)
     #
     # **ABOVE THE DISCOVERED EARLY-RETURN, WITH THE RIVERS, AND THAT MATCHES THE SIM'S OWN FOG
     # GATE.** A road is published to a faction that has seen the TILE — `Discovered`, deliberately NOT
@@ -374,7 +376,7 @@ func _tile_terrain_lines(tile_info: Dictionary,
             if _band_labor != null and HudRouteVocab.has_keeper(road):
                 keeper_label = _band_labor.band_label_for_id(
                     HudRouteVocab.keeper_band_id_of(road))
-            lines.append_array(HudRouteVocab.road_lines(road, keeper_label))
+            lines.append_array(HudRouteVocab.road_lines(road, keeper_label, ctx))
     # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
     #
     # A REMEMBERED TILE KEEPS BOTH WEBS' CAPACITIES AND LOSES BOTH THEIR STOCKS (issue #462). The rule
