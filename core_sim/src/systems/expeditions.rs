@@ -71,15 +71,42 @@ pub struct ExpeditionConfigs<'w> {
 /// fixed origin) follow it so labor reads the updated in-range source set, and on arrival the
 /// `BandTravel` component is removed. Movement is the only way a band repositions — hunting uses a
 /// bounded leash, never a whole-band chase.
+///
+/// # ⛔ THIS IS ALSO THE WHOLE OF THE ROUTE BRANCH'S "PEOPLE" TRAFFIC, AND ONE HOOK IS ENOUGH
+///
+/// **Every travelling thing in the game is a `PopulationCohort` carrying a `BandTravel`** — a band
+/// moving camp, a scout, a hunt party, and a **trade shipment** (`handle_send_trade_expedition`
+/// spawns an `Expedition` + `BandTravel` like every other party) — and this is the single system
+/// that steps all of them. So `docs/plan_standing_upkeep.md` §4.13's two remaining traffic rows,
+/// *a shipment walking a connection* and *ordinary band / expedition movement*, are filled by **one
+/// hook**. That is a fact about the code rather than a shortcut, and building two paths to make the
+/// table look symmetrical would be inventing a second producer of the same number.
+///
+/// The journey recorded is `current → next` — `next` is the position after the **whole** turn's
+/// movement, so `routes::advance_roads` traces the tiles between them and banks
+/// `work_per_worker_tile × workers` on each. The head count is
+/// [`crate::components::available_workers`], the same seam the labour pass spends.
+///
+/// ## ⛔ THE ONE-TURN LAG IS THE ARRANGEMENT, NOT A DEFECT
+///
+/// This runs in `TurnStage::Population` and `routes::advance_roads` drains the log in
+/// `TurnStage::Logistics`, so a **march** is banked in the **next** turn's Logistics while a
+/// **pooling link** is banked in the same turn's. Each entry is banked exactly once — the log has
+/// one drain — so nothing is lost and nothing doubles. **Do not reorder a stage for it**; it is the
+/// same shape as every other lag in this arc.
+#[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_band_movement(
     mut commands: Commands,
     labor_config: Res<LaborConfigHandle>,
+    ladder_config: Res<LadderConfigHandle>,
     sim_config: Res<SimulationConfig>,
     tile_registry: Res<TileRegistry>,
+    mut route_traffic: ResMut<crate::routes::RouteTrafficLog>,
     tiles: Query<&Tile>,
     mut cohorts: Query<(Entity, &mut PopulationCohort, &BandTravel)>,
 ) {
     let labor = labor_config.get();
+    let ladder = ladder_config.get();
     let width = tile_registry.width;
     let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
     for (entity, mut cohort, travel) in cohorts.iter_mut() {
@@ -102,6 +129,15 @@ pub fn advance_band_movement(
             cohort.current_tile = tile_entity;
             cohort.home = tile_entity;
         }
+        // **The boots that actually crossed the ground**, recorded only where the party moved —
+        // `marched` carries the same `from != to` guard, and a party held at its own tile wears
+        // nothing.
+        route_traffic.marched(
+            current,
+            next,
+            crate::components::available_workers(cohort.working),
+            &ladder,
+        );
         if next == travel.target {
             commands.entity(entity).remove::<BandTravel>();
         }

@@ -24,16 +24,18 @@ use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_roads, balance_supply_networks, road_at_risk_rung, road_upkeep_demand,
-    road_upkeep_measure, scalar_zero, settle_route_keeping, spawn_initial_world, BandId,
-    ConnectionKey, ConnectionLedger, ConnectionsConfig, CultureManager, DiscoveryProgressLedger,
-    EquipmentConfigHandle, FactionId, FactionInventory, GenerationId, GenerationRegistry,
-    LaborAllocation, LaborTarget, LadderConfig, LadderConfigHandle, LocalStore, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Road, RoadKeeper, RoadRegistry,
-    RouteTrafficLog, RungKey, Scalar, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, SupplyNetworkConfigHandle, SupplyNetworkMembership, Tile,
-    TileRegistry, FOOD, FULL_TIE, NEAR_ENOUGH_TO_KEEP, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT,
+    advance_band_movement, advance_roads, balance_supply_networks, credit_route_lessons, knows,
+    road_at_risk_rung, road_upkeep_demand, road_upkeep_measure, scalar_zero, settle_route_keeping,
+    spawn_initial_world, BandId, BandTravel, ConnectionKey, ConnectionLedger, ConnectionsConfig,
+    CultureManager, DiscoveryProgressLedger, EquipmentConfigHandle, FactionId, FactionInventory,
+    GenerationId, GenerationRegistry, LaborAllocation, LaborConfigHandle, LaborTarget,
+    LadderConfig, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
+    PopulationCohort, ResidentBand, Road, RoadKeeper, RoadRegistry, RouteTrafficLog, RungKey,
+    Scalar, SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    SupplyNetworkConfigHandle, SupplyNetworkMembership, Tile, TileRegistry, FOOD, FULL_TIE,
+    NEAR_ENOUGH_TO_KEEP, NO_UPKEEP_DEMAND, PAVING_DISCOVERY_ID, PER_WORKER_OUTPUT,
+    ROADBUILDING_DISCOVERY_ID,
 };
 
 const TEST_FACTION: FactionId = FactionId(7);
@@ -91,6 +93,9 @@ fn spawn_world() -> App {
     // The keeping pass resolves the road keepers' kit off the roster. The shipped
     // `default_kits.roadwork` is the bare `none` kit, so they work bare — intended, not a gap.
     app.world.insert_resource(EquipmentConfigHandle::default());
+    // The movement pass reads `band_move_tiles_per_turn` off it — a marching party is the second
+    // source of route traffic.
+    app.world.insert_resource(LaborConfigHandle::default());
 
     app.add_systems(bevy::app::Startup, spawn_initial_world);
     app.update();
@@ -186,10 +191,17 @@ fn set_food(app: &mut App, band: Entity, food: i64) {
         .set(FOOD, Scalar::from_i64(food));
 }
 
-/// One turn, in stage order: the two Logistics passes, then the Population one.
+/// One turn, in stage order: the three Logistics passes, then the two Population ones.
+///
+/// ⛔ **`advance_band_movement` IS ON THE POPULATION SIDE OF THE LINE**, which is what makes a
+/// march's one-turn lag visible in a fixture: the journey it records is drained by the **next**
+/// turn's `advance_roads`, while a pooling link recorded by `balance_supply_networks` is drained by
+/// the same turn's. Running it in Logistics would hide the lag the arrangement really has.
 fn resolve_turn(app: &mut App) {
     app.world.run_system_once(balance_supply_networks);
     app.world.run_system_once(advance_roads);
+    app.world.run_system_once(credit_route_lessons);
+    app.world.run_system_once(advance_band_movement);
     app.world.run_system_once(settle_route_keeping);
 }
 
@@ -205,6 +217,61 @@ fn two_neighbouring_camps(app: &mut App) -> (Entity, Entity) {
     let b = spawn_band(app, CAMP_B, 0);
     seed_mutual_tie(app, a, b);
     (a, b)
+}
+
+/// **Two camps `apart` tiles apart on one row**, of one people, who have met — the fixture the reach
+/// payoff is measured over, since `reach_tiles` is `3` and a road's whole point is the distances
+/// beyond it.
+fn two_camps_apart(app: &mut App, apart: u32) -> (Entity, Entity) {
+    let a = spawn_band(app, CAMP_A, 0);
+    let b = spawn_band(app, (CAMP_A.0 + apart, CAMP_A.1), 0);
+    seed_mutual_tie(app, a, b);
+    let run = tiles_between(app, a, b);
+    assert_eq!(
+        run.len() as u32,
+        apart + 1,
+        "precondition: the camps really are {apart} hexes apart along one row"
+    );
+    (a, b)
+}
+
+/// **Wear every tile of a run to a fully worn TRAIL** — the free floor's top: nobody's job, owing
+/// nothing, and therefore kept by arithmetic.
+fn seat_a_trail_along(app: &mut App, run: &[UVec2]) {
+    let ladder = LadderConfig::builtin();
+    let ceiling = core_sim::traffic_ceiling(&ladder);
+    let mut roads = app.world.resource_mut::<RoadRegistry>();
+    for tile in run {
+        roads
+            .road_or_trail(*tile, &ladder)
+            .set_position(ceiling, &ladder);
+    }
+}
+
+/// **Take one tile of a run back down to `route:path`** — the weakest link, and the containment
+/// fixture for both the reach payoff and the lesson.
+///
+/// It leaves a *little* work on the tile rather than removing the road, so the prune keeps it: what
+/// is under test is a run whose weakest tile is a **path**, not a run with a hole in the registry.
+fn break_one_tile_back_to_a_path(app: &mut App, tile: UVec2) {
+    const A_TOUCH_OF_WEAR: f32 = 1.0;
+    let ladder = LadderConfig::builtin();
+    let mut roads = app.world.resource_mut::<RoadRegistry>();
+    let road = roads.road_or_trail(tile, &ladder);
+    road.set_position(A_TOUCH_OF_WEAR, &ladder);
+    assert_eq!(
+        road.held_rung(),
+        RungKey::RoutePath,
+        "precondition: the broken tile holds the branch's floor and nothing more"
+    );
+}
+
+/// This faction's progress toward a lesson, as the ledger holds it.
+fn progress(app: &App, discovery: u32) -> f32 {
+    app.world
+        .resource::<DiscoveryProgressLedger>()
+        .get_progress(TEST_FACTION, discovery)
+        .to_f32()
 }
 
 /// The cumulative position at which a road **holds** `route:dirt_road`, read from the ladder rather
@@ -297,6 +364,7 @@ fn tiles_between(app: &App, a: Entity, b: Entity) -> Vec<UVec2> {
         width,
         height,
         wrap,
+        app.world.resource::<RoadRegistry>(),
     )
 }
 
@@ -954,5 +1022,429 @@ fn the_at_risk_rung_is_the_newest_rung_carrying_work() {
         road_at_risk_rung(&road_at(&app, tile).standing()),
         RungKey::RoutePavedRoad,
         "one unit into the paving, the paved road is the rung at risk"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// TRAFFIC — the people who march, and the one-turn lag that carries them
+// ---------------------------------------------------------------------------------------------
+
+/// ⛔ **A MARCHING PARTY WEARS THE GROUND IT CROSSES, AND ITS WORK LANDS NEXT TURN — ONCE.**
+///
+/// `advance_band_movement` is in `TurnStage::Population` and `advance_roads` drains the log in
+/// `TurnStage::Logistics`, so a march is banked in the **following** turn's Logistics. That lag is
+/// the arrangement, not a defect: the log has exactly one drain, so nothing is lost and nothing
+/// doubles — which is what the third turn below measures, with the band standing still.
+///
+/// One band, so nothing pools: what is measured is the **march** and nothing else.
+#[test]
+fn a_marching_band_wears_its_journey_in_on_the_next_turn_and_banks_it_once() {
+    let mut app = spawn_world();
+    let band = spawn_band(&mut app, CAMP_A, 100);
+    let from = position_of(&app, band);
+    let to = UVec2::new(CAMP_A.0 + 1, CAMP_A.1);
+    app.world.entity_mut(band).insert(BandTravel { target: to });
+
+    // Turn 1 — Logistics finds an empty log; the march is recorded afterwards, in Population.
+    resolve_turn(&mut app);
+    assert_eq!(
+        position_of(&app, band),
+        to,
+        "precondition: the band really did move this turn"
+    );
+    assert!(
+        app.world.resource::<RoadRegistry>().is_empty(),
+        "and nothing is worn yet — a march crosses the stage line before it is spent"
+    );
+
+    // Turn 2 — the next Logistics drains it.
+    resolve_turn(&mut app);
+    let ladder = LadderConfig::builtin();
+    let expected = ladder.route_traffic.work_per_worker_tile * BAND_POP as f32;
+    let banked: Vec<f32> = [from, to]
+        .iter()
+        .map(|tile| road_at(&app, *tile).position())
+        .collect();
+    for (tile, position) in [from, to].iter().zip(&banked) {
+        assert!(
+            (position - expected).abs() < 1.0e-3,
+            "each tile of the journey carries `work_per_worker_tile x workers`: {tile:?} holds \
+             {position} against {expected}"
+        );
+    }
+
+    // Turn 3 — the band is standing still, so there is nothing left to bank.
+    resolve_turn(&mut app);
+    for (tile, position) in [from, to].iter().zip(&banked) {
+        assert!(
+            (road_at(&app, *tile).position() - position).abs() < 1.0e-3,
+            "and it is banked EXACTLY ONCE: {tile:?} moved to {} after a turn of standing still",
+            road_at(&app, *tile).position()
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// REACH — what `holds_link_to_tiles` buys, consumed at last
+// ---------------------------------------------------------------------------------------------
+
+/// ⛔ **THE CAPABILITY: TWO CAMPS TOO FAR APART TO POOL DO SO OVER A ROAD.** The reach payoff's
+/// first consumer, paired with its own liveness half — the same pair, the same distance, the only
+/// difference being the road on the ground between them.
+///
+/// **Goods actually move**, which is the claim; a component forming would pass with the balancer
+/// itself broken.
+#[test]
+fn two_camps_beyond_the_free_reach_pool_only_over_a_kept_road() {
+    /// Beyond `reach_tiles` (3) and beyond a trail's 6, inside a dirt road's 10 — so only the built
+    /// rung can hold this link open.
+    const BEYOND_A_TRAIL: u32 = 8;
+    const STARTING_FOOD: i64 = 200;
+
+    let delivered = |roaded: bool| -> f32 {
+        let mut app = spawn_world();
+        let (a, b) = two_camps_apart(&mut app, BEYOND_A_TRAIL);
+        if roaded {
+            let run = tiles_between(&app, a, b);
+            let id = band_id(&app, a);
+            for tile in &run {
+                seat_a_dirt_road(&mut app, *tile, Some(id));
+            }
+            let wanted: u32 = run
+                .iter()
+                .map(|tile| keepers_the_bill_wants(&app, *tile))
+                .sum();
+            staff_roadwork(&mut app, a, wanted);
+            // One turn so the keeping is stamped and paid — an unmaintained road holds nothing open.
+            resolve_turn(&mut app);
+            for tile in &run {
+                assert!(
+                    road_at(&app, *tile).keeping_is_met(),
+                    "precondition: every tile of the run is kept ({tile:?})"
+                );
+            }
+        }
+        set_food(&mut app, a, STARTING_FOOD);
+        set_food(&mut app, b, 0);
+        resolve_turn(&mut app);
+        food_of(&app, b)
+    };
+
+    assert_eq!(
+        delivered(false),
+        0.0,
+        "precondition: at {BEYOND_A_TRAIL} tiles the free reach holds nothing — this pair cannot \
+         pool at all without a road"
+    );
+    assert!(
+        delivered(true) > 0.0,
+        "and an unbroken kept road between them holds the link open — a CAPABILITY, not a discount"
+    );
+}
+
+/// ⛔ **ONE BARE TILE IN THE RUN CLOSES THE LINK AGAIN.** Reach takes the run's **weakest** tile, so
+/// a link goods must get *through* is not most-of-the-way-there.
+#[test]
+fn one_broken_tile_in_a_routed_run_closes_the_link() {
+    const BEYOND_A_TRAIL: u32 = 8;
+    const STARTING_FOOD: i64 = 200;
+
+    let mut app = spawn_world();
+    let (a, b) = two_camps_apart(&mut app, BEYOND_A_TRAIL);
+    let run = tiles_between(&app, a, b);
+    let id = band_id(&app, a);
+    for tile in &run {
+        seat_a_dirt_road(&mut app, *tile, Some(id));
+    }
+    let wanted: u32 = run
+        .iter()
+        .map(|tile| keepers_the_bill_wants(&app, *tile))
+        .sum();
+    staff_roadwork(&mut app, a, wanted);
+    resolve_turn(&mut app);
+
+    set_food(&mut app, a, STARTING_FOOD);
+    set_food(&mut app, b, 0);
+    resolve_turn(&mut app);
+    assert!(
+        food_of(&app, b) > 0.0,
+        "precondition: the unbroken run really is holding this link open"
+    );
+
+    // One tile in the middle taken back to bare ground.
+    let middle = run[run.len() / 2];
+    app.world.resource_mut::<RoadRegistry>().remove(middle);
+    set_food(&mut app, a, STARTING_FOOD);
+    set_food(&mut app, b, 0);
+    resolve_turn(&mut app);
+    assert_eq!(
+        food_of(&app, b),
+        0.0,
+        "and one bare tile at {middle:?} closes it: the weakest tile is the answer"
+    );
+}
+
+/// ⛔ **THE FREE FLOOR CARRIES IT TOO** — a wholly trailed run holds a link open at a distance the
+/// free reach cannot, with nobody keeping anything and nobody paying anything.
+///
+/// **This is the test that proves the payoff filter is right.** Under the old `grants_sight` filter
+/// a fully worn trail read as bare ground, so this pair would not pool at all — and the whole branch
+/// would be unclimbable, since `grade` waits on a lesson only a standing connection teaches.
+#[test]
+fn a_wholly_trailed_run_holds_a_link_open_beyond_the_free_reach() {
+    /// Beyond `reach_tiles` (3), inside the trail rung's own 6.
+    const BEYOND_THE_FREE_REACH: u32 = 5;
+    const STARTING_FOOD: i64 = 200;
+
+    let delivered = |trailed: bool| -> f32 {
+        let mut app = spawn_world();
+        let (a, b) = two_camps_apart(&mut app, BEYOND_THE_FREE_REACH);
+        if trailed {
+            let run = tiles_between(&app, a, b);
+            seat_a_trail_along(&mut app, &run);
+            for tile in &run {
+                let road = road_at(&app, *tile);
+                assert_eq!(road.held_rung(), RungKey::RouteTrail);
+                assert_eq!(road.keeper, None, "and nobody keeps a trail");
+            }
+        }
+        set_food(&mut app, a, STARTING_FOOD);
+        set_food(&mut app, b, 0);
+        resolve_turn(&mut app);
+        food_of(&app, b)
+    };
+
+    assert_eq!(
+        delivered(false),
+        0.0,
+        "precondition: bare ground holds nothing open at {BEYOND_THE_FREE_REACH} tiles"
+    );
+    assert!(
+        delivered(true) > 0.0,
+        "FREE IS NOT WORTHLESS: a trail holds a link open where there was none"
+    );
+}
+
+/// **NO EARLY-GAME REGRESSION** — a pair inside `reach_tiles` with no roads anywhere pools exactly as
+/// it always did. The reach test is purely additive, and this is the half that says so.
+#[test]
+fn a_pair_inside_the_free_reach_pools_with_no_roads_at_all() {
+    const STARTING_FOOD: i64 = 200;
+
+    let mut app = spawn_world();
+    let (a, b) = two_neighbouring_camps(&mut app);
+    assert!(
+        app.world.resource::<RoadRegistry>().is_empty(),
+        "precondition: the shipped turn-1 state — no roads anywhere"
+    );
+    set_food(&mut app, a, STARTING_FOOD);
+    set_food(&mut app, b, 0);
+    resolve_turn(&mut app);
+    assert!(
+        food_of(&app, b) > 0.0,
+        "two neighbours pool on the free reach alone, exactly as before the payoff was consumed"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE KNOWLEDGE CHAIN — a connection that stands teaches roadbuilding
+// ---------------------------------------------------------------------------------------------
+
+/// ⛔ **THE TEST THE WHOLE SLICE EXISTS FOR: THE CHAIN IS LIVE END TO END.** Two bands within reach
+/// of each other over an unbroken kept trail teach the faction `roadbuilding`, which is what opens
+/// `grade` — and before this slice nothing in the sim credited a route lesson at all, so the branch
+/// stopped dead at its free floor.
+///
+/// **Paired with the negative the model turns on**: one tile of the run taken back to a `path` and
+/// the credit stops. Without that half, a broken connection predicate that credited everything would
+/// pass the liveness claim just as well.
+#[test]
+fn a_standing_trail_connection_teaches_roadbuilding_and_one_broken_tile_stops_it() {
+    const BEYOND_THE_FREE_REACH: u32 = 5;
+
+    let mut app = spawn_world();
+    let (a, b) = two_camps_apart(&mut app, BEYOND_THE_FREE_REACH);
+    let run = tiles_between(&app, a, b);
+    seat_a_trail_along(&mut app, &run);
+    assert_eq!(
+        progress(&app, ROADBUILDING_DISCOVERY_ID),
+        0.0,
+        "precondition: nothing has taught this faction roadbuilding"
+    );
+
+    resolve_turn(&mut app);
+    let learned = progress(&app, ROADBUILDING_DISCOVERY_ID);
+    assert!(
+        learned > 0.0,
+        "a standing connection over a trail teaches roadbuilding — the lesson the branch waits on"
+    );
+
+    resolve_turn(&mut app);
+    assert!(
+        progress(&app, ROADBUILDING_DISCOVERY_ID) > learned,
+        "and it is credited EVERY TURN THE CONNECTION STANDS, not once on completion"
+    );
+
+    // One tile of the run back to the branch's floor.
+    let held = progress(&app, ROADBUILDING_DISCOVERY_ID);
+    break_one_tile_back_to_a_path(&mut app, run[run.len() / 2]);
+    resolve_turn(&mut app);
+    resolve_turn(&mut app);
+    assert_eq!(
+        progress(&app, ROADBUILDING_DISCOVERY_ID),
+        held,
+        "and one broken tile stops it dead: the lesson is the connection's WEAKEST tile, and a run \
+         through a path is not a road you travel"
+    );
+}
+
+/// **LENGTH IS THE MULTIPLIER** — a long connection out-credits a short one per turn, in proportion
+/// to the tiles it runs over.
+///
+/// That is the route branch's own reading of the same currency the food webs scale by their floor:
+/// there the multiplier is *how hard you are pressing the source*, here it is *how far the connection
+/// runs*.
+#[test]
+fn a_longer_connection_teaches_more_in_proportion_to_its_length() {
+    let credited = |apart: u32| -> f32 {
+        let mut app = spawn_world();
+        let (a, b) = two_camps_apart(&mut app, apart);
+        let run = tiles_between(&app, a, b);
+        seat_a_trail_along(&mut app, &run);
+        resolve_turn(&mut app);
+        progress(&app, ROADBUILDING_DISCOVERY_ID)
+    };
+
+    // Two tiles apart is a three-tile run; five apart is a six-tile one — twice the lesson.
+    let short = credited(2);
+    let long = credited(5);
+    assert!(
+        short > 0.0,
+        "precondition: the short connection teaches too"
+    );
+    let ratio = long / short;
+    assert!(
+        (ratio - 2.0).abs() < 0.05,
+        "a 6-tile connection is worth twice a 3-tile one: {long} against {short} is x{ratio}"
+    );
+}
+
+/// ⛔ **THE WEAKEST TILE PICKS THE LESSON.** An all-dirt-road run teaches `paving`; the same run with
+/// one trail tile in it teaches `roadbuilding` instead — because what you travel is the gap.
+#[test]
+fn the_weakest_tile_of_a_run_picks_the_lesson_it_teaches() {
+    const BEYOND_THE_FREE_REACH: u32 = 5;
+
+    let taught = |with_a_trail_tile: bool| -> (f32, f32) {
+        let mut app = spawn_world();
+        let (a, b) = two_camps_apart(&mut app, BEYOND_THE_FREE_REACH);
+        let run = tiles_between(&app, a, b);
+        let id = band_id(&app, a);
+        for tile in &run {
+            seat_a_dirt_road(&mut app, *tile, Some(id));
+        }
+        let wanted: u32 = run
+            .iter()
+            .map(|tile| keepers_the_bill_wants(&app, *tile))
+            .sum();
+        staff_roadwork(&mut app, a, wanted);
+        if with_a_trail_tile {
+            seat_a_trail_along(&mut app, &run[run.len() / 2..][..1]);
+        }
+        // One turn to stamp and pay the keeping, then the turn under measurement.
+        resolve_turn(&mut app);
+        let before = (
+            progress(&app, ROADBUILDING_DISCOVERY_ID),
+            progress(&app, PAVING_DISCOVERY_ID),
+        );
+        resolve_turn(&mut app);
+        (
+            progress(&app, ROADBUILDING_DISCOVERY_ID) - before.0,
+            progress(&app, PAVING_DISCOVERY_ID) - before.1,
+        )
+    };
+
+    let (roadbuilding, paving) = taught(false);
+    assert!(
+        paving > 0.0 && roadbuilding == 0.0,
+        "a wholly dirt-roaded run teaches PAVING and nothing else: roadbuilding {roadbuilding}, \
+         paving {paving}"
+    );
+
+    let (roadbuilding, paving) = taught(true);
+    assert!(
+        roadbuilding > 0.0 && paving == 0.0,
+        "and one trail tile in it drops the whole run's lesson back to ROADBUILDING: roadbuilding \
+         {roadbuilding}, paving {paving}"
+    );
+}
+
+/// ⛔ **A RUN OF PATHS TEACHES NOTHING, THROUGH THE CONFIG RATHER THAN A BRANCH.** `route:path`
+/// declares `earns_knowledge: null`, so the accrual answers `None` on its own — exactly as the free
+/// floor owing no upkeep falls out of the arithmetic. There is no `path` special case in the code and
+/// there must not be one.
+#[test]
+fn a_run_of_paths_teaches_nothing() {
+    let mut app = spawn_world();
+    let (a, b) = two_camps_apart(&mut app, 2);
+    let run = tiles_between(&app, a, b);
+    for tile in &run {
+        break_one_tile_back_to_a_path(&mut app, *tile);
+    }
+    resolve_turn(&mut app);
+    assert_eq!(
+        progress(&app, ROADBUILDING_DISCOVERY_ID),
+        0.0,
+        "a connection over paths is still a connection, and it teaches nothing"
+    );
+    assert_eq!(progress(&app, PAVING_DISCOVERY_ID), 0.0);
+}
+
+/// ⛔ **THE GATE ACTUALLY OPENS** — `grade` is refused while `roadbuilding` is unlearned and accepted
+/// once it is, asserted through the very expression the command's refusal reads
+/// (`knows(ledger, faction, rung.unlock_discovery_id(), completion_threshold)`).
+///
+/// Before this slice the lesson could not be credited at all, so this gate was shut for ever and the
+/// two built rungs were unreachable.
+#[test]
+fn the_grade_gate_opens_once_the_connection_has_taught_roadbuilding() {
+    /// Comfortably more than the `lesson_cost / (learn_rate x tiles)` the fixture's run needs, so
+    /// what is measured is the gate rather than the loop bound.
+    const TURNS_TO_LEARN_ROADBUILDING: u32 = 40;
+    const BEYOND_THE_FREE_REACH: u32 = 5;
+
+    let ladder = LadderConfig::builtin();
+    let threshold = ladder.knowledge.completion_threshold;
+    let gate = ladder
+        .rung(RungKey::RouteDirtRoad)
+        .unlock_discovery_id()
+        .expect("`grade` is gated on a lesson");
+
+    let mut app = spawn_world();
+    let (a, b) = two_camps_apart(&mut app, BEYOND_THE_FREE_REACH);
+    let run = tiles_between(&app, a, b);
+    seat_a_trail_along(&mut app, &run);
+    assert!(
+        !knows(
+            app.world.resource::<DiscoveryProgressLedger>(),
+            TEST_FACTION,
+            gate,
+            threshold
+        ),
+        "precondition: `grade` is refused — the faction has not learned to build a road"
+    );
+
+    for _ in 0..TURNS_TO_LEARN_ROADBUILDING {
+        resolve_turn(&mut app);
+    }
+    assert!(
+        knows(
+            app.world.resource::<DiscoveryProgressLedger>(),
+            TEST_FACTION,
+            gate,
+            threshold
+        ),
+        "and a connection the players kept standing opens it: {} against a threshold of {threshold}",
+        progress(&app, ROADBUILDING_DISCOVERY_ID)
     );
 }

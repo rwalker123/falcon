@@ -2385,6 +2385,58 @@ impl RungDef {
         self.earns_discovery_id().map(|lesson| (lesson, amount))
     }
 
+    /// **THE ROUTE BRANCH'S OWN earn seam — WHAT A STANDING CONNECTION TEACHES, PER TURN IT
+    /// STANDS.** The sibling of [`RungDef::knowledge_accrual`], read by
+    /// `crate::routes::credit_route_lessons`.
+    ///
+    /// `self` is the rung the **connection** stands at — its weakest tile
+    /// (`crate::routes::path_lesson_rung`), because one path hex in the middle of a paved road means
+    /// what you travel is the gap.
+    ///
+    /// ```text
+    /// practice = learn_rate × tiles          // per CONNECTION per turn, NOT per worker
+    /// amount   = practice / lesson_cost(this rung's knowledge)
+    /// ```
+    ///
+    /// # ⛔ IT IS A SIBLING, NOT A CALL TO `knowledge_accrual` WITH A FAKED FLOOR
+    ///
+    /// The multiplier is the same currency read the branch's own way. On the food webs
+    /// [`learn_multiplier`] is *how hard you are pressing the source*; on the route branch it is **how
+    /// far the connection runs** — a longer connection is a bigger lesson, in proportion, which is
+    /// what makes local pooling teach roadbuilding slowly and a long haul teach it fast. Passing a
+    /// floor this branch does not have would be inventing a number nobody chose, exactly as
+    /// [`crate::systems::labor::credit_managed_rung_lesson`] states its own reading rather than
+    /// pretending to have one.
+    ///
+    /// # ⛔ IT TAKES NO WORKER COUNT, for the reason `knowledge_accrual` refuses one
+    ///
+    /// Practice is earned by *a turn the thing is used*, never by hands, or a faction would learn
+    /// roadbuilding faster by parking people on the road.
+    ///
+    /// # THE LENGTH IS IN TILES, AND THAT IS THE CONNECTION'S OWN LENGTH
+    ///
+    /// It is `path.len()` — the tiles of one connection — and **not** a count of roads on the map, so
+    /// a wider map does not teach roadbuilding faster for a reason no player caused. That is the
+    /// scaling bug a per-tile credit would have shipped.
+    ///
+    /// `None` when the rung teaches nothing (`earns_knowledge: null` — which is how *"a path does not
+    /// count"* falls out of the config rather than out of a branch), or when the practice is zero.
+    pub fn route_knowledge_accrual(
+        &self,
+        tiles: u32,
+        knowledge: &LadderKnowledge,
+    ) -> Option<(u32, f32)> {
+        let practice = knowledge.learn_rate * tiles as f32;
+        if practice <= 0.0 {
+            return None;
+        }
+        let name = self.earns_knowledge.as_deref()?;
+        let amount = knowledge
+            .ledger_credit(name, practice)
+            .expect("validate requires a lesson cost for every knowledge a rung teaches");
+        self.earns_discovery_id().map(|lesson| (lesson, amount))
+    }
+
     /// **The build seam — the accrual side. THE WORK UNITS THIS BUILD CREW PRODUCES THIS TURN**, not
     /// a fraction of anything and net of nothing: [`pool_work_supply`]`(workers, gear_per_worker)`
     /// when `improvement` **is** the rung's verb *and* the caller's rung-specific gates hold
@@ -2980,6 +3032,27 @@ pub struct RouteTraffic {
     /// would leave the whole branch permanently at its floor while reading like a live dial.
     pub work_per_link_tile_per_turn: f32,
 
+    /// **WHAT PEOPLE ON THE MOVE WEAR IN, PER TILE CROSSED, PER WORKER** — the same work units, one
+    /// kind of traffic over.
+    ///
+    /// ⛔ **TWO LEVERS, AND THEY STAY TWO** (§4.13: *"two levers, not three: goods and people are the
+    /// only two things that move, and a shipment is people"*). [`Self::work_per_link_tile_per_turn`]
+    /// is the **link** lever and this is the **people** lever: a link is not a headcount — two camps
+    /// pooling a larder are a *standing fact*, so its rate is per link per turn — while a march **is**
+    /// people, so its rate is per worker.
+    ///
+    /// **There is no third lever for shipments and there must not be.** A trade shipment is a
+    /// `PopulationCohort` carrying a `BandTravel` exactly as a band, a scout and a hunt party are, and
+    /// `crate::systems::advance_band_movement` is the single system that steps all of them — so one
+    /// hook fills both of §4.13's remaining traffic rows. **And no mass term**:
+    /// `balance_supply_networks` drops sub-`min_transfer` moves, so a mass-driven rate is the error
+    /// §4.13a ① already corrected.
+    ///
+    /// Validated finite and `> 0`, beside its sibling. **Opening value chosen for shape, not
+    /// balance** — a 10-worker band's single pass puts `0.5` on a tile against a live pooling link's
+    /// `0.35` a turn. **PLAYTEST DIAL, step 13e owns it.**
+    pub work_per_worker_tile: f32,
+
     /// **HOW MANY CONSECUTIVE IDLE TURNS A FREE ROAD FORGIVES** before it starts losing what
     /// traffic put into it — the free floor's own `upkeep.grace_turns`, and it lives here rather
     /// than on a rung for the reason the rate above does: it is a fact about *traffic*, which is
@@ -3340,6 +3413,19 @@ impl LadderConfig {
                              the dial still reads live"
                     .to_string(),
                 value: self.route_traffic.work_per_link_tile_per_turn.to_string(),
+            });
+        }
+        if !self.route_traffic.work_per_worker_tile.is_finite()
+            || self.route_traffic.work_per_worker_tile <= 0.0
+        {
+            return Err(LadderConfigError::Invalid {
+                field: "route_traffic.work_per_worker_tile".to_string(),
+                constraint: "wear a road in under marching people at a finite, positive rate — at \
+                             zero every band, scout, hunt party and trade shipment in the game \
+                             crosses the ground without leaving a mark on it, while the dial still \
+                             reads live"
+                    .to_string(),
+                value: self.route_traffic.work_per_worker_tile.to_string(),
             });
         }
         if self.route_range.base_tiles == 0 {

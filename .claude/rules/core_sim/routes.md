@@ -180,12 +180,53 @@ being visible.
 `disuse_grace_turns + 40 / disuse_loss_per_turn` ≈ **44** turns after the last traffic, against the
 ~114 turns of unbroken neighbourhood that wear it in. The pair was first written under the
 stored-path model, where the two were ~44 against ~57 and losing was the slower of the two. **The
-pace is settled in step 13e, not by a retune here** — 13b adds two more sources of route traffic, so
-the wear rate both figures hang off is about to move.
+pace is settled in step 13e, not by a retune here** — and the ~114 is the *pooling-link* figure
+alone: 13b added marching parties as a second source, so a tile that also carries traffic wears in
+faster than it says by however much walks over it.
 
 **Traffic converts to WORK UNITS**, the same currency `RungBuild::work_cost` is quoted in.
-`RouteTrafficLog` is **drained** by the accrual (`std::mem::take`), so a turn with no pooling wears
-nothing rather than re-wearing last turn's links.
+`RouteTrafficLog` is **drained** by the accrual (`std::mem::take`), so a turn with no traffic wears
+nothing rather than re-wearing last turn's journeys.
+
+### TWO KINDS OF TRAFFIC, TWO LEVERS, AND THEY STAY TWO
+
+§4.13: *"two levers, not three: goods and people are the only two things that move, and a shipment is
+people."*
+
+| what moves | lever | recorded by |
+|---|---|---|
+| a **pooling link** — two camps sharing a larder | `work_per_link_tile_per_turn`, **per link per turn** | `RouteTrafficLog::walked`, from `supply::balance_supply_networks` |
+| a **march** — anything travelling | `work_per_worker_tile`, **per worker** | `RouteTrafficLog::marched`, from `systems::advance_band_movement` |
+
+**A link is not a headcount**: two camps pooling a larder are a *standing fact*, not a party of a
+countable size — so its rate is per link per turn. **A march is people**, so its rate is per worker.
+⛔ **No third lever for shipments, and no mass term**: `balance_supply_networks` drops
+sub-`min_transfer` moves, so a mass-driven rate is the error §4.13a ① already corrected.
+
+Each log entry carries **the work each tile of that journey earns** (`RouteJourney::work_per_tile`),
+resolved where the journey was recorded — so there is still exactly one drain and one accrual loop,
+rather than two logs and a third kind of traffic forgetting one of them.
+
+> #### ⛔ ONE HOOK FILLS BOTH OF §4.13'S REMAINING TRAFFIC ROWS, AND THAT IS A FACT ABOUT THE CODE
+>
+> **Every travelling thing in the game is a `PopulationCohort` carrying a `BandTravel`** — a band
+> under `move_band`, a scout, a hunt party, and a **trade shipment**
+> (`handle_send_trade_expedition` spawns an `Expedition` + `BandTravel` like every other party) — and
+> `systems::advance_band_movement` is the single system that steps all of them.
+>
+> So *a shipment walking a connection* and *ordinary band / expedition movement* are **one
+> mechanism**. Building two paths to make the table look symmetrical would be a second producer of
+> the same number. The head count is `components::available_workers`, the same seam the labour pass
+> spends; the journey is `current → next`, where `next` is the position after the whole turn's
+> movement.
+
+> #### ⛔ A MARCH IS BANKED ONE TURN LATER THAN A LINK, AND THAT IS THE ARRANGEMENT
+>
+> `advance_band_movement` is in `TurnStage::Population`; `advance_roads` drains the log in
+> `TurnStage::Logistics`. So a **march** is banked in the **next** turn's Logistics while a **pooling
+> link** is banked in the same turn's. Each entry is banked **exactly once** — the log has one drain
+> — so nothing is lost and nothing doubles. **Do not reorder a stage for it**; it is the same shape as
+> every other lag in this arc.
 
 ## The scale term — `UpkeepScale::RouteSpan` COLLAPSED into `SourceLoad`
 
@@ -220,7 +261,8 @@ meaningful.
 | Term | Reading | Where |
 |---|---|---|
 | friction | **the MEAN over the tiles between two camps** | `routes::path_friction_multiplier`, over `trace_path`, read by `supply::component_friction` |
-| reach (`holds_link_to_tiles`) | **the WEAKEST tile** | `routes::path_reach_tiles` — **not yet consumed by the sim**; that is 13b's |
+| reach (`holds_link_to_tiles`) | **the WEAKEST tile** | `routes::path_reach_tiles`, read by `supply::balance_supply_networks`' link test |
+| the lesson a connection teaches | **the WEAKEST tile** | `routes::path_lesson_rung`, read by `routes::credit_route_lessons` |
 | `Seen` along a kept road | a per-rung yes/no | `Road::grants_sight` → `visibility_systems::light_kept_routes` |
 
 **Friction averages and reach takes the minimum, and the asymmetry is the point.** You genuinely lose
@@ -240,8 +282,76 @@ the set of links and lower a loss, never the reverse*.
 > component that gained a new unroaded neighbour would see its friction **rise**, punishing a band for
 > having walked somewhere. A minimum of monotone-improving readings is monotone-improving.
 
-**Only a BUILT and KEPT tile counts** on either term — the same `grants_sight` condition, for the same
-reason: an unmaintained road is not carrying anything.
+> ### ⛔ THE PAYOFF FILTER IS `keeping_is_met`, AND IT IS NOT `grants_sight`
+>
+> The two predicates answer different questions and only one of them is a payoff's.
+>
+> - **`keeping_is_met()` asks *"is this road being held up?"*** — *an unmaintained road is not
+>   carrying anything*, which is exactly what a payoff wants to exclude. **For the free floor the
+>   answer is yes by arithmetic**: a path and a trail declare no `upkeep`, so nothing stamps a demand
+>   and the shortfall is permanently zero. It is false only for a **built** road in shortfall.
+> - **`grants_sight()` additionally asks *"is this a rung that lights ground at all?"*** — a
+>   **visibility** question resting on *paying the upkeep IS the presence*. It is unchanged, and no
+>   free rung lights anything.
+>
+> Both payoffs filtered on `grants_sight` until 13b, so **the entire free floor read as bare ground**:
+> a fully worn trail held `0` tiles open and saved `0%` of the friction, against a config declaring
+> `route:trail` worth `holds_link_to_tiles: 6` and `friction_multiplier: 0.85`.
+>
+> **That was load-bearing rather than untidy.** With a trail extending reach by nothing the branch is
+> unclimbable: `grade` is gated on `roadbuilding`, which is learned from a standing connection that
+> only a road holds open, so you would need a `dirt_road` to earn the lesson that unlocks the
+> `dirt_road`. **The free floor is what breaks the circle** — *free is not worthless*.
+
+### ⛔ NEW TRAFFIC PREFERS AN EXISTING ROAD, AND NEVER DETOURS TO REACH ONE
+
+`trace_path` takes the `RoadRegistry` and, among the neighbours that **equally minimise** the
+remaining hex distance, prefers the one carrying the **highest held rung** (no road < `path` <
+`trail` < `dirt_road` < `paved_road`), breaking any remaining tie on the old lowest-direction-index
+rule so the walk stays deterministic. Only steps already tied for best are compared, so the hex
+distance bounds the walk exactly as before: it cannot get longer and it cannot loop. What it buys is
+that the second journey between two camps runs over the road the first one wore, rather than beside
+it.
+
+**The named limitation**: a road only helps a link where it lies along a *shortest* hex path between
+the two camps. That is self-consistent rather than a gap — roads are worn in by traced journeys in
+the first place, so they form on shortest paths.
+
+⛔ **It reads no terrain, and must not start.** Roads forming across a lake (#601) is blocked on #282;
+two answers to *"can you cross this hex"* is worse than the bug.
+
+⛔ **Anything that traces while holding the registry mutably collects every path first.**
+`advance_roads` phase 4 does exactly that — trace all, then bank — because the trace reads the
+registry the banking writes, and interleaving them would also let the first journey of a turn lay the
+road the second one follows.
+
+### THE REACH IS CONSUMED — a road is what lets two camps pool where they cannot
+
+`balance_supply_networks`' link test is now
+
+```text
+hex_distance(a, b) <= max(cfg.reach_tiles, path_reach_tiles(roads, trace_path(a, b, ..)))
+```
+
+with `pools_freely` and `tie_is_live` **unchanged**. It is purely additive: a pair inside
+`reach_tiles` pools exactly as it did, which is the no-early-game-regression guarantee. This is the
+first consumer `holds_link_to_tiles` has ever had — the number the client was rendering in the future
+tense — and it is what makes the top rungs a **capability** rather than a discount.
+
+> #### ⛔ THE BINNING NEIGHBOURHOOD IS SIZED BY `routes::max_route_reach_tiles`
+>
+> The pooling pass bins nodes into `cell_size` cells and scans ±1 cell (±2 in x when wrapping), under
+> the invariant it states itself: *"the neighbourhood must be a superset of what the distance test
+> accepts, or pairs are dropped silently."* Accepting out to a paved road's `16` against a cell size
+> of `reach_tiles` (`3`) breaks it — and it breaks as **some long roads just don't work**, with
+> nothing erroring anywhere. So `cell_size = max(cfg.reach_tiles, max_route_reach_tiles(ladder))`.
+>
+> **Nobody reads the rung records for that number directly**, the same discipline `road_keeping_range`
+> exists for: the day a rung is added or its reach retuned, the binning follows with no call site
+> moving.
+>
+> **Cost**: the trace runs only once the free test has already failed *and* the pair is within
+> `max_route_reach_tiles`, so a game with no roads — the shipped turn-1 state — traces nothing.
 
 **`Road::payoff` is stamped** and re-stamped on every write to the position, exactly as
 `Road::standing` is. A supply pass that resolved it would take a `LadderConfigHandle` to re-derive a
@@ -287,11 +397,11 @@ second producer of a rung's position, the failure this arc has had three of.
 > #### ⛔ THE FLOOR RUNG IS `path` BECAUSE NOTHING IN THE SIM LETS AN ANIMAL WEAR A ROAD IN
 >
 > It shipped as `game_trail`, named for #215's *"the first roads are the ones the animals made"*.
-> **Exactly one thing in the whole simulation banks route work**: `route_traffic.walked(..)`, called
-> from `supply.rs`'s pooling-link pass where two camps sharing a larder walk between them. Herds
-> move, but no herd has ever recorded a step as route traffic — so every path on the map is worn in
-> by the **player's own** trade-pooling bands, and the floor rung was displaying them a trail the
-> animals made. Ray hit it in play at tile (60,40).
+> **Everything that banks route work is people**: `walked(..)` from the pooling-link pass, and
+> `marched(..)` from the movement pass — two camps sharing a larder, and a band, scout, hunt party or
+> shipment on the move. Herds move, but no herd has ever recorded a step as route traffic — so every
+> path on the map is worn in by the **player's own** bands, and the floor rung was displaying them a
+> trail the animals made. Ray hit it in play at tile (60,40).
 >
 > That is the second half of a correction begun in `96bf835d`, which deleted the tile card's flavour
 > line *"a path the animals made"* for the same reason: it asserted a cause the model does not have.
@@ -313,6 +423,65 @@ profile that already names one. `routes.rs` carries the retirement note where th
 
 **Both survivors gate something a player decides**: a trail carrying traffic teaches `roadbuilding`,
 which opens `grade`; keeping a dirt road teaches `paving`, which opens `pave`.
+
+### ⛔ WHAT CREDITS THE LESSON — `routes::credit_route_lessons`, AND THE UNIT IS THE CONNECTION
+
+Until 13b **nothing in the sim credited a route lesson at all**: the only ladder credit was
+`systems::labor::credit_rung_lesson`, whose reachable callers are all food-web arms. So `roadbuilding`
+could not leave `0` by any means, `grade` was permanently refused, and both built rungs were
+unreachable. This pass is what makes the branch climbable.
+
+**A connection is two bands within reach of each other. Distance only** — nothing about goods, nothing
+about factions, nothing about whether they have ever met. **A road is what makes that reach bigger**:
+the same `max(reach_tiles, path_reach_tiles(..))` the pooling test uses.
+
+Ray: *"only credit the 'connection', so if a trail (or other road type) makes an unbroken connection
+between two bands … only then does road building get learned. That fits our distance model perfectly,
+since the local connections are shorter, they would contribute less."* Three things follow, and each
+is a reason:
+
+- **It dissolves the *how often* question rather than answering it.** That question only bit while a
+  caravan was modelled as an occasional *journey* against a neighbour link's every-turn pooling. A
+  connection is a **standing** thing, so both are present every turn and there is no frequency term
+  left.
+- **It kills a scaling bug a per-tile credit would have shipped**: a per-tile lesson scales with tile
+  count, so a wider map would teach roadbuilding faster for a reason no player caused.
+- **Credit per turn while the connection stands, never once on completion.** A one-off is a step
+  function and pays twice for a connection that breaks and reforms.
+
+| | |
+|---|---|
+| **the lesson** | the connection's **WEAKEST tile** (`routes::path_lesson_rung`) — one path hex in the middle of a paved road means what you travel is the gap. A tile with **no road**, or one whose `keeping_is_met()` is false, breaks the run and teaches nothing |
+| **the amount** | proportional to the connection's **length in tiles**, every turn it stands (`RungDef::route_knowledge_accrual`) |
+| **who is credited** | the faction of **each endpoint band**, gathered into a set — so one people at both ends is one credit, without the code ever asking whether the two ends are the same people |
+| **where** | `TurnStage::Logistics`, `.after(routes::advance_roads)` — **declared**, not left to the ambiguity gate, because it reads the road standing that pass just produced |
+
+⛔ ***"A path does not count"* NEEDS NO SPECIAL CASE.** `route:path` declares `earns_knowledge: null`,
+so the accrual answers `None` on its own — exactly as the free floor owing no upkeep falls out of the
+arithmetic rather than an `is_built()` guard. **Do not write a `path` branch.**
+
+⛔ **IT DOES ITS OWN O(n²) PASS AND MUST NOT BORROW THE SUPPLY LINK LIST.** This is the thing a future
+reader will "simplify". `balance_supply_networks`' links carry a **same-people** gate
+(`pools_freely`) and a **live-tie** gate (`tie_is_live`), and neither has anything to do with whether
+two camps are connected by ground. Band counts are small; a pass of its own is what keeps *a
+connection is distance* true.
+
+#### `RungDef::route_knowledge_accrual` is a SIBLING of `knowledge_accrual`, not a faked floor
+
+```text
+practice = learn_rate × tiles        // per CONNECTION per turn, NOT per worker
+amount   = practice / lesson_cost(this rung's knowledge)
+```
+
+Same seam, same currency, the branch's own reading: on the food webs `learn_multiplier` is *how hard
+you are pressing the source*; on the route branch the multiplier is *how far the connection runs*.
+Passing a floor this branch does not have would be inventing a number nobody chose — which is why
+`credit_managed_rung_lesson` states its own reading rather than pretending to have a floor.
+
+⛔ **It takes no worker count**, for exactly the reason `knowledge_accrual` refuses one: practice is
+earned by *a turn the thing is used*, never by hands, or a faction would learn roadbuilding faster by
+parking people on the road. `knowledge.learn_rate` and `lesson_costs["roadbuilding"]` / `["paving"]`
+are the dials, and **13e tunes them** — the pass adds no lever of its own.
 
 ## The build — `grade` and `pave` are TILE commands on the builders' pool
 
@@ -484,8 +653,11 @@ per turn by `advance_roads`.
    `grace_turns`. `RungDef::upkeep_decay` owns both the rate and the strictly-greater comparison;
 3. **clear** `upkeep_demanded` / `upkeep_supplied` for the coming turn's stamp;
 4. **bank this turn's traffic on every tile each journey crossed, capped at `traffic_ceiling`** — and
-   count the idle turns. The cap takes a `max` against the tile's own position, so a road **above** the
-   ceiling is untouched rather than dragged back to a trail every turn a link runs over it;
+   count the idle turns. Each journey banks **its own** `RouteJourney::work_per_tile`, so a link and a
+   march share one loop. **Every path is traced before any is banked**, because the trace reads the
+   registry the banking writes. The cap takes a `max` against the tile's own position, so a road
+   **above** the ceiling is untouched rather than dragged back to a trail every turn a link runs over
+   it;
 5. **bleed a free road nobody walked**, past `route_traffic.disuse_grace_turns`. **After the banking**,
    because whether a road was idle is only known once this turn's journeys have been drained onto it.
 
@@ -689,6 +861,7 @@ identical hole `builders` fell through one role earlier; `command_guard`'s role 
 | File | Key | Purpose |
 |---|---|---|
 | `src/data/intensification_ladder.json` | `route_traffic.work_per_link_tile_per_turn` (**0.35**) | **How fast traffic wears a road in**, in work units, **per tile a journey crosses**, per turn. **The link, not the tonnage**. Under the per-tile model *per tile* is literal, so two neighbouring camps wear each of their two tiles in over ~114 turns where the stored-path model took ~57 for the pair. Validated finite and `> 0`. **PLAYTEST DIAL**, §4.14 owns the number |
+| `src/data/intensification_ladder.json` | `route_traffic.work_per_worker_tile` (**0.05**) | **What people on the move wear in**, per tile a travelling party crosses, **per worker** — the *people* lever against the *link* lever above, and §4.13's *"two levers, not three"*. Every travelling thing reaches it through the one `advance_band_movement` hook, so there is no third lever for shipments and no mass term. Validated finite and `> 0`. Opening value chosen for **shape, not balance**: a 10-worker band's single pass puts `0.5` on a tile against a live pooling link's `0.35` a turn. **PLAYTEST DIAL**, step **13e** owns the number |
 | `src/data/intensification_ladder.json` | `route_traffic.disuse_grace_turns` (**4**) | **How many consecutive idle turns a FREE road forgives** before it gives back what traffic put into it — the free floor's own `upkeep.grace_turns`. It lives on this block rather than on a rung because it is a fact about *traffic*, and the free rungs declare no `upkeep` to hang it on. Validated finite only: a grace of `0` is meaningful and must stay expressible. **PLAYTEST DIAL**, §4.14 |
 | `src/data/intensification_ladder.json` | `route_traffic.disuse_loss_per_turn` (**1.0**) | **What an idle free road loses each turn past that grace**, in the same work units the position is banked in. **Flat, not proportional** — traffic is a yes/no. Validated finite and `> 0` (at zero the registry keeps every trail it ever laid). **PLAYTEST DIAL**, §4.14 |
 | `src/data/intensification_ladder.json` | `route_range.base_tiles` (**4**) | **How far a band keeps a road at the rung's own price**, in tiles, measured keeper→tile at the moment the verb is issued. ⛔ **READ IT THROUGH `routes::road_keeping_range`, NEVER FROM THIS FIELD** — see the callout above. Validated `> 0`: a base of zero prices every road as remote, which is a threshold that has stopped being one. **PLAYTEST DIAL**, §4.14 |
@@ -701,7 +874,12 @@ identical hole `builders` fell through one role earlier; `command_guard`'s role 
 free floor's adjacency **and its verb-lessness** (what replaced `is_crew_built`), the measure as
 `ground × distance`, the one-primitive scale claim, the bill, the remoteness seam moving **both** the
 upkeep and the build pile, the three sight states, the keeper released back into the free floor, the
-friction **mean**, the reach **minimum**, the traced path, and `kept_by`.
+friction **mean**, the reach **minimum**, the traced path, and `kept_by`. **Each payoff carries a
+trail sibling beside its dirt-road one** — a wholly trailed run holds the *trail rung's own* reach and
+reads the *trail rung's own* friction, with one bare tile in it holding nothing — which is what pins
+the `keeping_is_met` filter; and a built road in shortfall carries nothing on either term, so the
+filter is not simply *everything passes*. The road-preferring walk is pinned by seating a road on a
+tile the tie-break would have passed over and asserting the path takes it **at the same length**.
 
 `core_sim/tests/route_traffic.rs` drives the three systems in **stage order** through real turns
 (`balance_supply_networks` + `advance_roads` in Logistics, `settle_route_keeping` in Population): a
@@ -711,6 +889,20 @@ beside one that loses its rung, the proportional bleed, the grace, the keeperles
 pruned), the free floor owing nothing beside a dirt road that does, the remote road's dearer bill, and
 **Ray's case** — `two_bands_each_keep_half_the_tiles_between_them_and_each_pays_only_for_its_own_half`,
 in two phases so *"each pays only for its own"* is measured rather than assumed.
+
+Its fixture turn runs the five passes in stage order — `balance_supply_networks`, `advance_roads`,
+`credit_route_lessons` (Logistics), then `advance_band_movement`, `settle_route_keeping` (Population)
+— so a **march's one-turn lag is visible rather than papered over**. On top of the above it carries:
+the march banked on the **following** turn and **exactly once** (a third turn standing still moves
+nothing); the reach payoff as a **capability** (two camps 8 tiles apart deliver nothing, and deliver
+over an unbroken kept road) with its containment half (one bare tile closes the link) and its **free
+floor** half (a wholly trailed run holds a link open at 5 tiles, which is the test that proves the
+payoff filter); the no-regression half (a pair inside `reach_tiles` with no roads pools as before);
+and the knowledge chain end to end — `roadbuilding` rising from `0` over a standing trail and
+**stopping dead** when one tile drops to a `path`, length as the multiplier (a 6-tile connection is
+worth twice a 3-tile one), the weakest tile picking the lesson (all-dirt teaches `paving`, one trail
+tile in it teaches `roadbuilding`), a run of paths teaching nothing, and the `grade` gate opening —
+asserted through the very `knows(..)` expression the command's refusal reads.
 
 `core_sim/tests/route_sight.rs` and `core_sim/tests/route_wire.rs` both drive **whole turns** through
 `build_test_app`, deliberately: the thing under test in the first is that something *hands*

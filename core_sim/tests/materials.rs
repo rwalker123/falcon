@@ -353,6 +353,9 @@ fn pooling_a_material_between_bands_preserves_its_characteristics() {
     app.world.insert_resource(core_sim::RoadRegistry::default());
     app.world
         .insert_resource(core_sim::RouteTrafficLog::default());
+    // And the ladder the pooling reads the route payoff's own numbers off — the widest reach any
+    // rung holds open, which sizes the spatial bins, and the rate a recorded link banks.
+    app.world.insert_resource(LadderConfigHandle::default());
 
     let (width, height) = {
         let registry = app.world.resource::<TileRegistry>();

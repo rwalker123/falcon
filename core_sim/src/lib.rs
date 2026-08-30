@@ -285,13 +285,14 @@ pub use recipes_config::{
     BUILTIN_RECIPES_CONFIG,
 };
 pub use routes::{
-    advance_roads, path_friction_multiplier, path_reach_tiles, remoteness_multiplier,
-    road_at_risk_rung, road_build_fraction, road_keeping_basis, road_keeping_range, road_measure,
+    advance_roads, credit_route_lessons, max_route_reach_tiles, path_friction_multiplier,
+    path_lesson_rung, path_reach_tiles, remoteness_multiplier, road_at_risk_rung,
+    road_build_fraction, road_keeping_basis, road_keeping_range, road_measure,
     road_neglect_grace_remaining, road_rung_span, road_upkeep_demand, road_upkeep_measure,
     road_upkeep_workers_needed, route_rungs_in_climb_order, rung_grants_sight, trace_path,
-    traffic_ceiling, Road, RoadKeeper, RoadRegistry, RouteTrafficLog, FIRST_BUILT_RUNG,
-    FREE_FLOOR_TOP_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID,
-    ROADBUILDING_DISCOVERY_ID,
+    traffic_ceiling, Road, RoadKeeper, RoadRegistry, RouteJourney, RouteTrafficLog,
+    FIRST_BUILT_RUNG, FREE_FLOOR_TOP_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_REACH_HELD_OPEN,
+    PAVING_DISCOVERY_ID, ROADBUILDING_DISCOVERY_ID,
 };
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
@@ -898,6 +899,11 @@ pub fn build_headless_app() -> App {
                 // the connection ledger. Reversing it would let this turn's pooling read a road
                 // this turn's pooling created.
                 routes::advance_roads.after(supply::balance_supply_networks),
+                // ⛔ **AFTER THE ROAD PASS, ALWAYS** — declared rather than left to the ambiguity
+                // gate. A connection's lesson is read off the road standing `advance_roads` has just
+                // produced, so this turn's decay, banking and prune are all already in the registry
+                // when the lesson rung is resolved.
+                routes::credit_route_lessons.after(routes::advance_roads),
             )
                 .in_set(TurnStage::Logistics)
                 .run_if(capability_enabled(

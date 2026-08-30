@@ -83,6 +83,12 @@ fn spawn_world() -> App {
     app.world.insert_resource(core_sim::RoadRegistry::default());
     app.world
         .insert_resource(core_sim::RouteTrafficLog::default());
+    // The ladder, for the route payoff's own numbers: the widest reach any rung holds open (which
+    // sizes the spatial bins) and the rate a recorded link banks. With the registry empty above, the
+    // reach test falls through to `reach_tiles` on every pair, which is what keeps this file's
+    // numbers the unrouted ones.
+    app.world
+        .insert_resource(core_sim::LadderConfigHandle::default());
 
     app.add_systems(bevy::app::Startup, spawn_initial_world);
     app.update();
