@@ -124,12 +124,13 @@ pub(crate) fn labor_assignment_to_state(
             state.fauna_id = fauna_id.clone();
             state.floor = *floor;
         }
-        // The five band-wide roles carry no source and no floor: their whole content is the head
+        // The six band-wide roles carry no source and no floor: their whole content is the head
         // count already on the row.
         LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Agriculture
         | LaborTarget::Husbandry
+        | LaborTarget::Roadwork
         | LaborTarget::Builders => {}
     }
     state
@@ -511,6 +512,14 @@ fn resolved_build_job(
                 .and_then(|herd| crate::fauna::herd_build_verb(herd, Some(*declared)))
                 .map(|improvement| improvement.as_str().to_string())
                 .unwrap_or_default()
+        }
+        // ⛔ **A ROAD'S VERB IS THE ENTRY'S OWN, with no meter-derived twin behind it.** The two food
+        // webs re-derive theirs (`patch_build_verb` / `herd_build_verb`) because a meter already
+        // carrying work declares for itself and a stale entry must not override it. A road has no
+        // second declaration to reconcile: `grade` / `pave` are the only things that ever raise one,
+        // and the entry's own `declared` is that statement.
+        (crate::components::BuildJob::Rung(declared), crate::components::BuildSource::Road(_)) => {
+            declared.as_str().to_string()
         }
     }
 }
@@ -926,6 +935,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // **The need is the GAP the footprints leave, summed by the sim.** A client cannot sum it — herd
     // rows are fog-filtered, so a pen out of sight would silently leave a client-side total the band
     // still owes.
+    let roadwork_demand = allocation.map(|a| a.last_roadwork_demand).unwrap_or(0.0);
+    let roadwork_supplied = allocation.map(|a| a.last_roadwork_supplied).unwrap_or(0.0);
     let fodder_need = allocation.map(|a| a.last_fodder_need).unwrap_or(0.0);
     let fodder_income = allocation.map(|a| a.last_fodder_inflow).unwrap_or(0.0);
     // **The fodder runway, through the LARDER'S OWN function and the larder's own sentinel** — one
@@ -1346,6 +1357,18 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     .to_f32(),
             })
             .collect(),
+        // **THE BAND'S ROADWORK BILL** — the summed keeping of the roads under this band's own tile
+        // (route arc rule 2), struck by `settle_route_keeping` off the same stamped basis the
+        // per-road rows publish. **The sim sums it and a client must not**: route rows are
+        // fog-filtered, so a road out of sight would silently drop out of a client-side total the
+        // band certainly still owes. The shortfall is derived here from the pair, so the identity
+        // `demand − supplied == shortfall` holds on this row exactly as it does on `RouteState`.
+        roadwork_demand,
+        roadwork_supplied,
+        roadwork_shortfall: crate::intensification::upkeep_shortfall(
+            roadwork_demand,
+            roadwork_supplied,
+        ),
     }
 }
 
@@ -1382,6 +1405,12 @@ fn build_queue_entry_to_state(source: &BuildSource) -> SchemaBuildQueueEntryStat
             state.target_y = tile.y;
         }
         BuildSource::Herd(fauna_id) => fauna_id.clone_into(&mut state.fauna_id),
+        // A road tile is addressed exactly as a patch is — the `kind` token above is what tells the
+        // two apart on the wire (`roadwork` against `forage`).
+        BuildSource::Road(tile) => {
+            state.target_x = tile.x;
+            state.target_y = tile.y;
+        }
     }
     state
 }
@@ -1900,6 +1929,12 @@ mod tests {
                             fauna_id: fauna_id.clone(),
                             floor: 0.5,
                         },
+                        // A road carries no take row at all — its keeper is on the road, not on a
+                        // labor target — so a fixture that queued one would be describing a band
+                        // this helper cannot build.
+                        BuildSource::Road(_) => unreachable!(
+                            "a road has no labor row, so it cannot be a source in this fixture"
+                        ),
                     },
                     workers: 1,
                     kit: None,

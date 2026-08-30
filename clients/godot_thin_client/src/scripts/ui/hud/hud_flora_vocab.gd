@@ -431,7 +431,11 @@ const FLORA_CROP_COMMITTED_HINT := "Already committed — the crop cannot be cha
 # The one ecology phase a patch can be cultivated from (matches `EcologyPhase::as_str`).
 const ECOLOGY_PHASE_THRIVING := "thriving"
 
-# The FIVE intensification knowledge tracks (the `intensification_knowledge[]` row's field names) —
+# The intensification knowledge tracks the CLIENT NAMES BY HAND — the ones a gate table or a readout
+# has to spell. **They are not the whole set**: the ladder's knowledges ride the wire as a roster now
+# (`ladder_knowledge`), so the knowledge screen builds itself from that and needs none of these. What
+# is named here is what code must MATCH on, and §4.3 pins "no two rungs share an unlock gate".
+# The first four are one per rung-transition, so they read as the ladder itself —
 # the FACTION-WIDE half of the two-meter split (§4.1). The first FOUR are one per rung-transition, so
 # they read as the ladder itself, and §4.3 pins "no two rungs share an unlock gate":
 #   plant:  wild --cultivation--> tended --seed_selection--> field
@@ -444,6 +448,14 @@ const KNOWLEDGE_TRACK_HERDING := "herding"
 const KNOWLEDGE_TRACK_SEED_SELECTION := "seed_selection"
 
 const KNOWLEDGE_TRACK_PENNING := "penning"
+
+# **THE ROUTE BRANCH'S TWO** (arc #532), one per built rung: a trail carrying traffic teaches
+# `roadbuilding`, which opens `grade`; keeping a dirt road teaches `paving`, which opens `pave`. Their
+# discovery ids are 2012/2013 — **2011 is RETIRED, not reused** (`trailcraft` was a lesson for
+# something you cannot fail to do and was deleted rather than retuned).
+const KNOWLEDGE_TRACK_ROADBUILDING := "roadbuilding"
+
+const KNOWLEDGE_TRACK_PAVING := "paving"
 
 # **THE FIFTH IS DELIBERATELY NOT A RUNG TRANSITION** — no rung waits on it, and nothing about the
 # ladder's shape changes when it is learned. It is what the PEN rung TEACHES (the corral rung's

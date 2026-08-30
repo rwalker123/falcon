@@ -2,7 +2,7 @@
 //! each band's local goods store with nearby bands every turn.
 //!
 //! Loaded from `data/supply_network_config.json`. Bands (and, later, populated tiles / storage
-//! pits) within `reach_tiles` of each other form a connected supply network that redistributes
+//! pits) within `reach_tiles` hex steps of each other form a connected supply network that redistributes
 //! stored goods toward a per-capita balance, moving at most `throughput_per_turn` per node and
 //! losing `friction` of each transfer in transit. Early game this is tiny-reach, near-free sharing
 //! between neighbors; the same knobs scale to settlements/cities later. Mirrors the
@@ -26,9 +26,11 @@ pub const BUILTIN_SUPPLY_NETWORK_CONFIG: &str = include_str!("data/supply_networ
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct SupplyNetworkConfig {
-    /// **The distance at which a logistics link holds itself for free**, in tiles. Two *connected*
-    /// nodes (a live tie in [`crate::connections::ConnectionLedger`], either direction) are linked
-    /// when within it; beyond it a link needs a route to hold it open, and goods move by a shipment.
+    /// **The distance at which a logistics link holds itself for free**, in **hex steps**
+    /// ([`crate::grid_utils::hex_distance_wrapped`], the metric every other radius in the sim uses).
+    /// Two *connected* nodes (a live tie in [`crate::connections::ConnectionLedger`], either
+    /// direction) are linked when within it; beyond it a link needs a route to hold it open, and
+    /// goods move by a shipment.
     /// Whether a link's two ends then pool for free is a separate, same-faction policy —
     /// [`crate::supply::balance_supply_networks`].
     pub reach_tiles: u32,

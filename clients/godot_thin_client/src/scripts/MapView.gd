@@ -433,8 +433,24 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# state, redacted under the one rule the whole patch payload follows.
 	"patch_upkeep_demand", "patch_upkeep_supplied", "patch_upkeep_shortfall",
 	"patch_upkeep_workers_needed",
+	# …and the GOODS half of that same bill, redacted with the work half it is billed beside: a bill
+	# struck this turn and a store drawn down this turn are live state by construction. The per-RUNG
+	# `*_upkeep_material_demand` pair is deliberately NOT here, exactly as its work twin is not — that
+	# pair is a rate scaled by the tile's own terrain-derived load, so it survives fog.
+	"patch_upkeep_material_demand", "patch_upkeep_material_supplied",
+	# …and the PILE the rung above swallows to build. It is redacted with `patch_current_rung` and the
+	# build payload rather than exempted with the terrain, because the wire prices exactly ONE rung —
+	# the one directly above where this patch stands — so the pile a card quotes states the ladder
+	# position `patch_is_cultivated` / `patch_is_field` are struck out to hide.
+	"patch_build_material_cost",
+	# WHAT THIS SITE'S KEEPERS ARE HELD WITH, and whether the player named it. A kit resolved onto a
+	# work site this turn is a fact about a band's doing — set by a command — so it is redacted with
+	# the rest of the live payload, as `patch_build_kit_id` above is.
+	"patch_upkeep_kit_id", "patch_upkeep_kit_named",
 	# …and what that shortfall is COSTING the meter, which is the same fact one step on. The two
-	# per-rung `*_upkeep_demand` figures beside it are deliberately NOT here: since the plant rungs
+	# per-rung `*_upkeep_demand` figures beside it — and their `*_upkeep_material_demand` twins, which
+	# are the same quote in the other currency and ride the same tender-load — are deliberately NOT
+	# here: since the plant rungs
 	# moved onto `scaled_by: source_load` they no longer read identically on every patch, but the
 	# scale is the tile's own forage capacity — TERRAIN, which a Discovered tile remembers — so the
 	# figure sent for an unseen hex is the figure that hex last showed, exactly as
@@ -762,6 +778,33 @@ var discovered_sites: Array = []
 var discovered_site_lookup: Dictionary = {}
 var harvest_sites: Dictionary = {}
 var scout_sites: Dictionary = {}
+## **THE ROAD NETWORK — the roads in the GROUND** (arc #532, `.claude/rules/core_sim/routes.md`), one
+## entry per road, in the sim's own ledger order. World state like `units` / `herds`, which is why it
+## lives here and not on `AnnotationRenderer`: that renderer draws it through the `_view` back-ref,
+## the same way it reads `units` and `herds` today.
+##
+## ⛔ **THIS IS NOT `AnnotationRenderer._routes`, AND THE TWO MUST NOT MERGE.** That field — and
+## `map_preview`'s `"routes"` annotation state — is the per-faction ORDER PATH overlay: waypoints a
+## player's own movement orders are following. A road is a world object IN THE GROUND that outlives
+## every band that walks it. The obvious name was already taken by the other thing, so the road
+## network is spelled `road_network` everywhere in the client.
+##
+## ⛔ **ONE ENTRY PER ROAD *TILE*, AND THERE IS NO PATH ON A ROW.** A road is a per-tile improvement
+## with its own rung, its own meter, its own keeper and its own decay — which is what makes *"one band
+## keeps half the tiles between two camps and another keeps the rest"* representable at all. The key
+## `_ingest_road_network` stamps on each road dict is its TILE, built once at ingest so neither the
+## draw pass nor a hover re-reads the two coordinate halves. Named because the producer and its
+## readers are different scripts and a typo in a `get` there is a silently undrawn road.
+const ROAD_TILE_KEY := "tile"
+## The tile a malformed row resolves to — outside every grid, so such a row is never joined onto a
+## hex and never drawn. A row without both halves is a truncated frame, not a road at the origin.
+const ROAD_TILE_NONE := Vector2i(-1, -1)
+var road_network: Array = []
+## …and the same roads keyed by the tile they ARE (`{Vector2i: Array[road]}`), so `_tile_info_at` can
+## answer "what road is on this hex" without walking the list every hover. The registry is keyed by
+## tile sim-side, so the array holds exactly one — it stays an array so a duplicated row would render
+## twice rather than vanish silently, and so the tile card's block loop is unchanged.
+var road_tile_lookup: Dictionary = {}
 # Forage patches (cultivation/tended state, decoded from ForagePatchState), keyed by
 # Vector2i(x, y); read by `_tile_info_at` for the Tile-card cultivation/tended readout.
 var forage_patch_lookup: Dictionary = {}
@@ -938,6 +981,7 @@ const PROFILE_LAYERS_TAGS := "layers.tags"                # terrain palette + th
 const PROFILE_LAYERS_CULTURE := "layers.culture"          # the culture_layer_map merge + removals
 const PROFILE_LAYERS_CRISIS := "layers.crisis"            # AnnotationRenderer.set_crisis_annotations
 const PROFILE_LAYERS_ROUTES := "layers.routes"            # AnnotationRenderer.set_routes (the `orders` array)
+const PROFILE_LAYERS_ROAD_NETWORK := "layers.road_network"  # _ingest_road_network (the `routes` SECTION — the roads in the ground)
 const PROFILE_SITES_FOOD := "sites.food"                  # food_modules ingest + the terrain_id stamp
 const PROFILE_SITES_DISCOVERED := "sites.discovered"      # the per-faction discovered-site ingest
 const PROFILE_SITES_FORAGE := "sites.forage"              # the forage_patches ingest
@@ -964,6 +1008,10 @@ const SECTION_FOOD_MODULES := "food_modules"
 const SECTION_DISCOVERED_SITES := "discovered_sites"
 const SECTION_FORAGE_PATCHES := "forage_patches"
 const SECTION_POPULATIONS := "populations"
+## The ROADS-IN-THE-GROUND section (arc #532). Named `routes` because that is the wire's own name
+## for it and the manifest carries that spelling; the client-side NOUN is `road_network`, to keep it
+## clear of `AnnotationRenderer`'s order-path `_routes`.
+const SECTION_ROUTES := "routes"
 const SECTION_OVERLAY_TERRAIN := "overlays.terrain"
 const SECTION_OVERLAY_VISIBILITY := "overlays.visibility"
 const SECTION_OVERLAY_ELEVATION := "overlays.elevation"
@@ -1264,6 +1312,14 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	var t_layers_routes: int = profile.begin(PROFILE_LAYERS_ROUTES)
 	_annotations.set_routes(snapshot.get("orders", []))
 	profile.end(PROFILE_LAYERS_ROUTES, t_layers_routes)
+	var t_layers_roads: int = profile.begin(PROFILE_LAYERS_ROAD_NETWORK)
+	# **THE ROADS IN THE GROUND** — a different section from the order paths one line up, and a
+	# different KIND of thing (see `road_network`). Gated on the section's own name in the delta
+	# manifest: the decoder republishes the whole section whenever any road moves and names it, so a
+	# frame that does not name it carries the roads it already had.
+	if SnapshotSections.changed(snapshot, SECTION_ROUTES):
+		_ingest_road_network(snapshot.get("routes", []))
+	profile.end(PROFILE_LAYERS_ROAD_NETWORK, t_layers_roads)
 	profile.end(PROFILE_LAYERS, t_layers)
 	var t_sites: int = profile.begin(PROFILE_SITES)
 	# Four independent ingests, each now gated on the section IT reads and each clearing its own
@@ -1778,6 +1834,13 @@ func _draw() -> void:
 	# per-tile river-edge mask — the water is drawn exactly on the edge the future crossing cost applies to.)
 	_annotations.draw_crisis_annotations(radius, origin)
 
+	# THE ROADS IN THE GROUND (arc #532), drawn HERE — above the tile tints and BENEATH every marker,
+	# overlay ring and selection outline below. A road is infrastructure in the ground rather than
+	# something standing on it, so nothing that stands on the map may be painted over by it; drawing
+	# it with the annotations rather than at the end (where the ORDER-PATH routes go, two different
+	# things — see `MapView.road_network`) is what puts it in that layer.
+	_annotations.draw_road_network(radius, origin)
+
 	# SECONDARY MARKER SLOTS ARE COMPUTED HERE, not beside the marker draws below, because the
 	# worked-source marks dock a ring to the SOURCE's own marker and therefore need its slot before
 	# they can draw. This is a PURE computation over `discovered_sites` / `food_sites` / `herds` /
@@ -2191,6 +2254,11 @@ func reset_world_state() -> void:
 	_ready_for_improvement_knowledge = {}
 	_reset_deferred_overlays()
 	herd_trails.clear()
+	# The roads of a world we are about to stop showing. Both halves, together: the lookup holds the
+	# same road dicts the array does, so clearing one alone would leave a hover answering off a world
+	# that is gone.
+	road_network = []
+	road_tile_lookup = {}
 	culture_layer_map.clear()
 	selected_unit_id = -1
 	selected_herd_id = ""
@@ -3104,6 +3172,32 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["patch_upkeep_supplied"] = float(patch.get("upkeep_supplied", 0.0))
 		info["patch_upkeep_shortfall"] = float(patch.get("upkeep_shortfall", 0.0))
 		info["patch_upkeep_workers_needed"] = int(patch.get("upkeep_workers_needed", 0))
+		# **THE MATERIAL HALF OF THAT SAME BILL** (`docs/plan_standing_upkeep.md` §2.7) — what holding
+		# this patch's rung swallowed in GOODS this turn, and what the band's store actually paid
+		# toward it. The two travel as the work pair above does, terms and never their difference, and
+		# per GOOD rather than summed (`SourceForecast.material_payoff_rows`' contract: an empty list
+		# is "this rung eats nothing", never a zero of something).
+		#
+		# **THEY CROSS BECAUSE THE CARD READS THEM HERE AND NOWHERE ELSE.**
+		# `DetailFormat.rung_material_is_short` is `tile_info`-fed with this prefix, so without these
+		# two lines the card's material arm answered `false` on every patch in the game: no `⚠` and no
+		# state word on a tended rung whose goods had run out, while the work board's row — which
+		# reads the band's own labor copy — said in DANGER ink that the same source was being lost.
+		# The plant web's second wiring, for the fifth time (`tools/patch_crossref_guard.gd`).
+		info["patch_upkeep_material_demand"] = patch.get("upkeep_material_demand", [])
+		info["patch_upkeep_material_supplied"] = patch.get("upkeep_material_supplied", [])
+		# **AND THE PILE THE NEXT RUNG UP SWALLOWS TO BUILD** — the one-off price beside the per-turn
+		# ones, resolved off the ladder at capture and published whether or not a build is in flight.
+		# It prices exactly ONE rung, the one directly above where this patch stands
+		# (`SourceForecast.FORECAST_BUILD_MATERIAL_COST_KEY`), which is why it is redacted with the
+		# ladder position rather than exempted with the terrain: naming the pile names the rung.
+		#
+		# `DetailFormat.build_blocked_lines` is the reader, and it is the second renderer that was
+		# reading nothing: a forage build stalled on `materials` composes its sentence FROM this pile
+		# so it can name the good that ran out, and with the key absent every such refusal fell back to
+		# `BUILD_BLOCKED_MATERIALS_UNNAMED` — the client's own "we cannot say which good", shipped on a
+		# patch where the wire had said exactly which.
+		info["patch_build_material_cost"] = patch.get("build_material_cost", [])
 		# **THE PRE-COMMIT RATE, PER RUNG** — what holding each plant rung costs per turn, published
 		# whether or not a build is running (the `*_work_cost` rule). The compose sheet's closed form
 		# nets the BUILD crew's output against the rate of the rung it is pricing; the source-level
@@ -3124,6 +3218,25 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# stands on its own, and the field is a PRICE on the offered face rather than a term.
 		info["patch_cultivation_upkeep_demand"] = float(patch.get("cultivation_upkeep_demand", 0.0))
 		info["patch_field_upkeep_demand"] = float(patch.get("field_upkeep_demand", 0.0))
+		# **THE MATERIAL TWIN OF THAT PER-RUNG PAIR** — what each plant rung would cost in GOODS to
+		# hold, for a rung nobody has started. `SourceForecast.build_upkeep_material_demand` reads them
+		# through the same improvement→key table its work twin uses, and `RungLadder._hold_price_asides`
+		# renders both currencies of one quote as ONE clause. They are the rung's RATE and not this
+		# patch's stamped bill — `patch_upkeep_material_demand` above is that — and on a source
+		# mid-climb the two disagree by design.
+		#
+		# **NOT IN `FOW_DISCOVERED_HIDDEN_KEYS`, for word-for-word the reason the work pair above is
+		# not**: both plant rungs are `scaled_by: source_load`, so the sim strikes each rate through
+		# this patch's tender-load — `tile_capacity / capacity_per_tender`, a pure function of the
+		# TERRAIN a Discovered tile knows by definition — before it ships them. They carry no rung, so
+		# the figure sent for an unseen hex is the figure that hex last showed. Splitting the pair
+		# across the two lists would be worse than either whole answer: `RungLadder._price_terms`
+		# composes ONE clause from the work rate and the goods, so a redacted material half would have
+		# a remembered hex quoting a PARTIAL price as if it were the whole one.
+		info["patch_cultivation_upkeep_material_demand"] = patch.get(
+			"cultivation_upkeep_material_demand", [])
+		info["patch_field_upkeep_material_demand"] = patch.get(
+			"field_upkeep_material_demand", [])
 		# **WHAT THE AT-RISK METER IS LOSING PER TURN** — the term the compose sheet's closed form
 		# nets. Unlike the pair above it IS live patch state: it exists only because this band's keeping
 		# pool came up short past the rung's grace, so it is redacted with the shortfall it is derived
@@ -3137,6 +3250,16 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# rest of the payload.
 		info["patch_has_neglect_grace"] = bool(patch.get("has_neglect_grace", false))
 		info["patch_neglect_grace_remaining"] = int(patch.get("neglect_grace_remaining", 0))
+		# **WHAT THIS PATCH'S KEEPERS ARE HELD WITH** — the RESOLVED keeping kit of the work site (set
+		# by `upkeep_kit <faction> <x> <y>`, so it is the SOURCE's and the same on every band that works
+		# it), and whether that id is the player's own word or the web's derivation. The flag is not
+		# recoverable from the id — a player may name the very kit the derivation would have picked —
+		# which is why the wire states both and no reader re-derives the `(default)` mark.
+		#
+		# Redacted on a remembered hex: a kit in a band's hands this turn is live state, not ground,
+		# and it is set per site by a command the player issues.
+		info["patch_upkeep_kit_id"] = String(patch.get("upkeep_kit_id", ""))
+		info["patch_upkeep_kit_named"] = bool(patch.get("upkeep_kit_named", false))
 		# WHAT GROWS HERE — the tile's named plant composition (share-descending, already sorted
 		# server-side; never re-sorted here). It is the patch's STANDING basket: seeded from the
 		# biome, then REWEIGHTED as a commitment's build lands (issue #433 — a Tended Patch weeds the
@@ -3154,6 +3277,12 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# and it needs no FOW_DISCOVERED_HIDDEN_KEYS entry.
 		info["patch_committed_species"] = String(patch.get("committed_species", ""))
 		info["patch_committed_display_name"] = String(patch.get("committed_display_name", ""))
+	# THE ROADS CROSSING THIS HEX (arc #532) — the tile card's road readout reads its rows out of
+	# here and nowhere else, the forage patch's own cross-ref idiom. Stamped BEFORE the fog split
+	# below and deliberately NOT in `FOW_DISCOVERED_HIDDEN_KEYS`: a road is permanent geography like
+	# the terrain label and the river edges, so a remembered hex still reports the road that crosses
+	# it — which is exactly the `Discovered` gate the sim publishes these rows under.
+	info["roads"] = _roads_on_tile(col, row)
 	var units_here := _units_on_tile(col, row)
 	var herds_here := _herds_on_tile(col, row)
 	info["units"] = units_here
@@ -3217,6 +3346,50 @@ func _herds_on_tile(col: int, row: int) -> Array:
 		if x == col and y == row:
 			matches.append((herd as Dictionary).duplicate(true))
 	return matches
+
+## **INGEST THE ROAD NETWORK** — the `routes` section, kept whole for the map draw and indexed by
+## tile for the tile card. A whole-section replace on both wire paths, so this rebuilds both from
+## scratch: a road that reverted to nothing is PRUNED sim-side and simply stops arriving, and a
+## merge that kept stale entries would leave a road drawn on the map for the life of the world.
+##
+## ⛔ **THE ROW IS JOINED ON ITS TILE, and that pair IS its identity** — it replaced the retired
+## `RouteId` when a road stopped being a stored path and became a per-tile improvement. Resolved ONCE
+## here into the `Vector2i` both consumers want, so neither the draw pass nor a hover re-reads the
+## halves.
+##
+## **A ROW MISSING EITHER HALF IS DROPPED, NOT DRAWN AT THE ORIGIN.** That is a truncated frame, and a
+## road stamped on `(0, 0)` would be a visible lie about a hex the player can click.
+func _ingest_road_network(raw: Variant) -> void:
+	road_network = []
+	road_tile_lookup = {}
+	if not (raw is Array):
+		return
+	for entry in raw:
+		if not (entry is Dictionary):
+			continue
+		var road: Dictionary = (entry as Dictionary).duplicate(true)
+		var tile := Vector2i(int(road.get("tile_x", ROAD_TILE_NONE.x)),
+			int(road.get("tile_y", ROAD_TILE_NONE.y)))
+		if tile.x < 0 or tile.y < 0:
+			continue
+		road[ROAD_TILE_KEY] = tile
+		road_network.append(road)
+		if not road_tile_lookup.has(tile):
+			road_tile_lookup[tile] = []
+		(road_tile_lookup[tile] as Array).append(road)
+
+## The road on a hex — the tile card's cross-ref, read through `_tile_info_at`. The rows come back BY
+## REFERENCE into `road_network` rather than duplicated: nothing downstream writes to a road, and a
+## per-hover deep copy would be paid on every mouse move.
+##
+## **NOT fog-gated here, and that is deliberate**: the sim already publishes a road only to a faction
+## that has explored at least one of its tiles (`Discovered`, not `Active` — a road does not wander
+## off, so remembering one is remembering something true), and `_apply_visibility_to_info` drops the
+## whole payload on an UNEXPLORED hex. Gating on `_is_tile_visible` the way the herd list does would
+## hide a road the player is standing next to the moment they look away.
+func _roads_on_tile(col: int, row: int) -> Array:
+	var found: Variant = road_tile_lookup.get(Vector2i(col, row), null)
+	return found if found is Array else []
 
 ## EVERYTHING standing on a hex, as one ordered stack of `{kind, data}` entries: every band first,
 ## then every herd. That order is the click contract — bands still win the first click on a shared

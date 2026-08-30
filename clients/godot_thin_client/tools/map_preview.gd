@@ -451,6 +451,41 @@ const ROUTE_UNKNOWN_PATH := [[1, 5], [3, 6], [2, 8]]   # left of the other two, 
 # the reference frame if the frame exercises it.
 const ROUTE_DEGENERATE_PATH := [[5, 11]]
 
+# State "road network". ⛔ **NOT the `routes` state above, and the two must never be merged.** That one
+# draws ORDER PATHS — waypoints a player's own movement orders follow, coloured by FACTION. These are
+# the roads in the GROUND (arc #532): world objects in the ground that outlive the bands that walk
+# them, coloured by RUNG. The obvious name was taken by the other thing first.
+#
+# ⛔ **A ROAD IS ONE TILE, SO EACH OF THESE IS A RUN OF ROWS AND NOT A PATH.** Every tile carries its
+# own rung, its own meter, its own keeper and its own decay, and the row has no path on it — the draw
+# stamps a hex apiece. A run is written out here so the frame reads as a road across the map, which is
+# what a player sees, while remaining what the wire actually carries: independent tiles.
+#
+# One run per rung, laid parallel so the four opacity steps and the four widths read against each
+# other in one frame — a faint path through to a strong paved road — plus a fifth in SHORTFALL,
+# which must read in the DANGER ink whatever rung it holds.
+const ROAD_PATH_TILES := [[1, 1], [3, 1], [5, 2], [7, 2], [9, 3]]
+const ROAD_TRAIL_TILES := [[1, 3], [3, 3], [5, 4], [7, 4], [9, 5]]
+const ROAD_DIRT_TILES := [[1, 5], [3, 5], [5, 6], [7, 6], [9, 7]]
+const ROAD_PAVED_TILES := [[1, 7], [3, 7], [5, 8], [7, 8], [9, 9]]
+const ROAD_AT_RISK_TILES := [[1, 9], [3, 9], [5, 10], [7, 10], [9, 11]]
+# **A LONE ROAD TILE, AND IT MUST DRAW.** Under the stored-path model this was the degenerate case a
+# one-point polyline had to bail on; per tile it is the ORDINARY case — a road forms tile by tile, and
+# the first tile of one is a road. The frame keeps it precisely because the old draw would have
+# skipped it, so a renderer that still thinks in polylines fails visibly here.
+const ROAD_LONE_TILE := [[11, 11]]
+# The bill a road in shortfall carries. Any figure at or above `SourceForecast.UPKEEP_WORK_MIN` puts
+# it in the danger ink; these are the middle rung's own numbers so the frame states a real road.
+const ROAD_DEMAND := 3.4
+const ROAD_SHORTFALL := 1.7
+const ROAD_KEPT := 0.0
+# Whose job every kept road in the frame is. The map draw reads no keeper — a road's ink is its RUNG
+# and its at-risk state, never who holds it — so this is here to make the rows the shape the wire
+# sends rather than to move a pixel.
+const ROAD_KEEPER_BAND := 1
+# …and the multiple distance put on the price, at its no-cost reading.
+const ROAD_REMOTENESS_AT_HOME := 1.0
+
 # State "max zoom". How far the achieved hex radius may sit from `base_hex_radius × MAX_ZOOM_FACTOR`
 # before the state is no longer judging the cap. Both sides are floats computed through the clamp in
 # `_update_layout_metrics`, so an exact compare would be a coin flip on the last bit; a fraction of a
@@ -1513,6 +1548,19 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_routes")
+
+	# State "road network" — THE ROADS IN THE GROUND (arc #532), which is a different thing from the
+	# order paths one state up and is drawn by a different pass. **A road is ONE TILE, so the draw
+	# stamps a hex apiece** and a run of them reads as a road across the map. Five runs laid parallel:
+	# one at each of the four rungs, faintest at the top and strongest at the bottom, and a fifth in
+	# SHORTFALL reading in the danger ink whatever rung it stands on. A sixth is a LONE tile and must
+	# DRAW — the stored-path draw bailed on it, so it is the frame's own regression guard. Fog OFF, so
+	# the tile's visibility gate is not what is under test here.
+	_map.display_snapshot(_snapshot_road_network())
+	_map.selected_unit_id = -1
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_road_network")
 
 	# State "max zoom" — the ZOOM CAP raised from 4× to 7× in issue #375. Every other state renders at
 	# the cover fit (MIN_ZOOM_FACTOR), so nothing here had ever judged the OTHER end of the rail, and
@@ -4466,6 +4514,52 @@ func _snapshot_overlay_channels() -> Dictionary:
 ## MapView.faction_colors) and a path of [col, row] waypoints.
 func _route_order(faction: Variant, path: Array) -> Dictionary:
 	return {"faction": faction, "path": path}
+
+## One ROAD row, shaped exactly like the native decoder's `routes` entry — **ONE ROW PER TILE**, whose
+## `tile_x`/`tile_y` pair is its identity. There is no id and no path: a road is a per-tile
+## improvement, and a run of them is what a player reads as a road.
+func _road(tile: Array, rung: String, shortfall: float) -> Dictionary:
+	return {
+		"tile_x": int(tile[0]),
+		"tile_y": int(tile[1]),
+		# Read the bool before the id — `0` is a real `BandId`.
+		"has_keeper": true,
+		"keeper_band_id": ROAD_KEEPER_BAND,
+		"keeper_remoteness": ROAD_REMOTENESS_AT_HOME,
+		"rung": rung,
+		"build_fraction": 1.0,
+		"upkeep_demand": ROAD_DEMAND,
+		"upkeep_supplied": ROAD_DEMAND - shortfall,
+		"upkeep_shortfall": shortfall,
+		"upkeep_workers_needed": 4,
+		"has_neglect_grace": true,
+		"neglect_grace_remaining": 2,
+		"grants_sight": shortfall <= ROAD_KEPT,
+		"friction_multiplier": 1.0,
+		"holds_link_to_tiles": 0,
+	}
+
+## Every tile of one run, at one rung. The rows are independent — that is the model — so the run is
+## expanded here rather than carried as an object.
+func _road_run(tiles: Array, rung: String, shortfall: float) -> Array:
+	var rows: Array = []
+	for tile in tiles:
+		rows.append(_road(tile, rung, shortfall))
+	return rows
+
+## The road-network backdrop: a run at each of the four rungs, a fifth in shortfall, and a LONE tile —
+## which under the per-tile model must DRAW rather than be skipped.
+func _snapshot_road_network() -> Dictionary:
+	var snap := _base_snapshot(_band([], 2, 0), [])
+	var rows: Array = []
+	rows.append_array(_road_run(ROAD_PATH_TILES, HudRouteVocab.RUNG_KEY_PATH, ROAD_KEPT))
+	rows.append_array(_road_run(ROAD_TRAIL_TILES, HudRouteVocab.RUNG_KEY_TRAIL, ROAD_KEPT))
+	rows.append_array(_road_run(ROAD_DIRT_TILES, HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_KEPT))
+	rows.append_array(_road_run(ROAD_PAVED_TILES, HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_KEPT))
+	rows.append_array(_road_run(ROAD_AT_RISK_TILES, HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_SHORTFALL))
+	rows.append_array(_road_run(ROAD_LONE_TILE, HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_KEPT))
+	snap["routes"] = rows
+	return snap
 
 ## The routes backdrop: flat terrain, the resident band for scale, and four orders — three multi-hop
 ## routes covering the int/string/unknown faction-color lookups, and one one-waypoint order the draw

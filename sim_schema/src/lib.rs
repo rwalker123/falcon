@@ -459,46 +459,96 @@ mod tests {
         assert!((patch.fodderPerBiomass() - PATCH_FODDER_RATE).abs() < 1e-6);
     }
 
-    /// **The FODDER CAPABILITY rides the wire beside the fodder RATE.** `fodderPerBiomass` (above)
-    /// states what the *land* pays; `IntensificationKnowledgeState.foddering` states whether *this
-    /// faction* may bank it — the wild forage fodder credit is gated on the Foddering discovery
-    /// (`core_sim/src/systems/labor.rs`), so without this field a client composes a hay account the
-    /// sim will refuse. Encode → decode through the generated reader, because a struct field that
-    /// never reached the codec would still pass an in-process assertion.
+    /// **THE LADDER'S KNOWLEDGES CROSS AS A LIST, ROSTER AND PROGRESS APART** — and the pair is what
+    /// replaced a field per knowledge, which is why the route branch's two lessons had nowhere to
+    /// appear at all.
+    ///
+    /// Two claims, and they are different failures. The ROSTER carries what there is to learn and
+    /// **no faction**, so a faction with no ledger row still has a screen to look at; the PROGRESS
+    /// carries a faction's `0..1` per knowledge, joined back on `knowledgeId`. `foddering` is the
+    /// subject of both halves because it is the shipped `isStep: false` — a capability the pen rung
+    /// teaches rather than a gate on reaching a rung — and because the wild forage fodder credit is
+    /// gated on it (`core_sim/src/systems/labor.rs`), so a client that could not read it composes a
+    /// hay account the sim will refuse. Encode → decode through the generated reader, because a
+    /// struct field that never reached the codec would still pass an in-process assertion.
     #[test]
-    fn the_foddering_capability_rides_the_wire_beside_the_fodder_rate() {
+    fn the_ladder_knowledges_cross_the_wire_as_a_roster_and_a_progress_list() {
         /// Partway to Foddering — a learning meter, so a bool would lose the reading.
         const FODDERING_PROGRESS: f32 = 0.75;
-        /// A known rung-gate beside it, so the appended slot cannot be read off a neighbour's value.
+        /// A known rung-gate beside it, so one row cannot be read off a neighbour's value.
         const PENNING_PROGRESS: f32 = 1.0;
+        /// The `animal:pen` rung's order — the position Foddering takes in the Herds column.
+        const PEN_RUNG_ORDER: u32 = 3;
 
         let snapshot = WorldSnapshot {
+            ladder_knowledge: vec![
+                LadderKnowledgeState {
+                    knowledge_id: "penning".to_string(),
+                    display_name: "Penning".to_string(),
+                    branch: "animal".to_string(),
+                    order: 2,
+                    is_step: true,
+                },
+                LadderKnowledgeState {
+                    knowledge_id: "foddering".to_string(),
+                    display_name: "Foddering".to_string(),
+                    branch: "animal".to_string(),
+                    order: PEN_RUNG_ORDER,
+                    is_step: false,
+                },
+            ],
             intensification_knowledge: vec![IntensificationKnowledgeState {
                 faction: 1,
-                penning: PENNING_PROGRESS,
-                foddering: FODDERING_PROGRESS,
-                ..Default::default()
+                knowledges: vec![
+                    LadderKnowledgeProgress {
+                        knowledge_id: "penning".to_string(),
+                        progress: PENNING_PROGRESS,
+                    },
+                    LadderKnowledgeProgress {
+                        knowledge_id: "foddering".to_string(),
+                        progress: FODDERING_PROGRESS,
+                    },
+                ],
             }],
             ..WorldSnapshot::default()
         };
 
         let bytes = encode_snapshot_flatbuffer(&snapshot);
         let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
-        let knowledge = envelope
+        let subsistence = envelope
             .payload_as_snapshot()
             .expect("snapshot payload")
             .subsistence()
-            .expect("subsistence section present")
+            .expect("subsistence section present");
+
+        let roster = subsistence.ladderKnowledge().expect("roster present");
+        let fodder_row = roster.get(1);
+        assert_eq!(fodder_row.knowledgeId(), Some("foddering"));
+        assert_eq!(fodder_row.displayName(), Some("Foddering"));
+        assert_eq!(fodder_row.branch(), Some("animal"));
+        assert_eq!(fodder_row.order(), PEN_RUNG_ORDER);
+        assert!(
+            !fodder_row.isStep(),
+            "no rung waits on Foddering, so it is a capability rather than a step"
+        );
+        assert!(
+            roster.get(0).isStep(),
+            "a rung's `unlock_knowledge` names Penning, so it IS a step"
+        );
+
+        let knowledge = subsistence
             .intensificationKnowledge()
             .expect("intensification knowledge present")
             .get(0);
-
         assert_eq!(knowledge.faction(), 1);
-        assert!((knowledge.penning() - PENNING_PROGRESS).abs() < 1e-6);
+        let progress = knowledge.knowledges().expect("progress list present");
+        assert_eq!(progress.get(0).knowledgeId(), Some("penning"));
+        assert!((progress.get(0).progress() - PENNING_PROGRESS).abs() < 1e-6);
+        assert_eq!(progress.get(1).knowledgeId(), Some("foddering"));
         assert!(
-            (knowledge.foddering() - FODDERING_PROGRESS).abs() < 1e-6,
+            (progress.get(1).progress() - FODDERING_PROGRESS).abs() < 1e-6,
             "the fodder capability must cross verbatim: {}",
-            knowledge.foddering()
+            progress.get(1).progress()
         );
     }
 

@@ -38,9 +38,10 @@ class_name KnowledgeRoster
 ##   with a field is certainly using its Cultivation.
 ## - **A craft knowledge** is in use when the faction holds, or is making, something that is made of
 ##   it — see `craft_is_in_use`.
-## - **A knowledge that unlocks nothing cannot be unspent at all** (`UNLOCKLESS_TRACKS`). `foddering`
-##   changes what a pen may draw on rather than unlocking a step, so there is no source that could
-##   stand on it, and calling it "unused" would be a sentence about nothing.
+## - **A knowledge that unlocks nothing cannot be unspent at all.** `foddering` changes what a pen may
+##   draw on rather than unlocking a step, so there is no source that could stand on it, and calling
+##   it "unused" would be a sentence about nothing. **That is READ OFF THE ROSTER's `is_step`, not off
+##   a declared set here** — the ladder already knows whether any rung waits on a knowledge.
 ##
 ## ## Which sources count as the faction's — and why the two webs answer differently
 ##
@@ -61,8 +62,7 @@ class_name KnowledgeRoster
 ## backwards is what makes "using it" here and "allowed" there the same question — a second table
 ## would be a second answer, and the one that drifted would be this one, since nothing else reads it.
 ##
-## Built once at load. `IMPROVEMENT_NONE` for a track that gates no verb, which is every track in
-## `HudKnowledgeVocab.UNLOCKLESS_TRACKS` and nothing else.
+## `IMPROVEMENT_NONE` for a track that gates no verb.
 static func unlock_for_track(track: String) -> String:
 	for improvement in RungGates.RUNG_KNOWLEDGE_TRACKS:
 		if String(RungGates.RUNG_KNOWLEDGE_TRACKS[improvement]) == track:
@@ -71,24 +71,53 @@ static func unlock_for_track(track: String) -> String:
 
 ## **THE WHOLE ROSTER: every domain that has nodes, each holding its nodes in order.**
 ##
-## `model` is one dictionary rather than nine parameters because every field is needed to answer any
+## ⛔ **THE LADDER COLUMNS ARE BUILT FROM THE WIRE, NOT FROM A DECLARED LIST.** The sim publishes one
+## `ladder_knowledge` row per knowledge the ladder teaches, carrying the BRANCH of the rung that
+## teaches it (which column), that rung's ORDER (where in the column) and whether any rung's
+## `unlock_knowledge` names it (step, or capability hanging off the bottom). All three are derived
+## from `intensification_ladder.json` sim-side, so **a knowledge added to that config appears here
+## with no client edit** — which is exactly what the retired hard-coded `LADDER_DOMAINS` could not do,
+## and why the route branch's Roadbuilding and Paving had nowhere to show.
+##
+## `model` is one dictionary rather than ten parameters because every field is needed to answer any
 ## node's `unspent`, and a caller that could pass some of them would produce a roster whose verdicts
 ## were silently derived from an empty world. See `MODEL_*` for the keys.
 static func build_domains(model: Dictionary) -> Array[Dictionary]:
 	var domains: Array[Dictionary] = []
-	for spec in HudKnowledgeVocab.LADDER_DOMAINS:
+	# **COLUMN ORDER IS THE ROSTER'S OWN**, i.e. the ladder config's rung order — first branch to
+	# teach anything is the first column. Declaring an order here would be one more thing to edit when
+	# a branch is added, which is the whole defect this replaced.
+	var branch_order: Array[StringName] = []
+	var by_branch := {}
+	for entry_variant in model.get(MODEL_LADDER_ROSTER, []):
+		if not (entry_variant is Dictionary):
+			continue
+		var entry: Dictionary = entry_variant
+		var branch := StringName(String(entry.get(HudKnowledgeVocab.ROSTER_BRANCH, "")))
+		if String(branch) == "":
+			continue
+		if not by_branch.has(branch):
+			by_branch[branch] = []
+			branch_order.append(branch)
+		(by_branch[branch] as Array).append(entry)
+	for branch in branch_order:
+		var rows: Array = by_branch[branch]
+		# **WITHIN A COLUMN, THE ORDER IS THE TEACHING RUNG'S**, bottom step first, so a column read
+		# top to bottom reads as a progression. A CAPABILITY sorts after every step at the same rung —
+		# `foddering` is taught by the top animal rung and belongs under the chain, not inside it.
+		rows.sort_custom(_before_on_the_ladder)
 		var nodes: Array[Dictionary] = []
-		for track_variant in spec[HudKnowledgeVocab.DOMAIN_NODES]:
-			nodes.append(_ladder_node(String(track_variant), StringName(spec[HudKnowledgeVocab.DOMAIN_KEY]), model))
+		for row_variant in rows:
+			nodes.append(_ladder_node(row_variant as Dictionary, branch, model))
 		# **NEVER DRAW AN EMPTY DOMAIN COLUMN** — a column appears the turn its first branch does, and
 		# an empty one teaches the player that a whole area of the game is closed to them when in
-		# truth it does not exist yet. Today the two ladder domains always have nodes (their tracks are
-		# declared), so this guard is for the Routes / War / Telling columns that arrive with theirs.
+		# truth it does not exist yet. A branch reaches `branch_order` only by having a row, so this
+		# cannot happen today; it is stated because the guard is the rule.
 		if nodes.is_empty():
 			continue
 		domains.append({
-			HudKnowledgeVocab.DOMAIN_KEY: spec[HudKnowledgeVocab.DOMAIN_KEY],
-			HudKnowledgeVocab.DOMAIN_LABEL: spec[HudKnowledgeVocab.DOMAIN_LABEL],
+			HudKnowledgeVocab.DOMAIN_KEY: branch,
+			HudKnowledgeVocab.DOMAIN_LABEL: HudKnowledgeVocab.domain_label(branch),
 			HudKnowledgeVocab.DOMAIN_SHAPE: HudKnowledgeVocab.DOMAIN_SHAPE_LADDER,
 			HudKnowledgeVocab.DOMAIN_NODES: nodes,
 		})
@@ -104,6 +133,18 @@ static func build_domains(model: Dictionary) -> Array[Dictionary]:
 			HudKnowledgeVocab.DOMAIN_NODES: crafts,
 		})
 	return domains
+
+## Ladder order within one column: by the teaching rung's `order`, and a CAPABILITY after a STEP that
+## shares it. The second term is what puts `foddering` under the animal chain rather than beside
+## `penning` — both are taught by rungs of the same branch, and only one of them is a step somebody
+## climbs to.
+static func _before_on_the_ladder(a: Dictionary, b: Dictionary) -> bool:
+	var order_a := int(a.get(HudKnowledgeVocab.ROSTER_ORDER, 0))
+	var order_b := int(b.get(HudKnowledgeVocab.ROSTER_ORDER, 0))
+	if order_a != order_b:
+		return order_a < order_b
+	return bool(a.get(HudKnowledgeVocab.ROSTER_IS_STEP, false)) \
+		and not bool(b.get(HudKnowledgeVocab.ROSTER_IS_STEP, false))
 
 ## Every node of every domain, flattened — what the tally and the filter counts are taken over, so
 ## they cannot be computed off a different list than the one drawn.
@@ -172,6 +213,11 @@ static func tally(nodes: Array) -> Dictionary:
 const TALLY_UNSPENT := "unspent"
 
 # ---- the model the caller hands in ---------------------------------------------------------------
+## **WHAT THERE IS TO LEARN** — the ladder's knowledge roster as the wire sent it
+## (`FactionReadouts.ladder_knowledge`), one row per knowledge. **This is the DECLARATION**: the
+## columns, their order and each node's place in them are read off it, so the panel needs no track
+## list of its own.
+const MODEL_LADDER_ROSTER := "ladder_roster"
 ## `{track: 0..1}` — the player faction's intensification row, `FactionReadouts.faction_tracks`.
 const MODEL_TRACKS := "tracks"
 ## The player faction's craft rows, already filtered to `PLAYER_FACTION_ID` by whoever ingests them.
@@ -181,6 +227,11 @@ const MODEL_PATCHES := "patches"
 ## The herds the faction's bands WORK — resolved through their hunt assignments, because a herd
 ## carries no owner field client-side.
 const MODEL_HERDS := "herds"
+## The road TILES the faction's own bands KEEP. **A road is the one source with no labor row**, so
+## ownership is read straight off the road (`has_keeper` / `keeper_band_id`) rather than through
+## assignments the way a herd's is, and rather than through an `owner` field the way a patch's is —
+## a third answer to *"is this ours"*, forced by a third wire shape.
+const MODEL_ROADS := "roads"
 ## The world's recipe book (`SubsistenceSection.recipes`), for the craft half's "made of it" join.
 const MODEL_RECIPES := "recipes"
 ## `{item_id: count}` and `{material_id: amount}`, summed over the player's bands.
@@ -194,19 +245,30 @@ const MODEL_LEARNED_THIS_TURN := "learned_this_turn"
 
 # ---- the two node builders -----------------------------------------------------------------------
 
-static func _ladder_node(track: String, domain: StringName, model: Dictionary) -> Dictionary:
+## One node of a ladder column, built from its ROSTER ROW — the wire's declaration of the knowledge —
+## crossed with this faction's progress on it.
+static func _ladder_node(entry: Dictionary, domain: StringName, model: Dictionary) -> Dictionary:
+	var track := String(entry.get(HudKnowledgeVocab.ROSTER_KNOWLEDGE_ID, ""))
 	var tracks: Dictionary = model.get(MODEL_TRACKS, {})
-	# **THE DECLARED LIST IS WALKED, NOT THE WIRE'S ROW**, so a track the faction has never touched is
-	# an absent key that reads `0.0` and becomes a GREYED node — rather than no node at all, which is
-	# what the old faction-page block did.
+	# **THE ROSTER IS WALKED, NOT THE PROGRESS ROW**, so a track the faction has never touched is an
+	# absent key that reads `0.0` and becomes a GREYED node — rather than no node at all, which is
+	# what the old faction-page block did. It is also why the roster carries no faction: a faction
+	# with no progress row at all still has a full screen to look at.
 	var progress := clampf(float(tracks.get(track, 0.0)), 0.0, 1.0)
 	var state := _state_for(progress, progress >= HudConst.KNOWLEDGE_COMPLETE)
 	var unlocks := unlock_for_track(track)
-	var testable := unlocks != SourceForecast.IMPROVEMENT_NONE
+	# ⛔ **STEP OR CAPABILITY IS THE CONFIG'S ANSWER, and `unspent` follows it.** A knowledge no rung
+	# waits on has nothing to stand on it, so *"nothing is using it"* would be a sentence about
+	# nothing. The client used to declare that set; the roster derives it from the ladder.
+	var is_step := bool(entry.get(HudKnowledgeVocab.ROSTER_IS_STEP, false))
+	var testable := is_step and unlocks != SourceForecast.IMPROVEMENT_NONE
 	var in_use := ladder_in_use_count(unlocks, model) if testable else 0
+	# The player-facing name is the SIM's (`display_name`), so no client surface authors a second
+	# spelling of a discovery. The raw id is the honest fallback for a row that carried none.
+	var label := String(entry.get(HudKnowledgeVocab.ROSTER_DISPLAY_NAME, "")).strip_edges()
 	return {
 		HudKnowledgeVocab.NODE_KEY: track,
-		HudKnowledgeVocab.NODE_LABEL: String(FactionReadouts.KNOWLEDGE_TRACK_LABELS.get(track, track)),
+		HudKnowledgeVocab.NODE_LABEL: label if label != "" else track,
 		HudKnowledgeVocab.NODE_DOMAIN: domain,
 		HudKnowledgeVocab.NODE_STATE: state,
 		HudKnowledgeVocab.NODE_PROGRESS: progress,
@@ -219,7 +281,9 @@ static func _ladder_node(track: String, domain: StringName, model: Dictionary) -
 			and testable and in_use == 0,
 		# The unlock copy is READ from `FactionReadouts`, not re-authored — one sentence per track, so no
 		# two surfaces naming a discovery can describe it differently. That table OUTLIVED the one-shot
-		# unlock announcement it was written for (retired, §5); this pane is its reader now.
+		# unlock announcement it was written for (retired, §5); this pane is its reader now. **It is
+		# COPY, not structure**: a knowledge with no note draws with nothing to say rather than not
+		# drawing, which is what keeps the roster wire-driven.
 		HudKnowledgeVocab.NODE_NOTE: String(FactionReadouts.KNOWLEDGE_UNLOCK_NOTES.get(track, "")),
 		HudKnowledgeVocab.NODE_PRACTISE: String(HudKnowledgeVocab.PRACTISE_NOTES.get(track, "")),
 		HudKnowledgeVocab.NODE_NEW: _is_new(track, state, model),
@@ -292,11 +356,19 @@ static func _state_for(progress: float, known: bool) -> String:
 ## verb run", and a Field reached by `Sow` carries no `is_cultivated`, so a flag test would report a
 ## faction with a working field as not using its Cultivation.
 ##
-## Which pool is scanned is a property of the VERB (`FORAGE_IMPROVEMENTS` / `HUNT_IMPROVEMENTS`), not
-## a branch here: a plant verb can only be built on a patch, and an animal verb only on a herd.
+## Which pool is scanned is a property of the VERB (`FORAGE_IMPROVEMENTS` / `HUNT_IMPROVEMENTS` /
+## `ROUTE_IMPROVEMENTS`), not a branch here: a plant verb can only be built on a patch, an animal verb
+## only on a herd, and a route verb only on a road tile.
+##
+## ⛔ **THE ROAD ARM ASKS THE SAME QUESTION THROUGH A DIFFERENT FIELD NAME.** A patch and a herd
+## publish their standing as `current_rung`; a road publishes its as `rung`. So the road arm makes
+## `improvement_is_done`'s own comparison — `rung_at_or_above(standing, the rung this verb builds)` —
+## rather than a second rule, which is what keeps *"is anything using this"* one question on three webs.
 static func ladder_in_use_count(improvement: String, model: Dictionary) -> int:
 	if improvement == SourceForecast.IMPROVEMENT_NONE:
 		return 0
+	if SourceForecast.ROUTE_IMPROVEMENTS.has(improvement):
+		return _roads_standing_on(improvement, model)
 	var pool: Array = []
 	if SourceForecast.FORAGE_IMPROVEMENTS.has(improvement):
 		pool = model.get(MODEL_PATCHES, [])
@@ -308,6 +380,24 @@ static func ladder_in_use_count(improvement: String, model: Dictionary) -> int:
 			continue
 		if SourceForecast.improvement_is_done(source_variant as Dictionary,
 				HudComposeVocab.BARE_FORECAST_PREFIX, improvement):
+			found += 1
+	return found
+
+## **HOW MANY OF THE FACTION'S OWN ROAD TILES STAND ON THE RUNG `improvement` BUILDS.**
+##
+## The caller has already filtered the pool to roads this faction's bands KEEP — that is where
+## ownership lives on this web — so the only question left here is the rung, asked at-or-ABOVE for the
+## reason every other web asks it that way: a paved road is standing above a dirt road, and a faction
+## with a paved road is certainly using its Roadbuilding.
+static func _roads_standing_on(improvement: String, model: Dictionary) -> int:
+	var target := String(SourceForecast.IMPROVEMENT_RUNG_KEYS.get(improvement, ""))
+	if target == "":
+		return 0
+	var found := 0
+	for road_variant in model.get(MODEL_ROADS, []):
+		if not (road_variant is Dictionary):
+			continue
+		if SourceForecast.rung_at_or_above(HudRouteVocab.rung_of(road_variant as Dictionary), target):
 			found += 1
 	return found
 

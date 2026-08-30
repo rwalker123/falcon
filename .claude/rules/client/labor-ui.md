@@ -5596,9 +5596,13 @@ spelled and never a raw count.
       **`wastedYield` → `wasted_yield`** (the understaffing signal, also dropped) +
       **`overdraws` → `overdraws`** (the sim-answered overhunting ⚠ for the confirmed rows/map labels,
       policy-driven `!managed && policy.overdraws()`) → per-assignment keys
-      inside `labor_assignments`. `IntensificationKnowledgeState`: `cultivation` / `herding` +
-      slice-4's `seedSelection` / `penning` → `seed_selection` / `penning` (present — the "Penning 0%"
-      playtest report was NOT a decoder drop; see the kill-rhythm/knowledge notes below).
+      inside `labor_assignments`. `IntensificationKnowledgeState`: **a LIST now**, not named floats —
+      `knowledges` decodes to a `{knowledge_id: 0..1}` map covering every knowledge the ladder
+      declares, so `cultivation` / `seed_selection` / `herding` / `penning` are read out of it by name
+      (present — the "Penning 0%" playtest report was NOT a decoder drop; see the
+      kill-rhythm/knowledge notes below). **The five named float fields are retired**: adding a
+      knowledge used to mean adding a schema field, which is why the route branch's two lessons had
+      nowhere to appear — see `knowledge-panel.md`.
     - **The hunt row headlines the honest RATE, never the kill-credit PULSE** (`SourceForecast.source_yield_readout`,
       slice 8b UX + the local-hunt UX cleanup): a Current-actions Hunt SUMMARY row + the local-hunt preview
       show `sustainable_yield` (the smoothed per-turn take), not `actual_yield` (0 on a wait turn, a spike on
@@ -6363,8 +6367,9 @@ states no rate for it, not because the client dropped one). `map_preview`: `map_
 ## The FODDER account can be real and unbankable at once (issue #485)
 
 `ForagePatchState.fodderPerBiomass` states what the LAND pays. Whether the working band can BANK it is
-a second fact, and it now ships beside the ladder: `IntensificationKnowledgeState.foddering`, decoded
-as `foddering` in `native/src/dict/subsistence.rs`. The sim credits a **wild** patch's fodder take only
+a second fact, and it ships beside the ladder as an ordinary entry on the wire's knowledge LIST —
+`intensification_knowledge[].knowledges["foddering"]`, decoded in
+`native/src/dict/subsistence.rs` and read back through `FactionReadouts.faction_tracks`. The sim credits a **wild** patch's fodder take only
 to a faction that has learned Foddering, or on a patch already **committed** to a crop — committing IS
 the bid, so a committed patch is paid unconditionally (`systems/labor.rs`:
 `patch.species.is_some() || knows(faction, FODDERING)`). Foddering is earned by **keeping a penned

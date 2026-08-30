@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 38] = [
+const SIM_STATE_RESOURCES: [&str; 39] = [
     "ActiveCrisisLedger",
     // The band-id counter. Restoring the bands without it re-issues a live id after a rollback.
     "BandIdAllocator",
@@ -85,6 +85,10 @@ const SIM_STATE_RESOURCES: [&str; 38] = [
     "PendingCrisisSeeds",
     "PendingCrisisSpawns",
     "SedentarizationScore",
+    // **The roads.** A road is in the ground and outlives the bands that wore it in, so nothing
+    // rebuilds one — a restore that dropped this would hand back a world whose roads had never been
+    // walked, with every band's pooling silently back at the unrouted friction.
+    "RoadRegistry",
     "SentimentAxisBias",
     "SimulationTick",
     "TradeTelemetry",
@@ -112,7 +116,7 @@ const SIM_STATE_RESOURCES: [&str; 38] = [
 /// The second half is the load-bearing one, and it is why `HerdTelemetry`, `PowerGridState` and
 /// `SimulationMetrics` are not here despite each having a system that rebuilds it: `capture_snapshot`
 /// publishes all three within the same turn. See the comment on them in `SIM_STATE_RESOURCES`.
-const DERIVED_RESOURCES: [(&str, &str); 5] = [
+const DERIVED_RESOURCES: [(&str, &str); 6] = [
     // Filled by `calculate_visibility` (and the expedition comm flush) and drained + cleared by
     // `advance_connections` in the SAME stage, so it is empty at the end of every turn.
     ("ContactsThisTurn", "connections::advance_connections"),
@@ -122,6 +126,9 @@ const DERIVED_RESOURCES: [(&str, &str); 5] = [
     ),
     ("CultureEffectsCache", "reconcile_culture_layers"),
     ("HerdDensityMap", "advance_herds"),
+    // Written by `balance_supply_networks` and DRAINED by `advance_routes` in the SAME stage, so it
+    // is empty at the end of every turn — `ContactsThisTurn`'s shape exactly, one arc over.
+    ("RouteTrafficLog", "routes::advance_routes"),
     ("SupplyNetworkMembership", "balance_supply_networks"),
 ];
 

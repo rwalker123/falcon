@@ -1915,38 +1915,148 @@ pub struct FloraShareInfo {
     pub sow_work_cost: f32,
 }
 
+/// **ONE LADDER KNOWLEDGE THE CONFIG DECLARES** — the *roster* half, once per world and deliberately
+/// faction-independent.
+///
+/// ⛔ **EVERY FIELD IS DERIVED FROM `intensification_ladder.json`; NOTHING HERE IS AUTHORED
+/// SEPARATELY.** The branch and the order are the rung that *teaches* the knowledge
+/// (`earns_knowledge`), and [`Self::is_step`] is simply whether any rung's `unlock_knowledge` names
+/// it. That is what lets a client's knowledge screen build its own columns: a knowledge added to the
+/// ladder appears with no client edit and no schema edit, which the retired field-per-knowledge
+/// shape could never do.
+///
+/// **It carries no faction, and the progress half does.** A faction that has learned nothing has no
+/// ledger row at all, so a roster carried on that row would leave a new player's screen empty — with
+/// nothing on it to say there is anything to learn.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct LadderKnowledgeState {
+    /// The ladder config's own id (`"cultivation"`, `"roadbuilding"`, …) — the join key with
+    /// [`LadderKnowledgeProgress::knowledge_id`].
+    pub knowledge_id: String,
+    /// `"Seed Selection"` — the id with underscores turned to spaces and each word capitalized,
+    /// resolved sim-side so no client authors a second spelling of it.
+    pub display_name: String,
+    /// The branch of the rung that **teaches** it (`"plant"` | `"animal"` | `"route"`): which column.
+    pub branch: String,
+    /// …and that rung's `order`: the position within the column, bottom step first.
+    pub order: u32,
+    /// **Does any rung's `unlock_knowledge` name this?** A *step* in the chain when it does; a
+    /// *capability* hanging off the bottom of its column when it does not. `foddering` is the
+    /// shipped `false` — it changes what a pen may draw on rather than opening a further rung.
+    #[serde(default)]
+    pub is_step: bool,
+}
+
+/// One faction's progress on one ladder knowledge, `0..1` (`1.0` = known). Joined to the roster above
+/// by [`Self::knowledge_id`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct LadderKnowledgeProgress {
+    pub knowledge_id: String,
+    #[serde(default)]
+    pub progress: f32,
+}
+
 /// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
 /// knowledges, 0..1 (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client
-/// renders learning/known meters.
+/// renders learning/known meters. Only factions that have begun learning **something** appear here —
+/// what there *is* to learn rides [`LadderKnowledgeState`] instead, precisely so a faction absent
+/// from this list still has a screen to look at.
 ///
-/// One field per rung-transition — *"practice rung N unlocks rung N+1"*
-/// (`docs/plan_intensification_ladder.md` §4) — so the struct reads as the ladder itself:
-/// `wild --cultivation--> tended --seed_selection--> field` and
-/// `wild --herding--> pastoral --penning--> pen`. [`IntensificationKnowledgeState::foddering`] is the
-/// one exception — a *capability* the top animal rung teaches rather than a gate on reaching a rung.
+/// ⛔ **THE FIVE NAMED FLOATS ARE RETIRED**, their FlatBuffers ids held and never reused (they are
+/// `(deprecated)` in `snapshot.fbs`). Adding a knowledge used to mean adding a schema field, which is
+/// why the route branch's two lessons had nowhere to appear; [`Self::knowledges`] is the list that
+/// replaced them and is the only authority on a faction's ladder progress.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct IntensificationKnowledgeState {
     pub faction: u32,
-    /// Gates `cultivate`. Earned by working a **wild** patch under a stewardship policy.
+    /// **Every knowledge the ladder declares**, in the roster's own order. Sparse in *value*, never
+    /// in *membership*: a knowledge the faction has not begun reads `0` rather than being absent, so
+    /// no reader has to tell *not begun* from *not published*.
     #[serde(default)]
-    pub cultivation: f32,
-    /// Gates `tame` — and `tame` **only**, since the §4.3 reshuffle. Earned by working a **wild** herd.
+    pub knowledges: Vec<LadderKnowledgeProgress>,
+}
+
+/// **ONE RUNG OF THE ROUTE BRANCH, AS THE CONFIG DECLARES IT** — the branch's *catalog*, once per
+/// world and carrying no tile.
+///
+/// ⛔ **THIS IS WHAT LETS A CLIENT DRAW A ROAD LADDER OF RUNGS NOTHING HAS BUILT YET.**
+/// [`crate::state::routes::RouteState`] answers *where does this tile stand and what is that worth*;
+/// it says nothing about the rungs above it, so no readout could state what a paved road would cost
+/// or what it would buy until the tile already held one.
+///
+/// ⛔ **EVERY FIELD IS DERIVED FROM `intensification_ladder.json`; NOTHING HERE IS AUTHORED
+/// SEPARATELY** — the same discipline [`LadderKnowledgeState`] follows, and for the same reason: a
+/// rung added to that config appears in the ladder with no client edit and no schema edit.
+///
+/// **It rides the section and not the tile row.** These are properties of the *branch*, identical
+/// for every road in the world; carried on `RouteState` they would repeat the same four rows on
+/// every road tile.
+///
+/// **Route branch only, deliberately.** A generic `LadderRungState` filled for one branch is a
+/// promise the code does not keep; the plant and animal branches publishing the same is their own
+/// change.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct RouteRungState {
+    /// The rung's name on the wire, `"<branch>:<id>"` (`"route:dirt_road"`) — the same spelling
+    /// `RouteState::rung` carries, so a tile's standing joins to its row here.
+    pub rung_key: String,
+    /// The config record's own `order`: `1` at the branch's floor, climbing. **The row order is this
+    /// order** — the catalog is published bottom rung first.
+    pub order: u32,
+    /// `"Dirt Road"` — the rung id with underscores turned to spaces and each word capitalized,
+    /// resolved sim-side so no client authors a second spelling of it.
+    pub display_name: String,
+    /// The **tile command** that raises this rung (`"grade"` / `"pave"`), `""` where the rung
+    /// declares none. An empty verb is the free floor: a path and a trail are formed by *use*, so
+    /// there is no command to name the job and no crew to staff it.
+    pub verb: String,
+    /// The ladder knowledge that gates this rung (`"roadbuilding"`), joining to
+    /// [`LadderKnowledgeState::knowledge_id`] for the faction's own progress; `""` where the rung
+    /// waits on nothing.
+    pub unlock_knowledge: String,
+    /// The wire key of the rung **directly beneath** this one, `""` at the branch's floor — the
+    /// chain, so a client renders the climb without holding a second copy of the order.
+    pub requires_rung: String,
+    /// What reaching this rung costs, in work units, **before** the tile's own remoteness quote
+    /// (`RouteState::keeper_remoteness` is that multiplier). `0` where the rung declares no build at
+    /// all, which on the shipped ladder is the floor and nothing else. Inside the free floor the
+    /// figure is a duration in **traffic** rather than a crew's job.
     #[serde(default)]
-    pub herding: f32,
-    /// Gates `sow` (slice 5 — earned now, spent later). Earned by working a **tended** patch.
+    pub work_cost: f32,
+    /// The standing bill a road at this rung owes its keeper, in work units per turn, **before** the
+    /// tile's own load scales it (`RouteState::upkeep_demand` is the resolved reading). `0` where
+    /// the rung declares no upkeep — the free floor, which costs nothing to hold and can therefore
+    /// never be short.
     #[serde(default)]
-    pub seed_selection: f32,
-    /// Gates `corral` + `extend_pen` (the §4.3 reshuffle took this off `herding`). Earned by working
-    /// a **pastoral** herd.
+    pub upkeep_work_per_turn: f32,
+    /// The fraction of the base pooling friction a haul over a tile at this rung pays; `1.0` = no
+    /// help. `RouteState::friction_multiplier` is the same figure for the rung a tile **holds**.
     #[serde(default)]
-    pub penning: f32,
-    /// **Not a rung transition** — no rung waits on it; it is the capability the **pen** rung teaches
-    /// (`intensification_ladder.json`, corral's `earns_knowledge: "foddering"`). It gates every
-    /// fodder seam: a penned herd's hay *draw*, the pen's `K` fodder term, and the **wild** forage
-    /// patch's fodder credit. So it is the other half of the fodder answer — `ForagePatchState`
-    /// states what the land pays, this states whether the faction can bank it.
+    pub friction_multiplier: f32,
+    /// How far a tile at this rung holds a pooling link open, in tiles. `0` = none beyond the free
+    /// reach.
     #[serde(default)]
-    pub foddering: f32,
+    pub holds_link_to_tiles: u32,
+    /// **Does a road at this rung light its own tile?** Answered from whether the rung declares an
+    /// upkeep, because *paying the bill is the presence* — which is also why the free floor lights
+    /// nothing however worn it is. A road at a rung that grants sight still goes dark while its
+    /// keeping is unmet; `RouteState::grants_sight` is that resolved per-tile answer.
+    #[serde(default)]
+    pub grants_sight: bool,
+    /// **The ladder knowledge standing at this rung TEACHES** (`"roadbuilding"` on the trail), `""`
+    /// where the rung teaches nothing — the floor, and the top of the branch, which has nothing
+    /// above it to open.
+    ///
+    /// ⛔ **IT IS THE REMEDY, AND IT CANNOT BE INFERRED FROM [`Self::requires_rung`].** A gate says
+    /// *you do not know `paving` yet*; what a player does about it is stand on the rung that
+    /// **teaches** paving, which is a different fact from the rung directly beneath. The two
+    /// coincide on the shipped four rungs and the config is free to break that pairing — an
+    /// inference would then name the wrong rung in the one place it matters.
+    ///
+    /// Joins to [`LadderKnowledgeState::knowledge_id`], the same vocabulary
+    /// [`Self::unlock_knowledge`] uses.
+    #[serde(default)]
+    pub earns_knowledge: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

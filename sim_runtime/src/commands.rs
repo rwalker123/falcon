@@ -140,6 +140,24 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
     },
+    /// **The route branch's rung-3 verb — a TILE command that also names a KEEPER.**
+    ///
+    /// `cultivate`/`sow`'s grammar with a band token in it: a patch's keeper is whoever is already
+    /// foraging it, and a road has no take row at all, so the band that will keep this tile has to be
+    /// said out loud. **One keeper per tile, never a share.**
+    Grade {
+        faction_id: u32,
+        band_id: u64,
+        target_x: u32,
+        target_y: u32,
+    },
+    /// [`Self::Grade`]'s twin one rung up, on the same terms.
+    Pave {
+        faction_id: u32,
+        band_id: u64,
+        target_x: u32,
+        target_y: u32,
+    },
     // **RETIRED: `AbandonImprovement`** — "clear the build verb off every band working this source".
     //
     // The build verb is **derived from the meter** now (`forage::patch_build_verb` /
@@ -1328,6 +1346,28 @@ impl CommandEnvelope {
                 target_x: *target_x,
                 target_y: *target_y,
             }),
+            CommandPayload::Grade {
+                faction_id,
+                band_id,
+                target_x,
+                target_y,
+            } => pb::command_envelope::Command::Grade(pb::GradeCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                target_x: *target_x,
+                target_y: *target_y,
+            }),
+            CommandPayload::Pave {
+                faction_id,
+                band_id,
+                target_x,
+                target_y,
+            } => pb::command_envelope::Command::Pave(pb::PaveCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                target_x: *target_x,
+                target_y: *target_y,
+            }),
             CommandPayload::ExtendPen {
                 faction_id,
                 target_x,
@@ -1722,6 +1762,18 @@ impl CommandEnvelope {
             },
             pb::command_envelope::Command::Corral(cmd) => CommandPayload::Corral {
                 faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+            },
+            pb::command_envelope::Command::Grade(cmd) => CommandPayload::Grade {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+            },
+            pb::command_envelope::Command::Pave(cmd) => CommandPayload::Pave {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
             },

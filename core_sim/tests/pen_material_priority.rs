@@ -101,6 +101,10 @@ fn base_world() -> App {
     app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
+    // **The road ledger `advance_labor_allocation` counts spare road keepers against.** Empty
+    // is the shipped turn-1 state — no traffic has worn anything in yet — so this harness's
+    // keeping numbers are the roadless reading they have always been.
+    app.world.insert_resource(core_sim::RoadRegistry::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world
         .insert_resource(core_sim::CombatConfigHandle::default());

@@ -14,6 +14,24 @@ const WORKER_STEPPER_VALUE_WIDTH := 32.0
 
 const WORKER_STEPPER_SEPARATION := 6
 
+## ⛔ **THE POOL CARDS' OWN STEPPER METRIC, and it exists because FOUR pools have to share ONE row**
+## (arc #532). At the widths above a pool card's floor is ~112px, so four wanted 466px of a WORK zone
+## box that is 382 on the bottom dock and 356 on the left. The two ways to buy that width both cost a
+## ROW — and the zone has none: split 3 + 1 the block wanted 420px of a 358px box, i.e. a build queue
+## drawing nothing. So the width comes out of the CONTROL.
+##
+## **IT IS A SECOND METRIC, NOT A RETUNING OF THE FIRST.** The WORKFORCE zone's Scout and Warrior
+## cards sit TWO to a row and have width to spare; narrowing their steppers would shrink a control
+## for no reason. These four are the ones with the problem, so these four are the ones that pay.
+##
+## The horizontal trim is the load-bearing half: `HudStyle` pads a button 11px each side, which alone
+## floors it near 30px whatever `custom_minimum_size` says — the same reason the build queue's
+## reorder arrows opt into `HudWidgets.compact`'s `padding_h`.
+const POOL_STEPPER_BUTTON_WIDTH := 19.0
+const POOL_STEPPER_VALUE_WIDTH := 27.0
+const POOL_STEPPER_SEPARATION := 3
+const POOL_STEPPER_PADDING_H := 4
+
 # The two stepper FACES. One spelling, because two stepper families now draw them — the worker/party
 # steppers (`HudWidgets.add_stepper_controls`) and the shipment manifest's per-row cargo stepper,
 # which counts a FLOAT quantity of goods and so cannot share that builder's integer count. The minus
@@ -456,6 +474,24 @@ const AGRICULTURE_ROLE_HINT := "Keeps every tended patch and Field this band wor
 
 const HUSBANDRY_ROLE_HINT := "Keeps every tamed herd and pen this band works. Short of the sum, animals drift off."
 
+## **THE THIRD KEEPING ROLE** (arc #532) — the roads. Its card sits beside the two above because it
+## is the same kind of control: a band-wide count of hands set by `assign_labor`, measured against a
+## SUM rather than staffed on a tile.
+const ROLE_NAME_ROADWORK := "Roadwork"
+
+## ⛔ **IT NAMES THE ROADS THIS BAND BUILT, NOT THE GROUND IT IS STANDING ON, and the difference is
+## the whole catchment.** A road tile's keeper is the band that graded or paved it, wherever that band
+## now stands: `route_keeping_claims` walks the roads a band keeps and never reads that band's
+## position, so a camp four tiles away goes on paying and goes on being served. What distance costs is
+## a PRICE — the road's own `keeper_remoteness`, quoted when the job was taken on — and never whether
+## the bill exists.
+##
+## **The earlier wording said the opposite** (*"the roads this band is standing on"*), which was true
+## of a model where a road was a stored path and a band paid for whatever it stood over. Under the
+## per-tile model that reading would send a player to move camp in order to stop a bill that follows
+## them regardless.
+const ROADWORK_ROLE_HINT := "Keeps the roads this band built, however far it has since walked. Short of the bill, they wash out."
+
 ## **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level pool, and the
 ## card that replaced the per-source BUILDERS stepper the compose sheet used to carry.
 const ROLE_NAME_BUILDERS := "Builders"
@@ -523,11 +559,34 @@ const UPKEEP_POOL_COVERAGE_PLANT_FORMAT := "This pool supplies %s work a turn; t
 
 const UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT := "This pool supplies %s work a turn; this band's tamed animals and queued jobs need %s."
 
+## …and the ROUTE web's (arc #532).
+##
+## ⛔ **IT NAMES THE ROADS THIS BAND BUILT, NOT THE GROUND IT IS STANDING ON** — `ROADWORK_ROLE_HINT`
+## eighty lines up carries the long form of why, and this string was the copy that missed the
+## correction. A road tile's keeper is the band that graded or paved it, wherever that band has since
+## walked; `route_keeping_claims` never reads that band's position. *"The roads this band stands on"*
+## sends a player to move camp in order to stop a bill that follows them regardless — which is the
+## one remedy that cannot work.
+##
+## ⛔ **IT NAMES NO QUEUE, AND THE REASON IS THE FIGURE RATHER THAN THE LADDER.** It used to claim
+## that a route rung *"takes no builder and appends no build-queue entry"*, which is true of the free
+## floor alone: traffic wears a path and a trail in, and the two BUILT rungs are ordinary declarations
+## funded by the band's `builders` pool at the head of its queue, exactly like every rung on the other
+## two branches. What is actually true is that the number beside this sentence carries no queued
+## term — the road pool's `asked` is the cohort's published `roadwork_demand` verbatim
+## (`BandPanelController`'s road branch, which does NOT go through `_pool_coverage`), because the road
+## rows are fog-filtered and summing them client-side would understate a bill the band still owes. A
+## sentence promising a queued half the figure does not contain would be the worse error of the two.
+const UPKEEP_POOL_COVERAGE_ROUTE_FORMAT := "This pool supplies %s work a turn; the roads this band built need %s."
+
 ## Which of the pair a card takes, off the role it staffs — one picker, for `under_kept_note`'s reason:
 ## a card that reached for the wrong web's sentence would be a wrong answer that looks like a right one.
 static func upkeep_pool_coverage_format(role_name: String) -> String:
-    return UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT if role_name == ROLE_NAME_HUSBANDRY \
-        else UPKEEP_POOL_COVERAGE_PLANT_FORMAT
+    if role_name == ROLE_NAME_HUSBANDRY:
+        return UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT
+    if role_name == ROLE_NAME_ROADWORK:
+        return UPKEEP_POOL_COVERAGE_ROUTE_FORMAT
+    return UPKEEP_POOL_COVERAGE_PLANT_FORMAT
 
 ## **THE POOL CARD'S ONE LINE, or `""` where the pool covers what it is asked for** — the ONE composer,
 ## so the card's mark and its hover cannot disagree about whether there is anything to say.
@@ -546,8 +605,18 @@ static func upkeep_pool_coverage_line(role_name: String, cover: Dictionary) -> S
     # Nothing to hold, or held with room to spare. The second test is the coverage one and uses the
     # same floor every work rate on this panel is stated at, so a pool short by less than the readout
     # can print is not marked for a difference nobody could see.
+    #
+    # ⛔ **WHERE THE SIM PUBLISHES THE SHORTFALL, THAT IS THE COVERAGE TEST — the client does not
+    # subtract.** The `roadwork` pool's bill, supply and shortfall are three cohort fields struck
+    # against one stamped basis (`demand − supplied == shortfall` holds verbatim on the wire), so
+    # re-deriving the gap here would be a second answer free to disagree with the one the sim
+    # decayed the road by. The two food webs publish no such band-level roll-up, so they keep the
+    # projection-vs-demand test above — which is why this is an OPTIONAL key rather than the rule.
+    var covered := asked - supply
+    if cover.has(POOL_COVERAGE_SHORTFALL_KEY):
+        covered = float(cover[POOL_COVERAGE_SHORTFALL_KEY])
     if asked < SourceForecast.UPKEEP_WORK_MIN \
-            or asked - supply < SourceForecast.UPKEEP_WORK_MIN:
+            or covered < SourceForecast.UPKEEP_WORK_MIN:
         return ""
     return upkeep_pool_coverage_format(role_name) % [
         DetailFormat.format_work_units(supply), DetailFormat.format_work_units(asked)]
@@ -557,6 +626,12 @@ static func upkeep_pool_coverage_line(role_name: String, cover: Dictionary) -> S
 ## the supply side would mark every card in the game and on the demand side would mark none.
 const POOL_COVERAGE_SUPPLY_KEY := "supply"
 const POOL_COVERAGE_ASKED_KEY := "asked"
+
+## …and the OPTIONAL third, for a pool whose shortfall the sim states outright (the `roadwork` pool's
+## `roadwork_shortfall`). **Present means "use this instead of subtracting"**, which is why the reader
+## tests `has()` rather than defaulting: a defaulted `0.0` would read as *this pool covers everything*
+## and clear the mark on every card in the game.
+const POOL_COVERAGE_SHORTFALL_KEY := "shortfall"
 
 ## …and the messages the command feed shows for the press. Keyed by the token so the two can never
 ## drift from what was actually sent; the fallback exists only for a mode the sim gains before this
@@ -573,6 +648,12 @@ const UPKEEP_MODE_COMMAND_MESSAGE_FALLBACK := "Keeping split set to %s."
 const ROLE_CARD_SEPARATION := 6
 
 const ROLE_CARD_NAME_FONT_SIZE := 12
+
+## …and the POOL cards' own, which is smaller (arc #532). A fourth pool card has to fit the same
+## fixed strip, so at the shared 12 the widest name — `Agriculture` — became the card's floor and
+## four of them ran 42px past the left dock's 356px box. See `POOL_STEPPER_*` for the other half of
+## the squeeze and for why the block could not gain a row instead.
+const POOL_CARD_NAME_FONT_SIZE := 10
 
 ## Two lines of hint at ALLOC_SECTION_FONT_SIZE, so the two cards stay the same height whatever the
 ## hint wraps to.
@@ -2614,6 +2695,16 @@ const RUNG_TRACK_STATE_LOCKED := "locked"
 ## still issued a `tame`/`corral` declaration on press.**
 const RUNG_TRACK_STATE_OPEN := "open"
 
+## ⛔ **THE SEVENTH, AND THE ROUTE BRANCH IS THE ONLY WEB THAT HAS IT.** A route rung may declare NO
+## verb — the path and the trail above it are worn in by traffic and nobody orders them — so the row
+## is neither refused nor pressable. `locked` would be a lie in the one direction that matters: it
+## reads as *you may not*, where the truth is *there is nothing to order and it is rising anyway*.
+##
+## The word lives here rather than in `HudRouteVocab` so the state enumeration stays ONE table: a
+## state with no word in this block renders an empty face, which is the trap the block's own header
+## records.
+const RUNG_TRACK_STATE_WORN_IN := "wearing in"
+
 ## `75 work · ≈12 turns` — what a selectable destination's own leg still owes and when the sim says it
 ## lands. **The turns half renders only where the wire dates the leg**, which is when an entry is
 ## already climbing this branch; a rung nobody has queued has no chained date and states the work
@@ -2686,7 +2777,7 @@ const RUNG_TRACK_STALL_BARELY := "barely at all"
 ## the compose sheet's `BUILD_PRICE_UPKEEP_FORMAT` quotes, at every fullness, not the bill this source
 ## was handed this turn. It is rendered through `DetailFormat.format_work_units`, so the track and the
 ## sheet print one rate one way.
-const RUNG_TRACK_HOLD_FORMAT := "then %s a turn to hold"
+const RUNG_TRACK_HOLD_FORMAT := "then %s a turn"
 
 const RUNG_TRACK_HOLD_WORK_TERM := "%s work"
 
@@ -2763,6 +2854,13 @@ const RUNG_TRACK_ROW_META := "rung_track_row"
 ## …and valued that row's STATE, on the same node, so *which* row is the target is assertable without
 ## parsing the figures beside it.
 const RUNG_TRACK_STATE_META := "rung_track_state"
+## ⛔ **…AND THE ROW'S RUNG KEY, WHICH IS THE ONLY UNIQUE HANDLE ON THE ROUTE BRANCH.**
+## `RUNG_TRACK_ROW_META` is valued the improvement VERB, and a route rung may declare NONE — the free
+## floor is worn in by traffic — so `route:path` and `route:trail` both carry `""` there and an
+## assertion keyed on it would testify about whichever of them it found first. The rung key is
+## `"<branch>:<id>"` and is unique by construction on every branch, so it rides EVERY row rather than
+## being a route special case.
+const RUNG_TRACK_RUNG_META := "rung_track_rung"
 
 ## **WHICH OF THE THREE THE BUILD SLOT IS**, on the slot itself beside the face it drew. It exists
 ## because the slot's NODE TYPE stopped answering: a running build's face is a `Button` now (it opens

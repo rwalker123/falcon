@@ -57,6 +57,12 @@ pub struct SnapshotContext<'w> {
     /// The directed ties contact left behind. Published filtered to the viewer's own edges; the
     /// checkpoint carries the ledger itself.
     pub connections: Res<'w, crate::connections::ConnectionLedger>,
+    /// Every road in the world. Published filtered to the roads the viewer has explored; the
+    /// checkpoint carries the ledger itself.
+    pub roads: Res<'w, crate::routes::RoadRegistry>,
+    /// Tile coords → tile entity, so a road's path can be priced through the same
+    /// `TerrainDefinition::infrastructure_cost` sum the bill and the decay read.
+    pub tile_registry: Res<'w, crate::resources::TileRegistry>,
     pub viewer_faction: Res<'w, crate::visibility::ViewerFaction>,
     pub demographics: Res<'w, DemographicsConfigHandle>,
     pub wellbeing: Res<'w, crate::wellbeing_config::WellbeingConfigHandle>,
@@ -234,9 +240,13 @@ pub(crate) struct PublishState {
     sedentarization: Whole<Vec<SchemaSedentarizationState>>,
     discovered_sites: Whole<Vec<SchemaDiscoveredSitesState>>,
     connections: Whole<Vec<ConnectionState>>,
+    routes: Whole<Vec<RouteState>>,
     demographics: Whole<Vec<SchemaPopulationDemographicsState>>,
     forage_patches: Whole<Vec<ForagePatchState>>,
     intensification_knowledge: Whole<Vec<IntensificationKnowledgeState>>,
+    /// The ladder's knowledge ROSTER — a per-world constant, so it diffs out on every turn after the
+    /// first exactly as `kits` does.
+    ladder_knowledge: Whole<Vec<LadderKnowledgeState>>,
     campaign_profiles: Whole<Vec<CampaignProfileState>>,
     /// The event log's baseline is a **cursor**, not a copy of the ring: the highest `seq` the
     /// client has been sent. See `snapshot::diff_appended`.
@@ -274,6 +284,9 @@ pub(crate) struct PublishState {
     /// **Not** a per-world constant — a craft is *learned* — so this one really does change, and is
     /// diffed whole exactly like the ladder's own knowledge rows.
     craft_knowledge: Whole<Vec<CraftKnowledgeState>>,
+    /// The route branch's rung catalog — a per-world constant, diffed out on every frame after the
+    /// first exactly as the ladder's knowledge roster is.
+    route_rungs: Whole<Vec<RouteRungState>>,
     history: VecDeque<StoredSnapshot>,
 }
 
@@ -563,8 +576,10 @@ struct CampaignParts {
     sedentarization: Option<Vec<SchemaSedentarizationState>>,
     discovered_sites: Option<Vec<SchemaDiscoveredSitesState>>,
     connections: Option<Vec<ConnectionState>>,
+    routes: Option<Vec<RouteState>>,
     demographics: Option<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
+    ladder_knowledge: Option<Vec<LadderKnowledgeState>>,
     start_marker: Option<StartMarkerState>,
 }
 
@@ -580,8 +595,10 @@ struct CampaignBaselines<'a> {
     sedentarization: &'a mut Whole<Vec<SchemaSedentarizationState>>,
     discovered_sites: &'a mut Whole<Vec<SchemaDiscoveredSitesState>>,
     connections: &'a mut Whole<Vec<ConnectionState>>,
+    routes: &'a mut Whole<Vec<RouteState>>,
     demographics: &'a mut Whole<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: &'a mut Whole<Vec<IntensificationKnowledgeState>>,
+    ladder_knowledge: &'a mut Whole<Vec<LadderKnowledgeState>>,
     start_marker: &'a mut Whole<Option<StartMarkerState>>,
 }
 
@@ -612,12 +629,14 @@ fn diff_campaign(
         sedentarization: diff_whole(baseline.sedentarization, &snapshot.sedentarization, write),
         discovered_sites: diff_whole(baseline.discovered_sites, &snapshot.discovered_sites, write),
         connections: diff_whole(baseline.connections, &snapshot.connections, write),
+        routes: diff_whole(baseline.routes, &snapshot.routes, write),
         demographics: diff_whole(baseline.demographics, &snapshot.demographics, write),
         intensification_knowledge: diff_whole(
             baseline.intensification_knowledge,
             &snapshot.intensification_knowledge,
             write,
         ),
+        ladder_knowledge: diff_whole(baseline.ladder_knowledge, &snapshot.ladder_knowledge, write),
         // `Option` on both sides, so the delta carries the INNER option: `None` here means
         // unchanged, and a marker that was cleared arrives as `Some(None)` flattened to `None` —
         // the same conflation this field has always had.
@@ -640,6 +659,7 @@ struct SubsistenceParts {
     characteristic_bands: Option<Vec<CharacteristicBandState>>,
     recipes: Option<Vec<RecipeDefState>>,
     craft_knowledge: Option<Vec<CraftKnowledgeState>>,
+    route_rungs: Option<Vec<RouteRungState>>,
 }
 
 /// Fauna and flora: the herd roster, the forage patches, and the food-module map.
@@ -658,6 +678,7 @@ fn diff_subsistence(
     characteristic_bands: &mut Whole<Vec<CharacteristicBandState>>,
     recipes: &mut Whole<Vec<RecipeDefState>>,
     craft_knowledge: &mut Whole<Vec<CraftKnowledgeState>>,
+    route_rungs: &mut Whole<Vec<RouteRungState>>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> SubsistenceParts {
@@ -695,6 +716,7 @@ fn diff_subsistence(
         ),
         recipes: diff_whole(recipes, &snapshot.recipes, write),
         craft_knowledge: diff_whole(craft_knowledge, &snapshot.craft_knowledge, write),
+        route_rungs: diff_whole(route_rungs, &snapshot.route_rungs, write),
     }
 }
 
@@ -811,9 +833,11 @@ impl PublishState {
             sedentarization: Whole::default(),
             discovered_sites: Whole::default(),
             connections: Whole::default(),
+            routes: Whole::default(),
             demographics: Whole::default(),
             forage_patches: Whole::default(),
             intensification_knowledge: Whole::default(),
+            ladder_knowledge: Whole::default(),
             campaign_profiles: Whole::default(),
             // A fresh world has sent nothing, so every event ever pushed is "appended since".
             command_events: 0,
@@ -828,6 +852,7 @@ impl PublishState {
             characteristic_bands: Whole::default(),
             recipes: Whole::default(),
             craft_knowledge: Whole::default(),
+            route_rungs: Whole::default(),
             default_hunt_kit_id: Whole::default(),
             default_forage_kit_id: Whole::default(),
             default_scout_kit_id: Whole::default(),
@@ -944,8 +969,10 @@ impl PublishState {
             sedentarization,
             discovered_sites,
             connections,
+            routes,
             demographics,
             intensification_knowledge,
+            ladder_knowledge,
             start_marker,
             herds,
             forage_patches,
@@ -955,6 +982,7 @@ impl PublishState {
             characteristic_bands,
             recipes,
             craft_knowledge,
+            route_rungs,
             default_hunt_kit_id,
             default_forage_kit_id,
             default_scout_kit_id,
@@ -1050,8 +1078,10 @@ impl PublishState {
                             sedentarization,
                             discovered_sites,
                             connections,
+                            routes,
                             demographics,
                             intensification_knowledge,
+                            ladder_knowledge,
                             start_marker,
                         },
                         captured,
@@ -1073,6 +1103,7 @@ impl PublishState {
                         characteristic_bands,
                         recipes,
                         craft_knowledge,
+                        route_rungs,
                         captured,
                         write,
                     )
@@ -1145,8 +1176,10 @@ impl PublishState {
             sedentarization: campaign_parts.sedentarization,
             discovered_sites: campaign_parts.discovered_sites,
             connections: campaign_parts.connections,
+            routes: campaign_parts.routes,
             demographics: campaign_parts.demographics,
             intensification_knowledge: campaign_parts.intensification_knowledge,
+            ladder_knowledge: campaign_parts.ladder_knowledge,
             start_marker: campaign_parts.start_marker,
             herds: subsistence_parts.herds,
             forage_patches: subsistence_parts.forage_patches,
@@ -1156,6 +1189,7 @@ impl PublishState {
             characteristic_bands: subsistence_parts.characteristic_bands,
             recipes: subsistence_parts.recipes,
             craft_knowledge: subsistence_parts.craft_knowledge,
+            route_rungs: subsistence_parts.route_rungs,
             default_hunt_kit_id: subsistence_parts.default_hunt_kit_id,
             default_forage_kit_id: subsistence_parts.default_forage_kit_id,
             default_scout_kit_id: subsistence_parts.default_scout_kit_id,
@@ -1335,11 +1369,14 @@ impl PublishState {
         self.discovered_sites
             .reset(entry.snapshot.discovered_sites.clone());
         self.connections.reset(entry.snapshot.connections.clone());
+        self.routes.reset(entry.snapshot.routes.clone());
         self.demographics.reset(entry.snapshot.demographics.clone());
         self.forage_patches
             .reset(entry.snapshot.forage_patches.clone());
         self.intensification_knowledge
             .reset(entry.snapshot.intensification_knowledge.clone());
+        self.ladder_knowledge
+            .reset(entry.snapshot.ladder_knowledge.clone());
         self.campaign_profiles
             .reset(entry.snapshot.campaign_profiles.clone());
         // Rewind the cursor to the newest event the restored frame carries — a rollback un-sends
@@ -1366,6 +1403,7 @@ impl PublishState {
         self.recipes.reset(entry.snapshot.recipes.clone());
         self.craft_knowledge
             .reset(entry.snapshot.craft_knowledge.clone());
+        self.route_rungs.reset(entry.snapshot.route_rungs.clone());
         self.default_hunt_kit_id
             .reset(entry.snapshot.default_hunt_kit_id.clone());
         self.default_forage_kit_id
@@ -1530,6 +1568,7 @@ impl PublishState {
             characteristic_bands: None,
             recipes: None,
             craft_knowledge: None,
+            route_rungs: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -1539,9 +1578,11 @@ impl PublishState {
             sedentarization: None,
             discovered_sites: None,
             connections: None,
+            routes: None,
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
+            ladder_knowledge: None,
             knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1665,6 +1706,7 @@ impl PublishState {
             characteristic_bands: None,
             recipes: None,
             craft_knowledge: None,
+            route_rungs: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -1674,9 +1716,11 @@ impl PublishState {
             sedentarization: None,
             discovered_sites: None,
             connections: None,
+            routes: None,
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
+            ladder_knowledge: None,
             knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1784,6 +1828,7 @@ impl PublishState {
             characteristic_bands: None,
             recipes: None,
             craft_knowledge: None,
+            route_rungs: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -1793,9 +1838,11 @@ impl PublishState {
             sedentarization: None,
             discovered_sites: None,
             connections: None,
+            routes: None,
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
+            ladder_knowledge: None,
             knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -2112,6 +2159,8 @@ pub fn capture_snapshot(
         capability_flags,
         visibility_ledger,
         connections,
+        roads,
+        tile_registry,
         viewer_faction,
         demographics,
         wellbeing,
@@ -2958,6 +3007,21 @@ pub fn capture_snapshot(
         &band_factions,
         viewer_faction.0,
     );
+    // **THE ROADS THE VIEWER HAS EXPLORED** — fog-gated on `Discovered` rather than the herd list's
+    // `Active`, because a road does not wander off. See `snapshot::routes::route_states`.
+    let route_states = crate::snapshot::routes::route_states(
+        &roads,
+        &visibility_ledger,
+        viewer_faction.0,
+        config.fog_enabled,
+        &ladder_config,
+        |pos| {
+            tile_registry
+                .index(pos.x, pos.y)
+                .and_then(|entity| tiles.get(entity).ok())
+                .map(|(_, tile, _)| tile.terrain)
+        },
+    );
     let demographics_state = snapshot_demographics(&population_states);
     // Per forage patch — one per food-bearing tile — and every entry re-derives the rung ladder's
     // quotes for that patch, so this one is both map-sized and derivation-heavy.
@@ -2981,7 +3045,12 @@ pub fn capture_snapshot(
         &upkeep_kit_ids,
     );
     drop(forage_patches_scope);
-    let intensification_knowledge_state = snapshot_intensification_knowledge(&discovery_progress);
+    let intensification_knowledge_state =
+        snapshot_intensification_knowledge(&discovery_progress, &ladder_config);
+    let ladder_knowledge_state = snapshot_ladder_knowledge(&ladder_config);
+    // **THE ROUTE BRANCH'S RUNG CATALOG** — what a road may become, beside what there is to learn.
+    // A per-world constant like the roster above, so it diffs out after the first frame.
+    let route_rung_state = snapshot_route_rungs(&ladder_config);
     let command_events_state = command_events_to_state(&command_events);
     // The Telling's client-facing fork tier + stance readout (BTree-backed, so already ordered).
     let pending_forks_state = snapshot_pending_forks(&beat_ledger);
@@ -3057,9 +3126,12 @@ pub fn capture_snapshot(
         sedentarization: sedentarization_state.clone(),
         discovered_sites: discovered_sites_state.clone(),
         connections: connections_state.clone(),
+        routes: route_states.clone(),
         demographics: demographics_state.clone(),
         forage_patches: forage_patches_state.clone(),
         intensification_knowledge: intensification_knowledge_state.clone(),
+        ladder_knowledge: ladder_knowledge_state.clone(),
+        route_rungs: route_rung_state.clone(),
         command_events: command_events_state.clone(),
         command_events_retention_turns: command_events.retention_turns() as u32,
         pending_forks: pending_forks_state.clone(),

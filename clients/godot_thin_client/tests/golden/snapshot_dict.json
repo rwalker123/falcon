@@ -1521,20 +1521,20 @@
   ],
   "intensification_knowledge": [
     {
-      "cultivation": 94.459999,
       "faction": 72,
-      "foddering": 36.84,
-      "herding": 31.219999,
-      "penning": 29.51,
-      "seed_selection": 21.629999
+      "knowledges": {
+        "cultivation": 19.309999,
+        "herding": 64.07,
+        "roadbuilding": 12.16
+      }
     },
     {
-      "cultivation": 28.549999,
       "faction": 103,
-      "foddering": 10.48,
-      "herding": 37.700001,
-      "penning": 54.32,
-      "seed_selection": 14.35
+      "knowledges": {
+        "cultivation": 58.540001,
+        "herding": 16.42,
+        "roadbuilding": 25.709999
+      }
     }
   ],
   "kits": [
@@ -1581,6 +1581,29 @@
         "kits[1].jobs[1]"
       ],
       "scout_vantage_range": 48.380001
+    }
+  ],
+  "ladder_knowledge": [
+    {
+      "branch": "plant",
+      "display_name": "cultivation",
+      "is_step": true,
+      "knowledge_id": "cultivation",
+      "order": 139
+    },
+    {
+      "branch": "plant",
+      "display_name": "herding",
+      "is_step": true,
+      "knowledge_id": "herding",
+      "order": 148
+    },
+    {
+      "branch": "plant",
+      "display_name": "roadbuilding",
+      "is_step": true,
+      "knowledge_id": "roadbuilding",
+      "order": 65
     }
   ],
   "materials": [
@@ -2706,6 +2729,9 @@
       "pending_reveal_count": 2,
       "raid_forfeit": 89.769997,
       "raid_radius": 51,
+      "roadwork_demand": 58.639999,
+      "roadwork_shortfall": 109.0,
+      "roadwork_supplied": 76.110001,
       "scout_reveal_radius": 65,
       "scout_vantage_range": 44.77,
       "settlement_stage_icon": "populations[0].settlement_stage.icon",
@@ -3424,6 +3450,9 @@
       "pending_reveal_count": 2,
       "raid_forfeit": 69.870003,
       "raid_radius": 80,
+      "roadwork_demand": 67.360001,
+      "roadwork_shortfall": 58.630001,
+      "roadwork_supplied": 43.880001,
       "scout_reveal_radius": 130,
       "scout_vantage_range": 23.389999,
       "settlement_stage_icon": "populations[1].settlement_stage.icon",
@@ -3640,6 +3669,74 @@
         "recipes[3].requires_knowledge[1]"
       ],
       "work": 8.85
+    }
+  ],
+  "route_rungs": [
+    {
+      "display_name": "route_rungs[0].display_name",
+      "earns_knowledge": "route_rungs[0].earns_knowledge",
+      "friction_multiplier": 9.48,
+      "grants_sight": true,
+      "holds_link_to_tiles": 54,
+      "order": 107,
+      "requires_rung": "route_rungs[0].requires_rung",
+      "rung_key": "route_rungs[0].rung_key",
+      "unlock_knowledge": "route_rungs[0].unlock_knowledge",
+      "upkeep_work_per_turn": 106.610001,
+      "verb": "route_rungs[0].verb",
+      "work_cost": 11.68
+    },
+    {
+      "display_name": "route_rungs[1].display_name",
+      "earns_knowledge": "route_rungs[1].earns_knowledge",
+      "friction_multiplier": 107.57,
+      "grants_sight": true,
+      "holds_link_to_tiles": 5,
+      "order": 4,
+      "requires_rung": "route_rungs[1].requires_rung",
+      "rung_key": "route_rungs[1].rung_key",
+      "unlock_knowledge": "route_rungs[1].unlock_knowledge",
+      "upkeep_work_per_turn": 48.59,
+      "verb": "route_rungs[1].verb",
+      "work_cost": 67.610001
+    }
+  ],
+  "routes": [
+    {
+      "build_fraction": 107.57,
+      "friction_multiplier": 83.839996,
+      "grants_sight": true,
+      "has_keeper": true,
+      "has_neglect_grace": true,
+      "holds_link_to_tiles": 83,
+      "keeper_band_id": 96,
+      "keeper_remoteness": 49.759998,
+      "neglect_grace_remaining": 80,
+      "rung": "routes[0].rung",
+      "tile_x": 157,
+      "tile_y": 168,
+      "upkeep_demand": 45.200001,
+      "upkeep_shortfall": 79.529999,
+      "upkeep_supplied": 10.98,
+      "upkeep_workers_needed": 86
+    },
+    {
+      "build_fraction": 66.529999,
+      "friction_multiplier": 84.18,
+      "grants_sight": true,
+      "has_keeper": true,
+      "has_neglect_grace": true,
+      "holds_link_to_tiles": 76,
+      "keeper_band_id": 1,
+      "keeper_remoteness": 63.98,
+      "neglect_grace_remaining": 35,
+      "rung": "routes[1].rung",
+      "tile_x": 12,
+      "tile_y": 1,
+      "upkeep_demand": 101.57,
+      "upkeep_shortfall": 14.27,
+      "upkeep_supplied": 55.990002,
+      "upkeep_workers_needed": 57
     }
   ],
   "sedentarization": [

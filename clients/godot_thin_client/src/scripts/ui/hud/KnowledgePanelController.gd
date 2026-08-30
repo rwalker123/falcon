@@ -17,12 +17,16 @@ extends RefCounted
 ##
 ## ## Which sources the verdict is asked of, and why the two webs differ
 ##
-## **This is forced by the wire.** A forage patch carries `owner` / `has_owner`, so the plant half
-## scans every patch and filters on ownership — the same test `AttentionController._under_kept_rung_attention`
-## makes, and the same reason it can run outside the band loop. **A herd carries no owner field
-## client-side at all**, so the animal half walks the player bands' own HUNT ASSIGNMENTS and resolves
-## each to the live herd, exactly as `_starving_pen_attention` and `_under_kept_herd_attention` do —
-## a scan of `world_herds()` would count a rival's pen as the player's.
+## **This is forced by the wire, and the three webs give three different answers.** A forage patch
+## carries `owner` / `has_owner`, so the plant half scans every patch and filters on ownership — the
+## same test `AttentionController._under_kept_rung_attention` makes, and the same reason it can run
+## outside the band loop. **A herd carries no owner field client-side at all**, so the animal half
+## walks the player bands' own HUNT ASSIGNMENTS and resolves each to the live herd, exactly as
+## `_starving_pen_attention` and `_under_kept_herd_attention` do — a scan of `world_herds()` would
+## count a rival's pen as the player's. **A road carries its KEEPER on the row itself**
+## (`has_keeper` / `keeper_band_id`) and has no labor row at all, so the route half joins that band id
+## against the player's own roster: the third shape, and the only one where ownership is a band rather
+## than a faction.
 ##
 ## The live dict is the authority on a herd, never the assignment's launch-time target: herds MIGRATE.
 ##
@@ -232,11 +236,13 @@ func domains() -> Array[Dictionary]:
 func model() -> Dictionary:
 	var bands := _band_labor.player_bands() if _band_labor != null else []
 	return {
+		KnowledgeRoster.MODEL_LADDER_ROSTER: _topbar.ladder_knowledge() if _topbar != null else [],
 		KnowledgeRoster.MODEL_TRACKS: _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID) \
 			if _topbar != null else {},
 		KnowledgeRoster.MODEL_CRAFT_KNOWLEDGE: _player_craft_knowledge(),
 		KnowledgeRoster.MODEL_PATCHES: _owned_patches(),
 		KnowledgeRoster.MODEL_HERDS: _worked_herds(bands),
+		KnowledgeRoster.MODEL_ROADS: _kept_roads(bands),
 		KnowledgeRoster.MODEL_RECIPES: _recipes,
 		KnowledgeRoster.MODEL_OWNED_ITEMS: _owned_items(bands),
 		KnowledgeRoster.MODEL_OWNED_MATERIALS: _owned_materials(bands),
@@ -334,12 +340,40 @@ func _update_learned_this_turn() -> void:
 ## the empty pools are free rather than a shortcut: a track is known because its meter says so.
 func _diff_model() -> Dictionary:
 	return {
+		# **THE ROSTER IS NOT OPTIONAL HERE.** It is the DECLARATION of what nodes exist, so a diff
+		# walked without it would see no ladder nodes at all — and `_seen_keys` would never learn
+		# them, which is a diff that can never report a ladder discovery.
+		KnowledgeRoster.MODEL_LADDER_ROSTER: _topbar.ladder_knowledge() if _topbar != null else [],
 		KnowledgeRoster.MODEL_TRACKS: _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID) \
 			if _topbar != null else {},
 		KnowledgeRoster.MODEL_CRAFT_KNOWLEDGE: _player_craft_knowledge(),
 	}
 
 # ---- resolving the faction's sources ----------------------------------------
+
+## The road tiles the player's OWN BANDS KEEP. **A road's keeper is a BAND, not a faction**, so the
+## join is against the player's own roster — and `has_keeper` is read before the id, because `0` is a
+## real `BandId` and the bool is the field that answers.
+##
+## **A ROAD NOBODY KEEPS IS NOT OURS**, whatever rung it holds: the whole free floor has no keeper, and
+## a worn trail on the doorstep is not evidence that anybody has learned Roadbuilding.
+func _kept_roads(bands: Array) -> Array:
+	var kept: Array = []
+	if _band_labor == null:
+		return kept
+	var ours := {}
+	for band_variant in bands:
+		if band_variant is Dictionary:
+			ours[int((band_variant as Dictionary).get("band_id", HudConst.NO_BAND_ID))] = true
+	for road_variant in _band_labor.roads():
+		if not (road_variant is Dictionary):
+			continue
+		var road: Dictionary = road_variant
+		if not HudRouteVocab.has_keeper(road):
+			continue
+		if ours.has(HudRouteVocab.keeper_band_id_of(road)):
+			kept.append(road)
+	return kept
 
 ## The faction's OWN forage patches. **Ownership is the patch's own `owner` field**, which is what
 ## makes an assignment-free scan attributable and what stops this counting a rival's tended ground.

@@ -862,6 +862,12 @@ fn create_populations<'a>(
                     materialUpkeepNeed: Some(material_upkeep_need),
                     materialUpkeepIncome: Some(material_upkeep_income),
                     materialStore: Some(material_store),
+                    // The band's ROADWORK bill — appended last, always written, and summed by the
+                    // sim for `fodderNeed`'s reason: route rows are fog-filtered, so a road out of
+                    // sight would drop out of any client-side total the band still owes.
+                    roadworkDemand: cohort.roadwork_demand,
+                    roadworkSupplied: cohort.roadwork_supplied,
+                    roadworkShortfall: cohort.roadwork_shortfall,
                 },
             )
         })

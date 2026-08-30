@@ -1875,6 +1875,704 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
 
 13. **The route branch (#532 proper).** Routes as the ladder's third branch, `infrastructure_cost`
     wired for the first time, traversal-driven progress from supply links, shipments and movement.
+    > **⛔ TWO OF THE SOURCE DOCUMENTS' THREE CLAIMS WERE FALSE WHEN THIS SLICE OPENED, AND THE THIRD
+    > IS THE WORK ITSELF.** ① and ② below are corrections; ③ restates a claim that still stands and is
+    > what the rest of §4.13 answers. #532 and
+    > `docs/plan_contact_and_logistics.md` §Q4 are corrected in place rather than left to be
+    > re-derived — the lesson of #543, which was filed off a document describing deleted code and
+    > cost a full investigation to unwind.
+    >
+    > **① *"Upkeep is a standing cost, and the ladder only has a build cost"* — CLOSED, by this arc.**
+    > Both documents list it as one of *"two known gaps to be closed in the slice that builds this"*.
+    > §2.4–§2.8 shipped `RungUpkeep` entire: `work_per_turn`, a `scaled_by` measure, a material rate,
+    > `meter_decay`, `grace_turns`, the two band-level keeping pools, the fund-mode split and the
+    > shortfall/shed paths — load-bearing on both webs. **Routes inherit a standing-cost model and
+    > must not rebuild one.** (`retain_fraction` is not part of the inheritance either: it was a
+    > fourth dial and §2.8 deleted it along with the cliff it patched.)
+    >
+    > **② *"#232 already derives an overlay from movement/logistics traversals — the two should read
+    > one source rather than two"* — #232 IS OPEN AND NOTHING IS BUILT.** Verified: `RouteNetwork`
+    > appears nowhere in the workspace, and the only `traversal` in `core_sim` is an unrelated
+    > tree-walk comment in `telling/predicate.rs`. This slice therefore does not *find* a traversal
+    > seam, it **builds** the traffic counting — and #232 becomes a **consumer** of it (phase 13c
+    > below), not a supplier to it. Budget for that.
+    >
+    > **③ THE REMAINING GAP IS THE REAL WORK, AND IT IS UNTOUCHED** — *"a route is an edge, not a
+    > source… the site and behavior primitives are source-shaped and need route-shaped siblings."*
+    > That is what everything below answers.
+    >
+    > #### ⛔ THE PAYOFF IS ALREADY WRITTEN INTO SHIPPED CODE, AND IT IS A CAPABILITY, NOT A DISCOUNT
+    >
+    > The ladder's whole claim is **cheaper to travel and dearer to keep**, and this arc hands the
+    > dearer half over for free. **The cheaper half had no consumer**: `infrastructure_cost` is
+    > authored for all 37 terrains and verified to have *zero* readers outside `terrain.rs`'s own
+    > declaration, and nothing anywhere reads a route rung to reduce a movement or a shipment cost.
+    > **Shipping the branch without one builds a tax, not a ladder** — the trap §4.9 item 12 named
+    > and dodged, *"a mechanism whose only consumer is the next slice is the failure mode."*
+    >
+    > **`SupplyNetworkConfig::reach_tiles` already says what a route is for**, in its own doc comment,
+    > shipped: *"**The distance at which a logistics link holds itself for free**, in tiles… **beyond
+    > it a link needs a route to hold it open**, and goods move by a shipment."* `supply.rs`'s module
+    > doc says the same and adds *"that state belongs to the route ladder, not here."* So the consumer
+    > was chosen before this slice opened; it had simply never been wired.
+    >
+    > **THE THREE PAYOFF TERMS**, all per-rung. Two are read by `balance_supply_networks`; the third is
+    > a visibility source of its own.
+    >
+    > | Term | What it answers | Why it is needed |
+    > |---|---|---|
+    > | **`holds_link_to_tiles`** | *may these two bands pool at all?* A link forms at `distance <= reach_tiles` **OR** where a route of this rung spans it. | A **capability**. Without a road two bands 6 tiles apart cannot pool; with a dirt road they can. This is what makes the top rungs about **distance**, which is what roads are for. |
+    > | **`friction_multiplier`** | *how much of what is sent arrives?* Multiplies `SupplyNetworkConfig::friction` on a routed link. | Reach alone pays **nothing** to a road between two neighbours already inside `reach_tiles` — the commonest road in the game. That road has to buy something. |
+    > | **`Seen` along the road** | *what can I watch?* A route at a **built** rung **whose keeping is met** holds its own tiles `Seen`. **Not a per-rung number — a per-rung yes/no**, and `path` is the no. | The one payoff a player understands without a readout, and the one worth most in a fog-of-war game. **Ray's call**: a maintained road has traffic on it, and traffic is presence. See the callout below for why the keystone survives it. |
+    >
+    > **ALL THREE ARE PURELY ADDITIVE, so §Q4's "no early-game regression, by construction" guarantee
+    > holds unchanged**: an unrouted pair inside `reach_tiles` pools exactly as it does today, at
+    > exactly today's friction, and sees exactly what it sees today. A rung can only widen the set of
+    > links, lower a loss, and light ground that was dark — never the reverse.
+    >
+    > **AND THIS IS WHAT DISSOLVES THE BOOTSTRAP.** A route is built by traffic; if reach needed a
+    > route and traffic needed reach, no long road could ever form. It resolves because **each of
+    > #532's three traffic sources has its own job**:
+    > - **inside `reach_tiles`** the pooling link is already running, so *pooling traffic itself* wears
+    >   the trail in, and what it buys is **friction**;
+    > - **beyond `reach_tiles`** there is no pooling yet, so the wearing-in is done by **shipments and
+    >   ordinary band movement** — you walk it by hand until the road makes itself, and then the road
+    >   carries it for you.
+    >
+    > That is also #215's origin told twice over: the first roads are the ones the animals made, and
+    > the second are the ones two neighbouring camps wore between them. **Neither is a decision anyone
+    > typed.**
+    >
+    > #### ⛔ §4.13a — THE FREE FLOOR IS **TWO** RUNGS, AND TRAFFIC STOPS AT THE TOP OF IT
+    >
+    > **13a shipped the free/paid boundary one rung too low, and the symptom was a bill nobody asked
+    > for.** Traffic climbs a road automatically, and `route:trail` carried an `upkeep` — so two camps
+    > sharing a larder wore a trail into existence by themselves and the band acquired a **standing
+    > labour bill it never opted into**. Reported from play: a 7-worker nomadic band with no roads it
+    > had chosen, showing `Roadwork ⚠` on the Work board.
+    >
+    > **Nothing else in the game does that.** A wild patch and a wild herd sit at the free floor for
+    > ever until the player issues `cultivate` / `tame` and staffs the builders. Ray: *"similar to how
+    > the initial forage and hunt don't require worker pools, I don't think the initial trails should
+    > either. Those are formed only from usage and are **not upgraded**."*
+    >
+    > **⛔ AND MOVING THE BOUNDARY ALONE ONLY RELOCATES THE FAULT.** Make the trail free and traffic
+    > keeps climbing — into the dirt road, which is also billed, and the same ⚠ arrives one rung later
+    > and dearer. **The auto-climb is the fault, not where the line sits.** So the branch becomes
+    > exactly the other two webs' shape:
+    >
+    > | | free floor, formed by use | built, and paid for |
+    > |---|---|---|
+    > | `plant` | wild | tended · field |
+    > | `animal` | wild | pastoral · pen |
+    > | `route` | **path · trail** | **dirt road · paved road** |
+    >
+    > **THE FOUR RULES THAT FOLLOW:**
+    >
+    > **① Traffic banks work up to the top of `route:trail` AND NO FURTHER.** Uncapped it would wear a
+    > dirt road in for free and hand the player its bill anyway.
+    >
+    > **② `grade` and `pave` are real verbs on the builders' pool**, exactly like the four that ship.
+    > `grade` takes a road to `dirt_road` (you grade a roadbed), `pave` to `paved_road`. This retires
+    > `RungBranch::is_crew_built`: *"does this rung declare a `verb`"* already answers it per rung,
+    > which is the finer and correct grain — the branch is no longer uniformly crew-free.
+    >
+    > **③ TWO DECAY TRIGGERS, because the free rungs cannot be short.** A built road reverts on
+    > **unpaid keeping**; a trail costs nothing, so it reverts on **disuse**. That is not an invention —
+    > it is §Q4's own *"an unused road reverts"*, which 13a collapsed into the shortfall path.
+    >
+    > **④ THE QUEUE ENTRY IS A BAND'S; THE ROAD STILL BELONGS TO NOBODY.** One band's builders raise it,
+    > and once it is up anyone standing on it uses it and anyone standing on it may pay its keeping.
+    > **Building a road no more owns it than paying for it does** — which is what preserves the
+    > shared-public-good property the ground-shaped model bought.
+    >
+    > #### ⛔ §4.13b — A ROAD IS A **TILE IMPROVEMENT**, AND THE PATH OBJECT WAS A CONFLATION
+    >
+    > **13a modelled a road as a stored path with its own id** — one object holding a `Vec<UVec2>`, a
+    > ladder position, and a keeping bill for the whole run. Ray broke it with one sentence: *"a road
+    > is a single tile improvement, not the entire path, so one band could maintain 1/2 the tile roads
+    > for the distance of a connection between two bands and another the other 1/2."*
+    >
+    > **A path object cannot be half-maintained.** There is no way to express *these people look after
+    > this end and those people look after that end*, and that is the ordinary case the moment two
+    > camps sit at either end of a long road.
+    >
+    > **So a road is a per-TILE improvement, structurally identical to a forage patch**: each tile
+    > carries its own rung, its own meter, its own keeping and its own decay, worked by whoever takes
+    > that tile on.
+    >
+    > ##### ⛔ THREE OBJECTS WERE RUNNING TOGETHER, AND ONLY THE THIRD IS BEING REMOVED
+    >
+    > This is the part a future reader must not re-merge. Ray, on the risk: *"Connections between bands
+    > (i.e. supply depots) will probably be important later in the game for logistics… just want to
+    > make sure you won't remove something that we need."*
+    >
+    > | | what it is | status |
+    > |---|---|---|
+    > | **connection** | two bands know each other, this much (`connections.rs`) | **shipped, untouched** — #517 / #547 |
+    > | **logistics link** | goods move between them; what a shipment walks and what pooling rides | **shipped, untouched** |
+    > | **road** | a built, maintained improvement **on one tile** | the new shape |
+    > | **link quality** | how good the going is between two camps | **DERIVED each turn** by reading the road tiles along the way — not stored |
+    >
+    > **What is removed is only the stored path inside `Route`**, which was my invention and which
+    > nothing needs: a link already knows its two endpoints, so the tiles between them are computable.
+    > `trace_path` survives as a **function**; it stops being **state**. Ray's own phrasing for this is
+    > the right one — *"a route projected onto the tiles"*: the **link** is the object, the **roads**
+    > are the ground it runs over.
+    >
+    > ##### WHAT THE PER-TILE MODEL DISSOLVES
+    >
+    > - **"Can two bands maintain one road?"** — the question this arc spent three rounds on. It has no
+    >   content now: they maintain **different tiles**. No exclusivity rule, no split, nothing to
+    >   arbitrate. §4.13a's *"several bands each pay a share and the contributions add together"* is
+    >   **retired** — Ray: *"Don't agree with at all"*.
+    > - **`Roadwork` as a band-wide POOL is the wrong shape and is retired.** A pool is what a role
+    >   takes when it covers *everything the band holds* on a web — true of agriculture (every patch)
+    >   and husbandry (every flock), and false of roads, which a band does not hold. Roads are worked as
+    >   **per-tile rows**, like `Forage { tile }`. That is what makes the per-road choice exist at all:
+    >   Ray, on automatic payment for every road under a camp, *"Don't agree with this one at all,
+    >   per-road choice must exist"*.
+    > - **`grade` and `pave` become TILE commands** — `grade <faction> <band> <x> <y>`, the same grammar
+    >   as `cultivate <x> <y>` and `sow <x> <y>`, rather than a route-id form nothing else in the game
+    >   uses.
+    > - **`UpkeepScale::RouteSpan` probably retires with it.** It exists to express `length × terrain`;
+    >   per tile, the length term is gone and what remains is the tile's own `infrastructure_cost` — the
+    >   same *shape* as the plant web reading its tile's `K`. If it collapses into `SourceLoad` with a
+    >   per-branch reading, that is §4.11's stated preference (*"one primitive with a per-branch reading
+    >   beat a second variant"*) and this slice should take it.
+    > - **The tile card becomes the structurally correct home for the readout**, rather than the
+    >   judgement call it was.
+    >
+    > ##### ⛔ WHO KEEPS A ROAD: THE BAND THAT BUILT IT, AND NOBODY ELSE
+    >
+    > Confirmed with Ray, in three parts:
+    >
+    > 1. **A trail has no keeper, and that is fine because there is nothing to keep.** The free floor
+    >    costs nothing; it is formed by use and lost by disuse, and no band is associated with it.
+    > 2. **Improving a trail makes it that band's job.** `grade` is the declaration — the same act
+    >    `cultivate` performs on a patch. **One builder, one keeper, no shares**, which is what finally
+    >    disposes of the *"several bands each pay a part"* model Ray rejected: it is unrepresentable
+    >    rather than merely discouraged.
+    > 3. **Distance raises the cost; it never forbids the road.**
+    >
+    > **THERE IS NO WORK RANGE RULE, AND THE REASON IS NOT COMPLEXITY.** Ray: *"already forage and
+    > hunting have different work ranges, expeditions are even farther. I don't think it makes sense to
+    > restrict it."* A fourth arbitrary radius would say nothing. What bounds a distant road is that it
+    > is **dearer to hold and slower to build** — which is the argument `TradeExpeditionConfig` already
+    > makes for refusing a friction lever: *"what a long haul costs is already paid, and paid in the
+    > right currency."*
+    >
+    > **A THRESHOLD, NOT A CURVE.** Within a base range a road costs what the rung says; beyond it the
+    > build and the upkeep both rise. Simpler to tune than a sliding function and it is what Ray asked
+    > for.
+    >
+    > > **⛔ THE THRESHOLD IS READ THROUGH A FUNCTION, NEVER AS A BARE CONFIG CONSTANT.** Ray: *"Be
+    > > flexible on the threshold… make it a function that can expand over time, don't just create a
+    > > hardcoded constant. You can have a configuration item for the 'base' range, but still make a
+    > > function accessor for it so we can calculate it later."*
+    > >
+    > > So the config holds a **base**, and every caller asks a **seam** for the effective range. The
+    > > day it grows with knowledge, faction size or a central authority, that is one function body
+    > > changing and no call site moving. A `cfg.range` read scattered across the build cost, the
+    > > upkeep, the refusal and the wire is four places to find and three to miss — the same reason
+    > > `herd_ecology` and `patch_land_capacity` are seams rather than field reads.
+    >
+    > **WHEN THE KEEPING BAND IS GONE**, the road has no keeper and decays like any unkept improvement.
+    > Re-issuing `grade` / `pave` on it is how another band picks it up — no new verb, and adoption is
+    > the same act as building.
+    >
+    > ##### DEFERRED, AND IT IS ITS OWN ISSUE: INFRASTRUCTURE ABOVE THE BAND
+    >
+    > **Issue #598**, filed by Ray. A faction-level authority maintaining roads beyond any single
+    > band's reach is more realistic than a per-band keeper and is *"a whole entire mechanism in the
+    > game we don't have"* — a central government. **Explicitly out of this arc.** Recorded here only
+    > so the per-band keeper above is understood as this arc's answer rather than the final one.
+    >
+    > ##### ⛔ THE WORD **OWNERSHIP** IS RETIRED FROM THIS ARC
+    >
+    > Ray: *"A road could have no owner, but that is an abstract term in this game so it really has no
+    > meaning."* There is no owning. There is a **job** — *these people look after this tile's road* —
+    > which is a work row like any other, and the question *"who owns a road"* should not be asked
+    > again. What survives of §4.13a's ownership prose is only the concrete half: a band whose camp is
+    > on a road tile is served by it, and a road nobody maintains decays and goes.
+    >
+    > ##### WHAT DOES NOT EXIST YET, NAMED SO IT IS NOT ASSUMED INTO "ROUTE"
+    >
+    > **A depot.** Neither a connection nor a road is *a place goods sit*. It is a third object and
+    > nothing in this model provides one; Ray raised it as the thing later logistics will want. Do not
+    > let it be quietly folded into either.
+    >
+    > #### THE KNOWLEDGE CHAIN LOSES A LESSON, AND THE ONE IT LOSES TAUGHT NOTHING
+    >
+    > 13a shipped **four** lessons: `path` (then spelled `game_trail`) earned `trailcraft`, which gated
+    > `trail`. **A lesson
+    > for something you cannot fail to do.** You wear a path by walking it; there is no knowing-how
+    > involved and no way to be refused. Ray: *"Creating the trail leads to 'road building' knowledge,
+    > with dirt being the first build, then paved."*
+    >
+    > **`trailcraft` is DELETED** (its discovery id is retired, not reused — a gap is safer than a
+    > renumber). The surviving chain has every lesson gating something a player actually decides:
+    >
+    > | rung | gate | teaches |
+    > |---|---|---|
+    > | `path` | — | — |
+    > | `trail` | **none — it forms from use** | `roadbuilding` |
+    > | `dirt_road` | `roadbuilding` | `paving` |
+    > | `paved_road` | `paving` | — |
+    >
+    > **`roadbuilding` is earned by a TRAIL CARRYING TRAFFIC**, which is the route branch's reading of
+    > *"a rung teaches while it is practised"* — the practice is the walking. The faction that learns
+    > is the faction of a band standing on the road, the same catchment rule 2 uses everywhere else.
+    >
+    > #### THE FOUR RUNGS
+    >
+    > `route`: **path → trail → dirt road → paved road**. Rung 1 is the **floor** — `build: null`,
+    > `upkeep: null`, costs nothing to reach and buys nothing, exactly as `plant:wild` and
+    > `animal:wild` are floors. A position of `RUNG_UNSTARTED` **holds** the path. **The rung is
+    > spelled `path` and not `game_trail`**: nothing in the sim lets an animal wear a road in — the
+    > sole source of route work is `route_traffic.walked` in `supply.rs`'s pooling-link pass, which
+    > is the player's own trade-pooling bands walking between camps that share a larder. **Rung 2 is
+    > the floor's second storey** — worn in by traffic, still `upkeep: null`, still no verb.
+    >
+    > **`partial_credit: continuous` on all three.** A half-worn trail is genuinely half a trail —
+    > unlike `animal:pen`, where half a fence is not a fence. Nothing here earns `on_completion`.
+    >
+    > **`site_requirement` is `null` on every route rung**, and that is the honest answer rather than a
+    > gap: `site_requirement` asks *what must the LAND under this tile be*, and a route does not stand
+    > on a tile. What the route asks of the land is **priced, not gated** — it is the `scaled_by` term
+    > below. **Do not invent a `route_requirement` sibling to fill the hole**; a rung asking nothing of
+    > its site is what every animal rung already ships.
+    >
+    > #### THE SCALE TERM — the one place this slice extends the ladder's vocabulary
+    >
+    > §2.6 and §6 both reserve the `scaled_by` key for the route's **`length × terrain`**, *"genuinely
+    > a different shape: it reads the improvement's own geometry rather than the source it sits on."*
+    > It lands as a second variant beside `source_load`:
+    >
+    > ```
+    > UpkeepScale::RouteSpan  ⇒  Σ over the tiles the route crosses of infrastructure_cost(terrain)
+    > ```
+    >
+    > **ONE SUM, NOT A PRODUCT.** Length falls out of the *number* of terms and terrain out of each
+    > term's *value*, so *"length × terrain"* is a single measure rather than two multiplied — which is
+    > what lets it be one `f32` through the same `RungUpkeep::scaled_by` seam both currencies read.
+    >
+    > - **SUMMED PER TILE CROSSED, never averaged.** Three tiles of marsh cost three tiles of marsh.
+    >   Averaging would make a long road and a short one through the same country cost the same, which
+    >   deletes the length half of the term.
+    > - **§2.7's line holds: the land is a SCALE term, not an offset.** `infrastructure_cost`
+    >   *multiplies* the demand; it never subtracts from it.
+    > - **The rung-monotonicity check needs no change, and that is the point.** It *"compares only
+    >   adjacent rungs sharing a `scaled_by`"* — a rule §4.11 deliberately kept stated rather than
+    >   simplifying away *"because it is what makes adding the route branch's scale safe."* Route rungs
+    >   share `RouteSpan` and are compared against each other; no pair is compared across the unit
+    >   boundary. **`Flat` stays deleted** — this is the variant the key was held open for.
+    >
+    > #### ⛔ TRAFFIC PAYS FOR THE FLOOR; A CREW PAYS FOR THE ROADS — corrected by §4.13a above
+    >
+    > **This section read *"THE BUILD IS PAID BY TRAFFIC, SO A ROUTE TAKES NO BUILDER AND NO QUEUE
+    > ENTRY"*, of the whole branch. That is true of the free floor only.** Traffic wears in the game
+    > trail and the trail and stops there; `grade` and `pave` are ordinary verbs on the builders' pool.
+    > See §4.13a for why the uniform reading produced a bill the player never opted into.
+    >
+    > *"`build.progress_per_turn` | a crew clears ground | **traffic wears the route in**."* On the two
+    > **free** rungs, traffic is the crew: they take no `BuildJob`, no queue entry and no draw on the
+    > builders' pool. On `dirt_road` and `paved_road` a band's builders raise the road exactly as they
+    > raise a Field or a pen.
+    >
+    > **⛔ AND A QUEUED ROAD IS STILL OWNED BY NOBODY.** The queue is the most band-shaped thing in the
+    > engine — §2.5's entry names a destination **on a source that a band holds**, and the head takes
+    > every builder that band has — so it *looks* like queueing a road makes it that band's. It does
+    > not, and the reason is the one the keeping already runs on: **several bands may pay one road's
+    > bill, and the road belongs to none of them.** Building it is the same kind of act as paying for
+    > it. What a band's queue holds is *this band's builders are working on that road*, never *that
+    > road is ours* — and once it is up, anyone standing on it uses it.
+    >
+    > **Traffic converts to WORK UNITS**, the same currency `RungBuild::work_cost` is quoted in, so
+    > *"what does it cost to raise this"* keeps one answer in one unit whichever branch is asked.
+    > `progress_per_turn` was retired arc-wide and is not coming back for routes.
+    >
+    > | Traffic | Measured as | Converted by |
+    > |---|---|---|
+    > | a **live pooling link** (`balance_supply_networks`) | **link-tiles** — one turn of the link, × the road's length | `route_traffic.work_per_link_tile_per_turn` |
+    > | a **shipment** walking a connection | *13b's* | *13b's* |
+    > | ordinary **band / expedition movement** | *13b's* | *13b's* |
+    >
+    > > **⛔ THIS TABLE READ `mass-tiles` AND `worker-tiles`, TWO LEVERS, AND THE FIRST ONE WAS WRONG.**
+    > > `balance_supply_networks` drops sub-`min_transfer` moves, so a **balanced** network ships
+    > > nothing — a mass-driven rate would leave two camps who have shared a larder for thirty turns
+    > > with **no path at all**, exactly the case #532 forbids. It is the *link*, not the tonnage: a
+    > > trail forms because they are neighbours who walk to each other. One lever, and it shipped in
+    > > 13a; the other two rows are 13b's to fill in.
+    >
+    > **Two levers, not three**: goods and people are the only two things that move, and a shipment is
+    > people — its cargo rides in their packs (`TradeExpeditionConfig::per_worker_carry`, *"the party
+    > **is** the route"*). Counting a shipment's mass *and* its workers would price one trip twice,
+    > which is the error `TradeExpeditionConfig` already refuses to make about friction.
+    >
+    > **No accumulator is needed and none may be added.** The ladder position *is* the accumulator —
+    > cumulative work in a single `f32`, with `accrue_to` returning every rung a call crossed. A
+    > fractional turn's traffic banks as a fraction of a work unit and crosses a rung boundary when the
+    > sum crosses it, which is the whole-unit discipline already in force.
+    >
+    > #### THE UPKEEP IS PAID BY HANDS, AND WANTS THE THIRD KEEPING POOL
+    >
+    > Traffic raises a road; it does not hold one. *"A paved road costing more to hold than a trail is
+    > a crew that **stays**."* So the upkeep half draws on a band-level standing pool exactly as
+    > agriculture and husbandry do — **`LaborTarget::Roadwork`, a third role.**
+    >
+    > **That is the existing rule, not a new axis.** §2.5: *"One role per **WEB** because the two webs
+    > are already separate ladders — this is their existing split."* A third branch is a third ladder,
+    > so it takes a third role by the same argument that gave the first two theirs. It needs the
+    > route-shaped siblings of the two per-web seams — `route_claims_keeping` and
+    > `route_keeping_basis` — and **the basis must be the STAMPED bill, never the live demand**, for
+    > the reason §2.5 states in a ⛔: the wire asserts `demand − supplied == shortfall` verbatim, and a
+    > demand that moves mid-turn is only safe to read once. **A route's demand moves more than a
+    > source's**, because its geometry moves (below), so this is the branch most exposed to that
+    > defect.
+    >
+    > **`meter_decay` is declared** on all three built rungs — an unkept road washes out, which is a
+    > meter bleed and not a shed. (`null` is the animal branch's answer because a flock sheds *animals*
+    > at its own escape fractions; a road has nothing to shed.) *"A trail reverts in a season, a paved
+    > road stands for years"* is `grace_turns`, per rung, and the direction is the animal branch's:
+    > **the highest rung is the most forgiving**, because the paving does the holding.
+    >
+    > **Materials are config, not mechanism** — §4.9 item 12 shipped both terms. A dirt road declares
+    > none; a paved road declares stone on the pile *and* on the rate, and §2.7's *"decay refunds
+    > nothing / neglect is self-limiting"* applies unchanged. **The quarrying and hauling ARE the
+    > upkeep, not a second line beside it** — §2.7 disposes of that explicitly.
+    >
+    > #### ⛔ A ROAD IS IN THE GROUND. IT DOES NOT FOLLOW THE CAMP — and that is a DESIGN pillar, not a fidelity nicety
+    >
+    > **DECIDED. Ray: *"How would a road follow a camp? That makes no sense and is in fact a factor in
+    > moving vs staying. Roads can't follow camps."*** The rejected alternative — a route defined as
+    > *"the road between band A and band B"*, re-derived each turn from wherever those two bands
+    > currently stand — was rejected for the reason that matters, and it is not the unphysicality.
+    > **A road that follows its camp DELETES A DECISION.** A road you have paid to build and pay to
+    > hold is one of the strongest reasons the game can give you to *stay* — it is the move/stay/fork
+    > choice this project is built around (`docs/…concept_technical_plan_v_0.md`, and the same pillar
+    > the pen argues from). A road that packs up and comes with you costs nothing to leave, so it can
+    > never weigh on that choice. **The simpler implementation was buying its simplicity with the
+    > decision the feature exists to create.**
+    >
+    > **⛔ SO *"A ROUTE IS AN EDGE"* IS ITSELF THE WRONG SHAPE, and #532 / §Q4's first gap is sharpened
+    > rather than answered as written.** Both documents say *"a route… belongs to a connection"*. It
+    > does not. **A route is a thing in the world with a fixed tile path and its own identity** — the
+    > band pair is who *uses* it, never what it *is*. There is no `RouteKey { low, high }` and no
+    > band-pair keying: a `RouteLedger` holds routes by `RouteId`, each with a stamped `Vec<UVec2>`
+    > path, plus a tile→routes index (`BTreeMap`, for the iteration-order reason `ConnectionLedger`
+    > gives) so *"which roads is this band standing on"* is a lookup and not a scan.
+    >
+    > **THE FOUR RULES THAT FALL OUT, and every one of them replaces a rule the rejected shape needed:**
+    >
+    > | | Rule | What it dissolves |
+    > |---|---|---|
+    > | **1** | **A road's tiles are stamped once, from the path the first traffic actually walked, and never re-derived.** | The re-stamp rule. |
+    > | **2** | **A band is served by a road when it is STANDING ON ONE OF ITS TILES.** The road's own path is the catchment — there is no radius and no "close enough" constant to choose. Two bands on the same road may pool along it, at the along-road distance. | The tolerance constant. |
+    > | **3** | **A road nobody stands on earns no traffic, is claimed by no band, and reverts** under the meter decay and grace that every rung already declares. | The orphan case, and the *"who pays for a road to nowhere"* question — nobody does, and nobody needs to. |
+    > | **4** | **New traffic PREFERS AN EXISTING ROAD** whose path already joins where it is going. | The near-duplicate-road swarm, and it is why real networks consolidate: roads attract the traffic that widens them. |
+    >
+    > **AND IT MAKES A ROAD A SHARED PUBLIC GOOD, which the band-pair shape could not express.** Camp A
+    > leaves and camp C moves onto the same ground: **C inherits the road**, because the road never
+    > belonged to A. Every band standing on it claims its keeping from its own `Roadwork` pool, and the
+    > existing *"several bands can pay one source in one turn"* accumulation (§2.5 — `upkeep_supplied`
+    > accumulates, its clear lives in Logistics) is already the mechanism for that. **No new funding
+    > rule.**
+    >
+    > **The known cost, named: a band that steps one tile off its own road loses it.** That is accepted
+    > and is not softened with a radius — it is the legible half of the same pillar (*stay on your
+    > road*), and a radius would be the "close enough" constant rule 2 exists to avoid.
+    >
+    > **THE TILE-OWNED SUCCESSOR IS NO LONGER A SUCCESSOR — this IS the ground-shaped model.** What
+    > phase 13c adds is the *drawing* of it (#232), not a different ownership.
+    >
+    > #### ⛔ A MAINTAINED ROAD IS TRAFFIC, SO ITS TILES ARE `Seen` — and the keystone is UNTOUCHED
+    >
+    > **DECIDED. Ray: *"If a road exists and is maintained, the assumption is that there is traffic on
+    > it and it is seen."*** `plan_contact_and_logistics.md` §Q5's rider row was right and this
+    > design's first answer was wrong.
+    >
+    > **The objection that was raised and is now answered:** *"the commonest routed link is a pooling
+    > link where nobody physically walks, so `held` would buy sight with an automatic transfer."* That
+    > mistook the direction of the inference. **Maintenance is not free** — a road at a built rung is
+    > costing a band `work_per_turn × RouteSpan` every turn out of the `Roadwork` pool, and what those
+    > hands are *doing* is being on the road. **Paying the upkeep IS the presence.** A road nobody
+    > walks is a road nobody pays for, and rule 3 above has it reverting.
+    >
+    > **⛔ AND THAT IS WHY THE KEYSTONE DOES NOT BEND.** §Q3 and `connections.rs` state it as
+    > inviolable — *"**Only presence makes a tile `Seen`. A connection can only ever grant
+    > `Discovered`**"* — and name **logistics** as the first rider that will be tempted. **This is not
+    > that temptation.** The sight is granted by the *road*, which is maintained presence on specific
+    > ground, and **not by the connection**, which still grants `Discovered` and nothing else. A band
+    > with a live tie to a people it has never travelled to sees exactly what it sees today.
+    > `core_sim/tests/connections.rs` keeps passing unchanged, and **the route's grant must be written
+    > as its own visibility source beside a band's own presence — never routed through the connection
+    > grant**, or the test is being satisfied by an accident of plumbing rather than by the rule.
+    >
+    > **THE CONDITION IS THE PAID BILL, NOT THE HELD RUNG.** A route lights its tiles while it stands
+    > at a **built** rung (rung 2 and up) **and its keeping is met** — the `path` floor lights
+    > nothing, because nobody maintains a path; that is what makes it free. A road in shortfall
+    > goes dark before it decays, which is the honest early warning that the road is being lost.
+    >
+    > **THIS IS THE THIRD PAYOFF, AND IT IS THE MOST LEGIBLE OF THE THREE.** Sight along your own roads
+    > in a fog-of-war game is worth more to a player than a friction percentage, and it needs no
+    > readout to be understood. It strengthens the *"cheaper to travel"* half considerably — see the
+    > payoff table above, which carries all three.
+    >
+    > #### THE ONE-TURN LAG IS THE LEDGER'S, AND IT IS ACCEPTED FOR THE LEDGER'S REASON
+    >
+    > `balance_supply_networks` runs in `TurnStage::Logistics`; the route accrual has to run **after**
+    > it to count this turn's transfers. So the payoff is read at the standing as of the **previous**
+    > turn — precisely the lag `balance_supply_networks` already accepts against `ConnectionLedger`
+    > (*"`advance_connections` runs later the same turn… on the world's very first turn the ledger is
+    > empty"*). **Do not reorder a stage for it**, and do not let supply seed the route standing
+    > itself: that would make a second producer of a rung's position, which is the failure this arc has
+    > already had three of (§"NO CALL SITE MAY RE-DERIVE A STANDING FROM A METER").
+    >
+    > #### THE CLIENT SURFACE IS DESIGNED FROM SCRATCH, AND IT LANDS BEFORE THE TUNING
+    >
+    > Verified: **there is none today.** Every `route` hit in the client is the English word, except
+    > `map_preview.gd`'s `"routes"` annotation state, which draws **order paths** — the player's own
+    > movement waypoints — and is unrelated. **That name is therefore already taken in the client's
+    > vocabulary and this branch must not reuse it**; the ladder's object is a *route network*, which
+    > is #232's phrase.
+    >
+    > The minimum readout, landing **with** the branch and not after it: a per-route row wherever a
+    > band's connections are shown — the rung held, its meter, the upkeep demand and shortfall on the
+    > `Roadwork` pool, and **what the rung is buying** (the span it holds open, the friction it is
+    > saving). That last one is the whole point of the two-sided economy, and it is the one number that
+    > tells a player whether to pave or to stop.
+    >
+    > #### ⛔ THE THREE STEPS — **AGREED WITH RAY, ONE PR EACH.** Each is playable alone
+    >
+    > **13a — ROADS EXIST, AND THE FOOD-SHARING BETWEEN NEIGHBOURING CAMPS WEARS THEM IN.**
+    >
+    > > **⛔ 13a IS LANDED IN FULL, AND THREE THINGS BELOW ARE CORRECTIONS TO THIS SECTION'S OWN
+    > > SPEC.** The branch, `RouteLedger`, `UpkeepScale::RouteSpan`, the traffic accrual off pooling
+    > > links, the **friction** payoff, the checkpoint, the `LaborTarget::Roadwork` keeping pool, the
+    > > decay it funds, the `Seen`-along-a-kept-road grant, the whole `RouteState` wire and the client
+    > > readout are all in. Rationale as built: `.claude/rules/core_sim/routes.md` and
+    > > `.claude/rules/client/roads.md`.
+    > >
+    > > **⓪ ONE THING 13a WAS SPECIFIED TO SHIP AND DOES NOT: `holds_link_to_tiles` HAS NO SIM
+    > > READER.** It is published, and the client renders it in the **future** tense (*"will hold a
+    > > link 10 tiles out"*) precisely because nothing in `balance_supply_networks` consumes it yet.
+    > > That is 13b's first job, and the tense is what keeps the readout honest until then — rendering
+    > > it as an active effect would be a lie the player cannot check.
+    > >
+    > > **① THE TRAFFIC RATE IS THE LINK, NOT THE TONNAGE.** This section specified **mass-tiles**
+    > > — quantity moved × distance. **That is wrong for the case the branch exists to serve.**
+    > > `balance_supply_networks` drops sub-`min_transfer` moves, so a *balanced* network ships
+    > > nothing: a mass-driven rate leaves two camps who have shared a larder for thirty turns with
+    > > **no path at all**, which is exactly the case #532 forbids. A trail forms because they are
+    > > neighbours who walk to each other, not because of what they were carrying. One lever —
+    > > `route_traffic.work_per_link_tile_per_turn`, banked per tile of road per live turn — replaces
+    > > the two this section named.
+    > >
+    > > **② NO ROUTE RUNG DECLARES A MATERIAL, because `stone` does not exist.** The paved road was to
+    > > swallow stone on the pile and the rate. `materials.json` carries bone / fibre / grape / hide /
+    > > hurdles / tea / tobacco / wood, and the ladder's load-time check rightly rejects a rung naming
+    > > a material the table does not carry. **Adding a stone with no way to obtain one would ship a
+    > > rung that can never be HELD** — a harder failure than one that is cheap to hold — so quarrying
+    > > stays the crafting arc's. The engine half already ships; the rung takes its two lines when a
+    > > stone material lands.
+    > >
+    > > **③ THE COMPONENT'S FRICTION IS THE BEST ROAD BINDING IT, and that is forced rather than
+    > > generous.** `balance_commodity` pools a whole component against one friction scalar and has no
+    > > path model, so the reading is an approximation either way — but under a **worst**-road reading,
+    > > wearing a new poor trail into an existing network would **raise** its friction. A road would
+    > > make things worse, which breaks *"a rung can only widen the set of links and lower a loss"*
+    > > outright. A road counts only where **two** of a component's bands stand on it (rule 2).
+    > - **Sim:** `RungBranch::Route` (and the `BOTH_BRANCHES` sweep it forces open — the const is
+    >   deliberately exhaustive so no sweep can miss a third web), the four rungs in
+    >   `intensification_ladder.json`, `UpkeepScale::RouteSpan`, the `RouteLedger` + `RouteId` + stamped
+    >   tile path + tile→routes index, the `LaborTarget::Roadwork` pool with `route_claims_keeping` /
+    >   `route_keeping_basis`, and traffic accrual from `balance_supply_networks` transfers only.
+    > - **Payoffs shipped:** `friction_multiplier`, **and `Seen` along a kept road** — the visibility
+    >   grant belongs here rather than in 13b because it is the payoff a player reads without being
+    >   told, and 13a is the phase that has to prove the branch is worth having.
+    > - **Client:** the readout — rung, meter, `Roadwork` demand/shortfall, and **what the rung is
+    >   buying**. Lands with the branch, per this arc's readout-before-tuning rule.
+    > - **Playable alone because:** two camps that already pool wear a road between them with no order
+    >   typed, and the food they lose in transit drops. Needs no shipment and no movement traffic.
+    >
+    > **13b — TRADE PARTIES AND MARCHING BANDS WEAR ROADS IN TOO, AND A ROAD REACHES FURTHER THAN FREE
+    > RANGE DOES.**
+    > - **Sim:** traffic accrual from shipments (#517's trade expedition) and from ordinary band /
+    >   expedition movement, both in worker-tiles; the `holds_link_to_tiles` payoff in
+    >   `balance_supply_networks`; and **rule 4** — new traffic prefers an existing road.
+    > - **Playable alone because:** it creates pooling links **that could not exist before**. This is
+    >   the phase where the bootstrap pays off — you walk a long haul by hand, the road forms under
+    >   your feet, and then the road carries the goods for you.
+    >
+    > > **⛔ IT IS THE DISTANCE OF THE JOURNEY THAT TEACHES, NOT THE KIND OF TRAFFIC.** Ray:
+    > > *"Walking 100 yards to the next band won't make people think of dirt roads. Traveling a trail
+    > > for 30 miles (trade route) would."*
+    > >
+    > > **⛔ AND TWO THINGS THAT LOOK LIKE ONE RULE ARE NOT.** This was written up first as *"weighted by
+    > > the kind of traffic"*, which was wrong, and it also reached for the build meter, which was
+    > > wronger:
+    > >
+    > > | | governed by | weighted? |
+    > > |---|---|---|
+    > > | **how fast a trail forms** (the build meter) | **plain usage** | **NO — unweighted, and 13a's behaviour is correct as it stands.** Ray: *"that forms from just using it."* Walking to the next camp wears a path perfectly well |
+    > > | **how fast you learn `roadbuilding` / `paving`** | **how far the journey went** | **YES** |
+    > >
+    > > A caravan is not a better teacher because it is a caravan. It is a better teacher because it
+    > > went **thirty miles**, and thirty miles of trail is what makes a people want a road. A band
+    > > marching a long way learns the same lesson without carrying a single trade good — so this is
+    > > **not** a rule about trade, and a per-traffic-kind lever table would encode the wrong thing.
+    > >
+    > > **THE PER-TILE MODEL GIVES MOST OF THIS FOR FREE, which is a point in its favour** (§4.13b). A
+    > > road tile is a source, the ladder credits a lesson **once per source per turn**, and a thirty-tile
+    > > journey crosses thirty of them against a neighbour link's two. Distance-scaling falls out of the
+    > > model rather than being bolted on.
+    > >
+    > > **⛔ BUT FREQUENCY IS THE OTHER HALF, AND IT IS THE OPEN QUESTION 13b MUST ANSWER.** Neighbours
+    > > pool **every turn**; a caravan goes **occasionally**. Under a flat per-tile-per-turn credit a
+    > > 2-tile link running for thirty turns banks *sixty* against one thirty-tile haul's *thirty* — and
+    > > the short hop out-teaches the long journey, which is the exact inversion this rule exists to
+    > > prevent. **How far** and **how often** both have to be in the expression; only the first is
+    > > settled. Do not ship a per-tile credit without deciding the second.
+    > >
+    > > **⛔ SETTLED — THE UNIT OF LEARNING IS THE CONNECTION, NOT THE TILE.** Ray: *"only credit the
+    > > 'connection', so if a trail (or other road type) makes an unbroken connection between two bands
+    > > … only then does road building get learned. That fits our distance model perfectly, since the
+    > > local connections are shorter, they would contribute less."*
+    > >
+    > > **It does not answer the frequency question above — it DISSOLVES it.** That question only bites
+    > > because a caravan was modelled as an occasional JOURNEY against a neighbour link's every-turn
+    > > pooling. A connection is a STANDING thing: both are then present every turn, the credit is
+    > > purely proportional to length, and a thirty-tile route out-teaches a two-tile link fifteen to one
+    > > every single turn. There is no "how often" term left to tune, and no per-traffic-kind table.
+    > >
+    > > **AND IT KILLS A SCALING BUG THE PER-TILE CREDIT WOULD HAVE SHIPPED.** A per-tile lesson scales
+    > > with TILE COUNT, so a wider map teaches roadbuilding faster than a narrow one — a difference no
+    > > player caused and none could name. A connection scales with the distance between two camps,
+    > > which is a thing the player chose.
+    > >
+    > > **Two details this design decides on its own:**
+    > >
+    > > - **Credit per turn while the connection stands, never once on completion.** A one-off is a step
+    > >   function — nothing for eighty turns, then a lump — and it pays twice for a connection that
+    > >   breaks and reforms. Per turn is also the literal reading: *travelling* the trail, repeatedly.
+    > > - **The lesson is the connection's WEAKEST tile, not its best or its mean.** One path hex in the
+    > >   middle of a paved road means you do not have a paved route; what you travel is the gap. This is
+    > >   already the shipped distinction — `path_friction_multiplier` takes the MEAN because loss
+    > >   accumulates per tile, while `path_reach_tiles` takes the MIN because reach is a claim about the
+    > >   whole route holding. Learning is a claim of the second kind.
+    > >
+    > > **The consequence for 13a, stated so it is not mistaken for a defect:** nothing credits a route
+    > > lesson today, so `roadbuilding` cannot leave 0 and **the branch stops dead at `trail`**. `grade`
+    > > and `pave`, their gates, the ladder rows and the build-queue arm are all unreachable in play
+    > > until this step lands.
+    >
+    > **13c — DRAW THE ROAD NETWORK ON THE MAP (#232).**
+    > - The overlay, fed by the roads 13a/13b now hold. #232 is a **consumer** of this work, not a
+    >   supplier to it — see correction ② above. `map_preview.gd`'s existing `"routes"` annotation
+    >   state is **order paths** and is a different thing; do not reuse that name.
+    > - This is also where `map_preview.gd` earns back a frame it lost with the trade-link substrate.
+    >
+    > > **⛔ 13a ABSORBED THE BASIC DRAWING, so this step is smaller and sharper than it was written.**
+    > > Under the path model a road was an object that needed its own network view; per-tile, a road is
+    > > just a tile, so the per-tile stamp landed with 13a's client half. **What is left here is the
+    > > OVERLAY and the presentation** — not "make roads appear", which they already do.
+    >
+    > > **⛔ A ROAD FADES IN AS IT IS WORN, RATHER THAN SNAPPING AT THE RUNG.** From play: seven
+    > > path tiles existed at 24–52% and every one of them drew identically, so a road half worn
+    > > in looked exactly like one just begun. Ray: *"a partial trail… should still draw but at 52%
+    > > opacity, so as it becomes more complete"* it reads more strongly — *"fade in the
+    > > trails/dirt/paved."*
+    > >
+    > > **IT IS THE LADDER'S OWN INTERPOLATION, NOT A SECOND MECHANISM.** Opacity is a per-rung value
+    > > like any other, so it goes through `intensification::interpolate` on the road's standing —
+    > > exactly as the upkeep demand, the payout and the material rate already do. A road 52% of the way
+    > > from path to trail draws 52% of the way from the path's opacity to the trail's.
+    > >
+    > > **The ramp is BETWEEN RUNGS and never from zero**, and that falls out of the same reading rather
+    > > than needing a rule: a trail at 0% *is* a completed path, and it should look like one. A
+    > > road never fades to nothing while it still holds a rung.
+    > >
+    > > **The tile card already states the number** (`HudRouteVocab.progress_clause`); this is the map
+    > > saying the same thing without being asked. Two readings of one position, so they cannot
+    > > disagree — which is the whole reason to interpolate rather than invent a second progress curve.
+    >
+    > > **⛔ THE FADE MUST NOT LAND ON AMBER, BECAUSE THE MAP ALREADY SPENDS AMBER ON HERD TRAILS.**
+    > > `MapView.HERD_TRAIL_COLOR` is `Color(0.97, 0.69, 0.25, 0.6)` and `HudStyle.WARN` is
+    > > `#f2b13f` — the same amber to within rounding. **This has already misled a player once**: Ray
+    > > read the herd movement trails on the map as roads being drawn, and asked why the aurochs line
+    > > was there. A faint road fading in at low alpha is precisely the thing that would repeat that
+    > > mistake, since a partly-worn path and a herd's recent track would then be a thin amber line of
+    > > the same weight in the same place.
+    > >
+    > > The at-risk tint is NOT the problem and needs no change: a short road already draws in
+    > > `HudStyle.DANGER` (`AnnotationRenderer` line ~428), which nothing else on the map uses. **It is
+    > > the ordinary, healthy road that must not be amber.**
+    > >
+    > > So the fade is over ALPHA and WIDTH of a road's own hue, never a ramp toward the warning
+    > > colour — and the art of #600 has to clear the same bar, since a stylised dirt track is a
+    > > tan-brown object by nature and a herd trail is drawn on top of the same ground.
+    >
+    > > **RELATED, AND NOT THIS STEP'S: #215** — *"herd/game trails follow hex centers and become the
+    > > basis of roads."* Its own issue, and still open: nothing in the sim banks route work for an
+    > > animal today, which is why the floor rung is spelled `path` rather than `game_trail`.
+    >
+    > **13d — WHAT A STRANGER MAY DO WITH A ROAD.**
+    > - Unreachable in play today: worldgen creates `FactionId(0)` and one start profile, so a normal
+    >   game is single-faction. **Decide it before a second people lands, not after.**
+    >
+    > > **⛔ THE PER-TILE KEEPER MODEL CLOSED MOST OF THIS BY CONSTRUCTION, so this step is far smaller
+    > > than when it was agreed.** It was scoped when a road was a path object nobody kept, and the open
+    > > questions were use, sight, keeping and upgrading — four holes. Three shut on their own:
+    > >
+    > > | | scoped by | |
+    > > |---|---|---|
+    > > | the cheaper food-sharing | same people only, by the pooling policy | already closed |
+    > > | seeing along a road | the **keeper's** faction | closed by §4.13b |
+    > > | paying its upkeep | its keeper, and a road has exactly one | closed by §4.13b |
+    > > | **upgrading it** | **nothing** | **the open question** |
+    > >
+    > > So what is actually left is narrow: **may a stranger's band `grade` or `pave` a tile, and may it
+    > > adopt a keeperless road another people wore in?** Nothing tests faction on either path today.
+    > >
+    > > **⛔ AND IT IS A QUESTION ABOUT PERMISSION, NOT ABOUT OWNERSHIP.** That word is retired from this
+    > > arc (§4.13b) — Ray: *"that is an abstract term in this game so it really has no meaning."* There
+    > > is no owning, there is the job of keeping, and this step decides who may take that job on. A
+    > > proposal that re-introduces a possessive road is answering a question nobody asked.
+    >
+    > **13e — THE ROUTE BRANCH'S OWN TUNING PASS. CONFIG ONLY, AND LAST.**
+    > - **Why it is a step rather than deferred to §4.14**: §4.14 owns the *arc's* numbers and waits on
+    >   the whole arc. The route branch can be tuned as soon as **13a–13d** are in, without waiting for
+    >   the plant and animal spreads — and it needs to be, because the shipped pace is visibly wrong.
+    > - **Why it must not happen sooner**, which is the real argument and is §4.14's own one level down:
+    >   **13b adds two more traffic sources.** A pace tuned today is tuned against pooling links alone;
+    >   the moment shipments and marching bands also wear roads in, the effective rate changes and every
+    >   number set before it is a number set on a shape about to move. Ray: *"it would be better to have
+    >   everything done before tuning."*
+    >
+    > **THE KNOWN OFFENDER, measured in a live game at turn 32:** `route_traffic.work_per_link_tile_per_turn`
+    > is `0.35` and `route:trail` costs `40`, so a tile carrying one link needs **~114 turns** to become a
+    > trail. Seven path tiles existed between three bands at 24–52% worn and none could have
+    > changed rung. The rate **halved in effect** when roads went per-tile (§4.13b) — it is now literally
+    > per tile where it used to drive one path object — and was deliberately left uncompensated, because
+    > a model change must not hide behind a retune. **This is where that debt is paid.**
+    >
+    > **Everything else this step owns**: `route_traffic.disuse_grace_turns` / `disuse_loss_per_turn`
+    > (how fast an unwalked trail fades — currently ~44 turns against ~114 to form, which is very likely
+    > backwards); `route_range.base_tiles` / `remote_cost_multiplier`; the four rungs' `work_cost`,
+    > `work_per_turn` and `meter_decay`; and the payoff numbers — `friction_multiplier` and
+    > `holds_link_to_tiles`, the second of which cannot be judged until 13b consumes it.
+    >
+    > **The knowledge weighting is 13b's to DESIGN and this step's to TUNE.** *How far* and *how often*
+    > combine is a modelling question 13b must answer; the constants that fall out of it are numbers.
+    >
+    > **Tuning is not spread across the other steps** — §4.14 owns the arc's numbers and is explicitly
+    > last, and this step is its route-branch counterpart. The rung rates, spans, friction multipliers
+    > and traffic conversions land at shape-chosen values throughout 13a–13d and are moved **here**,
+    > once there is nothing left to change the shape.
+    >
+    > **Nothing in this list renumbers anything.** Items 14 and 15 keep their places; 13a–13e are
+    > the PRs *inside* item 13.
 14. **The tuning spread.** Config-only, and **last** — §4.10 changes what the numbers do to the curve,
     so tuning before it would be tuning a shape that is about to move.
     > **§4.11 LANDS FIRST, for this item's own reason.** A flat per-rung demand and a size-scaled one

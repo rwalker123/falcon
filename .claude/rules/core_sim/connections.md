@@ -203,7 +203,9 @@ the party walks does not stop the delivery, because the party is standing there.
 ## The supply network is the second reader, and it takes EITHER direction
 
 `balance_supply_networks` (`supply.rs`, arc #527 §Q4) treats a band pair as **linked** only where they
-are within `supply_network_config.reach_tiles` **and** the ledger holds a live tie between their
+are within `supply_network_config.reach_tiles` **hex steps** (`hex_distance_wrapped`, as every
+other radius in the sim is measured — see `campaign.md` → "The link is a rider on a CONNECTION")
+**and** the ledger holds a live tie between their
 `BandId`s. Before that it derived its edges from proximity alone, which made it a second independent
 implementation of the thing a shipment already gates on; now both riders sit on one object, which is
 what gives the route ladder an edge to attach a route to. Over that short distance a link is cheap

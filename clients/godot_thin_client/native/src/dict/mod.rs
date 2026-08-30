@@ -11,6 +11,7 @@ pub(crate) mod governance;
 pub(crate) mod knowledge;
 pub(crate) mod map;
 pub(crate) mod population;
+pub(crate) mod routes;
 pub(crate) mod subsistence;
 
 use flatbuffers::{ForwardsUOffset, Vector};

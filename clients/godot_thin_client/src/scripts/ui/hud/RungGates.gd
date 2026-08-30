@@ -121,6 +121,204 @@ static func hunt_gates(herd: Dictionary, knowledge: Dictionary) -> Dictionary:
         gates[SourceForecast.IMPROVEMENT_CORRAL] = corral_reasons
     return gates
 
+
+## **THE ROUTE ARM — may this ROAD be raised to each rung above the one it stands on, and if not,
+## why not?** (arc #532 slice 13). Keyed **RUNG KEY → `Array[Dictionary]` of refusals**, empty for a
+## rung that is ready to order.
+##
+## ⛔ **A REFUSAL IS A `{kind, short, long}` RECORD, NOT A STRING, and that is what the row cut
+## bought.** A ladder row has width for ONE clause and its hover has room for every sentence, and a
+## single string cannot be both — it was long enough to wrap a 292px row and still too short to keep
+## its remedy. `route_row_refusal` picks the one clause a row shows and `route_tooltip_refusals`
+## hands the hover all of them.
+
+## ⛔ **KEYED ON THE RUNG AND NOT ON THE VERB, WHICH IS THE ONE PLACE THIS BRANCH DIFFERS FROM THE
+## OTHER TWO.** A route rung may carry NO verb at all — the free floor is worn in by traffic and
+## nothing declares it — so a verb-keyed table would have two entries spelling `""` and could not tell
+## `path` from `trail`. The plant and animal webs have no such rung, which is why their gates are
+## keyed the way they are and why widening those was never an option.
+##
+## ⛔ **IT ANSWERS FOR EVERY RUNG ABOVE THE STANDING ONE, GATED OR NOT — the absence of a key is the
+## READY answer.** The ladder sheet shows the whole branch, so a refused rung is rendered and
+## explained rather than withheld; a mark would want the opposite, and this branch has no mark.
+##
+## **FIVE GATES, APPENDED IN `HudRouteVocab.GATE_ROW_PRIORITY` ORDER** — so the row's pick is the
+## first entry that carries a short form, and the hover reads in the same order the row chose from.
+## One list, not two, which is what stops a row and its own tooltip disagreeing about what matters:
+##
+##   1. **NOBODY DECLARES IT** — `verb == ""`. Not a refusal for want of anything; there is simply no
+##      order to give. **It is stated ALONE**: a craft or a keeper beside it would read as a
+##      prerequisite for something that is not on offer in the first place.
+##   2. ⛔ **ANOTHER BAND ALREADY KEEPS THIS TILE** — `road_verb_refusal`'s own last check. **One band
+##      keeps a road tile, never two**, so the sim rejects `grade`/`pave` outright when `Road::keeper`
+##      names somebody else. It outranks the craft because no amount of learning helps a tile that is
+##      already somebody else's job. Read off `has_keeper` / `keeper_band_id`, already on the row.
+##   3. **NO KEEPER TO NAME** — a band to act as. `grade`/`pave` carry a band token that IS the
+##      keeper, and `Main.IMPROVEMENT_NO_BAND` refuses the command outright rather than guessing one.
+##      It outranks the craft because it is the only gate on this card the player closes with a CLICK.
+##   4. **THE CRAFT** — `unlock_knowledge`, at the same `KNOWLEDGE_COMPLETE` bar every other track is
+##      read at. **The craft's NAME comes from the ladder's knowledge roster** (`labels`), never from
+##      a table here, so a rung added to `intensification_ladder.json` names its own unlock.
+##   5. ⛔ **THE GROUND** — `requires_rung`. A dirt road wants a trail beneath it and a trail is worn
+##      in only by traffic, so **a road cannot be built on bare ground**. **LAST, and not by whim**:
+##      *needs a trail first* names a rung the ladder is already displaying two lines above under
+##      `where you are`, so it is the one refusal the player cannot miss and therefore the one worth
+##      least on a line that holds a single clause.
+##
+## `ladder` is `HudRouteVocab.route_ladder`'s ordered catalog, `road` the raw `routes` row for the
+## tile, `labels` a `{knowledge_id: display_name}` lookup off the ladder's knowledge roster, and
+## `band` the acting band — `{}` meaning none is picked, which is gate 3.
+##
+## `keeper_label` is the KEEPER band's display name, resolved by the caller through this client's one
+## band-naming rule (`HudBandLaborState.band_label_for_id`) exactly as the tile card's `Kept by:` row
+## resolves it — this layer is stateless and holds no roster, and `""` correctly reads as
+## `ROAD_KEEPER_FOREIGN`.
+static func route_gates(road: Dictionary, ladder: Array[Dictionary], knowledge: Dictionary,
+        labels: Dictionary, band: Dictionary, keeper_label: String = "") -> Dictionary:
+    var gates := {}
+    var standing_key := HudRouteVocab.rung_of(road)
+    var standing_order := HudRouteVocab.ladder_order_of(ladder, standing_key)
+    # ⛔ **ASKED ONCE FOR THE WHOLE LADDER, because it is a fact about the TILE** — every verbed rung
+    # above the standing one is refused by it, and the sim asks it per command for the same reason.
+    # **It needs an acting band to be a comparison at all**: with none picked there is no "another"
+    # to name, and the missing-band gate is the honest thing to say instead.
+    var taken_by_another := not band.is_empty() and HudRouteVocab.has_keeper(road) \
+        and HudRouteVocab.keeper_band_id_of(road) \
+            != int(band.get("band_id", HudConst.NO_BAND_ID))
+    for entry in ladder:
+        if HudRouteVocab.catalog_order(entry) <= standing_order:
+            continue
+        var refusals: Array[Dictionary] = []
+        var requires := HudRouteVocab.catalog_requires_rung(entry)
+        var verb := HudRouteVocab.catalog_verb(entry)
+        if verb == HudRouteVocab.RUNG_CATALOG_NONE:
+            # **A RUNG NOBODY ORDERS HAS NO OTHER GATE WORTH STATING.** Nothing is refusing it, so a
+            # craft or a keeper beside it would read as a prerequisite for something that is not on
+            # offer in the first place.
+            refusals.append(_route_refusal(HudRouteVocab.GATE_KIND_WORN_IN, "",
+                HudRouteVocab.GATE_LONG_ROAD_WORN_IN))
+            gates[HudRouteVocab.catalog_rung_key(entry)] = refusals
+            continue
+        # ⛔ **THE TILE IS ALREADY SOMEBODY ELSE'S JOB.** The sim refuses the verb outright here, so
+        # without this the row rendered READY and the press bought a command-failure event.
+        if taken_by_another:
+            var keeper := keeper_label.strip_edges()
+            if keeper == "":
+                keeper = HudRouteVocab.ROAD_KEEPER_FOREIGN
+            refusals.append(_route_refusal(HudRouteVocab.GATE_KIND_ANOTHER_KEEPER,
+                HudRouteVocab.GATE_SHORT_ROAD_ANOTHER_KEEPER_FORMAT % keeper,
+                HudRouteVocab.GATE_LONG_ROAD_ANOTHER_KEEPER_FORMAT % keeper))
+        if band.is_empty():
+            refusals.append(_route_refusal(HudRouteVocab.GATE_KIND_NO_KEEPER,
+                HudRouteVocab.GATE_SHORT_ROAD_NO_KEEPER,
+                HudRouteVocab.GATE_LONG_ROAD_NO_KEEPER))
+        var unlock := HudRouteVocab.catalog_unlock_knowledge(entry)
+        if unlock != HudRouteVocab.RUNG_CATALOG_NONE \
+                and track(knowledge, unlock) < HudConst.KNOWLEDGE_COMPLETE:
+            # ⛔ **THE REMEDY IS THE RUNG THAT TEACHES THE CRAFT, LOOKED UP — never the rung
+            # beneath the gated one.** The two coincide on the four rungs that ship, which is
+            # exactly why reading `requires_rung` here looked correct; the config is free to break
+            # the pairing, and this is the one gate whose wrong answer sends a player to stand on
+            # the wrong ground. `""` where nothing on this branch teaches it, which the composer
+            # states by dropping the remedy rather than by naming a rung that does not.
+            refusals.append(_route_craft_refusal(unlock, track(knowledge, unlock), labels,
+                HudRouteVocab.ladder_rung_teaching(ladder, unlock)))
+        if requires != HudRouteVocab.RUNG_CATALOG_NONE \
+                and HudRouteVocab.ladder_order_of(ladder, requires) > standing_order:
+            var beneath := HudRouteVocab.ladder_rung_name(ladder, requires).to_lower()
+            refusals.append(_route_refusal(HudRouteVocab.GATE_KIND_GROUND,
+                HudRouteVocab.GATE_SHORT_ROAD_NEEDS_RUNG_FORMAT % beneath,
+                HudRouteVocab.GATE_LONG_ROAD_NEEDS_RUNG_FORMAT % beneath))
+        if not refusals.is_empty():
+            gates[HudRouteVocab.catalog_rung_key(entry)] = refusals
+    return gates
+
+## The refusals a route gates dict holds for ONE rung, as a typed array — `[]` when the rung is ready.
+## The route twin of `gate_reasons_for`, and separate from it because these are `{kind, short, long}`
+## records rather than bare strings: a road row has room for one clause and its hover has room for all
+## of them, and one string cannot be both.
+static func route_gates_for(gates: Dictionary, rung: String) -> Array[Dictionary]:
+    var out: Array[Dictionary] = []
+    var raw: Variant = gates.get(rung, null)
+    if raw is Array:
+        for entry in (raw as Array):
+            if entry is Dictionary:
+                out.append(entry as Dictionary)
+    return out
+
+## ⛔ **THE ONE REFUSAL A ROW STATES when several are unmet** — `HudRouteVocab.GATE_ROW_PRIORITY`'s
+## order, which sinks the GROUND gate to last because the ladder is already displaying the rung it
+## names two lines above. `""` for a ready rung, and for a rung whose only refusal carries no short
+## form (the worn-in rung, whose row word is the state's own).
+##
+## **A refusal of an unlisted kind still answers**, falling through to the first one the record
+## carries: a gate added without a priority entry must degrade to *stating something* rather than to
+## a blank half-face.
+static func route_row_refusal(refusals: Array[Dictionary]) -> String:
+    for kind in HudRouteVocab.GATE_ROW_PRIORITY:
+        for refusal in refusals:
+            if String(refusal.get(HudRouteVocab.GATE_KIND_KEY, "")) != kind:
+                continue
+            var short := String(refusal.get(HudRouteVocab.GATE_SHORT_KEY, ""))
+            if short != "":
+                return short
+    for refusal in refusals:
+        var fallback := String(refusal.get(HudRouteVocab.GATE_SHORT_KEY, ""))
+        if fallback != "":
+            return fallback
+    return ""
+
+## …and ALL of them, as sentences for the hover, in the order the gate layer appended them. `[]` for a
+## ready rung, which leaves the tooltip with its price and payoff lines alone.
+static func route_tooltip_refusals(refusals: Array) -> Array[String]:
+    var out: Array[String] = []
+    for refusal in refusals:
+        if not (refusal is Dictionary):
+            continue
+        var long := String((refusal as Dictionary).get(HudRouteVocab.GATE_LONG_KEY, ""))
+        if long != "":
+            out.append(long)
+    return out
+
+## One refusal record: the kind a row's priority sorts on, the clause a row shows, and the sentence a
+## hover shows. **`short` may be empty and `long` may not** — every gate has something to say at
+## length, and the one gate with no row clause (worn in) has its word in the state table instead.
+static func _route_refusal(kind: String, short: String, long: String) -> Dictionary:
+    return {
+        HudRouteVocab.GATE_KIND_KEY: kind,
+        HudRouteVocab.GATE_SHORT_KEY: short,
+        HudRouteVocab.GATE_LONG_KEY: long,
+    }
+
+## The CRAFT refusal, in both lengths.
+##
+## **The craft is named by the ladder's own roster** — the sim resolves every discovery's
+## `display_name`, and a client table beside it is how the knowledge screen and a gate reason come to
+## call one craft two things. A roster that does not carry the id yet says so plainly and still states
+## the PROGRESS, which is the honest half rather than a silent blank.
+##
+## ⛔ **`teaches` IS THE RUNG WHOSE `earns_knowledge` NAMES THIS CRAFT, AND IT IS LOOKED UP.** It was
+## the rung directly BENEATH the gated one for a slice, read off `requires_rung` — which produces
+## byte-identical sentences on the shipped four rungs and the wrong rung the moment a config has a
+## rung teach a craft that opens something further up. A gate reason is a REMEDY: naming the wrong
+## rung there tells the player to go and do the wrong thing, which is the one place this class of
+## inference actually costs something.
+##
+## `""` — no rung on this branch teaches it — drops the remedy clause entirely. That is a real state
+## (a route rung may be gated on a craft another branch earns), and a dangling *"Learn it from a busy
+## ."* would be worse than a head that simply states what is missing.
+static func _route_craft_refusal(unlock: String, progress: float, labels: Dictionary,
+        teaches: String) -> Dictionary:
+    var name := String(labels.get(unlock, "")).strip_edges()
+    var percent := HudFormat.progress_percent(progress)
+    var short := HudRouteVocab.GATE_SHORT_ROAD_NEEDS_CRAFT_UNNAMED if name == "" \
+        else HudRouteVocab.GATE_SHORT_ROAD_NEEDS_CRAFT_FORMAT % name
+    var long := HudRouteVocab.GATE_LONG_ROAD_KNOWLEDGE_HEAD_UNNAMED_FORMAT % percent if name == "" \
+        else HudRouteVocab.GATE_LONG_ROAD_KNOWLEDGE_HEAD_FORMAT % [name, percent]
+    if teaches.strip_edges() != "":
+        long += HudRouteVocab.GATE_LONG_ROAD_KNOWLEDGE_REMEDY_FORMAT % teaches.to_lower()
+    return _route_refusal(HudRouteVocab.GATE_KIND_CRAFT, short, long)
+
 ## **WILL THE HAY THIS CREW GATHERS ACTUALLY BE BANKED?** — `""` when it will, the reason when it will
 ## not. The plant twin in shape of the rung gates above, and a deliberate BROADENING of this file's
 ## remit: from "may this source climb its next rung" to "…and will the work it is doing actually pay
@@ -422,6 +620,12 @@ const RUNG_KNOWLEDGE_TRACKS := {
     SourceForecast.IMPROVEMENT_SOW: HudFloraVocab.KNOWLEDGE_TRACK_SEED_SELECTION,
     SourceForecast.IMPROVEMENT_TAME: HudFloraVocab.KNOWLEDGE_TRACK_HERDING,
     SourceForecast.IMPROVEMENT_CORRAL: HudFloraVocab.KNOWLEDGE_TRACK_PENNING,
+    # **THE ROUTE BRANCH'S TWO** (arc #532). They are in this table for the same reason the four above
+    # are, and for one more: `KnowledgeRoster` INVERTS it to ask "what does this knowledge unlock",
+    # which is how the knowledge screen tells a discovery nothing is using from one there is nothing
+    # to use. A route rung missing here would read as a knowledge that unlocks nothing at all.
+    SourceForecast.IMPROVEMENT_GRADE: HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING,
+    SourceForecast.IMPROVEMENT_PAVE: HudFloraVocab.KNOWLEDGE_TRACK_PAVING,
 }
 
 ## **Is this rung blocked on KNOWLEDGE specifically?** — the same `track < KNOWLEDGE_COMPLETE` test the

@@ -649,10 +649,13 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
     `ecologyPhase` for optional patch-health. This is the client's first per-tile forage-patch payload
     (previously forage was visible only via `laborAssignments`).
   - **Faction ladder knowledge** — a per-faction
-    `intensificationKnowledge:[IntensificationKnowledgeState{ faction, cultivation, herding,
-    seedSelection, penning }]` list (`snapshot_intensification_knowledge`, from the
-    `DiscoveryProgressLedger`), mirroring `sedentarization[]`. **One field per rung-transition**, so it
-    reads as the ladder itself — `wild --cultivation--> tended --seedSelection--> field` and
+    `intensificationKnowledge:[IntensificationKnowledgeState{ faction, knowledges }]` list
+    (`snapshot_intensification_knowledge`, from the `DiscoveryProgressLedger`), mirroring
+    `sedentarization[]`. **`knowledges` is one `0..1` reading per knowledge the ladder teaches**,
+    sparse in value and never in membership; the five named float fields it replaced are retired,
+    because adding a knowledge must not mean adding a schema field. What each knowledge IS — its
+    branch, its order, step-or-capability — rides the faction-independent `ladderKnowledge` roster
+    beside it. Read in rung order it still reads as the ladder itself — `wild --cultivation--> tended --seedSelection--> field` and
     `wild --herding--> pastoral --penning--> pen` — each the 0..1 progress on discoveries 2003 / 2004 /
     **2005** / **2006** (the last two appended in slice 4, **append-only**: `cultivation`/`herding`
     keep their shipped slots). A faction is emitted only once it has begun learning *something* (all

@@ -30,10 +30,11 @@ use crate::state::map::{
 use crate::state::population::{
     GenerationState, PopulationCohortState, PopulationDemographicsState,
 };
+use crate::state::routes::RouteState;
 use crate::state::subsistence::{
     CharacteristicBandState, CraftKnowledgeState, FoodModuleState, ForagePatchState,
-    HerdTelemetryState, IntensificationKnowledgeState, KitOptionState, MaterialDefState,
-    RecipeDefState, SedentarizationState,
+    HerdTelemetryState, IntensificationKnowledgeState, KitOptionState, LadderKnowledgeState,
+    MaterialDefState, RecipeDefState, RouteRungState, SedentarizationState,
 };
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
@@ -183,9 +184,16 @@ pub struct WorldSnapshot {
     /// Per-tile depletable-forage cultivation/ecology display state (Intensification Phase 1a).
     #[serde(default)]
     pub forage_patches: Vec<ForagePatchState>,
-    /// Per-faction Cultivation/Herding knowledge progress (Intensification Rung 1b/1c).
+    /// Per-faction progress on every ladder knowledge, `0..1`. Sparse in FACTIONS (a faction that
+    /// has learned nothing is absent) and never in knowledges.
     #[serde(default)]
     pub intensification_knowledge: Vec<IntensificationKnowledgeState>,
+    /// **What there IS to learn** — the ladder's knowledge roster, derived from
+    /// `intensification_ladder.json` and carrying no faction. A per-world constant, so it is
+    /// published once and diffed whole like [`Self::kits`]. It is what lets a client build its
+    /// knowledge columns without a hard-coded node list.
+    #[serde(default)]
+    pub ladder_knowledge: Vec<LadderKnowledgeState>,
     /// **The kit roster** (`equipment.json`'s `kits`) — every kit a party may be sent out with, in
     /// file order, with the tiers each grants. A per-world constant, published once so the client's
     /// picker needs no second copy of the TOE table.
@@ -224,6 +232,11 @@ pub struct WorldSnapshot {
     /// as a whole vector each frame.
     #[serde(default)]
     pub craft_knowledge: Vec<CraftKnowledgeState>,
+    /// **The route branch's rung catalog** — every rung of `intensification_ladder.json`'s route
+    /// branch, in climb order, so a client can draw a road ladder of rungs nothing has built yet.
+    /// A per-world constant, diffed whole like [`Self::ladder_knowledge`]. See [`RouteRungState`].
+    #[serde(default)]
+    pub route_rungs: Vec<RouteRungState>,
     pub moisture_raster: FloatRasterState,
     pub elevation_overlay: ElevationOverlayState,
     /// Climate-band cut points (`docs/plan_climate_authority.md` §8.3), a per-map constant.
@@ -257,6 +270,11 @@ pub struct WorldSnapshot {
     /// the viewer faction. Ordered by `(observer, subject)`, the ledger's own key order.
     #[serde(default)]
     pub connections: Vec<ConnectionState>,
+    /// **The roads in the ground the viewer can see** (`docs/plan_standing_upkeep.md` §4.13b) — one
+    /// row per road **TILE**, fog-filtered to the tiles the viewer faction has explored. Ordered by
+    /// `(y, x)`, the registry's own row-major key order.
+    #[serde(default)]
+    pub routes: Vec<RouteState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -311,6 +329,10 @@ pub struct WorldDelta {
     pub demographics: Option<Vec<PopulationDemographicsState>>,
     pub forage_patches: Option<Vec<ForagePatchState>>,
     pub intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
+    /// The ladder knowledge roster; a per-world constant, so a delta re-sends it only when the world
+    /// is rebuilt. `None` means unchanged.
+    #[serde(default)]
+    pub ladder_knowledge: Option<Vec<LadderKnowledgeState>>,
     /// The kit roster; a per-world constant, so a delta re-sends it only when the world is rebuilt.
     /// `None` means unchanged.
     #[serde(default)]
@@ -339,6 +361,10 @@ pub struct WorldDelta {
     /// world constant. `None` means unchanged.
     #[serde(default)]
     pub craft_knowledge: Option<Vec<CraftKnowledgeState>>,
+    /// The route branch's rung catalog; a per-world constant, so a delta re-sends it only when the
+    /// world is rebuilt. `None` means unchanged.
+    #[serde(default)]
+    pub route_rungs: Option<Vec<RouteRungState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
     /// Climate-band cut points; a per-map constant, so a delta re-sends it only when the map is
@@ -378,6 +404,8 @@ pub struct WorldDelta {
     /// `None` = unchanged this frame. A whole-vector diff like the other `Whole` sections; a
     /// section with no delta twin is permanently stale on a delta-fed client.
     pub connections: Option<Vec<ConnectionState>>,
+    /// `None` = unchanged this frame, on `connections`' own rules.
+    pub routes: Option<Vec<RouteState>>,
 }
 
 pub fn hash_snapshot(snapshot: &WorldSnapshot) -> u64 {

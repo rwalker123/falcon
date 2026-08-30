@@ -56,8 +56,8 @@ use sim_schema::state::governance::*;
 use sim_schema::state::map::*;
 use sim_schema::state::population::*;
 use sim_schema::state::subsistence::{
-    CharacteristicBandState, CraftKnowledgeState, MaterialDefState, RecipeDefState,
-    RecipeInputState, RecipeOutputState,
+    CharacteristicBandState, CraftKnowledgeState, LadderKnowledgeProgress, LadderKnowledgeState,
+    MaterialDefState, RecipeDefState, RecipeInputState, RecipeOutputState,
 };
 use sim_schema::world::{SnapshotHeader, WorldDelta, WorldSnapshot};
 use std::error::Error;
@@ -1235,12 +1235,50 @@ fn seed_snapshot() -> WorldSnapshot {
         // stands for here.
         patch.build_legs = rows();
     }
+    // **THE LADDER'S KNOWLEDGE ROSTER** (what there is to learn) and the per-faction PROGRESS list
+    // beside it. Both are seeded with real ids rather than defaulted rows, because the roster's
+    // whole job is to name knowledges and a column of empty strings cannot show the join working.
+    s.ladder_knowledge = ["cultivation", "herding", "roadbuilding"]
+        .iter()
+        .map(|knowledge| LadderKnowledgeState {
+            knowledge_id: (*knowledge).to_string(),
+            display_name: (*knowledge).to_string(),
+            branch: "plant".to_string(),
+            ..Default::default()
+        })
+        .collect();
     s.intensification_knowledge = rows();
+    for row in &mut s.intensification_knowledge {
+        // Index-aligned with the roster above, so the fixture encodes the shape the capture
+        // produces: sparse in VALUE, never in MEMBERSHIP.
+        row.knowledges = s
+            .ladder_knowledge
+            .iter()
+            .map(|entry| LadderKnowledgeProgress {
+                knowledge_id: entry.knowledge_id.clone(),
+                ..Default::default()
+            })
+            .collect();
+    }
+
+    // **THE ROUTE BRANCH'S RUNG CATALOG** — what a road may become, once per world. Seeded for the
+    // reason every repeated field here is: an empty vector is a field the decode guard cannot
+    // exercise, which is how an appended field reaches the client as nothing at all.
+    s.route_rungs = rows();
 
     // --- connections -----------------------------------------------------
     // The contact primitive's own section (arc #527). Seeded for the reason every repeated
     // field here is: an empty vector is a field the decode guard cannot exercise.
     s.connections = rows();
+
+    // --- routes ----------------------------------------------------------
+    // The roads in the ground (arc #532), **one row per tile**. Seeded for the same reason every
+    // repeated field here is: an empty vector is a field the decode guard cannot exercise.
+    //
+    // **There are no nested repeated fields on this row any more.** The stored `path_x`/`path_y`
+    // halves went with the path object — a road is a per-tile improvement, so the row carries its
+    // own `tile_x`/`tile_y` scalars and nothing to walk.
+    s.routes = rows();
 
     // --- knowledge -------------------------------------------------------
     s.discovered_sites = rows();

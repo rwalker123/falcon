@@ -1285,6 +1285,36 @@ table PopulationCohortState {
   materialUpkeepNeed:[MaterialPayoff];
   materialUpkeepIncome:[MaterialPayoff];
   materialStore:[MaterialPayoff];
+
+  // --- THE BAND'S ROADWORK BILL (appended, beside the two ledgers above) -------------------------
+  // WHAT THE ROADS THIS BAND KEEPS COST IT THIS TURN, in work units per turn - so the Work board can
+  // show the `roadwork` role's need the way it shows agriculture's and husbandry's.
+  //
+  // *** IT IS SUMMED OVER THE ROADS THIS BAND IS THE KEEPER OF, AND POSITION HAS NOTHING TO DO WITH
+  // IT. *** `settle_route_keeping` walks `RoadRegistry::kept_by(band)` - the band recorded on each
+  // road's own `Road::keeper` by the `grade` / `pave` that took it on. A band that walks to the far
+  // side of the map still owes every tile it keeps, and a band standing on somebody else's road owes
+  // nothing on it. (A road is a PER-TILE improvement with ONE keeper: there is no path object to be
+  // the catchment, no radius, and no co-payment - two bands cannot share one tile's bill, which is
+  // what makes "one band keeps half the tiles between two camps and another the other half" the
+  // representable state.)
+  //
+  // *** THE SIM SUMS IT, AND A CLIENT MUST NOT. *** The identical rule `fodderNeed` above is minted
+  // under, and load-bearing for the identical reason: ROUTE ROWS ARE FOG-FILTERED, so a road out of
+  // sight would silently drop out of any client-side total while the band certainly still owes its
+  // keeping.
+  //
+  // roadworkDemand    = the summed STAMPED bill of those roads (`routes::road_keeping_basis`, via
+  //                     `labor::route_keeping_claims`), whether or not the band can pay it -
+  //                     `fodderNeed`'s own rule. It is the alarm.
+  // roadworkSupplied  = what this band's `roadwork` keepers paid into those roads this turn. One
+  //                     keeper per road, so this is the whole payment those roads received rather
+  //                     than a share of it.
+  // roadworkShortfall = demand - supplied, and that identity holds verbatim here as it does on the
+  //                     RouteState row.
+  roadworkDemand:float = 0;
+  roadworkSupplied:float = 0;
+  roadworkShortfall:float = 0;
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of
@@ -3260,34 +3290,62 @@ table FloraShareInfo {
   sowWorkCost:float = 0;
 }
 
+// ONE LADDER KNOWLEDGE THE CONFIG DECLARES — the ROSTER half, once per world, faction-independent.
+//
+// ⛔ THIS IS WHAT LETS A CLIENT'S KNOWLEDGE SCREEN BUILD ITSELF. Everything a column needs is
+// DERIVED from `intensification_ladder.json` and nothing here is separately authored: the branch and
+// the order come off the rung that TEACHES the knowledge (`earns_knowledge`), and `isStep` is simply
+// whether any rung's `unlock_knowledge` names it. So a knowledge added to the ladder appears on the
+// client with no client edit and no schema edit — which is exactly what a field per knowledge, the
+// shape this replaced, could never do.
+//
+// It is faction-independent BY DESIGN, and the progress half below is not: a faction that has
+// learned nothing has no ledger row at all, and a roster carried on that row would leave a new
+// player's screen empty — with nothing on it to say there is anything to learn.
+table LadderKnowledgeState {
+  // The ladder config's own id: "cultivation", "roadbuilding", ... The join key with the progress row.
+  knowledgeId:string;
+  // "Seed Selection" — the id, underscores to spaces and each word capitalized, resolved sim-side so
+  // no client authors a second spelling of it.
+  displayName:string;
+  // The branch of the rung that TEACHES it: "plant" | "animal" | "route". WHICH COLUMN.
+  branch:string;
+  // ...and that rung's `order`. THE POSITION WITHIN THE COLUMN, bottom step first.
+  order:uint = 0;
+  // Does any rung's `unlock_knowledge` name this? A STEP in the chain when it does; a CAPABILITY
+  // hanging off the bottom of its column when it does not. `foddering` is the shipped `false`: it
+  // changes what a pen may draw on rather than opening a further rung. DERIVED, never declared.
+  isStep:bool = false;
+}
+
+// One faction's progress on ONE ladder knowledge, 0..1 (1.0 = known). The row's join key is
+// `knowledgeId`, which names a `LadderKnowledgeState` above.
+table LadderKnowledgeProgress {
+  knowledgeId:string;
+  progress:float = 0;
+}
+
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
 // knowledges, 0..1 (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client
-// renders learning/known meters. Only factions that have begun learning SOME ladder appear here.
+// renders learning/known meters. Only factions that have begun learning SOME ladder appear here —
+// the DECLARATION of what there is to learn rides `SubsistenceSection.ladderKnowledge` instead,
+// precisely so a faction absent from this list still has a screen to look at.
 //
-// One field per rung-transition — "practice rung N unlocks rung N+1"
-// (docs/plan_intensification_ladder.md §4), so these read as the ladder itself:
-//   plant:  wild --cultivation--> tended --seedSelection--> field (the Sow rung, a later slice)
-//   animal: wild --herding------> pastoral --penning------> pen
-// APPEND-ONLY: cultivation/herding keep their shipped slots; seedSelection/penning are appended
-// strictly after (slice 4's two new discoveries, ids 2005/2006), and foddering after those (2007 —
-// a capability, not a rung transition; see its comment below).
+// ⛔ THE FIVE NAMED FLOATS ARE RETIRED AND THEIR IDS ARE HELD, NEVER REUSED. Adding a knowledge used
+// to mean adding a schema field, which is why the route branch's two lessons had nowhere to appear;
+// `knowledges` below is the list that replaced them and it is the ONLY authority on a faction's
+// ladder progress.
 table IntensificationKnowledgeState {
   faction:uint;
-  // Gates `cultivate`. Earned by working a WILD patch under a stewardship policy.
-  cultivation:float = 0;
-  // Gates `tame` (and `tame` ONLY, since the §4.3 reshuffle). Earned by working a WILD herd.
-  herding:float = 0;
-  // Gates `sow` (slice 5 — earned now, spent later). Earned by working a TENDED patch.
-  seedSelection:float = 0;
-  // Gates `corral` + `extend_pen` — the §4.3 reshuffle took this off `herding`. Earned by working a
-  // PASTORAL (tamed) herd.
-  penning:float = 0;
-  // NOT a rung-transition gate like the four above — no rung waits on it. It is the capability the
-  // PEN rung teaches (`intensification_ladder.json`, corral's `earns_knowledge: "foddering"`), and
-  // it gates every fodder seam a faction has: the pen's hay DRAW, the pen's `K` fodder term, and the
-  // WILD forage patch's fodder credit. So a wild hay patch can publish a positive
-  // `ForagePatchState.fodderPerBiomass` — what the LAND pays — that this faction cannot bank.
-  foddering:float = 0;
+  cultivation:float = 0 (deprecated);
+  herding:float = 0 (deprecated);
+  seedSelection:float = 0 (deprecated);
+  penning:float = 0 (deprecated);
+  foddering:float = 0 (deprecated);
+  // EVERY knowledge the ladder declares, in the roster's own order. Sparse in VALUE, never in
+  // MEMBERSHIP: a knowledge the faction has not begun reads 0 rather than being absent, so a client
+  // never has to tell "not begun" from "not published".
+  knowledges:[LadderKnowledgeProgress];
 }
 
 // One discovered Wondrous Site in a faction's registry. `category`/`display_name`/`glyph` are
@@ -5116,11 +5174,89 @@ table CraftKnowledgeState {
   completionThreshold:float;  // what `progress` has to reach; a scale, so the client draws no bar of its own
 }
 
+// ONE RUNG OF THE ROUTE BRANCH, AS THE CONFIG DECLARES IT — the branch's CATALOG, once per world
+// and carrying no tile.
+//
+// ⛔ THIS IS WHAT LETS A CLIENT DRAW A ROAD LADDER OF RUNGS NOTHING HAS BUILT YET. `RouteState`
+// answers "where does THIS tile stand and what is that worth"; it says nothing about the rungs
+// above it, so no readout could state what a paved road would cost or what it would buy until the
+// tile already held one. Every field below is DERIVED from `intensification_ladder.json` through
+// the sim's own rung types and nothing here is separately authored, so a rung added to that config
+// appears in the ladder with no client edit and no schema edit.
+//
+// IT RIDES THE SECTION AND NOT THE TILE ROW. These are properties of the BRANCH, identical for
+// every road in the world — carried on `RouteState` they would repeat the same four rows on every
+// road tile.
+//
+// ROUTE BRANCH ONLY, deliberately: a generic `LadderRungState` filled for one branch is a promise
+// the code does not keep. The plant and animal branches publishing the same is their own change.
+table RouteRungState {
+  // The rung's name on the wire, "<branch>:<id>" — "route:dirt_road". The same spelling
+  // `RouteState.rung` carries, so a tile's standing joins to its row here.
+  rungKey:string;
+  // The config record's own `order`: 1 at the branch's floor, climbing. THE ROW ORDER IS THIS
+  // ORDER — the catalog is published bottom rung first.
+  order:uint;
+  // "Dirt Road" — the rung id with underscores turned to spaces and each word capitalized,
+  // resolved sim-side so no client authors a second spelling of it.
+  displayName:string;
+  // The TILE COMMAND that raises this rung ("grade" / "pave"), and "" where the rung declares none.
+  // An empty verb is the free floor: a path and a trail are formed by USE, so there is no command
+  // to name the job and no crew to staff it.
+  verb:string;
+  // The ladder knowledge that gates this rung ("roadbuilding"), joining to
+  // `LadderKnowledgeState.knowledgeId` for the faction's own progress; "" where the rung waits on
+  // nothing.
+  unlockKnowledge:string;
+  // The wire key of the rung DIRECTLY BENEATH this one, "" at the branch's floor — the chain, so a
+  // client renders the climb without holding a second copy of the order.
+  requiresRung:string;
+  // What reaching this rung costs, in work units, BEFORE the tile's own remoteness quote
+  // (`RouteState.keeperRemoteness` is that multiplier). 0 where the rung declares no build at all,
+  // which on the shipped ladder is the floor and nothing else. Inside the free floor the figure is
+  // a duration in TRAFFIC rather than a crew's job — traffic is the crew there, and it banks no
+  // further than the top of that floor.
+  workCost:float = 0;
+  // The standing bill a road at this rung owes its keeper, in work units per turn, BEFORE the
+  // tile's own load scales it (`RouteState.upkeepDemand` is the resolved reading). 0 where the rung
+  // declares no upkeep — the free floor, which costs nothing to hold and can therefore never be
+  // short.
+  upkeepWorkPerTurn:float = 0;
+  // The fraction of the base pooling friction a haul over a tile at this rung pays; 1.0 = no help.
+  // `RouteState.frictionMultiplier` is the same figure for the rung a tile HOLDS.
+  frictionMultiplier:float = 1;
+  // How far a tile at this rung holds a pooling link open, in tiles. 0 = holds none open beyond the
+  // free reach.
+  holdsLinkToTiles:uint = 0;
+  // Does a road at this rung light its own tile? Answered from whether the rung declares an
+  // UPKEEP, because paying the bill IS the presence — which is also why the free floor lights
+  // nothing however worn it is. A road at a rung that grants sight still goes dark while its
+  // keeping is unmet; `RouteState.grantsSight` is that resolved per-tile answer.
+  grantsSight:bool = false;
+  // --- WHAT STANDING HERE TEACHES (appended last) ------------------------------------------------
+  // The ladder knowledge this rung EARNS by being held — "roadbuilding" on the trail — and "" where
+  // the rung teaches nothing (the floor, and the top of the branch, which has nothing above it to
+  // open).
+  //
+  // ⛔ IT IS THE REMEDY, AND IT CANNOT BE INFERRED FROM `requiresRung`. A gate says "you do not know
+  // `paving` yet"; what a player does about it is stand on the rung that TEACHES paving, which is a
+  // different fact from the rung directly beneath. The two coincide on the shipped four rungs and
+  // the config is free to break that pairing — an inference would then name the wrong rung in the
+  // one place it matters, telling the player to go and do the wrong thing.
+  //
+  // Joins to `LadderKnowledgeState.knowledgeId`, the same vocabulary `unlockKnowledge` above uses.
+  earnsKnowledge:string;
+}
+
 table SubsistenceSection {
   herds:[HerdTelemetryState];
   foragePatches:[ForagePatchState];
   sedentarization:[SedentarizationState];
   intensificationKnowledge:[IntensificationKnowledgeState];
+  // --- THE LADDER KNOWLEDGE ROSTER, once per world (appended last) -------------------------------
+  // What there IS to learn, derived from `intensification_ladder.json` — see `LadderKnowledgeState`.
+  // A per-world constant, so it is diffed whole exactly like `kits`.
+  ladderKnowledge:[LadderKnowledgeState];
   foodModules:[FoodModuleState];
   // --- THE KIT ROSTER, once per world (appended last) -------------------------------------------
   // Every kit a party may be sent out with, in `equipment.json` order — the picker's list, with the
@@ -5167,6 +5303,12 @@ table SubsistenceSection {
   // Per faction per craft. Not per-world-constant like the two above (a craft is learned), so it is
   // diffed as a whole vector each frame — three crafts times the factions in the ledger.
   craftKnowledge:[CraftKnowledgeState];
+  // --- THE ROUTE BRANCH'S RUNG CATALOG, once per world (appended last) ---------------------------
+  // Every rung of `intensification_ladder.json`'s ROUTE branch, in climb order — see
+  // `RouteRungState`. A per-world constant, so it is diffed whole exactly like `kits`, and it rides
+  // beside `ladderKnowledge` because the two are the same kind of thing: the DECLARATION of what
+  // the ladder holds, carrying no faction and no tile.
+  routeRungs:[RouteRungState];
 }
 
 table KnowledgeSection {
@@ -5333,6 +5475,121 @@ table ConnectionSection {
   connections:[ConnectionState];
 }
 
+// --- Roads: the roads in the ground (arc #532, docs/plan_standing_upkeep.md 4.13b) --------------
+// ONE ROW PER TILE. A road is a PER-TILE IMPROVEMENT, structurally identical to a forage patch: each
+// tile carries its own rung, its own meter, its own keeper and its own decay. It is NOT an edge
+// between two bands and it does NOT follow a camp.
+//
+// *** THERE IS NO STORED PATH ON THIS ROW, and that is the model. *** A path object cannot be
+// half-maintained - there was no way to say "these people look after this end and those people look
+// after that end", which is the ordinary case the moment two camps sit at either end of a long road.
+// A link already knows its two endpoints, so the tiles between them are computable; the link is the
+// object and the roads are the ground it runs over.
+//
+// Published for roads the VIEWING FACTION CAN SEE: a road whose tile the faction has explored
+// (Discovered or Active). `Discovered` and not `Active` is right here where it would be wrong for a
+// herd: a road does not wander off, so remembering one is remembering something true.
+table RouteState {
+  // THE TILE THIS ROAD IS ON - the row's identity, and what a client joins and diffs rows on. It
+  // replaced the retired RouteId: with one record per tile there is nothing left for a separate id
+  // to name.
+  tileX:uint;
+  tileY:uint;
+  // The rung this road HOLDS, as "<branch>:<id>" via RungKey::wire_key - "route:path",
+  // "route:trail", "route:dirt_road", "route:paved_road".
+  //
+  // *** READ THE RUNG, NEVER INFER ONE FROM A FLOAT. *** `buildFraction` below is the meter on the
+  // rung being RAISED, which is a different rung; a client that thresholded the float would call a
+  // fully-worn trail a dirt road on the turn its first traffic banked. This string is the bool.
+  rung:string;
+  // The meter on the rung this road is actually raising, 0..1 - the route twin of
+  // `cultivationProgress` / `corralProgress`, off the same intensification::rung_work_done /
+  // build_fraction seam both food webs publish theirs from.
+  //
+  // *** NEVER DERIVED BY SUBTRACTION. *** `fl(base + width) - base` is not `width` when that
+  // addition rounds, which is the defect that published a completed Field as "Field 99%". A road
+  // that has just completed a rung reads EXACTLY 1.0 here, and so does one at the top of the ladder
+  // (there is nothing left to raise - draw a full bar, not an empty one).
+  buildFraction:float = 0;
+  // WHOSE JOB THIS TILE IS.
+  //
+  // hasKeeper      = is this tile anybody's job at all? FALSE ACROSS THE WHOLE FREE FLOOR - a game
+  //                  trail and a trail are formed by use and nobody keeps them, which is the
+  //                  commonest road in the game rather than an edge case. READ THIS FIRST:
+  //                  `keeperBandId` 0 is a real band id, so the bool is the field that answers.
+  // keeperBandId   = the BandId of the band that graded or paved this tile. ONE KEEPER PER TILE,
+  //                  NEVER A SHARE - which is what makes "one band keeps half the tiles between two
+  //                  camps and another the other half" the representable state, and co-payment the
+  //                  unrepresentable one. Re-issuing `grade`/`pave` on a road nobody keeps is how
+  //                  another band adopts it; there is deliberately no separate adoption verb.
+  hasKeeper:bool = false;
+  keeperBandId:ulong = 0;
+  // WHAT DISTANCE DID TO THIS ROAD'S PRICE, as a multiple of the rung's own - quoted when the keeper
+  // took the tile on and held for the whole job (ForagePatch::field_cost_multiplier's discipline).
+  // 1.0 inside the base range and on every road nobody keeps; higher beyond it.
+  //
+  // *** DISTANCE IS A COST, NEVER A WALL. *** No road is refused for being far away - there is no
+  // work-range rule on this branch at all - and this multiplier is the whole of what bounds a distant
+  // road: it is dearer to hold AND slower to build. Published because it is the only way a client can
+  // explain a bill larger than the rung says.
+  keeperRemoteness:float = 1;
+  // THE STANDING BILL, in work units per turn - the road twin of the patch and herd rows' identical
+  // four fields.
+  //
+  // *** demand - supplied == shortfall HOLDS VERBATIM ON THE WIRE. *** All three read the STAMPED
+  // basis (`routes::road_keeping_basis`), never the live interpolated demand.
+  //
+  // upkeepDemand         = what this road was billed this turn. 0 for a road that owes nothing,
+  //                        which is the whole free floor - nobody maintains a trail, and that is the
+  //                        whole of what makes the floor free.
+  // upkeepSupplied       = what its keeper actually paid, out of that band's `roadwork` pool.
+  // upkeepShortfall      = what the bill left unpaid. A road nobody keeps owes its bill to nobody,
+  //                        so it is wholly short and decays.
+  // upkeepWorkersNeeded  = whole `roadwork` keepers the bill wants, ceil(demand / per-worker
+  //                        output) - the readout that makes a standing cost legible ("wants 2, you
+  //                        have 0"). 0 for a road that owes nothing.
+  upkeepDemand:float = 0;
+  upkeepSupplied:float = 0;
+  upkeepShortfall:float = 0;
+  upkeepWorkersNeeded:uint = 0;
+  // THE NEGLECT COUNTDOWN, not the counter. `neglectGraceRemaining` is turns of shortfall left
+  // before the rung starts to bleed: 0 means IT IS REVERTING NOW, and a road whose bill is met reads
+  // its rung's full grace + 1 ("walk away and you have this long").
+  //
+  // `hasNeglectGrace = false` means THERE IS NOTHING AT RISK HERE - a road on the free floor, which
+  // declares no upkeep and so has no meter to lose. Read the bool first; `neglectGraceRemaining`
+  // reuses the "biting now" 0 rather than inventing a sentinel.
+  hasNeglectGrace:bool = false;
+  neglectGraceRemaining:uint = 0;
+  // *** IS THIS ROAD LIGHTING ITS OWN TILE RIGHT NOW? *** The RESOLVED answer, because a client
+  // cannot re-derive "is the bill met" - that is a comparison against the stamped basis with the
+  // sim's own epsilon. True iff the road stands at a BUILT rung and its keeping was met, which is
+  // why a road in shortfall GOES DARK BEFORE IT DECAYS: the honest early warning that it is being
+  // lost. The fog it lifts is its KEEPER's - paying the upkeep IS the presence.
+  grantsSight:bool = false;
+  // WHAT THIS RUNG IS BUYING, off the tile's own stamped payoff.
+  //
+  // frictionMultiplier = the fraction of the base pooling friction a haul over THIS TILE pays.
+  //                      1.0 = no help (bare ground and the path). A journey's saving is the
+  //                      MEAN of the tiles it crosses, so a partly-roaded run pays partly - which is
+  //                      the per-tile model's own answer and what the retired "best road binding the
+  //                      network" rule could not express. Read by `balance_supply_networks`.
+  // holdsLinkToTiles   = how far this tile's rung holds a pooling link open, in tiles. A journey's
+  //                      reach is the WEAKEST tile it crosses: one gap breaks a link goods must get
+  //                      THROUGH, which is why this is a minimum where the friction is a mean.
+  //
+  // *** holdsLinkToTiles IS AUTHORED AND NOT YET CONSUMED BY THE SIM. *** Nothing in
+  // `balance_supply_networks` reads it yet (that is slice 13b); it is published now because it is
+  // half of the client's "what this road buys" line, and an honest "authored, not yet consumed"
+  // beats a field a client has to guess at.
+  frictionMultiplier:float = 1;
+  holdsLinkToTiles:uint = 0;
+}
+
+table RouteSection {
+  routes:[RouteState];
+}
+
 table WorldSnapshot {
   header:SnapshotHeader;
   capabilityFlags:uint;
@@ -5347,6 +5604,8 @@ table WorldSnapshot {
   campaign:CampaignSection;
   // Appended LAST (append-only schema discipline).
   connections:ConnectionSection;
+  // The roads in the ground, appended after connections and on the same rules.
+  routes:RouteSection;
 }
 
 table WorldDelta {
@@ -5365,6 +5624,7 @@ table WorldDelta {
   // a delta-fed client — the defect `campaign_profiles` actually was, and the one
   // `core_sim/tests/delta_streaming.rs` exists to catch.
   connections:ConnectionSection;
+  routes:RouteSection;
 }
 
 union SnapshotPayload {

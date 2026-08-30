@@ -63,6 +63,7 @@ mod power;
 mod provinces;
 mod recipes_config;
 mod resources;
+pub mod routes;
 mod scalar;
 mod sedentarization;
 mod sedentarization_config;
@@ -283,6 +284,15 @@ pub use recipes_config::{
     RecipeOutput, RecipesConfig, RecipesConfigError, RecipesConfigHandle, RecipesConfigMetadata,
     BUILTIN_RECIPES_CONFIG,
 };
+pub use routes::{
+    advance_roads, path_friction_multiplier, path_reach_tiles, remoteness_multiplier,
+    road_at_risk_rung, road_build_fraction, road_keeping_basis, road_keeping_range, road_measure,
+    road_neglect_grace_remaining, road_rung_span, road_upkeep_demand, road_upkeep_measure,
+    road_upkeep_workers_needed, route_rungs_in_climb_order, rung_grants_sight, trace_path,
+    traffic_ceiling, Road, RoadKeeper, RoadRegistry, RouteTrafficLog, FIRST_BUILT_RUNG,
+    FREE_FLOOR_TOP_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID,
+    ROADBUILDING_DISCOVERY_ID,
+};
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
 };
@@ -372,10 +382,10 @@ pub use systems::{
     advance_predator_raids, advance_tick, bench_material_rate, bench_tiers, denial_forecast,
     expedition_returned_event, expedition_take_provisions, fold_party_into_band,
     hunt_per_worker_provisions, hunt_report_event, hunt_take, hunt_trip_forecast,
-    output_multiplier, party_owes_a_report, simulate_power, source_has_a_meter_at_risk,
-    split_band_from_parent, split_refusals, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome,
-    HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams, SplitBand,
-    SplitRefusal, SplitRefusals, TradeDiffusionEvent,
+    output_multiplier, party_owes_a_report, settle_route_keeping, simulate_power,
+    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
+    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
+    PowerSimParams, SplitBand, SplitRefusal, SplitRefusals, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -696,6 +706,11 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility::VisibilityLedger::default())
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(connections::ConnectionLedger::default())
+        // **The roads and this turn's traffic** (`docs/plan_standing_upkeep.md` §4.13). The registry
+        // is world state; the traffic log is a within-turn hand-off from `balance_supply_networks`,
+        // which knows which pairs pooled, to `routes::advance_roads`, which spends them.
+        .insert_resource(routes::RoadRegistry::default())
+        .insert_resource(routes::RouteTrafficLog::default())
         .insert_resource(connections::ContactsThisTurn::default())
         .insert_resource(visibility::ViewerFaction::default())
         .insert_resource(turn_pipeline_handle)
@@ -877,6 +892,12 @@ pub fn build_headless_app() -> App {
                     .before(advance_husbandry),
                 advance_graze_regrowth.after(advance_herd_grazing),
                 supply::balance_supply_networks.after(advance_herds),
+                // ⛔ **AFTER THE POOLING, ALWAYS.** This spends the links that pass recorded, so it
+                // has to see them — and the ordering is what makes the payoff a *previous*-turn
+                // reading, the same one-turn lag `balance_supply_networks` already accepts against
+                // the connection ledger. Reversing it would let this turn's pooling read a road
+                // this turn's pooling created.
+                routes::advance_roads.after(supply::balance_supply_networks),
             )
                 .in_set(TurnStage::Logistics)
                 .run_if(capability_enabled(
@@ -962,6 +983,18 @@ pub fn build_headless_app() -> App {
                 // Pure telemetry: writes `TradeTelemetry`, which only `simulate_population`
                 // touches. It rides alongside the whole movement/labor run instead of tailing it.
                 systems::publish_trade_telemetry.after(systems::simulate_population),
+                // **The third keeping pool** (`.claude/rules/core_sim/routes.md`). Both edges are
+                // declared rather than left to the ambiguity gate:
+                //  - `.after(advance_labor_allocation)` — the `roadwork` head count it divides has
+                //    to be the one the shedding order left, not the one the player typed.
+                //  - `.before(advance_crafting)` — it charges this turn's keeping wear on the
+                //    band's gear, exactly as the other two pools do from inside the labour pass, so
+                //    it lands before the bench that may replace what it just wore. Being ahead of
+                //    the bench also puts it ahead of the raids and the migration that follow, which
+                //    is what keeps it reading the band where the labour pass left it.
+                systems::settle_route_keeping
+                    .after(systems::advance_labor_allocation)
+                    .before(systems::advance_crafting),
             )
                 .in_set(TurnStage::Population)
                 .run_if(capability_enabled(
@@ -982,6 +1015,11 @@ pub fn build_headless_app() -> App {
                     // `ContactsThisTurn` (which `calculate_visibility` and the expedition flush
                     // both fill) and clears it, so the set is rebuilt from scratch every turn.
                     connections::advance_connections,
+                    // ⛔ **A KEPT ROAD IS ITS OWN VISIBILITY SOURCE, beside a band's presence and
+                    // never through the connection grant** — see `light_kept_routes`. It runs after
+                    // the sweep (the fog it writes into is the sweep's) and before the decay, so a
+                    // road's tiles are `Active` for the same turn a band's own camp is.
+                    visibility_systems::light_kept_routes,
                     visibility_systems::apply_visibility_decay,
                     sites::discover_sites,
                 )

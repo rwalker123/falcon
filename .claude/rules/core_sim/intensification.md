@@ -1111,20 +1111,29 @@ worked; a second axis would ask the player to state the same thing twice.
 
 #### MAINTENANCE IS A BAND-LEVEL POOL, not a crew on the tile
 
-**Two standing roles, one per web** — `LaborTarget::Agriculture` keeps every tended patch and Field
-the band works, `LaborTarget::Husbandry` every pastoral herd and pen. Staffed through
-`assign_labor <faction> <band> agriculture|husbandry <workers>` like Scout and Warrior, published as
-ordinary rows of `laborAssignments` with those `kind`s, shed by `normalize` and checkpointed like any
-other row (§2.5).
+**Three standing roles, one per branch** — `LaborTarget::Agriculture` keeps every tended patch and
+Field the band works, `LaborTarget::Husbandry` every pastoral herd and pen, and
+`LaborTarget::Roadwork` every road the band is standing on. Staffed through
+`assign_labor <faction> <band> agriculture|husbandry|roadwork <workers>` like Scout and Warrior,
+published as ordinary rows of `laborAssignments` with those `kind`s, shed by `normalize` and
+checkpointed like any other row (§2.5).
+
+> **The route pool reuses this whole seam and adds nothing to it** — the same `keeping_rates` →
+> `KeepingRate::worker_need` → `distribute_upkeep_pool` chain, under the same `upkeep_fund_mode`.
+> Where it differs is that a road is **not a source row**: it is owned by nobody, so what the pool
+> funds is resolved from the ground the band is standing on rather than from `assignments`, in its
+> own system (`systems::settle_route_keeping`) rather than inside `advance_labor_allocation`. See
+> `.claude/rules/core_sim/routes.md` → "The keeping".
 
 - **WHY IT LEFT THE TILE: an indivisible supplier meeting a per-source demand WASTES what it does not
   spend.** A patch asking for `2.0` work staffed by three hands throws one away, once per source, and
   the waste grows as gear makes a hand worth more. **A pool has no leftover by construction** — every
   unit either meets a demand or is still in the pool
   (`intensification::tests::a_short_pool_is_spent_whole_under_both_modes`).
-- **One role per WEB because the two webs are already separate ladders** — this is their existing
-  split, not a new axis. (`RungKey::upkeep_role`, which read it off `RungKey::branch`, retired with
-  the completion hand-off that was its only caller.)
+- **One role per BRANCH because the branches are already separate ladders** — this is their existing
+  split, not a new axis, which is why the route branch's arrival added a role rather than an axis.
+  (`RungKey::upkeep_role`, which read it off `RungKey::branch`, retired with the completion hand-off
+  that was its only caller.)
 - **The band's demand is the SUM** over everything it holds on that web, and **every meter carrying
   work draws, at any fullness** (`systems::labor::maintenance_shares`, §4.6a). A source claims a share
   through **`forage::patch_claims_keeping`** / **`fauna::herd_claims_keeping`** — one function per web,
@@ -1235,6 +1244,12 @@ other row (§2.5).
   - **HOLDS, not harvests.** A row's eligibility is the *ground's* answer and never its take crew.
     `maintenance_shares` used to skip rows at `workers == 0`, which made a finished improvement's
     keeping depend on somebody still gathering it — see "A SOURCE ROW IS THE BAND'S HOLDING" above.
+- **THE SHED TAKES THEM IN A STATED ORDER — Agriculture, Husbandry, Roadwork** — at both step 3 (a
+  keeper above the demand) and step 8 (one below it). **Roadwork last, on recoverability**: a road
+  carries the longest graces on the ladder and a lost one is re-earned by traffic alone, where a
+  feral patch wants a `Cultivate` and a shed flock is gone. Each pool's `ShedFacts` surplus is
+  decremented **by name** as the walk spends it; the wildcard that used to catch the second role
+  underflowed the moment a third one existed.
 - **THE SHORTFALL SPLIT IS A PER-BAND PLAYER OPTION** — `LaborAllocation::upkeep_fund_mode`
   (`intensification::UpkeepFundMode`), set by `upkeep_mode <faction> <band> spread|priority` (proto
   field **56**, `UpkeepModeCommand`, reusing the retired `MaintainCommand`'s slot):

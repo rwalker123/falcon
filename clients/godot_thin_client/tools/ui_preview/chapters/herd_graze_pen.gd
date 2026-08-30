@@ -13,6 +13,7 @@ const EXPECTED_CHECKPOINTS := 78
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
+const KnowledgeFx := preload("res://tools/ui_preview/fixtures_knowledge.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
@@ -935,9 +936,7 @@ func run(harness) -> void:
 	# the aside is already stating live, and its remedy names the very hunt this sheet is composing.
 	# What DOES render is the ◎ Pastoral DONE label for the rung this herd has climbed, which is what
 	# keeps the absence specific rather than the whole control family having vanished.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": CORRAL_GATE_PENNING,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": CORRAL_GATE_PENNING}}])
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(HerdFx.corral_locked_herd_fixture())
 	h._compose_herd(HerdFx.corral_locked_herd_fixture())
@@ -973,9 +972,7 @@ func run(harness) -> void:
 
 	# State 3c-corral-ungated — the SAME herd once Penning is fully known. Nothing about the ANIMAL
 	# changed, so if the box does not go live the gate is keyed to something it should not be.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": 1.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": 1.0}}])
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(HerdFx.corral_locked_herd_fixture())
 	h._compose_herd(HerdFx.corral_locked_herd_fixture())
@@ -1142,10 +1139,7 @@ func run(harness) -> void:
 	# offer, and a Corral gated on Penning is the only shape this bridge has. It also sharpens the
 	# contrast the frame exists for: the ANIMAL is ready and the PEOPLE are not, so the two meters are
 	# unmistakably about different things.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.12,
-		"penning": TWO_METER_PENNING,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 0.12, "penning": TWO_METER_PENNING}}])
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(HerdFx.fully_tamed_herd_fixture())
 	h._compose_herd(HerdFx.fully_tamed_herd_fixture())
@@ -1174,7 +1168,7 @@ func run(harness) -> void:
 			DetailFormat.husbandry_built_label()))
 	h._assert_hud("…and no knowledge percent leaks into the drawer, where it would read as a stat of the animal",
 		not Q.has_label_containing(h._hud.occupant_detail,
-			String(FactionReadouts.KNOWLEDGE_TRACK_LABELS[HudFloraVocab.KNOWLEDGE_TRACK_PENNING])))
+			KnowledgeFx.label_for(HudFloraVocab.KNOWLEDGE_TRACK_PENNING)))
 	# **THE GATED-CORRAL BRIDGE ASSERTION IS REMOVED, NOT WEAKENED.** It read the gated Corral control's
 	# own face — "Your people know Penning 45% — ♻ hunt a tamed herd to learn it" — and the compose
 	# sheet renders no control at all for a knowledge-only gate, so its subject no longer occurs here.
@@ -1238,9 +1232,7 @@ func run(harness) -> void:
 	#
 	# **The pair is the claim**: the same herd at the same floor, composed WITH a Tame and WITHOUT one,
 	# must cap identically — a verb moves no take-side number any more.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0}}])
 	# A band with idle workers comfortably above both caps (Tame 30, Sustain 7), so the stepper is bound by
 	# USEFULNESS (the "max N useful here" note), not by the idle-labor ceiling (a different note entirely).
 	var tame_cap_band := BandFx.band_fixture()

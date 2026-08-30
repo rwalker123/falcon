@@ -12,6 +12,20 @@ class_name HudKnowledgeVocab
 ## hex asked to "climb a rung" is a metaphor the game never taught. Nothing in this file says either
 ## word, and that is a rule rather than an accident.
 ##
+## ⛔ **THE COLUMNS ARE NOT DECLARED HERE EITHER — THE WIRE'S OWN ROSTER BUILDS THEM.** Land and Herds
+## used to be hard-coded node lists (`DOMAIN_NODES: ["cultivation", "seed_selection"]`), and the
+## reason was that their WIRE was hard-coded too: the ladder's knowledges rode as named float fields,
+## so adding one meant adding a schema field. That is why the route branch's Roadbuilding and Paving
+## had nowhere to appear and the header went on saying *"All 8"*. The sim publishes a
+## `ladder_knowledge` roster now — one row per knowledge, carrying the branch of the rung that TEACHES
+## it, that rung's ORDER, and whether any rung's `unlock_knowledge` names it — so **a knowledge added
+## to `intensification_ladder.json` reaches this panel with no client edit at all**, exactly as a
+## fourth craft in `recipes.json` already did.
+##
+## What is left here is COPY, and only copy: the player-facing name of a BRANCH (the wire says
+## `plant`, a player reads *Land*), and the two authored note tables. A knowledge whose branch or note
+## this file has never heard of still draws — it simply has less to say.
+##
 ## **THE UNLOCK NOTES ARE NOT RE-AUTHORED HERE.** `FactionReadouts.KNOWLEDGE_UNLOCK_NOTES` is already
 ## the "what it lets you do" copy for the five ladder tracks and the panel reads it, so no two
 ## surfaces naming a discovery can describe it differently. That table outlived the one-shot unlock
@@ -31,8 +45,11 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 # one is earned by practising the one below it — and a FAN domain draws none, because a craft is
 # learned by working its material and gates recipes rather than a next step.
 
-const DOMAIN_KEY_LAND := &"land"
-const DOMAIN_KEY_HERDS := &"herds"
+## A column's key IS the wire's own branch token for a ladder domain, so nothing has to be mapped
+## back and forth; `craft` is the one that is not a ladder branch at all.
+const DOMAIN_KEY_LAND := &"plant"
+const DOMAIN_KEY_HERDS := &"animal"
+const DOMAIN_KEY_ROUTES := &"route"
 const DOMAIN_KEY_CRAFT := &"craft"
 
 const DOMAIN_SHAPE_LADDER := "ladder"
@@ -44,31 +61,32 @@ const DOMAIN_LABEL := "label"
 const DOMAIN_SHAPE := "shape"
 const DOMAIN_NODES := "nodes"
 
-## **THE TWO LADDER DOMAINS AND THE TRACKS EACH OWNS, IN CLIMB ORDER.** The order is the ladder's own
-## — bottom step first — because each track is earned by practising the step below it, so a column
-## read top-to-bottom reads as a progression rather than as a list of unrelated meters. It is the
-## SAME order `FactionReadouts.KNOWLEDGE_TRACK_LABELS` declares, split into the two webs that learn
-## separately (`intensification_ladder.json` → `_comment_branches`: the plant and animal webs never
-## share a step).
-##
-## **`foddering` COMES LAST ON THE HERDS COLUMN AND IS NOT A STEP.** It is what keeping a pen taught
-## your people, not a way to reach a further pen — see `UNLOCKLESS_TRACKS`.
-const LADDER_DOMAINS: Array[Dictionary] = [
-	{DOMAIN_KEY: DOMAIN_KEY_LAND, DOMAIN_LABEL: "Land",
-		DOMAIN_NODES: ["cultivation", "seed_selection"]},
-	{DOMAIN_KEY: DOMAIN_KEY_HERDS, DOMAIN_LABEL: "Herds",
-		DOMAIN_NODES: ["herding", "penning", "foddering"]},
-]
+## ⛔ **WHAT A PLAYER CALLS EACH LADDER BRANCH.** The wire says `plant` / `animal` / `route`, which is
+## the SIM's vocabulary; these are the words on the column heads. **A LABEL TABLE AND NOTHING ELSE** —
+## it declares no nodes, so a knowledge added to a branch already listed here needs no edit, and one
+## added to a branch that is NOT listed still draws (see `domain_label`).
+const DOMAIN_BRANCH_LABELS := {
+	DOMAIN_KEY_LAND: "Land",
+	DOMAIN_KEY_HERDS: "Herds",
+	DOMAIN_KEY_ROUTES: "Roads",
+}
 
-## The CRAFT column's label. Its nodes are not declared: they come off the wire's own
+## The CRAFT column's label. Its nodes are not declared either: they come off the wire's own
 ## `craft_knowledge` vector in the order the sim published it, so a fourth craft appearing in
 ## `recipes.json` needs no client edit.
 const DOMAIN_CRAFT_LABEL := "Craft"
 
-## **ROUTES, WAR AND TELLING HAVE NO COLUMN, AND ADDING ONE IS ADDING A NODE, NOT A LABEL.** A domain
-## with no nodes is not drawn at all (`KnowledgeRoster` drops it), so a column appears the turn its
-## first branch does. An empty column is worse than a missing one: it teaches the player that a whole
-## area of the game is closed to them, when in truth it does not exist yet.
+## **A COLUMN APPEARS THE TURN ITS FIRST KNOWLEDGE DOES, AND AN EMPTY ONE IS NEVER DRAWN**
+## (`KnowledgeRoster` drops it). An empty column is worse than a missing one: it teaches the player
+## that a whole area of the game is closed to them when in truth it does not exist yet. War and
+## Telling have no ladder branch at all, so they have no column; **Roads gained one the moment the
+## route branch started teaching something**, with no edit beyond the label above.
+
+## What a branch this file has no word for reads as — the wire's own token, capitalized. It is the
+## honest answer rather than a blank head, and it is what keeps an unlisted branch DRAWABLE: the
+## panel is built from the roster, so a column must never depend on a client table having heard of it.
+static func domain_label(branch: StringName) -> String:
+	return String(DOMAIN_BRANCH_LABELS.get(branch, String(branch).capitalize()))
 
 ## The caption under a domain head, saying what SHAPE the column is and so what the reader is looking
 ## at. A few words, because a head that explained itself in a clause would read as part of the list.
@@ -266,6 +284,11 @@ const PRACTISE_NOTES := {
 	"herding": "Your people learn it by hunting wild herds — leave more standing and they learn faster.",
 	"penning": "Your people learn it by keeping herds they have already tamed.",
 	"foddering": "Your people learn it by keeping a herd in a pen.",
+	# **THE ROUTE BRANCH'S TWO.** Neither carries a "leave more standing" clause: a road is not drawn
+	# from, so there is no floor axis for practice to scale with — what teaches these is the road
+	# being USED and being HELD. `route:trail` earns `roadbuilding`, `route:dirt_road` earns `paving`.
+	"roadbuilding": "Your people learn it from a trail their own traffic keeps wearing in.",
+	"paving": "Your people learn it by keeping a dirt road in good repair.",
 }
 
 ## The craft half, which needs no table: every craft is learned the same way, and the sim charges the
@@ -276,13 +299,22 @@ const CRAFT_PRACTISE_NOTE := "Your people learn it by finishing things at the be
 ## client composes about one, and it says the thing a craft actually buys.
 const CRAFT_UNLOCK_NOTE_FORMAT := "Things made of %s can be worked at a bench."
 
-## **A KNOWLEDGE THAT UNLOCKS NOTHING TO STAND ON.** `foddering` is the only one today: it is not a
-## step with a verb — it changes what a pen may draw on, which its own unlock note says outright — so
-## there is no source that can stand on it and no honest way to call it unspent. It is EXCLUDED from
-## the unspent test rather than answered `false` by accident, and that is why this is a DECLARED set:
-## a track absent from `RungGates.RUNG_KNOWLEDGE_TRACKS` for a reason reads identically to one absent
-## because someone forgot to add it.
-const UNLOCKLESS_TRACKS := ["foddering"]
+## ⛔ **`UNLOCKLESS_TRACKS` IS RETIRED — *step or capability* FALLS OUT OF THE CONFIG NOW.**
+##
+## It was a declared set holding exactly `foddering`, and it had to be declared because the client
+## could not tell a knowledge that gates nothing from one somebody forgot to wire up. The roster's
+## `is_step` answers that from the ladder itself — *does any rung's `unlock_knowledge` name this* —
+## so `foddering` hangs off the bottom of the Herds column because the config says no rung waits on
+## it, rather than because this file says so. A knowledge that stops gating a rung stops being a step
+## with no second table to remember.
+##
+## The key the roster row carries it under.
+const ROSTER_IS_STEP := "is_step"
+## …and the rest of a roster row, which `KnowledgeRoster` reads and nothing else writes.
+const ROSTER_KNOWLEDGE_ID := "knowledge_id"
+const ROSTER_DISPLAY_NAME := "display_name"
+const ROSTER_BRANCH := "branch"
+const ROSTER_ORDER := "order"
 
 # ---- the words -------------------------------------------------------------------------------
 const PANEL_TITLE := "What your people know"

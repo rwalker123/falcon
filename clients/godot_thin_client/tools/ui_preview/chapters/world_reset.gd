@@ -34,7 +34,7 @@ func run(harness) -> void:
 	# for the eye and the two assertions carry the claim.
 	h._hud._selection._selected_tile_info.clear()
 	h._hud.clear_selection()
-	h._hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 0.55, "herding": 1.0}}])
 	h._hud._telling.reset()
 	h._hud.ingest_command_events(ForageFx.telling_fixture_events())
 	await h._settle()

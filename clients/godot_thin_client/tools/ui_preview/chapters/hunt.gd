@@ -1909,9 +1909,7 @@ func run(harness) -> void:
 	# Domestication is mid-ladder on purpose — Tame retires from the picker once the herd is fully tamed,
 	# and Corral is knowledge-gated below that, so a frame carrying BOTH rungs necessarily has one greyed.
 	# A gated rung still wears its payoff (that is the point of showing it), which this frame also proves.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0}}])
 	var payoff_boar := HerdFx.investment_pair_boar_herd()
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_band(-1)

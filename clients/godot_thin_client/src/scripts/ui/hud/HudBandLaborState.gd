@@ -399,6 +399,29 @@ func set_food_modules(modules_variant: Variant) -> void:
 			_food_module_by_tile[Vector2i(sx, sy)] = site
 	changed.emit(&"food_modules")
 
+## **THE ROADS IN THE GROUND**, as the `routes` section sent them — one row per road TILE (arc #532).
+##
+## Held whole rather than indexed, because its one reader asks a whole-list question: *"does this
+## faction keep a road standing on the rung Roadbuilding unlocked"*. `MapView` keeps its own per-tile
+## index for the map draw and the tile card, which are per-hex questions.
+##
+## ⛔ **A ROAD IS THE ONE SOURCE WITH NO LABOR ROW**, so ownership is read off the road itself
+## (`has_keeper` / `keeper_band_id`) rather than through a band's assignments the way a herd's is.
+var _roads: Array = []
+
+## Ingest the snapshot road rows. A non-Array input is ignored (the list keeps its last value),
+## matching every other catalogue setter here: a delta carries a section only when it CHANGED, so
+## absence means unchanged and never "the world has no roads".
+func set_roads(roads_variant: Variant) -> void:
+	if not (roads_variant is Array):
+		return
+	_roads = roads_variant
+	changed.emit(&"roads")
+
+## The road rows, BY REFERENCE — this model's accessor convention; every reader is read-only.
+func roads() -> Array:
+	return _roads
+
 ## Ingest the snapshot forage patches into the per-tile lookup. A non-Array input is ignored (the
 ## lookup keeps its last value), matching the old ingest.
 func set_forage_patches(patches_variant: Variant) -> void:
@@ -1040,6 +1063,30 @@ func upkeep_pool_state(band: Dictionary, kind: String) -> Dictionary:
 			source, HudComposeVocab.BARE_FORECAST_PREFIX))
 	return {"demand": demand, "supplied": supplied, "shortfall": shortfall,
 		POOL_PER_WORKER_TURN_KEY: per_worker}
+
+## **THE `roadwork` POOL'S STATE — read off the COHORT, never summed from the road rows** (arc #532).
+##
+## ⛔ **THE SIM SUMS IT AND THE CLIENT MUST NOT.** `routes` rows are fog-filtered, so a road out of
+## sight would silently drop out of a client-side total while the band certainly still owes its
+## keeping — `fodder_need`'s rule, load-bearing for the identical reason. The sim sums these three
+## over the roads under the band's OWN tile (there is no radius) precisely so no client has to.
+##
+## Three published fields and no arithmetic: `demand − supplied == shortfall` holds verbatim on the
+## wire, so the shortfall rides out as its own key rather than being re-derived by whoever reads it.
+## The demand is summed BEFORE the head-count gate sim-side, so a band with nobody on `roadwork`
+## reports the bill it is FAILING to pay rather than a reassuring zero — it is the alarm.
+##
+## **It carries no `POOL_PER_WORKER_TURN_KEY`, and it does not need one**: the two food webs project
+## their supply from the pool's own hands because `upkeep_supplied` there is a per-source share capped
+## by that source's demand. This pool's supply is the band's OWN contribution across every road it
+## stands on, and the shortfall beside it is the sim's answer to "did that cover it", so there is
+## nothing left for a projection to decide.
+func roadwork_pool_state(band: Dictionary) -> Dictionary:
+	return {
+		"demand": float(band.get("roadwork_demand", SourceForecast.NO_UPKEEP_DEMAND)),
+		"supplied": float(band.get("roadwork_supplied", SourceForecast.NO_UPKEEP_DEMAND)),
+		"shortfall": float(band.get("roadwork_shortfall", SourceForecast.NO_UPKEEP_DEMAND)),
+	}
 
 ## The key the bare per-worker work rate rides out on. **Named rather than spelled at each reader**,
 ## unlike the three figures beside it, because it is read from another script: a typo in a `get` there

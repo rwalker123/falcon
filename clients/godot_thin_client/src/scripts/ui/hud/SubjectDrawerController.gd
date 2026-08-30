@@ -60,6 +60,9 @@ var _occupant_detail: RichTextLabel = null
 var _allocation_panel: VBoxContainer = null
 var _herd_assign_controls: VBoxContainer = null
 var _forage_assign_controls: VBoxContainer = null
+# …and the LAND drawer's road action, hidden alongside `_forage_assign_controls` on every branch that
+# is not the land: a road is a property of the GROUND, so it belongs to exactly one subject.
+var _road_ladder_controls: VBoxContainer = null
 var _subject_body: VBoxContainer = null
 var _subject_scroll: ScrollContainer = null
 # The fit ceiling — read only, the room the drawer may claim in the dock beneath the card.
@@ -86,7 +89,7 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
         bandpanel: BandPanelController, banddetail: BandDetailLines, host: Node,
         tile_detail: RichTextLabel, occupant_detail: RichTextLabel, allocation_panel: VBoxContainer,
         herd_assign_controls: VBoxContainer, forage_assign_controls: VBoxContainer,
-        subject_body: VBoxContainer, subject_scroll: ScrollContainer, left_dock_scroll: ScrollContainer,
+        road_ladder_controls: VBoxContainer, subject_body: VBoxContainer, subject_scroll: ScrollContainer, left_dock_scroll: ScrollContainer,
         targeting: TargetingController) -> void:
     _selection = selection
     _band_labor = band_labor
@@ -100,6 +103,7 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
     _allocation_panel = allocation_panel
     _herd_assign_controls = herd_assign_controls
     _forage_assign_controls = forage_assign_controls
+    _road_ladder_controls = road_ladder_controls
     _subject_body = subject_body
     _subject_scroll = subject_scroll
     _left_dock_scroll = left_dock_scroll
@@ -183,6 +187,10 @@ func _render_land_drawer() -> void:
     # states a countdown on the row being billed whether or not its keeping is short).
     _tile_detail.tooltip_text = DetailFormat.block_tooltip(ctx)
     _drawercompose.build_forage_drawer_actions(_selection.tile_info())
+    # …and the ROAD action beneath it, at the bottom of the card with the other verbs. It appears
+    # exactly where the `Road` readout row above does — a tile carrying a road — so nothing shows on
+    # ground with no road; the builder decides that from the same `roads` key the rows are drawn from.
+    _drawercompose.build_road_drawer_actions(_selection.tile_info())
     if _allocation_panel != null:
         _allocation_panel.visible = false
     if _herd_assign_controls != null:
@@ -338,6 +346,37 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # never emits an empty "River:" label. Same formatter the map hover tooltip uses.
     if tile_info.has("river_edges"):
         lines.append_array(RiverEdges.summary_lines(int(tile_info["river_edges"])))
+    # THE ROADS CROSSING THIS HEX (arc #532) — **the tile card is the road's readout**, and this is
+    # where it goes for the same reason the rivers do: a road is IN THE GROUND. It is a world object
+    # belonging to no faction, that outlives every band that walks it — so it is a property of the
+    # LAND, not of an occupant, and the land drawer is the one surface in the client whose subject is
+    # a piece of ground. (It is not ownerless: exactly one band KEEPS each tile. What it has no
+    # owner in is the sense the order-path overlay does, which is coloured per faction. And it has no
+    # STAMPED PATH — that model went with the per-tile rebuild.)
+    #
+    # **ABOVE THE DISCOVERED EARLY-RETURN, WITH THE RIVERS, AND THAT MATCHES THE SIM'S OWN FOG
+    # GATE.** A road is published to a faction that has seen the TILE — `Discovered`, deliberately NOT
+    # the herd list's `Active` — because a road does not wander off, so remembering one is
+    # remembering something true. Appending below that return would have dropped the whole block from
+    # every remembered hex the sim went to the trouble of sending it for. An UNEXPLORED hex is
+    # already covered: this producer returns before here.
+    #
+    # ONE BLOCK PER ROAD — a hex may carry more than one, and each is its own investment with its own
+    # bill, so they are never summed into a hex total.
+    #
+    # ⛔ **THE KEEPER'S NAME IS RESOLVED HERE AND NOWHERE ELSE.** A road carries a `band_id`, and this
+    # client has exactly one band-naming rule (`HudBandLaborState.band_label_for_id` →
+    # `HudFormat.band_display_name`) — so the vocab composer is HANDED the label rather than
+    # inventing one from an id, and a road's keeper cannot be called something the dock does not.
+    # `""` is a band outside the player's roster, which a road really can have: the composer says
+    # *another people* rather than printing a number nobody can act on.
+    for road in Array(tile_info.get("roads", [])):
+        if road is Dictionary:
+            var keeper_label := ""
+            if _band_labor != null and HudRouteVocab.has_keeper(road):
+                keeper_label = _band_labor.band_label_for_id(
+                    HudRouteVocab.keeper_band_id_of(road))
+            lines.append_array(HudRouteVocab.road_lines(road, keeper_label, ctx))
     # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
     #
     # A REMEMBERED TILE KEEPS BOTH WEBS' CAPACITIES AND LOSES BOTH THEIR STOCKS (issue #462). The rule
@@ -620,6 +659,8 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         _tile_detail.visible = false
     if _forage_assign_controls != null:
         _forage_assign_controls.visible = false
+    if _road_ladder_controls != null:
+        _road_ladder_controls.visible = false
     # This render's tint context, constructed LOCALLY: the band line producers below fill it as they
     # emit rows, and it is handed to the formatter at the bottom. Nothing outlives this call.
     var ctx := DetailFormat.Context.new()

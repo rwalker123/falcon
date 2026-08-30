@@ -37,6 +37,9 @@ extends RefCounted
 const EXPECTED_CHECKPOINTS := 75
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
+## The ladder's KNOWLEDGE ROSTER and its progress row, in the wire's own shapes. Shared with the
+## `turn_orb` and `herd_graze_pen` chapters, which name a discovery and must call it the same thing.
+const KnowledgeFx := preload("res://tools/ui_preview/fixtures_knowledge.gd")
 ## The rung derivation, shared with `map_preview` / `band_panel_preview` / `snapshot_alias_guard`.
 const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 const NodeQuery := preload("res://tools/ui_preview/node_query.gd")
@@ -88,8 +91,11 @@ const TURN_THIRD := 42
 
 func run(harness) -> void:
 	h = harness
+	# ⛔ **THE ROSTER GOES IN FIRST, AND WITHOUT IT THERE IS NO LADDER AT ALL.** The columns are built
+	# from the wire now, so this push is what the panel is made of — not a detail of one state.
+	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
 	_assert_greyed_zero_tracks()
-	_assert_unlockless_tracks_are_declared()
+	_assert_the_roster_builds_the_columns()
 	_assert_ladder_usage()
 	_assert_craft_usage()
 	_assert_filter_counts()
@@ -110,11 +116,12 @@ func run(harness) -> void:
 ## Asked of an EMPTY tracks dict, which is what the wire really sends on turn one — the row is sparse,
 ## so the declared list is what has to be walked.
 func _assert_greyed_zero_tracks() -> void:
-	var domains := KnowledgeRoster.build_domains({})
+	# The ROSTER without a progress row — which is exactly what a faction absent from the ledger sees,
+	# and the reason the roster carries no faction of its own.
+	var domains := KnowledgeRoster.build_domains(
+		{KnowledgeRoster.MODEL_LADDER_ROSTER: KnowledgeFx.ladder_roster()})
 	var nodes := KnowledgeRoster.flatten(domains)
-	var declared := 0
-	for spec in HudKnowledgeVocab.LADDER_DOMAINS:
-		declared += (spec[HudKnowledgeVocab.DOMAIN_NODES] as Array).size()
+	var declared := KnowledgeFx.ladder_roster().size()
 	h._assert_hud("knowledge — a faction that knows NOTHING still renders every ladder track (%d of %d)"
 			% [nodes.size(), declared],
 		nodes.size() == declared)
@@ -126,8 +133,9 @@ func _assert_greyed_zero_tracks() -> void:
 			% [not_begun, nodes.size()],
 		not_begun == nodes.size() and nodes.size() > 0)
 	# **NO CRAFT COLUMN AT ALL when the wire has published no craft vector**, which is the "never draw
-	# an empty domain column" rule reaching the one domain that can actually be empty today. The two
-	# ladder columns' nodes are DECLARED, so they are never empty; the craft fan's come off the wire.
+	# an empty domain column" rule. Every column's nodes come off the wire now, so this is the general
+	# case rather than the craft fan's special one — the craft vector is simply the one this model
+	# leaves out.
 	var craft_columns := 0
 	for domain in domains:
 		if StringName(domain[HudKnowledgeVocab.DOMAIN_KEY]) == HudKnowledgeVocab.DOMAIN_KEY_CRAFT:
@@ -135,28 +143,103 @@ func _assert_greyed_zero_tracks() -> void:
 	h._assert_hud("knowledge — a domain with no nodes draws NO column (craft columns %d)" % craft_columns,
 		craft_columns == 0)
 
-## **A TRACK THAT UNLOCKS NOTHING IS DECLARED AS SUCH, never merely absent from the gate table.**
-## `KnowledgeRoster` derives `unspent_testable` by inverting `RungGates.RUNG_KNOWLEDGE_TRACKS`, so a
-## track ACCIDENTALLY missing from that table would silently become untestable and drop out of the
-## unspent count — reading exactly like `foddering`, which is missing on purpose. This is what tells
-## the two apart: the derived set and `HudKnowledgeVocab.UNLOCKLESS_TRACKS` must agree exactly.
-func _assert_unlockless_tracks_are_declared() -> void:
-	var derived: Array[String] = []
-	for spec in HudKnowledgeVocab.LADDER_DOMAINS:
-		for track_variant in spec[HudKnowledgeVocab.DOMAIN_NODES]:
-			var track := String(track_variant)
-			if KnowledgeRoster.unlock_for_track(track) == SourceForecast.IMPROVEMENT_NONE:
-				derived.append(track)
-	var declared: Array[String] = []
-	for track_variant in HudKnowledgeVocab.UNLOCKLESS_TRACKS:
-		declared.append(String(track_variant))
-	derived.sort()
-	declared.sort()
-	h._assert_hud("knowledge — the tracks that unlock nothing are exactly the DECLARED set (derived %s, declared %s)"
-			% [str(derived), str(declared)],
-		derived == declared)
-	h._assert_hud("knowledge — …and there is at least one, so the claim is not vacuous (%d)" % declared.size(),
-		declared.size() > 0)
+## ⛔ **THE PANEL BUILDS ITSELF FROM THE ROSTER — THIS IS THE CLAIM THE ARC IS ABOUT.**
+##
+## Land and Herds used to be hard-coded node lists in `HudKnowledgeVocab`, and the reason was that
+## their WIRE was hard-coded too: the ladder's knowledges rode as named float fields, so adding one
+## meant adding a schema field. That is why the route branch's two lessons had nowhere to appear and
+## the header went on saying *"All 8"*.
+##
+## Four claims, and each fails differently:
+##
+## 1. **A ROADS COLUMN EXISTS, carrying Roadbuilding and Paving** — the visible proof, because nothing
+##    in the client names either knowledge and no client edit put them there.
+## 2. **The column a knowledge lands in is the BRANCH of the rung that teaches it**, so Paving is on
+##    Roads and Penning is on Herds.
+## 3. **`foddering` is a CAPABILITY and it FALLS OUT** — no rung's `unlock_knowledge` names it, so the
+##    roster says `is_step: false` and it cannot be unspent. A client-side declared set is what this
+##    replaced, and the difference is that a knowledge which stops gating a rung now stops being a
+##    step with nothing to remember to edit.
+## 4. ⛔ **REMOVE A KNOWLEDGE FROM THE ROSTER AND THE PANEL DROPS IT, WITH NO CLIENT EDIT.** This is
+##    the falsification, run in the direction that needs no config file: if the node survives, the
+##    panel is drawing from something other than the wire.
+func _assert_the_roster_builds_the_columns() -> void:
+	var roster := KnowledgeFx.ladder_roster()
+	var domains := KnowledgeRoster.build_domains({KnowledgeRoster.MODEL_LADDER_ROSTER: roster})
+	var roads := _domain_by_key(domains, HudKnowledgeVocab.DOMAIN_KEY_ROUTES)
+	h._assert_hud("knowledge — the ROADS column exists, built from the wire's roster alone",
+		not roads.is_empty()
+			and String(roads[HudKnowledgeVocab.DOMAIN_LABEL])
+				== HudKnowledgeVocab.DOMAIN_BRANCH_LABELS[HudKnowledgeVocab.DOMAIN_KEY_ROUTES])
+	var road_keys := _node_keys(roads)
+	h._assert_hud("knowledge — …and it carries Roadbuilding then Paving, in the teaching rungs' order (%s)"
+			% str(road_keys),
+		road_keys == [KnowledgeFx.KNOWLEDGE_ROADBUILDING, KnowledgeFx.KNOWLEDGE_PAVING])
+	# …and each is NAMED by the sim's own `display_name`, never by a client table.
+	h._assert_hud("knowledge — …each named as the roster names it (`%s`)"
+			% KnowledgeFx.label_for(KnowledgeFx.KNOWLEDGE_ROADBUILDING),
+		_node_label(roads, KnowledgeFx.KNOWLEDGE_ROADBUILDING)
+			== KnowledgeFx.label_for(KnowledgeFx.KNOWLEDGE_ROADBUILDING))
+
+	# CLAIM 2 — the branch of the TEACHING rung decides the column. Asserted on a knowledge from each
+	# ladder web, so a producer that put everything in one column fails.
+	var herds := _domain_by_key(domains, HudKnowledgeVocab.DOMAIN_KEY_HERDS)
+	var land := _domain_by_key(domains, HudKnowledgeVocab.DOMAIN_KEY_LAND)
+	h._assert_hud("knowledge — a knowledge sits in the column of the branch that TEACHES it",
+		_node_keys(land).has(KnowledgeFx.KNOWLEDGE_SEED_SELECTION)
+			and _node_keys(herds).has(KnowledgeFx.KNOWLEDGE_PENNING)
+			and not _node_keys(land).has(KnowledgeFx.KNOWLEDGE_PENNING))
+
+	# CLAIM 3 — step vs capability, and it is the ROSTER's answer rather than a set in the client.
+	var fodder := _node_of(herds, KnowledgeFx.KNOWLEDGE_FODDERING)
+	var penning := _node_of(herds, KnowledgeFx.KNOWLEDGE_PENNING)
+	h._assert_hud("knowledge — `foddering` is a CAPABILITY, so `unspent` cannot be asked of it",
+		not fodder.is_empty()
+			and not bool(fodder[HudKnowledgeVocab.NODE_UNSPENT_TESTABLE]))
+	h._assert_hud("knowledge — …while a STEP beside it in the same column can be asked",
+		not penning.is_empty() and bool(penning[HudKnowledgeVocab.NODE_UNSPENT_TESTABLE]))
+	h._assert_hud("knowledge — …and the capability sorts UNDER the chain, last on its column (%s)"
+			% str(_node_keys(herds)),
+		_node_keys(herds).back() == KnowledgeFx.KNOWLEDGE_FODDERING)
+
+	# ⛔ CLAIM 4 — THE FALSIFICATION. A knowledge dropped from the roster is dropped from the panel,
+	# and nothing in the client had to change for that to be true.
+	var thinner := KnowledgeRoster.build_domains({
+		KnowledgeRoster.MODEL_LADDER_ROSTER:
+			KnowledgeFx.ladder_roster_without(KnowledgeFx.KNOWLEDGE_PAVING)})
+	var thinner_roads := _domain_by_key(thinner, HudKnowledgeVocab.DOMAIN_KEY_ROUTES)
+	h._assert_hud("knowledge — a knowledge REMOVED from the roster leaves the panel, with no client edit (%s)"
+			% str(_node_keys(thinner_roads)),
+		_node_keys(thinner_roads) == [KnowledgeFx.KNOWLEDGE_ROADBUILDING])
+	h._assert_hud("knowledge — …and the tally shrinks with it (%d → %d)"
+			% [KnowledgeRoster.flatten(domains).size(), KnowledgeRoster.flatten(thinner).size()],
+		KnowledgeRoster.flatten(thinner).size() == KnowledgeRoster.flatten(domains).size() - 1)
+
+## One domain out of a built roster, `{}` when the columns hold none of that branch.
+func _domain_by_key(domains: Array, key: StringName) -> Dictionary:
+	for domain_variant in domains:
+		var domain: Dictionary = domain_variant
+		if StringName(domain[HudKnowledgeVocab.DOMAIN_KEY]) == key:
+			return domain
+	return {}
+
+## A column's node keys, in the order the column draws them.
+func _node_keys(domain: Dictionary) -> Array[String]:
+	var keys: Array[String] = []
+	for node_variant in domain.get(HudKnowledgeVocab.DOMAIN_NODES, []):
+		keys.append(String((node_variant as Dictionary)[HudKnowledgeVocab.NODE_KEY]))
+	return keys
+
+func _node_of(domain: Dictionary, key: String) -> Dictionary:
+	for node_variant in domain.get(HudKnowledgeVocab.DOMAIN_NODES, []):
+		var node: Dictionary = node_variant
+		if String(node[HudKnowledgeVocab.NODE_KEY]) == key:
+			return node
+	return {}
+
+func _node_label(domain: Dictionary, key: String) -> String:
+	var node := _node_of(domain, key)
+	return "" if node.is_empty() else String(node[HudKnowledgeVocab.NODE_LABEL])
 
 # ---- "is a source standing on it" -------------------------------------------
 
@@ -245,9 +328,12 @@ func _assert_craft_usage() -> void:
 func _assert_filter_counts() -> void:
 	var model := _mixed_model()
 	var nodes := KnowledgeRoster.flatten(KnowledgeRoster.build_domains(model))
-	# `all` is every node: the two ladder columns' declared tracks plus the wire's craft vector.
+	# `all` is every node: **every knowledge the ROSTER carries** — which is the whole ladder, route
+	# branch included — plus the wire's craft vector. Written as a sum rather than as a literal,
+	# because the roster's length is the config's and a literal here would have to be re-typed every
+	# time the ladder grew, which is exactly the coupling this arc removed.
 	var wanted := {
-		HudKnowledgeVocab.FILTER_ALL: 8,
+		HudKnowledgeVocab.FILTER_ALL: KnowledgeFx.ladder_roster().size() + _craft_knowledge_mixed().size(),
 		HudKnowledgeVocab.FILTER_LEARNING: 3,
 		HudKnowledgeVocab.FILTER_CLOSE: 2,
 		HudKnowledgeVocab.FILTER_UNUSED: 1,
@@ -904,6 +990,7 @@ func _filter_pill(root: Node, key: String) -> Control:
 ## wrong number in it.
 func _model(tracks: Dictionary, patches: Array, herds: Array) -> Dictionary:
 	return {
+		KnowledgeRoster.MODEL_LADDER_ROSTER: KnowledgeFx.ladder_roster(),
 		KnowledgeRoster.MODEL_TRACKS: tracks,
 		KnowledgeRoster.MODEL_CRAFT_KNOWLEDGE: [],
 		KnowledgeRoster.MODEL_PATCHES: patches,
@@ -939,7 +1026,8 @@ func _mixed_model() -> Dictionary:
 	return model
 
 ## `cultivation` known WITH a tended patch under it (so in use), `herding` known with no herd at all
-## (so unspent), `seed_selection` close, `penning` barely begun, `foddering` untouched.
+## (so unspent), `seed_selection` close, `penning` barely begun. Every other track the roster carries
+## — `foddering` and the route branch's two — is untouched, which an absent key already says.
 func _tracks_mixed() -> Dictionary:
 	return {
 		"cultivation": PROGRESS_KNOWN,
@@ -949,18 +1037,12 @@ func _tracks_mixed() -> Dictionary:
 	}
 
 func _tracks_all_known() -> Dictionary:
-	var tracks := {}
-	for track in FactionReadouts.KNOWLEDGE_TRACK_LABELS:
-		tracks[track] = PROGRESS_KNOWN
-	return tracks
+	return KnowledgeFx.tracks_all_at(PROGRESS_KNOWN)
 
 ## The wire's shape for the intensification vector — a per-faction row, which is what
 ## `FactionReadouts` filters to the player faction.
 func _wire_tracks(tracks: Dictionary) -> Dictionary:
-	var row := {"faction": HudConst.PLAYER_FACTION_ID}
-	for track in tracks:
-		row[track] = tracks[track]
-	return row
+	return KnowledgeFx.progress_row(HudConst.PLAYER_FACTION_ID, tracks)
 
 ## One craft row, in the wire's own shape. `completion_threshold` rides because the client draws no
 ## scale of its own — a fixture that omitted it would put every craft meter at zero.

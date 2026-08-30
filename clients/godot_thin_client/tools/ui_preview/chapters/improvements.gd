@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 204
+const EXPECTED_CHECKPOINTS := 210
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -505,6 +505,22 @@ const BLOCKED_MATERIAL_PILE := 40.0
 ## so no client has to subtract.
 const HOVER_MATERIAL_DEMAND := 2.0
 const HOVER_MATERIAL_SUPPLIED := 1.2
+
+## **THE GOOD A PLANT RUNG IS AUTHORED TO EAT** (`_a_plant_rungs_material_price_is_stated`). The same
+## `stone` the block above spends, because it is the good the route branch puts on the plant ladder
+## next — an authored fixture staging a state the shipped config will reach, rather than one invented
+## to exercise a code path.
+const PLANT_HOLD_MATERIAL := BLOCKED_MATERIAL
+
+## **FOUR FIGURES, ALL FOUR DIFFERENT, AND THE DIFFERENCE IS THE CLAIM.** Each rung's standing price
+## is quoted from its OWN per-rung key, so a producer that read `cultivation_upkeep_material_demand`
+## for the Sow row — or a work rate for the goods term — composes a clause that fails an equality
+## instead of passing on two numbers that happened to agree. Every one is comfortably above
+## `SourceForecast.MATERIAL_FLOW_MIN` / `UPKEEP_WORK_MIN`, so nothing here is suppressed as noise.
+const PLANT_HOLD_CULTIVATE_WORK := 2.0
+const PLANT_HOLD_CULTIVATE_GOODS := 0.35
+const PLANT_HOLD_FIELD_WORK := 4.0
+const PLANT_HOLD_FIELD_GOODS := 0.6
 
 ## The two sentences Ray cut out of the blocked block — the plant cause's own remedy tail and the
 ## KEEPING line (`HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT`, which took the web's role name).
@@ -1004,9 +1020,7 @@ func run(harness) -> void:
 	tended_tile["patch_is_cultivated"] = true
 	# …and the STANDING RUNG re-derived from that flag, which is what `improvement_is_done` reads.
 	RungFx.stamp_patch(tended_tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0}}])
 	h._hud._band_labor._player_band = BandFx.cultivating_forage_band_fixture(
 		int(tended_tile["x"]), int(tended_tile["y"]))
 	h._hud._compose.reset_forage_source()
@@ -1042,9 +1056,7 @@ func run(harness) -> void:
 	# `forage_sow_locked` is the neighbouring case where BOTH kinds of reason are live at once.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
 	h._hud._compose.reset_forage_source()
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0}}])
 	h._show_tile(TileFx.tended_tile_fixture())
 	h._compose_forage(TileFx.tended_tile_fixture())
 	await h._settle()
@@ -1083,9 +1095,7 @@ func run(harness) -> void:
 		not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
 			ForageFx.GATHER_SHEET_CROP_KEY_NEEDLE))
 
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0}}])
 
 	# ---- THE THIRD METER STATE: BUILDING vs REVERTING (issue #442) ------------------------------
 	# **"Preparing 99%" WAS THE MOST MISLEADING LINE ON THE CARD.** A meter that is bleeding back toward
@@ -1935,6 +1945,9 @@ func run(harness) -> void:
 	# before the next capture. What it does move is one frame's GEOMETRY: see the block's own note.
 	await _a_refused_declaration_leaves_the_sheet_on_the_OFFER()
 	await _a_band_with_no_free_hands_is_offered_a_dead_box()
+	# PNG-less and appended LAST on purpose: it renders no frame and mounts nothing, so it cannot move
+	# a single capture that follows this chapter.
+	_a_plant_rungs_material_price_is_stated()
 
 ## **RETIRED — `compose_pool_take_full` / `compose_pool_take_freed`, the shared-pool pair**
 ## (`docs/plan_standing_upkeep.md` §2.5). They staged a band with every hand committed and asserted
@@ -2763,3 +2776,114 @@ func _improvement_state_for(source: Dictionary, rung: String, composed: String,
 	var state := ForageFx.improvement_state(host, rung)
 	host.free()
 	return state
+
+## **THE PLANT WEB'S PER-RUNG MATERIAL PRICE, AUTHORED — because the shipped ladder cannot state it.**
+##
+## `cultivationUpkeepMaterialDemand` / `fieldUpkeepMaterialDemand` are the material twins of the two
+## `*_upkeep_demand` work rates, and on the config that ships they are EMPTY on every patch in the
+## game: no plant rung names a material yet (only `animal:pen` does, and its good is hurdles). So the
+## whole plant half of the standing price is structurally unreachable in play, and every claim that
+## could be made against the live sim would be satisfied by a client that had deleted the clause.
+##
+## ⛔ **WHICH IS WHY THE CROSS-REF GUARD ALONE IS NOT ENOUGH, AND THIS STATE EXISTS.**
+## `tools/patch_crossref_guard.gd` proves the two keys reach `tile_info` — it walks the real decoder
+## into `MapView._tile_info_at` — but a key that arrives carrying `[]` renders exactly what a key that
+## never arrived renders: nothing. Green there and dead here are indistinguishable without a fixture
+## that puts a good on a plant rung, which is the same reason `equipment.json`'s bronze tier and
+## `materials.json`'s `varieties` are covered by authored fixtures rather than by the shipped catalog.
+##
+## **THE ASSERTION IS WHAT THE ROW SAYS**, by equality against a clause composed through the shipped
+## formats — not that an aside exists, and not a `contains` that a clause missing its material half
+## would still satisfy. The two rungs carry DIFFERENT figures in both currencies, so a producer that
+## read one rung's key for the other row fails rather than passing on a coincidence.
+##
+## **PNG-LESS, and the control tree is asserted instead.** The `⌃` track is a `PopupPanel` the BAND
+## PANEL floats (`band_panel_preview` owns its frames); mounting one into this harness's long-lived
+## `HudLayer` would change every frame that follows it, and the order here is load-bearing. Building
+## the track into a DETACHED column proves the aside reaches a rendered `Label` — the half a producer
+## claim on its own cannot make — and frees it without touching the scene.
+func _a_plant_rungs_material_price_is_stated() -> void:
+	var patch := BaseFx.unbuilt(BaseFx.food_tile_fixture())
+	patch["patch_cultivation_upkeep_demand"] = PLANT_HOLD_CULTIVATE_WORK
+	patch["patch_field_upkeep_demand"] = PLANT_HOLD_FIELD_WORK
+	patch["patch_cultivation_upkeep_material_demand"] = [
+		{"material_id": PLANT_HOLD_MATERIAL, "amount": PLANT_HOLD_CULTIVATE_GOODS}]
+	patch["patch_field_upkeep_material_demand"] = [
+		{"material_id": PLANT_HOLD_MATERIAL, "amount": PLANT_HOLD_FIELD_GOODS}]
+	RungFx.stamp_patch(patch, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	# THE PRECONDITION: the patch stands on `plant:wild`, so BOTH rungs are above the standing one and
+	# both are priced. A fixture that had drifted into a tended patch would price one row and drop the
+	# other, and the missing row's claim would read as a producer fault.
+	h._assert_hud("the priced patch stands on WILD, so both plant rungs are above it",
+		not SourceForecast.improvement_is_done(patch, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+				SourceForecast.IMPROVEMENT_CULTIVATE)
+			and not SourceForecast.improvement_is_done(patch,
+				HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_SOW))
+	var rows := RungLadder.track(SourceForecast.LABOR_KIND_FORAGE, patch,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_NONE,
+		_both_plant_tracks_known())
+	var cultivate_clause := _hold_clause_for(rows, SourceForecast.IMPROVEMENT_CULTIVATE)
+	var field_clause := _hold_clause_for(rows, SourceForecast.IMPROVEMENT_SOW)
+	h._assert_hud("the Cultivate rung states BOTH currencies of its standing price — \"%s\""
+			% cultivate_clause,
+		cultivate_clause == _plant_hold_clause(PLANT_HOLD_CULTIVATE_WORK,
+			PLANT_HOLD_CULTIVATE_GOODS))
+	h._assert_hud("…and the Sow rung states its OWN pair, never the rung below it — \"%s\""
+			% field_clause,
+		field_clause == _plant_hold_clause(PLANT_HOLD_FIELD_WORK, PLANT_HOLD_FIELD_GOODS)
+			and field_clause != cultivate_clause)
+	# **THE NEGATIVE, AND IT IS THE SHIPPED CONFIG'S OWN STATE**: a plant rung naming no material
+	# states its work term and NO material clause — an empty quote is "this rung eats nothing", never
+	# a `0 stone`. Without this, a client that appended the good's word to every rung passes above.
+	var no_goods := patch.duplicate(true)
+	no_goods["patch_cultivation_upkeep_material_demand"] = []
+	var bare_rows := RungLadder.track(SourceForecast.LABOR_KIND_FORAGE, no_goods,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_NONE,
+		_both_plant_tracks_known())
+	var bare_clause := _hold_clause_for(bare_rows, SourceForecast.IMPROVEMENT_CULTIVATE)
+	h._assert_hud("a plant rung that eats no good states its work term and no material at all — \"%s\""
+			% bare_clause,
+		bare_clause == HudWorkVocab.RUNG_TRACK_HOLD_FORMAT
+				% (HudWorkVocab.RUNG_TRACK_HOLD_WORK_TERM
+					% DetailFormat.format_work_units(PLANT_HOLD_CULTIVATE_WORK))
+			and not bare_clause.contains(PLANT_HOLD_MATERIAL))
+	# **AND THE CLAUSE REACHES A RENDERED LABEL**, which every claim above passes without: the asides
+	# are composed onto the row model by `track` and drawn by `build_track`, and only the second is
+	# what a player reads. Detached column, freed here — see this function's own note on why it is not
+	# mounted.
+	var column := RungLadder.build_track(rows, func(_rung: String) -> void: pass)
+	var drawn := Q.has_label_containing(column, cultivate_clause)
+	column.free()
+	h._assert_hud("…and the track DRAWS that clause as its own aside label", drawn)
+
+## The faction that has learned both plant tracks, so neither rung is refused for a reason that has
+## nothing to do with its price. Spelled through `RungGates`' own track keys and `HudConst`'s
+## completion mark rather than as literals, so a renamed track moves this with the gate it feeds.
+func _both_plant_tracks_known() -> Dictionary:
+	return {
+		HudFloraVocab.KNOWLEDGE_TRACK_CULTIVATION: HudConst.KNOWLEDGE_COMPLETE,
+		HudFloraVocab.KNOWLEDGE_TRACK_SEED_SELECTION: HudConst.KNOWLEDGE_COMPLETE,
+	}
+
+## The standing-price clause one rung of the track carries — `""` where that rung states none, which
+## fails an equality rather than satisfying one. A rung carries at most one hold aside
+## (`RungLadder._hold_price_asides` appends a single entry), so the first IS the clause.
+func _hold_clause_for(rows: Array[Dictionary], improvement: String) -> String:
+	for row in rows:
+		if String(row.get(RungLadder.ROW_IMPROVEMENT_KEY, "")) != improvement:
+			continue
+		var asides: Array = row.get(RungLadder.ROW_HOLD_ASIDES_KEY, [])
+		if asides.is_empty():
+			return ""
+		return String((asides[0] as Dictionary).get(RungLadder.RUNG_ASIDE_TEXT_KEY, ""))
+	return ""
+
+## The clause those two figures must compose to, through the SHIPPED formats — the joiner, the work
+## term's own unit and the material term's trimming all come from `HudWorkVocab`, so a re-worded price
+## moves the expectation with the code and this stays an assertion about the FIGURES.
+func _plant_hold_clause(work: float, goods: float) -> String:
+	return HudWorkVocab.RUNG_TRACK_HOLD_FORMAT % HudWorkVocab.RUNG_TRACK_PRICE_SEPARATOR.join([
+		HudWorkVocab.RUNG_TRACK_HOLD_WORK_TERM % DetailFormat.format_work_units(work),
+		HudWorkVocab.RUNG_TRACK_MATERIAL_TERM % [
+			DetailFormat.format_trimmed(goods, HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
+			PLANT_HOLD_MATERIAL]])

@@ -3,7 +3,8 @@
 //!
 //! Every band is a small logistics node holding a local goods store (`PopulationCohort.stores`).
 //! Each turn `balance_supply_networks` joins bands **of one people** that are within `reach_tiles`
-//! of each other **and** hold a live tie in [`crate::connections::ConnectionLedger`] into **supply
+//! **hex steps** of each other **and** hold a live tie in [`crate::connections::ConnectionLedger`]
+//! into **supply
 //! networks** (connected components) and moves each commodity toward a **per-capita balance** across
 //! the network — capped at `throughput_per_turn` per node and losing `friction` in transit. So a
 //! gatherer band automatically feeds a scouting band it's near, while a band that is detached, one
@@ -42,7 +43,7 @@ use crate::{
         BandId, LaborAllocation, MaterialBatch, PopulationCohort, ResidentBand, Tile, FOOD,
     },
     connections::{ConnectionKey, ConnectionLedger, NO_TIE},
-    grid_utils::wrapped_distance_sq,
+    grid_utils::hex_distance_wrapped,
     materials_config::BandKey,
     orders::FactionId,
     resources::{SimulationConfig, TileRegistry},
@@ -115,8 +116,16 @@ impl Node {
 }
 
 /// **The link rule.** An undirected logistics link exists between two resident bands iff they are
-/// within `reach_tiles` of each other *and* the ledger holds a live tie (`strength > NO_TIE`) in at
-/// least one direction.
+/// within `reach_tiles` **hex steps** of each other ([`crate::grid_utils::hex_distance_wrapped`])
+/// *and* the ledger holds a live tie (`strength > NO_TIE`) in at least one direction.
+///
+/// **Reach is measured in hex distance, like every other radius in the sim** — `band_work_range`,
+/// the hunt leash, a predator's prey-sensing disk. It was squared Euclidean on offset coordinates
+/// until the route branch, which is *stricter than it reads* at the diagonals: two camps 3 hex
+/// steps apart at
+/// `(53,15)`/`(56,14)` measure `3² + 1² = 10` against a threshold of `9` and were excluded by one
+/// unit, so `reach_tiles: 3` did not mean three hexes. Hex distance widens pooling at the diagonals
+/// and is a **gameplay change**, deliberately taken so the shipped lever means what it says.
 ///
 /// **Either direction, not both.** A connection is directed — *who found whom* — and whether a
 /// rider requires mutuality is the rider's business (`connections.rs`). This rider does not:
@@ -152,6 +161,45 @@ fn tie_is_live(ledger: &ConnectionLedger, a: BandId, b: BandId) -> bool {
 /// reproduces exactly the pairing the proximity-only network had, with no relay.
 fn pools_freely(a: &Node, b: &Node) -> bool {
     a.faction == b.faction
+}
+
+/// ⛔ **WHAT A COMPONENT'S POOLING LOSES IN TRANSIT, as a multiple of the base friction — DERIVED
+/// FROM THE TILES, never stored** (`docs/plan_standing_upkeep.md` §4.13b).
+///
+/// For each pooling link in this component, walk the tiles between its two camps
+/// ([`crate::routes::trace_path`]) and **average** what the roads on them are worth
+/// ([`crate::routes::path_friction_multiplier`]): you genuinely lose less over the roaded stretch of
+/// a haul, so **a partly-built road pays partly**. That is the per-tile model's own answer, and it is
+/// what the retired *"best road binding the network"* rule could not express — reading a path of
+/// tiles, *best* would call a thirty-tile dirt road with one paved tile a paved road.
+///
+/// ⛔ **THE COMPONENT TAKES ITS BEST LINK, AND THAT IS FORCED RATHER THAN GENEROUS.**
+/// [`balance_commodity`] pools a whole component against **one** friction scalar and has no path
+/// model, so any per-component reading is an approximation of the same thing. Under a *worst*-link
+/// reading, a component that gained a new unroaded neighbour would see its friction **rise** — a
+/// band punished for having walked somewhere, and *"a rung can only widen the set of links and lower
+/// a loss, never the reverse"* broken outright. Each link's own reading is monotone-improving in the
+/// roads beneath it, and a minimum of monotone-improving readings is monotone-improving too.
+///
+/// A component with no link of its own — which a singleton cannot have — pools at exactly today's
+/// friction, so there is no early-game regression, by construction.
+fn component_friction(
+    roads: &crate::routes::RoadRegistry,
+    nodes: &[Node],
+    links: &[(usize, usize)],
+    members: &[usize],
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> f32 {
+    links
+        .iter()
+        .filter(|(i, j)| members.contains(i) && members.contains(j))
+        .map(|(i, j)| {
+            let path = crate::routes::trace_path(nodes[*i].pos, nodes[*j].pos, width, height, wrap);
+            crate::routes::path_friction_multiplier(roads, &path)
+        })
+        .fold(crate::intensification::FRICTION_UNCHANGED, f32::min)
 }
 
 /// Iterative path-halving union-find root lookup.
@@ -241,6 +289,11 @@ type SupplyBands<'w, 's> = Query<
     With<ResidentBand>,
 >;
 
+// Every parameter is a distinct world resource or query this pass genuinely reads — the ECS's own
+// signature, not a call site anyone types. It crossed the threshold when the route branch added the
+// road ledger and the traffic log; the repo's convention for that is this allow, as on
+// `terrain::def` and `handle_send_trade_expedition`.
+#[allow(clippy::too_many_arguments)]
 pub fn balance_supply_networks(
     config: Res<SupplyNetworkConfigHandle>,
     sim_config: Res<SimulationConfig>,
@@ -255,6 +308,12 @@ pub fn balance_supply_networks(
     // alternative — supply seeding the ledger itself — would make a second producer of contact
     // that no sight sweep agrees with.
     ledger: Res<ConnectionLedger>,
+    // **The roads, read one stage early — the same lag, for the same reason.** `advance_roads` runs
+    // later in this stage, so the payoff below is read at each road tile's standing as of the
+    // *previous* turn, exactly as the connection ledger above is. Both are accepted rather than
+    // reordered: a supply pass that raised a road itself would be a second producer of a position.
+    roads: Res<crate::routes::RoadRegistry>,
+    mut route_traffic: ResMut<crate::routes::RouteTrafficLog>,
     // `With<ResidentBand>`: an expedition manages its own larder — its drop-off is the explicit
     // fold-back on arrival, not a passive supply-network leak — so it is excluded here.
     // **The food ledger's transfer terms ride here**, because this system is one of their writers:
@@ -267,8 +326,8 @@ pub fn balance_supply_networks(
     // Recomputed from scratch every turn; a 0/1-band map (early return below) leaves it empty.
     membership.0.clear();
     let cfg = config.get();
-    let reach_sq = (cfg.reach_tiles * cfg.reach_tiles) as i32;
     let width = tile_registry.width;
+    let height = tile_registry.height;
     let wrap = sim_config.map_topology.wrap_horizontal;
     let throughput = scalar_from_f32(cfg.throughput_per_turn);
     let friction = scalar_from_f32(cfg.friction).clamp(scalar_zero(), scalar_one());
@@ -319,6 +378,15 @@ pub fn balance_supply_networks(
     // **The bin key is position alone**: the bins are geometry, and both the tie and the pooling
     // policy are pair predicates, so a foreign neighbour only ever widens the candidate net — which
     // is negligible at band counts.
+    //
+    // ⛔ **THE NEIGHBOURHOOD MUST BE A SUPERSET OF WHAT THE DISTANCE TEST ACCEPTS**, or pairs are
+    // dropped silently. It is, and for the same reason `hex_range_tiles` may scan a bounding box:
+    // every hex step changes the offset column and row by at most 1 (`HEX_NEIGHBOR_OFFSETS`), so a
+    // node `reach` hex steps away is within `reach` columns and `reach` rows — the *same* offset
+    // box the retired squared-Euclidean test implied (`dx² + dy² <= reach²` also gives
+    // `|dx|, |dy| <= reach`). A delta of at most `cell_size` moves a floor-division cell index by at
+    // most one, so ±1 cells cover it, and the ±2 in x below still covers the runt seam cell.
+    // Changing the metric therefore did not change the required neighbourhood at all.
     let count = nodes.len();
     let mut parent: Vec<usize> = (0..count).collect();
 
@@ -339,6 +407,7 @@ pub fn balance_supply_networks(
     } else {
         &[-1, 0, 1]
     };
+    let mut links: Vec<(usize, usize)> = Vec::new();
     for i in 0..count {
         let (cx, cy) = cell_of(nodes[i].pos);
         let mut seen_cells: BTreeSet<(i32, i32)> = BTreeSet::new();
@@ -361,9 +430,22 @@ pub fn balance_supply_networks(
                         continue; // each unordered pair once; also skips self
                     }
                     if pools_freely(&nodes[i], &nodes[j])
-                        && wrapped_distance_sq(nodes[i].pos, nodes[j].pos, width, wrap) <= reach_sq
+                        && hex_distance_wrapped(nodes[i].pos, nodes[j].pos, width, wrap)
+                            <= cfg.reach_tiles
                         && tie_is_live(&ledger, nodes[i].band, nodes[j].band)
                     {
+                        // **THE COMMONEST TRAFFIC IN THE GAME, recorded where it is known.** Two
+                        // camps pooling a larder are people walking between them, turn after turn —
+                        // #532's *"it must not be the one case that produces no trail because nobody
+                        // typed a command"*. The road is worn by `routes::advance_routes` later in
+                        // this stage rather than here, so this turn's pooling cannot read a road
+                        // this turn's pooling created.
+                        route_traffic.walked(nodes[i].pos, nodes[j].pos);
+                        // **THE LINKS THEMSELVES, kept for the friction reading below.** A road's
+                        // payoff is derived from *the tiles a journey crosses*, so a component's
+                        // friction is read off its own pooling links rather than off whatever roads
+                        // its members happen to be camped on.
+                        links.push((i, j));
                         let (a, b) = (find(&mut parent, i), find(&mut parent, j));
                         if a != b {
                             parent[a] = b;
@@ -404,6 +486,15 @@ pub fn balance_supply_networks(
             continue;
         }
         let weights: Vec<Scalar> = members.iter().map(|&m| nodes[m].weight).collect();
+
+        // ⛔ **THE FIRST THING A ROUTE RUNG HAS EVER BOUGHT, and it is DERIVED FROM THE TILES.**
+        // See [`component_friction`]: each pooling link averages the roads on the tiles between its
+        // two camps, so a **partly** roaded run pays partly.
+        let friction = friction
+            * scalar_from_f32(component_friction(
+                &roads, &nodes, &links, members, width, height, wrap,
+            ));
+
         let mut commodities: BTreeSet<&str> = BTreeSet::new();
         for &m in members {
             for (item, _) in &nodes[m].stores {

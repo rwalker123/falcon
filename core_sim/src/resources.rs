@@ -1221,6 +1221,18 @@ pub enum CommandEventKind {
     /// different rungs the player chooses between (the animal side's `Tame` set the precedent).
     Sow,
     Corral,
+    /// **THE ROUTE BRANCH'S TWO TILE VERBS** — `grade` and `pave`, and the whole life of a road tile:
+    /// the command, the build meter completing, and the entry retiring.
+    ///
+    /// **One kind for both verbs**, unlike the plant web's `Cultivate`/`Sow` split, because the
+    /// player is looking at *one road on one tile* climbing its branch — the same reading
+    /// [`Self::Corral`] takes for a pen and its rings. The verb itself rides the detail
+    /// (`action=grade`), which is where the two are told apart.
+    ///
+    /// The wire field is already a string, so the feed renders it generically — no schema change.
+    /// **The client's `RUNG_BY_KIND` does not carry `road`**, so it falls to that map's default rung
+    /// exactly as `craft` does; giving the branch its own importance is the event dock's to decide.
+    Road,
     /// **The crafting bench** (`docs/plan_crafting_and_materials.md` §5) — a recipe put on it, taken
     /// off it, or re-crewed. One kind for the bench's whole life, the way [`Self::Corral`] is one
     /// kind for the pen's: the player is looking at one bench, not at three verbs.
@@ -1355,6 +1367,7 @@ impl CommandEventKind {
             CommandEventKind::Cultivate => "cultivate",
             CommandEventKind::Sow => "sow",
             CommandEventKind::Corral => "corral",
+            CommandEventKind::Road => "road",
             CommandEventKind::Craft => "craft",
             CommandEventKind::KitLife => "kit_life",
             CommandEventKind::MaterialShortfall => "material_shortfall",

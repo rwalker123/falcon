@@ -619,6 +619,17 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # answers the same question and answers it from the BANDS, apportioned once across the roster, so
     # a second per-faction total would be a second source of truth for the head count. The sim still
     # publishes the section; it joins `accessibleStockpile` as an unread wire table.
+    # **THE LADDER'S KNOWLEDGE ROSTER GOES FIRST**, because the progress list below is read AGAINST
+    # it: the roster says what there is to learn and where each knowledge sits, and the row beside it
+    # says how far this faction has got. A per-world constant, so a delta restates it only on a world
+    # rebuild and the `changed` gate skips it every other turn.
+    if snapshot.has("ladder_knowledge") and SnapshotSections.changed(snapshot, "ladder_knowledge"):
+        _hud_invoke("update_ladder_knowledge", [snapshot["ladder_knowledge"]])
+    # …and the ROUTE branch's rung catalog beside it, another per-world constant. It is what lets the
+    # tile card's road action open a whole ladder rather than one button per verb, so a rung added to
+    # `intensification_ladder.json` reaches the player with no client edit.
+    if snapshot.has("route_rungs") and SnapshotSections.changed(snapshot, "route_rungs"):
+        _hud_invoke("update_route_rungs", [snapshot["route_rungs"]])
     if snapshot.has("intensification_knowledge") and SnapshotSections.changed(snapshot, "intensification_knowledge"):
         _hud_invoke("update_intensification", [snapshot["intensification_knowledge"]])
     if snapshot.has("discovered_sites") and SnapshotSections.changed(snapshot, "discovered_sites"):
@@ -669,6 +680,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         # the patch's max-useful (the same forecast the compose control reads off tile_info). Same
         # array MapView ingests into `forage_patch_lookup`.
         _hud_invoke("update_forage_patches", [snapshot["forage_patches"]])
+    # THE ROADS IN THE GROUND (arc #532). The map ingests the same section into `road_network`; the
+    # HUD needs it because a road tile is the only source a route knowledge can be STANDING ON, and
+    # the knowledge screen's *"is anything using this"* verdict is asked of the faction's own sources.
+    if snapshot.has("routes") and SnapshotSections.changed(snapshot, "routes"):
+        _hud_invoke("update_road_network", [snapshot["routes"]])
     # The Telling (docs/plan_the_telling.md). The `has()` guard is LOAD-BEARING: a delta carries a
     # field only when it CHANGED, so absence means "unchanged", never "cleared" — clearing the
     # cached forks on absence would drop the end-turn gate every quiet turn.
@@ -1001,7 +1017,7 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
                 "message": "Assign %d hunter%s to %s, leaving %s standing." % [
                     workers, "" if workers == 1 else "s", herd_id, _floor_percent_text(payload)],
             }
-        "scout", "warrior", "agriculture", "husbandry", "builders":
+        "scout", "warrior", "agriculture", "husbandry", "roadwork", "builders":
             # **A BAND-WIDE ROLE CARRIES THE KIT TOKEN TOO, and it is the only optional token these
             # rows take.** They have no tile, no herd, no floor and no species — the sim ignores
             # every one of those on a role target — but `kit_job()` answers for all four
@@ -1009,11 +1025,13 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             # dropped on the floor. Same `_kit_token` omission rule as the other two branches, so a
             # player who never opened the role card's picker emits the line they always did.
             #
-            # **THE TWO KEEPING ROLES RIDE THE SAME BRANCH** (`docs/plan_standing_upkeep.md` §2.5).
-            # `agriculture` and `husbandry` are band-wide standing roles in exactly the grammar
-            # scout and warrior use, so a branch of their own would be the same line typed twice.
-            # They send no kit today — the role cards mount no picker, the wire naming no default
-            # kit for either job — and `_kit_token` omits an empty selection.
+            # **THE THREE KEEPING ROLES RIDE THE SAME BRANCH** (`docs/plan_standing_upkeep.md` §2.5,
+            # arc #532). `agriculture`, `husbandry` and `roadwork` are band-wide standing roles in
+            # exactly the grammar scout and warrior use, so a branch of their own would be the same
+            # line typed three times. They send no kit today — the role cards mount no picker, the
+            # wire naming no default kit for any of the three jobs (`default_kits.roadwork` is the
+            # bare `none` kit, so road keepers work bare-handed and that is intended) — and
+            # `_kit_token` omits an empty selection.
             #
             # **AND SO DOES `builders`, which the sim has always parsed and this builder DID NOT
             # NAME** — a role omitted from this match answers `{}`, so the Builders card's stepper
@@ -1302,10 +1320,23 @@ static func format_extend_pen(payload: Dictionary) -> Dictionary:
 ## rejected outright.
 const IMPROVEMENT_HERD_TARGETED := ["tame"]
 
-## ⛔ **NONE OF THE FOUR VERBS TAKES A WORKER COUNT, and a trailing one is a PARSE ERROR**
+## ⛔ **THE ROUTE BRANCH'S TWO VERBS NAME A BAND, AND THE REST DO NOT** (arc #532). `grade` and `pave`
+## are `cultivate`/`sow`'s grammar **plus a band token** —
+## `grade <faction> <band> <x> <y>` — because a patch's keeper is whoever is already foraging it while
+## **a road has no work row at all**, so who will keep the tile has to be said out loud. That token is
+## also what the sim records as the keeper: issuing the verb declares the job AND names who holds it,
+## which are the same act. Read off `SourceForecast.ROUTE_IMPROVEMENTS` rather than restated, so the
+## branch's verbs are spelled once.
+const IMPROVEMENT_BAND_TARGETED := SourceForecast.ROUTE_IMPROVEMENTS
+
+## The band a road verb names when the payload carries none. A road really has to be somebody's job,
+## so this is a REFUSAL rather than a default — see `format_improvement`.
+const IMPROVEMENT_NO_BAND := -1
+
+## ⛔ **NONE OF THESE VERBS TAKES A WORKER COUNT, and a trailing one is a PARSE ERROR**
 ## (`docs/plan_standing_upkeep.md` §2.5). Each carried the build's own crew for one slice; they
-## DECLARE now — the verb appends an entry to the build queue of every band already working the
-## source, and the hands stand on `assign_labor <faction> <band> builders <n>`.
+## DECLARE now — the verb appends an entry to a build queue, and the hands stand on
+## `assign_labor <faction> <band> builders <n>`.
 static func format_improvement(payload: Dictionary) -> Dictionary:
     var improvement := String(payload.get("improvement", "")).strip_edges().to_lower()
     if improvement == "":
@@ -1324,6 +1355,18 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
         return {}
+    if improvement in IMPROVEMENT_BAND_TARGETED:
+        # **NO BAND, NO COMMAND.** The token is the keeper, and a road with nobody on the hook is not
+        # a road the sim will accept — so an absent band is refused here rather than guessed at, the
+        # way an absent herd id is one branch up.
+        var band := int(payload.get("band_id", IMPROVEMENT_NO_BAND))
+        if band == IMPROVEMENT_NO_BAND:
+            return {}
+        return {
+            "line": "%s %d %d %d %d" % [improvement, faction, band, x, y],
+            "message": "%s (%d, %d) — this band's road now, queued for its builders." % [
+                improvement.capitalize(), x, y],
+        }
     return {
         "line": "%s %d %d %d" % [improvement, faction, x, y],
         "message": "%s (%d, %d) — queued for this band's builders." % [

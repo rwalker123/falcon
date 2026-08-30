@@ -2319,8 +2319,18 @@ new jobs are declared*.
 - **Its height is reserved through ONE function**, `HudWorkVocab.pools_block_height(has_fund_mode)`,
   called both as the block's `custom_minimum_size` and by `_work_board_capacity`'s chrome term — the
   BUILD QUEUE block's own rule, for the same reason: this zone `clip_contents`.
-- **IT ALWAYS RENDERS, unlike the queue block.** An empty queue is furniture explaining an absence; three
+- **IT ALWAYS RENDERS, unlike the queue block.** An empty queue is furniture explaining an absence; four
   steppers at zero are the controls that fix it.
+- ⛔ **IT IS FOUR CARDS SINCE THE `roadwork` POOL LANDED (arc #532), AND THE FOURTH WAS PAID FOR IN
+  WIDTH RATHER THAN HEIGHT.** At the shared stepper metric four cards wanted 466px of a box that is
+  382 on the bottom dock and 356 on the left, and both ways to buy that width cost a ROW this zone
+  does not have — split 3 + 1 the block wanted 420px of a 358px box. So the block took its own
+  stepper and title metrics (`HudWorkVocab.POOL_STEPPER_*` / `POOL_CARD_NAME_FONT_SIZE`) and
+  `pools_block_height` did not move. The reasoning, the measurements and the invariant that keeps the
+  row inside the box are in `.claude/rules/client/roads.md` → "The row of four does not fit"; **do not
+  restate them here**, and do not retune those metrics without re-running
+  `band_panel_preview._assert_pool_cards_are_level`, which is where a role name overtaking the
+  stepper as the card's floor fails.
 
 ### THE STRIP GREW, AND THE TWO-COLUMN BUDGET WAS A SILENT CLIP
 

@@ -165,7 +165,7 @@ and the same object that carries a splinter's lifeline is the one a foreign trad
 
 ### The route ladder
 
-What holds a link open is a **route**, and routes climb a ladder: **game trail → trail → dirt road →
+What holds a link open is a **route**, and routes climb a ladder: **path → trail → dirt road →
 paved road**, and later the things that succeed them. Each rung is unlocked by knowledge earned
 working the rung below — walking a trail is how you learn to build one — and each rung is **cheaper
 to travel and dearer to keep**.
@@ -174,8 +174,11 @@ That two-sided movement is the whole point. The ladder is *not* a straight upgra
 where the traffic pays for the upkeep, and everywhere else a trail is the right answer forever. It is
 the same economy as the pen — a rung you climb only where the land justifies it.
 
-The bottom rung already has an issue: **#215**, *"herd/game trails follow hex centers and become the
-basis of roads."* The first roads being the ones the animals made is the origin this ladder wants.
+**#215** — *"herd/game trails follow hex centers and become the basis of roads."* — remains open,
+and the bottom rung is **not** it. The rung is `path`, because nothing in the sim lets an animal wear
+a road in: route work is banked in exactly one place, `route_traffic.walked` in `supply.rs`'s
+pooling-link pass, which is the player's own trade-pooling bands. A ladder whose floor an animal
+could reach is still the origin #215 wants.
 
 ### It is the intensification ladder's shape
 
@@ -187,24 +190,57 @@ without translation:
 | `branch` | `plant` / `animal` | `route` — a third branch |
 | `requires_rung` | can't pen what you haven't tamed | can't pave what isn't a road |
 | `unlock_knowledge` / `earns_knowledge` | working a rung teaches the next | walking a trail teaches road-building |
-| `build.progress_per_turn` | a crew clears ground | traffic wears the route in |
-| `build.decay_per_turn` | an unworked patch goes feral | an unused road reverts |
+| `build.work_cost` | the size of the job in **work units** | traffic wears the route in — **traffic supplies the work** |
 | `build.grace_turns` | *"a weeded patch reverts in a season, a fence stands for years"* | a trail reverts in a season, a paved road stands for years |
-| `build.crew_needed` | the crew the build wants | the crew the road wants |
+| `upkeep.*` | what it costs to **hold** the rung, per turn, forever | a paved road is dearer to keep than a trail |
+
+> **⛔ THREE FIELD NAMES IN THIS TABLE WERE RETIRED AFTER IT WAS WRITTEN, and the rows above are
+> corrected.** It read `build.progress_per_turn` (*"a crew clears ground"*), `build.decay_per_turn`
+> (*"an unworked patch goes feral"*) and `build.crew_needed` (*"the crew the build wants"*). All
+> three are gone: an improvement costs **work**, not turns, so `progress_per_turn` became
+> `work_cost`; **shortfall IS the decay** (`docs/plan_standing_upkeep.md` §2.4), so
+> `decay_fraction_per_turn` retired into `upkeep.meter_decay`; and no rung declares a crew any more —
+> builders are a **band-level pool** working a queue (§2.5). An implementer following the old names
+> would be wiring to three fields that no longer parse.
 
 The knowledge pacing is already shared across branches in one file, deliberately — *"every knowledge
 pace in the game is tuned in ONE file"* — so a route branch is paced against the same
 ~20-turns-per-lesson yardstick as cultivation and husbandry, with no new tuning vocabulary.
 
-**Two known gaps, to be closed in the slice that builds this:**
+**One known gap remains. The second is CLOSED, by the standing-upkeep arc:**
 
-1. **A route is an edge, not a source.** Every shipped rung sits on a *thing* — a patch, a herd —
-   with a `site_requirement` about the tile it stands on. A route spans many tiles and belongs to a
-   connection. The meter machinery ports; the site and behavior primitives are source-shaped and
-   need route-shaped siblings.
-2. **Upkeep is a standing cost, and the ladder only has a build cost.** `crew_needed` is the crew
-   that *builds*; a paved road costing more to hold than a trail is a crew that *stays*. The closest
-   shipped precedent is herding, which the campaign rule already calls standing labor.
+1. **A route is not a source.** Every shipped rung sits on a *thing* — a patch, a herd — with a
+   `site_requirement` about the tile it stands on. A route spans many tiles. The meter machinery
+   ports; the site and behavior primitives are source-shaped and need route-shaped siblings.
+   **This is the real work of the slice, and it is designed in `docs/plan_standing_upkeep.md` §4.13.**
+
+> **⛔ AND THE OTHER HALF OF THAT SENTENCE — *"a route is an EDGE… and BELONGS TO A CONNECTION"* — IS
+> ALSO WRONG.** §4.13's design pass rejected it on Ray's call. **A road is in the ground.** Ray:
+> *"How would a road follow a camp? That makes no sense and is in fact a factor in moving vs staying.
+> Roads can't follow camps."*
+>
+> A route defined as *"the road between band A and band B"* moves when A moves, and **a road that
+> follows its camp deletes a decision** — a road you paid to build and pay to hold is one of the
+> strongest reasons the game can give you to **stay**, and it can only weigh on move/stay/fork if
+> leaving it costs you it.
+>
+> **So a route is a world object with a fixed tile path and its own identity**; the band pair is who
+> *uses* it, never what it *is*. A band is served by a road when it is **standing on one of its
+> tiles** — the road's own path is the catchment, so there is no radius constant — and a road nobody
+> stands on reverts. **This also makes a road a shared public good**: a band that camps where another
+> band left inherits the road, because the road never belonged to the first one.
+
+> **⛔ GAP 2 IS CLOSED — DO NOT REBUILD IT.** This section read: *"**Upkeep is a standing cost, and
+> the ladder only has a build cost.** `crew_needed` is the crew that builds; a paved road costing
+> more to hold than a trail is a crew that stays. The closest shipped precedent is herding, which the
+> campaign rule already calls standing labor."*
+>
+> **`docs/plan_standing_upkeep.md` §2.4–§2.8 built it, for both webs.** A rung declares an `upkeep`
+> block — `work_per_turn`, a `scaled_by` measure, a material rate, `meter_decay` and its own
+> `grace_turns` — funded from **band-level keeping pools** (`LaborTarget::Agriculture` /
+> `Husbandry`), with the fund-mode split and the shortfall/shed paths. **Routes inherit a
+> standing-cost model; the slice's job is to give it a route-shaped scale term, not to invent the
+> model.** Herding is no longer the "closest precedent" — it is one of two shipped instances.
 
 ### The terrain cost table is already written
 
@@ -212,16 +248,43 @@ pace in the game is tuned in ONE file"* — so a route branch is paced against t
 
 | Field | Read by |
 |---|---|
-| `movement` profile | fauna, the visibility sweep |
-| `logistics_penalty` | the dead logistics sim; morale hardness |
-| `attrition_rate` | the dead logistics sim; morale |
+| **`movement` profile** | **nobody** — see the correction below |
+| `logistics_penalty` | morale hardness (`systems/population.rs`) |
+| `attrition_rate` | morale (`systems/population.rs`) |
 | **`detection_modifier`** | **nobody** |
-| **`infrastructure_cost`** | **nobody** |
+| **`infrastructure_cost`** | **nobody — until `plan_standing_upkeep.md` §4.13 wires it as the route rung's scale term** |
 
-The last two have never been read by any system. `detection_modifier` is *how well you see, and are
-seen, in this terrain* — the range question, already answered per biome. `infrastructure_cost` is
-*what it costs to hold a route through here* — the route-upkeep question. **This arc's cost model is
-substantially already authored**; it has simply never been wired to anything.
+> **⛔ THE "DEAD LOGISTICS SIM" IS DELETED, so two rows no longer name it.** They read *"the dead
+> logistics sim; morale hardness"* and *"the dead logistics sim; morale"*. `LogisticsLink`,
+> `simulate_logistics` and the `tile.mass` economy went as this document's own §"What is deleted"
+> planned. **Both fields survived the demolition with exactly one live reader each**, and both are
+> morale's — so neither is available to a route without giving it a second meaning.
+
+> **⛔ THE `movement` ROW USED TO CREDIT READERS THAT READ THREE DIFFERENT FIELDS SHARING ONE NAME.**
+> It read *"fauna's rung `behavior.movement`, the visibility sweep"*. Neither reads this field.
+> `TerrainDefinition::movement` is a `MovementProfile`, and `MovementProfile` appears **nowhere in the
+> workspace but its own declaration in `terrain.rs` and the `lib.rs` re-export** — it has no readers at
+> all. What `fauna.rs` reads is `herd_rung(..).behavior.movement`, the intensification ladder's
+> `RungMovement`; what `visibility_systems.rs` reads is `cfg.movement.max_sweep_tiles` off
+> `visibility_config.rs`'s `MovementConfig`. Three distinct types, one word.
+>
+> **The error made the row look half-live and so softened the callout below**, which is the argument
+> §4.13's whole payoff choice rests on: the row belongs in the same **nobody** class as
+> `detection_modifier`, and the terrain cost table's *travel* half is authored but entirely unread.
+
+`detection_modifier` and `infrastructure_cost` have never been read by any system. `detection_modifier`
+is *how well you see, and are seen, in this terrain* — the range question, already answered per biome.
+`infrastructure_cost` is *what it costs to hold a route through here* — the route-upkeep question.
+**This arc's cost model is substantially already authored**; it has simply never been wired to anything.
+
+> **⛔ AND THE *OTHER* HALF OF THE LADDER'S CLAIM HAS NO DATA WAITING FOR IT.** A rung is
+> *"cheaper to travel and dearer to keep"*, and only the dearer half is authored here. **Band movement
+> is terrain-blind**: a band walks a flat `labor_config.band_move_tiles_per_turn` and the `movement`
+> profile above has **no reader at all**, let alone one that prices a band's step — so "cheaper to
+> travel" cannot mean a faster
+> march without first making movement terrain-sensitive, which is its own arc. **§4.13 therefore spends
+> the payoff where it is already live** — the supply network's `reach_tiles` and `friction`, which
+> `balance_supply_networks` reads every turn on the very edge a route sits on.
 
 ---
 
@@ -231,10 +294,34 @@ Each rider defines its own use of a connection. The connection does not know the
 
 | Rider | Sits on | Its own behaviour |
 |---|---|---|
-| **Logistics** | a connection | holds a route; its tiles stay `Seen` while held; climbs the ladder |
+| **Logistics** | a connection | holds a route; climbs the ladder; **its tiles stay `Seen` while the route is kept — confirmed, see below** |
 | **Culture** | a connection | **open — §Open items** |
 | **Knowledge** | a connection | **open** — the `openness → leak_timer → partial fragment` model is worth keeping (§As-built) |
 | **Cargo** (food, fodder, materials) | a **logistics link** | mass moves, throughput-limited, friction-lossy |
+
+> **⛔ THAT ROW LOOKS LIKE IT WALKS INTO THE KEYSTONE, AND IT DOES NOT. CONFIRMED 2026-08-29.**
+> §Q3 and `connections.rs`'s module doc state the rule as inviolable — *"**Only presence makes a tile
+> `Seen`. A connection can only ever grant `Discovered`.**"* — and name **logistics** as the first
+> rider that will be tempted to break it. §4.13's design pass first read this row as that temptation
+> and proposed granting nothing.
+>
+> **That was wrong, and the inference ran backwards.** Ray: *"If a road exists and is maintained, the
+> assumption is that there is traffic on it and it is seen."* **Maintenance is not free** — a kept
+> road bills a band every turn out of the `Roadwork` pool, and what those hands are doing is being on
+> the road. **Paying the upkeep IS the presence.** A road nobody walks is a road nobody pays for, and
+> it reverts.
+>
+> **So the keystone stands untouched**: the sight is granted by the **road** — maintained presence on
+> specific ground — and **not by the connection**, which still grants `Discovered` and nothing else.
+> A live tie to a people you have never travelled to shows you exactly what it shows you today, and
+> `core_sim/tests/connections.rs` keeps passing unchanged. **The route's grant must be written as its
+> own visibility source beside a band's own presence, never routed through the connection grant** —
+> otherwise the test is satisfied by plumbing rather than by the rule.
+>
+> **The condition is the PAID BILL, not the held rung**: a built rung (2 and up) with its keeping met.
+> The `path` floor lights nothing, because nobody maintains a path. A road in shortfall
+> goes dark before it decays, which is the honest early warning. Full model in
+> `plan_standing_upkeep.md` §4.13.
 
 Two structural properties belong to the rider, not the connection:
 

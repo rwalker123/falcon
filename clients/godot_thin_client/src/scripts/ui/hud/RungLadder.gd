@@ -65,6 +65,25 @@ const ROW_TURNS_KEY := "turns_remaining"
 const ROW_REASONS_KEY := "reasons"
 const ROW_SELECTABLE_KEY := "selectable"
 
+## ⛔ **THE THREE KEYS THE ROUTE BRANCH ADDS, AND EVERY ONE IS OPTIONAL.** A row that carries none of
+## them renders exactly as it always did, which is what keeps the plant and animal tracks untouched by
+## a cut made for roads.
+##
+## `ROW_FACE_KEY` is a FINISHED right-hand face. The other two branches let `_row_face` derive one
+## from the state and the figures; a road row states `<figure> · <nearest refusal>`, which is a
+## composition only its producer can make — it alone knows which refusal is nearest.
+##
+## `ROW_TOOLTIP_KEY` is the row's hover, and it is where the payoff, the standing bill, the
+## remoteness and EVERY refusal went when the row was cut to one line. **Nothing was deleted; it
+## moved here**, which is why the harness asserts hovers and not only visible text.
+##
+## `ROW_NAME_WIDTH_KEY` overrides the shared name column. See `HudRouteVocab.ROAD_LADDER_NAME_WIDTH`:
+## the route faces are wider and its rung names are shorter, so the column moves the pixels across
+## rather than widening a card the other two branches share.
+const ROW_FACE_KEY := "face"
+const ROW_TOOLTIP_KEY := "tooltip"
+const ROW_NAME_WIDTH_KEY := "name_width"
+
 ## **THE TWO PRICE-ASIDE KEYS, BESIDE `ROW_REASONS_KEY` AND DELIBERATELY NOT INSIDE IT.** That array
 ## means *why this rung is refused*, and a price is not a refusal — a LOCKED rung carries both, which
 ## is the whole reason they could not share one key.
@@ -220,6 +239,168 @@ static func has_track(rows: Array[Dictionary]) -> bool:
             return true
     return false
 
+# ---- THE ROUTE BRANCH — a SIBLING of `track`, never a widening of it -------------------------------
+#
+# ⛔ **`track` TAKES A LABOR `kind` AND A WIRE SOURCE DICT, AND A ROAD HAS NEITHER.** There is no
+# `forage`/`hunt` crew on a road, no per-source forecast row, no queued entry publishing legs, and no
+# `prefix` to spell its keys under. Widening that signature would push every plant and animal call
+# site through a branch it cannot use, so the route branch gets its own producer — and hands the
+# result to the SAME `build_track` renderer, which is what keeps one rung reading one way on every
+# card in the client.
+#
+# ⛔ **EVERY LABEL, PRICE, PAYOFF AND GATE COMES OFF THE CATALOG** (`HudRouteVocab.route_ladder`, the
+# wire's `routeRungs`). Nothing here reads `HudRouteVocab.RUNG_LABELS` and nothing hard-codes the
+# four shipped rungs: a rung added to `intensification_ladder.json` appears as a row with no client
+# edit at all, which is the whole reason the tile card's action opens a LADDER rather than a button
+# per verb.
+
+## A rung nobody declares — the free floor, worn in by traffic. **The seventh state, and the route
+## branch is the only web that can produce it**: it is not refused (which is what `STATE_LOCKED`
+## says) and it is not pressable, because there is no order to give. A rung in this state still
+## states its reason as an aside, so the row says why rather than merely being inert.
+const STATE_UNORDERED := "unordered"
+
+## **THE ROUTE BRANCH FOR ONE ROAD, BOTTOM RUNG FIRST — ONE LINE PER RUNG.**
+##
+## `road` is the raw `routes` row for the tile (the `HudRouteVocab` field readers' own shape),
+## `ladder` the ordered catalog, `knowledge` the faction's `{track: progress}` row, `labels` the
+## `{knowledge_id: display_name}` lookup off the ladder's knowledge roster, and `band` the acting band
+## — `{}` meaning none is picked, which is one of the keeper gates.
+##
+## `keeper_label` is the name of whichever band ALREADY keeps this tile, resolved by the caller
+## through this client's one band-naming rule — passed straight to `RungGates.route_gates`, which
+## names it in the *one band keeps a road tile, never two* refusal. This layer resolves no names, the
+## tile card's own `Kept by:` row having established that the drawer does it.
+##
+## ⛔ **THE ROW CARRIES A FINISHED FACE AND A TOOLTIP, AND NO ASIDES AT ALL.** The plant and animal
+## branches stack their price, their stall warning and their standing bill BENEATH the row; this one
+## printed the same way and came out six lines deep per rung, which is the wordiness this cut removed.
+## What a road row states is `<figure> · <nearest refusal>` and everything else is on the hover, so
+## `ROW_BUILD_ASIDES_KEY` / `ROW_HOLD_ASIDES_KEY` / `ROW_REASONS_KEY` stay EMPTY and `build_track`'s
+## aside loops emit nothing for these rows without needing to know the difference.
+##
+## **THE ROWS ARE OTHERWISE `track`'s OWN `ROW_*` SHAPE**, so the renderer is unchanged. Three of the
+## six original states are unreachable here and that is structural rather than unfinished: `path` and
+## `target` name legs of a QUEUED entry, and no road publishes one.
+static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: Dictionary,
+        labels: Dictionary, band: Dictionary,
+        keeper_label: String = "") -> Array[Dictionary]:
+    var rows: Array[Dictionary] = []
+    var gates := RungGates.route_gates(road, ladder, knowledge, labels, band, keeper_label)
+    var standing_order := HudRouteVocab.ladder_order_of(ladder, HudRouteVocab.rung_of(road))
+    # **THE REMOTENESS IS THE KEEPER'S PUBLISHED MULTIPLE, AND IT IS NEVER MULTIPLIED IN.** The sim
+    # quoted it when this road's keeper took the tile on; the client states it in the hover, apart
+    # from the base price, because folding the two would put the sim's pricing formula here.
+    var remote := HudRouteVocab.is_remote(road)
+    var meter := HudRouteVocab.build_fraction_of(road)
+    # **THE METER BELONGS TO THE FIRST ROW ABOVE THE STANDING RUNG AND TO NO OTHER** — it is the rung
+    # being RAISED, which is a DIFFERENT rung from the one the road holds. Tracked as a latch rather
+    # than an `order + 1` test, because the catalog's orders need not be contiguous.
+    var approach_placed := false
+    for entry in ladder:
+        var verb := HudRouteVocab.catalog_verb(entry)
+        var rung_key := HudRouteVocab.catalog_rung_key(entry)
+        var row := {
+            ROW_RUNG_KEY: rung_key,
+            ROW_IMPROVEMENT_KEY: verb,
+            ROW_NAME_KEY: HudRouteVocab.catalog_display_name(entry),
+            ROW_NAME_WIDTH_KEY: HudRouteVocab.ROAD_LADDER_NAME_WIDTH,
+            ROW_WORK_KEY: WORK_UNKNOWN,
+            ROW_TURNS_KEY: SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+            ROW_REASONS_KEY: [] as Array[String],
+            ROW_BUILD_ASIDES_KEY: [] as Array[Dictionary],
+            ROW_HOLD_ASIDES_KEY: [] as Array[Dictionary],
+            ROW_SELECTABLE_KEY: false,
+        }
+        var order := HudRouteVocab.catalog_order(entry)
+        if order < standing_order:
+            row[ROW_STATE_KEY] = STATE_BANKED
+            rows.append(row)
+            continue
+        if order == standing_order:
+            row[ROW_STATE_KEY] = STATE_STANDING
+            rows.append(row)
+            continue
+        # THE METER is CLAIMED by the first row above the standing rung whether or not that row
+        # shows it, so a later row can never pick it up.
+        var is_approach_row := not approach_placed
+        approach_placed = true
+        var refusals := RungGates.route_gates_for(gates, rung_key)
+        row[ROW_TOOLTIP_KEY] = _route_tooltip(entry, refusals, road, remote)
+        if verb == HudRouteVocab.RUNG_CATALOG_NONE:
+            # **A RUNG NOBODY ORDERS LEADS WITH ITS METER**, that being the only figure it has; with
+            # nothing rising it states the cause alone.
+            row[ROW_STATE_KEY] = STATE_UNORDERED
+            # ⛔ **THE METER RIDES THIS ROW AND NO OTHER.** A rung nobody orders has no figure of its
+            # own, so without the meter the line states only a static fact about traffic. Every other
+            # row already leads with a price — and the tile card's `Road` line one block up states the
+            # same percentage, so repeating it beside a price would be the duplication this cut is
+            # removing rather than a second useful reading.
+            var meter_clause := _route_meter_clause(meter) if is_approach_row else ""
+            row[ROW_FACE_KEY] = _route_face(meter_clause, HudWorkVocab.RUNG_TRACK_STATE_WORN_IN)
+            rows.append(row)
+            continue
+        # **THE BASE PRICE, AS PUBLISHED**, and it is the row's figure on every ordered rung —
+        # refused or not. A rung the player may plan toward has to be one they can plan against.
+        row[ROW_WORK_KEY] = HudRouteVocab.catalog_work_cost(entry)
+        var price := HudWorkVocab.RUNG_TRACK_COST_UNDATED_FORMAT % DetailFormat.format_work_units(
+            HudRouteVocab.catalog_work_cost(entry))
+        if refusals.is_empty():
+            # Buildable: the price IS the button, and there is no refusal to state beside it.
+            row[ROW_STATE_KEY] = STATE_OPEN
+            row[ROW_SELECTABLE_KEY] = true
+            row[ROW_FACE_KEY] = price
+            rows.append(row)
+            continue
+        # ⛔ **ONE REFUSAL ON THE ROW AND ALL OF THEM IN THE HOVER**, and never the word `locked`
+        # beside a reason that already is the state.
+        row[ROW_STATE_KEY] = STATE_LOCKED
+        row[ROW_FACE_KEY] = HudRouteVocab.ROAD_LADDER_FACE_FORMAT % [
+            price, RungGates.route_row_refusal(refusals)]
+        rows.append(row)
+    return rows
+
+## One row's face, with the meter clause in front of it where this row owns one. `""` for the meter is
+## the ordinary case, and then the face is exactly what was passed in — no stray separator.
+static func _route_face(meter_clause: String, face: String) -> String:
+    if meter_clause == "":
+        return face
+    return HudRouteVocab.ROAD_LADDER_FACE_FORMAT % [meter_clause, face]
+
+## **HOW FAR TRAFFIC HAS GOT TOWARD THE ROW THIS SITS ON** — `""` where nothing is rising.
+##
+## The wire states exactly `1.0` for a rung just finished AND for the top of the ladder, so the upper
+## test is a plain comparison rather than a tolerance; the lower one keeps a road that has banked
+## nothing from stating a `0%` that reads as a stalled build.
+static func _route_meter_clause(meter: float) -> String:
+    if meter <= HudRouteVocab.RUNG_CATALOG_NO_WORK_COST \
+            or meter >= HudRouteVocab.ROAD_METER_COMPLETE:
+        return ""
+    return HudRouteVocab.ROAD_LADDER_METER_FORMAT % int(
+        floor(meter * HudRouteVocab.ROAD_PERCENT_SCALE))
+
+## **EVERYTHING THE ROW STOPPED SAYING, as one hover.** In reading order: what it costs to build AND
+## to keep, what it does, what distance adds, then every refusal in the gate layer's own order.
+##
+## ⛔ **THE PRICE LINE RENDERS ONLY WHERE THE RUNG OWES UPKEEP.** On a rung that is free to hold it
+## would restate the face and add nothing, and a line that says nothing is what this cut removed.
+static func _route_tooltip(entry: Dictionary, refusals: Array, road: Dictionary,
+        remote: bool) -> String:
+    var lines: Array[String] = []
+    var upkeep := HudRouteVocab.catalog_upkeep(entry)
+    if upkeep >= SourceForecast.UPKEEP_WORK_MIN:
+        lines.append(HudRouteVocab.ROAD_LADDER_TIP_PRICE_FORMAT % [
+            DetailFormat.format_work_units(HudRouteVocab.catalog_work_cost(entry)),
+            DetailFormat.format_work_units(upkeep)])
+    var payoff := HudRouteVocab.rung_payoff_clause(entry)
+    if payoff != "":
+        lines.append(payoff)
+    if remote:
+        lines.append(HudRouteVocab.ROAD_LADDER_TIP_REMOTE_FORMAT % (
+            HudRouteVocab.ROAD_REMOTENESS_FORMAT % HudRouteVocab.keeper_remoteness_of(road)))
+    lines.append_array(RungGates.route_tooltip_refusals(refusals))
+    return HudRouteVocab.ROAD_LADDER_TIP_SEPARATOR.join(lines)
+
 ## **THE TRACK AS CONTROLS** — one row per rung, a `Button` where the rung may be picked and a `Label`
 ## where it may not.
 ##
@@ -229,12 +410,20 @@ static func has_track(rows: Array[Dictionary]) -> bool:
 ## queues and then blocks.
 ##
 ## `on_pick` takes the row's improvement VERB — the destination, which is what the command carries.
-static func build_track(rows: Array[Dictionary], on_pick: Callable) -> VBoxContainer:
+## **THE RENDERER IS SHARED WITH THE ROUTE BRANCH, AND ONLY THE HEADING IS WIDENED.** `track` was not:
+## it takes a labor `kind` and a wire SOURCE dict, and a road has neither, so widening the PRODUCER
+## would force every plant and animal call site through a branch it cannot use. A row is a row on any
+## branch, though — same name, same face, same asides in the same order — so `route_track` builds the
+## same `ROW_*` shape and hands it here rather than growing a second render loop that could drift.
+##
+## `title` defaults to the plant/animal heading, so every existing call site is untouched.
+static func build_track(rows: Array[Dictionary], on_pick: Callable,
+        title_text: String = HudWorkVocab.RUNG_TRACK_TITLE) -> VBoxContainer:
     var column := VBoxContainer.new()
     column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
     column.custom_minimum_size = Vector2(HudWorkVocab.RUNG_TRACK_WIDTH, 0.0)
     var title := Label.new()
-    title.text = HudWorkVocab.RUNG_TRACK_TITLE
+    title.text = title_text
     title.add_theme_color_override("font_color", HudStyle.INK_DIM)
     title.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_TITLE_FONT_SIZE)
     column.add_child(title)
@@ -329,17 +518,26 @@ static func _build_row(row: Dictionary, on_pick: Callable) -> Control:
     var line := HBoxContainer.new()
     line.set_meta(HudWorkVocab.RUNG_TRACK_ROW_META, String(row.get(ROW_IMPROVEMENT_KEY, "")))
     line.set_meta(HudWorkVocab.RUNG_TRACK_STATE_META, state)
+    # …and the rung KEY beside them, which is the only handle unique on the ROUTE branch: two of its
+    # rungs declare no verb at all, so the meta above cannot tell them apart.
+    line.set_meta(HudWorkVocab.RUNG_TRACK_RUNG_META, String(row.get(ROW_RUNG_KEY, "")))
     var tint := _state_color(state)
     var name := Label.new()
     name.text = String(row.get(ROW_NAME_KEY, ""))
     name.clip_text = true
     name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    name.custom_minimum_size = Vector2(HudWorkVocab.RUNG_TRACK_NAME_WIDTH, 0.0)
+    name.custom_minimum_size = Vector2(float(row.get(ROW_NAME_WIDTH_KEY,
+        HudWorkVocab.RUNG_TRACK_NAME_WIDTH)), 0.0)
     name.add_theme_color_override("font_color", tint)
     name.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_ROW_FONT_SIZE)
     name.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(name)
     var face := _row_face(row, state)
+    # **THE HOVER GOES ON THE LINE AND ON THE FACE BOTH.** A `Button` is `MOUSE_FILTER_STOP` and
+    # answers a hover with its OWN tooltip, so a tooltip left only on the row would never show over
+    # the one control the pointer is actually aiming at.
+    var hover := String(row.get(ROW_TOOLTIP_KEY, ""))
+    line.tooltip_text = hover
     if not selectable:
         var value := Label.new()
         value.text = face
@@ -347,6 +545,8 @@ static func _build_row(row: Dictionary, on_pick: Callable) -> Control:
         value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
         value.add_theme_color_override("font_color", tint)
         value.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_ROW_FONT_SIZE)
+        # ⛔ **IGNORE, so the hover falls through to the LINE that carries the tooltip.** A Label
+        # that swallowed the pointer would answer with its own empty tooltip and show nothing.
         value.mouse_filter = Control.MOUSE_FILTER_IGNORE
         line.add_child(value)
         return line
@@ -361,6 +561,7 @@ static func _build_row(row: Dictionary, on_pick: Callable) -> Control:
     # AFTER `apply_button`, which writes its own `font_color`: a rung already on the chosen path keeps
     # the cyan that says so, and the hover brightening stays as the affordance.
     pick.add_theme_color_override("font_color", tint)
+    pick.tooltip_text = hover
     var verb := String(row.get(ROW_IMPROVEMENT_KEY, ""))
     pick.pressed.connect(func() -> void: on_pick.call(verb))
     line.add_child(pick)
@@ -737,10 +938,21 @@ static func _build_back_row(on_back: Callable) -> Button:
 ## no figure at all — that is the receipt-not-discount property, rendered: a banked rung is not a
 ## discount to be quoted, it is a thing already bought.
 static func _row_face(row: Dictionary, state: String) -> String:
+    # ⛔ **A FINISHED FACE WINS, and only the route branch supplies one.** That branch's face is
+    # `<figure> · <nearest refusal>` — a composition its PRODUCER makes, since it alone knows which of
+    # several refusals is nearest — so deriving one here from the state would overwrite it with the
+    # single word this cut removed.
+    var supplied := String(row.get(ROW_FACE_KEY, ""))
+    if supplied != "":
+        return supplied
     match state:
         STATE_BANKED: return HudWorkVocab.RUNG_TRACK_STATE_BANKED
         STATE_STANDING: return HudWorkVocab.RUNG_TRACK_STATE_STANDING
         STATE_LOCKED: return HudWorkVocab.RUNG_TRACK_STATE_LOCKED
+        # **A ROUTE RUNG NOBODY DECLARES STATES THE CAUSE, NOT A PRICE.** It carries a real
+        # `workCost` of zero and a `locked` face would read as a refusal; what is true is that
+        # traffic raises it and there is no order to give.
+        STATE_UNORDERED: return HudWorkVocab.RUNG_TRACK_STATE_WORN_IN
     var work := float(row.get(ROW_WORK_KEY, WORK_UNKNOWN))
     if work <= WORK_UNKNOWN:
         # The wire prices no such job on this source. The state word is the whole of what is known.
@@ -779,6 +991,9 @@ static func _state_color(state: String) -> Color:
         STATE_PATH: return HudStyle.SIGNAL_DEEP
         STATE_TARGET: return HudStyle.SIGNAL
         STATE_LOCKED: return HudStyle.INK_DIM
+        # A rung above you that you cannot press reads in the quiet ink, whether it is refused or
+        # merely unorderable — the WORD beside it is what tells those two apart.
+        STATE_UNORDERED: return HudStyle.INK_DIM
     return HudStyle.INK
 
 ## **WHERE THE SOURCE STANDS — the HIGHEST banked rung, `0` (the wild floor) when none is.** Walked

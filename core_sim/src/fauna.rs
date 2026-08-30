@@ -4263,7 +4263,7 @@ pub fn herd_rung_already_built(herd: &Herd, declared: crate::components::Improve
     match declared {
         Improvement::Tame => herd.is_domesticated(),
         Improvement::Corral => herd.corral_meter_full(),
-        Improvement::Cultivate | Improvement::Sow => false,
+        Improvement::Cultivate | Improvement::Sow | Improvement::Grade | Improvement::Pave => false,
     }
 }
 
@@ -4394,7 +4394,9 @@ pub fn herd_claims_keeping(
         use crate::components::Improvement;
         match verb {
             Improvement::Tame | Improvement::Corral => true,
-            Improvement::Cultivate | Improvement::Sow => false,
+            Improvement::Cultivate | Improvement::Sow | Improvement::Grade | Improvement::Pave => {
+                false
+            }
         }
     });
     by_position || by_verb

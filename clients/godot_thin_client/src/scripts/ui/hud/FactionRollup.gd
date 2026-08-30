@@ -857,7 +857,8 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
         role_workers += int(labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT).get("workers", 0)) \
             + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR).get("workers", 0)) \
             + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_AGRICULTURE).get("workers", 0)) \
-            + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_HUSBANDRY).get("workers", 0))
+            + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_HUSBANDRY).get("workers", 0)) \
+            + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_ROADWORK).get("workers", 0))
         party_workers += labor.band_party_workers(band)
         bench_workers += labor.bench_workers(band)
     var segments: Array = []

@@ -708,9 +708,9 @@ const FIXTURE_EQUIPMENT: &str = r#"{
   },
   "kits": [
     { "id": "big_game", "display_name": "Stalking kit", "jobs": ["hunt"], "uses": ["spears"] },
-    { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior", "agriculture", "husbandry", "builders"], "uses": [] }
+    { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior", "agriculture", "husbandry", "builders", "roadwork"], "uses": [] }
   ],
-  "default_kits": { "hunt": "big_game", "forage": "none", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none", "builders": "none" },
+  "default_kits": { "hunt": "big_game", "forage": "none", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none", "builders": "none", "roadwork": "none" },
   "quarry_default_kit_margin": 0.25,
   "start_stock_fraction": 1.5,
   "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }

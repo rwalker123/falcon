@@ -345,7 +345,7 @@ func run(harness) -> void:
 	# Learning Cultivation crosses 0.55 → 1.0 between snapshots: the one-shot command-feed nudge fires
 	# ("Cultivation learned — The Cultivate policy is now available on Thriving patches."), visible in
 	# the left-dock Command Feed card in every frame from here on.
-	h._hud.update_intensification([{"faction": 0, "cultivation": 1.0, "herding": 1.0}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0}}])
 
 	# State 2-cultivate — knowledge known + a Thriving patch: 🌱 Cultivate is ENABLED and selected. The
 	# forecast states the DEAL instead of a single number — "Preparing: +0.24 /turn → then +1.20 /turn"
@@ -797,10 +797,7 @@ func run(harness) -> void:
 	# reason leads (the near-term one a player can move), the ground's refusal keeps the note slot
 	# beneath. They are different decisions — *you do not know how yet* means wait, *this ground will
 	# never take seed* means move on.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0,
-		"seed_selection": SOW_LOCKED_SEED_SELECTION, "penning": 0.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": SOW_LOCKED_SEED_SELECTION, "penning": 0.0}}])
 	# **THE TILE HAS TO BE A TENDED ONE NOW** (issue #442). Only ONE improvement is ever offered — the
 	# source's next rung — so on a WILD patch with Cultivation known, Cultivate is what the control
 	# offers and Sow is not reached at all. A tended patch has its rung-2 built, which makes Sow the
@@ -840,9 +837,7 @@ func run(harness) -> void:
 
 	# Seed Selection completes → the one-shot feed nudge fires ("Seed Selection learned — The Sow
 	# policy is now available — but only on rich, well-watered ground.").
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0}}])
 
 	# State 6b-sow-too-dry — knowledge KNOWN, and still refused: this prairie is rich but dry. THE
 	# WHOLE POINT of the sim shipping a reason rather than a bool — only ~46 of 4160 tiles (1.1%) will

@@ -437,3 +437,15 @@ static func detail_row_index(lines: Array[String], key: String) -> int:
 		if lines[index].begins_with(prefix):
 			return index
 	return -1
+
+## A row this producer did not emit at all. Its own token rather than `""`, because an ABSENT row and
+## a row that says nothing are different verdicts and an assertion has to be able to tell them apart.
+const DETAIL_ROW_ABSENT := "<row absent>"
+
+## …and what that row SAYS. **The assertion this file exists for**: a test that only proves a row is
+## PRESENT proves nothing about the readout, and every road claim in the walk is about the words.
+static func detail_row_value(lines: Array[String], key: String) -> String:
+	var index := detail_row_index(lines, key)
+	if index < 0:
+		return DETAIL_ROW_ABSENT
+	return lines[index].substr(key.length() + DetailFormat.DETAIL_KV_SEPARATOR.length())

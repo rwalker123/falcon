@@ -478,11 +478,7 @@ func _assert_bracket_follows_the_wire(tile: Dictionary) -> void:
 func run(harness) -> void:
 	h = harness
 	var tile := _gather_tile()
-	h._hud.update_intensification([{
-		"faction": 0,
-		"cultivation": CULTIVATION_KNOWN,
-		"foddering": FODDERING_KNOWN,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": CULTIVATION_KNOWN, "foddering": FODDERING_KNOWN}}])
 
 	# ---- The DEFAULT state — nothing ticked anywhere, so everything is coming home ---------------
 	# The band's own row carries NO selection, which is what the sheet seeds from; the state exists to

@@ -4,7 +4,8 @@
 //! 1. `clear_active_visibility` - Reset Active tiles to Discovered
 //! 2. `prune_sweep_tracker` - Forget sweep positions of despawned cohorts
 //! 3. `calculate_visibility` - Compute visibility from all sources
-//! 4. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
+//! 4. `light_kept_routes` - A KEPT ROAD holds its own path `Seen` for whoever stands on it
+//! 5. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
 
 use bevy::prelude::*;
 
@@ -52,7 +53,8 @@ use crate::{
     heightfield::ElevationField,
     labor_config::LaborConfigHandle,
     orders::FactionId,
-    resources::{SimulationConfig, SimulationTick},
+    resources::{SimulationConfig, SimulationTick, TileRegistry},
+    routes::RoadRegistry,
     visibility::{VisibilityLedger, VisibilityState, VisibilitySweepTracker},
     visibility_config::{TerrainModifierConfig, VisibilityConfigHandle},
 };
@@ -358,10 +360,15 @@ pub fn calculate_visibility(
                         LaborTarget::Hunt { fauna_id, .. } => {
                             herds.find(fauna_id).map(|herd| herd.position())
                         }
+                        // A band-wide role stands on no tile of its own. **`Roadwork` included** —
+                        // a kept road lights its own tile through `routes::Road::grants_sight`,
+                        // which is the *road's* grant beside a band's presence and not the keeping
+                        // role's, and it is not wired to this sweep yet.
                         LaborTarget::Scout
                         | LaborTarget::Warrior
                         | LaborTarget::Agriculture
                         | LaborTarget::Husbandry
+                        | LaborTarget::Roadwork
                         | LaborTarget::Builders => None,
                     };
                     // A Forage assignment carries raw command-supplied coords (see
@@ -517,6 +524,72 @@ pub fn calculate_visibility(
         target: "shadow_scale::visibility",
         "visibility.step2_calculate END"
     );
+}
+
+/// ⛔ **STEP 4: A KEPT ROAD HOLDS ITS OWN TILE `Seen`, AND IT IS ITS OWN VISIBILITY SOURCE.**
+///
+/// Ray: *"If a road exists and is maintained, the assumption is that there is traffic on it and it
+/// is seen."* [`crate::routes::Road::grants_sight`] already answers *which* roads — a road at a
+/// **built** rung whose **keeping bill is met** — and this is the pass that hands that answer to the
+/// fog.
+///
+/// # ⛔ THE CONNECTION KEYSTONE DOES NOT BEND, AND THAT IS WHY THIS IS A SEPARATE PASS
+///
+/// `connections.rs` states it as inviolable — *"Only presence makes a tile `Seen`. A connection can
+/// only ever grant `Discovered`."* — and names **logistics** as the first rider that will be tempted
+/// to break it. **This is not that temptation.** Maintenance is not free: a kept road bills its
+/// keeper every turn out of that band's `Roadwork` pool, and what those hands are *doing* is being on
+/// the road. **Paying the upkeep IS the presence**, so the grant comes from the *road* — maintained
+/// presence on specific ground — and never from an edge.
+///
+/// **It is therefore written here, beside a band's own presence, and NOT threaded through the
+/// connection grant.** Plumbing it through the ties would satisfy `core_sim/tests/connections.rs` by
+/// accident rather than by the rule, and would leave the next reader believing a connection can
+/// grant `Seen`. It grants the same `Active` a band's own camp grants, not `Discovered`.
+///
+/// # ⛔ WHOSE FOG IT LIFTS: THE KEEPER'S, AND NOBODY ELSE'S
+///
+/// A road tile is **one band's job** ([`crate::routes::Road::keeper`]), so the faction that sees it
+/// is that band's. It is read off the road rather than off who is camped there, which is the whole
+/// per-tile model in one line: *the people paying for this tile are the people on it.*
+///
+/// **The registry is walked, not the bands.** The keeper's own position is irrelevant — a band that
+/// grades a road four tiles from camp is paying for hands that stand *there*, and the grant follows
+/// the bill. That is also what makes the grant survive the band walking away, and what makes it stop
+/// the turn the bill does.
+///
+/// A road nobody keeps lights nothing at all, because the whole free floor answers `false` to
+/// `grants_sight` and a decayed road loses its keeper on the way down.
+///
+/// # NO CONTACT RIDES THIS REVEAL
+///
+/// [`ContactSink`] hangs off the *sight sweep*, whose effective range this pass has no part in. A
+/// road grants ground, not a sighting: crediting contact from the far end of a road would let a band
+/// meet a people it never looked at, which is the second half of the keystone wearing a different
+/// coat.
+pub fn light_kept_routes(
+    mut ledger: ResMut<VisibilityLedger>,
+    roads: Res<RoadRegistry>,
+    tile_registry: Res<TileRegistry>,
+    tick: Res<SimulationTick>,
+) {
+    if roads.is_empty() {
+        return;
+    }
+    let (width, height) = (tile_registry.width, tile_registry.height);
+    let current_turn = tick.0;
+    // Collected before the ledger is borrowed mutably: the two are separate resources, and the lit
+    // set is at most one entry per road tile.
+    let lit: Vec<(FactionId, UVec2)> = roads
+        .iter()
+        .filter(|(_, road)| road.grants_sight())
+        .filter_map(|(tile, road)| road.keeper.map(|keeper| (keeper.faction, tile)))
+        .collect();
+    for (faction, tile) in lit {
+        ledger
+            .ensure_faction(faction, width, height)
+            .mark_active(tile.x, tile.y, current_turn);
+    }
 }
 
 /// Tiles crossed by the straight offset-space segment from `from` to `to`,

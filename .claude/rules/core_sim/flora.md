@@ -919,12 +919,12 @@ now feeds every account at rung 2:
   turn the credit begins.
   - **Both halves of the fodder answer are on the wire** (#485). The rate seam publishes what the
     **land** pays — `ForagePatchState.fodderPerBiomass`, commodity-generic and knowledge-blind, as the
-    gate's placement at the consumer requires — and the **capability** rides
-    `IntensificationKnowledgeState.foddering`, the faction's 0..1 progress on discovery 2007, appended
-    after `penning`. So a viewer holding a patch row and its faction's knowledge row can tell a
+    gate's placement at the consumer requires — and the **capability** rides the faction's knowledge
+    list as `knowledges["foddering"]`, its 0..1 progress on discovery 2007. So a viewer holding a patch row and its faction's knowledge row can tell a
     **refused** fodder credit (positive rate, no Foddering) from an **absent** one (a patch whose
-    basket grows no hay), which the rate alone cannot distinguish. `foddering` is the one field on that
-    table that is **not** a rung-transition gate: no rung waits on it, the pen rung *teaches* it
+    basket grows no hay), which the rate alone cannot distinguish. `foddering` is the one entry on that
+    list that is **not** a rung-transition gate: no rung waits on it — which the roster beside it
+    states outright as `is_step: false` — and the pen rung *teaches* it
     (`intensification_ladder.json`, corral's `earns_knowledge`), and it gates all three fodder seams —
     the pen's hay draw, the pen's `K` fodder term, and this wild credit. **What that costs the capture
     is stated where the capture is edited** — `.claude/rules/core_sim/yield-forecast.md`, which owns

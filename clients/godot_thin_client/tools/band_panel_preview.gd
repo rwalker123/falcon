@@ -48,6 +48,7 @@ const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 ## same token that harness's frames are read against. It is one of TWO cross-harness fixture
 ## preloads, the rung derivation below being the other.
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
+const KnowledgeFx := preload("res://tools/ui_preview/fixtures_knowledge.gd")
 const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 ## …and the SECOND, for the same reason: the standing rung a fixture states must be the sim's own
 ## derivation off the flags the row already carries, and one transcription of it serves the whole tree
@@ -3797,7 +3798,8 @@ func _assert_pools_block(where: String, want_fund_mode: bool) -> void:
 		# nothing to keep is short of nothing, so all three cards must be bare — and without this the
 		# marked pair two states along passes on a builder that marks every keeping card there is.
 		_assert_pool_card_marks(where, [], [HudWorkVocab.ROLE_NAME_AGRICULTURE,
-			HudWorkVocab.ROLE_NAME_HUSBANDRY, HudWorkVocab.ROLE_NAME_BUILDERS])
+			HudWorkVocab.ROLE_NAME_HUSBANDRY, HudWorkVocab.ROLE_NAME_ROADWORK,
+			HudWorkVocab.ROLE_NAME_BUILDERS])
 
 ## GUARD: **the fund-mode row is the TWO BUTTONS and nothing else, and it draws inside the height
 ## reserved for it** (§4.7). It carried an arithmetic line beside them until the per-web marks landed;
@@ -4403,8 +4405,11 @@ const UPKEEP_MODE_BUTTON_COUNT := 2
 ## claim composed from live code could only describe whatever the code still tags.
 const RETIRED_UPKEEP_MODE_NOTE_META := "upkeep_mode_note"
 
-## How many cards the POOLS block carries — Agriculture, Husbandry, Builders.
-const POOL_CARD_COUNT := 3
+## How many cards the POOLS block carries — Agriculture, Husbandry, Roadwork, Builders. **Roadwork is
+## the fourth** (arc #532), and it is what forced the block's own stepper and title metrics
+## (`HudWorkVocab.POOL_STEPPER_*` / `POOL_CARD_NAME_FONT_SIZE`): four cards had to fit a strip that is
+## 356px on the left dock, and at the shared widths they wanted 466.
+const POOL_CARD_COUNT := 4
 
 ## GUARD: **which POOL CARDS fly the shortfall mark, asserted as a PAIR of lists.** A mark on every
 ## card and a mark on none are the same picture at a glance, so the claim is which cards carry it AND
@@ -4468,10 +4473,16 @@ func _other_keeping_role(role: String) -> String:
 ## ⛔ **THERE IS NO CONTENT-DIFFERS PRECONDITION HERE, AND THAT IS MEASURED RATHER THAN SKIPPED.** The
 ## role cards' own levelness claim is preconditioned on the two cards' CONTENT heights differing — the
 ## Scout's hint wraps to three lines against the Warrior's two — and a pool card has no prose, no
-## picker and no gear line, so its content is a title Label over a stepper. Measured, all three come
-## out **114 × 56**: the stepper's own 100px minimum dominates every role name, so the three cards are
+## picker and no gear line, so its content is a title Label over a stepper. Measured, all FOUR come
+## out **83 × 56**: the stepper's own minimum dominates every role name, so the cards are
 ## structurally identical in BOTH axes and no fixture can make them differ. A precondition either way
 ## round could only ever be vacuous, which is exactly what this file's own rule says not to ship.
+##
+## ⛔ **THE STEPPER-DOMINATES CLAIM IS THE GUARD ON THE WHOLE ROW, not a curiosity** (arc #532). Four
+## cards fit a 356px strip only while each is ~83px, and each is ~83px only while the stepper — a
+## fixed metric — is the floor rather than a role NAME, which is content. The moment a name becomes
+## the floor, one longer role name silently pushes the row past the zone's edge. This is where that
+## fails.
 ##
 ## **What is asserted instead is the pairing that CAN bite**: the minimums really are the stepper's
 ## (so a card that grew content would fail here first), all three render at one width and one height,
@@ -4480,7 +4491,8 @@ func _other_keeping_role(role: String) -> String:
 func _assert_pool_cards_are_level(where: String) -> void:
 	var cards := _pool_cards()
 	if cards.size() != POOL_CARD_COUNT:
-		_fail("%s — all three pool cards must render to compare their heights" % where)
+		_fail("%s — all %d pool cards must render to compare their heights" % [where,
+			POOL_CARD_COUNT])
 		return
 	var widths: Array[float] = []
 	var drawn_widths: Array[float] = []
@@ -7568,11 +7580,16 @@ func _find_pool_card(role_name: String) -> PanelContainer:
 	var block := _find_meta_control(_panel, HudWorkVocab.POOLS_BLOCK_META)
 	return null if block == null else _role_card_under(block, role_name)
 
-## All three pool cards, in the order the row builds them, `[]` when the block is absent.
+## Every pool card, in the order the row builds them, `[]` when the block is absent.
+##
+## **THE ROSTER IS A LITERAL LIST AND SO IS THE BUILDER'S**, which is why `POOL_CARD_COUNT` is
+## asserted against it: a pool added to the block and not to this list is a card this file silently
+## stops measuring, and the width guard below is the one thing standing between a fourth pool and a
+## row that runs off the edge of the zone.
 func _pool_cards() -> Array[PanelContainer]:
 	var cards: Array[PanelContainer] = []
 	for role_name in [HudWorkVocab.ROLE_NAME_AGRICULTURE, HudWorkVocab.ROLE_NAME_HUSBANDRY,
-			HudWorkVocab.ROLE_NAME_BUILDERS]:
+			HudWorkVocab.ROLE_NAME_ROADWORK, HudWorkVocab.ROLE_NAME_BUILDERS]:
 		var card := _find_pool_card(String(role_name))
 		if card != null:
 			cards.append(card)
@@ -8567,16 +8584,28 @@ func _has_label_containing(node: Node, text: String) -> bool:
 ## rung-transition tracks fully learned, which is what the rung-ready board needs. It is a function
 ## rather than a literal at its two call sites because the faction block REPLACES the row (a push
 ## overwrites a faction's whole row) and has to put this exact one back afterwards.
-func _standing_knowledge_row() -> Dictionary:
-	return {"faction": 0, "cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0}
+## ⛔ **TWO SHAPES, AND MIXING THEM IS SILENT.** The WIRE carries a per-faction row whose tracks ride
+## under `knowledges`; every GATE in this client (`RungGates`, `RungLadder.track`) takes the flat
+## `{track: 0..1}` map `FactionReadouts.faction_tracks` hands back. A gate handed the wire row reads
+## every track as `0`, which is a plausible frame with every rung honestly refused — so the two have
+## separate names here.
+func _standing_knowledge_tracks() -> Dictionary:
+	return {"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0}
 
-## THE KNOWLEDGE ZONE's craft tracks at the ladder's CEILING — all five, one of them FINISHED so the
-## `known` word renders beside four live meters. Five is the most rows that block can ever draw
-## (`FactionReadouts.KNOWLEDGE_TRACK_LABELS` is the whole ladder), which is what makes the zone's
-## measured extent the worst case rather than a sample.
+func _standing_knowledge_row() -> Dictionary:
+	return KnowledgeFx.progress_row(0, _standing_knowledge_tracks())
+
+## THE KNOWLEDGE ZONE's ladder tracks at the CEILING — every knowledge the roster carries, one of them
+## FINISHED so the `known` word renders beside live meters. It is the most rows that block can ever
+## draw, which is what makes the zone's measured extent the worst case rather than a sample: the
+## progress list is sparse in VALUE and never in membership, so the ladder's own length is the bound.
 func _faction_knowledge_fixture() -> Dictionary:
-	return {"faction": 0, "cultivation": 1.0, "seed_selection": 0.62, "herding": 0.41,
-		"penning": 0.28, "foddering": 0.07}
+	var tracks := KnowledgeFx.tracks_all_at(0.07)
+	tracks["cultivation"] = 1.0
+	tracks["seed_selection"] = 0.62
+	tracks["herding"] = 0.41
+	tracks["penning"] = 0.28
+	return KnowledgeFx.progress_row(0, tracks)
 
 ## THE KNOWLEDGE ZONE's discovered sites: **MORE distinct kinds than `FACTION_LIST_ROWS_MAX` shows**,
 ## so the `+N more` row is inside the measurement and the block is staged at the tallest it can ever
@@ -9079,8 +9108,8 @@ func _assert_faction_fodder_dormant() -> void:
 	# Foddering, so the page states the forage panel's own lock — and it must reach a cursor, which on
 	# a `RichTextLabel` means the label's own `tooltip_text` (`[hint=…]` does not parse in this build).
 	var locked_expected := DetailFormat.FODDER_LOCKED_TOOLTIP_FORMAT % [
-		HudFormat.progress_percent(float(_faction_knowledge_fixture().get(
-			HudFloraVocab.KNOWLEDGE_TRACK_FODDERING, 0.0))),
+		HudFormat.progress_percent(float((_faction_knowledge_fixture()["knowledges"] as Dictionary)
+			.get(HudFloraVocab.KNOWLEDGE_TRACK_FODDERING, 0.0))),
 		FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL)]
 	var label := _first_rich_text(band_zone)
 	_assert_band_panel("faction dormant: the page says WHY, in the forage panel's words: %s"
@@ -9091,7 +9120,8 @@ func _assert_faction_fodder_dormant() -> void:
 	# a pen — but the reason is calm, and it must NOT be the lock's sentence. The inequality is the
 	# half that catches a build stating one sentence in both states.
 	var learned := _faction_knowledge_fixture()
-	learned[HudFloraVocab.KNOWLEDGE_TRACK_FODDERING] = FACTION_FODDERING_LEARNED
+	(learned["knowledges"] as Dictionary)[HudFloraVocab.KNOWLEDGE_TRACK_FODDERING] = \
+		FACTION_FODDERING_LEARNED
 	_hud.update_intensification([learned])
 	_push_bands(_fodderless_faction_roster())
 	await _settle()
@@ -10356,7 +10386,8 @@ func _track_herd_band_fixture() -> Dictionary:
 ## turns on, so the two states below differ in knowledge and in the patch's own position and in
 ## nothing else.
 func _track_half_knowledge_row() -> Dictionary:
-	return {"faction": 0, "cultivation": 1.0, "seed_selection": 0.45, "herding": 1.0, "penning": 1.0}
+	return KnowledgeFx.progress_row(0, {
+		"cultivation": 1.0, "seed_selection": 0.45, "herding": 1.0, "penning": 1.0})
 
 ## A band working that one patch, so it carries a WORK ROW — the precondition the whole `⌃` rests on —
 ## with builders on the pool, so a declared climb reads as RUNNING rather than as stalled.
@@ -10510,7 +10541,7 @@ func _assert_rung_track_climbing() -> void:
 func _assert_rung_track_names_every_offer() -> void:
 	var rows := RungLadder.track(SourceForecast.LABOR_KIND_HUNT, {},
 		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_NONE,
-		_standing_knowledge_row())
+		_standing_knowledge_tracks())
 	# **THE PRECONDITIONS ARE THE VACUITY GUARD.** "No selectable row is blank" passes for free on a
 	# track with no selectable row at all, and on one whose rows are all priced — so the fixture is
 	# asserted to hold the exact shape the defect needs before the claim is made.

@@ -78,6 +78,21 @@ signal send_hunt_expedition_requested(payload: Dictionary)
 ## chip is what finds the row once the player is on it.
 signal work_tab_requested(band_entity: int)
 
+## ⛔ **THE ROUTE BRANCH'S DECLARATION — `grade|pave <faction> <band> <x> <y>`** (arc #532 slice 13),
+## relayed by `HudLayer` straight onto `improvement_requested` and formatted by
+## `Main.format_improvement`, both unchanged. It is a signal for the reason `send_hunt_expedition` is:
+## the command has no other emitter, so there is no HudLayer helper to route it through.
+##
+## **IT IS DELIBERATELY NOT CALLED `improvement_requested`.** That name was RETIRED from this
+## controller (see the block below) when the rung checkbox stopped being the commit, and reusing it
+## would read as that pair coming back — this is a different act, from a different surface, carrying a
+## band token none of those payloads had.
+##
+## **HudLayer relays it WITHOUT the optimistic overlay write** the work row's `⌃` gets: that write is
+## keyed to a band's LABOR ROWS and a road has none, so there is nothing to record and nothing to roll
+## back. The payload therefore carries no `pending_entity`.
+signal road_improvement_requested(payload: Dictionary)
+
 ## **THERE IS NO KEEPING SIGNAL HERE** (`docs/plan_standing_upkeep.md` §2.5). `maintain_requested`
 ## retired with the `maintain` command it carried: maintenance left the tile, so the keeping is
 ## staffed as a band-wide standing role from the Band panel's WORKFORCE zone and this sheet has no
@@ -101,6 +116,10 @@ var _host: Node = null
 # the drawer — the compose block moved out of them, the nodes did not move.
 var _herd_assign_controls: VBoxContainer = null
 var _forage_assign_controls: VBoxContainer = null
+# …and the LAND drawer's road action, at the BOTTOM of the card with the other verbs. Its own node
+# rather than a row inside `%ForageAssignControls`: that container is gated on the tile being a
+# GATHERING SITE with a band in hand, and a road crosses ground that is neither.
+var _road_ladder_controls: VBoxContainer = null
 # The selection card, READ-ONLY: the rect the sheet floats beside (`_compose_anchor_rect`).
 var _tile_panel: PanelCard = null
 
@@ -120,6 +139,14 @@ var _compose_sheet: ComposeSheet = null
 # that flashes). Zero readers outside this controller, so they travelled with the builders.
 var _forage_drawer_shape: Array = []
 var _herd_drawer_shape: Array = []
+var _road_drawer_shape: Array = []
+## The road ladder's Window and its inner `MarginContainer`, built on the first press of a `Road ▸`
+## and reused thereafter. **A Window renders over the dock and changes no layout**, which is why the
+## height-capped selection card can host a ladder at all; the margin is held so a re-open clears the
+## TRACK rather than the chrome that hosts it (`queue_free` is deferred, so freeing the margin renders
+## correctly once and opens onto an empty card ever after).
+var _road_ladder: PopupPanel = null
+var _road_ladder_body: MarginContainer = null
 ## **RETIRED — `_pen_extend_crew`, the ring's own dialled crew** (`docs/plan_standing_upkeep.md`
 ## §2.5). It held the number a stepper beside the Extend-pen button had dialled, because
 ## `extend_pen` took a trailing worker count; the verb DECLARES now — it appends a queue entry and the
@@ -172,7 +199,7 @@ func set_forecast_query(query: ForecastQuery) -> void:
 func _init(compose: ComposeState, band_labor: HudBandLaborState, selection: HudSelectionState,
         topbar: FactionReadouts, selectioncard: SelectionCardController, host: Node,
         herd_assign_controls: VBoxContainer, forage_assign_controls: VBoxContainer,
-        tile_panel: PanelCard,
+        road_ladder_controls: VBoxContainer, tile_panel: PanelCard,
         resolve_assign_band: Callable, herd_label_for_id: Callable, emit_assign_labor: Callable) -> void:
     _compose = compose
     _band_labor = band_labor
@@ -182,6 +209,7 @@ func _init(compose: ComposeState, band_labor: HudBandLaborState, selection: HudS
     _host = host
     _herd_assign_controls = herd_assign_controls
     _forage_assign_controls = forage_assign_controls
+    _road_ladder_controls = road_ladder_controls
     _tile_panel = tile_panel
     _resolve_assign_band_fn = resolve_assign_band
     _herd_label_for_id_fn = herd_label_for_id
@@ -4156,6 +4184,9 @@ func refresh_drawer_actions() -> void:
         build_herd_drawer_actions(_selection.herd())
     elif not _selection.tile_info().is_empty() and _selection.unit().is_empty():
         build_forage_drawer_actions(_selection.tile_info())
+        # The road action rides the LAND drawer with them: a road is a property of the ground, so its
+        # control appears on exactly the renders the terrain rows do.
+        build_road_drawer_actions(_selection.tile_info())
 
 ## The LAND drawer's read state: the standing forage summary (when the player already works this
 ## patch) and the `Assign harvesters ▸` button that opens the sheet. Fills `%ForageAssignControls`,
@@ -4264,6 +4295,200 @@ func _clear_herd_drawer() -> void:
     for child in _herd_assign_controls.get_children():
         child.queue_free()
     _herd_drawer_shape = []
+
+# ---- THE TILE CARD'S ROAD ACTION (arc #532 slice 13) -----------------------------------------------
+#
+# ⛔ **THE UNIT THE PLAYER PRESSES IS THE LADDER, NOT THE VERB.** One button per verb does not scale —
+# highways and railways are RUNGS, not new controls — and a single verb-named button forces ONE
+# refusal string, which cannot answer *"paving is out of reach but railroad is not"*. So the action
+# opens the whole branch, one row per rung in climb order, each carrying its own price, its own payoff
+# and its own gate. A rung added to `intensification_ladder.json` appears as a row with no client edit.
+#
+# ⛔ **IT IS NOT SHAPED LIKE FORAGE OR HUNT.** Those open a COMPOSE sheet because they take a worker
+# count; `grade` / `pave` take none and a trailing count is a parse error — they DECLARE, and the
+# hands come separately from `assign_labor <faction> <band> builders <n>`. So this is a plain action
+# that opens a card, the shape the pen's ring price card takes on the work board.
+#
+# ⛔ **IT APPEARS EXACTLY WHERE THE `Road` READOUT ROW APPEARS** — a tile carrying a road — so nothing
+# shows on ground with no road and no dead control grows on every hex in the world. **The GATING is
+# carried by the rows inside the ladder**, each disabled with its own reason, never by hiding the
+# action: a branch a player cannot climb today is still a branch they must be able to read.
+
+## The tile-card key the road rows travel under, stamped by `MapView._tile_info_at` off
+## `road_tile_lookup`. Spelled once here because a typo is a silently absent action.
+const TILE_ROADS_KEY := "roads"
+
+## **THE LAND drawer's ROAD ACTION — one `Road ▸` per road crossing this hex.**
+##
+## Per tile the registry holds exactly one road, so this is one button; the loop is the block loop's
+## own shape (`SubjectDrawerController._tile_terrain_lines` renders ONE BLOCK PER ROAD) rather than a
+## case being handled twice. A duplicated row would then render twice rather than vanish silently.
+func build_road_drawer_actions(tile_info: Dictionary) -> void:
+    if _road_ladder_controls == null:
+        return
+    var roads := _tile_roads(tile_info)
+    _road_ladder_controls.visible = not roads.is_empty()
+    if roads.is_empty():
+        _clear_road_drawer()
+        return
+    # THE SIGNATURE CARRIES IDENTITY ONLY, the two drawer builders' own rule: the subject key LEADS so
+    # a different hex forces a rebuild rather than a positional patch onto another tile's node, and the
+    # ROAD's live state (its rung, its meter, its keeper) is deliberately absent — those move every
+    # turn without changing this drawer's structure, and the card is read at PRESS time anyway.
+    var subject_key := _forage_source_key(tile_info)
+    var shape := [subject_key, roads.size()]
+    if shape == _road_drawer_shape and _road_ladder_controls.get_child_count() == roads.size():
+        return
+    _clear_road_drawer()
+    for index in range(roads.size()):
+        # The closure captures the road's INDEX, never the road dict: the same-shape patch keeps a
+        # button's connection across snapshots, so a captured dict would be frozen at whatever turn
+        # this drawer was last rebuilt — `_live_tile_info`'s own rule, one subject over.
+        _road_ladder_controls.add_child(_build_road_ladder_button(
+            func(anchor: Control) -> void:
+                _open_road_ladder(_live_tile_info(subject_key, tile_info), index, anchor)))
+    _road_drawer_shape = shape
+
+## Free the road drawer-actions and forget its shape, so the next build always rebuilds.
+func _clear_road_drawer() -> void:
+    if _road_ladder_controls == null:
+        return
+    for child in _road_ladder_controls.get_children():
+        child.queue_free()
+    _road_drawer_shape = []
+
+## The road rows on this hex, as typed dicts. `[]` on a tile with no road, which is most of the world.
+func _tile_roads(tile_info: Dictionary) -> Array[Dictionary]:
+    var roads: Array[Dictionary] = []
+    for road_variant in Array(tile_info.get(TILE_ROADS_KEY, [])):
+        if road_variant is Dictionary:
+            roads.append(road_variant as Dictionary)
+    return roads
+
+## The action itself — a ghost button in the `Assign … ▸` register, because it is the same KIND of
+## thing: a control on the card's bottom that opens a surface. **Labelled for the BRANCH's noun**
+## (`Road`), matching the readout row's key one block up, never for a verb — `grade` stops being the
+## whole story the day a non-road rung lands, and the row would then be named after one of its steps.
+##
+## `on_press` takes the button ITSELF, so the card can anchor to the control that was pressed.
+func _build_road_ladder_button(on_press: Callable) -> Button:
+    var button := Button.new()
+    button.text = HudRouteVocab.ROAD_LADDER_ACTION_LABEL
+    button.set_meta(HudRouteVocab.ROAD_LADDER_ACTION_META, true)
+    HudStyle.apply_button(button, "ghost")
+    button.pressed.connect(func() -> void: on_press.call(button))
+    return button
+
+## **THE LADDER CARD — floated over the dock, never drawn into it.**
+##
+## **A `PopupPanel` BECAUSE IT IS A WINDOW**, exactly as the work board's destination track is: the
+## selection card is height-capped and scrolls internally, so a ladder drawn as a block would push the
+## card's own rows out of view on the frame it opened. A Window changes no layout at all.
+##
+## **THE CARD IS REBUILT PER OPEN, NEVER PATCHED.** The track is a function of the road's rung, its
+## meter, the faction's knowledge and which band is acting — all four move per snapshot — so a card
+## that survived a render would offer a rung the road has since climbed. The panel NODE is reused
+## because a Window is expensive; its CONTENT is not.
+func _open_road_ladder(tile_info: Dictionary, index: int, anchor: Control) -> void:
+    var roads := _tile_roads(tile_info)
+    if index < 0 or index >= roads.size():
+        return
+    var road: Dictionary = roads[index]
+    var ladder := HudRouteVocab.route_ladder(_topbar.route_rungs())
+    if ladder.is_empty():
+        # **THE CATALOG IS PER WORLD AND ARRIVES WITH THE FIRST SNAPSHOT**, so an empty one is a wire
+        # this client has not been sent rather than a branch with nothing on it. A card of no rows
+        # would read as *this road can never be raised*, which is a claim about the world.
+        push_warning("DrawerComposeController: a Road ▸ was pressed with no route rung catalog on " +
+            "the wire — the ladder cannot state a single rung")
+        return
+    var band := _resolve_assign_band()
+    # ⛔ **THE KEEPER'S NAME IS RESOLVED HERE AND NOWHERE ELSE**, the tile card's own rule one block
+    # up: a road carries a `band_id`, this client has exactly one band-naming rule, and the gate
+    # layer is stateless and holds no roster. `""` for a band outside the player's roster, which the
+    # gate reads as *another people* — a real state, since a road may be kept by a people you merely
+    # know of.
+    var keeper_label := ""
+    if HudRouteVocab.has_keeper(road):
+        keeper_label = _band_labor.band_label_for_id(HudRouteVocab.keeper_band_id_of(road))
+    var rows := RungLadder.route_track(road, ladder, _player_knowledge(),
+        _topbar.knowledge_labels(), band, keeper_label)
+    var card := _ensure_road_ladder()
+    var margin := _road_ladder_body
+    HudWidgets.clear_children(margin)
+    margin.add_child(RungLadder.build_track(rows, func(verb: String) -> void:
+        # The press closes the card BEFORE it emits, the destination track's own rule: the declaration
+        # re-renders the drawer this card is anchored to.
+        _dismiss_road_ladder()
+        _emit_road_improvement(band, tile_info, verb),
+        HudRouteVocab.ROAD_LADDER_TITLE))
+    card.popup(_road_ladder_anchor_rect(anchor))
+
+## **DECLARE A ROUTE RUNG — `grade|pave <faction> <band> <x> <y>`, and the command has not moved.**
+##
+## ⛔ **THE BAND TOKEN IS THE KEEPER.** A patch's keeper is whoever is already foraging it; a road has
+## no work row at all, so who will keep the tile has to be said out loud — and issuing the verb
+## declares the job and names the keeper in one act. `Main.IMPROVEMENT_NO_BAND` refuses a payload
+## carrying none rather than guessing one, which is why the ladder's rows gate on the acting band.
+##
+## **IT CARRIES NO `pending_entity`, so no optimistic overlay is written.** That overlay's entries are
+## keyed to a band's LABOR ROWS, and a road has none — the declaration lands on the road's own build
+## meter, which the next snapshot restates.
+func _emit_road_improvement(band: Dictionary, tile_info: Dictionary, verb: String) -> void:
+    if verb == SourceForecast.IMPROVEMENT_NONE or band.is_empty():
+        return
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
+    if x < 0 or y < 0:
+        return
+    emit_signal("road_improvement_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "improvement": verb,
+        "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+        "x": x,
+        "y": y,
+    })
+
+## Take the ladder down, if one is up. Idempotent, and safe before the card has ever been built.
+func _dismiss_road_ladder() -> void:
+    if _road_ladder != null and is_instance_valid(_road_ladder) and _road_ladder.visible:
+        _road_ladder.hide()
+
+## Where the card sits: a zero-height rect just under the pressed action, in SCREEN space (what
+## `Popup.popup` wants). `get_screen_transform` folds in the window position and the canvas stretch,
+## both of which this HUD has.
+##
+## **AND THE ANCHOR MUST BE IN THE TREE, not merely alive.** A press can arrive on a control the
+## render that answered the previous one has already detached, and `get_screen_transform` on a
+## detached `CanvasItem` is an engine ERROR plus an identity transform — a card in the top-left corner
+## of the screen with nothing to say it came from this row.
+func _road_ladder_anchor_rect(anchor: Control) -> Rect2i:
+    if anchor == null or not is_instance_valid(anchor) or not anchor.is_inside_tree():
+        return Rect2i()
+    var xform := anchor.get_screen_transform()
+    var below := xform * Vector2(0.0, anchor.size.y + HudWorkVocab.RUNG_TRACK_GAP)
+    return Rect2i(Vector2i(below), Vector2i.ZERO)
+
+## The ladder's Window, built once and reused. Styled through `HudStyle` like every other card here.
+##
+## **THE CARD'S MARGIN IS THE CHROME AND IS NEVER FREED — its CHILDREN are.** Clearing the Window's
+## own children instead frees the margin the open reaches for, and `queue_free` is deferred, so the
+## first open renders correctly and every later one opens onto an empty card.
+func _ensure_road_ladder() -> PopupPanel:
+    if _road_ladder != null and is_instance_valid(_road_ladder):
+        return _road_ladder
+    var card := PopupPanel.new()
+    card.name = HudRouteVocab.ROAD_LADDER_META
+    card.set_meta(HudRouteVocab.ROAD_LADDER_META, true)
+    card.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
+    var margin := MarginContainer.new()
+    for side in DisclosureController.POPOVER_MARGIN_SIDES:
+        margin.add_theme_constant_override("margin_%s" % side, HudWorkVocab.RUNG_TRACK_PADDING)
+    card.add_child(margin)
+    _host.add_child(card)
+    _road_ladder = card
+    _road_ladder_body = margin
+    return card
 
 ## The STANDING-SUMMARY child-slot structure shared by both drawers: `[has_summary, warn, has_note,
 ## has_muted]` — the full set of optional summary child slots, so any structural change (summary
