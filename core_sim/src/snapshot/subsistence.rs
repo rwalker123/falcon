@@ -213,6 +213,9 @@ pub(crate) fn resolve_build_kit_ids<'a>(
                 crate::components::BuildSource::Herd(_) => {
                     crate::intensification::RungBranch::Animal
                 }
+                crate::components::BuildSource::Road(_) => {
+                    crate::intensification::RungBranch::Route
+                }
             };
             // **The one resolution seam**, so the row cannot state a kit the pool is not using.
             let kit = equipment
@@ -245,6 +248,11 @@ pub(crate) fn resolve_build_kit_ids<'a>(
                         claimed_herds.insert(id.clone());
                     }
                 }
+                // **A road publishes no `buildKitId`**, because it has no source row to publish one
+                // on: the two food webs key this map by patch tile and herd id, which are the rows
+                // the wire carries. A road's kit is `default_kits.builders` bare-handed and states
+                // itself; when the route branch gains a per-tile build readout it takes a key here.
+                crate::components::BuildSource::Road(_) => {}
             }
         }
     }

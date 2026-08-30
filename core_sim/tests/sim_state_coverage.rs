@@ -88,7 +88,7 @@ const SIM_STATE_RESOURCES: [&str; 39] = [
     // **The roads.** A road is in the ground and outlives the bands that wore it in, so nothing
     // rebuilds one — a restore that dropped this would hand back a world whose roads had never been
     // walked, with every band's pooling silently back at the unrouted friction.
-    "RouteLedger",
+    "RoadRegistry",
     "SentimentAxisBias",
     "SimulationTick",
     "TradeTelemetry",

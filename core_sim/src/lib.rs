@@ -285,10 +285,12 @@ pub use recipes_config::{
     BUILTIN_RECIPES_CONFIG,
 };
 pub use routes::{
-    advance_routes, route_at_risk_rung, route_build_fraction, route_keeping_basis,
-    route_neglect_grace_remaining, route_rung_span, route_span, route_upkeep_demand,
-    route_upkeep_workers_needed, span_of_terrains, traffic_ceiling, Route, RouteId, RouteLedger,
-    RouteTrafficLog, FIRST_BUILT_RUNG, FREE_FLOOR_TOP_RUNG, METER_FULL,
+    advance_roads, path_friction_multiplier, path_reach_tiles, remoteness_multiplier,
+    road_at_risk_rung, road_build_fraction, road_keeping_basis, road_keeping_range, road_measure,
+    road_neglect_grace_remaining, road_rung_span, road_upkeep_demand, road_upkeep_measure,
+    road_upkeep_workers_needed, trace_path, traffic_ceiling, Road, RoadKeeper, RoadRegistry,
+    RouteTrafficLog, FIRST_BUILT_RUNG, FREE_FLOOR_TOP_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP,
+    NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID, ROADBUILDING_DISCOVERY_ID,
 };
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
@@ -703,10 +705,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility::VisibilityLedger::default())
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(connections::ConnectionLedger::default())
-        // **The roads and this turn's traffic** (`docs/plan_standing_upkeep.md` §4.13). The ledger is
-        // world state; the traffic log is a within-turn hand-off from `balance_supply_networks`,
-        // which knows which pairs pooled, to `routes::advance_routes`, which spends them.
-        .insert_resource(routes::RouteLedger::default())
+        // **The roads and this turn's traffic** (`docs/plan_standing_upkeep.md` §4.13). The registry
+        // is world state; the traffic log is a within-turn hand-off from `balance_supply_networks`,
+        // which knows which pairs pooled, to `routes::advance_roads`, which spends them.
+        .insert_resource(routes::RoadRegistry::default())
         .insert_resource(routes::RouteTrafficLog::default())
         .insert_resource(connections::ContactsThisTurn::default())
         .insert_resource(visibility::ViewerFaction::default())
@@ -894,7 +896,7 @@ pub fn build_headless_app() -> App {
                 // reading, the same one-turn lag `balance_supply_networks` already accepts against
                 // the connection ledger. Reversing it would let this turn's pooling read a road
                 // this turn's pooling created.
-                routes::advance_routes.after(supply::balance_supply_networks),
+                routes::advance_roads.after(supply::balance_supply_networks),
             )
                 .in_set(TurnStage::Logistics)
                 .run_if(capability_enabled(

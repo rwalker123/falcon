@@ -1051,14 +1051,18 @@ pub enum RungBranch {
     /// (`docs/plan_standing_upkeep.md` §4.13). It differs from the two above in three ways that every
     /// sweep has to know about, which is why [`ALL_BRANCHES`] forced this file's call sites open:
     ///
-    /// 1. **Its build is paid by TRAFFIC, not by a crew** — so a route rung declares no `verb`, takes
-    ///    no [`crate::components::BuildQueueEntry`], and draws nothing from the builders' pool. There
-    ///    is no builders' *kit* for it either, which is what [`FOOD_WEB_BRANCHES`] is for.
-    /// 2. **Its improvement is owned by nobody.** A road is a thing in the world with a fixed tile
-    ///    path; the bands standing on it are who *use* it. A road that followed its camp would cost
-    ///    nothing to leave, and an improvement that is free to abandon cannot weigh on move-or-stay.
-    /// 3. **Its upkeep scales on its own geometry** ([`UpkeepScale::RouteSpan`]) rather than on a
-    ///    source's load, because there is no source under it.
+    /// 1. **Its FREE FLOOR is paid by TRAFFIC, not by a crew** — the two rungs below
+    ///    `routes::FIRST_BUILT_RUNG` declare no `verb`, take no
+    ///    [`crate::components::BuildQueueEntry`] and draw nothing from the builders' pool. The two
+    ///    above them are ordinary crew builds (`grade`, `pave`), so *"does this rung declare a
+    ///    `verb`"* is the branch-free way to ask, and there is deliberately no branch-level
+    ///    predicate that answers it more coarsely.
+    /// 2. **Its improvement sits on ONE TILE and belongs to no camp.** A road is a thing in the
+    ///    world; the band that graded it keeps it, and a road that followed its camp would cost
+    ///    nothing to leave — an improvement that is free to abandon cannot weigh on move-or-stay.
+    /// 3. **Its upkeep scales on the tile's own ground** — the branch's reading of
+    ///    [`UpkeepScale::SourceLoad`] is `infrastructure_cost × remoteness`
+    ///    (`routes::road_upkeep_measure`), because there is no *source* under a road.
     Route,
 }
 
@@ -1076,11 +1080,14 @@ pub const ALL_BRANCHES: [RungBranch; 3] =
 /// **The two FOOD WEBS**, for the sweeps that mean *"a ladder a crew builds with tools"* rather than
 /// *"a ladder"*.
 ///
-/// The distinction is real and not a convenience: a builders' kit serves a web whose rungs a band's
-/// `builders` pool raises, and **no kit can serve the route branch**, whose rungs are raised by
-/// traffic and whose work therefore has no crew to hold a tool. A route rung appearing in
-/// `every_branch_of_the_ladder_has_a_builders_kit_that_serves_only_it` would demand a kit for a job
-/// nobody does.
+/// The distinction is real and not a convenience. A builders' kit is a **tool roster** entry
+/// declaring a `build_work` that serves a branch, and **no shipped item declares one serving
+/// `route`**: a band's builders do grade and pave a road (so the branch is no longer crew-free — see
+/// [`RungBranch::Route`]), but they do it **bare-handed**, exactly as `default_kits.roadwork` sends
+/// its keepers out bare. A route rung appearing in
+/// `every_branch_of_the_ladder_has_a_builders_kit_that_serves_only_it` would demand a roster entry
+/// that deliberately does not exist yet; the day a barrow declares `build_work` serving `route`, the
+/// existing derivation picks it up with no code change and this constant is what gets widened.
 pub const FOOD_WEB_BRANCHES: [RungBranch; 2] = [RungBranch::Plant, RungBranch::Animal];
 
 impl RungBranch {
@@ -1093,15 +1100,13 @@ impl RungBranch {
         }
     }
 
-    /// **Does a band's `builders` pool raise this branch's rungs?** `false` for
-    /// [`RungBranch::Route`] alone — traffic is the crew — and it is the one predicate the build
-    /// engine, the queue and the kit resolution all ask instead of naming the route branch by hand.
-    pub fn is_crew_built(self) -> bool {
-        match self {
-            RungBranch::Plant | RungBranch::Animal => true,
-            RungBranch::Route => false,
-        }
-    }
+    // **RETIRED: `is_crew_built()`** — *"does a band's `builders` pool raise this branch's rungs"*,
+    // answered `false` for [`RungBranch::Route`] alone. It was true while traffic was the only thing
+    // that raised a road; with `grade` and `pave` on the builders' pool the branch is **no longer
+    // uniformly crew-free**, so a branch-level answer is the wrong grain and would have been wrong
+    // for half the rungs it covered. *"Does this rung declare a `verb`"* ([`RungDef::verb`],
+    // [`RungKey::builder_verb`]) is the same question at the grain that can answer it, and every
+    // former caller was asking about a **rung**.
 
     /// **THE WILD RUNG THIS BRANCH STANDS ON BEFORE ANY WORK IS DONE** — the coded twin of
     /// [`FIRST_RUNG_ORDER`], and the floor [`RungStanding::at`] starts its walk from. A branch's
@@ -1214,6 +1219,8 @@ impl RungKey {
             Improvement::Sow => RungKey::PlantField,
             Improvement::Tame => RungKey::AnimalPastoral,
             Improvement::Corral => RungKey::AnimalPen,
+            Improvement::Grade => RungKey::RouteDirtRoad,
+            Improvement::Pave => RungKey::RoutePavedRoad,
         }
     }
 
@@ -1274,15 +1281,13 @@ impl RungKey {
             RungKey::PlantField => Some(Improvement::Sow),
             RungKey::AnimalPastoral => Some(Improvement::Tame),
             RungKey::AnimalPen => Some(Improvement::Corral),
-            // ⛔ **NO ROUTE RUNG HAS A VERB, INCLUDING THE TWO THAT ARE BUILT.** Traffic wears the
-            // free floor in and nothing else raises a road **yet** — the two roads above it are the
-            // follow-up's, as **tile** commands on the per-tile model that replaces the stored path
-            // (`docs/plan_standing_upkeep.md` §4.13a). `None` here is *"nothing builds this on
-            // purpose"*, not *"nothing builds this"*.
-            RungKey::RouteGameTrail
-            | RungKey::RouteTrail
-            | RungKey::RouteDirtRoad
-            | RungKey::RoutePavedRoad => None,
+            // ⛔ **THE ROUTE BRANCH'S FREE FLOOR IS WHERE ITS `None`s ARE.** A game trail and a trail
+            // are formed by *use*: traffic is the crew, there is no command to name the job and no
+            // pool to staff it (`docs/plan_standing_upkeep.md` §4.13a). The two roads above them are
+            // ordinary crew builds, ordered per **tile** in `cultivate`/`sow`'s own grammar.
+            RungKey::RouteGameTrail | RungKey::RouteTrail => None,
+            RungKey::RouteDirtRoad => Some(Improvement::Grade),
+            RungKey::RoutePavedRoad => Some(Improvement::Pave),
         }
     }
 
@@ -1977,17 +1982,25 @@ pub struct RungBuild {
 /// chosen from here — adding a primitive is coding one thing once, after which using it is a config
 /// edit.
 ///
-/// **Two shipped variants.** Both food webs declare `source_load` — an animal rung quotes its rate
-/// per keeper-load, a plant rung per tender-load — and every route rung declares
-/// [`Self::RouteSpan`]. The **retired** variant was `flat`, the rate as declared: it survived only on
-/// the two plant rungs, on the reading that "a patch is one tile, so there is no count for the rate to
-/// ride", and that reading was wrong — a tile's own `K` *is* the count, which is what
-/// `forage::patch_tender_loads` measures. The `scaled_by` key was kept open through that deletion for
-/// exactly the variant below.
+/// ⛔ **ONE PRIMITIVE WITH A PER-BRANCH READING, AND THE SECOND VARIANT RETIRED INTO IT.** §4.11's
+/// stated preference — *"one primitive with a per-branch reading beat a second variant"* — and the
+/// route branch is what tested it. `RouteSpan` existed to express a road's `length × terrain`; with a
+/// road a **per-tile** improvement there is no length term left, and what remains is the same shape
+/// the plant web already reads: one tile's own ground. Both arms of `factor` were the same
+/// expression, so the variant was a second name for one measure.
+///
+/// The **other** retired variant was `flat`, the rate as declared: it survived only on the two plant
+/// rungs, on the reading that "a patch is one tile, so there is no count for the rate to ride", and
+/// that reading was wrong — a tile's own `K` *is* the count.
+///
+/// The `scaled_by` key stays in the config: it is what a future primitive that genuinely reads a
+/// different quantity would be declared through, and a rung stating its measure is what makes the
+/// rung-monotonicity check's *"compare only adjacent rungs sharing a `scaled_by`"* meaningful.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UpkeepScale {
-    /// **× the source's own LOAD reading, in whatever unit the rung quotes its rate in.** The
+    /// **× THE IMPROVEMENT'S OWN LOAD READING, in whatever unit the rung quotes its rate in — one
+    /// primitive, THREE branch readings.** The
     /// animal rungs quote **per keeper-load** — `head count / animals_per_herder` — which is what
     /// lets one rate say *a shepherd minds 300 sheep and a cowherd 80 cattle*: the species owns the
     /// ratio, the rung owns the rate. The plant rungs quote **per tender-load** — the tile's own `K`
@@ -1998,33 +2011,15 @@ pub enum UpkeepScale {
     /// **It is deliberately NOT "head count".** A per-*head* rate would say "one keeper per 100 fowl
     /// but one per 2 boar" and invent a 45-herder steppe megaherd that is a pure artifact of the
     /// unit — the measurement error `animals_per_herder` exists to prevent, restated one level up.
-    /// The caller supplies the reading (`fauna::herd_keeper_loads` / `forage::patch_tender_loads`),
-    /// so the web's own ratio is folded in before the ladder ever sees it and there is still exactly
-    /// one definition of it.
+    /// **The ROUTE branch's reading is the tile's own ground** — `infrastructure_cost × remoteness`
+    /// (`routes::road_upkeep_measure`), which is why a mountain road is dear to hold and a valley
+    /// road is cheap, and why a road far from the band that keeps it costs more than the same road
+    /// beside it. It is the plant web's shape exactly, with `infrastructure_cost` where `K` is.
+    ///
+    /// The caller supplies the reading (`fauna::herd_keeper_loads` / `forage::patch_tender_loads` /
+    /// `routes::road_upkeep_measure`), so each web's own ratio is folded in before the ladder ever
+    /// sees it and there is still exactly one definition of each.
     SourceLoad,
-    /// **× THE ROAD'S OWN GEOMETRY — `length × terrain`, as ONE SUM** (`docs/plan_standing_upkeep.md`
-    /// §2.6, §4.13):
-    ///
-    /// ```text
-    /// measure = Σ over the tiles the route crosses of infrastructure_cost(that tile's terrain)
-    /// ```
-    ///
-    /// **It is a sum, not a product, and that is what makes it fit here.** Length falls out of the
-    /// *number* of terms and terrain out of each term's *value*, so "length × terrain" is a single
-    /// `f32` through the same seam [`Self::SourceLoad`] uses rather than two factors a caller would
-    /// have to multiply in the right order.
-    ///
-    /// **Summed per tile crossed, never averaged.** Three tiles of marsh cost three tiles of marsh;
-    /// averaging would price a long road and a short one through the same country identically, which
-    /// deletes the length half of the term outright.
-    ///
-    /// **This is the first reader `TerrainDefinition::infrastructure_cost` has ever had.** It is
-    /// authored for all 37 terrains and was dead data until this rung; `routes::route_span` is the one
-    /// place it is summed, so the bill, the quote and the wire cannot read three different geometries.
-    ///
-    /// **It reads the improvement, not a source under it** — which is the whole reason it is a second
-    /// variant rather than a per-branch reading of the first. There is no source under a road.
-    RouteSpan,
 }
 
 impl UpkeepScale {
@@ -2032,20 +2027,14 @@ impl UpkeepScale {
     pub fn as_str(self) -> &'static str {
         match self {
             UpkeepScale::SourceLoad => "source_load",
-            UpkeepScale::RouteSpan => "route_span",
         }
     }
 
-    /// **The scale term this primitive reads**, given the improvement's own measure — the source's
-    /// load reading for [`Self::SourceLoad`], the summed span for [`Self::RouteSpan`]. Floored at zero
-    /// in both cases, so an improvement presenting nothing owes nothing.
-    ///
-    /// **Both arms take the same argument and that is deliberate**: the caller supplies the reading,
-    /// so the web's own ratio (or the road's own path) is folded in before the ladder ever sees it and
-    /// there is still exactly one definition of each.
+    /// **The scale term this primitive reads**, given the improvement's own measure. Floored at
+    /// zero, so an improvement presenting nothing owes nothing.
     pub fn factor(self, source_measure: f32) -> f32 {
         match self {
-            UpkeepScale::SourceLoad | UpkeepScale::RouteSpan => source_measure.max(0.0),
+            UpkeepScale::SourceLoad => source_measure.max(0.0),
         }
     }
 }
@@ -3006,6 +2995,40 @@ pub struct RouteTraffic {
     pub disuse_loss_per_turn: f32,
 }
 
+/// ⛔ **HOW FAR A BAND KEEPS A ROAD AT THE RUNG'S OWN PRICE** — the route branch's distance dial
+/// (`docs/plan_standing_upkeep.md` §4.13b).
+///
+/// **Read it through `routes::road_keeping_range` and never as a field.** Ray: *"make it a function
+/// that can expand over time, don't just create a hardcoded constant. You can have a configuration
+/// item for the 'base' range, but still make a function accessor for it so we can calculate it
+/// later."* This block is the **base**; the seam is the answer, and the day the range grows with
+/// knowledge or a central authority (issue #598) one function body changes and no call site moves.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RouteRange {
+    /// **THE BASE RANGE, in tiles**, measured from the keeper band to the road tile at the moment it
+    /// took the road on. Inside it a road costs exactly what the rung says.
+    ///
+    /// ⛔ **IT IS A COST THRESHOLD AND NOT A WORK RANGE.** Nothing is refused beyond it — Ray:
+    /// *"already forage and hunting have different work ranges, expeditions are even farther. I
+    /// don't think it makes sense to restrict it."* A fourth arbitrary radius would say nothing;
+    /// what bounds a distant road is that it is dearer to hold and slower to build.
+    ///
+    /// Validated `> 0`: a base of zero would price **every** road as remote, which is a threshold
+    /// that has stopped being one.
+    pub base_tiles: u32,
+
+    /// **WHAT A ROAD OUTSIDE THE BASE RANGE COSTS**, as a multiple of the rung's own price — applied
+    /// to **both** the build pile (`routes::road_rung_cost`) and the standing upkeep
+    /// (`routes::road_upkeep_measure`), so a far road is slower to raise *and* dearer to hold.
+    ///
+    /// **A threshold, not a curve**, which is what Ray asked for and is simpler to tune than a
+    /// sliding function.
+    ///
+    /// Validated finite and `>= 1.0`: below one, distance would make a road *cheaper*, which
+    /// inverts the whole term.
+    pub remote_cost_multiplier: f32,
+}
+
 /// The whole ladder: every rung of both branches, plus the pace they are learned at
 /// (`data/intensification_ladder.json`).
 #[derive(Debug, Clone, Deserialize)]
@@ -3014,6 +3037,9 @@ pub struct LadderConfig {
     pub knowledge: LadderKnowledge,
     /// How fast traffic raises the **route** branch — see [`RouteTraffic`].
     pub route_traffic: RouteTraffic,
+    /// How far a band keeps a road at the rung's own price — see [`RouteRange`], and read it through
+    /// `routes::road_keeping_range` rather than from here.
+    pub route_range: RouteRange,
     pub rungs: Vec<RungDef>,
 }
 
@@ -3209,6 +3235,28 @@ impl LadderConfig {
                              the dial still reads live"
                     .to_string(),
                 value: self.route_traffic.work_per_link_tile_per_turn.to_string(),
+            });
+        }
+        if self.route_range.base_tiles == 0 {
+            return Err(LadderConfigError::Invalid {
+                field: "route_range.base_tiles".to_string(),
+                constraint:
+                    "hold a base range of at least one tile — at zero every road is priced \
+                             as remote, which is a threshold that has stopped being one"
+                        .to_string(),
+                value: self.route_range.base_tiles.to_string(),
+            });
+        }
+        if !self.route_range.remote_cost_multiplier.is_finite()
+            || self.route_range.remote_cost_multiplier < 1.0
+        {
+            return Err(LadderConfigError::Invalid {
+                field: "route_range.remote_cost_multiplier".to_string(),
+                constraint: "cost a remote road at least what the rung says — below one, distance \
+                             would make a far road CHEAPER than the same road beside its keeper, \
+                             which inverts the whole term"
+                    .to_string(),
+                value: self.route_range.remote_cost_multiplier.to_string(),
             });
         }
         if !self.route_traffic.disuse_loss_per_turn.is_finite()

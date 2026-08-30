@@ -652,6 +652,20 @@ enum Command {
         target_x: u32,
         target_y: u32,
     },
+    /// **The route branch's two TILE verbs**, one variant apiece so the dispatch names the rung it
+    /// raises rather than carrying an `Improvement` a caller could get wrong.
+    Grade {
+        faction: FactionId,
+        band_id: u64,
+        target_x: u32,
+        target_y: u32,
+    },
+    Pave {
+        faction: FactionId,
+        band_id: u64,
+        target_x: u32,
+        target_y: u32,
+    },
     // **RETIRED: `AbandonImprovement`.** The build verb is derived from the meter
     // (`forage::patch_build_verb`, `docs/plan_standing_upkeep.md` §2.4), so there was no stored
     // authority for it to clear. What came back in its place is **disposal**, not arbitration:
@@ -5513,6 +5527,251 @@ fn crops_named_on_forage_source(
     crops
 }
 
+/// **THE RUNG DIRECTLY BENEATH `rung` ON ITS OWN BRANCH** — the inverse walk of [`RungKey::above`],
+/// which the ladder does not carry because nothing else has needed it.
+///
+/// It is what the two road verbs' *"not yet a trail / not yet a dirt road"* refusal asks, and it is
+/// derived from the coded climb rather than named per verb so a re-ordered branch cannot leave the
+/// refusal asking for the wrong rung. `None` at the root of a branch, which is the honest answer:
+/// nothing stands beneath a game trail.
+fn rung_beneath(rung: RungKey) -> Option<RungKey> {
+    let mut cursor = rung.branch().root_rung();
+    loop {
+        let next = cursor.above()?;
+        if next == rung {
+            return Some(cursor);
+        }
+        cursor = next;
+    }
+}
+
+/// **A band by its durable id, and the tile it is standing on** — the pair the road verbs need, so
+/// the lookup and the position cannot come from two different frames.
+fn band_entity_and_tile(app: &mut bevy::prelude::App, band: BandId) -> Option<(Entity, UVec2)> {
+    let mut query = app.world.query::<(Entity, &PopulationCohort, &BandId)>();
+    let (entity, current_tile) = query
+        .iter(&app.world)
+        .find(|(_, _, id)| **id == band)
+        .map(|(entity, cohort, _)| (entity, cohort.current_tile))?;
+    let position = app.world.get::<Tile>(current_tile)?.position;
+    Some((entity, position))
+}
+
+/// ⛔ **`grade <faction> <band> <x> <y>` / `pave …` — THE ROUTE BRANCH'S TWO TILE VERBS.**
+///
+/// `cultivate`/`sow`'s grammar with a **band** token in it, because a road is a per-tile improvement
+/// with a **keeper** and no labor row (`docs/plan_standing_upkeep.md` §4.13b). Issuing one does two
+/// things at once, and they are the same act: it **declares the job** (a `BuildQueueEntry` on that
+/// band's queue, raised by that band's `builders` pool at the head) and it **names the keeper** —
+/// exactly what `cultivate` does to a patch's owner.
+///
+/// **ONE KEEPER PER TILE, NO SHARES.** A tile another band already keeps is refused by name, which
+/// is what makes *"several bands each pay a part"* unrepresentable rather than merely discouraged —
+/// and what makes *"one band keeps half the tiles between two camps and another keeps the rest"* the
+/// state the model is built around.
+///
+/// **RE-ISSUING IT ON A ROAD NOBODY KEEPS IS ADOPTION**, and deliberately not a second verb. That is
+/// why the *"already at that rung"* refusal is scoped to a road **this band already keeps**: a
+/// keeperless dirt road is a road to pick up, not a job already done.
+///
+/// # THE REFUSALS, EACH NAMED
+///
+/// | | |
+/// |---|---|
+/// | no band by that id, or not yours | you cannot commit somebody else's people |
+/// | no road on that tile at all | there is nothing to grade; walk it first |
+/// | not yet a trail / not yet a dirt road | the rung beneath has to stand |
+/// | the knowledge is not learned | `roadbuilding` gates `grade`, `paving` gates `pave` |
+/// | another band keeps it | one keeper per tile |
+/// | you already keep it at that rung or above | there is nothing left to raise |
+///
+/// # ⛔ DISTANCE IS PRICED HERE AND REFUSED NOWHERE
+///
+/// The band's hex distance to the tile is quoted through [`core_sim::remoteness_multiplier`] — which
+/// asks [`core_sim::road_keeping_range`], the one seam — and **stamped on the road**, where it prices
+/// both the build pile and the standing upkeep for the life of the job. There is deliberately **no
+/// range refusal**: Ray, *"already forage and hunting have different work ranges, expeditions are even
+/// farther. I don't think it makes sense to restrict it."*
+fn handle_road_verb(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    tile: UVec2,
+    improvement: Improvement,
+) {
+    let verb = improvement.as_str();
+    let destination = RungKey::built_by(improvement);
+    let required = rung_beneath(destination)
+        .expect("every built route rung stands on the rung below it — the floor is two rungs down");
+
+    let refusal = road_verb_refusal(app, faction, band_id, tile, improvement, required);
+    if let Err(reason) = refusal {
+        warn!(
+            target: "shadow_scale::command",
+            command = verb,
+            faction = %faction.0,
+            band_id,
+            x = tile.x,
+            y = tile.y,
+            reason = %reason,
+            "command.road.rejected"
+        );
+        emit_command_failure(app, CommandEventKind::Road, faction, reason);
+        return;
+    }
+
+    // **The keeper and the remoteness quote, written together**, because the price is a fact about
+    // the moment the band took the road on — `ForagePatch::field_cost_multiplier`'s discipline.
+    let band = BandId(band_id);
+    let Some((entity, band_tile)) = band_entity_and_tile(app, band) else {
+        emit_command_failure(
+            app,
+            CommandEventKind::Road,
+            faction,
+            format!("Band {band_id} is not standing anywhere the simulation can see."),
+        );
+        return;
+    };
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let (width, wrap) = {
+        let registry = app.world.resource::<TileRegistry>();
+        let config = app.world.resource::<SimulationConfig>();
+        (registry.width, config.map_topology.wrap_horizontal)
+    };
+    let distance = hex_distance_wrapped(band_tile, tile, width, wrap);
+    let remoteness = core_sim::remoteness_multiplier(distance, &ladder);
+    {
+        let mut roads = app.world.resource_mut::<core_sim::RoadRegistry>();
+        let Some(road) = roads.road_mut(tile) else {
+            return;
+        };
+        road.take_keeper(core_sim::RoadKeeper { faction, band }, remoteness, &ladder);
+    }
+
+    // **The declaration**, on that band's own queue. A road names no labor row, so this is the
+    // band-addressed twin of `queue_build_on_working_bands` — and there is no yield seed to re-strike
+    // beside it, because a road pays into no take.
+    {
+        let mut allocation = band_allocation_mut(app, entity);
+        allocation.enqueue_build(BuildSource::Road(tile), BuildJob::Rung(improvement));
+    }
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = verb,
+        faction = %faction.0,
+        band_id,
+        x = tile.x,
+        y = tile.y,
+        distance,
+        remoteness,
+        "command.road.declared"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Road,
+        faction,
+        format!(
+            "Band {band_id} takes on the road at ({}, {}) — {verb}",
+            tile.x, tile.y
+        ),
+        Some(format!(
+            "status=declared action={verb} x={} y={} band={band_id} distance={distance}",
+            tile.x, tile.y
+        )),
+    );
+}
+
+/// **Every refusal `grade` / `pave` can produce, in the order they are asked.** Split out so the
+/// command and its tests read one list — the `validate_cultivate` convention one branch over.
+fn road_verb_refusal(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    tile: UVec2,
+    improvement: Improvement,
+    required: core_sim::RungKey,
+) -> Result<(), String> {
+    let band = BandId(band_id);
+    let holds_band = {
+        let mut query = app.world.query::<(&PopulationCohort, &BandId)>();
+        query
+            .iter(&app.world)
+            .any(|(cohort, id)| *id == band && cohort.faction == faction)
+    };
+    if !holds_band {
+        return Err(format!(
+            "Band {band_id} is not one of your people, so it cannot take on a road."
+        ));
+    }
+    let destination = RungKey::built_by(improvement);
+    let (threshold, knowledge) = {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        (
+            ladder.knowledge.completion_threshold,
+            ladder.rung(destination).unlock_discovery_id(),
+        )
+    };
+    let knows_rung = knowledge.is_none_or(|discovery_id| {
+        knows(
+            app.world.resource::<DiscoveryProgressLedger>(),
+            faction,
+            discovery_id,
+            threshold,
+        )
+    });
+    if !knows_rung {
+        return Err(format!(
+            "Your people have not learned how to {} a road yet.",
+            improvement.as_str()
+        ));
+    }
+    let roads = app.world.resource::<core_sim::RoadRegistry>();
+    let Some(road) = roads.road(tile) else {
+        return Err(format!(
+            "There is no road at ({}, {}) — walk it into a trail before you {} it.",
+            tile.x,
+            tile.y,
+            improvement.as_str()
+        ));
+    };
+    if !road.held_rung().is_at_or_above(required) {
+        return Err(format!(
+            "The road at ({}, {}) is only a {} — it must be a {} before you can {} it.",
+            tile.x,
+            tile.y,
+            road.held_rung().id().replace('_', " "),
+            required.id().replace('_', " "),
+            improvement.as_str()
+        ));
+    }
+    match road.keeper {
+        // **One keeper per tile.** A second band cannot become a co-payer of a road another band
+        // keeps — the refusal is what makes that unrepresentable rather than merely discouraged.
+        Some(keeper) if keeper.band != band => {
+            return Err(format!(
+                "Band {} already keeps the road at ({}, {}). One band keeps a road tile, never two \
+                 — have them abandon it first.",
+                keeper.band.0, tile.x, tile.y
+            ));
+        }
+        // **Already there, and it is YOURS** — nothing left to raise. A road nobody keeps falls
+        // through instead, which is how adoption works.
+        Some(_) if road.held_rung().is_at_or_above(destination) => {
+            return Err(format!(
+                "The road at ({}, {}) is already a {}.",
+                tile.x,
+                tile.y,
+                road.held_rung().id().replace('_', " ")
+            ));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// **Set the Cultivate improvement** on the forage patch at `tile` for the band(s) already working it
 /// (Intensification — "Cultivate & Corral as explicit policies"). This is the command form of what
 /// the client's policy picker does; it does **not** claim or complete anything.
@@ -6414,8 +6673,22 @@ fn handle_abandon(app: &mut bevy::prelude::App, faction: FactionId, source: Buil
         );
         return;
     };
+    // ⛔ **A TILE MAY CARRY A ROAD AS WELL AS A PATCH, AND `abandon` PUTS DOWN BOTH.**
+    //
+    // `abandon <faction> <x> <y>` names a *place*, and since roads became per-tile improvements a
+    // place can hold two holdings at once. Putting one down without the other would leave `abandon`
+    // silently partial on exactly the tiles where a band both farms and keeps a road — so this drops
+    // the faction's keeping of the road on that tile too, and its queue entry with it.
+    //
+    // **It is the per-road choice the `Roadwork` POOL needs.** The pool covers every road the band
+    // keeps, so *"pay for this road and not that one"* has to be expressible somewhere; this is that
+    // somewhere, and it needs no verb of its own (`docs/plan_standing_upkeep.md` §4.13b).
+    //
+    // **The meter is untouched**, exactly as it is for a patch: the ground keeps whatever is on it
+    // and, with nobody keeping it, rots back down at the rung's own rate over the following turns.
+    let roads_put_down = release_roads_at(app, faction, &source);
     let bands = bands_working_source(app, faction, &target);
-    if bands.is_empty() {
+    if bands.is_empty() && roads_put_down == 0 {
         emit_command_failure(
             app,
             CommandEventKind::CancelOrder,
@@ -6438,10 +6711,48 @@ fn handle_abandon(app: &mut bevy::prelude::App, faction: FactionId, source: Buil
         faction,
         format!("Put down {label} — whatever is built there is left to go back to the wild"),
         Some(format!(
-            "status=applied action=abandon source={label} bands={}",
+            "status=applied action=abandon source={label} bands={} roads={roads_put_down}",
             bands.len()
         )),
     );
+}
+
+/// **PUT DOWN THE ROAD ON THIS TILE, if this faction keeps one** — [`handle_abandon`]'s route half,
+/// returning how many were released (0 or 1; a tile carries at most one road).
+///
+/// It clears the keeper **and** that band's queue entry together, because the two are one statement:
+/// a `grade` declares the job and names the keeper in the same act, so undoing it has to undo both.
+/// Leaving the entry behind would have the band's builders raising a road it no longer keeps, which
+/// the road arm refuses anyway — silently, which is worse than not happening.
+///
+/// A `BuildSourceRef` naming a herd resolves no tile and releases nothing.
+fn release_roads_at(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    source: &BuildSourceRef,
+) -> usize {
+    let (Some(x), Some(y)) = (source.target_x, source.target_y) else {
+        return 0;
+    };
+    let tile = UVec2::new(x, y);
+    let keeper = {
+        let mut roads = app.world.resource_mut::<core_sim::RoadRegistry>();
+        let Some(road) = roads.road_mut(tile) else {
+            return 0;
+        };
+        match road.keeper {
+            Some(keeper) if keeper.faction == faction => {
+                road.release_keeper();
+                keeper
+            }
+            _ => return 0,
+        }
+    };
+    if let Some((entity, _)) = band_entity_and_tile(app, keeper.band) {
+        let mut allocation = band_allocation_mut(app, entity);
+        allocation.unqueue_build(&BuildSource::Road(tile));
+    }
+    1
 }
 
 /// **WITHDRAW A DECLARATION** — `unqueue <faction> <x> <y>` / `unqueue <faction> <herd_id>`.
@@ -6828,6 +7139,10 @@ fn handle_upkeep_kit(
     let branch = match build_source {
         BuildSource::Patch(_) => core_sim::RungBranch::Plant,
         BuildSource::Herd(_) => core_sim::RungBranch::Animal,
+        // Unreachable through this path — `BuildSource::of` maps a *labor target*, and no target
+        // names a road (the keeping is the band-wide `Roadwork` row, which names no tile). The arm
+        // is stated rather than wildcarded so a future road labor row fails to compile here.
+        BuildSource::Road(_) => core_sim::RungBranch::Route,
     };
     // **The kit resolves at the command boundary and FAILS CLOSED** — see the doc above. The
     // `absent` arm is never taken: an absent token is handled here as *"clear the override"*, so
@@ -7003,6 +7318,11 @@ fn build_verb_on_source(
             .resource::<HerdRegistry>()
             .find(&id)
             .and_then(|herd| herd_build_verb(herd, Some(declared))),
+        // **A road's declaration answers for itself**, with no meter-derived twin behind it: `grade`
+        // and `pave` are the only things that ever raise a road, so there is no second statement for
+        // the ground to override. Unreachable through this path in any case — the source comes from a
+        // *labor target*, and no target names a road.
+        BuildSource::Road(_) => Some(declared),
     }
 }
 
@@ -7772,6 +8092,28 @@ fn command_from_payload(
             target_x,
             target_y,
         }),
+        ProtoCommandPayload::Grade {
+            faction_id,
+            band_id,
+            target_x,
+            target_y,
+        } => Some(Command::Grade {
+            faction: FactionId(faction_id),
+            band_id,
+            target_x,
+            target_y,
+        }),
+        ProtoCommandPayload::Pave {
+            faction_id,
+            band_id,
+            target_x,
+            target_y,
+        } => Some(Command::Pave {
+            faction: FactionId(faction_id),
+            band_id,
+            target_x,
+            target_y,
+        }),
         ProtoCommandPayload::Abandon {
             faction_id,
             target_x,
@@ -8268,6 +8610,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Cultivate => "Cultivate",
         CommandEventKind::Sow => "Sow",
         CommandEventKind::Corral => "Corral",
+        CommandEventKind::Road => "Road",
         CommandEventKind::Craft => "Craft",
         CommandEventKind::KitLife => "Kit life",
         CommandEventKind::MaterialShortfall => "Material shortfall",
@@ -8761,6 +9104,34 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             mode,
         } => {
             handle_upkeep_mode(app, faction, band_id, mode);
+        }
+        Command::Grade {
+            faction,
+            band_id,
+            target_x,
+            target_y,
+        } => {
+            handle_road_verb(
+                app,
+                faction,
+                band_id,
+                UVec2::new(target_x, target_y),
+                Improvement::Grade,
+            );
+        }
+        Command::Pave {
+            faction,
+            band_id,
+            target_x,
+            target_y,
+        } => {
+            handle_road_verb(
+                app,
+                faction,
+                band_id,
+                UVec2::new(target_x, target_y),
+                Improvement::Pave,
+            );
         }
         Command::Abandon { faction, source } => {
             handle_abandon(app, faction, source);
@@ -16525,6 +16896,328 @@ mod tests {
             published_build_queue(&mut app, FIXTURE_BAND_ID),
             vec![(third.x, third.y), (second.x, second.y)],
             "the withdrawal arrives on the command's own recapture too"
+        );
+    }
+    // ---------------------------------------------------------------------------------------
+    // ⛔ THE ROUTE BRANCH'S TWO TILE VERBS — `grade` and `pave`
+    // ---------------------------------------------------------------------------------------
+
+    /// The band id every road fixture below addresses. Far above anything worldgen allocates.
+    const ROAD_BAND_ID: u64 = 9_811;
+
+    /// A world with one band standing on `coord`, and a road registry to grade tiles in.
+    fn road_world(coord: UVec2) -> (bevy::prelude::App, FactionId, Entity) {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_tile_grid(&mut app, coord);
+        let band = spawn_idle_band(&mut app, faction, tile);
+        app.world.entity_mut(band).insert(BandId(ROAD_BAND_ID));
+        (app, faction, band)
+    }
+
+    /// Seat a road on `coord` at the top of `rung`, with nobody keeping it — the ground a `grade`
+    /// or a `pave` is issued against.
+    fn seat_unkept_road(app: &mut bevy::prelude::App, coord: UVec2, rung: core_sim::RungKey) {
+        let ladder = core_sim::LadderConfig::builtin();
+        let (base, width) = core_sim::road_rung_span(rung, &ladder, core_sim::NEAR_ENOUGH_TO_KEEP);
+        let mut roads = app.world.resource_mut::<core_sim::RoadRegistry>();
+        roads
+            .road_or_trail(coord, &ladder)
+            .set_position(base + width, &ladder);
+    }
+
+    fn grant_roadbuilding(app: &mut bevy::prelude::App, faction: FactionId) {
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(
+                faction,
+                core_sim::ROADBUILDING_DISCOVERY_ID,
+                scalar_from_f32(1.0),
+            );
+    }
+
+    fn grant_paving(app: &mut bevy::prelude::App, faction: FactionId) {
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(faction, core_sim::PAVING_DISCOVERY_ID, scalar_from_f32(1.0));
+    }
+
+    fn road_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
+        app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            matches!(entry.kind, CommandEventKind::Road)
+                && entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains(needle))
+        })
+    }
+
+    fn keeper_of(app: &bevy::prelude::App, coord: UVec2) -> Option<BandId> {
+        app.world
+            .resource::<core_sim::RoadRegistry>()
+            .road(coord)
+            .and_then(|road| road.keeper)
+            .map(|keeper| keeper.band)
+    }
+
+    fn queued_road_tiles(app: &bevy::prelude::App, band: Entity) -> Vec<UVec2> {
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("the band has an allocation")
+            .build_queue
+            .iter()
+            .filter_map(|entry| match entry.source {
+                BuildSource::Road(tile) => Some(tile),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// ⛔ **`grade` IS REFUSED WITHOUT `roadbuilding` AND ACCEPTED WITH IT** — the knowledge gate,
+    /// with its liveness half, so the refusal is not passing on a verb that never works.
+    #[test]
+    fn grade_is_refused_without_roadbuilding_and_accepted_with_it() {
+        const COORD: UVec2 = UVec2::new(1, 1);
+
+        let (mut ignorant, faction, band) = road_world(COORD);
+        seat_unkept_road(&mut ignorant, COORD, core_sim::RungKey::RouteTrail);
+        handle_road_verb(
+            &mut ignorant,
+            faction,
+            ROAD_BAND_ID,
+            COORD,
+            Improvement::Grade,
+        );
+        assert!(
+            road_failure_detail_contains(&ignorant, "not learned"),
+            "a people who have not learned roadbuilding are told so by name"
+        );
+        assert_eq!(
+            keeper_of(&ignorant, COORD),
+            None,
+            "and the tile is still nobody's job"
+        );
+        assert!(queued_road_tiles(&ignorant, band).is_empty());
+
+        let (mut taught, faction, band) = road_world(COORD);
+        seat_unkept_road(&mut taught, COORD, core_sim::RungKey::RouteTrail);
+        grant_roadbuilding(&mut taught, faction);
+        handle_road_verb(
+            &mut taught,
+            faction,
+            ROAD_BAND_ID,
+            COORD,
+            Improvement::Grade,
+        );
+        assert_eq!(
+            keeper_of(&taught, COORD),
+            Some(BandId(ROAD_BAND_ID)),
+            "with the lesson learned, `grade` makes the tile that band's job"
+        );
+        assert_eq!(
+            queued_road_tiles(&taught, band),
+            vec![COORD],
+            "and appends the entry its builders will raise"
+        );
+    }
+
+    /// ⛔ **`grade` IS REFUSED ON GROUND THAT IS NOT YET A TRAIL, AND `pave` ON ONE THAT IS NOT YET A
+    /// DIRT ROAD** — the rung beneath has to stand, and each refusal names a different thing to fix.
+    #[test]
+    fn a_road_verb_is_refused_until_the_rung_beneath_it_stands() {
+        const COORD: UVec2 = UVec2::new(1, 1);
+
+        // Bare ground: there is no road at all.
+        let (mut bare, faction, _) = road_world(COORD);
+        grant_roadbuilding(&mut bare, faction);
+        handle_road_verb(&mut bare, faction, ROAD_BAND_ID, COORD, Improvement::Grade);
+        assert!(
+            road_failure_detail_contains(&bare, "There is no road"),
+            "bare ground is told there is nothing there to grade"
+        );
+
+        // A trail: `pave` cannot skip the dirt road.
+        let (mut trail, faction, _) = road_world(COORD);
+        seat_unkept_road(&mut trail, COORD, core_sim::RungKey::RouteTrail);
+        grant_roadbuilding(&mut trail, faction);
+        grant_paving(&mut trail, faction);
+        handle_road_verb(&mut trail, faction, ROAD_BAND_ID, COORD, Improvement::Pave);
+        assert!(
+            road_failure_detail_contains(&trail, "must be a dirt road"),
+            "a trail is told which rung is missing — not merely that the command failed"
+        );
+        assert_eq!(
+            keeper_of(&trail, COORD),
+            None,
+            "and a refused verb takes on nothing"
+        );
+
+        // The liveness half: the same tile at a dirt road accepts the same `pave`.
+        let (mut ready, faction, _) = road_world(COORD);
+        seat_unkept_road(&mut ready, COORD, core_sim::RungKey::RouteDirtRoad);
+        grant_paving(&mut ready, faction);
+        handle_road_verb(&mut ready, faction, ROAD_BAND_ID, COORD, Improvement::Pave);
+        assert_eq!(
+            keeper_of(&ready, COORD),
+            Some(BandId(ROAD_BAND_ID)),
+            "a dirt road really can be paved — otherwise the refusals above pass on a dead verb"
+        );
+    }
+
+    /// ⛔ **ONE KEEPER PER TILE: A SECOND BAND CANNOT BECOME A CO-PAYER OF A ROAD ANOTHER BAND
+    /// KEEPS.** This is what makes *"several bands each pay a share"* unrepresentable rather than
+    /// merely discouraged.
+    #[test]
+    fn a_second_band_cannot_take_on_a_tile_another_band_keeps() {
+        const COORD: UVec2 = UVec2::new(1, 1);
+        const OTHER_BAND_ID: u64 = 9_812;
+
+        let (mut app, faction, _) = road_world(COORD);
+        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteTrail);
+        grant_roadbuilding(&mut app, faction);
+        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, Improvement::Grade);
+        assert_eq!(keeper_of(&app, COORD), Some(BandId(ROAD_BAND_ID)));
+
+        // A second band of the same people, standing on the same ground.
+        let tile = app
+            .world
+            .resource::<TileRegistry>()
+            .index(COORD.x, COORD.y)
+            .expect("the fixture tile is on the map");
+        let other = spawn_idle_band(&mut app, faction, tile);
+        app.world.entity_mut(other).insert(BandId(OTHER_BAND_ID));
+
+        handle_road_verb(&mut app, faction, OTHER_BAND_ID, COORD, Improvement::Grade);
+        assert!(
+            road_failure_detail_contains(&app, "already keeps the road"),
+            "the second band is refused BY NAME — a road tile has exactly one keeper"
+        );
+        assert_eq!(
+            keeper_of(&app, COORD),
+            Some(BandId(ROAD_BAND_ID)),
+            "and the first band's claim is untouched"
+        );
+        assert!(
+            queued_road_tiles(&app, other).is_empty(),
+            "the refused band queues nothing, so its builders never touch that tile"
+        );
+    }
+
+    /// ⛔ **RE-ISSUING THE VERB ON A KEEPERLESS ROAD ADOPTS IT**, and that is deliberately not a
+    /// second verb: adoption is the same act as building.
+    ///
+    /// The *"already at that rung"* refusal is therefore scoped to a road **this band already
+    /// keeps** — a keeperless dirt road is a road to pick up, not a job already done. Both halves
+    /// are here, because the adoption alone would pass on a build with no such refusal at all.
+    #[test]
+    fn re_issuing_grade_on_a_keeperless_road_adopts_it() {
+        const COORD: UVec2 = UVec2::new(1, 1);
+
+        let (mut app, faction, band) = road_world(COORD);
+        // A whole dirt road that nobody keeps — what a band walking away from the game leaves.
+        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteDirtRoad);
+        grant_roadbuilding(&mut app, faction);
+
+        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, Improvement::Grade);
+        assert_eq!(
+            keeper_of(&app, COORD),
+            Some(BandId(ROAD_BAND_ID)),
+            "re-issuing `grade` on a road nobody keeps ADOPTS it — no new verb, no new mechanism"
+        );
+
+        // And now that it IS ours and already at that rung, the same command is refused.
+        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, Improvement::Grade);
+        assert!(
+            road_failure_detail_contains(&app, "already a dirt road"),
+            "a rung this band already holds has nothing left to raise"
+        );
+        assert_eq!(
+            queued_road_tiles(&app, band),
+            vec![COORD],
+            "and the refusal queued nothing a second time"
+        );
+    }
+
+    /// ⛔ **`abandon` PUTS A ROAD DOWN**, which is the per-road choice the band-wide `Roadwork` pool
+    /// needs: the pool covers every road the band keeps, so *"pay for this one and not that one"* has
+    /// to be expressible, and this is where.
+    #[test]
+    fn abandon_releases_a_road_and_drops_its_queue_entry() {
+        const COORD: UVec2 = UVec2::new(1, 1);
+
+        let (mut app, faction, band) = road_world(COORD);
+        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteTrail);
+        grant_roadbuilding(&mut app, faction);
+        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, Improvement::Grade);
+        assert_eq!(keeper_of(&app, COORD), Some(BandId(ROAD_BAND_ID)));
+
+        handle_abandon(&mut app, faction, patch_source(COORD));
+        assert_eq!(
+            keeper_of(&app, COORD),
+            None,
+            "the road is nobody's job again — and its meter is untouched, so it rots back down"
+        );
+        assert!(
+            queued_road_tiles(&app, band).is_empty(),
+            "and the declaration goes with it: the two are one statement"
+        );
+        assert!(
+            app.world
+                .resource::<core_sim::RoadRegistry>()
+                .road(COORD)
+                .is_some(),
+            "abandoning destroys nothing on the spot — the ground keeps what is on it"
+        );
+    }
+
+    /// ⛔ **A GRADED TILE IS RAISED BY THE BAND'S BUILDERS**, exactly as a Field or a pen is — and it
+    /// is the *builders* pool, not the keepers and not traffic.
+    #[test]
+    fn the_builders_pool_raises_a_graded_tile() {
+        const COORD: UVec2 = UVec2::new(1, 1);
+
+        let (mut app, faction, band) = road_world(COORD);
+        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteTrail);
+        grant_roadbuilding(&mut app, faction);
+        handle_road_verb(&mut app, faction, ROAD_BAND_ID, COORD, Improvement::Grade);
+        let before = app
+            .world
+            .resource::<core_sim::RoadRegistry>()
+            .road(COORD)
+            .expect("the road exists")
+            .position();
+
+        // Nobody on `builders`: the entry stands and nothing is banked.
+        resolve_labor(&mut app);
+        let unstaffed = app
+            .world
+            .resource::<core_sim::RoadRegistry>()
+            .road(COORD)
+            .expect("the road exists")
+            .position();
+        assert_eq!(
+            unstaffed, before,
+            "a declaration with no hands behind it puts nothing on the ground"
+        );
+
+        // Staff the pool and the meter moves.
+        {
+            let mut allocation = app
+                .world
+                .get_mut::<LaborAllocation>(band)
+                .expect("allocation");
+            allocation.set_assignment(LaborTarget::Builders, BAND_WORKERS, BAND_WORKERS, None);
+        }
+        resolve_labor(&mut app);
+        let staffed = app
+            .world
+            .resource::<core_sim::RoadRegistry>()
+            .road(COORD)
+            .expect("the road exists")
+            .position();
+        assert!(
+            staffed > before,
+            "the band's BUILDERS raise a graded tile: {staffed} against {before}"
         );
     }
 }

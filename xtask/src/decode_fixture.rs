@@ -1243,14 +1243,13 @@ fn seed_snapshot() -> WorldSnapshot {
     s.connections = rows();
 
     // --- routes ----------------------------------------------------------
-    // The roads in the ground (arc #532). Seeded for the same reason, and each row's own zipped
-    // path halves are seeded too — a nested repeated field is exactly as invisible to the guard as
-    // a top-level one.
+    // The roads in the ground (arc #532), **one row per tile**. Seeded for the same reason every
+    // repeated field here is: an empty vector is a field the decode guard cannot exercise.
+    //
+    // **There are no nested repeated fields on this row any more.** The stored `path_x`/`path_y`
+    // halves went with the path object — a road is a per-tile improvement, so the row carries its
+    // own `tile_x`/`tile_y` scalars and nothing to walk.
     s.routes = rows();
-    for route in &mut s.routes {
-        route.path_x = rows();
-        route.path_y = rows();
-    }
 
     // --- knowledge -------------------------------------------------------
     s.discovered_sites = rows();

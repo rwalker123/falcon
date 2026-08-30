@@ -258,9 +258,9 @@ pub struct WorldSnapshot {
     /// the viewer faction. Ordered by `(observer, subject)`, the ledger's own key order.
     #[serde(default)]
     pub connections: Vec<ConnectionState>,
-    /// **The roads in the ground the viewer can see** (`docs/plan_standing_upkeep.md` §4.13) — one
-    /// row per road, fog-filtered to roads at least one of whose path tiles the viewer faction has
-    /// explored. Ordered by `RouteId`, the ledger's own key order.
+    /// **The roads in the ground the viewer can see** (`docs/plan_standing_upkeep.md` §4.13b) — one
+    /// row per road **TILE**, fog-filtered to the tiles the viewer faction has explored. Ordered by
+    /// `(y, x)`, the registry's own row-major key order.
     #[serde(default)]
     pub routes: Vec<RouteState>,
 }

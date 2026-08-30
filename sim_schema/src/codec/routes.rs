@@ -1,4 +1,4 @@
-//! Route-section FlatBuffers serialization — the roads in the ground.
+//! Route-section FlatBuffers serialization — the roads in the ground, one row per tile.
 
 use crate::codec::FbBuilder;
 use crate::state::routes::RouteState;
@@ -13,17 +13,17 @@ fn create_routes<'a>(
     let offsets: Vec<_> = routes
         .iter()
         .map(|route| {
-            let path_x = builder.create_vector(&route.path_x);
-            let path_y = builder.create_vector(&route.path_y);
             let rung = builder.create_string(&route.rung);
             fb::RouteState::create(
                 builder,
                 &fb::RouteStateArgs {
-                    id: route.id,
-                    pathX: Some(path_x),
-                    pathY: Some(path_y),
+                    tileX: route.tile_x,
+                    tileY: route.tile_y,
                     rung: Some(rung),
                     buildFraction: route.build_fraction,
+                    hasKeeper: route.has_keeper,
+                    keeperBandId: route.keeper_band_id,
+                    keeperRemoteness: route.keeper_remoteness,
                     upkeepDemand: route.upkeep_demand,
                     upkeepSupplied: route.upkeep_supplied,
                     upkeepShortfall: route.upkeep_shortfall,
@@ -57,8 +57,8 @@ pub(crate) fn serialize_route_section_delta<'a>(
     builder: &mut FbBuilder<'a>,
     delta: &WorldDelta,
 ) -> WIPOffset<fb::RouteSection<'a>> {
-    // `None` means "unchanged this frame"; the whole vector is re-sent when any road moves, like
-    // every other `Whole` section.
+    // `None` means "unchanged this frame"; the whole vector is re-sent when any road tile moves,
+    // like every other `Whole` section.
     let routes = delta
         .routes
         .as_ref()

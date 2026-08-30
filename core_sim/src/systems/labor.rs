@@ -297,6 +297,11 @@ pub struct LaborConfigs<'w> {
 struct BuildersGear {
     plant: BuildersBranchGear,
     animal: BuildersBranchGear,
+    /// **The route branch's reading, which is real and deliberately empty.** No shipped tool declares
+    /// a `build_work` serving `route`, so this resolves to `default_kits.builders` and a road is
+    /// graded bare-handed — the same intended emptiness `default_kits.roadwork` ships for its
+    /// keepers.
+    route: BuildersBranchGear,
     /// **The entries that named a kit of their own**, one resolved answer each, keyed by source.
     ///
     /// A plain `Vec` walked linearly rather than a map: a band's queue is a handful of entries and
@@ -372,33 +377,29 @@ impl BuildersGear {
         Self {
             plant: derived(crate::intensification::RungBranch::Plant),
             animal: derived(crate::intensification::RungBranch::Animal),
+            route: derived(crate::intensification::RungBranch::Route),
             overrides,
         }
     }
 
-    /// ⛔ **THE ROUTE BRANCH IS UNREACHABLE HERE, BY CONSTRUCTION** — and the arm states that rather
-    /// than inventing a third gear.
+    /// **The derived gear for one branch** — one reading per ladder, resolved once per band.
     ///
-    /// This resolves the **builders' pool's** gear for a queued entry's web, and a route rung is
-    /// never queued: its build is paid by traffic, so it appends no `BuildQueueEntry` and
-    /// [`BuildSource`] has no route variant for [`source_branch`] to answer `Route` from. There is no
-    /// road-building kit either — [`crate::equipment_config::KitJob::Roadwork`] is the *keeping*
-    /// job, and a road's keepers are not builders.
+    /// ⛔ **THE ROUTE BRANCH IS REACHABLE NOW, AND ITS GEAR IS REAL BUT EMPTY.** A road above the
+    /// free floor is raised by `grade` / `pave` on the band's builders pool exactly as a Field or a
+    /// pen is, so it has a queue entry and a gear reading like any other web. **No shipped tool
+    /// declares a `build_work` serving `route`**, so the derivation lands on `default_kits.builders`
+    /// and road builders work **bare-handed** — the same intended emptiness
+    /// `default_kits.roadwork` already ships for their keepers, and the day a barrow declares the
+    /// stat this seam picks it up with no code change.
     ///
-    /// It falls back to the plant web's gear rather than panicking because this seam only ever
-    /// **prices** work; a panic would turn a would-be mispricing into a crashed turn, and the
-    /// `debug_assert` catches the real fault — someone giving a route rung a queue entry — in every
-    /// test run.
+    /// The `debug_assert` that used to guard this arm is gone with
+    /// `RungBranch::is_crew_built`: it asserted the branch was never queued, which is now false for
+    /// half its rungs.
     fn on(&self, branch: crate::intensification::RungBranch) -> &BuildersBranchGear {
-        debug_assert!(
-            branch.is_crew_built(),
-            "a route rung reached the builders' gear: routes are worn in by traffic and take no \
-             queue entry, so nothing should be pricing one against a builders' pool"
-        );
         match branch {
-            crate::intensification::RungBranch::Plant
-            | crate::intensification::RungBranch::Route => &self.plant,
+            crate::intensification::RungBranch::Plant => &self.plant,
             crate::intensification::RungBranch::Animal => &self.animal,
+            crate::intensification::RungBranch::Route => &self.route,
         }
     }
 
@@ -414,12 +415,14 @@ impl BuildersGear {
     }
 }
 
-/// **THE FOOD WEB A BUILD SOURCE BELONGS TO** — a patch is plant, a herd is animal. One expression,
-/// because three copies of this match are three places a third source kind has to be remembered.
+/// **THE LADDER A BUILD SOURCE BELONGS TO** — a patch is plant, a herd is animal, a road tile is
+/// route. One expression, because three copies of this match are three places a fourth source kind
+/// has to be remembered.
 fn source_branch(source: &BuildSource) -> crate::intensification::RungBranch {
     match source {
         BuildSource::Patch(_) => crate::intensification::RungBranch::Plant,
         BuildSource::Herd(_) => crate::intensification::RungBranch::Animal,
+        BuildSource::Road(_) => crate::intensification::RungBranch::Route,
     }
 }
 
@@ -891,8 +894,11 @@ fn head_rung_gate(
                     .is_ok();
                     plant_field_gate(true, knows_rung(rung), land_admits, has_crop)
                 }
-                // A rung the animal web owns can never stand on ground — a dead entry.
-                Improvement::Tame | Improvement::Corral => BuildGate::Undeclared,
+                // A rung another web owns can never stand on ground — a dead entry.
+                Improvement::Tame
+                | Improvement::Corral
+                | Improvement::Grade
+                | Improvement::Pave => BuildGate::Undeclared,
             }
         }
         (BuildSource::Herd(id), LaborTarget::Hunt { floor, .. }) => {
@@ -918,8 +924,11 @@ fn head_rung_gate(
                         herd.owner == Some(faction),
                     )
                 }
-                // A rung the plant web owns can never stand on a herd — a dead entry.
-                Improvement::Cultivate | Improvement::Sow => BuildGate::Undeclared,
+                // A rung another web owns can never stand on a herd — a dead entry.
+                Improvement::Cultivate
+                | Improvement::Sow
+                | Improvement::Grade
+                | Improvement::Pave => BuildGate::Undeclared,
             }
         }
         // A queue entry always names a Forage tile or a Hunt herd; a band-wide role holds neither.
@@ -1402,86 +1411,101 @@ fn maintenance_shares(
     awards
 }
 
-/// **WHAT THE ROADS UNDER THIS BAND CLAIM FROM ITS `Roadwork` POOL** — one claim per road the band
-/// is **standing on**, index-aligned with the returned ids.
+/// **WHAT THE ROADS THIS BAND KEEPS CLAIM FROM ITS `Roadwork` POOL** — one claim per road **tile the
+/// band is the keeper of**, index-aligned with the returned tiles.
 ///
-/// # ⛔ THE CATCHMENT IS THE ROAD'S OWN PATH, AND THERE IS NO RADIUS
+/// # ⛔ THE CATCHMENT IS THE KEEPER, NOT WHO IS STANDING THERE
 ///
-/// [`crate::routes::RouteLedger::routes_on_tile`] of the band's current tile — the route arc's
-/// **rule 2**. A band that steps one tile off its own road stops paying for it, and no tolerance
-/// constant softens that: the road's path *is* the catchment, which is what the rule exists to say.
+/// [`crate::routes::RoadRegistry::kept_by`] — the band that issued `grade` or `pave` on that tile,
+/// and nobody else. **One keeper per tile, no shares**, which is what finally disposes of the
+/// *"several bands each pay a part"* model Ray rejected: it is unrepresentable here rather than
+/// merely discouraged.
 ///
-/// **The claims carry no assignment index**, unlike [`keeping_claims`]': a road is a shared public
-/// good that no row of `assignments` names, so `KeepingClaim::index` indexes the returned id vector
-/// instead. That is the only structural difference between this pool and the two food webs' —
-/// everything downstream ([`keeping_rates`], [`KeepingRate::worker_need`],
+/// **The band's position does not enter it.** A band four tiles from a road it graded goes on paying
+/// for it — what distance costs is priced into the road's own `keeper_remoteness`, never into
+/// whether the bill exists. That is *"distance is a cost, never a wall"* in the one place it would
+/// otherwise have become a wall.
+///
+/// **The claims carry no assignment index**, unlike [`keeping_claims`]': a road has no labor row of
+/// its own, so `KeepingClaim::index` indexes the returned tile vector instead. That is the only
+/// structural difference between this pool and the two food webs' — everything downstream
+/// ([`keeping_rates`], [`KeepingRate::worker_need`],
 /// [`crate::intensification::distribute_upkeep_pool`]) is the identical seam, which is the point:
-/// **a route keeper is funded exactly as a field or a flock keeper is.**
+/// **a road keeper is funded exactly as a field or a flock keeper is.**
 ///
-/// Sorted **most-invested first** on the road's own position, tie-broken on the
-/// [`crate::routes::RouteId`] — the total order `UpkeepFundMode::Priority` funds in, stated here
-/// because `distribute_upkeep_pool` funds in slice order and the caller owns the ranking.
+/// Sorted **most-invested first** on the road's own position, tie-broken on the tile coord — the
+/// total order `UpkeepFundMode::Priority` funds in, stated here because `distribute_upkeep_pool`
+/// funds in slice order and the caller owns the ranking.
 ///
-/// **Every claim resolves ONE kit**, `keeping_kit_for(None, RungBranch::Route)`: there is no
-/// per-road row for a player to name one on, and the shipped `default_kits.roadwork` is the bare
-/// `none` kit — so road keepers work bare today, which is intended rather than a gap.
+/// **Every claim resolves ONE kit**, `keeping_kit_for(None, RungBranch::Route)`: there is no per-road
+/// row for a player to name one on, and the shipped `default_kits.roadwork` is the bare `none` kit —
+/// so road keepers work bare today, which is intended rather than a gap.
 fn route_keeping_claims(
-    ledger: &crate::routes::RouteLedger,
-    band_pos: Option<UVec2>,
+    registry: &crate::routes::RoadRegistry,
+    band: Option<BandId>,
     equipment: &crate::equipment_config::EquipmentConfig,
     tile_registry: &TileRegistry,
     tiles: &Query<&Tile>,
     ladder: &LadderConfig,
-) -> (Vec<crate::routes::RouteId>, Vec<KeepingClaim>) {
-    let Some(band_pos) = band_pos else {
+) -> (Vec<UVec2>, Vec<KeepingClaim>) {
+    let Some(band) = band else {
         return (Vec::new(), Vec::new());
     };
     let kit = equipment.keeping_kit_for(None, crate::intensification::RungBranch::Route);
-    let mut ids: Vec<crate::routes::RouteId> = Vec::new();
+    let mut kept: Vec<UVec2> = Vec::new();
     let mut claims: Vec<KeepingClaim> = Vec::new();
-    for id in ledger.routes_on_tile(band_pos) {
-        let Some(route) = ledger.get(*id) else {
-            continue;
-        };
-        let span = crate::routes::route_span(route, tile_registry, tiles);
+    for (tile, road) in registry.kept_by(band) {
+        let measure = crate::routes::road_measure(road, tile_registry, tiles);
         claims.push(KeepingClaim {
-            index: ids.len(),
+            index: kept.len(),
             kit: kit.clone(),
             // **The stamped bill where this turn's pass has struck one, the live demand where it
-            // has not** — `routes::route_keeping_basis`, the plant web's own rule.
-            demand: crate::routes::route_keeping_basis(route, span, ladder),
-            // *"Most invested"* on the route branch is how far up it the road has been worn: the
+            // has not** — `routes::road_keeping_basis`, the plant web's own rule.
+            demand: crate::routes::road_keeping_basis(road, measure, ladder),
+            // *"Most invested"* on the route branch is how far up it the tile has been worked: the
             // position **is** the accumulator here, so there is no separate stored cost to read.
-            invested: route.position(),
-            tiebreak: format!("{:020}", id.0),
+            invested: road.position(),
+            tiebreak: format!("{:010}:{:010}", tile.y, tile.x),
         });
-        ids.push(*id);
+        kept.push(tile);
     }
     claims.sort_by(|a, b| {
         b.invested
             .total_cmp(&a.invested)
             .then_with(|| a.tiebreak.cmp(&b.tiebreak))
     });
-    (ids, claims)
+    (kept, claims)
 }
 
-/// **PAY FOR THE ROADS THIS BAND IS STANDING ON** — the `Roadwork` keeping pool, the third of the
-/// three and the one with no source row (`docs/plan_standing_upkeep.md` §4.13, issue #532).
+/// **PAY FOR THE ROADS THIS BAND KEEPS** — the `Roadwork` keeping pool, the third of the three and
+/// the one with no source row (`docs/plan_standing_upkeep.md` §4.13b, issue #532).
+///
+/// **The pool survived the per-tile model and the automatic billing did not.** An earlier cut of
+/// this design replaced it with per-tile work rows; that was wrong, because there is no per-turn
+/// activity on a road whose output scales with people standing there. Ray: *"a road isn't active
+/// like hunting or foraging is so you don't need the tile workers. You just need to say you want a
+/// 'road' in this tile and it builds (with builders) and then maintains."* What was actually broken
+/// was the **automatic** bill; with the free floor free and `grade` the only way onto a paid rung,
+/// every road a band pays for is one it chose by typing a command — so `Roadwork` covers *the roads
+/// this band is the keeper of*, exactly as `Agriculture` covers the patches it cultivated.
 ///
 /// It runs in `TurnStage::Population` **`.after(advance_labor_allocation)`**, and that edge is
 /// declared rather than left to the ambiguity gate: the pool is *spent* there — the shedding order
 /// may take hands off the `roadwork` row — so the head count this pass divides has to be the one
 /// the band ended the turn with.
 ///
-/// # ⛔ (a) THE BILL IS STAMPED ON **EVERY** ROAD, NOT ONLY THE ONES A BAND STANDS ON
+/// # ⛔ (a) THE BILL IS STAMPED ON **EVERY** ROAD, KEEPER OR NOT
 ///
-/// This is the load-bearing half. [`crate::routes::Route::keeping_is_met`] answers `true` for a road
-/// with **no stamped bill** — an honest *"it has not been judged this turn"* — so an abandoned road
-/// that never got a demand stamped would read as kept for ever and **never decay**, which deletes
-/// the route arc's rule 3 outright (*"a road nobody stands on earns no traffic, is claimed by no
-/// band, and reverts"*). The stamp is first-write-wins, exactly as a patch's and a herd's is, and a
-/// rung with no `upkeep` — the game trail — falls out of the arithmetic owing
-/// [`crate::intensification::NO_UPKEEP_DEMAND`] rather than being branched around.
+/// This is the load-bearing half. [`crate::routes::Road::keeping_is_met`] answers `true` for a road
+/// with **no stamped bill** — an honest *"it has not been judged this turn"* — so a pass that
+/// stamped only the roads somebody keeps would leave a **keeperless** road reading as kept for ever:
+/// never arming its neglect counter, never decaying, never pruned. That is *"a road whose keeper is
+/// gone decays like any unkept improvement"* deleted outright, and it would fail as **no decay at
+/// all** rather than as a slow one.
+///
+/// The stamp is first-write-wins, exactly as a patch's and a herd's is, and the whole free floor
+/// falls out of the arithmetic owing [`crate::intensification::NO_UPKEEP_DEMAND`] rather than being
+/// branched around.
 ///
 /// # (b) THE PAYMENT IS THE SAME SUPPLY EXPRESSION THE OTHER TWO POOLS USE
 ///
@@ -1492,15 +1516,15 @@ fn route_keeping_claims(
 /// bill than a bare one for the same reason an equipped tender does, and the day a barrow declares a
 /// `build_work` stat serving `route` this seam picks it up with no code change.
 ///
-/// **`upkeep_supplied` ACCUMULATES (`+=`), never assigns.** Several bands may stand on one road and
-/// each pays a part — §2.5's stated rule, and the reason the field is cleared once per turn by
-/// [`crate::routes::advance_routes`] rather than here.
+/// **`upkeep_supplied` accumulates (`+=`)**, the §2.5 rule kept unchanged even though a tile now has
+/// exactly one keeper — the split hands a keeper's pool out claim by claim, and the field is cleared
+/// once per turn by [`crate::routes::advance_roads`] rather than here.
 ///
 /// # (c) THE BAND'S OWN ROADWORK LEDGER, SUMMED HERE BECAUSE A CLIENT CANNOT
 ///
 /// [`crate::components::LaborAllocation::last_roadwork_demand`] and its supplied twin are the
 /// band-level roll-up the Work board renders the `roadwork` role's need from — `fodderNeed`'s exact
-/// shape, minted under its exact rule: **route rows are fog-filtered**, so a road out of sight would
+/// shape, minted under its exact rule: **road rows are fog-filtered**, so a road out of sight would
 /// silently drop out of any client-side total while the band certainly still owes its keeping.
 ///
 /// **The demand is summed before the head-count gate**, so a band with nobody on the role publishes
@@ -1508,23 +1532,23 @@ fn route_keeping_claims(
 /// the hay need is ungated by Foddering.
 ///
 /// **Both are cleared at the top of every band's iteration, ahead of the `continue`s** — the
-/// `advance_labor_allocation` rule: a band that walks off its road must stop republishing last
-/// turn's bill for a road it no longer stands on.
+/// `advance_labor_allocation` rule: a band that abandons its last road must stop republishing last
+/// turn's bill.
 pub fn settle_route_keeping(
-    mut ledger: ResMut<crate::routes::RouteLedger>,
+    mut registry: ResMut<crate::routes::RoadRegistry>,
     ladder: Res<LadderConfigHandle>,
     equipment: Res<EquipmentConfigHandle>,
     tile_registry: Res<TileRegistry>,
     tiles: Query<&Tile>,
     // **`With<BandId>` — a cohort with no durable id is not a band the route layer knows**, exactly
-    // as `balance_supply_networks` refuses one as a pooling endpoint. Rule 2 is a statement about
-    // where a *band* stands, and a road records nobody's ownership, so an anonymous cohort has
-    // nothing to claim with.
+    // as `balance_supply_networks` refuses one as a pooling endpoint. A keeper *is* a `BandId`, so an
+    // anonymous cohort has nothing to claim with and could never have been named one.
     mut bands: Query<
         (
             &PopulationCohort,
             &mut LaborAllocation,
             Option<&mut BandEquipment>,
+            &BandId,
         ),
         With<BandId>,
     >,
@@ -1533,25 +1557,21 @@ pub fn settle_route_keeping(
     let equipment_cfg = equipment.get();
 
     // ## (a) The bill, on every road in the world.
-    for (_, route) in ledger.iter_mut() {
-        let span = crate::routes::route_span(route, &tile_registry, &tiles);
-        let demand = crate::routes::route_upkeep_demand(route, span, &ladder);
-        route.upkeep_demanded.get_or_insert(demand);
+    for road in registry.iter_mut() {
+        let measure = crate::routes::road_measure(road, &tile_registry, &tiles);
+        let demand = crate::routes::road_upkeep_demand(road, measure, &ladder);
+        road.upkeep_demanded.get_or_insert(demand);
     }
 
-    // ## (b) The payment, from the bands standing on them, and (c) each band's own roll-up.
-    for (cohort, mut allocation, mut band_equipment) in bands.iter_mut() {
-        // **(c) cleared ahead of every exit below**, so a band that walked off its road stops
+    // ## (b) The payment, from each road's own keeper, and (c) that band's roll-up.
+    for (cohort, mut allocation, mut band_equipment, band) in bands.iter_mut() {
+        // **(c) cleared ahead of every exit below**, so a band that has put its last road down stops
         // republishing a bill it no longer owes.
         allocation.last_roadwork_demand = NO_ROADWORK_LEDGER;
         allocation.last_roadwork_supplied = NO_ROADWORK_LEDGER;
-        let band_pos = tiles
-            .get(cohort.current_tile)
-            .map(|tile| tile.position)
-            .ok();
-        let (ids, claims) = route_keeping_claims(
-            &ledger,
-            band_pos,
+        let (kept, claims) = route_keeping_claims(
+            &registry,
+            Some(*band),
             &equipment_cfg,
             &tile_registry,
             &tiles,
@@ -1562,8 +1582,6 @@ pub fn settle_route_keeping(
         }
         // **(c) THE DEMAND IS SUMMED BEFORE THE HEAD-COUNT GATE.** A band with nobody on the role
         // owes exactly this much and this is the field that says so — the hay need's own rule.
-        // Each claim is priced at `routes::route_keeping_basis`, which is the stamp step (a) has
-        // just struck, so the roll-up and the per-road rows quote one bill.
         allocation.last_roadwork_demand = claims.iter().map(|claim| claim.demand).sum();
         let keepers = allocation.workers_on(&LaborTarget::Roadwork);
         if keepers == NO_CREW_ON_THIS_ACTIVITY {
@@ -1597,11 +1615,10 @@ pub fn settle_route_keeping(
                 .zip(distribute_upkeep_pool(keepers as f32, &needs, fund_mode))
         {
             let supplied = hands * rate.per_worker;
-            if let Some(route) = ledger.get_mut(ids[claim.index]) {
-                route.upkeep_supplied += supplied;
+            if let Some(road) = registry.road_mut(kept[claim.index]) {
+                road.upkeep_supplied += supplied;
             }
-            // **(c) this band's own contribution**, accumulated across the roads it stands on. Not
-            // the roads' totals: another band standing on the same road pays its own part.
+            // **(c) this band's own contribution**, accumulated across the roads it keeps.
             allocation.last_roadwork_supplied += supplied;
             // **The keeper's tools are spent on exactly that work** — billed on what the pool
             // *supplied* to this road, never on what the rung demanded. Inert with the shipped bare
@@ -2215,6 +2232,13 @@ fn head_build_legs(
                     herd.rung_work_done(rung, ladder),
                 )
             }),
+            // **A road lays no legs, and that is the material pile's own question.** This helper
+            // exists to price a queued entry's *material* draw leg by leg; no route rung declares a
+            // material (there is no `stone` to declare — `intensification_ladder.json`'s
+            // `_comment_materials`), so an empty answer is exact rather than a gap. Its other
+            // consumer, the published build chain, does not reach a road: a road carries no source
+            // row for an estimate to be stamped on.
+            BuildSource::Road(_) => None,
         };
         if let Some((width, done)) = span {
             let owed = (width - done).max(NOTHING_DEMANDED);
@@ -2401,10 +2425,11 @@ pub fn advance_labor_allocation(
     // this pass writes about a *row* carries, so the event dock can offer that band's Work tab
     // ([`band_detail_token`]) — so a band without one still works, gathers and lapses exactly as
     // before and simply publishes rows the dock cannot link.
-    // **Read-only here.** The shed counts a band's spare road keepers against what the roads under
-    // it cost ([`route_keeping_claims`]); paying them is `settle_route_keeping`'s, one system later,
-    // and raising them is `routes::advance_routes`', a whole stage earlier.
-    routes: Res<crate::routes::RouteLedger>,
+    // **Read-only here.** The shed counts a band's spare road keepers against what the roads it
+    // KEEPS cost ([`route_keeping_claims`]); paying them is `settle_route_keeping`'s, one system
+    // later, and the traffic that wears the free floor in is `routes::advance_roads`', a whole stage
+    // earlier. The build half of a road is this pass's own — see the road arm below.
+    mut roads: ResMut<crate::routes::RoadRegistry>,
     mut cohorts: Query<LaborBandParts>,
 ) {
     // # ⛔ THIS PASS MAY RUN ONCE PER LOGISTICS CLEAR, AND A SECOND RUN OVERSTATES THE KEEPING
@@ -2597,13 +2622,13 @@ pub fn advance_labor_allocation(
             .get(cohort.current_tile)
             .map(|tile| tile.position)
             .ok();
-        // **What the roads under this band cost it to hold** — struck here, off the same seam
+        // **What the roads this band KEEPS cost it to hold** — struck here, off the same seam
         // `settle_route_keeping` funds them through, so *"more road keepers than the bill needs"*
         // and *"what each road is owed"* cannot come from two readings of the same ground. The
-        // ledger is read-only in this pass: raising and paying a road are both somebody else's.
+        // registry is read-only in this pass: paying a road is `settle_route_keeping`'s.
         let (_, road_claims) = route_keeping_claims(
-            &routes,
-            band_pos,
+            &roads,
+            band_id,
             &equipment_cfg,
             &tile_registry,
             &tiles,
@@ -5556,6 +5581,78 @@ pub fn advance_labor_allocation(
                 }
             }
         }
+        // ## ⛔ THE ROAD AT THE HEAD OF THE QUEUE — RAISED BY THE BAND'S BUILDERS, NOT BY TRAFFIC
+        //
+        // **`grade` and `pave` are ordinary crew builds** (`docs/plan_standing_upkeep.md` §4.13a
+        // rule 2): traffic wears the free floor in and stops there, and everything above it is a
+        // decision somebody typed and a pool somebody staffed.
+        //
+        // **It is its own arm rather than a third case in the assignment loop, and the reason is
+        // structural: A ROAD HAS NO LABOR ROW.** That loop visits `assignments`, and every source it
+        // can reach is named by one — a road is named by its **keeper** instead, which is why
+        // `LaborAllocation::holds_build_source` exempts it from the prune. So the head is read
+        // directly here, after the loop, at exactly the point the other four verbs' completions are
+        // collected.
+        //
+        // **All hands on the head**, the same rule as everywhere else (§2.5): the entry banks the
+        // whole `builders` pool at its own kit, or nothing.
+        //
+        // ⛔ **AND IT BANKS ONLY WHAT THE KEEPER OWNS.** A band whose `grade` has been superseded —
+        // the tile decayed back into the free floor and lost its keeper, or another band adopted it
+        // — banks nothing, because the road is no longer that band's job. The entry is left for
+        // `retire_entries_already_built` and the ordinary queue paths rather than being second-
+        // guessed here.
+        if let Some(entry) = head_entry.as_ref() {
+            if let (BuildSource::Road(tile), BuildJob::Rung(improvement)) =
+                (&entry.source, entry.declared)
+            {
+                let destination = RungKey::built_by(improvement);
+                let keeps_it = band_id.is_some_and(|band| {
+                    roads
+                        .road(*tile)
+                        .and_then(|road| road.keeper)
+                        .is_some_and(|keeper| keeper.band == band)
+                });
+                // **The rung's own gate, and it is knowledge alone.** `site_requirement` is `null` on
+                // every route rung — a road asks nothing of the land it crosses, it is *priced* by it
+                // — so there is no ground term to refuse, and the rung beneath it is guaranteed by
+                // the keeper: a band cannot hold a road it never graded.
+                let knows_rung = ladder
+                    .rung(destination)
+                    .unlock_discovery_id()
+                    .is_none_or(|id| knows(&discovery, faction, id, knowledge_threshold));
+                if keeps_it && knows_rung && builders > NO_CREW_ON_THIS_ACTIVITY {
+                    let gear = builders_gear.for_source(&entry.source);
+                    let accrual =
+                        crate::intensification::pool_work_supply(builders, gear.work_per_worker);
+                    if let Some(road) = roads.road_mut(*tile) {
+                        // **Capped at the DESTINATION's top**, so a `grade` does not run on into the
+                        // paved road nobody ordered — the queue entry names where the road should end
+                        // up, and §2.8's *"an entry retires at its destination"* is the same rule read
+                        // from the other side.
+                        let (base, width) = crate::routes::road_rung_span(
+                            destination,
+                            &ladder,
+                            road.keeper_remoteness,
+                        );
+                        let before = road.position();
+                        road.set_position((before + accrual).min(base + width), &ladder);
+                        // **The gear is charged for the progress the METER TOOK**, never for the work
+                        // the pool offered — the plant arm's rule, so a road already at its
+                        // destination wears nothing.
+                        charge_build_wear(
+                            band_equipment.as_deref_mut(),
+                            &equipment_cfg,
+                            &gear.wear_kit,
+                            road.position() - before,
+                        );
+                        if road.held_rung().is_at_or_above(destination) {
+                            completed.push((entry.source.clone(), entry.declared));
+                        }
+                    }
+                }
+            }
+        }
         // **RETIRE THE QUEUE ENTRY OF EVERY BUILD THAT COMPLETED THIS TURN** — the one seam all five
         // build kinds (Cultivate/Sow/Tame/Corral, and the pen ring) pass through. There is nothing
         // left to raise on this source, so the entry leaves the queue and the whole pool moves to
@@ -5643,6 +5740,7 @@ pub fn advance_labor_allocation(
             &mut allocation,
             &forage_registry,
             &registry,
+            &roads,
             faction,
             tick.0,
             &mut event_log,
@@ -5692,6 +5790,7 @@ fn retire_entries_already_built(
     allocation: &mut LaborAllocation,
     forage_registry: &ForageRegistry,
     herds: &HerdRegistry,
+    roads: &crate::routes::RoadRegistry,
     faction: FactionId,
     tick: u64,
     event_log: &mut CommandEventLog,
@@ -5699,7 +5798,7 @@ fn retire_entries_already_built(
     let dead: Vec<BuildQueueEntry> = allocation
         .build_queue
         .iter()
-        .filter(|entry| entry_job_already_built(entry, forage_registry, herds))
+        .filter(|entry| entry_job_already_built(entry, forage_registry, herds, roads))
         .cloned()
         .collect();
     for entry in &dead {
@@ -5731,6 +5830,7 @@ fn entry_job_already_built(
     entry: &BuildQueueEntry,
     forage_registry: &ForageRegistry,
     herds: &HerdRegistry,
+    roads: &crate::routes::RoadRegistry,
 ) -> bool {
     match (&entry.source, entry.declared) {
         (BuildSource::Patch(tile), BuildJob::Rung(improvement)) => forage_registry
@@ -5744,6 +5844,18 @@ fn entry_job_already_built(
             .is_some_and(|herd| !herd.pen_extending),
         // A ring names a herd; a patch entry can never carry one.
         (BuildSource::Patch(_), BuildJob::ExtendPen) => false,
+        // **A road's test is the rung it HOLDS**, the same *"this rung is already achieved"* shape
+        // the two webs use. A road tile that has vanished from the registry — pruned back to bare
+        // ground — reads as **not** built, so the entry survives to be judged by the road arm, which
+        // drops it for the honest reason that there is nothing there any more.
+        (BuildSource::Road(tile), BuildJob::Rung(improvement)) => {
+            roads.road(*tile).is_some_and(|road| {
+                road.held_rung()
+                    .is_at_or_above(RungKey::built_by(improvement))
+            })
+        }
+        // A ring names a herd; a road entry can never carry one.
+        (BuildSource::Road(_), BuildJob::ExtendPen) => false,
     }
 }
 
@@ -5939,6 +6051,12 @@ fn publish_build_chain(
                     );
                 }
             }
+            // ⛔ **A ROAD PUBLISHES NO BUILD ESTIMATE, because it has no source row to stamp one
+            // on.** `buildTurnsRemaining` and its four siblings are per-patch and per-herd scratch,
+            // and the route branch's wire row carries only the tile's own standing. A road's
+            // countdown is the client-side work this slice deliberately leaves — see the route rule
+            // file. The arm is stated rather than defaulted so a future row cannot be forgotten here.
+            BuildSource::Road(_) => {}
         }
     }
 }
@@ -6082,6 +6200,12 @@ fn publish_entry(
                 );
             }
         }
+        // ⛔ **A ROAD PUBLISHES NO BUILD ESTIMATE, because it has no source row to stamp one
+        // on.** `buildTurnsRemaining` and its four siblings are per-patch and per-herd scratch,
+        // and the route branch's wire row carries only the tile's own standing. A road's
+        // countdown is the client-side work this slice deliberately leaves — see the route rule
+        // file. The arm is stated rather than defaulted so a future row cannot be forgotten here.
+        BuildSource::Road(_) => {}
     }
 }
 
@@ -6128,6 +6252,7 @@ fn describe_build_source(source: &BuildSource) -> String {
     match source {
         BuildSource::Patch(tile) => format!("({}, {})", tile.x, tile.y),
         BuildSource::Herd(id) => id.clone(),
+        BuildSource::Road(tile) => format!("the road at ({}, {})", tile.x, tile.y),
     }
 }
 
@@ -6145,6 +6270,9 @@ fn improvement_feed_channel(improvement: Improvement) -> CommandEventKind {
         Improvement::Sow => CommandEventKind::Sow,
         Improvement::Tame => CommandEventKind::Tame,
         Improvement::Corral => CommandEventKind::Corral,
+        // **One channel for both road verbs** — a road tile climbing its branch is one thing the
+        // player is watching, and which verb it was rides the detail.
+        Improvement::Grade | Improvement::Pave => CommandEventKind::Road,
     }
 }
 
@@ -7938,7 +8066,7 @@ mod labor_yield_tests {
         world.insert_resource(SimulationTick::default());
         // **An empty road ledger is the shipped turn-1 state** — no traffic has run anywhere yet —
         // so this harness's keeping numbers are the roadless reading they have always been.
-        world.insert_resource(crate::routes::RouteLedger::default());
+        world.insert_resource(crate::routes::RoadRegistry::default());
 
         let tiles: Vec<Entity> = (0..3)
             .map(|x| {

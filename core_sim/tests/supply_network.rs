@@ -77,9 +77,10 @@ fn spawn_world() -> App {
     app.world.insert_resource(ConnectionLedger::default());
     // **The roads and this turn's traffic.** Empty, which is the shipped turn-1 state and the
     // reading that makes every assertion in this file a statement about the UNROUTED network: with
-    // no road bound to a component, `component_friction_multiplier` answers `FRICTION_UNCHANGED` and
-    // the pooling numbers below are exactly the ones they were before the route branch existed.
-    app.world.insert_resource(core_sim::RouteLedger::default());
+    // no road on the tiles between any two camps, `supply::component_friction` answers
+    // `FRICTION_UNCHANGED` and the pooling numbers below are exactly the ones they were before the
+    // route branch existed.
+    app.world.insert_resource(core_sim::RoadRegistry::default());
     app.world
         .insert_resource(core_sim::RouteTrafficLog::default());
 

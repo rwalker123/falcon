@@ -1762,7 +1762,7 @@ pub enum LaborTarget {
     ///
     /// A road is a **shared public good** with no owner ([`crate::routes`] — rule 3), so unlike the
     /// two food webs' pools there is no *source row* naming what this one funds. What it funds is
-    /// resolved from where the band is standing ([`crate::routes::RouteLedger::routes_on_tile`] —
+    /// resolved from where the band is standing ([`crate::routes::RoadRegistry::routes_on_tile`] —
     /// rule 2, and there is no radius): step one tile off your own road and you stop paying for it,
     /// which is the legible half of *a road is a reason to stay*.
     ///
@@ -1800,6 +1800,10 @@ pub enum LaborTarget {
 pub const FORAGE_ROLE_KEY: &str = "forage";
 /// The **Hunt** twin of [`FORAGE_ROLE_KEY`].
 pub const HUNT_ROLE_KEY: &str = "hunt";
+/// The **Roadwork** twin of [`FORAGE_ROLE_KEY`] — the band-wide keeping role, and the row a road's
+/// build-queue entry names its web with. A road carries no *take* row of its own, so the keeping role
+/// is what a client joins a queued `grade` to.
+pub const ROADWORK_ROLE_KEY: &str = "roadwork";
 
 impl LaborTarget {
     /// The stable role key (also the snapshot `kind` string and the `activity` summary).
@@ -1811,7 +1815,7 @@ impl LaborTarget {
             LaborTarget::Warrior => "warrior",
             LaborTarget::Agriculture => "agriculture",
             LaborTarget::Husbandry => "husbandry",
-            LaborTarget::Roadwork => "roadwork",
+            LaborTarget::Roadwork => ROADWORK_ROLE_KEY,
             LaborTarget::Builders => "builders",
         }
     }
@@ -3621,6 +3625,15 @@ pub enum BuildSource {
     Patch(UVec2),
     /// A fauna herd, by id.
     Herd(String),
+    /// ⛔ **A ROAD TILE, by coord** — the route branch's build source, and the one that is **not
+    /// backed by a labor row** (`docs/plan_standing_upkeep.md` §4.13b).
+    ///
+    /// A patch and a herd are each worked by a `Forage` / `Hunt` row, and the queue is pruned of
+    /// anything the band no longer works. A road has no such row: the band that grades it is the
+    /// band that **keeps** it, recorded on the road itself (`routes::Road::keeper`), and the entry
+    /// is retired by arrival, by `abandon` or by `unqueue` rather than by a vanished row. See
+    /// [`LaborAllocation::holds_build_source`].
+    Road(UVec2),
 }
 
 impl BuildSource {
@@ -3647,6 +3660,9 @@ impl BuildSource {
         match self {
             BuildSource::Patch(_) => FORAGE_ROLE_KEY,
             BuildSource::Herd(_) => HUNT_ROLE_KEY,
+            // **The band-wide keeping role**, because that is the row a road's entry joins to on the
+            // Work board — a road has no take row of its own for a client to join against.
+            BuildSource::Road(_) => ROADWORK_ROLE_KEY,
         }
     }
 
@@ -3655,6 +3671,9 @@ impl BuildSource {
         match (self, target) {
             (BuildSource::Patch(tile), LaborTarget::Forage { tile: other, .. }) => tile == other,
             (BuildSource::Herd(id), LaborTarget::Hunt { fauna_id, .. }) => id == fauna_id,
+            // **A road names no row.** `LaborTarget::Roadwork` is band-wide and covers every road
+            // the band keeps, so it names no one of them — the same answer `Agriculture` gives a
+            // patch.
             _ => false,
         }
     }
@@ -3829,6 +3848,7 @@ impl LaborAllocation {
         self.build_queue.first().map(|entry| match entry.source {
             BuildSource::Patch(_) => crate::intensification::RungBranch::Plant,
             BuildSource::Herd(_) => crate::intensification::RungBranch::Animal,
+            BuildSource::Road(_) => crate::intensification::RungBranch::Route,
         })
     }
 
@@ -4200,10 +4220,21 @@ impl LaborAllocation {
     }
 
     /// Whether this band has a row on the named source — the membership test the queue is gated on.
+    ///
+    /// ⛔ **A ROAD IS HELD BY ITS KEEPER, NOT BY A ROW, so it is never pruned here.** The rule *"an
+    /// entry requires a row"* exists so the builders' pool cannot fund ground the band no longer
+    /// works; on the route branch that membership lives on the **road** (`routes::Road::keeper`),
+    /// which this component cannot see and must not guess at. A road entry is retired by arriving,
+    /// by `abandon` (which releases the keeper and drops the entry together) or by `unqueue` —
+    /// three explicit paths, none of which is a vanished labor row.
     fn holds_build_source(&self, source: &BuildSource) -> bool {
-        self.assignments
-            .iter()
-            .any(|assignment| source.names(&assignment.target))
+        match source {
+            BuildSource::Road(_) => true,
+            BuildSource::Patch(_) | BuildSource::Herd(_) => self
+                .assignments
+                .iter()
+                .any(|assignment| source.names(&assignment.target)),
+        }
     }
 
     // **RETIRED: `add_role_workers`** — put more hands on a band-wide standing role, creating its
@@ -4972,6 +5003,20 @@ pub enum Improvement {
     Tame,
     /// **Animal-only.** Build the pen for a domesticated herd (animal rung 3).
     Corral,
+    /// **Route-only.** Grade a roadbed on **one tile** — the route rung-3 verb, and the act that
+    /// makes that tile's road the ordering band's job (`docs/plan_standing_upkeep.md` §4.13b).
+    ///
+    /// **A TILE COMMAND, in `cultivate`/`sow`'s own grammar** — `grade <faction> <band> <x> <y>` —
+    /// because a road is a per-tile improvement. It is the same act `cultivate` performs on a patch:
+    /// it declares the job **and** names the keeper, and **one tile has exactly one keeper**, which
+    /// is what makes *"several bands each pay a share"* unrepresentable rather than merely
+    /// discouraged.
+    ///
+    /// **Re-issuing it on a road nobody keeps is ADOPTION**, and deliberately not a second verb.
+    Grade,
+    /// **Route-only.** Pave a graded tile — the route rung-4 verb, and [`Improvement::Grade`]'s twin
+    /// one rung up. It names a keeper on the same terms.
+    Pave,
 }
 
 /// **A floor of `0` — "leave nothing standing."** Named because a bare `0.0` at a comparison site
@@ -4999,6 +5044,8 @@ impl Improvement {
             Improvement::Sow => "sow",
             Improvement::Tame => "tame",
             Improvement::Corral => "corral",
+            Improvement::Grade => "grade",
+            Improvement::Pave => "pave",
         }
     }
 
@@ -5009,7 +5056,9 @@ impl Improvement {
     pub fn valid_for_forage(self) -> bool {
         match self {
             Improvement::Cultivate | Improvement::Sow => true,
-            Improvement::Tame | Improvement::Corral => false,
+            Improvement::Tame | Improvement::Corral | Improvement::Grade | Improvement::Pave => {
+                false
+            }
         }
     }
 
@@ -5023,7 +5072,29 @@ impl Improvement {
     pub fn valid_for_hunt(self) -> bool {
         match self {
             Improvement::Tame | Improvement::Corral => true,
-            Improvement::Cultivate | Improvement::Sow => false,
+            Improvement::Cultivate | Improvement::Sow | Improvement::Grade | Improvement::Pave => {
+                false
+            }
+        }
+    }
+
+    /// The improvements a **road tile** accepts — the route branch's two rung-transition verbs, and
+    /// the third of the exhaustive trio above.
+    ///
+    /// ⛔ **EXHAUSTIVE, like its two siblings, and for the reason they are.** A new verb must **fail
+    /// to compile** here until somebody states which web it belongs to; the hand-written
+    /// complements these replaced defaulted a new verb to legal everywhere.
+    ///
+    /// A road carries no labor row at all — the keeping is the band-wide `Roadwork` pool and the
+    /// build is the band-wide `builders` pool — so unlike its two siblings this is not the *"may
+    /// this assignment declare it"* test but the *"may this **tile** be sent there"* one, asked by
+    /// the `grade` / `pave` commands.
+    pub fn valid_for_route(self) -> bool {
+        match self {
+            Improvement::Grade | Improvement::Pave => true,
+            Improvement::Cultivate | Improvement::Sow | Improvement::Tame | Improvement::Corral => {
+                false
+            }
         }
     }
 }
@@ -5041,6 +5112,8 @@ impl FromStr for Improvement {
             "sow" => Ok(Improvement::Sow),
             "tame" => Ok(Improvement::Tame),
             "corral" => Ok(Improvement::Corral),
+            "grade" => Ok(Improvement::Grade),
+            "pave" => Ok(Improvement::Pave),
             _ => Err(()),
         }
     }

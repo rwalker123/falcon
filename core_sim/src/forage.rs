@@ -2967,7 +2967,7 @@ pub fn patch_claims_keeping(patch: &ForagePatch, improvement: Option<Improvement
     let by_position = patch.ladder_position() > RUNG_UNSTARTED;
     let by_verb = improvement.is_some_and(|verb| match verb {
         Improvement::Cultivate | Improvement::Sow => true,
-        Improvement::Tame | Improvement::Corral => false,
+        Improvement::Tame | Improvement::Corral | Improvement::Grade | Improvement::Pave => false,
     });
     by_position || by_verb
 }

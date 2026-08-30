@@ -1558,13 +1558,26 @@ fn the_build_queue_survives_a_checkpoint_in_the_order_the_player_set() {
 fn every_build_job_and_source_kind_is_stated() {
     let patch = BuildSource::Patch(UVec2::new(1, 1));
     let herd = BuildSource::Herd("game_deer_07".to_string());
-    for source in [&patch, &herd] {
+    let road = BuildSource::Road(UVec2::new(2, 2));
+    for source in [&patch, &herd, &road] {
         match source {
-            // A patch is named by its tile; a herd by an id that outlives its position.
+            // A patch is named by its tile; a herd by an id that outlives its position; a ROAD by
+            // its tile, because a road IS a tile (`docs/plan_standing_upkeep.md` §4.13b).
             BuildSource::Patch(tile) => assert_eq!(*tile, UVec2::new(1, 1)),
             BuildSource::Herd(id) => assert_eq!(id, "game_deer_07"),
+            BuildSource::Road(tile) => assert_eq!(*tile, UVec2::new(2, 2)),
         }
     }
+    assert!(
+        !road.names(&LaborTarget::Forage {
+            tile: UVec2::new(2, 2),
+            floor: FOOD_PEAK,
+            species: None,
+            take_species: core_sim::TakeSelection::EVERYTHING,
+        }),
+        "A ROAD NAMES NO LABOR ROW, even one on its own tile: its keeper is on the road, and the \
+         `Roadwork` role is band-wide and names no one of them"
+    );
     assert!(
         !patch.names(&LaborTarget::Hunt {
             fauna_id: "game_deer_07".to_string(),

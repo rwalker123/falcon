@@ -1,48 +1,41 @@
-//! **What a road publishes** (issue #532, `docs/plan_standing_upkeep.md` §4.13,
-//! `.claude/rules/core_sim/routes.md`).
+//! **The route section on the wire — one row per ROAD TILE** (`docs/plan_standing_upkeep.md`
+//! §4.13b, issue #532).
 //!
-//! ⛔ **EVERY ASSERTION HERE IS STRUCK ON THE ENCODED ENVELOPE**, through `root_as_envelope` and the
-//! accessor chain a client uses — never on the in-process `RouteLedger`. A field that never reached
-//! the codec still passes an in-process assertion, and the route section has no client reader yet to
-//! notice.
+//! Every assertion here reads the **encoded envelope** through `root_as_envelope`, never the
+//! in-process `RouteState`: a field that never reached the codec still passes an in-process
+//! assertion, and the route section has no client reader yet to notice.
 //!
-//! The fixtures drive **whole turns** so the numbers under test are the ones the real schedule
-//! produces: `advance_routes` judges and clears in Logistics, `settle_route_keeping` stamps and pays
-//! in Population, and the capture runs after both.
+//! The fixtures drive **whole turns** through [`core_sim::build_test_app`], so the numbers under
+//! test are the ones the real stage order produced — the keeping pass stamps in Population, the
+//! Snapshot stage publishes what it stamped.
 
 use bevy::app::App;
 use bevy::math::UVec2;
 use bevy::prelude::{Entity, With};
 
 use core_sim::{
-    build_test_app, FactionId, LaborAllocation, LaborTarget, LadderConfig, PopulationCohort,
-    ResidentBand, RouteId, RouteLedger, RungKey, SimulationConfig, SnapshotHistory, Tile,
-    TileRegistry, ViewerFaction, PER_WORKER_OUTPUT,
+    build_test_app, BandId, FactionId, LaborAllocation, LaborTarget, LadderConfig,
+    PopulationCohort, ResidentBand, RoadKeeper, RoadRegistry, RungKey, SimulationConfig,
+    SnapshotHistory, Tile, TileRegistry, ViewerFaction, METER_FULL, NEAR_ENOUGH_TO_KEEP,
+    PER_WORKER_OUTPUT,
 };
 
 /// A pinned earthlike world, so the terrain under every road below is the same one every run.
 const MAP_SEED: u64 = 119_304_647;
 
-/// **How long every fixture's road is, in tiles.** Long enough that its bill wants several pairs of
-/// hands, so a *part*-funded road is reachable by staffing one keeper.
-const ROAD_TILES: u32 = 14;
+/// **How far from the band's camp a published road sits.** Far enough that the fog gate is a real
+/// gate — the band has not explored that ground — and each test asserts that rather than trusting it.
+const FAR_TILES: u32 = 20;
 
-/// **The one keeper a part-funded fixture staffs.** Strictly between "nobody" and "the whole bill",
-/// which is the only regime in which `demand − supplied == shortfall` is a real claim: a fully
-/// funded or wholly starved road satisfies it with one side at zero.
-const ONE_KEEPER: u32 = 1;
-
-/// A road part-way up a rung, as a fraction of that rung's own width — the state every road passes
-/// through on its way up, and the one a `buildFraction` of `1.0` must not read.
-const HALF_WAY_UP_A_RUNG: f32 = 0.5;
-
-/// One road's published row, reduced to what the assertions here need.
-#[derive(Debug, Clone, PartialEq)]
-struct PublishedRoute {
-    id: u64,
-    path: Vec<UVec2>,
+/// One published route row, read off the encoded envelope.
+#[derive(Debug, Clone)]
+struct PublishedRoad {
+    tile: UVec2,
     rung: String,
     build_fraction: f32,
+    has_keeper: bool,
+    keeper_band_id: u64,
+    keeper_remoteness: f32,
     demand: f32,
     supplied: f32,
     shortfall: f32,
@@ -54,8 +47,8 @@ struct PublishedRoute {
     holds_link_to_tiles: u32,
 }
 
-/// The band's published roadwork roll-up.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// The band's `roadwork*` trio, read off the encoded envelope.
+#[derive(Debug, Clone, Copy)]
 struct PublishedRoadwork {
     demand: f32,
     supplied: f32,
@@ -83,7 +76,7 @@ fn encoded(app: &App) -> Vec<u8> {
 }
 
 /// **The `routes` section off the encoded envelope**, through the accessor chain a client uses.
-fn published_routes(app: &App) -> Vec<PublishedRoute> {
+fn published_roads(app: &App) -> Vec<PublishedRoad> {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
     let bytes = encoded(app);
@@ -97,36 +90,31 @@ fn published_routes(app: &App) -> Vec<PublishedRoute> {
         .expect("the route section is published");
     section
         .iter()
-        .map(|row| {
-            let xs = row.pathX().expect("a road publishes its path");
-            let ys = row.pathY().expect("a road publishes its path");
-            assert_eq!(xs.len(), ys.len(), "the zipped path halves must agree");
-            PublishedRoute {
-                id: row.id(),
-                path: (0..xs.len())
-                    .map(|index| UVec2::new(xs.get(index), ys.get(index)))
-                    .collect(),
-                rung: row.rung().expect("a road publishes its rung").to_string(),
-                build_fraction: row.buildFraction(),
-                demand: row.upkeepDemand(),
-                supplied: row.upkeepSupplied(),
-                shortfall: row.upkeepShortfall(),
-                workers_needed: row.upkeepWorkersNeeded(),
-                has_neglect_grace: row.hasNeglectGrace(),
-                neglect_grace_remaining: row.neglectGraceRemaining(),
-                grants_sight: row.grantsSight(),
-                friction_multiplier: row.frictionMultiplier(),
-                holds_link_to_tiles: row.holdsLinkToTiles(),
-            }
+        .map(|row| PublishedRoad {
+            tile: UVec2::new(row.tileX(), row.tileY()),
+            rung: row.rung().expect("a road publishes its rung").to_string(),
+            build_fraction: row.buildFraction(),
+            has_keeper: row.hasKeeper(),
+            keeper_band_id: row.keeperBandId(),
+            keeper_remoteness: row.keeperRemoteness(),
+            demand: row.upkeepDemand(),
+            supplied: row.upkeepSupplied(),
+            shortfall: row.upkeepShortfall(),
+            workers_needed: row.upkeepWorkersNeeded(),
+            has_neglect_grace: row.hasNeglectGrace(),
+            neglect_grace_remaining: row.neglectGraceRemaining(),
+            grants_sight: row.grantsSight(),
+            friction_multiplier: row.frictionMultiplier(),
+            holds_link_to_tiles: row.holdsLinkToTiles(),
         })
         .collect()
 }
 
-fn published_route(app: &App, id: RouteId) -> PublishedRoute {
-    published_routes(app)
+fn published_road(app: &App, tile: UVec2) -> PublishedRoad {
+    published_roads(app)
         .into_iter()
-        .find(|row| row.id == id.0)
-        .unwrap_or_else(|| panic!("road {} reached the viewer's frame", id.0))
+        .find(|row| row.tile == tile)
+        .unwrap_or_else(|| panic!("the road at {tile:?} reached the viewer's frame"))
 }
 
 /// **The band's `roadwork*` trio off the encoded envelope.** The campaign runs one cohort per test,
@@ -154,18 +142,18 @@ fn published_roadwork(app: &App) -> PublishedRoadwork {
     }
 }
 
-/// The campaign's first resident band: entity, faction and the tile it stands on. The viewer faction
-/// is pinned to it, so what is published is what *this* people can see.
-fn first_band(app: &mut App) -> (Entity, FactionId, UVec2) {
-    let (entity, faction, tile) = {
+/// The campaign's first resident band: entity, faction, `BandId` and the tile it stands on. The
+/// viewer faction is pinned to it, so what is published is what *this* people can see.
+fn first_band(app: &mut App) -> (Entity, FactionId, BandId, UVec2) {
+    let (entity, faction, band, tile) = {
         let mut query = app
             .world
-            .query_filtered::<(Entity, &PopulationCohort), With<ResidentBand>>();
-        let (entity, cohort) = query
+            .query_filtered::<(Entity, &PopulationCohort, &BandId), With<ResidentBand>>();
+        let (entity, cohort, band) = query
             .iter(&app.world)
             .next()
             .expect("the campaign spawns at least one resident band");
-        (entity, cohort.faction, cohort.current_tile)
+        (entity, cohort.faction, *band, cohort.current_tile)
     };
     let position = app
         .world
@@ -173,28 +161,25 @@ fn first_band(app: &mut App) -> (Entity, FactionId, UVec2) {
         .expect("a band stands on a real tile")
         .position;
     app.world.insert_resource(ViewerFaction(faction));
-    (entity, faction, position)
+    (entity, faction, band, position)
 }
 
-/// A straight run of `tiles` tiles starting at `head`.
-fn road_from(app: &App, head: UVec2, tiles: u32) -> Vec<UVec2> {
+fn tile_east_of(app: &App, head: UVec2, steps: u32) -> UVec2 {
     let width = app.world.resource::<TileRegistry>().width;
-    (0..tiles)
-        .map(|step| UVec2::new((head.x + step) % width, head.y))
-        .collect()
+    UVec2::new((head.x + steps) % width, head.y)
 }
 
 /// The shipped `route:dirt_road` **top position** and its neglect grace, read from the ladder rather
 /// than restated — a retune of `intensification_ladder.json` must move these fixtures with it.
 ///
-/// **It was the TRAIL rung's, and the move is this slice's correction**
-/// (`docs/plan_standing_upkeep.md` §4.13a): the trail is the free floor's second storey now — worn
-/// in by traffic and billed nothing — so a fixture about a *bill* has to stand on the first rung
-/// anybody keeps.
+/// ⛔ **THE DIRT ROAD, NOT THE TRAIL.** The trail is the free floor's second storey — worn in by
+/// traffic and billed nothing — so a fixture about a *bill* has to stand on the first rung anybody
+/// keeps.
 fn built_road_dials() -> (f32, u32) {
     let ladder = LadderConfig::builtin();
     let rung = ladder.rung(RungKey::RouteDirtRoad);
-    let (base, width) = core_sim::route_rung_span(RungKey::RouteDirtRoad, &ladder);
+    let (base, width) =
+        core_sim::road_rung_span(RungKey::RouteDirtRoad, &ladder, NEAR_ENOUGH_TO_KEEP);
     let grace = rung
         .upkeep
         .as_ref()
@@ -203,40 +188,44 @@ fn built_road_dials() -> (f32, u32) {
     (base + width, grace)
 }
 
-/// Lay a road along `path` and seat its position at `position` work units.
-fn seat_road(app: &mut App, path: Vec<UVec2>, position: f32) -> RouteId {
+/// Seat a road on `tile` at `position` and hand it to `keeper`. The position is written **before**
+/// the keeper: `set_position` releases a keeper on a road inside the free floor.
+fn seat_road(app: &mut App, tile: UVec2, position: f32, keeper: Option<(FactionId, BandId)>) {
     let ladder = LadderConfig::builtin();
-    let mut routes = app.world.resource_mut::<RouteLedger>();
-    let id = routes.insert(path, &ladder);
-    routes
-        .get_mut(id)
-        .expect("the road was just laid")
-        .set_position(position, &ladder);
-    id
+    let mut roads = app.world.resource_mut::<RoadRegistry>();
+    let road = roads.road_or_trail(tile, &ladder);
+    road.set_position(position, &ladder);
+    if let Some((faction, band)) = keeper {
+        road.take_keeper(RoadKeeper { faction, band }, NEAR_ENOUGH_TO_KEEP, &ladder);
+    }
 }
 
-fn seat_a_dirt_road(app: &mut App, path: Vec<UVec2>) -> RouteId {
+fn seat_a_dirt_road(app: &mut App, tile: UVec2, keeper: (FactionId, BandId)) {
     let (top, _) = built_road_dials();
-    seat_road(app, path, top)
+    seat_road(app, tile, top, Some(keeper));
 }
 
-/// **HOW MANY BARE HANDS COVER THIS ROAD'S BILL IN FULL**, read off the sim's own demand rather than
-/// hard-coded: the span is whatever the generated map's terrain under the road happens to cost.
-fn keepers_the_bill_wants(app: &App, id: RouteId) -> u32 {
+/// **HOW MANY BARE HANDS COVER THIS ROAD'S BILL IN FULL**, read off the sim's own measure rather
+/// than hard-coded: the ground under a road is whatever the generated map put there.
+fn keepers_the_bill_wants(app: &App, tile: UVec2) -> u32 {
     let ladder = LadderConfig::builtin();
-    let route = app
+    let road = app
         .world
-        .resource::<RouteLedger>()
-        .get(id)
-        .expect("the road is in the ledger");
-    let registry = app.world.resource::<TileRegistry>();
-    let span = core_sim::span_of_terrains(route.path.iter().filter_map(|pos| {
-        registry
-            .index(pos.x, pos.y)
-            .and_then(|entity| app.world.get::<Tile>(entity))
-            .map(|tile| tile.terrain)
-    }));
-    let demand = core_sim::route_upkeep_demand(route, span, &ladder);
+        .resource::<RoadRegistry>()
+        .road(tile)
+        .expect("the road is in the registry");
+    let terrain = app
+        .world
+        .resource::<TileRegistry>()
+        .index(tile.x, tile.y)
+        .and_then(|entity| app.world.get::<Tile>(entity))
+        .expect("a seated road stands on a real tile")
+        .terrain;
+    let demand = core_sim::road_upkeep_demand(
+        road,
+        core_sim::road_upkeep_measure(terrain, road.keeper_remoteness),
+        &ladder,
+    );
     (demand / PER_WORKER_OUTPUT).ceil() as u32
 }
 
@@ -247,6 +236,67 @@ fn staff_roadwork(app: &mut App, band: Entity, workers: u32) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// The row's identity, and the keeper it names
+// ---------------------------------------------------------------------------------------------
+
+/// ⛔ **THE ROW IS A TILE, AND IT NAMES ITS KEEPER** — the whole of what the per-tile model changed
+/// on the wire.
+///
+/// **Both keeper states are asserted in one world**, because `hasKeeper: false` passes on a build
+/// that never publishes a keeper at all.
+#[test]
+fn a_road_row_is_a_tile_and_names_the_band_whose_job_it_is() {
+    let mut app = spawn_world();
+    let (band, faction, id, camp) = first_band(&mut app);
+    let kept = camp;
+    let free = tile_east_of(&app, camp, 1);
+    seat_a_dirt_road(&mut app, kept, (faction, id));
+    seat_road(
+        &mut app,
+        free,
+        core_sim::traffic_ceiling(&LadderConfig::builtin()),
+        None,
+    );
+    let wanted = keepers_the_bill_wants(&app, kept);
+    staff_roadwork(&mut app, band, wanted);
+    app.update();
+
+    let row = published_road(&app, kept);
+    assert_eq!(
+        row.tile, kept,
+        "the row IS the tile — there is no path on it"
+    );
+    assert_eq!(
+        row.rung, "route:dirt_road",
+        "and it states the rung it holds"
+    );
+    assert!(row.has_keeper, "somebody keeps this one");
+    assert_eq!(
+        row.keeper_band_id, id.0,
+        "and the row names WHICH band — one keeper per tile, never a share"
+    );
+    assert_eq!(
+        row.keeper_remoteness, NEAR_ENOUGH_TO_KEEP,
+        "quoted at the band's own camp, so distance costs it nothing"
+    );
+
+    let floor = published_road(&app, free);
+    assert_eq!(
+        floor.rung, "route:trail",
+        "precondition: the second row really is on the free floor"
+    );
+    assert!(
+        !floor.has_keeper,
+        "and the free floor is NOBODY's job — the liveness half of the claim above"
+    );
+    assert_eq!(
+        floor.demand, 0.0,
+        "so it owes nothing, and `hasNeglectGrace` says there is nothing at risk"
+    );
+    assert!(!floor.has_neglect_grace);
+}
+
+// ---------------------------------------------------------------------------------------------
 // The bill
 // ---------------------------------------------------------------------------------------------
 
@@ -254,300 +304,242 @@ fn staff_roadwork(app: &mut App, band: Entity, workers: u32) {
 ///
 /// The part-funded regime is the whole point: a fully funded road closes the identity with a
 /// shortfall of zero and a starved one closes it with a supplied of zero, so either would pass with
-/// the terms read off three different bills. This one is staffed with a single keeper against a bill
-/// that wants several, and both preconditions are asserted before the identity is.
+/// the terms read off three different bills.
 ///
-/// All three read the **stamped** basis (`routes::route_keeping_basis`), never the live interpolated
-/// demand — which moves *within* a turn as bands walk on and off a road. This branch has had that
-/// defect twice.
+/// All three read the **stamped** basis (`routes::road_keeping_basis`), never the live interpolated
+/// demand. This branch has had that defect twice.
 #[test]
 fn the_published_bill_closes_on_a_part_funded_road() {
     let mut app = spawn_world();
-    let (band, _, camp) = first_band(&mut app);
-    let path = road_from(&app, camp, ROAD_TILES);
-    let road = seat_a_dirt_road(&mut app, path);
-    assert!(
-        keepers_the_bill_wants(&app, road) > ONE_KEEPER,
-        "precondition: this road's bill wants more than the one keeper the fixture staffs"
-    );
-    staff_roadwork(&mut app, band, ONE_KEEPER);
+    let (band, faction, id, camp) = first_band(&mut app);
+    // A short run of tiles, all kept by the one band and staffed with a single keeper — so the pool
+    // is spread thin enough that the rows are genuinely part funded rather than met or starved.
+    const RUN: u32 = 4;
+    let run: Vec<UVec2> = (0..RUN)
+        .map(|step| tile_east_of(&app, camp, step))
+        .collect();
+    for tile in &run {
+        seat_a_dirt_road(&mut app, *tile, (faction, id));
+    }
+    staff_roadwork(&mut app, band, 1);
     app.update();
 
-    let row = published_route(&app, road);
-    assert!(
-        row.supplied > 0.0,
-        "precondition: the one keeper really paid something ({row:?})"
-    );
-    assert!(
-        row.shortfall > 0.0,
-        "precondition: and the bill is still short, so this is the PART-funded regime ({row:?})"
-    );
+    let rows: Vec<PublishedRoad> = published_roads(&app);
     assert_eq!(
-        row.demand - row.supplied,
-        row.shortfall,
-        "the three published terms must close exactly: {row:?}"
+        rows.len(),
+        RUN as usize,
+        "every tile of the run reaches the frame"
     );
-    // The crew count rides the same bill, so it cannot quote a rung the three terms do not.
-    assert_eq!(
-        row.workers_needed,
-        (row.demand / PER_WORKER_OUTPUT).ceil() as u32,
-        "the published crew count is ceil of the SAME bill: {row:?}"
+    for row in &rows {
+        assert!(row.demand > 0.0, "a dirt road owes something");
+        assert!(
+            (row.demand - row.supplied - row.shortfall).abs() < 1.0e-4,
+            "demand − supplied == shortfall, verbatim: {row:?}"
+        );
+        assert_eq!(
+            row.workers_needed,
+            (row.demand / PER_WORKER_OUTPUT).ceil() as u32,
+            "and the worker count is ceil of the SAME bill"
+        );
+    }
+    assert!(
+        rows.iter().any(|row| row.supplied > 0.0),
+        "precondition: the single keeper really did pay something"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.supplied > 0.0 && row.shortfall > 0.0),
+        "precondition: and one keeper is not enough for a run of four — at least one row is PART \
+         funded, which is the regime the identity is hardest in"
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// The meter
-// ---------------------------------------------------------------------------------------------
-
-/// ⛔ **THE BUILD METER IS THE RUNG'S OWN, AND READS *EXACTLY* FULL ON A COMPLETED RUNG.**
+/// ⛔ **THE BUILD METER IS THE RUNG'S OWN, AND READS EXACTLY FULL ON A COMPLETED RUNG.**
 ///
-/// A road seated exactly at the top of `route:dirt_road` has nothing banked in the rung above, so the
-/// meter describes the rung it just finished and must read `1.0` — not `0.0` (which is what reading
-/// `standing.raising` unconditionally would publish) and not `0.99999994` (which is what deriving
-/// `fl(base + width) − base` published for a completed Field).
-///
-/// **Paired with a half-worn road in the same world**, whose meter reads a real fraction — otherwise
-/// "always 1.0" passes this test.
-///
-/// **And the rung string is the bool.** The completed road publishes `"route:dirt_road"` while the
-/// half-worn one publishes `"route:trail"` — the rung beneath it — so a client never has to
-/// threshold the float.
+/// Never derived by subtraction: `fl(base + width) − base` is not `width` when that addition rounds,
+/// which is the defect that published a completed Field as *"99%"*.
 #[test]
 fn the_build_meter_is_the_rungs_own_and_reads_exactly_full_on_a_completed_rung() {
-    let ladder = LadderConfig::builtin();
-    let (dirt_base, dirt_width) = core_sim::route_rung_span(RungKey::RouteDirtRoad, &ladder);
     let mut app = spawn_world();
-    let (band, _, camp) = first_band(&mut app);
-    let width = app.world.resource::<TileRegistry>().width;
-
-    let done_path = road_from(&app, camp, ROAD_TILES);
-    let done = seat_a_dirt_road(&mut app, done_path);
-    let part_head = UVec2::new((camp.x + width - ROAD_TILES + 1) % width, camp.y);
-    let part_path = road_from(&app, part_head, ROAD_TILES);
-    let part = seat_road(
-        &mut app,
-        part_path,
-        dirt_base + dirt_width * HALF_WAY_UP_A_RUNG,
-    );
-    let wanted = keepers_the_bill_wants(&app, done) + keepers_the_bill_wants(&app, part);
+    let (band, faction, id, camp) = first_band(&mut app);
+    let tile = camp;
+    seat_a_dirt_road(&mut app, tile, (faction, id));
+    let wanted = keepers_the_bill_wants(&app, tile);
     staff_roadwork(&mut app, band, wanted);
     app.update();
 
-    let finished = published_route(&app, done);
+    let row = published_road(&app, tile);
+    assert_eq!(row.rung, "route:dirt_road");
     assert_eq!(
-        finished.rung, "route:dirt_road",
-        "the completed road publishes the rung it HOLDS: {finished:?}"
-    );
-    assert_eq!(
-        finished.build_fraction, 1.0,
-        "a road that has just completed a rung reads EXACTLY full: {finished:?}"
+        row.build_fraction, METER_FULL,
+        "a road that has just COMPLETED a rung reads exactly full, not the next rung's zero and \
+         not 99%"
     );
 
-    let climbing = published_route(&app, part);
-    assert_eq!(
-        climbing.rung, "route:trail",
-        "a road half-way to a dirt road still HOLDS the trail beneath it: {climbing:?}"
+    // Half-way into the paving, the meter is the PAVED road's — a different rung from the one held.
+    let (dirt_top, _) = built_road_dials();
+    let (_, paved_width) = core_sim::road_rung_span(
+        RungKey::RoutePavedRoad,
+        &LadderConfig::builtin(),
+        NEAR_ENOUGH_TO_KEEP,
     );
+    {
+        let ladder = LadderConfig::builtin();
+        let mut roads = app.world.resource_mut::<RoadRegistry>();
+        roads
+            .road_mut(tile)
+            .expect("seated")
+            .set_position(dirt_top + paved_width / 2.0, &ladder);
+    }
+    app.update();
+    let row = published_road(&app, tile);
     assert_eq!(
-        climbing.build_fraction, HALF_WAY_UP_A_RUNG,
-        "and its meter is the real fraction of the rung it is raising: {climbing:?}"
+        row.rung, "route:dirt_road",
+        "the rung it HOLDS has not moved — the string is the bool"
     );
-
-    // What the rung is buying rides the same row, off the road's stamped payoff.
-    let payoff = ladder
-        .rung(RungKey::RouteDirtRoad)
-        .route_payoff
-        .as_ref()
-        .expect("every route rung declares a payoff");
-    assert_eq!(finished.friction_multiplier, payoff.friction_multiplier);
-    assert_eq!(finished.holds_link_to_tiles, payoff.holds_link_to_tiles);
     assert!(
-        finished.grants_sight,
-        "a built road whose bill was met publishes the resolved 'it is lighting its tiles'"
+        (row.build_fraction - 0.5).abs() < 1.0e-3,
+        "and the meter beside it is the PAVED road's, half raised: {}",
+        row.build_fraction
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// The countdown
-// ---------------------------------------------------------------------------------------------
-
-/// ⛔ **THE COUNTDOWN, NOT THE COUNTER — `0` MEANS REVERTING NOW.**
-///
-/// A kept road reads its rung's full `grace_turns + 1` ("walk away and you have this long"); the
-/// same road after `grace + 1` unpaid turns reads `0`, which is the penalty biting. Both halves are
-/// asserted because "always 0" and "always grace + 1" each pass one of them alone.
-///
-/// Resolved through the same at-risk-rung seam `advance_routes` bleeds through, so the wire cannot
-/// count down against a rung the sim is not touching — which is why the neglected road still reads
-/// `hasNeglectGrace: true` after its position has bled below the trail boundary: the rung at risk is
-/// the one carrying the banked work, not the free floor it has fallen back onto.
+/// ⛔ **THE COUNTDOWN, NOT THE COUNTER.** A kept road reads its rung's full grace + 1; one reverting
+/// now reads `0`. Both are asserted, because either alone passes on a build publishing a constant.
 #[test]
 fn the_countdown_reads_the_full_grace_on_a_kept_road_and_zero_on_one_reverting_now() {
     let (_, grace) = built_road_dials();
 
-    // ① Kept.
     let mut kept = spawn_world();
-    let (band, _, camp) = first_band(&mut kept);
-    let path = road_from(&kept, camp, ROAD_TILES);
-    let road = seat_a_dirt_road(&mut kept, path);
-    let wanted = keepers_the_bill_wants(&kept, road);
+    let (band, faction, id, camp) = first_band(&mut kept);
+    seat_a_dirt_road(&mut kept, camp, (faction, id));
+    let wanted = keepers_the_bill_wants(&kept, camp);
     staff_roadwork(&mut kept, band, wanted);
     kept.update();
-    let row = published_route(&kept, road);
-    assert!(row.has_neglect_grace, "a kept trail has a rung at risk");
+    let row = published_road(&kept, camp);
+    assert!(row.has_neglect_grace, "a dirt road has something at risk");
     assert_eq!(
         row.neglect_grace_remaining,
         grace + 1,
-        "a road whose bill is met reads its rung's whole grace: {row:?}"
+        "a road whose bill is met reads its rung's full grace — walk away and you have this long"
     );
 
-    // ② The same road, unpaid for one turn longer than its grace forgives.
-    let mut lost = spawn_world();
-    let (band, _, camp) = first_band(&mut lost);
-    let path = road_from(&lost, camp, ROAD_TILES);
-    let road = seat_a_dirt_road(&mut lost, path);
-    staff_roadwork(&mut lost, band, 0);
-    // The first turn's `advance_routes` judges a bill nobody had stamped yet, so the count of
-    // *consecutive short turns* starts on the second — hence `grace + 2` turns to reach `grace + 1`
-    // of them.
+    let mut short = spawn_world();
+    let (band, faction, id, camp) = first_band(&mut short);
+    seat_a_dirt_road(&mut short, camp, (faction, id));
+    staff_roadwork(&mut short, band, 0);
+    // **One turn to stamp the bill, then `grace + 1` turns of judged shortfall.** The keeping pass
+    // runs in Population *after* the decay pass has judged in Logistics, so the first turn's
+    // shortfall is only counted on the second — the one-turn carry, not an off-by-one here.
     for _ in 0..grace + 2 {
-        lost.update();
+        short.update();
     }
-    let row = published_route(&lost, road);
-    assert!(
-        row.has_neglect_grace,
-        "the rung carrying the banked work is still what is at risk: {row:?}"
-    );
     assert_eq!(
-        row.neglect_grace_remaining, 0,
-        "0 is the penalty biting NOW, and it is what a reverting road publishes: {row:?}"
+        published_road(&short, camp).neglect_grace_remaining,
+        0,
+        "and one past its grace reads 0 — it is reverting now"
     );
-    assert!(
-        !row.grants_sight,
-        "and it went dark on the way, which is the early warning"
-    );
-    // ⛔ **THE ROLL-UP IS UNGATED BY THE HEAD COUNT.** This band has nobody on `roadwork` and still
-    // owes exactly this road's bill; the demand is the alarm, and summing it behind the head-count
-    // gate would publish a reassuring zero for the band that is losing its road. `fodderNeed`'s own
-    // rule, and the shortfall is the whole demand because nothing was paid.
-    let roll_up = published_roadwork(&lost);
-    assert_eq!(
-        roll_up.demand, row.demand,
-        "a band with the role empty still publishes what its road is billing: {roll_up:?}"
-    );
-    assert_eq!(roll_up.supplied, 0.0);
-    assert_eq!(roll_up.shortfall, roll_up.demand);
 }
 
-// ---------------------------------------------------------------------------------------------
-// The band roll-up — the sim sums it, and the client must not
-// ---------------------------------------------------------------------------------------------
-
-/// ⛔ **THE BAND'S ROADWORK BILL IS THE SUM OF THE ROADS IT STANDS ON, SUMMED BY THE SIM.**
+/// ⛔ **THE BAND ROLL-UP IS THE SUM OF THE ROADS IT KEEPS, AND THE SIM SUMS IT.**
 ///
-/// **Two roads under one band**, because a single-road fixture cannot tell a sum from a copy: it is
-/// asserted that the roll-up equals `a + b` *and* that it equals neither road alone.
+/// Route rows are fog-filtered, so a road out of sight would silently drop out of any client-side
+/// total while the band certainly still owes its keeping — `fodderNeed`'s own rule.
 ///
-/// The client must not do this addition itself — route rows are fog-filtered, so a road out of sight
-/// would silently drop out of a client-side total while the band certainly still owes its keeping.
-/// That is `fodderNeed`'s own rule.
+/// **The demand is summed before the head-count gate**, so a band with nobody on the role publishes
+/// the bill it is failing to pay rather than a reassuring zero. That is the alarm.
 #[test]
-fn the_band_roll_up_is_the_sum_of_both_its_roads_stamped_demands() {
+fn the_band_roll_up_is_the_sum_of_the_roads_it_keeps() {
     let mut app = spawn_world();
-    let (band, _, camp) = first_band(&mut app);
-    let width = app.world.resource::<TileRegistry>().width;
-
-    // Two roads out of the same camp, in opposite directions: the camp tile is on both, and nothing
-    // else is.
-    let east_path = road_from(&app, camp, ROAD_TILES);
-    let east = seat_a_dirt_road(&mut app, east_path);
-    let west_head = UVec2::new((camp.x + width - ROAD_TILES + 1) % width, camp.y);
-    let west_path = road_from(&app, west_head, ROAD_TILES);
-    let west = seat_a_dirt_road(&mut app, west_path);
-    staff_roadwork(&mut app, band, ONE_KEEPER);
+    let (band, faction, id, camp) = first_band(&mut app);
+    let near = camp;
+    let far = tile_east_of(&app, camp, FAR_TILES);
+    seat_a_dirt_road(&mut app, near, (faction, id));
+    seat_a_dirt_road(&mut app, far, (faction, id));
+    staff_roadwork(&mut app, band, 0);
     app.update();
 
-    let east_row = published_route(&app, east);
-    let west_row = published_route(&app, west);
-    let roll_up = published_roadwork(&app);
+    let near_bill = published_road(&app, near).demand;
+    assert!(
+        near_bill > 0.0,
+        "precondition: the near road owes something"
+    );
+    let far_bill = app
+        .world
+        .resource::<RoadRegistry>()
+        .road(far)
+        .expect("the far road exists in the sim")
+        .upkeep_basis();
+    assert!(far_bill > 0.0, "precondition: so does the far one");
+    assert!(
+        published_roads(&app).iter().all(|row| row.tile != far),
+        "precondition: the FAR road is out of sight, which is what makes this a real test of the \
+         sim summing it"
+    );
 
+    let roll_up = published_roadwork(&app);
     assert!(
-        east_row.demand > 0.0 && west_row.demand > 0.0,
-        "precondition: both roads really are billing something ({east_row:?}, {west_row:?})"
-    );
-    assert_eq!(
+        (roll_up.demand - (near_bill + far_bill)).abs() < 1.0e-3,
+        "the roll-up carries BOTH roads' bills, the invisible one included: {} against {}",
         roll_up.demand,
-        east_row.demand + west_row.demand,
-        "the band's roll-up is the sum of the roads under its own tile: {roll_up:?}"
+        near_bill + far_bill
     );
-    assert_ne!(
-        roll_up.demand, east_row.demand,
-        "and it is not one road's bill wearing a sum's clothes"
-    );
-    assert_ne!(roll_up.demand, west_row.demand);
     assert_eq!(
-        roll_up.demand - roll_up.supplied,
-        roll_up.shortfall,
-        "the roll-up's own three terms close, exactly as a road row's do: {roll_up:?}"
+        roll_up.supplied, 0.0,
+        "with nobody on the role nothing is supplied…"
     );
     assert!(
-        roll_up.supplied > 0.0 && roll_up.shortfall > 0.0,
-        "precondition: the one keeper paid part of a bill it could not cover: {roll_up:?}"
-    );
-    // **The supplied half ACCUMULATES too.** This band is the only payer on either road, so its
-    // roll-up must equal what both roads received — an assignment in place of the `+=` would
-    // publish only the last road's payment and still close the identity above.
-    assert_eq!(
-        roll_up.supplied,
-        east_row.supplied + west_row.supplied,
-        "the band's payment is summed across both its roads: {roll_up:?}"
+        roll_up.shortfall > 0.0,
+        "…and the shortfall is the alarm the band is failing to answer"
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// The fog
-// ---------------------------------------------------------------------------------------------
-
-/// ⛔ **A ROAD ON GROUND THIS FACTION HAS NEVER SEEN IS ABSENT FROM ITS FRAME.**
-///
-/// Paired with a road under the band's own feet, which **is** published — otherwise an empty section
-/// passes this test, and an empty section is exactly what a broken producer emits.
+/// ⛔ **A ROAD ON GROUND THE FACTION HAS NEVER SEEN IS ABSENT FROM ITS FRAME**, and the near road
+/// beside it is present — the fog gate, with its liveness half.
 #[test]
 fn a_road_on_ground_the_faction_has_never_seen_is_absent_from_its_frame() {
     let mut app = spawn_world();
-    let (band, faction, camp) = first_band(&mut app);
-    let width = app.world.resource::<TileRegistry>().width;
+    let (band, faction, id, camp) = first_band(&mut app);
+    let near = camp;
+    let far = tile_east_of(&app, camp, FAR_TILES);
+    seat_a_dirt_road(&mut app, near, (faction, id));
+    seat_a_dirt_road(&mut app, far, (faction, id));
+    staff_roadwork(&mut app, band, 0);
+    app.update();
 
-    let known_path = road_from(&app, camp, ROAD_TILES);
-    let known = seat_a_dirt_road(&mut app, known_path.clone());
-    let away_head = UVec2::new((camp.x + width / 2) % width, camp.y);
-    let away_path = road_from(&app, away_head, ROAD_TILES);
-    let hidden = seat_a_dirt_road(&mut app, away_path.clone());
-    let wanted = keepers_the_bill_wants(&app, known);
+    let published: Vec<UVec2> = published_roads(&app).iter().map(|row| row.tile).collect();
+    assert!(
+        published.contains(&near),
+        "the road under the band's own feet reaches its frame"
+    );
+    assert!(
+        !published.contains(&far),
+        "and one on ground nobody of theirs has ever stood on does not"
+    );
+}
+
+/// **WHAT THE RUNG IS BUYING RIDES THE ROW**, off the road's own stamped payoff — the friction it
+/// saves and the reach it holds open.
+#[test]
+fn the_row_states_what_the_rung_is_buying() {
+    let ladder = LadderConfig::builtin();
+    let dirt = ladder
+        .rung(RungKey::RouteDirtRoad)
+        .route_payoff
+        .expect("every route rung declares a payoff");
+
+    let mut app = spawn_world();
+    let (band, faction, id, camp) = first_band(&mut app);
+    seat_a_dirt_road(&mut app, camp, (faction, id));
+    let wanted = keepers_the_bill_wants(&app, camp);
     staff_roadwork(&mut app, band, wanted);
     app.update();
 
-    // Precondition, off the sim's own fog ledger: not one tile of the far road has been explored.
-    let visibility = app.world.resource::<core_sim::VisibilityLedger>();
+    let row = published_road(&app, camp);
+    assert_eq!(row.friction_multiplier, dirt.friction_multiplier);
+    assert_eq!(row.holds_link_to_tiles, dirt.holds_link_to_tiles);
     assert!(
-        away_path
-            .iter()
-            .all(|pos| !visibility.is_discovered(faction, pos.x, pos.y)),
-        "precondition: the far road runs entirely over ground this people has never seen"
-    );
-
-    let published = published_routes(&app);
-    let seen = published
-        .iter()
-        .find(|row| row.id == known.0)
-        .expect("the road under the band's own feet is published");
-    assert_eq!(
-        seen.path, known_path,
-        "and it publishes its WHOLE path in path order, including the far tiles nobody has seen — \
-         a road is one object, and the fog gate is about whether you know of it: {seen:?}"
-    );
-    assert!(
-        !published.iter().any(|row| row.id == hidden.0),
-        "and the one on ground nobody has seen must not leak: {published:?}"
+        row.grants_sight,
+        "and the resolved *is this lighting its tile* answer, which a client cannot re-derive"
     );
 }

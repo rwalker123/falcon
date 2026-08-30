@@ -11,13 +11,37 @@ The sim side is `.claude/rules/core_sim/routes.md`, which is authoritative for w
 the wire MEANS; this file is what the client does with them. Read that one first — most of the traps
 here are its traps, arriving one layer out.
 
+> ## ⛔ THE WIRE ROW IS A **TILE** NOW, AND THE GDScript HALF STILL READS THE PATH
+>
+> `docs/plan_standing_upkeep.md` §4.13b replaced the stored path object with a **per-tile**
+> improvement: a road is one tile, with one **keeper**, its own rung, its own meter and its own decay.
+> `RouteState` accordingly carries `tileX` / `tileY` / `hasKeeper` / `keeperBandId` /
+> `keeperRemoteness` — and **no `id`, no `pathX`, no `pathY`**. `native/src/dict/routes.rs` publishes
+> that shape.
+>
+> **The GDScript below has not been re-written for it, and nothing errors.**
+> `MapView._ingest_road_network` reads the retired halves through `get`-with-default, so it builds an
+> empty path for every road: `AnnotationRenderer.draw_road_network` draws nothing, and the tile card's
+> road rows go with it because `road_tile_lookup` is keyed off the same zip. A silent blank, not a
+> crash — which is why it is written here rather than left to be found.
+>
+> Three sections of this file describe the retired model and are wrong until that work lands: the
+> polyline draw, the per-SEGMENT fog gate (there are no segments — a road is one tile, and the sim's
+> gate is now simply *"have you seen that tile"*), and *"a band keeps the roads under its own feet"* —
+> **the catchment is the KEEPER**, and a band four tiles from a road it graded goes on paying for it.
+> What distance costs is `keeperRemoteness`, priced into the bill and refused nowhere.
+>
+> **Two things this file says that became TRUE rather than false:** a route rung *does* declare a verb
+> now (`grade` / `pave`), so `SourceForecast.RUNG_KEY_IMPROVEMENTS` has a genuine gap; and
+> `holds_link_to_tiles` is still authored-not-consumed, so the future tense still stands.
+
 ## Key scripts
 
 | Script | Purpose |
 |--------|---------|
 | `ui/hud/hud_route_vocab.gd` (`HudRouteVocab`) | The road VOCABULARY leaf — the four rung keys + their labels + `RUNG_ORDER`, the tile card's five row keys and their formats, one reader per wire field, and one composer per row (`road_row_value` / `wearing_in_value` / `keeping_value` / `reverting_value` / `buys_value`, joined by `road_lines`). It also owns the three `*_value_hex` forks `DetailFormat._value_hex` dispatches to, so a road's ink is decided beside the words it tints. A vocab module with static funcs, the `hud_work_vocab.gd` shape; it reads `SourceForecast` / `DetailFormat` / `HudSelectionVocab` / `HudStyle` inside functions only, never in a `const`, so it adds no load cycle |
 | `ui/AnnotationRenderer.gd` → the `ROAD_*` family | The map draw: `draw_road_network` walks `MapView.road_network` (world state read through the `_view` back-ref, exactly as `units` / `herds` are) and `_draw_road` stamps one polyline per road through `MapView._unwrapped_path_points`, the connected-path idiom. It is called from `_draw` right after the crisis annotations — above the tile tints, beneath every marker, ring and selection outline, because a road is infrastructure IN the ground rather than something standing on it |
-| `native/src/dict/routes.rs` | `routes_to_array` — one dict per road, the `connections.rs` shape. The path crosses as the wire's own two packed halves (`path_x` / `path_y`) rather than an array of pairs: `MapView._ingest_road_network` zips it ONCE into `Vector2i`s, where a per-point Array would allocate a Variant per tile of every road on the map, every frame |
+| `native/src/dict/routes.rs` | `routes_to_array` — **one dict per road TILE**, the `connections.rs` shape. The row's identity is `tile_x` / `tile_y`, which replaced the retired `RouteId`; beside them ride `has_keeper` / `keeper_band_id` (read the bool first — `0` is a real `BandId`) and `keeper_remoteness`, the multiple distance put on that road's price. There is **no path on the row** — a link knows its two endpoints, so the tiles between them are computable |
 
 ## ⛔ A ROAD IS NOT AN ORDER PATH, AND THE OBVIOUS NAME WAS ALREADY TAKEN
 

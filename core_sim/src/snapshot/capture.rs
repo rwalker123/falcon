@@ -59,7 +59,7 @@ pub struct SnapshotContext<'w> {
     pub connections: Res<'w, crate::connections::ConnectionLedger>,
     /// Every road in the world. Published filtered to the roads the viewer has explored; the
     /// checkpoint carries the ledger itself.
-    pub routes: Res<'w, crate::routes::RouteLedger>,
+    pub roads: Res<'w, crate::routes::RoadRegistry>,
     /// Tile coords → tile entity, so a road's path can be priced through the same
     /// `TerrainDefinition::infrastructure_cost` sum the bill and the decay read.
     pub tile_registry: Res<'w, crate::resources::TileRegistry>,
@@ -2130,7 +2130,7 @@ pub fn capture_snapshot(
         capability_flags,
         visibility_ledger,
         connections,
-        routes,
+        roads,
         tile_registry,
         viewer_faction,
         demographics,
@@ -2981,7 +2981,7 @@ pub fn capture_snapshot(
     // **THE ROADS THE VIEWER HAS EXPLORED** — fog-gated on `Discovered` rather than the herd list's
     // `Active`, because a road does not wander off. See `snapshot::routes::route_states`.
     let route_states = crate::snapshot::routes::route_states(
-        &routes,
+        &roads,
         &visibility_ledger,
         viewer_faction.0,
         config.fog_enabled,

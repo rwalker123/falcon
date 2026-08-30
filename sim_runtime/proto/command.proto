@@ -205,6 +205,39 @@ message CorralCommand {
   reserved "workers";
 }
 
+// The intensification ladder's ROUTE rung-3 verb: grade a roadbed on ONE TILE, and make that tile's
+// road the ordering band's job. Needs ROADBUILDING knowledge - earned by a trail carrying traffic,
+// which is the practice on this branch.
+//
+// *** A TILE COMMAND, IN cultivate/sow's OWN GRAMMAR, because a road is a PER-TILE improvement. ***
+// A path object cannot be half-maintained: there was no way to say "these people look after this end
+// and those people look after that end", which is the ordinary case the moment two camps sit at
+// either end of a long road. So each tile carries its own rung, its own meter and its own keeper.
+//
+// *** IT NAMES A BAND, unlike `cultivate`. *** A patch's keeper is whoever is already foraging it; a
+// road has no take row at all, so the band that will keep it has to be said out loud. ONE KEEPER PER
+// TILE, NEVER A SHARE - which is what makes "one band keeps half the tiles between two camps and
+// another the other half" the representable state and co-payment the unrepresentable one.
+//
+// Re-issuing it on a road nobody keeps is ADOPTION, and deliberately not a second verb. It is raised
+// by the named band's `builders` pool at the head of that band's queue, so it names no workers.
+message GradeCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  uint32 target_x = 3;
+  uint32 target_y = 4;
+}
+
+// The route rung-4 verb: pave a graded tile. GradeCommand's twin one rung up, on the same terms and
+// naming a keeper the same way. Needs PAVING knowledge - earned by KEEPING a dirt road - and refuses
+// a tile that is not a dirt road yet.
+message PaveCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  uint32 target_x = 3;
+  uint32 target_y = 4;
+}
+
 // Grazing 2d-beta: grow the fenced footprint of a built pen by one ring (pen_radius += 1), worked off
 // over turns by the keeper band's labor (the corral build ladder). A ring rides the SAME animal:pen
 // rung as the initial build, so it takes that rung's gate too: needs PENNING knowledge (not Herding —
@@ -1073,5 +1106,9 @@ message CommandEnvelope {
     // 62 is held by `bench_priority`, so the work site's keeping kit takes 63 (append-only; never
     // renumber).
     UpkeepKitCommand upkeep_kit = 63;
+    // 63 is held by `upkeep_kit`, so the route branch's two tile verbs take 64-65 (append-only;
+    // never renumber).
+    GradeCommand grade = 64;
+    PaveCommand pave = 65;
   }
 }

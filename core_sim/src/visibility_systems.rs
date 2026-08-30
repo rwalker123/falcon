@@ -54,7 +54,7 @@ use crate::{
     labor_config::LaborConfigHandle,
     orders::FactionId,
     resources::{SimulationConfig, SimulationTick, TileRegistry},
-    routes::RouteLedger,
+    routes::RoadRegistry,
     visibility::{VisibilityLedger, VisibilityState, VisibilitySweepTracker},
     visibility_config::{TerrainModifierConfig, VisibilityConfigHandle},
 };
@@ -361,7 +361,7 @@ pub fn calculate_visibility(
                             herds.find(fauna_id).map(|herd| herd.position())
                         }
                         // A band-wide role stands on no tile of its own. **`Roadwork` included** —
-                        // a kept road lights its own tiles through `routes::Route::grants_sight`,
+                        // a kept road lights its own tile through `routes::Road::grants_sight`,
                         // which is the *road's* grant beside a band's presence and not the keeping
                         // role's, and it is not wired to this sweep yet.
                         LaborTarget::Scout
@@ -526,10 +526,10 @@ pub fn calculate_visibility(
     );
 }
 
-/// ⛔ **STEP 4: A KEPT ROAD HOLDS ITS OWN PATH `Seen`, AND IT IS ITS OWN VISIBILITY SOURCE.**
+/// ⛔ **STEP 4: A KEPT ROAD HOLDS ITS OWN TILE `Seen`, AND IT IS ITS OWN VISIBILITY SOURCE.**
 ///
 /// Ray: *"If a road exists and is maintained, the assumption is that there is traffic on it and it
-/// is seen."* [`crate::routes::Route::grants_sight`] already answers *which* roads — a road at a
+/// is seen."* [`crate::routes::Road::grants_sight`] already answers *which* roads — a road at a
 /// **built** rung whose **keeping bill is met** — and this is the pass that hands that answer to the
 /// fog.
 ///
@@ -537,26 +537,29 @@ pub fn calculate_visibility(
 ///
 /// `connections.rs` states it as inviolable — *"Only presence makes a tile `Seen`. A connection can
 /// only ever grant `Discovered`."* — and names **logistics** as the first rider that will be tempted
-/// to break it. **This is not that temptation.** Maintenance is not free: a kept road bills a band
-/// every turn out of its `Roadwork` pool, and what those hands are doing is being on the road.
-/// **Paying the upkeep IS the presence**, so the grant comes from the *road* — maintained presence
-/// on specific ground — and never from an edge.
+/// to break it. **This is not that temptation.** Maintenance is not free: a kept road bills its
+/// keeper every turn out of that band's `Roadwork` pool, and what those hands are *doing* is being on
+/// the road. **Paying the upkeep IS the presence**, so the grant comes from the *road* — maintained
+/// presence on specific ground — and never from an edge.
 ///
 /// **It is therefore written here, beside a band's own presence, and NOT threaded through the
 /// connection grant.** Plumbing it through the ties would satisfy `core_sim/tests/connections.rs` by
 /// accident rather than by the rule, and would leave the next reader believing a connection can
 /// grant `Seen`. It grants the same `Active` a band's own camp grants, not `Discovered`.
 ///
-/// # WHOSE FOG IT LIFTS
+/// # ⛔ WHOSE FOG IT LIFTS: THE KEEPER'S, AND NOBODY ELSE'S
 ///
-/// **A road belongs to nobody**, so the grant is scoped by *who is standing on it*: for every band
-/// on any tile of a kept road ([`RouteLedger::routes_on_tile`] at the band's own tile — the route
-/// arc's **rule 2**, and there is no radius), that band's **faction** sees **every** tile of that
-/// road's path, however far along it runs. A faction with nobody on a road sees nothing from it.
+/// A road tile is **one band's job** ([`crate::routes::Road::keeper`]), so the faction that sees it
+/// is that band's. It is read off the road rather than off who is camped there, which is the whole
+/// per-tile model in one line: *the people paying for this tile are the people on it.*
 ///
-/// A detached party is excluded for the reason [`calculate_visibility`] excludes it: an expedition
-/// is deliberately not a live faction vision source, and a road it marched over must not light the
-/// faction map from wherever it stands.
+/// **The registry is walked, not the bands.** The keeper's own position is irrelevant — a band that
+/// grades a road four tiles from camp is paying for hands that stand *there*, and the grant follows
+/// the bill. That is also what makes the grant survive the band walking away, and what makes it stop
+/// the turn the bill does.
+///
+/// A road nobody keeps lights nothing at all, because the whole free floor answers `false` to
+/// `grants_sight` and a decayed road loses its keeper on the way down.
 ///
 /// # NO CONTACT RIDES THIS REVEAL
 ///
@@ -566,38 +569,26 @@ pub fn calculate_visibility(
 /// coat.
 pub fn light_kept_routes(
     mut ledger: ResMut<VisibilityLedger>,
-    routes: Res<RouteLedger>,
+    roads: Res<RoadRegistry>,
     tile_registry: Res<TileRegistry>,
     tick: Res<SimulationTick>,
-    tiles: Query<&Tile>,
-    bands: Query<(&PopulationCohort, &BandId), Without<Expedition>>,
 ) {
-    if routes.is_empty() {
+    if roads.is_empty() {
         return;
     }
     let (width, height) = (tile_registry.width, tile_registry.height);
     let current_turn = tick.0;
-    for (cohort, _) in bands.iter() {
-        let Ok(tile) = tiles.get(cohort.current_tile) else {
-            continue;
-        };
-        // Collected before the map is borrowed mutably: the ledger lookup and the reveal are two
-        // resources, and the ids are a handful per tile.
-        let lit: Vec<&crate::routes::Route> = routes
-            .routes_on_tile(tile.position)
-            .iter()
-            .filter_map(|id| routes.get(*id))
-            .filter(|route| route.grants_sight())
-            .collect();
-        if lit.is_empty() {
-            continue;
-        }
-        let map = ledger.ensure_faction(cohort.faction, width, height);
-        for route in lit {
-            for pos in &route.path {
-                map.mark_active(pos.x, pos.y, current_turn);
-            }
-        }
+    // Collected before the ledger is borrowed mutably: the two are separate resources, and the lit
+    // set is at most one entry per road tile.
+    let lit: Vec<(FactionId, UVec2)> = roads
+        .iter()
+        .filter(|(_, road)| road.grants_sight())
+        .filter_map(|(tile, road)| road.keeper.map(|keeper| (keeper.faction, tile)))
+        .collect();
+    for (faction, tile) in lit {
+        ledger
+            .ensure_faction(faction, width, height)
+            .mark_active(tile.x, tile.y, current_turn);
     }
 }
 

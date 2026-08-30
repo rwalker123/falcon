@@ -1,8 +1,18 @@
 //! `routes` section -- the roads in the ground (arc #532, `.claude/rules/core_sim/routes.md`).
 //!
-//! ONE ROW PER ROAD. A road is a WORLD OBJECT with a fixed tile path and its own id: it is not an
-//! edge between two bands and it does not follow a camp, so there is no band pair anywhere on this
-//! row. The bands standing on it are who USES it, never what it IS.
+//! ONE ROW PER ROAD **TILE**. A road is a PER-TILE improvement, structurally identical to a forage
+//! patch: each tile carries its own rung, its own meter, its own keeper and its own decay. It is not
+//! an edge between two bands and it does not follow a camp.
+//!
+//! **THERE IS NO STORED PATH ON THIS ROW, and that is the model.** A path object cannot be
+//! half-maintained — there was no way to say "these people look after this end and those people look
+//! after that end", which is the ordinary case the moment two camps sit at either end of a long
+//! road. A link already knows its two endpoints, so the tiles between them are computable.
+//!
+//! ⛔ **THE GDScript SIDE HAS NOT BEEN RE-WRITTEN FOR THE PER-TILE SHAPE.** No Godot script reads
+//! this section yet (there is no road drawn on the map and no `roadwork` row on the Work board), so
+//! the rename below breaks nothing today — but a renderer written against it must join rows on
+//! `tile_x`/`tile_y` and draw a **tile**, never a polyline.
 //!
 //! Already fog-filtered SIM-SIDE, and the gate is `Discovered` rather than the herd list's `Active`
 //! -- a road does not wander off, so remembering one is remembering something true. A road on ground
@@ -22,21 +32,11 @@ pub(crate) fn routes_to_array(list: Vector<'_, ForwardsUOffset<fb::RouteState<'_
     let mut array = VarArray::new();
     for route in list {
         let mut dict = VarDictionary::new();
-        // The `RouteId` -- stable for the life of the road and never reused, so a consumer may
-        // cache the polyline against it and redraw only when the id is new.
-        let _ = dict.insert("id", route.id() as i64);
-        // THE TILES THIS ROAD RUNS OVER, IN PATH ORDER, zipped x/y (the `pendingRevealX`/`Y`
-        // convention). Carried across as the two packed halves the wire states rather than zipped
-        // into one array of pairs here: the consumer walks them by index, and a per-point Array
-        // would allocate a Variant per tile of every road on the map, every frame.
-        let _ = dict.insert(
-            "path_x",
-            &crate::dict::u32_vector_to_packed_int32(route.pathX()),
-        );
-        let _ = dict.insert(
-            "path_y",
-            &crate::dict::u32_vector_to_packed_int32(route.pathY()),
-        );
+        // **THE TILE IS THE ROW'S IDENTITY**, and it replaced the retired `RouteId`: with one record
+        // per tile there is nothing left for a separate id to name. A consumer joins and diffs rows
+        // on the pair.
+        let _ = dict.insert("tile_x", route.tileX() as i64);
+        let _ = dict.insert("tile_y", route.tileY() as i64);
         // **THE RUNG STRING IS THE BOOL -- never infer one from the float below.** `build_fraction`
         // is the meter on the rung being RAISED, which is a DIFFERENT rung; a consumer that
         // thresholded it would call a fully-worn trail a dirt road on the turn its first traffic
@@ -47,6 +47,18 @@ pub(crate) fn routes_to_array(list: Vector<'_, ForwardsUOffset<fb::RouteState<'_
         // exactly `1.0` here, and so does one at the top of the ladder: draw a full bar, not an
         // empty one.
         let _ = dict.insert("build_fraction", f64::from(route.buildFraction()));
+        // WHOSE JOB THIS TILE IS. **Read `has_keeper` first**: `keeper_band_id` 0 is a real band id,
+        // so the bool is the field that answers. `false` across the whole free floor — a game trail
+        // and a trail are formed by use and nobody keeps them, which is the commonest road in the
+        // game rather than an edge case. ONE KEEPER PER TILE, never a share: that is what makes "one
+        // band keeps half the tiles between two camps and another the other half" representable.
+        let _ = dict.insert("has_keeper", route.hasKeeper());
+        let _ = dict.insert("keeper_band_id", route.keeperBandId() as i64);
+        // WHAT DISTANCE DID TO THIS ROAD'S PRICE, as a multiple of the rung's own — quoted when the
+        // keeper took the tile on. `1.0` inside the base keeping range and on every road nobody
+        // keeps; higher beyond it. **Distance is a COST, never a wall**: no tile is refused for being
+        // far away, and this multiplier is the only way to explain a bill larger than the rung says.
+        let _ = dict.insert("keeper_remoteness", f64::from(route.keeperRemoteness()));
         // THE STANDING BILL, in work units per turn -- the road twin of the patch and herd rows'
         // identical four fields. **`demand - supplied == shortfall` HOLDS VERBATIM**, all three
         // reading the sim's stamped basis, so nothing here is re-derived by subtraction.
@@ -66,7 +78,7 @@ pub(crate) fn routes_to_array(list: Vector<'_, ForwardsUOffset<fb::RouteState<'_
             "neglect_grace_remaining",
             route.neglectGraceRemaining() as i64,
         );
-        // **IS THIS ROAD LIGHTING ITS OWN TILES RIGHT NOW?** The RESOLVED answer, because a client
+        // **IS THIS ROAD LIGHTING ITS OWN TILE RIGHT NOW?** The RESOLVED answer, because a client
         // cannot re-derive "is the bill met" -- that is a comparison against the stamped basis with
         // the sim's own epsilon. A road in shortfall GOES DARK BEFORE IT DECAYS, which is the honest
         // early warning that it is being lost.
@@ -74,9 +86,12 @@ pub(crate) fn routes_to_array(list: Vector<'_, ForwardsUOffset<fb::RouteState<'_
         // WHAT THIS RUNG IS BUYING, off the road's own stamped payoff -- and the half of this row
         // that makes the branch a ladder rather than a tax.
         //
-        // `friction_multiplier` = the fraction of the base pooling friction a network bound by this
-        //                         road pays. `1.0` = no help, which is the game trail.
-        // `holds_link_to_tiles` = how far this rung holds a pooling link open, in tiles.
+        // `friction_multiplier` = the fraction of the base pooling friction a haul over THIS TILE
+        //                         pays. `1.0` = no help. A journey's saving is the MEAN of the tiles
+        //                         it crosses, so a partly-roaded run pays partly.
+        // `holds_link_to_tiles` = how far this tile's rung holds a pooling link open, in tiles. A
+        //                         journey's reach is the WEAKEST tile it crosses — one gap breaks a
+        //                         link goods must get THROUGH.
         //                         **AUTHORED AND NOT YET CONSUMED BY THE SIM** (slice 13b), so a
         //                         readout must state it as what the rung WILL hold, never as a live
         //                         effect. `0` on the game trail is a live reading, not a parked dial.

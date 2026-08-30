@@ -1,16 +1,17 @@
-//! **A kept road holds its own tiles `Seen`, and the connection keystone is untouched** (issue
-//! #532, `docs/plan_standing_upkeep.md` §4.13, `.claude/rules/core_sim/routes.md`).
+//! **A kept road holds its own tile `Seen` for its KEEPER, and the connection keystone is
+//! untouched** (issue #532, `docs/plan_standing_upkeep.md` §4.13b,
+//! `.claude/rules/core_sim/routes.md`).
 //!
 //! Ray: *"If a road exists and is maintained, the assumption is that there is traffic on it and it
-//! is seen."* **Maintenance is not free** — a kept road bills a band every turn out of its
-//! `Roadwork` pool, and what those hands are doing is being on the road. **Paying the upkeep IS the
-//! presence**, which is why this grant is an *instance* of the keystone rather than an exception to
-//! it: the sight comes from the **road**, and never from a connection.
+//! is seen."* **Maintenance is not free** — a kept road bills its keeper every turn out of that
+//! band's `Roadwork` pool, and what those hands are doing is being on the road. **Paying the upkeep
+//! IS the presence**, which is why this grant is an *instance* of the keystone rather than an
+//! exception to it: the sight comes from the **road**, and never from a connection.
 //!
 //! These drive **whole turns** through [`core_sim::build_test_app`] rather than poking the
 //! visibility ledger directly, because the thing under test is precisely that something *hands*
-//! `Route::grants_sight` to the fog: a fixture that ran the sweep by hand would keep passing on a
-//! sim where the pass was never scheduled.
+//! `Road::grants_sight` to the fog: a fixture that ran the sweep by hand would keep passing on a sim
+//! where the pass was never scheduled.
 //!
 //! **Every containment claim below is paired with a liveness one** — "the road is dark" also passes
 //! on a sim where roads light nothing at all, so each dark assertion sits beside a lit one struck in
@@ -21,24 +22,20 @@ use bevy::math::UVec2;
 use bevy::prelude::{Entity, With};
 
 use core_sim::{
-    build_test_app, BandId, Connection, ConnectionKey, ConnectionLedger, ConnectionsConfig,
-    FactionId, LaborAllocation, LaborTarget, LadderConfig, PopulationCohort, ResidentBand, Route,
-    RouteId, RouteLedger, RungKey, SimulationConfig, StartingUnit, Tile, TileRegistry,
-    VisibilityLedger, VisibilityState, PER_WORKER_OUTPUT,
+    build_test_app, BandId, ConnectionKey, ConnectionLedger, ConnectionsConfig, FactionId,
+    LaborAllocation, LaborTarget, LadderConfig, PopulationCohort, ResidentBand, Road, RoadKeeper,
+    RoadRegistry, RungKey, SimulationConfig, StartingUnit, Tile, TileRegistry, VisibilityLedger,
+    VisibilityState, NEAR_ENOUGH_TO_KEEP, PER_WORKER_OUTPUT,
 };
 
 /// A pinned earthlike world, so the terrain under every road below is the same one every run.
 const MAP_SEED: u64 = 119_304_647;
 
-/// **How long every fixture's road is, in tiles.** Comfortably past the widest configured sight a
-/// band can reach (base range 6 plus an elevation bonus capped at 4), so the far end of a road is
-/// ground the camp standing on its head cannot possibly see for itself. Each test asserts that
-/// precondition rather than trusting this number.
-const ROAD_TILES: u32 = 14;
-
-/// The tile of the road the assertions are struck at — the far end, which is the only end that can
-/// distinguish the road's grant from the band's own eyes.
-const FAR_END: usize = (ROAD_TILES - 1) as usize;
+/// **How far from its keeper's camp the measured road tile sits**, in tiles. Comfortably past the
+/// widest configured sight a band can reach (base range 6 plus an elevation bonus capped at 4), so
+/// the tile is ground the camp cannot possibly see for itself. Each test asserts that precondition
+/// rather than trusting this number.
+const ROAD_DISTANCE: u32 = 14;
 
 fn spawn_world() -> App {
     let mut app = build_test_app();
@@ -50,103 +47,115 @@ fn spawn_world() -> App {
     app
 }
 
-/// The campaign's first resident band: entity, faction and the tile it stands on.
-fn first_band(app: &mut App) -> (Entity, FactionId, UVec2) {
-    let (entity, faction, tile) = {
+/// The campaign's first resident band: entity, faction, its `BandId` and the tile it stands on.
+fn first_band(app: &mut App) -> (Entity, FactionId, BandId, UVec2) {
+    let (entity, faction, band, tile) = {
         let mut query = app
             .world
-            .query_filtered::<(Entity, &PopulationCohort), With<ResidentBand>>();
-        let (entity, cohort) = query
+            .query_filtered::<(Entity, &PopulationCohort, &BandId), With<ResidentBand>>();
+        let (entity, cohort, band) = query
             .iter(&app.world)
             .next()
             .expect("the campaign spawns at least one resident band");
-        (entity, cohort.faction, cohort.current_tile)
+        (entity, cohort.faction, *band, cohort.current_tile)
     };
     let position = app
         .world
         .get::<Tile>(tile)
         .expect("a band stands on a real tile")
         .position;
-    (entity, faction, position)
+    (entity, faction, band, position)
 }
 
-/// A straight run of `tiles` tiles starting at `head`, clamped inside the map so every tile of it is
-/// real ground a faction map can carry a state for.
-fn road_from(app: &App, head: UVec2, tiles: u32) -> Vec<UVec2> {
+/// A tile `steps` east of `head`, wrapped inside the map so it is real ground a faction map can
+/// carry a state for.
+fn tile_east_of(app: &App, head: UVec2, steps: u32) -> UVec2 {
     let width = app.world.resource::<TileRegistry>().width;
-    (0..tiles)
-        .map(|step| UVec2::new((head.x + step) % width, head.y))
-        .collect()
-}
-
-/// Lay a road along `path` and seat it exactly at the top of the **dirt road** rung — the cheapest
-/// rung anybody maintains (`docs/plan_standing_upkeep.md` §4.13a), so a fixture asks the smallest
-/// bill that can be met or missed.
-///
-/// **It was the TRAIL rung, and the move is this slice's correction.** The trail is the free floor's
-/// second storey now: it is worn in by traffic and costs nothing to hold, so a fixture seated there
-/// would have no bill to meet or miss and every sight claim below would be vacuous.
-fn seat_a_dirt_road(app: &mut App, path: Vec<UVec2>) -> RouteId {
-    seat_at(app, path, dirt_road_top(&LadderConfig::builtin()))
-}
-
-/// Lay a road along `path` and seat it at `position`.
-fn seat_at(app: &mut App, path: Vec<UVec2>, position: f32) -> RouteId {
-    let ladder = LadderConfig::builtin();
-    let mut routes = app.world.resource_mut::<RouteLedger>();
-    let id = routes.insert(path, &ladder);
-    routes
-        .get_mut(id)
-        .expect("the road was just laid")
-        .set_position(position, &ladder);
-    id
+    UVec2::new((head.x + steps) % width, head.y)
 }
 
 /// The cumulative position at which a road **holds** `route:dirt_road`, read from the ladder rather
 /// than restated — a retune of `intensification_ladder.json` must move these fixtures with it.
 fn dirt_road_top(ladder: &LadderConfig) -> f32 {
-    let (base, width) = core_sim::route_rung_span(RungKey::RouteDirtRoad, ladder);
+    let (base, width) =
+        core_sim::road_rung_span(RungKey::RouteDirtRoad, ladder, NEAR_ENOUGH_TO_KEEP);
     base + width
 }
 
-/// Lay a road along `path` and leave it at the top of the **free floor** — a fully worn trail, which
-/// nobody maintains and which therefore lights nothing however far it runs.
+/// Seat a road on `tile` at `position` and hand it to `keeper`.
+///
+/// **The position is written BEFORE the keeper**, and the order is load-bearing: `set_position`
+/// releases a keeper on a road that has fallen back into the free floor, so seating a keeper first
+/// would hand it straight back.
+fn seat_at(app: &mut App, tile: UVec2, position: f32, keeper: Option<(FactionId, BandId)>) {
+    let ladder = LadderConfig::builtin();
+    let mut roads = app.world.resource_mut::<RoadRegistry>();
+    let road = roads.road_or_trail(tile, &ladder);
+    road.set_position(position, &ladder);
+    if let Some((faction, band)) = keeper {
+        road.take_keeper(RoadKeeper { faction, band }, NEAR_ENOUGH_TO_KEEP, &ladder);
+    }
+}
+
+/// Seat a **dirt road** — the cheapest rung anybody maintains
+/// (`docs/plan_standing_upkeep.md` §4.13a), so a fixture asks the smallest bill that can be met or
+/// missed.
+///
+/// ⛔ **NOT THE TRAIL.** The trail is the free floor's second storey: it is worn in by traffic and
+/// costs nothing to hold, so a fixture seated there would have no bill to meet or miss and every
+/// sight claim below would be vacuous.
+fn seat_a_dirt_road(app: &mut App, tile: UVec2, keeper: (FactionId, BandId)) {
+    seat_at(
+        app,
+        tile,
+        dirt_road_top(&LadderConfig::builtin()),
+        Some(keeper),
+    );
+}
+
+/// Seat a fully worn **trail** and hand it to nobody — the free floor, which nobody maintains and
+/// which therefore lights nothing however worn it is.
 ///
 /// **The top of the floor rather than a half-worn game trail**, because the top is where the claim
 /// is hardest: a road carrying every work unit traffic can ever put into it still grants no sight,
-/// since `Route::grants_sight` reasons from the **paid bill** and the whole floor is free.
-fn seat_a_worn_trail(app: &mut App, path: Vec<UVec2>) -> RouteId {
+/// since `Road::grants_sight` reasons from the **paid bill** and the whole floor is free.
+fn seat_a_worn_trail(app: &mut App, tile: UVec2) {
     seat_at(
         app,
-        path,
+        tile,
         core_sim::traffic_ceiling(&LadderConfig::builtin()),
-    )
+        None,
+    );
 }
 
-fn route(app: &App, id: RouteId) -> &Route {
+fn road_at(app: &App, tile: UVec2) -> &Road {
     app.world
-        .resource::<RouteLedger>()
-        .get(id)
-        .expect("the road is still in the ledger")
+        .resource::<RoadRegistry>()
+        .road(tile)
+        .expect("the road is still in the registry")
 }
 
 /// **HOW MANY BARE HANDS COVER THIS ROAD'S BILL IN FULL** — `ceil(demand / PER_WORKER_OUTPUT)`, read
-/// off the sim's own stamped bill rather than hard-coded, because the span is whatever the generated
-/// map's terrain under the road happens to cost.
-fn keepers_the_bill_wants(app: &App, id: RouteId) -> u32 {
+/// off the sim's own measure rather than hard-coded, because the ground under a road is whatever the
+/// generated map put there.
+fn keepers_the_bill_wants(app: &App, tile: UVec2) -> u32 {
     let ladder = LadderConfig::builtin();
-    let route = route(app, id);
-    let registry = app.world.resource::<TileRegistry>();
-    let span = core_sim::span_of_terrains(route.path.iter().filter_map(|pos| {
-        registry
-            .index(pos.x, pos.y)
-            .and_then(|entity| app.world.get::<Tile>(entity))
-            .map(|tile| tile.terrain)
-    }));
-    let demand = core_sim::route_upkeep_demand(route, span, &ladder);
+    let road = road_at(app, tile);
+    let terrain = app
+        .world
+        .resource::<TileRegistry>()
+        .index(tile.x, tile.y)
+        .and_then(|entity| app.world.get::<Tile>(entity))
+        .expect("a seated road stands on a real tile")
+        .terrain;
+    let demand = core_sim::road_upkeep_demand(
+        road,
+        core_sim::road_upkeep_measure(terrain, road.keeper_remoteness),
+        &ladder,
+    );
     assert!(
         demand > 0.0,
-        "precondition: a seated trail really does owe something ({demand})"
+        "precondition: a seated dirt road really does owe something ({demand})"
     );
     (demand / PER_WORKER_OUTPUT).ceil() as u32
 }
@@ -157,16 +166,16 @@ fn staff_roadwork(app: &mut App, band: Entity, workers: u32) {
     app.world.entity_mut(band).insert(allocation);
 }
 
-/// **A SECOND PEOPLE, CAMPED WHERE WE ASK** - a copy of the campaign band's own cohort under a new
+/// **A SECOND PEOPLE, CAMPED WHERE WE ASK** — a copy of the campaign band's own cohort under a new
 /// faction and a new [`BandId`], with its `roadwork` role staffed.
-///
-/// It exists because *"a faction with nobody on a kept road"* is **only reachable across factions**:
-/// `settle_route_keeping` pays a road from the bands standing on it, so within one people a road
-/// that is kept is by construction a road somebody of yours is on. A stranger keeping it is the only
-/// fixture in which the road is genuinely **kept** and genuinely **not ours**.
-fn plant_a_stranger(app: &mut App, at: UVec2, faction: FactionId, keepers: u32) -> Entity {
-    /// The id the stranger band takes - far above anything the campaign allocates.
-    const STRANGER_BAND_ID: u64 = 9_700;
+fn plant_a_stranger(
+    app: &mut App,
+    at: UVec2,
+    faction: FactionId,
+    keepers: u32,
+) -> (Entity, BandId) {
+    /// The id the stranger band takes — far above anything the campaign allocates.
+    const STRANGER_BAND_ID: BandId = BandId(9_700);
 
     let tile = app
         .world
@@ -188,15 +197,11 @@ fn plant_a_stranger(app: &mut App, at: UVec2, faction: FactionId, keepers: u32) 
     cohort.home = tile;
     let mut allocation = LaborAllocation::default();
     allocation.set_assignment(LaborTarget::Roadwork, keepers, keepers.max(1), None);
-    app.world
-        .spawn((
-            cohort,
-            unit,
-            ResidentBand,
-            BandId(STRANGER_BAND_ID),
-            allocation,
-        ))
-        .id()
+    let entity = app
+        .world
+        .spawn((cohort, unit, ResidentBand, STRANGER_BAND_ID, allocation))
+        .id();
+    (entity, STRANGER_BAND_ID)
 }
 
 fn state_at(app: &App, faction: FactionId, pos: UVec2) -> VisibilityState {
@@ -209,251 +214,182 @@ fn state_at(app: &App, faction: FactionId, pos: UVec2) -> VisibilityState {
 // THE HEADLINE, and both halves are load-bearing
 // ---------------------------------------------------------------------------------------------
 
-/// ⛔ **A KEPT ROAD LIGHTS ITS WHOLE PATH; THE SAME ROAD IN SHORTFALL GOES DARK — AND IT GOES DARK
+/// ⛔ **A KEPT ROAD LIGHTS ITS OWN TILE; THE SAME ROAD IN SHORTFALL GOES DARK — AND IT GOES DARK
 /// BEFORE IT DECAYS.**
 ///
 /// The two halves are one test because either alone proves nothing: the lit half passes on a sim
-/// that lights every tile of every road whatever its bill, and the dark half passes on a sim where a
-/// road lights nothing at all.
+/// that lights every road tile whatever its bill, and the dark half passes on a sim where a road
+/// lights nothing at all.
 ///
-/// **The far end is the whole measurement.** It is asserted `Unexplored` in the shortfall world, so
-/// the lit world's `Active` cannot be the band's own eyes reaching it — that is the distance
+/// **The distance is the whole measurement.** The tile is asserted `Unexplored` in the shortfall
+/// world, so the lit world's `Active` cannot be the band's own eyes reaching it — that is the
 /// precondition, struck against the sim rather than against a number.
 ///
 /// **`Active`, not `Discovered`.** A road grants exactly what a band's own camp grants; it is the
 /// *road* that is the presence.
 #[test]
-fn a_kept_road_lights_its_whole_path_and_the_same_road_in_shortfall_goes_dark_before_it_decays() {
-    // ① Kept: the bill is met, so the road holds its tiles Seen.
+fn a_kept_road_lights_its_tile_and_the_same_road_in_shortfall_goes_dark_before_it_decays() {
+    // ① Kept: the bill is met, so the road holds its tile Seen.
     let mut kept = spawn_world();
-    let (band, faction, camp) = first_band(&mut kept);
-    let path = road_from(&kept, camp, ROAD_TILES);
-    let far = path[FAR_END];
-    let road = seat_a_dirt_road(&mut kept, path.clone());
-    let wanted = keepers_the_bill_wants(&kept, road);
+    let (band, faction, id, camp) = first_band(&mut kept);
+    let far = tile_east_of(&kept, camp, ROAD_DISTANCE);
+    seat_a_dirt_road(&mut kept, far, (faction, id));
+    let wanted = keepers_the_bill_wants(&kept, far);
     staff_roadwork(&mut kept, band, wanted);
     kept.update();
 
     assert!(
-        route(&kept, road).grants_sight(),
-        "precondition: a built road whose bill was met is a road that lights its tiles"
+        road_at(&kept, far).grants_sight(),
+        "precondition: a built road whose bill was met is a road that lights its tile"
     );
-    for tile in &path {
-        assert_eq!(
-            state_at(&kept, faction, *tile),
-            VisibilityState::Active,
-            "every tile of a kept road is Seen, including {tile} at the far end"
-        );
-    }
+    assert_eq!(
+        state_at(&kept, faction, far),
+        VisibilityState::Active,
+        "a kept road's tile is SEEN for its keeper's people — paying the upkeep IS the presence"
+    );
 
-    // ② The same road with the role empty: the bill goes unpaid and the road goes dark.
+    // ② Short: nobody on the role, so the bill is missed and the road goes dark — while the rung is
+    //    still standing, which is the honest early warning.
     let mut short = spawn_world();
-    let (band, faction, camp) = first_band(&mut short);
-    let path = road_from(&short, camp, ROAD_TILES);
-    let road = seat_a_dirt_road(&mut short, path.clone());
+    let (band, faction, id, camp) = first_band(&mut short);
+    let far = tile_east_of(&short, camp, ROAD_DISTANCE);
+    seat_a_dirt_road(&mut short, far, (faction, id));
     staff_roadwork(&mut short, band, 0);
     short.update();
 
+    assert_eq!(
+        road_at(&short, far).held_rung(),
+        RungKey::RouteDirtRoad,
+        "the road has NOT decayed yet — it goes dark first"
+    );
     assert!(
-        !route(&short, road).grants_sight(),
-        "precondition: a road nobody paid for is not lighting anything"
+        road_at(&short, far).upkeep_shortfall() > 0.0,
+        "precondition: this road really is short"
     );
     assert_eq!(
         state_at(&short, faction, far),
         VisibilityState::Unexplored,
-        "⛔ THE DISTANCE PRECONDITION: the far end of the road is ground the camp's own sight \
-         cannot reach, so the kept world's Active reading above came from the ROAD"
-    );
-
-    // ⛔ **AND IT WENT DARK BEFORE IT DECAYED** — the honest early warning. The trail rung's grace
-    // has not run out after one short turn, so the road still holds exactly the rung it was seated
-    // at while already showing nothing.
-    assert_eq!(
-        route(&short, road).held_rung(),
-        RungKey::RouteDirtRoad,
-        "the road is dark on the FIRST short turn, well inside its grace and with its rung intact"
+        "a road in SHORTFALL lights nothing — and this is also the distance precondition for ①: \
+         the camp's own eyes do not reach this tile"
     );
 }
 
-/// **THE FREE FLOOR LIGHTS NOTHING, HOWEVER WORN IT IS.**
+/// ⛔ **THE FREE FLOOR LIGHTS NOTHING AND OWES NOTHING, HOWEVER WORN IT IS** (§4.13a).
 ///
-/// **The gate is the BUILT rung, and this fixture is what makes that visible.** The road here is at
-/// the very top of the free floor — a **fully worn trail**, carrying every work unit traffic can
-/// ever put into it (`routes::traffic_ceiling`). It still lights nothing, because a road formed by
-/// walking is not a road somebody keeps: `Route::grants_sight` is `is_built() && keeping_is_met()`,
-/// and the free floor is unbuilt whatever the second half says.
+/// A fully worn trail is the hardest case for the claim: every work unit traffic can ever bank is in
+/// it, and it still grants no sight — because nobody keeps it, and the grant reasons from the paid
+/// bill.
 ///
-/// ⛔ **AND THE FREE ROAD OWES NOTHING, WHICH IS ASSERTED RATHER THAN ASSUMED.** That is the whole of
-/// this slice's correction (`docs/plan_standing_upkeep.md` §4.13a): a trail used to carry an
-/// `upkeep`, so two camps that shared a larder wore one in by themselves and their band acquired a
-/// standing bill it never opted into. `keeping_is_met` alone would pass on the old build too — a
-/// funded trail is also met — so the bill itself is read.
-///
-/// Paired with a **kept dirt road** out of the same camp in the same turn, so "dark" cannot be the
-/// whole feature being absent.
+/// **Paired with a dirt road in the same world**, which does light its tile, so the dark half is not
+/// passing on a build where roads light nothing.
 #[test]
 fn the_free_floor_lights_nothing_and_owes_nothing_however_worn_it_is() {
     let mut app = spawn_world();
-    let (band, faction, camp) = first_band(&mut app);
-
-    // Two roads out of the same camp, in opposite directions along the row: one at the top of the
-    // free floor, one seated at the dirt road rung and funded.
-    let width = app.world.resource::<TileRegistry>().width;
-    let free_path = road_from(&app, camp, ROAD_TILES);
-    let kept_head = UVec2::new((camp.x + width - ROAD_TILES + 1) % width, camp.y);
-    let kept_path = road_from(&app, kept_head, ROAD_TILES);
-
-    let free = seat_a_worn_trail(&mut app, free_path.clone());
-    let kept = seat_a_dirt_road(&mut app, kept_path.clone());
-    // Only the BUILT road has a bill. Staffing it in full is what makes the dark half below a
-    // statement about the rung rather than about a shortfall.
-    let wanted = keepers_the_bill_wants(&app, kept);
-    staff_roadwork(&mut app, band, wanted);
-    app.update();
-
-    assert_eq!(
-        route(&app, free).held_rung(),
-        RungKey::RouteTrail,
-        "precondition: the free road is at the TOP of the branch's free floor"
-    );
-    assert_eq!(
-        route(&app, free).upkeep_basis(),
-        0.0,
-        "⛔ THE BUG THIS SLICE FIXES: a fully worn trail is billed NOTHING. It is formed by use, so \
-         a band that never ordered a road never acquires a standing labour bill for one"
-    );
-    assert_eq!(
-        state_at(&app, faction, free_path[FAR_END]),
-        VisibilityState::Unexplored,
-        "nobody keeps a trail, so its far end is dark"
-    );
-    // Liveness, in the same world and the same turn: a kept road out of the same camp DOES light.
-    assert_eq!(
-        state_at(&app, faction, kept_path[0]),
-        VisibilityState::Active,
-        "and the kept road beside it lights its own far end, so 'dark' is not the feature missing"
-    );
-}
-
-/// ⛔ **A FACTION WITH NOBODY ON A KEPT ROAD SEES NOTHING FROM IT — AND THE PEOPLE ON IT DO.**
-///
-/// A road belongs to nobody, so the grant is scoped by *who is standing on it* (rule 2 —
-/// `RouteLedger::routes_on_tile` at the band's own tile, and there is no radius).
-///
-/// **The far road is kept by a STRANGER, and it has to be.** `settle_route_keeping` pays a road from
-/// the bands standing on it, so within one people a road that is *kept* is by construction a road
-/// somebody of yours is on: a same-faction fixture would be measuring the shortfall, not the
-/// scoping. With a second people holding it, the road is genuinely kept and genuinely not ours — and
-/// the liveness half is the same road, the same turn, lit for **them**.
-#[test]
-fn a_faction_with_nobody_on_a_kept_road_sees_nothing_from_it() {
-    /// The stranger people's id. Any faction the campaign does not allocate will do.
-    const STRANGERS: FactionId = FactionId(41);
-
-    let mut app = spawn_world();
-    let (band, faction, camp) = first_band(&mut app);
-    let width = app.world.resource::<TileRegistry>().width;
-    assert_ne!(
-        faction, STRANGERS,
-        "the two peoples must be different peoples"
-    );
-
-    // The road under our camp, and an identical one a long way off that a stranger keeps.
-    let under_path = road_from(&app, camp, ROAD_TILES);
-    let away_head = UVec2::new((camp.x + width / 2) % width, camp.y);
-    let away_path = road_from(&app, away_head, ROAD_TILES);
-
-    let under = seat_a_dirt_road(&mut app, under_path.clone());
-    let away = seat_a_dirt_road(&mut app, away_path.clone());
-    let ours = keepers_the_bill_wants(&app, under);
-    let theirs = keepers_the_bill_wants(&app, away);
-    staff_roadwork(&mut app, band, ours);
-    plant_a_stranger(&mut app, away_path[0], STRANGERS, theirs);
-    app.update();
-
-    assert!(
-        route(&app, away).grants_sight(),
-        "precondition: the far road really is KEPT — the stranger paid its bill in full"
-    );
-    // Liveness: the road under our camp is lit end to end for us…
-    assert_eq!(
-        state_at(&app, faction, under_path[FAR_END]),
-        VisibilityState::Active,
-        "the road under our own camp lights its far end for us"
-    );
-    // …and the far road is lit end to end for THEM, so it is a live grant and not a dead road.
-    assert_eq!(
-        state_at(&app, STRANGERS, away_path[FAR_END]),
-        VisibilityState::Active,
-        "and the far road lights its far end for the people standing on it"
-    );
-    // Containment: that same kept road grants US nothing, because none of ours is on it.
-    for tile in &away_path {
-        assert_eq!(
-            state_at(&app, faction, *tile),
-            VisibilityState::Unexplored,
-            "a kept road no band of ours stands on grants us nothing at {tile}"
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
-// THE KEYSTONE — stated HERE, because this is the file where somebody would break it
-// ---------------------------------------------------------------------------------------------
-
-/// ⛔ **ONLY PRESENCE MAKES A TILE `Seen`. A CONNECTION CAN ONLY EVER GRANT `Discovered`.**
-///
-/// `connections.rs` names **logistics** as the first rider that will be tempted to break this, and
-/// the road grant above is the rider that arrived. It does not bend the rule: the sight is granted
-/// by the **road** — maintained presence on specific ground — and never by the tie.
-///
-/// Asserted here as well as in `core_sim/tests/connections.rs` because this is the file where the
-/// two mechanisms sit side by side, and therefore the file where routing the road's grant through
-/// the connection path would look like a tidy simplification.
-///
-/// **Paired with the road's own liveness in the same world and the same turn**: a full tie to a
-/// people this band has never travelled to lights nothing, while the road under its feet lights
-/// everything — so this cannot pass on a sim that grants no sight at all.
-#[test]
-fn a_live_tie_to_a_people_never_travelled_to_grants_no_active_tile() {
-    let mut app = spawn_world();
-    let (band, faction, camp) = first_band(&mut app);
-    let band_id = *app.world.get::<BandId>(band).expect("a band has an id");
-    let width = app.world.resource::<TileRegistry>().width;
-
-    // A full tie pointing at ground on the far side of the map, to a subject id no band carries.
-    let told_about = UVec2::new((camp.x + width / 2) % width, camp.y);
-    let subject = BandId(u64::MAX);
-    let cfg = ConnectionsConfig::default();
-    let key = ConnectionKey::new(band_id, subject);
-    {
-        let mut ties = app.world.resource_mut::<ConnectionLedger>();
-        let contacts_to_full = (core_sim::FULL_TIE.to_f32() / cfg.strength.gain_per_contact).ceil();
-        for _ in 0..contacts_to_full as u32 {
-            ties.record_contact(key, told_about, 0, 0, &cfg);
-        }
-    }
-
-    // The same band's own kept road, which is the liveness half.
-    let path = road_from(&app, camp, ROAD_TILES);
-    let road = seat_a_dirt_road(&mut app, path.clone());
+    let (band, faction, id, camp) = first_band(&mut app);
+    let trail = tile_east_of(&app, camp, ROAD_DISTANCE);
+    let road = tile_east_of(&app, camp, ROAD_DISTANCE + 1);
+    seat_a_worn_trail(&mut app, trail);
+    seat_a_dirt_road(&mut app, road, (faction, id));
     let wanted = keepers_the_bill_wants(&app, road);
     staff_roadwork(&mut app, band, wanted);
     app.update();
 
-    let tie: Option<Connection> = app.world.resource::<ConnectionLedger>().get(&key).copied();
-    assert!(
-        tie.is_some_and(|tie| tie.strength.to_f32() > 0.0),
-        "precondition: the seeded tie really survived the turn, so this world ran connections"
-    );
-    assert_ne!(
-        state_at(&app, faction, told_about),
-        VisibilityState::Active,
-        "⛔ THE KEYSTONE: a connection may only ever grant Discovered — it must never make a tile Seen"
+    assert_eq!(
+        road_at(&app, trail).held_rung(),
+        RungKey::RouteTrail,
+        "precondition: the trail really is fully worn"
     );
     assert_eq!(
-        state_at(&app, faction, path[FAR_END]),
+        road_at(&app, trail).keeper,
+        None,
+        "and it is nobody's job — the free floor has no keeper"
+    );
+    assert!(
+        !road_at(&app, trail).grants_sight(),
+        "a fully worn trail grants no sight: it costs nothing to hold, so nobody is on it"
+    );
+    assert_eq!(
+        state_at(&app, faction, trail),
+        VisibilityState::Unexplored,
+        "so its tile is dark"
+    );
+    assert_eq!(
+        state_at(&app, faction, road),
         VisibilityState::Active,
-        "and the road under the same band's feet DOES grant Seen, so this world grants sight at all"
+        "the liveness half: the kept dirt road one tile over DOES light its own"
+    );
+}
+
+/// ⛔ **THE FOG IT LIFTS IS THE KEEPER'S, AND NOBODY ELSE'S.**
+///
+/// A road tile is one band's job, so the faction that sees it is that band's. A people with no claim
+/// on the road sees nothing from it however close they camp — which is what makes the grant *paid
+/// presence* rather than proximity.
+#[test]
+fn a_faction_that_does_not_keep_a_road_sees_nothing_from_it() {
+    const STRANGERS: FactionId = FactionId(4_242);
+
+    let mut app = spawn_world();
+    let (_, ours, _, camp) = first_band(&mut app);
+    let far = tile_east_of(&app, camp, ROAD_DISTANCE);
+    // The stranger camps ON the far tile and keeps the road there; our own band never touches it.
+    let (stranger, stranger_id) = plant_a_stranger(&mut app, far, STRANGERS, 0);
+    seat_a_dirt_road(&mut app, far, (STRANGERS, stranger_id));
+    let wanted = keepers_the_bill_wants(&app, far);
+    staff_roadwork(&mut app, stranger, wanted);
+    app.update();
+
+    assert!(
+        road_at(&app, far).grants_sight(),
+        "precondition: the road really is kept — this is about WHOSE fog it lifts, not whether"
+    );
+    assert_eq!(
+        state_at(&app, STRANGERS, far),
+        VisibilityState::Active,
+        "the liveness half: the keeper's own people see the tile they pay for"
+    );
+    assert_eq!(
+        state_at(&app, ours, far),
+        VisibilityState::Unexplored,
+        "and a people with no claim on that road sees nothing from it — the grant is the KEEPER's"
+    );
+}
+
+/// ⛔ **THE CONNECTION KEYSTONE DOES NOT BEND.** A live tie to a people never travelled to grants
+/// `Discovered` at most, and never `Active` — `connections.rs` states it as inviolable and names
+/// **logistics** as the first rider that will be tempted to break it.
+///
+/// This test exists beside the road grant precisely because the road grant *looks* like that
+/// temptation. It is not: the sight is granted by the **road** — maintained presence on specific
+/// ground — and never by the edge.
+#[test]
+fn a_live_tie_to_a_people_never_travelled_to_grants_no_active_tile() {
+    const STRANGERS: FactionId = FactionId(4_243);
+
+    let mut app = spawn_world();
+    let (_, ours, our_band, camp) = first_band(&mut app);
+    let far = tile_east_of(&app, camp, ROAD_DISTANCE);
+    let (_, stranger_id) = plant_a_stranger(&mut app, far, STRANGERS, 0);
+    {
+        let cfg = ConnectionsConfig::default();
+        let key = ConnectionKey::new(our_band, stranger_id);
+        let mut ledger = app.world.resource_mut::<ConnectionLedger>();
+        for _ in 0..((core_sim::FULL_TIE.to_f32() / cfg.strength.gain_per_contact).ceil() as u32) {
+            ledger.record_contact(key, far, 0, 0, &cfg);
+        }
+    }
+    app.update();
+
+    assert!(
+        app.world
+            .resource::<ConnectionLedger>()
+            .get(&ConnectionKey::new(our_band, stranger_id))
+            .is_some_and(|tie| tie.strength.to_f32() > 0.0),
+        "precondition: the tie really is live"
+    );
+    assert_ne!(
+        state_at(&app, ours, far),
+        VisibilityState::Active,
+        "ONLY PRESENCE MAKES A TILE SEEN — a connection can only ever grant Discovered"
     );
 }

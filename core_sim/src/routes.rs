@@ -2,65 +2,53 @@
 //! `TerrainDefinition::infrastructure_cost` has ever had (`docs/plan_standing_upkeep.md` §4.13,
 //! issue #532).
 //!
-//! Routes climb **game trail → trail → dirt road → paved road**. Each rung is *cheaper to travel and
+//! Roads climb **game trail → trail → dirt road → paved road**. Each rung is *cheaper to travel and
 //! dearer to keep*, which is deliberately **not** a straight upgrade path: you pave where the traffic
 //! pays for the upkeep, and everywhere else a trail is the right answer for ever.
 //!
+//! # ⛔ A ROAD IS A **TILE** IMPROVEMENT, STRUCTURALLY IDENTICAL TO A FORAGE PATCH
+//!
+//! Ray: *"a road is a single tile improvement, not the entire path, so one band could maintain 1/2
+//! the tile roads for the distance of a connection between two bands and another the other 1/2."*
+//!
+//! **A path object cannot be half-maintained.** The model this replaced stored a road as one object
+//! holding a `Vec<UVec2>`, one ladder position and one keeping bill for the whole run, and there was
+//! no way to write down *these people look after this end and those people look after that end* —
+//! which is the ordinary case the moment two camps sit at either end of a long road.
+//!
+//! So each tile carries its own rung, its own meter, its own keeper and its own decay, held in a
+//! registry keyed by tile ([`RoadRegistry`]) exactly as `forage::ForageRegistry` holds patches.
+//! [`trace_path`] survives as a **function** — it is how a journey's tiles are worked out — and it is
+//! no longer state.
+//!
+//! **Three objects were running together and only the third was removed:** a *connection* (two bands
+//! know each other, `connections.rs`), a *logistics link* (goods move between them, `supply.rs`) and
+//! a *road* (a built, maintained improvement on one tile). The stored path was a fourth thing that
+//! nothing needs — a link already knows its two endpoints, so the tiles between them are computable.
+//!
 //! # ⛔ A ROAD IS IN THE GROUND. IT DOES NOT FOLLOW THE CAMP.
 //!
-//! The rejected model defined a route as *"the road between band A and band B"*, re-derived each turn
-//! from wherever those bands stand. It is simpler and it is wrong, and the fault is **not** the
-//! unphysicality — Ray: *"How would a road follow a camp? That makes no sense and is in fact a factor
-//! in moving vs staying. Roads can't follow camps."*
+//! Ray: *"How would a road follow a camp? That makes no sense and is in fact a factor in moving vs
+//! staying. Roads can't follow camps."* **A road that follows its camp deletes a decision.** A road
+//! you paid to build and pay to hold is one of the strongest reasons the game can give you to *stay*;
+//! one that packs up and comes with you costs nothing to leave, so it can never weigh on
+//! move/stay/fork — the pillar the whole project is built around.
 //!
-//! **A road that follows its camp deletes a decision.** A road you paid to build and pay to hold is
-//! one of the strongest reasons the game can give you to *stay*; one that packs up and comes with you
-//! costs nothing to leave, so it can never weigh on move/stay/fork — the pillar the whole project is
-//! built around.
+//! # WHO KEEPS A ROAD: THE BAND THAT BUILT IT, AND NOBODY ELSE
 //!
-//! **So #532's and §Q4's own framing — *"a route is an edge, and belongs to a connection"* — is
-//! wrong, and both were corrected.** A [`Route`] is a world object with a fixed tile path and its own
-//! [`RouteId`]. The band pair is who *uses* it, never what it *is*. There is deliberately **no**
-//! `RouteKey { low, high }` and no band-pair keying anywhere in this module.
+//! 1. **A trail has no keeper**, and that is fine because there is nothing to keep. The free floor
+//!    costs nothing, is formed by use and is lost to disuse.
+//! 2. **`grade` / `pave` make the road that band's job** — the same act `cultivate` performs on a
+//!    patch ([`Road::keeper`]). **One keeper, no shares**: the *"several bands each pay a part"*
+//!    model is unrepresentable here rather than merely discouraged, which is what finally disposes
+//!    of it.
+//! 3. **Distance raises the cost; it never forbids the road.** There is no work-range rule — Ray:
+//!    *"already forage and hunting have different work ranges, expeditions are even farther. I don't
+//!    think it makes sense to restrict it."* What bounds a distant road is [`remoteness_multiplier`].
 //!
-//! # The four rules, and each one replaces a rule the band-pair shape needed
-//!
-//! | | Rule | What it dissolves |
-//! |---|---|---|
-//! | **1** | A road's tiles are **stamped once**, from the path the first traffic walked, and never re-derived ([`Route::path`]). | The re-stamp rule. |
-//! | **2** | A band is served by a road while **standing on one of its tiles** ([`RouteLedger::routes_on_tile`]). The road's own path is the catchment, so there is **no radius and no "close enough" constant**. | The tolerance constant. |
-//! | **3** | A road nobody stands on earns no traffic, is claimed by no band, and **reverts** on the meter decay and grace every rung already declares. | The orphan case, and *"who pays for a road to nowhere"* — nobody does, and nobody needs to. |
-//! | **4** | New traffic **prefers an existing road** whose path already joins where it is going. | The near-duplicate-road swarm. It is also why real networks consolidate: roads attract the traffic that widens them. |
-//!
-//! **A road is therefore a SHARED PUBLIC GOOD**, which the band-pair shape could not express: camp A
-//! leaves, camp C settles on the same ground, and **C inherits the road** — because the road never
-//! belonged to A. Every band standing on one claims its keeping from that band's own `Roadwork` pool,
-//! and §2.5's existing *"several bands can pay one source in one turn"* accumulation is already the
-//! mechanism for that, so there is no new funding rule.
-//!
-//! **The accepted cost, named rather than softened: a band that steps one tile off its own road loses
-//! it.** No radius is added to cushion that — a radius is precisely the constant rule 2 exists to
-//! avoid, and *stay on your road* is the legible half of the same pillar.
-//!
-//! # What a rung buys — and why it had to buy something
-//!
-//! `infrastructure_cost` was authored for all 37 terrains and had **zero readers**; nothing anywhere
-//! read a route rung to reduce a cost. **Shipping the dearer half alone builds a tax, not a ladder.**
-//! The consumer was already chosen and never wired — `SupplyNetworkConfig::reach_tiles`' own shipped
-//! doc comment says *"beyond it a link needs a route to hold it open"*.
-//!
-//! So a rung buys three things, all read on the very edge the road sits on:
-//!
-//! - **[`RouteRungPayoff::holds_link_to_tiles`]** — a pooling link forms within `reach_tiles` **or**
-//!   where a road of this rung spans it. A *capability*, not a discount.
-//! - **[`RouteRungPayoff::friction_multiplier`]** — a routed link loses less of what it sends. Needed
-//!   because reach alone pays nothing to a road between two neighbours already inside `reach_tiles`,
-//!   which is the commonest road in the game.
-//! - **`Seen` along a kept road** ([`Route::grants_sight`]) — see the callout on that method.
-//!
-//! All three are **purely additive**, so §Q4's *"no early-game regression, by construction"* holds:
-//! an unrouted pair inside `reach_tiles` pools exactly as it does today, at exactly today's friction,
-//! and sees exactly what it sees today.
+//! **When the keeping band is gone** the road has no keeper, owes its bill to nobody and decays like
+//! any unkept improvement. Re-issuing `grade` / `pave` is how another band picks it up — **no new
+//! verb**, because adoption is the same act as building.
 //!
 //! # TRAFFIC PAYS FOR THE FLOOR, AND IT STOPS AT THE TOP OF IT
 //!
@@ -75,10 +63,9 @@
 //! traffic would go on wearing a **dirt road** in for free and hand the player its bill anyway, one
 //! rung later and dearer (`docs/plan_standing_upkeep.md` §4.13a).
 //!
-//! ⛔ **SO THE TWO ROADS ABOVE THE CAP ARE CURRENTLY UNREACHABLE, AND THAT IS THE INTENDED
-//! INTERMEDIATE STATE.** They keep `verb: null` — no rung claims a verb that does not exist — and
-//! they gain one in the follow-up that replaces this module's stored-path model with a **per-tile**
-//! improvement, where `grade` and `pave` are tile commands in `cultivate`/`sow`'s own shape.
+//! Above the cap a road is raised by `grade` and `pave` on the band's **builders** pool, exactly as a
+//! Field or a pen is, and held out of its **`Roadwork`** pool, exactly as a Field is held out of
+//! `Agriculture`.
 //!
 //! **Traffic converts to WORK UNITS**, the same currency `RungBuild::work_cost` is quoted in, so
 //! *"what does it cost to raise this"* has one answer in one unit whichever branch is asked.
@@ -89,15 +76,15 @@ use bevy::prelude::*;
 use sim_runtime::TerrainType;
 
 use crate::{
-    components::Tile,
+    components::{BandId, Tile},
     grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT},
     intensification::{
         build_fraction, interpolate, neglect_grace_remaining, rung_work_done, upkeep_shortfall,
         upkeep_shortfall_fraction, LadderConfig, RungBranch, RungKey, RungRoutePayoff,
         RungStanding, FRICTION_UNCHANGED, FULLY_SUPPLIED, NEGLECT_NONE, NO_CREW_ON_THIS_ACTIVITY,
-        NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT,
-        RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_UNSTARTED,
     },
+    orders::FactionId,
     resources::TileRegistry,
     terrain::terrain_definition,
 };
@@ -120,12 +107,8 @@ pub const PAVING_DISCOVERY_ID: u32 = 2013;
 /// The branch has the same two-part shape the other two webs have — `plant` is *wild* then
 /// *tended · field*, `animal` is *wild* then *pastoral · pen*, and `route` is
 /// **game trail · trail** then **dirt road · paved road**. Everything at or below this rung forms
-/// from use and is lost to disuse; everything above it is ordered with a verb, raised by the
-/// builders' pool and lost to unpaid keeping.
-///
-/// **13a put this line one rung lower and the symptom was a bill nobody asked for**: `route:trail`
-/// carried an `upkeep`, and two camps sharing a larder wore one in by themselves, so the band
-/// acquired a standing labour bill it never opted into.
+/// from use, is lost to disuse and has **no keeper**; everything above it is ordered with a verb,
+/// raised by the builders' pool, kept by one band and lost to unpaid keeping.
 pub const FREE_FLOOR_TOP_RUNG: RungKey = RungKey::RouteTrail;
 
 /// **THE FIRST RUNG SOMEBODY BUILDS AND SOMEBODY PAYS FOR** — the rung directly above
@@ -133,15 +116,29 @@ pub const FREE_FLOOR_TOP_RUNG: RungKey = RungKey::RouteTrail;
 /// `the_free_floor_and_the_first_built_rung_are_adjacent` pins the pair, so the two cannot drift.
 pub const FIRST_BUILT_RUNG: RungKey = RungKey::RouteDirtRoad;
 
-/// **A route's identity.** Deliberately not a band pair: a road outlives the bands that wore it in,
-/// and is inherited by whoever camps on it next.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RouteId(pub u64);
-
-/// **No traffic this turn** — the neutral [`Route::traffic_work`] accumulates from.
+/// **No traffic this turn** — the neutral [`Road::traffic_work`] accumulates from.
 pub const NO_TRAFFIC: f32 = 0.0;
 
-/// **A road: a fixed path of tiles, and where it stands on the route branch.**
+/// **A ROAD TILE COSTS WHAT THE RUNG SAYS** — the remoteness multiplier inside
+/// [`road_keeping_range`], and the value a road with no keeper carries.
+pub const NEAR_ENOUGH_TO_KEEP: f32 = 1.0;
+
+/// **THE BAND WHOSE JOB THIS ROAD IS.**
+///
+/// ⛔ **THERE IS NO OWNERSHIP HERE, AND THE WORD IS RETIRED FROM THIS ARC.** Ray: *"A road could have
+/// no owner, but that is an abstract term in this game so it really has no meaning."* What this
+/// records is a **job** — *these people look after this tile's road* — which is why `grade` and
+/// `pave` write it and `abandon` clears it.
+///
+/// The faction rides beside the band because the two consumers ask different questions: the sight
+/// grant lights the **faction's** fog, and the keeping payment is the **band's** pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RoadKeeper {
+    pub faction: FactionId,
+    pub band: BandId,
+}
+
+/// **A ROAD ON ONE TILE, and where it stands on the route branch.**
 ///
 /// One position in cumulative work units, exactly as a patch and a herd carry one
 /// (`docs/plan_standing_upkeep.md` §2.8) — the ladder position **is** the accumulator, so a
@@ -149,11 +146,10 @@ pub const NO_TRAFFIC: f32 = 0.0;
 /// sum crosses it. **No separate traffic accumulator may be added**; that would be a second producer
 /// of the same number.
 #[derive(Debug, Clone)]
-pub struct Route {
-    /// **THE TILES THIS ROAD RUNS OVER, stamped once and never re-derived** (rule 1). Ordered from
-    /// the end it was first walked from, and never empty for a route in the ledger.
-    pub path: Vec<UVec2>,
-    /// How far up the route branch this road has been worn, in cumulative work units.
+pub struct Road {
+    /// The tile this road is on — its registry key, the plant web's `ForagePatch::tile` exactly.
+    pub tile: UVec2,
+    /// How far up the route branch this tile has been worked, in cumulative work units.
     position: f32,
     /// The derived standing, re-stamped on every write to [`Self::position`] so the two cannot drift
     /// — the `ForagePatch::standing` / `Herd::standing` convention.
@@ -161,23 +157,34 @@ pub struct Route {
     /// **WHAT THIS ROAD BUYS, stamped beside the standing it is derived from.**
     ///
     /// Derived and re-stamped on every write to [`Self::position`], exactly as [`Self::standing`] is
-    /// — so a reader asking *what is this road worth* needs the road and nothing else.
-    ///
-    /// **That is what keeps the ladder out of `balance_supply_networks`.** The payoff is a pure
-    /// function of the held rung, so a supply pass that resolved it would be taking a config handle
-    /// to re-derive a number the road already knows — and every harness that stands the pooling up
-    /// would have to hand it one. A stamped reading has one producer, which is the rule the standing
-    /// beside it is stamped under.
+    /// — so a reader asking *what is this tile worth* needs the tile and nothing else. That is what
+    /// keeps the ladder out of `balance_supply_networks`: a supply pass that resolved the payoff
+    /// would take a `LadderConfigHandle` to re-derive a number the road already knows, and every
+    /// harness that stands the pooling up would have to hand it one.
     payoff: RungRoutePayoff,
+    /// **THE BAND THIS ROAD IS THE JOB OF** — written by `grade` / `pave`, cleared by `abandon` and
+    /// by a decay that takes the road back into the free floor. `None` across the whole free floor:
+    /// **nobody keeps a trail**, which is the whole of what makes it free.
+    pub keeper: Option<RoadKeeper>,
+    /// **WHAT DISTANCE DID TO THIS ROAD'S PRICE**, as a multiple — [`remoteness_multiplier`] at the
+    /// keeper band's distance, stamped **once, at the moment the keeper took the road on**.
+    ///
+    /// ⛔ **A QUOTE, NOT A LIVE READING**, and that is `ForagePatch::field_cost_multiplier`'s own
+    /// discipline. It prices both the **build** (through [`road_rung_cost`], so a remote road is a
+    /// bigger pile) and the **upkeep** (through [`road_upkeep_measure`], so it is dearer to hold);
+    /// re-read live it would move the rung boundaries under a half-built road every time the band
+    /// took a step, which is a second producer of a standing. **Re-issuing the verb re-prices it**,
+    /// which is also how adoption works.
+    pub keeper_remoteness: f32,
     /// **What this road's keeping was billed at, stamped once per turn, first-write-wins.** The wire
     /// states `demand − supplied == shortfall` verbatim, and an interpolated demand moves *within* a
     /// turn, so every reader must take the stamp rather than re-reading the live cost (§2.5).
-    ///
-    /// **A road's demand moves more than a source's**, because bands walk on and off it, so this is
-    /// the branch most exposed to that defect.
     pub upkeep_demanded: Option<f32>,
-    /// What the bands standing on this road actually supplied this turn. **Accumulates** across them
-    /// (`+=`), cleared once per turn by the decay pass — the §2.5 rule, unchanged.
+    /// What this road's keeper supplied this turn. Cleared once per turn by the decay pass.
+    ///
+    /// **It accumulates (`+=`) even though there is exactly one keeper**, because the fund split
+    /// hands a keeper's pool out claim by claim and the shape is the two food webs'. One keeper per
+    /// tile is enforced by the verb, not by an assignment here.
     pub upkeep_supplied: f32,
     /// Consecutive turns of shortfall. Any turn the bill is met wipes it; it is not a lifetime budget.
     ///
@@ -186,18 +193,16 @@ pub struct Route {
     /// and the *strictly greater than the grace* comparison, so all three webs count in one unit.
     pub neglect_turns: u16,
     /// **Work units earned from traffic this turn**, banked into [`Self::position`] by the accrual
-    /// pass and then cleared. Not persisted state in its own right — a within-turn accumulator across
-    /// the several links that may cross one road.
+    /// pass and then cleared. A within-turn accumulator across the several journeys that may cross
+    /// one tile, not persisted state in its own right.
     pub traffic_work: f32,
-    /// **Consecutive turns this road has carried no traffic** — the free floor's own neglect
+    /// **Consecutive turns this tile has carried no traffic** — the free floor's own neglect
     /// counter, and the exact twin of [`Self::neglect_turns`] one trigger over.
     ///
     /// ⛔ **THE FREE FLOOR NEEDS ITS OWN COUNTER BECAUSE IT CANNOT BE SHORT.** `route:game_trail`
     /// and `route:trail` declare no `upkeep`, so their demand is [`NO_UPKEEP_DEMAND`], their
     /// shortfall is always zero and [`Self::neglect_turns`] can never arm on them. What takes a free
-    /// road back is **disuse**, and this is what counts it. Any turn a road banks traffic wipes it —
-    /// consecutive idle turns, never a lifetime budget, which is the rule all three webs' neglect
-    /// counters already follow.
+    /// road back is **disuse**, and this is what counts it.
     ///
     /// It is counted on **every** road, including the built ones, so a road that decays back down
     /// into the free floor arrives there with an honest reading rather than a zero that would buy it
@@ -205,15 +210,17 @@ pub struct Route {
     pub idle_turns: u16,
 }
 
-impl Route {
-    /// A brand-new road at the branch's floor: a game trail, with work banked on nothing yet.
-    pub fn worn_in(path: Vec<UVec2>, ladder: &LadderConfig) -> Self {
-        debug_assert!(!path.is_empty(), "a route with no tiles is not a road");
+impl Road {
+    /// A brand-new road tile at the branch's floor: a game trail, with work banked on nothing yet and
+    /// nobody keeping it.
+    pub fn worn_in(tile: UVec2, ladder: &LadderConfig) -> Self {
         Self {
-            path,
+            tile,
             position: RUNG_UNSTARTED,
-            standing: route_standing_at(ladder, RUNG_UNSTARTED),
-            payoff: route_payoff_at(ladder, RUNG_UNSTARTED),
+            standing: road_standing_at(ladder, RUNG_UNSTARTED, NEAR_ENOUGH_TO_KEEP),
+            payoff: road_payoff_at(ladder, RUNG_UNSTARTED, NEAR_ENOUGH_TO_KEEP),
+            keeper: None,
+            keeper_remoteness: NEAR_ENOUGH_TO_KEEP,
             upkeep_demanded: None,
             upkeep_supplied: NO_UPKEEP_DEMAND,
             neglect_turns: NEGLECT_NONE,
@@ -232,12 +239,43 @@ impl Route {
         self.position
     }
 
-    /// **The one mutator**, writing the position and its derived standing together so a caller cannot
+    /// **THE ONE MUTATOR**, writing the position and its derived standing together so a caller cannot
     /// leave the pair disagreeing — `ForagePatch::set_ladder_position`'s rule.
+    ///
+    /// ⛔ **AND A ROAD THAT FALLS BACK INTO THE FREE FLOOR LOSES ITS KEEPER**, because there is
+    /// nothing left to keep: the floor declares no `upkeep`, so a keeper held there would be a job
+    /// with no work in it and a `Roadwork` row would go on naming a road that owes nothing. The test
+    /// is **strictly below** the ceiling: a road sitting exactly on the top of the trail is the state
+    /// a fresh `grade` leaves — keeper set, first work not yet banked — and clearing it there would
+    /// undo the command on the turn it was typed.
     pub fn set_position(&mut self, position: f32, ladder: &LadderConfig) {
         self.position = position.max(RUNG_UNSTARTED);
-        self.standing = route_standing_at(ladder, self.position);
-        self.payoff = route_payoff_at(ladder, self.position);
+        self.standing = road_standing_at(ladder, self.position, self.keeper_remoteness);
+        self.payoff = road_payoff_at(ladder, self.position, self.keeper_remoteness);
+        if self.position < traffic_ceiling(ladder) {
+            self.release_keeper();
+        }
+    }
+
+    /// **TAKE THIS ROAD ON** — what `grade` and `pave` do, and what adoption of a keeperless road is
+    /// (there is deliberately no separate verb for the second: adoption is the same act as building).
+    ///
+    /// The remoteness is quoted here and held for the whole of the job — see
+    /// [`Self::keeper_remoteness`]. Writing it re-resolves the standing, because the price of the
+    /// rung being raised has just moved.
+    pub fn take_keeper(&mut self, keeper: RoadKeeper, remoteness: f32, ladder: &LadderConfig) {
+        self.keeper = Some(keeper);
+        self.keeper_remoteness = remoteness;
+        self.standing = road_standing_at(ladder, self.position, self.keeper_remoteness);
+        self.payoff = road_payoff_at(ladder, self.position, self.keeper_remoteness);
+    }
+
+    /// **PUT THIS ROAD DOWN** — `abandon`'s whole effect on the route branch. The meter is untouched:
+    /// the ground keeps whatever is on it and, with nobody keeping it, rots back down at the rung's
+    /// own rate over the following turns exactly as an unkept improvement does.
+    pub fn release_keeper(&mut self) {
+        self.keeper = None;
+        self.keeper_remoteness = NEAR_ENOUGH_TO_KEEP;
     }
 
     /// **What this road buys**, at the rung it holds — the stamped reading, never a re-derivation.
@@ -253,37 +291,31 @@ impl Route {
     /// **Is this road one somebody BUILT and somebody keeps?** — `true` at [`FIRST_BUILT_RUNG`] and
     /// above, `false` across the whole free floor.
     ///
-    /// **It is a rung test and not a `!= game_trail` test, and that is this slice's correction.** A
-    /// trail is worn in by traffic and costs nothing to hold (`docs/plan_standing_upkeep.md`
-    /// §4.13a), so it is exactly as free as the game trail beneath it — and the one thing hanging off
-    /// this predicate, [`Self::grants_sight`], reasons from *"paying the upkeep IS the presence"*. A
-    /// road nobody pays for has nobody on it, so a free trail must light nothing however worn it is.
+    /// **It is a rung test and not a `!= game_trail` test.** A trail is worn in by traffic and costs
+    /// nothing to hold, so it is exactly as free as the game trail beneath it — and the one thing
+    /// hanging off this predicate, [`Self::grants_sight`], reasons from *"paying the upkeep IS the
+    /// presence"*. A road nobody pays for has nobody on it, so a free trail must light nothing
+    /// however worn it is.
     pub fn is_built(&self) -> bool {
         self.held_rung().is_at_or_above(FIRST_BUILT_RUNG)
     }
 
-    /// ⛔ **DOES THIS ROAD LIGHT ITS OWN TILES?**
+    /// ⛔ **DOES THIS ROAD LIGHT ITS OWN TILE?**
     ///
     /// **Yes, while it stands at a built rung and its keeping is met.** Ray: *"If a road exists and is
     /// maintained, the assumption is that there is traffic on it and it is seen."*
     ///
     /// The design pass first answered *no*, objecting that the commonest routed link is a pooling link
     /// where nobody physically walks. **That inference ran backwards.** Maintenance is not free — a
-    /// kept road bills a band every turn out of its `Roadwork` pool, and what those hands are doing is
-    /// being on the road. **Paying the upkeep IS the presence.** A road nobody walks is a road nobody
-    /// pays for, and rule 3 has it reverting.
+    /// kept road bills its keeper every turn out of the `Roadwork` pool, and what those hands are
+    /// doing is being on the road. **Paying the upkeep IS the presence.**
     ///
     /// ⛔ **AND THIS IS WHY THE CONNECTION KEYSTONE DOES NOT BEND.** `connections.rs` states it as
     /// inviolable — *"Only presence makes a tile `Seen`. A connection can only ever grant
     /// `Discovered`."* — and names **logistics** as the first rider that will be tempted to break it.
     /// **This is not that temptation.** The sight is granted by the *road*, which is maintained
-    /// presence on specific ground, and **never by the connection**, which still grants `Discovered`
-    /// and nothing else. A band with a live tie to a people it has never travelled to sees exactly
-    /// what it sees today, and `core_sim/tests/connections.rs` passes unchanged.
-    ///
-    /// **The grant must therefore be written as its own visibility source beside a band's own
-    /// presence — never routed through the connection grant.** Plumbing it through the connection
-    /// would satisfy the keystone test by accident rather than by the rule.
+    /// presence on specific ground, and **never by the connection**. `core_sim/tests/connections.rs`
+    /// passes unchanged.
     ///
     /// **The condition is the PAID BILL, not the held rung**, so a road in shortfall **goes dark
     /// before it decays** — the honest early warning that the road is being lost.
@@ -304,12 +336,6 @@ impl Route {
     /// where nobody stamped one (§2.5). The plant web's `patch_keeping_basis` one branch over: every
     /// reader of the keeping takes the stamp, because an interpolated demand moves *within* a turn
     /// and the wire states `demand − supplied == shortfall` verbatim.
-    ///
-    /// **A road with no stamp owes nothing rather than owing its live cost.** That is honest here
-    /// and nowhere else on the ladder: [`crate::systems::settle_route_keeping`] stamps **every**
-    /// road in the ledger, not only the ones a band stands on, so an absent stamp means the keeping
-    /// pass has not run at all — a harness driving [`advance_routes`] alone, which must not decay
-    /// roads against a bill nobody was ever handed.
     pub fn upkeep_basis(&self) -> f32 {
         self.upkeep_demanded.unwrap_or(NO_UPKEEP_DEMAND)
     }
@@ -325,92 +351,67 @@ impl Route {
 /// subtraction to a width.
 const KEEPING_EPSILON: f32 = 1.0e-4;
 
-/// **Every road in the world, by id, plus the tile index rule 2 is answered from.**
+/// **EVERY ROAD IN THE WORLD, ONE RECORD PER TILE** — `forage::ForageRegistry`'s exact shape one
+/// branch over, and what replaced the stored-path ledger.
 ///
 /// **`BTreeMap`, not `HashMap`** — the iteration order is observed by the snapshot and by the
-/// checkpoint, so it has to be an order and not an accident. `ConnectionLedger`'s rule, and for the
-/// same reason.
+/// checkpoint, so it has to be an order and not an accident. Keyed `(y, x)` so that order is
+/// row-major, like every other tile sweep in the engine.
 #[derive(Resource, Default, Debug, Clone)]
-pub struct RouteLedger {
-    routes: BTreeMap<RouteId, Route>,
-    /// **Which roads cross this tile** — the index behind [`Self::routes_on_tile`], rebuilt with every
-    /// insert and removal so it cannot drift from the paths it indexes. Keyed `(y, x)` so iteration is
-    /// row-major like every other tile sweep.
-    by_tile: BTreeMap<(u32, u32), Vec<RouteId>>,
-    /// The id the next road takes. Monotonic, never reused, so a checkpointed id cannot collide with a
-    /// road laid after the restore.
-    next_id: u64,
+pub struct RoadRegistry {
+    roads: BTreeMap<(u32, u32), Road>,
 }
 
-impl RouteLedger {
-    /// Lay a new road along `path` and return its id.
-    pub fn insert(&mut self, path: Vec<UVec2>, ladder: &LadderConfig) -> RouteId {
-        let id = RouteId(self.next_id);
-        self.next_id += 1;
-        for tile in &path {
-            self.by_tile.entry((tile.y, tile.x)).or_default().push(id);
-        }
-        self.routes.insert(id, Route::worn_in(path, ladder));
-        id
+impl RoadRegistry {
+    /// The road on this tile, or `None` where there has never been one.
+    pub fn road(&self, tile: UVec2) -> Option<&Road> {
+        self.roads.get(&(tile.y, tile.x))
     }
 
-    /// **Forget a road entirely** — what rule 3 does once a reverted road has nothing left on it.
-    pub fn remove(&mut self, id: RouteId) -> Option<Route> {
-        let route = self.routes.remove(&id)?;
-        for tile in &route.path {
-            if let Some(ids) = self.by_tile.get_mut(&(tile.y, tile.x)) {
-                ids.retain(|held| *held != id);
-                if ids.is_empty() {
-                    self.by_tile.remove(&(tile.y, tile.x));
-                }
-            }
-        }
-        Some(route)
+    pub fn road_mut(&mut self, tile: UVec2) -> Option<&mut Road> {
+        self.roads.get_mut(&(tile.y, tile.x))
     }
 
-    pub fn get(&self, id: RouteId) -> Option<&Route> {
-        self.routes.get(&id)
+    /// **The road on this tile, laying a game trail where there was none** — what traffic does the
+    /// first time anything walks a tile.
+    pub fn road_or_trail(&mut self, tile: UVec2, ladder: &LadderConfig) -> &mut Road {
+        self.roads
+            .entry((tile.y, tile.x))
+            .or_insert_with(|| Road::worn_in(tile, ladder))
     }
 
-    pub fn get_mut(&mut self, id: RouteId) -> Option<&mut Route> {
-        self.routes.get_mut(&id)
+    /// **Forget a road entirely** — what the prune does once a reverted road has nothing left on it.
+    pub fn remove(&mut self, tile: UVec2) -> Option<Road> {
+        self.roads.remove(&(tile.y, tile.x))
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (RouteId, &Route)> {
-        self.routes.iter().map(|(id, route)| (*id, route))
+    pub fn iter(&self) -> impl Iterator<Item = (UVec2, &Road)> {
+        self.roads.values().map(|road| (road.tile, road))
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (RouteId, &mut Route)> {
-        self.routes.iter_mut().map(|(id, route)| (*id, route))
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Road> {
+        self.roads.values_mut()
     }
 
     pub fn len(&self) -> usize {
-        self.routes.len()
+        self.roads.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.routes.is_empty()
+        self.roads.is_empty()
     }
 
-    /// **RULE 2 — which roads is a band standing on?** The road's own path is the catchment, so this
-    /// is an index lookup and not a radius test.
-    pub fn routes_on_tile(&self, tile: UVec2) -> &[RouteId] {
-        self.by_tile
-            .get(&(tile.y, tile.x))
-            .map_or(&[], |ids| ids.as_slice())
-    }
-
-    /// **RULE 4 — the road new traffic should wear, if one already joins these two tiles.** Traffic
-    /// prefers an existing road, which is what keeps a valley carrying one trail rather than nine
-    /// near-duplicates, and is why real road networks consolidate.
+    /// **THE ROADS THIS BAND IS THE KEEPER OF** — the catchment the `Roadwork` pool pays for, in the
+    /// registry's own row-major order.
     ///
-    /// **Both ends must be ON the road** (rule 2), so this is the same catchment the payoff is read
-    /// through — a road that merely passes nearby is not a road you are walking.
-    pub fn road_joining(&self, from: UVec2, to: UVec2) -> Option<RouteId> {
-        self.routes_on_tile(from)
-            .iter()
-            .copied()
-            .find(|id| self.routes_on_tile(to).contains(id))
+    /// ⛔ **IT IS THE KEEPER, NOT WHO IS STANDING THERE.** The model this replaced billed every band
+    /// camped on a road's path, which is how *"several bands each pay a share"* got in — a rule Ray
+    /// rejected outright. One keeper per tile makes co-payment unrepresentable, and a band that walks
+    /// away goes on paying for the road it took on, which is the whole point of a road being a thing
+    /// you commit to rather than a thing you happen to be near.
+    pub fn kept_by(&self, band: BandId) -> impl Iterator<Item = (UVec2, &Road)> {
+        self.iter()
+            .filter(move |(_, road)| road.keeper.is_some_and(|keeper| keeper.band == band))
     }
 }
 
@@ -418,16 +419,16 @@ impl RouteLedger {
 ///
 /// `balance_supply_networks` knows which pairs pooled; it must not also be the thing that lays roads,
 /// because it runs **before** the accrual and laying a road mid-pass would let this turn's pooling
-/// read a road this turn's pooling created. So it writes the pairs here and
-/// [`advance_routes`] spends them — the same producer/consumer split `upkeep_supplied` uses across
-/// the Population→Logistics carry.
+/// read a road this turn's pooling created. So it writes the pairs here and [`advance_roads`] spends
+/// them — the same producer/consumer split `upkeep_supplied` uses across the Population→Logistics
+/// carry.
 ///
 /// **Cleared by the accrual, every turn**, so a turn with no pooling wears nothing rather than
 /// re-wearing last turn's links.
 #[derive(Resource, Default, Debug, Clone)]
 pub struct RouteTrafficLog {
     /// The tile pairs that carried traffic this turn. Unordered within a pair — a road has no
-    /// direction — and duplicates are meaningful: two links over one road are twice the traffic.
+    /// direction — and duplicates are meaningful: two journeys over one tile are twice the traffic.
     pub links: Vec<(UVec2, UVec2)>,
 }
 
@@ -440,133 +441,182 @@ impl RouteTrafficLog {
     }
 }
 
-/// **WHAT A COMPONENT'S POOLING LOSES IN TRANSIT, as a multiple of the base friction** — the payoff
-/// `balance_supply_networks` reads, and the first thing a route rung has ever bought.
+/// **WHAT A JOURNEY OVER THESE TILES LOSES IN TRANSIT, as a multiple of the base friction** — the
+/// payoff `balance_supply_networks` reads, and the first thing a route rung has ever bought.
 ///
-/// **It is the BEST road binding the network, not the worst, and that is forced rather than
-/// generous.** The whole branch's safety argument is that a rung is **purely additive** — *"a rung
-/// can only widen the set of links and lower a loss, never the reverse"*, which is what preserves
-/// §Q4's *"no early-game regression, by construction"*. Under a worst-road reading, wearing a **new**
-/// poor trail into an existing network would **raise** that network's friction: a road would make
-/// things worse, and a band would be punished for having walked somewhere. Best-road cannot do that.
+/// ⛔ **IT AVERAGES ALONG THE TILES, AND THAT IS THE PER-TILE MODEL'S OWN ANSWER.** You genuinely
+/// lose less over the roaded stretch of a haul, so **a partly-built road pays partly**: half a run
+/// roaded is about half the saving. A bare tile contributes [`FRICTION_UNCHANGED`], so the average can
+/// never exceed it and improving any one tile can only lower it — **monotone-improving, which is the
+/// additive guarantee the whole branch rests on** (*"a rung can only widen the set of links and lower
+/// a loss, never the reverse"*).
 ///
-/// The balancer pools a whole component against **one** friction scalar — it has no path model — so
-/// either reading is an approximation of the same thing. This is the approximation that cannot
-/// regress.
+/// **The earlier *"best road binding the network"* rule is dead.** It was an artifact of choosing
+/// among independent path objects; reading a path of tiles, *best* would call a thirty-tile dirt road
+/// with one paved tile a paved road.
 ///
-/// **A road counts only if at least TWO members of the component stand on it** (rule 2): a road one
-/// band happens to be camped on carries none of that component's pooling, and crediting it would pay
-/// a network for a road nobody is using to reach anyone.
-///
-/// **And only if it is BUILT and KEPT** — the same condition [`Route::grants_sight`] reads, for the
-/// same reason: an unmaintained road is not carrying anything.
-pub fn component_friction_multiplier<'a>(
-    ledger: &RouteLedger,
-    member_tiles: impl IntoIterator<Item = &'a UVec2>,
+/// **Only a BUILT and KEPT tile counts** — the same [`Road::grants_sight`] condition, for the same
+/// reason: an unmaintained road is not carrying anything.
+pub fn path_friction_multiplier<'a>(
+    registry: &RoadRegistry,
+    path: impl IntoIterator<Item = &'a UVec2>,
 ) -> f32 {
-    let mut standing_on: BTreeMap<RouteId, u32> = BTreeMap::new();
-    for tile in member_tiles {
-        for id in ledger.routes_on_tile(*tile) {
-            *standing_on.entry(*id).or_default() += 1;
-        }
+    let mut tiles = 0u32;
+    let mut total = 0.0f32;
+    for tile in path {
+        tiles += 1;
+        total += registry
+            .road(*tile)
+            .filter(|road| road.grants_sight())
+            .map_or(FRICTION_UNCHANGED, |road| road.payoff().friction_multiplier);
     }
-    standing_on
-        .into_iter()
-        .filter(|(_, members)| *members >= MEMBERS_TO_CARRY_A_LINK)
-        .filter_map(|(id, _)| ledger.get(id))
-        .filter(|route| route.grants_sight())
-        .map(|route| route.payoff().friction_multiplier)
-        .fold(FRICTION_UNCHANGED, f32::min)
+    if tiles == 0 {
+        return FRICTION_UNCHANGED;
+    }
+    total / tiles as f32
 }
 
-/// **A road carries a component's pooling only once two of its bands stand on it** — one camp on a
-/// road is a camp beside a road, not a link over one.
-pub const MEMBERS_TO_CARRY_A_LINK: u32 = 2;
+/// **HOW FAR THE ROADS ALONG THIS PATH HOLD A LINK OPEN, in tiles — THE WEAKEST TILE.**
+///
+/// ⛔ **A GAP BREAKS A LINK GOODS MUST GET THROUGH**, which is why reach takes the minimum where the
+/// friction beside it takes the mean: losing a *fraction* of a haul over one rough tile is a real
+/// thing, and *"the goods get most of the way there"* is not. One bare tile in an otherwise paved run
+/// therefore holds nothing open, and that is the honest reading rather than a harsh one.
+///
+/// Monotone-improving for the same reason the average is: raising any tile can only raise the
+/// minimum, so a road can never make a link worse.
+///
+/// ⛔ **NOTHING IN THE SIM CONSUMES THIS YET** — the reach payoff is slice 13b's, which is why the
+/// client renders it in the future tense. It is derived and published here so the wire carries one
+/// answer rather than a client's guess, and so the per-tile reading is stated once.
+pub fn path_reach_tiles<'a>(
+    registry: &RoadRegistry,
+    path: impl IntoIterator<Item = &'a UVec2>,
+) -> u32 {
+    let mut reach: Option<u32> = None;
+    for tile in path {
+        let tile_reach = registry
+            .road(*tile)
+            .filter(|road| road.grants_sight())
+            .map_or(NO_REACH_HELD_OPEN, |road| road.payoff().holds_link_to_tiles);
+        reach = Some(reach.map_or(tile_reach, |held| held.min(tile_reach)));
+    }
+    reach.unwrap_or(NO_REACH_HELD_OPEN)
+}
 
-/// **THE SCALE TERM — `length × terrain`, as one sum** (`UpkeepScale::RouteSpan`).
+/// **A TILE THAT HOLDS NO LINK OPEN** — what bare ground and a game trail are both worth to
+/// [`path_reach_tiles`], and the value an empty path answers.
+pub const NO_REACH_HELD_OPEN: u32 = 0;
+
+/// **THE SCALE MEASURE — THIS TILE'S OWN GROUND, PRICED BY HOW FAR IT IS FROM ITS KEEPER.**
 ///
 /// ```text
-/// span = Σ over the road's tiles of infrastructure_cost(that tile's terrain)
+/// measure = infrastructure_cost(this tile's terrain) × keeper_remoteness
 /// ```
 ///
-/// **Summed per tile crossed, never averaged**: three tiles of marsh cost three tiles of marsh, and
-/// averaging would price a long road and a short one through the same country identically.
+/// **The length term is gone with the path object**, and what is left is the same *shape* the plant
+/// web already reads: a patch scales its keeping on its tile's own `K`, and a road tile scales its
+/// keeping on its tile's own `infrastructure_cost`. That is why `UpkeepScale::RouteSpan` collapsed
+/// back into [`crate::intensification::UpkeepScale::SourceLoad`] with a per-branch reading — §4.11's
+/// stated preference, *"one primitive with a per-branch reading beat a second variant"*.
 ///
 /// **This is the one place `infrastructure_cost` is read**, so the bill, the quote, the decay and the
 /// wire cannot answer three different geometries — the `forage::patch_land_capacity` rule.
 ///
-/// A tile absent from the registry contributes nothing rather than defaulting to some terrain nobody
-/// chose; an off-map path is a harness artifact, and inventing a cost for it would make a synthetic
-/// road dearer than a real one.
-pub fn route_span(route: &Route, registry: &TileRegistry, tiles: &Query<&Tile>) -> f32 {
-    span_of_terrains(
-        route
-            .path
-            .iter()
-            .filter_map(|pos| registry.index(pos.x, pos.y))
-            .filter_map(|entity| tiles.get(entity).ok())
-            .map(|tile| tile.terrain),
-    )
+/// **§2.7's line holds: the land is a SCALE term, not an offset.** It *multiplies* the demand; it
+/// never subtracts from it.
+pub fn road_upkeep_measure(terrain: TerrainType, remoteness: f32) -> f32 {
+    terrain_definition(terrain).infrastructure_cost * remoteness
 }
 
-/// **The sum itself**, for a caller that already holds the terrains. [`route_span`] is the ECS
-/// wrapper over it and adds nothing but the lookup, so there is exactly one definition of the
-/// arithmetic and a test can reach it without standing up a world.
-pub fn span_of_terrains(terrains: impl IntoIterator<Item = TerrainType>) -> f32 {
-    terrains
-        .into_iter()
-        .map(|terrain| terrain_definition(terrain).infrastructure_cost)
-        .sum()
+/// The ECS wrapper over [`road_upkeep_measure`], adding nothing but the tile lookup. A tile absent
+/// from the registry measures nothing rather than defaulting to some terrain nobody chose.
+pub fn road_measure(road: &Road, registry: &TileRegistry, tiles: &Query<&Tile>) -> f32 {
+    registry
+        .index(road.tile.x, road.tile.y)
+        .and_then(|entity| tiles.get(entity).ok())
+        .map_or(NO_UPKEEP_DEMAND, |tile| {
+            road_upkeep_measure(tile.terrain, road.keeper_remoteness)
+        })
 }
 
-/// **WHAT THIS ROAD OWES EVERY TURN TO STAY WHERE IT IS**, in work units — the road's own
-/// `upkeep_demand`, *interpolated* on its standing and scaled by its [`route_span`].
+/// ⛔ **HOW FAR A BAND KEEPS A ROAD AT THE RUNG'S OWN PRICE — READ THROUGH THIS FUNCTION, NEVER AS A
+/// BARE CONFIG FIELD.**
 ///
-/// It is `forage::patch_upkeep_demand`'s exact shape, with the span where the tender-loads are: the
-/// rung owns the rate, the branch owns the scale measure. **Interpolated rather than read off the
-/// held rung**, so a road part-way into a dirt road owes part of a dirt road — the same continuous
-/// bill the two food webs charge, and the reason a bill can never step within a turn.
+/// Ray: *"Be flexible on the threshold… make it a function that can expand over time, don't just
+/// create a hardcoded constant. You can have a configuration item for the 'base' range, but still
+/// make a function accessor for it so we can calculate it later."*
 ///
-/// ⛔ **THE GAME TRAIL FALLS OUT OF THE ARITHMETIC RATHER THAN BEING BRANCHED AROUND.** The floor
-/// declares no `upkeep`, so [`crate::intensification::RungDef::upkeep_demand`] answers
-/// [`NO_UPKEEP_DEMAND`] for it and a road holding only the trail interpolates to nothing owed. An
-/// `is_built()` guard here would be a second statement of *"nobody maintains a game trail"*, free to
-/// disagree with the ladder that already says it.
-pub fn route_upkeep_demand(route: &Route, span: f32, ladder: &LadderConfig) -> f32 {
-    interpolate(&route.standing(), |rung| {
-        ladder.rung(rung).upkeep_demand(span)
+/// So the config holds a **base** (`route_range.base_tiles`) and **every caller asks here** — the
+/// build cost, the upkeep, the command's own quote and the wire. The day the range grows with
+/// knowledge, faction size or a central authority (**issue #598**), that is *this function body*
+/// changing and **no call site moving**. A `cfg.base_tiles` read scattered across four sites is four
+/// places to find and three to miss, which is exactly why `fauna::herd_ecology` and
+/// `forage::patch_land_capacity` are seams rather than field reads.
+pub fn road_keeping_range(ladder: &LadderConfig) -> u32 {
+    ladder.route_range.base_tiles
+}
+
+/// ⛔ **DISTANCE IS A COST, NEVER A WALL** — what a road costs its keeper as a multiple of the rung's
+/// own price, at `distance` tiles from the band that took it on.
+///
+/// **There is no work-range rule and the reason is not complexity.** Ray: *"already forage and
+/// hunting have different work ranges, expeditions are even farther. I don't think it makes sense to
+/// restrict it."* A fourth arbitrary radius would say nothing; what bounds a distant road is that it
+/// is dearer to hold and slower to build — the argument `TradeExpeditionConfig` already makes about
+/// friction, *"what a long haul costs is already paid, and paid in the right currency."*
+///
+/// **A THRESHOLD, NOT A CURVE**, which is what Ray asked for and is simpler to tune: inside
+/// [`road_keeping_range`] a road costs what the rung says; outside it both the build and the upkeep
+/// rise by `route_range.remote_cost_multiplier`.
+pub fn remoteness_multiplier(distance: u32, ladder: &LadderConfig) -> f32 {
+    if distance <= road_keeping_range(ladder) {
+        NEAR_ENOUGH_TO_KEEP
+    } else {
+        ladder.route_range.remote_cost_multiplier
+    }
+}
+
+/// **WHAT THIS ROAD OWES EVERY TURN TO STAY WHERE IT IS**, in work units — the rung's own
+/// `upkeep_demand`, *interpolated* on its standing and scaled by its [`road_upkeep_measure`].
+///
+/// It is `forage::patch_upkeep_demand`'s exact shape, with the tile's ground where the tender-loads
+/// are: the rung owns the rate, the branch owns the scale measure. **Interpolated rather than read
+/// off the held rung**, so a road part-way into a dirt road owes part of a dirt road.
+///
+/// ⛔ **THE FREE FLOOR FALLS OUT OF THE ARITHMETIC RATHER THAN BEING BRANCHED AROUND.** Neither free
+/// rung declares an `upkeep`, so [`crate::intensification::RungDef::upkeep_demand`] answers
+/// [`NO_UPKEEP_DEMAND`] for both and a road holding a trail owes nothing. An `is_built()` guard here
+/// would be a second statement of *"nobody maintains a trail"*, free to disagree with the ladder that
+/// already says it.
+pub fn road_upkeep_demand(road: &Road, measure: f32, ladder: &LadderConfig) -> f32 {
+    interpolate(&road.standing(), |rung| {
+        ladder.rung(rung).upkeep_demand(measure)
     })
 }
 
 /// **THE BILL A CLAIM IS PRICED AT** — the **stamped** demand where this turn's keeping pass has
-/// already struck one, and the live [`route_upkeep_demand`] where it has not.
+/// already struck one, and the live [`road_upkeep_demand`] where it has not.
 ///
 /// `forage::patch_keeping_basis`' rule exactly, and for its reason: a claim and the bill it is
 /// judged against must be one number, and an interpolated demand moves *within* a turn.
 ///
 /// **The fallback is the only reading available to the SHED**, which counts a band's spare road
 /// keepers against this bill inside `advance_labor_allocation` — a whole system before
-/// [`crate::systems::settle_route_keeping`] stamps anything. Nothing moves a road's position between
-/// the two, so the two readings are the same number; what the fallback buys is that the count is not
-/// struck against a bill of zero and every road keeper shed as spare.
-pub fn route_keeping_basis(route: &Route, span: f32, ladder: &LadderConfig) -> f32 {
-    route
-        .upkeep_demanded
-        .unwrap_or_else(|| route_upkeep_demand(route, span, ladder))
+/// [`crate::systems::settle_route_keeping`] stamps anything.
+pub fn road_keeping_basis(road: &Road, measure: f32, ladder: &LadderConfig) -> f32 {
+    road.upkeep_demanded
+        .unwrap_or_else(|| road_upkeep_demand(road, measure, ladder))
 }
 
 /// **THE RUNG AT RISK ON THIS ROAD** — the newest rung carrying work, which is the rung a decay eats
 /// and the rung whose grace and rot rate govern.
 ///
-/// **One helper because three readers must agree**: the bill above interpolates *through* it, the
-/// grace lookup asks it how long neglect is forgiven, and [`advance_routes`] bleeds it. A road that
-/// billed one rung and decayed another is exactly the drift `forage::patch_unwinding_key` exists to
-/// prevent one branch over.
-///
-/// It answers a rung rather than an `Option`, unlike the plant web's: a route position always holds
-/// **something** ([`RungKey::RouteGameTrail`] is the floor), and that rung declares no upkeep — so
-/// *"a road with nothing built on it is at risk of nothing"* is already the arithmetic's own answer.
-pub fn route_at_risk_rung(standing: &RungStanding) -> RungKey {
+/// **One helper because three readers must agree**: the bill interpolates *through* it, the grace
+/// lookup asks it how long neglect is forgiven, and [`advance_roads`] bleeds it. A road that billed
+/// one rung and decayed another is exactly the drift `forage::patch_unwinding_key` exists to prevent
+/// one branch over.
+pub fn road_at_risk_rung(standing: &RungStanding) -> RungKey {
     standing
         .raising
         .filter(|_| standing.banked > NO_RUNG_WORK_BANKED)
@@ -574,44 +624,29 @@ pub fn route_at_risk_rung(standing: &RungStanding) -> RungKey {
 }
 
 /// **THE METER ON THE RUNG THIS ROAD IS ACTUALLY RAISING**, `0..=1` — the route branch's twin of
-/// `cultivationProgress` / `corralProgress`, and what `RouteState::buildFraction` publishes.
-///
-/// It is read at [`route_at_risk_rung`], the **same** seam the bill interpolates through, the grace
-/// counts down against and [`advance_routes`] bleeds — so a row cannot show one rung's meter beside
-/// another rung's countdown. A road that has just *completed* a rung has nothing banked in the next
-/// one, so the at-risk rung is the one it holds and this reads **exactly** [`METER_FULL`]; the turn
-/// its first traffic lands on the rung above, this becomes that rung's meter from zero.
+/// `cultivationProgress` / `corralProgress`, and what `RoadState::buildFraction` publishes.
 ///
 /// ⛔ **IT GOES THROUGH [`rung_work_done`], NEVER THROUGH A SUBTRACTION.** That seam answers a rung
 /// the standing already holds with the rung's full `width` by construction rather than with
-/// `fl(base + width) − base`, which is the rounding that published a completed Field at *"99%"*
-/// (`intensification::rung_work_done`'s own callout).
-///
-/// A road at the top of the branch is raising nothing and reads [`METER_FULL`] — an honest *"there
-/// is no meter in flight here"* rather than a zero a client would draw as an empty bar.
-pub fn route_build_fraction(route: &Route, ladder: &LadderConfig) -> f32 {
-    let standing = route.standing();
-    let at_risk = route_at_risk_rung(&standing);
-    let span = route_rung_span(at_risk, ladder);
+/// `fl(base + width) − base`, which is the rounding that published a completed Field at *"99%"*.
+pub fn road_build_fraction(road: &Road, ladder: &LadderConfig) -> f32 {
+    let standing = road.standing();
+    let at_risk = road_at_risk_rung(&standing);
+    let span = road_rung_span(at_risk, ladder, road.keeper_remoteness);
     build_fraction(
-        rung_work_done(standing, at_risk, route.position(), span),
+        rung_work_done(standing, at_risk, road.position(), span),
         span.1,
     )
 }
 
-/// **A meter with nothing left to raise** — what [`route_build_fraction`] answers at the top of the
+/// **A meter with nothing left to raise** — what [`road_build_fraction`] answers at the top of the
 /// branch, and the value [`build_fraction`] returns for a rung the standing already holds.
 pub const METER_FULL: f32 = 1.0;
 
 /// **HOW MANY WHOLE ROAD KEEPERS THIS ROAD'S BILL WANTS** — `ceil(basis / PER_WORKER_OUTPUT)`, the
-/// route twin of `forage::patch_upkeep_workers_needed`, and the readout that makes a standing cost
-/// legible: *"this wants 1, you have 0"*.
-///
-/// Struck against the **same** [`route_keeping_basis`] the published demand, supplied and shortfall
-/// are, so the four numbers on a row describe one bill. [`NO_CREW_ON_THIS_ACTIVITY`] for a road that
-/// owes nothing — a game trail, which nobody maintains.
-pub fn route_upkeep_workers_needed(route: &Route, span: f32, ladder: &LadderConfig) -> u32 {
-    let demand = route_keeping_basis(route, span, ladder);
+/// route twin of `forage::patch_upkeep_workers_needed`.
+pub fn road_upkeep_workers_needed(road: &Road, measure: f32, ladder: &LadderConfig) -> u32 {
+    let demand = road_keeping_basis(road, measure, ladder);
     if demand <= NO_UPKEEP_DEMAND {
         return NO_CREW_ON_THIS_ACTIVITY;
     }
@@ -622,38 +657,37 @@ pub fn route_upkeep_workers_needed(route: &Route, span: f32, ladder: &LadderConf
 /// the counter, through [`crate::intensification::neglect_grace_remaining`] so all three webs and
 /// the wire mean one thing by a grace.
 ///
-/// Resolved at [`route_at_risk_rung`], the same seam [`advance_routes`] bleeds through, so the wire
-/// cannot count down against a rung the sim is not touching.
-///
-/// **`None` = THERE IS NOTHING AT RISK HERE**, which is a road holding only the game trail with no
-/// traffic banked above it: that rung declares no `upkeep`, so there is no grace to count and no
-/// meter to lose. It falls out of the ladder rather than out of an `is_built()` guard, exactly as
-/// the bill does.
-pub fn route_neglect_grace_remaining(route: &Route, ladder: &LadderConfig) -> Option<u32> {
-    let rung = ladder.rung(route_at_risk_rung(&route.standing()));
+/// **`None` = THERE IS NOTHING AT RISK HERE**, which is a road anywhere on the free floor: those
+/// rungs declare no `upkeep`, so there is no grace to count and no meter to lose.
+pub fn road_neglect_grace_remaining(road: &Road, ladder: &LadderConfig) -> Option<u32> {
+    let rung = ladder.rung(road_at_risk_rung(&road.standing()));
     rung.upkeep.as_ref()?;
     Some(neglect_grace_remaining(
-        route.neglect_turns,
+        road.neglect_turns,
         rung.upkeep_grace_turns(),
     ))
 }
 
-/// **What a route rung costs to raise.** `None` for the game-trail floor, which is nothing to build.
+/// **What a route rung costs to raise on this road**, in work units.
 ///
-/// **Routes take no per-source price multiplier** — a mile of road is a mile of road — so every rung
-/// is quoted at [`RUNG_COST_UNSCALED`]. That is the plant web's own shape before the Sow share price
-/// landed on it, and it is why there is no `Route`-side twin of `patch_field_cost_multiplier`: the
-/// thing a road's price varies with is its **span**, and the span is already a term of the *upkeep*
-/// rather than of the build.
-fn route_rung_cost(rung: RungKey, ladder: &LadderConfig) -> Option<f32> {
-    ladder.rung(rung).build_cost(RUNG_COST_UNSCALED)
+/// **The free floor is never re-priced by distance**, and that is deliberate: traffic wears a trail
+/// in, and traffic does not care how far anybody's camp is. Only the two rungs a band **orders** —
+/// the ones [`FIRST_BUILT_RUNG`] and above — carry the remoteness quote, which is also what keeps
+/// [`traffic_ceiling`] a fixed number the accrual can cap against.
+pub fn road_rung_cost(rung: RungKey, ladder: &LadderConfig, remoteness: f32) -> Option<f32> {
+    let multiplier = if rung.is_at_or_above(FIRST_BUILT_RUNG) {
+        remoteness
+    } else {
+        NEAR_ENOUGH_TO_KEEP
+    };
+    ladder.rung(rung).build_cost(multiplier)
 }
 
-/// **What a route standing at `position` buys.** Read off the rung it *holds*, so a half-worn dirt
+/// **What a road standing at `position` buys.** Read off the rung it *holds*, so a half-worn dirt
 /// road buys exactly what the trail beneath it buys until the rung fills — the payoff is a property
 /// of the road you have, not of the one you are wearing in.
-pub fn route_payoff_at(ladder: &LadderConfig, position: f32) -> RungRoutePayoff {
-    let held = route_standing_at(ladder, position).held;
+pub fn road_payoff_at(ladder: &LadderConfig, position: f32, remoteness: f32) -> RungRoutePayoff {
+    let held = road_standing_at(ladder, position, remoteness).held;
     *ladder
         .rung(held)
         .route_payoff
@@ -661,42 +695,45 @@ pub fn route_payoff_at(ladder: &LadderConfig, position: f32) -> RungRoutePayoff 
         .expect("validate requires a route_payoff on every route rung")
 }
 
-/// Resolve a route position through the ladder — the one seam that answers *where does this road
+/// Resolve a road position through the ladder — the one seam that answers *where does this road
 /// stand*, so no call site re-derives a standing from a meter.
-pub fn route_standing_at(ladder: &LadderConfig, position: f32) -> RungStanding {
+pub fn road_standing_at(ladder: &LadderConfig, position: f32, remoteness: f32) -> RungStanding {
     RungStanding::at(ladder, RungBranch::Route, position, |rung| {
-        route_rung_cost(rung, ladder)
+        road_rung_cost(rung, ladder, remoteness)
     })
 }
 
 /// **Where a route rung starts and how wide it is**, in cumulative work units — `route:trail` is
-/// `(0, 40)`, `route:dirt_road` `(40, 110)` and `route:paved_road` `(150, 260)` on the shipped ladder.
-pub fn route_rung_span(rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
-    crate::intensification::rung_span(rung, &|key| route_rung_cost(key, ladder))
+/// `(0, 40)`, `route:dirt_road` `(40, 110)` and `route:paved_road` `(150, 260)` on the shipped
+/// ladder at [`NEAR_ENOUGH_TO_KEEP`].
+pub fn road_rung_span(rung: RungKey, ladder: &LadderConfig, remoteness: f32) -> (f32, f32) {
+    crate::intensification::rung_span(rung, &|key| road_rung_cost(key, ladder, remoteness))
 }
 
-/// ⛔ **THE POSITION TRAFFIC MAY BANK UP TO AND NO FURTHER** — the top of
-/// [`FREE_FLOOR_TOP_RUNG`]'s span, `40` on the shipped ladder.
+/// ⛔ **THE POSITION TRAFFIC MAY BANK UP TO AND NO FURTHER** — the top of [`FREE_FLOOR_TOP_RUNG`]'s
+/// span, `40` on the shipped ladder.
 ///
 /// **This cap is what makes the free/paid line mean anything** (`docs/plan_standing_upkeep.md`
 /// §4.13a rule 1). Moving `route:trail`'s bill off it without capping the climb only relocates the
 /// fault: traffic would go on wearing a **dirt road** in for free, and the player would be handed a
-/// standing labour bill for a road they never ordered — one rung later and dearer than the trail 13a
-/// billed them for. Above this line a road is raised by `grade` and `pave` on the builders' pool,
-/// which is a decision somebody made.
+/// standing labour bill for a road they never ordered.
 ///
-/// It is read off the **ladder**, never written as a number: retuning `route:trail`'s `work_cost`
-/// moves the cap with it, exactly as it moves the rung.
+/// It is read off the **ladder**, never written as a number, and the free floor takes no remoteness
+/// quote — so this is one number for every road on the map.
 pub fn traffic_ceiling(ladder: &LadderConfig) -> f32 {
-    let (base, width) = route_rung_span(FREE_FLOOR_TOP_RUNG, ladder);
+    let (base, width) = road_rung_span(FREE_FLOOR_TOP_RUNG, ladder, NEAR_ENOUGH_TO_KEEP);
     base + width
 }
 
-/// **The path traffic between two tiles wears** — a hex walk that greedily closes the distance.
+/// **The tiles a journey between two tiles crosses** — a hex walk that greedily closes the distance.
+///
+/// ⛔ **IT IS A FUNCTION AND NOT STATE**, which is the whole of what the per-tile model removed. A
+/// link already knows its two endpoints, so the tiles between them are computable; storing them was
+/// the fourth object nothing needed. Ray's phrasing is the right one — *"a route projected onto the
+/// tiles"*: the **link** is the object, the **roads** are the ground it runs over.
 ///
 /// Deterministic (it takes the lowest-numbered direction among equally good steps), wrap-aware
-/// through [`hex_neighbor`], and inclusive of both ends: a road runs from the camp to the camp, and
-/// the endpoints are on it by construction, which is what makes rule 2 true the moment a road is laid.
+/// through [`hex_neighbor`], and inclusive of both ends: a journey runs from the camp to the camp.
 pub fn trace_path(from: UVec2, to: UVec2, width: u32, height: u32, wrap: bool) -> Vec<UVec2> {
     let mut path = vec![from];
     let mut cursor = from;
@@ -723,8 +760,8 @@ pub fn trace_path(from: UVec2, to: UVec2, width: u32, height: u32, wrap: bool) -
     path
 }
 
-/// **TRAFFIC WEARS THE ROADS IN, AND NEGLECT WEARS THEM OUT** — the route branch's build accrual and
-/// its decay pass in one system, the counterpart of `forage::advance_cultivation` and
+/// **TRAFFIC WEARS THE ROADS IN, AND NEGLECT WEARS THEM OUT** — the route branch's traffic accrual
+/// and its decay pass in one system, the counterpart of `forage::advance_cultivation` and
 /// `fauna::advance_husbandry` on the two food webs.
 ///
 /// # ⛔ TWO DECAY TRIGGERS, BECAUSE A FREE RUNG CANNOT BE SHORT
@@ -739,49 +776,29 @@ pub fn trace_path(from: UVec2, to: UVec2, width: u32, height: u32, wrap: bool) -
 ///
 /// # THE PHASES, IN THIS ORDER
 ///
-/// 1. **Judge last turn's keeping.** The shortfall against the **stamped** bill
-///    ([`Route::upkeep_basis`]) arms or wipes [`Route::neglect_turns`] — *consecutive* turns short,
-///    never a lifetime budget, which is the rule both food webs already follow.
-/// 2. **Bleed the rung at risk** ([`route_at_risk_rung`]) at
-///    `shortfall_fraction × meter_decay.per_turn`, once the neglect has outlasted that rung's own
-///    `grace_turns`. [`crate::intensification::RungDef::upkeep_decay`] owns both the rate and the
-///    strictly-greater comparison, so this system never restates either.
-/// 3. **Clear the bill** for the coming turn's stamp — the `advance_cultivation` cycle exactly:
-///    `upkeep_demanded` back to `None` and `upkeep_supplied` back to [`NO_UPKEEP_DEMAND`], so next
-///    turn's shortfall is the whole demand again unless somebody restates it.
-/// 4. **Bank this turn's traffic** onto the position, **capped at [`traffic_ceiling`]** — the top of
-///    [`FREE_FLOOR_TOP_RUNG`], and no further. Uncapped, traffic would wear a dirt road in for free
-///    and hand the player its bill anyway (§4.13a rule 1).
-/// 5. **Bleed a free road nobody walked**, past `route_traffic.disuse_grace_turns`, at
-///    `route_traffic.disuse_loss_per_turn`. After the banking, because whether a road was idle is
-///    only known once this turn's links have been drained onto it.
+/// 1. **Judge last turn's keeping**, off the **stamped** bill ([`Road::upkeep_basis`]) — consecutive
+///    turns short, never a lifetime budget.
+/// 2. **Bleed the rung at risk** ([`road_at_risk_rung`]) at `shortfall_fraction × meter_decay`, once
+///    the neglect has outlasted that rung's own `grace_turns`.
+/// 3. **Clear the bill** for the coming turn's stamp.
+/// 4. **Bank this turn's traffic** on **every tile each journey crossed**, capped at
+///    [`traffic_ceiling`] — the top of the free floor, and no further.
+/// 5. **Bleed a free road nobody walked**, past `route_traffic.disuse_grace_turns`.
 ///
-/// Then the ledger is **pruned** of every road back at [`RUNG_UNSTARTED`] — see the callout at the
-/// foot of the body for why that must happen *after* the banking.
+/// Then the registry is **pruned** of every road back at [`RUNG_UNSTARTED`] — after the banking,
+/// because a tile first walked this turn is at the floor until its first traffic lands.
 ///
 /// # ⛔ THE ONE-TURN CARRY IS THE ARRANGEMENT, NOT A DEFECT TO FIX
 ///
-/// Logistics runs **before** Population, so the [`Route::upkeep_supplied`] phase 1 judges was
-/// stamped by *last* turn's [`crate::systems::settle_route_keeping`]. That is the same lag
-/// `forage::advance_cultivation` and `fauna::advance_husbandry` already run on, and it is what makes
-/// the keeping a carry-across-turns signal rather than a within-turn one. **Do not reorder a stage
-/// for it.**
-///
-/// It runs in `TurnStage::Logistics` **after `balance_supply_networks`**, which is what lets it see
-/// this turn's links. The consequence is that the *payoff* is read at the standing as of the
-/// **previous** turn — precisely the one-turn lag `balance_supply_networks` already accepts against
-/// `ConnectionLedger` (*"on the world's very first turn the ledger is empty, so nothing pools on turn
-/// 1"*). **Do not reorder a stage for it**, and do not let the supply pass raise a road itself: that
-/// would make a second producer of a rung's position, which is the failure this arc has had three of.
-///
-/// # Rules 1 and 4, in that order
-///
-/// For each link, the road that already joins both ends is the one that gets the work
-/// ([`RouteLedger::road_joining`] — **rule 4**, and why real networks consolidate). Only when there
-/// is none is a fresh path traced and **stamped once** (**rule 1**), which is also what puts both
-/// camps on it and makes rule 2 true of a road from the moment it exists.
-pub fn advance_routes(
-    mut ledger: ResMut<RouteLedger>,
+/// Logistics runs **before** Population, so the [`Road::upkeep_supplied`] phase 1 judges was stamped
+/// by *last* turn's [`crate::systems::settle_route_keeping`] — the same lag
+/// `forage::advance_cultivation` and `fauna::advance_husbandry` already run on. It runs in
+/// `TurnStage::Logistics` **after `balance_supply_networks`**, which is what lets it see this turn's
+/// links, and the *payoff* is therefore read at the standing as of the **previous** turn. **Do not
+/// reorder a stage for it**, and do not let the supply pass raise a road: that would be a second
+/// producer of a rung's position.
+pub fn advance_roads(
+    mut registry: ResMut<RoadRegistry>,
     mut traffic: ResMut<RouteTrafficLog>,
     ladder: Res<crate::intensification::LadderConfigHandle>,
     sim_config: Res<crate::resources::SimulationConfig>,
@@ -793,67 +810,47 @@ pub fn advance_routes(
     let wrap = sim_config.map_topology.wrap_horizontal;
 
     // ## Phases 1-3, over every road that already existed when this turn began.
-    //
-    // A road the drain below is about to lay is deliberately not here: it carries no stamped bill
-    // and no neglect, so judging it would compare two zeroes and clearing it would clear nothing.
-    for (_, route) in ledger.iter_mut() {
+    for road in registry.iter_mut() {
         // **1 — HOW SHORT, as a fraction of what was asked**, off the stamped basis and through the
-        // ladder's own seam, so the three branches share one reading of *"how short"* and supply
-        // only their own rate. A road nobody billed reads [`FULLY_SUPPLIED`] and is forgiven.
+        // ladder's own seam, so the three branches share one reading of *"how short"*. A road nobody
+        // billed reads [`FULLY_SUPPLIED`] and is forgiven.
         let shortfall_fraction =
-            upkeep_shortfall_fraction(route.upkeep_basis(), route.upkeep_supplied);
+            upkeep_shortfall_fraction(road.upkeep_basis(), road.upkeep_supplied);
         if shortfall_fraction > FULLY_SUPPLIED {
-            route.neglect_turns = route.neglect_turns.saturating_add(1);
+            road.neglect_turns = road.neglect_turns.saturating_add(1);
         } else {
-            // Any turn the bill is met wipes the counter outright: the grace is about *consecutive*
-            // shortfall rather than a lifetime budget, which is the rule both food webs follow.
-            route.neglect_turns = NEGLECT_NONE;
+            road.neglect_turns = NEGLECT_NONE;
         }
-        // **2 — THE BLEED, at the at-risk rung's own rate, past that rung's own grace.** Three
-        // dials answering three questions, and `upkeep_decay` owns the `>` that decides whether the
-        // penalty is biting — so nothing here restates the grace comparison.
-        let at_risk = route_at_risk_rung(&route.standing());
+        // **2 — THE BLEED, at the at-risk rung's own rate, past that rung's own grace.**
+        // `upkeep_decay` owns the `>` that decides whether the penalty is biting, so nothing here
+        // restates the grace comparison.
+        let at_risk = road_at_risk_rung(&road.standing());
         let decay = ladder
             .rung(at_risk)
-            .upkeep_decay(shortfall_fraction, route.neglect_turns);
+            .upkeep_decay(shortfall_fraction, road.neglect_turns);
         if decay > NO_UPKEEP_DECAY {
-            // `set_position` floors at `RUNG_UNSTARTED`, so a road cannot bleed past the game trail
-            // — and it re-stamps the standing and the payoff, which is what keeps a decaying road's
-            // friction reading honest without a second producer.
-            let bled = route.position() - decay;
-            route.set_position(bled, &ladder);
+            let bled = road.position() - decay;
+            road.set_position(bled, &ladder);
         }
-        // **3 — the bill and this turn's payment, cleared on the one-turn cycle.** Both describe
-        // the keepers that held this road, so a road whose keepers have gone must stop reporting
-        // what they paid; clearing is also what re-arms phase 1 next turn.
-        route.upkeep_demanded = None;
-        route.upkeep_supplied = NO_UPKEEP_DEMAND;
+        // **3 — the bill and this turn's payment, cleared on the one-turn cycle.**
+        road.upkeep_demanded = None;
+        road.upkeep_supplied = NO_UPKEEP_DEMAND;
     }
 
-    // ## Phase 4 — bank this turn's traffic.
+    // ## Phase 4 — bank this turn's traffic, ON EVERY TILE THE JOURNEY CROSSED.
     //
     // Drained rather than read: this turn's traffic is spent once, and a turn with no pooling must
     // wear nothing rather than re-wearing last turn's links.
+    //
+    // ⛔ **THE RATE IS PER TILE OF ROAD PER TURN, and under the per-tile model that is literal.**
+    // The stored-path model banked `rate × path length` onto one object; here each tile a journey
+    // crosses banks `rate`, so a long haul wears many tiles a little rather than one object a lot —
+    // which is what makes *"one band keeps half the tiles and another the other half"* a state the
+    // traffic can actually produce.
     for (from, to) in std::mem::take(&mut traffic.links) {
-        let id = match ledger.road_joining(from, to) {
-            Some(id) => id,
-            None => {
-                let path = trace_path(from, to, width, height, wrap);
-                // A traced path always carries both ends, so this cannot be empty for `from != to` —
-                // and `walked` refuses a self-link, so the pair is never degenerate.
-                if path.len() < MEMBERS_TO_CARRY_A_LINK as usize {
-                    continue;
-                }
-                ledger.insert(path, &ladder)
-            }
-        };
-        let Some(route) = ledger.get_mut(id) else {
-            continue;
-        };
-        // **Per tile of road**, so a longer link banks proportionally more into the longer road it
-        // needs — which keeps a road's pace roughly independent of its length, exactly as the span
-        // keeps its cost proportional to it.
-        route.traffic_work += rate * route.path.len() as f32;
+        for tile in trace_path(from, to, width, height, wrap) {
+            registry.road_or_trail(tile, &ladder).traffic_work += rate;
+        }
     }
 
     // **The position IS the accumulator** (§2.8), so the turn's traffic is banked straight onto it
@@ -861,78 +858,61 @@ pub fn advance_routes(
     //
     // ## ⛔ AND IT IS CAPPED AT THE TOP OF THE FREE FLOOR (§4.13a rule 1)
     //
-    // [`traffic_ceiling`] is where traffic stops. A road already **above** it — one a band's
-    // builders graded or paved — is untouched by this pass: the `max` is what keeps the cap from
-    // dragging a paved road back down to a trail every turn a link runs over it, which would be a
-    // second producer of a position the builders' pool owns.
+    // A road already **above** the cap — one a band's builders graded or paved — is untouched: the
+    // `max` is what keeps the cap from dragging a paved road back down to a trail every turn a link
+    // runs over it, which would be a second producer of a position the builders' pool owns.
     let ceiling = traffic_ceiling(&ladder);
-    for (_, route) in ledger.iter_mut() {
-        if route.traffic_work <= NO_TRAFFIC {
-            // **Nothing walked here.** Consecutive idle turns, so a road that carried a link last
+    for road in registry.iter_mut() {
+        if road.traffic_work <= NO_TRAFFIC {
+            // **Nothing walked here.** Consecutive idle turns, so a road that carried a journey last
             // turn and none this one starts its count from one.
-            route.idle_turns = route.idle_turns.saturating_add(1);
+            road.idle_turns = road.idle_turns.saturating_add(1);
             continue;
         }
-        // Any traffic at all wipes the disuse counter — the same *"consecutive, never a lifetime
-        // budget"* rule the shortfall counter above runs on.
-        route.idle_turns = NEGLECT_NONE;
-        let banked = (route.position() + route.traffic_work).min(ceiling.max(route.position()));
-        route.traffic_work = NO_TRAFFIC;
-        route.set_position(banked, &ladder);
+        road.idle_turns = NEGLECT_NONE;
+        let banked = (road.position() + road.traffic_work).min(ceiling.max(road.position()));
+        road.traffic_work = NO_TRAFFIC;
+        road.set_position(banked, &ladder);
     }
 
     // ## ⛔ THE SECOND DECAY TRIGGER — DISUSE, AND IT OWNS THE FREE FLOOR ALONE
     //
     // **A rung that costs nothing to hold cannot be short**, so the shortfall path above can never
-    // reach `route:game_trail` or `route:trail`: they declare no `upkeep`, their demand is
-    // [`NO_UPKEEP_DEMAND`] and their shortfall is permanently zero. 13a collapsed both triggers into
-    // that one path, which left a free trail immortal — and *"an unused road reverts"* is
-    // `plan_contact_and_logistics.md` §Q4's own rule, restored here to its own trigger.
-    //
-    // **The two triggers do not overlap.** This one is gated on the position sitting **inside** the
-    // free floor's span; the shortfall bleed above is gated by the arithmetic on rungs that declare
-    // an `upkeep`, which is everything above it. A dirt road nobody walks is lost because nobody
-    // **pays** for it, which is rule 3 for the built half and needs no traffic term.
-    //
-    // **The loss is FLAT rather than proportional**, unlike the shortfall bleed: a bill can be partly
-    // paid, but traffic is a yes/no — a road either carried a link this turn or it did not — so there
-    // is no fraction to scale by.
+    // reach `route:game_trail` or `route:trail`. The loss is **FLAT rather than proportional**,
+    // unlike the shortfall bleed: a bill can be partly paid, but traffic is a yes/no.
     //
     // It runs **after** the banking, because whether a road was idle is only known once this turn's
-    // links have been drained onto it.
+    // journeys have been drained onto it.
     let grace = ladder.route_traffic.disuse_grace_turns;
     let loss = ladder.route_traffic.disuse_loss_per_turn;
-    for (_, route) in ledger.iter_mut() {
-        if route.position() > ceiling {
+    for road in registry.iter_mut() {
+        if road.position() > ceiling {
             continue;
         }
-        if u32::from(route.idle_turns) <= grace {
+        if u32::from(road.idle_turns) <= grace {
             continue;
         }
-        let bled = route.position() - loss;
-        route.set_position(bled, &ladder);
+        let bled = road.position() - loss;
+        road.set_position(bled, &ladder);
     }
 
     // ## ⛔ THE PRUNE, AND IT MUST COME AFTER THE BANKING
     //
-    // **A game trail with no work in it is indistinguishable from no road at all** — it holds the
-    // free floor, buys nothing, lights nothing and owes nothing — so a ledger that kept every road
-    // it ever laid would grow without bound on reverted trails, and every one of them would be a
-    // live answer to `routes_on_tile` that carried no traffic and no payoff.
+    // **A game trail with no work in it is indistinguishable from no road at all** — it buys
+    // nothing, lights nothing and owes nothing — so a registry that kept every tile ever walked
+    // would grow without bound on reverted trails.
     //
-    // **After the banking, because a road laid THIS turn is at `RUNG_UNSTARTED` until its first
-    // traffic lands.** Pruning before phase 4 would delete every road on the turn it formed, which
-    // is the whole feature.
+    // **After the banking, because a tile first crossed THIS turn is at `RUNG_UNSTARTED` until its
+    // traffic lands.** Pruning before phase 4 would delete every road on the turn it formed.
     //
-    // Remembering that animals once walked there is **issue #215's concern, not this ledger's**: the
-    // game trail is a rung, and #215 is about seeding the world with them.
-    let reverted: Vec<RouteId> = ledger
+    // Remembering that animals once walked there is **issue #215's concern, not this registry's**.
+    let reverted: Vec<UVec2> = registry
         .iter()
-        .filter(|(_, route)| route.position() <= RUNG_UNSTARTED)
-        .map(|(id, _)| id)
+        .filter(|(_, road)| road.position() <= RUNG_UNSTARTED)
+        .map(|(tile, _)| tile)
         .collect();
-    for id in reverted {
-        ledger.remove(id);
+    for tile in reverted {
+        registry.remove(tile);
     }
 }
 
@@ -949,11 +929,22 @@ mod tests {
         RungKey::RoutePavedRoad,
     ];
 
+    fn dirt_road_top(ladder: &LadderConfig) -> f32 {
+        let (base, width) = road_rung_span(RungKey::RouteDirtRoad, ladder, NEAR_ENOUGH_TO_KEEP);
+        base + width
+    }
+
+    /// Seat a kept dirt road on `tile`, with a bill that is met — the state every payoff claim below
+    /// is read at, because `grants_sight` gates both of them on the paid bill.
+    fn seat_a_kept_dirt_road(registry: &mut RoadRegistry, tile: UVec2, ladder: &LadderConfig) {
+        let top = dirt_road_top(ladder);
+        let road = registry.road_or_trail(tile, ladder);
+        road.set_position(top, ladder);
+        road.upkeep_demanded = Some(NO_UPKEEP_DEMAND);
+    }
+
     /// ⛔ **THE LIVENESS CLAIM EVERY OTHER TEST IN THIS FILE RESTS ON.** Without it, a branch that
     /// silently failed to load would leave every assertion below passing over an empty ladder.
-    ///
-    /// It pins the coded climb against the shipped records' own `order`, which is the pairing
-    /// `the_coded_climb_matches_the_shipped_ladders_own_order` already makes for the two food webs.
     #[test]
     fn the_shipped_ladder_carries_four_route_rungs_and_a_position_climbs_them() {
         let ladder = LadderConfig::builtin();
@@ -969,7 +960,7 @@ mod tests {
         }
 
         // The floor is held at zero work, costs nothing, and is nobody's to keep.
-        let floor = route_standing_at(&ladder, RUNG_UNSTARTED);
+        let floor = road_standing_at(&ladder, RUNG_UNSTARTED, NEAR_ENOUGH_TO_KEEP);
         assert_eq!(floor.held, RungKey::RouteGameTrail);
         assert_eq!(floor.raising, Some(RungKey::RouteTrail));
         assert!(
@@ -984,7 +975,7 @@ mod tests {
             .filter_map(|key| ladder.rung(*key).build.as_ref())
             .map(|build| build.work_cost)
             .sum();
-        let top = route_standing_at(&ladder, all_the_work);
+        let top = road_standing_at(&ladder, all_the_work, NEAR_ENOUGH_TO_KEEP);
         assert_eq!(
             top.held,
             RungKey::RoutePavedRoad,
@@ -994,16 +985,11 @@ mod tests {
     }
 
     /// ⛔ **THE FREE FLOOR AND THE FIRST BUILT RUNG ARE ADJACENT, AND THE FLOOR IS EXACTLY THE RUNGS
-    /// THAT COST NOTHING TO HOLD.**
+    /// THAT COST NOTHING TO HOLD — AND THE ONES NO VERB RAISES.**
     ///
-    /// [`FREE_FLOOR_TOP_RUNG`] and [`FIRST_BUILT_RUNG`] are two constants because [`RungKey::above`]
-    /// is not `const`, so nothing in the type system stops them drifting apart — and a gap or an
-    /// overlap between them would put a rung in neither half of the branch, or in both.
-    ///
-    /// **The second half is the load-bearing one** (`docs/plan_standing_upkeep.md` §4.13a): the
-    /// coded line and the *config's* line have to be the same line. If a future retune gave
-    /// `route:trail` an `upkeep` back, this fails here rather than silently handing a band a bill for
-    /// a road it never ordered — which is exactly the defect the slice was opened for.
+    /// The verb half is what replaced `RungBranch::is_crew_built`: *"does this rung declare a
+    /// `verb`"* answers the same question at the correct grain, now that the branch is no longer
+    /// uniformly crew-free.
     #[test]
     fn the_free_floor_and_the_first_built_rung_are_adjacent() {
         assert_eq!(
@@ -1024,6 +1010,14 @@ mod tests {
                 if free { "inside" } else { "above" },
                 if free { "declare no" } else { "declare" }
             );
+            assert_eq!(
+                ladder.rung(rung).verb.is_none(),
+                free,
+                "{} is {} the coded free floor, so it must {} a verb",
+                rung.wire_key(),
+                if free { "inside" } else { "above" },
+                if free { "declare no" } else { "declare" }
+            );
             match rung.above() {
                 Some(next) => rung = next,
                 None => break,
@@ -1031,7 +1025,7 @@ mod tests {
         }
 
         // And the cap really is the top of that floor, in the position units traffic banks in.
-        let (base, width) = route_rung_span(FREE_FLOOR_TOP_RUNG, &ladder);
+        let (base, width) = road_rung_span(FREE_FLOOR_TOP_RUNG, &ladder, NEAR_ENOUGH_TO_KEEP);
         assert_eq!(
             traffic_ceiling(&ladder),
             base + width,
@@ -1039,72 +1033,66 @@ mod tests {
         );
     }
 
-    /// ⛔ **THE SPAN IS A SUM OVER THE TILES CROSSED — NOT AN AVERAGE, AND NOT A TILE COUNT.**
+    /// ⛔ **THE MEASURE IS THIS TILE'S OWN GROUND, PRICED BY DISTANCE — AND IT IS NOT A LENGTH.**
     ///
-    /// Both failure modes are asserted against explicitly, because each one passes the *other's*
-    /// test: an average is right about terrain and blind to length, a bare tile count is right about
-    /// length and blind to terrain. Only a sum is right about both.
+    /// The path object's `length × terrain` sum went with the path. What is left is the same shape
+    /// the plant web reads: one tile, its own ground, times what distance did to the price.
     #[test]
-    fn the_span_is_a_sum_over_the_tiles_crossed_and_never_an_average_or_a_tile_count() {
-        let valley_span = span_of_terrains([TerrainType::AlluvialPlain; 4]);
-        let range_span = span_of_terrains([TerrainType::AlpineMountain; 4]);
-        let short_range_span = span_of_terrains([TerrainType::AlpineMountain; 2]);
+    fn the_measure_is_the_tiles_own_ground_times_what_distance_did_to_it() {
+        let valley = road_upkeep_measure(TerrainType::AlluvialPlain, NEAR_ENOUGH_TO_KEEP);
+        let range = road_upkeep_measure(TerrainType::AlpineMountain, NEAR_ENOUGH_TO_KEEP);
 
-        // The arithmetic itself, stated rather than merely compared.
         assert!(
-            (valley_span - 4.0 * 0.9).abs() < 1.0e-5,
-            "four tiles of alluvial plain sum to 4 × 0.9, got {valley_span}"
+            (valley - 0.9).abs() < 1.0e-5,
+            "a tile of alluvial plain measures its own infrastructure_cost, got {valley}"
+        );
+        assert!(
+            range > valley,
+            "a road over a range costs more to hold than one down a river valley ({range} vs \
+             {valley}) — the per-terrain answer terrain.rs carried unread for 37 biomes"
         );
 
-        // **Kills the tile count**: same length, different country, different price.
+        let remote = road_upkeep_measure(TerrainType::AlluvialPlain, 2.0);
         assert!(
-            range_span > valley_span,
-            "a road over a range costs more to hold than one down a river valley ({range_span} vs \
-             {valley_span}) — the per-terrain answer terrain.rs has carried unread for 37 biomes"
-        );
-        // **Kills the average**: same country, different length, different price.
-        assert!(
-            range_span > short_range_span,
-            "twice the road through the same country costs twice as much ({range_span} vs \
-             {short_range_span}); averaging prices these identically and deletes the length half of \
-             `length × terrain`"
-        );
-        assert!(
-            (range_span - 2.0 * short_range_span).abs() < 1.0e-5,
-            "and it is exactly linear in length"
+            (remote - 2.0 * valley).abs() < 1.0e-5,
+            "and the remoteness quote is a SCALE term on it, never an offset (§2.7)"
         );
     }
 
-    /// Every route rung reads its own geometry, and no food-web rung does.
+    /// ⛔ **THE SCALE PRIMITIVE COLLAPSED**: `RouteSpan` retired into `SourceLoad` with a per-branch
+    /// reading, which is §4.11's stated preference. Every rung that owes anything now names one
+    /// measure, and the route branch supplies its own reading of it.
     #[test]
-    fn the_route_branch_is_the_only_branch_that_scales_on_its_own_geometry() {
+    fn every_rung_that_owes_anything_scales_on_the_one_scale_primitive() {
         let ladder = LadderConfig::builtin();
+        let mut route_rungs_with_upkeep = 0;
         for rung in &ladder.rungs {
             let Some(upkeep) = rung.upkeep.as_ref() else {
                 continue;
             };
-            let expected = if rung.branch == RungBranch::Route {
-                UpkeepScale::RouteSpan
-            } else {
-                UpkeepScale::SourceLoad
-            };
             assert_eq!(
                 upkeep.scaled_by,
-                expected,
-                "{}:{} scales on the wrong measure",
+                UpkeepScale::SourceLoad,
+                "{}:{} scales on a measure that no longer exists",
                 rung.branch.as_str(),
                 rung.id
             );
+            if rung.branch == RungBranch::Route {
+                route_rungs_with_upkeep += 1;
+            }
         }
+        assert_eq!(
+            route_rungs_with_upkeep, 2,
+            "the two built route rungs are the ones that owe — the liveness half of the claim above"
+        );
     }
 
-    /// The bill is the rung's rate times the road's own span — one rule, and the whole reason a
+    /// The bill is the rung's rate times the tile's own measure — one rule, and the whole reason a
     /// valley road is cheap to keep and a mountain road is dear.
     ///
-    /// **It is asked of the DIRT ROAD, because the trail beneath it is free** — the whole free floor
-    /// declares no `upkeep` (§4.13a), and a `0` rate would make the span term unmeasurable.
+    /// **It is asked of the DIRT ROAD, because the trail beneath it is free.**
     #[test]
-    fn the_keeping_bill_is_the_rungs_rate_times_the_roads_span() {
+    fn the_keeping_bill_is_the_rungs_rate_times_the_tiles_measure() {
         let ladder = LadderConfig::builtin();
         let road = ladder.rung(RungKey::RouteDirtRoad);
         let rate = road
@@ -1113,12 +1101,12 @@ mod tests {
             .expect("the dirt road is the first rung anybody keeps")
             .work_per_turn;
 
-        let valley = span_of_terrains([TerrainType::AlluvialPlain; 5]);
-        let range = span_of_terrains([TerrainType::AlpineMountain; 5]);
+        let valley = road_upkeep_measure(TerrainType::AlluvialPlain, NEAR_ENOUGH_TO_KEEP);
+        let range = road_upkeep_measure(TerrainType::AlpineMountain, NEAR_ENOUGH_TO_KEEP);
 
         assert!(
             (road.upkeep_demand(valley) - rate * valley).abs() < 1.0e-5,
-            "the demand is rate × span"
+            "the demand is rate × measure"
         );
         assert!(
             road.upkeep_demand(range) > road.upkeep_demand(valley),
@@ -1135,151 +1123,286 @@ mod tests {
         }
     }
 
-    /// **RULE 2 — the road's own path is the catchment.** A band standing on the road is served; one
-    /// standing a tile off it is not, and there is no radius to soften that.
+    /// ⛔ **DISTANCE IS A COST AND IT IS READ THROUGH THE SEAM.** One config edit moves the seam's
+    /// answer, and **both** the upkeep and the build pile move with it — which is what a bare
+    /// `cfg.base_tiles` read at one call site could not do.
     #[test]
-    fn a_band_is_served_only_while_it_stands_on_the_road() {
+    fn a_road_beyond_the_range_costs_more_to_build_and_more_to_hold() {
         let ladder = LadderConfig::builtin();
-        let mut ledger = RouteLedger::default();
-        let path = vec![UVec2::new(3, 3), UVec2::new(4, 3), UVec2::new(5, 3)];
-        let id = ledger.insert(path.clone(), &ladder);
+        let base = road_keeping_range(&ladder);
 
-        for tile in &path {
-            assert_eq!(
-                ledger.routes_on_tile(*tile),
-                &[id],
-                "a band camped on {tile:?} is on this road"
-            );
-        }
+        assert_eq!(
+            remoteness_multiplier(base, &ladder),
+            NEAR_ENOUGH_TO_KEEP,
+            "a road at the edge of the base range costs exactly what the rung says"
+        );
+        let remote = remoteness_multiplier(base + 1, &ladder);
         assert!(
-            ledger.routes_on_tile(UVec2::new(4, 4)).is_empty(),
-            "ONE TILE OFF THE ROAD IS OFF THE ROAD — accepted, and deliberately not softened with a \
-             radius, which is the 'close enough' constant this rule exists to avoid"
+            remote > NEAR_ENOUGH_TO_KEEP,
+            "and one tile past it costs more — a THRESHOLD, not a curve"
+        );
+
+        // The upkeep half.
+        let near = road_upkeep_measure(
+            TerrainType::AlluvialPlain,
+            remoteness_multiplier(base, &ladder),
+        );
+        let far = road_upkeep_measure(
+            TerrainType::AlluvialPlain,
+            remoteness_multiplier(base + 1, &ladder),
+        );
+        let dirt = ladder.rung(RungKey::RouteDirtRoad);
+        assert!(
+            dirt.upkeep_demand(far) > dirt.upkeep_demand(near),
+            "the same road is dearer to hold when its keeper is far from it"
+        );
+
+        // The build half — the same seam, the same edit.
+        let near_cost = road_rung_cost(RungKey::RouteDirtRoad, &ladder, NEAR_ENOUGH_TO_KEEP)
+            .expect("a dirt road is something to build");
+        let far_cost = road_rung_cost(RungKey::RouteDirtRoad, &ladder, remote)
+            .expect("a dirt road is something to build");
+        assert!(
+            far_cost > near_cost,
+            "and slower to build: {far_cost} against {near_cost}"
+        );
+
+        // ⛔ **AND THE FREE FLOOR IS NEVER RE-PRICED**, which is what keeps the traffic cap one
+        // number for every road on the map.
+        assert_eq!(
+            road_rung_cost(RungKey::RouteTrail, &ladder, remote),
+            road_rung_cost(RungKey::RouteTrail, &ladder, NEAR_ENOUGH_TO_KEEP),
+            "traffic wears a trail in and traffic does not care how far anybody's camp is"
         );
     }
 
-    /// **RULE 4 — new traffic prefers a road that already joins both ends**, which is why real road
-    /// networks consolidate instead of sprawling into near-duplicates.
-    #[test]
-    fn new_traffic_prefers_a_road_that_already_joins_both_ends() {
-        let ladder = LadderConfig::builtin();
-        let mut ledger = RouteLedger::default();
-        let id = ledger.insert(
-            vec![UVec2::new(1, 1), UVec2::new(2, 1), UVec2::new(3, 1)],
-            &ladder,
-        );
-
-        assert_eq!(
-            ledger.road_joining(UVec2::new(1, 1), UVec2::new(3, 1)),
-            Some(id),
-            "both ends stand on it, so this traffic widens the existing road"
-        );
-        assert_eq!(
-            ledger.road_joining(UVec2::new(1, 1), UVec2::new(9, 9)),
-            None,
-            "a road reaching only one of the two ends is not a road you are walking, so new traffic \
-             wears its own"
-        );
-    }
-
-    /// ⛔ **A ROAD LIGHTS ITS TILES ONLY WHILE IT IS BUILT *AND* KEPT** — and all three states are
+    /// ⛔ **A ROAD LIGHTS ITS TILE ONLY WHILE IT IS BUILT *AND* KEPT** — and all three states are
     /// asserted, because any two of them pass with the third condition dropped.
     #[test]
-    fn a_road_lights_its_tiles_only_while_it_is_built_and_kept() {
+    fn a_road_lights_its_tile_only_while_it_is_built_and_kept() {
         let ladder = LadderConfig::builtin();
-        let mut route = Route::worn_in(vec![UVec2::new(2, 2)], &ladder);
+        let mut road = Road::worn_in(UVec2::new(2, 2), &ladder);
 
         // ① The floor. Nobody maintains a game trail, so it lights nothing.
-        assert!(!route.is_built());
+        assert!(!road.is_built());
         assert!(
-            !route.grants_sight(),
+            !road.grants_sight(),
             "a GAME TRAIL grants no sight — it is free precisely because nobody keeps it"
         );
 
-        // ①b **AND NEITHER DOES A FULLY WORN TRAIL** (§4.13a). The trail is the floor's second
-        //     storey: traffic wears it in and nobody pays a thing for it, so *"paying the upkeep IS
-        //     the presence"* has nothing to stand on. This is the half that would pass on a build
-        //     where `is_built()` was still `!= game_trail`.
-        route.set_position(traffic_ceiling(&ladder), &ladder);
-        assert_eq!(route.held_rung(), FREE_FLOOR_TOP_RUNG);
-        assert!(!route.is_built(), "the whole free floor is unbuilt");
-        route.upkeep_demanded = Some(NO_UPKEEP_DEMAND);
-        route.upkeep_supplied = NO_UPKEEP_DEMAND;
+        // ①b **AND NEITHER DOES A FULLY WORN TRAIL** (§4.13a).
+        road.set_position(traffic_ceiling(&ladder), &ladder);
+        assert_eq!(road.held_rung(), FREE_FLOOR_TOP_RUNG);
+        assert!(!road.is_built(), "the whole free floor is unbuilt");
+        road.upkeep_demanded = Some(NO_UPKEEP_DEMAND);
         assert!(
-            route.keeping_is_met(),
+            road.keeping_is_met(),
             "precondition: a free trail owes nothing, so its bill is trivially met"
         );
         assert!(
-            !route.grants_sight(),
+            !road.grants_sight(),
             "a TRAIL grants no sight either — it costs nothing to hold, so nobody is on it keeping \
              it, and the sight grant reasons from the PAID BILL"
         );
 
         // ② A built rung with its bill met.
-        let (dirt_base, dirt_width) = route_rung_span(RungKey::RouteDirtRoad, &ladder);
-        route.set_position(dirt_base + dirt_width, &ladder);
-        assert_eq!(route.held_rung(), RungKey::RouteDirtRoad);
-        assert!(route.is_built());
-        route.upkeep_demanded = Some(4.0);
-        route.upkeep_supplied = 4.0;
+        road.set_position(dirt_road_top(&ladder), &ladder);
+        assert_eq!(road.held_rung(), RungKey::RouteDirtRoad);
+        assert!(road.is_built());
+        road.upkeep_demanded = Some(4.0);
+        road.upkeep_supplied = 4.0;
         assert!(
-            route.grants_sight(),
-            "a KEPT trail is presence on that ground — paying the upkeep IS the traffic"
+            road.grants_sight(),
+            "a KEPT dirt road is presence on that ground — paying the upkeep IS the traffic"
         );
 
-        // ③ The same road, short of hands. It goes DARK BEFORE IT DECAYS, which is the honest early
-        //    warning that the road is being lost.
-        route.upkeep_supplied = 1.0;
+        // ③ The same road, short of hands. It goes DARK BEFORE IT DECAYS.
+        road.upkeep_supplied = 1.0;
         assert!(
-            route.upkeep_shortfall() > 0.0,
+            road.upkeep_shortfall() > 0.0,
             "precondition: this road really is short"
         );
         assert!(
-            !route.grants_sight(),
+            !road.grants_sight(),
             "a road in SHORTFALL goes dark before it decays — the condition is the PAID BILL, not \
              the held rung"
         );
     }
 
-    /// `trace_path` carries both ends, so rule 2 is true of a road the moment it is laid: the camps
-    /// that wore it in are standing on it by construction.
+    /// ⛔ **THE FREE FLOOR HAS NO KEEPER**, and a road that decays back into it loses the one it had:
+    /// there is nothing left to keep, and a `Roadwork` row naming it would be a job with no work.
+    #[test]
+    fn a_road_that_falls_back_into_the_free_floor_loses_its_keeper() {
+        let ladder = LadderConfig::builtin();
+        let mut road = Road::worn_in(UVec2::new(1, 1), &ladder);
+        road.set_position(traffic_ceiling(&ladder), &ladder);
+        assert_eq!(road.keeper, None, "a trail is nobody's job");
+
+        road.take_keeper(
+            RoadKeeper {
+                faction: FactionId(0),
+                band: BandId(7),
+            },
+            NEAR_ENOUGH_TO_KEEP,
+            &ladder,
+        );
+        assert!(
+            road.keeper.is_some(),
+            "a fresh `grade` leaves the keeper set with no work banked yet — clearing it HERE would \
+             undo the command on the turn it was typed"
+        );
+
+        road.set_position(traffic_ceiling(&ladder) - 1.0, &ladder);
+        assert_eq!(
+            road.keeper, None,
+            "back inside the free floor, the road is nobody's job again"
+        );
+    }
+
+    /// ⛔ **FRICTION AVERAGES ALONG THE TILES: A HALF-ROADED RUN PAYS ABOUT HALF.** Not nothing (the
+    /// dead *"best road"* rule, which would have called this a whole dirt road) and not full.
+    #[test]
+    fn friction_averages_along_the_run_so_half_a_road_pays_about_half() {
+        let ladder = LadderConfig::builtin();
+        let mut registry = RoadRegistry::default();
+        let path: Vec<UVec2> = (0..4).map(|x| UVec2::new(x, 0)).collect();
+
+        assert_eq!(
+            path_friction_multiplier(&registry, &path),
+            FRICTION_UNCHANGED,
+            "bare ground helps nothing"
+        );
+
+        // Two of the four tiles kept at a dirt road.
+        for tile in &path[..2] {
+            seat_a_kept_dirt_road(&mut registry, *tile, &ladder);
+        }
+        let dirt = ladder
+            .rung(RungKey::RouteDirtRoad)
+            .route_payoff
+            .expect("every route rung declares a payoff")
+            .friction_multiplier;
+        let half = path_friction_multiplier(&registry, &path);
+        let expected = (2.0 * dirt + 2.0 * FRICTION_UNCHANGED) / 4.0;
+        assert!(
+            (half - expected).abs() < 1.0e-5,
+            "half a roaded run is the mean of its tiles: {half} against {expected}"
+        );
+        assert!(
+            half > dirt && half < FRICTION_UNCHANGED,
+            "which is strictly between 'roaded all the way' and 'no road at all'"
+        );
+
+        // The other half, and the run is worth the whole rung.
+        for tile in &path[2..] {
+            seat_a_kept_dirt_road(&mut registry, *tile, &ladder);
+        }
+        assert!(
+            (path_friction_multiplier(&registry, &path) - dirt).abs() < 1.0e-5,
+            "and a wholly roaded run pays exactly the rung's own multiplier"
+        );
+    }
+
+    /// ⛔ **REACH TAKES THE WEAKEST TILE — ONE GAP BREAKS THE RUN.** A link goods must get *through*
+    /// is not most-of-the-way-there, which is why this is a minimum where the friction is a mean.
+    #[test]
+    fn reach_takes_the_weakest_tile_so_one_bare_tile_breaks_the_run() {
+        let ladder = LadderConfig::builtin();
+        let mut registry = RoadRegistry::default();
+        let path: Vec<UVec2> = (0..4).map(|x| UVec2::new(x, 0)).collect();
+
+        for tile in &path {
+            seat_a_kept_dirt_road(&mut registry, *tile, &ladder);
+        }
+        let dirt_reach = ladder
+            .rung(RungKey::RouteDirtRoad)
+            .route_payoff
+            .expect("every route rung declares a payoff")
+            .holds_link_to_tiles;
+        assert!(
+            dirt_reach > NO_REACH_HELD_OPEN,
+            "precondition: a dirt road holds something open"
+        );
+        assert_eq!(
+            path_reach_tiles(&registry, &path),
+            dirt_reach,
+            "a wholly roaded run holds what its rung holds — the liveness half"
+        );
+
+        // One tile in the middle taken back to bare ground.
+        registry.remove(path[2]);
+        assert_eq!(
+            path_reach_tiles(&registry, &path),
+            NO_REACH_HELD_OPEN,
+            "ONE GAP BREAKS THE LINK — the weakest tile is the answer, not the best one"
+        );
+    }
+
+    /// `trace_path` carries both ends, so the tiles a journey wears include the camps it ran between.
     #[test]
     fn a_traced_path_reaches_its_target_and_carries_both_ends() {
         let (from, to) = (UVec2::new(2, 2), UVec2::new(7, 5));
         let path = trace_path(from, to, 40, 30, false);
 
-        assert_eq!(path.first(), Some(&from), "the road starts at the camp");
+        assert_eq!(path.first(), Some(&from), "the journey starts at the camp");
         assert_eq!(path.last(), Some(&to), "and reaches the other one");
         assert!(
             path.len() >= 2,
-            "a road between two different tiles has at least two of them"
+            "a journey between two different tiles crosses at least two of them"
         );
         for pair in path.windows(2) {
             assert_eq!(
                 hex_distance_wrapped(pair[0], pair[1], 40, false),
                 1,
-                "every step of a road is one hex — {:?} to {:?} is not",
+                "every step of a journey is one hex — {:?} to {:?} is not",
                 pair[0],
                 pair[1]
             );
         }
     }
 
-    /// A road forgotten by rule 3 leaves no trace in the tile index either — otherwise
-    /// `routes_on_tile` would go on serving bands off a road that no longer exists.
+    /// The registry answers *"which roads are this band's job"* off the keeper and nothing else — the
+    /// catchment the `Roadwork` pool pays for.
     #[test]
-    fn forgetting_a_road_clears_the_tiles_it_ran_over() {
+    fn the_registry_answers_which_roads_are_this_bands_job() {
         let ladder = LadderConfig::builtin();
-        let mut ledger = RouteLedger::default();
-        let tile = UVec2::new(6, 6);
-        let id = ledger.insert(vec![tile, UVec2::new(7, 6)], &ladder);
-        assert!(!ledger.routes_on_tile(tile).is_empty(), "precondition");
+        let mut registry = RoadRegistry::default();
+        let ours = BandId(1);
+        let theirs = BandId(2);
+        for (x, band) in [(0u32, ours), (1, theirs), (2, ours)] {
+            let tile = UVec2::new(x, 0);
+            seat_a_kept_dirt_road(&mut registry, tile, &ladder);
+            registry.road_mut(tile).expect("just seated").take_keeper(
+                RoadKeeper {
+                    faction: FactionId(0),
+                    band,
+                },
+                NEAR_ENOUGH_TO_KEEP,
+                &ladder,
+            );
+        }
+        // And one tile nobody took on.
+        let bare = UVec2::new(3, 0);
+        let ceiling = traffic_ceiling(&ladder);
+        registry
+            .road_or_trail(bare, &ladder)
+            .set_position(ceiling, &ladder);
 
-        ledger.remove(id);
-        assert!(
-            ledger.routes_on_tile(tile).is_empty(),
-            "a forgotten road serves nobody"
+        let mine: Vec<UVec2> = registry.kept_by(ours).map(|(tile, _)| tile).collect();
+        assert_eq!(
+            mine,
+            vec![UVec2::new(0, 0), UVec2::new(2, 0)],
+            "one band keeps some of the tiles and another keeps the rest — which is the whole \
+             reason a road is a TILE improvement"
         );
-        assert!(ledger.is_empty());
+        assert_eq!(registry.kept_by(theirs).count(), 1);
+        assert!(
+            registry
+                .road(bare)
+                .expect("a trail is still a road")
+                .keeper
+                .is_none(),
+            "and the free floor is nobody's job"
+        );
     }
 }

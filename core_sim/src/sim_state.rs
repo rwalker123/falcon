@@ -71,7 +71,7 @@ use crate::{
         DiscoveryProgressLedger, FactionInventory, PendingCrisisSeeds, PendingCrisisSpawns,
         SentimentAxisBias, SimulationTick, TradeTelemetry,
     },
-    routes::RouteLedger,
+    routes::RoadRegistry,
     sedentarization::SedentarizationScore,
     sites::{DiscoveredSites, SiteTag},
     telling::BeatLedger,
@@ -164,14 +164,14 @@ pub struct SimState {
     /// checkpoint that dropped it would restore a world that had forgotten everyone it had met.
     /// Its `ContactsThisTurn` twin is genuinely derived and is deliberately not here.
     pub connections: ConnectionLedger,
-    /// Every road in the world, with its tile path and its position on the route branch. **State,
-    /// not derived** — for a stronger reason than the ties above it: a road is *in the ground* and
-    /// outlives the bands that wore it in, so there is nothing to rebuild one **from**. A checkpoint
-    /// that dropped it would restore a world whose roads had never been walked, with every band's
-    /// pooling silently back at the unrouted friction. Its `RouteTrafficLog` twin is genuinely
-    /// derived — written and drained inside one stage — and is deliberately not here, which is
-    /// `ContactsThisTurn`'s arrangement exactly.
-    pub routes: RouteLedger,
+    /// Every road in the world, one record per tile, with its keeper and its position on the route
+    /// branch. **State, not derived** — for a stronger reason than the ties above it: a road is *in
+    /// the ground* and outlives the bands that wore it in, so there is nothing to rebuild one
+    /// **from**. A checkpoint that dropped it would restore a world whose roads had never been
+    /// walked, with every band's pooling silently back at the unrouted friction. Its
+    /// `RouteTrafficLog` twin is genuinely derived — written and drained inside one stage — and is
+    /// deliberately not here, which is `ContactsThisTurn`'s arrangement exactly.
+    pub roads: RoadRegistry,
     pub corruption: CorruptionLedgers,
     pub corruption_telemetry: CorruptionTelemetry,
     pub counter_intel: CounterIntelBudgets,
@@ -349,7 +349,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         capability_flags: *world.resource::<CapabilityFlags>(),
         command_events: world.resource::<CommandEventLog>().clone(),
         connections: world.resource::<ConnectionLedger>().clone(),
-        routes: world.resource::<RouteLedger>().clone(),
+        roads: world.resource::<RoadRegistry>().clone(),
         corruption: world.resource::<CorruptionLedgers>().clone(),
         corruption_telemetry: world.resource::<CorruptionTelemetry>().clone(),
         counter_intel: world.resource::<CounterIntelBudgets>().clone(),
@@ -524,7 +524,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     // copy is a prefix of the live one and everything appended after the checkpoint goes away.
     world.insert_resource(state.command_events.clone());
     world.insert_resource(state.connections.clone());
-    world.insert_resource(state.routes.clone());
+    world.insert_resource(state.roads.clone());
     world.insert_resource(state.corruption.clone());
     world.insert_resource(state.corruption_telemetry.clone());
     world.insert_resource(state.counter_intel.clone());

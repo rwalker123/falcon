@@ -144,7 +144,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "abandon",
         aliases: &[],
-        summary: "PUT A SOURCE DOWN: drop your bands' holding of it - the labor row AND its build-queue entry - on every band of the faction working it. THE METERS ARE UNTOUCHED: the ground keeps whatever is on it and, with nobody holding it, rots back down at the rung's own rate over the following turns exactly as an unkept improvement does. It exists because a meter is billed to the keeping pool from the first work banked, so a half-built patch you have lost interest in otherwise draws keepers forever. ONE BIT PER SOURCE, never a number - this is disposal, not a smaller share. Nothing is destroyed on the spot, so it needs no confirmation. Two integer tokens name a TILE; one token names a HERD id.",
+        summary: "PUT A SOURCE DOWN: drop your bands' holding of it - the labor row AND its build-queue entry - on every band of the faction working it. THE METERS ARE UNTOUCHED: the ground keeps whatever is on it and, with nobody holding it, rots back down at the rung's own rate over the following turns exactly as an unkept improvement does. It exists because a meter is billed to the keeping pool from the first work banked, so a half-built patch you have lost interest in otherwise draws keepers forever. ONE BIT PER SOURCE, never a number - this is disposal, not a smaller share. Nothing is destroyed on the spot, so it needs no confirmation. Two integer tokens name a TILE; one token names a HERD id. A TILE MAY CARRY A ROAD AS WELL AS A PATCH, and this puts down both: the road stops being your band's job, its build-queue entry goes with it, and with nobody keeping it the roadbed rots back down at the rung's own rate. That is also the per-road choice the band-wide `roadwork` pool needs - the pool covers every road the band keeps, so 'pay for this one and not that one' is said here.",
         usage: "abandon <faction_id> <x> <y> | abandon <faction_id> <herd_id>",
     },
     CommandVerbHelp {
@@ -212,6 +212,18 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         aliases: &[],
         summary: "DECLARE a Corral on your domesticated herd at a tile: appended to the build queue of every band hunting it and raised by the band's `builders` pool at the head of that queue - this names no workers. An investment that pays a reduced take while the pen is built, then pins the herd there (needs Penning knowledge, earned by working herds you have already TAMED — Herding gates tame, not corral).",
         usage: "corral <faction_id> <x> <y>",
+    },
+    CommandVerbHelp {
+        verb: "grade",
+        aliases: &[],
+        summary: "DECLARE a dirt road on ONE TILE, and make that tile's road the named band's job. A ROAD IS A TILE IMPROVEMENT, not a path: each tile carries its own rung, its own meter, its own keeper and its own decay, which is what lets one band keep half the tiles between two camps and another band keep the rest. Appended to that band's build queue and raised by its `builders` pool at the head of the queue - this names no workers. IT NAMES A BAND, unlike `cultivate`: a patch's keeper is whoever is already foraging it, and a road has no work row at all, so who will keep it has to be said out loud. ONE KEEPER PER TILE, never a share - a second band cannot become a co-payer of a tile you keep. Re-issuing it on a road nobody keeps ADOPTS it; there is no separate adoption verb. Needs Roadbuilding knowledge (earned by a trail carrying traffic) and a tile that has already been worn to a trail. DISTANCE IS A COST, NEVER A WALL: no tile is refused for being far from your camp, but beyond the base keeping range both the build and the upkeep cost more. Use `abandon <faction_id> <x> <y>` to put a road down.",
+        usage: "grade <faction_id> <band_id> <x> <y>",
+    },
+    CommandVerbHelp {
+        verb: "pave",
+        aliases: &[],
+        summary: "DECLARE a paved road on one tile - `grade`'s twin one rung up, on the same terms, naming the keeper the same way. Needs Paving knowledge (earned by KEEPING a dirt road, not by building one) and a tile that is ALREADY a dirt road. A paved road is dearer to hold than a dirt road and far more forgiving of neglect, because the roadbed does the holding.",
+        usage: "pave <faction_id> <band_id> <x> <y>",
     },
     CommandVerbHelp {
         verb: "extend_pen",
@@ -1063,6 +1075,42 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 target_x: parse_u32(x_str, "corral target_x")?,
                 target_y: parse_u32(y_str, "corral target_y")?,
             })
+        }
+        // ⛔ **THE ROUTE BRANCH'S TWO TILE VERBS**, in `cultivate`/`sow`'s grammar **plus a band**.
+        // A road has no work row for the keeper to be inferred from, so the band that will keep the
+        // tile is a token rather than a lookup — and one tile has exactly one keeper.
+        verb @ ("grade" | "pave") => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            let faction_id = parse_u32(faction_str, "faction")?;
+            let band_id = parse_u64(band_str, "band_id")?;
+            let target_x = parse_u32(x_str, "target_x")?;
+            let target_y = parse_u32(y_str, "target_y")?;
+            if verb == "grade" {
+                Ok(CommandPayload::Grade {
+                    faction_id,
+                    band_id,
+                    target_x,
+                    target_y,
+                })
+            } else {
+                Ok(CommandPayload::Pave {
+                    faction_id,
+                    band_id,
+                    target_x,
+                    target_y,
+                })
+            }
         }
         "extend_pen" => {
             let faction_str = parts

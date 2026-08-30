@@ -5358,24 +5358,26 @@ table ConnectionSection {
   connections:[ConnectionState];
 }
 
-// --- Routes: the roads in the ground (arc #532, docs/plan_standing_upkeep.md 4.13) ---------------
-// ONE ROW PER ROAD. A road is a WORLD OBJECT with a fixed tile path and its own id - it is NOT an
-// edge between two bands and it does NOT follow a camp. The bands standing on it are who USES it,
-// never what it IS, so there is no band pair anywhere on this row.
+// --- Roads: the roads in the ground (arc #532, docs/plan_standing_upkeep.md 4.13b) --------------
+// ONE ROW PER TILE. A road is a PER-TILE IMPROVEMENT, structurally identical to a forage patch: each
+// tile carries its own rung, its own meter, its own keeper and its own decay. It is NOT an edge
+// between two bands and it does NOT follow a camp.
 //
-// Published for roads the VIEWING FACTION CAN SEE: a road at least one of whose path tiles the
-// faction has explored (Discovered or Active). A road on ground nobody of yours has ever stood on
-// does not reach you. `Discovered` and not `Active` is right here where it would be wrong for a
+// *** THERE IS NO STORED PATH ON THIS ROW, and that is the model. *** A path object cannot be
+// half-maintained - there was no way to say "these people look after this end and those people look
+// after that end", which is the ordinary case the moment two camps sit at either end of a long road.
+// A link already knows its two endpoints, so the tiles between them are computable; the link is the
+// object and the roads are the ground it runs over.
+//
+// Published for roads the VIEWING FACTION CAN SEE: a road whose tile the faction has explored
+// (Discovered or Active). `Discovered` and not `Active` is right here where it would be wrong for a
 // herd: a road does not wander off, so remembering one is remembering something true.
 table RouteState {
-  // The RouteId. Stable for the life of the road, never reused, and what a client joins and diffs
-  // rows on.
-  id:ulong;
-  // THE TILES THIS ROAD RUNS OVER, IN PATH ORDER, zipped x/y (the `pendingRevealX`/`Y` convention).
-  // Stamped once from the path the first traffic walked and never re-derived, so a client may cache
-  // the polyline against `id` and redraw it only when the id is new.
-  pathX:[uint];
-  pathY:[uint];
+  // THE TILE THIS ROAD IS ON - the row's identity, and what a client joins and diffs rows on. It
+  // replaced the retired RouteId: with one record per tile there is nothing left for a separate id
+  // to name.
+  tileX:uint;
+  tileY:uint;
   // The rung this road HOLDS, as "<branch>:<id>" via RungKey::wire_key - "route:game_trail",
   // "route:trail", "route:dirt_road", "route:paved_road".
   //
@@ -5392,19 +5394,40 @@ table RouteState {
   // that has just completed a rung reads EXACTLY 1.0 here, and so does one at the top of the ladder
   // (there is nothing left to raise - draw a full bar, not an empty one).
   buildFraction:float = 0;
+  // WHOSE JOB THIS TILE IS.
+  //
+  // hasKeeper      = is this tile anybody's job at all? FALSE ACROSS THE WHOLE FREE FLOOR - a game
+  //                  trail and a trail are formed by use and nobody keeps them, which is the
+  //                  commonest road in the game rather than an edge case. READ THIS FIRST:
+  //                  `keeperBandId` 0 is a real band id, so the bool is the field that answers.
+  // keeperBandId   = the BandId of the band that graded or paved this tile. ONE KEEPER PER TILE,
+  //                  NEVER A SHARE - which is what makes "one band keeps half the tiles between two
+  //                  camps and another the other half" the representable state, and co-payment the
+  //                  unrepresentable one. Re-issuing `grade`/`pave` on a road nobody keeps is how
+  //                  another band adopts it; there is deliberately no separate adoption verb.
+  hasKeeper:bool = false;
+  keeperBandId:ulong = 0;
+  // WHAT DISTANCE DID TO THIS ROAD'S PRICE, as a multiple of the rung's own - quoted when the keeper
+  // took the tile on and held for the whole job (ForagePatch::field_cost_multiplier's discipline).
+  // 1.0 inside the base range and on every road nobody keeps; higher beyond it.
+  //
+  // *** DISTANCE IS A COST, NEVER A WALL. *** No road is refused for being far away - there is no
+  // work-range rule on this branch at all - and this multiplier is the whole of what bounds a distant
+  // road: it is dearer to hold AND slower to build. Published because it is the only way a client can
+  // explain a bill larger than the rung says.
+  keeperRemoteness:float = 1;
   // THE STANDING BILL, in work units per turn - the road twin of the patch and herd rows' identical
   // four fields.
   //
   // *** demand - supplied == shortfall HOLDS VERBATIM ON THE WIRE. *** All three read the STAMPED
-  // basis (`routes::route_keeping_basis`), never the live interpolated demand, because a road's
-  // demand moves within a turn as bands walk on and off it. This branch has had that defect twice.
+  // basis (`routes::road_keeping_basis`), never the live interpolated demand.
   //
   // upkeepDemand         = what this road was billed this turn. 0 for a road that owes nothing,
-  //                        which is a game trail - nobody maintains one, and that is the whole of
-  //                        what makes the floor free.
-  // upkeepSupplied       = what the bands standing on it actually paid. ACCUMULATES across them:
-  //                        several bands may stand on one road and each pays a part.
-  // upkeepShortfall      = what the bill left unpaid.
+  //                        which is the whole free floor - nobody maintains a trail, and that is the
+  //                        whole of what makes the floor free.
+  // upkeepSupplied       = what its keeper actually paid, out of that band's `roadwork` pool.
+  // upkeepShortfall      = what the bill left unpaid. A road nobody keeps owes its bill to nobody,
+  //                        so it is wholly short and decays.
   // upkeepWorkersNeeded  = whole `roadwork` keepers the bill wants, ceil(demand / per-worker
   //                        output) - the readout that makes a standing cost legible ("wants 2, you
   //                        have 0"). 0 for a road that owes nothing.
@@ -5414,29 +5437,29 @@ table RouteState {
   upkeepWorkersNeeded:uint = 0;
   // THE NEGLECT COUNTDOWN, not the counter. `neglectGraceRemaining` is turns of shortfall left
   // before the rung starts to bleed: 0 means IT IS REVERTING NOW, and a road whose bill is met reads
-  // its rung's full grace + 1 ("walk away and you have this long"). Resolved through the same
-  // at-risk-rung seam `advance_routes` bleeds through, so the wire cannot count down against a rung
-  // the sim is not touching.
+  // its rung's full grace + 1 ("walk away and you have this long").
   //
-  // `hasNeglectGrace = false` means THERE IS NOTHING AT RISK HERE - a road holding only the game
-  // trail, which declares no upkeep and so has no meter to lose. Read the bool first;
-  // `neglectGraceRemaining` reuses the "biting now" 0 rather than inventing a sentinel.
+  // `hasNeglectGrace = false` means THERE IS NOTHING AT RISK HERE - a road on the free floor, which
+  // declares no upkeep and so has no meter to lose. Read the bool first; `neglectGraceRemaining`
+  // reuses the "biting now" 0 rather than inventing a sentinel.
   hasNeglectGrace:bool = false;
   neglectGraceRemaining:uint = 0;
-  // *** IS THIS ROAD LIGHTING ITS OWN TILES RIGHT NOW? *** The RESOLVED answer, because a client
+  // *** IS THIS ROAD LIGHTING ITS OWN TILE RIGHT NOW? *** The RESOLVED answer, because a client
   // cannot re-derive "is the bill met" - that is a comparison against the stamped basis with the
   // sim's own epsilon. True iff the road stands at a BUILT rung and its keeping was met, which is
   // why a road in shortfall GOES DARK BEFORE IT DECAYS: the honest early warning that it is being
-  // lost. The tiles it lights are its own `pathX`/`pathY`, for the factions standing on it.
+  // lost. The fog it lifts is its KEEPER's - paying the upkeep IS the presence.
   grantsSight:bool = false;
-  // WHAT THIS RUNG IS BUYING, off the road's own stamped payoff.
+  // WHAT THIS RUNG IS BUYING, off the tile's own stamped payoff.
   //
-  // frictionMultiplier = the fraction of the base pooling friction a network bound by this road
-  //                      pays. 1.0 = no help (the game trail). Read by `balance_supply_networks`
-  //                      today, through the BEST road binding a component.
-  // holdsLinkToTiles   = how far this rung holds a pooling link open, in tiles - the capability the
-  //                      top rungs are about. 0 on the game trail is a live reading, not a parked
-  //                      dial: a path the animals made holds nothing open.
+  // frictionMultiplier = the fraction of the base pooling friction a haul over THIS TILE pays.
+  //                      1.0 = no help (bare ground and the game trail). A journey's saving is the
+  //                      MEAN of the tiles it crosses, so a partly-roaded run pays partly - which is
+  //                      the per-tile model's own answer and what the retired "best road binding the
+  //                      network" rule could not express. Read by `balance_supply_networks`.
+  // holdsLinkToTiles   = how far this tile's rung holds a pooling link open, in tiles. A journey's
+  //                      reach is the WEAKEST tile it crosses: one gap breaks a link goods must get
+  //                      THROUGH, which is why this is a minimum where the friction is a mean.
   //
   // *** holdsLinkToTiles IS AUTHORED AND NOT YET CONSUMED BY THE SIM. *** Nothing in
   // `balance_supply_networks` reads it yet (that is slice 13b); it is published now because it is

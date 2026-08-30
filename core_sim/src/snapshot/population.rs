@@ -513,6 +513,14 @@ fn resolved_build_job(
                 .map(|improvement| improvement.as_str().to_string())
                 .unwrap_or_default()
         }
+        // ⛔ **A ROAD'S VERB IS THE ENTRY'S OWN, with no meter-derived twin behind it.** The two food
+        // webs re-derive theirs (`patch_build_verb` / `herd_build_verb`) because a meter already
+        // carrying work declares for itself and a stale entry must not override it. A road has no
+        // second declaration to reconcile: `grade` / `pave` are the only things that ever raise one,
+        // and the entry's own `declared` is that statement.
+        (crate::components::BuildJob::Rung(declared), crate::components::BuildSource::Road(_)) => {
+            declared.as_str().to_string()
+        }
     }
 }
 
@@ -1397,6 +1405,12 @@ fn build_queue_entry_to_state(source: &BuildSource) -> SchemaBuildQueueEntryStat
             state.target_y = tile.y;
         }
         BuildSource::Herd(fauna_id) => fauna_id.clone_into(&mut state.fauna_id),
+        // A road tile is addressed exactly as a patch is — the `kind` token above is what tells the
+        // two apart on the wire (`roadwork` against `forage`).
+        BuildSource::Road(tile) => {
+            state.target_x = tile.x;
+            state.target_y = tile.y;
+        }
     }
     state
 }
@@ -1915,6 +1929,12 @@ mod tests {
                             fauna_id: fauna_id.clone(),
                             floor: 0.5,
                         },
+                        // A road carries no take row at all — its keeper is on the road, not on a
+                        // labor target — so a fixture that queued one would be describing a band
+                        // this helper cannot build.
+                        BuildSource::Road(_) => unreachable!(
+                            "a road has no labor row, so it cannot be a source in this fixture"
+                        ),
                     },
                     workers: 1,
                     kit: None,
