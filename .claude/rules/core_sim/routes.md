@@ -560,15 +560,24 @@ the band certainly still owes its keeping.
   `advance_labor_allocation`'s rule, so a band that abandons its last road stops republishing a bill it
   no longer owes.
 
-## The client half has not been re-written for the per-tile shape
+## The client half, as built
 
-`native/src/dict/routes.rs` publishes the new row (`tile_x` / `tile_y` / `has_keeper` /
-`keeper_band_id` / `keeper_remoteness`, and no path halves). **The GDScript side still reads the
-retired `path_x` / `path_y`**, so `MapView._ingest_road_network` builds an empty path for every road
-and `AnnotationRenderer.draw_road_network` draws nothing; the tile card's road rows go with it, since
-`road_tile_lookup` is keyed off the same zip. Nothing errors — the reads are `get`-with-default —
-which is why this is written down rather than left to be discovered.
-`.claude/rules/client/roads.md` describes the path model throughout.
+`native/src/dict/routes.rs` publishes the row (`tile_x` / `tile_y` / `has_keeper` / `keeper_band_id` /
+`keeper_remoteness`, and no path halves) and the GDScript side reads it: `MapView._ingest_road_network`
+joins on the tile pair, `AnnotationRenderer.draw_road_network` stamps one HEX per road, and the tile
+card gained a `Kept by:` row naming the keeping band and the multiple distance put on its price.
+`.claude/rules/client/roads.md` is that half.
+
+**Two things the client half needed from this side and now has.** `grade` / `pave` are in
+`sim_runtime::command_text` as `<faction> <band> <x> <y>`, and `SourceForecast.RUNG_KEY_IMPROVEMENTS`
+carries the route ladder — the branch declares verbs now, so it goes into that table rather than
+staying out of it.
+
+⛔ **AND `roadwork` COULD NOT BE STAFFED AT ALL UNTIL SLICE 13's CLIENT PASS.** The role was in
+`server.rs`'s `handle_assign_labor` dispatch and **missing from `command_text`'s own grammar** — and
+the client's native bridge parses a line there before it sends, so every
+`assign_labor … roadwork <n>` was refused inside the client with nothing failing anywhere. It is the
+identical hole `builders` fell through one role earlier; `command_guard`'s role sweep found both.
 
 ## Config files
 

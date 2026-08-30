@@ -12,8 +12,9 @@ use crate::forage::{
     patch_neglect_grace_remaining, patch_provisions_per_biomass, tended_fodder,
 };
 use crate::intensification::{
-    build_fraction, build_work_per_worker_turn, NOT_IN_ANY_BUILD_QUEUE, NO_BUILD_GEAR,
-    NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_WIDTH, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
+    build_fraction, build_work_per_worker_turn, knowledge_title_from_id, NOT_IN_ANY_BUILD_QUEUE,
+    NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_WIDTH, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND,
+    RUNG_COST_UNSCALED,
 };
 use sim_schema::{
     BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_NOT_YET_ESTIMATED, BUILD_QUEUE_BLOCKED,
@@ -2017,15 +2018,46 @@ fn material_rates(
 /// restated here because this is the readout that enforces it.
 const NO_PUBLISHED_SHARE: f32 = 0.0;
 
-/// Per-faction intensification-ladder knowledge for the client's learning/known meters — one field
-/// per rung-transition: Cultivation (2003) → Seed Selection (2005) up the plant ladder, Herding
-/// (2004) → Penning (2006) up the animal one, plus Foddering (2007), the *capability* the top animal
-/// rung teaches rather than a gate on reaching a rung. Iterates the ledger's factions in sorted
-/// order; a faction is emitted only when it has begun learning **something** (all zero → skipped),
-/// mirroring how `discovery_progress_entries` skips empty progress.
+/// **WHAT THERE IS TO LEARN** — the ladder's knowledge roster, once per world and carrying no
+/// faction. Every field is derived from `intensification_ladder.json`
+/// ([`LadderConfig::knowledge_roster`]); nothing here is separately authored, which is the whole
+/// point: a knowledge added to the ladder reaches a client's knowledge screen with no client edit.
+///
+/// ⛔ **IT IS FACTION-INDEPENDENT ON PURPOSE.** A faction that has learned nothing has no ledger row
+/// at all, so a roster carried on the per-faction row below would leave a new player's screen empty
+/// — with nothing on it to say there was anything to learn, which is the exact regression the
+/// knowledge screen exists to have fixed.
+pub(crate) fn snapshot_ladder_knowledge(ladder: &LadderConfig) -> Vec<LadderKnowledgeState> {
+    ladder
+        .knowledge_roster()
+        .into_iter()
+        .map(|entry| LadderKnowledgeState {
+            knowledge_id: entry.knowledge.to_string(),
+            display_name: knowledge_title_from_id(entry.knowledge),
+            branch: entry.branch.as_str().to_string(),
+            order: entry.order,
+            is_step: entry.is_step,
+        })
+        .collect()
+}
+
+/// Per-faction intensification-ladder knowledge for the client's learning/known meters — **one row
+/// per faction carrying a `0..1` for every knowledge the ladder teaches**, in the roster's own
+/// order. Iterates the ledger's factions in sorted order; a faction is emitted only when it has
+/// begun learning **something** (all zero → skipped), mirroring how `discovery_progress_entries`
+/// skips empty progress.
+///
+/// ⛔ **THE LIST IS SPARSE IN VALUE AND NEVER IN MEMBERSHIP.** A knowledge the faction has not begun
+/// rides at `0` rather than being absent, so no reader has to tell *not begun* from *not published*
+/// — and no reader needs the roster to know a row is missing.
+///
+/// **The five named float fields it replaced are retired.** Adding a knowledge used to mean adding a
+/// schema field, which is why the route branch's two lessons had nowhere to appear at all.
 pub(crate) fn snapshot_intensification_knowledge(
     ledger: &DiscoveryProgressLedger,
+    ladder: &LadderConfig,
 ) -> Vec<IntensificationKnowledgeState> {
+    let roster = ladder.knowledge_roster();
     let mut factions: Vec<u32> = ledger.progress.keys().map(|faction| faction.0).collect();
     factions.sort_unstable();
     factions.dedup();
@@ -2033,36 +2065,21 @@ pub(crate) fn snapshot_intensification_knowledge(
         .into_iter()
         .filter_map(|faction_id| {
             let faction = FactionId(faction_id);
-            let cultivation = ledger
-                .get_progress(faction, CULTIVATION_DISCOVERY_ID)
-                .to_f32();
-            let herding = ledger.get_progress(faction, HERDING_DISCOVERY_ID).to_f32();
-            let seed_selection = ledger
-                .get_progress(faction, SEED_SELECTION_DISCOVERY_ID)
-                .to_f32();
-            let penning = ledger.get_progress(faction, PENNING_DISCOVERY_ID).to_f32();
-            let foddering = ledger
-                .get_progress(faction, FODDERING_DISCOVERY_ID)
-                .to_f32();
-            // A rung-3 knowledge cannot be positive while its rung-2 gate is zero (you cannot work a
-            // tended patch you never cultivated), so this stays equivalent to the old
-            // cultivation/herding-only check — but stating every meter keeps it true if a later slice
-            // grants one another way.
-            if cultivation <= 0.0
-                && herding <= 0.0
-                && seed_selection <= 0.0
-                && penning <= 0.0
-                && foddering <= 0.0
-            {
+            let knowledges: Vec<LadderKnowledgeProgress> = roster
+                .iter()
+                .map(|entry| LadderKnowledgeProgress {
+                    knowledge_id: entry.knowledge.to_string(),
+                    progress: ledger.get_progress(faction, entry.discovery_id).to_f32(),
+                })
+                .collect();
+            // A faction with nothing on ANY meter is not published at all — the row would say only
+            // "this faction exists", and the roster above already says what there is to learn.
+            if knowledges.iter().all(|row| row.progress <= 0.0) {
                 return None;
             }
             Some(IntensificationKnowledgeState {
                 faction: faction_id,
-                cultivation,
-                herding,
-                seed_selection,
-                penning,
-                foddering,
+                knowledges,
             })
         })
         .collect()

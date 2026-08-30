@@ -488,9 +488,10 @@ paths:
   the arc's root fix). Two meters advance from one action and they are **different kinds of thing**;
   the client's whole job here is to never let them read as two numbers in a list:
   - **FACTION KNOWLEDGE — the faction page's KNOWLEDGE zone, and the ONLY place a knowledge meter
-    appears.** `Hud.update_intensification` (dispatched from `Main.gd`) INGESTS all **five** tracks of
-    `IntensificationKnowledgeState` (`intensification_knowledge[]`, decoded in `native/src/lib.rs
-    intensification_knowledge_to_array`) — `cultivation` / `seed_selection` / `herding` / `penning` /
+    appears.** `Hud.update_intensification` (dispatched from `Main.gd`) INGESTS **every track the row
+    carries**, off the wire's own `knowledges` map rather than a client-side list of names
+    (`intensification_knowledge[]`, decoded in `native/src/dict/subsistence.rs`
+    `intensification_knowledge_to_array`) — which today is — `cultivation` / `seed_selection` / `herding` / `penning` /
     `foddering` — and `FactionRollup._build_knowledge_block` renders one row each, in
     `KNOWLEDGE_TRACK_LABELS` order (each web's ladder, bottom rung first, so the block reads as two
     ladders climbing). A track is hidden until the faction begins it (the row is sparse), reads

@@ -619,6 +619,12 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # answers the same question and answers it from the BANDS, apportioned once across the roster, so
     # a second per-faction total would be a second source of truth for the head count. The sim still
     # publishes the section; it joins `accessibleStockpile` as an unread wire table.
+    # **THE LADDER'S KNOWLEDGE ROSTER GOES FIRST**, because the progress list below is read AGAINST
+    # it: the roster says what there is to learn and where each knowledge sits, and the row beside it
+    # says how far this faction has got. A per-world constant, so a delta restates it only on a world
+    # rebuild and the `changed` gate skips it every other turn.
+    if snapshot.has("ladder_knowledge") and SnapshotSections.changed(snapshot, "ladder_knowledge"):
+        _hud_invoke("update_ladder_knowledge", [snapshot["ladder_knowledge"]])
     if snapshot.has("intensification_knowledge") and SnapshotSections.changed(snapshot, "intensification_knowledge"):
         _hud_invoke("update_intensification", [snapshot["intensification_knowledge"]])
     if snapshot.has("discovered_sites") and SnapshotSections.changed(snapshot, "discovered_sites"):
@@ -669,6 +675,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         # the patch's max-useful (the same forecast the compose control reads off tile_info). Same
         # array MapView ingests into `forage_patch_lookup`.
         _hud_invoke("update_forage_patches", [snapshot["forage_patches"]])
+    # THE ROADS IN THE GROUND (arc #532). The map ingests the same section into `road_network`; the
+    # HUD needs it because a road tile is the only source a route knowledge can be STANDING ON, and
+    # the knowledge screen's *"is anything using this"* verdict is asked of the faction's own sources.
+    if snapshot.has("routes") and SnapshotSections.changed(snapshot, "routes"):
+        _hud_invoke("update_road_network", [snapshot["routes"]])
     # The Telling (docs/plan_the_telling.md). The `has()` guard is LOAD-BEARING: a delta carries a
     # field only when it CHANGED, so absence means "unchanged", never "cleared" — clearing the
     # cached forks on absence would drop the end-turn gate every quiet turn.
@@ -1304,10 +1315,23 @@ static func format_extend_pen(payload: Dictionary) -> Dictionary:
 ## rejected outright.
 const IMPROVEMENT_HERD_TARGETED := ["tame"]
 
-## ⛔ **NONE OF THE FOUR VERBS TAKES A WORKER COUNT, and a trailing one is a PARSE ERROR**
+## ⛔ **THE ROUTE BRANCH'S TWO VERBS NAME A BAND, AND THE REST DO NOT** (arc #532). `grade` and `pave`
+## are `cultivate`/`sow`'s grammar **plus a band token** —
+## `grade <faction> <band> <x> <y>` — because a patch's keeper is whoever is already foraging it while
+## **a road has no work row at all**, so who will keep the tile has to be said out loud. That token is
+## also what the sim records as the keeper: issuing the verb declares the job AND names who holds it,
+## which are the same act. Read off `SourceForecast.ROUTE_IMPROVEMENTS` rather than restated, so the
+## branch's verbs are spelled once.
+const IMPROVEMENT_BAND_TARGETED := SourceForecast.ROUTE_IMPROVEMENTS
+
+## The band a road verb names when the payload carries none. A road really has to be somebody's job,
+## so this is a REFUSAL rather than a default — see `format_improvement`.
+const IMPROVEMENT_NO_BAND := -1
+
+## ⛔ **NONE OF THESE VERBS TAKES A WORKER COUNT, and a trailing one is a PARSE ERROR**
 ## (`docs/plan_standing_upkeep.md` §2.5). Each carried the build's own crew for one slice; they
-## DECLARE now — the verb appends an entry to the build queue of every band already working the
-## source, and the hands stand on `assign_labor <faction> <band> builders <n>`.
+## DECLARE now — the verb appends an entry to a build queue, and the hands stand on
+## `assign_labor <faction> <band> builders <n>`.
 static func format_improvement(payload: Dictionary) -> Dictionary:
     var improvement := String(payload.get("improvement", "")).strip_edges().to_lower()
     if improvement == "":
@@ -1326,6 +1350,18 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
         return {}
+    if improvement in IMPROVEMENT_BAND_TARGETED:
+        # **NO BAND, NO COMMAND.** The token is the keeper, and a road with nobody on the hook is not
+        # a road the sim will accept — so an absent band is refused here rather than guessed at, the
+        # way an absent herd id is one branch up.
+        var band := int(payload.get("band_id", IMPROVEMENT_NO_BAND))
+        if band == IMPROVEMENT_NO_BAND:
+            return {}
+        return {
+            "line": "%s %d %d %d %d" % [improvement, faction, band, x, y],
+            "message": "%s (%d, %d) — this band's road now, queued for its builders." % [
+                improvement.capitalize(), x, y],
+        }
     return {
         "line": "%s %d %d %d" % [improvement, faction, x, y],
         "message": "%s (%d, %d) — queued for this band's builders." % [

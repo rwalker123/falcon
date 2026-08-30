@@ -105,14 +105,19 @@ const ROUTE_FALLBACK_COLOR := Color(0.95, 0.9, 0.6, 0.8)
 # --- THE ROAD NETWORK (the roads in the GROUND, arc #532) ----------------------------------------
 #
 # ⛔ **NOT the ROUTES family above.** That one draws ORDER PATHS — waypoints a player's own
-# movement orders are following, which vanish with the order. This draws roads: world objects with
-# fixed stamped paths, owned by nobody, that outlive every band that walks them. The obvious name was
-# taken by the other thing first, so this family is spelled `ROAD_*` and its state lives on
+# movement orders are following, which vanish with the order. This draws roads: world objects in the
+# ground, owned by nobody, that outlive every band that walks them. The obvious name was taken by the
+# other thing first, so this family is spelled `ROAD_*` and its state lives on
 # `MapView.road_network` (world state, like `units` and `herds`) rather than here.
+#
+# ⛔ **A ROAD IS ONE HEX, SO THE DRAW IS A TILE AND NOT A POLYLINE.** Each tile carries its own rung,
+# its own meter, its own keeper and its own decay, and the row has no path on it. A run of road
+# therefore reads as a run of stamped hexes — which is the honest picture, because the two ends of a
+# long road can genuinely be at different rungs and kept by different bands.
 
-## The per-rung line WIDTH ladder, faintest rung to strongest. Four steps because the branch has four
-## rungs; the widths climb because a paved road is a bigger thing on the ground than a game trail,
-## and the eye reads thickness before it reads tint at map zoom.
+## The per-rung STROKE WIDTH ladder, faintest rung to strongest. Four steps because the branch has
+## four rungs; the widths climb because a paved road is a bigger thing on the ground than a game
+## trail, and the eye reads thickness before it reads tint at map zoom.
 const ROAD_WIDTH_GAME_TRAIL := 1.5
 const ROAD_WIDTH_TRAIL := 2.0
 const ROAD_WIDTH_DIRT_ROAD := 3.0
@@ -140,9 +145,12 @@ const ROAD_OPACITY_PAVED_ROAD := 0.94
 const ROAD_AT_RISK_WIDTH := ROAD_WIDTH_DIRT_ROAD
 const ROAD_AT_RISK_OPACITY := ROAD_OPACITY_PAVED_ROAD
 
-## Fewer than this is not a line. A one-tile road is a real ledger entry (a road forms tile by tile),
-## so this is a DRAW gate, never a validity one.
-const ROAD_MIN_POINTS := 2
+## ⛔ **HOW BIG THE STAMPED HEX IS, as a fraction of the tile's own radius.** Inset rather than flush,
+## for two reasons that both matter at map zoom: a flush ring would sit exactly on the hex grid's own
+## edges and read as a GRID LINE rather than as a thing on the ground, and two adjacent road tiles
+## would share that edge so a run of road would draw its interior seams twice as heavily as its
+## outside. Inset, the run reads as a chain of stamps with the ground showing between them.
+const ROAD_TILE_RADIUS_FACTOR := 0.62
 
 # --- COMMAND TARGETING (HUD → map) --------------------------------------------------------------
 # What the pending command is asking the player to click. `_draw_targeting` branches on it.
@@ -390,7 +398,7 @@ func _draw_route(order: Dictionary, radius: float, origin: Vector2) -> void:
 	for i in range(points.size() - 1):
 		_view.draw_line(points[i], points[i + 1], color, ROUTE_WIDTH)
 
-## **EVERY ROAD IN THE GROUND, as a polyline along its own stamped path.**
+## **EVERY ROAD IN THE GROUND, one stamped HEX apiece.**
 ##
 ## Reads `MapView.road_network` through the back-ref rather than holding a copy: a road is world
 ## state, like `units` and `herds`, and this renderer already reads both that way. It is therefore
@@ -400,11 +408,16 @@ func draw_road_network(radius: float, origin: Vector2) -> void:
 		if road is Dictionary:
 			_draw_road(road, radius, origin)
 
-## One road. Styled by the RUNG IT HOLDS — never by the meter beside it, which belongs to the rung
-## above (`HudRouteVocab`'s own rule: the rung string is the bool).
+## One road — one hex. Styled by the RUNG IT HOLDS, never by the meter beside it, which belongs to the
+## rung above (`HudRouteVocab`'s own rule: the rung string is the bool).
 func _draw_road(road: Dictionary, radius: float, origin: Vector2) -> void:
-	var tiles: Array = Array(road.get(MapView.ROAD_TILES_KEY, []))
-	if tiles.size() < ROAD_MIN_POINTS:
+	var tile: Vector2i = road.get(MapView.ROAD_TILE_KEY, MapView.ROAD_TILE_NONE)
+	if tile.x < 0 or tile.y < 0:
+		return
+	# ⛔ **ONE ROAD, ONE VISIBILITY QUESTION.** The per-SEGMENT gate this replaced existed because a
+	# stored path could run off the explored map with only one of its tiles seen; a road is a single
+	# hex now, so the sim's own gate — *have you seen that tile* — is the whole of the test.
+	if not _road_tile_known(tile):
 		return
 	var rung := HudRouteVocab.rung_of(road)
 	var short := HudRouteVocab.is_short(road)
@@ -415,23 +428,17 @@ func _draw_road(road: Dictionary, radius: float, origin: Vector2) -> void:
 	var color := Color(HudStyle.DANGER, ROAD_AT_RISK_OPACITY) if short \
 		else Color(HudStyle.INK, _road_rung_opacity(rung))
 	var width := ROAD_AT_RISK_WIDTH if short else _road_rung_width(rung)
-	# A road's tiles are DATA columns, so a seam-crossing leg drawn off the raw `_hex_center` would
-	# shoot back across the whole map — the herd-trail bug, in the same shape. Unwrap the whole path
-	# into one column frame first, exactly as `_draw_route` does one family up.
-	var points := _view._unwrapped_path_points(tiles, radius, origin)
-	for i in range(points.size() - 1):
-		# **THE FOG GATE IS PER SEGMENT.** The sim publishes a road to a faction that has explored at
-		# least ONE of its tiles, so a road can reach the client with a tail running over ground
-		# nobody of yours has ever stood on. Drawing that tail would paint infrastructure across
-		# unexplored fog. A partly-drawn road is the honest picture: you see the part you have been.
-		if not _road_tile_known(tiles[i]) or not _road_tile_known(tiles[i + 1]):
-			continue
-		_view.draw_line(points[i], points[i + 1], color, width)
+	# A road names its tile by its DATA column, so the stamp goes on the copy of that column the
+	# viewport is actually over — `_hex_center_wrapped`, the single-tile idiom every marker family
+	# here uses. The polygon is then struck at the INSET radius off that true centre, which is why the
+	# two calls take different radii: the placement is the tile's, the drawing is the stamp's.
+	var center: Vector2 = _view._hex_center_wrapped(tile.x, tile.y, radius, origin)
+	_view._outline_hex_at(center, radius * ROAD_TILE_RADIUS_FACTOR, color, width)
 
 ## Has the player's faction ever stood on this tile? `Discovered` OR `Active` — the same gate the sim
 ## publishes a road under, and deliberately NOT `_is_tile_visible`, which demands `Active`: a road
 ## does not wander off, so a remembered one is remembered truly. `""` is fog-off, which knows
-## everything.
+## everything. **One call per ROAD now**, the per-segment walk having gone with the stored path.
 func _road_tile_known(tile: Vector2i) -> bool:
 	var state := _view._visibility_state_at(tile.x, tile.y)
 	return state != HudConst.VISIBILITY_UNEXPLORED

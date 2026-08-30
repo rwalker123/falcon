@@ -48,6 +48,7 @@ const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 ## same token that harness's frames are read against. It is one of TWO cross-harness fixture
 ## preloads, the rung derivation below being the other.
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
+const KnowledgeFx := preload("res://tools/ui_preview/fixtures_knowledge.gd")
 const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 ## …and the SECOND, for the same reason: the standing rung a fixture states must be the sim's own
 ## derivation off the flags the row already carries, and one transcription of it serves the whole tree
@@ -8583,16 +8584,28 @@ func _has_label_containing(node: Node, text: String) -> bool:
 ## rung-transition tracks fully learned, which is what the rung-ready board needs. It is a function
 ## rather than a literal at its two call sites because the faction block REPLACES the row (a push
 ## overwrites a faction's whole row) and has to put this exact one back afterwards.
-func _standing_knowledge_row() -> Dictionary:
-	return {"faction": 0, "cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0}
+## ⛔ **TWO SHAPES, AND MIXING THEM IS SILENT.** The WIRE carries a per-faction row whose tracks ride
+## under `knowledges`; every GATE in this client (`RungGates`, `RungLadder.track`) takes the flat
+## `{track: 0..1}` map `FactionReadouts.faction_tracks` hands back. A gate handed the wire row reads
+## every track as `0`, which is a plausible frame with every rung honestly refused — so the two have
+## separate names here.
+func _standing_knowledge_tracks() -> Dictionary:
+	return {"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0}
 
-## THE KNOWLEDGE ZONE's craft tracks at the ladder's CEILING — all five, one of them FINISHED so the
-## `known` word renders beside four live meters. Five is the most rows that block can ever draw
-## (`FactionReadouts.KNOWLEDGE_TRACK_LABELS` is the whole ladder), which is what makes the zone's
-## measured extent the worst case rather than a sample.
+func _standing_knowledge_row() -> Dictionary:
+	return KnowledgeFx.progress_row(0, _standing_knowledge_tracks())
+
+## THE KNOWLEDGE ZONE's ladder tracks at the CEILING — every knowledge the roster carries, one of them
+## FINISHED so the `known` word renders beside live meters. It is the most rows that block can ever
+## draw, which is what makes the zone's measured extent the worst case rather than a sample: the
+## progress list is sparse in VALUE and never in membership, so the ladder's own length is the bound.
 func _faction_knowledge_fixture() -> Dictionary:
-	return {"faction": 0, "cultivation": 1.0, "seed_selection": 0.62, "herding": 0.41,
-		"penning": 0.28, "foddering": 0.07}
+	var tracks := KnowledgeFx.tracks_all_at(0.07)
+	tracks["cultivation"] = 1.0
+	tracks["seed_selection"] = 0.62
+	tracks["herding"] = 0.41
+	tracks["penning"] = 0.28
+	return KnowledgeFx.progress_row(0, tracks)
 
 ## THE KNOWLEDGE ZONE's discovered sites: **MORE distinct kinds than `FACTION_LIST_ROWS_MAX` shows**,
 ## so the `+N more` row is inside the measurement and the block is staged at the tallest it can ever
@@ -9095,8 +9108,8 @@ func _assert_faction_fodder_dormant() -> void:
 	# Foddering, so the page states the forage panel's own lock — and it must reach a cursor, which on
 	# a `RichTextLabel` means the label's own `tooltip_text` (`[hint=…]` does not parse in this build).
 	var locked_expected := DetailFormat.FODDER_LOCKED_TOOLTIP_FORMAT % [
-		HudFormat.progress_percent(float(_faction_knowledge_fixture().get(
-			HudFloraVocab.KNOWLEDGE_TRACK_FODDERING, 0.0))),
+		HudFormat.progress_percent(float((_faction_knowledge_fixture()["knowledges"] as Dictionary)
+			.get(HudFloraVocab.KNOWLEDGE_TRACK_FODDERING, 0.0))),
 		FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL)]
 	var label := _first_rich_text(band_zone)
 	_assert_band_panel("faction dormant: the page says WHY, in the forage panel's words: %s"
@@ -9107,7 +9120,8 @@ func _assert_faction_fodder_dormant() -> void:
 	# a pen — but the reason is calm, and it must NOT be the lock's sentence. The inequality is the
 	# half that catches a build stating one sentence in both states.
 	var learned := _faction_knowledge_fixture()
-	learned[HudFloraVocab.KNOWLEDGE_TRACK_FODDERING] = FACTION_FODDERING_LEARNED
+	(learned["knowledges"] as Dictionary)[HudFloraVocab.KNOWLEDGE_TRACK_FODDERING] = \
+		FACTION_FODDERING_LEARNED
 	_hud.update_intensification([learned])
 	_push_bands(_fodderless_faction_roster())
 	await _settle()
@@ -10372,7 +10386,8 @@ func _track_herd_band_fixture() -> Dictionary:
 ## turns on, so the two states below differ in knowledge and in the patch's own position and in
 ## nothing else.
 func _track_half_knowledge_row() -> Dictionary:
-	return {"faction": 0, "cultivation": 1.0, "seed_selection": 0.45, "herding": 1.0, "penning": 1.0}
+	return KnowledgeFx.progress_row(0, {
+		"cultivation": 1.0, "seed_selection": 0.45, "herding": 1.0, "penning": 1.0})
 
 ## A band working that one patch, so it carries a WORK ROW — the precondition the whole `⌃` rests on —
 ## with builders on the pool, so a declared climb reads as RUNNING rather than as stalled.
@@ -10526,7 +10541,7 @@ func _assert_rung_track_climbing() -> void:
 func _assert_rung_track_names_every_offer() -> void:
 	var rows := RungLadder.track(SourceForecast.LABOR_KIND_HUNT, {},
 		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_NONE,
-		_standing_knowledge_row())
+		_standing_knowledge_tracks())
 	# **THE PRECONDITIONS ARE THE VACUITY GUARD.** "No selectable row is blank" passes for free on a
 	# track with no selectable row at all, and on one whose rows are all priced — so the fixture is
 	# asserted to hold the exact shape the defect needs before the claim is made.

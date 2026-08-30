@@ -345,17 +345,28 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # whose subject is a piece of ground.
     #
     # **ABOVE THE DISCOVERED EARLY-RETURN, WITH THE RIVERS, AND THAT MATCHES THE SIM'S OWN FOG
-    # GATE.** A road is published to a faction that has explored at least ONE of its path tiles —
-    # `Discovered`, deliberately NOT the herd list's `Active` — because a road does not wander off,
-    # so remembering one is remembering something true. Appending below that return would have
-    # dropped the whole block from every remembered hex the sim went to the trouble of sending it
-    # for. An UNEXPLORED hex is already covered: this producer returns before here.
+    # GATE.** A road is published to a faction that has seen the TILE — `Discovered`, deliberately NOT
+    # the herd list's `Active` — because a road does not wander off, so remembering one is
+    # remembering something true. Appending below that return would have dropped the whole block from
+    # every remembered hex the sim went to the trouble of sending it for. An UNEXPLORED hex is
+    # already covered: this producer returns before here.
     #
     # ONE BLOCK PER ROAD — a hex may carry more than one, and each is its own investment with its own
     # bill, so they are never summed into a hex total.
+    #
+    # ⛔ **THE KEEPER'S NAME IS RESOLVED HERE AND NOWHERE ELSE.** A road carries a `band_id`, and this
+    # client has exactly one band-naming rule (`HudBandLaborState.band_label_for_id` →
+    # `HudFormat.band_display_name`) — so the vocab composer is HANDED the label rather than
+    # inventing one from an id, and a road's keeper cannot be called something the dock does not.
+    # `""` is a band outside the player's roster, which a road really can have: the composer says
+    # *another people* rather than printing a number nobody can act on.
     for road in Array(tile_info.get("roads", [])):
         if road is Dictionary:
-            lines.append_array(HudRouteVocab.road_lines(road))
+            var keeper_label := ""
+            if _band_labor != null and HudRouteVocab.has_keeper(road):
+                keeper_label = _band_labor.band_label_for_id(
+                    HudRouteVocab.keeper_band_id_of(road))
+            lines.append_array(HudRouteVocab.road_lines(road, keeper_label))
     # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
     #
     # A REMEMBERED TILE KEEPS BOTH WEBS' CAPACITIES AND LOSES BOTH THEIR STOCKS (issue #462). The rule

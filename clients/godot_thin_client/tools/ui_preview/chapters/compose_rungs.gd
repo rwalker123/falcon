@@ -215,13 +215,12 @@ func run(harness) -> void:
 
 	# Fix #4 — LEARNING knowledge visibility: Penning at 34% (0 < value < 1) must climb WITH its % in
 	# the top-bar strip, not be absent-until-100. Seed Selection mid-climb too; Cultivation/Herding ✔.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "seed_selection": 0.6, "herding": 1.0, "penning": 0.34}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "seed_selection": 0.6, "herding": 1.0, "penning": 0.34}}])
 	h._hud.show_unit_selection(BandFx.band_fixture())
 	await h._settle()
 	await h._save("knowledge_penning_climbing")
 	# Restore the default strip for any later frame.
-	h._hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 0.55, "herding": 1.0}}])
 
 	# STALE-CLOSURE GUARD (herd) — the drawer diff-cache patches a same-SHAPE restate in place and
 	# DELIBERATELY keeps the compose-open button's `pressed` closure intact. Before the fix
@@ -303,9 +302,7 @@ func run(harness) -> void:
 	# Knowledge is complete on both rungs, so Tame is ungated (a gated Tame would be reset to Sustain
 	# and the frame would test nothing) and Corral's ONLY gate reason is the herd's own tameness — the
 	# number under test, rendered as the compact one-liner rather than a bulleted list.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0}}])
 	var reopen_band := BandFx.band_fixture()
 	reopen_band["idle_workers"] = REOPEN_IDLE_WORKERS
 	reopen_band["working_age"] = REOPEN_WORKING_AGE
@@ -396,7 +393,7 @@ func run(harness) -> void:
 	h._hud._compose.set_hunt_floor(SourceForecast.DEFAULT_HARVEST_FLOOR)
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud._band_labor._player_bands = []
-	h._hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 0.55, "herding": 1.0}}])
 
 	# ---- THE CREW NOUN AND THE PREVIOUS HERD'S IMPROVEMENT ---------------------------------------
 	# `ComposeState._hunt_improvement` is ONE slot shared by every herd, and neither `begin_hunt_source`
@@ -1721,10 +1718,7 @@ func _kit_swap_turn_estimate_states() -> void:
 	h._hud._band_labor._player_bands = [keepers]
 	# Tame has to be OFFERED, which is a knowledge gate: an un-learned rung renders its reason instead
 	# of its price, and there would be no clause to read on either frame.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
-		"foddering": 1.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0, "foddering": 1.0}}])
 	var warren := _kit_swap_herd()
 
 	#   (a) THE STALKING KIT — a drag harness takes no work off gentling an animal.

@@ -30,7 +30,7 @@ use crate::dict::routes::routes_to_array;
 use crate::dict::subsistence::{
     characteristic_bands_to_array, craft_knowledge_to_array, food_modules_to_array,
     forage_patches_to_array, herds_to_array, intensification_knowledge_to_array, kits_to_array,
-    materials_to_array, recipes_to_array, sedentarization_to_array,
+    ladder_knowledge_to_array, materials_to_array, recipes_to_array, sedentarization_to_array,
 };
 use crate::dict::{
     u16_vector_to_packed_int32, u32_vector_to_packed_int32, u64_vector_to_packed_int64,
@@ -716,6 +716,10 @@ fn decode_delta_against(
             "intensification_knowledge",
             &intensification_knowledge_to_array(intensification),
         );
+    }
+
+    if let Some(roster) = delta.subsistence().and_then(|s| s.ladderKnowledge()) {
+        frame.insert_changed("ladder_knowledge", &ladder_knowledge_to_array(roster));
     }
 
     if let Some(demographics) = delta.population().and_then(|s| s.demographics()) {

@@ -3285,34 +3285,62 @@ table FloraShareInfo {
   sowWorkCost:float = 0;
 }
 
+// ONE LADDER KNOWLEDGE THE CONFIG DECLARES — the ROSTER half, once per world, faction-independent.
+//
+// ⛔ THIS IS WHAT LETS A CLIENT'S KNOWLEDGE SCREEN BUILD ITSELF. Everything a column needs is
+// DERIVED from `intensification_ladder.json` and nothing here is separately authored: the branch and
+// the order come off the rung that TEACHES the knowledge (`earns_knowledge`), and `isStep` is simply
+// whether any rung's `unlock_knowledge` names it. So a knowledge added to the ladder appears on the
+// client with no client edit and no schema edit — which is exactly what a field per knowledge, the
+// shape this replaced, could never do.
+//
+// It is faction-independent BY DESIGN, and the progress half below is not: a faction that has
+// learned nothing has no ledger row at all, and a roster carried on that row would leave a new
+// player's screen empty — with nothing on it to say there is anything to learn.
+table LadderKnowledgeState {
+  // The ladder config's own id: "cultivation", "roadbuilding", ... The join key with the progress row.
+  knowledgeId:string;
+  // "Seed Selection" — the id, underscores to spaces and each word capitalized, resolved sim-side so
+  // no client authors a second spelling of it.
+  displayName:string;
+  // The branch of the rung that TEACHES it: "plant" | "animal" | "route". WHICH COLUMN.
+  branch:string;
+  // ...and that rung's `order`. THE POSITION WITHIN THE COLUMN, bottom step first.
+  order:uint = 0;
+  // Does any rung's `unlock_knowledge` name this? A STEP in the chain when it does; a CAPABILITY
+  // hanging off the bottom of its column when it does not. `foddering` is the shipped `false`: it
+  // changes what a pen may draw on rather than opening a further rung. DERIVED, never declared.
+  isStep:bool = false;
+}
+
+// One faction's progress on ONE ladder knowledge, 0..1 (1.0 = known). The row's join key is
+// `knowledgeId`, which names a `LadderKnowledgeState` above.
+table LadderKnowledgeProgress {
+  knowledgeId:string;
+  progress:float = 0;
+}
+
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
 // knowledges, 0..1 (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client
-// renders learning/known meters. Only factions that have begun learning SOME ladder appear here.
+// renders learning/known meters. Only factions that have begun learning SOME ladder appear here —
+// the DECLARATION of what there is to learn rides `SubsistenceSection.ladderKnowledge` instead,
+// precisely so a faction absent from this list still has a screen to look at.
 //
-// One field per rung-transition — "practice rung N unlocks rung N+1"
-// (docs/plan_intensification_ladder.md §4), so these read as the ladder itself:
-//   plant:  wild --cultivation--> tended --seedSelection--> field (the Sow rung, a later slice)
-//   animal: wild --herding------> pastoral --penning------> pen
-// APPEND-ONLY: cultivation/herding keep their shipped slots; seedSelection/penning are appended
-// strictly after (slice 4's two new discoveries, ids 2005/2006), and foddering after those (2007 —
-// a capability, not a rung transition; see its comment below).
+// ⛔ THE FIVE NAMED FLOATS ARE RETIRED AND THEIR IDS ARE HELD, NEVER REUSED. Adding a knowledge used
+// to mean adding a schema field, which is why the route branch's two lessons had nowhere to appear;
+// `knowledges` below is the list that replaced them and it is the ONLY authority on a faction's
+// ladder progress.
 table IntensificationKnowledgeState {
   faction:uint;
-  // Gates `cultivate`. Earned by working a WILD patch under a stewardship policy.
-  cultivation:float = 0;
-  // Gates `tame` (and `tame` ONLY, since the §4.3 reshuffle). Earned by working a WILD herd.
-  herding:float = 0;
-  // Gates `sow` (slice 5 — earned now, spent later). Earned by working a TENDED patch.
-  seedSelection:float = 0;
-  // Gates `corral` + `extend_pen` — the §4.3 reshuffle took this off `herding`. Earned by working a
-  // PASTORAL (tamed) herd.
-  penning:float = 0;
-  // NOT a rung-transition gate like the four above — no rung waits on it. It is the capability the
-  // PEN rung teaches (`intensification_ladder.json`, corral's `earns_knowledge: "foddering"`), and
-  // it gates every fodder seam a faction has: the pen's hay DRAW, the pen's `K` fodder term, and the
-  // WILD forage patch's fodder credit. So a wild hay patch can publish a positive
-  // `ForagePatchState.fodderPerBiomass` — what the LAND pays — that this faction cannot bank.
-  foddering:float = 0;
+  cultivation:float = 0 (deprecated);
+  herding:float = 0 (deprecated);
+  seedSelection:float = 0 (deprecated);
+  penning:float = 0 (deprecated);
+  foddering:float = 0 (deprecated);
+  // EVERY knowledge the ladder declares, in the roster's own order. Sparse in VALUE, never in
+  // MEMBERSHIP: a knowledge the faction has not begun reads 0 rather than being absent, so a client
+  // never has to tell "not begun" from "not published".
+  knowledges:[LadderKnowledgeProgress];
 }
 
 // One discovered Wondrous Site in a faction's registry. `category`/`display_name`/`glyph` are
@@ -5146,6 +5174,10 @@ table SubsistenceSection {
   foragePatches:[ForagePatchState];
   sedentarization:[SedentarizationState];
   intensificationKnowledge:[IntensificationKnowledgeState];
+  // --- THE LADDER KNOWLEDGE ROSTER, once per world (appended last) -------------------------------
+  // What there IS to learn, derived from `intensification_ladder.json` — see `LadderKnowledgeState`.
+  // A per-world constant, so it is diffed whole exactly like `kits`.
+  ladderKnowledge:[LadderKnowledgeState];
   foodModules:[FoodModuleState];
   // --- THE KIT ROSTER, once per world (appended last) -------------------------------------------
   // Every kit a party may be sent out with, in `equipment.json` order — the picker's list, with the

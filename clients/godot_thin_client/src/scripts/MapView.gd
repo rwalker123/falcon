@@ -785,18 +785,25 @@ var scout_sites: Dictionary = {}
 ##
 ## ⛔ **THIS IS NOT `AnnotationRenderer._routes`, AND THE TWO MUST NOT MERGE.** That field — and
 ## `map_preview`'s `"routes"` annotation state — is the per-faction ORDER PATH overlay: waypoints a
-## player's own movement orders are following. A road is a world object with a fixed stamped path
-## that outlives every band that walks it. The obvious name was already taken by the other thing, so
-## the road network is spelled `road_network` everywhere in the client.
-## The key `_ingest_road_network` stamps the ZIPPED path onto each road dict under — an `Array` of
-## `Vector2i` built once at ingest from the wire's two packed halves, so neither the draw pass nor a
-## hover re-zips it. Named because the producer and its readers are different scripts and a typo in a
-## `get` there is a silently empty polyline.
-const ROAD_TILES_KEY := "tiles"
+## player's own movement orders are following. A road is a world object IN THE GROUND that outlives
+## every band that walks it. The obvious name was already taken by the other thing, so the road
+## network is spelled `road_network` everywhere in the client.
+##
+## ⛔ **ONE ENTRY PER ROAD *TILE*, AND THERE IS NO PATH ON A ROW.** A road is a per-tile improvement
+## with its own rung, its own meter, its own keeper and its own decay — which is what makes *"one band
+## keeps half the tiles between two camps and another keeps the rest"* representable at all. The key
+## `_ingest_road_network` stamps on each road dict is its TILE, built once at ingest so neither the
+## draw pass nor a hover re-reads the two coordinate halves. Named because the producer and its
+## readers are different scripts and a typo in a `get` there is a silently undrawn road.
+const ROAD_TILE_KEY := "tile"
+## The tile a malformed row resolves to — outside every grid, so such a row is never joined onto a
+## hex and never drawn. A row without both halves is a truncated frame, not a road at the origin.
+const ROAD_TILE_NONE := Vector2i(-1, -1)
 var road_network: Array = []
-## …and the same roads keyed by the tiles they RUN OVER (`{Vector2i: Array[road]}`), so
-## `_tile_info_at` can answer "what roads cross this hex" without walking every path every hover. One
-## road appears under each of its own tiles; a hex may carry more than one road.
+## …and the same roads keyed by the tile they ARE (`{Vector2i: Array[road]}`), so `_tile_info_at` can
+## answer "what road is on this hex" without walking the list every hover. The registry is keyed by
+## tile sim-side, so the array holds exactly one — it stays an array so a duplicated row would render
+## twice rather than vanish silently, and so the tile card's block loop is unchanged.
 var road_tile_lookup: Dictionary = {}
 # Forage patches (cultivation/tended state, decoded from ForagePatchState), keyed by
 # Vector2i(x, y); read by `_tile_info_at` for the Tile-card cultivation/tended readout.
@@ -3345,9 +3352,13 @@ func _herds_on_tile(col: int, row: int) -> Array:
 ## scratch: a road that reverted to nothing is PRUNED sim-side and simply stops arriving, and a
 ## merge that kept stale entries would leave a road drawn on the map for the life of the world.
 ##
-## The path arrives as the wire's own two packed halves (`path_x` / `path_y`, zipped by index), which
-## is what the decoder carries rather than N sub-arrays; it is zipped ONCE here, into the `Vector2i`
-## tiles both consumers want.
+## ⛔ **THE ROW IS JOINED ON ITS TILE, and that pair IS its identity** — it replaced the retired
+## `RouteId` when a road stopped being a stored path and became a per-tile improvement. Resolved ONCE
+## here into the `Vector2i` both consumers want, so neither the draw pass nor a hover re-reads the
+## halves.
+##
+## **A ROW MISSING EITHER HALF IS DROPPED, NOT DRAWN AT THE ORIGIN.** That is a truncated frame, and a
+## road stamped on `(0, 0)` would be a visible lie about a hex the player can click.
 func _ingest_road_network(raw: Variant) -> void:
 	road_network = []
 	road_tile_lookup = {}
@@ -3357,24 +3368,19 @@ func _ingest_road_network(raw: Variant) -> void:
 		if not (entry is Dictionary):
 			continue
 		var road: Dictionary = (entry as Dictionary).duplicate(true)
-		var xs := PackedInt32Array(road.get("path_x", PackedInt32Array()))
-		var ys := PackedInt32Array(road.get("path_y", PackedInt32Array()))
-		var tiles: Array[Vector2i] = []
-		# **THE SHORTER HALF BOUNDS THE WALK.** The two are the same length by construction on the
-		# wire; taking the min rather than either one is what keeps a truncated frame from indexing
-		# past the end, which is a crash rather than a wrong drawing.
-		for i in range(mini(xs.size(), ys.size())):
-			tiles.append(Vector2i(xs[i], ys[i]))
-		road[ROAD_TILES_KEY] = tiles
+		var tile := Vector2i(int(road.get("tile_x", ROAD_TILE_NONE.x)),
+			int(road.get("tile_y", ROAD_TILE_NONE.y)))
+		if tile.x < 0 or tile.y < 0:
+			continue
+		road[ROAD_TILE_KEY] = tile
 		road_network.append(road)
-		for tile in tiles:
-			if not road_tile_lookup.has(tile):
-				road_tile_lookup[tile] = []
-			(road_tile_lookup[tile] as Array).append(road)
+		if not road_tile_lookup.has(tile):
+			road_tile_lookup[tile] = []
+		(road_tile_lookup[tile] as Array).append(road)
 
-## The roads crossing a hex — the tile card's cross-ref, read through `_tile_info_at`. The rows come
-## back BY REFERENCE into `road_network` rather than duplicated: nothing downstream writes to a road,
-## and a per-hover deep copy of every path would be paid on every mouse move.
+## The road on a hex — the tile card's cross-ref, read through `_tile_info_at`. The rows come back BY
+## REFERENCE into `road_network` rather than duplicated: nothing downstream writes to a road, and a
+## per-hover deep copy would be paid on every mouse move.
 ##
 ## **NOT fog-gated here, and that is deliberate**: the sim already publishes a road only to a faction
 ## that has explored at least one of its tiles (`Discovered`, not `Active` — a road does not wander

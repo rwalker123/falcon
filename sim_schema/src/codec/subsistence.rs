@@ -4,7 +4,7 @@ use crate::codec::FbBuilder;
 use crate::state::subsistence::{
     CharacteristicBandState, CraftKnowledgeState, FloraShareInfo, FoodModuleState,
     ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState, KitOptionState,
-    MaterialDefState, MaterialPayoff, RecipeDefState, SedentarizationState,
+    LadderKnowledgeState, MaterialDefState, MaterialPayoff, RecipeDefState, SedentarizationState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -19,6 +19,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let sedentarization = create_sedentarization(builder, &snapshot.sedentarization);
     let intensification_knowledge =
         create_intensification_knowledge(builder, &snapshot.intensification_knowledge);
+    let ladder_knowledge = create_ladder_knowledge(builder, &snapshot.ladder_knowledge);
     let food_modules = create_food_modules(builder, &snapshot.food_modules);
     let kits = create_kits(builder, &snapshot.kits);
     let default_hunt_kit_id = builder.create_string(&snapshot.default_hunt_kit_id);
@@ -39,6 +40,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
             foragePatches: Some(forage_patches),
             sedentarization: Some(sedentarization),
             intensificationKnowledge: Some(intensification_knowledge),
+            ladderKnowledge: Some(ladder_knowledge),
             foodModules: Some(food_modules),
             kits: Some(kits),
             defaultHuntKitId: Some(default_hunt_kit_id),
@@ -76,6 +78,10 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .intensification_knowledge
         .as_ref()
         .map(|entries| create_intensification_knowledge(builder, entries));
+    let ladder_knowledge = delta
+        .ladder_knowledge
+        .as_ref()
+        .map(|entries| create_ladder_knowledge(builder, entries));
     let food_modules = delta
         .food_modules
         .as_ref()
@@ -127,6 +133,7 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             foragePatches: forage_patches,
             sedentarization,
             intensificationKnowledge: intensification_knowledge,
+            ladderKnowledge: ladder_knowledge,
             foodModules: food_modules,
             kits,
             defaultHuntKitId: default_hunt_kit_id,
@@ -914,18 +921,51 @@ fn create_intensification_knowledge<'a>(
 ) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::IntensificationKnowledgeState<'a>>>> {
     let mut entries = Vec::with_capacity(states.len());
     for state in states {
+        let mut rows = Vec::with_capacity(state.knowledges.len());
+        for knowledge in &state.knowledges {
+            let knowledge_id = builder.create_string(&knowledge.knowledge_id);
+            rows.push(fb::LadderKnowledgeProgress::create(
+                builder,
+                &fb::LadderKnowledgeProgressArgs {
+                    knowledgeId: Some(knowledge_id),
+                    progress: knowledge.progress,
+                },
+            ));
+        }
+        let knowledges = builder.create_vector(&rows);
         let entry = fb::IntensificationKnowledgeState::create(
             builder,
             &fb::IntensificationKnowledgeStateArgs {
                 faction: state.faction,
-                cultivation: state.cultivation,
-                herding: state.herding,
-                seedSelection: state.seed_selection,
-                penning: state.penning,
-                foddering: state.foddering,
+                knowledges: Some(knowledges),
             },
         );
         entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+/// **THE LADDER KNOWLEDGE ROSTER** — what there *is* to learn, once per world. A per-world constant,
+/// so it is written whole on a snapshot and only when it moved on a delta, exactly like `kits`.
+fn create_ladder_knowledge<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[LadderKnowledgeState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::LadderKnowledgeState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let knowledge_id = builder.create_string(&state.knowledge_id);
+        let display_name = builder.create_string(&state.display_name);
+        let branch = builder.create_string(&state.branch);
+        entries.push(fb::LadderKnowledgeState::create(
+            builder,
+            &fb::LadderKnowledgeStateArgs {
+                knowledgeId: Some(knowledge_id),
+                displayName: Some(display_name),
+                branch: Some(branch),
+                order: state.order,
+                isStep: state.is_step,
+            },
+        ));
     }
     builder.create_vector(&entries)
 }

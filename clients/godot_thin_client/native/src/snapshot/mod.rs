@@ -36,7 +36,7 @@ use crate::dict::routes::routes_to_array;
 use crate::dict::subsistence::{
     characteristic_bands_to_array, craft_knowledge_to_array, food_modules_to_array,
     forage_patches_to_array, herds_to_array, intensification_knowledge_to_array, kits_to_array,
-    materials_to_array, recipes_to_array, sedentarization_to_array,
+    ladder_knowledge_to_array, materials_to_array, recipes_to_array, sedentarization_to_array,
 };
 use crate::snapshot::cache::RasterCache;
 use crate::snapshot::delta::CrisisAnnotationRecord;
@@ -1414,6 +1414,10 @@ pub(crate) fn snapshot_to_dict(
             "intensification_knowledge",
             &intensification_knowledge_to_array(intensification),
         );
+    }
+
+    if let Some(roster) = snapshot.subsistence().and_then(|s| s.ladderKnowledge()) {
+        let _ = dict.insert("ladder_knowledge", &ladder_knowledge_to_array(roster));
     }
 
     if let Some(demographics) = snapshot.population().and_then(|s| s.demographics()) {

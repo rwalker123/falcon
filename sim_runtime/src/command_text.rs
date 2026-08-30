@@ -1272,7 +1272,13 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 // which parses a line here before it sends it, refused every Builders staffing
                 // command and the pool could not be filled at all. Adding a role means adding it
                 // here too.
-                "scout" | "warrior" | "agriculture" | "husbandry" | "builders" => {
+                //
+                // ⛔ **AND `roadwork` FELL THROUGH THE SAME HOLE, ONE ROLE LATER** (arc #532). The
+                // server's dispatch took it, this grammar did not, and the bridge parses before it
+                // sends — so the route branch's keeping pool could not be staffed at all, with no
+                // error anywhere but the refusal. `command_guard`'s role sweep is what caught it, and
+                // is what keeps the two enumerations in step.
+                "scout" | "warrior" | "agriculture" | "husbandry" | "roadwork" | "builders" => {
                     let w = parts
                         .next()
                         .ok_or(CommandParseError::MissingArgument("workers"))?;

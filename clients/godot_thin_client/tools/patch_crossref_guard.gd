@@ -40,6 +40,14 @@ extends Node
 ##      `FORECAST_*_KEY` constants and `FORECAST_*_KEYS` tables, read reflectively so the list cannot
 ##      drift) must be crossed if the patch carries it — which is what stops an `UNCROSSED_KEYS`
 ##      entry being added for a field the forecast layer reads.
+##   4b. **THE ROAD'S OWN CROSS-REF, joined on its TILE.** A `routes` row is a per-tile improvement
+##      whose identity is its `tile_x`/`tile_y` pair, and it reaches the tile card through
+##      `MapView.road_tile_lookup` — a join, not a copy, so it fails one way rather than the patch's
+##      key-by-key way: get the key names wrong and EVERY road silently stops existing, with no
+##      error and nothing on screen. That is exactly what the retired `path_x`/`path_y` reads were
+##      doing (`get`-with-default, an empty path per road, a blank map). It is asserted here rather
+##      than in a preview harness for the reason at the top of this file: both harnesses seed
+##      `tile_info` themselves and cannot see a cross-ref at all.
 ##   5. **The FoW redaction.** A crossed patch key is live patch state and belongs in
 ##      `MapView.FOW_DISCOVERED_HIDDEN_KEYS`, the one rule the whole patch payload follows, unless it
 ##      is declared in `FOW_EXEMPT_KEYS` as ground knowledge a remembered tile still holds. This is
@@ -135,10 +143,50 @@ func _ready() -> void:
 	_assert_every_crossed_key_has_a_source(patch, info)
 	_assert_forecast_keys_cross(patch, info)
 	_assert_crossed_keys_are_fog_redacted(info)
+	_assert_the_road_row_joins_on_its_tile(mv)
 
 	mv.free()
 	_finish(patch.size())
 
+
+## ⛔ **CLAIM 4b — A ROAD ROW REACHES THE TILE CARD, AND IT IS JOINED ON ITS TILE.**
+##
+## A road is a per-tile improvement whose identity is `tile_x`/`tile_y`; `MapView._ingest_road_network`
+## resolves that pair once and keys `road_tile_lookup` by it, and `_tile_info_at` cross-refs the hex
+## under the cursor against it. **The failure mode is total and silent**: read the pair under the
+## wrong names and every road drops out of both the map draw and the tile card, through
+## `get`-with-default, with nothing to notice. That is the state this arc found the client in.
+##
+## Driven off the DECODER's own row rather than a literal, the whole file's discipline — a
+## hand-written fixture carries only the keys someone remembered.
+func _assert_the_road_row_joins_on_its_tile(mv: MapView) -> void:
+	var road := _decoded_road()
+	if road.is_empty():
+		return
+	mv._ingest_road_network([road])
+	var tile := Vector2i(int(road.get("tile_x", -1)), int(road.get("tile_y", -1)))
+	# The PRECONDITION, so the claim below cannot pass vacuously on a row the fixture never placed.
+	if tile.x < 0 or tile.y < 0:
+		_fail("the decoded road row carries no tile_x/tile_y — the join has nothing to key on")
+		return
+	if mv.road_network.size() != 1:
+		_fail("a decoded road row did not survive the ingest (road_network holds %d)"
+			% mv.road_network.size())
+		return
+	var found: Array = mv._roads_on_tile(tile.x, tile.y)
+	if found.is_empty():
+		_fail("the road on (%d, %d) does not cross onto its own tile — `road_tile_lookup` is keyed on something the wire does not send, which drops every road from the map AND the tile card silently"
+			% [tile.x, tile.y])
+		return
+	# …and it is THAT road, by its rung, so a join that stamped some other row on the hex fails too.
+	var crossed: Dictionary = found[0]
+	if String(crossed.get("rung", "")) != String(road.get("rung", "")):
+		_fail("the road crossed onto (%d, %d) is not the row the wire sent (`%s` vs `%s`)"
+			% [tile.x, tile.y, crossed.get("rung", ""), road.get("rung", "")])
+	# **AND A NEIGHBOURING HEX CARRIES NO ROAD**, which is what stops a lookup that answers "yes" for
+	# every tile from passing the claim above.
+	if not mv._roads_on_tile(tile.x + 1, tile.y + 1).is_empty():
+		_fail("a hex with no road on it answered with one — the join is not keyed on the tile at all")
 
 ## Claim 0 — the fixture actually carries the vectors the value claims are about.
 func _assert_fixture_is_saturated(patch: Dictionary) -> void:
@@ -222,8 +270,15 @@ func _forecast_wire_keys() -> PackedStringArray:
 	return keys
 
 
-## The fixture's first forage patch, straight out of the real decoder.
-func _decoded_patch() -> Dictionary:
+## **THE WHOLE DECODED FIXTURE, decoded ONCE.** Two sections are read out of it now, and decoding a
+## second time would be a second chance for the two claims to run against different worlds.
+var _decoded_cache: Dictionary = {}
+var _decoded_once := false
+
+func _decoded_snapshot() -> Dictionary:
+	if _decoded_once:
+		return _decoded_cache
+	_decoded_once = true
 	if not ClassDB.class_exists("SnapshotDecoder"):
 		_fail("SnapshotDecoder class is not registered — build the native extension first (cargo xtask godot-build)")
 		return {}
@@ -245,11 +300,32 @@ func _decoded_patch() -> Dictionary:
 	if not (decoded is Dictionary) or (decoded as Dictionary).is_empty():
 		_fail("decode_snapshot returned no snapshot for a %d-byte envelope — regenerate the fixture (cargo xtask decode-fixture)" % payload.size())
 		return {}
-	var patches: Variant = (decoded as Dictionary).get("forage_patches", [])
+	_decoded_cache = decoded as Dictionary
+	return _decoded_cache
+
+## The fixture's first forage patch, straight out of the real decoder.
+func _decoded_patch() -> Dictionary:
+	var decoded := _decoded_snapshot()
+	if decoded.is_empty():
+		return {}
+	var patches: Variant = decoded.get("forage_patches", [])
 	if not (patches is Array) or (patches as Array).is_empty():
 		_fail("the decoded fixture carries no forage_patches — this guard has nothing to cross")
 		return {}
 	return (patches as Array)[0]
+
+
+## The decoder's own first `routes` row, `{}` when the fixture carries none (which is itself a
+## failure — an empty section is a claim that checks nothing).
+func _decoded_road() -> Dictionary:
+	var decoded := _decoded_snapshot()
+	if decoded.is_empty():
+		return {}
+	var roads: Variant = decoded.get("routes", [])
+	if not (roads is Array) or (roads as Array).is_empty():
+		_fail("the decoded fixture carries no routes — the road cross-ref has nothing to join")
+		return {}
+	return (roads as Array)[0]
 
 
 func _fail(msg: String) -> void:

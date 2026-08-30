@@ -12,6 +12,7 @@ const EXPECTED_CHECKPOINTS := 49
 
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
+const KnowledgeFx := preload("res://tools/ui_preview/fixtures_knowledge.gd")
 ## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
 ## rung off its own flags through this, and re-stamps after any mutation of them.
 const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
@@ -100,10 +101,12 @@ const KNOWLEDGE_TURN_LEARNED := 610
 
 const KNOWLEDGE_TURN_NEXT := 611
 
-# **THE FOUR LADDER TRACKS THAT UNLOCK SOMETHING TO STAND ON**, taught in one turn, so the producer
-# has to emit four rows — and so all four are left UNSPENT, which is what makes the absence claim
-# below a real one. `foddering` is deliberately absent: it unlocks no verb
-# (`HudKnowledgeVocab.UNLOCKLESS_TRACKS`), so it can never be unspent and would weaken that claim.
+# **FOUR LADDER TRACKS THAT UNLOCK SOMETHING TO STAND ON**, taught in one turn, so the producer has
+# to emit four rows — and so all four are left UNSPENT, which is what makes the absence claim below a
+# real one. `foddering` is deliberately absent: the ROSTER marks it a capability rather than a step
+# (no rung's `unlock_knowledge` names it), so it can never be unspent and would weaken that claim.
+# The route branch's two are left out for a different reason — a fifth and sixth row would only make
+# the exact-count claim below harder to read.
 const KNOWLEDGE_TRACKS_TAUGHT := {
 	"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0,
 }
@@ -152,11 +155,12 @@ func _learned_rows(rows: Array) -> Array:
 ## Push the player faction's ladder tracks and let the whole HUD settle. `update_intensification` is
 ## the seam that rolls the knowledge screen's turn diff, and `update_overlay` ahead of it is what
 ## carries the turn that diff rolls AGAINST — the same order `Main` dispatches them in.
+## **THE ROSTER IS PUSHED FIRST**: it declares what there is to learn, and without it the knowledge
+## screen has no ladder nodes at all — so no track could ever be reported learned.
 func _teach(turn: int, tracks: Dictionary) -> void:
-	var row: Dictionary = {"faction": HudConst.PLAYER_FACTION_ID}
-	row.merge(tracks)
+	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
 	h._hud.update_overlay(turn, {})
-	h._hud.update_intensification([row])
+	h._hud.update_intensification([KnowledgeFx.progress_row(HudConst.PLAYER_FACTION_ID, tracks)])
 	await h._settle()
 
 func _set_forage_patches(patches: Array) -> void:
@@ -568,7 +572,7 @@ func run(harness) -> void:
 	# hands back the retained dict itself rather than a copy.
 	var inherited_tracks: Dictionary = h._hud._topbar.faction_tracks(
 		HudConst.PLAYER_FACTION_ID).duplicate()
-	h._hud.update_intensification([{"faction": HudConst.PLAYER_FACTION_ID}])
+	h._hud.update_intensification([KnowledgeFx.progress_row(HudConst.PLAYER_FACTION_ID, {})])
 	await h._settle()
 	_assert_knowledge_half_silent("the band states run with the knowledge producer silent")
 
@@ -1013,12 +1017,12 @@ func _assert_knowledge_producers(inherited_tracks: Dictionary) -> void:
 	var all_named := true
 	for track in KNOWLEDGE_TRACKS_TAUGHT:
 		var wanted := HudAttentionVocab.ATTENTION_KNOWLEDGE_LEARNED_LABEL_FORMAT % String(
-			FactionReadouts.KNOWLEDGE_TRACK_LABELS[track])
+			KnowledgeFx.label_for(track))
 		if _orb_row_with(rows, wanted) == null:
 			all_named = false
 	h._assert_hud("…each naming its own discovery, `%s`-style"
 			% (HudAttentionVocab.ATTENTION_KNOWLEDGE_LEARNED_LABEL_FORMAT % String(
-				FactionReadouts.KNOWLEDGE_TRACK_LABELS["cultivation"])),
+				KnowledgeFx.label_for(KnowledgeFx.KNOWLEDGE_CULTIVATION))),
 		all_named)
 	# **THE ROW WEARS `Open ▸`, AND THAT IS A CLAIM ABOUT TWO LISTS AT ONCE** — the kind must be in
 	# `HudAttentionVocab.ATTENTION_KINDS_WITH_A_PANEL` (or the affordance is blank) and it must have a

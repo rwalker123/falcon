@@ -33,8 +33,8 @@ use crate::state::population::{
 use crate::state::routes::RouteState;
 use crate::state::subsistence::{
     CharacteristicBandState, CraftKnowledgeState, FoodModuleState, ForagePatchState,
-    HerdTelemetryState, IntensificationKnowledgeState, KitOptionState, MaterialDefState,
-    RecipeDefState, SedentarizationState,
+    HerdTelemetryState, IntensificationKnowledgeState, KitOptionState, LadderKnowledgeState,
+    MaterialDefState, RecipeDefState, SedentarizationState,
 };
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
@@ -184,9 +184,16 @@ pub struct WorldSnapshot {
     /// Per-tile depletable-forage cultivation/ecology display state (Intensification Phase 1a).
     #[serde(default)]
     pub forage_patches: Vec<ForagePatchState>,
-    /// Per-faction Cultivation/Herding knowledge progress (Intensification Rung 1b/1c).
+    /// Per-faction progress on every ladder knowledge, `0..1`. Sparse in FACTIONS (a faction that
+    /// has learned nothing is absent) and never in knowledges.
     #[serde(default)]
     pub intensification_knowledge: Vec<IntensificationKnowledgeState>,
+    /// **What there IS to learn** — the ladder's knowledge roster, derived from
+    /// `intensification_ladder.json` and carrying no faction. A per-world constant, so it is
+    /// published once and diffed whole like [`Self::kits`]. It is what lets a client build its
+    /// knowledge columns without a hard-coded node list.
+    #[serde(default)]
+    pub ladder_knowledge: Vec<LadderKnowledgeState>,
     /// **The kit roster** (`equipment.json`'s `kits`) — every kit a party may be sent out with, in
     /// file order, with the tiers each grants. A per-world constant, published once so the client's
     /// picker needs no second copy of the TOE table.
@@ -317,6 +324,10 @@ pub struct WorldDelta {
     pub demographics: Option<Vec<PopulationDemographicsState>>,
     pub forage_patches: Option<Vec<ForagePatchState>>,
     pub intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
+    /// The ladder knowledge roster; a per-world constant, so a delta re-sends it only when the world
+    /// is rebuilt. `None` means unchanged.
+    #[serde(default)]
+    pub ladder_knowledge: Option<Vec<LadderKnowledgeState>>,
     /// The kit roster; a per-world constant, so a delta re-sends it only when the world is rebuilt.
     /// `None` means unchanged.
     #[serde(default)]

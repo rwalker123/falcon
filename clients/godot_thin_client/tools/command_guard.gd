@@ -215,6 +215,7 @@ func _ready() -> void:
 	await _drive_build_kit()
 	await _drive_build_order()
 	await _drive_send_trade_expedition()
+	_drive_road_verbs()
 
 	_assert_every_command_emitted()
 	_assert_every_role_is_emittable()
@@ -599,6 +600,45 @@ func _connect_recorders() -> void:
 			TRADE_HIDE_MATERIAL: TRADE_HIDE_HELD_TICKS,
 		}))
 
+## ⛔ **THE ROUTE BRANCH'S TILE VERBS — the only tile commands that NAME A BAND.**
+##
+## `grade <faction> <band> <x> <y>` and `pave` likewise: `cultivate`/`sow`'s grammar plus a band
+## token, because a patch's keeper is whoever is already foraging it and **a road has no work row at
+## all**, so who will keep the tile has to be said out loud. Issuing one declares the job and names
+## the keeper in the same act.
+##
+## **THE EXTRA TOKEN IS EXACTLY WHAT THIS GUARD EXISTS FOR.** Both handles here are `u64`-ish
+## integers in a positional grammar, so a builder that emitted `cultivate`'s four-token form would
+## still parse — the sim would read the BAND as the x coordinate and grade a tile nobody asked for,
+## with nothing failing anywhere. The Rust half asserts the parsed band equals the fixture's
+## `band_id`, and the fixture's `entity` and `band_id` are deliberately different numbers.
+##
+## Driven straight through `Main.format_improvement`, the pure static the compose sheet's press
+## reaches: there is no road control on the shipped HUD yet, so a click path would be a fiction and
+## the builder is the whole of the client's side of this verb.
+func _drive_road_verbs() -> void:
+	for improvement in SourceForecast.ROUTE_IMPROVEMENTS:
+		var payload := {
+			"improvement": improvement,
+			"faction": HudConst.PLAYER_FACTION_ID,
+			"band_id": BAND_ID,
+			"x": TARGET_X,
+			"y": TARGET_Y,
+		}
+		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload))
+	# **AND A ROAD VERB WITH NO BAND BUILDS NOTHING**, which is a refusal rather than a default: the
+	# token IS the keeper, and guessing one would commit somebody else's people to a standing bill.
+	# Asserted here rather than left to the parser, because a line missing its band token parses as
+	# the tile form of some OTHER verb rather than failing.
+	var bandless := {
+		"improvement": SourceForecast.IMPROVEMENT_GRADE,
+		"faction": HudConst.PLAYER_FACTION_ID,
+		"x": TARGET_X,
+		"y": TARGET_Y,
+	}
+	if not MAIN_SCRIPT.format_improvement(bandless).is_empty():
+		_fail("grade: a road verb with no band built a line — the keeper token is not optional")
+
 ## The commands whose grammar carries a `kit <id>` tail. Every OTHER kind records `expected_kit` as
 ## `""` — a command with no kit axis names no kit, which is what the Rust half's `NotKitBearing`
 ## answer means.
@@ -751,6 +791,10 @@ const EXPECTED_KINDS := {
 	"send_denial_raid": 1,
 	# ONE — the shipment's only launch site is that same sheet, and one line carries both piles.
 	"send_trade_expedition": 1,
+	# ONE EACH — the route branch's two tile verbs, whose whole difference from `cultivate`/`sow` is
+	# the BAND token in the middle. See `_drive_road_verbs`.
+	"grade": 1,
+	"pave": 1,
 }
 
 func _assert_every_command_emitted() -> void:

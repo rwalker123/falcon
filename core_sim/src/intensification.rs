@@ -3029,6 +3029,42 @@ pub struct RouteRange {
     pub remote_cost_multiplier: f32,
 }
 
+/// **One knowledge the ladder teaches, with the two facts that place it** — see
+/// [`LadderConfig::knowledge_roster`], which is the only producer of these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LadderKnowledgeEntry<'a> {
+    /// The config's own knowledge id (`"cultivation"`, `"roadbuilding"`, …).
+    pub knowledge: &'a str,
+    /// The branch of the rung that teaches it.
+    pub branch: RungBranch,
+    /// …and that rung's `order`.
+    pub order: u32,
+    /// Whether some rung's `unlock_knowledge` names it — a *step* rather than a *capability*.
+    pub is_step: bool,
+    /// The [`DiscoveryProgressLedger`](crate::knowledge::DiscoveryProgressLedger) row it is stored
+    /// under, resolved once here so no caller re-runs the name lookup.
+    pub discovery_id: u32,
+}
+
+/// **A KNOWLEDGE ID AS A PLAYER SHOULD READ IT** — `"seed_selection"` → `"Seed Selection"`.
+///
+/// It is NOT [`crate::crafting::title_from_id`], which hyphenates (`"Bone-working"`): that spelling
+/// is the crafts' own and a hyphen in *"Seed-selection"* would read as a compound word rather than
+/// as two. Resolved sim-side, beside the id it names, so no client authors a second spelling.
+pub fn knowledge_title_from_id(id: &str) -> String {
+    id.split('_')
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// The whole ladder: every rung of both branches, plus the pace they are learned at
 /// (`data/intensification_ladder.json`).
 #[derive(Debug, Clone, Deserialize)]
@@ -3211,6 +3247,52 @@ impl LadderConfig {
         self.rung(REFERENCE_BUILD_RUNG)
             .build_cost(RUNG_COST_UNSCALED)
             .expect("the reference rung is an investment — it has a build meter")
+    }
+
+    /// **WHAT THERE IS TO LEARN, DERIVED FROM THE LADDER AND NOTHING ELSE** — one entry per
+    /// knowledge a rung *teaches*, in the rungs' own declaration order.
+    ///
+    /// ⛔ **NOTHING HERE IS AUTHORED; ALL OF IT FALLS OUT OF `earns_knowledge` / `unlock_knowledge`.**
+    /// A knowledge belongs to the branch of the rung that teaches it and sits at that rung's `order`
+    /// — which is the only pair of facts a reader needs to place it in a column and in that column's
+    /// chain — and it is a STEP exactly when some rung's `unlock_knowledge` names it. That last one
+    /// is what makes `foddering` hang off the bottom of the animal branch rather than sit in its
+    /// chain, and it *falls out* rather than being declared, so a knowledge that stops gating a rung
+    /// stops being a step with no second table to remember.
+    ///
+    /// **The crafts are deliberately absent.** No rung teaches one — a bench does, per item finished
+    /// — so they carry no branch and no order, and they ride their own `CraftKnowledgeState` list.
+    ///
+    /// The first rung that teaches a knowledge wins, which is the honest reading of *"the step that
+    /// teaches it"* for a knowledge two rungs could earn; the ladder ships none such today.
+    pub fn knowledge_roster(&self) -> Vec<LadderKnowledgeEntry<'_>> {
+        let mut roster: Vec<LadderKnowledgeEntry<'_>> = Vec::new();
+        for rung in &self.rungs {
+            let Some(name) = rung.earns_knowledge.as_deref() else {
+                continue;
+            };
+            if roster.iter().any(|entry| entry.knowledge == name) {
+                continue;
+            }
+            roster.push(LadderKnowledgeEntry {
+                knowledge: name,
+                branch: rung.branch,
+                order: rung.order,
+                is_step: self.knowledge_gates_a_rung(name),
+                discovery_id: rung
+                    .earns_discovery_id()
+                    .expect("a taught knowledge resolves to a discovery (validated at load)"),
+            });
+        }
+        roster
+    }
+
+    /// **Does any rung wait on this knowledge?** The whole of the step-vs-capability distinction,
+    /// asked of the config rather than of a list beside it.
+    fn knowledge_gates_a_rung(&self, knowledge: &str) -> bool {
+        self.rungs
+            .iter()
+            .any(|rung| rung.unlock_knowledge.as_deref() == Some(knowledge))
     }
 
     /// A rung by branch + id, if it exists.

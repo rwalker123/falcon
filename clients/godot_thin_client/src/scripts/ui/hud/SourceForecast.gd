@@ -106,10 +106,16 @@ const IMPROVEMENT_CULTIVATE := "cultivate"
 const IMPROVEMENT_SOW := "sow"
 const IMPROVEMENT_TAME := "tame"
 const IMPROVEMENT_CORRAL := "corral"
-# The plant ladder and the animal ladder, each in RUNG ORDER (low → high). Kept apart because the two
-# webs never share a rung, and read by nothing that needs "all four".
+# **THE ROUTE BRANCH'S TWO VERBS** (arc #532). `grade` raises a worn trail to a dirt road, `pave`
+# raises a dirt road to a paved one — and both NAME A BAND as well as a tile, because a road has no
+# work row for its keeper to be inferred from. See `Main.format_improvement`.
+const IMPROVEMENT_GRADE := "grade"
+const IMPROVEMENT_PAVE := "pave"
+# The three ladders, each in RUNG ORDER (low → high). Kept apart because no two webs share a rung,
+# and read by nothing that needs "all six".
 const FORAGE_IMPROVEMENTS := [IMPROVEMENT_CULTIVATE, IMPROVEMENT_SOW]
 const HUNT_IMPROVEMENTS := [IMPROVEMENT_TAME, IMPROVEMENT_CORRAL]
+const ROUTE_IMPROVEMENTS := [IMPROVEMENT_GRADE, IMPROVEMENT_PAVE]
 # **THE FENCE RING'S JOB TOKEN, AND IT IS NOT A RUNG.** `snapshot::population::resolved_build_job`
 # publishes this in the `improvement` slot for a queue entry whose declared job is
 # `BuildJob::ExtendPen`: a ring widens the pen rung its herd already stands on, so there is no meter
@@ -1012,6 +1018,15 @@ const RUNG_KEY_FIELD := "plant:field"
 const RUNG_KEY_WILD_ANIMAL := "animal:wild"
 const RUNG_KEY_PASTORAL := "animal:pastoral"
 const RUNG_KEY_PEN := "animal:pen"
+# **THE ROUTE BRANCH'S FOUR, ALIASED OFF `HudRouteVocab` RATHER THAN RESTATED.** That leaf is the
+# road readout's vocabulary and already spells them; a second spelling here is exactly the "one fact
+# written twice" this pair of tables warns about one comment down. The direction is safe by that
+# file's own contract — it references this layer inside FUNCTIONS only, never in a `const`, so the
+# two do not form a load cycle.
+const RUNG_KEY_GAME_TRAIL := HudRouteVocab.RUNG_KEY_GAME_TRAIL
+const RUNG_KEY_TRAIL := HudRouteVocab.RUNG_KEY_TRAIL
+const RUNG_KEY_DIRT_ROAD := HudRouteVocab.RUNG_KEY_DIRT_ROAD
+const RUNG_KEY_PAVED_ROAD := HudRouteVocab.RUNG_KEY_PAVED_ROAD
 const RUNG_KEY_IMPROVEMENTS := {
     RUNG_KEY_WILD_PLANT: IMPROVEMENT_NONE,
     RUNG_KEY_TENDED: IMPROVEMENT_CULTIVATE,
@@ -1019,6 +1034,15 @@ const RUNG_KEY_IMPROVEMENTS := {
     RUNG_KEY_WILD_ANIMAL: IMPROVEMENT_NONE,
     RUNG_KEY_PASTORAL: IMPROVEMENT_TAME,
     RUNG_KEY_PEN: IMPROVEMENT_CORRAL,
+    # ⛔ **THE ROUTE BRANCH'S FREE FLOOR IS TWO RUNGS DEEP, AND BOTH DECLARE NO VERB.** A game trail
+    # is what the animals made and a trail is worn in by traffic — neither is something a band
+    # builds, so both map to `IMPROVEMENT_NONE` exactly as the two `wild` rungs do. The gap this
+    # closes is above them: `grade` and `pave` are real verbs now, where the branch declared none at
+    # all when these tables were written.
+    RUNG_KEY_GAME_TRAIL: IMPROVEMENT_NONE,
+    RUNG_KEY_TRAIL: IMPROVEMENT_NONE,
+    RUNG_KEY_DIRT_ROAD: IMPROVEMENT_GRADE,
+    RUNG_KEY_PAVED_ROAD: IMPROVEMENT_PAVE,
 }
 # **…AND THE INVERSE: THE RUNG EACH IMPROVEMENT VERB BUILDS.** `improvement_is_done` asks this of
 # every rung of every source the HUD draws, so it is written down rather than searched for in the
@@ -1026,7 +1050,7 @@ const RUNG_KEY_IMPROVEMENTS := {
 #
 # ⛔ **THE PAIR IS ONE FACT WRITTEN TWICE AND MUST STAY IN STEP.** A rung added to one table and not
 # the other is either a verb naming no rung — which reads as *never built*, silently — or a rung no
-# verb can reach. The route ladder's `route:trail` / `route:road` go into BOTH or into neither.
+# verb can reach. The route ladder is in BOTH, which is what closed the gap `grade` / `pave` opened.
 #
 # **`IMPROVEMENT_NONE` IS ABSENT, AND THAT ABSENCE IS THE ANSWER.** The floor is not something a band
 # builds, it is where every source starts, and it is spelled differently on each branch — so *is
@@ -1036,6 +1060,8 @@ const IMPROVEMENT_RUNG_KEYS := {
     IMPROVEMENT_SOW: RUNG_KEY_FIELD,
     IMPROVEMENT_TAME: RUNG_KEY_PASTORAL,
     IMPROVEMENT_CORRAL: RUNG_KEY_PEN,
+    IMPROVEMENT_GRADE: RUNG_KEY_DIRT_ROAD,
+    IMPROVEMENT_PAVE: RUNG_KEY_PAVED_ROAD,
 }
 # **THE RUNG THE SOURCE STANDS ON**, in that same `<branch>:<id>` spelling — the ONE wire field that
 # answers *"has this rung been built"* on both webs (`forage::patch_rung_key`, and its animal twin).
@@ -1046,11 +1072,16 @@ const FORECAST_CURRENT_RUNG_KEY := "current_rung"
 # of climb order would mark the wrong rung as *banked*.
 const RUNG_BRANCH_PLANT := [RUNG_KEY_WILD_PLANT, RUNG_KEY_TENDED, RUNG_KEY_FIELD]
 const RUNG_BRANCH_ANIMAL := [RUNG_KEY_WILD_ANIMAL, RUNG_KEY_PASTORAL, RUNG_KEY_PEN]
+# **THE ROUTE BRANCH IS FOUR RUNGS, NOT THREE**, because its free floor is two storeys: a game trail
+# is what the animals made and a trail is what traffic wore in over it. Both are below the first rung
+# anybody pays for, which is what `rung_above_branch_floor` reads out of the ORDER.
+const RUNG_BRANCH_ROUTE := [RUNG_KEY_GAME_TRAIL, RUNG_KEY_TRAIL, RUNG_KEY_DIRT_ROAD,
+    RUNG_KEY_PAVED_ROAD]
 # …and EVERY BRANCH THIS CLIENT KNOWS, in one list. It is what makes a question about a rung KEY
 # answerable without first being told which web the source is on — the wire spells a rung
-# `<branch>:<id>`, so the branch travels inside the key. A future third web (a route climbing
-# trail → road) is ONE ENTRY here and no per-source code anywhere.
-const RUNG_BRANCHES := [RUNG_BRANCH_PLANT, RUNG_BRANCH_ANIMAL]
+# `<branch>:<id>`, so the branch travels inside the key. The route web was that promised third entry,
+# and it cost exactly one row here and no per-source code anywhere.
+const RUNG_BRANCHES := [RUNG_BRANCH_PLANT, RUNG_BRANCH_ANIMAL, RUNG_BRANCH_ROUTE]
 const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
 # **WHAT IT COSTS TO HOLD THIS SOURCE AT THE RUNG IT STANDS ON**, in work units per turn — the RATE
 # half of the ladder beside the build's PILE (`docs/plan_standing_upkeep.md` §2). All four ship on
@@ -1383,7 +1414,8 @@ const FORECAST_DONE_FLAG_KEYS := {
 ## also cultivated, and it existed because *built* was asked of each web's private bools, which cannot
 ## see a rung skipped by `Sow`. `improvement_is_done` now compares the source's standing rung against
 ## the rung the verb builds, so *a higher rung retires the one below it* is the ORDER of
-## `RUNG_BRANCHES` rather than a table beside it — and the route ladder adds no entry to either.
+## `RUNG_BRANCHES` rather than a table beside it. **The route ladder adds no entry HERE either** — a
+## road carries no per-verb achievement flag, its rung string being the whole of its standing.
 # Below this a component's rate is zero — nothing to divide by. NOT the same question as "did the wire
 # carry a forecast", which `known` now answers separately (see `forecast_inputs`).
 const FORECAST_MIN_PER_WORKER := 0.0001

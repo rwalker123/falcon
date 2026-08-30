@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 68
+const EXPECTED_CHECKPOINTS := 75
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -647,7 +647,9 @@ func _river_tile_fixture(river_mask: int) -> Dictionary:
 # ---- ROADS ON THE TILE CARD (arc #532) --------------------------------------------------------
 #
 # A road is IN THE GROUND, so the land drawer is its readout. These fixtures are shaped exactly like
-# the native decoder's `routes` rows (`native/src/dict/routes.rs`), one road under the hex.
+# the native decoder's `routes` rows (`native/src/dict/routes.rs`) — **ONE ROW PER TILE**, with no path
+# on it: a road is a per-tile improvement with its own rung, its own meter, its own keeper and its own
+# decay.
 
 ## The friction multipliers and link spans the four route rungs actually ship in
 ## `intensification_ladder.json`, transcribed so the frames state the real ladder rather than round
@@ -697,14 +699,45 @@ const ROAD_METER_RISING_PERCENT := 30
 ## client that recomputed it would need the per-worker rate, which it does not hold.
 const ROAD_WANTS_DIRT := 4
 
+## The tile the road fixtures sit on — the river fixture's own hex, so the two frames differ in
+## exactly the thing under test. It is the row's IDENTITY now, the retired `RouteId` having gone with
+## the stored path.
+const ROAD_TILE := Vector2i(9, 36)
+
+## ⛔ **WHOSE JOB THE ROAD IS.** A road tile has ONE keeper and no shares, and it is the band that
+## GRADED it — wherever that band has since walked. `NO_KEEPER` is the whole free floor and also a
+## built road whose keeping band is gone.
+const ROAD_KEEPER_BAND := 1
+const ROAD_NO_KEEPER := -1
+
+## ⛔ **WHAT DISTANCE DID TO THE PRICE**, as the multiple the sim quoted when the keeper took the tile
+## on. `AT_HOME` is inside `route_range.base_tiles` and on every road nobody keeps; `REMOTE` is the
+## shipped `route_range.remote_cost_multiplier`, which prices BOTH the build pile and the standing
+## upkeep. **A threshold, not a curve** — and the only thing that can explain a bill larger than the
+## rung says.
+const ROAD_REMOTENESS_AT_HOME := 1.0
+const ROAD_REMOTENESS_REMOTE := 2.0
+
+## …and the bill a REMOTE dirt road actually carries: the rung's own, times that multiple. Written out
+## rather than computed, so an assertion that recomputed the product would not pass against a client
+## that had started doing the multiplication itself — which it must never do.
+const ROAD_DEMAND_DIRT_REMOTE := 6.8
+const ROAD_WANTS_DIRT_REMOTE := 7
+
 ## A road at one rung. `meter` is the wire's `build_fraction` — the meter on the rung being RAISED,
 ## which is a DIFFERENT rung, and `1.0` means nothing is rising.
 func _road_fixture(rung: String, meter: float, demand: float, shortfall: float,
-		workers_needed: int, grace: int, lit: bool, friction: float, link: int) -> Dictionary:
+		workers_needed: int, grace: int, lit: bool, friction: float, link: int,
+		keeper: int = ROAD_NO_KEEPER, remoteness: float = ROAD_REMOTENESS_AT_HOME) -> Dictionary:
 	return {
-		"id": 41,
-		"path_x": PackedInt32Array([9, 10, 11]),
-		"path_y": PackedInt32Array([36, 36, 37]),
+		# THE TILE IS THE ROW'S IDENTITY — there is no id and no path beside it.
+		"tile_x": ROAD_TILE.x,
+		"tile_y": ROAD_TILE.y,
+		# **THE BOOL IS READ BEFORE THE ID**, because `0` is a real `BandId` — so a fixture states both
+		# rather than leaving the reader to infer one from a sentinel.
+		"has_keeper": keeper != ROAD_NO_KEEPER,
+		"keeper_band_id": keeper,
+		"keeper_remoteness": remoteness,
 		"rung": rung,
 		"build_fraction": meter,
 		"upkeep_demand": demand,
@@ -730,10 +763,54 @@ func _road_tile_fixture(road: Dictionary) -> Dictionary:
 	tile["roads"] = [road]
 	return tile
 
-## The road block's own lines, off the REAL producer, so every claim below is about the shipped
-## readout rather than about a re-derivation here.
+## The road block's own lines, off the REAL producer (`SubjectDrawerController._tile_terrain_lines`),
+## so every claim about them is about the shipped readout rather than a re-derivation here.
+##
+## **THE KEEPER'S NAME RESOLVES INSIDE IT**, through this client's one band-naming rule — a road
+## carries an id and nothing else — so a road kept by a band this walk's roster does not hold comes
+## back UNNAMED, which is a real state and is asserted as one below.
 func _road_lines(road: Dictionary) -> Array[String]:
 	return h._hud._drawer._tile_terrain_lines(_road_tile_fixture(road))
+
+## **THE FIRST PLAYER BAND'S OWN `band_id`, read LIVE off the walk's roster.** A road frame that
+## hard-coded an id would render *another people* — this client resolves a keeper's name through its
+## band roster, and an id nobody holds resolves to nothing — which is a truthful state but the wrong
+## one to spend five frames on. `ROAD_NO_KEEPER` where the walk holds no player band, which draws the
+## keeperless case rather than a wrong name.
+func _road_keeper_band() -> int:
+	var bands: Array = h._hud._band_labor.player_bands()
+	if bands.is_empty() or not (bands[0] is Dictionary):
+		return ROAD_NO_KEEPER
+	return int((bands[0] as Dictionary).get("band_id", ROAD_NO_KEEPER))
+
+## ⛔ **THE ROAD FRAMES NEED A BAND ROSTER, AND IT IS PUT BACK ON THE WAY OUT.** A keeper is a BAND,
+## and this client resolves a band's name through the roster `update_band_alerts` fills — so with no
+## roster every road on screen reads *another people*, which is a true sentence about the wrong
+## subject. The roster is SHARED WALK STATE (the chapters after this one render against whatever they
+## inherit), so it is captured by value first and restored verbatim afterwards — `turn_orb`'s own rule
+## for the knowledge tracks, for the identical reason.
+## ⛔ **AND THE ACTING BAND IS RESTORED SEPARATELY, BECAUSE THIS CHAPTER SETS IT SEPARATELY.** The
+## forage-range block above writes `_band_labor._player_band` DIRECTLY, bypassing the roster —
+## `update_band_alerts` re-derives that field from the list it is handed, so a restore that put only
+## the roster back would leave the acting band cleared, and the compose sheet the NEXT chapter opens
+## draws nothing at all. It cost a run.
+func _with_a_band_roster(bands: Array) -> Dictionary:
+	var inherited := {
+		"bands": h._hud._band_labor.player_bands().duplicate(true),
+		"acting": h._hud._band_labor.player_band().duplicate(true),
+	}
+	h._hud.update_band_alerts(bands)
+	return inherited
+
+func _restore_band_roster(inherited: Dictionary) -> void:
+	h._hud.update_band_alerts(inherited["bands"])
+	h._hud._band_labor._player_band = inherited["acting"]
+
+## …and the same block with the keeper already NAMED. It calls the composer the drawer calls one line
+## after resolving that name, which is the only way to state a claim about the WORDS a named keeper
+## reads in without staging a band roster this chapter would then have to put back.
+func _road_lines_named(road: Dictionary, keeper_label: String) -> Array[String]:
+	return HudRouteVocab.road_lines(road, keeper_label)
 
 ## ---- WHAT THE ROAD ROWS SAY -------------------------------------------------------------------
 ##
@@ -845,6 +922,75 @@ func _assert_road_rows_say_what_the_rung_buys() -> void:
 	h._assert_hud("a countdown of 0 reads NOW, never `in 0 turns`",
 		Readout.detail_row_value(now_lines, HudRouteVocab.ROAD_REVERTING_ROW)
 			== HudRouteVocab.ROAD_REVERTING_NOW % HudSelectionVocab.RUNG_HAZARD_GLYPH)
+
+## ⛔ **WHOSE JOB THIS ROAD IS, AND WHAT DISTANCE IS CHARGING THEM FOR IT** — the half of the card
+## that had no surface at all while the client still read the retired stored path.
+##
+## The keeper is **the band that BUILT the tile, wherever it has since walked**, not whoever is
+## standing on it: the sim's claim walk never reads a keeper's position. So *"who pays for this"* is a
+## fact only this row can carry, and the remoteness beside it is the only thing that can explain a
+## bill larger than the rung's own — a real decision, priced and refused nowhere.
+func _assert_road_rows_say_whose_job_it_is() -> void:
+	var band_label := "Band 2"
+
+	# A KEPT ROAD NAMES ITS KEEPER, in the words this client names every band.
+	var kept_road := _road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT, 0.0,
+		ROAD_WANTS_DIRT, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT,
+		ROAD_KEEPER_BAND)
+	var kept := _road_lines_named(kept_road, band_label)
+	h._assert_hud("a kept road says WHOSE JOB it is, by the band's own name",
+		Readout.detail_row_value(kept, HudRouteVocab.ROAD_KEEPER_ROW) == band_label)
+
+	# ⛔ **AND A REMOTE ONE SAYS IT IS COSTING MORE FOR BEING FAR FROM THEM.** The clause rides the
+	# KEEPER's row rather than the bill's, because distance is a fact about the job and not about the
+	# rung — and the multiple is the SIM's, presented rather than derived.
+	var remote := _road_lines_named(_road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT_REMOTE, 0.0,
+		ROAD_WANTS_DIRT_REMOTE, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT,
+		ROAD_KEEPER_BAND, ROAD_REMOTENESS_REMOTE), band_label)
+	h._assert_hud("…and a road far from its keeper says it costs ×%s the rung's price"
+			% (HudRouteVocab.ROAD_REMOTENESS_FORMAT % ROAD_REMOTENESS_REMOTE),
+		Readout.detail_row_value(remote, HudRouteVocab.ROAD_KEEPER_ROW)
+			== HudRouteVocab.ROAD_KEEPER_REMOTE_FORMAT % [band_label,
+				HudRouteVocab.ROAD_REMOTENESS_FORMAT % ROAD_REMOTENESS_REMOTE])
+	# …and the BILL it quotes is the dearer one, straight off the wire. The two fixtures differ in
+	# their demand as well as their multiple, so a row that printed the rung's base price fails here
+	# while one that multiplied the base by the multiple itself would pass — which is why the client
+	# must do neither, and why the number is stated rather than computed.
+	h._assert_hud("…and the bill beside it is the dearer one the sim quoted (%s)"
+			% DetailFormat.format_work_units(ROAD_DEMAND_DIRT_REMOTE),
+		Readout.detail_row_value(remote, HudRouteVocab.ROAD_KEEPING_ROW)
+			== HudRouteVocab.ROAD_KEEPING_FORMAT % [
+				DetailFormat.format_work_units(ROAD_DEMAND_DIRT_REMOTE), ROAD_WANTS_DIRT_REMOTE])
+
+	# **A BAND OUTSIDE THE PLAYER'S ROSTER HAS NO NAME THE PLAYER CAN USE**, and a raw id would be a
+	# fact they cannot act on. This one goes through the REAL PRODUCER, which is what makes it a claim
+	# about the drawer's own resolution: it looks the keeper's id up in this client's one band-naming
+	# rule, gets nothing, and the row says so in words.
+	var foreign := _road_lines(kept_road)
+	h._assert_hud("a road kept by a people you merely know of is named as such, never by an id",
+		Readout.detail_row_value(foreign, HudRouteVocab.ROAD_KEEPER_ROW)
+			== HudRouteVocab.ROAD_KEEPER_FOREIGN)
+
+	# **A ROAD THAT OWES A BILL WITH NOBODY PAYING IT** — the keeping band is gone, so it is decaying
+	# towards nobody, and re-issuing the verb is how another band picks it up. Adoption is the same
+	# act as building, which is what the clause says rather than naming a verb that does not exist.
+	var orphan := _road_lines(_road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT, 0.0,
+		ROAD_WANTS_DIRT, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT))
+	h._assert_hud("a road with a bill and no keeper says so, and says how to take it on",
+		Readout.detail_row_value(orphan, HudRouteVocab.ROAD_KEEPER_ROW)
+			== HudRouteVocab.ROAD_KEEPER_NOBODY)
+
+	# ⛔ **AND THE FREE FLOOR HAS NO SUCH ROW AT ALL.** A game trail is kept by nobody because there is
+	# nothing to keep, which the `Keeping:` row already states in full — a second row saying "nobody"
+	# over it would read as a job going unfilled.
+	var trail := _road_lines(_road_fixture(
+		HudRouteVocab.RUNG_KEY_GAME_TRAIL, ROAD_METER_RISING, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		ROAD_FRICTION_GAME_TRAIL, ROAD_LINK_GAME_TRAIL))
+	h._assert_hud("the free floor prints no keeper row — nobody keeps it because there is nothing to keep",
+		Readout.detail_row_index(trail, HudRouteVocab.ROAD_KEEPER_ROW) < 0)
 
 func run(harness) -> void:
 	h = harness
@@ -1035,6 +1181,10 @@ func run(harness) -> void:
 
 	# ---- ROADS ON THE TILE CARD (arc #532) -------------------------------------------------------
 	#
+	# A band roster first, because a road's keeper IS a band and the card names it the way every other
+	# surface in this client names one. Put back below.
+	var inherited_bands := _with_a_band_roster([BandFx.band_fixture()])
+	#
 	# The ladder's third branch, one frame per rung, on the same piece of ground. Read as a set they
 	# are the whole argument the branch exists to make: the `Keeping:` row gets DEARER down the four
 	# and the `Buys:` row gets RICHER, which is what makes paving a decision rather than an upgrade.
@@ -1053,7 +1203,7 @@ func run(harness) -> void:
 	# one held, which is why the two are separate rows.
 	h._show_tile(_road_tile_fixture(_road_fixture(
 		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_RISING, ROAD_DEMAND_TRAIL, 0.0, 2,
-		ROAD_GRACE_TRAIL, true, ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL)))
+		ROAD_GRACE_TRAIL, true, ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL, _road_keeper_band())))
 	await h._settle()
 	await h._save("road_tile_trail")
 
@@ -1062,15 +1212,29 @@ func run(harness) -> void:
 	# row at all.
 	h._show_tile(_road_tile_fixture(_road_fixture(
 		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT, 0.0,
-		ROAD_WANTS_DIRT, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT)))
+		ROAD_WANTS_DIRT, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT,
+		_road_keeper_band())))
 	await h._settle()
 	await h._save("road_tile_dirt_road")
+
+	# ⛔ State road-remote — **THE SAME DIRT ROAD, KEPT FROM FAR AWAY**, and the frame this half of the
+	# card exists for. A road is kept by the band that BUILT it wherever that band has since walked,
+	# and beyond the base keeping range it costs a multiple of the rung's own price — priced, and
+	# refused nowhere. That is a decision the player makes with no other surface in the client: the
+	# `Kept by:` row names the band and says the road is costing more for being far from them, and the
+	# bill beneath it is the dearer one the sim quoted.
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT_REMOTE, 0.0,
+		ROAD_WANTS_DIRT_REMOTE, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT,
+		_road_keeper_band(), ROAD_REMOTENESS_REMOTE)))
+	await h._settle()
+	await h._save("road_tile_remote")
 
 	# State road-paved — the top of the branch. Dearest to keep and richest payoff, which is the
 	# whole shape of the decision.
 	h._show_tile(_road_tile_fixture(_road_fixture(
 		HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_PAVED, 0.0, 7,
-		ROAD_GRACE_PAVED, true, ROAD_FRICTION_PAVED, ROAD_LINK_PAVED)))
+		ROAD_GRACE_PAVED, true, ROAD_FRICTION_PAVED, ROAD_LINK_PAVED, _road_keeper_band())))
 	await h._settle()
 	await h._save("road_tile_paved_road")
 
@@ -1081,9 +1245,17 @@ func run(harness) -> void:
 	h._show_tile(_road_tile_fixture(_road_fixture(
 		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT,
 		ROAD_SHORTFALL_DIRT, ROAD_WANTS_DIRT, ROAD_GRACE_LEFT, false, ROAD_FRICTION_DIRT,
-		ROAD_LINK_DIRT)))
+		ROAD_LINK_DIRT, _road_keeper_band())))
 	await h._settle()
 	await h._save("road_tile_at_risk")
 
+	# …and the keeper's own claims, which a picture states as plausibly wrong as right.
+	_assert_road_rows_say_whose_job_it_is()
+
 	# …and the claims a picture cannot carry, over the REAL producer's lines.
 	_assert_road_rows_say_what_the_rung_buys()
+
+	# **PUT THE ROSTER BACK.** Everything after this chapter renders against whatever roster it
+	# inherits, and a band left standing here is a band the next chapter never asked for.
+	_restore_band_roster(inherited_bands)
+	await h._settle()

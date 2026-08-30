@@ -399,6 +399,29 @@ func set_food_modules(modules_variant: Variant) -> void:
 			_food_module_by_tile[Vector2i(sx, sy)] = site
 	changed.emit(&"food_modules")
 
+## **THE ROADS IN THE GROUND**, as the `routes` section sent them — one row per road TILE (arc #532).
+##
+## Held whole rather than indexed, because its one reader asks a whole-list question: *"does this
+## faction keep a road standing on the rung Roadbuilding unlocked"*. `MapView` keeps its own per-tile
+## index for the map draw and the tile card, which are per-hex questions.
+##
+## ⛔ **A ROAD IS THE ONE SOURCE WITH NO LABOR ROW**, so ownership is read off the road itself
+## (`has_keeper` / `keeper_band_id`) rather than through a band's assignments the way a herd's is.
+var _roads: Array = []
+
+## Ingest the snapshot road rows. A non-Array input is ignored (the list keeps its last value),
+## matching every other catalogue setter here: a delta carries a section only when it CHANGED, so
+## absence means unchanged and never "the world has no roads".
+func set_roads(roads_variant: Variant) -> void:
+	if not (roads_variant is Array):
+		return
+	_roads = roads_variant
+	changed.emit(&"roads")
+
+## The road rows, BY REFERENCE — this model's accessor convention; every reader is read-only.
+func roads() -> Array:
+	return _roads
+
 ## Ingest the snapshot forage patches into the per-tile lookup. A non-Array input is ignored (the
 ## lookup keeps its last value), matching the old ingest.
 func set_forage_patches(patches_variant: Variant) -> void:

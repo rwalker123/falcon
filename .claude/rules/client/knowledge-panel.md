@@ -1,6 +1,7 @@
 ---
 paths:
   - "clients/godot_thin_client/src/scripts/ui/hud/KnowledgePanel.gd"
+  - "clients/godot_thin_client/tools/ui_preview/fixtures_knowledge.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/KnowledgePanelController.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/KnowledgeRoster.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/hud_knowledge_vocab.gd"
@@ -45,8 +46,9 @@ was designed under.
 `FactionRollup._build_knowledge_block` skipped those outright (`if progress <= 0.0: continue`), and
 that skip is what made the whole ladder invisible to a new player: a faction that had learned nothing
 rendered an EMPTY zone, so nothing on screen said there was anything to learn at all. Removing it is
-half the value of this arc, which is why `KnowledgeRoster` walks the DECLARED track list rather than
-the wire's sparse row — the wire really does send `{}` on turn one.
+half the value of this arc, which is why `KnowledgeRoster` walks the ROSTER — what there *is* to learn
+— rather than the faction's progress row, which really does arrive empty on turn one and is absent
+altogether for a faction that has learned nothing.
 
 **The craft half takes its `0..1` from the sim's own denominator**, `progress / completion_threshold`,
 and a `known` craft reads `1.0` whatever its raw progress says: the sim's `known` flag is the
@@ -79,17 +81,18 @@ the thing, where a latch would go quiet forever after one use.
 **Ownership is `count` / `amount`, never `remaining`** — the crafting panel's own rule: a batch that
 runs out of units is REMOVED, so a worn-out item and one never made both read `remaining 0`.
 
-### `UNLOCKLESS_TRACKS` IS A DECLARED SET, AND THAT IS WHAT MAKES IT LOAD-BEARING
+### `unspent_testable` IS TWO QUESTIONS, AND THE CONFIG ANSWERS THE FIRST
 
-`unspent_testable` is derived by inverting `RungGates.RUNG_KNOWLEDGE_TRACKS` — that table is what the
-compose sheet gates on, so reading it backwards is what makes "using it" here and "allowed" there the
-same question. But a track ACCIDENTALLY missing from that table becomes untestable and drops silently
-out of the unspent count, reading exactly like `foddering`, which is missing on purpose.
+`unspent_testable` is `is_step` **and** a verb resolved by inverting `RungGates.RUNG_KNOWLEDGE_TRACKS`
+— that table is what the compose sheet gates on, so reading it backwards is what makes "using it" here
+and "allowed" there the same question.
 
-The harness asserts the derived set and the declared one agree EXACTLY, which is the only thing that
-can tell a deliberate omission from a forgotten one.
+**The two halves catch different faults.** `is_step` comes off the LADDER and is what distinguishes
+`foddering` — a capability no rung waits on — from a step. The verb lookup is the client's own table,
+and a route rung missing from it would read as a knowledge unlocking nothing at all; that is why
+`grade` / `pave` are in `RUNG_KNOWLEDGE_TRACKS` beside the four food-web verbs.
 
-### Which sources count as the faction's — the two webs answer DIFFERENTLY, and the wire forces it
+### Which sources count as the faction's — THREE webs, three answers, and the wire forces each
 
 **A forage patch carries `owner` / `has_owner`, so an ownership scan of every patch is attributable**
 — the same test `AttentionController._under_kept_rung_attention` makes, and the reason it can run
@@ -97,7 +100,23 @@ outside the band loop. **A herd carries no owner field client-side at all**, so 
 "ours" is through a band's own HUNT ASSIGNMENTS, which is exactly why `_starving_pen_attention` and
 `_under_kept_herd_attention` walk assignments instead of `world_herds()`.
 
-`KnowledgePanelController` resolves both and hands the two arrays to the roster, so the derivation
+**A ROAD IS THE THIRD SHAPE, and the only one where ownership is a BAND.** A road tile carries its
+keeper on the row (`has_keeper` / `keeper_band_id`) and has no labor row at all, so
+`_kept_roads` joins that id against the player's own band roster — the bool read first, because `0` is
+a real `BandId`. A road nobody keeps is not ours whatever rung it holds: the whole free floor has no
+keeper, and a worn trail on the doorstep is not evidence anybody learned Roadbuilding.
+
+The road rows reach the HUD through `HudLayer.update_road_network` → `HudBandLaborState.set_roads`, the
+road twin of `update_forage_patches`, and `MapView` keeps its own per-tile index for the map draw and
+the tile card (those are per-hex questions; this one is a whole-list question).
+
+**A route verb's rung is read through a DIFFERENT FIELD NAME, and that is the one asymmetry.** A patch
+and a herd publish their standing as `current_rung`; a road publishes its as `rung`. So
+`_roads_standing_on` makes `improvement_is_done`'s own comparison — `rung_at_or_above(standing, the
+rung this verb builds)` — rather than a second rule, which keeps *"is anything using this"* one
+question on three webs.
+
+`KnowledgePanelController` resolves all three and hands the arrays to the roster, so the derivation
 stays pure. The live herd dict is the authority, never the assignment's launch-time copy: herds
 migrate.
 
@@ -169,20 +188,60 @@ an explicit `UNSEEN_TURN` sentinel rather than by an empty dictionary.
 and the baseline is the TURN's rather than the frame's — but a key seen for the FIRST time in such a
 snapshot still joins the baseline, or it reports as new on the next tick.
 
-## DOMAINS ARE COLUMNS, IT IS NOT A GRAPH, AND AN EMPTY ONE IS NEVER DRAWN
+## ⛔ THE PANEL BUILDS ITSELF FROM THE CONFIG, AND FIXING THAT MEANT FIXING THE WIRE
+
+Ray, on finding his three new road knowledges missing: *"I would hope that panel would be more dynamic
+and be able to create itself from the configuration files of knowledge."*
+
+**The Craft column always worked that way** — its nodes come off `craft_knowledge` in the order the sim
+published them, so a fourth craft in `recipes.json` needs no client edit. **Land and Herds were
+hard-coded lists, and the reason was that their WIRE was hard-coded too**: the ladder's knowledges rode
+as five named `float` fields on `IntensificationKnowledgeState`, so adding a knowledge meant adding a
+schema field. That is exactly why the route branch's Roadbuilding and Paving had nowhere to appear and
+the header went on saying *"All 8"*.
+
+**So the fix is at the wire, and the panel follows.** The sim publishes a `ladder_knowledge` ROSTER —
+one row per knowledge the ladder teaches — and every column is built from it:
+
+| | derived from |
+|---|---|
+| which column | the **branch** of the rung that teaches it (`earns_knowledge`): `plant`→Land, `animal`→Herds, `route`→Roads; crafts ride their own list |
+| order within it | that rung's **order**, bottom step first |
+| step vs. capability | whether any rung's `unlock_knowledge` names it — `is_step` |
+
+⛔ **`UNLOCKLESS_TRACKS` IS RETIRED, AND THAT IS THE POINT OF `is_step`.** It was a DECLARED set holding
+exactly `foddering`, and it had to be declared because the client could not tell a knowledge that gates
+nothing from one somebody forgot to wire up. The ladder answers that itself now, so `foddering` hangs
+off the bottom of the Herds column because the config says no rung waits on it — and a knowledge that
+STOPS gating a rung stops being a step with no second table to remember.
+
+**What is left in the client is COPY, and only copy**: `HudKnowledgeVocab.DOMAIN_BRANCH_LABELS` (the
+wire says `plant`, a player reads *Land*) and the two authored note tables. A branch the label table
+has never heard of still draws — `domain_label` falls back to the capitalized wire token — because the
+panel is built from the roster and a column must never depend on a client table knowing about it.
+
+### DOMAINS ARE COLUMNS, IT IS NOT A GRAPH, AND AN EMPTY ONE IS NEVER DRAWN
 
 The rung engine models ~4 steps per web and grows by adding BRANCHES, so the screen never needs pan,
 zoom or edge routing — and a graph view would spend its whole budget drawing eight nodes' worth of
 empty space.
 
-**The prototype (`docs/knowledge_screen_ux_proposal.html`) shows 36 nodes; the game has EIGHT.** Land:
-`cultivation`, `seed_selection`. Herds: `herding`, `penning`, `foddering`. Craft: whatever
-`craft_knowledge` publishes. **Routes / War / Telling have no nodes, so they have no columns** — a
-column appears the turn its first branch does. An empty column is worse than a missing one: it teaches
-the player that a whole area of the game is closed to them when in truth it does not exist yet.
+**The prototype (`docs/knowledge_screen_ux_proposal.html`) shows 36 nodes; the shipped ladder teaches
+SEVEN** — Land: `cultivation`, `seed_selection`. Herds: `herding`, `penning`, `foddering`. **Roads:
+`roadbuilding`, `paving`.** Craft: whatever `craft_knowledge` publishes. **War and Telling have no
+ladder branch, so they have no column** — a column appears the turn its first branch teaches
+something, which is precisely how Roads got one with no client edit beyond its label. An empty column
+is worse than a missing one: it teaches the player that a whole area of the game is closed to them
+when in truth it does not exist yet.
 
-**The two ladder domains' nodes are DECLARED and the craft fan's come off the wire**, which is why the
-craft column is the only one that can currently be empty.
+⛔ **THE ROSTER CARRIES NO FACTION, AND THE PROGRESS LIST DOES.** A faction that has learned nothing has
+no `intensification_knowledge` row at all — the sim skips it — so a roster carried on that row would
+leave a new player's screen EMPTY, which is the exact regression this whole arc exists to have fixed.
+Two sections, and the split is load-bearing.
+
+⛔ **THE ROSTER IS ALSO WHAT THE TURN DIFF WALKS.** `_diff_model` carries it for the same reason
+`model` does: without it the diff sees no ladder nodes, `_seen_keys` never learns them, and no ladder
+discovery can ever be reported as new.
 
 **A LADDER domain draws a rail down its left edge; the CRAFT fan draws none.** Its nodes are ORDERED —
 each earned by practising the one below — and the rail is what says so; a craft is learned by working
@@ -220,12 +279,22 @@ the player has not noticed it, so it has to be legible without a click.
   unlocks a verb across the whole map, so there is no one hex for `focus_on_tile` to land on, which is
   why the knowledge rows are non-locating.
 
-**`PRACTISE_NOTES` IS AUTHORED, NOT DERIVED, AND THAT IS FORCED.** The ladder's `earns_knowledge` field
-is not on the wire: the client sees a faction's PROGRESS and the verb each track gates, but nothing
-that says which step TEACHES it. The five sentences are a transcription of the config, which is
-authoritative — `plant:wild` earns `cultivation`, `plant:tended` earns `seed_selection`, `animal:wild`
-earns `herding`, `animal:pastoral` earns `penning`, `animal:pen` earns `foddering`. **Re-read the
+**`PRACTISE_NOTES` IS AUTHORED — but it is COPY now, not structure.** The roster carries the branch and
+order of the teaching rung, so the client no longer needs a table to know WHERE a knowledge sits; what
+these sentences add is HOW it is practised, which the wire does not carry. They are a transcription of
+the config, which is authoritative — `plant:wild` earns `cultivation`, `plant:tended` earns
+`seed_selection`, `animal:wild` earns `herding`, `animal:pastoral` earns `penning`, `animal:pen` earns
+`foddering`, `route:trail` earns `roadbuilding`, `route:dirt_road` earns `paving`. **Re-read the
 config, do not re-word them, if a rung's `earns_knowledge` ever moves.**
+
+⛔ **A KNOWLEDGE WITH NO NOTE STILL DRAWS.** Absence leaves the pane with less to say; it never removes
+the node. That is what keeps the roster wire-driven: if a missing sentence could suppress a column
+entry, adding a knowledge would be a client edit again.
+
+**The player-facing NAME is the sim's** (`display_name`, resolved from the knowledge id: underscores to
+spaces, each word capitalized), read back through `FactionReadouts.knowledge_label`. The hard-coded
+`KNOWLEDGE_TRACK_LABELS` table is **retired** — it doubled as the declared track list, and both of its
+jobs are the wire's now.
 
 **The two "leave more standing" clauses are the `learn_multiplier`** and appear on exactly the two
 tracks earned by DRAWING from a source. A rung-3 source is tended rather than drawn from, so the floor
@@ -352,6 +421,27 @@ using it" for a reason that has nothing to do with the code under test. It cost 
 has no signal of its own to fake, and the harness contract's reason applies either way: an emitted
 signal passes on a control that is covered, zero-size or filtered out of the hit test, which is
 exactly the shape this row shipped in first.
+
+**`fixtures_knowledge.gd` is the shared roster fixture**, in the wire's own shapes, used by the
+`knowledge_panel` / `turn_orb` / `herd_graze_pen` chapters and by `band_panel_preview`. It is a
+TRANSCRIPTION of the shipped ladder and deliberately not derived — a fixture that recomputed the roster
+would pass against a producer that had stopped producing one. That the transcription matches the config
+is the SIM's claim (`the_published_roster_places_every_knowledge_the_ladder_teaches`); what the fixture
+proves is that the client renders whatever roster arrives.
+
+⛔ **AND A HARNESS THAT PUSHES NO ROSTER RENDERS NO LADDER COLUMNS**, which is the honest consequence of
+the panel building itself. The `ui_preview` prologue pushes it once so every chapter has one.
+
+**THE FALSIFICATION RUNS IN THE REMOVAL DIRECTION** (`_assert_the_roster_builds_the_columns`, claim 4):
+a knowledge dropped from the roster leaves the panel and the tally shrinks with it. It needs no config
+file, and nothing in the client names the dropped knowledge — so if the node survives, the panel is
+drawing from something other than the wire.
+
+⛔ **TWO SHAPES, AND MIXING THEM IS SILENT.** The wire's per-faction row carries its tracks under
+`knowledges`; every GATE in this client (`RungGates`, `RungLadder.track`) takes the flat
+`{track: 0..1}` map `faction_tracks` hands back. A gate handed the wire row reads every track as `0`,
+which renders a perfectly ordinary frame with every rung honestly refused — so `band_panel_preview`
+keeps `_standing_knowledge_row` and `_standing_knowledge_tracks` under separate names.
 
 **Frames:** `knowledge_panel` (the whole screen, mixed states) · `knowledge_panel_untouched` (**the
 frame this arc is about** — a faction that knows nothing, every node drawn and greyed, where the old

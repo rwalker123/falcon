@@ -1574,7 +1574,7 @@ func _forager_band_fixture() -> Dictionary:
 func _push_foddering(progress: float) -> void:
 	h._hud.update_intensification([{
 		"faction": HudConst.PLAYER_FACTION_ID,
-		HudFloraVocab.KNOWLEDGE_TRACK_FODDERING: progress,
+		"knowledges": {HudFloraVocab.KNOWLEDGE_TRACK_FODDERING: progress},
 	}])
 
 ## The `Fodder:` row's registered hover, off a context the producer has just filled. The tooltip is

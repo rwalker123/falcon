@@ -724,8 +724,9 @@ turn ticked*, over BOTH knowledge webs at once and off the roster the screen its
 
 ## The knowledge strip's FIFTH track is a capability, not a rung transition
 
-`IntensificationKnowledgeState.foddering` rides beside the ladder's four rung-transition tracks and
-is a different kind of thing: **no rung waits on it**. The other four are one per transition
+`foddering` rides the wire's knowledge list beside the ladder's rung-transition tracks and is a
+different kind of thing: **no rung waits on it** — which the roster states outright as `is_step:
+false`, derived from the ladder rather than declared client-side. The other four are one per transition
 (`wild --cultivation--> tended --seed_selection--> field`,
 `wild --herding--> pastoral --penning--> pen`), so the list reads as the ladder itself; Foddering is
 what the **pen rung teaches** (the corral rung's `earns_knowledge`), and what it buys is every fodder

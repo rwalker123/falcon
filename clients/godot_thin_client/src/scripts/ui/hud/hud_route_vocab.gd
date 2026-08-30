@@ -4,11 +4,16 @@ class_name HudRouteVocab
 ## `.claude/rules/core_sim/routes.md`). The rung names, the road readout's row keys and formats, and
 ## the one composer behind each of its rows.
 ##
+## ⛔ **A ROAD IS ONE TILE.** Each tile carries its own rung, its own meter, its own keeper and its
+## own decay (`.claude/rules/core_sim/routes.md`), which is what makes *"one band keeps half the tiles
+## between two camps and another keeps the rest"* a state the world can hold at all. There is no
+## stored path on the row and nothing here reads one.
+##
 ## ⛔ **A ROAD IS NOT AN ORDER PATH.** `AnnotationRenderer._routes` and `map_preview`'s `"routes"`
 ## annotation state are the per-faction ORDER-PATH overlay — waypoints a player's own movement orders
-## are following, which vanish when the order does. A road is a WORLD OBJECT with a fixed stamped
-## path that outlives every band that walks it, and it does not follow a camp. The obvious name was
-## taken by the other thing first, so the client noun for this one is **road** throughout
+## are following, which vanish when the order does. A road is a WORLD OBJECT in the ground that
+## outlives every band that walks it, and it does not follow a camp. The obvious name was taken by
+## the other thing first, so the client noun for this one is **road** throughout
 ## (`MapView.road_network`, `AnnotationRenderer.draw_road_network`, `ui_preview`'s `road_*` states).
 ##
 ## ⛔ **NOTHING HERE RE-DERIVES A NUMBER THE SIM ALREADY ANSWERED.** The bill, its shortfall, the
@@ -69,6 +74,14 @@ const ROAD_ROW := "Road"
 ## and nothing is being worn in, which is a row with nothing to say rather than a `100%` one.
 const ROAD_WEARING_ROW := "Wearing in"
 
+## ⛔ **WHOSE JOB THIS TILE IS** — the row that says who is on the hook for the bill below it.
+##
+## **The keeper is the band that BUILT it, wherever that band now stands.** It is not *"whoever is
+## standing here"*: `route_keeping_claims` walks the roads a band keeps and never reads that band's
+## position, so a band four tiles away goes on paying. Rendered only where there is something to say
+## — a game trail nobody keeps is already explained by the `Keeping:` row's own answer.
+const ROAD_KEEPER_ROW := "Kept by"
+
 ## What holding it costs, per turn, and how many `roadwork` keepers that bill wants.
 const ROAD_KEEPING_ROW := "Keeping"
 
@@ -96,6 +109,36 @@ const ROAD_UNDER_KEPT_WORD := "washing out"
 ## is a rung this client does not know.
 const ROAD_WEARING_FORMAT := "%s %d%%"
 const ROAD_WEARING_UNNAMED_FORMAT := "%d%%"
+
+## `Kept by:` values. The band's own label, as this client names every band
+## (`HudBandLaborState.band_label_for_id` → `HudFormat.band_display_name`), so a road's keeper and the
+## same band on the dock cannot be called two different things.
+const ROAD_KEEPER_FORMAT := "%s"
+
+## …and what a band OUTSIDE the player's roster reads as. A road may be kept by a people you merely
+## know of, and naming them by a raw id would state a fact the player cannot use.
+const ROAD_KEEPER_FOREIGN := "another people"
+
+## …and a road that OWES a bill and has nobody paying it: the keeping band is gone, so the road is
+## decaying towards nobody. **Re-issuing `grade` / `pave` is how it is picked up — adoption is the
+## same act as building**, which is what the clause says rather than inventing an adopt verb.
+const ROAD_KEEPER_NOBODY := "nobody — grade it again to take it on"
+
+## ⛔ **WHAT DISTANCE DID TO THE PRICE**, appended to the keeper's name. `keeper_remoteness` is the
+## multiple the sim quoted when the keeper took the tile on, applied to BOTH the build pile and the
+## standing upkeep — so a road beyond the base keeping range is dearer for exactly one reason and the
+## row says which. **A real decision with no other surface**: distance is a cost and never a wall, so
+## nothing refuses the road and nothing else on the card explains a bill larger than the rung's.
+const ROAD_KEEPER_REMOTE_FORMAT := "%s · far from them — ×%s the rung's price"
+
+## The remoteness at which distance costs nothing — the reading inside the base keeping range, and on
+## every road nobody keeps. Named because it is the TEST the clause above is gated on rather than a
+## rounding tolerance.
+const ROAD_REMOTENESS_AT_HOME := 1.0
+
+## How the multiple is printed. One decimal, because the shipped dial is `2.0` and a future one need
+## not be whole — and `%s` above rather than `%.1f` inline so the two cannot drift.
+const ROAD_REMOTENESS_FORMAT := "%.1f"
 
 ## `Keeping:` values. The bill and the keeper count are one sentence because they are one decision —
 ## *"wants 4, you have 0"* is the readout that makes a standing cost legible.
@@ -171,6 +214,33 @@ static func rung_of(road: Dictionary) -> String:
 
 static func build_fraction_of(road: Dictionary) -> float:
 	return float(road.get("build_fraction", 0.0))
+
+## **THE TILE IS THE ROW'S IDENTITY** — it replaced the retired `RouteId`, because with one record per
+## tile there is nothing left for a separate id to name. Both consumers join on it: the map stamps a
+## hex here, and the tile card cross-refs the hex under the cursor.
+static func tile_of(road: Dictionary) -> Vector2i:
+	return Vector2i(int(road.get("tile_x", -1)), int(road.get("tile_y", -1)))
+
+## ⛔ **READ THIS BEFORE `keeper_band_id_of`.** `0` is a real `BandId`, so the bool is the field that
+## answers *"does anybody keep this"*. `false` across the whole free floor, which is the commonest
+## road in the game rather than an edge case.
+static func has_keeper(road: Dictionary) -> bool:
+	return bool(road.get("has_keeper", false))
+
+static func keeper_band_id_of(road: Dictionary) -> int:
+	return int(road.get("keeper_band_id", HudConst.NO_BAND_ID))
+
+## **WHAT DISTANCE DID TO THIS ROAD'S PRICE**, as a multiple of the rung's own — quoted once, when the
+## keeper took the tile on, and held for the whole job. `1.0` inside the base keeping range and on
+## every road nobody keeps.
+static func keeper_remoteness_of(road: Dictionary) -> float:
+	return float(road.get("keeper_remoteness", ROAD_REMOTENESS_AT_HOME))
+
+## Is this road being held at a distance the sim charged extra for? The one gate the keeper row's
+## second clause forks on — and a presentation of a published multiple, never a distance this client
+## measured.
+static func is_remote(road: Dictionary) -> bool:
+	return keeper_remoteness_of(road) > ROAD_REMOTENESS_AT_HOME
 
 static func upkeep_demand_of(road: Dictionary) -> float:
 	return float(road.get("upkeep_demand", SourceForecast.NO_UPKEEP_DEMAND))
@@ -259,6 +329,25 @@ static func wearing_in_value(road: Dictionary) -> String:
 		return ROAD_WEARING_UNNAMED_FORMAT % percent
 	return ROAD_WEARING_FORMAT % [destination, percent]
 
+## ⛔ `Kept by:` — **WHOSE JOB THIS ROAD IS**, and what distance is charging them for it.
+##
+## `label` is the band's own name as this client resolves it (`""` for a band outside the player's
+## roster — a road really can be kept by a people you merely know of), so this composer never invents
+## one from an id.
+##
+## `""` — no row at all — for a road that owes nothing and nobody keeps: that is the free floor, and
+## the `Keeping:` row already says the whole of it. A road that OWES a bill with no keeper is the
+## opposite case and says so out loud, because it is decaying towards nobody.
+static func keeper_value(road: Dictionary, label: String) -> String:
+	if not has_keeper(road):
+		return ROAD_KEEPER_NOBODY if owes_keeping(road) else ""
+	var named := label.strip_edges()
+	var face: String = ROAD_KEEPER_FORMAT % (named if named != "" else ROAD_KEEPER_FOREIGN)
+	if not is_remote(road):
+		return face
+	return ROAD_KEEPER_REMOTE_FORMAT % [face,
+		ROAD_REMOTENESS_FORMAT % keeper_remoteness_of(road)]
+
 ## `Keeping:` — the bill, the shortfall and the keeper count, every figure straight off the wire.
 ## **The shortfall is the SIM'S field, never `demand − supplied`**: all three read one stamped basis,
 ## and this branch has shipped that defect twice.
@@ -319,15 +408,19 @@ static func buys_value(road: Dictionary) -> String:
 ## **THE WHOLE ROAD BLOCK FOR ONE ROAD**, as `Key: value` detail lines. One composer, so the tile
 ## card and any later surface state one road the same way.
 ##
-## The rows in order: what it is · what traffic is wearing in · what it costs · when it is lost ·
-## what it buys. The last is deliberately LAST — it is the answer the player weighs the four above
+## The rows in order: what it is · what traffic is wearing in · **whose job it is** · what it costs ·
+## when it is lost · what it buys. The keeper sits directly ABOVE the bill because it is the answer to
+## *who pays that*, and the payoff is deliberately LAST — it is what the player weighs the rows above
 ## against, so it reads as the conclusion rather than as one more property.
-static func road_lines(road: Dictionary) -> Array[String]:
+static func road_lines(road: Dictionary, keeper_label: String = "") -> Array[String]:
 	var lines: Array[String] = []
 	lines.append("%s: %s" % [ROAD_ROW, road_row_value(road)])
 	var wearing := wearing_in_value(road)
 	if wearing != "":
 		lines.append("%s: %s" % [ROAD_WEARING_ROW, wearing])
+	var keeper := keeper_value(road, keeper_label)
+	if keeper != "":
+		lines.append("%s: %s" % [ROAD_KEEPER_ROW, keeper])
 	lines.append("%s: %s" % [ROAD_KEEPING_ROW, keeping_value(road)])
 	var reverting := reverting_value(road)
 	if reverting != "":
@@ -341,6 +434,12 @@ static func road_value_hex(value: String) -> String:
 	if value.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH):
 		return HudStyle.WARN_HEX
 	return HudStyle.SIGNAL_HEX
+
+## The `Kept by:` ink. A road that owes a bill with NOBODY paying it reads in the same amber the
+## unmet bill below it does — it is the same news one row early — and a kept road reads in plain ink,
+## remoteness included: distance is a price, not an alarm.
+static func keeper_value_hex(value: String) -> String:
+	return HudStyle.WARN_HEX if value == ROAD_KEEPER_NOBODY else HudStyle.INK_HEX
 
 ## The `Keeping:` / `Reverting:` ink. Amber where the bill is unmet, plain ink otherwise —
 ## `ecology_value_hex`'s shape, keyed on the hazard mark the composers above put there rather than on

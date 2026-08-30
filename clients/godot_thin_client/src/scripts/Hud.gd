@@ -912,6 +912,22 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
 func update_sedentarization(sedentarization_variant: Variant) -> void:
     _topbar.update_sedentarization(sedentarization_variant)
 
+## **THE LADDER'S KNOWLEDGE ROSTER** (arc #532 / `docs/plan_knowledge_screen.md`) — what there IS to
+## learn, per world. A thin delegator because `Main` reaches it BY NAME through `_hud_invoke`, whose
+## `has_method` probe fails silently.
+##
+## It pushes the knowledge readouts for the same reason `update_intensification` does: `Main`
+## dispatches each section independently, so the turn a world's roster lands may move nobody at all.
+func update_ladder_knowledge(roster_variant: Variant) -> void:
+    _topbar.update_ladder_knowledge(roster_variant)
+    _refresh_knowledge_readouts()
+
+## THE ROADS IN THE GROUND, into the shared labor model — the road twin of `update_forage_patches`,
+## and it exists for one reader: a route knowledge is *in use* when one of the faction's own road
+## tiles stands on the rung it unlocked, and a road tile is the only source that can.
+func update_road_network(roads_variant: Variant) -> void:
+    _band_labor.set_roads(roads_variant)
+
 func update_intensification(intensification_variant: Variant) -> void:
     _topbar.update_intensification(intensification_variant)
     # PUSH the player's knowledge row to MapView, which needs it to decide whether a worked source

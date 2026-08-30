@@ -2986,8 +2986,10 @@ fn handle_assign_labor(
         "agriculture" => LaborTarget::Agriculture,
         "husbandry" => LaborTarget::Husbandry,
         // **The third keeping role** (`docs/plan_standing_upkeep.md` §4.13) — the route branch's,
-        // staffed exactly like the two above it. What its hands hold is not a source row but the
-        // roads under the band's own tile (`routes` rule 2), and `0` stops keeping roads at all.
+        // staffed exactly like the two above it. What its hands hold is not a source row but the road
+        // TILES THIS BAND IS THE KEEPER OF — the ones it graded or paved, wherever the band has since
+        // walked (`routes` rule 2; the catchment is the keeper, never the band's own position) — and
+        // `0` stops keeping roads at all.
         "roadwork" => LaborTarget::Roadwork,
         // **The builders** (`docs/plan_standing_upkeep.md` §2.5) — one pool for both webs, whose
         // whole output goes on the head of this band's build queue. A verb declares what to raise;

@@ -1002,6 +1002,10 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         # readings: signal for a rung being held, amber for one washing out. `HudRouteVocab` owns the
         # fork, keyed on the hazard mark its own composer put there.
         return HudRouteVocab.road_value_hex(value)
+    elif key == HudRouteVocab.ROAD_KEEPER_ROW:
+        # WHOSE JOB THIS ROAD IS. Amber only where the bill has nobody paying it — a keeper at a
+        # distance is a PRICE, not an alarm, so remoteness leaves the row in plain ink.
+        return HudRouteVocab.keeper_value_hex(value)
     elif key == HudRouteVocab.ROAD_KEEPING_ROW or key == HudRouteVocab.ROAD_REVERTING_ROW:
         # The road's bill and its countdown. One tint for the pair, because they are one state: the
         # countdown row only renders while the bill is short, so they can never disagree.

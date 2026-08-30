@@ -1915,38 +1915,65 @@ pub struct FloraShareInfo {
     pub sow_work_cost: f32,
 }
 
+/// **ONE LADDER KNOWLEDGE THE CONFIG DECLARES** — the *roster* half, once per world and deliberately
+/// faction-independent.
+///
+/// ⛔ **EVERY FIELD IS DERIVED FROM `intensification_ladder.json`; NOTHING HERE IS AUTHORED
+/// SEPARATELY.** The branch and the order are the rung that *teaches* the knowledge
+/// (`earns_knowledge`), and [`Self::is_step`] is simply whether any rung's `unlock_knowledge` names
+/// it. That is what lets a client's knowledge screen build its own columns: a knowledge added to the
+/// ladder appears with no client edit and no schema edit, which the retired field-per-knowledge
+/// shape could never do.
+///
+/// **It carries no faction, and the progress half does.** A faction that has learned nothing has no
+/// ledger row at all, so a roster carried on that row would leave a new player's screen empty — with
+/// nothing on it to say there is anything to learn.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct LadderKnowledgeState {
+    /// The ladder config's own id (`"cultivation"`, `"roadbuilding"`, …) — the join key with
+    /// [`LadderKnowledgeProgress::knowledge_id`].
+    pub knowledge_id: String,
+    /// `"Seed Selection"` — the id with underscores turned to spaces and each word capitalized,
+    /// resolved sim-side so no client authors a second spelling of it.
+    pub display_name: String,
+    /// The branch of the rung that **teaches** it (`"plant"` | `"animal"` | `"route"`): which column.
+    pub branch: String,
+    /// …and that rung's `order`: the position within the column, bottom step first.
+    pub order: u32,
+    /// **Does any rung's `unlock_knowledge` name this?** A *step* in the chain when it does; a
+    /// *capability* hanging off the bottom of its column when it does not. `foddering` is the
+    /// shipped `false` — it changes what a pen may draw on rather than opening a further rung.
+    #[serde(default)]
+    pub is_step: bool,
+}
+
+/// One faction's progress on one ladder knowledge, `0..1` (`1.0` = known). Joined to the roster above
+/// by [`Self::knowledge_id`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct LadderKnowledgeProgress {
+    pub knowledge_id: String,
+    #[serde(default)]
+    pub progress: f32,
+}
+
 /// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
 /// knowledges, 0..1 (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client
-/// renders learning/known meters.
+/// renders learning/known meters. Only factions that have begun learning **something** appear here —
+/// what there *is* to learn rides [`LadderKnowledgeState`] instead, precisely so a faction absent
+/// from this list still has a screen to look at.
 ///
-/// One field per rung-transition — *"practice rung N unlocks rung N+1"*
-/// (`docs/plan_intensification_ladder.md` §4) — so the struct reads as the ladder itself:
-/// `wild --cultivation--> tended --seed_selection--> field` and
-/// `wild --herding--> pastoral --penning--> pen`. [`IntensificationKnowledgeState::foddering`] is the
-/// one exception — a *capability* the top animal rung teaches rather than a gate on reaching a rung.
+/// ⛔ **THE FIVE NAMED FLOATS ARE RETIRED**, their FlatBuffers ids held and never reused (they are
+/// `(deprecated)` in `snapshot.fbs`). Adding a knowledge used to mean adding a schema field, which is
+/// why the route branch's two lessons had nowhere to appear; [`Self::knowledges`] is the list that
+/// replaced them and is the only authority on a faction's ladder progress.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct IntensificationKnowledgeState {
     pub faction: u32,
-    /// Gates `cultivate`. Earned by working a **wild** patch under a stewardship policy.
+    /// **Every knowledge the ladder declares**, in the roster's own order. Sparse in *value*, never
+    /// in *membership*: a knowledge the faction has not begun reads `0` rather than being absent, so
+    /// no reader has to tell *not begun* from *not published*.
     #[serde(default)]
-    pub cultivation: f32,
-    /// Gates `tame` — and `tame` **only**, since the §4.3 reshuffle. Earned by working a **wild** herd.
-    #[serde(default)]
-    pub herding: f32,
-    /// Gates `sow` (slice 5 — earned now, spent later). Earned by working a **tended** patch.
-    #[serde(default)]
-    pub seed_selection: f32,
-    /// Gates `corral` + `extend_pen` (the §4.3 reshuffle took this off `herding`). Earned by working
-    /// a **pastoral** herd.
-    #[serde(default)]
-    pub penning: f32,
-    /// **Not a rung transition** — no rung waits on it; it is the capability the **pen** rung teaches
-    /// (`intensification_ladder.json`, corral's `earns_knowledge: "foddering"`). It gates every
-    /// fodder seam: a penned herd's hay *draw*, the pen's `K` fodder term, and the **wild** forage
-    /// patch's fodder credit. So it is the other half of the fodder answer — `ForagePatchState`
-    /// states what the land pays, this states whether the faction can bank it.
-    #[serde(default)]
-    pub foddering: f32,
+    pub knowledges: Vec<LadderKnowledgeProgress>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

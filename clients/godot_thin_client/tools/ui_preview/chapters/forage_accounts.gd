@@ -1340,10 +1340,7 @@ func run(harness) -> void:
 	#
 	# **Penning goes with it**, because Foddering is what a PEN teaches: a strip reading `Foddering ✔`
 	# over an unstarted Penning is a pair the sim cannot produce, and a fixture may not state one.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
-		"foddering": 1.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0, "foddering": 1.0}}])
 	# State forage_three_accounts — THE FRAME THIS PASS IS JUDGED ON. Every other forage fixture pays
 	# provisions alone, so the picker's multi-account face had no frame at all and a hay meadow was
 	# indistinguishable from barren prairie. The extractive rungs must read `0.24 food · 0.40 fodder`
@@ -1549,10 +1546,7 @@ func run(harness) -> void:
 	# The pair at the end of the block flips the dial back and asserts the absence deliberately.
 	# Foddering rides along with the rest of the hay-meadow block (see its own note above): these are
 	# the same wild meadows, and without it their fodder readings mute.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": FLOOR_CHART_CULTIVATION_LEARNING, "herding": 1.0,
-		"seed_selection": 1.0, "penning": 1.0, "foddering": 1.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": FLOOR_CHART_CULTIVATION_LEARNING, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0, "foddering": 1.0}}])
 
 	# State floor_chart_full — A FULL PATCH WITH THE FLOOR ABOVE ITS STOCK. Nothing stands above the
 	# line, so there is nothing to clear (that target reads 0, not a crew) and the verdict reports
@@ -1710,10 +1704,7 @@ func run(harness) -> void:
 	# at ×1.00` for the rest of the game (reported from play) — and asserting only the empty half would
 	# pass on a line blanked unconditionally, which is why the learning half is captured first.
 	var teaching_learning = Readout.teaching_line(h._hud._drawercompose._compose_sheet)
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
-		"foddering": 1.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0, "foddering": 1.0}}])
 	h._compose_forage(h._floor_chart_drawn_patch)
 	await h._settle()
 	await h._save("forage_lesson_known")
@@ -1749,10 +1740,7 @@ func run(harness) -> void:
 	# **Foddering is dialed PART-LEARNED, not 0.** It is a 0..1 track like every other and only
 	# `KNOWLEDGE_COMPLETE` opens the credit, so a fixture at 0 could not tell "unlearned" from "partly
 	# learned and still refused" — and the reason line's live percent would be untestable besides.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
-		"foddering": FODDER_LOCK_PROGRESS,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0, "foddering": FODDER_LOCK_PROGRESS}}])
 	h._show_tile(wild_hay)
 	h._compose_forage(wild_hay)   # settle the source key first (it changed)
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
@@ -1827,10 +1815,7 @@ func run(harness) -> void:
 	# moves between this frame and the one above; only what these people know how to do with hay. It is
 	# also the FIVE-TRACK strip's frame — every track is non-zero here, so the top-bar readout renders
 	# the whole ladder plus the capability that is not a rung of it.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
-		"foddering": 1.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0, "foddering": 1.0}}])
 	h._compose_forage(wild_hay)
 	await h._settle()
 	await h._save("forage_fodder_known")
@@ -1855,9 +1840,7 @@ func run(harness) -> void:
 	# State forage_fodder_committed — THE SAME PATCH COMMITTED to its hay, with Foddering back at 0.
 	# THIS is the half that pins `species.is_some()`: the credit is open with the knowledge fully
 	# absent, so the gate cannot be read as knowledge alone.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0}}])
 	var committed_hay := _committed_hay_meadow_tile_fixture()
 	h._show_tile(committed_hay)
 	h._compose_forage(committed_hay)
@@ -1889,9 +1872,7 @@ func run(harness) -> void:
 
 	# Put the faction's knowledge back where this chapter's earlier blocks left it, so the states after
 	# this one render the ladder they were written against.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0}}])
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.set_forage_species("")
 
@@ -2208,10 +2189,7 @@ func run(harness) -> void:
 	# all-complete dial the frames above leave behind, the aside's teaching line is correctly ABSENT
 	# and the claim below (that it may not deny the take) would be asserting about nothing. Restored
 	# at the end of the block, exactly as the chart block above restores it.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": FLOOR_CHART_CULTIVATION_LEARNING, "herding": 1.0,
-		"seed_selection": 1.0, "penning": 0.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": FLOOR_CHART_CULTIVATION_LEARNING, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0}}])
 	var at_floor := BaseFx.food_tile_fixture()
 	at_floor["patch_biomass"] = SourceForecast.FLOOR_FOOD_PEAK \
 		* float(at_floor["patch_carrying_capacity"])
@@ -2347,9 +2325,7 @@ func run(harness) -> void:
 			and not descending_text.contains(RETIRED_REACHES_AFTERMATH))
 
 	# Put the faction's knowledge back where the block before this one left it.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0}}])
 
 	# ---- THE ROW'S TWO RATES ARE NAMED, BOTH OF THEM (PNG-less) --------------------------------
 	# Appended last, and it renders nothing: the claim is about a HOVER, which no frame carries, and

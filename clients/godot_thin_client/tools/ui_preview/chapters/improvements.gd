@@ -1020,9 +1020,7 @@ func run(harness) -> void:
 	tended_tile["patch_is_cultivated"] = true
 	# …and the STANDING RUNG re-derived from that flag, which is what `improvement_is_done` reads.
 	RungFx.stamp_patch(tended_tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0}}])
 	h._hud._band_labor._player_band = BandFx.cultivating_forage_band_fixture(
 		int(tended_tile["x"]), int(tended_tile["y"]))
 	h._hud._compose.reset_forage_source()
@@ -1058,9 +1056,7 @@ func run(harness) -> void:
 	# `forage_sow_locked` is the neighbouring case where BOTH kinds of reason are live at once.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
 	h._hud._compose.reset_forage_source()
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0}}])
 	h._show_tile(TileFx.tended_tile_fixture())
 	h._compose_forage(TileFx.tended_tile_fixture())
 	await h._settle()
@@ -1099,9 +1095,7 @@ func run(harness) -> void:
 		not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
 			ForageFx.GATHER_SHEET_CROP_KEY_NEEDLE))
 
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0}}])
 
 	# ---- THE THIRD METER STATE: BUILDING vs REVERTING (issue #442) ------------------------------
 	# **"Preparing 99%" WAS THE MOST MISLEADING LINE ON THE CARD.** A meter that is bleeding back toward

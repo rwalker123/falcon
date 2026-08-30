@@ -479,11 +479,18 @@ const HUSBANDRY_ROLE_HINT := "Keeps every tamed herd and pen this band works. Sh
 ## SUM rather than staffed on a tile.
 const ROLE_NAME_ROADWORK := "Roadwork"
 
-## **IT NAMES STANDING ON THE ROAD, because that is literally the catchment.** A band keeps the roads
-## under its own feet and nothing else — there is no radius, and a band that steps one tile off its
-## own road stops paying for it and stops being served by it. That is the one fact a player has to
-## know before staffing this pool, so it is what the hint says.
-const ROADWORK_ROLE_HINT := "Keeps the roads this band is standing on. Short of the bill, they wash out."
+## ⛔ **IT NAMES THE ROADS THIS BAND BUILT, NOT THE GROUND IT IS STANDING ON, and the difference is
+## the whole catchment.** A road tile's keeper is the band that graded or paved it, wherever that band
+## now stands: `route_keeping_claims` walks the roads a band keeps and never reads that band's
+## position, so a camp four tiles away goes on paying and goes on being served. What distance costs is
+## a PRICE — the road's own `keeper_remoteness`, quoted when the job was taken on — and never whether
+## the bill exists.
+##
+## **The earlier wording said the opposite** (*"the roads this band is standing on"*), which was true
+## of a model where a road was a stored path and a band paid for whatever it stood over. Under the
+## per-tile model that reading would send a player to move camp in order to stop a bill that follows
+## them regardless.
+const ROADWORK_ROLE_HINT := "Keeps the roads this band built, however far it has since walked. Short of the bill, they wash out."
 
 ## **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level pool, and the
 ## card that replaced the per-source BUILDERS stepper the compose sheet used to carry.

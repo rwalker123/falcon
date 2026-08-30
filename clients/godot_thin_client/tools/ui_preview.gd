@@ -115,6 +115,7 @@ const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
+const KnowledgeFx := preload("res://tools/ui_preview/fixtures_knowledge.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 
 
@@ -441,9 +442,14 @@ func _ready() -> void:
 
 	# Top-bar demographics readout (faction 0 age structure + dependency ratio).
 
+	# **THE LADDER'S KNOWLEDGE ROSTER — what there IS to learn.** Pushed BEFORE any progress, because
+	# the knowledge screen's columns are built from it: a HUD with no roster has no ladder nodes at
+	# all, whatever a faction's meters say.
+	_hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+
 	# Top-bar intensification-knowledge meters (faction 0): Cultivation still learning
 	# (block-glyph bar + "learning"), Herding fully mastered ("✔ known"). Visible across frames.
-	_hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
+	_hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 0.55, "herding": 1.0}}])
 
 	# Top-bar Wondrous-Sites discoveries readout (faction 0). The strip keys on `site_id`, so this
 	# fixture is built to prove the two cases the glyph could not distinguish:

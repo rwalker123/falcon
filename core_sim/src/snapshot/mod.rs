@@ -23,12 +23,13 @@ use sim_runtime::{
     GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
     GreatDiscoveryTelemetryState, HerdTelemetryState, InfluentialIndividualState,
     IntensificationKnowledgeState, KitOptionState, KnowledgeLedgerEntryState,
-    KnowledgeMetricsState, KnowledgeTimelineEventState, LaborAssignmentState, MaterialDefState,
-    MountainKind, PendingForkState, PendingForksState, PendingMigrationState,
-    PopulationCohortState, PopulationDemographicsState as SchemaPopulationDemographicsState,
-    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState, RecipeDefState,
-    RouteState, ScalarRasterState, SedentarizationState as SchemaSedentarizationState,
-    SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
+    KnowledgeMetricsState, KnowledgeTimelineEventState, LaborAssignmentState,
+    LadderKnowledgeProgress, LadderKnowledgeState, MaterialDefState, MountainKind,
+    PendingForkState, PendingForksState, PendingMigrationState, PopulationCohortState,
+    PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
+    PowerIncidentState, PowerNodeState, PowerTelemetryState, RecipeDefState, RouteState,
+    ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
+    SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, SourcePriorityState, StanceAxisState, StanceState,
     StartMarkerState, TerrainOverlayState, TerrainSample, TileState, VictoryModeSnapshotState,
     VictoryResultState, VictorySnapshotState, VoiceLineState, VoiceMediumState, WorldDelta,
@@ -51,15 +52,14 @@ use crate::{
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
     fauna::{
         herd_herders_needed, hunt_forecast, would_be_herders_needed, EcologyPhase, Herd,
-        HerdRegistry, HerdTelemetry, FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID,
-        PENNING_DISCOVERY_ID, PEN_FULLY_FED,
+        HerdRegistry, HerdTelemetry, FULLY_HERDED, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
     flora_config::{FloraConfig, FloraConfigHandle, FloraShare},
     food::FoodModuleTag,
     forage::{
         forage_forecast, patch_composition, rung_site_refusal, tile_is_fresh_watered, ForagePatch,
-        ForageRegistry, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
+        ForageRegistry, NO_FORAGE_SEASON,
     },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},
@@ -912,7 +912,10 @@ mod tests {
     use crate::components::{
         ElementKind, LocalStore, MoraleCause, SourcePriority, TakeSelection, YieldRange,
     };
+    use crate::fauna::{FODDERING_DISCOVERY_ID, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID};
     use crate::forage::ForagePatch;
+    use crate::forage::CULTIVATION_DISCOVERY_ID;
+    use crate::intensification::LadderConfig;
     use crate::power::PowerNodeId;
     use crate::{
         labor_config::LaborConfig,
@@ -1092,6 +1095,7 @@ mod tests {
         let header = SnapshotHeader::new(tick, tiles.len(), 0, 0, 0);
         WorldSnapshot {
             header,
+            ladder_knowledge: Vec::new(),
             kits: Vec::new(),
             materials: Vec::new(),
             characteristic_bands: Vec::new(),
@@ -1164,6 +1168,7 @@ mod tests {
         let header = SnapshotHeader::new(tick, 0, 0, 0, 0);
         WorldSnapshot {
             header,
+            ladder_knowledge: Vec::new(),
             kits: Vec::new(),
             materials: Vec::new(),
             characteristic_bands: Vec::new(),
@@ -1231,6 +1236,7 @@ mod tests {
         let header = SnapshotHeader::new(tick, 0, 0, 0, 0);
         WorldSnapshot {
             header,
+            ladder_knowledge: Vec::new(),
             kits: Vec::new(),
             materials: Vec::new(),
             characteristic_bands: Vec::new(),
@@ -2347,8 +2353,70 @@ mod tests {
         );
     }
 
+    /// The one progress reader in this module, so each test says what it is asking about.
+    fn track(row: &IntensificationKnowledgeState, knowledge: &str) -> f32 {
+        row.knowledges
+            .iter()
+            .find(|entry| entry.knowledge_id == knowledge)
+            .unwrap_or_else(|| panic!("`{knowledge}` is on the published list"))
+            .progress
+    }
+
+    /// ⛔ **THE ROSTER IS DERIVED FROM THE LADDER AND CARRIES NO FACTION** — which is what lets a
+    /// client build its knowledge columns without a node list of its own, and what keeps a faction
+    /// that has learned nothing from having an empty screen.
+    ///
+    /// Three claims, and each is a different way the derivation could be wrong: the route branch's
+    /// two lessons are PRESENT (a hard-coded roster is exactly what could not carry them), a
+    /// knowledge sits in the branch and at the order of the rung that TEACHES it, and `foddering` is
+    /// the shipped `is_step: false` because no rung's `unlock_knowledge` names it.
+    #[test]
+    fn the_published_roster_places_every_knowledge_the_ladder_teaches() {
+        let ladder = LadderConfig::builtin();
+        let roster = snapshot_ladder_knowledge(&ladder);
+
+        let ids: Vec<&str> = roster.iter().map(|row| row.knowledge_id.as_str()).collect();
+        assert!(
+            ids.contains(&"roadbuilding") && ids.contains(&"paving"),
+            "the route branch's lessons ride the roster: {ids:?}"
+        );
+
+        let seed = roster
+            .iter()
+            .find(|row| row.knowledge_id == "seed_selection")
+            .expect("seed_selection is taught");
+        assert_eq!(seed.branch, "plant");
+        assert_eq!(
+            seed.order, 2,
+            "it is taught by `plant:tended`, so it sits at that rung's order"
+        );
+        assert!(seed.is_step, "`plant:field` waits on it");
+        assert_eq!(
+            seed.display_name, "Seed Selection",
+            "the player-facing name is resolved sim-side, not by a client table"
+        );
+
+        let fodder = roster
+            .iter()
+            .find(|row| row.knowledge_id == "foddering")
+            .expect("foddering is taught");
+        assert_eq!(fodder.branch, "animal");
+        assert!(
+            !fodder.is_step,
+            "no rung waits on Foddering — it is a capability, and that FALLS OUT of the config"
+        );
+
+        let road = roster
+            .iter()
+            .find(|row| row.knowledge_id == "roadbuilding")
+            .expect("roadbuilding is taught");
+        assert_eq!(road.branch, "route");
+        assert!(road.is_step, "`route:dirt_road` waits on it");
+    }
+
     #[test]
     fn snapshot_intensification_knowledge_reports_learned_ladders() {
+        let ladder = LadderConfig::builtin();
         let mut ledger = DiscoveryProgressLedger::default();
         // Faction 2 fully knows Cultivation and is partway to Herding.
         ledger.add_progress(FactionId(2), CULTIVATION_DISCOVERY_ID, Scalar::one());
@@ -2356,15 +2424,23 @@ mod tests {
         // Faction 5 has only unrelated discovery progress → no intensification row.
         ledger.add_progress(FactionId(5), 1, Scalar::one());
 
-        let rows = snapshot_intensification_knowledge(&ledger);
+        let rows = snapshot_intensification_knowledge(&ledger, &ladder);
         assert_eq!(rows.len(), 1, "only factions on the ladders appear");
         let f2 = &rows[0];
         assert_eq!(f2.faction, 2);
-        assert!((f2.cultivation - 1.0).abs() < 1e-6);
-        assert!((f2.herding - 0.5).abs() < 1e-6);
+        assert!((track(f2, "cultivation") - 1.0).abs() < 1e-6);
+        assert!((track(f2, "herding") - 0.5).abs() < 1e-6);
         assert_eq!(
-            f2.foddering, 0.0,
+            track(f2, "foddering"),
+            0.0,
             "a faction that never ran a pen has no fodder capability"
+        );
+        // ⛔ **SPARSE IN VALUE, NEVER IN MEMBERSHIP.** An untouched knowledge rides at `0` rather
+        // than being dropped, so no reader has to tell "not begun" from "not published".
+        assert_eq!(
+            f2.knowledges.len(),
+            snapshot_ladder_knowledge(&ladder).len(),
+            "every knowledge the roster declares carries a reading on every published row"
         );
     }
 
@@ -2377,6 +2453,7 @@ mod tests {
         /// known/unknown bit.
         const PARTIAL_FODDERING: f32 = 0.25;
 
+        let ladder = LadderConfig::builtin();
         let mut ledger = DiscoveryProgressLedger::default();
         ledger.add_progress(FactionId(7), PENNING_DISCOVERY_ID, Scalar::one());
         ledger.add_progress(FactionId(7), FODDERING_DISCOVERY_ID, Scalar::one());
@@ -2387,15 +2464,15 @@ mod tests {
             Scalar::from_f32(PARTIAL_FODDERING),
         );
 
-        let rows = snapshot_intensification_knowledge(&ledger);
+        let rows = snapshot_intensification_knowledge(&ledger, &ladder);
         assert_eq!(rows.len(), 2, "both factions are on the ladder");
         let penned = &rows[0];
         assert_eq!(penned.faction, 7);
-        assert!((penned.foddering - 1.0).abs() < 1e-6);
+        assert!((track(penned, "foddering") - 1.0).abs() < 1e-6);
         let fodder_only = &rows[1];
         assert_eq!(fodder_only.faction, 9);
-        assert!((fodder_only.foddering - PARTIAL_FODDERING).abs() < 1e-6);
-        assert_eq!(fodder_only.penning, 0.0);
+        assert!((track(fodder_only, "foddering") - PARTIAL_FODDERING).abs() < 1e-6);
+        assert_eq!(track(fodder_only, "penning"), 0.0);
     }
 
     #[test]

@@ -422,6 +422,12 @@ const RUNG_KNOWLEDGE_TRACKS := {
     SourceForecast.IMPROVEMENT_SOW: HudFloraVocab.KNOWLEDGE_TRACK_SEED_SELECTION,
     SourceForecast.IMPROVEMENT_TAME: HudFloraVocab.KNOWLEDGE_TRACK_HERDING,
     SourceForecast.IMPROVEMENT_CORRAL: HudFloraVocab.KNOWLEDGE_TRACK_PENNING,
+    # **THE ROUTE BRANCH'S TWO** (arc #532). They are in this table for the same reason the four above
+    # are, and for one more: `KnowledgeRoster` INVERTS it to ask "what does this knowledge unlock",
+    # which is how the knowledge screen tells a discovery nothing is using from one there is nothing
+    # to use. A route rung missing here would read as a knowledge that unlocks nothing at all.
+    SourceForecast.IMPROVEMENT_GRADE: HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING,
+    SourceForecast.IMPROVEMENT_PAVE: HudFloraVocab.KNOWLEDGE_TRACK_PAVING,
 }
 
 ## **Is this rung blocked on KNOWLEDGE specifically?** — the same `track < KNOWLEDGE_COMPLETE` test the

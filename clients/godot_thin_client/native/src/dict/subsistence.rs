@@ -1373,26 +1373,65 @@ pub(crate) fn intensification_knowledge_to_array(
         let mut dict = VarDictionary::new();
         let _ = dict.insert("faction", state.faction() as i64);
         // The FACTION-WIDE half of the two-meter split (docs/plan_intensification_ladder.md §4.1):
-        // "can my PEOPLE do this verb at all?", earned once by cumulative practice and permanent —
+        // "can my PEOPLE do this verb at all?", earned once by cumulative practice and permanent --
         // as opposed to the per-source build meters (`domestication`/`corral_progress` on a herd,
         // `cultivation_progress`/`field_progress` on a patch), which are local to ONE food source and
-        // decay if abandoned. One field per rung-transition, so these read as the ladder itself:
-        //   plant:  wild --cultivation--> tended --seed_selection--> field
-        //   animal: wild --herding------> pastoral --penning-------> pen
-        let _ = dict.insert("cultivation", state.cultivation());
-        let _ = dict.insert("herding", state.herding());
-        // Appended by slice 4 (discovery ids 2005/2006). The §4.3 gate reshuffle: `herding` now gates
-        // `tame` ALONE, and `penning` — not `herding` — gates `corral` + `extend_pen`.
-        let _ = dict.insert("seed_selection", state.seedSelection());
-        let _ = dict.insert("penning", state.penning());
-        // **NOT A RUNG-TRANSITION GATE like the four above** — no rung waits on it. It is the lesson
-        // the PEN rung itself teaches (`intensification_ladder.json`, corral's
-        // `earns_knowledge: "foddering"`), and it gates every fodder seam a faction has: the pen's
-        // hay DRAW, the pen's `K` fodder term, and the WILD forage patch's fodder credit. So a wild
-        // hay meadow can publish a positive `ForagePatchState.fodderPerBiomass` — what the LAND pays
-        // — that this faction cannot bank. Appended after `penning`, and this decoder has repeatedly
-        // dropped appended fields silently: if it arrives as zero, check HERE first.
-        let _ = dict.insert("foddering", state.foddering());
+        // decay if abandoned.
+        //
+        // ⛔ **A LIST, AND THE FIVE NAMED FLOATS IT REPLACED ARE RETIRED.** Adding a knowledge used
+        // to mean adding a schema field, which is why the route branch's two lessons had nowhere to
+        // appear and a client's knowledge screen had to hard-code its nodes. **Sparse in VALUE,
+        // never in MEMBERSHIP**: a knowledge the faction has not begun rides at `0` rather than
+        // being absent, so no reader has to tell "not begun" from "not published".
+        //
+        // It decodes to `{knowledge_id: progress}` rather than to an array of pairs, because every
+        // consumer asks *"what is this faction's progress on THIS knowledge"* — the roster below is
+        // what answers "which knowledges are there, and where do they go".
+        let mut progress = VarDictionary::new();
+        if let Some(rows) = state.knowledges() {
+            for row in rows {
+                let _ = progress.insert(
+                    row.knowledgeId().unwrap_or_default(),
+                    f64::from(row.progress()),
+                );
+            }
+        }
+        let _ = dict.insert("knowledges", &progress.to_variant());
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// **WHAT THERE IS TO LEARN** -- the ladder's knowledge ROSTER, once per world and carrying no
+/// faction.
+///
+/// ⛔ **THIS IS WHAT LETS A KNOWLEDGE SCREEN BUILD ITS OWN COLUMNS.** Every field is derived from
+/// `intensification_ladder.json` sim-side and nothing is authored twice: `branch` says which column,
+/// `order` says where in it, and `is_step` says whether the knowledge sits IN the chain or hangs off
+/// the bottom of it. A knowledge added to that config therefore reaches the panel with no client
+/// edit at all.
+///
+/// **It is faction-independent BY DESIGN**, and the progress list above is not: a faction that has
+/// learned nothing has no row there, and a roster carried on that row would leave a new player's
+/// screen empty -- with nothing on it to say there was anything to learn.
+pub(crate) fn ladder_knowledge_to_array(
+    states: Vector<'_, ForwardsUOffset<fb::LadderKnowledgeState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for state in states {
+        let mut dict = VarDictionary::new();
+        // The ladder config's own id -- the join key with the progress list above.
+        let _ = dict.insert("knowledge_id", state.knowledgeId().unwrap_or_default());
+        // "Seed Selection". Resolved SIM-SIDE, so no client authors a second spelling of it.
+        let _ = dict.insert("display_name", state.displayName().unwrap_or_default());
+        // The branch of the rung that TEACHES it: "plant" | "animal" | "route".
+        let _ = dict.insert("branch", state.branch().unwrap_or_default());
+        // ...and that rung's order, bottom step first.
+        let _ = dict.insert("order", state.order() as i64);
+        // **STEP OR CAPABILITY.** `true` when some rung's `unlock_knowledge` names it. `foddering` is
+        // the shipped `false` -- it changes what a pen may draw on rather than opening a further
+        // rung, which is why it hangs off the bottom of its column rather than sitting in the chain.
+        let _ = dict.insert("is_step", state.isStep());
         array.push(&dict.to_variant());
     }
     array

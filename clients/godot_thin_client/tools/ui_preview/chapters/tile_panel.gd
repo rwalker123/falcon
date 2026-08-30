@@ -688,9 +688,7 @@ func run(harness) -> void:
 	# tile_panel_compose_gated — a LOCKED rung inside the sheet: 🐄 Corral greyed AND its gate reasons
 	# rendered right beside it. The reasons explain the greyed button, so they had to travel WITH the
 	# picker; a reason left behind in the drawer would explain a button that is no longer there.
-	h._hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": 0.35,
-	}])
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": 0.35}}])
 	h._hud._band_labor._player_bands = []
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud._compose.reset_hunt_source()

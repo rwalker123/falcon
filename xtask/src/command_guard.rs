@@ -367,6 +367,13 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         | CommandPayload::SendHuntExpedition { band_id, .. }
         | CommandPayload::SendTradeExpedition { band_id, .. }
         | CommandPayload::SplitBand { band_id, .. } => *band_id,
+        // ⛔ **THE ROUTE BRANCH'S TWO TILE VERBS NAME A BAND, and no other tile verb does** (arc
+        // #532). A patch's keeper is whoever is already foraging it; a road has no work row at all,
+        // so the band that will KEEP the tile has to be a token — and the handle is REQUIRED, since
+        // a road with nobody on the hook is not a road the sim will accept.
+        CommandPayload::Grade { band_id, .. } | CommandPayload::Pave { band_id, .. } => {
+            Some(*band_id)
+        }
         CommandPayload::RecallExpedition {
             expedition_band_id, ..
         } => Some(*expedition_band_id),

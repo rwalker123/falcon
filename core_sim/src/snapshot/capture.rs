@@ -244,6 +244,9 @@ pub(crate) struct PublishState {
     demographics: Whole<Vec<SchemaPopulationDemographicsState>>,
     forage_patches: Whole<Vec<ForagePatchState>>,
     intensification_knowledge: Whole<Vec<IntensificationKnowledgeState>>,
+    /// The ladder's knowledge ROSTER — a per-world constant, so it diffs out on every turn after the
+    /// first exactly as `kits` does.
+    ladder_knowledge: Whole<Vec<LadderKnowledgeState>>,
     campaign_profiles: Whole<Vec<CampaignProfileState>>,
     /// The event log's baseline is a **cursor**, not a copy of the ring: the highest `seq` the
     /// client has been sent. See `snapshot::diff_appended`.
@@ -573,6 +576,7 @@ struct CampaignParts {
     routes: Option<Vec<RouteState>>,
     demographics: Option<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
+    ladder_knowledge: Option<Vec<LadderKnowledgeState>>,
     start_marker: Option<StartMarkerState>,
 }
 
@@ -591,6 +595,7 @@ struct CampaignBaselines<'a> {
     routes: &'a mut Whole<Vec<RouteState>>,
     demographics: &'a mut Whole<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: &'a mut Whole<Vec<IntensificationKnowledgeState>>,
+    ladder_knowledge: &'a mut Whole<Vec<LadderKnowledgeState>>,
     start_marker: &'a mut Whole<Option<StartMarkerState>>,
 }
 
@@ -628,6 +633,7 @@ fn diff_campaign(
             &snapshot.intensification_knowledge,
             write,
         ),
+        ladder_knowledge: diff_whole(baseline.ladder_knowledge, &snapshot.ladder_knowledge, write),
         // `Option` on both sides, so the delta carries the INNER option: `None` here means
         // unchanged, and a marker that was cleared arrives as `Some(None)` flattened to `None` —
         // the same conflation this field has always had.
@@ -825,6 +831,7 @@ impl PublishState {
             demographics: Whole::default(),
             forage_patches: Whole::default(),
             intensification_knowledge: Whole::default(),
+            ladder_knowledge: Whole::default(),
             campaign_profiles: Whole::default(),
             // A fresh world has sent nothing, so every event ever pushed is "appended since".
             command_events: 0,
@@ -958,6 +965,7 @@ impl PublishState {
             routes,
             demographics,
             intensification_knowledge,
+            ladder_knowledge,
             start_marker,
             herds,
             forage_patches,
@@ -1065,6 +1073,7 @@ impl PublishState {
                             routes,
                             demographics,
                             intensification_knowledge,
+                            ladder_knowledge,
                             start_marker,
                         },
                         captured,
@@ -1161,6 +1170,7 @@ impl PublishState {
             routes: campaign_parts.routes,
             demographics: campaign_parts.demographics,
             intensification_knowledge: campaign_parts.intensification_knowledge,
+            ladder_knowledge: campaign_parts.ladder_knowledge,
             start_marker: campaign_parts.start_marker,
             herds: subsistence_parts.herds,
             forage_patches: subsistence_parts.forage_patches,
@@ -1355,6 +1365,8 @@ impl PublishState {
             .reset(entry.snapshot.forage_patches.clone());
         self.intensification_knowledge
             .reset(entry.snapshot.intensification_knowledge.clone());
+        self.ladder_knowledge
+            .reset(entry.snapshot.ladder_knowledge.clone());
         self.campaign_profiles
             .reset(entry.snapshot.campaign_profiles.clone());
         // Rewind the cursor to the newest event the restored frame carries — a rollback un-sends
@@ -1558,6 +1570,7 @@ impl PublishState {
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
+            ladder_knowledge: None,
             knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1694,6 +1707,7 @@ impl PublishState {
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
+            ladder_knowledge: None,
             knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1814,6 +1828,7 @@ impl PublishState {
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
+            ladder_knowledge: None,
             knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -3016,7 +3031,9 @@ pub fn capture_snapshot(
         &upkeep_kit_ids,
     );
     drop(forage_patches_scope);
-    let intensification_knowledge_state = snapshot_intensification_knowledge(&discovery_progress);
+    let intensification_knowledge_state =
+        snapshot_intensification_knowledge(&discovery_progress, &ladder_config);
+    let ladder_knowledge_state = snapshot_ladder_knowledge(&ladder_config);
     let command_events_state = command_events_to_state(&command_events);
     // The Telling's client-facing fork tier + stance readout (BTree-backed, so already ordered).
     let pending_forks_state = snapshot_pending_forks(&beat_ledger);
@@ -3096,6 +3113,7 @@ pub fn capture_snapshot(
         demographics: demographics_state.clone(),
         forage_patches: forage_patches_state.clone(),
         intensification_knowledge: intensification_knowledge_state.clone(),
+        ladder_knowledge: ladder_knowledge_state.clone(),
         command_events: command_events_state.clone(),
         command_events_retention_turns: command_events.retention_turns() as u32,
         pending_forks: pending_forks_state.clone(),

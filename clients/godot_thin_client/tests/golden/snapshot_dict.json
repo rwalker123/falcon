@@ -1521,20 +1521,20 @@
   ],
   "intensification_knowledge": [
     {
-      "cultivation": 94.459999,
       "faction": 72,
-      "foddering": 36.84,
-      "herding": 31.219999,
-      "penning": 29.51,
-      "seed_selection": 21.629999
+      "knowledges": {
+        "cultivation": 19.309999,
+        "herding": 64.07,
+        "roadbuilding": 12.16
+      }
     },
     {
-      "cultivation": 28.549999,
       "faction": 103,
-      "foddering": 10.48,
-      "herding": 37.700001,
-      "penning": 54.32,
-      "seed_selection": 14.35
+      "knowledges": {
+        "cultivation": 58.540001,
+        "herding": 16.42,
+        "roadbuilding": 25.709999
+      }
     }
   ],
   "kits": [
@@ -1581,6 +1581,29 @@
         "kits[1].jobs[1]"
       ],
       "scout_vantage_range": 48.380001
+    }
+  ],
+  "ladder_knowledge": [
+    {
+      "branch": "plant",
+      "display_name": "cultivation",
+      "is_step": true,
+      "knowledge_id": "cultivation",
+      "order": 139
+    },
+    {
+      "branch": "plant",
+      "display_name": "herding",
+      "is_step": true,
+      "knowledge_id": "herding",
+      "order": 148
+    },
+    {
+      "branch": "plant",
+      "display_name": "roadbuilding",
+      "is_step": true,
+      "knowledge_id": "roadbuilding",
+      "order": 65
     }
   ],
   "materials": [
@@ -3653,13 +3676,15 @@
       "build_fraction": 107.57,
       "friction_multiplier": 83.839996,
       "grants_sight": true,
+      "has_keeper": true,
       "has_neglect_grace": true,
       "holds_link_to_tiles": 83,
-      "id": 83,
+      "keeper_band_id": 96,
+      "keeper_remoteness": 49.759998,
       "neglect_grace_remaining": 80,
-      "path_x": {"__packed": "PackedInt32Array", "len": 2, "items": [44, 127]},
-      "path_y": {"__packed": "PackedInt32Array", "len": 2, "items": [23, 44]},
       "rung": "routes[0].rung",
+      "tile_x": 157,
+      "tile_y": 168,
       "upkeep_demand": 45.200001,
       "upkeep_shortfall": 79.529999,
       "upkeep_supplied": 10.98,
@@ -3669,13 +3694,15 @@
       "build_fraction": 66.529999,
       "friction_multiplier": 84.18,
       "grants_sight": true,
+      "has_keeper": true,
       "has_neglect_grace": true,
       "holds_link_to_tiles": 76,
-      "id": 14,
+      "keeper_band_id": 1,
+      "keeper_remoteness": 63.98,
       "neglect_grace_remaining": 35,
-      "path_x": {"__packed": "PackedInt32Array", "len": 2, "items": [3, 40]},
-      "path_y": {"__packed": "PackedInt32Array", "len": 2, "items": [200, 67]},
       "rung": "routes[1].rung",
+      "tile_x": 12,
+      "tile_y": 1,
       "upkeep_demand": 101.57,
       "upkeep_shortfall": 14.27,
       "upkeep_supplied": 55.990002,
