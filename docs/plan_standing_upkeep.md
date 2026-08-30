@@ -2430,10 +2430,37 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > > settled. Do not ship a per-tile credit without deciding the second.
     >
     > **13c — DRAW THE ROAD NETWORK ON THE MAP (#232).**
-    > - The overlay, fed by the routes 13a/13b now hold. #232 is a **consumer** of this work, not a
+    > - The overlay, fed by the roads 13a/13b now hold. #232 is a **consumer** of this work, not a
     >   supplier to it — see correction ② above. `map_preview.gd`'s existing `"routes"` annotation
     >   state is **order paths** and is a different thing; do not reuse that name.
     > - This is also where `map_preview.gd` earns back a frame it lost with the trade-link substrate.
+    >
+    > > **⛔ 13a ABSORBED THE BASIC DRAWING, so this step is smaller and sharper than it was written.**
+    > > Under the path model a road was an object that needed its own network view; per-tile, a road is
+    > > just a tile, so the per-tile stamp landed with 13a's client half. **What is left here is the
+    > > OVERLAY and the presentation** — not "make roads appear", which they already do.
+    >
+    > > **⛔ A ROAD FADES IN AS IT IS WORN, RATHER THAN SNAPPING AT THE RUNG.** From play: seven
+    > > game-trail tiles existed at 24–52% and every one of them drew identically, so a road half worn
+    > > in looked exactly like one just begun. Ray: *"a partial trail… should still draw but at 52%
+    > > opacity, so as it becomes more complete"* it reads more strongly — *"fade in the
+    > > trails/dirt/paved."*
+    > >
+    > > **IT IS THE LADDER'S OWN INTERPOLATION, NOT A SECOND MECHANISM.** Opacity is a per-rung value
+    > > like any other, so it goes through `intensification::interpolate` on the road's standing —
+    > > exactly as the upkeep demand, the payout and the material rate already do. A road 52% of the way
+    > > from game trail to trail draws 52% of the way from the game trail's opacity to the trail's.
+    > >
+    > > **The ramp is BETWEEN RUNGS and never from zero**, and that falls out of the same reading rather
+    > > than needing a rule: a trail at 0% *is* a completed game trail, and it should look like one. A
+    > > road never fades to nothing while it still holds a rung.
+    > >
+    > > **The tile card already states the number** (`HudRouteVocab.wearing_in_value`); this is the map
+    > > saying the same thing without being asked. Two readings of one position, so they cannot
+    > > disagree — which is the whole reason to interpolate rather than invent a second progress curve.
+    >
+    > > **RELATED, AND NOT THIS STEP'S: #215** — *"herd/game trails follow hex centers and become the
+    > > basis of roads."* The game-trail rung's own origin, and its own issue.
     >
     > **Tuning is NOT a step here** — §4.14 already owns every number in this arc and is explicitly
     > last. The rung rates, spans, friction multipliers and traffic conversions land at shape-chosen
