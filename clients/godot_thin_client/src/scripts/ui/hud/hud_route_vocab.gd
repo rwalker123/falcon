@@ -41,7 +41,7 @@ const RUNG_KEY_PAVED_ROAD := "route:paved_road"
 ## sent the rung a road HOLDS and must be able to name the one traffic is wearing in above it.
 ##
 ## A rung this list does not know renders its meter without a destination name rather than guessing
-## one — see `wearing_in_value`.
+## one — see `progress_clause`.
 const RUNG_ORDER := [
 	RUNG_KEY_GAME_TRAIL,
 	RUNG_KEY_TRAIL,
@@ -58,57 +58,96 @@ const RUNG_LABELS := {
 	RUNG_KEY_PAVED_ROAD: "Paved road",
 }
 
-## The mark a road wears on the tile card, in the same slot the plant/animal rung badges wear theirs.
-const ROAD_GLYPH := "🛣"
+# RETIRED — `ROAD_GLYPH` (🛣), the badge the rung row used to lead with (issue #566). It sat in the
+# value cell of a row whose KEY already reads `Road`, so it said the word twice and bought the card
+# nothing; the plant/animal badges it was copied from lead rows whose keys name a rung
+# (`Cultivation`, `Corral`) rather than the thing itself.
 
 # ---- THE TILE CARD'S ROAD BLOCK --------------------------------------------------------------
 #
-# Five rows, each `Key: value`, keys inside `DetailFormat.DETAIL_KEY_MAX_LENGTH` so they align in the
-# card's two-column table with every other row on it.
+# ⛔ **EVERY ROW HERE IS CONDITIONAL, AND A FREE GAME TRAIL IS ONE ROW.** The block used to print five
+# rows whatever the road was, two of which were sentences saying *no* — `Keeping: free — nobody keeps
+# a game trail` over `Buys: nothing — a path the animals made`, which was four lines of prose to say
+# that the commonest road in the game costs nothing and does nothing. **A row that would say "none"
+# is not rendered at all** (issue #566): the rung row is the only unconditional one, and the other
+# three appear exactly when the road has something to say with them.
+#
+# **THE ROWS READ LIKE THE ROWS ABOVE THEM ON THE CARD** — `label · value · qualifier`, the shape
+# `Foraging  90 / 100 · Thriving` and `Grazing  9 / 10 · Thriving` already use, joined by
+# `ROAD_CLAUSE_SEPARATOR`. A road-specific style on a card of ecology rows reads as a different
+# card's row.
+#
+# Keys stay inside `DetailFormat.DETAIL_KEY_MAX_LENGTH` so they align in the card's two-column table
+# with every other row on it.
 
-## What this ground carries. Always rendered where a road crosses the hex.
+## What this ground carries, and how far the traffic on it has got toward the next rung. **Always
+## rendered where a road crosses the hex** — it is the row that says a road is here at all.
 const ROAD_ROW := "Road"
 
-## The meter traffic is banking into the rung ABOVE the one held — the route twin of `Cultivation` /
-## `Field`. **Rendered only while something is rising**: a full meter means the held rung is complete
-## and nothing is being worn in, which is a row with nothing to say rather than a `100%` one.
-const ROAD_WEARING_ROW := "Wearing in"
+## ⛔ **THE PAYOFF ROW, AND IT IS DELIBERATELY UNLABELLED.** `Buys:` was a key doing no work: the
+## value (*40% less lost between bands*) already reads as a benefit, so the label only narrowed the
+## column the sentence had to live in.
+##
+## ⛔ **THE KEY IS A BLANK RATHER THAN ABSENT, AND THAT IS STRUCTURAL.** `DetailFormat.detail_bbcode`
+## renders a colon-free line FULL WIDTH and closes the open `[table=2]` to do it — so a keyless payoff
+## in the middle of the block would split the card's one table in two and the road's keys would stop
+## sharing a column with `Foraging` / `Grazing` below them. A blank key keeps the row in the table and
+## the value in the value column, which is what "bare" has to mean here.
+const ROAD_BONUS_ROW := " "
 
-## ⛔ **WHOSE JOB THIS TILE IS** — the row that says who is on the hook for the bill below it.
+## What holding it costs, per turn, and how many `roadwork` keepers that bill wants. **Rendered only
+## where the road actually owes something**, which today is neither free rung.
+##
+## ⛔ **THE WORD IS `Upkeep`, WHICH IS THE CLIENT'S AND THE WIRE'S.** It read `Keeping` for a slice —
+## a second word for the thing `HudDisclosureVocab.DETAIL_ROW_UPKEEP` names on the band's own card and
+## `upkeep_demand` / `upkeep_supplied` name on the wire. **Sharing that key is deliberate**: one
+## concept, one word, one row label everywhere in the client. `DetailFormat._value_hex` therefore
+## carries a single `Upkeep` arm that answers for both the band's material bill and this.
+const ROAD_UPKEEP_ROW := "Upkeep"
+
+## ⛔ **WHOSE JOB THIS TILE IS** — the row that says who is on the hook for the bill above it.
 ##
 ## **The keeper is the band that BUILT it, wherever that band now stands.** It is not *"whoever is
 ## standing here"*: `route_keeping_claims` walks the roads a band keeps and never reads that band's
-## position, so a band four tiles away goes on paying. Rendered only where there is something to say
-## — a game trail nobody keeps is already explained by the `Keeping:` row's own answer.
+## position, so a band four tiles away goes on paying. Rendered only where there is something to say.
 const ROAD_KEEPER_ROW := "Kept by"
-
-## What holding it costs, per turn, and how many `roadwork` keepers that bill wants.
-const ROAD_KEEPING_ROW := "Keeping"
 
 ## The neglect COUNTDOWN, rendered only while the road is actually at risk.
 const ROAD_REVERTING_ROW := "Reverting"
 
-## ⛔ **WHAT THE RUNG IS BUYING — the row this whole readout exists for.** The route ladder is
-## deliberately NOT a straight upgrade path: a road is cheaper to travel and dearer to keep, and the
-## player is meant to pave only where the traffic pays for the upkeep. Without a visible statement of
-## what a rung buys, every road reads as pure cost and the decision the branch exists to create is
-## invisible — §4.9 item 12's *"a tax, not a ladder"* trap, on the client side of the wire.
-const ROAD_BUYS_ROW := "Buys"
+## The separator between a row's value and its qualifiers — the card's own middot, so a road row
+## breaks into clauses the same way the ecology rows above it do. One const for the rung row's
+## qualifiers and the payoff row's clauses, because they are the same punctuation doing the same job.
+const ROAD_CLAUSE_SEPARATOR := " · "
 
-## `Road:` value — the rung it holds, badged. `RUNG_BUILT_FORMAT`'s sibling: a road always HOLDS its
-## rung whole (the meter beside it belongs to the rung above), so there is no percentage here.
-const ROAD_RUNG_FORMAT := "%s %s"
+## ⛔ **`Road:` — THE RUNG IS THE FACT AND THE PERCENTAGE IS THE NEXT RUNG'S APPROACH.** A game trail
+## at 25% is a COMPLETE game trail a quarter of the way to becoming a trail — it is not a road that is
+## a quarter built, and the row must not be readable that way. The rung stands alone as the value and
+## the meter arrives as a qualifier that names where it is GOING (`25% to trail`), which is the only
+## phrasing that cannot be read as a progress bar on the rung being held.
+##
+## **`build_fraction` is a DIFFERENT rung's meter** (`RungKey::wire_key`'s rule) — a reader that
+## thresholded it would call a fully-worn trail a dirt road on the turn its first traffic banked — so
+## it can never be printed as the rung row's own value.
+##
+## The destination reads in LOWER CASE because it is mid-sentence there rather than heading a row.
+## Every rung name is plain English with no proper noun in it (`RUNG_LABELS`), so the fold is safe and
+## needs no second label table beside the first.
+const ROAD_PROGRESS_FORMAT := "%d%% to %s"
 
-## …and the same face with the branch's own consequence word when the keeping is short, through the
-## shared `RUNG_UNDER_KEPT_FORMAT` the plant and animal rows use. **`washing out` is the ROUTE web's
-## word**, beside the plant web's `slipping` and the animal web's `drifting`: a road nobody keeps is
-## not abandoned, it is eroding.
+## …and the same clause where `RUNG_ORDER` does not know the destination: the meter still means
+## *something above this is rising*, and naming a rung this client cannot vouch for would be worse
+## than not naming one.
+const ROAD_PROGRESS_UNNAMED_FORMAT := "%d%% to the next rung"
+
+## The hazard qualifier on the rung row — the branch's own consequence word behind the shared mark.
+## **`washing out` is the ROUTE web's word**, beside the plant web's `slipping` and the animal web's
+## `drifting`: a road nobody keeps is not abandoned, it is eroding. It rides the row as ONE MORE
+## MIDDOT CLAUSE, which is the ecology rows' own shape (`205 / 205 · ⚠ Stressed`) — the space-joined
+## `HudSelectionVocab.RUNG_UNDER_KEPT_FORMAT` would run the word onto the end of the progress clause
+## and read as the NEXT rung washing out.
+const ROAD_HAZARD_CLAUSE_FORMAT := "%s %s"
 const ROAD_UNDER_KEPT_WORD := "washing out"
-
-## `Wearing in:` value — the destination rung and the meter, or the bare meter where the destination
-## is a rung this client does not know.
-const ROAD_WEARING_FORMAT := "%s %d%%"
-const ROAD_WEARING_UNNAMED_FORMAT := "%d%%"
 
 ## `Kept by:` values. The band's own label, as this client names every band
 ## (`HudBandLaborState.band_label_for_id` → `HudFormat.band_display_name`), so a road's keeper and the
@@ -140,15 +179,14 @@ const ROAD_REMOTENESS_AT_HOME := 1.0
 ## not be whole — and `%s` above rather than `%.1f` inline so the two cannot drift.
 const ROAD_REMOTENESS_FORMAT := "%.1f"
 
-## `Keeping:` values. The bill and the keeper count are one sentence because they are one decision —
+## `Upkeep:` values. The bill and the keeper count are one sentence because they are one decision —
 ## *"wants 4, you have 0"* is the readout that makes a standing cost legible.
-const ROAD_KEEPING_FORMAT := "%s work a turn · wants %d keepers"
-const ROAD_KEEPING_SHORT_FORMAT := "%s short of %s work a turn · wants %d keepers"
-
-## …and the FLOOR's own answer, which is not "0" but "nobody maintains one". The game trail declares
-## no upkeep at all, and that is the whole of what makes it free — a `0 work a turn` row would read
-## as a bill that happens to be empty this turn.
-const ROAD_KEEPING_FREE := "free — nobody keeps a game trail"
+##
+## **THERE IS NO "free" READING HERE ANY MORE.** The floor declares no upkeep at all, so the row is
+## simply not emitted (see `upkeep_value`) — a sentence saying the bill does not exist is a row spent
+## on nothing, and it was on every road in a current game.
+const ROAD_UPKEEP_FORMAT := "%s work a turn · wants %d keepers"
+const ROAD_UPKEEP_SHORT_FORMAT := "%s short of %s work a turn · wants %d keepers"
 
 ## `Reverting:` values — the COUNTDOWN, never the counter. `0` means it is reverting NOW, which is
 ## why zero gets its own word rather than printing `in 0 turns`.
@@ -159,35 +197,35 @@ const ROAD_REVERTING_ONE := "%s next turn"
 ## The countdown's own zero, named because it is a MEANING (biting now) and not a sentinel.
 const ROAD_REVERTING_IMMINENT := 0
 
-## `Buys:` clauses. Joined with the card's own middot separator; each is omitted where the rung buys
-## nothing on that axis, so a rung that buys nothing at all falls through to `ROAD_BUYS_NOTHING`.
-const ROAD_BUYS_SEPARATOR := " · "
-
-## The friction payoff, stated as what it SAVES. `friction_multiplier` is the fraction of the base
-## loss a network bound by this road pays, so `0.6` is *40% less lost* — the conversion is a
+## The payoff's friction clause, stated as what it SAVES. `friction_multiplier` is the fraction of the
+## base loss a network bound by this road pays, so `0.6` is *40% less lost* — the conversion is a
 ## presentation of the published multiplier, never a re-derivation of a sim answer.
-const ROAD_BUYS_FRICTION_FORMAT := "%d%% less lost between bands"
+const ROAD_BONUS_FRICTION_FORMAT := "%d%% less lost between bands"
 
-## The sight payoff — `grants_sight` is the RESOLVED answer, because a client cannot re-derive
+## The sight clause — `grants_sight` is the RESOLVED answer, because a client cannot re-derive
 ## *"is the bill met"* (that is a comparison against the stamped basis with the sim's own epsilon).
-const ROAD_BUYS_SIGHT := "lights its own tiles"
+const ROAD_BONUS_SIGHT := "lights its own tiles"
 
 ## …and its other half: a BUILT road whose bill is unpaid goes dark BEFORE it decays, which is the
 ## honest early warning that it is being lost. Said out loud, because a clause that merely vanished
-## would read as a rung that never lit anything.
-const ROAD_BUYS_DARK := "dark until its keeping is paid"
+## would read as a rung that never lit anything. **It says `upkeep`, the row above it's own word.**
+const ROAD_BONUS_DARK := "dark until its upkeep is paid"
 
 ## ⛔ **THE LINK SPAN IS FUTURE TENSE, AND THAT IS NOT A STYLE CHOICE.** `holds_link_to_tiles` is
 ## authored on every route rung and **not yet read by the sim** — nothing in `balance_supply_networks`
 ## consumes it (that is slice 13b). It is published now because it is half of this line, and an honest
 ## *"authored, not yet consumed"* beats a field the client has to guess at; rendering it in the
 ## present tense would state an effect that is not in play.
-const ROAD_BUYS_LINK_FORMAT := "will hold a link %d tiles out"
+const ROAD_BONUS_LINK_FORMAT := "will hold a link %d tiles out"
 
-## A rung that buys nothing on any axis — the game trail, stated rather than left as an empty row.
-## Both its terms are their own neutral (multiplier `1.0`, span `0`), and that is a LIVE reading:
-## *"this rung is worth nothing"* is precisely what the branch's floor means.
-const ROAD_BUYS_NOTHING := "nothing — a path the animals made"
+# RETIRED — `ROAD_BUYS_NOTHING` (`nothing — a path the animals made`), the sentence a rung buying
+# nothing on every axis used to print (issue #566).
+#
+# ⛔ **IT WAS FACTUALLY WRONG, NOT MERELY WORDY.** It asserted an ORIGIN the sim does not model: a
+# game trail is a rung a tile HOLDS, and the commonest way a tile comes to hold it is the player's own
+# bands walking the same ground and banking traffic into the meter — nothing about it is a path
+# animals made. The rung buying nothing is now said by the row's ABSENCE, which states the same fact
+# and cannot state a false one beside it.
 
 ## The friction multiplier at which a rung takes nothing off the loss. Named because it is the
 ## GAME TRAIL's own reading and the test the friction clause is gated on, not a rounding tolerance.
@@ -198,7 +236,7 @@ const ROAD_LINK_NONE := 0
 
 ## The meter at which a rung is complete and nothing is rising above it. The wire states exactly
 ## `1.0` for a road that has just finished a rung AND for one at the top of the ladder, precisely so
-## no reader has to derive it by subtraction — see `ROAD_WEARING_ROW`.
+## no reader has to derive it by subtraction — see `ROAD_PROGRESS_FORMAT`.
 const ROAD_METER_COMPLETE := 1.0
 
 ## Percent scale for the meter. Named for the same reason `HudFormat.progress_percent` exists.
@@ -298,36 +336,93 @@ static func rung_label(rung: String) -> String:
 	return String(RUNG_LABELS.get(rung, rung))
 
 ## The rung traffic is wearing in ABOVE the one held — `""` at the top of the branch and for a rung
-## `RUNG_ORDER` does not know. Callers render the bare meter in that case rather than naming a rung
-## they cannot vouch for.
+## `RUNG_ORDER` does not know. Callers state the meter without a destination in that case rather than
+## naming a rung they cannot vouch for.
 static func next_rung_label(rung: String) -> String:
 	var at := RUNG_ORDER.find(rung)
 	if at < 0 or at + 1 >= RUNG_ORDER.size():
 		return ""
 	return rung_label(String(RUNG_ORDER[at + 1]))
 
-## `Road:` — the rung this road HOLDS, with the branch's hazard word where its keeping is short. The
-## shared `RUNG_UNDER_KEPT_FORMAT` and `RUNG_HAZARD_GLYPH`, so a washing-out road wears the same mark
-## in the same place a slipping patch and a drifting flock do.
-static func road_row_value(road: Dictionary) -> String:
-	var face: String = ROAD_RUNG_FORMAT % [ROAD_GLYPH, rung_label(rung_of(road))]
-	if is_short(road):
-		return HudSelectionVocab.RUNG_UNDER_KEPT_FORMAT % [face,
-			HudSelectionVocab.RUNG_HAZARD_GLYPH, ROAD_UNDER_KEPT_WORD]
-	return face
-
-## `Wearing in:` — the meter on the rung being raised, or `""` where nothing is. **`1.0` is the
-## complete reading**, published exactly rather than derived by subtraction, so the test is a plain
-## comparison and never a tolerance.
-static func wearing_in_value(road: Dictionary) -> String:
+## ⛔ **THE APPROACH TO THE NEXT RUNG, NEVER THE STATE OF THIS ONE** — `25% to trail`, not `Trail 25%`.
+## `""` where nothing is rising: **`1.0` is the complete reading**, published exactly rather than
+## derived by subtraction, so the test is a plain comparison and never a tolerance, and it covers both
+## a rung just finished and the top of the ladder.
+static func progress_clause(road: Dictionary) -> String:
 	var meter := build_fraction_of(road)
 	if meter >= ROAD_METER_COMPLETE:
 		return ""
 	var percent := int(floor(meter * ROAD_PERCENT_SCALE))
 	var destination := next_rung_label(rung_of(road))
 	if destination == "":
-		return ROAD_WEARING_UNNAMED_FORMAT % percent
-	return ROAD_WEARING_FORMAT % [destination, percent]
+		return ROAD_PROGRESS_UNNAMED_FORMAT % percent
+	return ROAD_PROGRESS_FORMAT % [percent, destination.to_lower()]
+
+## `Road:` — **the rung this road HOLDS**, plus what traffic is wearing in above it and the branch's
+## hazard word where its upkeep is short, as middot clauses in that order.
+##
+## ⛔ **THE RUNG IS THE VALUE AND EVERYTHING ELSE IS A QUALIFIER.** A game trail at 25% is a COMPLETE
+## game trail a quarter of the way to a trail; the row this replaced said `Trail 25%` on a second
+## `Wearing in` row, which reads as a road that is 25% built and is the one thing this row must never
+## be readable as.
+static func road_row_value(road: Dictionary) -> String:
+	var clauses: Array[String] = [rung_label(rung_of(road))]
+	var progress := progress_clause(road)
+	if progress != "":
+		clauses.append(progress)
+	if is_short(road):
+		clauses.append(ROAD_HAZARD_CLAUSE_FORMAT % [
+			HudSelectionVocab.RUNG_HAZARD_GLYPH, ROAD_UNDER_KEPT_WORD])
+	return ROAD_CLAUSE_SEPARATOR.join(clauses)
+
+## ⛔ **THE PAYOFF, UNLABELLED — what this rung is BUYING, and the point of the whole readout.** Three
+## clauses, each off a published field:
+##
+## - the friction it saves, as a percentage of the base loss it takes off (`friction_multiplier`);
+## - whether it is lighting its own tiles right now (`grants_sight`, the RESOLVED answer) — and, on a
+##   built road whose bill is unpaid, that it has gone dark, which happens BEFORE the rung decays;
+## - the link span the rung will hold open (`holds_link_to_tiles`), in **future tense**, because the
+##   sim does not read that field yet.
+##
+## ⛔ **A RUNG THAT BUYS NOTHING RENDERS NO ROW.** It used to print `nothing — a path the animals
+## made`, which was a row spent on saying no AND a false claim about where the tile's rung came from
+## (nothing in the sim models an animal's path; the meter is banked by whoever walks the ground). Both
+## free rungs land here, so this is the commonest road in the game rendering one row shorter.
+static func bonus_value(road: Dictionary) -> String:
+	var clauses: Array[String] = []
+	var multiplier := friction_multiplier_of(road)
+	if multiplier < ROAD_FRICTION_NO_HELP:
+		clauses.append(ROAD_BONUS_FRICTION_FORMAT % int(round(
+			(ROAD_FRICTION_NO_HELP - multiplier) * ROAD_PERCENT_SCALE)))
+	if grants_sight(road):
+		clauses.append(ROAD_BONUS_SIGHT)
+	elif is_short(road):
+		# A road only goes dark for a reason, and the reason is the unpaid bill one row up. Gated on
+		# the shortfall rather than printed for every unlit road, because the GAME TRAIL lights
+		# nothing even with its bill paid in full — a rung nobody keeps is not a road going dark —
+		# and telling the player to pay a bill that does not exist would be a wrong remedy.
+		clauses.append(ROAD_BONUS_DARK)
+	var span := holds_link_to_tiles_of(road)
+	if span > ROAD_LINK_NONE:
+		clauses.append(ROAD_BONUS_LINK_FORMAT % span)
+	return ROAD_CLAUSE_SEPARATOR.join(clauses)
+
+## `Upkeep:` — the bill, the shortfall and the keeper count, every figure straight off the wire.
+## **The shortfall is the SIM'S field, never `demand − supplied`**: all three read one stamped basis,
+## and this branch has shipped that defect twice.
+##
+## ⛔ **`""` — NO ROW — WHERE THE ROAD OWES NOTHING.** Both free rungs declare no upkeep at all, and a
+## sentence saying so (`free — nobody keeps a game trail`) was a row spent on the absence of a bill,
+## on every road a current game can contain.
+static func upkeep_value(road: Dictionary) -> String:
+	if not owes_keeping(road):
+		return ""
+	var demand := DetailFormat.format_work_units(upkeep_demand_of(road))
+	var wants := upkeep_workers_needed_of(road)
+	if is_short(road):
+		return ROAD_UPKEEP_SHORT_FORMAT % [
+			DetailFormat.format_work_units(upkeep_shortfall_of(road)), demand, wants]
+	return ROAD_UPKEEP_FORMAT % [demand, wants]
 
 ## ⛔ `Kept by:` — **WHOSE JOB THIS ROAD IS**, and what distance is charging them for it.
 ##
@@ -335,9 +430,9 @@ static func wearing_in_value(road: Dictionary) -> String:
 ## roster — a road really can be kept by a people you merely know of), so this composer never invents
 ## one from an id.
 ##
-## `""` — no row at all — for a road that owes nothing and nobody keeps: that is the free floor, and
-## the `Keeping:` row already says the whole of it. A road that OWES a bill with no keeper is the
-## opposite case and says so out loud, because it is decaying towards nobody.
+## `""` — no row at all — for a road that owes nothing and nobody keeps: that is the free floor, where
+## there is no job to be on the hook for. A road that OWES a bill with no keeper is the opposite case
+## and says so out loud, because it is decaying towards nobody.
 static func keeper_value(road: Dictionary, label: String) -> String:
 	if not has_keeper(road):
 		return ROAD_KEEPER_NOBODY if owes_keeping(road) else ""
@@ -347,19 +442,6 @@ static func keeper_value(road: Dictionary, label: String) -> String:
 		return face
 	return ROAD_KEEPER_REMOTE_FORMAT % [face,
 		ROAD_REMOTENESS_FORMAT % keeper_remoteness_of(road)]
-
-## `Keeping:` — the bill, the shortfall and the keeper count, every figure straight off the wire.
-## **The shortfall is the SIM'S field, never `demand − supplied`**: all three read one stamped basis,
-## and this branch has shipped that defect twice.
-static func keeping_value(road: Dictionary) -> String:
-	if not owes_keeping(road):
-		return ROAD_KEEPING_FREE
-	var demand := DetailFormat.format_work_units(upkeep_demand_of(road))
-	var wants := upkeep_workers_needed_of(road)
-	if is_short(road):
-		return ROAD_KEEPING_SHORT_FORMAT % [
-			DetailFormat.format_work_units(upkeep_shortfall_of(road)), demand, wants]
-	return ROAD_KEEPING_FORMAT % [demand, wants]
 
 ## `Reverting:` — the countdown, or `""` where nothing is at risk. **The countdown, not the counter**:
 ## `0` is *it is reverting now*, and a road whose bill is met reads its rung's full grace + 1, which
@@ -374,58 +456,32 @@ static func reverting_value(road: Dictionary) -> String:
 		return ROAD_REVERTING_ONE % HudSelectionVocab.RUNG_HAZARD_GLYPH
 	return ROAD_REVERTING_FORMAT % [HudSelectionVocab.RUNG_HAZARD_GLYPH, left]
 
-## ⛔ `Buys:` — **WHAT THIS RUNG IS BUYING, and the point of the whole readout.** Three clauses, each
-## off a published field:
-##
-## - the friction it saves, as a percentage of the base loss it takes off (`friction_multiplier`);
-## - whether it is lighting its own tiles right now (`grants_sight`, the RESOLVED answer) — and, on a
-##   built road whose bill is unpaid, that it has gone dark, which happens BEFORE the rung decays;
-## - the link span the rung will hold open (`holds_link_to_tiles`), in **future tense**, because the
-##   sim does not read that field yet.
-##
-## A rung buying nothing on every axis says so out loud rather than rendering an empty row.
-static func buys_value(road: Dictionary) -> String:
-	var clauses: Array[String] = []
-	var multiplier := friction_multiplier_of(road)
-	if multiplier < ROAD_FRICTION_NO_HELP:
-		clauses.append(ROAD_BUYS_FRICTION_FORMAT % int(round(
-			(ROAD_FRICTION_NO_HELP - multiplier) * ROAD_PERCENT_SCALE)))
-	if grants_sight(road):
-		clauses.append(ROAD_BUYS_SIGHT)
-	elif is_short(road):
-		# A road only goes dark for a reason, and the reason is the unpaid bill one row up. Gated on
-		# the shortfall rather than printed for every unlit road, because the GAME TRAIL lights
-		# nothing even with its bill paid in full — a path the animals made is not a road somebody
-		# keeps — and telling the player to pay a bill that does not exist would be a wrong remedy.
-		clauses.append(ROAD_BUYS_DARK)
-	var span := holds_link_to_tiles_of(road)
-	if span > ROAD_LINK_NONE:
-		clauses.append(ROAD_BUYS_LINK_FORMAT % span)
-	if clauses.is_empty():
-		return ROAD_BUYS_NOTHING
-	return ROAD_BUYS_SEPARATOR.join(clauses)
-
 ## **THE WHOLE ROAD BLOCK FOR ONE ROAD**, as `Key: value` detail lines. One composer, so the tile
 ## card and any later surface state one road the same way.
 ##
-## The rows in order: what it is · what traffic is wearing in · **whose job it is** · what it costs ·
-## when it is lost · what it buys. The keeper sits directly ABOVE the bill because it is the answer to
-## *who pays that*, and the payoff is deliberately LAST — it is what the player weighs the rows above
-## against, so it reads as the conclusion rather than as one more property.
+## ⛔ **ONLY THE RUNG ROW IS UNCONDITIONAL, AND A FREE GAME TRAIL IS ONE LINE.** Every other row is
+## emitted iff its composer has something to say — the payoff iff the rung buys something, the bill
+## iff the road owes something, the keeper iff there is a job, the countdown iff the rung is at risk.
+## The block used to be five rows on every road in the world, two of them prose saying *no*.
+##
+## The rows in order: what it is · what it buys · what it costs · whose job it is · when it is lost.
+## The payoff sits directly under the rung because it is what the rung IS FOR, and the keeper follows
+## the bill because it is the answer to *who pays that*.
 static func road_lines(road: Dictionary, keeper_label: String = "") -> Array[String]:
 	var lines: Array[String] = []
 	lines.append("%s: %s" % [ROAD_ROW, road_row_value(road)])
-	var wearing := wearing_in_value(road)
-	if wearing != "":
-		lines.append("%s: %s" % [ROAD_WEARING_ROW, wearing])
+	var bonus := bonus_value(road)
+	if bonus != "":
+		lines.append("%s: %s" % [ROAD_BONUS_ROW, bonus])
+	var upkeep := upkeep_value(road)
+	if upkeep != "":
+		lines.append("%s: %s" % [ROAD_UPKEEP_ROW, upkeep])
 	var keeper := keeper_value(road, keeper_label)
 	if keeper != "":
 		lines.append("%s: %s" % [ROAD_KEEPER_ROW, keeper])
-	lines.append("%s: %s" % [ROAD_KEEPING_ROW, keeping_value(road)])
 	var reverting := reverting_value(road)
 	if reverting != "":
 		lines.append("%s: %s" % [ROAD_REVERTING_ROW, reverting])
-	lines.append("%s: %s" % [ROAD_BUYS_ROW, buys_value(road)])
 	return lines
 
 ## The `Road:` row's ink — the shared rung palette, so a road at risk reads in the same amber a
@@ -435,22 +491,26 @@ static func road_value_hex(value: String) -> String:
 		return HudStyle.WARN_HEX
 	return HudStyle.SIGNAL_HEX
 
-## The `Kept by:` ink. A road that owes a bill with NOBODY paying it reads in the same amber the
-## unmet bill below it does — it is the same news one row early — and a kept road reads in plain ink,
-## remoteness included: distance is a price, not an alarm.
-static func keeper_value_hex(value: String) -> String:
-	return HudStyle.WARN_HEX if value == ROAD_KEEPER_NOBODY else HudStyle.INK_HEX
+## The payoff row's ink. **SIGNAL, unconditionally, and it takes no value** — the row is emitted only
+## where the rung buys something (`bonus_value` returns `""` otherwise), so there is no second reading
+## for it to fork on. It is the one row on the card that states a PAYOFF, and the branch fails as a
+## ladder if it does not stand out from the cost below it.
+static func bonus_value_hex() -> String:
+	return HudStyle.SIGNAL_HEX
 
-## The `Keeping:` / `Reverting:` ink. Amber where the bill is unmet, plain ink otherwise —
+## The `Upkeep:` / `Reverting:` ink. Amber where the bill is unmet, plain ink otherwise —
 ## `ecology_value_hex`'s shape, keyed on the hazard mark the composers above put there rather than on
-## a list of known sentences.
-static func keeping_value_hex(value: String) -> String:
+## a list of known sentences. **The road's `Upkeep` row shares its key with the BAND's material bill**
+## (`HudDisclosureVocab.DETAIL_ROW_UPKEEP` — one word for one concept), so `DetailFormat._value_hex`
+## reaches this only after the band's runway tint has declined the row, and a band bill carries no
+## hazard mark and therefore reads the same plain ink it always did.
+static func upkeep_value_hex(value: String) -> String:
 	if value.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH):
 		return HudStyle.WARN_HEX
 	return HudStyle.INK_HEX
 
-## The `Buys:` ink. A rung that buys something reads in SIGNAL — it is the one row on the card that
-## states a PAYOFF, and the branch fails as a ladder if it does not stand out from the cost above it.
-## A rung that buys nothing reads dim, which is the truthful weight of the floor.
-static func buys_value_hex(value: String) -> String:
-	return HudStyle.INK_DIM_HEX if value == ROAD_BUYS_NOTHING else HudStyle.SIGNAL_HEX
+## The `Kept by:` ink. A road that owes a bill with NOBODY paying it reads in the same amber the
+## unmet bill above it does — it is the same news one row late — and a kept road reads in plain ink,
+## remoteness included: distance is a price, not an alarm.
+static func keeper_value_hex(value: String) -> String:
+	return HudStyle.WARN_HEX if value == ROAD_KEEPER_NOBODY else HudStyle.INK_HEX

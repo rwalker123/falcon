@@ -968,6 +968,14 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         if not is_nan(ctx.material_turns) and (value.contains(FOOD_RUNWAY_UNIT) \
                 or value.contains(FOOD_UNLIMITED_GLYPH)):
             return BandFoodStatus.hex_for_turns(ctx.material_turns)
+        # ⛔ **THE ROAD'S BILL SHARES THIS KEY, AND THAT IS DELIBERATE** (arc #532). One concept —
+        # a standing cost in work or goods — carries one word everywhere in the client, so the tile
+        # card's road row is labelled `Upkeep` exactly as the band's material bill is, and both
+        # arrive here. The band's row is recognized ABOVE by the shared runway spelling and never
+        # falls through; the road's carries no runway and no material context, and its own fork
+        # answers WARN only on the hazard mark its composer put there — so a band bill that declines
+        # the runway tint reads the same plain ink it always did.
+        return HudRouteVocab.upkeep_value_hex(value)
     elif key == HudDisclosureVocab.DETAIL_ROW_MORALE:
         # The player band's morale row tints by the morale thresholds.
         if not is_nan(ctx.morale):
@@ -1006,16 +1014,18 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         # WHOSE JOB THIS ROAD IS. Amber only where the bill has nobody paying it — a keeper at a
         # distance is a PRICE, not an alarm, so remoteness leaves the row in plain ink.
         return HudRouteVocab.keeper_value_hex(value)
-    elif key == HudRouteVocab.ROAD_KEEPING_ROW or key == HudRouteVocab.ROAD_REVERTING_ROW:
-        # The road's bill and its countdown. One tint for the pair, because they are one state: the
-        # countdown row only renders while the bill is short, so they can never disagree.
-        return HudRouteVocab.keeping_value_hex(value)
-    elif key == HudRouteVocab.ROAD_BUYS_ROW:
+    elif key == HudRouteVocab.ROAD_REVERTING_ROW:
+        # The road's countdown, tinted by the same fork its `Upkeep` row takes above — they are one
+        # state, the countdown rendering only while the bill is short, so they cannot disagree.
+        return HudRouteVocab.upkeep_value_hex(value)
+    elif key == HudRouteVocab.ROAD_BONUS_ROW:
         # ⛔ **THE PAYOFF ROW, AND IT IS TINTED ON PURPOSE.** It is the only row on the card that
-        # states what a standing cost BUYS; left in plain ink beside the amber bill above it, the
+        # states what a standing cost BUYS; left in plain ink beside the amber bill below it, the
         # branch reads as pure cost, which is exactly the *"a tax, not a ladder"* failure the payoff
-        # was shipped to prevent.
-        return HudRouteVocab.buys_value_hex(value)
+        # was shipped to prevent. It carries no LABEL — the value already reads as a benefit — so
+        # the ink is the only thing marking it out, and it takes no value: the row is emitted solely
+        # where the rung buys something.
+        return HudRouteVocab.bonus_value_hex()
     elif key == HudFloraVocab.FIELD_ROW:
         # Plant rung 3 — the patch twin of the Corral row's tint (ink while building, signal once
         # complete). Same shape as Cultivation's; kept its own case because a Field is a different
