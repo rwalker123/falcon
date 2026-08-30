@@ -2354,25 +2354,35 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     >   the phase where the bootstrap pays off — you walk a long haul by hand, the road forms under
     >   your feet, and then the road carries the goods for you.
     >
-    > > **⛔ THE AUTOMATIC LINK TEACHES FAR LESS THAN A TRADE ROUTE, AND 13b OWNS THE WEIGHT.** Ray:
-    > > *"the automatic links between bands should count for much less progress towards roads than
-    > > trade routes."* The pooling link is people wandering to the camp next door; a shipment is a
-    > > deliberate haul with cargo over a distance. **You do not learn road-building by living beside
-    > > someone.** So `roadbuilding`'s accrual is weighted **by the kind of traffic**, not merely by its
-    > > presence — one lever per traffic kind, in the same `route_traffic` block, priced against the
-    > > ladder's own ~20-turns-per-lesson yardstick.
+    > > **⛔ IT IS THE DISTANCE OF THE JOURNEY THAT TEACHES, NOT THE KIND OF TRAFFIC.** Ray:
+    > > *"Walking 100 yards to the next band won't make people think of dirt roads. Traveling a trail
+    > > for 30 miles (trade route) would."*
     > >
-    > > **THE CONSEQUENCE, STATED SO IT IS A CHOICE AND NOT A SURPRISE: it puts the upper ladder behind
-    > > deliberate logistics.** With the automatic link weighted far down, a faction that never sends a
-    > > trade expedition learns `roadbuilding` very slowly or effectively not at all — so `dirt_road`
-    > > and `paved_road` become a reward for *doing* logistics rather than for standing still. That
-    > > reads as the intent of the rule rather than a side effect of it, and it gives 13b real weight;
-    > > it is recorded here because it is a large gameplay outcome to have fall out of one weight.
+    > > **⛔ AND TWO THINGS THAT LOOK LIKE ONE RULE ARE NOT.** This was written up first as *"weighted by
+    > > the kind of traffic"*, which was wrong, and it also reached for the build meter, which was
+    > > wronger:
     > >
-    > > **OPEN, and 13b must not assume it: does the same weighting apply to the road's own BUILD
-    > > METER?** The rule above is about *knowledge*. Whether a laden caravan also **wears** a tile
-    > > faster than neighbours crossing it every turn is a separate question — the caravan is heavier
-    > > but rarer, the neighbours lighter but constant — and the two need not share a weight.
+    > > | | governed by | weighted? |
+    > > |---|---|---|
+    > > | **how fast a trail forms** (the build meter) | **plain usage** | **NO — unweighted, and 13a's behaviour is correct as it stands.** Ray: *"that forms from just using it."* Walking to the next camp wears a path perfectly well |
+    > > | **how fast you learn `roadbuilding` / `paving`** | **how far the journey went** | **YES** |
+    > >
+    > > A caravan is not a better teacher because it is a caravan. It is a better teacher because it
+    > > went **thirty miles**, and thirty miles of trail is what makes a people want a road. A band
+    > > marching a long way learns the same lesson without carrying a single trade good — so this is
+    > > **not** a rule about trade, and a per-traffic-kind lever table would encode the wrong thing.
+    > >
+    > > **THE PER-TILE MODEL GIVES MOST OF THIS FOR FREE, which is a point in its favour** (§4.13b). A
+    > > road tile is a source, the ladder credits a lesson **once per source per turn**, and a thirty-tile
+    > > journey crosses thirty of them against a neighbour link's two. Distance-scaling falls out of the
+    > > model rather than being bolted on.
+    > >
+    > > **⛔ BUT FREQUENCY IS THE OTHER HALF, AND IT IS THE OPEN QUESTION 13b MUST ANSWER.** Neighbours
+    > > pool **every turn**; a caravan goes **occasionally**. Under a flat per-tile-per-turn credit a
+    > > 2-tile link running for thirty turns banks *sixty* against one thirty-tile haul's *thirty* — and
+    > > the short hop out-teaches the long journey, which is the exact inversion this rule exists to
+    > > prevent. **How far** and **how often** both have to be in the expression; only the first is
+    > > settled. Do not ship a per-tile credit without deciding the second.
     >
     > **13c — DRAW THE ROAD NETWORK ON THE MAP (#232).**
     > - The overlay, fed by the routes 13a/13b now hold. #232 is a **consumer** of this work, not a
