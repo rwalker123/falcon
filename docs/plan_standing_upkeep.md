@@ -2041,6 +2041,51 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > - **The tile card becomes the structurally correct home for the readout**, rather than the
     >   judgement call it was.
     >
+    > ##### ⛔ WHO KEEPS A ROAD: THE BAND THAT BUILT IT, AND NOBODY ELSE
+    >
+    > Confirmed with Ray, in three parts:
+    >
+    > 1. **A trail has no keeper, and that is fine because there is nothing to keep.** The free floor
+    >    costs nothing; it is formed by use and lost by disuse, and no band is associated with it.
+    > 2. **Improving a trail makes it that band's job.** `grade` is the declaration — the same act
+    >    `cultivate` performs on a patch. **One builder, one keeper, no shares**, which is what finally
+    >    disposes of the *"several bands each pay a part"* model Ray rejected: it is unrepresentable
+    >    rather than merely discouraged.
+    > 3. **Distance raises the cost; it never forbids the road.**
+    >
+    > **THERE IS NO WORK RANGE RULE, AND THE REASON IS NOT COMPLEXITY.** Ray: *"already forage and
+    > hunting have different work ranges, expeditions are even farther. I don't think it makes sense to
+    > restrict it."* A fourth arbitrary radius would say nothing. What bounds a distant road is that it
+    > is **dearer to hold and slower to build** — which is the argument `TradeExpeditionConfig` already
+    > makes for refusing a friction lever: *"what a long haul costs is already paid, and paid in the
+    > right currency."*
+    >
+    > **A THRESHOLD, NOT A CURVE.** Within a base range a road costs what the rung says; beyond it the
+    > build and the upkeep both rise. Simpler to tune than a sliding function and it is what Ray asked
+    > for.
+    >
+    > > **⛔ THE THRESHOLD IS READ THROUGH A FUNCTION, NEVER AS A BARE CONFIG CONSTANT.** Ray: *"Be
+    > > flexible on the threshold… make it a function that can expand over time, don't just create a
+    > > hardcoded constant. You can have a configuration item for the 'base' range, but still make a
+    > > function accessor for it so we can calculate it later."*
+    > >
+    > > So the config holds a **base**, and every caller asks a **seam** for the effective range. The
+    > > day it grows with knowledge, faction size or a central authority, that is one function body
+    > > changing and no call site moving. A `cfg.range` read scattered across the build cost, the
+    > > upkeep, the refusal and the wire is four places to find and three to miss — the same reason
+    > > `herd_ecology` and `patch_land_capacity` are seams rather than field reads.
+    >
+    > **WHEN THE KEEPING BAND IS GONE**, the road has no keeper and decays like any unkept improvement.
+    > Re-issuing `grade` / `pave` on it is how another band picks it up — no new verb, and adoption is
+    > the same act as building.
+    >
+    > ##### DEFERRED, AND IT IS ITS OWN ISSUE: INFRASTRUCTURE ABOVE THE BAND
+    >
+    > **Issue #598**, filed by Ray. A faction-level authority maintaining roads beyond any single
+    > band's reach is more realistic than a per-band keeper and is *"a whole entire mechanism in the
+    > game we don't have"* — a central government. **Explicitly out of this arc.** Recorded here only
+    > so the per-band keeper above is understood as this arc's answer rather than the final one.
+    >
     > ##### ⛔ THE WORD **OWNERSHIP** IS RETIRED FROM THIS ARC
     >
     > Ray: *"A road could have no owner, but that is an abstract term in this game so it really has no
