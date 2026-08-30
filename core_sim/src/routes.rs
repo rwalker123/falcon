@@ -62,12 +62,23 @@
 //! an unrouted pair inside `reach_tiles` pools exactly as it does today, at exactly today's friction,
 //! and sees exactly what it sees today.
 //!
-//! # The build is paid by TRAFFIC, so a route takes no builder and no queue entry
+//! # TRAFFIC PAYS FOR THE FLOOR, AND IT STOPS AT THE TOP OF IT
 //!
-//! *"A crew clears ground | **traffic wears the route in**."* Traffic **is** the crew, so a route rung
-//! declares no `verb`, appends no `BuildQueueEntry`, and draws nothing from the builders' pool
-//! ([`RungBranch::is_crew_built`] is the one predicate that says so). That is what lets a road be
-//! owned by nobody: the queue is the most band-shaped thing in the engine.
+//! *"A crew clears ground | **traffic wears the route in**."* That is true of the **free floor** and
+//! of nothing else. A game trail and a trail declare no `verb`, append no `BuildQueueEntry` and draw
+//! nothing from the builders' pool — traffic is the crew, and it banks work up to the top of
+//! [`FREE_FLOOR_TOP_RUNG`] **and no further** ([`traffic_ceiling`]).
+//!
+//! **The cap is the load-bearing half, not where the line sits.** 13a billed `route:trail`, so two
+//! camps sharing a larder wore a trail in by themselves and the band acquired a standing labour bill
+//! it never opted into. Making the trail free without capping the climb only relocates that fault:
+//! traffic would go on wearing a **dirt road** in for free and hand the player its bill anyway, one
+//! rung later and dearer (`docs/plan_standing_upkeep.md` §4.13a).
+//!
+//! ⛔ **SO THE TWO ROADS ABOVE THE CAP ARE CURRENTLY UNREACHABLE, AND THAT IS THE INTENDED
+//! INTERMEDIATE STATE.** They keep `verb: null` — no rung claims a verb that does not exist — and
+//! they gain one in the follow-up that replaces this module's stored-path model with a **per-tile**
+//! improvement, where `grade` and `pave` are tile commands in `cultivate`/`sow`'s own shape.
 //!
 //! **Traffic converts to WORK UNITS**, the same currency `RungBuild::work_cost` is quoted in, so
 //! *"what does it cost to raise this"* has one answer in one unit whichever branch is asked.
@@ -91,13 +102,36 @@ use crate::{
     terrain::terrain_definition,
 };
 
-/// **Trailcraft** — taught by traffic on a game trail, gates `route:trail`. *You learn to wear a path
-/// in by walking one.*
-pub const TRAILCRAFT_DISCOVERY_ID: u32 = 2011;
-/// **Roadbuilding** — taught by keeping a trail, gates `route:dirt_road`.
+// **RETIRED: `TRAILCRAFT_DISCOVERY_ID` (2011).** *Trailcraft* was taught by a game trail and gated
+// `route:trail` — **a lesson for something you cannot fail to do.** You wear a path in by walking it;
+// there is no knowing-how involved and no way to be refused, so the gate was open by the time
+// anything could ask it (`docs/plan_standing_upkeep.md` §4.13a). **The id 2011 is retired, not
+// reused**, and the two ids below are deliberately *not* renumbered down onto it: a gap is safer than
+// a renumber, because a renumber silently re-points every start profile that already names one.
+/// **Roadbuilding** — taught by a trail carrying traffic, gates `route:dirt_road` and its `grade`
+/// verb. The first lesson on the branch that gates something a player actually decides.
 pub const ROADBUILDING_DISCOVERY_ID: u32 = 2012;
-/// **Paving** — taught by keeping a dirt road, gates `route:paved_road`.
+/// **Paving** — taught by keeping a dirt road, gates `route:paved_road` and its `pave` verb.
 pub const PAVING_DISCOVERY_ID: u32 = 2013;
+
+/// ⛔ **THE TOP OF THE ROUTE BRANCH'S FREE FLOOR** — the highest rung traffic wears in by itself, and
+/// the highest one that costs nothing to hold (`docs/plan_standing_upkeep.md` §4.13a).
+///
+/// The branch has the same two-part shape the other two webs have — `plant` is *wild* then
+/// *tended · field*, `animal` is *wild* then *pastoral · pen*, and `route` is
+/// **game trail · trail** then **dirt road · paved road**. Everything at or below this rung forms
+/// from use and is lost to disuse; everything above it is ordered with a verb, raised by the
+/// builders' pool and lost to unpaid keeping.
+///
+/// **13a put this line one rung lower and the symptom was a bill nobody asked for**: `route:trail`
+/// carried an `upkeep`, and two camps sharing a larder wore one in by themselves, so the band
+/// acquired a standing labour bill it never opted into.
+pub const FREE_FLOOR_TOP_RUNG: RungKey = RungKey::RouteTrail;
+
+/// **THE FIRST RUNG SOMEBODY BUILDS AND SOMEBODY PAYS FOR** — the rung directly above
+/// [`FREE_FLOOR_TOP_RUNG`], stated as its own constant because [`RungKey::above`] is not `const`.
+/// `the_free_floor_and_the_first_built_rung_are_adjacent` pins the pair, so the two cannot drift.
+pub const FIRST_BUILT_RUNG: RungKey = RungKey::RouteDirtRoad;
 
 /// **A route's identity.** Deliberately not a band pair: a road outlives the bands that wore it in,
 /// and is inherited by whoever camps on it next.
@@ -155,6 +189,20 @@ pub struct Route {
     /// pass and then cleared. Not persisted state in its own right — a within-turn accumulator across
     /// the several links that may cross one road.
     pub traffic_work: f32,
+    /// **Consecutive turns this road has carried no traffic** — the free floor's own neglect
+    /// counter, and the exact twin of [`Self::neglect_turns`] one trigger over.
+    ///
+    /// ⛔ **THE FREE FLOOR NEEDS ITS OWN COUNTER BECAUSE IT CANNOT BE SHORT.** `route:game_trail`
+    /// and `route:trail` declare no `upkeep`, so their demand is [`NO_UPKEEP_DEMAND`], their
+    /// shortfall is always zero and [`Self::neglect_turns`] can never arm on them. What takes a free
+    /// road back is **disuse**, and this is what counts it. Any turn a road banks traffic wipes it —
+    /// consecutive idle turns, never a lifetime budget, which is the rule all three webs' neglect
+    /// counters already follow.
+    ///
+    /// It is counted on **every** road, including the built ones, so a road that decays back down
+    /// into the free floor arrives there with an honest reading rather than a zero that would buy it
+    /// a second grace it has not earned.
+    pub idle_turns: u16,
 }
 
 impl Route {
@@ -170,6 +218,7 @@ impl Route {
             upkeep_supplied: NO_UPKEEP_DEMAND,
             neglect_turns: NEGLECT_NONE,
             traffic_work: NO_TRAFFIC,
+            idle_turns: NEGLECT_NONE,
         }
     }
 
@@ -201,10 +250,16 @@ impl Route {
         self.standing.held
     }
 
-    /// **Is this road one somebody keeps?** `false` at the game-trail floor, which is the whole of
-    /// what makes that rung free: nobody maintains a game trail.
+    /// **Is this road one somebody BUILT and somebody keeps?** — `true` at [`FIRST_BUILT_RUNG`] and
+    /// above, `false` across the whole free floor.
+    ///
+    /// **It is a rung test and not a `!= game_trail` test, and that is this slice's correction.** A
+    /// trail is worn in by traffic and costs nothing to hold (`docs/plan_standing_upkeep.md`
+    /// §4.13a), so it is exactly as free as the game trail beneath it — and the one thing hanging off
+    /// this predicate, [`Self::grants_sight`], reasons from *"paying the upkeep IS the presence"*. A
+    /// road nobody pays for has nobody on it, so a free trail must light nothing however worn it is.
     pub fn is_built(&self) -> bool {
-        self.held_rung() != RungKey::RouteGameTrail
+        self.held_rung().is_at_or_above(FIRST_BUILT_RUNG)
     }
 
     /// ⛔ **DOES THIS ROAD LIGHT ITS OWN TILES?**
@@ -620,6 +675,23 @@ pub fn route_rung_span(rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
     crate::intensification::rung_span(rung, &|key| route_rung_cost(key, ladder))
 }
 
+/// ⛔ **THE POSITION TRAFFIC MAY BANK UP TO AND NO FURTHER** — the top of
+/// [`FREE_FLOOR_TOP_RUNG`]'s span, `40` on the shipped ladder.
+///
+/// **This cap is what makes the free/paid line mean anything** (`docs/plan_standing_upkeep.md`
+/// §4.13a rule 1). Moving `route:trail`'s bill off it without capping the climb only relocates the
+/// fault: traffic would go on wearing a **dirt road** in for free, and the player would be handed a
+/// standing labour bill for a road they never ordered — one rung later and dearer than the trail 13a
+/// billed them for. Above this line a road is raised by `grade` and `pave` on the builders' pool,
+/// which is a decision somebody made.
+///
+/// It is read off the **ladder**, never written as a number: retuning `route:trail`'s `work_cost`
+/// moves the cap with it, exactly as it moves the rung.
+pub fn traffic_ceiling(ladder: &LadderConfig) -> f32 {
+    let (base, width) = route_rung_span(FREE_FLOOR_TOP_RUNG, ladder);
+    base + width
+}
+
 /// **The path traffic between two tiles wears** — a hex walk that greedily closes the distance.
 ///
 /// Deterministic (it takes the lowest-numbered direction among equally good steps), wrap-aware
@@ -655,7 +727,17 @@ pub fn trace_path(from: UVec2, to: UVec2, width: u32, height: u32, wrap: bool) -
 /// its decay pass in one system, the counterpart of `forage::advance_cultivation` and
 /// `fauna::advance_husbandry` on the two food webs.
 ///
-/// # THE FOUR PHASES, IN THIS ORDER
+/// # ⛔ TWO DECAY TRIGGERS, BECAUSE A FREE RUNG CANNOT BE SHORT
+///
+/// - **The built rungs** (`dirt_road`, `paved_road`) revert on **unpaid keeping** — phases 1 and 2.
+/// - **The free floor** (`game_trail`, `trail`) costs nothing, so it can never be short: it reverts
+///   on **DISUSE** — phase 5. That is `plan_contact_and_logistics.md` §Q4's own *"an unused road
+///   reverts"*, which 13a collapsed into the shortfall path and left a free trail immortal.
+///
+/// **Each owns its own region of the position** and they do not overlap: disuse applies only inside
+/// [`traffic_ceiling`], the shortfall bleed only above it.
+///
+/// # THE PHASES, IN THIS ORDER
 ///
 /// 1. **Judge last turn's keeping.** The shortfall against the **stamped** bill
 ///    ([`Route::upkeep_basis`]) arms or wipes [`Route::neglect_turns`] — *consecutive* turns short,
@@ -667,7 +749,12 @@ pub fn trace_path(from: UVec2, to: UVec2, width: u32, height: u32, wrap: bool) -
 /// 3. **Clear the bill** for the coming turn's stamp — the `advance_cultivation` cycle exactly:
 ///    `upkeep_demanded` back to `None` and `upkeep_supplied` back to [`NO_UPKEEP_DEMAND`], so next
 ///    turn's shortfall is the whole demand again unless somebody restates it.
-/// 4. **Bank this turn's traffic** onto the position.
+/// 4. **Bank this turn's traffic** onto the position, **capped at [`traffic_ceiling`]** — the top of
+///    [`FREE_FLOOR_TOP_RUNG`], and no further. Uncapped, traffic would wear a dirt road in for free
+///    and hand the player its bill anyway (§4.13a rule 1).
+/// 5. **Bleed a free road nobody walked**, past `route_traffic.disuse_grace_turns`, at
+///    `route_traffic.disuse_loss_per_turn`. After the banking, because whether a road was idle is
+///    only known once this turn's links have been drained onto it.
 ///
 /// Then the ledger is **pruned** of every road back at [`RUNG_UNSTARTED`] — see the callout at the
 /// foot of the body for why that must happen *after* the banking.
@@ -771,13 +858,59 @@ pub fn advance_routes(
 
     // **The position IS the accumulator** (§2.8), so the turn's traffic is banked straight onto it
     // and no second meter exists to disagree with it.
+    //
+    // ## ⛔ AND IT IS CAPPED AT THE TOP OF THE FREE FLOOR (§4.13a rule 1)
+    //
+    // [`traffic_ceiling`] is where traffic stops. A road already **above** it — one a band's
+    // builders graded or paved — is untouched by this pass: the `max` is what keeps the cap from
+    // dragging a paved road back down to a trail every turn a link runs over it, which would be a
+    // second producer of a position the builders' pool owns.
+    let ceiling = traffic_ceiling(&ladder);
     for (_, route) in ledger.iter_mut() {
         if route.traffic_work <= NO_TRAFFIC {
+            // **Nothing walked here.** Consecutive idle turns, so a road that carried a link last
+            // turn and none this one starts its count from one.
+            route.idle_turns = route.idle_turns.saturating_add(1);
             continue;
         }
-        let banked = route.position() + route.traffic_work;
+        // Any traffic at all wipes the disuse counter — the same *"consecutive, never a lifetime
+        // budget"* rule the shortfall counter above runs on.
+        route.idle_turns = NEGLECT_NONE;
+        let banked = (route.position() + route.traffic_work).min(ceiling.max(route.position()));
         route.traffic_work = NO_TRAFFIC;
         route.set_position(banked, &ladder);
+    }
+
+    // ## ⛔ THE SECOND DECAY TRIGGER — DISUSE, AND IT OWNS THE FREE FLOOR ALONE
+    //
+    // **A rung that costs nothing to hold cannot be short**, so the shortfall path above can never
+    // reach `route:game_trail` or `route:trail`: they declare no `upkeep`, their demand is
+    // [`NO_UPKEEP_DEMAND`] and their shortfall is permanently zero. 13a collapsed both triggers into
+    // that one path, which left a free trail immortal — and *"an unused road reverts"* is
+    // `plan_contact_and_logistics.md` §Q4's own rule, restored here to its own trigger.
+    //
+    // **The two triggers do not overlap.** This one is gated on the position sitting **inside** the
+    // free floor's span; the shortfall bleed above is gated by the arithmetic on rungs that declare
+    // an `upkeep`, which is everything above it. A dirt road nobody walks is lost because nobody
+    // **pays** for it, which is rule 3 for the built half and needs no traffic term.
+    //
+    // **The loss is FLAT rather than proportional**, unlike the shortfall bleed: a bill can be partly
+    // paid, but traffic is a yes/no — a road either carried a link this turn or it did not — so there
+    // is no fraction to scale by.
+    //
+    // It runs **after** the banking, because whether a road was idle is only known once this turn's
+    // links have been drained onto it.
+    let grace = ladder.route_traffic.disuse_grace_turns;
+    let loss = ladder.route_traffic.disuse_loss_per_turn;
+    for (_, route) in ledger.iter_mut() {
+        if route.position() > ceiling {
+            continue;
+        }
+        if u32::from(route.idle_turns) <= grace {
+            continue;
+        }
+        let bled = route.position() - loss;
+        route.set_position(bled, &ladder);
     }
 
     // ## ⛔ THE PRUNE, AND IT MUST COME AFTER THE BANKING
@@ -860,6 +993,52 @@ mod tests {
         assert_eq!(top.raising, None, "there is nothing above a paved road");
     }
 
+    /// ⛔ **THE FREE FLOOR AND THE FIRST BUILT RUNG ARE ADJACENT, AND THE FLOOR IS EXACTLY THE RUNGS
+    /// THAT COST NOTHING TO HOLD.**
+    ///
+    /// [`FREE_FLOOR_TOP_RUNG`] and [`FIRST_BUILT_RUNG`] are two constants because [`RungKey::above`]
+    /// is not `const`, so nothing in the type system stops them drifting apart — and a gap or an
+    /// overlap between them would put a rung in neither half of the branch, or in both.
+    ///
+    /// **The second half is the load-bearing one** (`docs/plan_standing_upkeep.md` §4.13a): the
+    /// coded line and the *config's* line have to be the same line. If a future retune gave
+    /// `route:trail` an `upkeep` back, this fails here rather than silently handing a band a bill for
+    /// a road it never ordered — which is exactly the defect the slice was opened for.
+    #[test]
+    fn the_free_floor_and_the_first_built_rung_are_adjacent() {
+        assert_eq!(
+            FREE_FLOOR_TOP_RUNG.above(),
+            Some(FIRST_BUILT_RUNG),
+            "the first built rung is the one directly above the floor's top — no gap, no overlap"
+        );
+
+        let ladder = LadderConfig::builtin();
+        let mut rung = RungBranch::Route.root_rung();
+        loop {
+            let free = !rung.is_at_or_above(FIRST_BUILT_RUNG);
+            assert_eq!(
+                ladder.rung(rung).upkeep.is_none(),
+                free,
+                "{} is {} the coded free floor, so it must {} an `upkeep`",
+                rung.wire_key(),
+                if free { "inside" } else { "above" },
+                if free { "declare no" } else { "declare" }
+            );
+            match rung.above() {
+                Some(next) => rung = next,
+                None => break,
+            }
+        }
+
+        // And the cap really is the top of that floor, in the position units traffic banks in.
+        let (base, width) = route_rung_span(FREE_FLOOR_TOP_RUNG, &ladder);
+        assert_eq!(
+            traffic_ceiling(&ladder),
+            base + width,
+            "traffic stops at the top of the free floor's own span, read off the ladder"
+        );
+    }
+
     /// ⛔ **THE SPAN IS A SUM OVER THE TILES CROSSED — NOT AN AVERAGE, AND NOT A TILE COUNT.**
     ///
     /// Both failure modes are asserted against explicitly, because each one passes the *other's*
@@ -921,32 +1100,39 @@ mod tests {
 
     /// The bill is the rung's rate times the road's own span — one rule, and the whole reason a
     /// valley road is cheap to keep and a mountain road is dear.
+    ///
+    /// **It is asked of the DIRT ROAD, because the trail beneath it is free** — the whole free floor
+    /// declares no `upkeep` (§4.13a), and a `0` rate would make the span term unmeasurable.
     #[test]
     fn the_keeping_bill_is_the_rungs_rate_times_the_roads_span() {
         let ladder = LadderConfig::builtin();
-        let trail = ladder.rung(RungKey::RouteTrail);
-        let rate = trail
+        let road = ladder.rung(RungKey::RouteDirtRoad);
+        let rate = road
             .upkeep
             .as_ref()
-            .expect("the trail rung is kept")
+            .expect("the dirt road is the first rung anybody keeps")
             .work_per_turn;
 
         let valley = span_of_terrains([TerrainType::AlluvialPlain; 5]);
         let range = span_of_terrains([TerrainType::AlpineMountain; 5]);
 
         assert!(
-            (trail.upkeep_demand(valley) - rate * valley).abs() < 1.0e-5,
+            (road.upkeep_demand(valley) - rate * valley).abs() < 1.0e-5,
             "the demand is rate × span"
         );
         assert!(
-            trail.upkeep_demand(range) > trail.upkeep_demand(valley),
-            "the same trail costs more to hold over a range than down a valley"
+            road.upkeep_demand(range) > road.upkeep_demand(valley),
+            "the same road costs more to hold over a range than down a valley"
         );
-        assert_eq!(
-            ladder.rung(RungKey::RouteGameTrail).upkeep_demand(range),
-            0.0,
-            "and a game trail costs nothing to hold over ANY country — nobody maintains one"
-        );
+        for free in [RungKey::RouteGameTrail, RungKey::RouteTrail] {
+            assert_eq!(
+                ladder.rung(free).upkeep_demand(range),
+                NO_UPKEEP_DEMAND,
+                "{} costs nothing to hold over ANY country — the free floor is formed by use and \
+                 nobody keeps it",
+                free.wire_key()
+            );
+        }
     }
 
     /// **RULE 2 — the road's own path is the catchment.** A band standing on the road is served; one
@@ -1010,15 +1196,30 @@ mod tests {
             "a GAME TRAIL grants no sight — it is free precisely because nobody keeps it"
         );
 
+        // ①b **AND NEITHER DOES A FULLY WORN TRAIL** (§4.13a). The trail is the floor's second
+        //     storey: traffic wears it in and nobody pays a thing for it, so *"paying the upkeep IS
+        //     the presence"* has nothing to stand on. This is the half that would pass on a build
+        //     where `is_built()` was still `!= game_trail`.
+        route.set_position(traffic_ceiling(&ladder), &ladder);
+        assert_eq!(route.held_rung(), FREE_FLOOR_TOP_RUNG);
+        assert!(!route.is_built(), "the whole free floor is unbuilt");
+        route.upkeep_demanded = Some(NO_UPKEEP_DEMAND);
+        route.upkeep_supplied = NO_UPKEEP_DEMAND;
+        assert!(
+            route.keeping_is_met(),
+            "precondition: a free trail owes nothing, so its bill is trivially met"
+        );
+        assert!(
+            !route.grants_sight(),
+            "a TRAIL grants no sight either — it costs nothing to hold, so nobody is on it keeping \
+             it, and the sight grant reasons from the PAID BILL"
+        );
+
         // ② A built rung with its bill met.
-        let trail_cost = ladder
-            .rung(RungKey::RouteTrail)
-            .build
-            .as_ref()
-            .expect("the trail rung is built")
-            .work_cost;
-        route.set_position(trail_cost, &ladder);
-        assert_eq!(route.held_rung(), RungKey::RouteTrail);
+        let (dirt_base, dirt_width) = route_rung_span(RungKey::RouteDirtRoad, &ladder);
+        route.set_position(dirt_base + dirt_width, &ladder);
+        assert_eq!(route.held_rung(), RungKey::RouteDirtRoad);
+        assert!(route.is_built());
         route.upkeep_demanded = Some(4.0);
         route.upkeep_supplied = 4.0;
         assert!(

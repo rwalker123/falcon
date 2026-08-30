@@ -1274,10 +1274,11 @@ impl RungKey {
             RungKey::PlantField => Some(Improvement::Sow),
             RungKey::AnimalPastoral => Some(Improvement::Tame),
             RungKey::AnimalPen => Some(Improvement::Corral),
-            // ⛔ **NO ROUTE RUNG HAS A VERB, INCLUDING THE THREE THAT ARE BUILT.** Traffic wears a
-            // road in, so there is no command to name a job and no crew to staff one — which is why
-            // this branch adds no `Improvement` variant and why `RungKey::built_by` needed no new
-            // arm. `None` here is *"nothing builds this on purpose"*, not *"nothing builds this"*.
+            // ⛔ **NO ROUTE RUNG HAS A VERB, INCLUDING THE TWO THAT ARE BUILT.** Traffic wears the
+            // free floor in and nothing else raises a road **yet** — the two roads above it are the
+            // follow-up's, as **tile** commands on the per-tile model that replaces the stored path
+            // (`docs/plan_standing_upkeep.md` §4.13a). `None` here is *"nothing builds this on
+            // purpose"*, not *"nothing builds this"*.
             RungKey::RouteGameTrail
             | RungKey::RouteTrail
             | RungKey::RouteDirtRoad
@@ -2966,6 +2967,43 @@ pub struct RouteTraffic {
     /// Validated finite and `> 0`: a rate of zero means *"traffic never wears a road in"*, which
     /// would leave the whole branch permanently at its floor while reading like a live dial.
     pub work_per_link_tile_per_turn: f32,
+
+    /// **HOW MANY CONSECUTIVE IDLE TURNS A FREE ROAD FORGIVES** before it starts losing what
+    /// traffic put into it — the free floor's own `upkeep.grace_turns`, and it lives here rather
+    /// than on a rung for the reason the rate above does: it is a fact about *traffic*, which is
+    /// this block's subject, and the free rungs declare no `upkeep` block to hang it on.
+    ///
+    /// ⛔ **THE FREE FLOOR CANNOT BE SHORT, SO IT CANNOT DECAY ON A SHORTFALL**
+    /// (`docs/plan_standing_upkeep.md` §4.13a rule 3). `route:game_trail` and `route:trail` declare
+    /// no `upkeep` at all, so their demand is [`NO_UPKEEP_DEMAND`], their shortfall is always zero
+    /// and the built rungs' decay path can never reach them. What takes a free road back is the
+    /// thing that made it — **disuse** — which is `plan_contact_and_logistics.md` §Q4's own *"an
+    /// unused road reverts"*, restored to its own trigger after 13a collapsed it into the shortfall
+    /// path.
+    ///
+    /// **The two triggers do not overlap**: this one applies only while a road's position sits
+    /// inside the free floor's span, and the unpaid-keeping decay only above it. A dirt road nobody
+    /// stands on is already lost because nobody *pays* for it, which is rule 3 for the built half.
+    ///
+    /// **§4.14 owns the number.** Validated finite only — a grace of `0` is the meaningful *"a road
+    /// starts fading the turn its traffic stops"* and must stay expressible.
+    pub disuse_grace_turns: u32,
+
+    /// **WHAT AN IDLE FREE ROAD LOSES EACH TURN, past [`Self::disuse_grace_turns`]**, in the same
+    /// work units the position is banked in — the free floor's `upkeep.meter_decay.per_turn`.
+    ///
+    /// **Flat, not proportional.** The built rungs' bleed is `shortfall_fraction × per_turn` because
+    /// a bill can be *partly* paid; traffic is a yes/no — a road either carried a link this turn or
+    /// it did not — so there is no fraction to scale by and inventing one would be a dial nothing
+    /// could move.
+    ///
+    /// It is also what keeps the ledger bounded: a road bled to [`RUNG_UNSTARTED`] is pruned by
+    /// [`crate::routes::advance_routes`], and without a loss on the free floor an abandoned trail
+    /// would sit in the ledger for ever answering `routes_on_tile`.
+    ///
+    /// Validated finite and `> 0`: at zero a trail nobody has walked in a thousand turns is still a
+    /// trail, and the dial that says otherwise reads live.
+    pub disuse_loss_per_turn: f32,
 }
 
 /// The whole ladder: every rung of both branches, plus the pace they are learned at
@@ -3171,6 +3209,16 @@ impl LadderConfig {
                              the dial still reads live"
                     .to_string(),
                 value: self.route_traffic.work_per_link_tile_per_turn.to_string(),
+            });
+        }
+        if !self.route_traffic.disuse_loss_per_turn.is_finite()
+            || self.route_traffic.disuse_loss_per_turn <= 0.0
+        {
+            return Err(LadderConfigError::Invalid {
+                field: "route_traffic.disuse_loss_per_turn".to_string(),
+                constraint: "give up a finite, positive amount of a free road every idle turn — at                              zero a trail nobody has walked in a thousand turns is still a trail,                              the ledger keeps every one it ever laid, and the dial that says                              otherwise still reads live"
+                    .to_string(),
+                value: self.route_traffic.disuse_loss_per_turn.to_string(),
             });
         }
 
@@ -3525,11 +3573,15 @@ fn discovery_id_for(name: &str) -> Option<u32> {
         // Flora Roster F3 — the `animal:pen` rung's `earns_knowledge`. Running a pen teaches
         // Foddering, which unlocks the fodder-draw (feed + `K_pen` term); it gates no rung of its own.
         "foddering" => Some(FODDERING_DISCOVERY_ID),
-        // **The route branch's three lessons** (`docs/plan_standing_upkeep.md` §4.13). Walking a game
-        // trail teaches you to wear a trail in; keeping a trail teaches you to lay a road; keeping a
-        // road teaches you to pave one. They are earned exactly as the food webs' are — by the rung
-        // being *practised*, which on this branch means the road carrying traffic.
-        "trailcraft" => Some(crate::routes::TRAILCRAFT_DISCOVERY_ID),
+        // **The route branch's two lessons** (`docs/plan_standing_upkeep.md` §4.13a). A trail
+        // carrying traffic teaches you to lay a road; keeping a road teaches you to pave one. They
+        // are earned exactly as the food webs' are — by the rung being *practised*, which on this
+        // branch means the road carrying traffic.
+        //
+        // **There were three, and `trailcraft` was deleted rather than retuned**: it was earned by
+        // the game trail and gated the trail, which is a lesson for something you cannot fail to do
+        // — you wear a path by walking it. Its **discovery id 2011 is retired**, not reused, and
+        // `roadbuilding` / `paving` keep 2012 / 2013 rather than sliding down onto it.
         "roadbuilding" => Some(crate::routes::ROADBUILDING_DISCOVERY_ID),
         "paving" => Some(crate::routes::PAVING_DISCOVERY_ID),
         // **The three CRAFTS** (`crafting.rs`). They are not ladder rungs and nothing here earns

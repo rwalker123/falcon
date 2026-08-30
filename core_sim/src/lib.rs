@@ -287,8 +287,8 @@ pub use recipes_config::{
 pub use routes::{
     advance_routes, route_at_risk_rung, route_build_fraction, route_keeping_basis,
     route_neglect_grace_remaining, route_rung_span, route_span, route_upkeep_demand,
-    route_upkeep_workers_needed, span_of_terrains, Route, RouteId, RouteLedger, RouteTrafficLog,
-    METER_FULL,
+    route_upkeep_workers_needed, span_of_terrains, traffic_ceiling, Route, RouteId, RouteLedger,
+    RouteTrafficLog, FIRST_BUILT_RUNG, FREE_FLOOR_TOP_RUNG, METER_FULL,
 };
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,

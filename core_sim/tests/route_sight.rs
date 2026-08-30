@@ -79,51 +79,48 @@ fn road_from(app: &App, head: UVec2, tiles: u32) -> Vec<UVec2> {
         .collect()
 }
 
-/// Lay a road along `path` and seat it exactly at the top of the **trail** rung — the cheapest rung
-/// anybody maintains, so a fixture asks the smallest bill that can be met or missed.
-fn seat_a_trail(app: &mut App, path: Vec<UVec2>) -> RouteId {
-    let ladder = LadderConfig::builtin();
-    let seated = trail_cost(&ladder);
-    let mut routes = app.world.resource_mut::<RouteLedger>();
-    let id = routes.insert(path, &ladder);
-    routes
-        .get_mut(id)
-        .expect("the road was just laid")
-        .set_position(seated, &ladder);
-    id
-}
-
-/// The shipped `route:trail` price, read from the ladder rather than restated — a retune of
-/// `intensification_ladder.json` must move these fixtures with it, not break them.
-fn trail_cost(ladder: &LadderConfig) -> f32 {
-    ladder
-        .rung(RungKey::RouteTrail)
-        .build
-        .as_ref()
-        .expect("the trail rung is built")
-        .work_cost
-}
-
-/// **A GAME TRAIL WITH REAL WORK WORN INTO IT, as a fraction of the trail rung's own cost** — which
-/// is what every road in the game looks like for the whole of its first fifty-odd turns.
+/// Lay a road along `path` and seat it exactly at the top of the **dirt road** rung — the cheapest
+/// rung anybody maintains (`docs/plan_standing_upkeep.md` §4.13a), so a fixture asks the smallest
+/// bill that can be met or missed.
 ///
-/// It has to carry *some* work: a game trail with **nothing** banked is indistinguishable from no
-/// road at all, and `advance_routes` prunes it on the turn it is laid (the route arc's rule 3). Any
-/// fraction strictly inside `(0, 1)` says the same thing; a half is the least arbitrary of them.
-const WORN_BUT_NOT_YET_A_TRAIL: f32 = 0.5;
+/// **It was the TRAIL rung, and the move is this slice's correction.** The trail is the free floor's
+/// second storey now: it is worn in by traffic and costs nothing to hold, so a fixture seated there
+/// would have no bill to meet or miss and every sight claim below would be vacuous.
+fn seat_a_dirt_road(app: &mut App, path: Vec<UVec2>) -> RouteId {
+    seat_at(app, path, dirt_road_top(&LadderConfig::builtin()))
+}
 
-/// Lay a road along `path` and leave it at the branch's **floor** — a game trail, which nobody
-/// maintains and which therefore lights nothing however long it runs.
-fn seat_a_game_trail(app: &mut App, path: Vec<UVec2>) -> RouteId {
+/// Lay a road along `path` and seat it at `position`.
+fn seat_at(app: &mut App, path: Vec<UVec2>, position: f32) -> RouteId {
     let ladder = LadderConfig::builtin();
-    let worn = trail_cost(&ladder) * WORN_BUT_NOT_YET_A_TRAIL;
     let mut routes = app.world.resource_mut::<RouteLedger>();
     let id = routes.insert(path, &ladder);
     routes
         .get_mut(id)
         .expect("the road was just laid")
-        .set_position(worn, &ladder);
+        .set_position(position, &ladder);
     id
+}
+
+/// The cumulative position at which a road **holds** `route:dirt_road`, read from the ladder rather
+/// than restated — a retune of `intensification_ladder.json` must move these fixtures with it.
+fn dirt_road_top(ladder: &LadderConfig) -> f32 {
+    let (base, width) = core_sim::route_rung_span(RungKey::RouteDirtRoad, ladder);
+    base + width
+}
+
+/// Lay a road along `path` and leave it at the top of the **free floor** — a fully worn trail, which
+/// nobody maintains and which therefore lights nothing however far it runs.
+///
+/// **The top of the floor rather than a half-worn game trail**, because the top is where the claim
+/// is hardest: a road carrying every work unit traffic can ever put into it still grants no sight,
+/// since `Route::grants_sight` reasons from the **paid bill** and the whole floor is free.
+fn seat_a_worn_trail(app: &mut App, path: Vec<UVec2>) -> RouteId {
+    seat_at(
+        app,
+        path,
+        core_sim::traffic_ceiling(&LadderConfig::builtin()),
+    )
 }
 
 fn route(app: &App, id: RouteId) -> &Route {
@@ -232,7 +229,7 @@ fn a_kept_road_lights_its_whole_path_and_the_same_road_in_shortfall_goes_dark_be
     let (band, faction, camp) = first_band(&mut kept);
     let path = road_from(&kept, camp, ROAD_TILES);
     let far = path[FAR_END];
-    let road = seat_a_trail(&mut kept, path.clone());
+    let road = seat_a_dirt_road(&mut kept, path.clone());
     let wanted = keepers_the_bill_wants(&kept, road);
     staff_roadwork(&mut kept, band, wanted);
     kept.update();
@@ -253,7 +250,7 @@ fn a_kept_road_lights_its_whole_path_and_the_same_road_in_shortfall_goes_dark_be
     let mut short = spawn_world();
     let (band, faction, camp) = first_band(&mut short);
     let path = road_from(&short, camp, ROAD_TILES);
-    let road = seat_a_trail(&mut short, path.clone());
+    let road = seat_a_dirt_road(&mut short, path.clone());
     staff_roadwork(&mut short, band, 0);
     short.update();
 
@@ -273,59 +270,62 @@ fn a_kept_road_lights_its_whole_path_and_the_same_road_in_shortfall_goes_dark_be
     // at while already showing nothing.
     assert_eq!(
         route(&short, road).held_rung(),
-        RungKey::RouteTrail,
+        RungKey::RouteDirtRoad,
         "the road is dark on the FIRST short turn, well inside its grace and with its rung intact"
     );
 }
 
-/// **A GAME TRAIL LIGHTS NOTHING, HOWEVER LONG IT IS AND HOWEVER WELL FUNDED.**
+/// **THE FREE FLOOR LIGHTS NOTHING, HOWEVER WORN IT IS.**
 ///
-/// **The gate is the BUILT rung, and this fixture is what makes that visible.** The road here is
-/// worn half-way to the trail rung, so its bill *interpolates* to half a trail's — a real bill, and
-/// this test **funds it in full**. It still lights nothing, because a path the animals made is not a
-/// road somebody keeps: `Route::grants_sight` is `is_built() && keeping_is_met()`, and the first
-/// half is false at the floor whatever the second says.
+/// **The gate is the BUILT rung, and this fixture is what makes that visible.** The road here is at
+/// the very top of the free floor — a **fully worn trail**, carrying every work unit traffic can
+/// ever put into it (`routes::traffic_ceiling`). It still lights nothing, because a road formed by
+/// walking is not a road somebody keeps: `Route::grants_sight` is `is_built() && keeping_is_met()`,
+/// and the free floor is unbuilt whatever the second half says.
 ///
-/// A game trail with **nothing** worn into it cannot be observed at all — `advance_routes` prunes
-/// it on the turn it is laid, which is the route arc's rule 3 — so a part-worn one is the only game
-/// trail there is to test.
+/// ⛔ **AND THE FREE ROAD OWES NOTHING, WHICH IS ASSERTED RATHER THAN ASSUMED.** That is the whole of
+/// this slice's correction (`docs/plan_standing_upkeep.md` §4.13a): a trail used to carry an
+/// `upkeep`, so two camps that shared a larder wore one in by themselves and their band acquired a
+/// standing bill it never opted into. `keeping_is_met` alone would pass on the old build too — a
+/// funded trail is also met — so the bill itself is read.
 ///
-/// Paired with a kept trail out of the same camp in the same turn, so "dark" cannot be the whole
-/// feature being absent.
+/// Paired with a **kept dirt road** out of the same camp in the same turn, so "dark" cannot be the
+/// whole feature being absent.
 #[test]
-fn a_game_trail_lights_nothing_however_long_it_is() {
+fn the_free_floor_lights_nothing_and_owes_nothing_however_worn_it_is() {
     let mut app = spawn_world();
     let (band, faction, camp) = first_band(&mut app);
 
-    // Two roads out of the same camp, in opposite directions along the row: one at the free floor,
-    // one seated at the trail rung and funded.
+    // Two roads out of the same camp, in opposite directions along the row: one at the top of the
+    // free floor, one seated at the dirt road rung and funded.
     let width = app.world.resource::<TileRegistry>().width;
     let free_path = road_from(&app, camp, ROAD_TILES);
     let kept_head = UVec2::new((camp.x + width - ROAD_TILES + 1) % width, camp.y);
     let kept_path = road_from(&app, kept_head, ROAD_TILES);
 
-    let free = seat_a_game_trail(&mut app, free_path.clone());
-    let kept = seat_a_trail(&mut app, kept_path.clone());
-    // **Both** roads' bills, because the camp stands on both and a half-worn game trail owes a
-    // half-worn trail's keeping. Funding only one would leave the other short, and the test would
-    // then be measuring a shortfall rather than the rung.
-    let wanted = keepers_the_bill_wants(&app, kept) + keepers_the_bill_wants(&app, free);
+    let free = seat_a_worn_trail(&mut app, free_path.clone());
+    let kept = seat_a_dirt_road(&mut app, kept_path.clone());
+    // Only the BUILT road has a bill. Staffing it in full is what makes the dark half below a
+    // statement about the rung rather than about a shortfall.
+    let wanted = keepers_the_bill_wants(&app, kept);
     staff_roadwork(&mut app, band, wanted);
     app.update();
 
     assert_eq!(
         route(&app, free).held_rung(),
-        RungKey::RouteGameTrail,
-        "precondition: the free road is still at the branch's floor"
+        RungKey::RouteTrail,
+        "precondition: the free road is at the TOP of the branch's free floor"
     );
-    assert!(
-        route(&app, free).keeping_is_met(),
-        "precondition: and its bill was PAID IN FULL, so what follows is about the rung, not the bill"
+    assert_eq!(
+        route(&app, free).upkeep_basis(),
+        0.0,
+        "⛔ THE BUG THIS SLICE FIXES: a fully worn trail is billed NOTHING. It is formed by use, so \
+         a band that never ordered a road never acquires a standing labour bill for one"
     );
     assert_eq!(
         state_at(&app, faction, free_path[FAR_END]),
         VisibilityState::Unexplored,
-        "nobody maintains a game trail, so its far end is dark"
+        "nobody keeps a trail, so its far end is dark"
     );
     // Liveness, in the same world and the same turn: a kept road out of the same camp DOES light.
     assert_eq!(
@@ -363,8 +363,8 @@ fn a_faction_with_nobody_on_a_kept_road_sees_nothing_from_it() {
     let away_head = UVec2::new((camp.x + width / 2) % width, camp.y);
     let away_path = road_from(&app, away_head, ROAD_TILES);
 
-    let under = seat_a_trail(&mut app, under_path.clone());
-    let away = seat_a_trail(&mut app, away_path.clone());
+    let under = seat_a_dirt_road(&mut app, under_path.clone());
+    let away = seat_a_dirt_road(&mut app, away_path.clone());
     let ours = keepers_the_bill_wants(&app, under);
     let theirs = keepers_the_bill_wants(&app, away);
     staff_roadwork(&mut app, band, ours);
@@ -436,7 +436,7 @@ fn a_live_tie_to_a_people_never_travelled_to_grants_no_active_tile() {
 
     // The same band's own kept road, which is the liveness half.
     let path = road_from(&app, camp, ROAD_TILES);
-    let road = seat_a_trail(&mut app, path.clone());
+    let road = seat_a_dirt_road(&mut app, path.clone());
     let wanted = keepers_the_bill_wants(&app, road);
     staff_roadwork(&mut app, band, wanted);
     app.update();

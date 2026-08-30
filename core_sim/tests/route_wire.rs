@@ -32,9 +32,9 @@ const ROAD_TILES: u32 = 14;
 /// funded or wholly starved road satisfies it with one side at zero.
 const ONE_KEEPER: u32 = 1;
 
-/// A game trail with real work worn into it, as a fraction of the trail rung's own cost — the state
-/// every road passes through on its way up, and the one a `buildFraction` of `1.0` must not read.
-const WORN_BUT_NOT_YET_A_TRAIL: f32 = 0.5;
+/// A road part-way up a rung, as a fraction of that rung's own width — the state every road passes
+/// through on its way up, and the one a `buildFraction` of `1.0` must not read.
+const HALF_WAY_UP_A_RUNG: f32 = 0.5;
 
 /// One road's published row, reduced to what the assertions here need.
 #[derive(Debug, Clone, PartialEq)]
@@ -184,22 +184,23 @@ fn road_from(app: &App, head: UVec2, tiles: u32) -> Vec<UVec2> {
         .collect()
 }
 
-/// The shipped `route:trail` price and its two neglect dials, read from the ladder rather than
-/// restated — a retune of `intensification_ladder.json` must move these fixtures with it.
-fn trail_dials() -> (f32, u32) {
+/// The shipped `route:dirt_road` **top position** and its neglect grace, read from the ladder rather
+/// than restated — a retune of `intensification_ladder.json` must move these fixtures with it.
+///
+/// **It was the TRAIL rung's, and the move is this slice's correction**
+/// (`docs/plan_standing_upkeep.md` §4.13a): the trail is the free floor's second storey now — worn
+/// in by traffic and billed nothing — so a fixture about a *bill* has to stand on the first rung
+/// anybody keeps.
+fn built_road_dials() -> (f32, u32) {
     let ladder = LadderConfig::builtin();
-    let rung = ladder.rung(RungKey::RouteTrail);
-    let cost = rung
-        .build
-        .as_ref()
-        .expect("the trail rung is built")
-        .work_cost;
+    let rung = ladder.rung(RungKey::RouteDirtRoad);
+    let (base, width) = core_sim::route_rung_span(RungKey::RouteDirtRoad, &ladder);
     let grace = rung
         .upkeep
         .as_ref()
-        .expect("the trail rung is kept")
+        .expect("the dirt road is the first rung anybody keeps")
         .grace_turns;
-    (cost, grace)
+    (base + width, grace)
 }
 
 /// Lay a road along `path` and seat its position at `position` work units.
@@ -214,9 +215,9 @@ fn seat_road(app: &mut App, path: Vec<UVec2>, position: f32) -> RouteId {
     id
 }
 
-fn seat_a_trail(app: &mut App, path: Vec<UVec2>) -> RouteId {
-    let (cost, _) = trail_dials();
-    seat_road(app, path, cost)
+fn seat_a_dirt_road(app: &mut App, path: Vec<UVec2>) -> RouteId {
+    let (top, _) = built_road_dials();
+    seat_road(app, path, top)
 }
 
 /// **HOW MANY BARE HANDS COVER THIS ROAD'S BILL IN FULL**, read off the sim's own demand rather than
@@ -264,7 +265,7 @@ fn the_published_bill_closes_on_a_part_funded_road() {
     let mut app = spawn_world();
     let (band, _, camp) = first_band(&mut app);
     let path = road_from(&app, camp, ROAD_TILES);
-    let road = seat_a_trail(&mut app, path);
+    let road = seat_a_dirt_road(&mut app, path);
     assert!(
         keepers_the_bill_wants(&app, road) > ONE_KEEPER,
         "precondition: this road's bill wants more than the one keeper the fixture staffs"
@@ -300,7 +301,7 @@ fn the_published_bill_closes_on_a_part_funded_road() {
 
 /// ⛔ **THE BUILD METER IS THE RUNG'S OWN, AND READS *EXACTLY* FULL ON A COMPLETED RUNG.**
 ///
-/// A road seated exactly at the top of `route:trail` has nothing banked in the rung above, so the
+/// A road seated exactly at the top of `route:dirt_road` has nothing banked in the rung above, so the
 /// meter describes the rung it just finished and must read `1.0` — not `0.0` (which is what reading
 /// `standing.raising` unconditionally would publish) and not `0.99999994` (which is what deriving
 /// `fl(base + width) − base` published for a completed Field).
@@ -308,27 +309,33 @@ fn the_published_bill_closes_on_a_part_funded_road() {
 /// **Paired with a half-worn road in the same world**, whose meter reads a real fraction — otherwise
 /// "always 1.0" passes this test.
 ///
-/// **And the rung string is the bool.** The completed road publishes `"route:trail"` while the
-/// half-worn one publishes `"route:game_trail"`, so a client never has to threshold the float.
+/// **And the rung string is the bool.** The completed road publishes `"route:dirt_road"` while the
+/// half-worn one publishes `"route:trail"` — the rung beneath it — so a client never has to
+/// threshold the float.
 #[test]
 fn the_build_meter_is_the_rungs_own_and_reads_exactly_full_on_a_completed_rung() {
-    let (cost, _) = trail_dials();
+    let ladder = LadderConfig::builtin();
+    let (dirt_base, dirt_width) = core_sim::route_rung_span(RungKey::RouteDirtRoad, &ladder);
     let mut app = spawn_world();
     let (band, _, camp) = first_band(&mut app);
     let width = app.world.resource::<TileRegistry>().width;
 
     let done_path = road_from(&app, camp, ROAD_TILES);
-    let done = seat_a_trail(&mut app, done_path);
+    let done = seat_a_dirt_road(&mut app, done_path);
     let part_head = UVec2::new((camp.x + width - ROAD_TILES + 1) % width, camp.y);
     let part_path = road_from(&app, part_head, ROAD_TILES);
-    let part = seat_road(&mut app, part_path, cost * WORN_BUT_NOT_YET_A_TRAIL);
+    let part = seat_road(
+        &mut app,
+        part_path,
+        dirt_base + dirt_width * HALF_WAY_UP_A_RUNG,
+    );
     let wanted = keepers_the_bill_wants(&app, done) + keepers_the_bill_wants(&app, part);
     staff_roadwork(&mut app, band, wanted);
     app.update();
 
     let finished = published_route(&app, done);
     assert_eq!(
-        finished.rung, "route:trail",
+        finished.rung, "route:dirt_road",
         "the completed road publishes the rung it HOLDS: {finished:?}"
     );
     assert_eq!(
@@ -338,18 +345,17 @@ fn the_build_meter_is_the_rungs_own_and_reads_exactly_full_on_a_completed_rung()
 
     let climbing = published_route(&app, part);
     assert_eq!(
-        climbing.rung, "route:game_trail",
-        "a road half-way to a trail still HOLDS the floor: {climbing:?}"
+        climbing.rung, "route:trail",
+        "a road half-way to a dirt road still HOLDS the trail beneath it: {climbing:?}"
     );
     assert_eq!(
-        climbing.build_fraction, WORN_BUT_NOT_YET_A_TRAIL,
+        climbing.build_fraction, HALF_WAY_UP_A_RUNG,
         "and its meter is the real fraction of the rung it is raising: {climbing:?}"
     );
 
     // What the rung is buying rides the same row, off the road's stamped payoff.
-    let ladder = LadderConfig::builtin();
     let payoff = ladder
-        .rung(RungKey::RouteTrail)
+        .rung(RungKey::RouteDirtRoad)
         .route_payoff
         .as_ref()
         .expect("every route rung declares a payoff");
@@ -377,13 +383,13 @@ fn the_build_meter_is_the_rungs_own_and_reads_exactly_full_on_a_completed_rung()
 /// the one carrying the banked work, not the free floor it has fallen back onto.
 #[test]
 fn the_countdown_reads_the_full_grace_on_a_kept_road_and_zero_on_one_reverting_now() {
-    let (_, grace) = trail_dials();
+    let (_, grace) = built_road_dials();
 
     // ① Kept.
     let mut kept = spawn_world();
     let (band, _, camp) = first_band(&mut kept);
     let path = road_from(&kept, camp, ROAD_TILES);
-    let road = seat_a_trail(&mut kept, path);
+    let road = seat_a_dirt_road(&mut kept, path);
     let wanted = keepers_the_bill_wants(&kept, road);
     staff_roadwork(&mut kept, band, wanted);
     kept.update();
@@ -399,7 +405,7 @@ fn the_countdown_reads_the_full_grace_on_a_kept_road_and_zero_on_one_reverting_n
     let mut lost = spawn_world();
     let (band, _, camp) = first_band(&mut lost);
     let path = road_from(&lost, camp, ROAD_TILES);
-    let road = seat_a_trail(&mut lost, path);
+    let road = seat_a_dirt_road(&mut lost, path);
     staff_roadwork(&mut lost, band, 0);
     // The first turn's `advance_routes` judges a bill nobody had stamped yet, so the count of
     // *consecutive short turns* starts on the second — hence `grace + 2` turns to reach `grace + 1`
@@ -454,10 +460,10 @@ fn the_band_roll_up_is_the_sum_of_both_its_roads_stamped_demands() {
     // Two roads out of the same camp, in opposite directions: the camp tile is on both, and nothing
     // else is.
     let east_path = road_from(&app, camp, ROAD_TILES);
-    let east = seat_a_trail(&mut app, east_path);
+    let east = seat_a_dirt_road(&mut app, east_path);
     let west_head = UVec2::new((camp.x + width - ROAD_TILES + 1) % width, camp.y);
     let west_path = road_from(&app, west_head, ROAD_TILES);
-    let west = seat_a_trail(&mut app, west_path);
+    let west = seat_a_dirt_road(&mut app, west_path);
     staff_roadwork(&mut app, band, ONE_KEEPER);
     app.update();
 
@@ -513,10 +519,10 @@ fn a_road_on_ground_the_faction_has_never_seen_is_absent_from_its_frame() {
     let width = app.world.resource::<TileRegistry>().width;
 
     let known_path = road_from(&app, camp, ROAD_TILES);
-    let known = seat_a_trail(&mut app, known_path.clone());
+    let known = seat_a_dirt_road(&mut app, known_path.clone());
     let away_head = UVec2::new((camp.x + width / 2) % width, camp.y);
     let away_path = road_from(&app, away_head, ROAD_TILES);
-    let hidden = seat_a_trail(&mut app, away_path.clone());
+    let hidden = seat_a_dirt_road(&mut app, away_path.clone());
     let wanted = keepers_the_bill_wants(&app, known);
     staff_roadwork(&mut app, band, wanted);
     app.update();

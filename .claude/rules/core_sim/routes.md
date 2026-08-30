@@ -53,18 +53,56 @@ to A.
 it.** No radius is added to cushion that — a radius is precisely the constant rule 2 exists to avoid,
 and *stay on your road* is the legible half of the same pillar.
 
-## The build is paid by TRAFFIC, so a route takes no builder and no queue entry
+## ⛔ TRAFFIC PAYS FOR THE FLOOR, AND IT STOPS AT THE TOP OF IT
 
-*"A crew clears ground | **traffic wears the route in**."* Traffic **is** the crew, so:
+**The branch's free/paid line sits between `trail` and `dirt_road`, which puts it in the same place
+the other two webs' lines already are.**
 
-- **no route rung declares a `verb`** — the branch adds no `Improvement` variant, and `RungKey::built_by`
-  needed no new arm;
-- **no `BuildQueueEntry`, and no draw on the `builders` pool.** `RungBranch::is_crew_built` is the one
-  predicate that says so, and it is `false` for `Route` alone.
+| | free floor, formed by use | built, and paid for |
+|---|---|---|
+| `plant` | wild | tended · field |
+| `animal` | wild | pastoral · pen |
+| `route` | **game trail · trail** | **dirt road · paved road** |
 
-**That is what lets a road be owned by nobody**: the queue is the most band-shaped thing in the engine
-(an entry names a destination on a source **that a band holds**, and the head takes every builder that
-band has), so a road sitting in one band's queue would become that band's property.
+*"A crew clears ground | **traffic wears the route in**."* That is true of the **free floor**: the two
+free rungs declare no `verb`, append no `BuildQueueEntry`, draw nothing from the `builders` pool and
+are billed nothing for holding.
+
+**Traffic banks work up to `routes::traffic_ceiling` — the top of `FREE_FLOOR_TOP_RUNG` — and no
+further**, capped in `advance_routes`.
+
+> ### ⛔ THE CAP IS THE LOAD-BEARING HALF, NOT WHERE THE LINE SITS
+>
+> 13a billed `route:trail`, so two camps sharing a larder wore a trail in by themselves and the band
+> acquired **a standing labour bill it never opted into** — reported from play as a 7-worker nomadic
+> band showing `Roadwork ⚠` with no road it had chosen. Nothing else in the game does that: a wild
+> patch and a wild herd sit at their floor for ever until the player says otherwise.
+>
+> **Moving the line without capping the climb only relocates that fault.** Traffic would go on
+> wearing a *dirt road* in for free and hand the player its bill anyway, one rung later and dearer.
+> `docs/plan_standing_upkeep.md` §4.13a.
+
+**`Route::is_built()` is therefore a rung test** — `is_at_or_above(FIRST_BUILT_RUNG)`, not
+`!= game_trail`. Its one consumer, `Route::grants_sight`, reasons from *"paying the upkeep IS the
+presence"*, so a free trail must light nothing however worn it is. `FREE_FLOOR_TOP_RUNG` and
+`FIRST_BUILT_RUNG` are pinned adjacent by
+`the_free_floor_and_the_first_built_rung_are_adjacent`, because `RungKey::above` is not `const`.
+
+### ⛔ THE TWO ROADS ARE CURRENTLY UNREACHABLE, AND THAT IS THE INTENDED INTERMEDIATE STATE
+
+Traffic stops below them and no verb raises them: `dirt_road` and `paved_road` keep `verb: null`,
+`RungKey::builder_verb` answers `None` for every route rung, and `RungBranch::is_crew_built` is still
+`false` for `Route` and still accurate.
+
+**They gain their verbs with the model that replaces this module's stored path.** Ray: a road is a
+**per-tile improvement**, structurally like a forage patch — one band must be able to keep half the
+tiles between two camps and another band the other half, which a path object with its own id cannot
+express. So `grade` / `pave` land there as **tile** commands (`grade <faction> <band> <x> <y>`) in
+`cultivate` / `sow`'s own shape, and `RouteLedger` / `RouteId` / `Route::path` go with them.
+
+**A rung must never name a verb the engine has no `Improvement` variant for** — the ladder's load
+check would reject it, and a config that claims a command nobody can type is the same lie as a rung
+eating a material nobody defines. `null` is the honest reading in the meantime.
 
 **Traffic converts to WORK UNITS**, the same currency `RungBuild::work_cost` is quoted in, so *"what
 does it cost to raise this"* has one answer in one unit whichever branch is asked.
@@ -180,11 +218,17 @@ nothing rather than re-wearing last turn's links.
 
 `game trail → trail → dirt road → paved road`, in `intensification_ladder.json`.
 
-- **The game trail is the FLOOR** — `build: null`, `upkeep: null`, and a position of `RUNG_UNSTARTED`
-  already holds it, exactly as `plant:wild` and `animal:wild` are floors. **Nobody maintains a game
-  trail**, which is the whole of what makes the rung free — and why it lights no tiles, since
-  `grants_sight` reads the *paid bill*. It is #215's origin: the first roads are the ones the animals
-  made.
+| rung | verb | `unlock_knowledge` | `earns_knowledge` | `build` | `upkeep` |
+|---|---|---|---|---|---|
+| `game_trail` | — | — | — | null | null |
+| `trail` | **— (it forms from use)** | **—** | `roadbuilding` | 40 work | **null** |
+| `dirt_road` | — *(pending, see above)* | `roadbuilding` | `paving` | 110 work | yes |
+| `paved_road` | — *(pending)* | `paving` | — | 260 work | yes |
+
+- **The floor is TWO rungs.** A game trail is #215's origin — the first roads are the ones the animals
+  made — and a trail is the floor's second storey, worn in by traffic. Neither costs anything to hold,
+  neither takes a verb, and neither lights a tile: `grants_sight` reads the **paid bill**, and a road
+  formed by walking is not a road somebody keeps.
 - **`partial_credit: continuous` on all three built rungs.** A half-worn trail is genuinely half a
   trail, unlike `animal:pen` where half a fence is not a fence.
 - **`site_requirement: null` on every route rung**, and that is the honest answer rather than a gap: a
@@ -194,8 +238,51 @@ nothing rather than re-wearing last turn's links.
   already ships.
 - **The grace direction is the ANIMAL branch's** — the highest rung is the most forgiving, because the
   roadbed does the holding.
-- **The three lessons** are `trailcraft` → `roadbuilding` → `paving` (discovery ids 2011–2013,
-  `routes.rs`), priced in the ladder's own `lesson_costs` at the same 20 as every other.
+- **The free floor still BUYS something.** `route_payoff` is required on every rung including the two
+  free ones: a trail holds a link 6 tiles out and takes 15% off the friction. **Free is not
+  worthless** — it is the same shape `plant:wild` has, where a wild patch feeds you for nothing.
+
+### ⛔ THE CHAIN LOST A LESSON, AND THE ONE IT LOST TAUGHT NOTHING
+
+13a shipped **four**: `game_trail` earned `trailcraft`, which gated `trail`. **A lesson for something
+you cannot fail to do** — you wear a path by walking it, so there is no knowing-how involved and no
+way to be refused, and the gate was open by the time anything could ask it. `trailcraft` is **deleted**
+from `discovery_id_for`, from the ladder's `lesson_costs` and from
+`start_profile_knowledge_tags.json`.
+
+**Discovery id 2011 is RETIRED, not reused**, and `roadbuilding` / `paving` keep 2012 / 2013 rather
+than sliding down onto it — a gap is safer than a renumber, which silently re-points every start
+profile that already names one. `routes.rs` carries the retirement note where the constant was.
+
+**The two survivors both gate something a player decides**: a trail carrying traffic teaches
+`roadbuilding`, which will open `grade`; keeping a dirt road teaches `paving`, which will open `pave`.
+Priced at the same 20 as every other lesson.
+
+## ⛔ TWO DECAY TRIGGERS, BECAUSE A FREE RUNG CANNOT BE SHORT
+
+| trigger | region of the position | armed by | rate |
+|---|---|---|---|
+| **unpaid keeping** | strictly **above** `traffic_ceiling` | `Route::neglect_turns`, past the rung's own `upkeep.grace_turns` | `shortfall_fraction × meter_decay.per_turn` |
+| **disuse** | **inside** the free floor's span | `Route::idle_turns`, past `route_traffic.disuse_grace_turns` | `route_traffic.disuse_loss_per_turn`, **flat** |
+
+**They do not overlap, and the second is not an invention.** The free floor declares no `upkeep`, so
+its demand is `NO_UPKEEP_DEMAND` and its shortfall is permanently zero — the built rungs' path can
+never reach it, and 13a's collapsing of both into that one path left a worn trail **immortal**. This
+is `plan_contact_and_logistics.md` §Q4's own *"an unused road reverts"*, restored to its own trigger.
+A dirt road nobody walks is still lost because nobody **pays** for it, which is rule 3 for the built
+half and needs no traffic term.
+
+**The disuse loss is FLAT rather than proportional**, unlike the shortfall bleed: a bill can be
+*partly* paid, but traffic is a yes/no — a road either carried a link this turn or it did not — so
+there is no fraction to scale by, and inventing one would be a dial nothing could move.
+
+**`Route::idle_turns` is counted on EVERY road, built ones included**, so a road that decays back down
+into the free floor arrives there with an honest reading rather than a zero that would buy it a second
+grace it never earned.
+
+**It is also what keeps the ledger bounded.** A road bled back to `RUNG_UNSTARTED` is pruned; without
+a loss on the free floor an abandoned trail would sit there for ever, still answering
+`routes_on_tile` — which is the leak the prune exists to prevent.
 
 ### ⛔ NO ROUTE RUNG DECLARES A MATERIAL, AND THE REASON IS THAT THE MATERIAL DOES NOT EXIST
 
@@ -239,10 +326,11 @@ ever**: never arming its neglect counter, never decaying, never pruned. That is 
 it fails as *no decay at all* rather than as a slow one. `route_traffic::a_road_no_band_stands_on_
 decays_and_is_finally_forgotten` is the pin.
 
-**The game trail falls out of the arithmetic rather than being branched around.** The floor declares
-no `upkeep`, so `RungDef::upkeep_demand` answers `NO_UPKEEP_DEMAND` for it and a road holding only
-the trail owes nothing. An `is_built()` guard would be a second statement of *"nobody maintains a
-game trail"*, free to disagree with the ladder that already says it.
+**THE WHOLE FREE FLOOR falls out of the arithmetic rather than being branched around.** Neither free
+rung declares an `upkeep`, so `RungDef::upkeep_demand` answers `NO_UPKEEP_DEMAND` for both and a road
+holding a game trail — **or a fully worn trail** — owes nothing. An `is_built()` guard would be a
+second statement of *"nobody keeps the free floor"*, free to disagree with the ladder that already
+says it.
 
 ### A route keeper is funded exactly as a field or a flock keeper is
 
@@ -259,7 +347,7 @@ and each pays a part. Pinned by `route_traffic::two_bands_on_one_road_each_pay_a
 which is the only fixture in the file with two payers — every single-band fixture cannot tell the two
 spellings apart.
 
-### `advance_routes` is four phases, and the order is the whole of it
+### `advance_routes` is five phases, and the order is the whole of it
 
 1. **judge last turn's keeping** — `upkeep_shortfall_fraction` off the **stamped** basis arms or
    wipes `Route::neglect_turns` (consecutive turns, never a lifetime budget);
@@ -267,14 +355,20 @@ spellings apart.
    `grace_turns`. `RungDef::upkeep_decay` owns both the rate and the strictly-greater comparison, so
    this system restates neither;
 3. **clear** `upkeep_demanded` / `upkeep_supplied` for the coming turn's stamp;
-4. **bank this turn's traffic**.
+4. **bank this turn's traffic, capped at `traffic_ceiling`** — and count the idle turns, because a
+   road that banked nothing this turn is a road nobody walked. The cap takes a `max` against the
+   road's own position, so a road **above** the ceiling is untouched rather than dragged back down
+   to a trail every turn a link runs over it;
+5. **bleed a free road nobody walked**, past `route_traffic.disuse_grace_turns`, at
+   `route_traffic.disuse_loss_per_turn`. **After the banking**, because whether a road was idle is
+   only known once this turn's links have been drained onto it.
 
 **`routes::route_at_risk_rung` is the one answer to *which rung is at risk*** — `standing.raising`
 where anything is banked in it, else `standing.held` — because the bill interpolates through it, the
 grace lookup asks it, and the decay bleeds it. Three readers that disagreed is exactly what
 `forage::patch_unwinding_key` exists to prevent one branch over. It returns a rung rather than an
 `Option`, unlike the plant web's: a route position always holds *something*, and that something
-declares no upkeep at the floor.
+declares no upkeep across the whole free floor.
 
 **Then the ledger is PRUNED of every road back at `RUNG_UNSTARTED`, and the prune runs AFTER the
 banking.** A game trail with no work in it is indistinguishable from no road — it buys nothing,
@@ -380,7 +474,7 @@ closed** on an absent faction map.
 |---|---|
 | `id` | the `RouteId` — stable, never reused, what a client joins and diffs rows on |
 | `pathX` / `pathY` | the stamped path in path order, zipped (the `pendingRevealX`/`Y` convention) |
-| `rung` | the rung it **holds**, `RungKey::wire_key` — `"route:trail"`. **This string is the bool**; a rung is never inferred from the float beside it |
+| `rung` | the rung it **holds**, `RungKey::wire_key` — `"route:dirt_road"`. **This string is the bool**; a rung is never inferred from the float beside it |
 | `buildFraction` | the meter on the rung being **raised**, through `routes::route_build_fraction` → `intensification::rung_work_done` / `build_fraction`, the seam both food webs publish theirs from |
 | `upkeepDemand` / `upkeepSupplied` / `upkeepShortfall` / `upkeepWorkersNeeded` | the standing bill, all four off the **stamped** `route_keeping_basis` |
 | `hasNeglectGrace` / `neglectGraceRemaining` | the **countdown**, through `routes::route_neglect_grace_remaining` at the at-risk rung |
@@ -404,8 +498,9 @@ client has to guess at.
   `route_at_risk_rung` — the same seam the bill interpolates through and the decay bleeds — so a road
   that has just **completed** a rung reads exactly `1.0` rather than the next rung's zero.
 - **The countdown, not the counter.** `0` = reverting now; a road whose bill is met reads its rung's
-  full `grace_turns + 1`. `hasNeglectGrace: false` means *nothing at risk* — a road holding only the
-  game trail with no work banked above it, whose rung declares no `upkeep`.
+  full `grace_turns + 1`. `hasNeglectGrace: false` means *nothing at risk* — **anywhere on the free
+  floor**, whose rungs declare no `upkeep` at all. That is the commonest road in the game, not an
+  edge case: a road stays there until somebody builds it.
 - **`grantsSight` is the resolved answer**, because a client cannot re-derive *"is the bill met"*:
   that is a comparison against the stamped basis with the sim's own `KEEPING_EPSILON`.
 
@@ -431,13 +526,15 @@ keeping.
 | File | Key | Purpose |
 |---|---|---|
 | `src/data/intensification_ladder.json` | `route_traffic.work_per_link_tile_per_turn` (**0.35**) | **How fast traffic wears a road in**, in work units, per tile of road, per turn a link is live. **The link, not the tonnage** — see the callout above. At `0.35` a two-tile link between neighbouring camps banks `0.7` a turn and reaches the trail rung's 40 in about 57 turns of unbroken neighbourhood: a road you notice having made rather than one you decide to make. Validated finite and `> 0` (a rate of zero freezes the whole branch at its floor while reading like a live dial). **PLAYTEST DIAL**, §4.14 owns the number |
+| `src/data/intensification_ladder.json` | `route_traffic.disuse_grace_turns` (**4**) | **How many consecutive idle turns a FREE road forgives** before it starts giving back what traffic put into it — the free floor's own `upkeep.grace_turns`. It lives on this block rather than on a rung because it is a fact about *traffic*, and the free rungs declare no `upkeep` to hang it on. Validated finite only: a grace of `0` — *"a road starts fading the turn its traffic stops"* — is meaningful and must stay expressible. **PLAYTEST DIAL**, §4.14 |
+| `src/data/intensification_ladder.json` | `route_traffic.disuse_loss_per_turn` (**1.0**) | **What an idle free road loses each turn past that grace**, in the same work units the position is banked in. **Flat, not proportional** — traffic is a yes/no, so there is no fraction to scale by. At `4` / `1.0` a fully worn trail survives a season away and is gone about 44 turns after the last traffic, against the ~57 it took to wear in: **losing a road is slower than making one**. Validated finite and `> 0` (at zero a trail nobody has walked in a thousand turns is still a trail, and the ledger keeps every one it ever laid). **PLAYTEST DIAL**, §4.14 |
 | `src/data/intensification_ladder.json` | the four `route` rungs | The branch itself — see "The four rungs". The `route_payoff` block is **required on every route rung and rejected on every other**: a route rung with a standing cost and no payoff is the *tax, not a ladder* failure, so its absence is a load failure rather than a default |
 
 ## Tests
 
 `core_sim/src/routes.rs`'s own module — the ladder liveness (which every other claim in the file rests
-on), the span's two failure modes, the bill, rules 2 and 4, the three sight states, and the traced
-path.
+on), the span's two failure modes, the bill **read at the dirt road because the trail beneath it is
+free**, rules 2 and 4, the three sight states, and the traced path.
 
 `core_sim/tests/route_sight.rs` and `core_sim/tests/route_wire.rs` both drive **whole turns** through
 `build_test_app`, deliberately: the thing under test in the first is that something *hands*
@@ -446,28 +543,43 @@ never scheduled), and the second asserts on the **encoded envelope** through `ro
 because a field that never reached the codec still passes an in-process assertion and the route
 section has no client reader yet to notice.
 
-`core_sim/tests/route_traffic.rs` drives the three systems in **stage order** through real turns (`balance_supply_networks` + `advance_routes` in Logistics, `settle_route_keeping` in
-Population): a road forming under pooling nobody ordered, the friction payoff paired against an
-unrouted run, the one-camp negative control, and the keeping — a road that holds beside the same road
-that loses its rung, the proportional bleed, the grace, the abandoned road, the two payers, and the
-free floor.
+⛔ **EVERY KEEPING FIXTURE IN BOTH FILES SEATS ITS ROAD AT THE DIRT ROAD, NOT THE TRAIL.** The trail is
+free now, so a fixture seated there has no bill to meet or miss and every claim about a shortfall,
+a grace, a payer or a sight grant would be vacuous — passing on a build where the whole keeping was
+deleted.
 
-**Every live claim was falsified in isolation.** On the sight grant: dropping `light_kept_routes`
-from the schedule fails all four of `route_sight.rs`, as does granting `Discovered` instead of
-`Active`; ungating the grant from `grants_sight` fails the shortfall and game-trail halves; lighting
-every road in the ledger rather than the ones under a band fails the cross-faction scoping test. On
-the wire: reading `buildFraction` off `standing.raising` instead of `route_at_risk_rung`, publishing
-the neglect **counter** in place of the countdown, copying one road's demand instead of summing the
-band's, assigning the roll-up's supplied instead of accumulating it, moving the roll-up's demand
-behind the head-count gate, dropping the fog gate, and publishing the gross demand as the shortfall
-each fail exactly one test in `route_wire.rs`. On the earlier slices: making the span an average, and
-ungating the sight from the bill, each fail their own test; removing the friction term and removing the traffic recording
-each fail theirs. On the keeping half — ignoring the grace, stamping the bill only where a band
-stands, dropping the `+=` to an assignment, taking the decay at the flat rate instead of the shortfall
-fraction, removing the prune, and reading the at-risk rung without the banked-work test — each fails a
-different one, and the last fails six. A harness that stands `balance_supply_networks` up must insert `RouteLedger` and
-`RouteTrafficLog` — five test files do, and an empty ledger is the shipped turn-1 state, which is what
-makes those files' pooling numbers the **unrouted** reading they have always been.
+`core_sim/tests/route_traffic.rs` drives the three systems in **stage order** through real turns
+(`balance_supply_networks` + `advance_routes` in Logistics, `settle_route_keeping` in Population): a
+road forming under pooling nobody ordered, the friction payoff paired against an unrouted run, the
+one-camp negative control, the keeping — a road that holds beside the same road that loses its rung,
+the proportional bleed, the grace, the abandoned road, the two payers — and **§4.13a's three**: the
+band whose only roads are trails and owes nothing (paired against a dirt road that does), the traffic
+that climbs to the top of the free floor and stops (paired against the liveness half — it *does*
+reach the trail), and the trail that fades from disuse (paired against one still being walked).
+
+**Every live claim was falsified in isolation.** On §4.13a: **removing the traffic cap** fails
+`traffic_climbs_to_the_top_of_the_free_floor_and_stops_there`, `a_trail_nobody_walks_fades…` **and**
+`a_band_whose_only_roads_are_trails_owes_nothing…` — which is the *"moving the line alone only
+relocates the fault"* claim proving itself, since uncapped traffic climbs straight into the billed
+dirt road and hands the band a bill again. **Giving `route:trail` its `upkeep` back** fails the
+owes-nothing test and the disuse test. **Disabling the disuse bleed** fails the disuse test and
+`a_road_no_band_stands_on_decays_and_is_finally_forgotten`. On the sight grant: dropping
+`light_kept_routes` from the schedule fails all four of `route_sight.rs`, as does granting
+`Discovered` instead of `Active`; ungating the grant from `grants_sight` fails the shortfall and
+free-floor halves; lighting every road in the ledger rather than the ones under a band fails the
+cross-faction scoping test. On the wire: reading `buildFraction` off `standing.raising` instead of
+`route_at_risk_rung`, publishing the neglect **counter** in place of the countdown, copying one
+road's demand instead of summing the band's, assigning the roll-up's supplied instead of accumulating
+it, moving the roll-up's demand behind the head-count gate, dropping the fog gate, and publishing the
+gross demand as the shortfall each fail exactly one test in `route_wire.rs`. On the earlier slices:
+making the span an average, and ungating the sight from the bill, each fail their own test; removing
+the friction term and removing the traffic recording each fail theirs. On the keeping half — ignoring
+the grace, stamping the bill only where a band stands, dropping the `+=` to an assignment, taking the
+decay at the flat rate instead of the shortfall fraction, removing the prune, and reading the at-risk
+rung without the banked-work test — each fails a different one, and the last fails six. A harness that
+stands `balance_supply_networks` up must insert `RouteLedger` and `RouteTrafficLog` — five test files
+do, and an empty ledger is the shipped turn-1 state, which is what makes those files' pooling numbers
+the **unrouted** reading they have always been.
 
 ## See Also
 

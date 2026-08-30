@@ -234,7 +234,8 @@ fn two_camps_that_pool_wear_a_trail_between_them_with_nobody_ordering_it() {
     assert_eq!(
         route.held_rung(),
         RungKey::RouteTrail,
-        "the traffic climbed off the free game-trail floor and onto the first rung anyone pays for"
+        "the traffic climbed off the game-trail floor and onto the trail above it — the top of the \
+         FREE floor, which is as far as traffic ever goes (§4.13a)"
     );
 
     // **RULE 2, and the reason `trace_path` carries both ends**: the camps that wore it in are
@@ -270,19 +271,17 @@ fn a_kept_road_delivers_more_and_an_unrouted_network_is_untouched() {
     set_food(&mut app, a, OPENING_SURPLUS);
     set_food(&mut app, b, 0);
     let ladder = LadderConfig::builtin();
-    let trail_cost = ladder
-        .rung(RungKey::RouteTrail)
-        .build
-        .as_ref()
-        .expect("the trail rung is built")
-        .work_cost;
+    // **The DIRT ROAD rung, because the payoff a supply pass reads is gated on a KEPT road** — and
+    // the free floor beneath it is kept by nobody (§4.13a), so a road seated on a trail grants no
+    // sight, carries no component and would make this measurement vacuous.
+    let (road_top, _, _) = built_road_dials();
     let path = vec![position_of(&app, a), position_of(&app, b)];
     let mut routes = app.world.resource_mut::<RouteLedger>();
     let id = routes.insert(path, &ladder);
     routes
         .get_mut(id)
         .expect("the road was just laid")
-        .set_position(trail_cost, &ladder);
+        .set_position(road_top, &ladder);
     let road_is_kept = routes.get(id).expect("the road exists").grants_sight();
     assert!(
         road_is_kept,
@@ -319,12 +318,10 @@ fn a_road_only_one_camp_stands_on_buys_that_network_nothing() {
     set_food(&mut app, a, 100);
     set_food(&mut app, b, 0);
     let ladder = LadderConfig::builtin();
-    let trail_cost = ladder
-        .rung(RungKey::RouteTrail)
-        .build
-        .as_ref()
-        .expect("the trail rung is built")
-        .work_cost;
+    // **The DIRT ROAD rung, because the payoff a supply pass reads is gated on a KEPT road** — and
+    // the free floor beneath it is kept by nobody (§4.13a), so a road seated on a trail grants no
+    // sight, carries no component and would make this measurement vacuous.
+    let (road_top, _, _) = built_road_dials();
     // A road running away from camp A, touching neither camp B nor anything between them.
     let lone = position_of(&app, a);
     let path = vec![
@@ -337,7 +334,7 @@ fn a_road_only_one_camp_stands_on_buys_that_network_nothing() {
     routes
         .get_mut(id)
         .expect("the road was just laid")
-        .set_position(trail_cost, &ladder);
+        .set_position(road_top, &ladder);
 
     app.world.run_system_once(balance_supply_networks);
 
@@ -358,31 +355,39 @@ fn a_road_only_one_camp_stands_on_buys_that_network_nothing() {
 // makes the position a clean reading of the decay.
 // ---------------------------------------------------------------------------------------------
 
-/// The trail rung's own three dials, read from the shipped ladder rather than restated — a retune of
-/// `intensification_ladder.json` must move these tests' arithmetic with it, not break it.
-fn trail_dials() -> (f32, f32, u16) {
+/// The **dirt road** rung's own three dials, read from the shipped ladder rather than restated — a
+/// retune of `intensification_ladder.json` must move these tests' arithmetic with it, not break it.
+///
+/// **It was the TRAIL rung's, and the move is this slice's correction**
+/// (`docs/plan_standing_upkeep.md` §4.13a): the trail is the free floor's second storey now — worn
+/// in by traffic, billed nothing, and reverting on **disuse** rather than on a shortfall — so it has
+/// no keeping dials for a keeping fixture to quote.
+fn built_road_dials() -> (f32, f32, u16) {
     let ladder = LadderConfig::builtin();
-    let rung = ladder.rung(RungKey::RouteTrail);
-    let build = rung.build.as_ref().expect("the trail rung is built");
-    let upkeep = rung.upkeep.as_ref().expect("the trail rung is kept");
+    let rung = ladder.rung(RungKey::RouteDirtRoad);
+    let upkeep = rung
+        .upkeep
+        .as_ref()
+        .expect("the dirt road is the first rung anybody keeps");
     let decay = upkeep
         .meter_decay
         .as_ref()
-        .expect("the trail rung bleeds its meter");
-    (build.work_cost, decay.per_turn, upkeep.grace_turns as u16)
+        .expect("the dirt road bleeds its meter");
+    let (base, width) = core_sim::route_rung_span(RungKey::RouteDirtRoad, &ladder);
+    (base + width, decay.per_turn, upkeep.grace_turns as u16)
 }
 
-/// Lay a road along `path` and seat it exactly at the top of the **trail** rung — the rung whose
-/// grace and rot rate every assertion below is quoted against.
-fn seat_a_trail(app: &mut App, path: Vec<UVec2>) -> RouteId {
+/// Lay a road along `path` and seat it exactly at the top of the **dirt road** rung — the rung whose
+/// grace and rot rate every assertion below is quoted against, and the cheapest rung anybody keeps.
+fn seat_a_dirt_road(app: &mut App, path: Vec<UVec2>) -> RouteId {
     let ladder = LadderConfig::builtin();
-    let (trail_cost, _, _) = trail_dials();
+    let (seated, _, _) = built_road_dials();
     let mut routes = app.world.resource_mut::<RouteLedger>();
     let id = routes.insert(path, &ladder);
     routes
         .get_mut(id)
         .expect("the road was just laid")
-        .set_position(trail_cost, &ladder);
+        .set_position(seated, &ladder);
     id
 }
 
@@ -439,25 +444,25 @@ fn keepers_the_bill_wants(app: &App, id: RouteId) -> u32 {
 #[test]
 fn a_road_with_keepers_holds_and_the_same_road_without_them_loses_its_rung() {
     const ROAD_TILES: u32 = 4;
-    let (trail_cost, _, grace) = trail_dials();
+    let (road_top, _, grace) = built_road_dials();
     let turns = u32::from(grace) + 2;
 
     // ① Kept.
     let mut kept = spawn_world();
     let band = spawn_band(&mut kept, CAMP_A, 100);
     let path = road_under(&kept, band, ROAD_TILES);
-    let road = seat_a_trail(&mut kept, path);
+    let road = seat_a_dirt_road(&mut kept, path);
     let wanted = keepers_the_bill_wants(&kept, road);
     staff_roadwork(&mut kept, band, wanted);
     resolve_turns(&mut kept, turns);
     assert_eq!(
         route(&kept, road).position(),
-        trail_cost,
+        road_top,
         "a road whose bill is met holds exactly where it stands, however long nobody walks it"
     );
     assert_eq!(
         route(&kept, road).held_rung(),
-        RungKey::RouteTrail,
+        RungKey::RouteDirtRoad,
         "and it still holds the rung it was seated at"
     );
 
@@ -465,12 +470,12 @@ fn a_road_with_keepers_holds_and_the_same_road_without_them_loses_its_rung() {
     let mut lost = spawn_world();
     let band = spawn_band(&mut lost, CAMP_A, 100);
     let path = road_under(&lost, band, ROAD_TILES);
-    let road = seat_a_trail(&mut lost, path);
+    let road = seat_a_dirt_road(&mut lost, path);
     staff_roadwork(&mut lost, band, 0);
     resolve_turns(&mut lost, turns);
     assert!(
-        route(&lost, road).position() < trail_cost,
-        "an unkept road loses ground once its grace is spent ({} of {trail_cost})",
+        route(&lost, road).position() < road_top,
+        "an unkept road loses ground once its grace is spent ({} of {road_top})",
         route(&lost, road).position()
     );
 }
@@ -486,12 +491,12 @@ fn a_road_with_keepers_holds_and_the_same_road_without_them_loses_its_rung() {
 fn half_a_roads_bill_funded_loses_half_the_rungs_rate() {
     const ROAD_TILES: u32 = 12;
     const EPSILON: f32 = 1.0e-3;
-    let (trail_cost, rate, grace) = trail_dials();
+    let (road_top, rate, grace) = built_road_dials();
 
     let mut app = spawn_world();
     let band = spawn_band(&mut app, CAMP_A, 100);
     let path = road_under(&app, band, ROAD_TILES);
-    let road = seat_a_trail(&mut app, path);
+    let road = seat_a_dirt_road(&mut app, path);
     let wanted = keepers_the_bill_wants(&app, road);
     assert!(
         wanted >= 2,
@@ -511,7 +516,7 @@ fn half_a_roads_bill_funded_loses_half_the_rungs_rate() {
         )
     };
     assert_eq!(
-        before, trail_cost,
+        before, road_top,
         "precondition: nothing has decayed yet — the grace is still forgiving"
     );
     let fraction = (demand - supplied) / demand;
@@ -534,25 +539,25 @@ fn half_a_roads_bill_funded_loses_half_the_rungs_rate() {
 #[test]
 fn a_road_inside_its_grace_has_not_moved_and_one_past_it_has() {
     const ROAD_TILES: u32 = 4;
-    let (trail_cost, _, grace) = trail_dials();
+    let (road_top, _, grace) = built_road_dials();
 
     let mut app = spawn_world();
     let band = spawn_band(&mut app, CAMP_A, 100);
     let path = road_under(&app, band, ROAD_TILES);
-    let road = seat_a_trail(&mut app, path);
+    let road = seat_a_dirt_road(&mut app, path);
     staff_roadwork(&mut app, band, 0);
 
     // The first turn stamps the bill; the grace then forgives that many consecutive short turns.
     resolve_turns(&mut app, u32::from(grace) + 1);
     assert_eq!(
         route(&app, road).position(),
-        trail_cost,
+        road_top,
         "inside its grace the road has not moved at all"
     );
 
     resolve_turn(&mut app);
     assert!(
-        route(&app, road).position() < trail_cost,
+        route(&app, road).position() < road_top,
         "one turn past the grace it is going backwards ({})",
         route(&app, road).position()
     );
@@ -568,15 +573,15 @@ fn a_road_inside_its_grace_has_not_moved_and_one_past_it_has() {
 #[test]
 fn a_road_no_band_stands_on_decays_and_is_finally_forgotten() {
     const ROAD_TILES: u32 = 3;
-    let (trail_cost, rate, grace) = trail_dials();
+    let (road_top, rate, grace) = built_road_dials();
     // Every work unit of the rung, at the full unmet rate, plus the grace that precedes the first
     // one and the turn that stamps the first bill.
-    let turns_to_nothing = (trail_cost / rate).ceil() as u32 + u32::from(grace) + 2;
+    let turns_to_nothing = (road_top / rate).ceil() as u32 + u32::from(grace) + 2;
 
     let mut app = spawn_world();
     // A road out in open country, with no band anywhere near it and no camp on any of its tiles.
     let lone = UVec2::new(CAMP_A.0, CAMP_A.1);
-    let road = seat_a_trail(
+    let road = seat_a_dirt_road(
         &mut app,
         (0..ROAD_TILES)
             .map(|step| UVec2::new(lone.x, lone.y + step))
@@ -585,8 +590,8 @@ fn a_road_no_band_stands_on_decays_and_is_finally_forgotten() {
 
     resolve_turns(&mut app, u32::from(grace) + 2);
     assert!(
-        route(&app, road).position() < trail_cost,
-        "a road nobody stands on is billed like any other, and nobody pays it ({} of {trail_cost})",
+        route(&app, road).position() < road_top,
+        "a road nobody stands on is billed like any other, and nobody pays it ({} of {road_top})",
         route(&app, road).position()
     );
 
@@ -680,7 +685,7 @@ fn a_game_trail_owes_nothing_over_any_terrain_and_has_no_rung_to_lose() {
 fn two_bands_on_one_road_each_pay_a_part_of_its_bill() {
     /// Long enough that its bill wants more hands than either band brings on its own.
     const ROAD_TILES: u32 = 12;
-    let (trail_cost, _, grace) = trail_dials();
+    let (road_top, _, grace) = built_road_dials();
     let turns = u32::from(grace) + 2;
 
     let mut app = spawn_world();
@@ -689,7 +694,7 @@ fn two_bands_on_one_road_each_pay_a_part_of_its_bill() {
     // (rule 2) without either standing on the other.
     let b = spawn_band(&mut app, (CAMP_A.0 + 1, CAMP_A.1), 100);
     let path = road_under(&app, a, ROAD_TILES);
-    let road = seat_a_trail(&mut app, path);
+    let road = seat_a_dirt_road(&mut app, path);
     let wanted = keepers_the_bill_wants(&app, road);
     assert!(
         wanted >= 2,
@@ -703,7 +708,7 @@ fn two_bands_on_one_road_each_pay_a_part_of_its_bill() {
     resolve_turns(&mut app, turns);
     assert_eq!(
         route(&app, road).position(),
-        trail_cost,
+        road_top,
         "two bands' shares ADD, so between them the bill is met and the road holds"
     );
 
@@ -711,11 +716,205 @@ fn two_bands_on_one_road_each_pay_a_part_of_its_bill() {
     let mut alone = spawn_world();
     let a = spawn_band(&mut alone, CAMP_A, 100);
     let path = road_under(&alone, a, ROAD_TILES);
-    let road = seat_a_trail(&mut alone, path);
+    let road = seat_a_dirt_road(&mut alone, path);
     staff_roadwork(&mut alone, a, each);
     resolve_turns(&mut alone, turns);
     assert!(
-        route(&alone, road).position() < trail_cost,
+        route(&alone, road).position() < road_top,
         "and one band's share alone genuinely is short — otherwise the half above measured nothing"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// §4.13a — the free floor is TWO rungs, traffic stops at the top of it, and the floor reverts on
+// DISUSE rather than on a shortfall it can never have.
+// ---------------------------------------------------------------------------------------------
+
+/// ⛔ **THE REPORTED BUG, ASSERTED DIRECTLY: A BAND WHOSE ONLY ROADS ARE TRAILS OWES NOTHING.**
+///
+/// Two camps that share a larder wear a trail between them with nobody ordering anything. Under 13a
+/// that trail carried an `upkeep`, so the band acquired a **standing labour bill it never opted
+/// into** — reported from play as a 7-worker nomadic band showing `Roadwork ⚠` with no road it had
+/// chosen. Nothing else in the game does that: a wild patch and a wild herd sit at their free floor
+/// for ever until the player issues `cultivate` / `tame`.
+///
+/// **Paired with a band holding a DIRT ROAD, which does owe** — without that half this passes just
+/// as well on a sim where roads never bill anybody at all.
+#[test]
+fn a_band_whose_only_roads_are_trails_owes_nothing_and_a_dirt_road_owes() {
+    // ① The reported case: two neighbours, a worn trail, and no order typed.
+    let mut app = spawn_world();
+    let (a, b) = two_neighbouring_camps(&mut app);
+    // **Nobody is staffed** — the roll-up is summed *before* the head-count gate, so an empty role
+    // publishes the bill it is failing to pay. That is exactly the alarm the reported bug lit, and
+    // it is the reading this test needs.
+    staff_roadwork(&mut app, a, 0);
+    staff_roadwork(&mut app, b, 0);
+    resolve_turns(&mut app, TURNS_TO_WEAR_A_TRAIL);
+
+    let (id, road) = {
+        let ledger = app.world.resource::<RouteLedger>();
+        let (id, road) = ledger.iter().next().expect("the pooling wore a road in");
+        (id, road.clone())
+    };
+    assert_eq!(
+        road.held_rung(),
+        RungKey::RouteTrail,
+        "precondition: the traffic really did wear a full trail — this is the state that used to \
+         bill the band"
+    );
+    assert_eq!(
+        road.upkeep_basis(),
+        NO_UPKEEP_DEMAND,
+        "⛔ A TRAIL IS FREE. It formed from use, so nobody may be handed a standing bill for it"
+    );
+    for band in [a, b] {
+        let allocation = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("the keeping pass publishes a roll-up on every band");
+        assert_eq!(
+            allocation.last_roadwork_demand, NO_UPKEEP_DEMAND,
+            "and neither band's Roadwork roll-up asks for a single hand"
+        );
+    }
+
+    // ② The paired half: raise the same road to a dirt road and the bill appears.
+    {
+        let ladder = LadderConfig::builtin();
+        let mut ledger = app.world.resource_mut::<RouteLedger>();
+        let (base, width) = core_sim::route_rung_span(RungKey::RouteDirtRoad, &ladder);
+        ledger
+            .get_mut(id)
+            .expect("the road is still in the ledger")
+            .set_position(base + width, &ladder);
+    }
+    resolve_turn(&mut app);
+    assert!(
+        route(&app, id).upkeep_basis() > NO_UPKEEP_DEMAND,
+        "the SAME road, once it is a dirt road somebody built, is billed every turn"
+    );
+    assert!(
+        app.world
+            .get::<LaborAllocation>(a)
+            .expect("the band is still there")
+            .last_roadwork_demand
+            > NO_UPKEEP_DEMAND,
+        "and the band standing on it publishes the bill it owes — so 'owes nothing' above is a \
+         statement about the RUNG, not about a sim where roads never bill"
+    );
+}
+
+/// ⛔ **TRAFFIC ALONE NEVER REACHES THE DIRT ROAD.** It banks up to the top of `route:trail` and no
+/// further, however many turns the pooling runs.
+///
+/// **Moving the free/paid line without this cap only relocates the fault**: traffic would go on
+/// wearing a dirt road in for free and hand the player its bill anyway, one rung later and dearer.
+///
+/// **The liveness half is in the same fixture** — the road does reach the trail — because without it
+/// this passes on a branch that never climbs at all.
+#[test]
+fn traffic_climbs_to_the_top_of_the_free_floor_and_stops_there() {
+    /// Far more turns than the trail's own 40 work units need at this link's length, so what is
+    /// being measured is the **cap** rather than the loop bound. At the shipped
+    /// `work_per_link_tile_per_turn` of 0.35 over a 3-tile road this is ~10× the climb.
+    const TURNS_WAY_PAST_THE_TRAIL: u32 = 600;
+
+    let mut app = spawn_world();
+    two_neighbouring_camps(&mut app);
+    resolve_turns(&mut app, TURNS_WAY_PAST_THE_TRAIL);
+
+    let ceiling = core_sim::traffic_ceiling(&LadderConfig::builtin());
+    let (_, road) = {
+        let ledger = app.world.resource::<RouteLedger>();
+        let (id, road) = ledger.iter().next().expect("the pooling wore a road in");
+        (id, road.clone())
+    };
+    // Liveness: it really did climb.
+    assert_eq!(
+        road.held_rung(),
+        RungKey::RouteTrail,
+        "the pooling did wear a full trail — without this the cap below is vacuous"
+    );
+    assert_eq!(
+        road.position(),
+        ceiling,
+        "⛔ AND IT STOPS THERE. Traffic banks to the top of the free floor and no further, so a \
+         band never acquires a dirt road — or its bill — without having ordered one"
+    );
+    assert!(
+        !road.is_built(),
+        "so the road is still on the free floor after {TURNS_WAY_PAST_THE_TRAIL} turns of pooling"
+    );
+}
+
+/// ⛔ **A FREE ROAD REVERTS ON DISUSE, AND ONE STILL CARRYING TRAFFIC DOES NOT.**
+///
+/// The second decay trigger, and it exists because the first one cannot reach here: a rung that
+/// costs nothing to hold can never be **short**, so 13a's shortfall path left a worn trail immortal.
+/// This is `plan_contact_and_logistics.md` §Q4's own *"an unused road reverts"*, restored to its own
+/// trigger.
+///
+/// **Both halves in one fixture**, because a decay-only test passes on a sim where roads always
+/// fade and a hold-only test passes on one where nothing ever decays.
+#[test]
+fn a_trail_nobody_walks_fades_and_one_still_walked_does_not() {
+    let ladder = LadderConfig::builtin();
+    let ceiling = core_sim::traffic_ceiling(&ladder);
+    let grace = ladder.route_traffic.disuse_grace_turns;
+
+    // ① Still walked: the two camps go on pooling, so the road never has an idle turn.
+    let mut walked = spawn_world();
+    two_neighbouring_camps(&mut walked);
+    resolve_turns(&mut walked, TURNS_TO_WEAR_A_TRAIL + grace + 2);
+    let (_, still_there) = {
+        let ledger = walked.world.resource::<RouteLedger>();
+        let (id, road) = ledger.iter().next().expect("the pooling wore a road in");
+        (id, road.clone())
+    };
+    assert_eq!(
+        still_there.position(),
+        ceiling,
+        "a trail its two camps are still walking holds exactly where the cap leaves it"
+    );
+
+    // ② The same road, abandoned: seat one by hand under a lone camp with nobody to pool with, so it
+    //    carries no traffic at all from the turn it is laid.
+    let mut idle = spawn_world();
+    let lone = spawn_band(&mut idle, CAMP_A, 100);
+    let path = road_under(&idle, lone, 3);
+    let road = {
+        let mut ledger = idle.world.resource_mut::<RouteLedger>();
+        let id = ledger.insert(path, &ladder);
+        ledger
+            .get_mut(id)
+            .expect("the road was just laid")
+            .set_position(ceiling, &ladder);
+        id
+    };
+
+    // Inside its grace it has not moved.
+    resolve_turns(&mut idle, grace);
+    assert_eq!(
+        route(&idle, road).position(),
+        ceiling,
+        "a road forgives {grace} idle turns before it starts to fade"
+    );
+
+    // Past it, it does.
+    resolve_turn(&mut idle);
+    assert!(
+        route(&idle, road).position() < ceiling,
+        "and once the grace is spent an unwalked trail loses ground every turn ({} of {ceiling})",
+        route(&idle, road).position()
+    );
+
+    // And it is finally forgotten, which is what keeps the ledger bounded.
+    let turns_to_nothing =
+        (ceiling / ladder.route_traffic.disuse_loss_per_turn).ceil() as u32 + grace + 2;
+    resolve_turns(&mut idle, turns_to_nothing);
+    assert!(
+        idle.world.resource::<RouteLedger>().get(road).is_none(),
+        "a trail bled back to the floor is indistinguishable from no road, so the ledger forgets it"
     );
 }
