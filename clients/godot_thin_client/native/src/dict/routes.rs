@@ -102,9 +102,10 @@ pub(crate) fn routes_to_array(list: Vector<'_, ForwardsUOffset<fb::RouteState<'_
         // `holds_link_to_tiles` = how far this tile's rung holds a pooling link open, in tiles. A
         //                         journey's reach is the WEAKEST tile it crosses — one gap breaks a
         //                         link goods must get THROUGH.
-        //                         **AUTHORED AND NOT YET CONSUMED BY THE SIM** (slice 13b), so a
-        //                         readout must state it as what the rung WILL hold, never as a live
-        //                         effect. `0` on the path is a live reading, not a parked dial.
+        //                         **LIVE SINCE SLICE 13b**: `balance_supply_networks` forms a
+        //                         pooling link at `distance <= max(reach_tiles, this reading)`, so a
+        //                         readout states a live effect. `0` on the path is a live reading
+        //                         too, not a parked dial.
         let _ = dict.insert("friction_multiplier", f64::from(route.frictionMultiplier()));
         let _ = dict.insert("holds_link_to_tiles", route.holdsLinkToTiles() as i64);
         array.push(&dict.to_variant());

@@ -218,11 +218,14 @@ const ROAD_BONUS_SIGHT := "you can see along it"
 ## would read as a rung that never lit anything. **It says `upkeep`, the row above it's own word.**
 const ROAD_BONUS_DARK := "dark until upkeep is paid"
 
-## ⛔ **THE LINK SPAN IS FUTURE TENSE, AND THAT IS NOT A STYLE CHOICE.** `holds_link_to_tiles` is
-## authored on every route rung and **not yet read by the sim** — nothing in `balance_supply_networks`
-## consumes it (that is slice 13b). It is published now because it is half of this line, and an honest
-## *"authored, not yet consumed"* beats a field the client has to guess at; rendering it in the
-## present tense would state an effect that is not in play.
+## ⛔ **THE LINK SPAN IS A LIVE EFFECT, AS OF SLICE 13b.** `balance_supply_networks` forms a pooling
+## link at `distance <= max(reach_tiles, the weakest tile of the run)`, so this sentence states
+## something the player can act on: two camps too far apart to share a larder can be joined by a road.
+##
+## It was authored a slice before it was consumed, and the wording was chosen then to survive that —
+## *links camps up to N tiles apart* describes what the rung does rather than when it starts doing it,
+## so the tense did not have to move when the sim caught up. **Keep it that way**: a rung's payoff is
+## published from the config, so a new rung's line must read correctly with no client edit.
 const ROAD_BONUS_LINK_FORMAT := "links camps up to %d tiles apart"
 
 # RETIRED — `ROAD_BUYS_NOTHING` (`nothing — a path the animals made`), the sentence a rung buying
@@ -408,8 +411,8 @@ static func bonus_value(road: Dictionary) -> String:
 ## - whether the road is lighting its tiles right now (`grants_sight`, the RESOLVED answer, because a
 ##   client cannot re-derive *is the bill met*), and, on a BUILT road whose bill is unpaid, that it
 ##   has gone dark — which happens BEFORE the rung decays and is the honest early warning;
-## - the link span the rung will hold open (`holds_link_to_tiles`), in **future tense**, the sim not
-##   reading that field yet.
+## - the link span the rung holds open (`holds_link_to_tiles`), a **live** effect since slice 13b:
+##   the pooling pass joins two camps at `max(reach_tiles, the weakest tile of the run between them)`.
 ##
 ## `""` where there is nothing further to say, which leaves the hover empty rather than blank-lined.
 static func bonus_tooltip(road: Dictionary) -> String:

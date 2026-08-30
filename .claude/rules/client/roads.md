@@ -229,11 +229,13 @@ Three clauses, each off a published field:
   upkeep is paid* — the row above it's own word — because a road **goes dark BEFORE it decays** and a clause that merely vanished
   would read as a rung that never lit anything. Gated on the shortfall rather than on "unlit",
   because the PATH lights nothing even with its (interpolated) bill paid in full.
-- **the link span, in FUTURE TENSE, and that is not a style choice.** `holds_link_to_tiles` is
-  authored on every route rung and **not yet read by the sim** — nothing in `balance_supply_networks`
-  consumes it; that is slice 13b. Rendering it in the present tense would state an effect that is not
-  in play, so it reads *links N tiles out* — future tense carried by *links … out* rather than by a
-  `will hold` the wording pass cut.
+- **the link span, and it is a LIVE effect as of slice 13b.** `balance_supply_networks` forms a
+  pooling link at `distance <= max(reach_tiles, the weakest tile of the run)`, so *links camps up to N
+  tiles apart* states something the player can act on: two camps too far apart to share a larder can
+  be joined by a road. The line was authored a slice before the sim consumed the field, and its
+  wording was chosen to survive that — it says what the rung **does**, never when it starts doing it,
+  so the tense did not have to move when the sim caught up. **Keep it tense-neutral**: a rung's payoff
+  is published from the config, so a new rung's line has to read correctly with no client edit.
 
 **A rung buying nothing on every axis RENDERS NO ROW**, which is both free rungs. It used to say so in
 words — `nothing — a path the animals made`, in dim ink — and that sentence was **factually wrong, not
