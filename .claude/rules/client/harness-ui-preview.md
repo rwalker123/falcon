@@ -2213,3 +2213,41 @@ one caller instead of two.
 impossible number, the run read back `reached 104 checkpoints`, and 104 was set. The declared 90 was
 a STALE floor — the chapter had been reaching 107 before this change, so subtracting the three
 removed claims from 90 would have left the guard 14 checkpoints slacker than the file it audits.
+
+## The plant rung's material price, authored (the material half of upkeep)
+
+Five `PASS` and NO frame, appended LAST in `chapters/improvements.gd` — it renders nothing and mounts
+nothing, so no capture after it moves. `EXPECTED_CHECKPOINTS` 204 → **210**, RE-MEASURED rather than adjusted by the delta: the declared
+204 was already one under the chapter's real count.
+
+**It exists because `patch_crossref_guard` going green cannot tell a working wiring from a dead one.**
+That guard proves `cultivation_upkeep_material_demand` / `field_upkeep_material_demand` reach
+`tile_info` (`harness-headless-guards.md`), and on the shipped ladder they arrive carrying `[]` — no
+plant rung declares a material — so a key that arrives empty renders exactly what a key that never
+arrived renders. The state authors a plant material upkeep instead, which is this repo's own
+convention for a path the shipped config does not reach (`equipment.json`'s bronze tier and
+`materials.json`'s `varieties` are covered the same way).
+
+**THE CLAIM IS WHAT THE ROW SAYS, by EQUALITY against a clause composed through the shipped formats**
+— never that an aside exists, and never a `contains` a clause missing its material half would still
+satisfy. `RungLadder.track` is prefix-parametric, so it is asked at `patch_`, which is the spelling
+this arc's cross-ref put those keys in.
+
+- **The two rungs carry four DIFFERENT figures** (2.0 / 0.35 work·stone against 4.0 / 0.6), so a
+  producer reading one rung's key for the other row fails rather than passing on a coincidence. Each
+  clears `MATERIAL_FLOW_MIN` / `UPKEEP_WORK_MIN`, so nothing is suppressed as noise.
+- **The negative IS the shipped config's own state**: the same rung with an empty quote states its
+  work term and no material clause at all — an empty list is *this rung eats nothing*, never a
+  `0 stone`. Without it, a client appending the good's word to every rung passes above.
+- **The rendered half is asserted on a DETACHED column.** The `⌃` track is a `PopupPanel` the BAND
+  PANEL floats, and mounting one into this harness's long-lived `HudLayer` would change every frame
+  after it; `RungLadder.build_track` into a freed `VBoxContainer` proves the clause reaches a real
+  `Label` — the half a producer claim alone cannot make — and touches no scene.
+
+**The other three of the arc's seven were already covered** and are worth not re-covering:
+`improvements.gd`'s existing block authors `patch_upkeep_material_demand` /
+`patch_upkeep_material_supplied` and asserts the tended row wears `⚠ slipping`, and
+`tile_meter_blocked_materials` authors `patch_build_material_cost` and asserts the refusal NAMES the
+good in DANGER ink. Those renderers were correct all along — only the cross-ref feeding them was
+missing, which is why the fix moved no frame: a clean run is **1614 `PASS`, exit 0**, five more than
+before with the same frame set.

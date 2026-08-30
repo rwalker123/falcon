@@ -99,6 +99,9 @@ const FOW_EXEMPT_KEYS := {
 	"patch_cultivation_upkeep_demand":
 		"the rung's standing PRICE, not this patch's bill — both plant rungs are `scaled_by: source_load` and the sim strikes them through the TILE's K, which is terrain, so the figure sent for an unseen hex is the one it last showed",
 	"patch_field_upkeep_demand": "as patch_cultivation_upkeep_demand",
+	"patch_cultivation_upkeep_material_demand":
+		"the same per-rung PRICE as patch_cultivation_upkeep_demand above, in the other currency and struck through the same tender-load — so it carries no rung either, and splitting the pair would have `RungLadder._price_terms` quote a remembered hex a PARTIAL price (it composes ONE clause from the work rate and the goods)",
+	"patch_field_upkeep_material_demand": "as patch_cultivation_upkeep_material_demand",
 }
 
 ## The two vectors whose absence was the reported bug. Asserted NON-EMPTY on the fixture before

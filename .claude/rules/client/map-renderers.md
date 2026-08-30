@@ -247,10 +247,11 @@ answering gestures altogether.
 The patch block in `_tile_info_at` copies the `forage_patches` row across key by key from an explicit
 list, `patch_`-prefixing each one, and every forage compose sheet reads its source out of that
 `tile_info` and nowhere else. **A key the decoder emits but this block omits is silently absent on the
-plant web** — no error, no zero to notice — and it has shipped that way four times
+plant web** — no error, no zero to notice — and it has shipped that way five times
 (`perWorkerBiomass`/`regrowthSamples`, then `materialPerBiomass`/`perWorkerMaterial`, then
 `buildKitId`, which crossed onto no `tile_info` for a release while `SourceForecast.build_kit_id`
-read it there and there only, so every forage build quoted no kit at all). Adding a
+read it there and there only, so every forage build quoted no kit at all, and then the
+material-half-of-upkeep arc's SEVEN at once — see `harness-headless-guards.md`). Adding a
 `ForagePatchState` field is therefore **two edits here**: the copy line, and an entry in
 `FOW_DISCOVERED_HIDDEN_KEYS` under the one rule the whole patch payload follows.
 

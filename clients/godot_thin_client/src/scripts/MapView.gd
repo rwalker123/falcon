@@ -433,8 +433,24 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# state, redacted under the one rule the whole patch payload follows.
 	"patch_upkeep_demand", "patch_upkeep_supplied", "patch_upkeep_shortfall",
 	"patch_upkeep_workers_needed",
+	# …and the GOODS half of that same bill, redacted with the work half it is billed beside: a bill
+	# struck this turn and a store drawn down this turn are live state by construction. The per-RUNG
+	# `*_upkeep_material_demand` pair is deliberately NOT here, exactly as its work twin is not — that
+	# pair is a rate scaled by the tile's own terrain-derived load, so it survives fog.
+	"patch_upkeep_material_demand", "patch_upkeep_material_supplied",
+	# …and the PILE the rung above swallows to build. It is redacted with `patch_current_rung` and the
+	# build payload rather than exempted with the terrain, because the wire prices exactly ONE rung —
+	# the one directly above where this patch stands — so the pile a card quotes states the ladder
+	# position `patch_is_cultivated` / `patch_is_field` are struck out to hide.
+	"patch_build_material_cost",
+	# WHAT THIS SITE'S KEEPERS ARE HELD WITH, and whether the player named it. A kit resolved onto a
+	# work site this turn is a fact about a band's doing — set by a command — so it is redacted with
+	# the rest of the live payload, as `patch_build_kit_id` above is.
+	"patch_upkeep_kit_id", "patch_upkeep_kit_named",
 	# …and what that shortfall is COSTING the meter, which is the same fact one step on. The two
-	# per-rung `*_upkeep_demand` figures beside it are deliberately NOT here: since the plant rungs
+	# per-rung `*_upkeep_demand` figures beside it — and their `*_upkeep_material_demand` twins, which
+	# are the same quote in the other currency and ride the same tender-load — are deliberately NOT
+	# here: since the plant rungs
 	# moved onto `scaled_by: source_load` they no longer read identically on every patch, but the
 	# scale is the tile's own forage capacity — TERRAIN, which a Discovered tile remembers — so the
 	# figure sent for an unseen hex is the figure that hex last showed, exactly as
@@ -3149,6 +3165,32 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["patch_upkeep_supplied"] = float(patch.get("upkeep_supplied", 0.0))
 		info["patch_upkeep_shortfall"] = float(patch.get("upkeep_shortfall", 0.0))
 		info["patch_upkeep_workers_needed"] = int(patch.get("upkeep_workers_needed", 0))
+		# **THE MATERIAL HALF OF THAT SAME BILL** (`docs/plan_standing_upkeep.md` §2.7) — what holding
+		# this patch's rung swallowed in GOODS this turn, and what the band's store actually paid
+		# toward it. The two travel as the work pair above does, terms and never their difference, and
+		# per GOOD rather than summed (`SourceForecast.material_payoff_rows`' contract: an empty list
+		# is "this rung eats nothing", never a zero of something).
+		#
+		# **THEY CROSS BECAUSE THE CARD READS THEM HERE AND NOWHERE ELSE.**
+		# `DetailFormat.rung_material_is_short` is `tile_info`-fed with this prefix, so without these
+		# two lines the card's material arm answered `false` on every patch in the game: no `⚠` and no
+		# state word on a tended rung whose goods had run out, while the work board's row — which
+		# reads the band's own labor copy — said in DANGER ink that the same source was being lost.
+		# The plant web's second wiring, for the fifth time (`tools/patch_crossref_guard.gd`).
+		info["patch_upkeep_material_demand"] = patch.get("upkeep_material_demand", [])
+		info["patch_upkeep_material_supplied"] = patch.get("upkeep_material_supplied", [])
+		# **AND THE PILE THE NEXT RUNG UP SWALLOWS TO BUILD** — the one-off price beside the per-turn
+		# ones, resolved off the ladder at capture and published whether or not a build is in flight.
+		# It prices exactly ONE rung, the one directly above where this patch stands
+		# (`SourceForecast.FORECAST_BUILD_MATERIAL_COST_KEY`), which is why it is redacted with the
+		# ladder position rather than exempted with the terrain: naming the pile names the rung.
+		#
+		# `DetailFormat.build_blocked_lines` is the reader, and it is the second renderer that was
+		# reading nothing: a forage build stalled on `materials` composes its sentence FROM this pile
+		# so it can name the good that ran out, and with the key absent every such refusal fell back to
+		# `BUILD_BLOCKED_MATERIALS_UNNAMED` — the client's own "we cannot say which good", shipped on a
+		# patch where the wire had said exactly which.
+		info["patch_build_material_cost"] = patch.get("build_material_cost", [])
 		# **THE PRE-COMMIT RATE, PER RUNG** — what holding each plant rung costs per turn, published
 		# whether or not a build is running (the `*_work_cost` rule). The compose sheet's closed form
 		# nets the BUILD crew's output against the rate of the rung it is pricing; the source-level
@@ -3169,6 +3211,25 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# stands on its own, and the field is a PRICE on the offered face rather than a term.
 		info["patch_cultivation_upkeep_demand"] = float(patch.get("cultivation_upkeep_demand", 0.0))
 		info["patch_field_upkeep_demand"] = float(patch.get("field_upkeep_demand", 0.0))
+		# **THE MATERIAL TWIN OF THAT PER-RUNG PAIR** — what each plant rung would cost in GOODS to
+		# hold, for a rung nobody has started. `SourceForecast.build_upkeep_material_demand` reads them
+		# through the same improvement→key table its work twin uses, and `RungLadder._hold_price_asides`
+		# renders both currencies of one quote as ONE clause. They are the rung's RATE and not this
+		# patch's stamped bill — `patch_upkeep_material_demand` above is that — and on a source
+		# mid-climb the two disagree by design.
+		#
+		# **NOT IN `FOW_DISCOVERED_HIDDEN_KEYS`, for word-for-word the reason the work pair above is
+		# not**: both plant rungs are `scaled_by: source_load`, so the sim strikes each rate through
+		# this patch's tender-load — `tile_capacity / capacity_per_tender`, a pure function of the
+		# TERRAIN a Discovered tile knows by definition — before it ships them. They carry no rung, so
+		# the figure sent for an unseen hex is the figure that hex last showed. Splitting the pair
+		# across the two lists would be worse than either whole answer: `RungLadder._price_terms`
+		# composes ONE clause from the work rate and the goods, so a redacted material half would have
+		# a remembered hex quoting a PARTIAL price as if it were the whole one.
+		info["patch_cultivation_upkeep_material_demand"] = patch.get(
+			"cultivation_upkeep_material_demand", [])
+		info["patch_field_upkeep_material_demand"] = patch.get(
+			"field_upkeep_material_demand", [])
 		# **WHAT THE AT-RISK METER IS LOSING PER TURN** — the term the compose sheet's closed form
 		# nets. Unlike the pair above it IS live patch state: it exists only because this band's keeping
 		# pool came up short past the rung's grace, so it is redacted with the shortfall it is derived
@@ -3182,6 +3243,16 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# rest of the payload.
 		info["patch_has_neglect_grace"] = bool(patch.get("has_neglect_grace", false))
 		info["patch_neglect_grace_remaining"] = int(patch.get("neglect_grace_remaining", 0))
+		# **WHAT THIS PATCH'S KEEPERS ARE HELD WITH** — the RESOLVED keeping kit of the work site (set
+		# by `upkeep_kit <faction> <x> <y>`, so it is the SOURCE's and the same on every band that works
+		# it), and whether that id is the player's own word or the web's derivation. The flag is not
+		# recoverable from the id — a player may name the very kit the derivation would have picked —
+		# which is why the wire states both and no reader re-derives the `(default)` mark.
+		#
+		# Redacted on a remembered hex: a kit in a band's hands this turn is live state, not ground,
+		# and it is set per site by a command the player issues.
+		info["patch_upkeep_kit_id"] = String(patch.get("upkeep_kit_id", ""))
+		info["patch_upkeep_kit_named"] = bool(patch.get("upkeep_kit_named", false))
 		# WHAT GROWS HERE — the tile's named plant composition (share-descending, already sorted
 		# server-side; never re-sorted here). It is the patch's STANDING basket: seeded from the
 		# biome, then REWEIGHTED as a commitment's build lands (issue #433 — a Tended Patch weeds the

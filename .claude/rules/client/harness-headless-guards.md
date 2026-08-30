@@ -439,9 +439,46 @@ fails 4 (claims 1 and 4, naming both keys); narrowing `per_worker_biomass` with 
 3 alone, naming `110.809997558594 → 110`; and removing the two material entries from
 `FOW_DISCOVERED_HIDDEN_KEYS` fails claim 5 alone. Its fixture is gitignored — write it first with
 `cargo xtask decode-fixture`. `godot --headless --path . res://tools/patch_crossref_guard.tscn`; exits
-0/1, CI-usable, no GPU. A clean run reads `34 wire keys cross onto tile_info intact (5 declared
+0/1, CI-usable, no GPU. A clean run reads `59 wire keys cross onto tile_info intact (5 declared
 uncrossed)` — the count is printed for the reason `marker_field_guard` prints its own, a partition
-over an empty source being vacuously true and otherwise indistinguishable.
+over an empty source being vacuously true and otherwise indistinguishable. **The figure is a date
+stamp, not a constant**: it moves with every appended `ForagePatchState` field, so re-measure rather
+than trusting it.
+
+### The material half was the FIFTH time, and it was found by this guard rather than in play
+
+The guard shipped red: the material-half-of-upkeep arc appended seven fields the decoder emits and
+`_tile_info_at` never copied — `build_material_cost`, `upkeep_material_demand`,
+`upkeep_material_supplied`, `cultivation_upkeep_material_demand`, `field_upkeep_material_demand`,
+`upkeep_kit_id`, `upkeep_kit_named` — twelve problems over claims 1 and 4. **The renderers had all
+been built**, which is the whole shape of this bug class: `DetailFormat.build_blocked_lines` composes
+its stuck-on-materials sentence FROM the pile so it can name the good that ran out, and with
+`patch_build_material_cost` absent every such refusal on the plant web fell back to
+`BUILD_BLOCKED_MATERIALS_UNNAMED` — the client's own *"we cannot say which good"*, shipped on a patch
+where the wire had said exactly which. `DetailFormat.rung_material_is_short` answered `false` on every
+patch in the game for the same reason, so a tended rung whose goods had run out wore no `⚠` and no
+state word while the work board's row said in DANGER ink that the source was being lost.
+
+**All seven are crossed; five are redacted and two are exempt.** The redacted five are live state — a
+bill struck this turn, a store drawn down this turn, a kit resolved onto a work site this turn, and
+`build_material_cost`, which prices the rung DIRECTLY ABOVE where the patch stands and so states the
+ladder position `patch_current_rung` is redacted to hide.
+
+⛔ **`patch_cultivation_upkeep_material_demand` / `patch_field_upkeep_material_demand` are in
+`FOW_EXEMPT_KEYS`, beside the work twins they are the other currency of.** Both plant rungs are
+`scaled_by: source_load`, so the sim strikes each rate through the patch's tender-load —
+`tile_capacity / capacity_per_tender`, a pure function of TERRAIN a Discovered tile knows by
+definition — before shipping it. They carry no rung, so the figure sent for an unseen hex is the one
+that hex last showed, which is word-for-word `patch_cultivation_upkeep_demand`'s own exemption.
+**Splitting the pair would be worse than either whole answer**: `RungLadder._price_terms` composes ONE
+clause from the work rate and the goods, so a redacted material half has a remembered hex quoting a
+PARTIAL price as though it were the whole one.
+
+**Green here is necessary and not sufficient, and the shipped config is why.** No plant rung declares
+a material, so all five material fields are structurally `[]` on every shipped patch and a key that
+arrives empty renders exactly what a key that never arrived renders — nothing. The guard proves the
+keys reach `tile_info`; `ui_preview`'s authored plant material upkeep proves the readout states
+something when there is something to state (`harness-ui-preview.md`).
 
 ## `tools/snapshot_alias_guard.gd` / `.tscn`
 
