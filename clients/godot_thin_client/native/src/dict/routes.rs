@@ -101,3 +101,63 @@ pub(crate) fn routes_to_array(list: Vector<'_, ForwardsUOffset<fb::RouteState<'_
     }
     array
 }
+
+/// **THE ROUTE BRANCH'S RUNG CATALOG** -- one row per rung of `intensification_ladder.json`'s route
+/// branch, published ONCE PER WORLD beside `ladderKnowledge` and carrying no faction and no tile.
+///
+/// ⛔ **THIS IS WHAT LETS THE TILE CARD'S ROAD ACTION OPEN A LADDER RATHER THAN A BUTTON PER VERB.**
+/// Every rung's name, its price, what it buys and what gates it is resolved sim-side, so a rung
+/// added to that config appears as a row in the client with no client edit at all -- the same
+/// property `ladder_knowledge_to_array` buys the knowledge screen, for the same reason.
+///
+/// **THE ROW ORDER IS THE CLIMB ORDER**, bottom rung first, and `order` carries it so a consumer
+/// need not trust the vector's sequence to join a tile's standing to a position on the branch.
+///
+/// **THE THREE `""` FIELDS ARE STATES, NOT ABSENCES**: `verb` is empty on a rung nobody declares
+/// (the free floor is worn in by traffic), `unlockKnowledge` on one nothing gates, `requiresRung` at
+/// the branch's floor. A reader forks on each rather than treating it as missing data.
+pub(crate) fn route_rungs_to_array(
+    rungs: Vector<'_, ForwardsUOffset<fb::RouteRungState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for rung in rungs {
+        let mut dict = VarDictionary::new();
+        // The join key with a road tile's own `rung`, spelled `"<branch>:<id>"` exactly as
+        // `RouteState.rung` spells it.
+        let _ = dict.insert("rung_key", rung.rungKey().unwrap_or_default());
+        let _ = dict.insert("order", rung.order() as i64);
+        // "Dirt Road" -- resolved SIM-SIDE, so no client authors a second spelling of it. The
+        // client's own `HudRouteVocab.RUNG_LABELS` is the tile card's four-rung readout table and
+        // must never be read for a ladder row: a fifth rung would render as its raw wire key.
+        let _ = dict.insert("display_name", rung.displayName().unwrap_or_default());
+        // The TILE COMMAND that raises this rung, and `""` where the rung declares none.
+        let _ = dict.insert("verb", rung.verb().unwrap_or_default());
+        // The ladder knowledge that gates it, joining to `LadderKnowledgeState.knowledgeId`.
+        let _ = dict.insert(
+            "unlock_knowledge",
+            rung.unlockKnowledge().unwrap_or_default(),
+        );
+        // ⛔ **THE RUNG DIRECTLY BENEATH, AND THIS IS WHY A ROAD CANNOT BE BUILT ON BARE GROUND.**
+        // `route:dirt_road` requires `route:trail`, and a trail is reached only by traffic -- so
+        // roads are upgraded where people already walk. It is also the CHAIN a client renders the
+        // climb from without holding a second copy of the order.
+        let _ = dict.insert("requires_rung", rung.requiresRung().unwrap_or_default());
+        // **THE BASE PRICE, BEFORE THE TILE'S OWN REMOTENESS QUOTE.** `RouteState.keeperRemoteness`
+        // is that multiplier and a readout states it as its own clause; a client that multiplied
+        // the two would hold a copy of the sim's pricing formula, where it can drift.
+        let _ = dict.insert("work_cost", f64::from(rung.workCost()));
+        // ...and the standing bill, likewise BEFORE the tile's own load scales it
+        // (`RouteState.upkeepDemand` is the resolved per-tile reading).
+        let _ = dict.insert("upkeep_work_per_turn", f64::from(rung.upkeepWorkPerTurn()));
+        // WHAT THE RUNG BUYS, the same three axes a built road's row carries -- read here as what
+        // the rung WILL pay once it stands, rather than as a live effect.
+        let _ = dict.insert("friction_multiplier", f64::from(rung.frictionMultiplier()));
+        let _ = dict.insert("holds_link_to_tiles", rung.holdsLinkToTiles() as i64);
+        // **THE RUNG'S OWN ANSWER, NOT A TILE'S.** `RouteState.grantsSight` is the RESOLVED
+        // per-tile reading and goes dark while the keeping is unmet; this says whether the rung
+        // lights its tiles at all once it stands and its bill is paid.
+        let _ = dict.insert("grants_sight", rung.grantsSight());
+        array.push(&dict.to_variant());
+    }
+    array
+}

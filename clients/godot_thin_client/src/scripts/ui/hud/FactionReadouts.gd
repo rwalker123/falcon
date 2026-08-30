@@ -61,6 +61,15 @@ const SEDENTARIZATION_STAGE_NONE := "none"
 ## all, and a roster carried on that row would leave a new player's screen with nothing on it to say
 ## there was anything to learn.
 var _ladder_knowledge: Array = []
+## ⛔ **THE ROUTE BRANCH'S RUNG CATALOG as the wire sent it** — an ordered array of
+## `{rung_key, order, display_name, verb, unlock_knowledge, requires_rung, work_cost,
+## upkeep_work_per_turn, friction_multiplier, holds_link_to_tiles, grants_sight}`. **Per WORLD, not
+## per faction**, the roster above's own shape and reason: it declares what the branch HOLDS, which
+## is true of a faction that has never graded a step of it.
+##
+## It is what lets the tile card's road action open a LADDER rather than one button per verb — a rung
+## added to `intensification_ladder.json` appears as a row with no client edit at all.
+var _route_rungs: Array = []
 ## **WHAT EACH DISCOVERY LETS THE FACTION'S HANDS DO — one sentence per ladder track, and this table
 ## OUTLIVED THE ANNOUNCEMENT IT WAS WRITTEN FOR.**
 ##
@@ -130,6 +139,10 @@ func reset_world_state() -> void:
 	# roster is the only thing that can replace it, and until that arrives the previous game's ladder
 	# would otherwise still be on screen.
 	_ladder_knowledge.clear()
+	# …and the route branch's catalog for the identical reason: it is a per-WORLD constant, so a delta
+	# never restates it, and a road ladder opened before the new world's own catalog lands would draw
+	# the previous game's rungs.
+	_route_rungs.clear()
 	update_intensification([])
 	update_discoveries([])
 	update_sedentarization([])
@@ -244,6 +257,44 @@ func knowledge_label(track: String) -> String:
 		if String(entry.get("knowledge_id", "")) == track:
 			return String(entry.get("display_name", ""))
 	return ""
+
+## **EVERY LADDER KNOWLEDGE'S NAME, AS ONE LOOKUP** — `{knowledge_id: display_name}`.
+##
+## `knowledge_label` above answers for ONE id and is the right shape for a surface naming one craft;
+## a GATE BUILDER walks a whole branch and would otherwise re-scan the roster per rung. It is a
+## PARAMETER wherever it goes (`RungGates.route_gates` takes it), because the gate layer is stateless
+## by invariant and must never reach for this cluster.
+func knowledge_labels() -> Dictionary:
+	var labels := {}
+	for entry_variant in _ladder_knowledge:
+		if not (entry_variant is Dictionary):
+			continue
+		var entry: Dictionary = entry_variant
+		var id := String(entry.get("knowledge_id", "")).strip_edges()
+		if id == "":
+			continue
+		labels[id] = String(entry.get("display_name", ""))
+	return labels
+
+## ⛔ **INGEST THE ROUTE RUNG CATALOG** — the `route_rungs` section, retained whole.
+##
+## **PER WORLD, NOT PER FACTION, and that is why it is a section of its own** — exactly
+## `ladder_knowledge`'s shape and for its reason: it declares what the route branch HOLDS, which is
+## true before any faction has built a step of it.
+##
+## A non-Array leaves the last value standing, this HUD's catalogue-setter convention: absence means
+## unchanged, never *"this world has no route branch"*. It renders nothing here; the tile card's road
+## ladder reads its rows back.
+func update_route_rungs(catalog_variant: Variant) -> void:
+	if not (catalog_variant is Array):
+		return
+	_route_rungs = catalog_variant
+
+## The catalog as the wire sent it, BY REFERENCE (this HUD's accessor convention; every reader is
+## read-only). `[]` before any snapshot has arrived, which every caller renders as *no ladder to
+## show* rather than as a branch with nothing on it.
+func route_rungs() -> Array:
+	return _route_rungs
 
 ## A faction's progress (0..1) on one intensification track; 0 when the faction has not begun it
 ## (the snapshot row is sparse) or no snapshot has arrived yet. PUBLIC because the rung-gate reasons

@@ -14,10 +14,11 @@ use bevy::math::UVec2;
 use bevy::prelude::{Entity, With};
 
 use core_sim::{
-    build_test_app, BandId, FactionId, LaborAllocation, LaborTarget, LadderConfig,
-    PopulationCohort, ResidentBand, RoadKeeper, RoadRegistry, RungKey, SimulationConfig,
-    SnapshotHistory, Tile, TileRegistry, ViewerFaction, METER_FULL, NEAR_ENOUGH_TO_KEEP,
-    PER_WORKER_OUTPUT,
+    build_test_app, route_rungs_in_climb_order, rung_grants_sight, BandId, FactionId,
+    LaborAllocation, LaborTarget, LadderConfig, PopulationCohort, ResidentBand, RoadKeeper,
+    RoadRegistry, RungKey, SimulationConfig, SnapshotHistory, Tile, TileRegistry, ViewerFaction,
+    FIRST_BUILT_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT,
+    RUNG_COST_UNSCALED,
 };
 
 /// A pinned earthlike world, so the terrain under every road below is the same one every run.
@@ -541,5 +542,240 @@ fn the_row_states_what_the_rung_is_buying() {
     assert!(
         row.grants_sight,
         "and the resolved *is this lighting its tile* answer, which a client cannot re-derive"
+    );
+}
+
+/// The route branch as the **coded** climb has it, bottom rung first. `RungKey::above` is pinned
+/// against the records' own `order` by `routes.rs`'s own module, so this is a second reading of the
+/// shipped ladder rather than a second authority over it — and it is what makes the catalog
+/// assertions below *liveness* claims rather than a comparison of the config with itself.
+/// **A rung no crew builds costs nothing to reach** — what a record with no `build` block publishes,
+/// which on the shipped ladder is the branch's floor and nothing else.
+const NO_BUILD_WORK: f32 = 0.0;
+
+const SHIPPED_ROUTE_CLIMB: [RungKey; 4] = [
+    RungKey::RoutePath,
+    RungKey::RouteTrail,
+    RungKey::RouteDirtRoad,
+    RungKey::RoutePavedRoad,
+];
+
+/// One published rung-catalog row, read off the encoded envelope.
+#[derive(Debug, Clone)]
+struct PublishedRouteRung {
+    rung_key: String,
+    order: u32,
+    display_name: String,
+    verb: String,
+    unlock_knowledge: String,
+    requires_rung: String,
+    work_cost: f32,
+    upkeep_work_per_turn: f32,
+    friction_multiplier: f32,
+    holds_link_to_tiles: u32,
+    grants_sight: bool,
+}
+
+/// **The `routeRungs` catalog off the encoded envelope**, through the accessor chain a client uses.
+/// It rides the subsistence section beside `ladderKnowledge` — both are declarations of what the
+/// ladder holds, carrying no faction and no tile.
+fn published_route_rungs(app: &App) -> Vec<PublishedRouteRung> {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let bytes = encoded(app);
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let catalog = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .subsistence()
+        .and_then(|section| section.routeRungs())
+        .expect("the route rung catalog is published");
+    catalog
+        .iter()
+        .map(|row| PublishedRouteRung {
+            rung_key: row.rungKey().expect("a rung publishes its key").to_string(),
+            order: row.order(),
+            display_name: row
+                .displayName()
+                .expect("a rung publishes a display name")
+                .to_string(),
+            verb: row
+                .verb()
+                .expect("the verb is published, empty or not")
+                .to_string(),
+            unlock_knowledge: row
+                .unlockKnowledge()
+                .expect("the gate is published, empty or not")
+                .to_string(),
+            requires_rung: row
+                .requiresRung()
+                .expect("the rung beneath is published, empty or not")
+                .to_string(),
+            work_cost: row.workCost(),
+            upkeep_work_per_turn: row.upkeepWorkPerTurn(),
+            friction_multiplier: row.frictionMultiplier(),
+            holds_link_to_tiles: row.holdsLinkToTiles(),
+            grants_sight: row.grantsSight(),
+        })
+        .collect()
+}
+
+/// ⛔ **THE CATALOG IS `intensification_ladder.json`'S OWN ROUTE BRANCH, IN CLIMB ORDER** — one row
+/// per rung the config declares, every value read off that rung's record.
+///
+/// **This is what lets a client draw a ladder of rungs nothing has built yet**, and it is asserted
+/// against the *records* rather than against literals for the reason the whole catalog exists: a
+/// rung added to the config, or a figure retuned on one, must reach the wire with no edit here and
+/// none on the client. The liveness half is the shipped climb above — a catalog that published
+/// nothing, or published the plant branch, fails the count and the keys before any figure is read.
+#[test]
+fn the_route_rung_catalog_is_the_configs_own_climb() {
+    let ladder = LadderConfig::builtin();
+    let declared = route_rungs_in_climb_order(&ladder);
+    assert_eq!(
+        declared.len(),
+        SHIPPED_ROUTE_CLIMB.len(),
+        "the shipped ladder declares the four route rungs the coded climb names"
+    );
+
+    let app = spawn_world();
+    let published = published_route_rungs(&app);
+    assert_eq!(
+        published.len(),
+        declared.len(),
+        "one published row per rung the config declares"
+    );
+
+    for (index, (row, rung)) in published.iter().zip(declared.iter()).enumerate() {
+        let key = SHIPPED_ROUTE_CLIMB[index];
+        assert_eq!(
+            row.rung_key,
+            key.wire_key(),
+            "row {index} is the rung the climb puts there"
+        );
+        assert_eq!(row.rung_key, rung.wire_key(), "…and the record's own key");
+        assert_eq!(row.order, rung.order, "the record's own climb order");
+        assert_eq!(
+            row.verb,
+            rung.verb.clone().unwrap_or_default(),
+            "{} publishes the verb its record declares",
+            row.rung_key
+        );
+        assert_eq!(
+            row.unlock_knowledge,
+            rung.unlock_knowledge.clone().unwrap_or_default(),
+            "{} publishes the knowledge its record waits on",
+            row.rung_key
+        );
+        assert_eq!(
+            row.requires_rung,
+            rung.requires_rung_wire_key().unwrap_or_default(),
+            "{} names the rung beneath it, branch-qualified",
+            row.rung_key
+        );
+        assert_eq!(
+            row.work_cost,
+            rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(NO_BUILD_WORK),
+            "{} publishes its record's unscaled build cost",
+            row.rung_key
+        );
+        assert_eq!(
+            row.upkeep_work_per_turn,
+            rung.upkeep
+                .as_ref()
+                .map_or(NO_UPKEEP_DEMAND, |upkeep| upkeep.work_per_turn),
+            "{} publishes its record's unscaled standing rate",
+            row.rung_key
+        );
+        let payoff = rung
+            .route_payoff
+            .expect("every route rung declares a payoff");
+        assert_eq!(row.friction_multiplier, payoff.friction_multiplier);
+        assert_eq!(row.holds_link_to_tiles, payoff.holds_link_to_tiles);
+        assert_eq!(
+            row.grants_sight,
+            rung_grants_sight(rung),
+            "{} publishes whether a road standing there lights its tile",
+            row.rung_key
+        );
+    }
+}
+
+/// ⛔ **THE FREE FLOOR NAMES NO VERB AND THE FLOOR REQUIRES NOTHING** — the two facts a ladder
+/// readout has to render differently, pinned on the published rows.
+///
+/// A path and a trail are formed by **use**: there is no command to name the job, nothing to staff
+/// and nothing to pay, so a client must not draw a build button on either. And the floor is where
+/// every road already stands, so it waits on no rung beneath it — the `""` that ends the chain.
+#[test]
+fn the_catalogs_free_floor_names_no_verb_and_its_floor_requires_nothing() {
+    let app = spawn_world();
+    let published = published_route_rungs(&app);
+    let ladder = LadderConfig::builtin();
+
+    let floor = &published[0];
+    assert_eq!(
+        floor.rung_key,
+        RungKey::RoutePath.wire_key(),
+        "the catalog opens at the branch's floor"
+    );
+    assert!(
+        floor.requires_rung.is_empty(),
+        "the floor waits on nothing beneath it"
+    );
+    assert_eq!(
+        floor.display_name, "Path",
+        "the id, read as a player reads it"
+    );
+
+    for row in &published {
+        let key = SHIPPED_ROUTE_CLIMB
+            .iter()
+            .copied()
+            .find(|key| key.wire_key() == row.rung_key)
+            .expect("every published row is a rung the coded climb names");
+        if key.is_at_or_above(FIRST_BUILT_RUNG) {
+            assert!(
+                !row.verb.is_empty(),
+                "{} is built by a command, so it names one",
+                row.rung_key
+            );
+            assert!(
+                row.upkeep_work_per_turn > NO_UPKEEP_DEMAND,
+                "{} costs work to hold",
+                row.rung_key
+            );
+            assert!(
+                row.grants_sight,
+                "{} is paid for, and paying the bill IS the presence",
+                row.rung_key
+            );
+        } else {
+            assert!(
+                row.verb.is_empty(),
+                "{} is formed by use — there is no command to name",
+                row.rung_key
+            );
+            assert_eq!(
+                row.upkeep_work_per_turn, NO_UPKEEP_DEMAND,
+                "{} costs nothing to hold",
+                row.rung_key
+            );
+            assert!(
+                !row.grants_sight,
+                "{} lights nothing, however worn it is",
+                row.rung_key
+            );
+        }
+    }
+
+    assert_eq!(
+        published.iter().filter(|row| row.verb.is_empty()).count(),
+        route_rungs_in_climb_order(&ladder)
+            .iter()
+            .filter(|rung| rung.verb.is_none())
+            .count(),
+        "as many verb-less rows as the config declares verb-less rungs"
     );
 }

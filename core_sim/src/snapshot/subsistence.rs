@@ -2041,6 +2041,60 @@ pub(crate) fn snapshot_ladder_knowledge(ladder: &LadderConfig) -> Vec<LadderKnow
         .collect()
 }
 
+/// **A RUNG NOBODY BUILDS COSTS NOTHING TO REACH** — the `work_cost` a rung with no `build` block
+/// publishes. On the shipped ladder that is `route:path` and nothing else: the branch's floor is
+/// where a road already stands, so there is no pile to raise.
+const NO_BUILD_WORK: f32 = 0.0;
+
+/// **WHAT A ROAD MAY BECOME** — the route branch's rung catalog, once per world and carrying no
+/// tile. `RouteState` publishes the rung a tile **stands on**; this publishes the whole climb, so a
+/// client can price a rung nothing has built yet.
+///
+/// ⛔ **EVERY FIELD IS DERIVED FROM `intensification_ladder.json`, EXACTLY AS THE KNOWLEDGE ROSTER
+/// ABOVE IS.** Nothing here is separately authored and no value is restated: the cost and the bill
+/// are the rung's own `build` / `upkeep` blocks, the payoff is its `route_payoff`, and the chain is
+/// its `requires_rung`. A rung added to that config appears in the ladder with no further edit,
+/// which is the whole reason this rides the wire instead of a client-side table.
+///
+/// **The two rates are the rung's own, before the tile's multipliers.** A road's real price also
+/// carries its keeper's remoteness quote and its ground's `infrastructure_cost`, and both of those
+/// are per-tile facts published on `RouteState` — a catalog row is the branch's figure, which is the
+/// only one that is the same for every road in the world.
+pub(crate) fn snapshot_route_rungs(ladder: &LadderConfig) -> Vec<RouteRungState> {
+    crate::routes::route_rungs_in_climb_order(ladder)
+        .into_iter()
+        .map(|rung| {
+            // The same `expect` `routes::road_payoff_at` makes, and for the same reason: the ladder's
+            // own `validate` requires a payoff on every route rung and rejects one anywhere else, so
+            // a neutral default here would be a second, quieter answer to a config that cannot load.
+            let payoff = rung
+                .route_payoff
+                .as_ref()
+                .expect("validate requires a route_payoff on every route rung");
+            RouteRungState {
+                rung_key: rung.wire_key(),
+                order: rung.order,
+                // The same spelling the knowledge roster resolves its titles with — both are
+                // underscored ladder ids, and a second capitalization rule would be a second answer
+                // to one question.
+                display_name: knowledge_title_from_id(&rung.id),
+                verb: rung.verb.clone().unwrap_or_default(),
+                unlock_knowledge: rung.unlock_knowledge.clone().unwrap_or_default(),
+                requires_rung: rung.requires_rung_wire_key().unwrap_or_default(),
+                // Unscaled: the remoteness quote is the tile's, not the rung's.
+                work_cost: rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(NO_BUILD_WORK),
+                upkeep_work_per_turn: rung
+                    .upkeep
+                    .as_ref()
+                    .map_or(NO_UPKEEP_DEMAND, |upkeep| upkeep.work_per_turn),
+                friction_multiplier: payoff.friction_multiplier,
+                holds_link_to_tiles: payoff.holds_link_to_tiles,
+                grants_sight: crate::routes::rung_grants_sight(rung),
+            }
+        })
+        .collect()
+}
+
 /// Per-faction intensification-ladder knowledge for the client's learning/known meters — **one row
 /// per faction carrying a `0..1` for every knowledge the ladder teaches**, in the roster's own
 /// order. Iterates the ledger's factions in sorted order; a faction is emitted only when it has

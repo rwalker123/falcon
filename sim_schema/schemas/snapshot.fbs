@@ -5169,6 +5169,67 @@ table CraftKnowledgeState {
   completionThreshold:float;  // what `progress` has to reach; a scale, so the client draws no bar of its own
 }
 
+// ONE RUNG OF THE ROUTE BRANCH, AS THE CONFIG DECLARES IT — the branch's CATALOG, once per world
+// and carrying no tile.
+//
+// ⛔ THIS IS WHAT LETS A CLIENT DRAW A ROAD LADDER OF RUNGS NOTHING HAS BUILT YET. `RouteState`
+// answers "where does THIS tile stand and what is that worth"; it says nothing about the rungs
+// above it, so no readout could state what a paved road would cost or what it would buy until the
+// tile already held one. Every field below is DERIVED from `intensification_ladder.json` through
+// the sim's own rung types and nothing here is separately authored, so a rung added to that config
+// appears in the ladder with no client edit and no schema edit.
+//
+// IT RIDES THE SECTION AND NOT THE TILE ROW. These are properties of the BRANCH, identical for
+// every road in the world — carried on `RouteState` they would repeat the same four rows on every
+// road tile.
+//
+// ROUTE BRANCH ONLY, deliberately: a generic `LadderRungState` filled for one branch is a promise
+// the code does not keep. The plant and animal branches publishing the same is their own change.
+table RouteRungState {
+  // The rung's name on the wire, "<branch>:<id>" — "route:dirt_road". The same spelling
+  // `RouteState.rung` carries, so a tile's standing joins to its row here.
+  rungKey:string;
+  // The config record's own `order`: 1 at the branch's floor, climbing. THE ROW ORDER IS THIS
+  // ORDER — the catalog is published bottom rung first.
+  order:uint;
+  // "Dirt Road" — the rung id with underscores turned to spaces and each word capitalized,
+  // resolved sim-side so no client authors a second spelling of it.
+  displayName:string;
+  // The TILE COMMAND that raises this rung ("grade" / "pave"), and "" where the rung declares none.
+  // An empty verb is the free floor: a path and a trail are formed by USE, so there is no command
+  // to name the job and no crew to staff it.
+  verb:string;
+  // The ladder knowledge that gates this rung ("roadbuilding"), joining to
+  // `LadderKnowledgeState.knowledgeId` for the faction's own progress; "" where the rung waits on
+  // nothing.
+  unlockKnowledge:string;
+  // The wire key of the rung DIRECTLY BENEATH this one, "" at the branch's floor — the chain, so a
+  // client renders the climb without holding a second copy of the order.
+  requiresRung:string;
+  // What reaching this rung costs, in work units, BEFORE the tile's own remoteness quote
+  // (`RouteState.keeperRemoteness` is that multiplier). 0 where the rung declares no build at all,
+  // which on the shipped ladder is the floor and nothing else. Inside the free floor the figure is
+  // a duration in TRAFFIC rather than a crew's job — traffic is the crew there, and it banks no
+  // further than the top of that floor.
+  workCost:float = 0;
+  // The standing bill a road at this rung owes its keeper, in work units per turn, BEFORE the
+  // tile's own load scales it (`RouteState.upkeepDemand` is the resolved reading). 0 where the rung
+  // declares no upkeep — the free floor, which costs nothing to hold and can therefore never be
+  // short.
+  upkeepWorkPerTurn:float = 0;
+  // The fraction of the base pooling friction a haul over a tile at this rung pays; 1.0 = no help.
+  // `RouteState.frictionMultiplier` is the same figure for the rung a tile HOLDS.
+  frictionMultiplier:float = 1;
+  // How far a tile at this rung holds a pooling link open, in tiles. 0 = holds none open beyond the
+  // free reach.
+  holdsLinkToTiles:uint = 0;
+  // Does a road at this rung light its own tile? Answered from whether the rung declares an
+  // UPKEEP, because paying the bill IS the presence — which is also why the free floor lights
+  // nothing however worn it is. A road at a rung that grants sight still goes dark while its
+  // keeping is unmet; `RouteState.grantsSight` is that resolved per-tile answer.
+  grantsSight:bool = false;
+}
+
 table SubsistenceSection {
   herds:[HerdTelemetryState];
   foragePatches:[ForagePatchState];
@@ -5224,6 +5285,12 @@ table SubsistenceSection {
   // Per faction per craft. Not per-world-constant like the two above (a craft is learned), so it is
   // diffed as a whole vector each frame — three crafts times the factions in the ledger.
   craftKnowledge:[CraftKnowledgeState];
+  // --- THE ROUTE BRANCH'S RUNG CATALOG, once per world (appended last) ---------------------------
+  // Every rung of `intensification_ladder.json`'s ROUTE branch, in climb order — see
+  // `RouteRungState`. A per-world constant, so it is diffed whole exactly like `kits`, and it rides
+  // beside `ladderKnowledge` because the two are the same kind of thing: the DECLARATION of what
+  // the ladder holds, carrying no faction and no tile.
+  routeRungs:[RouteRungState];
 }
 
 table KnowledgeSection {

@@ -284,6 +284,9 @@ pub(crate) struct PublishState {
     /// **Not** a per-world constant — a craft is *learned* — so this one really does change, and is
     /// diffed whole exactly like the ladder's own knowledge rows.
     craft_knowledge: Whole<Vec<CraftKnowledgeState>>,
+    /// The route branch's rung catalog — a per-world constant, diffed out on every frame after the
+    /// first exactly as the ladder's knowledge roster is.
+    route_rungs: Whole<Vec<RouteRungState>>,
     history: VecDeque<StoredSnapshot>,
 }
 
@@ -656,6 +659,7 @@ struct SubsistenceParts {
     characteristic_bands: Option<Vec<CharacteristicBandState>>,
     recipes: Option<Vec<RecipeDefState>>,
     craft_knowledge: Option<Vec<CraftKnowledgeState>>,
+    route_rungs: Option<Vec<RouteRungState>>,
 }
 
 /// Fauna and flora: the herd roster, the forage patches, and the food-module map.
@@ -674,6 +678,7 @@ fn diff_subsistence(
     characteristic_bands: &mut Whole<Vec<CharacteristicBandState>>,
     recipes: &mut Whole<Vec<RecipeDefState>>,
     craft_knowledge: &mut Whole<Vec<CraftKnowledgeState>>,
+    route_rungs: &mut Whole<Vec<RouteRungState>>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> SubsistenceParts {
@@ -711,6 +716,7 @@ fn diff_subsistence(
         ),
         recipes: diff_whole(recipes, &snapshot.recipes, write),
         craft_knowledge: diff_whole(craft_knowledge, &snapshot.craft_knowledge, write),
+        route_rungs: diff_whole(route_rungs, &snapshot.route_rungs, write),
     }
 }
 
@@ -846,6 +852,7 @@ impl PublishState {
             characteristic_bands: Whole::default(),
             recipes: Whole::default(),
             craft_knowledge: Whole::default(),
+            route_rungs: Whole::default(),
             default_hunt_kit_id: Whole::default(),
             default_forage_kit_id: Whole::default(),
             default_scout_kit_id: Whole::default(),
@@ -975,6 +982,7 @@ impl PublishState {
             characteristic_bands,
             recipes,
             craft_knowledge,
+            route_rungs,
             default_hunt_kit_id,
             default_forage_kit_id,
             default_scout_kit_id,
@@ -1095,6 +1103,7 @@ impl PublishState {
                         characteristic_bands,
                         recipes,
                         craft_knowledge,
+                        route_rungs,
                         captured,
                         write,
                     )
@@ -1180,6 +1189,7 @@ impl PublishState {
             characteristic_bands: subsistence_parts.characteristic_bands,
             recipes: subsistence_parts.recipes,
             craft_knowledge: subsistence_parts.craft_knowledge,
+            route_rungs: subsistence_parts.route_rungs,
             default_hunt_kit_id: subsistence_parts.default_hunt_kit_id,
             default_forage_kit_id: subsistence_parts.default_forage_kit_id,
             default_scout_kit_id: subsistence_parts.default_scout_kit_id,
@@ -1393,6 +1403,7 @@ impl PublishState {
         self.recipes.reset(entry.snapshot.recipes.clone());
         self.craft_knowledge
             .reset(entry.snapshot.craft_knowledge.clone());
+        self.route_rungs.reset(entry.snapshot.route_rungs.clone());
         self.default_hunt_kit_id
             .reset(entry.snapshot.default_hunt_kit_id.clone());
         self.default_forage_kit_id
@@ -1557,6 +1568,7 @@ impl PublishState {
             characteristic_bands: None,
             recipes: None,
             craft_knowledge: None,
+            route_rungs: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -1694,6 +1706,7 @@ impl PublishState {
             characteristic_bands: None,
             recipes: None,
             craft_knowledge: None,
+            route_rungs: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -1815,6 +1828,7 @@ impl PublishState {
             characteristic_bands: None,
             recipes: None,
             craft_knowledge: None,
+            route_rungs: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -3034,6 +3048,9 @@ pub fn capture_snapshot(
     let intensification_knowledge_state =
         snapshot_intensification_knowledge(&discovery_progress, &ladder_config);
     let ladder_knowledge_state = snapshot_ladder_knowledge(&ladder_config);
+    // **THE ROUTE BRANCH'S RUNG CATALOG** — what a road may become, beside what there is to learn.
+    // A per-world constant like the roster above, so it diffs out after the first frame.
+    let route_rung_state = snapshot_route_rungs(&ladder_config);
     let command_events_state = command_events_to_state(&command_events);
     // The Telling's client-facing fork tier + stance readout (BTree-backed, so already ordered).
     let pending_forks_state = snapshot_pending_forks(&beat_ledger);
@@ -3114,6 +3131,7 @@ pub fn capture_snapshot(
         forage_patches: forage_patches_state.clone(),
         intensification_knowledge: intensification_knowledge_state.clone(),
         ladder_knowledge: ladder_knowledge_state.clone(),
+        route_rungs: route_rung_state.clone(),
         command_events: command_events_state.clone(),
         command_events_retention_turns: command_events.retention_turns() as u32,
         pending_forks: pending_forks_state.clone(),

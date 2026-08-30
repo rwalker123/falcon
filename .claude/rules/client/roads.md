@@ -3,6 +3,8 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/hud/hud_route_vocab.gd"
   - "clients/godot_thin_client/src/scripts/ui/AnnotationRenderer.gd"
   - "clients/godot_thin_client/native/src/dict/routes.rs"
+  - "clients/godot_thin_client/src/scripts/ui/hud/RungLadder.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/RungGates.gd"
 ---
 
 # Roads — the client half of the intensification ladder's third branch
@@ -17,7 +19,10 @@ here are its traps, arriving one layer out.
 |--------|---------|
 | `ui/hud/hud_route_vocab.gd` (`HudRouteVocab`) | The road VOCABULARY leaf — the four rung keys + their labels + `RUNG_ORDER`, the tile card's **five** row keys and their formats, one reader per wire field, and one composer per row (`road_row_value` and its `progress_clause` / `bonus_value` / `upkeep_value` / **`keeper_value`** / `reverting_value`, joined by `road_lines`). It also owns the four `*_value_hex` forks `DetailFormat._value_hex` dispatches to, so a road's ink is decided beside the words it tints. A vocab module with static funcs, the `hud_work_vocab.gd` shape; it reads `SourceForecast` / `DetailFormat` / `HudSelectionVocab` / `HudConst` / `HudStyle` inside functions only, never in a `const`, so it adds no load cycle — **and that contract is what lets `SourceForecast` alias its four `RUNG_KEY_*` at `const` level** rather than spelling the wire's route rungs twice |
 | `ui/AnnotationRenderer.gd` → the `ROAD_*` family | The map draw: `draw_road_network` walks `MapView.road_network` (world state read through the `_view` back-ref, exactly as `units` / `herds` are) and `_draw_road` stamps **one HEX per road** — `MapView._hex_center_wrapped` for the placement, `_outline_hex_at` at `ROAD_TILE_RADIUS_FACTOR` of the tile radius for the ring. It is called from `_draw` right after the crisis annotations — above the tile tints, beneath every marker, ring and selection outline, because a road is infrastructure IN the ground rather than something standing on it |
-| `native/src/dict/routes.rs` | `routes_to_array` — **one dict per road TILE**, the `connections.rs` shape. The row's identity is `tile_x` / `tile_y`, which replaced the retired `RouteId`; beside them ride `has_keeper` / `keeper_band_id` (read the bool first — `0` is a real `BandId`) and `keeper_remoteness`, the multiple distance put on that road's price. There is **no path on the row** — a link knows its two endpoints, so the tiles between them are computable |
+| `ui/hud/RungLadder.gd` → `route_track` / `build_track`'s `title` | **THE ROUTE BRANCH'S ROW PRODUCER, a SIBLING of `track` and never a widening of it** — `track` takes a labor `kind` and a wire source dict, and a road has neither. It emits `track`'s own `ROW_*` shape so the RENDERER is shared (`build_track` gained one optional heading argument and nothing else), walks `HudRouteVocab.route_ladder`'s ordered catalog, and owns the branch's seventh state, `STATE_UNORDERED` — the rung nobody declares. Its two private leaves are `_route_progress_aside` (the meter, on the row DIRECTLY above the standing rung and no other) and `_route_hold_asides` (the standing bill, in the plant/animal branches' own sentence) |
+| `ui/hud/RungGates.gd` → `route_gates` / `route_knowledge_reason` | **THE ROUTE ARM of the shared gate layer**, keyed **RUNG KEY** rather than verb (two route rungs declare none, so a verb-keyed table cannot tell `path` from `trail`). Four gates in reading order — the ground, the un-orderable rung, the craft, the keeper — each carrying its own remedy. The craft's NAME is threaded in as a `{knowledge_id: display_name}` parameter off the ladder's knowledge roster, never a table here, and its remedy comes off the same `requires_rung` gate 1 reads |
+| `ui/hud/DrawerComposeController.gd` → the `build_road_drawer_actions` family | The tile card's `Road ▸` action and the `PopupPanel` it opens (`_open_road_ladder` / `_emit_road_improvement` / `_ensure_road_ladder` / `_road_ladder_anchor_rect` / `_dismiss_road_ladder`), filling `%RoadLadderControls` — its own container at the BOTTOM of the card, since `%ForageAssignControls` is gated on a gathering site with a band in hand. It emits `road_improvement_requested`, which `HudLayer` relays straight onto `improvement_requested` with **no** optimistic overlay write |
+| `native/src/dict/routes.rs` | `routes_to_array` — **one dict per road TILE**, the `connections.rs` shape. The row's identity is `tile_x` / `tile_y`, which replaced the retired `RouteId`; beside them ride `has_keeper` / `keeper_band_id` (read the bool first — `0` is a real `BandId`) and `keeper_remoteness`, the multiple distance put on that road's price. There is **no path on the row** — a link knows its two endpoints, so the tiles between them are computable. **`route_rungs_to_array` is the file's second producer and answers a different question** — one row per RUNG of the branch, published once per world beside `ladderKnowledge`, carrying no faction and no tile |
 
 ## ⛔ A ROAD IS NOT AN ORDER PATH, AND THE OBVIOUS NAME WAS ALREADY TAKEN
 
@@ -293,6 +298,184 @@ each side, which alone floors it near 30px whatever `custom_minimum_size` says.
 is where that fails. Four cards fit a 356px strip only while each is ~83px, and each is ~83px only
 while a fixed METRIC is the floor rather than a role NAME, which is content: the moment a name
 becomes the floor, one longer role name silently pushes the row past the zone's edge.
+
+## ⛔ THE ROUTE BRANCH'S SURFACE IS A LADDER, NOT A BUTTON PER VERB
+
+`grade` and `pave` worked on the command channel and **nothing in the HUD issued them**. Every other
+ladder verb is declared from a WORK ROW (`BandPanelController._emit_ready_declaration`), and roads
+deliberately have no work row — *"a road isn't active like hunting or foraging is, so you don't need
+the tile workers"* — so the route branch was the one branch with no way to press it.
+
+**The answer is not a button per verb.** Highways and railways are RUNGS, so a control per verb grows
+one control per rung forever; and a single verb-named button is worse still, because it forces ONE
+refusal string and cannot answer *"paving is out of reach but railroad is not"*. **The unit the
+player presses is the LADDER**: one action opens the whole branch, one row per rung in climb order,
+each carrying its own price, its own payoff and its own gate.
+
+**A RUNG ADDED TO `intensification_ladder.json` MUST APPEAR WITH NO CLIENT CHANGE.** That is the
+requirement the whole design is arranged around, and it is what makes
+`SubsistenceSection.routeRungs` — not a client table — the authority for every label, price, payoff
+and gate reason on the card.
+
+### The wire catalog, and the one table it must NOT be read from
+
+`RouteRungState`, published once per snapshot beside `ladderKnowledge`: `rungKey` · `order` ·
+`displayName` · `verb` · `unlockKnowledge` · `requiresRung` · `workCost` · `upkeepWorkPerTurn` ·
+`frictionMultiplier` · `holdsLinkToTiles` · `grantsSight`. Per WORLD, carrying no faction and no
+tile, so it is diffed whole like `kits` and cleared at the world boundary
+(`FactionReadouts.reset_world_state`) — a delta never restates it, so the previous game's rungs would
+otherwise still be on the card.
+
+⛔ **`HudRouteVocab.RUNG_LABELS` MAY NOT NAME A LADDER ROW.** That table is the tile card's readout
+vocabulary and is a hard-coded four; a fifth rung read through it renders as its raw wire key. The
+sheet names every row from `catalog_display_name`, which is the sim's own word.
+
+**THE THREE `""` FIELDS ARE STATES, NOT ABSENCES**, and each reads as its own row: `verb` is empty on
+a rung nobody declares, `unlockKnowledge` on one nothing gates, `requiresRung` at the floor.
+
+### `RungLadder.route_track` is a SIBLING of `track`, and `build_track` is shared
+
+⛔ **`track` TAKES A LABOR `kind` AND A WIRE SOURCE DICT, AND A ROAD HAS NEITHER** — no crew, no
+per-source forecast row, no queued entry publishing legs, no key prefix. Widening it would push every
+plant and animal call site through a branch it cannot use. So the PRODUCER is a sibling and the
+RENDERER is not: `route_track` emits `track`'s own `ROW_*` shape and hands it to `build_track`, which
+gained one optional `title` argument and nothing else. A row is a row on any branch — same name, same
+face, same asides in the same order — and a second render loop would drift.
+
+**Three of the six original states are unreachable here, structurally**: `path` and `target` name
+legs of a QUEUED entry and no road publishes one.
+
+> #### ⛔ THE SEVENTH STATE — `STATE_UNORDERED`, and only the route branch can produce it
+>
+> A route rung may declare NO verb: the path and the trail above it are worn in by traffic and
+> nobody orders them. `locked` is a lie in the one direction that matters — it reads *you may not*,
+> where the truth is *there is nothing to order and it is rising anyway* — so the row takes its own
+> state, its own face word (`HudWorkVocab.RUNG_TRACK_STATE_WORN_IN`, *traffic wears it in*) and an
+> aside naming what raises it. **The word lives in `HudWorkVocab` beside the other six**, so the
+> state enumeration stays one table; that block's own header records what an unworded state costs.
+
+⛔ **A REFUSED ROW SPENDS ITS FACE ON THE REFUSAL, SO ITS PRICE MOVES TO AN ASIDE**
+(`HudRouteVocab.ROAD_LADDER_PRICE_FORMAT`, *110 work to raise it*). The plant and animal branches
+fall back to their material PILE there; this branch eats no material, so without it a locked rung
+would state **no price at all** — and a rung a player may plan toward has to be one they can plan
+against, which is `RungLadder`'s own rule for the pile arriving one currency over. It renders ONLY
+where the face is spent: an open rung states its price once, and `110 work` above `110 work to raise
+it` is one fact twice.
+
+**THE ASIDE ORDER IS THE SENTENCE** — how far traffic has got, what it costs, what distance does to
+that cost, what it buys, then what it costs to hold. The last two are the tile card's own row order
+(what it is · what it buys · what it costs), so the two surfaces read the same way round.
+
+### The gates, keyed on the RUNG and not on the verb
+
+`RungGates.route_gates(road, ladder, knowledge, labels, band)` — the shared, stateless layer, because
+a renderer must not depend on a controller and the sheet, the card and any later map mark must not
+disagree about what is climbable.
+
+⛔ **KEYED ON THE RUNG KEY, which is the one place this branch differs from the other two.** Two
+route rungs declare no verb, so a verb-keyed table would hold two entries spelling `""` and could not
+tell `path` from `trail`. Four gates, in the order a player reads them:
+
+| # | gate | reason names |
+|---|---|---|
+| 1 | **the ground** — `requiresRung` unmet | what it needs AND what this ground carries |
+| 2 | **nobody declares it** — `verb == ""` | that traffic raises it; there is no order to give |
+| 3 | **the craft** — `unlockKnowledge` below `KNOWLEDGE_COMPLETE` | the discovery's own `displayName`, its live %, and the rung beneath as the remedy |
+| 4 | **the keeper** — no acting band | pick a band; whoever raises a road keeps it |
+
+**THE GROUND GATE IS FIRST BECAUSE IT SUPERSEDES**: telling somebody to learn Paving while they stand
+on a path is a remedy for the wrong thing. **THE KEEPER GATE IS LAST** because it is the one gate the
+player closes without leaving the card — every reason above it is a thing to go and do.
+
+⛔ **AND THE CONSEQUENCE IS INTENDED: A ROAD CANNOT BE BUILT ON BARE GROUND.** `dirt_road` requires
+`trail` and a trail is reached only by traffic, so roads are upgraded where people already walk. Do
+not add a path around it.
+
+**THE CRAFT IS NAMED FROM THE LADDER'S KNOWLEDGE ROSTER, never from a table here** —
+`FactionReadouts.knowledge_labels()` inverts it once and it is threaded in as a PARAMETER, the
+statelessness `RungGates` is built on. **And the REMEDY comes off `requiresRung`**, the same field
+gate 1 reads: a route knowledge is earned by holding the rung below the one it opens, so both
+sentences come off one field rather than two tables that could drift. A roster with no name for the
+craft states the progress and the remedy without inventing one.
+
+### Where the action sits, and what decides that it is there at all
+
+**THE BOTTOM OF THE TILE CARD, with the Forage and Hunt actions** — `%RoadLadderControls`, its own
+`VBoxContainer` after `%HerdAssignControls` in `SubjectBody`. Not a row inside `%ForageAssignControls`:
+that container is gated on the tile being a GATHERING SITE with a band in hand, and a road crosses
+ground that is neither. Not a button inside the `Road` readout row either — the card's rows are
+readouts and a control in one would make it the only place on the card where a stat line is also a
+control.
+
+**IT IS SHAPED LIKE A PLAIN ACTION, NOT LIKE FORAGE OR HUNT.** Those open a COMPOSE sheet because
+they take a worker count; `grade` / `pave` take none and a trailing count is a parse error — they
+DECLARE, and the hands come separately from `assign_labor <faction> <band> builders <n>`.
+
+**LABELLED `Road ▸`, THE BRANCH'S NOUN**, matching the readout row's key one block up. Never a verb:
+`grade` stops being the whole story the day a non-road rung lands, and the control would then be
+named after one of its steps.
+
+⛔ **IT APPEARS EXACTLY WHERE THE `Road` READOUT ROW APPEARS** — a tile carrying a road — so nothing
+grows on a hex with no road. **The GATING is carried by the ROWS INSIDE the ladder**, each disabled
+with its own reason, and never by hiding the action: a branch a player cannot climb today is still a
+branch they must be able to read and plan against.
+
+**THE CARD IS A `PopupPanel`, the destination track's own idiom.** The selection card is
+height-capped and scrolls internally, so a ladder drawn as a block would push the card's own rows out
+of view on the frame it opened; a Window changes no layout at all. Its CONTENT is rebuilt per open
+and never patched — the rung, the meter, the knowledge and the acting band all move per snapshot —
+while the panel node is reused because a Window is expensive.
+
+### Remoteness is STATED, never multiplied
+
+Every row quotes the rung's **BASE** `workCost` as published. Where the road's own
+`keeper_remoteness` is above `ROAD_REMOTENESS_AT_HOME` the multiple rides its own clause —
+`far from them — ×2.0 the rung's price`, the same sentence the tile card's `Kept by` row carries — so
+the player meets one wording for one fact. **The client multiplies nothing**: folding the two would
+put a copy of the sim's pricing formula where it can drift.
+
+### The command has not moved
+
+`HudLayer.improvement_requested` → `Main.format_improvement`, which already carries the route verbs'
+extra band token (`Main.IMPROVEMENT_BAND_TARGETED`). No new command, no new token, no change to the
+formatter. The relay is `DrawerComposeController.road_improvement_requested` → `HudLayer`, and it is
+deliberately **not** named `improvement_requested` on that controller: that name was retired there
+when the rung checkbox stopped being the commit, and reusing it would read as the pair coming back.
+
+⛔ **THE RELAY CARRIES NO OPTIMISTIC OVERLAY WRITE.** `_on_work_row_improvement_requested` records a
+pending LABOR ROW before it relays, which is right for a `⌃` on the work board; a road has no work
+row, so there is nothing to record and nothing a failed send would have to roll back. The payload
+therefore carries no `pending_entity` — the same shape as the `extend_pen` relay beside it.
+
+### Tests
+
+`ui_preview`'s `land_readouts` chapter carries **four frames** and the claims a picture cannot make,
+driven through the REAL action and the REAL formatter. Read as a set they are the argument the
+feature exists to make: `road_ladder_gated` (a path, with every rung above it refused and each for
+its own reason — nothing on it pressable), `road_ladder_grade` (the same branch one rung up with
+Roadbuilding learned: `grade` OPEN, priced and pressable), `road_ladder_pave` (the top rung on a
+REMOTE dirt road, quoting the base price with the multiple as its own clause) and
+`road_ladder_no_keeper` (the same road with no band selected — the top rung refused, and refused for
+that reason ALONE).
+
+**Half the claims are ABSENCES**, which is what a rendered frame cannot carry: no action at all on a
+hex with no road; not one pressable row on a path's ladder; the price stated ONCE on an open row; no
+approach clause where the meter reads exactly `1.0`; no keeper complaint while a band is selected;
+and no ground or craft complaint on the keeper frame, where both are ready.
+
+**The catalog fixture is a TRANSCRIPTION of the shipped ladder, deliberately not a derivation** — one
+that recomputed it would pass against a producer that had stopped producing one — and the expected
+sentences are written out for the same reason: an expectation recomposed from the producer's own
+format string passes against a producer that has stopped composing it.
+
+**`PAVED_HOLD_ASIDE` reads `then 0.9 work a turn to hold` against a config that says `0.95`**, and
+that is the shipped string: the value arrives as an `f32` and `DetailFormat.format_work_units` rounds
+it down at one decimal. An expectation "corrected" to the config's digits fails against a client
+doing nothing wrong.
+
+**Falsified**: disabling the KEEPER gate (`if false and band.is_empty()`) makes an unavailable rung
+render live and fails **exactly two** claims, both on `road_ladder_no_keeper`, with the other 29 —
+and every other chapter — still green.
 
 ## What is NOT wired, and is not an omission
 

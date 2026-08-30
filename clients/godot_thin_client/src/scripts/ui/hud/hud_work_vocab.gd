@@ -2681,6 +2681,16 @@ const RUNG_TRACK_STATE_LOCKED := "locked"
 ## still issued a `tame`/`corral` declaration on press.**
 const RUNG_TRACK_STATE_OPEN := "open"
 
+## ⛔ **THE SEVENTH, AND THE ROUTE BRANCH IS THE ONLY WEB THAT HAS IT.** A route rung may declare NO
+## verb — the path and the trail above it are worn in by traffic and nobody orders them — so the row
+## is neither refused nor pressable. `locked` would be a lie in the one direction that matters: it
+## reads as *you may not*, where the truth is *there is nothing to order and it is rising anyway*.
+##
+## The word lives here rather than in `HudRouteVocab` so the state enumeration stays ONE table: a
+## state with no word in this block renders an empty face, which is the trap the block's own header
+## records.
+const RUNG_TRACK_STATE_WORN_IN := "traffic wears it in"
+
 ## `75 work · ≈12 turns` — what a selectable destination's own leg still owes and when the sim says it
 ## lands. **The turns half renders only where the wire dates the leg**, which is when an entry is
 ## already climbing this branch; a rung nobody has queued has no chained date and states the work
@@ -2830,6 +2840,13 @@ const RUNG_TRACK_ROW_META := "rung_track_row"
 ## …and valued that row's STATE, on the same node, so *which* row is the target is assertable without
 ## parsing the figures beside it.
 const RUNG_TRACK_STATE_META := "rung_track_state"
+## ⛔ **…AND THE ROW'S RUNG KEY, WHICH IS THE ONLY UNIQUE HANDLE ON THE ROUTE BRANCH.**
+## `RUNG_TRACK_ROW_META` is valued the improvement VERB, and a route rung may declare NONE — the free
+## floor is worn in by traffic — so `route:path` and `route:trail` both carry `""` there and an
+## assertion keyed on it would testify about whichever of them it found first. The rung key is
+## `"<branch>:<id>"` and is unique by construction on every branch, so it rides EVERY row rather than
+## being a route special case.
+const RUNG_TRACK_RUNG_META := "rung_track_rung"
 
 ## **WHICH OF THE THREE THE BUILD SLOT IS**, on the slot itself beside the face it drew. It exists
 ## because the slot's NODE TYPE stopped answering: a running build's face is a `Button` now (it opens

@@ -121,6 +121,93 @@ static func hunt_gates(herd: Dictionary, knowledge: Dictionary) -> Dictionary:
         gates[SourceForecast.IMPROVEMENT_CORRAL] = corral_reasons
     return gates
 
+
+## **THE ROUTE ARM — may this ROAD be raised to each rung above the one it stands on, and if not,
+## why not?** (arc #532 slice 13). Keyed **RUNG KEY → `Array[String]` of reasons**, empty for a rung
+## that is ready to order.
+
+## ⛔ **KEYED ON THE RUNG AND NOT ON THE VERB, WHICH IS THE ONE PLACE THIS BRANCH DIFFERS FROM THE
+## OTHER TWO.** A route rung may carry NO verb at all — the free floor is worn in by traffic and
+## nothing declares it — so a verb-keyed table would have two entries spelling `""` and could not tell
+## `path` from `trail`. The plant and animal webs have no such rung, which is why their gates are
+## keyed the way they are and why widening those was never an option.
+##
+## ⛔ **IT ANSWERS FOR EVERY RUNG ABOVE THE STANDING ONE, GATED OR NOT — the absence of a key is the
+## READY answer.** The ladder sheet shows the whole branch, so a refused rung is rendered and
+## explained rather than withheld; a mark would want the opposite, and this branch has no mark.
+##
+## Four gates, in the order a player reads them, and the FIRST is the one that supersedes:
+##   1. **THE GROUND** — `requires_rung`. A dirt road wants a trail beneath it and a trail is worn in
+##      only by traffic, so **a road cannot be built on bare ground**. Stated first because telling
+##      somebody to learn Paving while they stand on a path is a remedy for the wrong thing.
+##   2. **NOBODY DECLARES IT** — `verb == ""`. Not a refusal for want of anything; there is simply no
+##      order to give, and the row says so rather than looking broken.
+##   3. **THE CRAFT** — `unlock_knowledge`, at the same `KNOWLEDGE_COMPLETE` bar every other track is
+##      read at. **The craft's NAME comes from the ladder's knowledge roster** (`labels`), never from
+##      a table here, so a rung added to `intensification_ladder.json` names its own unlock.
+##   4. **THE KEEPER** — a band to name. `grade`/`pave` carry a band token that IS the keeper, and
+##      `Main.IMPROVEMENT_NO_BAND` refuses the command outright rather than guessing one, so the row
+##      states it before the press instead of failing silently after it.
+##
+## `ladder` is `HudRouteVocab.route_ladder`'s ordered catalog, `road` the raw `routes` row for the
+## tile, `labels` a `{knowledge_id: display_name}` lookup off the ladder's knowledge roster, and
+## `band` the acting band — `{}` meaning none is picked, which is gate 4.
+static func route_gates(road: Dictionary, ladder: Array[Dictionary], knowledge: Dictionary,
+        labels: Dictionary, band: Dictionary) -> Dictionary:
+    var gates := {}
+    var standing_key := HudRouteVocab.rung_of(road)
+    var standing_order := HudRouteVocab.ladder_order_of(ladder, standing_key)
+    var standing_name := HudRouteVocab.ladder_rung_name(ladder, standing_key)
+    for entry in ladder:
+        if HudRouteVocab.catalog_order(entry) <= standing_order:
+            continue
+        var reasons: Array[String] = []
+        var requires := HudRouteVocab.catalog_requires_rung(entry)
+        if requires != HudRouteVocab.RUNG_CATALOG_NONE \
+                and HudRouteVocab.ladder_order_of(ladder, requires) > standing_order:
+            reasons.append(HudRouteVocab.GATE_REASON_ROAD_NEEDS_RUNG_FORMAT % [
+                HudRouteVocab.ladder_rung_name(ladder, requires).to_lower(),
+                standing_name.to_lower()])
+        var verb := HudRouteVocab.catalog_verb(entry)
+        if verb == HudRouteVocab.RUNG_CATALOG_NONE:
+            reasons.append(HudRouteVocab.GATE_REASON_ROAD_WORN_IN)
+            gates[HudRouteVocab.catalog_rung_key(entry)] = reasons
+            continue
+        var unlock := HudRouteVocab.catalog_unlock_knowledge(entry)
+        if unlock != HudRouteVocab.RUNG_CATALOG_NONE \
+                and track(knowledge, unlock) < HudConst.KNOWLEDGE_COMPLETE:
+            # **THE RUNG THE CRAFT IS EARNED ON, and the standing one where a rung names no
+            # prerequisite.** Both are rungs the player can actually put traffic over, so neither
+            # sentence can come out naming nothing — which is what a bare `requires_rung` read would
+            # have produced on a config that ever declared a verb without one.
+            var beneath := standing_name
+            if requires != HudRouteVocab.RUNG_CATALOG_NONE:
+                beneath = HudRouteVocab.ladder_rung_name(ladder, requires)
+            reasons.append(route_knowledge_reason(unlock, track(knowledge, unlock),
+                labels, beneath.to_lower()))
+        # **THE KEEPER IS LAST, because it is the one gate the player closes without leaving the
+        # card** — every reason above it is a thing to go and do, and this one is a click.
+        if band.is_empty():
+            reasons.append(HudRouteVocab.GATE_REASON_ROAD_NO_KEEPER)
+        if not reasons.is_empty():
+            gates[HudRouteVocab.catalog_rung_key(entry)] = reasons
+    return gates
+
+## One route knowledge gate's sentence. **The craft is named by the ladder's own roster** — the sim
+## resolves every discovery's `display_name`, and a client table beside it is how the knowledge screen
+## and a gate reason come to call one craft two things. A roster that does not carry the id yet states
+## the PROGRESS and the remedy without inventing a name, which is the honest half.
+##
+## **The remedy names the rung BENEATH**, which is the same `requires_rung` gate 1 reads: a route
+## knowledge is earned by holding the rung below the one it opens, so both sentences come off one
+## field rather than off two tables that could drift.
+static func route_knowledge_reason(unlock: String, progress: float, labels: Dictionary,
+        beneath: String) -> String:
+    var name := String(labels.get(unlock, "")).strip_edges()
+    if name == "":
+        return HudRouteVocab.GATE_REASON_ROAD_KNOWLEDGE_UNNAMED_FORMAT % beneath
+    return HudRouteVocab.GATE_REASON_ROAD_KNOWLEDGE_FORMAT % [
+        name, HudFormat.progress_percent(progress), beneath]
 ## **WILL THE HAY THIS CREW GATHERS ACTUALLY BE BANKED?** — `""` when it will, the reason when it will
 ## not. The plant twin in shape of the rung gates above, and a deliberate BROADENING of this file's
 ## remit: from "may this source climb its next rung" to "…and will the work it is doing actually pay

@@ -26,7 +26,7 @@ use crate::dict::knowledge::{
 };
 use crate::dict::map::tiles_to_array;
 use crate::dict::population::{demographics_to_array, generations_to_array, populations_to_array};
-use crate::dict::routes::routes_to_array;
+use crate::dict::routes::{route_rungs_to_array, routes_to_array};
 use crate::dict::subsistence::{
     characteristic_bands_to_array, craft_knowledge_to_array, food_modules_to_array,
     forage_patches_to_array, herds_to_array, intensification_knowledge_to_array, kits_to_array,
@@ -720,6 +720,13 @@ fn decode_delta_against(
 
     if let Some(roster) = delta.subsistence().and_then(|s| s.ladderKnowledge()) {
         frame.insert_changed("ladder_knowledge", &ladder_knowledge_to_array(roster));
+    }
+
+    // ...and the ROUTE branch's rung catalog on the DELTA path too. A per-world constant read only
+    // on the full path republishes the BASELINE's value for the life of the world -- the staleness
+    // the `food_modules` / `faction_inventory` pair recorded, one section over.
+    if let Some(catalog) = delta.subsistence().and_then(|s| s.routeRungs()) {
+        frame.insert_changed("route_rungs", &route_rungs_to_array(catalog));
     }
 
     if let Some(demographics) = delta.population().and_then(|s| s.demographics()) {

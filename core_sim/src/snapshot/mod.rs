@@ -27,9 +27,9 @@ use sim_runtime::{
     LadderKnowledgeProgress, LadderKnowledgeState, MaterialDefState, MountainKind,
     PendingForkState, PendingForksState, PendingMigrationState, PopulationCohortState,
     PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
-    PowerIncidentState, PowerNodeState, PowerTelemetryState, RecipeDefState, RouteState,
-    ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
-    SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
+    PowerIncidentState, PowerNodeState, PowerTelemetryState, RecipeDefState, RouteRungState,
+    RouteState, ScalarRasterState, SedentarizationState as SchemaSedentarizationState,
+    SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, SourcePriorityState, StanceAxisState, StanceState,
     StartMarkerState, TerrainOverlayState, TerrainSample, TileState, VictoryModeSnapshotState,
     VictoryResultState, VictorySnapshotState, VoiceLineState, VoiceMediumState, WorldDelta,
@@ -1096,6 +1096,7 @@ mod tests {
         WorldSnapshot {
             header,
             ladder_knowledge: Vec::new(),
+            route_rungs: Vec::new(),
             kits: Vec::new(),
             materials: Vec::new(),
             characteristic_bands: Vec::new(),
@@ -1169,6 +1170,7 @@ mod tests {
         WorldSnapshot {
             header,
             ladder_knowledge: Vec::new(),
+            route_rungs: Vec::new(),
             kits: Vec::new(),
             materials: Vec::new(),
             characteristic_bands: Vec::new(),
@@ -1237,6 +1239,7 @@ mod tests {
         WorldSnapshot {
             header,
             ladder_knowledge: Vec::new(),
+            route_rungs: Vec::new(),
             kits: Vec::new(),
             materials: Vec::new(),
             characteristic_bands: Vec::new(),

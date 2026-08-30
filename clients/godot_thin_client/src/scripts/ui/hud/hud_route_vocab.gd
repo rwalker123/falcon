@@ -521,3 +521,234 @@ static func upkeep_value_hex(value: String) -> String:
 ## remoteness included: distance is a price, not an alarm.
 static func keeper_value_hex(value: String) -> String:
 	return HudStyle.WARN_HEX if value == ROAD_KEEPER_NOBODY else HudStyle.INK_HEX
+
+# ---- THE ROUTE RUNG CATALOG (`SubsistenceSection.routeRungs`) ----------------------------------
+#
+# ⛔ **THE UNIT THE PLAYER PRESSES IS THE LADDER, NOT THE VERB, AND THIS CATALOG IS WHAT MAKES THAT
+# FREE.** One row per rung of the route branch, published ONCE PER SNAPSHOT beside `ladderKnowledge`
+# — every rung's name, its price, what it buys and what gates it, all resolved sim-side out of
+# `intensification_ladder.json`. A rung added to that config therefore appears in the ladder sheet
+# **with no client edit at all**, which is the whole reason the sheet is not a row of buttons.
+#
+# ⛔ **THE SHEET MUST NOT READ `RUNG_LABELS` FOR ITS ROW NAMES.** That table exists so the tile
+# card's readout can name a rung the wire sends it on a ROAD ROW; it is a hard-coded four and would
+# silently render a fifth rung as its raw wire key. The sheet names every row from
+# `catalog_display_name`, which is the sim's own word for it.
+#
+# The catalog is per WORLD and carries no faction and no tile — exactly `ladder_knowledge`'s shape and
+# for its reason. What a PARTICULAR road stands at is the `routes` row above; the two are joined on
+# the rung key.
+
+## One catalog row's fields, spelled once. A typo in a `get` here is a silent zero, and on the price
+## side a silent zero would advertise a free road.
+const RUNG_CATALOG_KEY := "rung_key"
+const RUNG_CATALOG_ORDER := "order"
+const RUNG_CATALOG_DISPLAY_NAME := "display_name"
+const RUNG_CATALOG_VERB := "verb"
+const RUNG_CATALOG_UNLOCK_KNOWLEDGE := "unlock_knowledge"
+const RUNG_CATALOG_REQUIRES_RUNG := "requires_rung"
+const RUNG_CATALOG_WORK_COST := "work_cost"
+const RUNG_CATALOG_UPKEEP := "upkeep_work_per_turn"
+const RUNG_CATALOG_FRICTION := "friction_multiplier"
+const RUNG_CATALOG_LINK := "holds_link_to_tiles"
+const RUNG_CATALOG_GRANTS_SIGHT := "grants_sight"
+
+## ⛔ **THE WIRE'S OWN SPELLING OF *there is none*, AND IT IS A NAMED EMPTY STRING RATHER THAN A
+## SENTINEL.** `verb` is `""` on a rung nobody declares, `unlock_knowledge` is `""` on one nothing
+## gates, and `requires_rung` is `""` on the floor. All three are real, distinct facts about a rung
+## and each reads as its own gate below.
+const RUNG_CATALOG_NONE := ""
+
+## A rung nobody pays for — the two free ones, worn in by traffic. Named because it is the TEST the
+## verbless rungs' face is gated on, not a rounding tolerance: a `0 work` price would read as a
+## defect on a row that has no price to state at all.
+const RUNG_CATALOG_NO_WORK_COST := 0.0
+
+## The order a rung with no published position falls to. **Below the floor**, so a row this client
+## cannot place sorts to the bottom of the ladder rather than silently ahead of the rung it needs.
+const RUNG_CATALOG_NO_ORDER := -1
+
+# ---- CATALOG READERS --------------------------------------------------------------------------
+
+static func catalog_rung_key(entry: Dictionary) -> String:
+	return String(entry.get(RUNG_CATALOG_KEY, "")).strip_edges()
+
+static func catalog_order(entry: Dictionary) -> int:
+	return int(entry.get(RUNG_CATALOG_ORDER, RUNG_CATALOG_NO_ORDER))
+
+## The sim's own word for this rung. **The raw wire key where the catalog carries none**, which is the
+## honest answer rather than a blank row — the same rule `rung_label` follows one section up.
+static func catalog_display_name(entry: Dictionary) -> String:
+	var name := String(entry.get(RUNG_CATALOG_DISPLAY_NAME, "")).strip_edges()
+	return name if name != "" else catalog_rung_key(entry)
+
+## ⛔ **`""` MEANS NOBODY DECLARES THIS RUNG — it is worn in by traffic.** It is a state, not a
+## missing field: both free rungs carry it, and they are the commonest road in the game.
+static func catalog_verb(entry: Dictionary) -> String:
+	return String(entry.get(RUNG_CATALOG_VERB, RUNG_CATALOG_NONE)).strip_edges()
+
+static func catalog_unlock_knowledge(entry: Dictionary) -> String:
+	return String(entry.get(RUNG_CATALOG_UNLOCK_KNOWLEDGE, RUNG_CATALOG_NONE)).strip_edges()
+
+## The rung this one has to stand on to be raised — `""` for the floor. ⛔ **This is why a road cannot
+## be built on bare ground**: `dirt_road` requires `trail`, and a trail is reached only by traffic, so
+## roads are upgraded where people already walk.
+static func catalog_requires_rung(entry: Dictionary) -> String:
+	return String(entry.get(RUNG_CATALOG_REQUIRES_RUNG, RUNG_CATALOG_NONE)).strip_edges()
+
+## ⛔ **THE RUNG'S BASE PRICE, QUOTED AS PUBLISHED.** Remoteness multiplies it sim-side and is stated
+## as its OWN clause beside this figure — see `ROAD_LADDER_REMOTE_FORMAT`. The client never multiplies
+## the two, because that would put a copy of the sim's pricing formula where it can drift.
+static func catalog_work_cost(entry: Dictionary) -> float:
+	return float(entry.get(RUNG_CATALOG_WORK_COST, RUNG_CATALOG_NO_WORK_COST))
+
+static func catalog_upkeep(entry: Dictionary) -> float:
+	return float(entry.get(RUNG_CATALOG_UPKEEP, SourceForecast.NO_UPKEEP_DEMAND))
+
+static func catalog_friction(entry: Dictionary) -> float:
+	return float(entry.get(RUNG_CATALOG_FRICTION, ROAD_FRICTION_NO_HELP))
+
+static func catalog_link_span(entry: Dictionary) -> int:
+	return int(entry.get(RUNG_CATALOG_LINK, ROAD_LINK_NONE))
+
+static func catalog_grants_sight(entry: Dictionary) -> bool:
+	return bool(entry.get(RUNG_CATALOG_GRANTS_SIGHT, false))
+
+## **THE WHOLE BRANCH, BOTTOM RUNG FIRST**, as typed rows — the wire's `order` is the climb order and
+## this is the one place it is applied. Non-Dictionary entries are dropped rather than defaulted: a
+## row this client cannot read has no rung key to join a road on.
+##
+## `[]` before any snapshot has arrived, which every caller renders as *no ladder to show* rather than
+## as a branch with nothing on it.
+static func route_ladder(catalog: Array) -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for entry_variant in catalog:
+		if entry_variant is Dictionary:
+			rows.append(entry_variant as Dictionary)
+	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return catalog_order(a) < catalog_order(b))
+	return rows
+
+## Where a rung sits in the branch — `RUNG_CATALOG_NO_ORDER` for one the catalog does not carry, which
+## sorts it below the floor and so above nothing.
+static func ladder_order_of(ladder: Array[Dictionary], rung_key: String) -> int:
+	for entry in ladder:
+		if catalog_rung_key(entry) == rung_key:
+			return catalog_order(entry)
+	return RUNG_CATALOG_NO_ORDER
+
+## One rung's name as the LADDER SHEET says it — the catalog's own word. The raw key for a rung the
+## catalog does not carry, which is what a road standing on an unknown rung reads as.
+static func ladder_rung_name(ladder: Array[Dictionary], rung_key: String) -> String:
+	for entry in ladder:
+		if catalog_rung_key(entry) == rung_key:
+			return catalog_display_name(entry)
+	return rung_key
+
+# ---- THE LADDER SHEET'S OWN WORDS --------------------------------------------------------------
+#
+# ⛔ **THE ACTION IS NAMED FOR THE BRANCH, NEVER FOR A VERB.** One button per verb does not scale —
+# highways and railways are rungs, not new controls — and a single verb-named button forces ONE
+# refusal string, which cannot answer *"paving is out of reach but railroad is not"*. The action opens
+# the whole branch and every rung carries its own price and its own gate.
+
+## The tile card's road action. `Road` is the branch's noun and matches the readout row's key one
+## section up, so the control and the row it acts on are called the same thing. The chevron is the
+## card's own *opens something* mark, as `HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT` wears it.
+const ROAD_LADDER_ACTION_LABEL := "Road ▸"
+
+## …and the two stable HANDLES a harness reaches those nodes by. **Never by face text**: the action's
+## label is one word a future rung could change, and the card carries no text of its own at all.
+const ROAD_LADDER_ACTION_META := &"road_ladder_action"
+const ROAD_LADDER_META := &"road_ladder"
+
+## …and the sheet's heading, in `HudWorkVocab.RUNG_TRACK_TITLE`'s register because it is the same kind
+## of card one branch over. **`RAISE`, not `TAKE`** — a road is not carried anywhere, and the plant
+## branch's verb read as movement on a surface whose whole subject is a piece of ground.
+const ROAD_LADDER_TITLE := "RAISE IT TO…"
+
+## What a rung BUYS, as the aside beneath its price — `HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT`'s
+## shape, and it wraps the same three clauses the tile card's payoff row states.
+const ROAD_LADDER_BUYS_FORMAT := "buys %s"
+
+## ⛔ **THE PRICE OF A RUNG THE LADDER REFUSES, WHICH ITS FACE CANNOT CARRY.** A row's right-hand slot
+## states the price where the rung may be ordered and the word `locked` where it may not — so on this
+## branch, which eats no material and therefore has no pile aside to fall back on, a refused rung
+## would state no price at all. **A rung a player may plan toward must be a rung they can plan
+## against**, which is `RungLadder`'s own rule for the material pile, arriving one currency over.
+##
+## It renders ONLY where the face has been spent on a refusal: an open rung states its price once, on
+## the face, and a row saying `110 work` above an aside saying `110 work to raise it` is one fact
+## twice. `HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT`'s shape, so the two prices read alike.
+const ROAD_LADDER_PRICE_FORMAT := "%s work to raise it"
+
+## ⛔ **HOW FAR TRAFFIC HAS GOT TOWARD THE ROW IT SITS ON.** `build_fraction` is the meter on the rung
+## being RAISED, so it belongs to the row DIRECTLY ABOVE the standing one and to no other — the same
+## rule the tile card's `25% to trail` follows, said from the destination's side rather than the
+## holder's.
+const ROAD_LADDER_PROGRESS_FORMAT := "%d%% of the way there already"
+
+## ⛔ **WHAT DISTANCE DOES TO THIS ROW'S PRICE, AS ITS OWN CLAUSE.** The figure beside it is the rung's
+## BASE price exactly as published; the multiple is stated separately because multiplying the two here
+## would put a copy of the sim's pricing formula in the client, where it can drift. Same sentence the
+## tile card's `Kept by:` row already carries, so the player meets one wording for one fact.
+const ROAD_LADDER_REMOTE_FORMAT := "far from them — ×%s the rung's price"
+
+# ---- THE GATES, EACH WITH ITS OWN REMEDY -------------------------------------------------------
+#
+# ⛔ **A GATED ROW IS SHOWN AND EXPLAINED, NEVER HIDDEN.** The sheet exists to say what the branch
+# HOLDS; a rung silently missing reads as a shorter ladder rather than as one this road cannot climb
+# — `RungLadder`'s own rule, and the reason the action is offered on every road rather than only on
+# the ones that can be raised today.
+
+## The GROUND gate. `requires_rung` is the rung this one has to stand on, and a road cannot be built
+## on bare ground because of it: a dirt road wants a trail beneath it and a trail is worn in only by
+## traffic. Both halves are stated — what it needs, and what this ground actually carries.
+const GATE_REASON_ROAD_NEEDS_RUNG_FORMAT := "Needs a %s beneath it — this ground carries only a %s"
+
+## The rung nobody declares. It is not refused for want of anything; there is simply no order to give,
+## which the remedy says rather than leaving the row looking broken.
+const GATE_REASON_ROAD_WORN_IN := "Worn in by traffic — nothing to order; it rises as your bands pool food across this hex"
+
+## The KNOWLEDGE gate, in `HudFloraVocab.GATE_REASON_*_KNOWLEDGE_FORMAT`'s voice — **with the craft's
+## name taken from the ladder's own knowledge roster** rather than spelled here, so a rung added to the
+## config names its unlock with no client edit.
+##
+## **THE REMEDY IS THE RUNG BENEATH, WHICH THE CATALOG ALREADY NAMES.** A route knowledge is earned by
+## holding the rung below the one it opens (`requires_rung`), so the sentence reads off the same field
+## the ground gate does instead of a second table that could drift from it.
+const GATE_REASON_ROAD_KNOWLEDGE_FORMAT := "Your people know %s %d%% — keep a %s carrying traffic to learn it"
+
+## …and the same gate where the roster has no name for the craft yet. The PROGRESS is still the news,
+## and naming a discovery this client cannot vouch for would be worse than not naming one.
+const GATE_REASON_ROAD_KNOWLEDGE_UNNAMED_FORMAT := "Your people have not learned this craft yet — keep a %s carrying traffic"
+
+## ⛔ **THE KEEPER GATE — a road really has to be somebody's job.** The band token IS the keeper:
+## issuing the verb declares the work and names who is on the hook for the standing bill, which are one
+## act. `Main.IMPROVEMENT_NO_BAND` refuses the command outright rather than guessing a band, so the
+## row says so before the press rather than after it.
+const GATE_REASON_ROAD_NO_KEEPER := "No band to keep it — pick one of your bands first; whoever raises a road keeps it"
+
+## **WHAT A RUNG BUYS, OFF THE CATALOG RATHER THAN OFF A BUILT ROAD** — the same three clauses
+## `bonus_value` composes for the tile card, asked of a rung nobody has raised yet.
+##
+## ⛔ **IT IS ALL FUTURE TENSE, INCLUDING THE SIGHT CLAUSE.** `bonus_value` reads a road's RESOLVED
+## `grants_sight` — *is it lighting its tiles right now* — and there is no such answer for a rung that
+## does not exist; what the catalog carries is whether the rung lights its tiles once it stands and its
+## bill is paid. The `dark until its upkeep is paid` half has no place here either: it is news about a
+## road being lost, and nothing is being lost on a rung nobody has built.
+##
+## `""` where the rung buys nothing on every axis — both free rungs — and the caller then renders no
+## aside at all, exactly as the tile card renders no payoff row.
+static func rung_payoff_clause(entry: Dictionary) -> String:
+	var clauses: Array[String] = []
+	var multiplier := catalog_friction(entry)
+	if multiplier < ROAD_FRICTION_NO_HELP:
+		clauses.append(ROAD_BONUS_FRICTION_FORMAT % int(round(
+			(ROAD_FRICTION_NO_HELP - multiplier) * ROAD_PERCENT_SCALE)))
+	if catalog_grants_sight(entry):
+		clauses.append(ROAD_BONUS_SIGHT)
+	var span := catalog_link_span(entry)
+	if span > ROAD_LINK_NONE:
+		clauses.append(ROAD_BONUS_LINK_FORMAT % span)
+	return ROAD_CLAUSE_SEPARATOR.join(clauses)

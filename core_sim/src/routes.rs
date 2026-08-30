@@ -80,7 +80,7 @@ use crate::{
     grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT},
     intensification::{
         build_fraction, interpolate, neglect_grace_remaining, rung_work_done, upkeep_shortfall,
-        upkeep_shortfall_fraction, LadderConfig, RungBranch, RungKey, RungRoutePayoff,
+        upkeep_shortfall_fraction, LadderConfig, RungBranch, RungDef, RungKey, RungRoutePayoff,
         RungStanding, FRICTION_UNCHANGED, FULLY_SUPPLIED, NEGLECT_NONE, NO_CREW_ON_THIS_ACTIVITY,
         NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_UNSTARTED,
     },
@@ -723,6 +723,38 @@ pub fn road_rung_span(rung: RungKey, ladder: &LadderConfig, remoteness: f32) -> 
 pub fn traffic_ceiling(ladder: &LadderConfig) -> f32 {
     let (base, width) = road_rung_span(FREE_FLOOR_TOP_RUNG, ladder, NEAR_ENOUGH_TO_KEEP);
     base + width
+}
+
+/// **EVERY RUNG THE ROUTE BRANCH DECLARES, IN CLIMB ORDER** — the branch's catalog, read straight
+/// off the config records.
+///
+/// ⛔ **IT WALKS `ladder.rungs` AND NOT [`RungKey::ALL`], DELIBERATELY.** The key enum names the
+/// rungs a *system* reasons about; this answers *what does the config hold*, so a rung added to
+/// `intensification_ladder.json` is in the catalog — and therefore on the wire and in the client's
+/// ladder — with no code edit. Sorted by the record's own `order`, which the ladder validates as a
+/// dense climb from `1`.
+pub fn route_rungs_in_climb_order(ladder: &LadderConfig) -> Vec<&RungDef> {
+    let mut rungs: Vec<&RungDef> = ladder
+        .rungs
+        .iter()
+        .filter(|rung| rung.branch == RungBranch::Route)
+        .collect();
+    rungs.sort_by_key(|rung| rung.order);
+    rungs
+}
+
+/// ⛔ **DOES A ROAD AT THIS RUNG LIGHT ITS OWN TILE?** — the *rung's* half of
+/// [`Road::grants_sight`], which is that answer **and** this turn's paid bill.
+///
+/// **It asks whether the rung declares an `upkeep`, because paying the bill IS the presence** —
+/// a road nobody pays for has nobody on it, so the free floor lights nothing however worn it is.
+/// That is the same reading [`Road::is_built`] makes one step earlier: the free floor is exactly the
+/// rungs that cost nothing to hold, pinned by
+/// `the_free_floor_and_the_first_built_rung_are_adjacent`, so asking the **record** rather than
+/// [`FIRST_BUILT_RUNG`] answers identically for the shipped ladder and keeps answering for a rung
+/// the coded climb has never heard of.
+pub fn rung_grants_sight(rung: &RungDef) -> bool {
+    rung.upkeep.is_some()
 }
 
 /// **The tiles a journey between two tiles crosses** — a hex walk that greedily closes the distance.

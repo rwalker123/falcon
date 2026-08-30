@@ -3671,6 +3671,34 @@
       "work": 8.85
     }
   ],
+  "route_rungs": [
+    {
+      "display_name": "route_rungs[0].display_name",
+      "friction_multiplier": 9.48,
+      "grants_sight": true,
+      "holds_link_to_tiles": 54,
+      "order": 107,
+      "requires_rung": "route_rungs[0].requires_rung",
+      "rung_key": "route_rungs[0].rung_key",
+      "unlock_knowledge": "route_rungs[0].unlock_knowledge",
+      "upkeep_work_per_turn": 106.610001,
+      "verb": "route_rungs[0].verb",
+      "work_cost": 11.68
+    },
+    {
+      "display_name": "route_rungs[1].display_name",
+      "friction_multiplier": 107.57,
+      "grants_sight": true,
+      "holds_link_to_tiles": 5,
+      "order": 4,
+      "requires_rung": "route_rungs[1].requires_rung",
+      "rung_key": "route_rungs[1].rung_key",
+      "unlock_knowledge": "route_rungs[1].unlock_knowledge",
+      "upkeep_work_per_turn": 48.59,
+      "verb": "route_rungs[1].verb",
+      "work_cost": 67.610001
+    }
+  ],
   "routes": [
     {
       "build_fraction": 107.57,

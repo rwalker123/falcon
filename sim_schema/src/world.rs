@@ -34,7 +34,7 @@ use crate::state::routes::RouteState;
 use crate::state::subsistence::{
     CharacteristicBandState, CraftKnowledgeState, FoodModuleState, ForagePatchState,
     HerdTelemetryState, IntensificationKnowledgeState, KitOptionState, LadderKnowledgeState,
-    MaterialDefState, RecipeDefState, SedentarizationState,
+    MaterialDefState, RecipeDefState, RouteRungState, SedentarizationState,
 };
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
@@ -232,6 +232,11 @@ pub struct WorldSnapshot {
     /// as a whole vector each frame.
     #[serde(default)]
     pub craft_knowledge: Vec<CraftKnowledgeState>,
+    /// **The route branch's rung catalog** — every rung of `intensification_ladder.json`'s route
+    /// branch, in climb order, so a client can draw a road ladder of rungs nothing has built yet.
+    /// A per-world constant, diffed whole like [`Self::ladder_knowledge`]. See [`RouteRungState`].
+    #[serde(default)]
+    pub route_rungs: Vec<RouteRungState>,
     pub moisture_raster: FloatRasterState,
     pub elevation_overlay: ElevationOverlayState,
     /// Climate-band cut points (`docs/plan_climate_authority.md` §8.3), a per-map constant.
@@ -356,6 +361,10 @@ pub struct WorldDelta {
     /// world constant. `None` means unchanged.
     #[serde(default)]
     pub craft_knowledge: Option<Vec<CraftKnowledgeState>>,
+    /// The route branch's rung catalog; a per-world constant, so a delta re-sends it only when the
+    /// world is rebuilt. `None` means unchanged.
+    #[serde(default)]
+    pub route_rungs: Option<Vec<RouteRungState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
     /// Climate-band cut points; a per-map constant, so a delta re-sends it only when the map is

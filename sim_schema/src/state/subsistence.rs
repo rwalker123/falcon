@@ -1976,6 +1976,75 @@ pub struct IntensificationKnowledgeState {
     pub knowledges: Vec<LadderKnowledgeProgress>,
 }
 
+/// **ONE RUNG OF THE ROUTE BRANCH, AS THE CONFIG DECLARES IT** — the branch's *catalog*, once per
+/// world and carrying no tile.
+///
+/// ⛔ **THIS IS WHAT LETS A CLIENT DRAW A ROAD LADDER OF RUNGS NOTHING HAS BUILT YET.**
+/// [`crate::state::routes::RouteState`] answers *where does this tile stand and what is that worth*;
+/// it says nothing about the rungs above it, so no readout could state what a paved road would cost
+/// or what it would buy until the tile already held one.
+///
+/// ⛔ **EVERY FIELD IS DERIVED FROM `intensification_ladder.json`; NOTHING HERE IS AUTHORED
+/// SEPARATELY** — the same discipline [`LadderKnowledgeState`] follows, and for the same reason: a
+/// rung added to that config appears in the ladder with no client edit and no schema edit.
+///
+/// **It rides the section and not the tile row.** These are properties of the *branch*, identical
+/// for every road in the world; carried on `RouteState` they would repeat the same four rows on
+/// every road tile.
+///
+/// **Route branch only, deliberately.** A generic `LadderRungState` filled for one branch is a
+/// promise the code does not keep; the plant and animal branches publishing the same is their own
+/// change.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct RouteRungState {
+    /// The rung's name on the wire, `"<branch>:<id>"` (`"route:dirt_road"`) — the same spelling
+    /// `RouteState::rung` carries, so a tile's standing joins to its row here.
+    pub rung_key: String,
+    /// The config record's own `order`: `1` at the branch's floor, climbing. **The row order is this
+    /// order** — the catalog is published bottom rung first.
+    pub order: u32,
+    /// `"Dirt Road"` — the rung id with underscores turned to spaces and each word capitalized,
+    /// resolved sim-side so no client authors a second spelling of it.
+    pub display_name: String,
+    /// The **tile command** that raises this rung (`"grade"` / `"pave"`), `""` where the rung
+    /// declares none. An empty verb is the free floor: a path and a trail are formed by *use*, so
+    /// there is no command to name the job and no crew to staff it.
+    pub verb: String,
+    /// The ladder knowledge that gates this rung (`"roadbuilding"`), joining to
+    /// [`LadderKnowledgeState::knowledge_id`] for the faction's own progress; `""` where the rung
+    /// waits on nothing.
+    pub unlock_knowledge: String,
+    /// The wire key of the rung **directly beneath** this one, `""` at the branch's floor — the
+    /// chain, so a client renders the climb without holding a second copy of the order.
+    pub requires_rung: String,
+    /// What reaching this rung costs, in work units, **before** the tile's own remoteness quote
+    /// (`RouteState::keeper_remoteness` is that multiplier). `0` where the rung declares no build at
+    /// all, which on the shipped ladder is the floor and nothing else. Inside the free floor the
+    /// figure is a duration in **traffic** rather than a crew's job.
+    #[serde(default)]
+    pub work_cost: f32,
+    /// The standing bill a road at this rung owes its keeper, in work units per turn, **before** the
+    /// tile's own load scales it (`RouteState::upkeep_demand` is the resolved reading). `0` where
+    /// the rung declares no upkeep — the free floor, which costs nothing to hold and can therefore
+    /// never be short.
+    #[serde(default)]
+    pub upkeep_work_per_turn: f32,
+    /// The fraction of the base pooling friction a haul over a tile at this rung pays; `1.0` = no
+    /// help. `RouteState::friction_multiplier` is the same figure for the rung a tile **holds**.
+    #[serde(default)]
+    pub friction_multiplier: f32,
+    /// How far a tile at this rung holds a pooling link open, in tiles. `0` = none beyond the free
+    /// reach.
+    #[serde(default)]
+    pub holds_link_to_tiles: u32,
+    /// **Does a road at this rung light its own tile?** Answered from whether the rung declares an
+    /// upkeep, because *paying the bill is the presence* — which is also why the free floor lights
+    /// nothing however worn it is. A road at a rung that grants sight still goes dark while its
+    /// keeping is unmet; `RouteState::grants_sight` is that resolved per-tile answer.
+    #[serde(default)]
+    pub grants_sight: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FoodModuleState {
     pub x: u32,

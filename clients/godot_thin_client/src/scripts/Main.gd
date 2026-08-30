@@ -625,6 +625,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # rebuild and the `changed` gate skips it every other turn.
     if snapshot.has("ladder_knowledge") and SnapshotSections.changed(snapshot, "ladder_knowledge"):
         _hud_invoke("update_ladder_knowledge", [snapshot["ladder_knowledge"]])
+    # …and the ROUTE branch's rung catalog beside it, another per-world constant. It is what lets the
+    # tile card's road action open a whole ladder rather than one button per verb, so a rung added to
+    # `intensification_ladder.json` reaches the player with no client edit.
+    if snapshot.has("route_rungs") and SnapshotSections.changed(snapshot, "route_rungs"):
+        _hud_invoke("update_route_rungs", [snapshot["route_rungs"]])
     if snapshot.has("intensification_knowledge") and SnapshotSections.changed(snapshot, "intensification_knowledge"):
         _hud_invoke("update_intensification", [snapshot["intensification_knowledge"]])
     if snapshot.has("discovered_sites") and SnapshotSections.changed(snapshot, "discovered_sites"):

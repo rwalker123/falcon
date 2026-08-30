@@ -1261,6 +1261,11 @@ fn seed_snapshot() -> WorldSnapshot {
             .collect();
     }
 
+    // **THE ROUTE BRANCH'S RUNG CATALOG** — what a road may become, once per world. Seeded for the
+    // reason every repeated field here is: an empty vector is a field the decode guard cannot
+    // exercise, which is how an appended field reaches the client as nothing at all.
+    s.route_rungs = rows();
+
     // --- connections -----------------------------------------------------
     // The contact primitive's own section (arc #527). Seeded for the reason every repeated
     // field here is: an empty vector is a field the decode guard cannot exercise.

@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 75
+const EXPECTED_CHECKPOINTS := 110
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -18,6 +18,10 @@ const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 ## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
 ## rung off its own flags through this, and re-stamps after any mutation of them.
 const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
+## The generic node/text finders, and the REAL command formatter — the road ladder's press is asserted
+## through `Main.format_improvement`, the pure static `Main._on_hud_improvement` dispatches to.
+const Q := preload("res://tools/ui_preview/node_query.gd")
+const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -1279,7 +1283,462 @@ func run(harness) -> void:
 	# …and the claims a picture cannot carry, over the REAL producer's lines.
 	_assert_road_rows_are_conditional()
 
+	# ---- THE ROAD LADDER, the tile card's route ACTION (arc #532 slice 13) ------------------------
+	#
+	# ⛔ **ONE ACTION OPENS THE WHOLE BRANCH.** Read as a set these frames are the argument the
+	# feature exists to make: the gates are carried by the ROWS, each with its own reason and its own
+	# remedy, so a branch the player cannot climb today is still a branch they can read and plan
+	# against. A button per verb could state none of that, and a single verb-named button could state
+	# exactly one refusal.
+	h._hud.update_route_rungs(_route_rung_catalog())
+	var inherited_knowledge: Dictionary = h._hud._topbar.faction_tracks(HudConst.PLAYER_FACTION_ID).duplicate(true)
+
+	# ⛔ **STATE road-ladder-none — A TILE WITH NO ROAD OFFERS NO ACTION.** PNG-less, because the
+	# claim is an ABSENCE and a frame of a card without a button is indistinguishable from a frame of
+	# one whose button failed to render. The action appears exactly where the `Road` readout row does,
+	# so no dead control grows on every hex in the world.
+	h._show_tile(_river_tile_fixture(RIVER_MASK_NONE))
+	await h._settle()
+	h._assert_hud("a hex with no road offers no road action at all",
+		_road_ladder_action() == null and not h._hud.road_ladder_controls.visible)
+
+	# ⛔ **STATE road-ladder-gated — THE FLOOR, WITH EVERY RUNG ABOVE IT REFUSED, AND EACH FOR ITS OWN
+	# REASON.** This is the readout a player meets first: a path worn in by their own traffic, a trail
+	# rising above it that nobody orders, and two built rungs standing behind a craft and behind the
+	# ground itself. **A road cannot be built on bare ground** — a dirt road wants a trail beneath it
+	# and a trail is worn in only by traffic — and this frame is where that reads as a sentence rather
+	# than as a missing button.
+	h._hud.update_intensification([{"faction": 0, "knowledges": {
+		HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING: LADDER_ROADBUILDING_PART,
+		HudFloraVocab.KNOWLEDGE_TRACK_PAVING: 0.0}}])
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_PATH, ROAD_METER_RISING, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		ROAD_FRICTION_PATH, ROAD_LINK_PATH)))
+	await h._settle()
+	if not await _open_road_ladder():
+		h._assert_hud("the road ladder opens from the tile card's `Road ▸`", false)
+	else:
+		var gated_states := _road_ladder_states()
+		var gated_faces := _road_ladder_faces()
+		var gated_text := _road_ladder_text()
+		h._assert_hud("the ladder states the WHOLE branch — one row per catalog rung, in climb order",
+			gated_states.size() == _route_rung_catalog().size())
+		h._assert_hud("the road HOLDS the floor, so the path row is where you are",
+			String(gated_states.get(HudRouteVocab.RUNG_KEY_PATH, "")) == RungLadder.STATE_STANDING)
+		# ⛔ **THE TRAIL IS NOT LOCKED, AND THAT DISTINCTION IS THE POINT.** Nothing refuses it; there
+		# is simply no order to give, and `locked` would read as *you may not* where the truth is
+		# *it is rising anyway*.
+		h._assert_hud("a rung nobody declares reads as traffic wearing it in, never as locked",
+			String(gated_states.get(HudRouteVocab.RUNG_KEY_TRAIL, "")) == RungLadder.STATE_UNORDERED
+				and String(gated_faces.get(HudRouteVocab.RUNG_KEY_TRAIL, ""))
+					== HudWorkVocab.RUNG_TRACK_STATE_WORN_IN)
+		h._assert_hud("…and it says what raises it instead of merely being inert",
+			gated_text.contains(HudRouteVocab.GATE_REASON_ROAD_WORN_IN))
+		# ⛔ **THE GROUND GATE IS THE ONE THIS BRANCH IS ABOUT.** It names what the rung needs AND
+		# what this ground actually carries, so the remedy is legible without a second sentence.
+		h._assert_hud("a dirt road on a path says it needs a trail beneath it, naming both rungs",
+			gated_text.contains(GATE_NEEDS_TRAIL_UNDER_PATH))
+		# …and the CRAFT gate beside it, with the discovery named from the ladder's own knowledge
+		# roster rather than from a table in this client.
+		h._assert_hud("…and states the craft it waits on, by the sim's own name for it, at its live %d%%"
+			% LADDER_ROADBUILDING_PERCENT, gated_text.contains(GATE_ROADBUILDING_PART))
+		# ⛔ **A REFUSED RUNG STILL STATES ITS PRICE.** Its face is spent on the refusal and this
+		# branch eats no material, so without the aside a rung the player is planning toward would
+		# carry no figure at all.
+		h._assert_hud("…and quotes what raising it would cost, on a row whose face says `locked`",
+			gated_text.contains(GATE_DIRT_PRICE_ASIDE)
+				and String(gated_faces.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, ""))
+					== HudWorkVocab.RUNG_TRACK_STATE_LOCKED)
+		# ⛔ **AND NOT ONE ROW IS PRESSABLE.** The shape is the statement: a rung the branch offers is
+		# a `Button`, a rung it refuses is a `Label`, so this is the absence that matters most.
+		var pressable := 0
+		for entry_variant in _route_rung_catalog():
+			if _road_ladder_row_button(String((entry_variant as Dictionary)["rung_key"])) != null:
+				pressable += 1
+		h._assert_hud("nothing on a path's ladder may be ordered — every row is a Label",
+			pressable == 0)
+		await h._save("road_ladder_gated")
+	_dismiss_road_ladder()
+
+	# ⛔ **STATE road-ladder-grade — THE CRAFT IS LEARNED AND THE GROUND IS READY, so `grade` goes
+	# LIVE.** Only two things move between this frame and the one above: the road stands a rung
+	# higher, and the faction has finished Roadbuilding. That the dirt-road row turns from a refusal
+	# into a priced, pressable order is the whole of what the ladder is for.
+	h._hud.update_intensification([{"faction": 0, "knowledges": {
+		HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING: 1.0,
+		HudFloraVocab.KNOWLEDGE_TRACK_PAVING: 0.0}}])
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_RISING, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL)))
+	await h._settle()
+	if not await _open_road_ladder():
+		h._assert_hud("the road ladder opens on a trail", false)
+	else:
+		var live_states := _road_ladder_states()
+		var live_faces := _road_ladder_faces()
+		var live_text := _road_ladder_text()
+		h._assert_hud("a rung already paid for is BANKED — it is a receipt, never a discount",
+			String(live_states.get(HudRouteVocab.RUNG_KEY_PATH, "")) == RungLadder.STATE_BANKED)
+		h._assert_hud("with the craft learned and a trail beneath it, `grade` is OPEN and pressable",
+			String(live_states.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, "")) == RungLadder.STATE_OPEN
+				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_DIRT_ROAD) != null)
+		h._assert_hud("…quoting the rung's own BASE price on its face",
+			String(live_faces.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, "")) == DIRT_PRICE_FACE)
+		# ⛔ **AND THE PRICE IS STATED ONCE.** The locked row's aside is the face's stand-in, so a row
+		# that carries both says one fact twice.
+		h._assert_hud("…and not a second time as an aside beneath it",
+			not live_text.contains(GATE_DIRT_PRICE_ASIDE))
+		# **THE METER BELONGS TO THE RUNG BEING RAISED**, so it sits on the row directly above the
+		# one the road holds — the destination's side of the tile card's own `30% to dirt road`.
+		h._assert_hud("the rung being raised says how far traffic has already got toward it",
+			live_text.contains(LADDER_APPROACH_CLAUSE))
+		h._assert_hud("…what it buys, in the tile card's own three clauses",
+			live_text.contains(DIRT_BUYS_ASIDE))
+		h._assert_hud("…and what holding it will cost, every turn, in the ladder card's own words",
+			live_text.contains(DIRT_HOLD_ASIDE))
+		# The rung above it is refused for TWO reasons at once, and both are true and both actionable.
+		h._assert_hud("the rung above it is refused by the ground AND by the craft, and says so twice",
+			live_text.contains(GATE_NEEDS_DIRT_UNDER_TRAIL)
+				and live_text.contains(GATE_PAVING_NONE))
+		# ⛔ **ABSENCE — the keeper gate does NOT fire while a band is selected.** It is the one gate
+		# a player closes without leaving the card, and stating it here would be an alarm about
+		# nothing.
+		h._assert_hud("…and nothing complains about a keeper, a band being selected",
+			not live_text.contains(HudRouteVocab.GATE_REASON_ROAD_NO_KEEPER))
+		await h._save("road_ladder_grade")
+		# ⛔ **WHAT THE PRESS WOULD TRANSMIT, through the REAL formatter.** `grade` is
+		# `cultivate`/`sow`'s grammar PLUS a band token, and both handles are integers in a positional
+		# grammar — so a payload that omitted the band would still PARSE, as a tile-targeted verb
+		# aimed at the wrong coordinates. Asserting the LINE is the only way to see that.
+		var captured: Array[Dictionary] = []
+		var sink := func(p: Dictionary) -> void: captured.append(p)
+		h._hud.improvement_requested.connect(sink)
+		_road_ladder_row_button(HudRouteVocab.RUNG_KEY_DIRT_ROAD).pressed.emit()
+		h._hud.improvement_requested.disconnect(sink)
+		var line := "" if captured.is_empty() \
+			else String(MAIN_SCRIPT.format_improvement(captured[0]).get("line", ""))
+		print("ui_preview: road ladder grade -> %s" % line)
+		h._assert_hud("pressing the Dirt Road row would transmit `%s`" % _expected_grade_line(),
+			line == _expected_grade_line())
+	_dismiss_road_ladder()
+
+	# ⛔ **STATE road-ladder-pave — THE TOP OF THE BRANCH, KEPT FROM FAR AWAY.** Paving is learned, the
+	# ground is a dirt road, and the row is live. The keeper is beyond the base keeping range, so the
+	# row states the rung's BASE price and the multiple distance charges as a SEPARATE clause: the
+	# client never multiplies the two, because that would put a copy of the sim's pricing formula
+	# where it can drift.
+	h._hud.update_intensification([{"faction": 0, "knowledges": {
+		HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING: 1.0,
+		HudFloraVocab.KNOWLEDGE_TRACK_PAVING: 1.0}}])
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT_REMOTE, 0.0,
+		ROAD_WANTS_DIRT_REMOTE, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT,
+		_road_keeper_band(), ROAD_REMOTENESS_REMOTE)))
+	await h._settle()
+	if not await _open_road_ladder():
+		h._assert_hud("the road ladder opens on a dirt road", false)
+	else:
+		var pave_states := _road_ladder_states()
+		var pave_faces := _road_ladder_faces()
+		var pave_text := _road_ladder_text()
+		h._assert_hud("with Paving learned on a dirt road, the top rung is OPEN and pressable",
+			String(pave_states.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, "")) == RungLadder.STATE_OPEN
+				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_PAVED_ROAD) != null)
+		h._assert_hud("…quoting the rung's BASE price, exactly as the catalog publishes it",
+			String(pave_faces.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, "")) == PAVED_PRICE_FACE)
+		h._assert_hud("…and stating what distance does to that price as its OWN clause, never folded in",
+			pave_text.contains(LADDER_REMOTE_CLAUSE))
+		h._assert_hud("…the richest payoff on the branch, and the dearest bill to hold",
+			pave_text.contains(PAVED_BUYS_ASIDE) and pave_text.contains(PAVED_HOLD_ASIDE))
+		# ⛔ **ABSENCE — the meter is exactly `1.0`, so nothing is rising and no approach is stated.**
+		# The wire publishes that `1.0` rather than leaving it to a subtraction, which is what makes
+		# this a plain comparison.
+		h._assert_hud("a road with nothing rising above it states no approach at all",
+			not pave_text.contains(LADDER_APPROACH_SUFFIX))
+		await h._save("road_ladder_pave")
+	_dismiss_road_ladder()
+
+	# ⛔ **STATE road-ladder-no-keeper — THE SAME ROAD WITH NOBODY TO NAME AS KEEPER.** `grade` and
+	# `pave` carry a band token and that token IS the keeper: issuing the verb declares the job and
+	# names who is on the hook for its standing bill, which are one act. `Main.IMPROVEMENT_NO_BAND`
+	# refuses a payload carrying none rather than guessing one, so the row has to say so BEFORE the
+	# press instead of failing silently after it.
+	var held_bands: Array = h._hud._band_labor.player_bands().duplicate(true)
+	var held_acting: Dictionary = h._hud._band_labor.player_band().duplicate(true)
+	var held_panel: Dictionary = h._hud._band_labor.panel_band().duplicate(true)
+	h._hud.update_band_alerts([])
+	# **THE PANEL BAND IS CLEARED SEPARATELY, because `_resolve_assign_band` asks it SECOND.** An
+	# empty roster alone leaves the previous chapter's panel subject standing and the gate never
+	# fires — the state would render as its own opposite with nothing on screen to say so.
+	h._hud._band_labor.set_panel_band({})
+	await h._settle()
+	if not await _open_road_ladder():
+		h._assert_hud("the road ladder still opens with no band selected", false)
+	else:
+		var keeper_states := _road_ladder_states()
+		var keeper_text := _road_ladder_text()
+		h._assert_hud("with nobody to keep it, the top rung is refused rather than offered",
+			String(keeper_states.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
+					== RungLadder.STATE_LOCKED
+				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_PAVED_ROAD) == null)
+		h._assert_hud("…and says which band it wants and why, since whoever raises a road keeps it",
+			keeper_text.contains(HudRouteVocab.GATE_REASON_ROAD_NO_KEEPER))
+		# ⛔ **ABSENCE — nothing else is wrong here.** The craft is learned and the ground is ready, so
+		# a card that also stated the ground gate or the craft gate would be blaming the wrong thing.
+		h._assert_hud("…and complains about nothing else, the craft and the ground both being ready",
+			not keeper_text.contains(GATE_PAVING_NONE)
+				and not keeper_text.contains(GATE_NEEDS_DIRT_UNDER_TRAIL))
+		await h._save("road_ladder_no_keeper")
+	_dismiss_road_ladder()
+	# **PUT THE BANDS AND THE KNOWLEDGE BACK**, this chapter's own rule for shared walk state: the
+	# chapters after it render against whatever they inherit.
+	h._hud.update_band_alerts(held_bands)
+	h._hud._band_labor._player_band = held_acting
+	h._hud._band_labor.set_panel_band(held_panel)
+	h._hud.update_intensification([{"faction": 0, "knowledges": inherited_knowledge}])
+	await h._settle()
+
 	# **PUT THE ROSTER BACK.** Everything after this chapter renders against whatever roster it
 	# inherits, and a band left standing here is a band the next chapter never asked for.
 	_restore_band_roster(inherited_bands)
 	await h._settle()
+
+# ---- THE ROAD LADDER'S OWN FIXTURE NUMBERS AND ITS EXPECTED SENTENCES ---------------------------
+#
+# ⛔ **THE PRICES AND BILLS ARE THE SHIPPED LADDER'S, TRANSCRIBED** — `intensification_ladder.json`'s
+# route branch — so the frames state the real ladder rather than round numbers, and the assertions
+# below test the CONVERSION rather than arithmetic on invented inputs.
+
+## `route:trail` declares a `work_cost` and NO verb. Inside the free floor that figure is a duration
+## in TRAFFIC rather than a crew's job, which is exactly why the ladder must state no price on that
+## row — the fixture carries it so the suppression is tested against a real number.
+const LADDER_TRAIL_WORK_COST := 40.0
+const LADDER_DIRT_WORK_COST := 110.0
+const LADDER_PAVED_WORK_COST := 260.0
+## …and the two built rungs' standing bills, per turn, BEFORE a tile's own load scales them.
+const LADDER_DIRT_UPKEEP := 0.45
+const LADDER_PAVED_UPKEEP := 0.95
+
+## A faction part-way through Roadbuilding — the gate's live progress, and the reading its reason
+## quotes. **Deliberately not zero**: a `0%` reason passes a composer that had stopped reading the
+## faction's row at all.
+const LADDER_ROADBUILDING_PART := 0.4
+const LADDER_ROADBUILDING_PERCENT := 40
+
+## **THE SENTENCES, WRITTEN OUT.** An expectation recomposed from the same format string the producer
+## uses passes against a producer that has stopped composing it — which is the whole failure these
+## claims exist to catch. Every one of them names BOTH halves of its gate: what is missing, and what
+## the player does about it.
+const GATE_NEEDS_TRAIL_UNDER_PATH := "Needs a trail beneath it — this ground carries only a path"
+const GATE_NEEDS_DIRT_UNDER_TRAIL := "Needs a dirt road beneath it — this ground carries only a trail"
+## ⛔ **THE CRAFT IS NAMED FROM THE LADDER'S OWN KNOWLEDGE ROSTER**, not from a table in this client —
+## which is what lets a rung added to the config name its own unlock. The remedy names the rung
+## BENEATH, because that is the rung whose traffic teaches it.
+const GATE_ROADBUILDING_PART := "Your people know Roadbuilding 40% — keep a trail carrying traffic to learn it"
+const GATE_PAVING_NONE := "Your people know Paving 0% — keep a dirt road carrying traffic to learn it"
+
+## The price a REFUSED rung states as an aside, its face being spent on the refusal…
+const GATE_DIRT_PRICE_ASIDE := "110 work to raise it"
+## …and the same price on an OPEN rung's face, where it belongs and where it is stated ONCE.
+const DIRT_PRICE_FACE := "110 work"
+const PAVED_PRICE_FACE := "260 work"
+
+## What each built rung BUYS — the tile card's own three clauses, asked of a rung nobody has raised
+## yet and therefore all in the future tense.
+const DIRT_BUYS_ASIDE := "buys 40% less lost between bands · lights its own tiles · will hold a link 10 tiles out"
+const PAVED_BUYS_ASIDE := "buys 65% less lost between bands · lights its own tiles · will hold a link 16 tiles out"
+
+## …and what holding it costs every turn. **The figures are ROUNDED BY THE SHIPPED FORMATTER**
+## (`DetailFormat.format_work_units` at one decimal), so 0.45 reads `0.5` and 0.95 reads `1.0` — a
+## display fact worth pinning, since a bill quoted at a different precision on one surface is how two
+## readouts of one number start disagreeing.
+const DIRT_HOLD_ASIDE := "then 0.5 work a turn to hold"
+## ⛔ **`0.9`, NOT `1.0` — the config's 0.95 arrives as an `f32` and rounds DOWN.** Written out as it
+## renders rather than as the config reads, because the claim is about the SHIPPED string; an
+## expectation "corrected" to the config's own digits would fail against a client doing nothing wrong.
+const PAVED_HOLD_ASIDE := "then 0.9 work a turn to hold"
+
+## How far traffic has already got toward the rung directly above the one the road HOLDS — the
+## destination's side of the tile card's own `30% to dirt road`.
+const LADDER_APPROACH_CLAUSE := "30% of the way there already"
+## …and the tail alone, for the ABSENCE claim: a road whose meter reads exactly `1.0` has nothing
+## rising above it and states no approach on any row.
+const LADDER_APPROACH_SUFFIX := "of the way there already"
+
+## ⛔ **WHAT DISTANCE DOES TO THE PRICE, AS ITS OWN CLAUSE.** The figure beside it is the rung's BASE
+## price exactly as published; the multiple is stated separately because multiplying the two client-
+## side would put a copy of the sim's pricing formula where it can drift.
+const LADDER_REMOTE_CLAUSE := "far from them — ×2.0 the rung's price"
+
+## **THE LINE A PRESS ON THE DIRT ROAD ROW WOULD TRANSMIT.** Composed from the FIXTURE's own values
+## rather than read off the payload, so the claim is about the shipped grammar: `grade` is
+## `cultivate`/`sow`'s form PLUS a band token, and both handles are integers in a positional grammar —
+## the fixture's band id and the tile's `x` are deliberately different numbers, so a builder that
+## dropped the band would produce a line that still parses and grades the wrong hex.
+func _expected_grade_line() -> String:
+	return "%s %d %d %d %d" % [SourceForecast.IMPROVEMENT_GRADE, HudConst.PLAYER_FACTION_ID,
+		_road_keeper_band(), ROAD_TILE.x, ROAD_TILE.y]
+
+## ---- THE ROAD LADDER, the tile card's route ACTION (arc #532 slice 13) -------------------------
+##
+## ⛔ **THE UNIT THE PLAYER PRESSES IS THE LADDER, NOT THE VERB**, and the frames below exist to hold
+## that: one action opens the whole branch, one row per rung in climb order, each carrying its own
+## price, its own payoff and its own gate. A button per verb does not scale (highways and railways
+## are RUNGS) and one verb-named button forces a single refusal string, which cannot answer *"paving
+## is out of reach but railroad is not"*.
+
+## **THE ROUTE BRANCH'S RUNG CATALOG, TRANSCRIBED FROM THE SHIPPED LADDER** — the shape
+## `native/src/dict/routes.rs::route_rungs_to_array` decodes off `SubsistenceSection.routeRungs`.
+##
+## ⛔ **A TRANSCRIPTION, DELIBERATELY NOT A DERIVATION.** A fixture that recomputed the catalog would
+## pass against a producer that had stopped producing one; what this file proves is that the CLIENT
+## renders whatever catalog arrives. The claim that the transcription matches `intensification_ladder.json`
+## is the sim's own (`core_sim/tests/route_wire.rs`).
+##
+## The three `""` fields are STATES rather than absences — no verb on the free floor, no unlock where
+## nothing gates, no prerequisite at the branch's bottom — and every one of them is a row the ladder
+## has to say something different about.
+func _route_rung_catalog() -> Array:
+	return [
+		{
+			"rung_key": HudRouteVocab.RUNG_KEY_PATH, "order": 1, "display_name": "Path",
+			"verb": "", "unlock_knowledge": "", "requires_rung": "",
+			"work_cost": 0.0, "upkeep_work_per_turn": 0.0,
+			"friction_multiplier": ROAD_FRICTION_PATH, "holds_link_to_tiles": ROAD_LINK_PATH,
+			"grants_sight": false,
+		},
+		{
+			# **A TRAIL COSTS 40 WORK AND DECLARES NO VERB**, which is the config's own shape: inside
+			# the free floor the figure is a duration in TRAFFIC rather than a crew's job. The ladder
+			# must therefore state no PRICE on this row — a `40 work` face beside a rung nobody can
+			# order reads as a job going begging.
+			"rung_key": HudRouteVocab.RUNG_KEY_TRAIL, "order": 2, "display_name": "Trail",
+			"verb": "", "unlock_knowledge": "", "requires_rung": HudRouteVocab.RUNG_KEY_PATH,
+			"work_cost": LADDER_TRAIL_WORK_COST, "upkeep_work_per_turn": 0.0,
+			"friction_multiplier": ROAD_FRICTION_TRAIL, "holds_link_to_tiles": ROAD_LINK_TRAIL,
+			"grants_sight": false,
+		},
+		{
+			"rung_key": HudRouteVocab.RUNG_KEY_DIRT_ROAD, "order": 3, "display_name": "Dirt Road",
+			"verb": SourceForecast.IMPROVEMENT_GRADE,
+			"unlock_knowledge": HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING,
+			"requires_rung": HudRouteVocab.RUNG_KEY_TRAIL,
+			"work_cost": LADDER_DIRT_WORK_COST, "upkeep_work_per_turn": LADDER_DIRT_UPKEEP,
+			"friction_multiplier": ROAD_FRICTION_DIRT, "holds_link_to_tiles": ROAD_LINK_DIRT,
+			"grants_sight": true,
+		},
+		{
+			"rung_key": HudRouteVocab.RUNG_KEY_PAVED_ROAD, "order": 4, "display_name": "Paved Road",
+			"verb": SourceForecast.IMPROVEMENT_PAVE,
+			"unlock_knowledge": HudFloraVocab.KNOWLEDGE_TRACK_PAVING,
+			"requires_rung": HudRouteVocab.RUNG_KEY_DIRT_ROAD,
+			"work_cost": LADDER_PAVED_WORK_COST, "upkeep_work_per_turn": LADDER_PAVED_UPKEEP,
+			"friction_multiplier": ROAD_FRICTION_PAVED, "holds_link_to_tiles": ROAD_LINK_PAVED,
+			"grants_sight": true,
+		},
+	]
+
+## Every `Control` under `root` carrying `meta`. `Q.find_meta_node` answers the FIRST — which is the
+## right shape for a chart or a verdict, and the wrong one for a card of four rows.
+func _collect_meta(root: Node, meta: String, out: Array[Control] = []) -> Array[Control]:
+	if root == null:
+		return out
+	if root is Control and (root as Control).has_meta(meta):
+		out.append(root as Control)
+	for child in root.get_children():
+		_collect_meta(child, meta, out)
+	return out
+
+## The tile card's `Road ▸` action, found by META — its face is one word a future rung could change.
+func _road_ladder_action() -> Button:
+	for control in _collect_meta(h._hud, HudRouteVocab.ROAD_LADDER_ACTION_META, []):
+		if control is Button:
+			return control as Button
+	return null
+
+## Press the action and let the card land. `false` when there was nothing to press, which every
+## caller reports as its own failure rather than going on to assert about an empty card.
+func _open_road_ladder() -> bool:
+	var action := _road_ladder_action()
+	if action == null:
+		return false
+	action.pressed.emit()
+	await h._settle()
+	return not _road_ladder_states().is_empty()
+
+## Take the card down between states. A `PopupPanel` is a Window and outlives the render that opened
+## it, so a frame saved with the previous state's ladder still up is the wrong picture with no tell.
+func _dismiss_road_ladder() -> void:
+	h._hud._drawercompose._dismiss_road_ladder()
+
+## The open card's rows as `rung_key -> state`. **Keyed by RUNG and never by the improvement verb**:
+## two route rungs declare NO verb, so `RUNG_TRACK_ROW_META` carries `""` for both and an assertion
+## on it would testify about whichever of them it found first.
+func _road_ladder_states() -> Dictionary:
+	var out: Dictionary = {}
+	for control in _collect_meta(h._hud, HudWorkVocab.RUNG_TRACK_RUNG_META, []):
+		out[String(control.get_meta(HudWorkVocab.RUNG_TRACK_RUNG_META))] = \
+			String(control.get_meta(HudWorkVocab.RUNG_TRACK_STATE_META))
+	return out
+
+## …and each row's right-hand FACE — the state word where it states one, the price where it does not.
+func _road_ladder_faces() -> Dictionary:
+	var out: Dictionary = {}
+	for control in _collect_meta(h._hud, HudWorkVocab.RUNG_TRACK_RUNG_META, []):
+		var key := String(control.get_meta(HudWorkVocab.RUNG_TRACK_RUNG_META))
+		for child in control.get_children():
+			if child is Button:
+				out[key] = (child as Button).text
+			elif child is Label and (child as Label).horizontal_alignment \
+					== HORIZONTAL_ALIGNMENT_RIGHT:
+				out[key] = (child as Label).text
+	return out
+
+## The PRESSABLE row for one rung, or `null` where the ladder refuses it. **The shape IS the
+## statement** — a rung the branch offers is a `Button`, a rung it does not is a `Label` — so this is
+## how *may I order this* is asked without reading a word.
+func _road_ladder_row_button(rung_key: String) -> Button:
+	for control in _collect_meta(h._hud, HudWorkVocab.RUNG_TRACK_RUNG_META, []):
+		if String(control.get_meta(HudWorkVocab.RUNG_TRACK_RUNG_META)) != rung_key:
+			continue
+		for child in control.get_children():
+			if child is Button:
+				return child as Button
+	return null
+
+## Everything the open card SAYS, joined — its title, its row faces and every aside beneath them.
+## The gate reasons and the price asides are composed sentences, so what is asserted about them is
+## the exact wording rather than a node's presence.
+func _road_ladder_text() -> String:
+	var card := _road_ladder_card(h._hud)
+	if card == null:
+		return ""
+	var parts: Array[String] = []
+	for node in _all_nodes(card, []):
+		if node is Button:
+			parts.append((node as Button).text)
+		elif node is Label:
+			parts.append((node as Label).text)
+	return "\n".join(parts)
+
+## ⛔ **THE CARD IS A `Window`, SO `Q.find_meta_node` CANNOT SEE IT.** That finder matches on
+## `root is Control`, which is right for every other surface in this harness and wrong for a
+## `PopupPanel` — it walked straight past the card and answered `null`, so every claim about what the
+## ladder SAYS passed a `contains` on an empty string in the wrong direction. A Window is the whole
+## reason a height-capped dock card can host a ladder at all, so the finder follows the node kind.
+func _road_ladder_card(root: Node) -> Node:
+	if root == null:
+		return null
+	if root.has_meta(HudRouteVocab.ROAD_LADDER_META):
+		return root
+	for child in root.get_children():
+		var found := _road_ladder_card(child)
+		if found != null:
+			return found
+	return null
+
+func _all_nodes(root: Node, out: Array[Node] = []) -> Array[Node]:
+	out.append(root)
+	for child in root.get_children():
+		_all_nodes(child, out)
+	return out

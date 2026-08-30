@@ -2266,6 +2266,27 @@ pub struct RungRoutePayoff {
 }
 
 impl RungDef {
+    /// **THIS RECORD'S NAME ON THE WIRE** — `"<branch>:<id>"`, the same spelling
+    /// [`RungKey::wire_key`] produces and every validation message already uses.
+    ///
+    /// It is asked of the **record** rather than of the key so a reading built from the config —
+    /// the route branch's published rung catalog is the one — names a rung the coded
+    /// [`RungKey`] enum has never heard of. A rung added to `intensification_ladder.json` therefore
+    /// reaches the wire without a code edit; `RungKey::wire_key` answers for the rungs a system
+    /// *names*, and the two agree by construction.
+    pub fn wire_key(&self) -> String {
+        format!("{}:{}", self.branch.as_str(), self.id)
+    }
+
+    /// **THE WIRE KEY OF THE RUNG DIRECTLY BENEATH THIS ONE** — `requires_rung` is a bare id within
+    /// the *same* branch, so this is the qualified spelling of it. `None` at a branch's floor, which
+    /// requires nothing.
+    pub fn requires_rung_wire_key(&self) -> Option<String> {
+        self.requires_rung
+            .as_deref()
+            .map(|below| format!("{}:{}", self.branch.as_str(), below))
+    }
+
     /// The improvement that drives this rung's build meter, already parsed. `None` for a rung no verb
     /// drives today. (Validated at load, so the parse cannot fail here.)
     pub fn verb_improvement(&self) -> Option<Improvement> {

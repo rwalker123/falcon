@@ -4,7 +4,8 @@ use crate::codec::FbBuilder;
 use crate::state::subsistence::{
     CharacteristicBandState, CraftKnowledgeState, FloraShareInfo, FoodModuleState,
     ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState, KitOptionState,
-    LadderKnowledgeState, MaterialDefState, MaterialPayoff, RecipeDefState, SedentarizationState,
+    LadderKnowledgeState, MaterialDefState, MaterialPayoff, RecipeDefState, RouteRungState,
+    SedentarizationState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -33,6 +34,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let characteristic_bands = create_characteristic_bands(builder, &snapshot.characteristic_bands);
     let recipes = create_recipes(builder, &snapshot.recipes);
     let craft_knowledge = create_craft_knowledge(builder, &snapshot.craft_knowledge);
+    let route_rungs = create_route_rungs(builder, &snapshot.route_rungs);
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -54,6 +56,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
             characteristicBands: Some(characteristic_bands),
             recipes: Some(recipes),
             craftKnowledge: Some(craft_knowledge),
+            routeRungs: Some(route_rungs),
         },
     )
 }
@@ -126,6 +129,10 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .craft_knowledge
         .as_ref()
         .map(|entries| create_craft_knowledge(builder, entries));
+    let route_rungs = delta
+        .route_rungs
+        .as_ref()
+        .map(|entries| create_route_rungs(builder, entries));
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -145,6 +152,7 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             characteristicBands: characteristic_bands,
             recipes,
             craftKnowledge: craft_knowledge,
+            routeRungs: route_rungs,
         },
     )
 }
@@ -964,6 +972,40 @@ fn create_ladder_knowledge<'a>(
                 branch: Some(branch),
                 order: state.order,
                 isStep: state.is_step,
+            },
+        ));
+    }
+    builder.create_vector(&entries)
+}
+
+/// **THE ROUTE BRANCH'S RUNG CATALOG** — every rung the route branch declares, in climb order and
+/// once per world. A per-world constant, written whole on a snapshot and only when it moved on a
+/// delta, exactly like the roster above.
+fn create_route_rungs<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[RouteRungState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::RouteRungState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let rung_key = builder.create_string(&state.rung_key);
+        let display_name = builder.create_string(&state.display_name);
+        let verb = builder.create_string(&state.verb);
+        let unlock_knowledge = builder.create_string(&state.unlock_knowledge);
+        let requires_rung = builder.create_string(&state.requires_rung);
+        entries.push(fb::RouteRungState::create(
+            builder,
+            &fb::RouteRungStateArgs {
+                rungKey: Some(rung_key),
+                order: state.order,
+                displayName: Some(display_name),
+                verb: Some(verb),
+                unlockKnowledge: Some(unlock_knowledge),
+                requiresRung: Some(requires_rung),
+                workCost: state.work_cost,
+                upkeepWorkPerTurn: state.upkeep_work_per_turn,
+                frictionMultiplier: state.friction_multiplier,
+                holdsLinkToTiles: state.holds_link_to_tiles,
+                grantsSight: state.grants_sight,
             },
         ));
     }

@@ -288,9 +288,10 @@ pub use routes::{
     advance_roads, path_friction_multiplier, path_reach_tiles, remoteness_multiplier,
     road_at_risk_rung, road_build_fraction, road_keeping_basis, road_keeping_range, road_measure,
     road_neglect_grace_remaining, road_rung_span, road_upkeep_demand, road_upkeep_measure,
-    road_upkeep_workers_needed, trace_path, traffic_ceiling, Road, RoadKeeper, RoadRegistry,
-    RouteTrafficLog, FIRST_BUILT_RUNG, FREE_FLOOR_TOP_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP,
-    NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID, ROADBUILDING_DISCOVERY_ID,
+    road_upkeep_workers_needed, route_rungs_in_climb_order, rung_grants_sight, trace_path,
+    traffic_ceiling, Road, RoadKeeper, RoadRegistry, RouteTrafficLog, FIRST_BUILT_RUNG,
+    FREE_FLOOR_TOP_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID,
+    ROADBUILDING_DISCOVERY_ID,
 };
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,

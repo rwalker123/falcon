@@ -266,6 +266,10 @@ var _server_build: String = "?"
 @onready var allocation_panel: VBoxContainer = %AllocationPanel
 @onready var herd_assign_controls: VBoxContainer = %HerdAssignControls
 @onready var forage_assign_controls: VBoxContainer = %ForageAssignControls
+## The LAND drawer's ROAD action, at the BOTTOM of the selection card with the other verbs (arc #532
+## slice 13). Its own container rather than a row inside `%ForageAssignControls`, which is gated on
+## the tile being a gathering site with a band in hand — a road crosses ground that is neither.
+@onready var road_ladder_controls: VBoxContainer = %RoadLadderControls
 @onready var left_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack
 @onready var right_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack
 @onready var right_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll
@@ -616,10 +620,16 @@ func _ready() -> void:
     # parents that sheet into, and the three HudLayer helpers that keep callers on this side.
     _drawercompose = DrawerComposeController.new(
         _compose, _band_labor, _selection, _topbar, _selectioncard, self,
-        herd_assign_controls, forage_assign_controls, tile_panel,
+        herd_assign_controls, forage_assign_controls, road_ladder_controls, tile_panel,
         _resolve_assign_band, _herd_label_for_id, _emit_assign_labor)
     _drawercompose.send_hunt_expedition_requested.connect(
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
+    # **THE ROAD LADDER'S DECLARATION GOES STRAIGHT OUT — no optimistic overlay write.**
+    # `_on_work_row_improvement_requested` records a pending LABOR ROW before it relays, which is
+    # right for a `⌃` on the work board; a road has no work row, so there is nothing to record and
+    # nothing a failed send would have to roll back. Same shape as the `extend_pen` relay below.
+    _drawercompose.road_improvement_requested.connect(
+        func(payload: Dictionary) -> void: improvement_requested.emit(payload))
     # **THE COMPOSE SHEET ASKS FOR THE WORK TAB; THE PANEL IS REACHED ONLY FROM HERE** (§4.7a ①).
     # `_bandpanel` is constructed BELOW this line, so the relay is a lambda rather than a direct
     # connection to its method — by the time a link can be clicked it is populated, which is the same
@@ -791,7 +801,7 @@ func _ready() -> void:
     _drawer = SubjectDrawerController.new(
         _selection, _band_labor, _selectioncard, _drawercompose, _bandpanel, _banddetail, self,
         tile_detail, occupant_detail, allocation_panel, herd_assign_controls, forage_assign_controls,
-        subject_body, subject_scroll, left_dock_scroll, _targeting)
+        road_ladder_controls, subject_body, subject_scroll, left_dock_scroll, _targeting)
     _load_ui_balance_config()
     _connect_zoom_rail()
     # AFTER `_connect_zoom_rail()`: that call applies the nav backing's stylebox, hence its padding,
@@ -921,6 +931,16 @@ func update_sedentarization(sedentarization_variant: Variant) -> void:
 func update_ladder_knowledge(roster_variant: Variant) -> void:
     _topbar.update_ladder_knowledge(roster_variant)
     _refresh_knowledge_readouts()
+
+## **THE ROUTE BRANCH'S RUNG CATALOG** (arc #532 slice 13) — what the road ladder HOLDS, per world.
+## A thin delegator for `update_ladder_knowledge`'s reason: `Main` reaches it BY NAME through
+## `_hud_invoke`, whose `has_method` probe fails silently.
+##
+## **IT PUSHES NO RE-RENDER.** The catalog is read at the moment the tile card's `Road ▸` action is
+## PRESSED, not at render, so a snapshot carrying it moves nothing on screen — and a world's catalog
+## lands long before any road exists to open a ladder on.
+func update_route_rungs(catalog_variant: Variant) -> void:
+    _topbar.update_route_rungs(catalog_variant)
 
 ## THE ROADS IN THE GROUND, into the shared labor model — the road twin of `update_forage_patches`,
 ## and it exists for one reader: a route knowledge is *in use* when one of the faction's own road
@@ -1915,6 +1935,8 @@ func _hide_selection_card() -> void:
 func _hide_drawer_blocks() -> void:
     if forage_assign_controls != null:
         forage_assign_controls.visible = false
+    if road_ladder_controls != null:
+        road_ladder_controls.visible = false
     if allocation_panel != null:
         allocation_panel.visible = false
     if herd_assign_controls != null:
