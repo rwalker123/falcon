@@ -2354,6 +2354,26 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     >   the phase where the bootstrap pays off — you walk a long haul by hand, the road forms under
     >   your feet, and then the road carries the goods for you.
     >
+    > > **⛔ THE AUTOMATIC LINK TEACHES FAR LESS THAN A TRADE ROUTE, AND 13b OWNS THE WEIGHT.** Ray:
+    > > *"the automatic links between bands should count for much less progress towards roads than
+    > > trade routes."* The pooling link is people wandering to the camp next door; a shipment is a
+    > > deliberate haul with cargo over a distance. **You do not learn road-building by living beside
+    > > someone.** So `roadbuilding`'s accrual is weighted **by the kind of traffic**, not merely by its
+    > > presence — one lever per traffic kind, in the same `route_traffic` block, priced against the
+    > > ladder's own ~20-turns-per-lesson yardstick.
+    > >
+    > > **THE CONSEQUENCE, STATED SO IT IS A CHOICE AND NOT A SURPRISE: it puts the upper ladder behind
+    > > deliberate logistics.** With the automatic link weighted far down, a faction that never sends a
+    > > trade expedition learns `roadbuilding` very slowly or effectively not at all — so `dirt_road`
+    > > and `paved_road` become a reward for *doing* logistics rather than for standing still. That
+    > > reads as the intent of the rule rather than a side effect of it, and it gives 13b real weight;
+    > > it is recorded here because it is a large gameplay outcome to have fall out of one weight.
+    > >
+    > > **OPEN, and 13b must not assume it: does the same weighting apply to the road's own BUILD
+    > > METER?** The rule above is about *knowledge*. Whether a laden caravan also **wears** a tile
+    > > faster than neighbours crossing it every turn is a separate question — the caravan is heavier
+    > > but rarer, the neighbours lighter but constant — and the two need not share a weight.
+    >
     > **13c — DRAW THE ROAD NETWORK ON THE MAP (#232).**
     > - The overlay, fed by the routes 13a/13b now hold. #232 is a **consumer** of this work, not a
     >   supplier to it — see correction ② above. `map_preview.gd`'s existing `"routes"` annotation
