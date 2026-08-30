@@ -338,6 +338,24 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # never emits an empty "River:" label. Same formatter the map hover tooltip uses.
     if tile_info.has("river_edges"):
         lines.append_array(RiverEdges.summary_lines(int(tile_info["river_edges"])))
+    # THE ROADS CROSSING THIS HEX (arc #532) — **the tile card is the road's readout**, and this is
+    # where it goes for the same reason the rivers do: a road is IN THE GROUND. It is a world object
+    # with a stamped path, owned by nobody, that outlives every band that walks it — so it is a
+    # property of the LAND, not of an occupant, and the land drawer is the one surface in the client
+    # whose subject is a piece of ground.
+    #
+    # **ABOVE THE DISCOVERED EARLY-RETURN, WITH THE RIVERS, AND THAT MATCHES THE SIM'S OWN FOG
+    # GATE.** A road is published to a faction that has explored at least ONE of its path tiles —
+    # `Discovered`, deliberately NOT the herd list's `Active` — because a road does not wander off,
+    # so remembering one is remembering something true. Appending below that return would have
+    # dropped the whole block from every remembered hex the sim went to the trouble of sending it
+    # for. An UNEXPLORED hex is already covered: this producer returns before here.
+    #
+    # ONE BLOCK PER ROAD — a hex may carry more than one, and each is its own investment with its own
+    # bill, so they are never summed into a hex total.
+    for road in Array(tile_info.get("roads", [])):
+        if road is Dictionary:
+            lines.append_array(HudRouteVocab.road_lines(road))
     # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
     #
     # A REMEMBERED TILE KEEPS BOTH WEBS' CAPACITIES AND LOSES BOTH THEIR STOCKS (issue #462). The rule

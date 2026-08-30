@@ -14,6 +14,24 @@ const WORKER_STEPPER_VALUE_WIDTH := 32.0
 
 const WORKER_STEPPER_SEPARATION := 6
 
+## ⛔ **THE POOL CARDS' OWN STEPPER METRIC, and it exists because FOUR pools have to share ONE row**
+## (arc #532). At the widths above a pool card's floor is ~112px, so four wanted 466px of a WORK zone
+## box that is 382 on the bottom dock and 356 on the left. The two ways to buy that width both cost a
+## ROW — and the zone has none: split 3 + 1 the block wanted 420px of a 358px box, i.e. a build queue
+## drawing nothing. So the width comes out of the CONTROL.
+##
+## **IT IS A SECOND METRIC, NOT A RETUNING OF THE FIRST.** The WORKFORCE zone's Scout and Warrior
+## cards sit TWO to a row and have width to spare; narrowing their steppers would shrink a control
+## for no reason. These four are the ones with the problem, so these four are the ones that pay.
+##
+## The horizontal trim is the load-bearing half: `HudStyle` pads a button 11px each side, which alone
+## floors it near 30px whatever `custom_minimum_size` says — the same reason the build queue's
+## reorder arrows opt into `HudWidgets.compact`'s `padding_h`.
+const POOL_STEPPER_BUTTON_WIDTH := 19.0
+const POOL_STEPPER_VALUE_WIDTH := 27.0
+const POOL_STEPPER_SEPARATION := 3
+const POOL_STEPPER_PADDING_H := 4
+
 # The two stepper FACES. One spelling, because two stepper families now draw them — the worker/party
 # steppers (`HudWidgets.add_stepper_controls`) and the shipment manifest's per-row cargo stepper,
 # which counts a FLOAT quantity of goods and so cannot share that builder's integer count. The minus
@@ -456,6 +474,17 @@ const AGRICULTURE_ROLE_HINT := "Keeps every tended patch and Field this band wor
 
 const HUSBANDRY_ROLE_HINT := "Keeps every tamed herd and pen this band works. Short of the sum, animals drift off."
 
+## **THE THIRD KEEPING ROLE** (arc #532) — the roads. Its card sits beside the two above because it
+## is the same kind of control: a band-wide count of hands set by `assign_labor`, measured against a
+## SUM rather than staffed on a tile.
+const ROLE_NAME_ROADWORK := "Roadwork"
+
+## **IT NAMES STANDING ON THE ROAD, because that is literally the catchment.** A band keeps the roads
+## under its own feet and nothing else — there is no radius, and a band that steps one tile off its
+## own road stops paying for it and stops being served by it. That is the one fact a player has to
+## know before staffing this pool, so it is what the hint says.
+const ROADWORK_ROLE_HINT := "Keeps the roads this band is standing on. Short of the bill, they wash out."
+
 ## **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level pool, and the
 ## card that replaced the per-source BUILDERS stepper the compose sheet used to carry.
 const ROLE_NAME_BUILDERS := "Builders"
@@ -523,11 +552,20 @@ const UPKEEP_POOL_COVERAGE_PLANT_FORMAT := "This pool supplies %s work a turn; t
 
 const UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT := "This pool supplies %s work a turn; this band's tamed animals and queued jobs need %s."
 
+## …and the ROUTE web's (arc #532). **It names no QUEUE, and that is not an omission**: a route rung
+## takes no builder and appends no build-queue entry — traffic wears a road in — so there is no
+## declare-time half of this sentence to state. What it names instead is the ground the band is
+## standing on, which is the whole of what this pool is billed for.
+const UPKEEP_POOL_COVERAGE_ROUTE_FORMAT := "This pool supplies %s work a turn; the roads this band stands on need %s."
+
 ## Which of the pair a card takes, off the role it staffs — one picker, for `under_kept_note`'s reason:
 ## a card that reached for the wrong web's sentence would be a wrong answer that looks like a right one.
 static func upkeep_pool_coverage_format(role_name: String) -> String:
-    return UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT if role_name == ROLE_NAME_HUSBANDRY \
-        else UPKEEP_POOL_COVERAGE_PLANT_FORMAT
+    if role_name == ROLE_NAME_HUSBANDRY:
+        return UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT
+    if role_name == ROLE_NAME_ROADWORK:
+        return UPKEEP_POOL_COVERAGE_ROUTE_FORMAT
+    return UPKEEP_POOL_COVERAGE_PLANT_FORMAT
 
 ## **THE POOL CARD'S ONE LINE, or `""` where the pool covers what it is asked for** — the ONE composer,
 ## so the card's mark and its hover cannot disagree about whether there is anything to say.
@@ -546,8 +584,18 @@ static func upkeep_pool_coverage_line(role_name: String, cover: Dictionary) -> S
     # Nothing to hold, or held with room to spare. The second test is the coverage one and uses the
     # same floor every work rate on this panel is stated at, so a pool short by less than the readout
     # can print is not marked for a difference nobody could see.
+    #
+    # ⛔ **WHERE THE SIM PUBLISHES THE SHORTFALL, THAT IS THE COVERAGE TEST — the client does not
+    # subtract.** The `roadwork` pool's bill, supply and shortfall are three cohort fields struck
+    # against one stamped basis (`demand − supplied == shortfall` holds verbatim on the wire), so
+    # re-deriving the gap here would be a second answer free to disagree with the one the sim
+    # decayed the road by. The two food webs publish no such band-level roll-up, so they keep the
+    # projection-vs-demand test above — which is why this is an OPTIONAL key rather than the rule.
+    var covered := asked - supply
+    if cover.has(POOL_COVERAGE_SHORTFALL_KEY):
+        covered = float(cover[POOL_COVERAGE_SHORTFALL_KEY])
     if asked < SourceForecast.UPKEEP_WORK_MIN \
-            or asked - supply < SourceForecast.UPKEEP_WORK_MIN:
+            or covered < SourceForecast.UPKEEP_WORK_MIN:
         return ""
     return upkeep_pool_coverage_format(role_name) % [
         DetailFormat.format_work_units(supply), DetailFormat.format_work_units(asked)]
@@ -557,6 +605,12 @@ static func upkeep_pool_coverage_line(role_name: String, cover: Dictionary) -> S
 ## the supply side would mark every card in the game and on the demand side would mark none.
 const POOL_COVERAGE_SUPPLY_KEY := "supply"
 const POOL_COVERAGE_ASKED_KEY := "asked"
+
+## …and the OPTIONAL third, for a pool whose shortfall the sim states outright (the `roadwork` pool's
+## `roadwork_shortfall`). **Present means "use this instead of subtracting"**, which is why the reader
+## tests `has()` rather than defaulting: a defaulted `0.0` would read as *this pool covers everything*
+## and clear the mark on every card in the game.
+const POOL_COVERAGE_SHORTFALL_KEY := "shortfall"
 
 ## …and the messages the command feed shows for the press. Keyed by the token so the two can never
 ## drift from what was actually sent; the fallback exists only for a mode the sim gains before this
@@ -573,6 +627,12 @@ const UPKEEP_MODE_COMMAND_MESSAGE_FALLBACK := "Keeping split set to %s."
 const ROLE_CARD_SEPARATION := 6
 
 const ROLE_CARD_NAME_FONT_SIZE := 12
+
+## …and the POOL cards' own, which is smaller (arc #532). A fourth pool card has to fit the same
+## fixed strip, so at the shared 12 the widest name — `Agriculture` — became the card's floor and
+## four of them ran 42px past the left dock's 356px box. See `POOL_STEPPER_*` for the other half of
+## the squeeze and for why the block could not gain a row instead.
+const POOL_CARD_NAME_FONT_SIZE := 10
 
 ## Two lines of hint at ALLOC_SECTION_FONT_SIZE, so the two cards stay the same height whatever the
 ## hint wraps to.

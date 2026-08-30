@@ -1155,7 +1155,8 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     # would stop adding up to the head count.
     var role_workers := int(scout_eff.get("workers", 0)) + int(warrior_eff.get("workers", 0)) \
         + int(_band_labor.effective_role_workers(band, HudConst.LABOR_KIND_AGRICULTURE).get("workers", 0)) \
-        + int(_band_labor.effective_role_workers(band, HudConst.LABOR_KIND_HUSBANDRY).get("workers", 0))
+        + int(_band_labor.effective_role_workers(band, HudConst.LABOR_KIND_HUSBANDRY).get("workers", 0)) \
+        + int(_band_labor.effective_role_workers(band, HudConst.LABOR_KIND_ROADWORK).get("workers", 0))
     # Workers out with a party are NOT a segment — the sim already took them out of `working_age` on
     # launch, so a slice for them overran the denominator the segments partition. They read as the
     # header's "away" clause instead (`WORKFORCE_AWAY_FORMAT`).
@@ -1233,9 +1234,14 @@ func _build_role_card_row() -> HBoxContainer:
 ## reads as an answer to a live question. Both figures are summed from the wire's per-source fields
 ## and neither is derived from the other (`upkeep_pool_state`).
 func _build_upkeep_mode_row(band: Dictionary, plant_pool: Dictionary,
-        animal_pool: Dictionary) -> VBoxContainer:
+        animal_pool: Dictionary, road_pool: Dictionary) -> VBoxContainer:
+    # **THE ROAD BILL COUNTS TOWARDS "IS THERE ANYTHING TO FUND"** (arc #532): route keeping runs
+    # through the same `distribute_upkeep_pool` under the band's own `upkeep_fund_mode` that the two
+    # food webs do, so a band whose ONLY standing cost is a road it stands on must still be offered
+    # the split. Leaving it out hid the control on exactly the band the road branch creates.
     var demand := float(plant_pool.get("demand", SourceForecast.NO_UPKEEP_DEMAND)) \
-        + float(animal_pool.get("demand", SourceForecast.NO_UPKEEP_DEMAND))
+        + float(animal_pool.get("demand", SourceForecast.NO_UPKEEP_DEMAND)) \
+        + float(road_pool.get("demand", SourceForecast.NO_UPKEEP_DEMAND))
     if demand < SourceForecast.UPKEEP_WORK_MIN:
         return null
     var block := HudWidgets.make_zone_block()
@@ -2131,10 +2137,11 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     var idle := _band_labor.effective_idle(band)
     var agriculture_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_AGRICULTURE)
     var husbandry_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_HUSBANDRY)
+    var roadwork_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_ROADWORK)
     var builders_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS)
     var block := HudWidgets.make_zone_block()
     var on_work := int(agriculture_eff.get("workers", 0)) + int(husbandry_eff.get("workers", 0)) \
-        + int(builders_eff.get("workers", 0))
+        + int(roadwork_eff.get("workers", 0)) + int(builders_eff.get("workers", 0))
     block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_POOLS,
         HudWorkVocab.POOLS_ZONE_READOUT_FORMAT % [on_work, int(band.get("working_age", 0))]))
     # **ONE ROW OF THREE, through the role cards' own row chrome.** They are one family — the hands the
@@ -2154,6 +2161,31 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
         HudConst.LABOR_KIND_AGRICULTURE, int(agriculture_eff.get("workers", 0)), plant_pool, queued)
     var animal_cover := _pool_coverage(band, SourceForecast.LABOR_KIND_HUNT,
         HudConst.LABOR_KIND_HUSBANDRY, int(husbandry_eff.get("workers", 0)), animal_pool, queued)
+    # **AND THE ROAD POOL'S, WHICH TAKES A DIFFERENT ROUTE TO THE SAME DICT** — `_pool_coverage`
+    # above prices a web off its SOURCE rows plus the band's build queue, and neither term exists
+    # here: a route rung takes no builder and appends no queue entry, and the road rows are
+    # fog-filtered so summing them would understate a bill the band still owes. All three figures are
+    # published on the cohort instead, and the SHORTFALL rides out beside them so the card's mark is
+    # the sim's own verdict rather than a subtraction taken here.
+    var road_pool := _band_labor.roadwork_pool_state(band)
+    var road_cover := {
+        HudWorkVocab.POOL_COVERAGE_SUPPLY_KEY: float(road_pool.get("supplied",
+            SourceForecast.NO_UPKEEP_DEMAND)),
+        HudWorkVocab.POOL_COVERAGE_ASKED_KEY: float(road_pool.get("demand",
+            SourceForecast.NO_UPKEEP_DEMAND)),
+        HudWorkVocab.POOL_COVERAGE_SHORTFALL_KEY: float(road_pool.get("shortfall",
+            SourceForecast.NO_UPKEEP_DEMAND)),
+    }
+    # ⛔ **ONE ROW OF FOUR, AND THE STEPPERS ARE NARROWED TO PAY FOR IT** (arc #532). At the shared
+    # stepper width a pool card's floor is 112px, so four of them wanted 466px of a box that is 382
+    # on the bottom dock and 356 on the left — `band_panel_preview`'s overflow probe named every
+    # control that ran off the right edge. The two alternatives both cost a ROW, and the WORK zone
+    # has no row to give: split into 3 + 1 it wanted 420px of a 358px box, which is the build queue
+    # drawing nothing. So the width came out of the CONTROL instead — see
+    # `HudWorkVocab.POOL_STEPPER_*`, which is the pool cards' own stepper metric and nobody else's.
+    #
+    # **THE FOUR STAY ONE ROW BECAUSE THEY ARE ONE DECISION**: how this band spends the hands it is
+    # not sending out. A row that wrapped would put that decision in two places at two widths.
     var cards := _build_role_card_row()
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_AGRICULTURE,
         HudWorkVocab.AGRICULTURE_ROLE_HINT, HudConst.LABOR_KIND_AGRICULTURE, agriculture_eff, idle,
@@ -2161,6 +2193,12 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_HUSBANDRY,
         HudWorkVocab.HUSBANDRY_ROLE_HINT, HudConst.LABOR_KIND_HUSBANDRY, husbandry_eff, idle,
         animal_cover))
+    # **THE THIRD KEEPING CARD, and it wears the mark for the same reason the two beside it do.** A
+    # road nobody keeps washes out, which is a real investment lost — the same news `slipping` and
+    # `drifting` carry one branch over.
+    cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_ROADWORK,
+        HudWorkVocab.ROADWORK_ROLE_HINT, HudConst.LABOR_KIND_ROADWORK, roadwork_eff, idle,
+        road_cover))
     # **THE BUILDERS CARD WEARS NO MARK, and it is not an omission.** It funds a QUEUE, one entry at a
     # time, and an entry that is not being built is not being LOST — the queue block one down states
     # its own blocked head. There is no keeping shortfall for this pool to be short of.
@@ -2170,7 +2208,7 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     # The fund mode renders only where either web demands work this turn — see `_build_upkeep_mode_row`.
     # Its presence is what the reserved height forks on, so the answer is recorded on the block rather
     # than re-derived by the capacity maths.
-    var fund_mode := _build_upkeep_mode_row(band, plant_pool, animal_pool)
+    var fund_mode := _build_upkeep_mode_row(band, plant_pool, animal_pool, road_pool)
     if fund_mode != null:
         block.add_child(fund_mode)
     block.set_meta(HudWorkVocab.POOLS_BLOCK_META, fund_mode != null)
@@ -2309,7 +2347,7 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     card.add_child(col)
     var title := Label.new()
     title.text = role_name
-    title.add_theme_font_size_override("font_size", HudWorkVocab.ROLE_CARD_NAME_FONT_SIZE)
+    title.add_theme_font_size_override("font_size", HudWorkVocab.POOL_CARD_NAME_FONT_SIZE)
     # A PENDING edit and a SHORT pool are different news and the pending one is the newer: it says the
     # number under this title is not the sim's yet. WARN carries both, so the ink forks only against
     # the calm card.
@@ -2327,7 +2365,7 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
         name_row.add_child(title)
         var mark := Label.new()
         mark.text = HudWorkVocab.UPKEEP_POOL_SHORT_MARK
-        mark.add_theme_font_size_override("font_size", HudWorkVocab.ROLE_CARD_NAME_FONT_SIZE)
+        mark.add_theme_font_size_override("font_size", HudWorkVocab.POOL_CARD_NAME_FONT_SIZE)
         mark.add_theme_color_override("font_color", HudStyle.WARN)
         name_row.add_child(mark)
         col.add_child(name_row)
@@ -2335,13 +2373,20 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
         else KitRoster.NO_KIT_ID
     var stepper := HBoxContainer.new()
     stepper.alignment = BoxContainer.ALIGNMENT_CENTER
-    stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    # **THE POOLS ROW'S OWN STEPPER SEPARATION**, not the shared one — see
+    # `HudWorkVocab.POOL_STEPPER_*` for why the four cards buy their row out of the control's width.
+    stepper.add_theme_constant_override("separation", HudWorkVocab.POOL_STEPPER_SEPARATION)
     # `compact_chrome`, the work zone's own row treatment: the default button padding alone makes a
-    # stepper ~40px tall, which is most of what this block can afford for a whole card.
+    # stepper ~40px tall, which is most of what this block can afford for a whole card. The `metric`
+    # beside it is the WIDTH half of the same squeeze.
     HudWidgets.add_stepper_controls(stepper, workers, idle > 0,
         func(n: int) -> void: _emit_assign_labor(
             band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
-            "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id), true)
+            "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id), true, {
+        HudWidgets.STEPPER_METRIC_BUTTON_WIDTH: HudWorkVocab.POOL_STEPPER_BUTTON_WIDTH,
+        HudWidgets.STEPPER_METRIC_VALUE_WIDTH: HudWorkVocab.POOL_STEPPER_VALUE_WIDTH,
+        HudWidgets.STEPPER_METRIC_PADDING_H: HudWorkVocab.POOL_STEPPER_PADDING_H,
+    })
     col.add_child(stepper)
     return card
 

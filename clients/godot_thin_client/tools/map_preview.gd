@@ -451,6 +451,28 @@ const ROUTE_UNKNOWN_PATH := [[1, 5], [3, 6], [2, 8]]   # left of the other two, 
 # the reference frame if the frame exercises it.
 const ROUTE_DEGENERATE_PATH := [[5, 11]]
 
+# State "road network". ⛔ **NOT the `routes` state above, and the two must never be merged.** That one
+# draws ORDER PATHS — waypoints a player's own movement orders follow, coloured by FACTION. These are
+# the roads in the GROUND (arc #532): world objects with fixed stamped paths that outlive the bands
+# that walk them, coloured by RUNG. The obvious name was taken by the other thing first.
+#
+# One road per rung, laid parallel so the four palette steps and the four widths read against each
+# other in one frame — a faint game trail through to a strong paved road — plus a fifth in SHORTFALL,
+# which must read in the DANGER ink whatever rung it holds.
+const ROAD_GAME_TRAIL_PATH := [[1, 1], [3, 1], [5, 2], [7, 2], [9, 3]]
+const ROAD_TRAIL_PATH := [[1, 3], [3, 3], [5, 4], [7, 4], [9, 5]]
+const ROAD_DIRT_PATH := [[1, 5], [3, 5], [5, 6], [7, 6], [9, 7]]
+const ROAD_PAVED_PATH := [[1, 7], [3, 7], [5, 8], [7, 8], [9, 9]]
+const ROAD_AT_RISK_PATH := [[1, 9], [3, 9], [5, 10], [7, 10], [9, 11]]
+# A one-tile road — a real ledger entry (a road forms tile by tile) that the DRAW must bail on, the
+# `ROUTE_DEGENERATE_PATH` rule one family up: a guard only guards the frame if the frame reaches it.
+const ROAD_DEGENERATE_PATH := [[11, 11]]
+# The bill a road in shortfall carries. Any figure at or above `SourceForecast.UPKEEP_WORK_MIN` puts
+# it in the danger ink; these are the middle rung's own numbers so the frame states a real road.
+const ROAD_DEMAND := 3.4
+const ROAD_SHORTFALL := 1.7
+const ROAD_KEPT := 0.0
+
 # State "max zoom". How far the achieved hex radius may sit from `base_hex_radius × MAX_ZOOM_FACTOR`
 # before the state is no longer judging the cap. Both sides are floats computed through the clamp in
 # `_update_layout_metrics`, so an exact compare would be a coin flip on the last bit; a fraction of a
@@ -1513,6 +1535,17 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_routes")
+
+	# State "road network" — THE ROADS IN THE GROUND (arc #532), which is a different thing from the
+	# order paths one state up and is drawn by a different pass. Five roads laid parallel: one at each
+	# of the four rungs, faintest at the top and strongest at the bottom, and a fifth in SHORTFALL
+	# reading in the danger ink whatever rung it stands on. A sixth is one tile long and must not draw
+	# at all. Fog OFF, so the segment-level fog gate is not what is under test here.
+	_map.display_snapshot(_snapshot_road_network())
+	_map.selected_unit_id = -1
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_road_network")
 
 	# State "max zoom" — the ZOOM CAP raised from 4× to 7× in issue #375. Every other state renders at
 	# the cover fit (MIN_ZOOM_FACTOR), so nothing here had ever judged the OTHER end of the rail, and
@@ -4466,6 +4499,45 @@ func _snapshot_overlay_channels() -> Dictionary:
 ## MapView.faction_colors) and a path of [col, row] waypoints.
 func _route_order(faction: Variant, path: Array) -> Dictionary:
 	return {"faction": faction, "path": path}
+
+## One ROAD row, shaped exactly like the native decoder's `routes` entry — the wire's two packed path
+## halves, zipped by `MapView._ingest_road_network`, never an array of pairs.
+func _road(id: int, rung: String, path: Array, shortfall: float) -> Dictionary:
+	var xs := PackedInt32Array()
+	var ys := PackedInt32Array()
+	for point in path:
+		xs.append(int(point[0]))
+		ys.append(int(point[1]))
+	return {
+		"id": id,
+		"path_x": xs,
+		"path_y": ys,
+		"rung": rung,
+		"build_fraction": 1.0,
+		"upkeep_demand": ROAD_DEMAND,
+		"upkeep_supplied": ROAD_DEMAND - shortfall,
+		"upkeep_shortfall": shortfall,
+		"upkeep_workers_needed": 4,
+		"has_neglect_grace": true,
+		"neglect_grace_remaining": 2,
+		"grants_sight": shortfall <= ROAD_KEPT,
+		"friction_multiplier": 1.0,
+		"holds_link_to_tiles": 0,
+	}
+
+## The road-network backdrop: one road at each of the four rungs, one in shortfall, and a one-tile
+## road the draw must bail on.
+func _snapshot_road_network() -> Dictionary:
+	var snap := _base_snapshot(_band([], 2, 0), [])
+	snap["routes"] = [
+		_road(1, HudRouteVocab.RUNG_KEY_GAME_TRAIL, ROAD_GAME_TRAIL_PATH, ROAD_KEPT),
+		_road(2, HudRouteVocab.RUNG_KEY_TRAIL, ROAD_TRAIL_PATH, ROAD_KEPT),
+		_road(3, HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_DIRT_PATH, ROAD_KEPT),
+		_road(4, HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_PAVED_PATH, ROAD_KEPT),
+		_road(5, HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_AT_RISK_PATH, ROAD_SHORTFALL),
+		_road(6, HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_DEGENERATE_PATH, ROAD_KEPT),
+	]
+	return snap
 
 ## The routes backdrop: flat terrain, the resident band for scale, and four orders — three multi-hop
 ## routes covering the int/string/unknown faction-color lookups, and one one-waypoint order the draw

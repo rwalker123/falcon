@@ -1257,6 +1257,26 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     }
     let _ = dict.insert("equipment_batches", &equipment_batches);
 
+    // **THE BAND'S ROAD-KEEPING BILL** (arc #532) — the `roadwork` twins of `fodder_need` and the
+    // material bill above, summed by the sim over the roads under this band's OWN tile (a band is
+    // served by a road while standing on one of its tiles, and there is no radius).
+    //
+    // **THE SIM SUMS IT AND THE CLIENT MUST NOT.** `routes` rows are fog-filtered, so a road out of
+    // sight would silently drop out of a client-side total the band still owes for — the identical
+    // rule `fodder_need` carries, load-bearing for the identical reason.
+    //
+    //   `roadwork_demand`    = the summed stamped bill of those roads. Summed BEFORE the head-count
+    //                          gate, so a band with nobody on `roadwork` publishes the bill it is
+    //                          FAILING to pay rather than a reassuring zero. It is the alarm.
+    //   `roadwork_supplied`  = what THIS band's keepers paid into those roads this turn — its own
+    //                          contribution, not the roads' totals: several bands may stand on one
+    //                          road and each pays a part.
+    //   `roadwork_shortfall` = demand - supplied, and that identity holds verbatim here as it does
+    //                          on the `RouteState` row, so nothing downstream re-derives it.
+    let _ = dict.insert("roadwork_demand", cohort.roadworkDemand() as f64);
+    let _ = dict.insert("roadwork_supplied", cohort.roadworkSupplied() as f64);
+    let _ = dict.insert("roadwork_shortfall", cohort.roadworkShortfall() as f64);
+
     dict
 }
 

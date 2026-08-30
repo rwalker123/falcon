@@ -3797,7 +3797,8 @@ func _assert_pools_block(where: String, want_fund_mode: bool) -> void:
 		# nothing to keep is short of nothing, so all three cards must be bare — and without this the
 		# marked pair two states along passes on a builder that marks every keeping card there is.
 		_assert_pool_card_marks(where, [], [HudWorkVocab.ROLE_NAME_AGRICULTURE,
-			HudWorkVocab.ROLE_NAME_HUSBANDRY, HudWorkVocab.ROLE_NAME_BUILDERS])
+			HudWorkVocab.ROLE_NAME_HUSBANDRY, HudWorkVocab.ROLE_NAME_ROADWORK,
+			HudWorkVocab.ROLE_NAME_BUILDERS])
 
 ## GUARD: **the fund-mode row is the TWO BUTTONS and nothing else, and it draws inside the height
 ## reserved for it** (§4.7). It carried an arithmetic line beside them until the per-web marks landed;
@@ -4403,8 +4404,11 @@ const UPKEEP_MODE_BUTTON_COUNT := 2
 ## claim composed from live code could only describe whatever the code still tags.
 const RETIRED_UPKEEP_MODE_NOTE_META := "upkeep_mode_note"
 
-## How many cards the POOLS block carries — Agriculture, Husbandry, Builders.
-const POOL_CARD_COUNT := 3
+## How many cards the POOLS block carries — Agriculture, Husbandry, Roadwork, Builders. **Roadwork is
+## the fourth** (arc #532), and it is what forced the block's own stepper and title metrics
+## (`HudWorkVocab.POOL_STEPPER_*` / `POOL_CARD_NAME_FONT_SIZE`): four cards had to fit a strip that is
+## 356px on the left dock, and at the shared widths they wanted 466.
+const POOL_CARD_COUNT := 4
 
 ## GUARD: **which POOL CARDS fly the shortfall mark, asserted as a PAIR of lists.** A mark on every
 ## card and a mark on none are the same picture at a glance, so the claim is which cards carry it AND
@@ -4468,10 +4472,16 @@ func _other_keeping_role(role: String) -> String:
 ## ⛔ **THERE IS NO CONTENT-DIFFERS PRECONDITION HERE, AND THAT IS MEASURED RATHER THAN SKIPPED.** The
 ## role cards' own levelness claim is preconditioned on the two cards' CONTENT heights differing — the
 ## Scout's hint wraps to three lines against the Warrior's two — and a pool card has no prose, no
-## picker and no gear line, so its content is a title Label over a stepper. Measured, all three come
-## out **114 × 56**: the stepper's own 100px minimum dominates every role name, so the three cards are
+## picker and no gear line, so its content is a title Label over a stepper. Measured, all FOUR come
+## out **83 × 56**: the stepper's own minimum dominates every role name, so the cards are
 ## structurally identical in BOTH axes and no fixture can make them differ. A precondition either way
 ## round could only ever be vacuous, which is exactly what this file's own rule says not to ship.
+##
+## ⛔ **THE STEPPER-DOMINATES CLAIM IS THE GUARD ON THE WHOLE ROW, not a curiosity** (arc #532). Four
+## cards fit a 356px strip only while each is ~83px, and each is ~83px only while the stepper — a
+## fixed metric — is the floor rather than a role NAME, which is content. The moment a name becomes
+## the floor, one longer role name silently pushes the row past the zone's edge. This is where that
+## fails.
 ##
 ## **What is asserted instead is the pairing that CAN bite**: the minimums really are the stepper's
 ## (so a card that grew content would fail here first), all three render at one width and one height,
@@ -4480,7 +4490,8 @@ func _other_keeping_role(role: String) -> String:
 func _assert_pool_cards_are_level(where: String) -> void:
 	var cards := _pool_cards()
 	if cards.size() != POOL_CARD_COUNT:
-		_fail("%s — all three pool cards must render to compare their heights" % where)
+		_fail("%s — all %d pool cards must render to compare their heights" % [where,
+			POOL_CARD_COUNT])
 		return
 	var widths: Array[float] = []
 	var drawn_widths: Array[float] = []
@@ -7568,11 +7579,16 @@ func _find_pool_card(role_name: String) -> PanelContainer:
 	var block := _find_meta_control(_panel, HudWorkVocab.POOLS_BLOCK_META)
 	return null if block == null else _role_card_under(block, role_name)
 
-## All three pool cards, in the order the row builds them, `[]` when the block is absent.
+## Every pool card, in the order the row builds them, `[]` when the block is absent.
+##
+## **THE ROSTER IS A LITERAL LIST AND SO IS THE BUILDER'S**, which is why `POOL_CARD_COUNT` is
+## asserted against it: a pool added to the block and not to this list is a card this file silently
+## stops measuring, and the width guard below is the one thing standing between a fourth pool and a
+## row that runs off the edge of the zone.
 func _pool_cards() -> Array[PanelContainer]:
 	var cards: Array[PanelContainer] = []
 	for role_name in [HudWorkVocab.ROLE_NAME_AGRICULTURE, HudWorkVocab.ROLE_NAME_HUSBANDRY,
-			HudWorkVocab.ROLE_NAME_BUILDERS]:
+			HudWorkVocab.ROLE_NAME_ROADWORK, HudWorkVocab.ROLE_NAME_BUILDERS]:
 		var card := _find_pool_card(String(role_name))
 		if card != null:
 			cards.append(card)

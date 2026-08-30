@@ -1001,7 +1001,7 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
                 "message": "Assign %d hunter%s to %s, leaving %s standing." % [
                     workers, "" if workers == 1 else "s", herd_id, _floor_percent_text(payload)],
             }
-        "scout", "warrior", "agriculture", "husbandry", "builders":
+        "scout", "warrior", "agriculture", "husbandry", "roadwork", "builders":
             # **A BAND-WIDE ROLE CARRIES THE KIT TOKEN TOO, and it is the only optional token these
             # rows take.** They have no tile, no herd, no floor and no species — the sim ignores
             # every one of those on a role target — but `kit_job()` answers for all four
@@ -1009,11 +1009,13 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             # dropped on the floor. Same `_kit_token` omission rule as the other two branches, so a
             # player who never opened the role card's picker emits the line they always did.
             #
-            # **THE TWO KEEPING ROLES RIDE THE SAME BRANCH** (`docs/plan_standing_upkeep.md` §2.5).
-            # `agriculture` and `husbandry` are band-wide standing roles in exactly the grammar
-            # scout and warrior use, so a branch of their own would be the same line typed twice.
-            # They send no kit today — the role cards mount no picker, the wire naming no default
-            # kit for either job — and `_kit_token` omits an empty selection.
+            # **THE THREE KEEPING ROLES RIDE THE SAME BRANCH** (`docs/plan_standing_upkeep.md` §2.5,
+            # arc #532). `agriculture`, `husbandry` and `roadwork` are band-wide standing roles in
+            # exactly the grammar scout and warrior use, so a branch of their own would be the same
+            # line typed three times. They send no kit today — the role cards mount no picker, the
+            # wire naming no default kit for any of the three jobs (`default_kits.roadwork` is the
+            # bare `none` kit, so road keepers work bare-handed and that is intended) — and
+            # `_kit_token` omits an empty selection.
             #
             # **AND SO DOES `builders`, which the sim has always parsed and this builder DID NOT
             # NAME** — a role omitted from this match answers `{}`, so the Builders card's stepper

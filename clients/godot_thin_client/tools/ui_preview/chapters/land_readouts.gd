@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 48
+const EXPECTED_CHECKPOINTS := 68
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -643,6 +643,209 @@ func _river_tile_fixture(river_mask: int) -> Dictionary:
 		"river_edges": river_mask,
 	}
 
+
+# ---- ROADS ON THE TILE CARD (arc #532) --------------------------------------------------------
+#
+# A road is IN THE GROUND, so the land drawer is its readout. These fixtures are shaped exactly like
+# the native decoder's `routes` rows (`native/src/dict/routes.rs`), one road under the hex.
+
+## The friction multipliers and link spans the four route rungs actually ship in
+## `intensification_ladder.json`, transcribed so the frames state the real ladder rather than round
+## numbers. Reading them back is what makes the `Buys:` assertions a test of the CONVERSION rather
+## than of arithmetic on invented inputs.
+const ROAD_FRICTION_GAME_TRAIL := 1.0
+const ROAD_FRICTION_TRAIL := 0.85
+const ROAD_FRICTION_DIRT := 0.6
+const ROAD_FRICTION_PAVED := 0.35
+const ROAD_LINK_GAME_TRAIL := 0
+const ROAD_LINK_TRAIL := 6
+const ROAD_LINK_DIRT := 10
+const ROAD_LINK_PAVED := 16
+## …and the loss each takes off, as the row states it. Written out rather than computed here: an
+## assertion that recomputed the conversion would pass against a producer that had stopped doing it.
+const ROAD_SAVING_TRAIL_PERCENT := 15
+const ROAD_SAVING_DIRT_PERCENT := 40
+const ROAD_SAVING_PAVED_PERCENT := 65
+
+## The three built rungs' own `grace_turns` (2 / 5 / 12) — the DIRECTION is the animal branch's: the
+## highest rung is the most forgiving, because the roadbed does the holding. A road whose bill is met
+## reads its rung's full grace + 1, which is why these are the numbers a kept road carries.
+const ROAD_GRACE_TRAIL := 3
+const ROAD_GRACE_DIRT := 6
+const ROAD_GRACE_PAVED := 13
+## …and what a road actually losing its rung reads: turns of shortfall LEFT, not turns served.
+const ROAD_GRACE_LEFT := 2
+## The countdown's biting value. `0` is "it is reverting NOW" and gets its own word, which is the one
+## claim that separates a countdown from a counter.
+const ROAD_GRACE_NONE := 0
+
+## Standing bills that climb with the rung — the branch's whole shape in three numbers.
+const ROAD_DEMAND_TRAIL := 1.6
+const ROAD_DEMAND_DIRT := 3.4
+const ROAD_DEMAND_PAVED := 6.0
+## …and a bill half unpaid, so the shortfall and the demand are visibly different numbers on the row.
+const ROAD_SHORTFALL_DIRT := 1.7
+
+## `build_fraction` at a rung being worn in, and at one with nothing rising above it. The complete
+## reading is the wire's exact `1.0`, never derived by subtraction.
+const ROAD_METER_RISING := 0.3
+const ROAD_METER_COMPLETE := 1.0
+## …the same meter as the percent the row prints, so the assertion reads the producer's own floor.
+const ROAD_METER_RISING_PERCENT := 30
+
+## The number of `roadwork` keepers the middle rung's bill wants. The SIM's answer on the wire; a
+## client that recomputed it would need the per-worker rate, which it does not hold.
+const ROAD_WANTS_DIRT := 4
+
+## A road at one rung. `meter` is the wire's `build_fraction` — the meter on the rung being RAISED,
+## which is a DIFFERENT rung, and `1.0` means nothing is rising.
+func _road_fixture(rung: String, meter: float, demand: float, shortfall: float,
+		workers_needed: int, grace: int, lit: bool, friction: float, link: int) -> Dictionary:
+	return {
+		"id": 41,
+		"path_x": PackedInt32Array([9, 10, 11]),
+		"path_y": PackedInt32Array([36, 36, 37]),
+		"rung": rung,
+		"build_fraction": meter,
+		"upkeep_demand": demand,
+		# **THE SUPPLIED SIDE IS STATED, NEVER LEFT TO BE DERIVED** — the wire holds
+		# `demand − supplied == shortfall` verbatim, so a fixture that broke that identity would be
+		# testing the client against a frame the sim cannot produce.
+		"upkeep_supplied": demand - shortfall,
+		"upkeep_shortfall": shortfall,
+		"upkeep_workers_needed": workers_needed,
+		# `has_neglect_grace == false` is "there is nothing at risk here", which is the game trail:
+		# it declares no upkeep, so it has no meter to lose.
+		"has_neglect_grace": demand > 0.0,
+		"neglect_grace_remaining": grace,
+		"grants_sight": lit,
+		"friction_multiplier": friction,
+		"holds_link_to_tiles": link,
+	}
+
+## The hex the road crosses — the river fixture's ground with a road on it, so the two frames differ
+## in exactly the thing under test.
+func _road_tile_fixture(road: Dictionary) -> Dictionary:
+	var tile := _river_tile_fixture(RIVER_MASK_NONE)
+	tile["roads"] = [road]
+	return tile
+
+## The road block's own lines, off the REAL producer, so every claim below is about the shipped
+## readout rather than about a re-derivation here.
+func _road_lines(road: Dictionary) -> Array[String]:
+	return h._hud._drawer._tile_terrain_lines(_road_tile_fixture(road))
+
+## ---- WHAT THE ROAD ROWS SAY -------------------------------------------------------------------
+##
+## ⛔ **THE `Buys:` ROW IS THE POINT OF THE WHOLE READOUT, so it is what these assertions are mostly
+## about.** The route ladder is deliberately not a straight upgrade path — a road is cheaper to
+## travel and dearer to keep — so without a visible statement of what a rung buys, every road reads
+## as pure cost and the decision the branch exists to create is invisible. A frame can show that the
+## row is THERE; only this can show that it says the right thing.
+func _assert_road_rows_say_what_the_rung_buys() -> void:
+	# THE FLOOR. Free to hold, and it buys nothing — both terms of its payoff are at their own
+	# neutral, and "this rung is worth nothing" is precisely what the branch's floor means.
+	var trail_lines := _road_lines(_road_fixture(
+		HudRouteVocab.RUNG_KEY_GAME_TRAIL, ROAD_METER_RISING, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		ROAD_FRICTION_GAME_TRAIL, ROAD_LINK_GAME_TRAIL))
+	h._assert_hud("a game trail is FREE to hold, and says so rather than billing 0 work",
+		Readout.detail_row_value(trail_lines, HudRouteVocab.ROAD_KEEPING_ROW)
+			== HudRouteVocab.ROAD_KEEPING_FREE)
+	h._assert_hud("…and it states outright that it buys NOTHING",
+		Readout.detail_row_value(trail_lines, HudRouteVocab.ROAD_BUYS_ROW)
+			== HudRouteVocab.ROAD_BUYS_NOTHING)
+	# **NOTHING AT RISK MEANS NO COUNTDOWN ROW.** The floor declares no upkeep, so it has no meter to
+	# lose; a `Reverting:` row here would be the "biting now" zero read as a state.
+	h._assert_hud("…and no countdown, because a rung with no upkeep has nothing to lose",
+		Readout.detail_row_index(trail_lines, HudRouteVocab.ROAD_REVERTING_ROW) < 0)
+
+	# THE MIDDLE RUNGS. The meter belongs to the rung being RAISED, not the one held.
+	var wearing_lines := _road_lines(_road_fixture(
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_RISING, ROAD_DEMAND_TRAIL, 0.0, 2,
+		ROAD_GRACE_TRAIL, true, ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL))
+	h._assert_hud("a road HOLDS its rung whole — the meter beside it names the rung ABOVE",
+		Readout.detail_row_value(wearing_lines, HudRouteVocab.ROAD_ROW)
+			== HudRouteVocab.ROAD_RUNG_FORMAT % [HudRouteVocab.ROAD_GLYPH,
+				HudRouteVocab.RUNG_LABELS[HudRouteVocab.RUNG_KEY_TRAIL]]
+		and Readout.detail_row_value(wearing_lines, HudRouteVocab.ROAD_WEARING_ROW)
+			== HudRouteVocab.ROAD_WEARING_FORMAT % [
+				HudRouteVocab.RUNG_LABELS[HudRouteVocab.RUNG_KEY_DIRT_ROAD],
+				ROAD_METER_RISING_PERCENT])
+	h._assert_hud("…and its payoff names the loss it saves, the sight it grants and the span it will hold",
+		Readout.detail_row_value(wearing_lines, HudRouteVocab.ROAD_BUYS_ROW)
+			== HudRouteVocab.ROAD_BUYS_SEPARATOR.join([
+				HudRouteVocab.ROAD_BUYS_FRICTION_FORMAT % ROAD_SAVING_TRAIL_PERCENT,
+				HudRouteVocab.ROAD_BUYS_SIGHT,
+				HudRouteVocab.ROAD_BUYS_LINK_FORMAT % ROAD_LINK_TRAIL]))
+
+	# A COMPLETE RUNG WITH NOTHING RISING ABOVE IT PRINTS NO METER ROW — the wire states exactly
+	# `1.0` there (for a rung just finished AND for the top of the ladder), so the test is a plain
+	# comparison and never a tolerance.
+	var dirt_lines := _road_lines(_road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT, 0.0,
+		ROAD_WANTS_DIRT, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT))
+	h._assert_hud("a complete rung with nothing rising above it states no meter row at all",
+		Readout.detail_row_index(dirt_lines, HudRouteVocab.ROAD_WEARING_ROW) < 0)
+	h._assert_hud("…its bill names the work AND the keepers that bill wants (%d)" % ROAD_WANTS_DIRT,
+		Readout.detail_row_value(dirt_lines, HudRouteVocab.ROAD_KEEPING_ROW)
+			== HudRouteVocab.ROAD_KEEPING_FORMAT % [
+				DetailFormat.format_work_units(ROAD_DEMAND_DIRT), ROAD_WANTS_DIRT])
+	h._assert_hud("…and it saves %d%% of what is lost between bands" % ROAD_SAVING_DIRT_PERCENT,
+		Readout.detail_row_value(dirt_lines, HudRouteVocab.ROAD_BUYS_ROW).begins_with(
+			HudRouteVocab.ROAD_BUYS_FRICTION_FORMAT % ROAD_SAVING_DIRT_PERCENT))
+
+	# THE TOP OF THE LADDER — dearest to keep, richest payoff. The pair is the branch's argument.
+	var paved_lines := _road_lines(_road_fixture(
+		HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_PAVED, 0.0, 7,
+		ROAD_GRACE_PAVED, true, ROAD_FRICTION_PAVED, ROAD_LINK_PAVED))
+	h._assert_hud("the top rung is DEARER to keep than the one below it, and says so",
+		Readout.detail_row_value(paved_lines, HudRouteVocab.ROAD_KEEPING_ROW).begins_with(
+			DetailFormat.format_work_units(ROAD_DEMAND_PAVED)))
+	h._assert_hud("…and RICHER: %d%% saved and a %d-tile span, both above the dirt road's"
+			% [ROAD_SAVING_PAVED_PERCENT, ROAD_LINK_PAVED],
+		Readout.detail_row_value(paved_lines, HudRouteVocab.ROAD_BUYS_ROW)
+			== HudRouteVocab.ROAD_BUYS_SEPARATOR.join([
+				HudRouteVocab.ROAD_BUYS_FRICTION_FORMAT % ROAD_SAVING_PAVED_PERCENT,
+				HudRouteVocab.ROAD_BUYS_SIGHT,
+				HudRouteVocab.ROAD_BUYS_LINK_FORMAT % ROAD_LINK_PAVED]))
+
+	# THE ROAD IN SHORTFALL. Four claims, and each is a different field of the row.
+	var risk_lines := _road_lines(_road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT,
+		ROAD_SHORTFALL_DIRT, ROAD_WANTS_DIRT, ROAD_GRACE_LEFT, false, ROAD_FRICTION_DIRT,
+		ROAD_LINK_DIRT))
+	h._assert_hud("a road in shortfall wears the hazard mark and the ROUTE web's own word",
+		Readout.detail_row_value(risk_lines, HudRouteVocab.ROAD_ROW).ends_with(
+			"%s %s" % [HudSelectionVocab.RUNG_HAZARD_GLYPH, HudRouteVocab.ROAD_UNDER_KEPT_WORD]))
+	# ⛔ **THE SHORTFALL IS THE SIM'S FIELD.** The fixture's demand and shortfall are deliberately
+	# different numbers, so a row that printed `demand − supplied` would still pass — and one that
+	# printed the GROSS demand as the shortfall would not.
+	h._assert_hud("…and states the SHORTFALL against the bill, both figures off the wire",
+		Readout.detail_row_value(risk_lines, HudRouteVocab.ROAD_KEEPING_ROW)
+			== HudRouteVocab.ROAD_KEEPING_SHORT_FORMAT % [
+				DetailFormat.format_work_units(ROAD_SHORTFALL_DIRT),
+				DetailFormat.format_work_units(ROAD_DEMAND_DIRT), ROAD_WANTS_DIRT])
+	h._assert_hud("…and counts DOWN to losing the rung (%d turns left)" % ROAD_GRACE_LEFT,
+		Readout.detail_row_value(risk_lines, HudRouteVocab.ROAD_REVERTING_ROW)
+			== HudRouteVocab.ROAD_REVERTING_FORMAT % [
+				HudSelectionVocab.RUNG_HAZARD_GLYPH, ROAD_GRACE_LEFT])
+	# **THE ROAD GOES DARK BEFORE IT DECAYS** — `grants_sight` is the RESOLVED answer, and the row
+	# says why the light went out rather than silently dropping the clause.
+	h._assert_hud("…and the payoff row says the road has gone DARK until its keeping is paid",
+		Readout.detail_row_value(risk_lines, HudRouteVocab.ROAD_BUYS_ROW).contains(
+			HudRouteVocab.ROAD_BUYS_DARK))
+
+	# ⛔ **THE COUNTDOWN, NOT THE COUNTER.** `0` means it is reverting NOW; rendering it through the
+	# same format as every other value would print `in 0 turns`, which reads as a turn of grace the
+	# road does not have. PNG-less, because the whole claim is a word.
+	var now_lines := _road_lines(_road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT,
+		ROAD_SHORTFALL_DIRT, ROAD_WANTS_DIRT, ROAD_GRACE_NONE, false, ROAD_FRICTION_DIRT,
+		ROAD_LINK_DIRT))
+	h._assert_hud("a countdown of 0 reads NOW, never `in 0 turns`",
+		Readout.detail_row_value(now_lines, HudRouteVocab.ROAD_REVERTING_ROW)
+			== HudRouteVocab.ROAD_REVERTING_NOW % HudSelectionVocab.RUNG_HAZARD_GLYPH)
+
 func run(harness) -> void:
 	h = harness
 
@@ -829,3 +1032,58 @@ func run(harness) -> void:
 	h._show_tile(_river_tile_fixture(RIVER_MASK_NONE))
 	await h._settle()
 	await h._save("river_tile_none")
+
+	# ---- ROADS ON THE TILE CARD (arc #532) -------------------------------------------------------
+	#
+	# The ladder's third branch, one frame per rung, on the same piece of ground. Read as a set they
+	# are the whole argument the branch exists to make: the `Keeping:` row gets DEARER down the four
+	# and the `Buys:` row gets RICHER, which is what makes paving a decision rather than an upgrade.
+
+	# State road-game-trail — THE FLOOR. `Keeping: free` (nobody maintains a game trail — that is the
+	# whole of what makes the rung free, and a `0 work a turn` row would read as an empty bill rather
+	# than an absent one) and `Buys: nothing`, both terms of the payoff at their own neutral.
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_GAME_TRAIL, ROAD_METER_RISING, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		ROAD_FRICTION_GAME_TRAIL, ROAD_LINK_GAME_TRAIL)))
+	await h._settle()
+	await h._save("road_tile_game_trail")
+
+	# State road-trail — the first rung anyone pays for, with traffic already wearing in the one
+	# above it: `Wearing in: Dirt road 30%`. The meter belongs to the rung being RAISED, never to the
+	# one held, which is why the two are separate rows.
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_RISING, ROAD_DEMAND_TRAIL, 0.0, 2,
+		ROAD_GRACE_TRAIL, true, ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL)))
+	await h._settle()
+	await h._save("road_tile_trail")
+
+	# State road-dirt — the middle rung, complete and nothing rising above it yet (`build_fraction`
+	# exactly 1.0, which the wire states rather than leaving to a subtraction), so NO `Wearing in:`
+	# row at all.
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT, 0.0,
+		ROAD_WANTS_DIRT, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT)))
+	await h._settle()
+	await h._save("road_tile_dirt_road")
+
+	# State road-paved — the top of the branch. Dearest to keep and richest payoff, which is the
+	# whole shape of the decision.
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_PAVED, 0.0, 7,
+		ROAD_GRACE_PAVED, true, ROAD_FRICTION_PAVED, ROAD_LINK_PAVED)))
+	await h._settle()
+	await h._save("road_tile_paved_road")
+
+	# State road-at-risk — the same dirt road with its bill going unpaid: the rung row wears the
+	# branch's own consequence word, the `Keeping:` row states the SHORTFALL against the bill and the
+	# keepers it wants, the `Reverting:` countdown appears, and the `Buys:` row says the road has gone
+	# DARK — which happens BEFORE the rung decays, and is the honest early warning.
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT,
+		ROAD_SHORTFALL_DIRT, ROAD_WANTS_DIRT, ROAD_GRACE_LEFT, false, ROAD_FRICTION_DIRT,
+		ROAD_LINK_DIRT)))
+	await h._settle()
+	await h._save("road_tile_at_risk")
+
+	# …and the claims a picture cannot carry, over the REAL producer's lines.
+	_assert_road_rows_say_what_the_rung_buys()

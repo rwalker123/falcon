@@ -32,6 +32,7 @@ use crate::dict::knowledge::{
 };
 use crate::dict::map::{terrain_label_from_id, tiles_to_array, TERRAIN_TAG_LABELS};
 use crate::dict::population::{demographics_to_array, generations_to_array, populations_to_array};
+use crate::dict::routes::routes_to_array;
 use crate::dict::subsistence::{
     characteristic_bands_to_array, craft_knowledge_to_array, food_modules_to_array,
     forage_patches_to_array, herds_to_array, intensification_knowledge_to_array, kits_to_array,
@@ -1506,6 +1507,14 @@ pub(crate) fn snapshot_to_dict(
     // the staleness `food_modules` and `faction_inventory` each shipped with.
     if let Some(connections) = snapshot.connections().and_then(|s| s.connections()) {
         let _ = dict.insert("connections", &connections_to_array(connections));
+    }
+
+    // **THE ROADS IN THE GROUND** (arc #532) — the same whole-section replace as the ties above and
+    // decoded on BOTH paths for the same reason: a section read only here republishes the
+    // BASELINE's roads for the life of the world. `RouteSection` is published on the delta too,
+    // precisely so this pair can exist.
+    if let Some(routes) = snapshot.routes().and_then(|s| s.routes()) {
+        let _ = dict.insert("routes", &routes_to_array(routes));
     }
 
     if let Some(tiles_fb) = snapshot.map().and_then(|s| s.tiles()) {

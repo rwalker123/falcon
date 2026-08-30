@@ -26,6 +26,7 @@ use crate::dict::knowledge::{
 };
 use crate::dict::map::tiles_to_array;
 use crate::dict::population::{demographics_to_array, generations_to_array, populations_to_array};
+use crate::dict::routes::routes_to_array;
 use crate::dict::subsistence::{
     characteristic_bands_to_array, craft_knowledge_to_array, food_modules_to_array,
     forage_patches_to_array, herds_to_array, intensification_knowledge_to_array, kits_to_array,
@@ -775,6 +776,15 @@ fn decode_delta_against(
     // which a `!is_empty()` gate here would swallow — the defect that blanked the culture tensions.
     if let Some(connections) = delta.connections().and_then(|s| s.connections()) {
         frame.insert_changed("connections", &connections_to_array(connections));
+    }
+
+    // **THE ROADS IN THE GROUND** (arc #532) — the same whole-section replace as the ties above,
+    // and `insert_changed` for the same reason: the sim diffs the section whole, so presence on a
+    // delta IS the change signal and present-and-EMPTY means "every road you knew of is gone".
+    // `RouteSection` rides the delta precisely so this twin can exist — a section with no delta
+    // twin is permanently stale on a delta-fed client.
+    if let Some(routes) = delta.routes().and_then(|s| s.routes()) {
+        frame.insert_changed("routes", &routes_to_array(routes));
     }
 
     // NOT a keyed diff — a whole-section replace, so present (even EMPTY) means "this is the roster

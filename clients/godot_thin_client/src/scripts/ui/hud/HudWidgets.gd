@@ -381,30 +381,48 @@ static func build_marker_icon(texture: Texture2D, glyph: String, box_px: float, 
 
 ## The shared −/+ stepper controls (minus, centered count, plus) appended to a row's HBox, so the
 ## one-line and two-line forms compose the same stepper. `on_change` fires with the new count.
-static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool, on_change: Callable, compact_chrome: bool = false) -> void:
+##
+## **THE METRIC IS A PARAMETER SINCE FOUR POOL CARDS HAD TO SHARE ONE ROW** (arc #532). `metric` is
+## `{button_width, value_width, padding_h}`; anything it omits falls back to the shared
+## `WORKER_STEPPER_*` widths, so every existing caller renders byte-identically. The pool cards hand
+## `HudWorkVocab.POOL_STEPPER_*` — see that block for why the WORK zone had no row to give instead.
+static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool, on_change: Callable, compact_chrome: bool = false, metric: Dictionary = {}) -> void:
+    var button_width := float(metric.get(STEPPER_METRIC_BUTTON_WIDTH,
+        HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH))
+    var value_width := float(metric.get(STEPPER_METRIC_VALUE_WIDTH,
+        HudWorkVocab.WORKER_STEPPER_VALUE_WIDTH))
+    var padding_h := int(metric.get(STEPPER_METRIC_PADDING_H, KEEP_BUTTON_PADDING_H))
     var minus := Button.new()
     minus.text = HudWorkVocab.STEPPER_MINUS_FACE
-    minus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
+    minus.custom_minimum_size = Vector2(button_width, 0)
     HudStyle.apply_button(minus, "ghost")
     minus.disabled = count <= 0
     minus.pressed.connect(func() -> void: on_change.call(count - HudConst.WORKER_STEP))
     row.add_child(minus)
     var value := Label.new()
     value.text = str(count)
-    value.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_VALUE_WIDTH, 0)
+    value.custom_minimum_size = Vector2(value_width, 0)
     value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     value.add_theme_color_override("font_color", HudStyle.INK if count > 0 else HudStyle.INK_FAINT)
     row.add_child(value)
     var plus := Button.new()
     plus.text = HudWorkVocab.STEPPER_PLUS_FACE
-    plus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
+    plus.custom_minimum_size = Vector2(button_width, 0)
     HudStyle.apply_button(plus, "ghost")
     plus.disabled = not plus_enabled
     plus.pressed.connect(func() -> void: on_change.call(count + HudConst.WORKER_STEP))
     row.add_child(plus)
     if compact_chrome:
         for control in [minus, value, plus]:
-            compact(control, HudWorkVocab.WORK_STEPPER_FONT_SIZE, HudWorkVocab.WORK_STEPPER_PADDING_V)
+            compact(control, HudWorkVocab.WORK_STEPPER_FONT_SIZE,
+                HudWorkVocab.WORK_STEPPER_PADDING_V, padding_h)
+
+## The three keys a `metric` may carry. **Named**, because producer and reader are different scripts
+## and a typo in a `get` here is a silent fallback to the shared width — which is precisely the
+## overflow the metric exists to prevent, reappearing with nothing to show it.
+const STEPPER_METRIC_BUTTON_WIDTH := "button_width"
+const STEPPER_METRIC_VALUE_WIDTH := "value_width"
+const STEPPER_METRIC_PADDING_H := "padding_h"
 
 ## Squeeze a control into a zone's fixed-height chrome row: smaller type, and a button's stylebox
 ## chrome trimmed vertically. `HudStyle._button_stylebox` pads 9px top and bottom, which alone makes a

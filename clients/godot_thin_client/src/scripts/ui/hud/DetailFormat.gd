@@ -997,6 +997,21 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         return husbandry_value_hex(value)
     elif key == CULTIVATION_ROW:
         return cultivation_value_hex(value)
+    elif key == HudRouteVocab.ROAD_ROW:
+        # The road's rung row (arc #532) — the route twin of the two lines above, and the same two
+        # readings: signal for a rung being held, amber for one washing out. `HudRouteVocab` owns the
+        # fork, keyed on the hazard mark its own composer put there.
+        return HudRouteVocab.road_value_hex(value)
+    elif key == HudRouteVocab.ROAD_KEEPING_ROW or key == HudRouteVocab.ROAD_REVERTING_ROW:
+        # The road's bill and its countdown. One tint for the pair, because they are one state: the
+        # countdown row only renders while the bill is short, so they can never disagree.
+        return HudRouteVocab.keeping_value_hex(value)
+    elif key == HudRouteVocab.ROAD_BUYS_ROW:
+        # ⛔ **THE PAYOFF ROW, AND IT IS TINTED ON PURPOSE.** It is the only row on the card that
+        # states what a standing cost BUYS; left in plain ink beside the amber bill above it, the
+        # branch reads as pure cost, which is exactly the *"a tax, not a ladder"* failure the payoff
+        # was shipped to prevent.
+        return HudRouteVocab.buys_value_hex(value)
     elif key == HudFloraVocab.FIELD_ROW:
         # Plant rung 3 — the patch twin of the Corral row's tint (ink while building, signal once
         # complete). Same shape as Cultivation's; kept its own case because a Field is a different

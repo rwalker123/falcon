@@ -762,6 +762,26 @@ var discovered_sites: Array = []
 var discovered_site_lookup: Dictionary = {}
 var harvest_sites: Dictionary = {}
 var scout_sites: Dictionary = {}
+## **THE ROAD NETWORK — the roads in the GROUND** (arc #532, `.claude/rules/core_sim/routes.md`), one
+## entry per road, in the sim's own ledger order. World state like `units` / `herds`, which is why it
+## lives here and not on `AnnotationRenderer`: that renderer draws it through the `_view` back-ref,
+## the same way it reads `units` and `herds` today.
+##
+## ⛔ **THIS IS NOT `AnnotationRenderer._routes`, AND THE TWO MUST NOT MERGE.** That field — and
+## `map_preview`'s `"routes"` annotation state — is the per-faction ORDER PATH overlay: waypoints a
+## player's own movement orders are following. A road is a world object with a fixed stamped path
+## that outlives every band that walks it. The obvious name was already taken by the other thing, so
+## the road network is spelled `road_network` everywhere in the client.
+## The key `_ingest_road_network` stamps the ZIPPED path onto each road dict under — an `Array` of
+## `Vector2i` built once at ingest from the wire's two packed halves, so neither the draw pass nor a
+## hover re-zips it. Named because the producer and its readers are different scripts and a typo in a
+## `get` there is a silently empty polyline.
+const ROAD_TILES_KEY := "tiles"
+var road_network: Array = []
+## …and the same roads keyed by the tiles they RUN OVER (`{Vector2i: Array[road]}`), so
+## `_tile_info_at` can answer "what roads cross this hex" without walking every path every hover. One
+## road appears under each of its own tiles; a hex may carry more than one road.
+var road_tile_lookup: Dictionary = {}
 # Forage patches (cultivation/tended state, decoded from ForagePatchState), keyed by
 # Vector2i(x, y); read by `_tile_info_at` for the Tile-card cultivation/tended readout.
 var forage_patch_lookup: Dictionary = {}
@@ -938,6 +958,7 @@ const PROFILE_LAYERS_TAGS := "layers.tags"                # terrain palette + th
 const PROFILE_LAYERS_CULTURE := "layers.culture"          # the culture_layer_map merge + removals
 const PROFILE_LAYERS_CRISIS := "layers.crisis"            # AnnotationRenderer.set_crisis_annotations
 const PROFILE_LAYERS_ROUTES := "layers.routes"            # AnnotationRenderer.set_routes (the `orders` array)
+const PROFILE_LAYERS_ROAD_NETWORK := "layers.road_network"  # _ingest_road_network (the `routes` SECTION — the roads in the ground)
 const PROFILE_SITES_FOOD := "sites.food"                  # food_modules ingest + the terrain_id stamp
 const PROFILE_SITES_DISCOVERED := "sites.discovered"      # the per-faction discovered-site ingest
 const PROFILE_SITES_FORAGE := "sites.forage"              # the forage_patches ingest
@@ -964,6 +985,10 @@ const SECTION_FOOD_MODULES := "food_modules"
 const SECTION_DISCOVERED_SITES := "discovered_sites"
 const SECTION_FORAGE_PATCHES := "forage_patches"
 const SECTION_POPULATIONS := "populations"
+## The ROADS-IN-THE-GROUND section (arc #532). Named `routes` because that is the wire's own name
+## for it and the manifest carries that spelling; the client-side NOUN is `road_network`, to keep it
+## clear of `AnnotationRenderer`'s order-path `_routes`.
+const SECTION_ROUTES := "routes"
 const SECTION_OVERLAY_TERRAIN := "overlays.terrain"
 const SECTION_OVERLAY_VISIBILITY := "overlays.visibility"
 const SECTION_OVERLAY_ELEVATION := "overlays.elevation"
@@ -1264,6 +1289,14 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	var t_layers_routes: int = profile.begin(PROFILE_LAYERS_ROUTES)
 	_annotations.set_routes(snapshot.get("orders", []))
 	profile.end(PROFILE_LAYERS_ROUTES, t_layers_routes)
+	var t_layers_roads: int = profile.begin(PROFILE_LAYERS_ROAD_NETWORK)
+	# **THE ROADS IN THE GROUND** — a different section from the order paths one line up, and a
+	# different KIND of thing (see `road_network`). Gated on the section's own name in the delta
+	# manifest: the decoder republishes the whole section whenever any road moves and names it, so a
+	# frame that does not name it carries the roads it already had.
+	if SnapshotSections.changed(snapshot, SECTION_ROUTES):
+		_ingest_road_network(snapshot.get("routes", []))
+	profile.end(PROFILE_LAYERS_ROAD_NETWORK, t_layers_roads)
 	profile.end(PROFILE_LAYERS, t_layers)
 	var t_sites: int = profile.begin(PROFILE_SITES)
 	# Four independent ingests, each now gated on the section IT reads and each clearing its own
@@ -1778,6 +1811,13 @@ func _draw() -> void:
 	# per-tile river-edge mask — the water is drawn exactly on the edge the future crossing cost applies to.)
 	_annotations.draw_crisis_annotations(radius, origin)
 
+	# THE ROADS IN THE GROUND (arc #532), drawn HERE — above the tile tints and BENEATH every marker,
+	# overlay ring and selection outline below. A road is infrastructure in the ground rather than
+	# something standing on it, so nothing that stands on the map may be painted over by it; drawing
+	# it with the annotations rather than at the end (where the ORDER-PATH routes go, two different
+	# things — see `MapView.road_network`) is what puts it in that layer.
+	_annotations.draw_road_network(radius, origin)
+
 	# SECONDARY MARKER SLOTS ARE COMPUTED HERE, not beside the marker draws below, because the
 	# worked-source marks dock a ring to the SOURCE's own marker and therefore need its slot before
 	# they can draw. This is a PURE computation over `discovered_sites` / `food_sites` / `herds` /
@@ -2191,6 +2231,11 @@ func reset_world_state() -> void:
 	_ready_for_improvement_knowledge = {}
 	_reset_deferred_overlays()
 	herd_trails.clear()
+	# The roads of a world we are about to stop showing. Both halves, together: the lookup holds the
+	# same road dicts the array does, so clearing one alone would leave a hover answering off a world
+	# that is gone.
+	road_network = []
+	road_tile_lookup = {}
 	culture_layer_map.clear()
 	selected_unit_id = -1
 	selected_herd_id = ""
@@ -3154,6 +3199,12 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# and it needs no FOW_DISCOVERED_HIDDEN_KEYS entry.
 		info["patch_committed_species"] = String(patch.get("committed_species", ""))
 		info["patch_committed_display_name"] = String(patch.get("committed_display_name", ""))
+	# THE ROADS CROSSING THIS HEX (arc #532) — the tile card's road readout reads its rows out of
+	# here and nowhere else, the forage patch's own cross-ref idiom. Stamped BEFORE the fog split
+	# below and deliberately NOT in `FOW_DISCOVERED_HIDDEN_KEYS`: a road is permanent geography like
+	# the terrain label and the river edges, so a remembered hex still reports the road that crosses
+	# it — which is exactly the `Discovered` gate the sim publishes these rows under.
+	info["roads"] = _roads_on_tile(col, row)
 	var units_here := _units_on_tile(col, row)
 	var herds_here := _herds_on_tile(col, row)
 	info["units"] = units_here
@@ -3217,6 +3268,51 @@ func _herds_on_tile(col: int, row: int) -> Array:
 		if x == col and y == row:
 			matches.append((herd as Dictionary).duplicate(true))
 	return matches
+
+## **INGEST THE ROAD NETWORK** — the `routes` section, kept whole for the map draw and indexed by
+## tile for the tile card. A whole-section replace on both wire paths, so this rebuilds both from
+## scratch: a road that reverted to nothing is PRUNED sim-side and simply stops arriving, and a
+## merge that kept stale entries would leave a road drawn on the map for the life of the world.
+##
+## The path arrives as the wire's own two packed halves (`path_x` / `path_y`, zipped by index), which
+## is what the decoder carries rather than N sub-arrays; it is zipped ONCE here, into the `Vector2i`
+## tiles both consumers want.
+func _ingest_road_network(raw: Variant) -> void:
+	road_network = []
+	road_tile_lookup = {}
+	if not (raw is Array):
+		return
+	for entry in raw:
+		if not (entry is Dictionary):
+			continue
+		var road: Dictionary = (entry as Dictionary).duplicate(true)
+		var xs := PackedInt32Array(road.get("path_x", PackedInt32Array()))
+		var ys := PackedInt32Array(road.get("path_y", PackedInt32Array()))
+		var tiles: Array[Vector2i] = []
+		# **THE SHORTER HALF BOUNDS THE WALK.** The two are the same length by construction on the
+		# wire; taking the min rather than either one is what keeps a truncated frame from indexing
+		# past the end, which is a crash rather than a wrong drawing.
+		for i in range(mini(xs.size(), ys.size())):
+			tiles.append(Vector2i(xs[i], ys[i]))
+		road[ROAD_TILES_KEY] = tiles
+		road_network.append(road)
+		for tile in tiles:
+			if not road_tile_lookup.has(tile):
+				road_tile_lookup[tile] = []
+			(road_tile_lookup[tile] as Array).append(road)
+
+## The roads crossing a hex — the tile card's cross-ref, read through `_tile_info_at`. The rows come
+## back BY REFERENCE into `road_network` rather than duplicated: nothing downstream writes to a road,
+## and a per-hover deep copy of every path would be paid on every mouse move.
+##
+## **NOT fog-gated here, and that is deliberate**: the sim already publishes a road only to a faction
+## that has explored at least one of its tiles (`Discovered`, not `Active` — a road does not wander
+## off, so remembering one is remembering something true), and `_apply_visibility_to_info` drops the
+## whole payload on an UNEXPLORED hex. Gating on `_is_tile_visible` the way the herd list does would
+## hide a road the player is standing next to the moment they look away.
+func _roads_on_tile(col: int, row: int) -> Array:
+	var found: Variant = road_tile_lookup.get(Vector2i(col, row), null)
+	return found if found is Array else []
 
 ## EVERYTHING standing on a hex, as one ordered stack of `{kind, data}` entries: every band first,
 ## then every herd. That order is the click contract — bands still win the first click on a shared

@@ -460,6 +460,20 @@ const BUILD_ORDER_POSITION := 2
 ## `ui_preview`'s `trade_picker_destination`, where the pick is a real pointer gesture.
 func _drive_send_trade_expedition() -> void:
 	_hud._selection.clear()
+	# ⛔ **DROP THE ROLE SWEEP'S OPTIMISTIC OVERLAY FIRST, or this drive is testing the wrong band.**
+	# `_drive_assign_labor_kits` above puts `PARTY_WORKERS` on EVERY band-wide role, and each of those
+	# is recorded as a pending assignment the instant it is emitted — so by the time the sweep ends,
+	# the fixture band's whole workforce is optimistically spoken for and `effective_idle` is 0. The
+	# parties compose sheet does not render at a compose pool of 0 (there is nobody to send), so this
+	# drive found no destination row, no cargo rows and no confirm button, and reported four failures
+	# about a shipment form that had simply not been drawn.
+	#
+	# **It bit when the `roadwork` role landed** (arc #532), which is the sweep's sixth entry and the
+	# one that took the pool past zero — but the coupling was there all along and the next role would
+	# have found it again. `reconcile_pending` at a later turn is exactly what a fresh snapshot does
+	# to these entries, so the drive starts from the band the wire describes rather than from the
+	# previous drive's optimism.
+	_hud._band_labor.reconcile_pending(_hud._band_labor.current_turn() + 1)
 	_panel.set_active_tab(&"parties")
 	_hud._bandpanel._party_compose_open = true
 	_hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_TRADE
@@ -645,6 +659,7 @@ const ASSIGN_LABOR_ROLES := [
 	HudConst.LABOR_KIND_WARRIOR,
 	HudConst.LABOR_KIND_AGRICULTURE,
 	HudConst.LABOR_KIND_HUSBANDRY,
+	HudConst.LABOR_KIND_ROADWORK,
 	HudConst.LABOR_KIND_BUILDERS,
 ]
 
@@ -660,7 +675,7 @@ const ASSIGN_LABOR_BARE_DRIVES := 1
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 9
+const ASSIGN_LABOR_EXPECTED := 10
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##

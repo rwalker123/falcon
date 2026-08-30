@@ -2706,6 +2706,9 @@
       "pending_reveal_count": 2,
       "raid_forfeit": 89.769997,
       "raid_radius": 51,
+      "roadwork_demand": 58.639999,
+      "roadwork_shortfall": 109.0,
+      "roadwork_supplied": 76.110001,
       "scout_reveal_radius": 65,
       "scout_vantage_range": 44.77,
       "settlement_stage_icon": "populations[0].settlement_stage.icon",
@@ -3424,6 +3427,9 @@
       "pending_reveal_count": 2,
       "raid_forfeit": 69.870003,
       "raid_radius": 80,
+      "roadwork_demand": 67.360001,
+      "roadwork_shortfall": 58.630001,
+      "roadwork_supplied": 43.880001,
       "scout_reveal_radius": 130,
       "scout_vantage_range": 23.389999,
       "settlement_stage_icon": "populations[1].settlement_stage.icon",
@@ -3640,6 +3646,40 @@
         "recipes[3].requires_knowledge[1]"
       ],
       "work": 8.85
+    }
+  ],
+  "routes": [
+    {
+      "build_fraction": 107.57,
+      "friction_multiplier": 83.839996,
+      "grants_sight": true,
+      "has_neglect_grace": true,
+      "holds_link_to_tiles": 83,
+      "id": 83,
+      "neglect_grace_remaining": 80,
+      "path_x": {"__packed": "PackedInt32Array", "len": 2, "items": [44, 127]},
+      "path_y": {"__packed": "PackedInt32Array", "len": 2, "items": [23, 44]},
+      "rung": "routes[0].rung",
+      "upkeep_demand": 45.200001,
+      "upkeep_shortfall": 79.529999,
+      "upkeep_supplied": 10.98,
+      "upkeep_workers_needed": 86
+    },
+    {
+      "build_fraction": 66.529999,
+      "friction_multiplier": 84.18,
+      "grants_sight": true,
+      "has_neglect_grace": true,
+      "holds_link_to_tiles": 76,
+      "id": 14,
+      "neglect_grace_remaining": 35,
+      "path_x": {"__packed": "PackedInt32Array", "len": 2, "items": [3, 40]},
+      "path_y": {"__packed": "PackedInt32Array", "len": 2, "items": [200, 67]},
+      "rung": "routes[1].rung",
+      "upkeep_demand": 101.57,
+      "upkeep_shortfall": 14.27,
+      "upkeep_supplied": 55.990002,
+      "upkeep_workers_needed": 57
     }
   ],
   "sedentarization": [

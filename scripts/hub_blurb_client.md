@@ -42,6 +42,7 @@ wrapped `##` section instead. Follow the shape the file already uses.
 | `fog-of-war.md` | Fog of war is server-owned: preference → command → snapshot → render | `MapView.gd`, `Main.gd`, `MenuShell.gd`, `ClientSettings.gd` |
 | `interface-scale.md` | The Options interface-scale slider: the UI scales, the map counter-scales to hold still | `ui_scaler.gd`, `ClientSettings.gd`, `MenuShell.gd`, `MapView.gd` |
 | `map-markers.md` | The layered hex-icon stack UX | `BandMarkerRenderer.gd`, `SecondaryMarkerRenderer.gd` |
+| `roads.md` | The roads in the ground: the rung ladder on the map, the tile card's road readout, the `roadwork` pool | `hud_route_vocab.gd`, `AnnotationRenderer.gd`, `dict/routes.rs` |
 | `overlay-channels.md` | Selected-band/herd overlays, annotations, worked-source marks | `BandOverlayRenderer.gd`, `AnnotationRenderer.gd` |
 | `inspector-panels.md` | Every `ui/inspector/` panel | `Inspector.gd`, `ui/inspector/**` |
 | `workbench.md` | The designer surface replacing the Inspector: shell, page registry, config tuning | `ui/workbench/**`, `tools/workbench_*` |
