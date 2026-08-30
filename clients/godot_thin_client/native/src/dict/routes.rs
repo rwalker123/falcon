@@ -157,6 +157,13 @@ pub(crate) fn route_rungs_to_array(
         // per-tile reading and goes dark while the keeping is unmet; this says whether the rung
         // lights its tiles at all once it stands and its bill is paid.
         let _ = dict.insert("grants_sight", rung.grantsSight());
+        // ⛔ **WHAT STANDING HERE TEACHES, AND IT IS THE GATE'S REMEDY.** `unlockKnowledge` above
+        // says what a rung WAITS ON; this says what a rung EARNS, and the two are different rungs.
+        // A gate reason has to name the rung that TEACHES the missing craft, which is emphatically
+        // not the rung directly beneath the gated one -- the two coincide on the shipped four and
+        // the config is free to break that pairing, at which point an inference would send the
+        // player to stand on the wrong ground. `""` where the rung teaches nothing.
+        let _ = dict.insert("earns_knowledge", rung.earnsKnowledge().unwrap_or_default());
         array.push(&dict.to_variant());
     }
     array

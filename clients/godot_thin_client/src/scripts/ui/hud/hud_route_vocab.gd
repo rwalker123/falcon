@@ -552,6 +552,10 @@ const RUNG_CATALOG_UPKEEP := "upkeep_work_per_turn"
 const RUNG_CATALOG_FRICTION := "friction_multiplier"
 const RUNG_CATALOG_LINK := "holds_link_to_tiles"
 const RUNG_CATALOG_GRANTS_SIGHT := "grants_sight"
+## ⛔ **WHAT STANDING ON THIS RUNG TEACHES — the gate's REMEDY, and the reason it is a wire field.**
+## `unlock_knowledge` says what a rung WAITS ON; this says what a rung EARNS, and they are different
+## rungs. See `ladder_rung_teaching` for why the pairing may not be inferred.
+const RUNG_CATALOG_EARNS_KNOWLEDGE := "earns_knowledge"
 
 ## ⛔ **THE WIRE'S OWN SPELLING OF *there is none*, AND IT IS A NAMED EMPTY STRING RATHER THAN A
 ## SENTINEL.** `verb` is `""` on a rung nobody declares, `unlock_knowledge` is `""` on one nothing
@@ -614,6 +618,11 @@ static func catalog_link_span(entry: Dictionary) -> int:
 static func catalog_grants_sight(entry: Dictionary) -> bool:
 	return bool(entry.get(RUNG_CATALOG_GRANTS_SIGHT, false))
 
+## ⛔ **`""` MEANS THIS RUNG TEACHES NOTHING** — the branch's floor, and its top, which has nothing
+## above it to open. A state, not a missing field.
+static func catalog_earns_knowledge(entry: Dictionary) -> String:
+	return String(entry.get(RUNG_CATALOG_EARNS_KNOWLEDGE, RUNG_CATALOG_NONE)).strip_edges()
+
 ## **THE WHOLE BRANCH, BOTTOM RUNG FIRST**, as typed rows — the wire's `order` is the climb order and
 ## this is the one place it is applied. Non-Dictionary entries are dropped rather than defaulted: a
 ## row this client cannot read has no rung key to join a road on.
@@ -644,6 +653,27 @@ static func ladder_rung_name(ladder: Array[Dictionary], rung_key: String) -> Str
 		if catalog_rung_key(entry) == rung_key:
 			return catalog_display_name(entry)
 	return rung_key
+
+## ⛔ **WHICH RUNG TEACHES THIS CRAFT — the gate's remedy, LOOKED UP AND NEVER INFERRED.**
+##
+## The obvious shortcut is *"the rung beneath the gated one"* (`requires_rung`), and it holds for the
+## four rungs that ship today: a trail teaches Roadbuilding, which opens the dirt road above it. **It
+## is a coincidence of this config and not a property of the ladder.** `intensification_ladder.json`
+## is free to have a rung teach a craft that opens something two rungs up, and the moment it does the
+## inference names the WRONG rung — in a REMEDY, which is to say it sends the player to go and stand
+## on the wrong ground. That is the one place a wrong answer costs something, so the pairing rides
+## the wire (`earns_knowledge`) and this is the lookup.
+##
+## `""` where no rung on this branch teaches it, which is a real state: a route rung may be gated on a
+## craft another branch earns. The caller then states the craft and its progress with no remedy rather
+## than naming a rung that does not teach it.
+static func ladder_rung_teaching(ladder: Array[Dictionary], knowledge_id: String) -> String:
+	if knowledge_id == RUNG_CATALOG_NONE:
+		return ""
+	for entry in ladder:
+		if catalog_earns_knowledge(entry) == knowledge_id:
+			return catalog_display_name(entry)
+	return ""
 
 # ---- THE LADDER SHEET'S OWN WORDS --------------------------------------------------------------
 #
@@ -710,18 +740,34 @@ const GATE_REASON_ROAD_NEEDS_RUNG_FORMAT := "Needs a %s beneath it — this grou
 ## which the remedy says rather than leaving the row looking broken.
 const GATE_REASON_ROAD_WORN_IN := "Worn in by traffic — nothing to order; it rises as your bands pool food across this hex"
 
-## The KNOWLEDGE gate, in `HudFloraVocab.GATE_REASON_*_KNOWLEDGE_FORMAT`'s voice — **with the craft's
-## name taken from the ladder's own knowledge roster** rather than spelled here, so a rung added to the
-## config names its unlock with no client edit.
+## ⛔ **THE KNOWLEDGE GATE IS A HEAD PLUS AN OPTIONAL REMEDY, and the split is what makes all four
+## combinations reachable without a table.** Two facts arrive independently — whether the ladder's
+## knowledge roster NAMES this craft, and whether any rung on this branch TEACHES it — so a format per
+## sentence would need four consts and a fork to pick between them.
 ##
-## **THE REMEDY IS THE RUNG BENEATH, WHICH THE CATALOG ALREADY NAMES.** A route knowledge is earned by
-## holding the rung below the one it opens (`requires_rung`), so the sentence reads off the same field
-## the ground gate does instead of a second table that could drift from it.
-const GATE_REASON_ROAD_KNOWLEDGE_FORMAT := "Your people know %s %d%% — keep a %s carrying traffic to learn it"
+## The head, in `HudFloraVocab.GATE_REASON_*_KNOWLEDGE_FORMAT`'s voice, **with the craft named from the
+## ladder's own knowledge roster** rather than spelled here — so a rung added to the config names its
+## unlock with no client edit.
+const GATE_REASON_ROAD_KNOWLEDGE_HEAD_FORMAT := "Your people know %s %d%%"
 
-## …and the same gate where the roster has no name for the craft yet. The PROGRESS is still the news,
-## and naming a discovery this client cannot vouch for would be worse than not naming one.
-const GATE_REASON_ROAD_KNOWLEDGE_UNNAMED_FORMAT := "Your people have not learned this craft yet — keep a %s carrying traffic"
+## …and the same head where the roster carries no name for the craft. **The PROGRESS is still the
+## news**, so it is stated: naming a discovery this client cannot vouch for would be worse than not
+## naming one, and dropping the number with the name would throw away the half that is known.
+const GATE_REASON_ROAD_KNOWLEDGE_HEAD_UNNAMED_FORMAT := "Your people know this craft %d%%"
+
+## ⛔ **THE REMEDY, AND IT NAMES THE RUNG THAT TEACHES THE CRAFT — never the rung beneath the gated
+## one.** See `ladder_rung_teaching`: the two coincide on the shipped four rungs and the config is free
+## to break the pairing, at which point an inference would tell the player to go and stand on the wrong
+## ground. **Appended only where a rung on this branch teaches it**, because a remedy that named no
+## rung would be a dangling clause and one that guessed would be worse.
+const GATE_REASON_ROAD_KNOWLEDGE_REMEDY_FORMAT := " — keep a %s carrying traffic to learn it"
+
+# ⛔ RETIRED — **`GATE_REASON_ROAD_KNOWLEDGE_FORMAT` and `GATE_REASON_ROAD_KNOWLEDGE_UNNAMED_FORMAT`**,
+# the two whole-sentence forms the pair above replaced. Their remedy clause was fed the rung BENEATH
+# the gated one (`requires_rung`), which is a different fact from the rung that teaches the craft; the
+# sentences they produced on the shipped ladder are byte-identical to what the head-plus-remedy pair
+# produces, which is precisely why the defect was invisible and why the fixture that catches it has to
+# state a catalog where the two rungs differ.
 
 ## ⛔ **THE KEEPER GATE — a road really has to be somebody's job.** The band token IS the keeper:
 ## issuing the verb declares the work and names who is on the hook for the standing bill, which are one

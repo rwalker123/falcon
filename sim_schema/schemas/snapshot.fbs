@@ -5228,6 +5228,19 @@ table RouteRungState {
   // nothing however worn it is. A road at a rung that grants sight still goes dark while its
   // keeping is unmet; `RouteState.grantsSight` is that resolved per-tile answer.
   grantsSight:bool = false;
+  // --- WHAT STANDING HERE TEACHES (appended last) ------------------------------------------------
+  // The ladder knowledge this rung EARNS by being held — "roadbuilding" on the trail — and "" where
+  // the rung teaches nothing (the floor, and the top of the branch, which has nothing above it to
+  // open).
+  //
+  // ⛔ IT IS THE REMEDY, AND IT CANNOT BE INFERRED FROM `requiresRung`. A gate says "you do not know
+  // `paving` yet"; what a player does about it is stand on the rung that TEACHES paving, which is a
+  // different fact from the rung directly beneath. The two coincide on the shipped four rungs and
+  // the config is free to break that pairing — an inference would then name the wrong rung in the
+  // one place it matters, telling the player to go and do the wrong thing.
+  //
+  // Joins to `LadderKnowledgeState.knowledgeId`, the same vocabulary `unlockKnowledge` above uses.
+  earnsKnowledge:string;
 }
 
 table SubsistenceSection {

@@ -2043,6 +2043,20 @@ pub struct RouteRungState {
     /// keeping is unmet; `RouteState::grants_sight` is that resolved per-tile answer.
     #[serde(default)]
     pub grants_sight: bool,
+    /// **The ladder knowledge standing at this rung TEACHES** (`"roadbuilding"` on the trail), `""`
+    /// where the rung teaches nothing — the floor, and the top of the branch, which has nothing
+    /// above it to open.
+    ///
+    /// ⛔ **IT IS THE REMEDY, AND IT CANNOT BE INFERRED FROM [`Self::requires_rung`].** A gate says
+    /// *you do not know `paving` yet*; what a player does about it is stand on the rung that
+    /// **teaches** paving, which is a different fact from the rung directly beneath. The two
+    /// coincide on the shipped four rungs and the config is free to break that pairing — an
+    /// inference would then name the wrong rung in the one place it matters.
+    ///
+    /// Joins to [`LadderKnowledgeState::knowledge_id`], the same vocabulary
+    /// [`Self::unlock_knowledge`] uses.
+    #[serde(default)]
+    pub earns_knowledge: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

@@ -176,15 +176,14 @@ static func route_gates(road: Dictionary, ladder: Array[Dictionary], knowledge: 
         var unlock := HudRouteVocab.catalog_unlock_knowledge(entry)
         if unlock != HudRouteVocab.RUNG_CATALOG_NONE \
                 and track(knowledge, unlock) < HudConst.KNOWLEDGE_COMPLETE:
-            # **THE RUNG THE CRAFT IS EARNED ON, and the standing one where a rung names no
-            # prerequisite.** Both are rungs the player can actually put traffic over, so neither
-            # sentence can come out naming nothing — which is what a bare `requires_rung` read would
-            # have produced on a config that ever declared a verb without one.
-            var beneath := standing_name
-            if requires != HudRouteVocab.RUNG_CATALOG_NONE:
-                beneath = HudRouteVocab.ladder_rung_name(ladder, requires)
-            reasons.append(route_knowledge_reason(unlock, track(knowledge, unlock),
-                labels, beneath.to_lower()))
+            # ⛔ **THE REMEDY IS THE RUNG THAT TEACHES THE CRAFT, LOOKED UP — never the rung
+            # beneath the gated one.** The two coincide on the four rungs that ship, which is
+            # exactly why reading `requires_rung` here looked correct; the config is free to break
+            # the pairing, and this is the one gate whose wrong answer sends a player to stand on
+            # the wrong ground. `""` where nothing on this branch teaches it, which the composer
+            # states by dropping the remedy rather than by naming a rung that does not.
+            reasons.append(route_knowledge_reason(unlock, track(knowledge, unlock), labels,
+                HudRouteVocab.ladder_rung_teaching(ladder, unlock)))
         # **THE KEEPER IS LAST, because it is the one gate the player closes without leaving the
         # card** — every reason above it is a thing to go and do, and this one is a click.
         if band.is_empty():
@@ -193,21 +192,33 @@ static func route_gates(road: Dictionary, ladder: Array[Dictionary], knowledge: 
             gates[HudRouteVocab.catalog_rung_key(entry)] = reasons
     return gates
 
-## One route knowledge gate's sentence. **The craft is named by the ladder's own roster** — the sim
-## resolves every discovery's `display_name`, and a client table beside it is how the knowledge screen
-## and a gate reason come to call one craft two things. A roster that does not carry the id yet states
-## the PROGRESS and the remedy without inventing a name, which is the honest half.
+## One route knowledge gate's sentence — **a HEAD saying what is missing, plus a REMEDY saying what to
+## do about it, appended only when there is one.**
 ##
-## **The remedy names the rung BENEATH**, which is the same `requires_rung` gate 1 reads: a route
-## knowledge is earned by holding the rung below the one it opens, so both sentences come off one
-## field rather than off two tables that could drift.
+## **The craft is named by the ladder's own roster** — the sim resolves every discovery's
+## `display_name`, and a client table beside it is how the knowledge screen and a gate reason come to
+## call one craft two things. A roster that does not carry the id yet states the PROGRESS without
+## inventing a name, which is the honest half rather than a silent blank.
+##
+## ⛔ **`teaches` IS THE RUNG WHOSE `earns_knowledge` NAMES THIS CRAFT, AND IT IS LOOKED UP.** It was
+## the rung directly BENEATH the gated one for a slice, read off `requires_rung` — which produces
+## byte-identical sentences on the shipped four rungs and the wrong rung the moment a config has a
+## rung teach a craft that opens something further up. A gate reason is a REMEDY: naming the wrong
+## rung there tells the player to go and do the wrong thing, which is the one place this class of
+## inference actually costs something.
+##
+## `""` — no rung on this branch teaches it — drops the remedy clause entirely. That is a real state
+## (a route rung may be gated on a craft another branch earns), and a dangling *"keep a  carrying
+## traffic"* would be worse than a head that simply states what is missing.
 static func route_knowledge_reason(unlock: String, progress: float, labels: Dictionary,
-        beneath: String) -> String:
+        teaches: String) -> String:
     var name := String(labels.get(unlock, "")).strip_edges()
-    if name == "":
-        return HudRouteVocab.GATE_REASON_ROAD_KNOWLEDGE_UNNAMED_FORMAT % beneath
-    return HudRouteVocab.GATE_REASON_ROAD_KNOWLEDGE_FORMAT % [
-        name, HudFormat.progress_percent(progress), beneath]
+    var percent := HudFormat.progress_percent(progress)
+    var head := HudRouteVocab.GATE_REASON_ROAD_KNOWLEDGE_HEAD_UNNAMED_FORMAT % percent \
+        if name == "" else HudRouteVocab.GATE_REASON_ROAD_KNOWLEDGE_HEAD_FORMAT % [name, percent]
+    if teaches.strip_edges() == "":
+        return head
+    return head + HudRouteVocab.GATE_REASON_ROAD_KNOWLEDGE_REMEDY_FORMAT % teaches.to_lower()
 ## **WILL THE HAY THIS CREW GATHERS ACTUALLY BE BANKED?** — `""` when it will, the reason when it will
 ## not. The plant twin in shape of the rung gates above, and a deliberate BROADENING of this file's
 ## remit: from "may this source climb its next rung" to "…and will the work it is doing actually pay

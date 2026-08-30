@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 110
+const EXPECTED_CHECKPOINTS := 112
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -1490,6 +1490,42 @@ func run(harness) -> void:
 				and not keeper_text.contains(GATE_NEEDS_DIRT_UNDER_TRAIL))
 		await h._save("road_ladder_no_keeper")
 	_dismiss_road_ladder()
+	# ⛔ **THE CLAIM THE `earns_knowledge` FIELD EXISTS FOR — a catalog where the rung that TEACHES a
+	# craft is NOT the rung directly beneath the one it gates.** PNG-less: every one of these frames
+	# renders a perfectly plausible card whichever rung the remedy names, and the whole difference is
+	# one word in one sentence.
+	#
+	# On the shipped ladder the two rules agree — a trail teaches Roadbuilding and sits directly under
+	# the dirt road it opens — so a fixture built on it cannot tell them apart, and the wrong rule
+	# passed every claim above for a slice. Here **the TRAIL teaches Paving** while `paved_road` still
+	# requires `dirt_road`, so *the rung beneath* and *the rung that teaches it* are different rungs and
+	# name different words. `intensification_ladder.json` is free to do exactly this, and a gate reason
+	# is a REMEDY: naming the wrong rung there sends the player to stand on the wrong ground.
+	h._hud.update_route_rungs(_twisted_teaching_catalog())
+	h._hud.update_intensification([{"faction": 0, "knowledges": {
+		HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING: 1.0,
+		HudFloraVocab.KNOWLEDGE_TRACK_PAVING: 0.0}}])
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT, 0.0,
+		ROAD_WANTS_DIRT, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT,
+		_road_keeper_band())))
+	await h._settle()
+	if not await _open_road_ladder():
+		h._assert_hud("the road ladder opens against a catalog of its own", false)
+	else:
+		var twisted_text := _road_ladder_text()
+		h._assert_hud("the craft gate names the rung that TEACHES it, wherever the config puts that rung",
+			twisted_text.contains(GATE_PAVING_TAUGHT_BY_TRAIL))
+		# ⛔ **AND THIS IS THE HALF THAT FAILS UNDER THE OLD RULE.** `Dirt Road` is the rung directly
+		# beneath `Paved Road`, so an inference off `requires_rung` produces exactly this sentence —
+		# which is also the sentence the SHIPPED catalog produces, and therefore the sharpest possible
+		# discriminator between the two rules.
+		h._assert_hud("…and never the rung merely BENEATH it, which is what the retired inference read",
+			not twisted_text.contains(GATE_PAVING_NONE))
+	_dismiss_road_ladder()
+	# The real catalog back, before anything else renders against it.
+	h._hud.update_route_rungs(_route_rung_catalog())
+
 	# **PUT THE BANDS AND THE KNOWLEDGE BACK**, this chapter's own rule for shared walk state: the
 	# chapters after it render against whatever they inherit.
 	h._hud.update_band_alerts(held_bands)
@@ -1536,6 +1572,11 @@ const GATE_NEEDS_DIRT_UNDER_TRAIL := "Needs a dirt road beneath it — this grou
 ## BENEATH, because that is the rung whose traffic teaches it.
 const GATE_ROADBUILDING_PART := "Your people know Roadbuilding 40% — keep a trail carrying traffic to learn it"
 const GATE_PAVING_NONE := "Your people know Paving 0% — keep a dirt road carrying traffic to learn it"
+## ⛔ **THE SAME GATE UNDER A CATALOG WHERE THE TRAIL TEACHES PAVING.** The head is identical and the
+## REMEDY names a different rung, which is the whole of the difference between reading the rung that
+## TEACHES a craft and inferring the rung merely BENEATH the one it gates. The const above is the
+## wrong answer, and the fixture asserts its ABSENCE.
+const GATE_PAVING_TAUGHT_BY_TRAIL := "Your people know Paving 0% — keep a trail carrying traffic to learn it"
 
 ## The price a REFUSED rung states as an aside, its face being spent on the refusal…
 const GATE_DIRT_PRICE_ASIDE := "110 work to raise it"
@@ -1602,7 +1643,7 @@ func _route_rung_catalog() -> Array:
 	return [
 		{
 			"rung_key": HudRouteVocab.RUNG_KEY_PATH, "order": 1, "display_name": "Path",
-			"verb": "", "unlock_knowledge": "", "requires_rung": "",
+			"verb": "", "unlock_knowledge": "", "requires_rung": "", "earns_knowledge": "",
 			"work_cost": 0.0, "upkeep_work_per_turn": 0.0,
 			"friction_multiplier": ROAD_FRICTION_PATH, "holds_link_to_tiles": ROAD_LINK_PATH,
 			"grants_sight": false,
@@ -1614,6 +1655,9 @@ func _route_rung_catalog() -> Array:
 			# order reads as a job going begging.
 			"rung_key": HudRouteVocab.RUNG_KEY_TRAIL, "order": 2, "display_name": "Trail",
 			"verb": "", "unlock_knowledge": "", "requires_rung": HudRouteVocab.RUNG_KEY_PATH,
+			# **THE TRAIL TEACHES ROADBUILDING**, which opens the rung directly above it — the
+			# coincidence that made reading `requires_rung` for the remedy look correct.
+			"earns_knowledge": HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING,
 			"work_cost": LADDER_TRAIL_WORK_COST, "upkeep_work_per_turn": 0.0,
 			"friction_multiplier": ROAD_FRICTION_TRAIL, "holds_link_to_tiles": ROAD_LINK_TRAIL,
 			"grants_sight": false,
@@ -1623,6 +1667,7 @@ func _route_rung_catalog() -> Array:
 			"verb": SourceForecast.IMPROVEMENT_GRADE,
 			"unlock_knowledge": HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING,
 			"requires_rung": HudRouteVocab.RUNG_KEY_TRAIL,
+			"earns_knowledge": HudFloraVocab.KNOWLEDGE_TRACK_PAVING,
 			"work_cost": LADDER_DIRT_WORK_COST, "upkeep_work_per_turn": LADDER_DIRT_UPKEEP,
 			"friction_multiplier": ROAD_FRICTION_DIRT, "holds_link_to_tiles": ROAD_LINK_DIRT,
 			"grants_sight": true,
@@ -1632,11 +1677,40 @@ func _route_rung_catalog() -> Array:
 			"verb": SourceForecast.IMPROVEMENT_PAVE,
 			"unlock_knowledge": HudFloraVocab.KNOWLEDGE_TRACK_PAVING,
 			"requires_rung": HudRouteVocab.RUNG_KEY_DIRT_ROAD,
+			# The top of the branch teaches nothing: there is nothing above it to open.
+			"earns_knowledge": "",
 			"work_cost": LADDER_PAVED_WORK_COST, "upkeep_work_per_turn": LADDER_PAVED_UPKEEP,
 			"friction_multiplier": ROAD_FRICTION_PAVED, "holds_link_to_tiles": ROAD_LINK_PAVED,
 			"grants_sight": true,
 		},
 	]
+
+## ⛔ **A CATALOG WHOSE TEACHING RUNG IS NOT THE RUNG BENEATH — the ONE fixture that can tell the two
+## rules apart.**
+##
+## `_route_rung_catalog` above is the shipped ladder, and on it *the rung beneath the gated one* and
+## *the rung that teaches its craft* are the SAME rung on both steps. Every claim this chapter makes
+## against it therefore passes under either rule, which is exactly how the wrong one survived a slice.
+##
+## This one moves ONE field and nothing else: **the TRAIL earns Paving** (the dirt road now teaches
+## nothing), while `paved_road` still requires `dirt_road`. So the remedy must read *keep a trail*,
+## and an inference off `requires_rung` reads *keep a dirt road* — which is also what the shipped
+## catalog reads, making it the sharpest discriminator available.
+##
+## Built by MUTATING the shipped catalog rather than by restating it, so a rung added to the real
+## fixture arrives here too and the two cannot drift into testing different ladders.
+func _twisted_teaching_catalog() -> Array:
+	var twisted: Array = []
+	for entry_variant in _route_rung_catalog():
+		var entry: Dictionary = (entry_variant as Dictionary).duplicate(true)
+		var key := String(entry[HudRouteVocab.RUNG_CATALOG_KEY])
+		if key == HudRouteVocab.RUNG_KEY_TRAIL:
+			entry[HudRouteVocab.RUNG_CATALOG_EARNS_KNOWLEDGE] = \
+				HudFloraVocab.KNOWLEDGE_TRACK_PAVING
+		elif key == HudRouteVocab.RUNG_KEY_DIRT_ROAD:
+			entry[HudRouteVocab.RUNG_CATALOG_EARNS_KNOWLEDGE] = ""
+		twisted.append(entry)
+	return twisted
 
 ## Every `Control` under `root` carrying `meta`. `Q.find_meta_node` answers the FIRST — which is the
 ## right shape for a chart or a verdict, and the wrong one for a card of four rows.

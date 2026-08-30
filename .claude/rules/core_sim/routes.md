@@ -590,10 +590,20 @@ coded climb has never heard of is in the catalog, and `RungDef::wire_key` /
 | `displayName` | the id read as a player reads it, through the ladder's own `knowledge_title_from_id` — one capitalization rule for underscored ladder ids, not two |
 | `verb` | the rung's own, `""` where it declares none. **An empty verb is the free floor**: a path and a trail are formed by use, so there is no command to draw a button for |
 | `unlockKnowledge` | the gate, joining to `LadderKnowledgeState.knowledgeId` for the faction's own progress; `""` where the rung waits on nothing |
+| `earnsKnowledge` | **the remedy** — the lesson standing at this rung teaches; `""` at the floor and at the top of the branch, which has nothing above it to open |
 | `requiresRung` | the rung beneath, **branch-qualified** (the config's `requires_rung` is a bare id within the branch); `""` at the floor, which ends the chain |
 | `workCost` / `upkeepWorkPerTurn` | the rung's `build.work_cost` and `upkeep.work_per_turn`, **unscaled** — `0` where the record declares no block at all |
 | `frictionMultiplier` / `holdsLinkToTiles` | the rung's `route_payoff`, which `validate` requires on every route rung — so the capture `expect`s it exactly as `road_payoff_at` does, rather than publishing a quieter neutral for a config that cannot load |
 | `grantsSight` | **does a road at this rung light its tile while its keeping is met** — `routes::rung_grants_sight`, which asks whether the record declares an `upkeep` |
+
+⛔ **THE REMEDY IS PUBLISHED BECAUSE IT CANNOT BE INFERRED FROM `requiresRung`.** A gate states what a
+player does not yet know; what they *do* about it is stand on the rung that **teaches** that lesson,
+and that is a different fact from the rung directly beneath the gated one. The two coincide on the
+shipped four — `trail` teaches `roadbuilding` and `dirt_road` requires `trail` — and the config is
+free to break the pairing, at which point an inference names the wrong rung in the one place it is
+telling the player what to go and do. `earnsKnowledge` is the rung's own `earns_knowledge`, in the
+same vocabulary `unlockKnowledge` and `LadderKnowledgeState.knowledgeId` use, so the client joins
+gate → teacher rather than guessing it.
 
 **The two rates are the BRANCH's figures, and a road's real price is not.** The remoteness quote and
 the tile's own `infrastructure_cost` are per-tile facts published on `RouteState`
@@ -616,7 +626,8 @@ the plant and animal branches publishing the same is their own change.
 `snapshot_ladder_knowledge` in the capture. `core_sim/tests/route_wire.rs` pins it on the **encoded
 envelope**: one row per rung the config declares, in the coded climb's order, every value read back
 off that rung's record — plus the shape a ladder renders differently, the floor requiring nothing and
-the free floor naming no verb, owing nothing and lighting nothing.
+the free floor naming no verb, owing nothing and lighting nothing, and every gate on the branch
+answered by some *other* rung's lesson.
 
 ### The band roll-up — `roadworkDemand` / `roadworkSupplied` / `roadworkShortfall`
 

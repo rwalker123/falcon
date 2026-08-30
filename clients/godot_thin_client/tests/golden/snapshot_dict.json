@@ -3674,6 +3674,7 @@
   "route_rungs": [
     {
       "display_name": "route_rungs[0].display_name",
+      "earns_knowledge": "route_rungs[0].earns_knowledge",
       "friction_multiplier": 9.48,
       "grants_sight": true,
       "holds_link_to_tiles": 54,
@@ -3687,6 +3688,7 @@
     },
     {
       "display_name": "route_rungs[1].display_name",
+      "earns_knowledge": "route_rungs[1].earns_knowledge",
       "friction_multiplier": 107.57,
       "grants_sight": true,
       "holds_link_to_tiles": 5,

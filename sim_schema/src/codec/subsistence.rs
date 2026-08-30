@@ -992,6 +992,7 @@ fn create_route_rungs<'a>(
         let verb = builder.create_string(&state.verb);
         let unlock_knowledge = builder.create_string(&state.unlock_knowledge);
         let requires_rung = builder.create_string(&state.requires_rung);
+        let earns_knowledge = builder.create_string(&state.earns_knowledge);
         entries.push(fb::RouteRungState::create(
             builder,
             &fb::RouteRungStateArgs {
@@ -1006,6 +1007,7 @@ fn create_route_rungs<'a>(
                 frictionMultiplier: state.friction_multiplier,
                 holdsLinkToTiles: state.holds_link_to_tiles,
                 grantsSight: state.grants_sight,
+                earnsKnowledge: Some(earns_knowledge),
             },
         ));
     }

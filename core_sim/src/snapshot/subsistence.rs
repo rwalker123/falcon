@@ -2090,6 +2090,11 @@ pub(crate) fn snapshot_route_rungs(ladder: &LadderConfig) -> Vec<RouteRungState>
                 friction_multiplier: payoff.friction_multiplier,
                 holds_link_to_tiles: payoff.holds_link_to_tiles,
                 grants_sight: crate::routes::rung_grants_sight(rung),
+                // **The remedy a gate asks for**, and it is the rung's own `earns_knowledge` rather
+                // than anything read off the chain: the rung that TEACHES a knowledge and the rung
+                // directly beneath the one it gates are two different facts that merely coincide on
+                // the shipped four.
+                earns_knowledge: rung.earns_knowledge.clone().unwrap_or_default(),
             }
         })
         .collect()

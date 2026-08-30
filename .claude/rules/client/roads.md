@@ -20,7 +20,7 @@ here are its traps, arriving one layer out.
 | `ui/hud/hud_route_vocab.gd` (`HudRouteVocab`) | The road VOCABULARY leaf — the four rung keys + their labels + `RUNG_ORDER`, the tile card's **five** row keys and their formats, one reader per wire field, and one composer per row (`road_row_value` and its `progress_clause` / `bonus_value` / `upkeep_value` / **`keeper_value`** / `reverting_value`, joined by `road_lines`). It also owns the four `*_value_hex` forks `DetailFormat._value_hex` dispatches to, so a road's ink is decided beside the words it tints. A vocab module with static funcs, the `hud_work_vocab.gd` shape; it reads `SourceForecast` / `DetailFormat` / `HudSelectionVocab` / `HudConst` / `HudStyle` inside functions only, never in a `const`, so it adds no load cycle — **and that contract is what lets `SourceForecast` alias its four `RUNG_KEY_*` at `const` level** rather than spelling the wire's route rungs twice |
 | `ui/AnnotationRenderer.gd` → the `ROAD_*` family | The map draw: `draw_road_network` walks `MapView.road_network` (world state read through the `_view` back-ref, exactly as `units` / `herds` are) and `_draw_road` stamps **one HEX per road** — `MapView._hex_center_wrapped` for the placement, `_outline_hex_at` at `ROAD_TILE_RADIUS_FACTOR` of the tile radius for the ring. It is called from `_draw` right after the crisis annotations — above the tile tints, beneath every marker, ring and selection outline, because a road is infrastructure IN the ground rather than something standing on it |
 | `ui/hud/RungLadder.gd` → `route_track` / `build_track`'s `title` | **THE ROUTE BRANCH'S ROW PRODUCER, a SIBLING of `track` and never a widening of it** — `track` takes a labor `kind` and a wire source dict, and a road has neither. It emits `track`'s own `ROW_*` shape so the RENDERER is shared (`build_track` gained one optional heading argument and nothing else), walks `HudRouteVocab.route_ladder`'s ordered catalog, and owns the branch's seventh state, `STATE_UNORDERED` — the rung nobody declares. Its two private leaves are `_route_progress_aside` (the meter, on the row DIRECTLY above the standing rung and no other) and `_route_hold_asides` (the standing bill, in the plant/animal branches' own sentence) |
-| `ui/hud/RungGates.gd` → `route_gates` / `route_knowledge_reason` | **THE ROUTE ARM of the shared gate layer**, keyed **RUNG KEY** rather than verb (two route rungs declare none, so a verb-keyed table cannot tell `path` from `trail`). Four gates in reading order — the ground, the un-orderable rung, the craft, the keeper — each carrying its own remedy. The craft's NAME is threaded in as a `{knowledge_id: display_name}` parameter off the ladder's knowledge roster, never a table here, and its remedy comes off the same `requires_rung` gate 1 reads |
+| `ui/hud/RungGates.gd` → `route_gates` / `route_knowledge_reason` | **THE ROUTE ARM of the shared gate layer**, keyed **RUNG KEY** rather than verb (two route rungs declare none, so a verb-keyed table cannot tell `path` from `trail`). Four gates in reading order — the ground, the un-orderable rung, the craft, the keeper — each carrying its own remedy. The craft's NAME is threaded in as a `{knowledge_id: display_name}` parameter off the ladder's knowledge roster, never a table here; its REMEDY is the rung whose `earns_knowledge` names that craft, **looked up through `HudRouteVocab.ladder_rung_teaching` and never inferred from `requires_rung`** |
 | `ui/hud/DrawerComposeController.gd` → the `build_road_drawer_actions` family | The tile card's `Road ▸` action and the `PopupPanel` it opens (`_open_road_ladder` / `_emit_road_improvement` / `_ensure_road_ladder` / `_road_ladder_anchor_rect` / `_dismiss_road_ladder`), filling `%RoadLadderControls` — its own container at the BOTTOM of the card, since `%ForageAssignControls` is gated on a gathering site with a band in hand. It emits `road_improvement_requested`, which `HudLayer` relays straight onto `improvement_requested` with **no** optimistic overlay write |
 | `native/src/dict/routes.rs` | `routes_to_array` — **one dict per road TILE**, the `connections.rs` shape. The row's identity is `tile_x` / `tile_y`, which replaced the retired `RouteId`; beside them ride `has_keeper` / `keeper_band_id` (read the bool first — `0` is a real `BandId`) and `keeper_remoteness`, the multiple distance put on that road's price. There is **no path on the row** — a link knows its two endpoints, so the tiles between them are computable. **`route_rungs_to_array` is the file's second producer and answers a different question** — one row per RUNG of the branch, published once per world beside `ladderKnowledge`, carrying no faction and no tile |
 
@@ -321,7 +321,7 @@ and gate reason on the card.
 
 `RouteRungState`, published once per snapshot beside `ladderKnowledge`: `rungKey` · `order` ·
 `displayName` · `verb` · `unlockKnowledge` · `requiresRung` · `workCost` · `upkeepWorkPerTurn` ·
-`frictionMultiplier` · `holdsLinkToTiles` · `grantsSight`. Per WORLD, carrying no faction and no
+`frictionMultiplier` · `holdsLinkToTiles` · `grantsSight` · `earnsKnowledge`. Per WORLD, carrying no faction and no
 tile, so it is diffed whole like `kits` and cleared at the world boundary
 (`FactionReadouts.reset_world_state`) — a delta never restates it, so the previous game's rungs would
 otherwise still be on the card.
@@ -330,8 +330,10 @@ otherwise still be on the card.
 vocabulary and is a hard-coded four; a fifth rung read through it renders as its raw wire key. The
 sheet names every row from `catalog_display_name`, which is the sim's own word.
 
-**THE THREE `""` FIELDS ARE STATES, NOT ABSENCES**, and each reads as its own row: `verb` is empty on
-a rung nobody declares, `unlockKnowledge` on one nothing gates, `requiresRung` at the floor.
+**THE FOUR `""` FIELDS ARE STATES, NOT ABSENCES**, and each reads as its own row: `verb` is empty on
+a rung nobody declares, `unlockKnowledge` on one nothing gates, `requiresRung` at the floor, and
+`earnsKnowledge` on a rung that teaches nothing (the floor, and the top, which has nothing above it
+to open).
 
 ### `RungLadder.route_track` is a SIBLING of `track`, and `build_track` is shared
 
@@ -380,7 +382,7 @@ tell `path` from `trail`. Four gates, in the order a player reads them:
 |---|---|---|
 | 1 | **the ground** — `requiresRung` unmet | what it needs AND what this ground carries |
 | 2 | **nobody declares it** — `verb == ""` | that traffic raises it; there is no order to give |
-| 3 | **the craft** — `unlockKnowledge` below `KNOWLEDGE_COMPLETE` | the discovery's own `displayName`, its live %, and the rung beneath as the remedy |
+| 3 | **the craft** — `unlockKnowledge` below `KNOWLEDGE_COMPLETE` | the discovery's own `displayName`, its live %, and — as the remedy — the rung whose `earnsKnowledge` names it |
 | 4 | **the keeper** — no acting band | pick a band; whoever raises a road keeps it |
 
 **THE GROUND GATE IS FIRST BECAUSE IT SUPERSEDES**: telling somebody to learn Paving while they stand
@@ -393,10 +395,30 @@ not add a path around it.
 
 **THE CRAFT IS NAMED FROM THE LADDER'S KNOWLEDGE ROSTER, never from a table here** —
 `FactionReadouts.knowledge_labels()` inverts it once and it is threaded in as a PARAMETER, the
-statelessness `RungGates` is built on. **And the REMEDY comes off `requiresRung`**, the same field
-gate 1 reads: a route knowledge is earned by holding the rung below the one it opens, so both
-sentences come off one field rather than two tables that could drift. A roster with no name for the
-craft states the progress and the remedy without inventing one.
+statelessness `RungGates` is built on.
+
+> #### ⛔ THE REMEDY NAMES THE RUNG THAT **TEACHES** THE CRAFT, AND IT IS LOOKED UP
+>
+> It read `requiresRung` — *the rung directly beneath the gated one* — for a slice, on the reasoning
+> that a route knowledge is earned by holding the rung below the one it opens. **That is a property
+> of the four rungs that ship, not of the ladder.** A trail teaches Roadbuilding and does sit
+> directly under the dirt road it opens; `intensification_ladder.json` is free to have a rung teach a
+> craft that opens something two rungs up, and the inference then names the WRONG rung.
+>
+> **It matters because it is a REMEDY.** Every other consequence of that inference would be a
+> cosmetic slip; this one tells the player to go and stand on the wrong ground. So the pairing rides
+> the wire as `earnsKnowledge` and `HudRouteVocab.ladder_rung_teaching` is the lookup.
+>
+> **The sentence it produced was byte-identical on the shipped catalog**, which is exactly why the
+> defect was invisible and why the fixture that catches it has to state a catalog where the two rungs
+> differ — see Tests.
+
+The sentence is a HEAD (what is missing) plus a REMEDY appended only where there is one, because two
+facts arrive independently — whether the roster NAMES the craft and whether any rung on this branch
+TEACHES it — and a format per sentence would need four consts and a fork to choose between them. A
+roster with no name states the progress anyway; **a branch where nothing teaches the craft drops the
+remedy clause entirely**, that being a real state (a route rung may be gated on a craft another
+branch earns) and a dangling *"keep a  carrying traffic"* being worse than a head alone.
 
 ### Where the action sits, and what decides that it is there at all
 
@@ -473,9 +495,22 @@ that is the shipped string: the value arrives as an `f32` and `DetailFormat.form
 it down at one decimal. An expectation "corrected" to the config's digits fails against a client
 doing nothing wrong.
 
-**Falsified**: disabling the KEEPER gate (`if false and band.is_empty()`) makes an unavailable rung
-render live and fails **exactly two** claims, both on `road_ladder_no_keeper`, with the other 29 —
-and every other chapter — still green.
+> #### ⛔ ONE CLAIM RUNS AGAINST A CATALOG OF ITS OWN, AND IT HAS TO
+>
+> On the shipped ladder *the rung beneath the gated one* and *the rung that teaches its craft* are the
+> SAME rung on both steps, so every frame above passes under either rule — which is how the
+> `requiresRung` inference survived a slice. `_twisted_teaching_catalog` moves ONE field and nothing
+> else: **the trail earns Paving** while `paved_road` still requires `dirt_road`. The remedy must then
+> read *keep a trail*, and the inference reads *keep a dirt road* — which is also what the shipped
+> catalog reads, making it the sharpest discriminator available. It is built by MUTATING the shipped
+> fixture rather than restating it, so a rung added to one arrives in the other and the two cannot
+> drift into testing different ladders. PNG-less: both rules render a perfectly plausible card.
+
+**Falsified, twice.** Disabling the KEEPER gate (`if false and band.is_empty()`) makes an unavailable
+rung render live and fails **exactly two** claims, both on `road_ladder_no_keeper`. Restoring the
+`requiresRung` inference in place of `ladder_rung_teaching` fails **exactly two** others, both on the
+twisted catalog — and *nothing on the shipped one*, which is the measurement that says the inference
+was undetectable without that fixture. Every other chapter stayed green through both.
 
 ## What is NOT wired, and is not an omission
 

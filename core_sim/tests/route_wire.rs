@@ -574,6 +574,7 @@ struct PublishedRouteRung {
     friction_multiplier: f32,
     holds_link_to_tiles: u32,
     grants_sight: bool,
+    earns_knowledge: String,
 }
 
 /// **The `routeRungs` catalog off the encoded envelope**, through the accessor chain a client uses.
@@ -617,6 +618,10 @@ fn published_route_rungs(app: &App) -> Vec<PublishedRouteRung> {
             friction_multiplier: row.frictionMultiplier(),
             holds_link_to_tiles: row.holdsLinkToTiles(),
             grants_sight: row.grantsSight(),
+            earns_knowledge: row
+                .earnsKnowledge()
+                .expect("the lesson is published, empty or not")
+                .to_string(),
         })
         .collect()
 }
@@ -699,7 +704,89 @@ fn the_route_rung_catalog_is_the_configs_own_climb() {
             "{} publishes whether a road standing there lights its tile",
             row.rung_key
         );
+        assert_eq!(
+            row.earns_knowledge,
+            rung.earns_knowledge.clone().unwrap_or_default(),
+            "{} publishes the lesson its record teaches",
+            row.rung_key
+        );
     }
+}
+
+/// ⛔ **WHICH RUNG TEACHES WHICH LESSON IS PUBLISHED, BECAUSE IT CANNOT BE INFERRED** — the REMEDY
+/// half of a gate.
+///
+/// `unlockKnowledge` says what a rung waits on; `earnsKnowledge` says where that lesson is learned,
+/// and a client that recovered the second from `requiresRung` would be reading a coincidence. On the
+/// shipped ladder the trail both teaches `roadbuilding` and sits beneath the rung it gates — a
+/// config that separates them is legal, and the inference would then name the wrong rung in the one
+/// place a player is being told what to go and do.
+///
+/// Asserted against the **records**, so moving `earns_knowledge` in the config moves this with it;
+/// the shipped pairing beneath is the liveness half.
+#[test]
+fn the_catalog_names_the_rung_that_teaches_each_gate() {
+    let ladder = LadderConfig::builtin();
+    let app = spawn_world();
+    let published = published_route_rungs(&app);
+
+    // Every gate on the branch is answered by some rung's lesson — the join the client makes.
+    for row in &published {
+        if row.unlock_knowledge.is_empty() {
+            continue;
+        }
+        let teacher = published
+            .iter()
+            .find(|other| other.earns_knowledge == row.unlock_knowledge)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} waits on '{}', and some rung on the branch teaches it",
+                    row.rung_key, row.unlock_knowledge
+                )
+            });
+        assert_ne!(
+            teacher.rung_key, row.rung_key,
+            "a rung cannot teach the lesson that gates it"
+        );
+    }
+
+    // …and the shipped answer, read off the records rather than restated: exactly the rungs whose
+    // `earns_knowledge` is set publish a lesson, and the rest publish none.
+    for (row, rung) in published
+        .iter()
+        .zip(route_rungs_in_climb_order(&ladder).iter())
+    {
+        match rung.earns_knowledge.as_deref() {
+            Some(lesson) => assert_eq!(
+                row.earns_knowledge, lesson,
+                "{} teaches its record's lesson",
+                row.rung_key
+            ),
+            None => assert!(
+                row.earns_knowledge.is_empty(),
+                "{} teaches nothing, and publishes nothing",
+                row.rung_key
+            ),
+        }
+    }
+
+    let teaching: Vec<&str> = published
+        .iter()
+        .filter(|row| !row.earns_knowledge.is_empty())
+        .map(|row| row.earns_knowledge.as_str())
+        .collect();
+    assert!(
+        !teaching.is_empty(),
+        "the branch teaches something — the liveness half of the loop above"
+    );
+    assert!(
+        published[0].earns_knowledge.is_empty(),
+        "the floor teaches nothing: you wear a path by walking it"
+    );
+    assert!(
+        published[published.len() - 1].earns_knowledge.is_empty(),
+        "and the top of the branch has nothing above it to open"
+    );
 }
 
 /// ⛔ **THE FREE FLOOR NAMES NO VERB AND THE FLOOR REQUIRES NOTHING** — the two facts a ladder
