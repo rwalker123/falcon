@@ -309,6 +309,199 @@ fn seam_bands_beyond_reach_do_not_share() {
     );
 }
 
+/// The shipped reach, read off the config the fixtures actually run against rather than assumed.
+fn reach_tiles(app: &App) -> u32 {
+    app.world
+        .resource::<SupplyNetworkConfigHandle>()
+        .get()
+        .reach_tiles
+}
+
+/// Whether the fixture's map wraps — the flag both distance helpers below must be handed.
+fn wraps(app: &App) -> bool {
+    app.world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal
+}
+
+/// A row of **odd** parity near the equator.
+///
+/// The offset shape that separates the two metrics only bites on one parity — odd-r shoves odd rows
+/// right — so the diagonal fixtures pin the row instead of trusting `h / 2` to land on it.
+fn odd_equator_row(h: u32) -> u32 {
+    (h / 2) | 1
+}
+
+/// `columns` east and one row **north** of `(x, y)`, wrapping the column.
+///
+/// From an **odd** row this is exactly `columns` hex steps but `columns² + 1` in squared Euclidean —
+/// the `(53,15)`/`(56,14)` shape reported from a live game. It is the only shape that tells the two
+/// metrics apart at the boundary, which is why every diagonal fixture below is built from it (and
+/// asserts the hex distance it expects rather than trusting this comment).
+fn diagonal_from(x: u32, y: u32, columns: u32, width: u32) -> (u32, u32) {
+    ((x + columns) % width, y - 1)
+}
+
+/// Assert a pair sits at `expected` hex steps, **and** that squared Euclidean would have called it
+/// further away than the reach. Without the second half the fixture could pass on a pair both
+/// metrics already accepted, measuring a coincidence rather than the metric.
+fn assert_hex_apart(app: &App, a: Entity, b: Entity, expected: u32) {
+    let (pa, pb) = (position_of(app, a), position_of(app, b));
+    let width = app.world.resource::<TileRegistry>().width;
+    let wrap = wraps(app);
+    let hex = core_sim::grid_utils::hex_distance_wrapped(pa, pb, width, wrap);
+    assert_eq!(
+        hex, expected,
+        "fixture must sit at {expected} hex steps: {pa:?} -> {pb:?} is {hex}"
+    );
+    let reach = reach_tiles(app);
+    let euclid_sq = core_sim::grid_utils::wrapped_distance_sq(pa, pb, width, wrap);
+    assert!(
+        euclid_sq > (reach * reach) as i32,
+        "the fixture must be a pair the retired Euclidean test rejected: {euclid_sq} vs reach² {}",
+        reach * reach
+    );
+}
+
+/// **The reported bug, directly.** Two connected bands exactly `reach_tiles` hex steps apart on the
+/// offset diagonal pool — even though squared Euclidean on offset coordinates scores them
+/// `reach² + 1` and would reject them by one unit. This is the `(53,15)`/`(56,14)` pair a live game
+/// found reading `supply_network_id: 0` at the shipped `reach_tiles: 3`.
+#[test]
+fn bands_a_hex_diagonal_apart_pool_though_euclidean_would_reject() {
+    let mut app = spawn_world();
+    let (w, h) = {
+        let reg = app.world.resource::<TileRegistry>();
+        (reg.width, reg.height)
+    };
+    let reach = reach_tiles(&app);
+    let (cx, cy) = (w / 4, odd_equator_row(h));
+    let (ex, ey) = diagonal_from(cx, cy, reach, w);
+    let fed = spawn_band(&mut app, cx, cy, 1_000);
+    let empty = spawn_band(&mut app, ex, ey, 0);
+    assert_hex_apart(&app, fed, empty, reach);
+    seed_mutual_tie(&mut app, fed, empty);
+
+    app.world.run_system_once(balance_supply_networks);
+
+    assert!(
+        food_of(&app, empty) > 0.0,
+        "a band exactly `reach_tiles` HEX steps away should receive food, got {}",
+        food_of(&app, empty)
+    );
+    let membership = app.world.resource::<SupplyNetworkMembership>();
+    let net = membership.network_of(fed);
+    assert!(net >= 1, "the pair must form a real network, not read 0");
+    assert_eq!(
+        net,
+        membership.network_of(empty),
+        "a pair at exactly `reach_tiles` hex steps shares one supply-network id"
+    );
+}
+
+/// **The boundary still bites.** One hex step further out — `reach_tiles + 1` — and the same pair
+/// pools nothing. Paired with the fixture above, because "everything pools" also passes that one.
+#[test]
+fn bands_one_hex_step_beyond_reach_do_not_pool() {
+    let mut app = spawn_world();
+    let (w, h) = {
+        let reg = app.world.resource::<TileRegistry>();
+        (reg.width, reg.height)
+    };
+    let reach = reach_tiles(&app);
+    let (cx, cy) = (w / 4, odd_equator_row(h));
+    let (ex, ey) = diagonal_from(cx, cy, reach + 1, w);
+    let fed = spawn_band(&mut app, cx, cy, 1_000);
+    let empty = spawn_band(&mut app, ex, ey, 0);
+    assert_hex_apart(&app, fed, empty, reach + 1);
+    seed_mutual_tie(&mut app, fed, empty);
+
+    app.world.run_system_once(balance_supply_networks);
+
+    assert_eq!(
+        food_of(&app, empty),
+        0.0,
+        "a band one hex step beyond the reach receives nothing"
+    );
+    assert_eq!(
+        food_of(&app, fed),
+        1_000.0,
+        "the fed band keeps all its food when the only other band is out of reach"
+    );
+    let membership = app.world.resource::<SupplyNetworkMembership>();
+    assert_eq!(membership.network_of(fed), 0);
+    assert_eq!(membership.network_of(empty), 0);
+}
+
+/// **The seam is judged by the same metric.** The diagonal pair again, straddling the wrap: exactly
+/// `reach_tiles` hex steps apart across the seam, Euclidean-further, and it pools. Guards the
+/// spatial hash's wrap folding against the widened test — its bins are still a superset.
+#[test]
+fn seam_bands_a_hex_diagonal_apart_pool() {
+    let mut app = spawn_world();
+    app.world
+        .resource_mut::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal = true;
+    let (w, h) = {
+        let reg = app.world.resource::<TileRegistry>();
+        (reg.width, reg.height)
+    };
+    let reach = reach_tiles(&app);
+    let cy = odd_equator_row(h);
+    let (ex, ey) = diagonal_from(w - 1, cy, reach, w);
+    let fed = spawn_band(&mut app, w - 1, cy, 1_000);
+    let empty = spawn_band(&mut app, ex, ey, 0);
+    assert_hex_apart(&app, fed, empty, reach);
+    seed_mutual_tie(&mut app, fed, empty);
+
+    app.world.run_system_once(balance_supply_networks);
+
+    assert!(
+        food_of(&app, empty) > 0.0,
+        "a diagonal pair across the seam at exactly `reach_tiles` hex steps should pool, got {}",
+        food_of(&app, empty)
+    );
+    let membership = app.world.resource::<SupplyNetworkMembership>();
+    assert!(membership.network_of(fed) >= 1);
+    assert_eq!(
+        membership.network_of(fed),
+        membership.network_of(empty),
+        "the seam pair shares one supply-network id"
+    );
+}
+
+/// The seam pair's beyond-reach twin: one hex step further and nothing crosses the seam either.
+#[test]
+fn seam_bands_one_hex_step_beyond_reach_do_not_pool() {
+    let mut app = spawn_world();
+    app.world
+        .resource_mut::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal = true;
+    let (w, h) = {
+        let reg = app.world.resource::<TileRegistry>();
+        (reg.width, reg.height)
+    };
+    let reach = reach_tiles(&app);
+    let cy = odd_equator_row(h);
+    let (ex, ey) = diagonal_from(w - 1, cy, reach + 1, w);
+    let fed = spawn_band(&mut app, w - 1, cy, 1_000);
+    let empty = spawn_band(&mut app, ex, ey, 0);
+    assert_hex_apart(&app, fed, empty, reach + 1);
+    seed_mutual_tie(&mut app, fed, empty);
+
+    app.world.run_system_once(balance_supply_networks);
+
+    assert_eq!(
+        food_of(&app, empty),
+        0.0,
+        "one hex step beyond the reach is out of reach across the seam too"
+    );
+    assert_eq!(food_of(&app, fed), 1_000.0);
+}
+
 /// A band ten tiles away shares nothing even with a full tie — **distance still gates**, which is
 /// the whole of a distant splinter needing a shipment rather than a free pool.
 #[test]

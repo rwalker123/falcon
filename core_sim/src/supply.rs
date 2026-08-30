@@ -3,7 +3,8 @@
 //!
 //! Every band is a small logistics node holding a local goods store (`PopulationCohort.stores`).
 //! Each turn `balance_supply_networks` joins bands **of one people** that are within `reach_tiles`
-//! of each other **and** hold a live tie in [`crate::connections::ConnectionLedger`] into **supply
+//! **hex steps** of each other **and** hold a live tie in [`crate::connections::ConnectionLedger`]
+//! into **supply
 //! networks** (connected components) and moves each commodity toward a **per-capita balance** across
 //! the network — capped at `throughput_per_turn` per node and losing `friction` in transit. So a
 //! gatherer band automatically feeds a scouting band it's near, while a band that is detached, one
@@ -42,7 +43,7 @@ use crate::{
         BandId, LaborAllocation, MaterialBatch, PopulationCohort, ResidentBand, Tile, FOOD,
     },
     connections::{ConnectionKey, ConnectionLedger, NO_TIE},
-    grid_utils::wrapped_distance_sq,
+    grid_utils::hex_distance_wrapped,
     materials_config::BandKey,
     orders::FactionId,
     resources::{SimulationConfig, TileRegistry},
@@ -115,8 +116,16 @@ impl Node {
 }
 
 /// **The link rule.** An undirected logistics link exists between two resident bands iff they are
-/// within `reach_tiles` of each other *and* the ledger holds a live tie (`strength > NO_TIE`) in at
-/// least one direction.
+/// within `reach_tiles` **hex steps** of each other ([`crate::grid_utils::hex_distance_wrapped`])
+/// *and* the ledger holds a live tie (`strength > NO_TIE`) in at least one direction.
+///
+/// **Reach is measured in hex distance, like every other radius in the sim** — `band_work_range`,
+/// the hunt leash, a predator's prey-sensing disk. It was squared Euclidean on offset coordinates
+/// until the route branch, which is *stricter than it reads* at the diagonals: two camps 3 hex
+/// steps apart at
+/// `(53,15)`/`(56,14)` measure `3² + 1² = 10` against a threshold of `9` and were excluded by one
+/// unit, so `reach_tiles: 3` did not mean three hexes. Hex distance widens pooling at the diagonals
+/// and is a **gameplay change**, deliberately taken so the shipped lever means what it says.
 ///
 /// **Either direction, not both.** A connection is directed — *who found whom* — and whether a
 /// rider requires mutuality is the rider's business (`connections.rs`). This rider does not:
@@ -317,7 +326,6 @@ pub fn balance_supply_networks(
     // Recomputed from scratch every turn; a 0/1-band map (early return below) leaves it empty.
     membership.0.clear();
     let cfg = config.get();
-    let reach_sq = (cfg.reach_tiles * cfg.reach_tiles) as i32;
     let width = tile_registry.width;
     let height = tile_registry.height;
     let wrap = sim_config.map_topology.wrap_horizontal;
@@ -370,6 +378,15 @@ pub fn balance_supply_networks(
     // **The bin key is position alone**: the bins are geometry, and both the tie and the pooling
     // policy are pair predicates, so a foreign neighbour only ever widens the candidate net — which
     // is negligible at band counts.
+    //
+    // ⛔ **THE NEIGHBOURHOOD MUST BE A SUPERSET OF WHAT THE DISTANCE TEST ACCEPTS**, or pairs are
+    // dropped silently. It is, and for the same reason `hex_range_tiles` may scan a bounding box:
+    // every hex step changes the offset column and row by at most 1 (`HEX_NEIGHBOR_OFFSETS`), so a
+    // node `reach` hex steps away is within `reach` columns and `reach` rows — the *same* offset
+    // box the retired squared-Euclidean test implied (`dx² + dy² <= reach²` also gives
+    // `|dx|, |dy| <= reach`). A delta of at most `cell_size` moves a floor-division cell index by at
+    // most one, so ±1 cells cover it, and the ±2 in x below still covers the runt seam cell.
+    // Changing the metric therefore did not change the required neighbourhood at all.
     let count = nodes.len();
     let mut parent: Vec<usize> = (0..count).collect();
 
@@ -413,7 +430,8 @@ pub fn balance_supply_networks(
                         continue; // each unordered pair once; also skips self
                     }
                     if pools_freely(&nodes[i], &nodes[j])
-                        && wrapped_distance_sq(nodes[i].pos, nodes[j].pos, width, wrap) <= reach_sq
+                        && hex_distance_wrapped(nodes[i].pos, nodes[j].pos, width, wrap)
+                            <= cfg.reach_tiles
                         && tie_is_live(&ledger, nodes[i].band, nodes[j].band)
                     {
                         // **THE COMMONEST TRAFFIC IN THE GAME, recorded where it is known.** Two

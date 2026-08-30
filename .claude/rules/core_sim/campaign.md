@@ -22,7 +22,7 @@ paths:
 |------|---------|
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
-| `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
+| `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
 ## Campaign Loop & System Activation
 
@@ -250,9 +250,27 @@ unit-tested `balance_commodity`. Config: `supply_network_config.json`.
 > **An undirected logistics link exists between two resident bands iff both hold** (`supply::tie_is_live`,
 > arc #527 §Q4):
 >
-> 1. `wrapped_distance_sq(a, b) <= reach_tiles²` — the geometry, unchanged; and
+> 1. `hex_distance_wrapped(a, b) <= reach_tiles` — the geometry; and
 > 2. `ConnectionLedger` holds a live tie (`strength > NO_TIE`) between their `BandId`s in **at least
 >    one direction**.
+>
+> **Rule 1 is measured in hex steps, which widened pooling at the diagonals.** It was
+> `wrapped_distance_sq(a, b) <= reach_tiles²` — squared Euclidean on odd-r *offset* coordinates —
+> making the supply network the only reach in the sim not measured the way `band_work_range`, the
+> hunt leash and a predator's prey-sensing disk are. Euclidean on offset coords is **stricter than
+> it reads**: two camps at `(53,15)` and `(56,14)` are exactly 3 hex steps apart, but score
+> `3² + 1² = 10` against a threshold of `9`, so at the shipped `reach_tiles: 3` they were excluded
+> by one unit — no pooling, no supply-link line, and (because the automatic pooling link is the only
+> road traffic that exists) no road could ever form between them. Moving to hex distance is a
+> **gameplay change**, not a refactor: every band's pooling reach grows at the diagonals and
+> `reach_tiles: 3` finally means three hexes.
+>
+> **The spatial-hash neighbourhood is unchanged by the metric.** The union bins nodes into
+> `reach_tiles`-wide cells and compares only against neighbouring cells (±1 in y, ±2 in x across the
+> wrap seam). That is a superset under either metric for the same reason `hex_range_tiles` may scan
+> a bounding box: every hex step changes the offset column and row by at most 1
+> (`HEX_NEIGHBOR_OFFSETS`), so a tile `reach` steps away is within `reach` columns and rows — the
+> same offset box `dx² + dy² <= reach²` implies.
 >
 > The edge used to be derived from proximity alone, which made this a second independent
 > implementation of *"goods move between two bands"* beside a trade shipment's tie gate
