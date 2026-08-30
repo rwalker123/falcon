@@ -1984,6 +1984,77 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > **Building a road no more owns it than paying for it does** — which is what preserves the
     > shared-public-good property the ground-shaped model bought.
     >
+    > #### ⛔ §4.13b — A ROAD IS A **TILE IMPROVEMENT**, AND THE PATH OBJECT WAS A CONFLATION
+    >
+    > **13a modelled a road as a stored path with its own id** — one object holding a `Vec<UVec2>`, a
+    > ladder position, and a keeping bill for the whole run. Ray broke it with one sentence: *"a road
+    > is a single tile improvement, not the entire path, so one band could maintain 1/2 the tile roads
+    > for the distance of a connection between two bands and another the other 1/2."*
+    >
+    > **A path object cannot be half-maintained.** There is no way to express *these people look after
+    > this end and those people look after that end*, and that is the ordinary case the moment two
+    > camps sit at either end of a long road.
+    >
+    > **So a road is a per-TILE improvement, structurally identical to a forage patch**: each tile
+    > carries its own rung, its own meter, its own keeping and its own decay, worked by whoever takes
+    > that tile on.
+    >
+    > ##### ⛔ THREE OBJECTS WERE RUNNING TOGETHER, AND ONLY THE THIRD IS BEING REMOVED
+    >
+    > This is the part a future reader must not re-merge. Ray, on the risk: *"Connections between bands
+    > (i.e. supply depots) will probably be important later in the game for logistics… just want to
+    > make sure you won't remove something that we need."*
+    >
+    > | | what it is | status |
+    > |---|---|---|
+    > | **connection** | two bands know each other, this much (`connections.rs`) | **shipped, untouched** — #517 / #547 |
+    > | **logistics link** | goods move between them; what a shipment walks and what pooling rides | **shipped, untouched** |
+    > | **road** | a built, maintained improvement **on one tile** | the new shape |
+    > | **link quality** | how good the going is between two camps | **DERIVED each turn** by reading the road tiles along the way — not stored |
+    >
+    > **What is removed is only the stored path inside `Route`**, which was my invention and which
+    > nothing needs: a link already knows its two endpoints, so the tiles between them are computable.
+    > `trace_path` survives as a **function**; it stops being **state**. Ray's own phrasing for this is
+    > the right one — *"a route projected onto the tiles"*: the **link** is the object, the **roads**
+    > are the ground it runs over.
+    >
+    > ##### WHAT THE PER-TILE MODEL DISSOLVES
+    >
+    > - **"Can two bands maintain one road?"** — the question this arc spent three rounds on. It has no
+    >   content now: they maintain **different tiles**. No exclusivity rule, no split, nothing to
+    >   arbitrate. §4.13a's *"several bands each pay a share and the contributions add together"* is
+    >   **retired** — Ray: *"Don't agree with at all"*.
+    > - **`Roadwork` as a band-wide POOL is the wrong shape and is retired.** A pool is what a role
+    >   takes when it covers *everything the band holds* on a web — true of agriculture (every patch)
+    >   and husbandry (every flock), and false of roads, which a band does not hold. Roads are worked as
+    >   **per-tile rows**, like `Forage { tile }`. That is what makes the per-road choice exist at all:
+    >   Ray, on automatic payment for every road under a camp, *"Don't agree with this one at all,
+    >   per-road choice must exist"*.
+    > - **`grade` and `pave` become TILE commands** — `grade <faction> <band> <x> <y>`, the same grammar
+    >   as `cultivate <x> <y>` and `sow <x> <y>`, rather than a route-id form nothing else in the game
+    >   uses.
+    > - **`UpkeepScale::RouteSpan` probably retires with it.** It exists to express `length × terrain`;
+    >   per tile, the length term is gone and what remains is the tile's own `infrastructure_cost` — the
+    >   same *shape* as the plant web reading its tile's `K`. If it collapses into `SourceLoad` with a
+    >   per-branch reading, that is §4.11's stated preference (*"one primitive with a per-branch reading
+    >   beat a second variant"*) and this slice should take it.
+    > - **The tile card becomes the structurally correct home for the readout**, rather than the
+    >   judgement call it was.
+    >
+    > ##### ⛔ THE WORD **OWNERSHIP** IS RETIRED FROM THIS ARC
+    >
+    > Ray: *"A road could have no owner, but that is an abstract term in this game so it really has no
+    > meaning."* There is no owning. There is a **job** — *these people look after this tile's road* —
+    > which is a work row like any other, and the question *"who owns a road"* should not be asked
+    > again. What survives of §4.13a's ownership prose is only the concrete half: a band whose camp is
+    > on a road tile is served by it, and a road nobody maintains decays and goes.
+    >
+    > ##### WHAT DOES NOT EXIST YET, NAMED SO IT IS NOT ASSUMED INTO "ROUTE"
+    >
+    > **A depot.** Neither a connection nor a road is *a place goods sit*. It is a third object and
+    > nothing in this model provides one; Ray raised it as the thing later logistics will want. Do not
+    > let it be quietly folded into either.
+    >
     > #### THE KNOWLEDGE CHAIN LOSES A LESSON, AND THE ONE IT LOSES TAUGHT NOTHING
     >
     > 13a shipped **four** lessons: `game trail` earned `trailcraft`, which gated `trail`. **A lesson
