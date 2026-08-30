@@ -5410,7 +5410,7 @@ table RouteState {
   // to name.
   tileX:uint;
   tileY:uint;
-  // The rung this road HOLDS, as "<branch>:<id>" via RungKey::wire_key - "route:game_trail",
+  // The rung this road HOLDS, as "<branch>:<id>" via RungKey::wire_key - "route:path",
   // "route:trail", "route:dirt_road", "route:paved_road".
   //
   // *** READ THE RUNG, NEVER INFER ONE FROM A FLOAT. *** `buildFraction` below is the meter on the
@@ -5485,7 +5485,7 @@ table RouteState {
   // WHAT THIS RUNG IS BUYING, off the tile's own stamped payoff.
   //
   // frictionMultiplier = the fraction of the base pooling friction a haul over THIS TILE pays.
-  //                      1.0 = no help (bare ground and the game trail). A journey's saving is the
+  //                      1.0 = no help (bare ground and the path). A journey's saving is the
   //                      MEAN of the tiles it crosses, so a partly-roaded run pays partly - which is
   //                      the per-tile model's own answer and what the retired "best road binding the
   //                      network" rule could not express. Read by `balance_supply_networks`.

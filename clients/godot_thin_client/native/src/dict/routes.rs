@@ -40,7 +40,7 @@ pub(crate) fn routes_to_array(list: Vector<'_, ForwardsUOffset<fb::RouteState<'_
         // **THE RUNG STRING IS THE BOOL -- never infer one from the float below.** `build_fraction`
         // is the meter on the rung being RAISED, which is a DIFFERENT rung; a consumer that
         // thresholded it would call a fully-worn trail a dirt road on the turn its first traffic
-        // banked. `"route:game_trail"` | `"route:trail"` | `"route:dirt_road"` | `"route:paved_road"`.
+        // banked. `"route:path"` | `"route:trail"` | `"route:dirt_road"` | `"route:paved_road"`.
         let _ = dict.insert("rung", route.rung().unwrap_or_default());
         // The meter on the rung being raised, 0..1 -- the route twin of `cultivation_progress`.
         // **NEVER DERIVED BY SUBTRACTION** sim-side, so a road that has just completed a rung reads
@@ -48,7 +48,7 @@ pub(crate) fn routes_to_array(list: Vector<'_, ForwardsUOffset<fb::RouteState<'_
         // empty one.
         let _ = dict.insert("build_fraction", f64::from(route.buildFraction()));
         // WHOSE JOB THIS TILE IS. **Read `has_keeper` first**: `keeper_band_id` 0 is a real band id,
-        // so the bool is the field that answers. `false` across the whole free floor — a game trail
+        // so the bool is the field that answers. `false` across the whole free floor — a path
         // and a trail are formed by use and nobody keeps them, which is the commonest road in the
         // game rather than an edge case. ONE KEEPER PER TILE, never a share: that is what makes "one
         // band keeps half the tiles between two camps and another the other half" representable.
@@ -70,7 +70,7 @@ pub(crate) fn routes_to_array(list: Vector<'_, ForwardsUOffset<fb::RouteState<'_
         let _ = dict.insert("upkeep_workers_needed", route.upkeepWorkersNeeded() as i64);
         // THE NEGLECT COUNTDOWN, NOT THE COUNTER: `0` means IT IS REVERTING NOW, and a road whose
         // bill is met reads its rung's full grace + 1. `has_neglect_grace == false` means there is
-        // NOTHING AT RISK here -- a road holding only the game trail, which declares no upkeep and
+        // NOTHING AT RISK here -- a road holding only the path, which declares no upkeep and
         // so has no meter to lose. **Read the bool first**; the number reuses the "biting now" 0
         // rather than inventing a sentinel.
         let _ = dict.insert("has_neglect_grace", route.hasNeglectGrace());
@@ -94,7 +94,7 @@ pub(crate) fn routes_to_array(list: Vector<'_, ForwardsUOffset<fb::RouteState<'_
         //                         link goods must get THROUGH.
         //                         **AUTHORED AND NOT YET CONSUMED BY THE SIM** (slice 13b), so a
         //                         readout must state it as what the rung WILL hold, never as a live
-        //                         effect. `0` on the game trail is a live reading, not a parked dial.
+        //                         effect. `0` on the path is a live reading, not a parked dial.
         let _ = dict.insert("friction_multiplier", f64::from(route.frictionMultiplier()));
         let _ = dict.insert("holds_link_to_tiles", route.holdsLinkToTiles() as i64);
         array.push(&dict.to_variant());

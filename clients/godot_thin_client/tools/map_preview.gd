@@ -462,9 +462,9 @@ const ROUTE_DEGENERATE_PATH := [[5, 11]]
 # what a player sees, while remaining what the wire actually carries: independent tiles.
 #
 # One run per rung, laid parallel so the four opacity steps and the four widths read against each
-# other in one frame — a faint game trail through to a strong paved road — plus a fifth in SHORTFALL,
+# other in one frame — a faint path through to a strong paved road — plus a fifth in SHORTFALL,
 # which must read in the DANGER ink whatever rung it holds.
-const ROAD_GAME_TRAIL_TILES := [[1, 1], [3, 1], [5, 2], [7, 2], [9, 3]]
+const ROAD_PATH_TILES := [[1, 1], [3, 1], [5, 2], [7, 2], [9, 3]]
 const ROAD_TRAIL_TILES := [[1, 3], [3, 3], [5, 4], [7, 4], [9, 5]]
 const ROAD_DIRT_TILES := [[1, 5], [3, 5], [5, 6], [7, 6], [9, 7]]
 const ROAD_PAVED_TILES := [[1, 7], [3, 7], [5, 8], [7, 8], [9, 9]]
@@ -4552,7 +4552,7 @@ func _road_run(tiles: Array, rung: String, shortfall: float) -> Array:
 func _snapshot_road_network() -> Dictionary:
 	var snap := _base_snapshot(_band([], 2, 0), [])
 	var rows: Array = []
-	rows.append_array(_road_run(ROAD_GAME_TRAIL_TILES, HudRouteVocab.RUNG_KEY_GAME_TRAIL, ROAD_KEPT))
+	rows.append_array(_road_run(ROAD_PATH_TILES, HudRouteVocab.RUNG_KEY_PATH, ROAD_KEPT))
 	rows.append_array(_road_run(ROAD_TRAIL_TILES, HudRouteVocab.RUNG_KEY_TRAIL, ROAD_KEPT))
 	rows.append_array(_road_run(ROAD_DIRT_TILES, HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_KEPT))
 	rows.append_array(_road_run(ROAD_PAVED_TILES, HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_KEPT))

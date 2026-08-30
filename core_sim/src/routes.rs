@@ -2,7 +2,7 @@
 //! `TerrainDefinition::infrastructure_cost` has ever had (`docs/plan_standing_upkeep.md` §4.13,
 //! issue #532).
 //!
-//! Roads climb **game trail → trail → dirt road → paved road**. Each rung is *cheaper to travel and
+//! Roads climb **path → trail → dirt road → paved road**. Each rung is *cheaper to travel and
 //! dearer to keep*, which is deliberately **not** a straight upgrade path: you pave where the traffic
 //! pays for the upkeep, and everywhere else a trail is the right answer for ever.
 //!
@@ -53,7 +53,7 @@
 //! # TRAFFIC PAYS FOR THE FLOOR, AND IT STOPS AT THE TOP OF IT
 //!
 //! *"A crew clears ground | **traffic wears the route in**."* That is true of the **free floor** and
-//! of nothing else. A game trail and a trail declare no `verb`, append no `BuildQueueEntry` and draw
+//! of nothing else. A path and a trail declare no `verb`, append no `BuildQueueEntry` and draw
 //! nothing from the builders' pool — traffic is the crew, and it banks work up to the top of
 //! [`FREE_FLOOR_TOP_RUNG`] **and no further** ([`traffic_ceiling`]).
 //!
@@ -89,7 +89,7 @@ use crate::{
     terrain::terrain_definition,
 };
 
-// **RETIRED: `TRAILCRAFT_DISCOVERY_ID` (2011).** *Trailcraft* was taught by a game trail and gated
+// **RETIRED: `TRAILCRAFT_DISCOVERY_ID` (2011).** *Trailcraft* was taught by a path and gated
 // `route:trail` — **a lesson for something you cannot fail to do.** You wear a path in by walking it;
 // there is no knowing-how involved and no way to be refused, so the gate was open by the time
 // anything could ask it (`docs/plan_standing_upkeep.md` §4.13a). **The id 2011 is retired, not
@@ -106,7 +106,7 @@ pub const PAVING_DISCOVERY_ID: u32 = 2013;
 ///
 /// The branch has the same two-part shape the other two webs have — `plant` is *wild* then
 /// *tended · field*, `animal` is *wild* then *pastoral · pen*, and `route` is
-/// **game trail · trail** then **dirt road · paved road**. Everything at or below this rung forms
+/// **path · trail** then **dirt road · paved road**. Everything at or below this rung forms
 /// from use, is lost to disuse and has **no keeper**; everything above it is ordered with a verb,
 /// raised by the builders' pool, kept by one band and lost to unpaid keeping.
 pub const FREE_FLOOR_TOP_RUNG: RungKey = RungKey::RouteTrail;
@@ -199,7 +199,7 @@ pub struct Road {
     /// **Consecutive turns this tile has carried no traffic** — the free floor's own neglect
     /// counter, and the exact twin of [`Self::neglect_turns`] one trigger over.
     ///
-    /// ⛔ **THE FREE FLOOR NEEDS ITS OWN COUNTER BECAUSE IT CANNOT BE SHORT.** `route:game_trail`
+    /// ⛔ **THE FREE FLOOR NEEDS ITS OWN COUNTER BECAUSE IT CANNOT BE SHORT.** `route:path`
     /// and `route:trail` declare no `upkeep`, so their demand is [`NO_UPKEEP_DEMAND`], their
     /// shortfall is always zero and [`Self::neglect_turns`] can never arm on them. What takes a free
     /// road back is **disuse**, and this is what counts it.
@@ -211,7 +211,7 @@ pub struct Road {
 }
 
 impl Road {
-    /// A brand-new road tile at the branch's floor: a game trail, with work banked on nothing yet and
+    /// A brand-new road tile at the branch's floor: a path, with work banked on nothing yet and
     /// nobody keeping it.
     pub fn worn_in(tile: UVec2, ladder: &LadderConfig) -> Self {
         Self {
@@ -291,8 +291,8 @@ impl Road {
     /// **Is this road one somebody BUILT and somebody keeps?** — `true` at [`FIRST_BUILT_RUNG`] and
     /// above, `false` across the whole free floor.
     ///
-    /// **It is a rung test and not a `!= game_trail` test.** A trail is worn in by traffic and costs
-    /// nothing to hold, so it is exactly as free as the game trail beneath it — and the one thing
+    /// **It is a rung test and not a `!= path` test.** A trail is worn in by traffic and costs
+    /// nothing to hold, so it is exactly as free as the path beneath it — and the one thing
     /// hanging off this predicate, [`Self::grants_sight`], reasons from *"paying the upkeep IS the
     /// presence"*. A road nobody pays for has nobody on it, so a free trail must light nothing
     /// however worn it is.
@@ -372,7 +372,7 @@ impl RoadRegistry {
         self.roads.get_mut(&(tile.y, tile.x))
     }
 
-    /// **The road on this tile, laying a game trail where there was none** — what traffic does the
+    /// **The road on this tile, laying a path where there was none** — what traffic does the
     /// first time anything walks a tile.
     pub fn road_or_trail(&mut self, tile: UVec2, ladder: &LadderConfig) -> &mut Road {
         self.roads
@@ -504,7 +504,7 @@ pub fn path_reach_tiles<'a>(
     reach.unwrap_or(NO_REACH_HELD_OPEN)
 }
 
-/// **A TILE THAT HOLDS NO LINK OPEN** — what bare ground and a game trail are both worth to
+/// **A TILE THAT HOLDS NO LINK OPEN** — what bare ground and a path are both worth to
 /// [`path_reach_tiles`], and the value an empty path answers.
 pub const NO_REACH_HELD_OPEN: u32 = 0;
 
@@ -767,7 +767,7 @@ pub fn trace_path(from: UVec2, to: UVec2, width: u32, height: u32, wrap: bool) -
 /// # ⛔ TWO DECAY TRIGGERS, BECAUSE A FREE RUNG CANNOT BE SHORT
 ///
 /// - **The built rungs** (`dirt_road`, `paved_road`) revert on **unpaid keeping** — phases 1 and 2.
-/// - **The free floor** (`game_trail`, `trail`) costs nothing, so it can never be short: it reverts
+/// - **The free floor** (`path`, `trail`) costs nothing, so it can never be short: it reverts
 ///   on **DISUSE** — phase 5. That is `plan_contact_and_logistics.md` §Q4's own *"an unused road
 ///   reverts"*, which 13a collapsed into the shortfall path and left a free trail immortal.
 ///
@@ -878,7 +878,7 @@ pub fn advance_roads(
     // ## ⛔ THE SECOND DECAY TRIGGER — DISUSE, AND IT OWNS THE FREE FLOOR ALONE
     //
     // **A rung that costs nothing to hold cannot be short**, so the shortfall path above can never
-    // reach `route:game_trail` or `route:trail`. The loss is **FLAT rather than proportional**,
+    // reach `route:path` or `route:trail`. The loss is **FLAT rather than proportional**,
     // unlike the shortfall bleed: a bill can be partly paid, but traffic is a yes/no.
     //
     // It runs **after** the banking, because whether a road was idle is only known once this turn's
@@ -898,7 +898,7 @@ pub fn advance_roads(
 
     // ## ⛔ THE PRUNE, AND IT MUST COME AFTER THE BANKING
     //
-    // **A game trail with no work in it is indistinguishable from no road at all** — it buys
+    // **A path with no work in it is indistinguishable from no road at all** — it buys
     // nothing, lights nothing and owes nothing — so a registry that kept every tile ever walked
     // would grow without bound on reverted trails.
     //
@@ -923,7 +923,7 @@ mod tests {
 
     /// The four route rungs, bottom to top.
     const ROUTE_RUNGS: [RungKey; 4] = [
-        RungKey::RouteGameTrail,
+        RungKey::RoutePath,
         RungKey::RouteTrail,
         RungKey::RouteDirtRoad,
         RungKey::RoutePavedRoad,
@@ -961,12 +961,17 @@ mod tests {
 
         // The floor is held at zero work, costs nothing, and is nobody's to keep.
         let floor = road_standing_at(&ladder, RUNG_UNSTARTED, NEAR_ENOUGH_TO_KEEP);
-        assert_eq!(floor.held, RungKey::RouteGameTrail);
+        assert_eq!(floor.held, RungKey::RoutePath);
+        // ⛔ **THE FLOOR'S WIRE KEY IS PINNED AS A LITERAL, DELIBERATELY.** Every other rung
+        // assertion in the workspace compares against `wire_key()` so a hand-typed string cannot
+        // drift; here the client reads `"route:path"` as a literal of its own, so one side has to
+        // state the spelling or the two can drift apart in silence.
+        assert_eq!(RungKey::RoutePath.wire_key(), "route:path");
         assert_eq!(floor.raising, Some(RungKey::RouteTrail));
         assert!(
-            ladder.rung(RungKey::RouteGameTrail).build.is_none()
-                && ladder.rung(RungKey::RouteGameTrail).upkeep.is_none(),
-            "NOBODY MAINTAINS A GAME TRAIL — that is the whole of what makes the floor free"
+            ladder.rung(RungKey::RoutePath).build.is_none()
+                && ladder.rung(RungKey::RoutePath).upkeep.is_none(),
+            "NOBODY MAINTAINS A PATH — that is the whole of what makes the floor free"
         );
 
         // And a position really climbs: banking every rung's work reaches the top of the branch.
@@ -1112,7 +1117,7 @@ mod tests {
             road.upkeep_demand(range) > road.upkeep_demand(valley),
             "the same road costs more to hold over a range than down a valley"
         );
-        for free in [RungKey::RouteGameTrail, RungKey::RouteTrail] {
+        for free in [RungKey::RoutePath, RungKey::RouteTrail] {
             assert_eq!(
                 ladder.rung(free).upkeep_demand(range),
                 NO_UPKEEP_DEMAND,
@@ -1183,11 +1188,11 @@ mod tests {
         let ladder = LadderConfig::builtin();
         let mut road = Road::worn_in(UVec2::new(2, 2), &ladder);
 
-        // ① The floor. Nobody maintains a game trail, so it lights nothing.
+        // ① The floor. Nobody maintains a path, so it lights nothing.
         assert!(!road.is_built());
         assert!(
             !road.grants_sight(),
-            "a GAME TRAIL grants no sight — it is free precisely because nobody keeps it"
+            "a PATH grants no sight — it is free precisely because nobody keeps it"
         );
 
         // ①b **AND NEITHER DOES A FULLY WORN TRAIL** (§4.13a).

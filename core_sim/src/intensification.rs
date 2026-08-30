@@ -1120,10 +1120,9 @@ impl RungBranch {
         match self {
             RungBranch::Plant => RungKey::PlantWild,
             RungBranch::Animal => RungKey::AnimalWild,
-            // A **game trail** is what traffic leaves without anybody deciding anything — the first
-            // roads are the ones the animals made (#215). It costs nothing to reach and buys nothing,
-            // exactly as a wild patch does.
-            RungBranch::Route => RungKey::RouteGameTrail,
+            // A **path** is what traffic leaves without anybody deciding anything. It costs nothing
+            // to reach and buys nothing, exactly as a wild patch does.
+            RungBranch::Route => RungKey::RoutePath,
         }
     }
 }
@@ -1149,9 +1148,9 @@ pub enum RungKey {
     AnimalPastoral,
     /// A **penned** herd — the `Corral` investment (`Herd::corral_progress`).
     AnimalPen,
-    /// **A GAME TRAIL** — the route branch's floor. Costs nothing, buys nothing, and is what traffic
-    /// leaves behind before anyone decides to make a road (#215).
-    RouteGameTrail,
+    /// **A PATH** — the route branch's floor. Costs nothing, buys nothing, and is what traffic
+    /// leaves behind before anyone decides to make a road.
+    RoutePath,
     /// **A TRAIL** — worn in and kept. The first rung a band pays for.
     RouteTrail,
     /// **A DIRT ROAD.**
@@ -1169,7 +1168,7 @@ impl RungKey {
         RungKey::AnimalWild,
         RungKey::AnimalPastoral,
         RungKey::AnimalPen,
-        RungKey::RouteGameTrail,
+        RungKey::RoutePath,
         RungKey::RouteTrail,
         RungKey::RouteDirtRoad,
         RungKey::RoutePavedRoad,
@@ -1181,7 +1180,7 @@ impl RungKey {
             RungKey::AnimalWild | RungKey::AnimalPastoral | RungKey::AnimalPen => {
                 RungBranch::Animal
             }
-            RungKey::RouteGameTrail
+            RungKey::RoutePath
             | RungKey::RouteTrail
             | RungKey::RouteDirtRoad
             | RungKey::RoutePavedRoad => RungBranch::Route,
@@ -1196,10 +1195,13 @@ impl RungKey {
             RungKey::PlantField => "field",
             RungKey::AnimalPastoral => "pastoral",
             RungKey::AnimalPen => "pen",
-            // **Not `wild`.** The route floor is a *game trail* rather than "no road", because it is a
+            // **Not `wild`.** The route floor is a *path* rather than "no road", because it is a
             // real thing traffic made — and giving it the two food webs' shared `wild` spelling would
-            // put a third rung under one id for no gain.
-            RungKey::RouteGameTrail => "game_trail",
+            // put a third rung under one id for no gain. It is spelled `path` and not `game_trail`
+            // because nothing in the sim lets an animal wear a road in: the sole source of route work
+            // is `route_traffic.walked` in `supply.rs`'s pooling-link pass, which is the player's own
+            // bands walking between camps that share a larder.
+            RungKey::RoutePath => "path",
             RungKey::RouteTrail => "trail",
             RungKey::RouteDirtRoad => "dirt_road",
             RungKey::RoutePavedRoad => "paved_road",
@@ -1252,7 +1254,7 @@ impl RungKey {
             RungKey::AnimalWild => Some(RungKey::AnimalPastoral),
             RungKey::AnimalPastoral => Some(RungKey::AnimalPen),
             RungKey::AnimalPen => None,
-            RungKey::RouteGameTrail => Some(RungKey::RouteTrail),
+            RungKey::RoutePath => Some(RungKey::RouteTrail),
             RungKey::RouteTrail => Some(RungKey::RouteDirtRoad),
             RungKey::RouteDirtRoad => Some(RungKey::RoutePavedRoad),
             RungKey::RoutePavedRoad => None,
@@ -1281,11 +1283,11 @@ impl RungKey {
             RungKey::PlantField => Some(Improvement::Sow),
             RungKey::AnimalPastoral => Some(Improvement::Tame),
             RungKey::AnimalPen => Some(Improvement::Corral),
-            // ⛔ **THE ROUTE BRANCH'S FREE FLOOR IS WHERE ITS `None`s ARE.** A game trail and a trail
+            // ⛔ **THE ROUTE BRANCH'S FREE FLOOR IS WHERE ITS `None`s ARE.** A path and a trail
             // are formed by *use*: traffic is the crew, there is no command to name the job and no
             // pool to staff it (`docs/plan_standing_upkeep.md` §4.13a). The two roads above them are
             // ordinary crew builds, ordered per **tile** in `cultivate`/`sow`'s own grammar.
-            RungKey::RouteGameTrail | RungKey::RouteTrail => None,
+            RungKey::RoutePath | RungKey::RouteTrail => None,
             RungKey::RouteDirtRoad => Some(Improvement::Grade),
             RungKey::RoutePavedRoad => Some(Improvement::Pave),
         }
@@ -2237,7 +2239,7 @@ pub struct RungDef {
 /// **Both terms are purely additive**, which is what preserves §Q4's "no early-game regression, by
 /// construction" guarantee: a rung can only widen the set of links and lower a loss, never the
 /// reverse. The third payoff — `Seen` along a kept road — is not here because it is not a number: it
-/// is `routes::Route::grants_sight`, a yes/no that the **game trail** answers no to.
+/// is `routes::Route::grants_sight`, a yes/no that the **path** answers no to.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RungRoutePayoff {
@@ -2248,8 +2250,8 @@ pub struct RungRoutePayoff {
     /// tiles apart cannot pool at all; with a dirt road they can. `reach_tiles`' own shipped doc says
     /// so: *"beyond it a link needs a route to hold it open"*.
     ///
-    /// **`0` on the game trail is a live reading, not a parked dial**: a trail the animals made holds
-    /// nothing open, which is exactly what makes that rung free.
+    /// **`0` on the path is a live reading, not a parked dial**: a path holds nothing open, which is
+    /// exactly what makes that rung free.
     pub holds_link_to_tiles: u32,
     /// **WHAT FRACTION OF THE BASE FRICTION A ROUTED LINK PAYS** — multiplies
     /// `SupplyNetworkConfig::friction`. `1.0` = no help.
@@ -2963,7 +2965,7 @@ pub struct RouteTraffic {
     /// this block's subject, and the free rungs declare no `upkeep` block to hang it on.
     ///
     /// ⛔ **THE FREE FLOOR CANNOT BE SHORT, SO IT CANNOT DECAY ON A SHORTFALL**
-    /// (`docs/plan_standing_upkeep.md` §4.13a rule 3). `route:game_trail` and `route:trail` declare
+    /// (`docs/plan_standing_upkeep.md` §4.13a rule 3). `route:path` and `route:trail` declare
     /// no `upkeep` at all, so their demand is [`NO_UPKEEP_DEMAND`], their shortfall is always zero
     /// and the built rungs' decay path can never reach them. What takes a free road back is the
     /// thing that made it — **disuse** — which is `plan_contact_and_logistics.md` §Q4's own *"an
@@ -3709,7 +3711,7 @@ fn discovery_id_for(name: &str) -> Option<u32> {
         // branch means the road carrying traffic.
         //
         // **There were three, and `trailcraft` was deleted rather than retuned**: it was earned by
-        // the game trail and gated the trail, which is a lesson for something you cannot fail to do
+        // the path and gated the trail, which is a lesson for something you cannot fail to do
         // — you wear a path by walking it. Its **discovery id 2011 is retired**, not reused, and
         // `roadbuilding` / `paving` keep 2012 / 2013 rather than sliding down onto it.
         "roadbuilding" => Some(crate::routes::ROADBUILDING_DISCOVERY_ID),

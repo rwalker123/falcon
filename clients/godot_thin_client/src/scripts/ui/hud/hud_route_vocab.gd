@@ -30,29 +30,36 @@ class_name HudRouteVocab
 # ⛔ **THE RUNG STRING IS THE BOOL.** `build_fraction` beside it on the wire is the meter on the rung
 # being RAISED, which is a DIFFERENT rung — a reader that thresholded the float would call a
 # fully-worn trail a dirt road on the turn its first traffic banked.
-const RUNG_KEY_GAME_TRAIL := "route:game_trail"
+const RUNG_KEY_PATH := "route:path"
 const RUNG_KEY_TRAIL := "route:trail"
 const RUNG_KEY_DIRT_ROAD := "route:dirt_road"
 const RUNG_KEY_PAVED_ROAD := "route:paved_road"
 
 ## The branch in climb order, floor first. **The order is the BRANCH's, not this file's** — it is
-## `game trail → trail → dirt road → paved road` in `intensification_ladder.json`, restated here for
+## `path → trail → dirt road → paved road` in `intensification_ladder.json`, restated here for
 ## the same reason `SourceForecast.RUNG_KEY_*` restates the plant and animal ladders: the client is
 ## sent the rung a road HOLDS and must be able to name the one traffic is wearing in above it.
 ##
 ## A rung this list does not know renders its meter without a destination name rather than guessing
 ## one — see `progress_clause`.
 const RUNG_ORDER := [
-	RUNG_KEY_GAME_TRAIL,
+	RUNG_KEY_PATH,
 	RUNG_KEY_TRAIL,
 	RUNG_KEY_DIRT_ROAD,
 	RUNG_KEY_PAVED_ROAD,
 ]
 
-## Player-facing names. The floor is *"Game trail"* rather than *"None"* because it IS a thing —
-## the first roads are the ones the animals made (issue #215), and it is a rung a road really holds.
+## Player-facing names. The floor is *"Path"* rather than *"None"* because it IS a thing — a rung a
+## road really holds and the row therefore renders, not the absence of one (issue #215).
+##
+## ⛔ **IT IS A PATH AND NOT A *"GAME TRAIL"*, AND THAT IS A CORRECTION.** The old name asserted an
+## ORIGIN the sim does not model: exactly one pass banks route work — the pooling-link pass in
+## `core_sim/src/supply.rs` — and no animal has ever worn a step of any road. So a path worn in by
+## the player's own trade traffic was shown to him as *"Game trail"*. Same reason the row's retired
+## `nothing — a path the animals made` clause went (see RETIRED `ROAD_BUYS_NOTHING` below); this is
+## the second half of that fix, on the rung the sentence was hung off.
 const RUNG_LABELS := {
-	RUNG_KEY_GAME_TRAIL: "Game trail",
+	RUNG_KEY_PATH: "Path",
 	RUNG_KEY_TRAIL: "Trail",
 	RUNG_KEY_DIRT_ROAD: "Dirt road",
 	RUNG_KEY_PAVED_ROAD: "Paved road",
@@ -65,9 +72,9 @@ const RUNG_LABELS := {
 
 # ---- THE TILE CARD'S ROAD BLOCK --------------------------------------------------------------
 #
-# ⛔ **EVERY ROW HERE IS CONDITIONAL, AND A FREE GAME TRAIL IS ONE ROW.** The block used to print five
+# ⛔ **EVERY ROW HERE IS CONDITIONAL, AND A FREE PATH IS ONE ROW.** The block used to print five
 # rows whatever the road was, two of which were sentences saying *no* — `Keeping: free — nobody keeps
-# a game trail` over `Buys: nothing — a path the animals made`, which was four lines of prose to say
+# a path` over `Buys: nothing — a path the animals made`, which was four lines of prose to say
 # that the commonest road in the game costs nothing and does nothing. **A row that would say "none"
 # is not rendered at all** (issue #566): the rung row is the only unconditional one, and the other
 # three appear exactly when the road has something to say with them.
@@ -120,8 +127,8 @@ const ROAD_REVERTING_ROW := "Reverting"
 ## qualifiers and the payoff row's clauses, because they are the same punctuation doing the same job.
 const ROAD_CLAUSE_SEPARATOR := " · "
 
-## ⛔ **`Road:` — THE RUNG IS THE FACT AND THE PERCENTAGE IS THE NEXT RUNG'S APPROACH.** A game trail
-## at 25% is a COMPLETE game trail a quarter of the way to becoming a trail — it is not a road that is
+## ⛔ **`Road:` — THE RUNG IS THE FACT AND THE PERCENTAGE IS THE NEXT RUNG'S APPROACH.** A path
+## at 25% is a COMPLETE path a quarter of the way to becoming a trail — it is not a road that is
 ## a quarter built, and the row must not be readable that way. The rung stands alone as the value and
 ## the meter arrives as a qualifier that names where it is GOING (`25% to trail`), which is the only
 ## phrasing that cannot be read as a progress bar on the rung being held.
@@ -222,13 +229,13 @@ const ROAD_BONUS_LINK_FORMAT := "will hold a link %d tiles out"
 # nothing on every axis used to print (issue #566).
 #
 # ⛔ **IT WAS FACTUALLY WRONG, NOT MERELY WORDY.** It asserted an ORIGIN the sim does not model: a
-# game trail is a rung a tile HOLDS, and the commonest way a tile comes to hold it is the player's own
+# path is a rung a tile HOLDS, and the commonest way a tile comes to hold it is the player's own
 # bands walking the same ground and banking traffic into the meter — nothing about it is a path
 # animals made. The rung buying nothing is now said by the row's ABSENCE, which states the same fact
 # and cannot state a false one beside it.
 
 ## The friction multiplier at which a rung takes nothing off the loss. Named because it is the
-## GAME TRAIL's own reading and the test the friction clause is gated on, not a rounding tolerance.
+## PATH's own reading and the test the friction clause is gated on, not a rounding tolerance.
 const ROAD_FRICTION_NO_HELP := 1.0
 
 ## The link span a rung holding nothing open reads. Same rule as above: a live `0`, not a parked dial.
@@ -293,7 +300,7 @@ static func upkeep_workers_needed_of(road: Dictionary) -> int:
 	return int(road.get("upkeep_workers_needed", SourceForecast.NO_UPKEEP_CREW))
 
 ## **READ THIS BEFORE THE NUMBER BESIDE IT.** `false` means there is NOTHING AT RISK on this road —
-## it holds only the game trail, which declares no upkeep and so has no meter to lose — and the
+## it holds only the path, which declares no upkeep and so has no meter to lose — and the
 ## countdown then reuses the "biting now" `0` rather than inventing a sentinel.
 static func has_neglect_grace(road: Dictionary) -> bool:
 	return bool(road.get("has_neglect_grace", false))
@@ -324,7 +331,7 @@ static func is_short(road: Dictionary) -> bool:
 
 ## Is the road actually losing its rung — short AND past nothing left to forgive? **The bool comes
 ## first**: `has_neglect_grace == false` is *"nothing at risk here"*, and reading the countdown
-## without it would put a `Reverting: now` on every game trail in the world.
+## without it would put a `Reverting: now` on every path in the world.
 static func is_at_risk(road: Dictionary) -> bool:
 	return is_short(road) and has_neglect_grace(road)
 
@@ -361,8 +368,8 @@ static func progress_clause(road: Dictionary) -> String:
 ## `Road:` — **the rung this road HOLDS**, plus what traffic is wearing in above it and the branch's
 ## hazard word where its upkeep is short, as middot clauses in that order.
 ##
-## ⛔ **THE RUNG IS THE VALUE AND EVERYTHING ELSE IS A QUALIFIER.** A game trail at 25% is a COMPLETE
-## game trail a quarter of the way to a trail; the row this replaced said `Trail 25%` on a second
+## ⛔ **THE RUNG IS THE VALUE AND EVERYTHING ELSE IS A QUALIFIER.** A path at 25% is a COMPLETE
+## path a quarter of the way to a trail; the row this replaced said `Trail 25%` on a second
 ## `Wearing in` row, which reads as a road that is 25% built and is the one thing this row must never
 ## be readable as.
 static func road_row_value(road: Dictionary) -> String:
@@ -398,7 +405,7 @@ static func bonus_value(road: Dictionary) -> String:
 		clauses.append(ROAD_BONUS_SIGHT)
 	elif is_short(road):
 		# A road only goes dark for a reason, and the reason is the unpaid bill one row up. Gated on
-		# the shortfall rather than printed for every unlit road, because the GAME TRAIL lights
+		# the shortfall rather than printed for every unlit road, because the PATH lights
 		# nothing even with its bill paid in full — a rung nobody keeps is not a road going dark —
 		# and telling the player to pay a bill that does not exist would be a wrong remedy.
 		clauses.append(ROAD_BONUS_DARK)
@@ -412,7 +419,7 @@ static func bonus_value(road: Dictionary) -> String:
 ## and this branch has shipped that defect twice.
 ##
 ## ⛔ **`""` — NO ROW — WHERE THE ROAD OWES NOTHING.** Both free rungs declare no upkeep at all, and a
-## sentence saying so (`free — nobody keeps a game trail`) was a row spent on the absence of a bill,
+## sentence saying so (`free — nobody keeps a path`) was a row spent on the absence of a bill,
 ## on every road a current game can contain.
 static func upkeep_value(road: Dictionary) -> String:
 	if not owes_keeping(road):
@@ -459,7 +466,7 @@ static func reverting_value(road: Dictionary) -> String:
 ## **THE WHOLE ROAD BLOCK FOR ONE ROAD**, as `Key: value` detail lines. One composer, so the tile
 ## card and any later surface state one road the same way.
 ##
-## ⛔ **ONLY THE RUNG ROW IS UNCONDITIONAL, AND A FREE GAME TRAIL IS ONE LINE.** Every other row is
+## ⛔ **ONLY THE RUNG ROW IS UNCONDITIONAL, AND A FREE PATH IS ONE LINE.** Every other row is
 ## emitted iff its composer has something to say — the payoff iff the rung buys something, the bill
 ## iff the road owes something, the keeper iff there is a job, the countdown iff the rung is at risk.
 ## The block used to be five rows on every road in the world, two of them prose saying *no*.

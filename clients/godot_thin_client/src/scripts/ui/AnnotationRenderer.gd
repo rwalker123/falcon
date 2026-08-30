@@ -118,7 +118,7 @@ const ROUTE_FALLBACK_COLOR := Color(0.95, 0.9, 0.6, 0.8)
 ## The per-rung STROKE WIDTH ladder, faintest rung to strongest. Four steps because the branch has
 ## four rungs; the widths climb because a paved road is a bigger thing on the ground than a game
 ## trail, and the eye reads thickness before it reads tint at map zoom.
-const ROAD_WIDTH_GAME_TRAIL := 1.5
+const ROAD_WIDTH_PATH := 1.5
 const ROAD_WIDTH_TRAIL := 2.0
 const ROAD_WIDTH_DIRT_ROAD := 3.0
 const ROAD_WIDTH_PAVED_ROAD := 4.0
@@ -126,14 +126,14 @@ const ROAD_WIDTH_PAVED_ROAD := 4.0
 ## ⛔ **THE RUNG LADDER IS ONE INK AT FOUR OPACITIES, NOT FOUR PALETTE ENTRIES — and that is a
 ## CORRECTION, made against a rendered frame.** The first cut walked the palette's own ink ladder
 ## (`LINE_SOFT` → `INK_FAINT` → `INK_DIM` → `INK`), which is faintest-to-strongest **on the HUD's dark
-## ground and INVERTED on the map's**: rendered over tan steppe, the game trail drew as a near-black
+## ground and INVERTED on the map's**: rendered over tan steppe, the path drew as a near-black
 ## hairline with the most contrast on the frame while the paved road drew as pale grey. A road's rung
 ## has to read as prominence on ground of ANY tone, and only opacity does that.
 ##
 ## `HudStyle.INK` at these four, derived at draw time — the map's own idiom for a themed overlay
 ## tint (`MapView.SUPPLY_LINK_COLOR` is `SIGNAL` at its own opacity for the same reason). Read live
 ## rather than cached so a theme swap is picked up with no installation hook of this family's own.
-const ROAD_OPACITY_GAME_TRAIL := 0.30
+const ROAD_OPACITY_PATH := 0.30
 const ROAD_OPACITY_TRAIL := 0.52
 const ROAD_OPACITY_DIRT_ROAD := 0.74
 const ROAD_OPACITY_PAVED_ROAD := 0.94
@@ -453,9 +453,9 @@ static func _road_rung_opacity(rung: String) -> float:
 			return ROAD_OPACITY_DIRT_ROAD
 		HudRouteVocab.RUNG_KEY_TRAIL:
 			return ROAD_OPACITY_TRAIL
-	# The game trail AND any rung this client has never heard of: the faintest step there is. A road
+	# The path AND any rung this client has never heard of: the faintest step there is. A road
 	# is a real thing whatever it is called, so an unknown rung draws rather than vanishing.
-	return ROAD_OPACITY_GAME_TRAIL
+	return ROAD_OPACITY_PATH
 
 static func _road_rung_width(rung: String) -> float:
 	match rung:
@@ -465,7 +465,7 @@ static func _road_rung_width(rung: String) -> float:
 			return ROAD_WIDTH_DIRT_ROAD
 		HudRouteVocab.RUNG_KEY_TRAIL:
 			return ROAD_WIDTH_TRAIL
-	return ROAD_WIDTH_GAME_TRAIL
+	return ROAD_WIDTH_PATH
 
 ## The command-targeting overlay: which things on the map are valid targets for the command the HUD
 ## is currently asking the player to aim, plus a reticle on the hovered hex.

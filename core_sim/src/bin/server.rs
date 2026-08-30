@@ -5535,7 +5535,7 @@ fn crops_named_on_forage_source(
 /// It is what the two road verbs' *"not yet a trail / not yet a dirt road"* refusal asks, and it is
 /// derived from the coded climb rather than named per verb so a re-ordered branch cannot leave the
 /// refusal asking for the wrong rung. `None` at the root of a branch, which is the honest answer:
-/// nothing stands beneath a game trail.
+/// nothing stands beneath a path.
 fn rung_beneath(rung: RungKey) -> Option<RungKey> {
     let mut cursor = rung.branch().root_rung();
     loop {

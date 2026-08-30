@@ -165,7 +165,7 @@ and the same object that carries a splinter's lifeline is the one a foreign trad
 
 ### The route ladder
 
-What holds a link open is a **route**, and routes climb a ladder: **game trail → trail → dirt road →
+What holds a link open is a **route**, and routes climb a ladder: **path → trail → dirt road →
 paved road**, and later the things that succeed them. Each rung is unlocked by knowledge earned
 working the rung below — walking a trail is how you learn to build one — and each rung is **cheaper
 to travel and dearer to keep**.
@@ -174,8 +174,11 @@ That two-sided movement is the whole point. The ladder is *not* a straight upgra
 where the traffic pays for the upkeep, and everywhere else a trail is the right answer forever. It is
 the same economy as the pen — a rung you climb only where the land justifies it.
 
-The bottom rung already has an issue: **#215**, *"herd/game trails follow hex centers and become the
-basis of roads."* The first roads being the ones the animals made is the origin this ladder wants.
+**#215** — *"herd/game trails follow hex centers and become the basis of roads."* — remains open,
+and the bottom rung is **not** it. The rung is `path`, because nothing in the sim lets an animal wear
+a road in: route work is banked in exactly one place, `route_traffic.walked` in `supply.rs`'s
+pooling-link pass, which is the player's own trade-pooling bands. A ladder whose floor an animal
+could reach is still the origin #215 wants.
 
 ### It is the intensification ladder's shape
 
@@ -303,7 +306,7 @@ Each rider defines its own use of a connection. The connection does not know the
 > otherwise the test is satisfied by plumbing rather than by the rule.
 >
 > **The condition is the PAID BILL, not the held rung**: a built rung (2 and up) with its keeping met.
-> The `game trail` floor lights nothing, because nobody maintains a game trail. A road in shortfall
+> The `path` floor lights nothing, because nobody maintains a path. A road in shortfall
 > goes dark before it decays, which is the honest early warning. Full model in
 > `plan_standing_upkeep.md` §4.13.
 

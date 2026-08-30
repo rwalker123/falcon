@@ -1023,7 +1023,7 @@ const RUNG_KEY_PEN := "animal:pen"
 # written twice" this pair of tables warns about one comment down. The direction is safe by that
 # file's own contract — it references this layer inside FUNCTIONS only, never in a `const`, so the
 # two do not form a load cycle.
-const RUNG_KEY_GAME_TRAIL := HudRouteVocab.RUNG_KEY_GAME_TRAIL
+const RUNG_KEY_PATH := HudRouteVocab.RUNG_KEY_PATH
 const RUNG_KEY_TRAIL := HudRouteVocab.RUNG_KEY_TRAIL
 const RUNG_KEY_DIRT_ROAD := HudRouteVocab.RUNG_KEY_DIRT_ROAD
 const RUNG_KEY_PAVED_ROAD := HudRouteVocab.RUNG_KEY_PAVED_ROAD
@@ -1034,12 +1034,12 @@ const RUNG_KEY_IMPROVEMENTS := {
     RUNG_KEY_WILD_ANIMAL: IMPROVEMENT_NONE,
     RUNG_KEY_PASTORAL: IMPROVEMENT_TAME,
     RUNG_KEY_PEN: IMPROVEMENT_CORRAL,
-    # ⛔ **THE ROUTE BRANCH'S FREE FLOOR IS TWO RUNGS DEEP, AND BOTH DECLARE NO VERB.** A game trail
-    # is what the animals made and a trail is worn in by traffic — neither is something a band
+    # ⛔ **THE ROUTE BRANCH'S FREE FLOOR IS TWO RUNGS DEEP, AND BOTH DECLARE NO VERB.** A path and
+    # the trail above it are both worn in by traffic alone — neither is something a band
     # builds, so both map to `IMPROVEMENT_NONE` exactly as the two `wild` rungs do. The gap this
     # closes is above them: `grade` and `pave` are real verbs now, where the branch declared none at
     # all when these tables were written.
-    RUNG_KEY_GAME_TRAIL: IMPROVEMENT_NONE,
+    RUNG_KEY_PATH: IMPROVEMENT_NONE,
     RUNG_KEY_TRAIL: IMPROVEMENT_NONE,
     RUNG_KEY_DIRT_ROAD: IMPROVEMENT_GRADE,
     RUNG_KEY_PAVED_ROAD: IMPROVEMENT_PAVE,
@@ -1072,10 +1072,10 @@ const FORECAST_CURRENT_RUNG_KEY := "current_rung"
 # of climb order would mark the wrong rung as *banked*.
 const RUNG_BRANCH_PLANT := [RUNG_KEY_WILD_PLANT, RUNG_KEY_TENDED, RUNG_KEY_FIELD]
 const RUNG_BRANCH_ANIMAL := [RUNG_KEY_WILD_ANIMAL, RUNG_KEY_PASTORAL, RUNG_KEY_PEN]
-# **THE ROUTE BRANCH IS FOUR RUNGS, NOT THREE**, because its free floor is two storeys: a game trail
-# is what the animals made and a trail is what traffic wore in over it. Both are below the first rung
-# anybody pays for, which is what `rung_above_branch_floor` reads out of the ORDER.
-const RUNG_BRANCH_ROUTE := [RUNG_KEY_GAME_TRAIL, RUNG_KEY_TRAIL, RUNG_KEY_DIRT_ROAD,
+# **THE ROUTE BRANCH IS FOUR RUNGS, NOT THREE**, because its free floor is two storeys: a path is
+# what the first traffic wears in and a trail is what more of it wears over that. Both are below
+# the first rung anybody pays for, which is what `rung_above_branch_floor` reads out of the ORDER.
+const RUNG_BRANCH_ROUTE := [RUNG_KEY_PATH, RUNG_KEY_TRAIL, RUNG_KEY_DIRT_ROAD,
     RUNG_KEY_PAVED_ROAD]
 # …and EVERY BRANCH THIS CLIENT KNOWS, in one list. It is what makes a question about a rung KEY
 # answerable without first being told which web the source is on — the wire spells a rung

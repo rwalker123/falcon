@@ -1921,7 +1921,7 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > |---|---|---|
     > | **`holds_link_to_tiles`** | *may these two bands pool at all?* A link forms at `distance <= reach_tiles` **OR** where a route of this rung spans it. | A **capability**. Without a road two bands 6 tiles apart cannot pool; with a dirt road they can. This is what makes the top rungs about **distance**, which is what roads are for. |
     > | **`friction_multiplier`** | *how much of what is sent arrives?* Multiplies `SupplyNetworkConfig::friction` on a routed link. | Reach alone pays **nothing** to a road between two neighbours already inside `reach_tiles` — the commonest road in the game. That road has to buy something. |
-    > | **`Seen` along the road** | *what can I watch?* A route at a **built** rung **whose keeping is met** holds its own tiles `Seen`. **Not a per-rung number — a per-rung yes/no**, and `game trail` is the no. | The one payoff a player understands without a readout, and the one worth most in a fog-of-war game. **Ray's call**: a maintained road has traffic on it, and traffic is presence. See the callout below for why the keystone survives it. |
+    > | **`Seen` along the road** | *what can I watch?* A route at a **built** rung **whose keeping is met** holds its own tiles `Seen`. **Not a per-rung number — a per-rung yes/no**, and `path` is the no. | The one payoff a player understands without a readout, and the one worth most in a fog-of-war game. **Ray's call**: a maintained road has traffic on it, and traffic is presence. See the callout below for why the keystone survives it. |
     >
     > **ALL THREE ARE PURELY ADDITIVE, so §Q4's "no early-game regression, by construction" guarantee
     > holds unchanged**: an unrouted pair inside `reach_tiles` pools exactly as it does today, at
@@ -1963,7 +1963,7 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > |---|---|---|
     > | `plant` | wild | tended · field |
     > | `animal` | wild | pastoral · pen |
-    > | `route` | **game trail · trail** | **dirt road · paved road** |
+    > | `route` | **path · trail** | **dirt road · paved road** |
     >
     > **THE FOUR RULES THAT FOLLOW:**
     >
@@ -2102,7 +2102,8 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     >
     > #### THE KNOWLEDGE CHAIN LOSES A LESSON, AND THE ONE IT LOSES TAUGHT NOTHING
     >
-    > 13a shipped **four** lessons: `game trail` earned `trailcraft`, which gated `trail`. **A lesson
+    > 13a shipped **four** lessons: `path` (then spelled `game_trail`) earned `trailcraft`, which gated
+    > `trail`. **A lesson
     > for something you cannot fail to do.** You wear a path by walking it; there is no knowing-how
     > involved and no way to be refused. Ray: *"Creating the trail leads to 'road building' knowledge,
     > with dirt being the first build, then paved."*
@@ -2112,7 +2113,7 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     >
     > | rung | gate | teaches |
     > |---|---|---|
-    > | `game_trail` | — | — |
+    > | `path` | — | — |
     > | `trail` | **none — it forms from use** | `roadbuilding` |
     > | `dirt_road` | `roadbuilding` | `paving` |
     > | `paved_road` | `paving` | — |
@@ -2123,9 +2124,12 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     >
     > #### THE FOUR RUNGS
     >
-    > `route`: **game trail → trail → dirt road → paved road**. Rung 1 is the **floor** — `build: null`,
+    > `route`: **path → trail → dirt road → paved road**. Rung 1 is the **floor** — `build: null`,
     > `upkeep: null`, costs nothing to reach and buys nothing, exactly as `plant:wild` and
-    > `animal:wild` are floors. A position of `RUNG_UNSTARTED` **holds** the game trail. **Rung 2 is
+    > `animal:wild` are floors. A position of `RUNG_UNSTARTED` **holds** the path. **The rung is
+    > spelled `path` and not `game_trail`**: nothing in the sim lets an animal wear a road in — the
+    > sole source of route work is `route_traffic.walked` in `supply.rs`'s pooling-link pass, which
+    > is the player's own trade-pooling bands walking between camps that share a larder. **Rung 2 is
     > the floor's second storey** — worn in by traffic, still `upkeep: null`, still no verb.
     >
     > **`partial_credit: continuous` on all three.** A half-worn trail is genuinely half a trail —
@@ -2304,8 +2308,8 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > grant**, or the test is being satisfied by an accident of plumbing rather than by the rule.
     >
     > **THE CONDITION IS THE PAID BILL, NOT THE HELD RUNG.** A route lights its tiles while it stands
-    > at a **built** rung (rung 2 and up) **and its keeping is met** — the `game trail` floor lights
-    > nothing, because nobody maintains a game trail; that is what makes it free. A road in shortfall
+    > at a **built** rung (rung 2 and up) **and its keeping is met** — the `path` floor lights
+    > nothing, because nobody maintains a path; that is what makes it free. A road in shortfall
     > goes dark before it decays, which is the honest early warning that the road is being lost.
     >
     > **THIS IS THE THIRD PAYOFF, AND IT IS THE MOST LEGIBLE OF THE THREE.** Sight along your own roads
@@ -2441,7 +2445,7 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > > OVERLAY and the presentation** — not "make roads appear", which they already do.
     >
     > > **⛔ A ROAD FADES IN AS IT IS WORN, RATHER THAN SNAPPING AT THE RUNG.** From play: seven
-    > > game-trail tiles existed at 24–52% and every one of them drew identically, so a road half worn
+    > > path tiles existed at 24–52% and every one of them drew identically, so a road half worn
     > > in looked exactly like one just begun. Ray: *"a partial trail… should still draw but at 52%
     > > opacity, so as it becomes more complete"* it reads more strongly — *"fade in the
     > > trails/dirt/paved."*
@@ -2449,10 +2453,10 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > > **IT IS THE LADDER'S OWN INTERPOLATION, NOT A SECOND MECHANISM.** Opacity is a per-rung value
     > > like any other, so it goes through `intensification::interpolate` on the road's standing —
     > > exactly as the upkeep demand, the payout and the material rate already do. A road 52% of the way
-    > > from game trail to trail draws 52% of the way from the game trail's opacity to the trail's.
+    > > from path to trail draws 52% of the way from the path's opacity to the trail's.
     > >
     > > **The ramp is BETWEEN RUNGS and never from zero**, and that falls out of the same reading rather
-    > > than needing a rule: a trail at 0% *is* a completed game trail, and it should look like one. A
+    > > than needing a rule: a trail at 0% *is* a completed path, and it should look like one. A
     > > road never fades to nothing while it still holds a rung.
     > >
     > > **The tile card already states the number** (`HudRouteVocab.wearing_in_value`); this is the map
@@ -2460,7 +2464,8 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > > disagree — which is the whole reason to interpolate rather than invent a second progress curve.
     >
     > > **RELATED, AND NOT THIS STEP'S: #215** — *"herd/game trails follow hex centers and become the
-    > > basis of roads."* The game-trail rung's own origin, and its own issue.
+    > > basis of roads."* Its own issue, and still open: nothing in the sim banks route work for an
+    > > animal today, which is why the floor rung is spelled `path` rather than `game_trail`.
     >
     > **13d — WHAT A STRANGER MAY DO WITH A ROAD.**
     > - Unreachable in play today: worldgen creates `FactionId(0)` and one start profile, so a normal
@@ -2497,7 +2502,7 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     >
     > **THE KNOWN OFFENDER, measured in a live game at turn 32:** `route_traffic.work_per_link_tile_per_turn`
     > is `0.35` and `route:trail` costs `40`, so a tile carrying one link needs **~114 turns** to become a
-    > trail. Seven game-trail tiles existed between three bands at 24–52% worn and none could have
+    > trail. Seven path tiles existed between three bands at 24–52% worn and none could have
     > changed rung. The rate **halved in effect** when roads went per-tile (§4.13b) — it is now literally
     > per tile where it used to drive one path object — and was deliberately left uncompensated, because
     > a model change must not hide behind a retune. **This is where that debt is paid.**

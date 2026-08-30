@@ -26,7 +26,7 @@ pub struct RouteState {
     /// Reads exactly `1.0` for a road that has just completed a rung and for one at the top of the
     /// ladder.
     pub build_fraction: f32,
-    /// **Is this tile anybody's job?** `false` across the whole free floor — a game trail and a trail
+    /// **Is this tile anybody's job?** `false` across the whole free floor — a path and a trail
     /// are formed by use and nobody keeps them, which is the commonest road in the game rather than
     /// an edge case. **Read this before [`Self::keeper_band_id`]**, whose `0` is a real band id.
     pub has_keeper: bool,

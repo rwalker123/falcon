@@ -33,6 +33,23 @@ that walks it — and it is coloured by RUNG.
 do not "unify" the two draw passes: they read different sections, live in different layers of `_draw`
 and answer different questions.
 
+## ⛔ THE FLOOR RUNG IS `route:path` / `Path`, AND IT WAS RENAMED OUT OF A FALSE ORIGIN
+
+It was `route:game_trail` / `Game trail`. Nothing in the simulation makes one: exactly ONE pass banks
+route work — the pooling-link pass in `core_sim/src/supply.rs` — and no animal has ever worn a step
+of any road. The commonest way a tile comes to hold the floor rung is the player's own bands walking
+the same ground while their food pools, so `Road  Game trail · 1% to trail` was the client telling
+him an animal made the path his own trade traffic wore in.
+
+It is the second half of the fix that deleted the tile card's `nothing — a path the animals made`
+clause (issue #566, below): that sentence and this rung name asserted the same unmodelled cause, and
+removing only the sentence left the cause standing in the value beside it. The wire key is
+`route:path` **exactly**, matched to what the sim publishes.
+
+**The hunting food-site `kind == "game_trail"` is a DIFFERENT concept and keeps its name** —
+`HudBandLaborState.FOOD_SITE_KIND_GAME_TRAIL`, the `MapView` marker colour table, `SiteSprites`' art
+key. That one names where game is hunted, which the sim does model. Grep before renaming either.
+
 ## THE DRAW IS A HEX, NOT A POLYLINE — and the stamp is INSET
 
 A road is one tile, so the draw stamps its own hex and a run of road reads as a chain of stamps. That
@@ -53,11 +70,11 @@ is the connected-path helper and has nothing left to unwrap here.
 
 The first cut walked the palette's own ink ladder (`LINE_SOFT` → `INK_FAINT` → `INK_DIM` → `INK`),
 which is faintest-to-strongest **on the HUD's dark ground and INVERTED on the map's**. Rendered over
-tan steppe in `map_road_network`, the game trail drew as a near-black hairline carrying the most
+tan steppe in `map_road_network`, the path drew as a near-black hairline carrying the most
 contrast on the frame while the paved road drew as pale grey — the ladder read backwards.
 
 **A rung has to read as PROMINENCE on ground of any tone, and only opacity does that.** So the
-prominence ladder is `HudStyle.INK` at `ROAD_OPACITY_GAME_TRAIL` → `_TRAIL` → `_DIRT_ROAD` →
+prominence ladder is `HudStyle.INK` at `ROAD_OPACITY_PATH` → `_TRAIL` → `_DIRT_ROAD` →
 `_PAVED_ROAD` (0.30 / 0.52 / 0.74 / 0.94), derived at draw time — the map's own idiom for a themed
 overlay tint, the one `MapView.SUPPLY_LINK_COLOR` already uses. The WIDTH ladder rides beside it
 because thickness reads before tint at map zoom.
@@ -93,15 +110,15 @@ The rows reach the drawer through `tile_info["roads"]`, stamped by `MapView._til
 `road_tile_lookup` stays an ARRAY per hex anyway, so a duplicated row would render twice rather than
 vanish silently, and the drawer's block loop needs no special case.
 
-### ⛔ EVERY ROW IS CONDITIONAL, AND A FREE GAME TRAIL IS ONE ROW
+### ⛔ EVERY ROW IS CONDITIONAL, AND A FREE PATH IS ONE ROW
 
 The block printed **five rows on every road in the world** (`Road` / `Wearing in` / `Kept by` /
-`Keeping` / `Buys`), which on the commonest road in the game — a free game trail — read:
+`Keeping` / `Buys`), which on the commonest road in the game — a free path — read:
 
 ```text
-Road        🛣 Game trail
+Road        🛣 Path
 Wearing in  Trail 25%
-Keeping     free — nobody keeps a game trail
+Keeping     free — nobody keeps a path
 Buys        nothing — a path the animals made
 ```
 
@@ -109,7 +126,7 @@ Four rows to say that a thing costs nothing and does nothing, two of them prose 
 *no*. It is one row now (issue #566): **a row that would say "none" is not rendered at all.**
 
 ```text
-Road        Game trail · 25% to trail
+Road        Path · 25% to trail
 ```
 
 **The rows read like the rows above them on the card** — `label · value · qualifier`, the shape
@@ -119,7 +136,7 @@ row.
 
 | Row | Rendered when | Says | The trap it avoids |
 |---|---|---|---|
-| `Road` | a road exists on the tile — **the only unconditional row** | the rung it HOLDS, plus `N% to <next rung>` while something is rising above it, plus the branch's own hazard word `washing out` when short | ⛔ **THE PERCENTAGE MUST NOT READ AS "THIS ROAD IS 25% BUILT".** A game trail at 25% is a COMPLETE game trail a quarter of the way to becoming a trail, so the rung stands alone as the value and the meter is a qualifier naming where it is GOING. The retired `Wearing in: Trail 25%` row said the opposite, and `build_fraction` is a DIFFERENT rung's meter — a reader that thresholded it would call a fully-worn trail a dirt road on the turn its first traffic banked. **Rendered only below `1.0`**: the wire states exactly `1.0` for a rung just finished AND for the top of the ladder, so the test is a plain comparison |
+| `Road` | a road exists on the tile — **the only unconditional row** | the rung it HOLDS, plus `N% to <next rung>` while something is rising above it, plus the branch's own hazard word `washing out` when short | ⛔ **THE PERCENTAGE MUST NOT READ AS "THIS ROAD IS 25% BUILT".** A path at 25% is a COMPLETE path a quarter of the way to becoming a trail, so the rung stands alone as the value and the meter is a qualifier naming where it is GOING. The retired `Wearing in: Trail 25%` row said the opposite, and `build_fraction` is a DIFFERENT rung's meter — a reader that thresholded it would call a fully-worn trail a dirt road on the turn its first traffic banked. **Rendered only below `1.0`**: the wire states exactly `1.0` for a rung just finished AND for the top of the ladder, so the test is a plain comparison |
 | *(the bonus)* | the rung buys something on any axis | ⛔ **what the rung is BUYING** | see below. **UNLABELLED** — `Buys:` was a key doing no work, the value already reading as a benefit |
 | `Upkeep` | the road actually owes something — **neither free rung does** | the bill, the SHORTFALL where there is one, and the keepers the bill wants | all three figures are published; `demand − supplied == shortfall` holds verbatim on the wire and the keeper count is the sim's own `ceil`. **The word is `Upkeep`** — see below |
 | `Kept by` | the road has a keeper, or owes a bill nobody is paying | ⛔ **WHOSE JOB THIS ROAD IS**, and what distance is charging them for it | see below |
@@ -140,7 +157,7 @@ road's carries no runway and no material context, and falls through to `upkeep_v
 answers WARN only on the hazard mark its own composer put there — so a band bill that declines the
 runway tint reads the plain ink it always did.
 
-**AND THE FREE READING IS GONE WITH THE ROW.** `free — nobody keeps a game trail` was a sentence
+**AND THE FREE READING IS GONE WITH THE ROW.** `free — nobody keeps a path` was a sentence
 spent on the absence of a bill, on every road a current game can contain. The floor declares no upkeep
 at all, and the row's ABSENCE states that without a line.
 
@@ -203,7 +220,7 @@ Three clauses, each off a published field:
   epsilon). Its other half is said out loud: a built road whose bill is unpaid reads *dark until its
   upkeep is paid* — the row above it's own word — because a road **goes dark BEFORE it decays** and a clause that merely vanished
   would read as a rung that never lit anything. Gated on the shortfall rather than on "unlit",
-  because the GAME TRAIL lights nothing even with its (interpolated) bill paid in full.
+  because the PATH lights nothing even with its (interpolated) bill paid in full.
 - **the link span, in FUTURE TENSE, and that is not a style choice.** `holds_link_to_tiles` is
   authored on every route rung and **not yet read by the sim** — nothing in `balance_supply_networks`
   consumes it; that is slice 13b. Rendering it in the present tense would state an effect that is not
@@ -211,7 +228,7 @@ Three clauses, each off a published field:
 
 **A rung buying nothing on every axis RENDERS NO ROW**, which is both free rungs. It used to say so in
 words — `nothing — a path the animals made`, in dim ink — and that sentence was **factually wrong, not
-merely wordy**: it asserted an ORIGIN the sim does not model. A game trail is a rung a tile HOLDS, and
+merely wordy**: it asserted an ORIGIN the sim does not model. A path is a rung a tile HOLDS, and
 the commonest way a tile comes to hold one is the player's own bands walking the same ground and
 banking traffic into the meter; nothing about it is a path animals made. The row's absence states the
 same fact — both of the floor's terms are at their own neutral — and cannot state a false one beside
@@ -283,8 +300,8 @@ becomes the floor, one longer role name silently pushes the row past the zone's 
   It used to be in none of them, correctly: no route rung declared a verb. `grade` and `pave` closed
   that gap, so the branch goes into all three — the tables' own note is *both or neither*, and the
   four rung keys are ALIASED off `HudRouteVocab` rather than spelled twice. **The free floor is two
-  rungs deep and both map to `IMPROVEMENT_NONE`**, exactly as the two `wild` rungs do: a game trail is
-  what the animals made and a trail is worn in by traffic, and neither is something a band builds.
+  rungs deep and both map to `IMPROVEMENT_NONE`**, exactly as the two `wild` rungs do: a path and
+  the trail above it are worn in by traffic alone, and neither is something a band builds.
   `ReadyForImprovement` is unaffected — it reads `current_rung` off patches and herds, and no road
   carries one.
 - **No kit picker on the Roadwork card, and `KitRoster.KEEPING_JOB_BUILD_BRANCHES` gains no entry.**
@@ -317,7 +334,7 @@ a picture cannot make, run against the REAL producer
 (`SubjectDrawerController._tile_terrain_lines`) rather than a re-derivation. They assert what the rows
 SAY and, since the block became conditional, **what the card does NOT draw**: the free floor composes
 exactly one line and the other four keys are absent from the producer's output; the rung row reads
-`Game trail · 30% to trail` and **never** the retired `Trail 30%`, which is the wording that read as a
+`Path · 30% to trail` and **never** the retired `Trail 30%`, which is the wording that read as a
 part-built road; a complete rung states the rung bare and the top rung states no approach at all; the
 bill reads under `Upkeep`; the shortfall is stated against the bill with the keepers it wants; the
 countdown; the gone-dark clause naming *upkeep*; and `0` reading `now` rather than `in 0 turns`. The

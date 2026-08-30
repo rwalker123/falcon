@@ -116,7 +116,7 @@ fn seat_a_dirt_road(app: &mut App, tile: UVec2, keeper: (FactionId, BandId)) {
 /// Seat a fully worn **trail** and hand it to nobody — the free floor, which nobody maintains and
 /// which therefore lights nothing however worn it is.
 ///
-/// **The top of the floor rather than a half-worn game trail**, because the top is where the claim
+/// **The top of the floor rather than a half-worn path**, because the top is where the claim
 /// is hardest: a road carrying every work unit traffic can ever put into it still grants no sight,
 /// since `Road::grants_sight` reasons from the **paid bill** and the whole floor is free.
 fn seat_a_worn_trail(app: &mut App, tile: UVec2) {

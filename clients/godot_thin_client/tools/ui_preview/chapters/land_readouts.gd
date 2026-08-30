@@ -655,11 +655,11 @@ func _river_tile_fixture(river_mask: int) -> Dictionary:
 ## `intensification_ladder.json`, transcribed so the frames state the real ladder rather than round
 ## numbers. Reading them back is what makes the `Buys:` assertions a test of the CONVERSION rather
 ## than of arithmetic on invented inputs.
-const ROAD_FRICTION_GAME_TRAIL := 1.0
+const ROAD_FRICTION_PATH := 1.0
 const ROAD_FRICTION_TRAIL := 0.85
 const ROAD_FRICTION_DIRT := 0.6
 const ROAD_FRICTION_PAVED := 0.35
-const ROAD_LINK_GAME_TRAIL := 0
+const ROAD_LINK_PATH := 0
 const ROAD_LINK_TRAIL := 6
 const ROAD_LINK_DIRT := 10
 const ROAD_LINK_PAVED := 16
@@ -747,7 +747,7 @@ func _road_fixture(rung: String, meter: float, demand: float, shortfall: float,
 		"upkeep_supplied": demand - shortfall,
 		"upkeep_shortfall": shortfall,
 		"upkeep_workers_needed": workers_needed,
-		# `has_neglect_grace == false` is "there is nothing at risk here", which is the game trail:
+		# `has_neglect_grace == false` is "there is nothing at risk here", which is the path:
 		# it declares no upkeep, so it has no meter to lose.
 		"has_neglect_grace": demand > 0.0,
 		"neglect_grace_remaining": grace,
@@ -816,7 +816,7 @@ func _road_lines_named(road: Dictionary, keeper_label: String) -> Array[String]:
 ##
 ## ⛔ **THE BLOCK IS CONDITIONAL NOW, SO HALF THESE CLAIMS ARE ABSENCES.** It used to print five rows
 ## on every road in the world — two of them prose saying *no* — and the readout the player actually
-## meets, a free game trail, spent four lines to say that it costs nothing and does nothing. Every row
+## meets, a free path, spent four lines to say that it costs nothing and does nothing. Every row
 ## but the rung row is emitted only where it has something to say, and an assertion that a row is
 ## PRESENT proves nothing about that: what is asserted below is the exact WORDS each row carries and
 ## the exact rows a road does NOT draw.
@@ -825,26 +825,26 @@ func _assert_road_rows_are_conditional() -> void:
 	# risk — so the rung row is the whole of it, and the four remaining keys are absent from the REAL
 	# producer's output rather than present-and-empty.
 	var trail_road := _road_fixture(
-		HudRouteVocab.RUNG_KEY_GAME_TRAIL, ROAD_METER_RISING, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
-		ROAD_FRICTION_GAME_TRAIL, ROAD_LINK_GAME_TRAIL)
+		HudRouteVocab.RUNG_KEY_PATH, ROAD_METER_RISING, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		ROAD_FRICTION_PATH, ROAD_LINK_PATH)
 	var trail_lines := _road_lines(trail_road)
-	h._assert_hud("a free game trail composes exactly ONE row",
+	h._assert_hud("a free path composes exactly ONE row",
 		HudRouteVocab.road_lines(trail_road).size() == 1)
 	h._assert_hud("…and the card draws no upkeep row, because the floor declares no bill",
 		Readout.detail_row_index(trail_lines, HudRouteVocab.ROAD_UPKEEP_ROW) < 0)
-	h._assert_hud("…no payoff row, because a game trail buys nothing on any axis",
+	h._assert_hud("…no payoff row, because a path buys nothing on any axis",
 		Readout.detail_row_index(trail_lines, HudRouteVocab.ROAD_BONUS_ROW) < 0)
 	h._assert_hud("…no keeper row, because there is no job to be on the hook for",
 		Readout.detail_row_index(trail_lines, HudRouteVocab.ROAD_KEEPER_ROW) < 0)
 	h._assert_hud("…and no countdown, because a rung with no upkeep has nothing to lose",
 		Readout.detail_row_index(trail_lines, HudRouteVocab.ROAD_REVERTING_ROW) < 0)
 
-	# ⛔ **AND THE ONE ROW READS AS A COMPLETE GAME TRAIL PART-WAY TO A TRAIL**, never as a road that
+	# ⛔ **AND THE ONE ROW READS AS A COMPLETE PATH PART-WAY TO A TRAIL**, never as a road that
 	# is 30% built. The rung is the value; the meter arrives as a qualifier naming where it is GOING.
 	h._assert_hud("the rung is the FACT and the percentage is the NEXT rung's approach",
 		Readout.detail_row_value(trail_lines, HudRouteVocab.ROAD_ROW)
 			== "%s%s%s" % [
-				HudRouteVocab.RUNG_LABELS[HudRouteVocab.RUNG_KEY_GAME_TRAIL],
+				HudRouteVocab.RUNG_LABELS[HudRouteVocab.RUNG_KEY_PATH],
 				HudRouteVocab.ROAD_CLAUSE_SEPARATOR,
 				HudRouteVocab.ROAD_PROGRESS_FORMAT % [ROAD_METER_RISING_PERCENT,
 					String(HudRouteVocab.RUNG_LABELS[HudRouteVocab.RUNG_KEY_TRAIL]).to_lower()]])
@@ -1213,14 +1213,14 @@ func run(harness) -> void:
 	# row gets dearer and the unlabelled payoff gets richer — which is what makes paving a decision
 	# rather than an upgrade. **The floor's block is ONE ROW**, and that contrast is the frame.
 
-	# State road-game-trail — THE FLOOR, and it is a SINGLE ROW: `Road  Game trail · 30% to trail`.
+	# State road-path — THE FLOOR, and it is a SINGLE ROW: `Road  Path · 30% to trail`.
 	# Nothing to pay, nobody paying it, nothing bought and nothing at risk, so no other row is drawn
 	# at all. It rendered four rows here until issue #566, two of them prose saying *no*.
 	h._show_tile(_road_tile_fixture(_road_fixture(
-		HudRouteVocab.RUNG_KEY_GAME_TRAIL, ROAD_METER_RISING, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
-		ROAD_FRICTION_GAME_TRAIL, ROAD_LINK_GAME_TRAIL)))
+		HudRouteVocab.RUNG_KEY_PATH, ROAD_METER_RISING, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		ROAD_FRICTION_PATH, ROAD_LINK_PATH)))
 	await h._settle()
-	await h._save("road_tile_game_trail")
+	await h._save("road_tile_path")
 
 	# State road-trail — the first rung anyone pays for, with traffic already wearing in the one above
 	# it: `Road  Trail · 30% to dirt road`. The meter belongs to the rung being RAISED, so it reads as

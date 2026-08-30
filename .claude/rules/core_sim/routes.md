@@ -131,7 +131,7 @@ camp is. That is also what keeps `traffic_ceiling` one number for every road on 
 |---|---|---|
 | `plant` | wild | tended · field |
 | `animal` | wild | pastoral · pen |
-| `route` | **game trail · trail** | **dirt road · paved road** |
+| `route` | **path · trail** | **dirt road · paved road** |
 
 The two free rungs declare no `verb`, append no `BuildQueueEntry`, draw nothing from the builders'
 pool and are billed nothing for holding. **Traffic banks work up to `routes::traffic_ceiling` — the
@@ -147,7 +147,7 @@ top of `FREE_FLOOR_TOP_RUNG` — and no further**, capped in `advance_roads`.
 > a *dirt road* in for free and hand the player its bill anyway, one rung later and dearer.
 
 **`Road::is_built()` is therefore a rung test** — `is_at_or_above(FIRST_BUILT_RUNG)`, not
-`!= game_trail`. Its one consumer, `Road::grants_sight`, reasons from *"paying the upkeep IS the
+`!= path`. Its one consumer, `Road::grants_sight`, reasons from *"paying the upkeep IS the
 presence"*, so a free trail must light nothing however worn it is. `FREE_FLOOR_TOP_RUNG` and
 `FIRST_BUILT_RUNG` are pinned adjacent by `the_free_floor_and_the_first_built_rung_are_adjacent`,
 because `RungKey::above` is not `const`.
@@ -253,18 +253,18 @@ second producer of a rung's position, the failure this arc has had three of.
 
 ## The four rungs
 
-`game trail → trail → dirt road → paved road`, in `intensification_ladder.json`.
+`path → trail → dirt road → paved road`, in `intensification_ladder.json`.
 
 | rung | verb | `unlock_knowledge` | `earns_knowledge` | `build` | `upkeep` |
 |---|---|---|---|---|---|
-| `game_trail` | — | — | — | null | null |
+| `path` | — | — | — | null | null |
 | `trail` | **— (it forms from use)** | **—** | `roadbuilding` | 40 work | **null** |
 | `dirt_road` | **`grade`** | `roadbuilding` | `paving` | 110 work | yes |
 | `paved_road` | **`pave`** | `paving` | — | 260 work | yes |
 
-- **The floor is TWO rungs.** A game trail is #215's origin — the first roads are the ones the animals
-  made — and a trail is the floor's second storey. Neither costs anything to hold, neither takes a
-  verb, neither has a keeper, and neither lights a tile.
+- **The floor is TWO rungs.** A path is what traffic wears in before anybody decides to make a road,
+  and a trail is the floor's second storey. Neither costs anything to hold, neither takes a verb,
+  neither has a keeper, and neither lights a tile.
 - **`partial_credit: continuous` on all three built rungs.** A half-worn trail is genuinely half a
   trail, unlike `animal:pen` where half a fence is not a fence.
 - **`site_requirement: null` on every route rung**, and that is the honest answer rather than a gap: a
@@ -277,11 +277,27 @@ second producer of a rung's position, the failure this arc has had three of.
   free ones: a trail holds a link 6 tiles out and takes 15% off the friction. **Free is not
   worthless** — the shape `plant:wild` has, where a wild patch feeds you for nothing.
 
+> #### ⛔ THE FLOOR RUNG IS `path` BECAUSE NOTHING IN THE SIM LETS AN ANIMAL WEAR A ROAD IN
+>
+> It shipped as `game_trail`, named for #215's *"the first roads are the ones the animals made"*.
+> **Exactly one thing in the whole simulation banks route work**: `route_traffic.walked(..)`, called
+> from `supply.rs`'s pooling-link pass where two camps sharing a larder walk between them. Herds
+> move, but no herd has ever recorded a step as route traffic — so every path on the map is worn in
+> by the **player's own** trade-pooling bands, and the floor rung was displaying them a trail the
+> animals made. Ray hit it in play at tile (60,40).
+>
+> That is the second half of a correction begun in `96bf835d`, which deleted the tile card's flavour
+> line *"a path the animals made"* for the same reason: it asserted a cause the model does not have.
+>
+> **#215 is unaffected and remains open.** Even were herds to bank route work later, a path worn in
+> by the player's traders is not a game trail; the rung's name states what reaches it — traffic,
+> whoever's — rather than an origin.
+
 ### ⛔ THE CHAIN LOST A LESSON, AND THE ONE IT LOST TAUGHT NOTHING
 
-13a shipped **four**: `game_trail` earned `trailcraft`, which gated `trail`. **A lesson for something
-you cannot fail to do** — you wear a path by walking it, so there is no knowing-how involved and no
-way to be refused. `trailcraft` is **deleted** from `discovery_id_for`, from the ladder's
+13a shipped **four**: `path` (then spelled `game_trail`) earned `trailcraft`, which gated `trail`.
+**A lesson for something you cannot fail to do** — you wear a path by walking it, so there is no
+knowing-how involved and no way to be refused. `trailcraft` is **deleted** from `discovery_id_for`, from the ladder's
 `lesson_costs` and from `start_profile_knowledge_tags.json`.
 
 **Discovery id 2011 is RETIRED, not reused**, and `roadbuilding` / `paving` keep 2012 / 2013 rather
@@ -416,7 +432,7 @@ never arming its neglect counter, never decaying, never pruned. It fails as *no 
 than as a slow one. `route_traffic::a_keeperless_road_decays_and_is_finally_pruned` is the pin.
 
 **THE WHOLE FREE FLOOR falls out of the arithmetic rather than being branched around.** Neither free
-rung declares an `upkeep`, so a road holding a game trail — **or a fully worn trail** — owes nothing.
+rung declares an `upkeep`, so a road holding a path — **or a fully worn trail** — owes nothing.
 An `is_built()` guard would be a second statement of *"nobody keeps the free floor"*, free to disagree
 with the ladder that already says it.
 
@@ -450,7 +466,7 @@ per turn by `advance_roads`.
 5. **bleed a free road nobody walked**, past `route_traffic.disuse_grace_turns`. **After the banking**,
    because whether a road was idle is only known once this turn's journeys have been drained onto it.
 
-**Then the registry is PRUNED of every road back at `RUNG_UNSTARTED`, after the banking.** A game trail
+**Then the registry is PRUNED of every road back at `RUNG_UNSTARTED`, after the banking.** A path
 with no work in it is indistinguishable from no road; pruning *before* phase 4 would delete every road
 on the turn it formed. Remembering that animals once walked there is **#215's concern, not this
 registry's**.
