@@ -2459,9 +2459,25 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > > than needing a rule: a trail at 0% *is* a completed path, and it should look like one. A
     > > road never fades to nothing while it still holds a rung.
     > >
-    > > **The tile card already states the number** (`HudRouteVocab.wearing_in_value`); this is the map
+    > > **The tile card already states the number** (`HudRouteVocab.progress_clause`); this is the map
     > > saying the same thing without being asked. Two readings of one position, so they cannot
     > > disagree — which is the whole reason to interpolate rather than invent a second progress curve.
+    >
+    > > **⛔ THE FADE MUST NOT LAND ON AMBER, BECAUSE THE MAP ALREADY SPENDS AMBER ON HERD TRAILS.**
+    > > `MapView.HERD_TRAIL_COLOR` is `Color(0.97, 0.69, 0.25, 0.6)` and `HudStyle.WARN` is
+    > > `#f2b13f` — the same amber to within rounding. **This has already misled a player once**: Ray
+    > > read the herd movement trails on the map as roads being drawn, and asked why the aurochs line
+    > > was there. A faint road fading in at low alpha is precisely the thing that would repeat that
+    > > mistake, since a partly-worn path and a herd's recent track would then be a thin amber line of
+    > > the same weight in the same place.
+    > >
+    > > The at-risk tint is NOT the problem and needs no change: a short road already draws in
+    > > `HudStyle.DANGER` (`AnnotationRenderer` line ~428), which nothing else on the map uses. **It is
+    > > the ordinary, healthy road that must not be amber.**
+    > >
+    > > So the fade is over ALPHA and WIDTH of a road's own hue, never a ramp toward the warning
+    > > colour — and the art of #600 has to clear the same bar, since a stylised dirt track is a
+    > > tan-brown object by nature and a herd trail is drawn on top of the same ground.
     >
     > > **RELATED, AND NOT THIS STEP'S: #215** — *"herd/game trails follow hex centers and become the
     > > basis of roads."* Its own issue, and still open: nothing in the sim banks route work for an
