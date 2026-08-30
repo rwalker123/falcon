@@ -2462,12 +2462,62 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > > **RELATED, AND NOT THIS STEP'S: #215** — *"herd/game trails follow hex centers and become the
     > > basis of roads."* The game-trail rung's own origin, and its own issue.
     >
-    > **Tuning is NOT a step here** — §4.14 already owns every number in this arc and is explicitly
-    > last. The rung rates, spans, friction multipliers and traffic conversions land at shape-chosen
-    > values and are §4.14's to move, exactly as §4.11's were.
+    > **13d — WHAT A STRANGER MAY DO WITH A ROAD.**
+    > - Unreachable in play today: worldgen creates `FactionId(0)` and one start profile, so a normal
+    >   game is single-faction. **Decide it before a second people lands, not after.**
     >
-    > **Nothing in this list renumbers anything.** Items 14 and 15 keep their places; 13a/13b/13c are
-    > the three PRs *inside* item 13.
+    > > **⛔ THE PER-TILE KEEPER MODEL CLOSED MOST OF THIS BY CONSTRUCTION, so this step is far smaller
+    > > than when it was agreed.** It was scoped when a road was a path object nobody kept, and the open
+    > > questions were use, sight, keeping and upgrading — four holes. Three shut on their own:
+    > >
+    > > | | scoped by | |
+    > > |---|---|---|
+    > > | the cheaper food-sharing | same people only, by the pooling policy | already closed |
+    > > | seeing along a road | the **keeper's** faction | closed by §4.13b |
+    > > | paying its upkeep | its keeper, and a road has exactly one | closed by §4.13b |
+    > > | **upgrading it** | **nothing** | **the open question** |
+    > >
+    > > So what is actually left is narrow: **may a stranger's band `grade` or `pave` a tile, and may it
+    > > adopt a keeperless road another people wore in?** Nothing tests faction on either path today.
+    > >
+    > > **⛔ AND IT IS A QUESTION ABOUT PERMISSION, NOT ABOUT OWNERSHIP.** That word is retired from this
+    > > arc (§4.13b) — Ray: *"that is an abstract term in this game so it really has no meaning."* There
+    > > is no owning, there is the job of keeping, and this step decides who may take that job on. A
+    > > proposal that re-introduces a possessive road is answering a question nobody asked.
+    >
+    > **13e — THE ROUTE BRANCH'S OWN TUNING PASS. CONFIG ONLY, AND LAST.**
+    > - **Why it is a step rather than deferred to §4.14**: §4.14 owns the *arc's* numbers and waits on
+    >   the whole arc. The route branch can be tuned as soon as **13a–13d** are in, without waiting for
+    >   the plant and animal spreads — and it needs to be, because the shipped pace is visibly wrong.
+    > - **Why it must not happen sooner**, which is the real argument and is §4.14's own one level down:
+    >   **13b adds two more traffic sources.** A pace tuned today is tuned against pooling links alone;
+    >   the moment shipments and marching bands also wear roads in, the effective rate changes and every
+    >   number set before it is a number set on a shape about to move. Ray: *"it would be better to have
+    >   everything done before tuning."*
+    >
+    > **THE KNOWN OFFENDER, measured in a live game at turn 32:** `route_traffic.work_per_link_tile_per_turn`
+    > is `0.35` and `route:trail` costs `40`, so a tile carrying one link needs **~114 turns** to become a
+    > trail. Seven game-trail tiles existed between three bands at 24–52% worn and none could have
+    > changed rung. The rate **halved in effect** when roads went per-tile (§4.13b) — it is now literally
+    > per tile where it used to drive one path object — and was deliberately left uncompensated, because
+    > a model change must not hide behind a retune. **This is where that debt is paid.**
+    >
+    > **Everything else this step owns**: `route_traffic.disuse_grace_turns` / `disuse_loss_per_turn`
+    > (how fast an unwalked trail fades — currently ~44 turns against ~114 to form, which is very likely
+    > backwards); `route_range.base_tiles` / `remote_cost_multiplier`; the four rungs' `work_cost`,
+    > `work_per_turn` and `meter_decay`; and the payoff numbers — `friction_multiplier` and
+    > `holds_link_to_tiles`, the second of which cannot be judged until 13b consumes it.
+    >
+    > **The knowledge weighting is 13b's to DESIGN and this step's to TUNE.** *How far* and *how often*
+    > combine is a modelling question 13b must answer; the constants that fall out of it are numbers.
+    >
+    > **Tuning is not spread across the other steps** — §4.14 owns the arc's numbers and is explicitly
+    > last, and this step is its route-branch counterpart. The rung rates, spans, friction multipliers
+    > and traffic conversions land at shape-chosen values throughout 13a–13d and are moved **here**,
+    > once there is nothing left to change the shape.
+    >
+    > **Nothing in this list renumbers anything.** Items 14 and 15 keep their places; 13a–13e are
+    > the PRs *inside* item 13.
 14. **The tuning spread.** Config-only, and **last** — §4.10 changes what the numbers do to the curve,
     so tuning before it would be tuning a shape that is about to move.
     > **§4.11 LANDS FIRST, for this item's own reason.** A flat per-rung demand and a size-scaled one
