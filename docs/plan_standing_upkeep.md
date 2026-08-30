@@ -2144,11 +2144,18 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     >
     > **13a — ROADS EXIST, AND THE FOOD-SHARING BETWEEN NEIGHBOURING CAMPS WEARS THEM IN.**
     >
-    > > **⛔ LANDED SO FAR, AND TWO THINGS BELOW ARE CORRECTIONS TO THIS SECTION'S OWN SPEC.** The
-    > > branch, `RouteLedger`, `UpkeepScale::RouteSpan`, the traffic accrual off pooling links, the
-    > > **friction** payoff and the checkpoint are in; the `Roadwork` pool, the decay, the visibility
-    > > grant and the client readout are not. Rationale as built:
-    > > `.claude/rules/core_sim/routes.md`.
+    > > **⛔ 13a IS LANDED IN FULL, AND THREE THINGS BELOW ARE CORRECTIONS TO THIS SECTION'S OWN
+    > > SPEC.** The branch, `RouteLedger`, `UpkeepScale::RouteSpan`, the traffic accrual off pooling
+    > > links, the **friction** payoff, the checkpoint, the `LaborTarget::Roadwork` keeping pool, the
+    > > decay it funds, the `Seen`-along-a-kept-road grant, the whole `RouteState` wire and the client
+    > > readout are all in. Rationale as built: `.claude/rules/core_sim/routes.md` and
+    > > `.claude/rules/client/roads.md`.
+    > >
+    > > **⓪ ONE THING 13a WAS SPECIFIED TO SHIP AND DOES NOT: `holds_link_to_tiles` HAS NO SIM
+    > > READER.** It is published, and the client renders it in the **future** tense (*"will hold a
+    > > link 10 tiles out"*) precisely because nothing in `balance_supply_networks` consumes it yet.
+    > > That is 13b's first job, and the tense is what keeps the readout honest until then — rendering
+    > > it as an active effect would be a lie the player cannot check.
     > >
     > > **① THE TRAFFIC RATE IS THE LINK, NOT THE TONNAGE.** This section specified **mass-tiles**
     > > — quantity moved × distance. **That is wrong for the case the branch exists to serve.**
