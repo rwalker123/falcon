@@ -1941,12 +1941,76 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > the second are the ones two neighbouring camps wore between them. **Neither is a decision anyone
     > typed.**
     >
-    > #### THE FOUR RUNGS ARE THE BRANCH'S EXISTING SHAPE, NOT A NEW ONE
+    > #### ⛔ §4.13a — THE FREE FLOOR IS **TWO** RUNGS, AND TRAFFIC STOPS AT THE TOP OF IT
+    >
+    > **13a shipped the free/paid boundary one rung too low, and the symptom was a bill nobody asked
+    > for.** Traffic climbs a road automatically, and `route:trail` carried an `upkeep` — so two camps
+    > sharing a larder wore a trail into existence by themselves and the band acquired a **standing
+    > labour bill it never opted into**. Reported from play: a 7-worker nomadic band with no roads it
+    > had chosen, showing `Roadwork ⚠` on the Work board.
+    >
+    > **Nothing else in the game does that.** A wild patch and a wild herd sit at the free floor for
+    > ever until the player issues `cultivate` / `tame` and staffs the builders. Ray: *"similar to how
+    > the initial forage and hunt don't require worker pools, I don't think the initial trails should
+    > either. Those are formed only from usage and are **not upgraded**."*
+    >
+    > **⛔ AND MOVING THE BOUNDARY ALONE ONLY RELOCATES THE FAULT.** Make the trail free and traffic
+    > keeps climbing — into the dirt road, which is also billed, and the same ⚠ arrives one rung later
+    > and dearer. **The auto-climb is the fault, not where the line sits.** So the branch becomes
+    > exactly the other two webs' shape:
+    >
+    > | | free floor, formed by use | built, and paid for |
+    > |---|---|---|
+    > | `plant` | wild | tended · field |
+    > | `animal` | wild | pastoral · pen |
+    > | `route` | **game trail · trail** | **dirt road · paved road** |
+    >
+    > **THE FOUR RULES THAT FOLLOW:**
+    >
+    > **① Traffic banks work up to the top of `route:trail` AND NO FURTHER.** Uncapped it would wear a
+    > dirt road in for free and hand the player its bill anyway.
+    >
+    > **② `grade` and `pave` are real verbs on the builders' pool**, exactly like the four that ship.
+    > `grade` takes a road to `dirt_road` (you grade a roadbed), `pave` to `paved_road`. This retires
+    > `RungBranch::is_crew_built`: *"does this rung declare a `verb`"* already answers it per rung,
+    > which is the finer and correct grain — the branch is no longer uniformly crew-free.
+    >
+    > **③ TWO DECAY TRIGGERS, because the free rungs cannot be short.** A built road reverts on
+    > **unpaid keeping**; a trail costs nothing, so it reverts on **disuse**. That is not an invention —
+    > it is §Q4's own *"an unused road reverts"*, which 13a collapsed into the shortfall path.
+    >
+    > **④ THE QUEUE ENTRY IS A BAND'S; THE ROAD STILL BELONGS TO NOBODY.** One band's builders raise it,
+    > and once it is up anyone standing on it uses it and anyone standing on it may pay its keeping.
+    > **Building a road no more owns it than paying for it does** — which is what preserves the
+    > shared-public-good property the ground-shaped model bought.
+    >
+    > #### THE KNOWLEDGE CHAIN LOSES A LESSON, AND THE ONE IT LOSES TAUGHT NOTHING
+    >
+    > 13a shipped **four** lessons: `game trail` earned `trailcraft`, which gated `trail`. **A lesson
+    > for something you cannot fail to do.** You wear a path by walking it; there is no knowing-how
+    > involved and no way to be refused. Ray: *"Creating the trail leads to 'road building' knowledge,
+    > with dirt being the first build, then paved."*
+    >
+    > **`trailcraft` is DELETED** (its discovery id is retired, not reused — a gap is safer than a
+    > renumber). The surviving chain has every lesson gating something a player actually decides:
+    >
+    > | rung | gate | teaches |
+    > |---|---|---|
+    > | `game_trail` | — | — |
+    > | `trail` | **none — it forms from use** | `roadbuilding` |
+    > | `dirt_road` | `roadbuilding` | `paving` |
+    > | `paved_road` | `paving` | — |
+    >
+    > **`roadbuilding` is earned by a TRAIL CARRYING TRAFFIC**, which is the route branch's reading of
+    > *"a rung teaches while it is practised"* — the practice is the walking. The faction that learns
+    > is the faction of a band standing on the road, the same catchment rule 2 uses everywhere else.
+    >
+    > #### THE FOUR RUNGS
     >
     > `route`: **game trail → trail → dirt road → paved road**. Rung 1 is the **floor** — `build: null`,
     > `upkeep: null`, costs nothing to reach and buys nothing, exactly as `plant:wild` and
-    > `animal:wild` are floors. A position of `RUNG_UNSTARTED` **holds** the game trail. Three built
-    > rungs above it, which is one more than either food web and no new grammar.
+    > `animal:wild` are floors. A position of `RUNG_UNSTARTED` **holds** the game trail. **Rung 2 is
+    > the floor's second storey** — worn in by traffic, still `upkeep: null`, still no verb.
     >
     > **`partial_credit: continuous` on all three.** A half-worn trail is genuinely half a trail —
     > unlike `animal:pen`, where half a fence is not a fence. Nothing here earns `on_completion`.
@@ -1982,15 +2046,25 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     >   share `RouteSpan` and are compared against each other; no pair is compared across the unit
     >   boundary. **`Flat` stays deleted** — this is the variant the key was held open for.
     >
-    > #### ⛔ THE BUILD IS PAID BY TRAFFIC, SO A ROUTE TAKES NO BUILDER AND NO QUEUE ENTRY
+    > #### ⛔ TRAFFIC PAYS FOR THE FLOOR; A CREW PAYS FOR THE ROADS — corrected by §4.13a above
     >
-    > *"`build.progress_per_turn` | a crew clears ground | **traffic wears the route in**."* **Traffic
-    > is the crew.** A route therefore has **no `BuildJob`, no queue entry and no draw on the builders'
-    > pool** — which is what lets a route be **owned by nobody** (see the ground-shaped model below),
-    > because the queue is the most band-shaped thing in the engine: §2.5's entry names a destination
-    > **on a source that a band holds**, and the head holds every builder that band has. A road that
-    > belongs to whoever stands on it could not sit in one band's queue without becoming that band's
-    > property.
+    > **This section read *"THE BUILD IS PAID BY TRAFFIC, SO A ROUTE TAKES NO BUILDER AND NO QUEUE
+    > ENTRY"*, of the whole branch. That is true of the free floor only.** Traffic wears in the game
+    > trail and the trail and stops there; `grade` and `pave` are ordinary verbs on the builders' pool.
+    > See §4.13a for why the uniform reading produced a bill the player never opted into.
+    >
+    > *"`build.progress_per_turn` | a crew clears ground | **traffic wears the route in**."* On the two
+    > **free** rungs, traffic is the crew: they take no `BuildJob`, no queue entry and no draw on the
+    > builders' pool. On `dirt_road` and `paved_road` a band's builders raise the road exactly as they
+    > raise a Field or a pen.
+    >
+    > **⛔ AND A QUEUED ROAD IS STILL OWNED BY NOBODY.** The queue is the most band-shaped thing in the
+    > engine — §2.5's entry names a destination **on a source that a band holds**, and the head takes
+    > every builder that band has — so it *looks* like queueing a road makes it that band's. It does
+    > not, and the reason is the one the keeping already runs on: **several bands may pay one road's
+    > bill, and the road belongs to none of them.** Building it is the same kind of act as paying for
+    > it. What a band's queue holds is *this band's builders are working on that road*, never *that
+    > road is ours* — and once it is up, anyone standing on it uses it.
     >
     > **Traffic converts to WORK UNITS**, the same currency `RungBuild::work_cost` is quoted in, so
     > *"what does it cost to raise this"* keeps one answer in one unit whichever branch is asked.
@@ -1998,9 +2072,16 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     >
     > | Traffic | Measured as | Converted by |
     > |---|---|---|
-    > | a **pooling transfer** (`balance_supply_networks`) | **mass-tiles** — quantity that crossed × the link's length | `work_per_mass_tile` |
-    > | a **shipment** walking a connection | **worker-tiles** — party workers × tiles walked | `work_per_worker_tile` |
-    > | ordinary **band / expedition movement** | **worker-tiles**, same reading | `work_per_worker_tile` |
+    > | a **live pooling link** (`balance_supply_networks`) | **link-tiles** — one turn of the link, × the road's length | `route_traffic.work_per_link_tile_per_turn` |
+    > | a **shipment** walking a connection | *13b's* | *13b's* |
+    > | ordinary **band / expedition movement** | *13b's* | *13b's* |
+    >
+    > > **⛔ THIS TABLE READ `mass-tiles` AND `worker-tiles`, TWO LEVERS, AND THE FIRST ONE WAS WRONG.**
+    > > `balance_supply_networks` drops sub-`min_transfer` moves, so a **balanced** network ships
+    > > nothing — a mass-driven rate would leave two camps who have shared a larder for thirty turns
+    > > with **no path at all**, exactly the case #532 forbids. It is the *link*, not the tonnage: a
+    > > trail forms because they are neighbours who walk to each other. One lever, and it shipped in
+    > > 13a; the other two rows are 13b's to fill in.
     >
     > **Two levers, not three**: goods and people are the only two things that move, and a shipment is
     > people — its cargo rides in their packs (`TradeExpeditionConfig::per_worker_carry`, *"the party
