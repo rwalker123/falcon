@@ -1287,24 +1287,29 @@ table PopulationCohortState {
   materialStore:[MaterialPayoff];
 
   // --- THE BAND'S ROADWORK BILL (appended, beside the two ledgers above) -------------------------
-  // WHAT THE ROADS THIS BAND STANDS ON COST IT THIS TURN, in work units per turn - so the Work board
-  // can show the `roadwork` role's need the way it shows agriculture's and husbandry's.
+  // WHAT THE ROADS THIS BAND KEEPS COST IT THIS TURN, in work units per turn - so the Work board can
+  // show the `roadwork` role's need the way it shows agriculture's and husbandry's.
   //
-  // Summed over the roads under the band's OWN TILE (the route arc's rule 2 - the road's path is the
-  // catchment and there is no radius). A band that steps one tile off its road owes nothing on it
-  // and this reads 0.
+  // *** IT IS SUMMED OVER THE ROADS THIS BAND IS THE KEEPER OF, AND POSITION HAS NOTHING TO DO WITH
+  // IT. *** `settle_route_keeping` walks `RoadRegistry::kept_by(band)` - the band recorded on each
+  // road's own `Road::keeper` by the `grade` / `pave` that took it on. A band that walks to the far
+  // side of the map still owes every tile it keeps, and a band standing on somebody else's road owes
+  // nothing on it. (A road is a PER-TILE improvement with ONE keeper: there is no path object to be
+  // the catchment, no radius, and no co-payment - two bands cannot share one tile's bill, which is
+  // what makes "one band keeps half the tiles between two camps and another the other half" the
+  // representable state.)
   //
   // *** THE SIM SUMS IT, AND A CLIENT MUST NOT. *** The identical rule `fodderNeed` above is minted
   // under, and load-bearing for the identical reason: ROUTE ROWS ARE FOG-FILTERED, so a road out of
   // sight would silently drop out of any client-side total while the band certainly still owes its
   // keeping.
   //
-  // roadworkDemand    = the summed STAMPED bill of those roads (`routes::route_keeping_basis`),
-  //                     whether or not the band can pay it - `fodderNeed`'s own rule. It is the
-  //                     alarm.
-  // roadworkSupplied  = what THIS band's `roadwork` keepers paid into those roads this turn. It is
-  //                     this band's own contribution, not the roads' totals: several bands may stand
-  //                     on one road and each pays a part.
+  // roadworkDemand    = the summed STAMPED bill of those roads (`routes::road_keeping_basis`, via
+  //                     `labor::route_keeping_claims`), whether or not the band can pay it -
+  //                     `fodderNeed`'s own rule. It is the alarm.
+  // roadworkSupplied  = what this band's `roadwork` keepers paid into those roads this turn. One
+  //                     keeper per road, so this is the whole payment those roads received rather
+  //                     than a share of it.
   // roadworkShortfall = demand - supplied, and that identity holds verbatim here as it does on the
   //                     RouteState row.
   roadworkDemand:float = 0;

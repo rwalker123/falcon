@@ -2888,3 +2888,139 @@ fn the_published_build_kit_is_the_one_the_entry_resolves_to() {
         "a source in nobody's queue is being raised with nothing at all"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// (12) A road entry is held by its KEEPER, and losing the keeper retires it
+// ---------------------------------------------------------------------------------------------
+
+/// **How long the fixture waits for disuse to take an unwalked road back.** Comfortably more than
+/// the shipped grace plus the turns the loss rate needs to clear the free floor's top, so what fails
+/// on a stuck fixture is this bound rather than the loop running for ever.
+const TURNS_BEFORE_DISUSE_MUST_HAVE_BITTEN: u32 = 200;
+
+/// **Where the fixture road is seated** — the top of the free floor, which is where a `grade` that
+/// has banked nothing stands. Read off the ladder rather than written, so a retune moves it.
+fn trail_top(app: &App) -> f32 {
+    let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+    core_sim::traffic_ceiling(&ladder)
+}
+
+/// Seat a road on `tile` at the top of the free floor and make the fixture band its keeper — what
+/// `grade` leaves behind on the turn it is typed, with no work banked yet.
+fn grade_a_road(app: &mut App, tile: UVec2) {
+    let position = trail_top(app);
+    let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+    let mut roads = app.world.resource_mut::<core_sim::RoadRegistry>();
+    let road = roads.road_or_trail(tile, &ladder);
+    // The position first: `set_position` releases a keeper on a road inside the free floor, so a
+    // keeper written before it would be wiped by the seating itself.
+    road.set_position(position, &ladder);
+    road.take_keeper(
+        core_sim::RoadKeeper {
+            faction: FactionId(0),
+            band: core_sim::BandId(FIXTURE_BAND),
+        },
+        core_sim::NEAR_ENOUGH_TO_KEEP,
+        &ladder,
+    );
+}
+
+/// Does the fixture band still keep the road on `tile`?
+fn road_has_keeper(app: &App, tile: UVec2) -> bool {
+    app.world
+        .resource::<core_sim::RoadRegistry>()
+        .road(tile)
+        .and_then(|road| road.keeper)
+        .is_some_and(|keeper| keeper.band == core_sim::BandId(FIXTURE_BAND))
+}
+
+/// One turn including the **route** pass, which is what wears a road in and what takes it back.
+fn resolve_a_turn_with_roads(app: &mut App) {
+    app.world.run_system_once(core_sim::advance_roads);
+    resolve_a_turn(app);
+}
+
+/// ⛔ **A ROAD ENTRY IS RETIRED THE TURN THE BAND STOPS BEING THE KEEPER — AND THE POOL BEHIND IT IS
+/// RELEASED.**
+///
+/// A road is the one build source with **no labor row**: its membership is `Road::keeper`, so the
+/// queue's *"an entry requires a holding"* prune has to read the road. It used to answer *held* for
+/// every road unconditionally, and every exit was then closed at once: `advance_roads` releases the
+/// keeper when disuse drops the road below `traffic_ceiling`, after which the road arm banks nothing
+/// (it is not the keeper), `retire_entries_already_built` does not fire (the tile does not hold the
+/// destination rung) and `abandon` finds no keeper to release. The entry stayed at the **head** for
+/// ever.
+///
+/// **The second assertion is the one that hurts.** All hands go on the head, so a permanently
+/// stranded head funds *nothing else the band has queued* — silently, with only the undocumented
+/// `unqueue` to recover it. A test asserting only *"the entry is gone"* would pass on a fix that
+/// left the pool starved, so the patch behind it is measured before and after.
+#[test]
+fn a_road_entry_dies_with_its_keeper_and_frees_the_pool_behind_it() {
+    let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
+    let patch = sources[0];
+    let road_tile = patch;
+    grade_a_road(&mut app, road_tile);
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        // The road goes to the HEAD, which is where a fresh `grade` puts the pool.
+        allocation.build_queue.insert(
+            0,
+            core_sim::BuildQueueEntry {
+                source: BuildSource::Road(road_tile),
+                declared: BuildJob::Rung(Improvement::Grade),
+                kit: Some(bare_builders()),
+            },
+        );
+    }
+
+    // **The liveness half: while the band keeps the road the head is the road, and the patch waits.**
+    resolve_a_turn_with_roads(&mut app);
+    assert!(
+        road_has_keeper(&app, road_tile),
+        "the graded road is still this band's job on the turn after the command"
+    );
+    assert_eq!(
+        queued_sources(&app, band),
+        vec![BuildSource::Road(road_tile), BuildSource::Patch(patch)],
+        "the road is the head and the patch is queued behind it"
+    );
+    let waiting = meter(&app, patch);
+    resolve_a_turn_with_roads(&mut app);
+    assert_eq!(
+        meter(&app, patch),
+        waiting,
+        "all hands are on the head, so the patch behind it banks nothing — the state the stranded \
+         entry made permanent"
+    );
+
+    // **Now let the road go.** Nothing walks it, so after the ladder's own disuse grace it bleeds a
+    // little every turn, drops below the free floor's top, and `set_position` releases the keeper —
+    // the reachable path, driven rather than reached by hand.
+    let mut turns = 0;
+    while road_has_keeper(&app, road_tile) {
+        resolve_a_turn_with_roads(&mut app);
+        turns += 1;
+        assert!(
+            turns < TURNS_BEFORE_DISUSE_MUST_HAVE_BITTEN,
+            "disuse takes an unwalked road back — {turns} turns without it means the fixture, not \
+             the rule, has stopped working"
+        );
+    }
+
+    assert_eq!(
+        queued_sources(&app, band),
+        vec![BuildSource::Patch(patch)],
+        "the road entry is retired the turn the band stops being the keeper — the job is not theirs"
+    );
+    let before = meter(&app, patch);
+    resolve_a_turn_with_roads(&mut app);
+    assert!(
+        meter(&app, patch) > before,
+        "…and the whole builders pool moves onto what the band still holds, which is the failure \
+         the stranded entry actually caused"
+    );
+}

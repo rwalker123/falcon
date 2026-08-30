@@ -2810,7 +2810,8 @@ pub fn advance_labor_allocation(
         // queue is pruned of anything the band no longer works before a single work unit is aimed,
         // so no seam that drops a row can leave the pool funding ground nobody stands on. A ring
         // whose entry goes here stops with it ([`fauna::cancel_dropped_rings`]).
-        let pruned_entries = allocation.prune_build_queue();
+        let pruned_entries =
+            allocation.prune_build_queue(&|tile| band_keeps_road(&roads, band_id, tile));
         fauna::cancel_dropped_rings(&mut registry, &pruned_entries);
         // **THE BAND'S BUILDERS** — one pool, whose whole output goes on the **head** of the queue
         // until that entry's meter fills, then on the next (§2.5). It is not a crew on any tile: a
@@ -5599,20 +5600,16 @@ pub fn advance_labor_allocation(
         //
         // ⛔ **AND IT BANKS ONLY WHAT THE KEEPER OWNS.** A band whose `grade` has been superseded —
         // the tile decayed back into the free floor and lost its keeper, or another band adopted it
-        // — banks nothing, because the road is no longer that band's job. The entry is left for
-        // `retire_entries_already_built` and the ordinary queue paths rather than being second-
-        // guessed here.
+        // — banks nothing, because the road is no longer that band's job. **The entry itself is
+        // dropped by the next turn's prune**, which asks [`band_keeps_road`]: the keeper *is* a road
+        // entry's membership, so losing it retires the entry exactly as a vanished row retires a
+        // patch's. Nothing is second-guessed here.
         if let Some(entry) = head_entry.as_ref() {
             if let (BuildSource::Road(tile), BuildJob::Rung(improvement)) =
                 (&entry.source, entry.declared)
             {
                 let destination = RungKey::built_by(improvement);
-                let keeps_it = band_id.is_some_and(|band| {
-                    roads
-                        .road(*tile)
-                        .and_then(|road| road.keeper)
-                        .is_some_and(|keeper| keeper.band == band)
-                });
+                let keeps_it = band_keeps_road(&roads, band_id, *tile);
                 // **The rung's own gate, and it is knowledge alone.** `site_requirement` is `null` on
                 // every route rung — a road asks nothing of the land it crosses, it is *priced* by it
                 // — so there is no ground term to refuse, and the rung beneath it is guaranteed by
@@ -5717,7 +5714,8 @@ pub fn advance_labor_allocation(
         // pre-loop prune enforces: an entry requires a row. **And a ring the dropped entry was
         // funding stops with it** — see [`fauna::cancel_dropped_rings`]; the lapse is the one exit
         // no command issues, so nothing else would clear the flag.
-        let lapsed_entries = allocation.prune_build_queue();
+        let lapsed_entries =
+            allocation.prune_build_queue(&|tile| band_keeps_road(&roads, band_id, tile));
         fauna::cancel_dropped_rings(&mut registry, &lapsed_entries);
         // **RETIRE EVERY ENTRY WHOSE DECLARED JOB IS ALREADY STANDING** — and say so on the verb's
         // own channel, exactly as a completion is announced.
@@ -5783,6 +5781,30 @@ pub fn advance_labor_allocation(
 /// `extend_pen` sets `pen_extending` *before* it queues, so an entry standing over a cleared flag is
 /// a ring that finished, was cancelled, or was never begun — dead in every case.
 ///
+/// ⛔ **DOES THIS BAND STILL KEEP THE ROAD ON THIS TILE?** — the route branch's half of *an entry
+/// requires a holding*, handed to [`LaborAllocation::prune_build_queue`] because a road's membership
+/// is `routes::Road::keeper` and the component cannot see it.
+///
+/// **A road with no keeper is nobody's job**, and a road kept by another band is not this band's:
+/// both answer `false`, and the entry goes. That covers every way a keeper is lost with one rule
+/// rather than a special case per exit — `abandon`, adoption by another band, and the one that
+/// stranded a queue in play, `routes::advance_roads` releasing the keeper when decay drops the road
+/// below `routes::traffic_ceiling`.
+///
+/// A band with no `BandId` keeps nothing: a keeper names a band, so an unnamed cohort cannot be one.
+fn band_keeps_road(
+    roads: &crate::routes::RoadRegistry,
+    band_id: Option<BandId>,
+    tile: UVec2,
+) -> bool {
+    band_id.is_some_and(|band| {
+        roads
+            .road(tile)
+            .and_then(|road| road.keeper)
+            .is_some_and(|keeper| keeper.band == band)
+    })
+}
+
 /// A source the band no longer holds is not this function's business — `prune_build_queue` has
 /// already taken it, and an entry naming a source neither registry can resolve is left alone rather
 /// than guessed at.
@@ -5846,8 +5868,10 @@ fn entry_job_already_built(
         (BuildSource::Patch(_), BuildJob::ExtendPen) => false,
         // **A road's test is the rung it HOLDS**, the same *"this rung is already achieved"* shape
         // the two webs use. A road tile that has vanished from the registry — pruned back to bare
-        // ground — reads as **not** built, so the entry survives to be judged by the road arm, which
-        // drops it for the honest reason that there is nothing there any more.
+        // ground — reads as **not** built here, and that is the honest answer to *this* question:
+        // what retires such an entry is the **prune**, which asks [`band_keeps_road`] and finds no
+        // keeper on a road that is no longer there. This function judges the job; the prune judges
+        // the holding.
         (BuildSource::Road(tile), BuildJob::Rung(improvement)) => {
             roads.road(*tile).is_some_and(|road| {
                 road.held_rung()

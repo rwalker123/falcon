@@ -1875,7 +1875,9 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
 
 13. **The route branch (#532 proper).** Routes as the ladder's third branch, `infrastructure_cost`
     wired for the first time, traversal-driven progress from supply links, shipments and movement.
-    > **⛔ THREE CLAIMS IN THE SOURCE DOCUMENTS WERE FALSE WHEN THIS SLICE OPENED.** #532 and
+    > **⛔ TWO OF THE SOURCE DOCUMENTS' THREE CLAIMS WERE FALSE WHEN THIS SLICE OPENED, AND THE THIRD
+    > IS THE WORK ITSELF.** ① and ② below are corrections; ③ restates a claim that still stands and is
+    > what the rest of §4.13 answers. #532 and
     > `docs/plan_contact_and_logistics.md` §Q4 are corrected in place rather than left to be
     > re-derived — the lesson of #543, which was filed off a document describing deleted code and
     > cost a full investigation to unwind.
@@ -2432,6 +2434,38 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > > the short hop out-teaches the long journey, which is the exact inversion this rule exists to
     > > prevent. **How far** and **how often** both have to be in the expression; only the first is
     > > settled. Do not ship a per-tile credit without deciding the second.
+    > >
+    > > **⛔ SETTLED — THE UNIT OF LEARNING IS THE CONNECTION, NOT THE TILE.** Ray: *"only credit the
+    > > 'connection', so if a trail (or other road type) makes an unbroken connection between two bands
+    > > … only then does road building get learned. That fits our distance model perfectly, since the
+    > > local connections are shorter, they would contribute less."*
+    > >
+    > > **It does not answer the frequency question above — it DISSOLVES it.** That question only bites
+    > > because a caravan was modelled as an occasional JOURNEY against a neighbour link's every-turn
+    > > pooling. A connection is a STANDING thing: both are then present every turn, the credit is
+    > > purely proportional to length, and a thirty-tile route out-teaches a two-tile link fifteen to one
+    > > every single turn. There is no "how often" term left to tune, and no per-traffic-kind table.
+    > >
+    > > **AND IT KILLS A SCALING BUG THE PER-TILE CREDIT WOULD HAVE SHIPPED.** A per-tile lesson scales
+    > > with TILE COUNT, so a wider map teaches roadbuilding faster than a narrow one — a difference no
+    > > player caused and none could name. A connection scales with the distance between two camps,
+    > > which is a thing the player chose.
+    > >
+    > > **Two details this design decides on its own:**
+    > >
+    > > - **Credit per turn while the connection stands, never once on completion.** A one-off is a step
+    > >   function — nothing for eighty turns, then a lump — and it pays twice for a connection that
+    > >   breaks and reforms. Per turn is also the literal reading: *travelling* the trail, repeatedly.
+    > > - **The lesson is the connection's WEAKEST tile, not its best or its mean.** One path hex in the
+    > >   middle of a paved road means you do not have a paved route; what you travel is the gap. This is
+    > >   already the shipped distinction — `path_friction_multiplier` takes the MEAN because loss
+    > >   accumulates per tile, while `path_reach_tiles` takes the MIN because reach is a claim about the
+    > >   whole route holding. Learning is a claim of the second kind.
+    > >
+    > > **The consequence for 13a, stated so it is not mistaken for a defect:** nothing credits a route
+    > > lesson today, so `roadbuilding` cannot leave 0 and **the branch stops dead at `trail`**. `grade`
+    > > and `pave`, their gates, the ladder rows and the build-queue arm are all unreachable in play
+    > > until this step lands.
     >
     > **13c — DRAW THE ROAD NETWORK ON THE MAP (#232).**
     > - The overlay, fed by the roads 13a/13b now hold. #232 is a **consumer** of this work, not a

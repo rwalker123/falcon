@@ -176,6 +176,13 @@ keeps half the tiles and another the other half"* a state the traffic can actual
 number to move, and hiding a model change behind a compensating config edit is how the jump stops
 being visible.
 
+**So losing a free road is currently about 2.6× FASTER than making one**: a fully worn trail is gone
+`disuse_grace_turns + 40 / disuse_loss_per_turn` ≈ **44** turns after the last traffic, against the
+~114 turns of unbroken neighbourhood that wear it in. The pair was first written under the
+stored-path model, where the two were ~44 against ~57 and losing was the slower of the two. **The
+pace is settled in step 13e, not by a retune here** — 13b adds two more sources of route traffic, so
+the wear rate both figures hang off is about to move.
+
 **Traffic converts to WORK UNITS**, the same currency `RungBuild::work_cost` is quoted in.
 `RouteTrafficLog` is **drained** by the accrual (`std::mem::take`), so a turn with no pooling wears
 nothing rather than re-wearing last turn's links.
@@ -335,10 +342,26 @@ nowhere.
 ### ⛔ `BuildSource::Road(tile)` IS THE ONE SOURCE WITH NO LABOR ROW
 
 Every other build source is named by a `Forage` / `Hunt` row, and `prune_build_queue` drops an entry
-whose row is gone. A road is named by its **keeper**, recorded on the road, which
-`LaborAllocation` cannot see — so `holds_build_source` answers `true` for `Road` unconditionally and a
-road entry is retired by three explicit paths instead: **arriving** at its destination,
-`retire_entries_already_built` (which reads the rung the tile holds), and `abandon` / `unqueue`.
+whose row is gone. A road is named by its **keeper**, recorded on the road, which `LaborAllocation`
+cannot see — so **the keeper is passed in**: `prune_build_queue` takes a `keeps_road` predicate and
+`systems::labor::band_keeps_road` answers it off `RoadRegistry`, at both of the turn's prunes. *An
+entry raises a rung on a tile this band keeps; the moment it is not the keeper the job is not theirs
+and the entry goes.* One rule covers every exit — `abandon`, adoption by another band, and decay or
+disuse dropping the road below `traffic_ceiling`, which is `Road::set_position`'s own keeper release.
+
+⛔ **`holds_build_source` used to answer `true` for a road unconditionally, and that stranded a
+band's whole pool.** Every other exit was closed at the same moment: the road arm banks nothing once
+the band is not the keeper, `retire_entries_already_built` reads the rung the *tile* holds (which a
+decayed road no longer does), and `abandon` finds no keeper to release. So the entry sat at the
+**head** for ever and — all hands on the head — every other build that band had queued was funded
+zero work, silently, recoverable only through `unqueue`. `build_queue.rs`'s
+`a_road_entry_dies_with_its_keeper_and_frees_the_pool_behind_it` drives the disuse path and asserts
+both halves, the retirement and the pool moving on.
+
+The two callers that cannot see the roads — `drop_source_row` and the role clear, both row-driven —
+pass `components::road_holding_unchanged`, because clearing a labor row cannot change a keeper.
+`enqueue_build` passes it too: `grade` / `pave` write the keeper immediately before declaring, and no
+other path can produce a `BuildSource::Road`.
 
 **The build is its own arm in `advance_labor_allocation`, after the assignment loop**, because that
 loop visits `assignments` and can never reach a road. It banks the whole `builders` pool at the

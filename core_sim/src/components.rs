@@ -3630,10 +3630,24 @@ pub enum BuildSource {
     ///
     /// A patch and a herd are each worked by a `Forage` / `Hunt` row, and the queue is pruned of
     /// anything the band no longer works. A road has no such row: the band that grades it is the
-    /// band that **keeps** it, recorded on the road itself (`routes::Road::keeper`), and the entry
-    /// is retired by arrival, by `abandon` or by `unqueue` rather than by a vanished row. See
-    /// [`LaborAllocation::holds_build_source`].
+    /// band that **keeps** it, recorded on the road itself (`routes::Road::keeper`) — so the
+    /// keeper *is* this source's membership, and the entry is retired the turn the band stops being
+    /// the keeper, whether that is `abandon`, another band's adoption, or decay dropping the road
+    /// back into the free floor. See [`LaborAllocation::holds_build_source`].
     Road(UVec2),
+}
+
+/// **THE ROAD-MEMBERSHIP ANSWER A CALLER WITH NO VIEW OF THE ROADS GIVES** — *"leave road entries
+/// standing"*.
+///
+/// [`LaborAllocation::holds_build_source`] asks whether the band still keeps a road, and the answer
+/// lives on `routes::Road::keeper`. Two kinds of caller cannot see it and do not need to: a seam
+/// clearing a **labor row** cannot change a keeper, and `grade` / `pave` — the only path that
+/// enqueues a road at all — writes the keeper immediately before declaring. The judge is the turn's
+/// own prune in `systems::labor`, which holds the registry and runs before a single work unit is
+/// aimed.
+pub fn road_holding_unchanged(_tile: UVec2) -> bool {
+    true
 }
 
 impl BuildSource {
@@ -4020,7 +4034,9 @@ impl LaborAllocation {
         };
         self.assignments.remove(idx);
         self.last_yields.remove(idx);
-        let _ = self.prune_build_queue();
+        // A row going away cannot change a road's keeper, so road entries stand here and are judged
+        // by the turn's own prune — [`road_holding_unchanged`].
+        let _ = self.prune_build_queue(&road_holding_unchanged);
         true
     }
 
@@ -4095,7 +4111,10 @@ impl LaborAllocation {
     /// would draw the whole builders pool onto something no crew is standing on. Nothing enrols
     /// itself either — a meter is never the thing that creates an entry (§2.4).
     pub fn enqueue_build(&mut self, source: BuildSource, declared: BuildJob) -> bool {
-        if !self.holds_build_source(&source) {
+        // A road's holding is its keeper, and `grade` / `pave` write it immediately before declaring
+        // — the only path that can produce a `BuildSource::Road`, since the row-driven queue verb
+        // cannot reach a source with no row. See [`road_holding_unchanged`].
+        if !self.holds_build_source(&source, &road_holding_unchanged) {
             return false;
         }
         match self
@@ -4193,19 +4212,26 @@ impl LaborAllocation {
             .find(|entry| &entry.source == source)
     }
 
-    /// **Drop every entry whose source this band no longer works** — the per-turn sweep that makes
-    /// *"an entry requires a row"* an invariant rather than a rule five seams have to remember
+    /// **Drop every entry whose source this band no longer holds** — the per-turn sweep that makes
+    /// *"an entry requires a holding"* an invariant rather than a rule five seams have to remember
     /// (§3.2). A row dies on a lapse, a drop, a `cancel_order`, a `normalize` eviction and the
     /// turn's holding retirement; each of those could clear the entry itself, and one of them
     /// eventually would not.
     ///
+    /// `keeps_road` answers the **route** branch's half of that membership — see
+    /// [`Self::holds_build_source`], which cannot see the roads. A caller with no view of them
+    /// passes [`road_holding_unchanged`].
+    ///
     /// Returns the entries it dropped, so a caller that wants to narrate the loss can.
-    pub fn prune_build_queue(&mut self) -> Vec<BuildQueueEntry> {
+    pub fn prune_build_queue(
+        &mut self,
+        keeps_road: &dyn Fn(UVec2) -> bool,
+    ) -> Vec<BuildQueueEntry> {
         let mut dropped = Vec::new();
         let held: Vec<bool> = self
             .build_queue
             .iter()
-            .map(|entry| self.holds_build_source(&entry.source))
+            .map(|entry| self.holds_build_source(&entry.source, keeps_road))
             .collect();
         let mut index = 0;
         self.build_queue.retain(|entry| {
@@ -4219,17 +4245,21 @@ impl LaborAllocation {
         dropped
     }
 
-    /// Whether this band has a row on the named source — the membership test the queue is gated on.
+    /// Whether this band still **holds** the named source — the membership test the queue is gated
+    /// on. A patch and a herd are held by a labor **row**; a road is held by its **keeper**.
     ///
-    /// ⛔ **A ROAD IS HELD BY ITS KEEPER, NOT BY A ROW, so it is never pruned here.** The rule *"an
-    /// entry requires a row"* exists so the builders' pool cannot fund ground the band no longer
-    /// works; on the route branch that membership lives on the **road** (`routes::Road::keeper`),
-    /// which this component cannot see and must not guess at. A road entry is retired by arriving,
-    /// by `abandon` (which releases the keeper and drops the entry together) or by `unqueue` —
-    /// three explicit paths, none of which is a vanished labor row.
-    fn holds_build_source(&self, source: &BuildSource) -> bool {
+    /// ⛔ **A ROAD'S HOLDING IS `routes::Road::keeper`, WHICH THIS COMPONENT CANNOT SEE**, so it is
+    /// supplied by the caller as `keeps_road`. It used to answer `true` unconditionally, and that
+    /// was the lie that stranded a band's whole pool: `advance_roads` releases the keeper the moment
+    /// decay drops a road below `routes::traffic_ceiling`, after which the road arm banks nothing,
+    /// the tile no longer holds the destination rung so
+    /// `systems::labor::retire_entries_already_built` does not fire, and `abandon` finds no keeper
+    /// to release — so the entry sat at the **head** of the queue for ever and every build behind it
+    /// was funded zero work, silently. *An entry raises a rung on a tile this band keeps; the moment
+    /// it is not the keeper the job is not theirs.*
+    fn holds_build_source(&self, source: &BuildSource, keeps_road: &dyn Fn(UVec2) -> bool) -> bool {
         match source {
-            BuildSource::Road(_) => true,
+            BuildSource::Road(tile) => keeps_road(*tile),
             BuildSource::Patch(_) | BuildSource::Herd(_) => self
                 .assignments
                 .iter()
@@ -4835,8 +4865,9 @@ impl LaborAllocation {
         });
         // A cleared row takes its declaration with it — the same rule the turn's prune enforces,
         // applied on the spot so `cancel_order … work` does not leave the band funding a build on
-        // ground it no longer holds.
-        let _ = self.prune_build_queue();
+        // ground it no longer holds. Road entries stand here for the reason
+        // [`road_holding_unchanged`] gives: clearing a row is not losing a keeper.
+        let _ = self.prune_build_queue(&road_holding_unchanged);
         freed
     }
 }
@@ -5078,25 +5109,15 @@ impl Improvement {
         }
     }
 
-    /// The improvements a **road tile** accepts — the route branch's two rung-transition verbs, and
-    /// the third of the exhaustive trio above.
-    ///
-    /// ⛔ **EXHAUSTIVE, like its two siblings, and for the reason they are.** A new verb must **fail
-    /// to compile** here until somebody states which web it belongs to; the hand-written
-    /// complements these replaced defaulted a new verb to legal everywhere.
-    ///
-    /// A road carries no labor row at all — the keeping is the band-wide `Roadwork` pool and the
-    /// build is the band-wide `builders` pool — so unlike its two siblings this is not the *"may
-    /// this assignment declare it"* test but the *"may this **tile** be sent there"* one, asked by
-    /// the `grade` / `pave` commands.
-    pub fn valid_for_route(self) -> bool {
-        match self {
-            Improvement::Grade | Improvement::Pave => true,
-            Improvement::Cultivate | Improvement::Sow | Improvement::Tame | Improvement::Corral => {
-                false
-            }
-        }
-    }
+    // **RETIRED: `valid_for_route`** — *"may this tile be sent there"*, the intended third of the
+    // exhaustive trio above. **It never had a caller.** Its two siblings guard a verb the player
+    // TYPED against the row it was aimed at (`assign_labor` parses an improvement and must refuse a
+    // `tame` on a patch), and a road has no such row: `grade` and `pave` are their own commands, and
+    // `handle_road_verb` / `road_verb_refusal` receive the `Improvement` as a **literal** from the
+    // dispatch that already knows which verb was typed. So the predicate could only ever compare a
+    // constant with itself — and, being `pub` on a public type, the dead-code lint stayed silent
+    // while the exhaustive-match guard it was added for protected nothing. `RungKey::built_by` is
+    // the real trio-mate: it is exhaustive over the verbs and every route rung goes through it.
 }
 
 impl FromStr for Improvement {

@@ -3369,8 +3369,12 @@ impl LadderConfig {
         {
             return Err(LadderConfigError::Invalid {
                 field: "route_traffic.disuse_loss_per_turn".to_string(),
-                constraint: "give up a finite, positive amount of a free road every idle turn — at                              zero a trail nobody has walked in a thousand turns is still a trail,                              the ledger keeps every one it ever laid, and the dial that says                              otherwise still reads live"
-                    .to_string(),
+                constraint:
+                    "give up a finite, positive amount of a free road every idle turn — at \
+                             zero a trail nobody has walked in a thousand turns is still a trail, \
+                             the ledger keeps every one it ever laid, and the dial that says \
+                             otherwise still reads live"
+                        .to_string(),
                 value: self.route_traffic.disuse_loss_per_turn.to_string(),
             });
         }

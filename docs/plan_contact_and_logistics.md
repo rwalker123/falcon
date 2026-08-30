@@ -248,7 +248,7 @@ pace in the game is tuned in ONE file"* — so a route branch is paced against t
 
 | Field | Read by |
 |---|---|
-| `movement` profile | fauna's rung `behavior.movement`, the visibility sweep — **and nothing that costs a band a step**; see below |
+| **`movement` profile** | **nobody** — see the correction below |
 | `logistics_penalty` | morale hardness (`systems/population.rs`) |
 | `attrition_rate` | morale (`systems/population.rs`) |
 | **`detection_modifier`** | **nobody** |
@@ -260,6 +260,18 @@ pace in the game is tuned in ONE file"* — so a route branch is paced against t
 > planned. **Both fields survived the demolition with exactly one live reader each**, and both are
 > morale's — so neither is available to a route without giving it a second meaning.
 
+> **⛔ THE `movement` ROW USED TO CREDIT READERS THAT READ THREE DIFFERENT FIELDS SHARING ONE NAME.**
+> It read *"fauna's rung `behavior.movement`, the visibility sweep"*. Neither reads this field.
+> `TerrainDefinition::movement` is a `MovementProfile`, and `MovementProfile` appears **nowhere in the
+> workspace but its own declaration in `terrain.rs` and the `lib.rs` re-export** — it has no readers at
+> all. What `fauna.rs` reads is `herd_rung(..).behavior.movement`, the intensification ladder's
+> `RungMovement`; what `visibility_systems.rs` reads is `cfg.movement.max_sweep_tiles` off
+> `visibility_config.rs`'s `MovementConfig`. Three distinct types, one word.
+>
+> **The error made the row look half-live and so softened the callout below**, which is the argument
+> §4.13's whole payoff choice rests on: the row belongs in the same **nobody** class as
+> `detection_modifier`, and the terrain cost table's *travel* half is authored but entirely unread.
+
 `detection_modifier` and `infrastructure_cost` have never been read by any system. `detection_modifier`
 is *how well you see, and are seen, in this terrain* — the range question, already answered per biome.
 `infrastructure_cost` is *what it costs to hold a route through here* — the route-upkeep question.
@@ -268,7 +280,8 @@ is *how well you see, and are seen, in this terrain* — the range question, alr
 > **⛔ AND THE *OTHER* HALF OF THE LADDER'S CLAIM HAS NO DATA WAITING FOR IT.** A rung is
 > *"cheaper to travel and dearer to keep"*, and only the dearer half is authored here. **Band movement
 > is terrain-blind**: a band walks a flat `labor_config.band_move_tiles_per_turn` and the `movement`
-> profile above has *no reader that prices a band's step* — so "cheaper to travel" cannot mean a faster
+> profile above has **no reader at all**, let alone one that prices a band's step — so "cheaper to
+> travel" cannot mean a faster
 > march without first making movement terrain-sensitive, which is its own arc. **§4.13 therefore spends
 > the payoff where it is already live** — the supply network's `reach_tiles` and `friction`, which
 > `balance_supply_networks` reads every turn on the very edge a route sits on.
