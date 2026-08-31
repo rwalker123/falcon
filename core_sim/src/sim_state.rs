@@ -17,12 +17,14 @@
 //! inside cloned components are overwritten on restore and are
 //! set to [`Entity::PLACEHOLDER`] at capture so nothing can read a stale one by accident.
 //!
-//! **2. No config.** Three sim-state types hold configuration —
-//! [`InfluentialRoster::checkpoint`], [`KnowledgeLedger::checkpoint`] and
-//! [`CultureManager::checkpoint`] exist precisely to leave it behind. Cloning them whole would
-//! capture the tuning that was live when the checkpoint was taken, so a rollback would silently
-//! reinstall it: hot-reload a config, roll back, and the reload is undone with nothing logged.
-//! Restore re-attaches whatever config is live now.
+//! **2. No config.** Four sim-state types hold configuration —
+//! [`InfluentialRoster::checkpoint`], [`KnowledgeLedger::checkpoint`],
+//! [`CultureManager::checkpoint`] and [`ActiveCrisisLedger::checkpoint`] exist precisely to leave it
+//! behind. Cloning them whole would capture the tuning that was live when the checkpoint was taken,
+//! so a rollback would silently reinstall it: hot-reload a config, roll back, and the reload is
+//! undone with nothing logged. The first three re-attach whatever config is live now by leaving a
+//! field alone; the crisis ledger holds its config **by value inside each entry**, so it carries
+//! archetype and modifier *ids* and re-resolves them against the catalogs live at restore.
 //!
 //! **3. Capture is a pure function of the world.** [`capture_sim_state`] takes `&World` and
 //! reads nothing else — no change detection, no retained deltas, no assumption that it ran last
@@ -54,7 +56,8 @@ use crate::{
         TownCenter,
     },
     connections::ConnectionLedger,
-    crisis::{ActiveCrisisLedger, CrisisTelemetry},
+    crisis::{ActiveCrisisLedger, ActiveCrisisLedgerCheckpoint, CrisisTelemetry},
+    crisis_config::{CrisisArchetypeCatalogHandle, CrisisModifierCatalogHandle},
     culture::{CultureManager, CultureManagerCheckpoint},
     espionage::{
         CounterIntelBudgets, EspionageMissionState, EspionageRoster, FactionSecurityPolicies,
@@ -155,7 +158,6 @@ pub struct SimState {
 
     // --- resources, cloned whole ---
     pub band_ids: BandIdAllocator,
-    pub active_crises: ActiveCrisisLedger,
     pub beat_ledger: BeatLedger,
     pub capability_flags: CapabilityFlags,
     pub command_events: CommandEventLog,
@@ -211,6 +213,10 @@ pub struct SimState {
     pub herd_telemetry: crate::fauna::HerdTelemetry,
 
     // --- resources whose config is deliberately left behind ---
+    /// The live crises, named by the archetype id each was seeded from. **Not the ledger itself**:
+    /// an `ActiveCrisis` holds its `CrisisArchetypeRuntime` by value, so cloning the ledger would
+    /// carry `crisis_archetypes.json` into the checkpoint and a rollback would reinstall it.
+    pub active_crises: ActiveCrisisLedgerCheckpoint,
     pub culture: CultureManagerCheckpoint,
     pub influencers: InfluentialRosterCheckpoint,
     pub knowledge: KnowledgeLedgerCheckpoint,
@@ -344,7 +350,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         bands,
         settlements,
         band_ids: *world.resource::<BandIdAllocator>(),
-        active_crises: world.resource::<ActiveCrisisLedger>().clone(),
+        active_crises: world.resource::<ActiveCrisisLedger>().checkpoint(),
         beat_ledger: world.resource::<BeatLedger>().clone(),
         capability_flags: *world.resource::<CapabilityFlags>(),
         command_events: world.resource::<CommandEventLog>().clone(),
@@ -517,7 +523,6 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     // --- pass 4b: resources -------------------------------------------------------------------
     world.insert_resource(state.tick);
     world.insert_resource(state.band_ids);
-    world.insert_resource(state.active_crises.clone());
     world.insert_resource(state.beat_ledger.clone());
     world.insert_resource(state.capability_flags);
     // Installing the checkpoint's copy IS the truncation: the log is append-only, so the captured
@@ -560,7 +565,17 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
 
     // --- pass 4c: resources whose config must NOT come from the checkpoint --------------------
     // `restore_checkpoint` writes state and leaves the config field alone, so each of these keeps
-    // whatever config is live now. That is the whole reason these three are not plain clones.
+    // whatever config is live now. That is the whole reason these four are not plain clones.
+    //
+    // The crisis ledger is the one that re-resolves by KEY rather than leaving a field alone: its
+    // config sits by value inside each entry (`CrisisArchetypeRuntime`, `ModifierEffects`) rather
+    // than behind a single handle, so the checkpoint carries ids and the catalogs live now supply
+    // the tuning. Both catalogs are read before the ledger is borrowed mutably.
+    let crisis_archetypes = world.resource::<CrisisArchetypeCatalogHandle>().get();
+    let crisis_modifiers = world.resource::<CrisisModifierCatalogHandle>().get();
+    world
+        .resource_mut::<ActiveCrisisLedger>()
+        .restore_checkpoint(&state.active_crises, &crisis_archetypes, &crisis_modifiers);
     world
         .resource_mut::<CultureManager>()
         .restore_checkpoint(&state.culture);

@@ -119,12 +119,39 @@ is a stable sim id: tiles and settlements by `(x, y)`, power nodes by `y * width
 `Entity::PLACEHOLDER` at capture, so a stale one cannot be read by accident rather than merely
 should not be.
 
-**No config.** Three sim-state types hold configuration, and `checkpoint()` on each leaves it
-behind: `InfluentialRoster.config` and `KnowledgeLedger.config` behind `Arc`s, and
-`CultureManager.settings` **by value** — which a search for `Arc<*Config>` does not find. Cloning
-them whole would capture the tuning that was live when the checkpoint was taken, so a rollback would
-silently reinstall it: hot-reload a config, roll back, and the reload is undone with nothing logged.
-Restore re-attaches whatever config is live by leaving the field alone.
+The rule held everywhere except one field, and the exception is the instructive part: **the only
+`Entity` in the closure was one nothing read.** `PowerGridNodeTelemetry` carried an `entity`
+alongside the `node_id` its map was already keyed by, and because no consumer outside the system
+that wrote it ever dereferenced the handle, a restore reinstating a despawned tile's id produced no
+symptom at all. A rule with no reader to break it is not enforced by anything — the field is gone,
+and `PowerNodeId` (`y * width + x`) says durably what the handle said transiently.
+
+**A dead `Entity` still costs**, which is why `PowerTopology` stores a `node_count: usize` and not
+the `node_entities: Vec<Entity>` it once did. Worldgen builds that resource and nothing rewrites it,
+so after a restore every one of its handles was stale — 4160 of 4160 on the standard test map, while
+`TileRegistry` was correctly rebuilt beside it in pass 4a. The grid still routed correctly, because
+the only thing anything ever asked that vector was its `.len()` and a stale handle still counts.
+Everything the routing actually reads — `PowerNodeId`, `adjacency` — is position-keyed and holds
+across a renumber by construction.
+
+**No config.** Four sim-state types hold configuration, and `checkpoint()` on each leaves it
+behind: `InfluentialRoster.config` and `KnowledgeLedger.config` behind `Arc`s,
+`CultureManager.settings` **by value** — which a search for `Arc<*Config>` does not find — and
+`ActiveCrisisLedger`, where the config sits by value *inside each entry* rather than behind one
+handle. Cloning them whole would capture the tuning that was live when the checkpoint was taken, so
+a rollback would silently reinstall it: hot-reload a config, roll back, and the reload is undone with
+nothing logged.
+
+The first three restore by **leaving a field alone**. The crisis ledger cannot: every `ActiveCrisis`
+holds a `CrisisArchetypeRuntime` parsed out of `crisis_archetypes.json`, and every `ActiveModifier`
+holds its `ModifierEffects` out of `crisis_modifiers.json`, one copy per live crisis. So
+`ActiveCrisisLedgerCheckpoint` carries **ids**, and `restore_checkpoint` re-resolves them against the
+catalogs live at restore — which also means a crisis whose archetype was renamed by a reload reports
+its new name. **A crisis whose archetype a reload deleted is dropped, loudly.** It is not a case that
+can be carried: growth, the r0 band, the telemetry weights and the incident table all come from the
+archetype, so an unresolved crisis could only be advanced against invented defaults. An unresolved
+*modifier* is dropped on its own and the crisis survives, a modifier being an add-on rather than the
+thing that defines a crisis.
 
 **Capture is a pure function of the world.** `capture_sim_state(&World)` reads nothing else — no
 change detection, no retained deltas, no assumption it ran last turn. That is what keeps
@@ -329,13 +356,30 @@ regression and was a different world.
 Nothing in `SimState` derives `Serialize`. The checkpoint is an in-memory `Clone`, which is what an
 in-process rollback needs.
 
-- **17 sim-state maps are keyed by `FactionId`, `UVec2` or tuples.** `serde_json` admits only string
-  keys, and JSON is the repo's only serde codec today (`sim_schema`).
-- **The sim-state closure is 119 types and contains no trait objects, function pointers, closures,
-  raw pointers, interior mutability, lock types or manual `Drop` impls.** The only constructs serde
-  could not derive through were a `SmallRng` — deleted; the influencer roster draws from derived
-  seeds now, like every other RNG consumer — and `Entity`, which the first construction rule
-  removes.
+- **JSON cannot encode this checkpoint, but the reason is narrower than "only string keys".**
+  `serde_json`'s map-key serializer *stringifies integers*, and a newtype over an integer is
+  transparent — so `FactionId(u32)`, `BandId`, `PowerNodeId`, `GreatDiscoveryId`, `CultureLayerId`
+  and `GenerationId` keys all encode. What it cannot express is a key that serializes to a **struct
+  or a sequence**: `UVec2` (`ForageRegistry`, `GrazeRegistry`), tuple keys (`GreatDiscoveryLedger`,
+  `KnowledgeLedgerCheckpoint`, `RoadRegistry`, `DiscoveredSites`) and composite struct keys
+  (`ConnectionKey`, `BandKey`). About ten fields, not seventeen — and one is enough, so the
+  conclusion is unchanged: a save format needs a codec with arbitrary map keys, and JSON is the
+  repo's only serde codec today (`sim_schema`).
+- **The sim-state closure is 188 types and contains no trait objects, function pointers, closures,
+  raw pointers, interior mutability, lock types or manual `Drop` impls.** Twenty of them already
+  derive `Serialize`/`Deserialize`, including all thirteen that come from `sim_schema`, so the
+  remaining work is `core_sim`-only. The only constructs serde could not derive through were a
+  `SmallRng` — deleted; the influencer roster draws from derived seeds now, like every other RNG
+  consumer — and `Entity`, which the first construction rule removes.
+- **Two dependency features the closure needs are on transitively rather than by request.**
+  `glam/serde` reaches `UVec2` through `bevy_reflect`'s `bevy_math` feature, and `serde/rc` — which
+  `KitChoice`'s `Arc<str>` / `Arc<[Arc<str>]>` require — is enabled by `sim_schema`. Both are
+  consequences of the current feature set rather than of anything `core_sim` asks for; narrowing
+  `core_sim`'s bevy features, which its `Cargo.toml` carries a TODO for, can take the first away.
+  Losing either is a compile error, not silent corruption.
+- **`bevy::utils::HashMap` needs nothing** — `bevy_utils` already depends on `hashbrown` with its
+  `serde` feature, and the impls are generic over the hasher. `CapabilityFlags` is the only
+  `bitflags` type in the closure and already derives both halves.
 
 ## Omission fails a test, not a rollback
 
@@ -376,3 +420,11 @@ rollback is most likely to drop.
 The world-static bucket's reason carries an expiry: those resources survive a rollback only because
 a restore rebuilds into the same live `World`, which still holds the map worldgen built. That stops
 being true the day a checkpoint becomes a save file loaded into a fresh process.
+
+**"Survives a rollback" is a weaker claim than it sounds, and `PowerTopology` is where it was
+weakest.** A world-static resource is not rebuilt by a restore, so anything in one that names an
+`Entity` is stale immediately afterwards — it survives only in the sense that the bytes are still
+there. `TileRegistry` is the exception that hides this: `restore_sim_state` rebuilds it in pass 4a
+precisely because it is a `Vec<Entity>`, and nothing else in the bucket got the same treatment.
+Everything world-static is now either position-keyed or rebuilt, which is what makes the bucket's
+reason true rather than merely untested.

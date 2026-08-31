@@ -867,7 +867,7 @@ pub fn spawn_initial_world(
     }
 
     let topology = PowerTopology::from_grid(
-        &tiles,
+        tiles.len(),
         config.grid_size.x,
         config.grid_size.y,
         config.power_line_capacity,
