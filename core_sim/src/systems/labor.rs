@@ -294,23 +294,23 @@ pub struct LaborConfigs<'w> {
 /// it is *dated* at the gear it would be raised with when its turn comes. An entry carrying its own
 /// kit is dated at **that** kit rather than at its web's derived one, which is the whole point of
 /// the override.
-struct BuildersGear {
-    plant: BuildersBranchGear,
-    animal: BuildersBranchGear,
-    /// **The route branch's reading, which is real and deliberately empty.** No shipped tool declares
-    /// a `build_work` serving `route`, so this resolves to `default_kits.builders` and a road is
-    /// graded bare-handed — the same intended emptiness `default_kits.roadwork` ships for its
-    /// keepers.
-    route: BuildersBranchGear,
-    /// **The entries that named a kit of their own**, one resolved answer each, keyed by source.
+struct BuildersGear<'a> {
+    /// The roster every answer is resolved through.
+    equipment: &'a crate::equipment_config::EquipmentConfig,
+    /// **The band's ledger as the turn found it** — the wear snapshot every rate is struck at, so a
+    /// tool that breaks mid-turn does not re-price the work already banked beside it.
+    band_kit: &'a BandEquipment,
+    /// The whole pool, since all hands go on the head.
+    builders: u32,
+    /// **The entries that named a kit of their own**, keyed by source.
     ///
     /// A plain `Vec` walked linearly rather than a map: a band's queue is a handful of entries and
     /// only the overridden ones are here, so the probe is cheaper than hashing a `BuildSource`.
-    overrides: Vec<(BuildSource, BuildersBranchGear)>,
+    overrides: Vec<(BuildSource, crate::equipment_config::KitChoice)>,
 }
 
-/// One web's answer: the kit the pool works it with, and what that kit is worth over the pool.
-struct BuildersBranchGear {
+/// One build's answer: the kit the pool works it with, and what that kit is worth over the pool.
+struct BuildersRungGear {
     /// **The kit resolved for this web, narrowed to the tools that actually served it** — which is
     /// what the wear
     /// is charged against ([`crate::equipment_config::EquipmentConfig::build_gear_kit`]).
@@ -333,86 +333,101 @@ struct BuildersBranchGear {
     gear_supply: f32,
 }
 
-impl BuildersGear {
+impl<'a> BuildersGear<'a> {
     fn resolve(
-        equipment: &crate::equipment_config::EquipmentConfig,
+        equipment: &'a crate::equipment_config::EquipmentConfig,
         build_queue: &[crate::components::BuildQueueEntry],
         builders: u32,
-        band_kit: &BandEquipment,
+        band_kit: &'a BandEquipment,
     ) -> Self {
-        // One kit, priced over the whole pool on one web. The two derived answers and every
-        // override are struck through it, so a named kit and a derived one are quoted the same way.
-        let priced = |kit: &crate::equipment_config::KitChoice,
-                      branch: crate::intensification::RungBranch| {
-            // **The coverage is over the POOL**, so the rate the wire publishes and the rate the
-            // accrual is struck at are one number for the whole band.
-            let coverage = equipment.coverage(kit, builders as f32, band_kit);
-            let work_per_worker = coverage
-                .weighted_rate(|crew| equipment.build_work_per_worker(crew, band_kit, branch));
-            BuildersBranchGear {
-                wear_kit: equipment.build_gear_kit(kit, band_kit, branch),
-                work_per_worker,
-                gear_supply: gear_work_supply(work_per_worker, builders),
-            }
-        };
-        let derived = |branch: crate::intensification::RungBranch| {
-            priced(&equipment.builders_kit_for(None, Some(branch)), branch)
-        };
-        // **Only the entries that named a kit are resolved individually** — everything else is
-        // served by its web's derived answer above, which is the same number it would resolve to.
-        let overrides = build_queue
-            .iter()
-            .filter_map(|entry| {
-                let named = entry.kit.as_ref()?;
-                let branch = source_branch(&entry.source);
-                Some((
-                    entry.source.clone(),
-                    priced(
-                        &equipment.builders_kit_for(Some(named), Some(branch)),
-                        branch,
-                    ),
-                ))
-            })
-            .collect();
         Self {
-            plant: derived(crate::intensification::RungBranch::Plant),
-            animal: derived(crate::intensification::RungBranch::Animal),
-            route: derived(crate::intensification::RungBranch::Route),
-            overrides,
+            equipment,
+            band_kit,
+            builders,
+            // **Only the entries that named a kit are recorded** — everything else is served by the
+            // roster's own answer for the job in front of it, which is the same kit it would resolve
+            // to. The *pricing* is not done here: it depends on the rung, which is a fact about the
+            // turn rather than about the queue.
+            overrides: build_queue
+                .iter()
+                .filter_map(|entry| Some((entry.source.clone(), entry.kit.as_ref()?.clone())))
+                .collect(),
         }
     }
 
-    /// **The derived gear for one branch** — one reading per ladder, resolved once per band.
+    /// **THE GEAR ONE BUILD IS RAISED WITH** — this source's entry's own kit, else the roster's
+    /// answer for the branch **and rung** in front of the pool, priced over the whole builders pool.
     ///
-    /// ⛔ **THE ROUTE BRANCH IS REACHABLE NOW, AND ITS GEAR IS REAL BUT EMPTY.** A road above the
-    /// free floor is raised by `grade` / `pave` on the band's builders pool exactly as a Field or a
-    /// pen is, so it has a queue entry and a gear reading like any other web. **No shipped tool
-    /// declares a `build_work` serving `route`**, so the derivation lands on `default_kits.builders`
-    /// and road builders work **bare-handed** — the same intended emptiness
-    /// `default_kits.roadwork` already ships for their keepers, and the day a barrow declares the
-    /// stat this seam picks it up with no code change.
+    /// ⛔ **THE RUNG IS THE ONE BEING WORKED THIS TURN, NEVER THE ENTRY'S DESTINATION.** A `pave`
+    /// standing on ground below a dirt road is doing *grading* work, so it must resolve the grading
+    /// tool and be paid the grading tool's offset; pricing it against where it is *going* would hand
+    /// the paving kit's uplift to earthmoving, which is the whole failure
+    /// [`crate::equipment_config::EquipmentEffect::rung`] exists to prevent. It is the rule
+    /// [`crate::equipment_config::EquipmentConfig::build_gear_kit`] already states for wear — *the
+    /// work actually done decides* — read one seam earlier.
     ///
-    /// The `debug_assert` that used to guard this arm is gone with
-    /// `RungBranch::is_crew_built`: it asserted the branch was never queued, which is now false for
-    /// half its rungs.
-    fn on(&self, branch: crate::intensification::RungBranch) -> &BuildersBranchGear {
-        match branch {
-            crate::intensification::RungBranch::Plant => &self.plant,
-            crate::intensification::RungBranch::Animal => &self.animal,
-            crate::intensification::RungBranch::Route => &self.route,
-        }
-    }
-
-    /// **This source's entry's own answer, else its web's derived one.** The web a source belongs to
-    /// is a fact about the source, so nothing needs a second authority to decide which derived
-    /// reading a queued entry is stamped with — and an entry that named a kit is priced and dated at
-    /// **that** kit, which is what makes the override mean anything below the head.
-    fn for_source(&self, source: &BuildSource) -> &BuildersBranchGear {
-        self.overrides
+    /// **`None` is a real answer and it is the conservative one**: a source nobody has queued is
+    /// climbing nothing, and a rung-bound tool must not be quoted where no rung was named (see
+    /// `serves_build`'s `(Some(_), None)` arm). A tool bound to no rung — every shipped plant and
+    /// animal build tool — answers identically whatever is passed, which is what keeps the two food
+    /// webs byte-identical across this change.
+    ///
+    /// **Resolved on demand rather than cached per branch.** The reading was one per ladder while a
+    /// branch was the only bound there was; a rung-bound tool makes it one per *rung*, and a build
+    /// asks this a handful of times a band-turn.
+    fn for_source(
+        &self,
+        source: &BuildSource,
+        rung: Option<crate::intensification::RungKey>,
+    ) -> BuildersRungGear {
+        let branch = source_branch(source);
+        let key = rung.map(|rung| rung.wire_key());
+        let key = key.as_deref();
+        let named = self
+            .overrides
             .iter()
-            .find(|(key, _)| key == source)
-            .map_or_else(|| self.on(source_branch(source)), |(_, gear)| gear)
+            .find(|(source_key, _)| source_key == source)
+            .map(|(_, kit)| kit);
+        let kit = self.equipment.builders_kit_for(named, Some(branch), key);
+        // **The coverage is over the POOL**, so the rate the wire publishes and the rate the accrual
+        // is struck at are one number for the whole band.
+        let coverage = self
+            .equipment
+            .coverage(&kit, self.builders as f32, self.band_kit);
+        let work_per_worker = coverage.weighted_rate(|crew| {
+            self.equipment
+                .build_work_per_worker(crew, self.band_kit, branch, key)
+        });
+        BuildersRungGear {
+            wear_kit: self
+                .equipment
+                .build_gear_kit(&kit, self.band_kit, branch, key),
+            work_per_worker,
+            gear_supply: gear_work_supply(work_per_worker, self.builders),
+        }
     }
+}
+
+/// **THE RUNG A QUEUED SOURCE IS CLIMBING TOWARD**, or `None` for a source this band has not
+/// queued.
+///
+/// It is the entry's **destination** and is used only where the source's own standing is not in
+/// hand — the four rung arms, whose tools declare no rung bound at all, so every rung on their
+/// branch resolves the same kit and the same worth. Where the distinction can be seen (the route
+/// branch, whose two rungs want different tools) the caller reads the rung actually in flight
+/// instead: `pile_legs.first()` for the material draw, `Road::held_rung` for the road arm.
+///
+/// **`None` is the right answer for an unqueued source and not a gap** — nothing is being raised
+/// there, so no rung-bound tool may be quoted against it
+/// ([`crate::equipment_config::EquipmentEffect::serves_build`]).
+fn queued_destination(
+    build_queue: &[crate::components::BuildQueueEntry],
+    source: &BuildSource,
+) -> Option<crate::intensification::RungKey> {
+    build_queue
+        .iter()
+        .find(|entry| &entry.source == source)
+        .map(|entry| entry.declared.destination())
 }
 
 /// **THE LADDER A BUILD SOURCE BELONGS TO** — a patch is plant, a herd is animal, a road tile is
@@ -552,8 +567,14 @@ fn keeping_rates(
 ) -> Vec<KeepingRate> {
     let total_demand = keeping_demand(claims);
     // The distinct kits on this branch, and what each group's sites ask for between them. Keyed by
-    // roster id: an id determines the kit's items, so two claims that resolved the same id resolved
-    // the same gear.
+    // roster id: an id determines the kit's items, so two claims that resolved the same id are
+    // drawing on the same units and must share one coverage between them.
+    //
+    // ⛔ **THE RUNG IS NOT PART OF THE KEY, AND THAT IS DELIBERATE.** Coverage answers *"how many of
+    // these hands does the band own gear for"* — a fact about the LEDGER — so splitting one kit into
+    // two groups by rung would arm a prefix of each and put two equipped hands behind one tool. What
+    // the rung decides is the RATE, which is why it is applied per claim below against the group's
+    // own partition rather than by re-partitioning.
     let mut group_kits: Vec<crate::equipment_config::KitChoice> = Vec::new();
     let mut group_demand: Vec<f32> = Vec::new();
     let mut group_of_claim: Vec<usize> = Vec::with_capacity(claims.len());
@@ -569,32 +590,39 @@ fn keeping_rates(
         group_demand[group] += claim.demand;
         group_of_claim.push(group);
     }
-    let resolved: Vec<KeepingRate> = group_kits
+    // **The coverage is over the GROUP**, exactly as the builders' is over their pool: the seam arms
+    // a prefix, so a part-equipped group gets the share it actually carries and the bare hands
+    // beside it still bring their own `PER_WORKER_OUTPUT`.
+    let coverage: Vec<crate::equipment_config::KitCoverage> = group_kits
         .iter()
         .zip(&group_demand)
         .map(|(kit, demand)| {
-            // **The coverage is over the GROUP**, exactly as the builders' is over their pool: the
-            // seam arms a prefix, so a part-equipped group gets the share it actually carries and
-            // the bare hands beside it still bring their own `PER_WORKER_OUTPUT`.
             let share = if total_demand > NO_UPKEEP_DEMAND {
                 keepers as f32 * (demand / total_demand)
             } else {
                 NO_UPKEEP_DEMAND
             };
-            let gear = equipment
-                .coverage(kit, share, band_kit)
-                .weighted_rate(|crew| equipment.build_work_per_worker(crew, band_kit, branch));
-            KeepingRate {
-                per_worker: crate::intensification::build_work_per_worker_turn(gear),
-                wear_kit: equipment.build_gear_kit(kit, band_kit, branch),
-            }
+            equipment.coverage(kit, share, band_kit)
         })
         .collect();
+    // **THE RATE IS PER CLAIM, AT THE RUNG THAT SITE STANDS ON** — the group's partition is shared
+    // (the band owns what it owns) but a rung-bound tool is worth nothing on a rung it does not
+    // serve, so a dirt road and a paved one kept out of one bundle read different rates off the same
+    // coverage. Where nothing in the kit is rung-bound — every plant and animal tool that ships —
+    // every claim in a group reads the identical number and this is the same fold it always was.
     group_of_claim
         .into_iter()
-        .map(|group| KeepingRate {
-            per_worker: resolved[group].per_worker,
-            wear_kit: resolved[group].wear_kit.clone(),
+        .zip(claims)
+        .map(|(group, claim)| {
+            let rung_key = claim.rung.map(|rung| rung.wire_key());
+            let rung_key = rung_key.as_deref();
+            let gear = coverage[group].weighted_rate(|crew| {
+                equipment.build_work_per_worker(crew, band_kit, branch, rung_key)
+            });
+            KeepingRate {
+                per_worker: crate::intensification::build_work_per_worker_turn(gear),
+                wear_kit: equipment.build_gear_kit(&group_kits[group], band_kit, branch, rung_key),
+            }
         })
         .collect()
 }
@@ -946,6 +974,13 @@ struct KeepingClaim {
     /// claim, because the rate a claim is funded at and the wear that rate spends are two readings
     /// of one choice and must not be taken from two places.
     kit: crate::equipment_config::KitChoice,
+    /// **THE RUNG THIS SITE STANDS ON** — the bound the kit was resolved at and the one its keeping
+    /// is priced at, so the two cannot come from two readings.
+    ///
+    /// ⛔ **THE SITE'S OWN RUNG, NEVER A DESTINATION.** A keeper is holding what is there; nothing
+    /// about a queued build changes what this turn's keeping is worth, so a Field being widened is
+    /// kept exactly as a Field.
+    rung: Option<crate::intensification::RungKey>,
     invested: f32,
     tiebreak: String,
 }
@@ -1003,12 +1038,15 @@ fn keeping_claims(
                 if !crate::forage::patch_claims_keeping(patch, verb) {
                     continue;
                 }
+                let rung = crate::forage::patch_rung_key(patch);
                 plant.push(KeepingClaim {
                     index,
                     kit: equipment.keeping_kit_for(
                         assignment.upkeep_kit.as_ref(),
                         crate::intensification::RungBranch::Plant,
+                        Some(&rung.wire_key()),
                     ),
+                    rung: Some(rung),
                     // **The DEMAND takes no verb any more** — it interpolates on the patch's own
                     // position, so there is no step for the one-turn carry to straddle. The verb
                     // survives one line up, where it still answers *does this source claim at all
@@ -1042,12 +1080,15 @@ fn keeping_claims(
                 if !fauna::herd_claims_keeping(herd, verb) {
                     continue;
                 }
+                let rung = fauna::herd_rung_key(herd);
                 animal.push(KeepingClaim {
                     index,
                     kit: equipment.keeping_kit_for(
                         assignment.upkeep_kit.as_ref(),
                         crate::intensification::RungBranch::Animal,
+                        Some(&rung.wire_key()),
                     ),
+                    rung: Some(rung),
                     // **The DEMAND takes no verb any more** — it interpolates on the herd's own
                     // position, so there is no step for the one-turn carry to straddle. The verb
                     // survives one line up, where it still answers *does this source claim at all
@@ -1437,9 +1478,12 @@ fn maintenance_shares(
 /// total order `UpkeepFundMode::Priority` funds in, stated here because `distribute_upkeep_pool`
 /// funds in slice order and the caller owns the ranking.
 ///
-/// **Every claim resolves ONE kit**, `keeping_kit_for(None, RungBranch::Route)`: there is no per-road
-/// row for a player to name one on, and the shipped `default_kits.roadwork` is the bare `none` kit —
-/// so road keepers work bare today, which is intended rather than a gap.
+/// **No claim can carry a NAMED kit**: there is no per-road row for a player to name one on, so
+/// every road takes the roster's own derivation. **The derivation is per road**, because the route
+/// branch's keeping tools are bound to a rung
+/// ([`crate::equipment_config::EquipmentEffect::rung`]) — a dirt road and a paved one on one band's
+/// books are kept with different tools, and one kit resolved for the band would hand whichever it
+/// happened to pick to both.
 fn route_keeping_claims(
     registry: &crate::routes::RoadRegistry,
     band: Option<BandId>,
@@ -1451,14 +1495,21 @@ fn route_keeping_claims(
     let Some(band) = band else {
         return (Vec::new(), Vec::new());
     };
-    let kit = equipment.keeping_kit_for(None, crate::intensification::RungBranch::Route);
     let mut kept: Vec<UVec2> = Vec::new();
     let mut claims: Vec<KeepingClaim> = Vec::new();
     for (tile, road) in registry.kept_by(band) {
         let measure = crate::routes::road_measure(road, tile_registry, tiles);
+        // **The rung the road STANDS on**, which is what its keepers are holding — not whatever a
+        // queued `pave` is climbing toward.
+        let rung = road.held_rung();
         claims.push(KeepingClaim {
             index: kept.len(),
-            kit: kit.clone(),
+            kit: equipment.keeping_kit_for(
+                None,
+                crate::intensification::RungBranch::Route,
+                Some(&rung.wire_key()),
+            ),
+            rung: Some(rung),
             // **The stamped bill where this turn's pass has struck one, the live demand where it
             // has not** — `routes::road_keeping_basis`, the plant web's own rule.
             demand: crate::routes::road_keeping_basis(road, measure, ladder),
@@ -2913,9 +2964,14 @@ pub fn advance_labor_allocation(
                 // The turn's accrual as the arm will compute it — the whole pool at the entry's own
                 // kit, which is `RungDef::build_accrual`'s body once its gate has held, and the
                 // ring arm's `pen_extend_accrual` on the same terms.
+                // **The rung the pool is standing on this turn is the FIRST LEG** — the legs
+                // are in climb order and each carries what it still owes, so the head of the list
+                // is the one this turn's work lands in. It is the same rung the arm below charges
+                // the wear against.
+                let in_flight = pile_legs.first().map(|(rung, _, _)| *rung);
                 let accrual = crate::intensification::pool_work_supply(
                     builders,
-                    builders_gear.for_source(source).work_per_worker,
+                    builders_gear.for_source(source, in_flight).work_per_worker,
                 );
                 BuildMaterialDraw {
                     coverage: FULLY_SERVED,
@@ -3236,7 +3292,11 @@ pub fn advance_labor_allocation(
                     // the plant web's derived answer. Resolved once for the arm, because the
                     // accrual, the balance, the projection and the wear charge must all be struck at
                     // one number or the countdown and the meter disagree.
-                    let entry_gear = builders_gear.for_source(&BuildSource::Patch(*tile));
+                    let patch_source = BuildSource::Patch(*tile);
+                    let entry_gear = builders_gear.for_source(
+                        &patch_source,
+                        queued_destination(&build_queue, &patch_source),
+                    );
                     // The **gather** season is the food module's. A tile with no module offers no
                     // wild gather at all (`NO_FORAGE_SEASON` → zero per-worker throughput), which is
                     // exactly right — and, since slice 5, a real state rather than an impossible one:
@@ -4277,7 +4337,9 @@ pub fn advance_labor_allocation(
                     // **THE GEAR THIS SOURCE'S OWN ENTRY IS RAISED WITH** — the animal twin of the
                     // Forage arm's, resolved once so the accrual, the balance, the projection and
                     // the wear charge are all struck at one number.
-                    let entry_gear = builders_gear.for_source(&BuildSource::Herd(fauna_id.clone()));
+                    let herd_source = BuildSource::Herd(fauna_id.clone());
+                    let entry_gear = builders_gear
+                        .for_source(&herd_source, queued_destination(&build_queue, &herd_source));
                     let Some(herd) = registry.herds.iter_mut().find(|herd| herd.id == *fauna_id)
                     else {
                         continue;
@@ -5619,7 +5681,17 @@ pub fn advance_labor_allocation(
                     .unlock_discovery_id()
                     .is_none_or(|id| knows(&discovery, faction, id, knowledge_threshold));
                 if keeps_it && knows_rung && builders > NO_CREW_ON_THIS_ACTIVITY {
-                    let gear = builders_gear.for_source(&entry.source);
+                    // **THE RUNG THE ROAD IS ACTUALLY CLIMBING, not where the entry is going**
+                    // — a `pave` on a road that has decayed back below a dirt road is doing
+                    // *grading* work this turn, so it resolves and wears the grading tool. The
+                    // destination caps the climb below; it does not price it.
+                    let in_flight = roads
+                        .road(*tile)
+                        .map(|road| road.held_rung())
+                        .and_then(|held| held.above())
+                        .filter(|next| destination.is_at_or_above(*next))
+                        .unwrap_or(destination);
+                    let gear = builders_gear.for_source(&entry.source, Some(in_flight));
                     let accrual =
                         crate::intensification::pool_work_supply(builders, gear.work_per_worker);
                     if let Some(road) = roads.road_mut(*tile) {
@@ -6186,7 +6258,12 @@ fn publish_entry(
     let answer = BuildEstimate {
         turns,
         reason,
-        gear: builders_gear.for_source(source).gear_supply,
+        // **The rung in flight is the first leg**, the same reading the material draw takes: the
+        // legs are in climb order, so the head of the list is where this turn's work lands and
+        // therefore which tool the pool is holding. A row with no legs is climbing nothing.
+        gear: builders_gear
+            .for_source(source, legs.first().map(|published| published.leg.rung))
+            .gear_supply,
         position: position as i32,
         destination,
         legs,
@@ -7726,6 +7803,9 @@ mod keeping_split_tests {
             kit: crate::equipment_config::EquipmentConfig::builtin()
                 .kit(kit_id)
                 .unwrap_or_else(|| panic!("the shipped roster carries '{kit_id}'")),
+            // These cases are about the SPLIT, which groups on the pair; naming no rung keeps every
+            // claim in one group per kit, exactly as they were before the rung axis existed.
+            rung: None,
             invested: demand,
             tiebreak: format!("{index:010}"),
         }
@@ -11650,6 +11730,7 @@ mod labor_yield_tests {
                 .expect("the shipped roster carries the hurdling kit"),
             &crate::components::BandEquipment::start_stocked(&equipment),
             crate::intensification::RungBranch::Animal,
+            None,
         );
         assert!(
             declared > crate::intensification::NO_BUILD_GEAR,

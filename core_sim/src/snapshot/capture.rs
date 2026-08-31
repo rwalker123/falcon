@@ -2951,6 +2951,8 @@ pub fn capture_snapshot(
         populations
             .iter()
             .filter_map(|(_, _, allocation, ..)| allocation),
+        &forage_registry,
+        &herd_registry,
         &equipment_config,
     );
     let herd_states = herd_snapshot_entries(HerdSnapshotInputs {

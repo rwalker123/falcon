@@ -1441,6 +1441,18 @@ table BandKitTiers {
   // attackMaxBodyMass imposes on attack, and for the same reason: the number is real, it is simply
   // not real HERE.
   buildWorkBranch:string;
+  // WHICH RUNG OF THAT WEB `buildWorkPerWorker` IS FOR (appended) - a "<branch>:<id>" rung key such
+  // as "route:paved_road", and "" when this kit's build tool serves EVERY rung on its branch, which
+  // is every kit that ships today but the two road tools.
+  //
+  // IT IS THE THIRD TERM OF THE ONE READING ABOVE, and it is read with the other two or not at all.
+  // A branch was enough while a web's rungs all wanted the same tool; the route ladder is the first
+  // where they do not - an earthmoving tool is worth its offset on a `grade` and NOTHING on the
+  // `pave` above it, and the stone-dressing tool is the exact reverse. So a sheet must compare BOTH
+  // this and `buildWorkBranch` against the rung the queue entry is actually raising and treat a
+  // mismatch as 0. An empty string is "no rung bound", not "no rung": it matches every rung on the
+  // branch.
+  buildWorkRung:string;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

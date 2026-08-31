@@ -219,8 +219,11 @@ pub(crate) fn resolve_build_kit_ids<'a>(
                 }
             };
             // **The one resolution seam**, so the row cannot state a kit the pool is not using.
+            // The rung is the entry's **destination**, on `LaborAllocation::builders_kit`'s own
+            // rule and for its reason: this pass walks a queue and holds no source standing.
+            let destination = entry.declared.destination().wire_key();
             let kit = equipment
-                .builders_kit_for(entry.kit.as_ref(), Some(branch))
+                .builders_kit_for(entry.kit.as_ref(), Some(branch), Some(&destination))
                 .id()
                 .to_string();
             let position = position as i32;
@@ -312,27 +315,38 @@ impl UpkeepKitIds {
 /// **The one place a band's live rows become the wire's `upkeepKitId`** — see [`UpkeepKitIds`].
 pub(crate) fn resolve_upkeep_kits<'a>(
     allocations: impl Iterator<Item = &'a crate::components::LaborAllocation>,
+    // **Both webs' registries, for the RUNG each worked site stands on** — a keeping tool may be
+    // bound to a rung, so the derivation cannot be answered off the row alone.
+    forage: &ForageRegistry,
+    herds: &HerdRegistry,
     equipment: &crate::equipment_config::EquipmentConfig,
 ) -> UpkeepKitIds {
     let mut resolved = UpkeepKitIds::default();
     for allocation in allocations {
         for assignment in &allocation.assignments {
-            let (branch, key) = match &assignment.target {
+            // **The site's own rung beside its web**, because a keeping tool may be bound to
+            // one ([`crate::equipment_config::EquipmentEffect::rung`]) — the same pair
+            // `systems::labor::keeping_claims` resolves the live kit at, so the published row and
+            // the keepers cannot name two different tools.
+            let (branch, rung, key) = match &assignment.target {
                 crate::components::LaborTarget::Forage { tile, .. } => (
                     crate::intensification::RungBranch::Plant,
+                    forage.patch(*tile).map(crate::forage::patch_rung_key),
                     SourceKey::Patch(*tile),
                 ),
                 crate::components::LaborTarget::Hunt { fauna_id, .. } => (
                     crate::intensification::RungBranch::Animal,
+                    herds.find(fauna_id).map(crate::fauna::herd_rung_key),
                     SourceKey::Herd(fauna_id.clone()),
                 ),
                 // A band-wide role stands on no ground, so it keeps nothing.
                 _ => continue,
             };
+            let rung = rung.map(|rung| rung.wire_key());
             // **The one resolution seam**, so the row cannot state a kit the keepers are not using.
             let entry = ResolvedUpkeepKit {
                 id: equipment
-                    .keeping_kit_for(assignment.upkeep_kit.as_ref(), branch)
+                    .keeping_kit_for(assignment.upkeep_kit.as_ref(), branch, rung.as_deref())
                     .id()
                     .to_string(),
                 named: assignment.upkeep_kit.is_some(),

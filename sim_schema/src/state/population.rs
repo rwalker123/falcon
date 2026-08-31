@@ -504,6 +504,20 @@ pub struct BandKitTiersState {
     /// schema change. Appended (append-only).
     #[serde(default)]
     pub build_work_branch: String,
+    /// **WHICH RUNG OF THAT WEB [`Self::build_work_per_worker`] IS FOR** — a `"<branch>:<id>"` rung
+    /// key such as `"route:paved_road"`, and `""` when the kit's build tool serves **every** rung on
+    /// its branch, which is every kit that ships today but the two road tools.
+    ///
+    /// **The third term of the same one reading**, and a consumer that takes the worth without it is
+    /// wrong in the generous direction. A branch was enough while a web's rungs all wanted the same
+    /// tool; the route ladder is the first where they do not — an earthmoving tool is worth its
+    /// offset on a `grade` and nothing on the `pave` above it, and the stone-dressing tool is the
+    /// exact reverse.
+    ///
+    /// **Empty means "bound to no rung", not "bound to no build"**: it matches every rung on
+    /// `build_work_branch`. Appended (append-only).
+    #[serde(default)]
+    pub build_work_rung: String,
 }
 
 /// The neutral value of [`BandKitTiersState`]'s three multipliers — `1.0`, never `0`.
@@ -551,6 +565,9 @@ impl Default for BandKitTiersState {
             // An empty branch is the honest reading of a kit with no build tool, and the safe one:
             // naming a web here would price a build off gear the kit does not hold.
             build_work_branch: String::new(),
+            // Empty is *"this tool is not bound to a rung"*, which is what every kit but the two
+            // road tools declares — so the default is also the shipped answer nearly everywhere.
+            build_work_rung: String::new(),
         }
     }
 }

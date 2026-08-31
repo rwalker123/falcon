@@ -3879,14 +3879,23 @@ impl LaborAllocation {
     /// states the kit rather than 'the player named none'"*): the builders' default is per entry, so
     /// an entry that named nothing would otherwise publish `none` while the pool was out with
     /// hurdles.
+    ///
+    /// ⛔ **THE RUNG IT RESOLVES AT IS THE HEAD ENTRY'S DESTINATION, because a queue is all this
+    /// seam can see.** The turn itself prices the pool at the rung actually **in flight**
+    /// (`systems::labor::BuildersGear::for_source`), and the two agree wherever a command could have
+    /// created the entry: `pave` is refused on anything below a dirt road, so a route entry's
+    /// destination *is* the rung under its builders. They part only if the source falls back down
+    /// the ladder while its entry waits, which this seam has no registry to see.
     pub fn builders_kit(
         &self,
         config: &crate::equipment_config::EquipmentConfig,
     ) -> crate::equipment_config::KitChoice {
         let head = self.build_queue.first();
+        let destination = head.map(|entry| entry.declared.destination().wire_key());
         config.builders_kit_for(
             head.and_then(|entry| entry.kit.as_ref()),
             self.head_build_branch(),
+            destination.as_deref(),
         )
     }
 

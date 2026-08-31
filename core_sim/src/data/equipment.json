@@ -169,6 +169,62 @@
         }
       ]
     },
+    "earthmoving": {
+      "wear": [
+        {
+          "per": "build_progress",
+          "amount": 0.025
+        },
+        {
+          "per": "upkeep_work",
+          "amount": 0.025
+        }
+      ],
+      "workers_per_unit": 6,
+      "effects": [],
+      "tiers": [
+        {
+          "id": "flint",
+          "starting_durability": 100.0,
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 2.0,
+              "branch": "route",
+              "rung": "route:dirt_road"
+            }
+          ]
+        }
+      ]
+    },
+    "stone_dressing": {
+      "wear": [
+        {
+          "per": "build_progress",
+          "amount": 0.025
+        },
+        {
+          "per": "upkeep_work",
+          "amount": 0.025
+        }
+      ],
+      "workers_per_unit": 6,
+      "effects": [],
+      "tiers": [
+        {
+          "id": "flint",
+          "starting_durability": 100.0,
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 2.0,
+              "branch": "route",
+              "rung": "route:paved_road"
+            }
+          ]
+        }
+      ]
+    },
     "wayfinding": {
       "wear": [
         {
@@ -304,9 +360,11 @@
   },
   "_comment_bench_tools": "BENCH TOOLS - the band-local, consumable half of the crafting model (docs/plan_crafting_and_materials.md section 5). A TOOL BOUNDS ONE MATERIAL (`bounds_material`) and grants nothing outside it, the same shape `max_body_mass` already runs on: a loom is useless on a hide, with no 'this tool does not apply' branch anywhere - the bench asks for the tool bounding the material it is working, and a loom is not that tool. A TOOL SERVES THE BENCH, NOT A PARTY: no kit may name one (validate rejects it), and its live predicate is OWNERSHIP plus condition rather than a kit mask. Ownership is a real question for a tool alone: nothing stocks one at spawn, so an absent ledger entry can only mean nobody has made one - reading it as a free loom on turn 1 would delete 'tools are earned, never a prerequisite' outright. ITS THREE STATS ARE EQUIPPED-ONLY, and their unequipped side is the MATERIAL's own `hand_working` in materials.json (rate 0.5, quality_ceiling 0.60, and an efficiency of 1.0 that needs no authoring because by hand IS the baseline). That is one home per fact taken seriously: a tool that is not there cannot declare anything, and the two-tier fallback used by the carries would answer the LOOM's numbers for a band scraping a hide. PRESENT EFFECTS APPLY AND ABSENT ONES DO NOT - a speed-only tool would leave the ceiling and the efficiency exactly where the bare hand had them, which is fine because no land is better at speed and a speed-only tool therefore never touches the move/stay decision. WHAT THE SHIPPED THREE BUY, against the bare hand's 0.5 rate and 0.60 ceiling: all three roughly QUADRUPLE the bench (1.6-2.0 against 0.5) and all three lift the ceiling past `fine`'s 0.75 seam, which a bare-handed band cannot reach at all whatever it is working. The efficiencies differ deliberately, by how scarce the bounded material is: the bone awl saves the most (0.70) because bone is an order of magnitude scarcer than hide or fibre, and it is the slowest (1.6) because bone is worked slowly. ITS QUANTUM IS `item_crafted`, one per item the bench finishes, AND THE CRAFT'S LESSON IS CHARGED ON THE SAME ONE - so the thing that consumes the tool and the thing that teaches the craft cannot drift apart. 100 / 4.0 = 25 items, which against ~5 items per craft lesson and a 15-20 turn kit clock is an infrastructure investment that pays back over several kits rather than a consumable like the gear itself.",
   "_comment_crook": "THE CROOK - a long bone staff hafted with cord, and with it the halters and butchering stone a keeper works a beast with. IT IS THE ITEM `hurdles` USED TO BE, minus the butchering quantum and the pen collection rate (docs/plan_standing_upkeep.md section 4.9 item 12): HURDLES ARE A MATERIAL NOW. The test is whether the thing comes home with you - a crook goes to the next herd, so it is kit; a fence panel stays in the ground, so it is material, and it is spent by the `animal:pen` rung's build pile and its upkeep rate instead of carried. Every dial here is carried across from that item UNCHANGED (wear 0.16 on both quanta, build_work 0.5 on the `animal` branch, starting_durability 100), so the reclassification is PACING-NEUTRAL on gear: an animal build is geared exactly as it was and a keeper wears exactly what a keeper wore. IT DECLARES NO `bounds_material` - validate rejects a kit naming an item that has one, and the crook is party-carried; `bone_awl` has one and is a BENCH tool, which is why it is not the template here. ITS HEADLINE QUANTUM IS THE BUILD, WHICH IS A CHANGED READING FOR A NEW ITEM AND NOT A CHANGED READING FOR AN EXISTING ONE: `build_progress` is written first, so ItemDefinition::headline_wear quotes this gauge in gardens' worth (100 / 0.16 = 625 work units, 12.5 reference gardens at plant:tended's work_cost of 50) exactly as the hoes' does. The hurdles led with `biomass_collected` deliberately, so their gauge read '~2500 biomass butchered'; the crook does NO butchering - that quantum moved to the sled when hurdles became a material - so there is nothing left for it to lead with. No shipped item's gauge moved. WHY IT IS BONE AND FIBRE: the `hoes` shape, one web over. A crook is a long staff, so the recipe reads bone's `length` and joins `wayfinding` as a second reader of that axis, which breaks nothing because bone's pair already has a reader on each end. AND IT MUST BE START-STOCKED, which is automatic rather than declared: start_stocked_items is every item some kit `uses`, and `hurdling` uses this - without it every tame, pen build and turn of herd keeping on turn one drops to bare-handed speed.",
+  "_comment_road_tools": "THE TWO ROAD TOOLS, AND THE FIRST TIME ONE BRANCH'S RUNGS WANTED DIFFERENT GEAR. `earthmoving` is the mattock-and-spade bundle a GRADE is cut with; `stone_dressing` is the maul, wedges and dressing hammer a PAVE is laid with. Each declares `build_work` on the `route` branch AND names its own `rung` (route:dirt_road / route:paved_road), which is what keeps them apart: a mattock is worth 2.0 on a grade and EXACTLY NO_BUILD_GEAR on the paving above it, and the dressing hammer is the precise reverse. Without the rung bound a kit carrying both would deliver 2.0 + 2.0 per worker on either job, because build_work is a per-worker SUM - the same failure `branch` was added to stop one axis out. There is no 'this tool is not for that' refusal anywhere; the term simply resolves to the neutral, exactly as a snare's bounded attack does against a Red Deer. EQUIPPED 2.0 AGAINST THE BARE HAND'S 1.0 = 3.0 A TURN, three times bare output, where the hoes and the crook buy 0.5 against 1.0. Road work is the branch tools were made for: at 4 builders a 300-unit dirt road is 75 turns bare and 25 kitted, and an 800-unit paved road is 200 bare and 67 kitted. WEAR IS 0.025 AND NOT THE 0.16 THE HOES AND CROOK USE, AND THAT IS DELIBERATE. The plant and animal reference jobs are 50-75 work units, so 0.16 against starting_durability 100 gives 625 units - about 12 gardens' worth, which is the gauge those items were tuned to. The route jobs are 300 and 800, six to sixteen times that, so 0.16 would spend MORE THAN ONE WHOLE KIT on a single paved road: you could not finish one job with one tool, which is not scarcity but a broken gauge. 0.025 gives 100 / 0.025 = 4000 work units per unit of tool, i.e. ~13 dirt roads or 5 paved ones - the hoes' bracket restated in the jobs these things actually do. `workers_per_unit` 6 is the other half of the sizing: one mattock set serves a gang of six, so build_work_saturating_crew is 6 per unit held rather than the 1-per-worker every other item assumes - road work is done with shared plant, not with a tool in every hand. `build_progress` IS WRITTEN FIRST so ItemDefinition::headline_wear leads with it: the road is what these tools do, and their upkeep quantum is the same road being kept. Like every number in this file these are PROVISIONAL OPENING VALUES - section 4.14 owns the retune.",
   "_comment_wayfinding": "WAYFINDING GEAR - tallies, marked staves, a fire-drill, whatever a forward observer carries. IT LIFTS WHAT A VANTAGE CAN MAKE OUT (`scout_vantage_range`), NOT HOW FAR OUT IT IS POSTED: the posting distance is three dials (labor_config.json `scout.vantage_distance_base` / `_per_scout` / `_max`) and a kit reaching into one of them would be a fourth authority over the same line. The equipped 2 is labor_config's `scout.vantage_range` and stays there; this declares the bare 1.0. ITS QUANTUM IS `tile_revealed`, AND `tile_revealed` MEANS FIRST-EVER-REVEALED. A parked band re-sees the same ring every turn, so charging per tile SEEN would be a turn clock in a per-use costume - precisely what docs/plan_denial_raid.md 1.2 forbids. What wears wayfinding gear is going somewhere new, so a band that stops exploring stops paying, and a band that never explores pays nothing at all. 100 / 0.05 = 2000 first-sights.",
   "_comment_warrior": "CLUBS - the Warrior role's TOE, and the arc's 'weapons -> combat strength / rocks and fists -> weak force' made real. IT DECLARES `attack` - THE SAME STAT A SPEAR DOES - because attack is already 'what this person hits with' and a `warrior_attack` beside it would be a second authority over the one number the resolver reads. What keeps a club out of a hunt and a spear out of a raid is the kit's `jobs` list. Equipped 6.0 against the bare hand's 1.0 (creatures.json `person.combat.attack`), well under the spear's 20: a raid is people fighting animals at the camp with whatever is by the fire, not a hunting party that chose its ground. THIS IS THE ONE PLACE THE SHIPPED OPENING MOVES - a start-kitted band defends a predator raid at 6 where it used to defend at 1, and drops back to 1 when the clubs are gone. Predators Phase 1b is explicitly a placeholder resolver, so the raid tuning is the right place to absorb it. ITS QUANTUM IS `fight` - ONE ENGAGEMENT, ONE USE, not one casualty inflicted: a defence that killed nothing was still fought, and pricing gear on its results would charge a band that is losing the least. 100 / 2.0 = 50 raids fought.",
   "_comment_kits": "THE KIT ROSTER - what a party is SENT OUT WITH, chosen by name instead of implicitly using whatever the band owns. A kit is a MASK over the items above: effective_equipped(item) = kit uses it AND the band still has condition in it. `big_game` and `gathering` reproduce the pre-roster behaviour exactly, so choosing them is bit-for-bit the shipped game. `none` is an ORDINARY ROSTER MEMBER and NOT a sentinel: it simply uses nothing, so every predicate reads false and the party runs at the unequipped tiers throughout - and, because wear rides the same predicate, spends no durability on any item. That is what makes a bare-handed comparison free to run: it must not consume the very kit it is being compared against. `trapping` is the first kit that is not a subset of the old behaviour: traps clear no defence (a trapper falls back to the bare hand's attack 1), so it takes ONLY quarry with no defence at all - rabbit, fowl, grouse, snow hare, catfish - and on exactly that quarry it is the better instrument, because reach and not damage is what binds there. It carries the sled too: a trapper still has to get the catch home. `jobs` is what a kit may be sent on; a kit named for a job it does not list is a COMMAND FAILURE, never a silent fall back to the default. `default_kits` is what each verb uses when the player names none. THE BAND-WIDE ROLES NOW HAVE A KIT AXIS: `scout` and `warrior` are jobs like the other two. They were absent on the grounds that they consumed no component, which was a statement about this file and not about the sim - scouts have posted forward-observer vantages and warriors have been the band's defending contingent against a predator raid for some time. `none` lists every job, so going bare is a choice on every role. THE BUILDERS ARE A JOB TOO, since docs/plan_standing_upkeep.md 2.5 took the build crew off the tile: a build's gear offset used to ride the SOURCE ROW's kit (a Corral was priced off the hunt row's handling gear), and it is now the BUILDERS POOL's own gear, resolved PER QUEUE ENTRY (see the derivation below) rather than off any labor row. THERE ARE TWO BUILDERS KITS AND EACH SERVES ONE FOOD WEB: `tillage` (hoes) for plant builds, `hurdling` (the CROOK) for animal ones - the kit keeps its name and the item under it changed, because hurdles became a MATERIAL (docs/plan_standing_upkeep.md section 4.9 item 12) and a material is spent into an improvement rather than carried to the next job. NEITHER CARRIES CARRY GEAR - nothing is hauled during a build, and a sled does not even wear on `build_progress`, so it was inert baggage on the builders' bundle. THE `husbandry` KIT IS GONE, AND THE `husbandry` JOB IS NOT (docs/plan_standing_upkeep.md section 4.9 item 12b). The kit was a weaponless hunt bundle - a sled and nothing else - for a rung that resolved no fight. A pen resolves the ordinary fight now, so a hunt kit carrying no attack is obviously the wrong thing to send to one: containment solves catching, weapons solve killing, and NO WEAPONS, NO BEEF. THE HUNTERS WHO TOOK THE HERD WILD ARE THE HUNTERS WHO TAKE IT PENNED, WITH THE GEAR THEY ALREADY CARRY - `big_game` is spears PLUS the same sled, a strict superset, so it grants everything the deleted kit granted INCLUDING the sled's own haul rate, and `kit_supplying(hunt, hunt_carry)` answers `big_game` exactly as it did. The sledless case is `none`, which was always where a bare-handed keeper stood. THERE IS ONE CARRY RATE AND A PEN IS COLLECTED ON IT (issue #543): what a worker can carry is a fact about the people and their gear, asked once from the band's kit and blind to whether the animal is penned or wild. A SECOND STAT, `pen_carry`, USED TO FORK THEM AND IS DELETED - its unequipped side lived on `hurdles`, so a drag-harness crew collected 12 at a pen where handling gear collected 40; when the hurdles became a material both sides landed on the sled and the two names answered one number. THE ANIMAL WEB'S TWO HUNT KITS ARE THEREFORE `big_game` AND `trapping`, the same decisive pair the plant web's default picker scores, rather than a real kit and a vestigial one. `husbandry` SURVIVES AS A JOB and is load-bearing: it is the keeping role on the animal ladder, the `hurdling` kit lists it, `default_kits.husbandry` is `none`, and `keeping_kit_for_branch` maps the animal branch to it - deleting the job would silently break per-site upkeep kits on the whole animal web. THE `builders` DEFAULT IS DERIVED PER QUEUE ENTRY, not named here: `default_kits.builders` stays `none` as a FALL-BACK, and what the pool actually works with is the roster's own answer for the head entry's web (EquipmentConfig::build_kit_for_branch, the shape `kit_supplying` already uses for a penned herd) - so a queue item, which is one job, gets the kit for that job. A kit NAMED on the QUEUE ENTRY overrides that derivation, `none` included, which is how a player sends the pool out bare-handed on one job to conserve gear (command: `build_kit <faction> <source...> [kit <id>]`; an absent `kit` token clears the override). THE `builders` LABOR ROW CARRIES NO KIT AT ALL and `assign_labor` refuses one there: a single stored id is per BAND, so one pick pinned the animal web's tool onto every later plant build with no way back.",
+  "_comment_road_kits": "THE TWO ROAD KITS - `roadbuilding` (earthmoving) and `paving` (stone dressing). Each lists `builders` AND `roadwork`, on the `tillage` / `hurdling` pattern: those kits list the build job and their web's KEEPING job, because upkeep reads the same supply expression a build does (docs/plan_standing_upkeep.md section 4.8), so the tool that cuts a roadbed is the tool that mends it. `default_kits.roadwork` stays `none` as the FALL-BACK; what a keeper actually holds is the roster's own answer for the rung that road stands on, which is why a dirt road is kept with the mattock and a paved one with the dressing hammer off the same derivation. NEITHER CARRIES CARRY GEAR, for the reason the other two builders kits do not: nothing is hauled during a build.",
   "kits": [
     {
       "id": "big_game",
@@ -360,6 +418,28 @@
       ],
       "uses": [
         "hoes"
+      ]
+    },
+    {
+      "id": "roadbuilding",
+      "display_name": "Roadbuilding kit",
+      "jobs": [
+        "builders",
+        "roadwork"
+      ],
+      "uses": [
+        "earthmoving"
+      ]
+    },
+    {
+      "id": "paving",
+      "display_name": "Paving kit",
+      "jobs": [
+        "builders",
+        "roadwork"
+      ],
+      "uses": [
+        "stone_dressing"
       ]
     },
     {
