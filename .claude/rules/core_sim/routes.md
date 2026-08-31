@@ -771,7 +771,7 @@ route branch, in climb order**.
 rows on every road tile. Both are the same kind of thing — the *declaration* of what the ladder holds,
 carrying no faction and no tile — and both are per-world constants, diffed whole like `kits`.
 
-⛔ **EVERY FIELD IS DERIVED FROM THE RUNG'S OWN RECORD; NOTHING IS RESTATED.** That is the whole point
+⛔ **EVERY FIELD BUT ONE IS DERIVED FROM THE RUNG'S OWN RECORD; NOTHING IS RESTATED.** That is the whole point
 of publishing it at all: a rung added to the config appears in the client's ladder with **no client
 edit and no schema edit**, the same promise `ladderKnowledge` makes for the knowledge screen.
 `routes::route_rungs_in_climb_order` walks `ladder.rungs` — **not `RungKey::ALL`** — so a rung the
@@ -790,6 +790,7 @@ coded climb has never heard of is in the catalog, and `RungDef::wire_key` /
 | `workCost` / `upkeepWorkPerTurn` | the rung's `build.work_cost` and `upkeep.work_per_turn`, **unscaled** — `0` where the record declares no block at all |
 | `frictionMultiplier` / `holdsLinkToTiles` | the rung's `route_payoff`, which `validate` requires on every route rung — so the capture `expect`s it exactly as `road_payoff_at` does, rather than publishing a quieter neutral for a config that cannot load |
 | `grantsSight` | **does a road at this rung light its tile while its keeping is met** — `routes::rung_grants_sight`, which asks whether the record declares an `upkeep` |
+| `buildWorkPerWorkerTurn` | **what one bare-handed worker banks in a turn** — `intensification::build_work_per_worker_turn(NO_BUILD_GEAR)`, i.e. `PER_WORKER_OUTPUT` before gear and before any multiplier. The one field that is the **sim's** and not the rung's record |
 
 ⛔ **THE REMEDY IS PUBLISHED BECAUSE IT CANNOT BE INFERRED FROM `requiresRung`.** A gate states what a
 player does not yet know; what they *do* about it is stand on the rung that **teaches** that lesson,
@@ -804,6 +805,24 @@ gate → teacher rather than guessing it.
 the tile's own `infrastructure_cost` are per-tile facts published on `RouteState`
 (`keeperRemoteness`, `upkeepDemand`); a catalog row states the number that is the same for every road
 in the world, which is the only one a ladder can quote.
+
+⛔ **`buildWorkPerWorkerTurn` RIDES THE CATALOG FOR EXACTLY THAT REASON, AND IT IS THE SIM'S NUMBER
+RATHER THAN THE CONFIG RUNG'S.** Worker output is written as a **sum of terms**
+(`intensification::build_work_per_worker_turn` = `PER_WORKER_OUTPUT` + the kit's addend), so every
+SOURCE row publishes its own resolved rate and its readers are told to *read it, never assume it* — a
+transcribed `1.0` goes stale in silence the day a second bare term lands. A road has no source row at
+all, which is why `buildTurnsRemaining` is a no-op for roads sim-side, so the route ladder's turn
+estimate and its *short N workers* clause had no published rate to divide by and the client held a
+constant instead. The rate is identical for every rung and every road in the world, which is the
+catalog's own definition of what belongs on it; on `RouteState` it would be one copy of one constant
+per road on the map. It is published at `NO_BUILD_GEAR` — bare hands — because gear is the crew's
+fact and the ladder prices a job, not a kit: the client adds the kit's addend itself through
+`SourceForecast.pool_work_supply`, the same seam a Cultivate is paced by.
+
+**A `0` here is *no estimate*, never a divisor.** Readers state no turns clause and no *short N*
+clause rather than substituting a rate, which is the same discipline
+`ForagePatchState.buildWorkPerWorkerTurn`'s readers follow — reintroducing a client-side default is
+the transcription coming back through the side door.
 
 **`grantsSight` asks the RECORD for its upkeep rather than comparing against `FIRST_BUILT_RUNG`**, and
 the two answer identically: the free floor is exactly the rungs that cost nothing to hold, pinned by
@@ -822,7 +841,9 @@ the plant and animal branches publishing the same is their own change.
 envelope**: one row per rung the config declares, in the coded climb's order, every value read back
 off that rung's record — plus the shape a ladder renders differently, the floor requiring nothing and
 the free floor naming no verb, owing nothing and lighting nothing, and every gate on the branch
-answered by some *other* rung's lesson.
+answered by some *other* rung's lesson. The bare work rate is pinned against the sim's own
+sum-of-terms seam rather than a literal, and against the branch reading **one** rate: a per-rung
+figure would not be a catalog fact.
 
 ### The band roll-up — `roadworkDemand` / `roadworkSupplied` / `roadworkShortfall`
 

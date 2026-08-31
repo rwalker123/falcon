@@ -2060,6 +2060,12 @@ const NO_BUILD_WORK: f32 = 0.0;
 /// carries its keeper's remoteness quote and its ground's `infrastructure_cost`, and both of those
 /// are per-tile facts published on `RouteState` — a catalog row is the branch's figure, which is the
 /// only one that is the same for every road in the world.
+///
+/// **`build_work_per_worker_turn` is the one field that is the SIM'S and not the config rung's**,
+/// and it rides here for that same reason: it is identical for every rung and for every road in the
+/// world, which is the only kind of number a ladder can quote. Every source row publishes its own
+/// copy; a road has no source row, so without this the client would have to hold a transcription of
+/// [`crate::intensification::PER_WORKER_OUTPUT`] and would not learn of a second term landing in it.
 pub(crate) fn snapshot_route_rungs(ladder: &LadderConfig) -> Vec<RouteRungState> {
     crate::routes::route_rungs_in_climb_order(ladder)
         .into_iter()
@@ -2095,6 +2101,16 @@ pub(crate) fn snapshot_route_rungs(ladder: &LadderConfig) -> Vec<RouteRungState>
                 // directly beneath the one it gates are two different facts that merely coincide on
                 // the shipped four.
                 earns_knowledge: rung.earns_knowledge.clone().unwrap_or_default(),
+                // **The bare rate, read and not restated** — through the same
+                // `build_work_per_worker_turn` seam the patch and herd rows publish theirs by, at
+                // `NO_BUILD_GEAR`, because it is the *sum of terms* the model is written as and a
+                // second term added there must reach this row too.
+                //
+                // It is the same figure for every rung — the sim's one answer to *what does a
+                // worker bank in a turn* — so it rides the CATALOG and not the tile row. A road
+                // has no source row to carry it, and a client left to transcribe the constant
+                // instead would go stale in silence the day that sum grows.
+                build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
             }
         })
         .collect()

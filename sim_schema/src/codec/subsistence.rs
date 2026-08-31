@@ -1008,6 +1008,7 @@ fn create_route_rungs<'a>(
                 holdsLinkToTiles: state.holds_link_to_tiles,
                 grantsSight: state.grants_sight,
                 earnsKnowledge: Some(earns_knowledge),
+                buildWorkPerWorkerTurn: state.build_work_per_worker_turn,
             },
         ));
     }

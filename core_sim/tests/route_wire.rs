@@ -14,11 +14,11 @@ use bevy::math::UVec2;
 use bevy::prelude::{Entity, With};
 
 use core_sim::{
-    build_test_app, route_rungs_in_climb_order, rung_grants_sight, BandId, FactionId,
-    LaborAllocation, LaborTarget, LadderConfig, PopulationCohort, ResidentBand, RoadKeeper,
-    RoadRegistry, RungKey, SimulationConfig, SnapshotHistory, Tile, TileRegistry, ViewerFaction,
-    FIRST_BUILT_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT,
-    RUNG_COST_UNSCALED,
+    build_test_app, build_work_per_worker_turn, route_rungs_in_climb_order, rung_grants_sight,
+    BandId, FactionId, LaborAllocation, LaborTarget, LadderConfig, PopulationCohort, ResidentBand,
+    RoadKeeper, RoadRegistry, RungKey, SimulationConfig, SnapshotHistory, Tile, TileRegistry,
+    ViewerFaction, FIRST_BUILT_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_BUILD_GEAR,
+    NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED,
 };
 
 /// A pinned earthlike world, so the terrain under every road below is the same one every run.
@@ -575,6 +575,7 @@ struct PublishedRouteRung {
     holds_link_to_tiles: u32,
     grants_sight: bool,
     earns_knowledge: String,
+    build_work_per_worker_turn: f32,
 }
 
 /// **The `routeRungs` catalog off the encoded envelope**, through the accessor chain a client uses.
@@ -622,6 +623,7 @@ fn published_route_rungs(app: &App) -> Vec<PublishedRouteRung> {
                 .earnsKnowledge()
                 .expect("the lesson is published, empty or not")
                 .to_string(),
+            build_work_per_worker_turn: row.buildWorkPerWorkerTurn(),
         })
         .collect()
 }
@@ -710,7 +712,32 @@ fn the_route_rung_catalog_is_the_configs_own_climb() {
             "{} publishes the lesson its record teaches",
             row.rung_key
         );
+        // ⛔ **THE BARE RATE IS THE SIM'S, PUBLISHED ON EVERY ROW** — the one catalog field that is
+        // not the config rung's. A road has no source row to carry it, so a client without this has
+        // to transcribe `PER_WORKER_OUTPUT`; asserted against the sim's own sum-of-terms seam at
+        // no gear, so a second term landing there moves this with it rather than past it.
+        assert_eq!(
+            row.build_work_per_worker_turn,
+            build_work_per_worker_turn(NO_BUILD_GEAR),
+            "{} publishes the sim's bare per-worker work rate",
+            row.rung_key
+        );
     }
+
+    // …and it is the SAME figure on every rung, which is what makes it a catalog fact rather than a
+    // per-rung one: a ladder quotes one rate for the whole branch.
+    let rates: Vec<f32> = published
+        .iter()
+        .map(|row| row.build_work_per_worker_turn)
+        .collect();
+    assert!(
+        rates.windows(2).all(|pair| pair[0] == pair[1]),
+        "the bare work rate is one number for the branch, not a per-rung one: {rates:?}"
+    );
+    assert!(
+        rates[0] > NO_BUILD_GEAR,
+        "a rate of zero would leave every reader with no estimate at all"
+    );
 }
 
 /// ⛔ **WHICH RUNG TEACHES WHICH LESSON IS PUBLISHED, BECAUSE IT CANNOT BE INFERRED** — the REMEDY
