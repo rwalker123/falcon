@@ -1928,6 +1928,11 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
 ## It is the ONE control inside the sheet that navigates to another surface — the sheet's other
 ## outward signals commit a command and close through their own `close_compose_sheet()` — so this is
 ## the whole of the exemption, not the first of a family.
+##
+## **THE ROAD LADDER'S RUNG PRESS IS A SECOND CALLER, and it is not a second exemption.** That card is
+## its own Window and puts ITSELF away first (`_dismiss_road_ladder`); what it wants from here is the
+## jump and the sheet-close beside it, both of which are exactly what a press landing on the Work
+## board needs. A rung already being built calls this ALONE, no command being issued at all.
 func _navigate_to_work_tab(band_entity: int) -> void:
     close_compose_sheet()
     emit_signal("work_tab_requested", band_entity)
@@ -4474,9 +4479,18 @@ func _fill_road_ladder() -> void:
     var kit_gear := KitRoster.build_gear(band,
         HudBandLaborState.role_kit_id(band, HudConst.LABOR_KIND_BUILDERS),
         KitRoster.BUILD_BRANCH_ROUTE)
+    # **WHETHER THIS ROAD IS ALREADY ORDERED IS A FACTION QUESTION, not the acting band's** — the
+    # same set the tile card's `Road` row joins on, so the card and the ladder cannot disagree about
+    # one road while the picker names a band that is not its keeper.
     var rows := RungLadder.route_track(road, ladder, _player_knowledge(),
         _topbar.knowledge_labels(), band, keeper_label, builders, kit_gear,
-        _road_ladder_queue(band))
+        _road_ladder_queue(band), _band_labor.road_queue_tiles())
+    # ⛔ **THE RUNG ALREADY BEING BUILT IS A JUMP, NOT A SECOND ORDER.** The sim refuses a rung the
+    # band already keeps at or above (*you already keep it at that rung or above*), so pressing it
+    # spent a command to be told no; what a player pressing a road they have already ordered wants is
+    # the board where its place in the queue is decided. Resolved from the ROWS rather than re-derived,
+    # so the face that says *being built* and the press that acts on it read one answer.
+    var building_verb := RungLadder.route_building_verb(rows)
     HudWidgets.clear_children(margin)
     var column := VBoxContainer.new()
     column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
@@ -4489,7 +4503,15 @@ func _fill_road_ladder() -> void:
         # The press closes the card BEFORE it emits, the destination track's own rule: the declaration
         # re-renders the drawer this card is anchored to.
         _dismiss_road_ladder()
-        _emit_road_improvement(band, _road_ladder_tile, verb),
+        # **A RUNG NOT YET ORDERED IS QUEUED AND THEN FOLLOWED; the one being built is only followed.**
+        # Either way the press ends on the acting band's Work tab — the board that says where this
+        # road stands in the queue and which staffs the builders that will raise it — so the act and
+        # its consequence are one gesture rather than a command that lands somewhere unseen.
+        if verb != building_verb:
+            _emit_road_improvement(band, _road_ladder_tile, verb)
+        # **THE BAND IS THE `Band:` PICKER'S**, which is the band the entry is being made for and
+        # whose pool pays for it — the same rule the offered rung's `Work tab` link follows.
+        _navigate_to_work_tab(int(band.get("entity", ComposeState.NO_BAND_ENTITY))),
         HudRouteVocab.ROAD_LADDER_TITLE))
     var abandon := _build_road_abandon_row(road, band)
     if abandon != null:

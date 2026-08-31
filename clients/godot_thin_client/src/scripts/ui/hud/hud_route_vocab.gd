@@ -420,6 +420,12 @@ static func next_rung_key(rung: String) -> String:
 		return ""
 	return String(RUNG_ORDER[at + 1])
 
+## ⛔ **THE PERCENTAGE A ROAD'S METER READS — ONE EXPRESSION, TWO SURFACES.** The tile card's `Road`
+## row and the ladder row for the rung being BUILT state the same climb, so they may not round it two
+## ways; `floor` rather than `round`, because a hair short of a rung must never read as the rung.
+static func road_percent_of(meter: float) -> int:
+	return int(floor(meter * ROAD_PERCENT_SCALE))
+
 ## ⛔ **THE APPROACH TO THE NEXT RUNG, NEVER THE STATE OF THIS ONE** — `25% to trail`, not `Trail 25%`.
 ## `""` where nothing is rising: **`1.0` is the complete reading**, published exactly rather than
 ## derived by subtraction, so the test is a plain comparison and never a tolerance, and it covers both
@@ -435,7 +441,7 @@ static func progress_clause(road: Dictionary, queued: bool = false) -> String:
 	# climb, and printing a percentage would invent one.
 	if meter <= ROAD_METER_UNSTARTED and not queued:
 		return ""
-	var percent := int(floor(meter * ROAD_PERCENT_SCALE))
+	var percent := road_percent_of(meter)
 	var destination := next_rung_label(rung_of(road))
 	if destination == "":
 		return ROAD_PROGRESS_UNNAMED_FORMAT % percent
@@ -961,10 +967,45 @@ const ROAD_LADDER_TITLE := "RAISE IT TO…"
 const ROAD_LADDER_FACE_FORMAT := "%s · %s"
 
 ## The meter on the row DIRECTLY ABOVE the standing rung, and on no other — `build_fraction` is the
-## rung being RAISED. **It rides the `wearing in` row alone**: that row has no price of its own, so
-## without it the line states only a static fact about traffic, while every other row already leads
-## with a figure.
+## rung being RAISED.
+##
+## ⛔ **ON THE RUNG BEING BUILT IT REPLACES THE PRICE, and at `0%` it still prints.** A rung that is
+## already ordered is not a purchase the player is weighing, so `110 work` on it answers a question
+## nobody is asking; what they pressed the ladder to find out is whether the press LANDED. A road
+## queued behind another job banks nothing for dozens of turns, so `0%` where the price used to be is
+## the whole of the receipt — see `RungLadder.route_track`, which owns the two faces.
 const ROAD_LADDER_METER_FORMAT := "%d%%"
+
+## ⛔ **THE RUNG'S OWN STANDING BILL, BESIDE THE PILE IT WOULD COST TO BUILD** — the second half of
+## what the press commits to, and the half a one-off figure cannot state. It is the CATALOG's
+## `upkeepWorkPerTurn` for that rung, never a progress-scaled figure: a rung nobody has started has no
+## live bill to scale, and the number being weighed is what holding it will cost forever.
+const ROAD_LADDER_UPKEEP_FORMAT := "%s/turn upkeep"
+
+## ⛔ **A RATE IS PRINTED TO TWO DECIMALS, AND THE BUILD PILE IS NOT.** `DetailFormat.format_work_units`
+## rounds to one (`HudSelectionVocab.BUILD_WORK_DECIMALS`), which prints the dirt road's `0.45` as
+## `0.5` and the paved road's `0.95` as `1.0` — an 11% lie about the number the player is deciding
+## against, and the same rounding class as the `0.0 work a turn` this arc already fixed. `110` does not
+## care, so the pile keeps the shared formatter and only the rate reads through
+## `DetailFormat.format_trimmed`, which strips the trailing zeros a fixed `%.2f` would leave.
+const ROAD_LADDER_RATE_DECIMALS := 2
+
+## ⛔ **WHAT A RUNG NOBODY HAS STARTED COSTS — the pile AND the bill, and no duration.** The turns
+## estimate used to ride here and was wrong twice over: it was divided by the acting band's CURRENT
+## builders, who in the reported game were all on a Tame, and it ignored the queue the press would
+## join. The two figures that do not move with a crew are what the row states now.
+##
+## **THE UPKEEP CLAUSE IS DROPPED WHERE THE RUNG DECLARES NONE.** The free floor holds for nothing, so
+## `0/turn upkeep` would be a bill where there is no bill; `SourceForecast.UPKEEP_WORK_MIN` is the same
+## floor every other work rate in the client is suppressed under.
+static func road_ladder_price_face(entry: Dictionary) -> String:
+	var pile := HudWorkVocab.RUNG_TRACK_COST_UNDATED_FORMAT % DetailFormat.format_work_units(
+		catalog_work_cost(entry))
+	var upkeep := catalog_upkeep(entry)
+	if upkeep < SourceForecast.UPKEEP_WORK_MIN:
+		return pile
+	return ROAD_LADDER_FACE_FORMAT % [pile, ROAD_LADDER_UPKEEP_FORMAT % DetailFormat.format_trimmed(
+		upkeep, ROAD_LADDER_RATE_DECIMALS)]
 
 # ⛔ RETIRED — **`ROAD_LADDER_BUYS_FORMAT`, `ROAD_LADDER_PRICE_FORMAT` and
 # `ROAD_LADDER_PROGRESS_FORMAT`**, the three ASIDES a ladder row used to stack beneath itself
@@ -1016,6 +1057,19 @@ const ROAD_LADDER_QUEUE_EMPTY_ASIDE := "joins this band's build queue, and start
 ## which is what a player reorders against.
 const ROAD_LADDER_QUEUE_BEHIND_FORMAT := "joins this band's build queue behind %s%s — %s"
 const ROAD_LADDER_QUEUE_MORE_FORMAT := " and %d more"
+
+## ⛔ **…AND THE SAME SENTENCE WITHOUT THE QUALIFIER, for a row that quotes no estimate.** The note
+## below says what a DURATION is measured from, and a row stating its pile and its standing bill has
+## no duration on it — the clause would then qualify a number the player cannot see. The placement
+## itself still matters (it is what the press joins), so the sentence stays and only its tail goes.
+const ROAD_LADDER_QUEUE_BEHIND_PLAIN_FORMAT := "joins this band's build queue behind %s%s"
+
+## ⛔ **AND THE SAME PLACEMENT ONCE THE ROAD IS ALREADY ON THE LIST — `waiting`, NEVER `joins`.**
+## Every sentence above is about a press that has not happened yet. On a road whose `grade` is already
+## on the wire the future tense states something false on the one card the player opened to find out
+## whether the press landed — which is the reported defect wearing different words. The clause is what
+## explains a percentage parked at zero, so it is exactly the row that must not sound prospective.
+const ROAD_LADDER_QUEUE_WAITING_FORMAT := "waiting behind %s%s — %s"
 
 ## …and the qualifier on the estimate beside it. **It names what the count is measured FROM rather
 ## than hedging it**: the number is exact once the builders reach this entry, and a raid on the figure
