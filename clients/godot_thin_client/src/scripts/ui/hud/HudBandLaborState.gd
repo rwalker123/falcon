@@ -422,6 +422,44 @@ func set_roads(roads_variant: Variant) -> void:
 func roads() -> Array:
 	return _roads
 
+## ⛔ **WHICH ROAD TILES THE PLAYER HAS QUEUED — `{Vector2i: true}` over EVERY player band's queue.**
+##
+## A road is the one build source with **no labor row** (deliberately: a road is not worked like a
+## patch or a herd, so it has no crew to staff), which is exactly why the BUILD QUEUE block silently
+## dropped its entry and the tile card went on reading the road as un-declared. The entry is on the
+## wire — `PopulationCohortState.build_queue` publishes it as `kind: "roadwork"` carrying the road's
+## tile — so what was missing is this join, not a field.
+##
+## **EVERY BAND, not the acting one.** *Has anybody of mine ordered this road* is a FACTION question:
+## the tile card names no band, and a road queued by Band 2 read as un-queued while Band 1 was
+## selected would be the same invisibility one band over.
+##
+## **The TILE is the key**, which is the road row's own identity (`tile_x` / `tile_y`, the retired
+## `RouteId`'s replacement), so the two lists join on one spelling — and `pending_key`'s `roadwork`
+## arm keys per tile for the same reason, which is what stops two queued roads sharing one entry.
+##
+## `{}` for a faction that has queued no roads, which every consumer reads as *nothing is queued*.
+func road_queue_tiles() -> Dictionary:
+	var tiles: Dictionary = {}
+	for band_variant in current_player_bands():
+		if not (band_variant is Dictionary):
+			continue
+		var entries: Variant = (band_variant as Dictionary).get("build_queue", [])
+		if not (entries is Array):
+			continue
+		for entry_variant in (entries as Array):
+			if not (entry_variant is Dictionary):
+				continue
+			var entry: Dictionary = entry_variant
+			if String(entry.get("kind", "")).strip_edges().to_lower() \
+					!= HudConst.LABOR_KIND_ROADWORK:
+				continue
+			var x := int(entry.get("target_x", -1))
+			var y := int(entry.get("target_y", -1))
+			if x >= 0 and y >= 0:
+				tiles[Vector2i(x, y)] = true
+	return tiles
+
 ## Ingest the snapshot forage patches into the per-tile lookup. A non-Array input is ignored (the
 ## lookup keeps its last value), matching the old ingest.
 func set_forage_patches(patches_variant: Variant) -> void:
@@ -441,12 +479,27 @@ func set_forage_patches(patches_variant: Variant) -> void:
 # ---- Optimistic pending labor overlay ------------------------------------------------------------
 
 ## Stable key identifying a source/role within a band's assignment set.
+##
+## ⛔ **`roadwork` NAMES TWO DIFFERENT THINGS ON THE WIRE, AND THE TILE IS WHAT TELLS THEM APART.**
+## It is a band-wide standing ROLE (`assign_labor <faction> <band> roadwork <n>`, one slot per band,
+## keeping the roads the band built) **and** it is the `BuildSource::kind()` of a queued ROAD, one per
+## TILE. Both arrive through this function, so the road arm is gated on a real tile: an entry from
+## `build_queue` carries `target_x`/`target_y` and keys per road, while the role — asked at `-1, -1`
+## like every other band-wide role — keeps the bare kind it has always had.
+##
+## **WITHOUT THE TILE, TWO QUEUED ROADS SHARE ONE KEY** and the queue block would join both entries to
+## whichever road it looked up first, draw one row for two jobs, and send that row's rank for both.
 func pending_key(kind: String, x: int, y: int, herd_id: String) -> String:
 	match kind:
 		LABOR_KIND_FORAGE:
 			return "forage:%d,%d" % [x, y]
 		LABOR_KIND_HUNT:
 			return "hunt:%s" % herd_id
+		HudConst.LABOR_KIND_ROADWORK:
+			# A road BUILD keys per tile; the band-wide roadwork ROLE falls through to the bare kind.
+			if x >= 0 and y >= 0:
+				return "roadwork:%d,%d" % [x, y]
+			return kind
 		_:
 			return kind  # scout / warrior — one band-wide role each
 

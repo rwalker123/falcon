@@ -15436,6 +15436,11 @@ func _render_queue_control_states() -> void:
 	# its take crew — so that entry has no model and the block cannot draw it. Every claim above is
 	# blind to the difference, its fixture having a model for every entry.
 	await _assert_queue_positions_are_the_wires()
+	# **(d4b) …AND THE ENTRY WHOSE SOURCE IS NOT A LABOR ROW AT ALL: a ROAD** (arc #532). (d4) above
+	# proves an UNRESOLVABLE source still spends its rank; this proves a road is not one of those. It
+	# is the exact defect reported from play — a graded tile showed nothing anywhere, because the block
+	# builds its rows from labor rows and a road deliberately has none.
+	await _assert_a_queued_road_draws_its_row()
 	# **(d5) …AND THE WHOLE QUEUE OVER THE WHOLE ZONE** (§4.9 item 9c). The block above is a SUMMARY
 	# capped at three rows; everything behind them had no row to be seen, reordered or withdrawn from.
 	# The expansion is a MODE over the same Work zone, and its frames run on a fixture LONGER than any
@@ -15933,6 +15938,211 @@ func _assert_queue_positions_are_the_wires(
 
 ## Put the three-entry reorder fixture back, so the states after this one start where they did before
 ## the hidden-entry band was pushed.
+# ---- A QUEUED ROAD (arc #532) --------------------------------------------------------------------
+#
+# ⛔ **THE ROAD WAS INVISIBLE, AND THAT IS INDISTINGUISHABLE FROM THE COMMAND HAVING FAILED.** Reported
+# from play at turn 122: Ray graded a tile and nothing showed it had worked. All three of these were
+# true at once and only the third was wrong — the `grade` landed (the keeper was set), the road was
+# banking zero for the correct reason (a Tame sat at the head of that band's queue, and the head takes
+# every builder), and the entry drew no row, so the player could not see the road was queued, could not
+# see what it was waiting behind, and **could not reorder it**.
+
+## The tile the road fixtures sit on — deliberately NOT one of the queue patches, so the road's face
+## and a patch's face can never be confused for one another by coordinate.
+const ROAD_QUEUE_TILE := Vector2i(64, 17)
+
+## The rung the road HOLDS and the one its entry is climbing to. The meter is exactly zero, which is
+## the reported state: an entry declared and behind a Tame banks nothing for dozens of turns.
+const ROAD_QUEUE_HELD_RUNG := "route:trail"
+const ROAD_QUEUE_DESTINATION_RUNG := "route:dirt_road"
+const ROAD_QUEUE_METER := 0.0
+## …and the shipped ladder's price for that rung, transcribed. The leg line states it, so a producer
+## that quoted the WRONG rung's price fails on the words rather than on a shape.
+const ROAD_QUEUE_WORK_COST := 110.0
+const ROAD_QUEUE_UPKEEP := 0.45
+## The rung's published name, which is what the row is titled by — never `HudRouteVocab.RUNG_LABELS`,
+## which is the tile card's hard-coded four.
+const ROAD_QUEUE_RUNG_NAME := "Dirt Road"
+
+## Where the road's entry sits in the wire queue, and how many rows the block must draw. The HUNT
+## entry is the head — Ray's Tame — so the road is at 1 and can be PROMOTED above it, which is the
+## affordance the whole fix exists to restore.
+const ROAD_QUEUE_RANK := 1
+const ROAD_QUEUE_DRAWN_ROWS := 2
+
+## The meter the date column quotes beside `Queued`. It is `ROAD_QUEUE_METER` as a whole percent, and
+## it is the number the whole defect is about: zero, for as long as the Tame ahead of it runs.
+const ROAD_QUEUE_ZERO_PERCENT := 0
+
+## The rung catalog, transcribed from `intensification_ladder.json`'s route branch. **A DERIVATION
+## WOULD PASS AGAINST A PRODUCER THAT HAD STOPPED PRODUCING ONE**, so the numbers are written out.
+func _road_queue_catalog() -> Array:
+	return [
+		{"rung_key": ROAD_QUEUE_HELD_RUNG, "order": 2, "display_name": "Trail", "verb": "",
+			"unlock_knowledge": "", "requires_rung": "route:path", "earns_knowledge": "",
+			"work_cost": 40.0, "upkeep_work_per_turn": 0.0,
+			"friction_multiplier": 0.85, "holds_link_to_tiles": 6, "grants_sight": false,
+			"build_work_per_worker_turn": 1.0},
+		{"rung_key": ROAD_QUEUE_DESTINATION_RUNG, "order": 3,
+			"display_name": ROAD_QUEUE_RUNG_NAME, "verb": SourceForecast.IMPROVEMENT_GRADE,
+			"unlock_knowledge": "roadbuilding", "requires_rung": ROAD_QUEUE_HELD_RUNG,
+			"earns_knowledge": "paving",
+			"work_cost": ROAD_QUEUE_WORK_COST, "upkeep_work_per_turn": ROAD_QUEUE_UPKEEP,
+			"friction_multiplier": 0.6, "holds_link_to_tiles": 10, "grants_sight": true,
+			"build_work_per_worker_turn": 1.0},
+	]
+
+## The road row the block joins its entry to, shaped exactly as `native/src/dict/routes.rs` writes one.
+## **The TILE is its identity**, which is what the entry's `target_x` / `target_y` join on.
+func _road_queue_row() -> Dictionary:
+	return {
+		"tile_x": ROAD_QUEUE_TILE.x, "tile_y": ROAD_QUEUE_TILE.y,
+		"has_keeper": true, "keeper_band_id": 0, "keeper_remoteness": 1.0,
+		"rung": ROAD_QUEUE_HELD_RUNG, "build_fraction": ROAD_QUEUE_METER,
+		"upkeep_demand": 0.0, "upkeep_supplied": 0.0, "upkeep_shortfall": 0.0,
+		"upkeep_workers_needed": 0,
+		"has_neglect_grace": false, "neglect_grace_remaining": 0,
+		"grants_sight": false, "friction_multiplier": 0.85, "holds_link_to_tiles": 6,
+	}
+
+## …and the queue entry the sim publishes for it: `kind: "roadwork"` carrying the road's TILE.
+## `BuildSource::kind()` is the same token the band-wide roadwork ROLE uses, which is exactly why
+## `HudBandLaborState.pending_key` gates its road arm on a real tile.
+static func _queue_road_entry(tile: Vector2i) -> Dictionary:
+	return {"kind": HudConst.LABOR_KIND_ROADWORK,
+		"target_x": tile.x, "target_y": tile.y, "fauna_id": ""}
+
+## The band whose queue is `[Tame <herd>, grade <road>]` — Ray's own shape, with the road behind the
+## Tame that is taking every builder.
+##
+## **THE HUNT ROW IS KEPT SO THE HEAD HAS A MODEL**, which is what makes the road's rank a real 1 and
+## the head marker a real answer rather than an artefact of a one-row queue.
+func _road_queue_band_fixture() -> Dictionary:
+	var band := _build_queue_band_fixture(2)
+	band["build_queue"] = [_queue_hunt_entry(QUEUE_HERD_ID), _queue_road_entry(ROAD_QUEUE_TILE)]
+	return band
+
+## …and the same band with the road NOT queued — the paired negative, without which "the road draws"
+## is satisfied by a block that draws a road row unconditionally.
+func _road_queue_band_without_the_road() -> Dictionary:
+	var band := _build_queue_band_fixture(2)
+	band["build_queue"] = [_queue_hunt_entry(QUEUE_HERD_ID)]
+	return band
+
+func _assert_a_queued_road_draws_its_row() -> void:
+	_hud.update_route_rungs(_road_queue_catalog())
+	_hud.update_road_network([_road_queue_row()])
+	_set_forage_patches(_build_queue_patches(2))
+	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD, QUEUE_TURNS_HEAD))
+
+	# ---- THE NEGATIVE FIRST: the same road, the same catalog, NO entry ---------------------------
+	# Without it every claim below is satisfied by a block that draws a row for any road it can see.
+	_push_bands([_road_queue_band_without_the_road()])
+	_hud._bandpanel.rerender()
+	await _settle()
+	_assert_band_panel("a road the band has NOT queued draws no queue row — 1 row, the herd's",
+		_build_queue_rows().size() == 1)
+
+	# ---- THE POSITIVE: the road's entry is on the wire and the block draws it --------------------
+	_push_bands([_road_queue_band_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_queue_road")
+	_assert_zone_content_fits()
+	var rows := _build_queue_rows()
+	_assert_band_panel("a queued ROAD draws its own row beside the herd's — %d rows (got %d)"
+			% [ROAD_QUEUE_DRAWN_ROWS, rows.size()],
+		rows.size() == ROAD_QUEUE_DRAWN_ROWS)
+	if rows.size() != ROAD_QUEUE_DRAWN_ROWS:
+		_restore_road_queue_fixture()
+		await _settle()
+		return
+	var road_row := rows[ROAD_QUEUE_RANK]
+	# ⛔ **THE FACE NAMES THE RUNG BEING RAISED, NOT THE VERB.** `Grade (64, 17)` names one STEP of the
+	# branch and a tile may carry a road AND a patch, so the coordinates alone would draw two rows a
+	# player cannot tell apart. The name is the CATALOG's, so a fifth rung arrives named.
+	var face_label := _find_meta_control(road_row, HudWorkVocab.BUILD_QUEUE_FACE_META)
+	var face := "" if face_label == null 		else String(face_label.get_meta(HudWorkVocab.BUILD_QUEUE_FACE_META))
+	var wanted_face := HudRouteVocab.ROAD_QUEUE_FACE_FORMAT % [
+		ROAD_QUEUE_RUNG_NAME, ROAD_QUEUE_TILE.x, ROAD_QUEUE_TILE.y]
+	_assert_band_panel("…named by the RUNG it is being raised to and its tile — `%s` (got \"%s\")"
+			% [wanted_face, face],
+		face == wanted_face)
+	# ⛔ **AND IT WEARS THE WIRE'S RANK, with the head marker on the Tame in front of it.** The rank is
+	# what every `build_order` names, and the marker is what says where the builders actually are.
+	_assert_band_panel("…at the wire's rank %d, behind the entry the pool is funding"
+			% ROAD_QUEUE_RANK,
+		int(road_row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)) == ROAD_QUEUE_RANK)
+	var marker := _find_meta_control(road_row, HudWorkVocab.BUILD_QUEUE_MARKER_META)
+	_assert_band_panel("…and does NOT wear the head marker, the Tame ahead of it being what is funded",
+		marker != null and not bool(marker.get_meta(HudWorkVocab.BUILD_QUEUE_MARKER_META)))
+	# ⛔ **THE REORDER IS THE POINT OF THE FIX.** Ray's road was behind a Tame with no way to express
+	# *put the road first*; a road row whose `▲` were disabled would draw the entry and still leave him
+	# where he started.
+	var promote := _find_meta_control(road_row, HudWorkVocab.BUILD_QUEUE_PROMOTE_META) as Button
+	_assert_band_panel("…and its `%s` is ENABLED, so the road can be put in front of the Tame"
+			% HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH,
+		promote != null and not promote.disabled)
+	# ⛔ **AND THE DATE COLUMN SAYS `Queued`, NOT `⚠ Stalled`.** A road publishes no chained countdown
+	# at all, so the client chooses which *there is no number* this is — and `-1` on a ranked entry
+	# renders `⚠ Stalled 0%`, a claim that something is wrong on a road that is waiting behind a head
+	# exactly as designed. That would be the reported defect one column over: a working command made to
+	# look like a failed one.
+	var date := _find_meta_control(road_row, HudWorkVocab.BUILD_QUEUE_DATE_META)
+	var date_face := "" if date == null \
+		else String(date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META))
+	var wanted_date := HudSelectionVocab.RUNG_QUEUED_FORMAT % ROAD_QUEUE_ZERO_PERCENT
+	_assert_band_panel("…and its date column reads `%s`, never a stall (got \"%s\")"
+			% [wanted_date, date_face],
+		date_face == wanted_date)
+	_assert_band_panel("…with no hazard mark on it, nothing being wrong with a road that is waiting",
+		not date_face.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH))
+
+	# ---- …AND IT CAN BE WITHDRAWN, WITH `unqueue` AND NOT `abandon` ------------------------------
+	# Two different verbs with different consequences: `unqueue` drops the declaration and leaves the
+	# meter and the keeper alone, where `abandon` releases the holding — and the road ladder's own
+	# `Stop keeping this road` already owns that one.
+	var road_key := _hud._band_labor.pending_key(HudConst.LABOR_KIND_ROADWORK,
+		ROAD_QUEUE_TILE.x, ROAD_QUEUE_TILE.y, "")
+	_hud._bandpanel._queue_open_key = ""
+	_hud._bandpanel._toggle_queue_settings(road_key)
+	await _settle()
+	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+	var withdraw: Button = null if strip == null 		else _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_UNQUEUE_META) as Button
+	_assert_band_panel("a road row opens a settings strip carrying the `%s` withdrawal"
+			% HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH,
+		withdraw != null)
+	if withdraw != null:
+		var seen: Array = []
+		var sink := func(payload: Dictionary) -> void: seen.append(payload)
+		_hud.unqueue_requested.connect(sink)
+		withdraw.pressed.emit()
+		_hud.unqueue_requested.disconnect(sink)
+		var line := "" if seen.is_empty() 			else String(MAIN_SCRIPT.format_unqueue(seen[0] as Dictionary).get("line", ""))
+		var wanted_line := "unqueue %d %d %d" % [HudConst.PLAYER_FACTION_ID,
+			ROAD_QUEUE_TILE.x, ROAD_QUEUE_TILE.y]
+		print("band_panel_preview: queued road withdrawal -> %s" % line)
+		_assert_band_panel("…and pressing it sends `%s` — the TILE form, and never `abandon` (got \"%s\")"
+				% [wanted_line, line],
+			line == wanted_line)
+	_hud._bandpanel._queue_open_key = ""
+	_restore_road_queue_fixture()
+	await _settle()
+
+## Put the roads and the catalog back where the states after this one expect them — SHARED harness
+## state, the road frames' own rule: a road left on the model is a road the next state never staged.
+func _restore_road_queue_fixture() -> void:
+	# **THE EXPANSION IS CLOSED ON EVERY EXIT, INCLUDING THE EARLY ONE.** This state opens a settings
+	# strip to reach the `✕`, and the bail-out path above returns before that — so closing it here
+	# rather than beside the open is what keeps a later state from inheriting an expansion that shifts
+	# every row beneath it. Measured: with the join sabotaged, the un-closed strip cost the queue
+	# auto-scroll state its drop target, which is a second failure saying nothing about the sabotage.
+	_hud._bandpanel._queue_open_key = ""
+	_hud.update_road_network([])
+	_hud.update_route_rungs([])
+	_hud._band_labor._pending_labor.clear()
+	_restore_queue_reorder_fixture()
+
 func _restore_queue_reorder_fixture() -> void:
 	_hud._band_labor._pending_labor.clear()
 	_set_forage_patches(_build_queue_patches(3))

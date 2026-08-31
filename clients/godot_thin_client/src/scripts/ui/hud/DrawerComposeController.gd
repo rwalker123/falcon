@@ -4475,7 +4475,8 @@ func _fill_road_ladder() -> void:
         HudBandLaborState.role_kit_id(band, HudConst.LABOR_KIND_BUILDERS),
         KitRoster.BUILD_BRANCH_ROUTE)
     var rows := RungLadder.route_track(road, ladder, _player_knowledge(),
-        _topbar.knowledge_labels(), band, keeper_label, builders, kit_gear)
+        _topbar.knowledge_labels(), band, keeper_label, builders, kit_gear,
+        _road_ladder_queue(band))
     HudWidgets.clear_children(margin)
     var column := VBoxContainer.new()
     column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
@@ -4494,6 +4495,38 @@ func _fill_road_ladder() -> void:
     if abandon != null:
         column.add_child(abandon)
     margin.add_child(column)
+
+## ⛔ **WHAT A PRESS WOULD LAND BEHIND — the acting band's own build queue, as `{ahead, head}`.**
+##
+## The press DECLARES: it appends an entry, and the whole `builders` pool funds the HEAD of that queue
+## until its meter fills. So *how long* is only half the answer and *what is it waiting behind* is the
+## other half — the question a road banking nothing for thirty turns actually raises.
+##
+## **THE HEAD IS THE ONLY ENTRY WORTH NAMING**, because it is the only one that decides when this road
+## starts; the rest are a count, which is what the BUILD QUEUE block's reorder arrows act on.
+##
+## `{}` for a band this controller cannot resolve, which the ladder renders as NO line rather than as
+## an empty queue — an unknown queue and an empty one are different facts and only one is reassuring.
+func _road_ladder_queue(band: Dictionary) -> Dictionary:
+    if band.is_empty():
+        return {}
+    var keys := _band_labor.build_queue_keys(band)
+    var head := ""
+    var entries: Variant = band.get("build_queue", [])
+    if entries is Array and not (entries as Array).is_empty() \
+            and (entries as Array)[0] is Dictionary:
+        var first: Dictionary = (entries as Array)[0]
+        # **THE SUBJECT, NOT THE QUEUE ROW'S FACE.** `Tame Wild Aurochs` reads as a fragment of another
+        # panel quoted mid-sentence; `behind Wild Aurochs` reads as a sentence. One resolution, in the
+        # queue block's own vocabulary, so the two surfaces cannot name one entry two ways.
+        head = HudWorkVocab.build_queue_subject(
+            String(first.get("kind", "")).strip_edges().to_lower(),
+            int(first.get("target_x", -1)), int(first.get("target_y", -1)),
+            _herd_label_for_id(String(first.get("fauna_id", ""))))
+    return {
+        HudRouteVocab.ROAD_LADDER_QUEUE_AHEAD_KEY: keys.size(),
+        HudRouteVocab.ROAD_LADDER_QUEUE_HEAD_KEY: head,
+    }
 
 ## ⛔ **WHICH BAND THE CARD OPENS ON, AND THE DEFAULT IS THE ONE A PLAYER WOULD HAVE PICKED ANYWAY.**
 ##

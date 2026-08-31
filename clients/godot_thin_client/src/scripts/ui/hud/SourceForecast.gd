@@ -131,6 +131,12 @@ const DOMESTICATION_COMPLETE := 1.0
 # shape test on a wire key would misread a source whose snapshot omitted it.
 const SOURCE_KIND_HERD := "herd"
 const SOURCE_KIND_FORAGE := "forage"
+## ⛔ **THE THIRD BRANCH'S SOURCE KIND, AND `source_kind_for_labor` DELIBERATELY DOES NOT ANSWER IT.**
+## That function is a two-way alias over the two FOOD WEBS — its `else` is `SOURCE_KIND_HERD`, so a
+## road handed to it comes back an animal and every keyed readout after it names the wrong pool. A
+## road has no labor row to be routed FROM, so there is nothing for that alias to widen; what needs
+## the kind is the queue row's price clause, which resolves it from the entry's own `roadwork` kind.
+const SOURCE_KIND_ROUTE := "route"
 
 ## THE ONE MAPPING between the two kind vocabularies — an ASSIGNMENT's `kind` (`LABOR_KIND_*`, the
 ## sim's own word) and a FORECAST's (`SOURCE_KIND_*`). They coincide on the plant web (`"forage"` both
@@ -995,6 +1001,13 @@ const FORECAST_BUILD_DESTINATION_CAPACITY_KEY := "build_destination_capacity"
 # readers are two GDScript surfaces: a typo in a `get` here is a silent zero, which on the work side
 # would price a whole branch as free.
 const BUILD_LEG_RUNG_KEY := "rung"
+## ⛔ **THE LEG'S OWN NAME, WHERE THE VERB CANNOT PRODUCE ONE.** The two food webs derive a leg's word
+## from its improvement verb (`DetailFormat.rung_badge_word`), which is a hard-coded four and answers
+## `""` for `grade` / `pave` — so a road's leg would render as a bare price with nothing saying which
+## rung it buys. The ROUTE branch's rung names are published per world, so its producer carries the
+## name and the renderer prefers it. `""` on every leg either food web builds, which takes the derived
+## word exactly as before.
+const BUILD_LEG_NAME_KEY := "name"
 const BUILD_LEG_WORK_KEY := "work_remaining"
 const BUILD_LEG_TURNS_KEY := "turns_remaining"
 # …and the fourth key `build_legs` ADDS: the wire's rung crossed to the improvement verb a command

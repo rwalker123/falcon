@@ -285,10 +285,14 @@ const STATE_UNORDERED := "unordered"
 ## `builders` is the ACTING BAND'S OWN POOL and `kit_gear` what that pool carries, which is what makes
 ## the turns estimate a fact about the band the picker names rather than about the road — a different
 ## band with a different pool is a different answer, so both move when the picker does.
+##
+## `queue` is that same band's BUILD QUEUE, as `{ahead, head}` — how many entries a press would land
+## behind and what the first of them is called. It moves with the picker for the identical reason: a
+## different band is a different line to stand in.
 static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: Dictionary,
         labels: Dictionary, band: Dictionary,
         keeper_label: String = "", builders: int = SourceForecast.BUILD_CREW_NONE,
-        kit_gear: Dictionary = {}) -> Array[Dictionary]:
+        kit_gear: Dictionary = {}, queue: Dictionary = {}) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
     var gates := RungGates.route_gates(road, ladder, knowledge, labels, band, keeper_label)
     var standing_order := HudRouteVocab.ladder_order_of(ladder, HudRouteVocab.rung_of(road))
@@ -366,11 +370,24 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
                 else HudWorkVocab.RUNG_TRACK_COST_FORMAT % [
                     DetailFormat.format_work_units(HudRouteVocab.catalog_work_cost(entry)),
                     turns_clause]
+            # ⛔ **WHERE THE PRESS LANDS, STATED AT THE MOMENT OF THE DECISION.** The press DECLARES —
+            # it appends to the acting band's build queue, and the head of that queue takes every
+            # builder — so a card that stated only a price and a duration promised work starting on
+            # the spot. It also says what the duration is measured from, which is why the estimate is
+            # kept rather than cut: the number is right and it is not a completion date.
+            var asides: Array[Dictionary] = []
+            var placement := _route_queue_aside(queue)
+            if placement != "":
+                asides.append({
+                    RUNG_ASIDE_TEXT_KEY: placement,
+                    RUNG_ASIDE_WARN_KEY: false,
+                })
             if builders <= SourceForecast.BUILD_CREW_NONE:
-                row[ROW_BUILD_ASIDES_KEY] = [{
+                asides.append({
                     RUNG_ASIDE_TEXT_KEY: HudRouteVocab.ROAD_LADDER_NO_BUILDERS_ASIDE,
                     RUNG_ASIDE_WARN_KEY: true,
-                }] as Array[Dictionary]
+                })
+            row[ROW_BUILD_ASIDES_KEY] = asides
             rows.append(row)
             continue
         # ⛔ **ONE REFUSAL ON THE ROW AND ALL OF THEM IN THE HOVER**, and never the word `locked`
@@ -399,6 +416,30 @@ static func _route_meter_clause(meter: float) -> String:
         return ""
     return HudRouteVocab.ROAD_LADDER_METER_FORMAT % int(
         floor(meter * HudRouteVocab.ROAD_PERCENT_SCALE))
+
+## **WHAT A PRESS ON THIS ROW WOULD JOIN, AS ONE ASIDE.** `""` for a caller that states no queue at
+## all — a harness, or a card opened with no band on the roster — which draws no line rather than
+## claiming the queue is empty. **An empty queue and an unknown one are different facts**, and the
+## first of them is the reassuring one, so it is never the fall-back.
+static func _route_queue_aside(queue: Dictionary) -> String:
+    if not queue.has(HudRouteVocab.ROAD_LADDER_QUEUE_AHEAD_KEY):
+        return ""
+    var ahead := int(queue[HudRouteVocab.ROAD_LADDER_QUEUE_AHEAD_KEY])
+    if ahead <= QUEUE_NOTHING_AHEAD:
+        return HudRouteVocab.ROAD_LADDER_QUEUE_EMPTY_ASIDE
+    # **THE HEAD IS NAMED AND THE REST ARE COUNTED**, which is the shape of the decision: the head is
+    # what this road is waiting behind, and the count is what a reorder is measured against.
+    var more := ""
+    if ahead > QUEUE_HEAD_ALONE:
+        more = HudRouteVocab.ROAD_LADDER_QUEUE_MORE_FORMAT % (ahead - QUEUE_HEAD_ALONE)
+    return HudRouteVocab.ROAD_LADDER_QUEUE_BEHIND_FORMAT % [
+        String(queue.get(HudRouteVocab.ROAD_LADDER_QUEUE_HEAD_KEY, "")), more,
+        HudRouteVocab.ROAD_LADDER_QUEUE_ESTIMATE_NOTE]
+
+## The two counts the aside above forks on, named because each is a MEANING: nothing is in the way, and
+## the only thing in the way is the head this sentence has just named.
+const QUEUE_NOTHING_AHEAD := 0
+const QUEUE_HEAD_ALONE := 1
 
 ## **THE METER READING FOR A ROW WITH NOTHING BANKED AGAINST IT** — every row but the one directly
 ## above the standing rung. Named because it is a MEANING (this rung has not been started) rather

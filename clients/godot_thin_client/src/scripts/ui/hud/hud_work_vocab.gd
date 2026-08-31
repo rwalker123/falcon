@@ -1556,6 +1556,12 @@ static func under_kept_tooltip_for_source(source_kind: String,
 ## surfaces that need the bare word (the compose sheet's standing price, the blocked-queue remedy)
 ## read the same table rather than spelling the pair a third time.
 static func keeping_role_name(source_kind: String) -> String:
+    # ⛔ **THE ROUTE BRANCH PAYS ITS KEEPING OUT OF `roadwork`, NOT OUT OF EITHER FOOD WEB'S POOL.**
+    # Without this arm a road falls to the `else` and the price clause names `Agriculture`, sending the
+    # player to a card that cannot move the number — the exact failure this table exists to stop one
+    # web over.
+    if source_kind == SourceForecast.SOURCE_KIND_ROUTE:
+        return ROLE_NAME_ROADWORK
     return ROLE_NAME_HUSBANDRY if source_kind == SourceForecast.SOURCE_KIND_HERD \
         else ROLE_NAME_AGRICULTURE
 
@@ -1991,6 +1997,26 @@ const BUILD_QUEUE_PLANT_FACE_FORMAT := "%s (%d, %d)"
 
 ## …and its animal twin, naming the herd rather than a tile.
 const BUILD_QUEUE_ANIMAL_FACE_FORMAT := "%s %s"
+
+## **WHAT A QUEUE ENTRY IS ABOUT, WITHOUT ITS VERB** — the herd, the tile, the road — for a surface
+## that already has a sentence around it and wants only the subject. The road ladder's placement aside
+## is its one caller: *"joins this band's build queue behind Wild Aurochs"* reads as a sentence where
+## the row FACE's `Tame Wild Aurochs` would read as a fragment of the queue block quoted mid-line.
+##
+## **THE THREE ARMS ARE THE WIRE'S THREE `BuildSource` KINDS**, so an entry can always be named: a
+## herd by this client's one herd-naming rule, a patch by its tile, and a road by its tile with the
+## noun that tells it from the patch on the same hex.
+const BUILD_QUEUE_TILE_SUBJECT_FORMAT := "(%d, %d)"
+const BUILD_QUEUE_ROAD_SUBJECT_FORMAT := "the road at (%d, %d)"
+
+## `herd_label` is resolved by the caller through `HudBandLaborState`/`HudFormat`'s one herd-naming
+## rule; `""` falls back to the tile, which is what a herd this client cannot name still has.
+static func build_queue_subject(kind: String, x: int, y: int, herd_label: String) -> String:
+    if kind == SourceForecast.LABOR_KIND_HUNT and herd_label != "":
+        return herd_label
+    if kind == HudConst.LABOR_KIND_ROADWORK:
+        return BUILD_QUEUE_ROAD_SUBJECT_FORMAT % [x, y]
+    return BUILD_QUEUE_TILE_SUBJECT_FORMAT % [x, y]
 
 ## The truncation row. **A truncated list with nothing under it reads as the whole list**, which is
 ## the faction page's standing rule for a capped list, applied to the band's own.

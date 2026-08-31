@@ -390,13 +390,22 @@ func _tile_terrain_lines(tile_info: Dictionary,
     if _topbar != null:
         build_rate = HudRouteVocab.branch_build_work_per_worker_turn(
             HudRouteVocab.route_ladder(_topbar.route_rungs()))
+    # ⛔ **AND WHICH ROADS THIS FACTION HAS QUEUED, for the identical reason.** A road declared but
+    # not yet started banks nothing for as long as it waits behind the head of its band's queue, and
+    # the rung row read as a bare `Trail` throughout — indistinguishable from ground nobody has
+    # ordered anything on. The join is a set of TILES resolved here and handed over; the vocab leaf
+    # holds no band roster and no build queue, exactly as it holds no band NAMES.
+    var queued_tiles: Dictionary = {}
+    if _band_labor != null:
+        queued_tiles = _band_labor.road_queue_tiles()
     for road in Array(tile_info.get("roads", [])):
         if road is Dictionary:
             var keeper_label := ""
             if _band_labor != null and HudRouteVocab.has_keeper(road):
                 keeper_label = _band_labor.band_label_for_id(
                     HudRouteVocab.keeper_band_id_of(road))
-            lines.append_array(HudRouteVocab.road_lines(road, keeper_label, ctx, build_rate))
+            lines.append_array(HudRouteVocab.road_lines(road, keeper_label, ctx, build_rate,
+                queued_tiles))
     # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
     #
     # A REMEMBERED TILE KEEPS BOTH WEBS' CAPACITIES AND LOSES BOTH THEIR STOCKS (issue #462). The rule
