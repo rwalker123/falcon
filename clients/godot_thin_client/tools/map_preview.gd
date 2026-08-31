@@ -3226,14 +3226,17 @@ const FAUNA_SPRITE_ROSTER := [
 	["game_reindeer_01", "Wild Reindeer"],
 	["game_gazelle_01", "Desert Gazelle"],
 	["game_rabbit_01", "Rabbit Warren"],
+	["game_snow_hare_01", "Snow Hare Warren"],
 	["game_boar_01", "Wild Boar"],
 	["game_mammoth_01", "Thunder Mammoth"],
 	["game_aurochs_01", "Aurochs"],
 	["game_cattle_01", "Cattle"],
 	["game_goat_01", "Wild Goat"],
+	["game_ibex_01", "Alpine Ibex"],
 	["game_horse_01", "Wild Horse"],
 	["game_sheep_01", "Sheep"],
 	["game_fowl_01", "Jungle Fowl"],
+	["game_grouse_01", "Forest Grouse"],
 	["game_wolf_01", "Grey Wolf Pack"],
 	["game_seal_01", "Grey Seals"],
 	["game_catfish_01", "Silt Catfish"],
@@ -3248,6 +3251,11 @@ const FAUNA_SPRITE_ROSTER := [
 ## claim belongs to `cargo xtask fauna-icon-guard`**, which checks this side against the sim's
 ## `fauna_config.json`; what this frame is for is JUDGING art that exists — swapped, clipped or
 ## fringed sprites, and species that read as one another — which no guard can do.
+##
+## ORDER IS PART OF THE FRAME. `snow_hare`, `ibex` and `grouse` each sit IMMEDIATELY AFTER the
+## sprite they used to share (rabbit, goat, fowl), because "do these two read as one animal?"
+## is the only question their art was drawn to answer and it is answered by standing them next
+## to each other. Keep a new species beside its nearest look-alike rather than appending it.
 ## Rows of eight — two full ones and a short third. It was one row of eleven until the roster outgrew `GRID_W` (16 columns, and a
 ## single spaced row of 16 would run off the map), and `seal` + `catfish` were simply pushed OFF a
 ## frame whose whole job is to put every sprite this list names in one picture — so the row count is
