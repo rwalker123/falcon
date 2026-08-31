@@ -99,4 +99,28 @@ pub struct RouteState {
     /// See [`Self::build_material_demand`].
     #[serde(default)]
     pub build_material_supplied: f32,
+    /// **HOW LONG UNTIL THIS ROAD ARRIVES** — the **chained** countdown: everything above this entry
+    /// in its band's queue, plus this entry's own span.
+    ///
+    /// ⛔ **THE SAME QUANTITY WITH THE SAME SENTINELS a patch and a herd publish**, through the same
+    /// seam — there is deliberately no route dialect, so a client renders a road through the
+    /// identical fork. [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`), [`crate::BUILD_METER_HOLDS`]
+    /// (`-2`), [`crate::BUILD_METER_ROTS`] (`-3`), [`crate::BUILD_QUEUE_BLOCKED`] (`-4`) and
+    /// [`crate::BUILD_NOT_YET_ESTIMATED`] (`-5`); `>= 0` is a real count.
+    ///
+    /// ⛔ **ONLY A QUEUED ROAD HAS A REAL NUMBER.** A rung nobody has ordered has no quote, so it
+    /// reads `-1` — never `0`, which would render as a finished build.
+    ///
+    /// **It is the fix for a road reading `Queued 97%` for 147 turns**: the sim published nothing
+    /// here, so the client hardcoded the `-5` sentinel on every road queue model. Appended
+    /// (append-only).
+    #[serde(default = "no_build_turns_estimate")]
+    pub build_turns_remaining: i32,
+}
+
+/// The serde default of [`RouteState::build_turns_remaining`] — the *no estimate* sentinel, so a
+/// road decoded from a document that predates the field reads *"the sim has no number"* rather than
+/// the `0` a derived default would give, which renders as a finished build.
+fn no_build_turns_estimate() -> i32 {
+    crate::NO_BUILD_TURNS_ESTIMATE
 }

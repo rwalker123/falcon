@@ -11,18 +11,21 @@
 //!
 //! ⛔ **THIS SECTION HAS CONSUMERS NOW, AND A CHANGE TO THE ROW SHAPE HAS TO VISIT THEM.** It read
 //! *"no Godot script reads this section yet"* for one slice, which was true when the per-tile rebuild
-//! landed and is a licence to change the row freely — exactly the wrong thing to leave behind. Four
+//! landed and is a licence to change the row freely — exactly the wrong thing to leave behind. Five
 //! readers, all joining on `tile_x`/`tile_y`:
 //!
 //!   * `MapView._ingest_road_network` -> `MapView.road_network` / `road_tile_lookup`, the world-state
-//!     cache the other three read through;
+//!     cache the other four read through;
 //!   * `AnnotationRenderer.draw_road_network`, which stamps ONE HEX per row -- **never a polyline**,
 //!     there being no stored path to draw;
 //!   * `SubjectDrawerController._tile_terrain_lines`, the tile card's road block, via
 //!     `MapView._tile_info_at`'s `roads` key;
 //!   * `DrawerComposeController`'s road ladder (`RungLadder.route_track` / `RungGates.route_gates`),
 //!     which reads `rung`, `build_fraction`, `keeper_remoteness` and the `has_keeper` /
-//!     `keeper_band_id` pair to decide what a player may order on the tile.
+//!     `keeper_band_id` pair to decide what a player may order on the tile;
+//!   * `BandPanelController._road_queue_models` -> the BUILD QUEUE's road rows, via
+//!     `HudBandLaborState.roads()`, joining each `roadwork` queue entry's `target_x`/`target_y` to a
+//!     row here for its rung, its meter and its `build_turns_remaining`.
 //!
 //! Already fog-filtered SIM-SIDE, and the gate is `Discovered` rather than the herd list's `Active`
 //! -- a road does not wander off, so remembering one is remembering something true. A road on ground
@@ -143,6 +146,24 @@ pub(crate) fn routes_to_array(list: Vector<'_, ForwardsUOffset<fb::RouteState<'_
             "build_material_supplied",
             f64::from(route.buildMaterialSupplied()),
         );
+        // **HOW LONG UNTIL THIS ROAD ARRIVES — the CHAINED countdown, and the SAME QUANTITY WITH THE
+        // SAME SENTINELS a patch and a herd publish.** Everything above this entry in its band's
+        // queue, plus this entry's own span, through `published_build_countdown`: `-1` no estimate,
+        // `-2` holds, `-3` rots, `-4` blocked, `-5` queued and not yet estimated. There is
+        // deliberately no route dialect, so `DetailFormat.build_sentinel_value` renders a road
+        // through the identical fork with no branch of its own.
+        //
+        // ⛔ **ONLY A QUEUED ROAD HAS A REAL NUMBER, AND AN UNORDERED RUNG READS `-1` RATHER THAN
+        // `0`** — a `0` would render as a finished build. A client pricing an UNORDERED rung against
+        // a hypothetical crew (`RungLadder._route_turns`) is doing its own arithmetic and is right
+        // to; this field is the job actually in front of the band, and the two must not be collapsed.
+        //
+        // **IT IS THE FIX FOR A ROAD READING `Queued 97%` FOR 147 TURNS.** The sim published nothing
+        // here, so the client hardcoded the `-5` "not yet estimated" sentinel on every road queue
+        // model and a road read `Queued` on turn 1 and turn 147 alike. The claim behind that hardcode
+        // — "a road has no source row for the sim to stamp an estimate on" — was never true of this
+        // table, which is keyed by tile exactly as a patch row is.
+        let _ = dict.insert("build_turns_remaining", route.buildTurnsRemaining() as i64);
         array.push(&dict.to_variant());
     }
     array

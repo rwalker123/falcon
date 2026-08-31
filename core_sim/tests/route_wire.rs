@@ -49,6 +49,7 @@ struct PublishedRoad {
     build_blocked_reason: String,
     build_material_demand: f32,
     build_material_supplied: f32,
+    build_turns_remaining: i32,
 }
 
 /// The band's `roadwork*` trio, read off the encoded envelope.
@@ -116,6 +117,7 @@ fn published_roads(app: &App) -> Vec<PublishedRoad> {
                 .to_string(),
             build_material_demand: row.buildMaterialDemand(),
             build_material_supplied: row.buildMaterialSupplied(),
+            build_turns_remaining: row.buildTurnsRemaining(),
         })
         .collect()
 }
@@ -367,6 +369,69 @@ fn stage_a_paving(app: &mut App, band: Entity, tile: UVec2, builders: u32, stone
             &characteristics,
         );
     }
+}
+
+/// ⛔ **A ROAD UNDER WAY PUBLISHES A REAL COUNTDOWN, AND IT MOVES.**
+///
+/// The sim stamped nothing here, so every client road queue model hardcoded
+/// `BUILD_NOT_YET_ESTIMATED` — *the sim has not looked at this entry yet* — and a road read
+/// **`Queued 97%` on turn 147**. The justification was the claim this branch has now had corrected
+/// three times: *a road has no source row for the sim to stamp one on*. `RouteState` is that row.
+///
+/// **Three arms, and the third is the one the defect would survive.**
+/// 1. A queued road under way publishes a **real count**, not `-5` and not `-1`.
+/// 2. ⛔ **THE COUNT MOVES AS THE METER CLIMBS.** A field pinned at any *single* value — a constant
+///    sentinel, or a frozen number — satisfies arm 1 on the turn it is read. That is exactly the
+///    shape of the shipped bug, so *"it changed"* is the assertion that actually distinguishes a
+///    live figure from a stuck one.
+/// 3. A road **nobody has queued** publishes the honest *no estimate*, never a `0` that would render
+///    as a finished build. Only a queued road has a quote; a client sizing an unbuilt rung against a
+///    hypothetical crew is doing its own arithmetic and is right to.
+#[test]
+fn a_queued_road_publishes_a_real_countdown_that_moves_as_it_builds() {
+    /// A crew big enough that a turn's accrual is a visible share of the paved rung.
+    const BUILDERS: u32 = 4;
+    /// Far more stone than the whole pile, so the store is never what stops it.
+    const PLENTY: f32 = 1_000.0;
+
+    let mut app = spawn_world();
+    let (band, faction, id, camp) = first_band(&mut app);
+    // A second road the same band can see but has NOT queued — arm 3.
+    let unqueued = tile_east_of(&app, camp, 1);
+    seat_a_dirt_road(&mut app, camp, (faction, id));
+    seat_a_dirt_road(&mut app, unqueued, (faction, id));
+    stage_a_paving(&mut app, band, camp, BUILDERS, PLENTY);
+    app.update();
+
+    let first = published_road(&app, camp).build_turns_remaining;
+    assert!(
+        first >= 0,
+        "a queued road under way must publish a REAL COUNT, not a sentinel: got {first}, where -5 \
+         is `the sim has not looked` (the value the client hardcoded for every road, which is why \
+         one read `Queued` for 147 turns) and -1 is `no estimate`"
+    );
+
+    // **The meter climbs, so the countdown must come down.** One more turn of the same crew.
+    app.update();
+    let second = published_road(&app, camp).build_turns_remaining;
+    assert!(
+        second >= 0,
+        "and it is still a real count a turn later, not a sentinel: got {second}"
+    );
+    assert!(
+        second < first,
+        "⛔ THE COUNTDOWN MUST MOVE: {second} against {first}. A figure that never changes is what \
+         the hardcoded sentinel was - arm 1 passes on it, and the player watches `Queued` for a \
+         hundred turns"
+    );
+
+    // **Arm 3** — a road nobody ordered has no quote, and says so.
+    assert_eq!(
+        published_road(&app, unqueued).build_turns_remaining,
+        sim_schema::NO_BUILD_TURNS_ESTIMATE,
+        "a road no band has queued publishes NO ESTIMATE - never 0, which renders as a build that \
+         has finished"
+    );
 }
 
 /// ⛔ **A ROAD IS A SOURCE ROW, AND ITS ROW SAYS WHY THE POOL IS STUCK ON IT.**

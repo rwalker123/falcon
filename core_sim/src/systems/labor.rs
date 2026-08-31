@@ -6060,7 +6060,7 @@ pub fn advance_labor_allocation(
             &builders_gear,
             &mut forage_registry,
             &mut registry,
-            &roads,
+            &mut roads,
             &mut patch_build_claims,
             &mut herd_build_claims,
         );
@@ -6237,9 +6237,9 @@ fn publish_build_chain(
     builders_gear: &BuildersGear,
     forage_registry: &mut ForageRegistry,
     herds: &mut HerdRegistry,
-    // **Read only to judge the invariant below** — a road stamps nothing here; `RouteState` carries
-    // its own build state and the road arm writes it.
-    roads: &crate::routes::RoadRegistry,
+    // **Written, not merely read.** A road is a source row and this pass stamps its countdown, the
+    // one figure on it that only the queue can answer for.
+    roads: &mut crate::routes::RoadRegistry,
     patch_claims: &mut BuildEstimateClaims<UVec2>,
     herd_claims: &mut BuildEstimateClaims<String>,
 ) {
@@ -6367,6 +6367,7 @@ fn publish_build_chain(
             builders_gear,
             forage_registry,
             herds,
+            roads,
             patch_claims,
             herd_claims,
         );
@@ -6547,6 +6548,7 @@ fn publish_entry(
     builders_gear: &BuildersGear,
     forage_registry: &mut ForageRegistry,
     herds: &mut HerdRegistry,
+    roads: &mut crate::routes::RoadRegistry,
     patch_claims: &mut BuildEstimateClaims<UVec2>,
     herd_claims: &mut BuildEstimateClaims<String>,
 ) {
@@ -6596,18 +6598,33 @@ fn publish_entry(
                 );
             }
         }
-        // ⛔ **A ROAD PUBLISHES NO *CHAINED COUNTDOWN*, AND IT IS NOT FOR WANT OF A ROW.**
-        // `RouteState` **is** the road's source row — keyed by tile exactly as a patch row is — and it
-        // carries the tile's own build state (`buildBlockedReason` and the material pair), stamped by
-        // the road build arm. What it does not carry is `buildTurnsRemaining` and its four siblings,
-        // which are per-patch and per-herd *scratch* written by this pass; a road's countdown is
-        // client-side work this slice leaves. The arm is stated rather than defaulted so a future row
-        // cannot be forgotten here.
+        // ⛔ **A ROAD IS A SOURCE ROW AND IT PUBLISHES A CHAINED COUNTDOWN LIKE ANY OTHER.**
+        // `RouteState` is that row — keyed by tile exactly as a patch row is — and this is the one
+        // figure on it that **only the queue can answer for**: an entry is dated as everything above
+        // it plus its own span, which no per-tile seam can see. The rest of the road's build state
+        // (`buildBlockedReason`, the material pair) is stamped by the road build arm, where the quote
+        // is struck.
         //
-        // **The road's quote IS recorded** ­— see the road build arm — which is the half that mattered:
-        // without one, a staffed road head published `Blocked` with no cause and `carried` handed that
-        // same answer to every entry behind it.
-        BuildSource::Road(_) => {}
+        // **It shipped stamping nothing, and the client filled the silence with a constant**: every
+        // road queue model hardcoded the *"not yet estimated"* sentinel, so a road read `Queued` on
+        // turn 1 and on turn 147 alike. The claim behind it — *a road has no source row for the sim
+        // to stamp one on* — was never true of this table.
+        //
+        // ⛔ **NO CLAIMS OBJECT, AND THAT IS STRUCTURAL RATHER THAN AN OMISSION.** The patch and herd
+        // arms go through [`BuildEstimateClaims`] because several bands can work one source and the
+        // **sooner** answer must win. A road cannot be contested: there is one keeper per tile, and
+        // each band's own `prune_build_queue` drops the entry for a road it does not keep **before**
+        // that band's queue is walked — so by the time this pass runs, at most one band holds an
+        // entry for any tile. A claims set would be a rule with nothing to arbitrate.
+        BuildSource::Road(tile) => {
+            if let Some(road) = roads.road_mut(*tile) {
+                road.build_turns_remaining = answer.turns;
+                // **The place in the line rides with the date**, the same pairing the two food webs
+                // publish: it is what lets the countdown tell *"queued since the last pass"* from
+                // *"looked at and stalled"*, which sit at the same `0%`.
+                road.build_queue_position = answer.position;
+            }
+        }
     }
 }
 

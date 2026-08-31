@@ -480,15 +480,22 @@ static func default_kit_for(job: String, source: Dictionary, job_default_id: Str
 ## from surviving into a Red Deer's sheet as a greyed row the picker is nonetheless opened on.
 ##
 ## **`kit_offer` is asked at the FRESH tier, so this list never reshuffles as gear wears** — see there.
+## ⛔ **THE BRANCH TRAVELS WITH ITS RUNG HERE TOO, and it did not.** The filter below is
+## `kit_offer`'s, which reads the rung — so a caller that named a route BRANCH and no rung had both
+## road kits refused by the third arm, the `selectable` list collapse back to the unfiltered `offered`,
+## and the "which kits may this pool hold" question silently answered as though the branch had never
+## been passed. It is the same omission that put `No kit` on the build queue header, one function
+## along; the two are fixed together because `_role_kit_id` calls both in one breath.
 static func resolve_selection(kits: Array, job: String, default_id: String,
 		composed_id: String, quarry: Dictionary = {}, prefix: String = "",
-		build_branch: String = BUILD_BRANCH_NONE) -> String:
+		build_branch: String = BUILD_BRANCH_NONE,
+		build_rung: String = BUILD_RUNG_ANY) -> String:
 	var offered := kits_for_job(kits, job)
 	if offered.is_empty():
 		return NO_KIT_ID
 	var selectable: Array = []
 	for kit_variant in offered:
-		if kit_is_offered(kits, kit_variant, job, quarry, prefix, build_branch):
+		if kit_is_offered(kits, kit_variant, job, quarry, prefix, build_branch, build_rung):
 			selectable.append(kit_variant)
 	# A roster whose every hunt kit is withheld cannot happen while it carries a null kit (one is
 	# always offered), but a config is free to drop that entry — and a picker with no entries at all
@@ -980,8 +987,18 @@ static func kit_serves_branch(kits: Array, kit: Dictionary, branch: String) -> b
 	return kit_uses(kits, kit, KIT_BUILD_WORK_KEY) \
 		and String(kit.get(KIT_BUILD_BRANCH_KEY, BUILD_BRANCH_NONE)) == branch
 
+## ⛔ **`rung` HAS NO DEFAULT, AND THAT IS THE GUARD RATHER THAN AN INCONVENIENCE.** It carried
+## `BUILD_RUNG_ANY` as a default and a caller that simply forgot the argument got the THIRD ARM —
+## `false` for every rung-bound tool — with no error and no warning anywhere. That shipped twice: the
+## build queue HEADER read `1 builders · No kit` over an entry whose own dropdown named the
+## Roadbuilding kit the sim was demonstrably using. A missing argument is a GDScript parse error, so a
+## caller that cannot name a rung now has to SAY so by passing `BUILD_RUNG_ANY` — which is the
+## sentence the third arm answers, stated on purpose instead of arrived at by omission.
+##
+## `work_kit_for_branch` and `build_kit_for_branch` are required for the same reason, they being the
+## two lookups whose answer this predicate decides.
 static func kit_serves_build(kits: Array, kit: Dictionary, branch: String,
-		rung: String = BUILD_RUNG_ANY) -> bool:
+		rung: String) -> bool:
 	if branch == BUILD_BRANCH_NONE:
 		return false
 	if not kit_uses(kits, kit, KIT_BUILD_WORK_KEY):
@@ -1257,8 +1274,7 @@ static func builders_kit_for(kits: Array, row_kit_id: String, branch: String,
 ## **The sim's `EquipmentConfig::build_kit_for_branch`, asked of the published roster** — same order,
 ## same fresh-tier test, and the same reason it is a lookup rather than a table: ⛔ no `web → kit id`
 ## match is spelled anywhere, so a third build tool is a roster edit on both halves.
-static func build_kit_for_branch(kits: Array, branch: String,
-		rung: String = BUILD_RUNG_ANY) -> String:
+static func build_kit_for_branch(kits: Array, branch: String, rung: String) -> String:
 	return work_kit_for_branch(kits, JOB_BUILDERS, branch, rung)
 
 ## **THE ROSTER'S ANSWER FOR ONE JOB AND ONE WEB** — the earliest entry offering `job`, in roster
@@ -1266,7 +1282,7 @@ static func build_kit_for_branch(kits: Array, branch: String,
 ## which is the ONE lookup both its derivations are: the builders' kit and the KEEPING pool's are the
 ## same question asked of two job lists, so a second walk here could only drift from this one.
 static func work_kit_for_branch(kits: Array, job: String, branch: String,
-		rung: String = BUILD_RUNG_ANY) -> String:
+		rung: String) -> String:
 	if branch == BUILD_BRANCH_NONE:
 		return NO_KIT_ID
 	for kit_variant in kits_for_job(kits, job):
@@ -1313,9 +1329,15 @@ const KEEPING_JOB_BUILD_BRANCHES := {
 ##
 ## `NO_KIT_ID` for a role that keeps no web, and for a roster carrying no tool that serves it — a real
 ## answer meaning the pool works bare-handed.
+## ⛔ **AND IT ASKS `BUILD_RUNG_ANY` OUT LOUD, which the table two blocks up is the reason for.** The
+## two branches this can name are the PLANT and ANIMAL webs, whose kits bind no rung, so every one of
+## their tools serves every rung of its branch and the unqualified ask is the right one. It is stated
+## rather than defaulted because `work_kit_for_branch` takes no default — a lookup that cannot name a
+## rung has to say so, so that the day a ROUTE row joins that table the omission is a decision on the
+## page instead of a `NO_KIT_ID` nobody can see.
 static func keeping_kit_for(kits: Array, role_kind: String) -> String:
 	return work_kit_for_branch(kits, role_kind,
-		String(KEEPING_JOB_BUILD_BRANCHES.get(role_kind, BUILD_BRANCH_NONE)))
+		String(KEEPING_JOB_BUILD_BRANCHES.get(role_kind, BUILD_BRANCH_NONE)), BUILD_RUNG_ANY)
 
 ## **THE ROSTER'S BARE ENTRY FOR ONE JOB — the kit that carries nothing.** `kit_supplies_any` is the
 ## derived reading of "the null kit" (`item_ids` empty), which is why nothing here spells the id

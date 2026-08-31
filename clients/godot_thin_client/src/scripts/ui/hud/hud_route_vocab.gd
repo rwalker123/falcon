@@ -337,6 +337,24 @@ static func queued_progress(road: Dictionary) -> float:
 	var meter := build_fraction_of(road)
 	return ROAD_METER_UNSTARTED if meter >= ROAD_METER_COMPLETE else meter
 
+## ⛔ **HOW LONG UNTIL THIS ROAD ARRIVES — the SIM's chained countdown, never the client's estimate.**
+##
+## `RouteState.buildTurnsRemaining` carries the identical five sentinels a patch and a herd publish,
+## through the identical `published_build_countdown` seam: `SourceForecast.BUILD_TURNS_NO_ESTIMATE`
+## (`-1`), `BUILD_TURNS_HOLDS` (`-2`), `BUILD_TURNS_ROTS` (`-3`), `BUILD_TURNS_QUEUE_BLOCKED` (`-4`)
+## and `BUILD_TURNS_NOT_YET_ESTIMATED` (`-5`); `>= 0` is a real count of turns. There is deliberately
+## no route dialect, so `DetailFormat.build_sentinel_value` renders a road with no branch of its own.
+##
+## **THE DEFAULT IS THE `-1` SENTINEL AND NOT `0`.** A `0` reads as a build that finishes this turn,
+## so a road the decoder somehow handed no field would announce a finished job.
+##
+## ⛔ **IT IS NOT `RungLadder._route_turns`, AND THE TWO MUST NOT BE COLLAPSED.** That one prices an
+## UNORDERED rung against a hypothetical crew, for the ladder card, and it is right to; this is the
+## job actually in front of the band. A rung nobody has ordered reads `-1` here for exactly that
+## reason — the sim quotes nothing for a job nobody declared.
+static func build_turns_remaining_of(road: Dictionary) -> int:
+	return int(road.get("build_turns_remaining", SourceForecast.BUILD_TURNS_NO_ESTIMATE))
+
 ## **THE TILE IS THE ROW'S IDENTITY** — it replaced the retired `RouteId`, because with one record per
 ## tile there is nothing left for a separate id to name. Both consumers join on it: the map stamps a
 ## hex here, and the tile card cross-refs the hex under the cursor.

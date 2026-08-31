@@ -52,6 +52,10 @@ pub(crate) fn route_states(
     viewer: FactionId,
     fog_enabled: bool,
     ladder: &LadderConfig,
+    // **Which tiles some band has QUEUED** — the `queued_live` term of the countdown below, read off
+    // the bands' own queues because the row's scratch lags a command by a whole turn and the state
+    // it separates exists precisely in that frame.
+    build_kits: &crate::snapshot::subsistence::BuildKitIds,
     terrain_at: impl Fn(UVec2) -> Option<sim_runtime::TerrainType>,
 ) -> Vec<sim_runtime::RouteState> {
     registry
@@ -101,6 +105,20 @@ pub(crate) fn route_states(
                 build_blocked_reason: road.build_blocked_reason.key().to_string(),
                 build_material_demand: road.build_material_demanded,
                 build_material_supplied: road.build_material_supplied,
+                // ⛔ **THE COUNTDOWN, THROUGH THE SEAM BOTH FOOD WEBS GO THROUGH** — so a road
+                // cannot publish a state as a different number than a patch does. The road shipped
+                // publishing nothing here and the client filled the silence with a hardcoded *"not
+                // yet estimated"*, which is why a road under way read `Queued 97%` for 147 turns.
+                //
+                // **Only a QUEUED road has a real number.** A rung nobody ordered has no quote, so
+                // this is the honest *no estimate* rather than a `0` that would render as a
+                // finished build; a client estimating an unbuilt rung against a hypothetical crew
+                // is doing its own arithmetic and is right to.
+                build_turns_remaining: crate::snapshot::subsistence::published_build_countdown(
+                    road.build_turns_remaining,
+                    road.build_queue_position,
+                    build_kits.road_is_queued(tile),
+                ),
             }
         })
         .collect()

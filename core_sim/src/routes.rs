@@ -236,6 +236,28 @@ pub struct Road {
     pub build_material_demanded: f32,
     /// See [`Self::build_material_demanded`].
     pub build_material_supplied: f32,
+    /// **HOW MANY TURNS UNTIL THIS ROAD REACHES WHERE ITS ENTRY IS SENDING IT** — the chained
+    /// countdown, and the exact twin of `ForagePatch::build_turns_remaining` /
+    /// `Herd::build_turns_remaining`.
+    ///
+    /// **`None` is the wire's `NO_BUILD_TURNS_ESTIMATE`**, and the three
+    /// [`crate::intensification::BuildTurns`] variants map through the one seam both food webs go
+    /// through, so a road cannot publish a state as a different number than a patch does.
+    ///
+    /// ⛔ **IT CAN ONLY BE STAMPED BY THE CHAIN PASS**, because it is a fact about the **queue**: an
+    /// entry is dated as everything above it plus its own span, which no per-tile seam can see. A
+    /// road nobody has queued keeps `None` — the honest *no estimate*, never a `0` that would render
+    /// as a finished build.
+    pub build_turns_remaining: Option<crate::intensification::BuildTurns>,
+    /// **THIS ROAD'S 0-BASED PLACE IN ITS KEEPER'S BUILD QUEUE**, or
+    /// [`sim_schema::NOT_IN_ANY_BUILD_QUEUE`] when no pass has placed it.
+    ///
+    /// It is **scratch, not published**: its one reader is the countdown's *"has an estimate pass
+    /// ever run for this entry"* test, which is what separates a build queued a second ago from one
+    /// that is genuinely stalled — both sit at `0%`, so the meter cannot tell them apart. Cleared
+    /// every turn with the pair above, which is what makes *"live-queued and still cleared"* mean
+    /// *"queued since the last pass"*.
+    pub build_queue_position: i32,
 }
 
 impl Road {
@@ -257,6 +279,8 @@ impl Road {
             build_blocked_reason: crate::intensification::BuildGate::Open,
             build_material_demanded: NO_MATERIAL_DRAWN,
             build_material_supplied: NO_MATERIAL_DRAWN,
+            build_turns_remaining: None,
+            build_queue_position: sim_schema::NOT_IN_ANY_BUILD_QUEUE,
         }
     }
 
@@ -1112,6 +1136,12 @@ pub fn advance_roads(
         road.build_blocked_reason = crate::intensification::BuildGate::Open;
         road.build_material_demanded = NO_MATERIAL_DRAWN;
         road.build_material_supplied = NO_MATERIAL_DRAWN;
+        // **THE COUNTDOWN AND ITS PLACE IN THE LINE CLEAR TOGETHER**, and the clearing is what makes
+        // the *"queued since the last pass"* reading possible at all: a road that is in a band's
+        // LIVE queue and still carries the cleared place is one no chain pass has reached yet.
+        // Leaving either standing would date a road off a queue that has since moved.
+        road.build_turns_remaining = None;
+        road.build_queue_position = sim_schema::NOT_IN_ANY_BUILD_QUEUE;
     }
 
     // ## Phase 4 — bank this turn's traffic, ON EVERY TILE THE JOURNEY CROSSED.

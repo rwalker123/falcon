@@ -3025,6 +3025,7 @@ pub fn capture_snapshot(
         viewer_faction.0,
         config.fog_enabled,
         &ladder_config,
+        &build_kit_ids,
         |pos| {
             tile_registry
                 .index(pos.x, pos.y)

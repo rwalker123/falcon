@@ -62,7 +62,7 @@ fn published_build_turns(turns: crate::intensification::BuildTurns) -> i32 {
 /// **`queued_live` is read off the bands' own queues** ([`BuildKitIds`]), not off the turn-written
 /// row, for the reason the kit beside it is: the row's scratch lags a command by a whole turn, and
 /// this state exists precisely in the frame before that turn.
-fn published_build_countdown(
+pub(crate) fn published_build_countdown(
     turns: Option<crate::intensification::BuildTurns>,
     stamped_position: i32,
     queued_live: bool,
@@ -163,6 +163,12 @@ fn published_build_legs(
 pub(crate) struct BuildKitIds {
     patches: HashMap<UVec2, String>,
     herds: HashMap<String, String>,
+    /// **The road tiles some band has queued**, as a set rather than a map: a road's *kit* is
+    /// published through `RouteState`'s own row and needs no entry here, but *"is this source in a
+    /// band's LIVE queue"* is the term the countdown's `queued_live` test reads and it has to be
+    /// answered off the bands' queues rather than off the turn-written row — the row's scratch lags
+    /// a command by a whole turn, and the state this separates exists precisely in that frame.
+    roads: std::collections::HashSet<UVec2>,
 }
 
 impl BuildKitIds {
@@ -174,6 +180,12 @@ impl BuildKitIds {
     /// The animal twin, keyed by herd id.
     fn herd(&self, id: &str) -> String {
         self.herds.get(id).cloned().unwrap_or_default()
+    }
+
+    /// **Is this road tile in some band's live build queue?** — the route twin of
+    /// `patch_is_queued`, and the `queued_live` term of [`published_build_countdown`].
+    pub(crate) fn road_is_queued(&self, tile: UVec2) -> bool {
+        self.roads.contains(&tile)
     }
 
     /// **IS THIS PATCH IN SOME BAND'S LIVE QUEUE?** — membership of the same index the kit comes
@@ -252,11 +264,18 @@ pub(crate) fn resolve_build_kit_ids<'a>(
                         claimed_herds.insert(id.clone());
                     }
                 }
-                // **A road publishes no `buildKitId`**, because it has no source row to publish one
-                // on: the two food webs key this map by patch tile and herd id, which are the rows
-                // the wire carries. A road's kit is `default_kits.builders` bare-handed and states
-                // itself; when the route branch gains a per-tile build readout it takes a key here.
-                crate::components::BuildSource::Road(_) => {}
+                // **A road publishes no `buildKitId` YET**, and the reason is not that it has
+                // nowhere to put one: `RouteState` is the road's source row and carries its build
+                // state. This map is keyed by patch tile and herd id because those are the two rows
+                // that publish a kit field today, and adding a third is a wire change nobody has
+                // needed — a road's kit is the roster's own answer for the rung in flight
+                // (`roadbuilding` or `paving`) and no surface asks the sim for it.
+                // **A road records only its MEMBERSHIP here.** Its kit rides its own row, but
+                // whether some band has it queued is the term the published countdown needs, and
+                // this pass is the one place that reads the bands' live queues.
+                crate::components::BuildSource::Road(tile) => {
+                    resolved.roads.insert(*tile);
+                }
             }
         }
     }
@@ -2084,7 +2103,8 @@ const NO_BUILD_MATERIAL: f32 = 0.0;
 /// **`build_work_per_worker_turn` is the one field that is the SIM'S and not the config rung's**,
 /// and it rides here for that same reason: it is identical for every rung and for every road in the
 /// world, which is the only kind of number a ladder can quote. Every source row publishes its own
-/// copy; a road has no source row, so without this the client would have to hold a transcription of
+/// copy; a road's own row does not repeat it — one constant per road on the map — so without this
+/// the client would have to hold a transcription of
 /// [`crate::intensification::PER_WORKER_OUTPUT`] and would not learn of a second term landing in it.
 pub(crate) fn snapshot_route_rungs(ladder: &LadderConfig) -> Vec<RouteRungState> {
     crate::routes::route_rungs_in_climb_order(ladder)

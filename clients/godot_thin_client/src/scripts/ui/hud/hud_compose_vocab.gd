@@ -425,6 +425,36 @@ const IMPROVEMENT_RUNNING_LABELS := {
     "corral": "Penning",
 }
 
+# ⛔ **THE TABLE ABOVE IS AN OVERRIDE LIST, NOT THE ROSTER OF VERBS THAT MAY RUN.** It holds the four
+# whose participle English (or this game's own vocabulary) does not give for free — `corral` reads
+# `Penning`, which no morphology derives — and every other verb is gerunded here.
+#
+# **THAT IS WHAT LETS A RUNG NAME ITSELF.** The ROUTE branch's verbs (`grade`, `pave`) arrive from the
+# published rung catalog, so a fifth rung added to `intensification_ladder.json` reads `Grading` /
+# `Paving` / its own participle in the build queue's date column with no client edit at all — the same
+# property the catalog's `display_name` already buys the queue row's FACE. A hard-coded pair here
+# would have had to be extended by hand for every rung the config ever grows.
+#
+# **THE DERIVATION IS THE ONE REGULAR ENGLISH RULE and nothing more**: drop a silent trailing `e`,
+# append `ing`, capitalize. It is deliberately not a conjugator — a verb it gets wrong is a verb that
+# belongs in the override table above, which is what that table is for.
+#
+# `""` in and `""` out, because an entry with no verb has no participle and the callers' own bare
+# dated face is the right answer there (see `DetailFormat.build_completion_value`).
+const IMPROVEMENT_RUNNING_SUFFIX := "ing"
+const IMPROVEMENT_RUNNING_SILENT_E := "e"
+
+static func improvement_running_label(verb: String) -> String:
+    var stem := verb.strip_edges().to_lower()
+    if stem == "":
+        return ""
+    var named := String(IMPROVEMENT_RUNNING_LABELS.get(stem, ""))
+    if named != "":
+        return named
+    if stem.ends_with(IMPROVEMENT_RUNNING_SILENT_E):
+        stem = stem.substr(0, stem.length() - IMPROVEMENT_RUNNING_SILENT_E.length())
+    return (stem + IMPROVEMENT_RUNNING_SUFFIX).capitalize()
+
 # The STATE the finished rung leaves the source in — a noun, because nothing is happening any more.
 # These are the same four words the work board's rung marks use, and they carry the same glyphs
 # (`DetailFormat`'s, resolved at the call site) so a Tended Patch reads identically on the compose

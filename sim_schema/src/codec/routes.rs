@@ -38,6 +38,7 @@ fn create_routes<'a>(
                     buildBlockedReason: Some(build_blocked_reason),
                     buildMaterialDemand: route.build_material_demand,
                     buildMaterialSupplied: route.build_material_supplied,
+                    buildTurnsRemaining: route.build_turns_remaining,
                 },
             )
         })

@@ -1700,7 +1700,10 @@ static func build_completion_value(turns: int, build_crew: int, percent: int,
     var sentinel := build_sentinel_value(turns, build_crew, percent, queue_position)
     if sentinel != "":
         return sentinel
-    var verb := String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(leg, ""))
+    # **THE PARTICIPLE COMES THROUGH THE SEAM, NOT OFF THE TABLE** — `improvement_running_label`
+    # gerunds a verb the table does not name, which is what lets a ROUTE rung (`grade` / `pave`, and
+    # whatever `intensification_ladder.json` grows next) render its own word here with no client edit.
+    var verb := HudComposeVocab.improvement_running_label(leg)
     if verb == "":
         return HudSelectionVocab.RUNG_COMPLETES_FORMAT % [current_turn + turns, percent]
     return HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT % [verb, percent, current_turn + turns]

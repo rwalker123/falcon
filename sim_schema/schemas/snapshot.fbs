@@ -5711,6 +5711,29 @@ table RouteState {
   buildBlockedReason:string;
   buildMaterialDemand:float = 0;
   buildMaterialSupplied:float = 0;
+  // --- HOW LONG UNTIL THIS ROAD ARRIVES (appended) ----------------------------------------------
+  // The CHAINED countdown, and *** THE SAME QUANTITY WITH THE SAME SENTINELS a patch and a herd
+  // publish ***: everything above this entry in its band's queue, plus this entry's own span. There
+  // is deliberately no route dialect - `ForagePatchState.buildTurnsRemaining` carries the full
+  // sentinel table and the rationale, and a client renders a road through the identical fork.
+  //
+  //   >= 0  a real count of turns
+  //   -1    no estimate: nobody is working it, its gate refuses, or a running build banked nothing
+  //   -2    the meter holds exactly where it is
+  //   -3    the meter is going backwards
+  //   -4    the queue is blocked at this entry
+  //   -5    queued since the last turn resolved; no estimate pass has run for it yet
+  //
+  // *** ONLY A QUEUED ROAD HAS A REAL NUMBER. *** A rung nobody has ordered has no quote, so it
+  // reads -1 - never 0, which would render as a finished build. A client estimating an UNBUILT rung
+  // against a hypothetical crew, for a ladder card, is doing its own arithmetic and is right to;
+  // this field is about the job actually in front of the band.
+  //
+  // *** IT IS THE FIX FOR A ROAD READING `Queued 97%` FOR 147 TURNS. *** The sim published nothing
+  // here, so every client road queue model hardcoded the -5 "not yet estimated" sentinel and a road
+  // read `Queued` on turn 1 and turn 147 alike. The claim behind that - "a road has no source row
+  // for the sim to stamp one on" - was never true of this table.
+  buildTurnsRemaining:int = -1;
 }
 
 table RouteSection {

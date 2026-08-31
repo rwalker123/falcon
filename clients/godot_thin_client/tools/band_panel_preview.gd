@@ -15441,6 +15441,11 @@ func _render_queue_control_states() -> void:
 	# is the exact defect reported from play — a graded tile showed nothing anywhere, because the block
 	# builds its rows from labor rows and a road deliberately has none.
 	await _assert_a_queued_road_draws_its_row()
+	# **(d4c) …AND THE SAME ROAD ONCE THE CREW IS ON IT** — the header's kit and the date column, the
+	# two surfaces the road slice shipped defects on with no assertion between them. Appended after
+	# (d4b) rather than folded into it: that state's whole subject is a road that has banked NOTHING,
+	# and the `Queued` face it asserts is correct there and must survive.
+	await _assert_a_road_under_way_reads_its_verb_and_its_kit()
 	# **(d5) …AND THE WHOLE QUEUE OVER THE WHOLE ZONE** (§4.9 item 9c). The block above is a SUMMARY
 	# capped at three rows; everything behind them had no row to be seen, reordered or withdrawn from.
 	# The expansion is a MODE over the same Work zone, and its frames run on a fixture LONGER than any
@@ -16013,6 +16018,13 @@ func _road_queue_row() -> Dictionary:
 		"upkeep_workers_needed": 0,
 		"has_neglect_grace": false, "neglect_grace_remaining": 0,
 		"grants_sight": false, "friction_multiplier": 0.85, "holds_link_to_tiles": 6,
+		# **THE SIM'S OWN COUNTDOWN, AND IT IS `-5` HERE FOR THE REASON THE STATE IS ABOUT**: this
+		# road was ordered since the last turn resolved, so no estimate pass has looked at it and
+		# `RouteState.buildTurnsRemaining` publishes `BUILD_NOT_YET_ESTIMATED`. **STATED RATHER THAN
+		# DEFAULTED** — the client used to hardcode this sentinel on every road, which is what made a
+		# road under way for 147 turns read exactly like this one; the fixture now says which of the
+		# two roads it is, and `_road_under_way_row` states the other.
+		"build_turns_remaining": SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED,
 	}
 
 ## …and the queue entry the sim publishes for it: `kind: "roadwork"` carrying the road's TILE.
@@ -16138,6 +16150,190 @@ func _assert_a_queued_road_draws_its_row() -> void:
 	_hud._bandpanel._queue_open_key = ""
 	_restore_road_queue_fixture()
 	await _settle()
+
+# ---- A ROAD UNDER WAY, AND THE KIT THE HEADER NAMES FOR IT ---------------------------------------
+#
+# ⛔ **TWO DEFECTS REPORTED FROM ONE SCREENSHOT, AND NEITHER HAD AN ASSERTION.** The queue block held at
+# 1077 PASS through the whole rung-bound-kit slice: every claim added went onto the ladder card and the
+# roster derivation, and the two surfaces that shipped the bugs — the block's HEADER and its DATE
+# COLUMN — got none. This state is that blind spot.
+#
+#   ① the header read `1 builders · No kit` over an expanded entry whose own `KIT` dropdown read
+#     `Roadbuilding kit`, the sim demonstrably using the kit (the road advanced at the kitted rate);
+#   ② the row read `Queued 97%` on turn 147, because the model hardcoded the *not yet estimated*
+#     sentinel on every road.
+
+## The road's own countdown and meter while the crew is actually on it. **BOTH ARE REACHABLE
+## TOGETHER**: `routes::road_at_risk_rung` resolves `buildFraction` to the rung being RAISED once
+## something is banked in it, so a road holding a trail with 97% of a dirt road banked publishes
+## exactly this pair — a real positive count beside a meter short of full.
+const ROAD_UNDER_WAY_METER := 0.97
+const ROAD_UNDER_WAY_TURNS := 8
+
+## The road under way, on the same tile so the entry's join is the one already covered. Everything but
+## the meter and the countdown is `_road_queue_row`'s.
+func _road_under_way_row() -> Dictionary:
+	var road := _road_queue_row()
+	road["build_fraction"] = ROAD_UNDER_WAY_METER
+	road["build_turns_remaining"] = ROAD_UNDER_WAY_TURNS
+	return road
+
+## …and the band whose queue holds ONLY the road, so the road is the HEAD and the header's kit is the
+## road's. The two defects meet on that band: the header names a kit for the head entry, and the head
+## entry is the row whose date column is wrong.
+func _road_head_band_fixture() -> Dictionary:
+	var band := _build_queue_band_fixture(2)
+	band["build_queue"] = [_queue_road_entry(ROAD_QUEUE_TILE)]
+	return band
+
+## **THE ROSTER WITH THE TWO ROAD KITS ON IT** — `BandFx.kit_roster_fixture()` with the shipped
+## `equipment.json` pair appended, so every kit every other state reads is untouched and the restore is
+## exact. **APPENDED rather than authored fresh**: the header's answer has to be the roster's own
+## ordered lookup, and a roster holding nothing but road kits would answer `roadbuilding` by having no
+## alternative.
+##
+## ⛔ **EACH DECLARES A `build_work_rung`, which is the whole point.** `roadbuilding` serves
+## `route:dirt_road` and `paving` serves `route:paved_road`; a caller that names the branch and no rung
+## is served by NEITHER (`KitRoster.kit_serves_build`'s third arm), which is what made the header read
+## `No kit`.
+const ROAD_HEAD_KIT := "roadbuilding"
+const ROAD_HEAD_KIT_NAME := "Roadbuilding kit"
+const ROAD_PAVING_KIT := "paving"
+## The kitted build rate, well above `BandFx.KIT_BUILD_WORK_NEUTRAL` so `KitRoster.kit_uses` reads the
+## tool as a real one — the roster minimum is the bare-handed tier, and a kit at that tier serves no
+## build at all. It is the rate Ray measured in play (a road advancing at ~3 work/turn on one builder,
+## against the bare 1.0), which is what made the header's `No kit` demonstrably wrong rather than
+## merely odd.
+const ROAD_KIT_BUILD_WORK := 3.0
+
+func _road_kit_roster() -> Array:
+	var roster := BandFx.kit_roster_fixture().duplicate(true)
+	roster.append({
+		KitRoster.KIT_ID_KEY: ROAD_HEAD_KIT, "display_name": ROAD_HEAD_KIT_NAME,
+		KitRoster.KIT_JOBS_KEY: [KitRoster.JOB_BUILDERS],
+		KitRoster.KIT_BUILD_WORK_KEY: ROAD_KIT_BUILD_WORK,
+		KitRoster.KIT_BUILD_BRANCH_KEY: KitRoster.BUILD_BRANCH_ROUTE,
+		KitRoster.KIT_BUILD_RUNG_KEY: HudRouteVocab.RUNG_KEY_DIRT_ROAD,
+		KitRoster.KIT_ITEM_IDS_KEY: ["earthmoving_tools"],
+	})
+	roster.append({
+		KitRoster.KIT_ID_KEY: ROAD_PAVING_KIT, "display_name": "Paving kit",
+		KitRoster.KIT_JOBS_KEY: [KitRoster.JOB_BUILDERS],
+		KitRoster.KIT_BUILD_WORK_KEY: ROAD_KIT_BUILD_WORK,
+		KitRoster.KIT_BUILD_BRANCH_KEY: KitRoster.BUILD_BRANCH_ROUTE,
+		KitRoster.KIT_BUILD_RUNG_KEY: HudRouteVocab.RUNG_KEY_PAVED_ROAD,
+		KitRoster.KIT_ITEM_IDS_KEY: ["stone_dressing_tools"],
+	})
+	return roster
+
+## The kit face the expanded head row's own picker is showing — the DETAIL half of claim ①.
+func _open_queue_row_kit_face(key: String) -> String:
+	_hud._bandpanel._queue_open_key = ""
+	_hud._bandpanel._toggle_queue_settings(key)
+	await _settle()
+	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+	if strip == null:
+		return ""
+	var picker := _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META)
+	if picker == null:
+		return ""
+	return KitRoster.display_name_for_id(_hud._band_labor.kits(),
+		String(picker.get_meta(HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META)))
+
+func _assert_a_road_under_way_reads_its_verb_and_its_kit() -> void:
+	_hud.update_kit_roster(_road_kit_roster(),
+		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+	_hud.update_route_rungs(_road_queue_catalog())
+	_hud.update_road_network([_road_under_way_row()])
+	_set_forage_patches(_build_queue_patches(2))
+	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD, QUEUE_TURNS_HEAD))
+	_push_bands([_road_head_band_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_queue_road_under_way")
+	_assert_zone_content_fits()
+	var rows := _build_queue_rows()
+	_assert_band_panel("a road at the HEAD of the queue draws exactly one row (got %d)" % rows.size(),
+		rows.size() == 1)
+	if rows.size() != 1:
+		_restore_road_kit_roster()
+		_restore_road_queue_fixture()
+		await _settle()
+		return
+
+	# ---- ② THE DATE COLUMN: the SIM's countdown, and the rung's own verb ------------------------
+	# ⛔ **`Queued` HERE WOULD BE THE REPORTED DEFECT.** That face renders only on
+	# `BUILD_TURNS_NOT_YET_ESTIMATED`, which means *the sim has not looked at this entry yet* — true
+	# on the turn the grade is ordered and false forever after. Hardcoding it made a road under way
+	# for 147 turns read identically to one ordered this turn.
+	var date := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_DATE_META)
+	var date_face := "" if date == null \
+		else String(date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META))
+	# ⛔ **THE VERB IS COMPOSED, NOT TRANSCRIBED.** `improvement_running_label` gerunds the CATALOG's
+	# own verb, so a fifth route rung names itself; spelling `Grading` here would pass against a client
+	# that had hard-coded the pair back.
+	var wanted_verb := HudComposeVocab.improvement_running_label(SourceForecast.IMPROVEMENT_GRADE)
+	var wanted_percent := HudFormat.progress_percent(ROAD_UNDER_WAY_METER)
+	var wanted_date := HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT % [wanted_verb,
+		wanted_percent, _hud._band_labor.current_turn() + ROAD_UNDER_WAY_TURNS]
+	print("band_panel_preview: road under way date -> %s" % date_face)
+	_assert_band_panel("a road UNDER WAY dates off the sim's own `buildTurnsRemaining` — `%s` (got \"%s\")"
+			% [wanted_date, date_face],
+		date_face == wanted_date)
+	# **THE PAIRED NEGATIVE, and it is the defect stated as a claim.** The equality above already
+	# fails on `Queued 97%`, but only as "these two strings differ"; this one NAMES the wrong reading,
+	# so a regression reports the defect rather than a diff.
+	var queued_face := HudSelectionVocab.RUNG_QUEUED_FORMAT % wanted_percent
+	# **THE WORD IS TAKEN OFF THE FORMAT, NOT TRANSCRIBED**, so a reworded sentinel cannot leave this
+	# negative passing against a string nothing renders any more.
+	var queued_word := HudSelectionVocab.RUNG_QUEUED_FORMAT.split(" ")[0]
+	_assert_band_panel("…and NEVER `%s`, which claims the sim has not looked at this entry yet"
+			% queued_face,
+		date_face != queued_face and not date_face.contains(queued_word))
+	_assert_band_panel("…and wears no hazard mark, a road being graded on schedule having nothing wrong with it",
+		not date_face.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH))
+
+	# ---- ① THE HEADER'S KIT AND THE HEAD ENTRY'S KIT AGREE --------------------------------------
+	# ⛔ **THE AGREEMENT IS THE CLAIM, NOT THE ID.** Both surfaces ask the roster the same question
+	# about the same entry, so any call site that names the branch and forgets the RUNG breaks the
+	# equality — `KitRoster.kit_serves_build`'s third arm refuses every rung-bound tool to an
+	# unqualified caller, and `_role_kit_id` then falls through to `bare_kit_id` and prints `No kit`.
+	# That is what Ray photographed: `1 builders · No kit` over a dropdown reading `Roadbuilding kit`.
+	var road_key := _hud._band_labor.pending_key(HudConst.LABOR_KIND_ROADWORK,
+		ROAD_QUEUE_TILE.x, ROAD_QUEUE_TILE.y, "")
+	var row_kit_face := await _open_queue_row_kit_face(road_key)
+	# **THE BLOCK IS RE-READ AFTER THE EXPANSION, and the ordering is load-bearing**: opening a row
+	# re-renders the zone, so a handle taken before the toggle points into a freed subtree and every
+	# label search over it answers `false` for a reason that has nothing to do with the claim.
+	var block := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META)
+	var head_face := HudWorkVocab.BUILD_QUEUE_BUILDERS_FORMAT % [QUEUE_BUILDERS, row_kit_face]
+	print("band_panel_preview: road queue head -> %s" % head_face)
+	_assert_band_panel("the queue HEADER names the head ROW's own kit — \"%s\"" % head_face,
+		block != null and _has_label_containing(block, head_face))
+	# **AND BY EQUALITY, so the pair cannot agree on the WRONG kit.** The roster binds `roadbuilding`
+	# to `route:dirt_road` and `paving` to `route:paved_road`; this road holds a trail, so the rung
+	# being worked is the dirt road and the earthmoving tools are what the sim will hand the pool.
+	_assert_band_panel("…and that kit is `%s`, the roster's tool for the rung being raised (got \"%s\")"
+			% [ROAD_HEAD_KIT_NAME, row_kit_face],
+		row_kit_face == ROAD_HEAD_KIT_NAME)
+	# **THE PAIRED NEGATIVE: the bare-handed fall-through is what the defect rendered.** Naming it
+	# makes a regression report the reported face instead of an inequality.
+	var bare_face := KitRoster.display_name_for_id(_hud._band_labor.kits(), BandFx.KIT_ID_NONE)
+	_assert_band_panel("…and never the bare kit's `%s`, which is what an unqualified lookup falls through to"
+			% bare_face,
+		row_kit_face != bare_face)
+	_hud._bandpanel._queue_open_key = ""
+	_restore_road_kit_roster()
+	_restore_road_queue_fixture()
+	await _settle()
+
+## Put the world's kit roster back — SHARED harness state, seeded once in the prologue, so a road kit
+## left on it would appear in every builders picker every state after this one draws.
+func _restore_road_kit_roster() -> void:
+	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
+		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
 
 ## Put the roads and the catalog back where the states after this one expect them — SHARED harness
 ## state, the road frames' own rule: a road left on the model is a road the next state never staged.

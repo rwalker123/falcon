@@ -559,10 +559,21 @@ or another band adopted it) puts no work on ground that is no longer its job.
   the head entry's material coverage before it is banked, which is `animal:pen`'s stated rule — *a
   short store stalls the build proportionally and never refuses it*, and the unbanked remainder is
   wasted rather than carried.
-- **A road publishes no chained countdown.** `buildTurnsRemaining` and its four siblings are per-patch
-  and per-herd *scratch* written by the publish pass; the arms are stated as no-ops so a future row
-  cannot be forgotten. It does record a `BuildQuote` — see below, where not doing so was a defect that
-  reached every other source the band worked.
+- **A road publishes a chained countdown like any other source.** `RouteState.buildTurnsRemaining`
+  carries **the same quantity with the same sentinels** a patch and a herd publish, through the same
+  `published_build_countdown` seam — there is deliberately no route dialect, so a client renders a
+  road through the identical fork. Only the **queue** can answer it (an entry is dated as everything
+  above it plus its own span), so `publish_entry` stamps it and the decay pass clears it, exactly as
+  the two food webs do. **Only a queued road has a number**: an unordered rung has no quote and reads
+  the honest *no estimate*, never a `0` that renders as a finished build.
+
+  ⛔ **It shipped stamping nothing, and the client filled the silence with a constant** — every road
+  queue model hardcoded the `-5` *not yet estimated* sentinel, so a road read `Queued 97%` on turn 1
+  and on turn 147 alike. The justification was *"a road has no source row for the sim to stamp one
+  on"*, which was never true of `RouteState`. **No claims object arbitrates it**, unlike the two food
+  webs': one keeper per tile, and each band's own `prune_build_queue` drops the entry for a road it
+  does not keep *before* that band's queue is walked, so at most one band can hold an entry for a
+  tile by the time the pass runs.
 
 > #### ⛔ EVERY ROAD ENTRY RECORDS A `BuildQuote`, AND THE COST OF NOT DOING SO WAS NOT CONFINED TO ROADS
 >
@@ -805,6 +816,7 @@ you seen that tile"*. It **fails closed** on an absent faction map.
 | `hasNeglectGrace` / `neglectGraceRemaining` | the **countdown**, through `routes::road_neglect_grace_remaining` at the at-risk rung |
 | `grantsSight` | the resolved *"is this road lighting its tile"* |
 | `frictionMultiplier` / `holdsLinkToTiles` | what the rung is buying, off the tile's stamped `payoff()` — the first a MEAN along a journey, the second the journey's MINIMUM |
+| `buildTurnsRemaining` | **the chained countdown** — everything above this entry in its band's queue plus its own span, with the two food webs' sentinel vocabulary verbatim (`-1` no estimate, `-2` holds, `-3` rots, `-4` blocked, `-5` not yet estimated, `>= 0` a real count). ⛔ **Only a QUEUED road has a number**; an unordered rung reads `-1`, never `0` |
 | `buildBlockedReason` | **why the pool is stuck on this tile**, `""` when it is not — the same `BuildGate` vocabulary a patch row uses. A road can carry `knowledge`, `owned_by_other` (another band keeps the tile), `no_keeper` (**nobody** does — the tile is going begging, and re-issuing the verb adopts it) and `materials`. ⛔ The first two are **not one cause**: an unkept road reported as another band's sends the player after a rival that does not exist. Read off `BuildQuote::blocking_gate`, never off the rung gate, because a head the store emptied has an **open** rung gate |
 | `buildMaterialDemand` / `buildMaterialSupplied` | this turn's share of the rung's pile and what the stores paid of it — the material twin of the four above, on the same rule: `demand − supplied` is the shortfall, verbatim |
 
