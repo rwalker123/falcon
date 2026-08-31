@@ -376,7 +376,7 @@ warn aside is untouched and still rides the row being built.**
   The subject comes from `HudWorkVocab.build_queue_subject` — the queue block's own vocabulary, so the
   two surfaces cannot name one entry two ways — and it is the SUBJECT rather than the row's face,
   `Tame Wild Aurochs` reading mid-sentence as another panel quoted rather than as English.
-- ⛔ **THE TURNS ESTIMATE IS KEPT.** `110 work · ≈39 turns` silently assumed the builders were free,
+- ⛔ **THE TURNS ESTIMATE IS KEPT.** `300 work · ≈105 turns` silently assumed the builders were free,
   and **deleting the figure would throw away the one thing the row can say about the price of the
   job** — it is exact once the builders reach the entry. The aside named what it was measured FROM
   for a slice; that clause is retired above, the row being built now stating the progress and the
@@ -425,7 +425,7 @@ queued."*
 > **`HudRouteVocab.queued_progress(road)` is the one reader ALL THREE surfaces go through**: a meter
 > at or above `ROAD_METER_COMPLETE` on a road whose entry is queued reads `ROAD_METER_UNSTARTED`, so
 > the queue row draws `Queued 0%`, the card draws `Trail · 0% to dirt road` and the rung ladder's
-> BUILDING row draws `0% · ≈55 turns`. A road with work banked is untouched, which is what keeps the
+> BUILDING row draws `0% · ≈150 turns`. A road with work banked is untouched, which is what keeps the
 > readings one sentence rather than a fork.
 >
 > ⛔ **THE LADDER WAS THE THIRD SURFACE AND IT WENT ON READING THE METER RAW FOR A SLICE**, drawing
@@ -438,9 +438,9 @@ queued."*
 >
 > ⛔ **THE ROW'S TURNS NEEDED NO CHANGE, AND THE REASON IS WORTH KNOWING.** `RungLadder._route_turns`
 > already resets a banked fraction at or above `ROAD_METER_COMPLETE` to `NOTHING_BANKED` before it
-> divides — its own note says a reader that netted `1.0` off the pile would quote `≈1 turn` for a
-> 260-work paving nobody has started — so it draws the same boundary `queued_progress` does and
-> quotes the whole price. `≈55 turns` on a freshly-declared 110-work dirt road at two builders is
+> divides — its own note says a reader that netted `1.0` off the pile would quote `≈1 turn` for an
+> 800-work paving nobody has started — so it draws the same boundary `queued_progress` does and
+> quotes the whole price. `≈150 turns` on a freshly-declared 300-work dirt road at two builders is
 > that working. **`_route_meter_clause` on the `STATE_UNORDERED` approach row is likewise untouched**:
 > that row states a rung being worn in by TRAFFIC, which nobody queues.
 >
@@ -609,8 +609,8 @@ legs of a QUEUED entry and no road publishes one.
 > RAISE IT TO…
 > Path          where you are
 > Trail         30% · wearing in
-> Dirt Road     110 work · needs Roadbuilding
-> Paved Road    260 work · needs Paving
+> Dirt Road     300 work · needs Roadbuilding
+> Paved Road    800 work · needs Paving
 > ```
 >
 > **The face is `<figure> · <nearest refusal>`**, and where the rung is buildable the figure IS the
@@ -634,7 +634,7 @@ legs of a QUEUED entry and no road publishes one.
 >
 > ⛔ **AND THE NAME COLUMN IS NARROWER ON THIS BRANCH** (`ROAD_LADDER_NAME_WIDTH`, 96px against the
 > shared 150px). At the shared width the value column is 142px of a 292px card and
-> `110 work · needs Roadbuilding` does not fit — the row clipped, which was half of why the card read
+> `300 work · needs Roadbuilding` does not fit — the row clipped, which was half of why the card read
 > badly. It rides the ROW (`ROW_NAME_WIDTH_KEY`) rather than widening `build_track`'s signature,
 > because the plant and animal tracks want the wider column they have.
 
@@ -692,13 +692,13 @@ band token that IS the keeper, so somebody has to be named out loud.
 
 ### ⛔ THE ROW SAYS HOW LONG, AND THE CREW IS THE ACTING BAND'S
 
-`Dirt Road — 110 work` at one builder is ~110 turns and the card said nothing about it, while every
+`Dirt Road — 300 work` at one builder is ~300 turns and the card said nothing about it, while every
 other build surface in the game states a turns estimate. `route_track` had carried
 `ROW_TURNS_KEY: BUILD_TURNS_NO_ESTIMATE` on every row since the branch shipped; it is filled now.
 
-- **ON A BUILDABLE ROW IT RIDES THE FACE** (`110 work · ≈39 turns`, `HudWorkVocab.RUNG_TRACK_COST_FORMAT`),
+- **ON A BUILDABLE ROW IT RIDES THE FACE** (`300 work · ≈105 turns`, `HudWorkVocab.RUNG_TRACK_COST_FORMAT`),
   **and on a REFUSED one it rides the HOVER**. The face holds one clause beside the price and on a
-  refused rung that clause is the refusal; `110 work · ≈110 turns · needs Roadbuilding` is exactly the
+  refused rung that clause is the refusal; `300 work · ≈300 turns · needs Roadbuilding` is exactly the
   wordiness this card was cut down from. A rung a player plans toward is still one they can plan
   against, which is what the hover line is for.
 - ⛔ **IT IS THE CLOSED FORM'S OWN SUPPLY SEAM, NOT A SECOND ESTIMATOR.**
@@ -716,7 +716,7 @@ other build surface in the game states a turns estimate. `route_track` had carri
 - **THE PILE IS THE RUNG'S BASE PRICE, matching the figure beside it**, less whatever the meter has
   banked against the row DIRECTLY above the standing rung. ⛔ **`build_fraction == 1.0` means *nothing
   is rising*, not *this rung is paid for*** — the wire states it for a rung just finished AND for the
-  top of the ladder — so it is netted off nothing, or the card quotes `≈1 turn` for a 260-work paving
+  top of the ladder — so it is netted off nothing, or the card quotes `≈1 turn` for an 800-work paving
   nobody has started. `_route_meter_clause` draws the same boundary for the same reason.
 - **The remoteness multiple is quoted apart from the estimate**, as it is from the price: folding it
   in would put a copy of the sim's pricing formula here.
@@ -975,8 +975,8 @@ become one: with the keeper as the default, the *another band keeps it* refusal 
 the player moves the picker. Driving it (`item_selected.emit`, which is what a click does) asserts the
 default, the re-render, the card surviving it, and the gate — in that order, on one frame.
 
-**The turns figures are written out and each one is a claim about a different term.** `≈39 turns` is
-`ceil(110 × 0.7 / 2)` — a row quoting the whole price would say `55`; `≈130 turns` is `ceil(260 / 2)`
+**The turns figures are written out and each one is a claim about a different term.** `≈105 turns` is
+`ceil(300 × 0.7 / 2)` — a row quoting the whole price would say `150`; `≈400 turns` is `ceil(800 / 2)`
 over a meter of exactly `1.0` — a row that netted that `1.0` off would say `≈1 turn`.
 
 **`road_ladder_other_keeper` STAGES A SECOND BAND, and that is what the claim needs.** With only the
@@ -1113,8 +1113,8 @@ CLAIM.** The same road with the `grade` standing on THIS tile draws **no placeme
 form**, and the negative is named per surviving form rather than by a shared needle, so a producer
 resurrecting either is caught. It cannot stand alone: a producer that had dropped every aside passes
 a lone negative, and the state above it drawing its `joins …` sentence is what stops that. Its other
-two claims are Change 2's — `0% · ≈55 turns`, and the price GONE from that row — over the untouched
-rung above still quoting `260 work`.
+two claims are Change 2's — `0% · ≈150 turns`, and the price GONE from that row — over the untouched
+rung above still quoting `800 work`.
 
 **Falsified**: passing the raw `build_fraction` back into the building row's figure fails **exactly
 one** claim, the progress one, naming the `100%` the wire honestly publishes for a completed trail.

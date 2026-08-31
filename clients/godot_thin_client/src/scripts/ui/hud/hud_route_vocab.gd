@@ -991,7 +991,7 @@ const ROAD_LADDER_FACE_FORMAT := "%s · %s"
 ## rung being RAISED.
 ##
 ## ⛔ **ON THE RUNG BEING BUILT IT REPLACES THE PRICE, and at `0%` it still prints.** A rung that is
-## already ordered is not a purchase the player is weighing, so `110 work` on it answers a question
+## already ordered is not a purchase the player is weighing, so `300 work` on it answers a question
 ## nobody is asking; what they pressed the ladder to find out is whether the press LANDED. A road
 ## queued behind another job banks nothing for dozens of turns, so `0%` where the price used to be is
 ## the whole of the receipt — see `RungLadder.route_track`, which owns the two faces.
@@ -1030,7 +1030,7 @@ static func road_ladder_price_face(entry: Dictionary) -> String:
 
 # ⛔ RETIRED — **`ROAD_LADDER_BUYS_FORMAT`, `ROAD_LADDER_PRICE_FORMAT` and
 # `ROAD_LADDER_PROGRESS_FORMAT`**, the three ASIDES a ladder row used to stack beneath itself
-# (`buys …`, `costs 110 work`, `35% done`). The first is in the tooltip now, the second is the face,
+# (`buys …`, `costs 300 work`, `35% done`). The first is in the tooltip now, the second is the face,
 # the third is a clause of the face. **The word `buys` went with them** — a payoff already reads as a
 # benefit, so the label only narrowed the column the sentence had to live in.
 
@@ -1047,14 +1047,14 @@ const ROAD_LADDER_TIP_REMOTE_FORMAT := "Far from your band, so it costs ×%s."
 ## removed.
 const ROAD_LADDER_TIP_PRICE_FORMAT := "%s work to build, %s work a turn to keep."
 
-## **HOW LONG, AT THE ACTING BAND'S OWN `builders` POOL.** `Dirt Road — 110 work` with one builder is
-## ~110 turns, and nothing on the card said so; every other build surface in the game states a turns
+## **HOW LONG, AT THE ACTING BAND'S OWN `builders` POOL.** `Dirt Road — 300 work` with one builder is
+## ~300 turns, and nothing on the card said so; every other build surface in the game states a turns
 ## estimate. **It names the BAND because the answer is the band's** — a different pool is a different
 ## number, which is why the estimate re-renders with the picker above it.
 ##
 ## ⛔ **ON A BUILDABLE ROW IT RIDES THE FACE, and on a refused one it rides the HOVER.** The face holds
 ## one clause beside the price, and on a refused rung that clause is the refusal — a row reading
-## `110 work · ≈110 turns · needs Roadbuilding` is the wordiness this card was cut down from.
+## `300 work · ≈300 turns · needs Roadbuilding` is the wordiness this card was cut down from.
 const ROAD_LADDER_TIP_TURNS_FORMAT := "%s with this band's builders."
 
 # ---- WHERE THE PRESS LANDS — the queue, said at the moment of the decision ----------------------
@@ -1064,7 +1064,7 @@ const ROAD_LADDER_TIP_TURNS_FORMAT := "%s with this band's builders."
 # a line rather than work starting on the spot. Ray: *"it isn't obvious that the road will show up in
 # the build queue, so we need something to indicate that when the job is selected."*
 #
-# ⛔ **AND THE TURNS ESTIMATE IMPLIED IT STARTS NOW.** `110 work · ≈37 turns` silently assumes the
+# ⛔ **AND THE TURNS ESTIMATE IMPLIED IT STARTS NOW.** `300 work · ≈100 turns` silently assumes the
 # builders are free; in the reported game they were on a Tame until turn 132. The figure is RIGHT and
 # it is not a completion date — so it is kept, and where anything is ahead of this road the row says
 # what the number is measured from.
@@ -1136,7 +1136,7 @@ const ROAD_LADDER_ABANDON_ALSO := "…and the foraging your people do on this he
 
 ## ⛔ **THE NAME COLUMN IS NARROWER ON THIS BRANCH, and the wrapping is why.** The shared
 ## `HudWorkVocab.RUNG_TRACK_NAME_WIDTH` (150px) leaves 142px of a 292px card for the value, and
-## `110 work · needs Roadbuilding` does not fit in it — the row clipped, which was half of why the
+## `300 work · needs Roadbuilding` does not fit in it — the row clipped, which was half of why the
 ## card read badly. Route rung names are short (`Paved Road` is the longest the shipped ladder holds),
 ## so the column gives the width back to the face. It rides the ROW rather than widening
 ## `build_track`'s signature: the plant and animal tracks want the wider name column they have.

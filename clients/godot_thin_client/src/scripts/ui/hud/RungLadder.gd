@@ -375,7 +375,7 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
             continue
         # ⛔ **THE ROW'S FIGURE IS ITS PROGRESS WHILE IT IS BEING BUILT, AND ITS PRICE OTHERWISE.**
         #
-        # A rung already ordered is not a purchase being weighed, so `110 work` on it answers a
+        # A rung already ordered is not a purchase being weighed, so `300 work` on it answers a
         # question nobody is asking; what the player pressed the ladder to find out is whether the
         # press LANDED, and the percentage is the receipt. **`0%` is the whole point** — a road queued
         # behind another job banks nothing for dozens of turns, and a bare price there is exactly what
@@ -573,7 +573,7 @@ static func _route_turns(entry: Dictionary, banked_fraction: float, builders: in
         return SourceForecast.BUILD_TURNS_NO_ESTIMATE
     # ⛔ **`1.0` MEANS *NOTHING IS RISING*, NOT *THIS RUNG IS PAID FOR*.** The wire states exactly that
     # for a rung just finished AND for the top of the ladder, so a reader that netted it off the pile
-    # would quote `≈1 turn` for a 260-work paving nobody has started — `_route_meter_clause` draws the
+    # would quote `≈1 turn` for an 800-work paving nobody has started — `_route_meter_clause` draws the
     # same boundary one line up, and for the same reason.
     var banked := banked_fraction
     if banked >= HudRouteVocab.ROAD_METER_COMPLETE:

@@ -15967,7 +15967,7 @@ const ROAD_QUEUE_DESTINATION_RUNG := "route:dirt_road"
 const ROAD_QUEUE_METER := 1.0
 ## …and the shipped ladder's price for that rung, transcribed. The leg line states it, so a producer
 ## that quoted the WRONG rung's price fails on the words rather than on a shape.
-const ROAD_QUEUE_WORK_COST := 110.0
+const ROAD_QUEUE_WORK_COST := 300.0
 const ROAD_QUEUE_UPKEEP := 0.45
 ## The rung's published name, which is what the row is titled by — never `HudRouteVocab.RUNG_LABELS`,
 ## which is the tile card's hard-coded four.

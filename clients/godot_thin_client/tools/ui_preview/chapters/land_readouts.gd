@@ -732,11 +732,13 @@ const ROAD_WANTS_HAIRLINE := 1
 ## rather than computed**, and deliberately PLURAL: the shipped row said `wants 1 keepers`.
 const ROAD_SHORT_WORKERS_DIRT := 2
 
-## ⛔ **THE METER OF A ROAD THAT HAS BEEN ORDERED AND HAS BANKED NOTHING — the reported state.** The
-## road is behind a Tame at the head of its band's queue, and the head takes every builder, so it
-## reads zero for dozens of turns. The row printed a bare `Trail` throughout, identical to ground
-## nobody has touched, which made a working `grade` indistinguishable from a failed one.
-const ROAD_METER_DECLARED := 0.0
+## ⛔ **THE PERCENT A DECLARED ROAD'S ROW PRINTS — AND IT IS NOT THE METER IT WAS READ OFF.** The road
+## is behind a Tame at the head of its band's queue, and the head takes every builder, so it banks
+## nothing for dozens of turns; the WIRE meanwhile publishes `ROAD_METER_FRESHLY_GRADED` for the trail
+## it already holds. `HudRouteVocab.queued_progress` is what turns that full meter into this zero, so
+## the row reads `0% to dirt road` rather than the bare `Trail` that made a working `grade`
+## indistinguishable from a failed one. **There is no `0.0` meter const to stage beside it**, because
+## no server sends one on a road holding a rung.
 const ROAD_METER_DECLARED_PERCENT := 0
 
 ## …and a shortfall worth exactly ONE hand, which is what proves the row pluralizes: the shipped one
@@ -1231,8 +1233,13 @@ func _assert_the_real_drawer_prices_a_shortfall() -> void:
 ## climb to report, and a `0%` there would invent one — so the SAME fixture with no queue entry must
 ## state the rung bare.
 func _assert_a_declared_road_says_it_is_climbing() -> void:
+	# ⛔ **THE METER IS THE ONE THE WIRE ACTUALLY PUBLISHES.** Nothing is banked into the dirt road, so
+	# `road_at_risk_rung` falls back to the TRAIL this road holds and ships `METER_FULL`; a `0.0` here
+	# is a state no server produces, and it made BOTH claims below pass down the wrong arm —
+	# `progress_clause`'s zero-meter guard rather than its full-meter suppression, and
+	# `queued_progress`'s pass-through rather than the mapping the queued reading exists for.
 	var road := _road_fixture(
-		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_DECLARED, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_FRESHLY_GRADED, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
 		ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL, _road_keeper_band())
 	var approach := "%s%s%s" % [
 		HudRouteVocab.RUNG_LABELS[HudRouteVocab.RUNG_KEY_TRAIL],
@@ -1741,8 +1748,13 @@ func run(harness) -> void:
 	# face.** The approach row takes two faces now — a price on a rung nobody has ordered, its progress
 	# on the one being built — so a fixture carrying banked work would render the OTHER one and this
 	# state would quietly stop being about the offer at all.
+	#
+	# ⛔ **`ROAD_METER_COMPLETE` IS HOW *NOTHING IS RISING* IS SPELT ON THE WIRE, not banked work.**
+	# With nothing in the dirt road, `road_at_risk_rung` answers with the TRAIL this road holds, which
+	# is complete — a `0.0` here would be a meter no server sends, and `_route_climbing` reads the two
+	# the same way only by accident.
 	h._show_tile(_road_tile_fixture(_road_fixture(
-		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_DECLARED, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_COMPLETE, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
 		ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL)))
 	await h._settle()
 	if not await _open_road_ladder():
@@ -1856,7 +1868,7 @@ func run(harness) -> void:
 
 	# ⛔ **STATE road-ladder-queued — WHAT THE PRESS WOULD WAIT BEHIND.** The same live `grade` row on a
 	# band whose queue already holds two jobs. This is the reported game: a road declared behind a Tame
-	# banks nothing for dozens of turns, and the card said only `110 work · ≈39 turns` — a figure that
+	# banks nothing for dozens of turns, and the card said only `300 work · ≈105 turns` — a figure that
 	# silently promises the builders are free. **The estimate is kept**, because it is the right number;
 	# what the row adds is what it is measured FROM and what stands in front of it.
 	#
@@ -1896,7 +1908,7 @@ func run(harness) -> void:
 	# ⛔ **STATE road-ladder-declared — THE REPORTED SCREENSHOT, and the reading this whole cut exists
 	# for.** The same road, with a `grade` now standing on THIS tile behind the two jobs above. It has
 	# banked nothing and will bank nothing for dozens of turns, because the head of the queue takes
-	# every builder the band has — and the `110 work` that used to stand here was indistinguishable
+	# every builder the band has — and the `300 work` that used to stand here was indistinguishable
 	# from a `grade` that never landed. `0%` is the receipt for the press.
 	_with_a_queued_road()
 	h._show_tile(_road_tile_fixture(_road_fixture(
@@ -2190,8 +2202,8 @@ const LADDER_BARE_WORK_RATE := 1.0
 const LADDER_NO_BARE_WORK_RATE := 0.0
 
 const LADDER_TRAIL_WORK_COST := 40.0
-const LADDER_DIRT_WORK_COST := 110.0
-const LADDER_PAVED_WORK_COST := 260.0
+const LADDER_DIRT_WORK_COST := 300.0
+const LADDER_PAVED_WORK_COST := 800.0
 ## …and the two built rungs' standing bills, per turn, BEFORE a tile's own load scales them.
 const LADDER_DIRT_UPKEEP := 0.45
 const LADDER_PAVED_UPKEEP := 0.95
@@ -2223,18 +2235,18 @@ const ROW_TRAIL_FACE := "30% · wearing in"
 ## `DetailFormat.format_work_units` rounds to ONE, which prints the config's `0.45` as `0.5` and its
 ## `0.95` as `1.0` — an 11% lie about the figure the player is deciding against. An expectation
 ## written to the one-decimal spelling would pass a client that had gone back to it.
-const ROW_DIRT_GATED_FACE := "110 work · 0.45/turn upkeep · needs Roadbuilding"
-const ROW_PAVED_GATED_FACE := "260 work · 0.95/turn upkeep · needs Paving"
+const ROW_DIRT_GATED_FACE := "300 work · 0.45/turn upkeep · needs Roadbuilding"
+const ROW_PAVED_GATED_FACE := "800 work · 0.95/turn upkeep · needs Paving"
 ## …the keeper pair, which outrank the craft — no amount of learning helps a tile that is taken, and
 ## picking a band is the one gate on the card closed with a click.
-const ROW_PAVED_TAKEN_FACE := "260 work · 0.95/turn upkeep · Band 2 keeps it"
-const ROW_PAVED_NO_BAND_FACE := "260 work · 0.95/turn upkeep · pick a band"
+const ROW_PAVED_TAKEN_FACE := "800 work · 0.95/turn upkeep · Band 2 keeps it"
+const ROW_PAVED_NO_BAND_FACE := "800 work · 0.95/turn upkeep · pick a band"
 ## …and a BUILDABLE rung nobody has started, whose price is the button and which has no refusal to
 ## state beside it. **It states no DURATION at all**, and that is deliberate rather than an omission:
 ## the estimate was divided by the acting band's CURRENT builders and ignored the queue the press
 ## would join, so it moved with a crew that was not going to work this road.
-const DIRT_PRICE_FACE := "110 work · 0.45/turn upkeep"
-const PAVED_PRICE_FACE := "260 work · 0.95/turn upkeep"
+const DIRT_PRICE_FACE := "300 work · 0.45/turn upkeep"
+const PAVED_PRICE_FACE := "800 work · 0.95/turn upkeep"
 
 ## ⛔ **THE NEEDLE FOR "THIS ROW QUOTES A DURATION"**, for the ABSENCE half of the pair above. The
 ## glyph is `DetailFormat`'s own approximation mark, which no other clause on this card uses, so it
@@ -2249,26 +2261,25 @@ const LADDER_UPKEEP_WORD := "upkeep"
 ## already ordered is not a purchase being weighed, so a price on it answers a question nobody is
 ## asking; what the player pressed the ladder to find out is whether the press LANDED.
 ##
-## **THE NUMBERS ARE WRITTEN OUT, and each one is a claim about a different term.** The trail already
-## carries 30% of the dirt road banked, so the pile left is `110 x 0.7 = 77` and at two builders that
-## is `ceil(77 / 2) = 39` - a row quoting the WHOLE price would say `55` and fail here. The QUEUED
-## road two states on has banked nothing at all, so its pile is the full `110` and
-## `ceil(110 / 2) = 55`, which is what says both readings come out of the same arithmetic.
+## **THE NUMBER IS WRITTEN OUT, and it is a claim about a term the face cannot show on its own.** The
+## QUEUED road two states on has banked nothing against the dirt road, so its pile is the full `300`
+## and at two builders that is `ceil(300 / 2) = 150` — a reader that netted the wire's `1.0` off the
+## pile would quote `≈1 turn` there instead, which is the boundary `_route_turns` draws.
 const LADDER_BUILDERS := 2
 ## …and the pool the fixture band ships with, which is nobody. Named because it is the STATE the frame
 ## below is about (a band that has staffed no builders), not an unset value.
 const LADDER_NO_BUILDERS := 0
-const DIRT_BUILDING_TURNS_FACE := "30% · ≈39 turns"
-## …and the same row with nobody on `builders`: there is no pace to divide by, so the progress stands
-## alone. **`30%` and not a blank** — the meter is a fact about the road, not about the crew.
+## **THE FACE OF A ROW BEING BUILT WITH NOBODY ON `builders`**: there is no pace to divide by, so the
+## progress stands alone. **`30%` and not a blank** — the meter is a fact about the road, not about
+## the crew.
 const DIRT_BUILDING_FACE := "30%"
 ## ⛔ **…AND THE READING THIS WHOLE CUT EXISTS FOR: a road QUEUED and banking nothing yet.** `0%` is
 ## the receipt for the press — a road queued behind another job banks nothing for dozens of turns, and
-## the `110 work` that used to stand here was indistinguishable from a `grade` that never landed.
-const DIRT_QUEUED_ZERO_FACE := "0% · ≈55 turns"
+## the `300 work` that used to stand here was indistinguishable from a `grade` that never landed.
+const DIRT_QUEUED_ZERO_FACE := "0% · ≈150 turns"
 ## …and the same figure as the hover states it, on a REFUSED row, where the face has spent its one
 ## clause on the refusal.
-const TIP_PAVED_TURNS := "≈130 turns with this band's builders."
+const TIP_PAVED_TURNS := "≈400 turns with this band's builders."
 
 ## ⛔ **THE MARKER FOR "THIS ROW SHOWS A METER"**, for the ABSENCE claim. A face leads with a
 ## PERCENTAGE only where the rung is worn in by traffic or is being BUILT; a rung nobody has ordered
@@ -2284,8 +2295,8 @@ const LADDER_LOCKED_WORD := "locked"
 ## The price PAIRED with the standing bill, as a sentence — the ROW now states those same two figures
 ## one line away, and **the hover spells the rate exactly as the row spells it**: one number told two
 ## ways on one card is the defect, and the one-decimal spelling (`0.5`, `0.9`) was the wrong one.
-const TIP_DIRT_PRICE := "110 work to build, 0.45 work a turn to keep."
-const TIP_PAVED_PRICE := "260 work to build, 0.95 work a turn to keep."
+const TIP_DIRT_PRICE := "300 work to build, 0.45 work a turn to keep."
+const TIP_PAVED_PRICE := "800 work to build, 0.95 work a turn to keep."
 
 ## What each rung does, in plain English — the jargon (`buys`, `lost hauling`, `lights its tiles`,
 ## `links N tiles out`) is retired from every road surface.

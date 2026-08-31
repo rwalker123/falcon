@@ -278,7 +278,7 @@
       "ceiling_required": null,
       "site_requirement": null,
       "build": {
-        "work_cost": 110.0,
+        "work_cost": 300.0,
         "grace_turns": null
       },
       "upkeep": {
@@ -309,7 +309,7 @@
       "ceiling_required": null,
       "site_requirement": null,
       "build": {
-        "work_cost": 260.0,
+        "work_cost": 800.0,
         "grace_turns": null
       },
       "upkeep": {

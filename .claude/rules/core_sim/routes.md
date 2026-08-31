@@ -376,8 +376,8 @@ second producer of a rung's position, the failure this arc has had three of.
 |---|---|---|---|---|---|
 | `path` | — | — | — | null | null |
 | `trail` | **— (it forms from use)** | **—** | `roadbuilding` | 40 work | **null** |
-| `dirt_road` | **`grade`** | `roadbuilding` | `paving` | 110 work | yes |
-| `paved_road` | **`pave`** | `paving` | — | 260 work | yes |
+| `dirt_road` | **`grade`** | `roadbuilding` | `paving` | 300 work | yes |
+| `paved_road` | **`pave`** | `paving` | — | 800 work | yes |
 
 - **The floor is TWO rungs.** A path is what traffic wears in before anybody decides to make a road,
   and a trail is the floor's second storey. Neither costs anything to hold, neither takes a verb,
