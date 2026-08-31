@@ -1384,6 +1384,21 @@ const KIT_WITHHELD_REASON_BUILD_BRANCH_FORMAT := "its tools are no use on %s"
 ## the whole client — and `KitRoster` already reads this file.
 const KIT_BUILD_BRANCH_PLANT_NOUN := "a crop build"
 const KIT_BUILD_BRANCH_ANIMAL_NOUN := "an animal build"
+## …and the third branch, which is not a food web at all. `route` is the wire's token; what the
+## player is looking at is a road.
+const KIT_BUILD_BRANCH_ROUTE_NOUN := "a road build"
+
+## ⛔ **THE RUNG-BOUND REFUSAL, AND IT IS A DIFFERENT SENTENCE FROM THE BRANCH ONE ON PURPOSE.** The
+## paving kit in front of a `grade` shares the road's branch — *its tools are no use on a road build*
+## would be plainly false, and a reason a player can see is wrong is worse than no reason at all.
+## What is true is that a tool bound to one rung resolves to the neutral on every other, so this says
+## that instead, in the ladder's own word (`ROAD_PROGRESS_UNNAMED_FORMAT` already says *rung* to the
+## player).
+##
+## **It names no rung**, deliberately: this leaf holds no catalog and the rung's display name lives on
+## one, so a format taking a key would print `route:paved_road` at the player the first time a caller
+## passed the wrong string.
+const KIT_WITHHELD_REASON_BUILD_RUNG := "its tools are for a different rung"
 
 ## **THE JOB'S DEFAULT IS MARKED, NOT SEPARATED.** The player needs to know which kit the verb takes
 ## when they name none; that is a note on an ordinary entry, and a divider would imply the roster has

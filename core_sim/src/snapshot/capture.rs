@@ -1969,6 +1969,14 @@ fn kit_roster_states(
                     .build_work_branch
                     .map(|branch| branch.as_str().to_string())
                     .unwrap_or_default(),
+                // **AND WHICH RUNG OF THAT WEB**, `""` for a tool bound to none. The roster row is
+                // what a PICKER reads, so leaving the bound off here — while the band's resolved
+                // row carries it — is what lets a `pave` be offered the grading kit: both road kits
+                // would look unbound and the earliest in file order would win.
+                build_work_rung: tiers
+                    .build_work_rung
+                    .map(|rung| rung.wire_key())
+                    .unwrap_or_default(),
                 // **The attack's size window**, so the client's pre-launch gate resolves this kit
                 // against the quarry in front of it rather than against the kit's best case. `0` on
                 // either end is unbounded, which every weapon but the passive device is.

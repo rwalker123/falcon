@@ -735,10 +735,119 @@ other build surface in the game states a turns estimate. `route_track` had carri
   `pool_work_supply` would answer whatever the KIT alone pays, which on a branch no kit serves is
   also `0` and would look like the same refusal for a different reason.
 - **The kit is asked for with `KitRoster.BUILD_BRANCH_ROUTE` (`"route"`, `RungBranch::Route`'s own
-  wire spelling), which answers `{}` for every shipped kit** — no equipment declares a `build_work`
-  effect serving the branch — so a road is priced at bare hands, which is the truth about the shipped
-  roster rather than a gap. **Asking with `BUILD_BRANCH_NONE` instead would be wrong**: that means *no
-  branch test at all* and would credit the crook's 0.5 against a road.
+  wire spelling) AND with the RUNG the row is raising.** **Asking with `BUILD_BRANCH_NONE` instead
+  would be wrong**: that means *no branch test at all* and would credit the crook's 0.5 against a
+  road.
+
+> #### ⛔ THE ROAD TOOLS ARE BOUND TO ONE RUNG EACH, SO THE GEAR TERM IS PER ROW
+>
+> `roadbuilding` (earthmoving) and `paving` (stone dressing) both declare `build_work` on the route
+> branch and each names its own `rung` — `route:dirt_road` and `route:paved_road` — worth `2.0` a
+> worker there and **exactly the neutral on the other**. They are the first branch whose rungs want
+> different tools, which is why `EquipmentEffect::serves_build` took a rung beside its branch.
+>
+> **`RungLadder.route_track` therefore takes `kit_gear_by_rung`, a `{rung_key: gear}` map, not one
+> term for the card.** One answer spent on four rows quotes the paving kit's uplift on the `grade`
+> beneath it — an uplift the sim pays nothing for. `DrawerComposeController._road_ladder_kit_gear`
+> builds the map, one `KitRoster.builders_kit_for` + `build_gear` per catalog rung, so a band whose
+> `builders` row reads `none` because it has nothing queued is still quoted the tool the roster will
+> hand it when the press lands.
+>
+> **Measured on `road_ladder_rung_kit`** (a band holding the PAVING kit, two builders, a road at
+> trail-top): the `grade` row's hover reads `≈150 turns` — `ceil(300 / 2)`, bare hands — and the
+> `pave` row's reads `≈134 turns` — `ceil(800 / (2 × 1.0 + 2 × 2.0))`. Deleting the rung test from
+> `build_gear` moves the `grade` row to `≈50 turns` and fails that state's first claim by name.
+>
+> ⛔ **THE BOUND RIDES BOTH TABLES, AND THE ROSTER HALF IS WHAT THE PICKER OPENS ON.**
+> `BandKitTiers.buildWorkRung` is the band's RESOLVED row (what `build_gear` reads) and
+> `KitOption.buildWorkRung` is the roster's fresh one (what `kit_serves_build`, `work_kit_for_branch`
+> and `kit_offer`'s greying read). While only the first was published, the roster answered *two kits
+> serve a `grade`* and the derivation handed back whichever it listed FIRST — so a `pave` entry
+> opened on the **roadbuilding** kit. `_assert_the_roster_names_one_road_kit_per_rung` is the client
+> half of the sim's own claim (*the roster must name EXACTLY ONE kit for a grade*).
+>
+> ⛔ **`kit_serves_build`'s THIRD ARM — a caller that names NO rung is quoted NOTHING** — is the one
+> that fails silently and generously, and it is the sim's own `(Some(_), None) => false`. **Measured:**
+> flipping it to *serve* fails exactly one claim, which reports `got "roadbuilding"` — the roster's
+> first road tool handed to a caller that could not say which rung it was pricing.
+>
+> ⛔ **AND THE FORK IN `kit_offer` IS `kit_serves_branch`, NOT `kit_serves_build` ASKED WITH NO
+> RUNG.** The two questions read alike and answer differently: the unqualified ask IS the third arm,
+> so using it to mean *is this a road tool at all* sends every rung-bound kit down the BRANCH
+> sentence — *its tools are no use on a road build*, which is plainly false of a paving hammer in
+> front of a `grade`, and a reason a player can see is wrong is worse than none.
+
+### The stone is FLAT, and the work beside it is not
+
+`route:paved_road` eats **20 stone**; every other rung of the branch eats nothing at all, and states
+no clause rather than a `0`.
+
+- **`RouteRungState.buildMaterialCost` is already the whole truth for every tile on the map**, where
+  `workCost` one field over is a base the tile's own `keeperRemoteness` still has to be applied to.
+  A tile of road needs the same twenty stone wherever it lies, and remoteness already taxes the
+  getting there. ⛔⛔ **Passing it through the remoteness term `workCost` goes through over-quotes
+  every remote road on the map, and looks entirely plausible.** The sim gets the flatness by
+  cancellation rather than by a special case — it spreads the pile over the leg's own *priced* width
+  (`pile × accrual / width`), and the whole climb banks exactly that width — so a remote road draws
+  its stone **more slowly, over more turns**, never more of it.
+  **Measured:** `road_ladder_paved_pile` is a road at the shipped `×2`, and its row reads
+  `+ 20 stone to raise it`. Scaling the pile makes it read `+ 40 stone to raise it` and fails two
+  claims, the second naming the doubled figure outright.
+- **`RouteState.buildMaterialDemand` / `buildMaterialSupplied`** are this turn's draw and what the
+  shelf paid of it, `demand − supplied` being the shortfall verbatim — the material twin of the
+  upkeep pair. ⛔ **A short store STALLS the build in proportion and never refuses it**: the covered
+  fraction scales the work banked and the stone drawn together and the uncovered remainder is
+  *wasted*, so a stalled road banks **less**, never zero. Only a shelf with nothing at all on it
+  blocks the head, and that arrives as `buildBlockedReason == "materials"`.
+- ⛔ **`no_keeper` HAS NO WORDING IN THIS CLIENT AND MUST NOT GET ONE.** The sim mints the cause so an
+  unkept road stops reporting `owned_by_other` — the two are not one cause, and a road nobody keeps
+  reported as a rival's sends the player after somebody who does not exist — but `prune_build_queue`
+  drops the queue entry of any road its band does not keep, so no unkept road survives to publish it.
+  It is load-bearing for the gate and dead on the wire; a sentence for a state that cannot reach the
+  player is dead content.
+
+> #### The shared price asides took the route row, and the pile clause is now the SAME sentence
+>
+> `route_track` composes its rows through `RungLadder._build_price_asides` — the same composer
+> `track()` and `ring_row` open with — so the pile clause, the order (pile, then warning) and the
+> WARN ink have one spelling on every branch. A refused rung states its pile too, `track()`'s own
+> rule: a rung the ladder refuses today is still one the player is planning toward.
+>
+> **The paved row reads `+ 20 stone to raise it`** — `HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT`
+> over `RUNG_TRACK_MATERIAL_TERM`, exactly as a pen's hurdles read. ⛔ **The noun is
+> `RouteRungState.buildMaterialId`'s and never this client's.** *The route branch eats stone* is a
+> fact about `intensification_ladder.json`; a client holding it is a second authority that goes stale
+> the day a rung is retuned, which is the transcription `buildWorkPerWorkerTurn` exists to have
+> prevented. `land_readouts` composes its expectation from the fixture's own declared pair for the
+> same reason, so a retune reaches the wire without an edit in the test.
+>
+> ⛔ **THE AMOUNT AND THE NOUN ARE ONE READING — `HudRouteVocab.catalog_material_pile` IS WHERE THEY
+> ARE PAIRED.** It answers `{}` unless the rung declares both, so *this rung eats nothing* and *this
+> rung eats 20 stone* are the only two answers a caller can get. **An empty id is NOT "a pile we
+> cannot name"** — that third state died with the wire gap that produced it, and `_material_term`'s
+> nameless arm went with it. The row read `+ 20 to raise it` for one slice, and *twenty of what?* is
+> why the id was appended.
+>
+> **The stall clause stays route-shaped, and the NOUN is no longer the reason — the ARITHMETIC is.**
+> `RUNG_TRACK_STALL_FORMAT` reads *"you have %s — it will stall at about %s"*, whose two terms are one
+> sum: a STOCK of the good, and the fraction of the PILE that stock covers. A road's fraction is the
+> sim's own per-turn coverage (`buildMaterialSupplied / buildMaterialDemand`), struck against every
+> other claim on the store at the sim's priority — so pairing it with a stock would read as one
+> calculation and be another. `ROAD_LADDER_STALL_FORMAT` states the shortfall and the reach and
+> quotes no stock; the FRACTION still comes through the shared `_stall_fraction_word` ladder, which
+> is the half that could drift.
+>
+> ⛔ **`_build_price_asides`' `derive_stall` FLAG NAMES WHICH AUTHORITY OWNS THE WARNING, and an
+> empty clause alone could not.** The seam was `stall_clause != ""` until `buildMaterialId` landed —
+> and then the route pile stopped being nameless, the derived worst-good search suddenly found
+> `stone` in a store holding none, and a rung **nobody had ordered** grew
+> `you have 0 stone — it will stall at about barely at all`: a warning about a build that is not
+> happening, derived by the wrong authority from a stock the sim never consulted. Routes pass
+> `NO_MATERIAL_STORE` and derive nothing.
+>
+> **`_hold_price_asides` is deliberately NOT on the route row.** The face already reads
+> `800 work · 0.95/turn upkeep` and the hover repeats it as a sentence; a third spelling beneath the
+> row is exactly the duplication this card was cut down from.
 
 ### The rate rides the CATALOG, and one row answers for the branch
 

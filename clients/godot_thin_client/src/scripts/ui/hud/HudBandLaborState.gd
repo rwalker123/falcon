@@ -1249,6 +1249,40 @@ func head_build_branch(band: Dictionary) -> String:
 		return KitRoster.BUILD_BRANCH_NONE
 	return KitRoster.build_branch_for_kind(String(head.get("kind", "")).strip_edges().to_lower())
 
+## **…AND WHICH RUNG OF IT** — `KitRoster.BUILD_RUNG_ANY` for a head that is not a road, and for a
+## band with nothing queued.
+##
+## ⛔ **ONLY A ROAD HEAD HAS ONE TO GIVE, AND IT COSTS A LOOKUP THE BRANCH DOES NOT.** A queue entry
+## publishes `{kind, target_x, target_y, fauna_id}` and no rung, so the rung has to come off the
+## SOURCE — for a road, the rung above the one the road on that tile HOLDS, which is the step its
+## keepers would actually work next. A patch and a herd answer `BUILD_RUNG_ANY` because no plant or
+## animal kit binds a rung: `kit_serves_build`'s first arm serves them whatever the caller says.
+##
+## **A road the snapshot does not carry answers `BUILD_RUNG_ANY` too** — the `routes` section is
+## fog-filtered, and an unqualified ask is quoted no rung-bound tool at all, which errs toward the
+## ungeared estimate rather than toward a tool the sim may not pay for.
+func head_build_rung(band: Dictionary) -> String:
+	var head := build_queue_head(band)
+	if head.is_empty():
+		return KitRoster.BUILD_RUNG_ANY
+	if String(head.get("kind", "")).strip_edges().to_lower() != HudConst.LABOR_KIND_ROADWORK:
+		return KitRoster.BUILD_RUNG_ANY
+	return road_next_rung(Vector2i(int(head.get("target_x", -1)), int(head.get("target_y", -1))))
+
+## **THE RUNG A ROAD ON THIS TILE WOULD BE WORKED TO NEXT** — the one above the rung it HOLDS, and
+## `KitRoster.BUILD_RUNG_ANY` for a tile carrying no road this client can see. The road ladder and
+## the queue row both price against it, so it is resolved here rather than at each of them.
+func road_next_rung(tile: Vector2i) -> String:
+	if tile.x < 0 or tile.y < 0:
+		return KitRoster.BUILD_RUNG_ANY
+	for road_variant in roads():
+		if not (road_variant is Dictionary):
+			continue
+		var road: Dictionary = road_variant
+		if HudRouteVocab.tile_of(road) == tile:
+			return HudRouteVocab.next_rung_key(HudRouteVocab.rung_of(road))
+	return KitRoster.BUILD_RUNG_ANY
+
 ## **IS THIS SOURCE THE ENTRY THIS BAND'S BUILDERS ARE STANDING ON?** — *are they on THIS one*, which
 ## is what separates a build in flight from one waiting its turn.
 ##

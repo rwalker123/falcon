@@ -288,9 +288,14 @@ const STATE_UNORDERED := "unordered"
 ## **THE ROWS ARE OTHERWISE `track`'s OWN `ROW_*` SHAPE**, so the renderer is unchanged. Three of the
 ## six original states are unreachable here and that is structural rather than unfinished: `path` and
 ## `target` name legs of a QUEUED entry, and no road publishes one.
-## `builders` is the ACTING BAND'S OWN POOL and `kit_gear` what that pool carries, which is what makes
-## the turns estimate a fact about the band the picker names rather than about the road — a different
-## band with a different pool is a different answer, so both move when the picker does.
+## `builders` is the ACTING BAND'S OWN POOL and `kit_gear_by_rung` what that pool carries, which is
+## what makes the turns estimate a fact about the band the picker names rather than about the road —
+## a different band with a different pool is a different answer, so both move when the picker does.
+##
+## ⛔ **THE GEAR IS KEYED BY RUNG, NOT ONE TERM FOR THE CARD.** Both shipped road tools serve the
+## route branch and each names ONE rung of it, so a single answer spent on every row would quote the
+## paving kit's uplift on the `grade` below it. `{}` — and a rung missing from the map — is the
+## ungeared reading.
 ##
 ## `queue` is that same band's BUILD QUEUE, as `{ahead, head}` — how many entries a press would land
 ## behind and what the first of them is called. It moves with the picker for the identical reason: a
@@ -304,7 +309,7 @@ const STATE_UNORDERED := "unordered"
 static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: Dictionary,
         labels: Dictionary, band: Dictionary,
         keeper_label: String = "", builders: int = SourceForecast.BUILD_CREW_NONE,
-        kit_gear: Dictionary = {}, queue: Dictionary = {},
+        kit_gear_by_rung: Dictionary = {}, queue: Dictionary = {},
         queued_tiles: Dictionary = {}) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
     var gates := RungGates.route_gates(road, ladder, knowledge, labels, band, keeper_label)
@@ -318,6 +323,11 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
     # work already banked against it. It decides which of the approach row's two faces renders, and it
     # is resolved ONCE here rather than per row: only one row can own the meter.
     var climbing := _route_climbing(meter, HudRouteVocab.is_queued(road, queued_tiles))
+    # ⛔ **THIS BRANCH READS NO SHELF AT ALL, and that is the point of the `derive_stall` seam.** A
+    # road's stall is the SIM'S published pair (`buildMaterialDemand`/`buildMaterialSupplied`),
+    # already struck against the store at the sim's own priority; dividing the band's stock by the
+    # pile here would be a second authority answering a question that is already answered, and it
+    # would answer it on every rung rather than on the one being built.
     # **THE METER BELONGS TO THE FIRST ROW ABOVE THE STANDING RUNG AND TO NO OTHER** — it is the rung
     # being RAISED, which is a DIFFERENT rung from the one the road holds. Tracked as a latch rather
     # than an `order + 1` test, because the catalog's orders need not be contiguous.
@@ -357,7 +367,7 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
         # **THE ESTIMATE IS PER ROW, because the pile is** — only the row directly above the standing
         # rung has anything banked against it, and every row above that is priced whole.
         var turns := _route_turns(entry, meter if is_approach_row else NOTHING_BANKED,
-            builders, kit_gear)
+            builders, kit_gear_by_rung)
         row[ROW_TURNS_KEY] = turns
         var turns_clause := DetailFormat.build_turns_clause(turns, builders)
         row[ROW_TOOLTIP_KEY] = _route_tooltip(entry, refusals, road, remote, turns_clause)
@@ -424,7 +434,13 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
             # looking at — and on that screenshot the head of the band's queue WAS this very road,
             # so the line named the road as the thing it was waiting behind. The row's own figures
             # are the receipt for the press; there is nothing left for a sentence to add.
-            var asides: Array[Dictionary] = []
+            # ⛔ **THE PILE AND ITS STALL COME THROUGH THE SHARED COMPOSER**, the same
+            # `_build_price_asides` the plant and animal tracks open with — so the format, the order
+            # (pile, then warning) and the WARN ink have ONE spelling on every branch. They lead,
+            # because what a rung EATS is part of its price and the placement note beneath is about
+            # the press.
+            var asides := _build_price_asides(_route_pile(entry), NO_MATERIAL_STORE,
+                _route_stall_clause(road, is_building), false)
             if not is_building:
                 var placement := _route_queue_aside(queue)
                 if placement != "":
@@ -445,8 +461,49 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
         row[ROW_STATE_KEY] = STATE_LOCKED
         row[ROW_FACE_KEY] = HudRouteVocab.ROAD_LADDER_FACE_FORMAT % [
             figure, RungGates.route_row_refusal(refusals)]
+        # **A REFUSED RUNG STATES ITS PILE TOO** — `track()`'s own rule one branch over: a rung the
+        # ladder refuses today is still a rung the player is planning toward, and a price hidden
+        # behind a refusal is a price nobody can plan against. No stall clause here: the draw is a
+        # fact about the road being built NOW, and a rung nobody has ordered is drawing nothing.
+        row[ROW_BUILD_ASIDES_KEY] = _build_price_asides(_route_pile(entry), NO_MATERIAL_STORE,
+            "", false)
         rows.append(row)
     return rows
+
+## **THE ROUTE PILE AS THE SHARED COMPOSER TAKES IT** — one `MaterialPayoff`-shaped row, or `[]` for a
+## rung that eats nothing, which is every rung of the branch but `route:paved_road`.
+##
+## ⛔ **THE AMOUNT AND ITS NOUN ARE ONE READING, AND `catalog_material_pile` IS WHERE THEY ARE PAIRED.**
+## A rung eats 20 stone or it eats nothing; there is no third state, and half an answer — an amount
+## with no word — is a sentence nobody can render. That half-answer is exactly what the row printed
+## for a slice (`+ 20 to raise it`), which is why the pairing lives in one reader rather than at each
+## caller.
+##
+## ⛔⛔ **THE FIGURE IS TAKEN AS PUBLISHED AND NEVER SCALED BY `keeper_remoteness`.** The work beside
+## it is a base the tile's multiplier still applies to; the stone is already the whole truth for
+## every tile on the map. A remote road draws the same pile, more slowly.
+static func _route_pile(entry: Dictionary) -> Array[Dictionary]:
+    var pile: Array[Dictionary] = []
+    var row := HudRouteVocab.catalog_material_pile(entry)
+    if not row.is_empty():
+        pile.append(row)
+    return pile
+
+## **THE STALL SENTENCE FOR A ROAD, OR `""` WHERE THE SHELF IS KEEPING UP** — handed to
+## `_build_price_asides` because the SIM already resolved it: the road's own row publishes this
+## turn's draw and what the store paid of it, so nothing is divided here.
+##
+## ⛔ **ONLY THE ROW BEING BUILT CAN BE SHORT.** `buildMaterialDemand` is *this turn's* draw, so a
+## rung nobody has ordered draws nothing and a stall clause on it would be a warning about a build
+## that is not happening.
+##
+## The fraction goes through the SHARED `_stall_fraction_word`, so a road and a pen describe the same
+## coverage with the same word.
+static func _route_stall_clause(road: Dictionary, is_building: bool) -> String:
+    if not is_building or not HudRouteVocab.is_material_short(road):
+        return ""
+    return HudRouteVocab.ROAD_LADDER_STALL_FORMAT % _stall_fraction_word(
+        HudRouteVocab.material_coverage_of(road))
 
 ## ⛔ **IS THE RUNG ABOVE THE STANDING ONE BEING BUILT?** — the test the approach row's two faces fork
 ## on, and it is TWO facts because either alone leaves a real state reading as its opposite: a road
@@ -558,7 +615,7 @@ const NOTHING_BANKED := 0.0
 ## is yet keeping. `BUILD_TURNS_NO_ESTIMATE` — no clause at all — for a rung the catalog prices at
 ## nothing and for a pool that supplies nothing.
 static func _route_turns(entry: Dictionary, banked_fraction: float, builders: int,
-        kit_gear: Dictionary) -> int:
+        kit_gear_by_rung: Dictionary) -> int:
     var cost := HudRouteVocab.catalog_work_cost(entry)
     if cost <= HudRouteVocab.RUNG_CATALOG_NO_WORK_COST:
         return SourceForecast.BUILD_TURNS_NO_ESTIMATE
@@ -568,6 +625,13 @@ static func _route_turns(entry: Dictionary, banked_fraction: float, builders: in
     var per_worker_turn := HudRouteVocab.catalog_build_work_per_worker_turn(entry)
     if per_worker_turn <= SourceForecast.BUILD_WORK_NONE:
         return SourceForecast.BUILD_TURNS_NO_ESTIMATE
+    # ⛔ **THE GEAR TERM IS THIS ROW'S OWN, LOOKED UP BY RUNG.** Both shipped road tools declare the
+    # route branch and each names one rung, so a single term spent on every row would quote the
+    # paving kit's uplift on the `grade` beneath it — the defect `EquipmentEffect::serves_build`'s
+    # rung bound exists to stop. A rung with no entry in the map is ungeared, which is what a branch
+    # no tool on this roster serves answers for every row.
+    var kit_gear: Dictionary = kit_gear_by_rung.get(
+        HudRouteVocab.catalog_rung_key(entry), {})
     var supply := SourceForecast.pool_work_supply(builders, per_worker_turn, kit_gear)
     if supply <= SourceForecast.BUILD_WORK_NONE:
         return SourceForecast.BUILD_TURNS_NO_ESTIMATE
@@ -810,8 +874,28 @@ static func build_aside(text: String, warn: bool = false) -> Label:
 ## ⛔ **AN EMPTY PILE IS "THIS RUNG EATS NOTHING", NOT "NOTHING IS KNOWN"** — the `MaterialPayoff`
 ## contract this whole wire follows — so it renders NO aside rather than a `0` or a dash. A rung that
 ## eats nothing must not read as one that eats badly.
+## ⛔ **`stall_clause` IS FOR A CALLER WHOSE STALL THE SIM ALREADY RESOLVED, and the route branch is
+## the one.** The derived path below divides the band's shelf by the pile per good — which needs the
+## good's NAME, on both sides. A road's pile is nameless on the wire, and it does not need the
+## derivation at all: `RouteState.buildMaterialDemand`/`buildMaterialSupplied` are this turn's draw
+## already struck against the store, so the route caller hands the finished sentence in and the
+## format, the ordering and the WARN ink stay here, shared, rather than being spelled a second time.
+##
+## **THE NOUN IS NO LONGER WHAT KEEPS THEM APART — THE ARITHMETIC IS.** `RouteRungState.buildMaterialId`
+## names the road's material now, so the derived sentence *could* be composed; it would just be the
+## wrong sum. The derived fraction is a STOCK over a PILE; a road's is the sim's own per-turn
+## coverage, struck against every other claim on the store at the sim's priority. Pairing one with
+## the other's wording would read as one calculation and be another.
+## ⛔ **`derive_stall` NAMES WHICH AUTHORITY OWNS THE WARNING, and `""` alone could not.** An empty
+## clause from a caller that derives means *nothing is short*; from a caller that owns the answer it
+## means the same thing — but the derived path must not then run and produce a SECOND, different
+## verdict. It did exactly that the day `buildMaterialId` landed: the route pile stopped being
+## nameless, the worst-good search suddenly found `stone` in a store holding none, and a rung nobody
+## had ordered grew `you have 0 stone — it will stall at about barely at all` — a warning about a
+## build that is not happening, derived by the wrong authority from a stock the sim never consulted.
 static func _build_price_asides(pile: Array[Dictionary],
-        store: Dictionary) -> Array[Dictionary]:
+        store: Dictionary, stall_clause: String = "",
+        derive_stall: bool = true) -> Array[Dictionary]:
     var asides: Array[Dictionary] = []
     if pile.is_empty():
         return asides
@@ -819,6 +903,13 @@ static func _build_price_asides(pile: Array[Dictionary],
         RUNG_ASIDE_TEXT_KEY: HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT % _material_terms(pile),
         RUNG_ASIDE_WARN_KEY: false,
     })
+    if not derive_stall:
+        if stall_clause != "":
+            asides.append({
+                RUNG_ASIDE_TEXT_KEY: stall_clause,
+                RUNG_ASIDE_WARN_KEY: true,
+            })
+        return asides
     # **THE FRACTION IS THE WORST GOOD'S, AND THE CLAUSE NAMES THAT GOOD.** A build draws every good
     # in its pile at one coverage fraction, so the one the shelf runs out of first is what the whole
     # build stalls at — and a summed "you have 8 things" would be the currency this model refuses.
@@ -923,6 +1014,10 @@ static func _price_terms(work: float, goods: Array[Dictionary]) -> Array[String]
     terms.append_array(_material_term_list(goods))
     return terms
 
+## **NO SHELF TO CONSULT** — what a caller that owns its own stall verdict passes, so the derived
+## path has nothing to read even if it were reached. The route branch is the one such caller.
+const NO_MATERIAL_STORE := {}
+
 ## The band's shelf as `{material_id: amount}` — the ONE place `material_store` is turned into a
 ## lookup, so the stall test reads a good's own stock and never a total across goods.
 static func _material_store(band: Dictionary) -> Dictionary:
@@ -951,6 +1046,12 @@ static func _material_term_list(rows: Array[Dictionary]) -> Array[String]:
 ## ONE good's amount and its name. **A material names itself** — the catalogue ships no display word,
 ## so the id IS the noun, which is the rule every material readout in this client follows. The amount
 ## is trimmed rather than fixed, so a whole pile reads `6` and a mending rate reads `0.05`.
+##
+## ⛔ **EVERY BRANCH REACHES HERE WITH A NAMED GOOD, AND THE NAMELESS ARM IS GONE.** It rendered the
+## amount alone for one slice, when the route pile was a bare float — the row read `+ 20 to raise it`
+## and *twenty of what?* is why `RouteRungState.buildMaterialId` was appended. A rung that eats
+## nothing is now filtered out UPSTREAM (`HudRouteVocab.catalog_material_pile` answers `{}` unless
+## both halves are there), so an id reaching this function is always a word.
 static func _material_term(material_id: String, amount: float) -> String:
     return HudWorkVocab.RUNG_TRACK_MATERIAL_TERM % [
         DetailFormat.format_trimmed(amount, HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),

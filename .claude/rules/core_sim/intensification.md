@@ -2032,10 +2032,12 @@ reason rather than a second guess at its own.
 | `no_crop` | no committed species (Cultivate) / no commitment (Sow) |
 | `species_ceiling` | `can_domesticate()` / `can_pen()` — one fact about the animal, two rungs |
 | `rung_below` | Corral on a herd that is not tamed |
-| `owned_by_other` | the source is another faction's |
+| `owned_by_other` | the source is another faction's. **Never *nobody's*** — see `no_keeper` |
+| `no_keeper` | **nobody holds the source at all.** Route-only today: a road's keeper is released the moment decay or disuse takes the tile below the free floor's top. The remedy is the opposite of `owned_by_other`'s — take it on, by re-issuing `grade`/`pave` |
 | `site` | the land does not admit the rung |
 | `ring_idle` | a pen-ring entry with no extension running |
 | `undeclared` | the meter's rung is not the one this entry declared — a DEAD entry |
+| `materials` | **not a conjunct** — the rung's gate HOLDS and the stores are what stopped it, minted by the countdown off a coverage of zero |
 | `unworked` | **not a conjunct** — no quote at all, the band's row on the source having lapsed |
 
 **THE KEY SET IS READ OFF THE ARMS, NOT AUTHORED.** Each is a term of some rung's own `eligible`, and

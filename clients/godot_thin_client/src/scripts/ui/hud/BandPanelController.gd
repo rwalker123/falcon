@@ -3973,11 +3973,22 @@ func _queue_kit_listing(band: Dictionary, model: Dictionary) -> Dictionary:
             KitRoster.KIT_ENTRIES_SELECTED_KEY: HudWidgets.NO_ENTRY_SELECTED,
             QUEUE_KIT_DERIVED_KEY: KitRoster.NO_KIT_ID}
     var kits := _band_labor.kits()
-    var derived := KitRoster.build_kit_for_branch(kits, branch)
+    # ⛔ **THE RUNG IS THE ONE BEING WORKED, AND ONLY THE ROAD MODEL CARRIES ONE.**
+    # `_road_queue_model` fills `build_destination` with `next_rung_key` off the rung the road HOLDS
+    # — the step being worked, never the far end of a multi-leg order — so a `pave` declared on a
+    # trail is quoted the mattock it needs first and not the dressing hammer it will want later.
+    #
+    # **A patch's and a herd's models put a VERB in that same key** (`build_destination_rung` maps a
+    # rung key to its improvement), which is not a rung and must never be offered as one. They ask
+    # unqualified instead, and `kit_serves_build`'s first arm answers for them: no plant or animal
+    # kit binds a rung, so every one of their tools serves every rung of its branch.
+    var rung := String(model.get("build_destination", "")).strip_edges() \
+        if branch == KitRoster.BUILD_BRANCH_ROUTE else KitRoster.BUILD_RUNG_ANY
+    var derived := KitRoster.build_kit_for_branch(kits, branch, rung)
     var listing := KitRoster.kit_entries(kits, KitRoster.JOB_BUILDERS,
         _queue_kit_selection(model, derived), derived,
         func(kit_id: String) -> void: _emit_build_kit(band, model, kit_id, derived),
-        {}, "", branch)
+        {}, "", branch, rung)
     listing[QUEUE_KIT_DERIVED_KEY] = derived
     return listing
 

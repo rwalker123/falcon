@@ -46,6 +46,9 @@ struct PublishedRoad {
     grants_sight: bool,
     friction_multiplier: f32,
     holds_link_to_tiles: u32,
+    build_blocked_reason: String,
+    build_material_demand: f32,
+    build_material_supplied: f32,
 }
 
 /// The band's `roadwork*` trio, read off the encoded envelope.
@@ -107,6 +110,12 @@ fn published_roads(app: &App) -> Vec<PublishedRoad> {
             grants_sight: row.grantsSight(),
             friction_multiplier: row.frictionMultiplier(),
             holds_link_to_tiles: row.holdsLinkToTiles(),
+            build_blocked_reason: row
+                .buildBlockedReason()
+                .expect("the cause is published, empty or not")
+                .to_string(),
+            build_material_demand: row.buildMaterialDemand(),
+            build_material_supplied: row.buildMaterialSupplied(),
         })
         .collect()
 }
@@ -206,6 +215,74 @@ fn seat_a_dirt_road(app: &mut App, tile: UVec2, keeper: (FactionId, BandId)) {
     seat_road(app, tile, top, Some(keeper));
 }
 
+/// [`seat_a_dirt_road`] at a stated **remoteness** — the keeper quote a road takes on when the band
+/// that graded it is far from it. Distance is a cost on this branch, never a wall, so the only thing
+/// it changes is the price: the same rung, dearer to hold.
+fn seat_a_remote_dirt_road(
+    app: &mut App,
+    tile: UVec2,
+    keeper: (FactionId, BandId),
+    remoteness: f32,
+) {
+    let (top, _) = built_road_dials();
+    let ladder = LadderConfig::builtin();
+    let mut roads = app.world.resource_mut::<RoadRegistry>();
+    let road = roads.road_or_trail(tile, &ladder);
+    road.set_position(top, &ladder);
+    let (faction, band) = keeper;
+    road.take_keeper(RoadKeeper { faction, band }, remoteness, &ladder);
+}
+
+/// **WHAT ONE ROAD OWES ITS KEEPER THIS TURN**, in work units — `keepers_the_bill_wants`' own
+/// reading, before the ceil that turns it into a head count.
+fn the_bill_one_road_owes(app: &App, tile: UVec2) -> f32 {
+    let ladder = LadderConfig::builtin();
+    let road = app
+        .world
+        .resource::<RoadRegistry>()
+        .road(tile)
+        .expect("the road is in the registry");
+    let terrain = app
+        .world
+        .resource::<TileRegistry>()
+        .index(tile.x, tile.y)
+        .and_then(|entity| app.world.get::<Tile>(entity))
+        .expect("a seated road stands on a real tile")
+        .terrain;
+    core_sim::road_upkeep_demand(
+        road,
+        core_sim::road_upkeep_measure(terrain, road.keeper_remoteness),
+        &ladder,
+    )
+}
+
+/// **WHAT ONE ROADWORK KEEPER ACTUALLY DELIVERS**, in work units per turn — `PER_WORKER_OUTPUT` plus
+/// whatever the roster's derived road-keeping kit adds.
+///
+/// ⛔ **READ, NEVER ASSUMED.** It was `PER_WORKER_OUTPUT` while no tool served the branch; the road
+/// tools tripled it, which is exactly the kind of move a fixture written against a literal absorbs
+/// silently — see the `RUN` derivation at its one call site.
+fn a_road_keepers_own_output() -> f32 {
+    let equipment = core_sim::EquipmentConfig::builtin();
+    // The **reference** ledger — one unit of everything. A single keeper needs exactly one, so this
+    // is the honest stock for a one-worker coverage and it cannot go stale on the spawn's own dials.
+    let ledger = core_sim::BandEquipment::start_stocked(&equipment);
+    let rung = RungKey::RouteDirtRoad.wire_key();
+    let kit = equipment.keeping_kit_for(None, core_sim::RungBranch::Route, Some(&rung));
+    build_work_per_worker_turn(
+        equipment
+            .coverage(&kit, 1.0, &ledger)
+            .weighted_rate(|crew| {
+                equipment.build_work_per_worker(
+                    crew,
+                    &ledger,
+                    core_sim::RungBranch::Route,
+                    Some(&rung),
+                )
+            }),
+    )
+}
+
 /// **HOW MANY BARE HANDS COVER THIS ROAD'S BILL IN FULL**, read off the sim's own measure rather
 /// than hard-coded: the ground under a road is whatever the generated map put there.
 fn keepers_the_bill_wants(app: &App, tile: UVec2) -> u32 {
@@ -234,6 +311,124 @@ fn staff_roadwork(app: &mut App, band: Entity, workers: u32) {
     let mut allocation = LaborAllocation::default();
     allocation.set_assignment(LaborTarget::Roadwork, workers, workers.max(1), None);
     app.world.entity_mut(band).insert(allocation);
+}
+
+/// Stand a band's builders on a `pave` at `tile`, with `stone` in its stores — the state the paving
+/// pile is actually drawn in. `stone` of `0.0` leaves the shelf bare, which is the blocked arm.
+fn stage_a_paving(app: &mut App, band: Entity, tile: UVec2, builders: u32, stone: f32) {
+    let ladder = LadderConfig::builtin();
+    let (base, width) = core_sim::road_rung_span(
+        RungKey::RouteDirtRoad,
+        &ladder,
+        core_sim::NEAR_ENOUGH_TO_KEEP,
+    );
+    {
+        let mut roads = app.world.resource_mut::<RoadRegistry>();
+        roads
+            .road_mut(tile)
+            .expect("the fixture road is seated")
+            .set_position(base + width, &ladder);
+    }
+    app.world
+        .resource_mut::<core_sim::DiscoveryProgressLedger>()
+        .add_progress(
+            FactionId(0),
+            core_sim::PAVING_DISCOVERY_ID,
+            core_sim::scalar_one(),
+        );
+    let mut allocation = LaborAllocation::default();
+    allocation.set_assignment(LaborTarget::Builders, builders, builders.max(1), None);
+    allocation.enqueue_build(
+        core_sim::BuildSource::Road(tile),
+        core_sim::BuildJob::Rung(core_sim::Improvement::Pave),
+    );
+    app.world.entity_mut(band).insert(allocation);
+
+    let materials = core_sim::MaterialsConfig::builtin();
+    let characteristics = materials
+        .materials()
+        .find(|(id, _)| *id == "stone")
+        .and_then(|(_, def)| def.start_stock.as_ref())
+        .map(|stock| stock.characteristics.clone())
+        .expect("the shipped roster stocks the paving material at a spawn");
+    let key = materials
+        .band_key("stone", &characteristics)
+        .expect("the shipped roster rates the paving material");
+    let mut cohort = app
+        .world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band");
+    cohort.stores = core_sim::LocalStore::new();
+    if stone > 0.0 {
+        cohort.stores.deposit_material(
+            "stone",
+            key,
+            core_sim::scalar_from_f32(stone),
+            &characteristics,
+        );
+    }
+}
+
+/// ⛔ **A ROAD IS A SOURCE ROW, AND ITS ROW SAYS WHY THE POOL IS STUCK ON IT.**
+///
+/// It was stated for years that a road *"carries no source row for an estimate to be stamped on"*,
+/// and that claim is what made the material half of this branch look impossible to build.
+/// `RouteState` is keyed by tile exactly as a patch row is, so the same three facts a patch
+/// publishes about the build in front of it ride here.
+///
+/// **Both arms in one sweep, because either alone passes on a stuck field.** A band with stone draws
+/// it and reports no block; the same band with a bare shelf reports `"materials"` — the cause a
+/// rung whose own gate **holds** publishes, which is the one a client could never derive for itself.
+///
+/// The `demand`/`supplied` pair obeys `RouteState`'s standing rule: the difference is the shortfall,
+/// verbatim on the wire.
+#[test]
+fn a_paving_road_publishes_its_material_draw_and_says_when_the_store_stopped_it() {
+    /// A crew big enough that a turn's accrual is a visible share of the rung.
+    const BUILDERS: u32 = 4;
+    /// Far more stone than one turn's share, so the stocked arm is never itself the short one.
+    const PLENTY: f32 = 1_000.0;
+
+    let paved = |stone: f32| {
+        let mut app = spawn_world();
+        let (band, faction, id, camp) = first_band(&mut app);
+        seat_a_dirt_road(&mut app, camp, (faction, id));
+        stage_a_paving(&mut app, band, camp, BUILDERS, stone);
+        app.update();
+        published_road(&app, camp)
+    };
+
+    let stocked = paved(PLENTY);
+    assert!(
+        stocked.build_material_demand > 0.0,
+        "**LIVENESS**: a paving in progress must ask the stores for stone, or the blocked arm below \
+         is comparing two zeroes"
+    );
+    assert_eq!(
+        stocked.build_material_supplied, stocked.build_material_demand,
+        "a band that holds plenty pays the whole of this turn's share: demand - supplied is the \
+         shortfall, verbatim"
+    );
+    assert_eq!(
+        stocked.build_blocked_reason, "",
+        "a paving the store can cover is not blocked at all"
+    );
+
+    let bare = paved(0.0);
+    assert_eq!(
+        bare.build_blocked_reason, "materials",
+        "⛔ a paving the store cannot cover says SO, and says WHY: the rung's own gate holds, so a \
+         client reading the gate alone would see a block with no cause"
+    );
+    assert_eq!(
+        bare.build_material_supplied, 0.0,
+        "and it paid nothing toward the pile it asked for"
+    );
+    assert!(
+        bare.build_material_demand > 0.0,
+        "the bill it could not pay is still stated - a demand that vanished with the stock would \
+         publish 'nothing was owed' for a road that is stuck"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -315,12 +510,32 @@ fn the_published_bill_closes_on_a_part_funded_road() {
     let (band, faction, id, camp) = first_band(&mut app);
     // A short run of tiles, all kept by the one band and staffed with a single keeper — so the pool
     // is spread thin enough that the rows are genuinely part funded rather than met or starved.
+    //
+    // ⛔ **THE RUN IS PRICED OUT OF THE KEEPER'S REACH, AND THE MULTIPLE IS DERIVED.** Four roads
+    // next door outran one *bare-handed* keeper, and that is what this fixture used to rely on; the
+    // route branch's own builders kits made a keeper three times as productive
+    // (`a_road_keepers_own_output`), so the same four rows came back fully **met** and the part-funded
+    // regime — the one the identity is hardest in — stopped being reached at all. The run stays four
+    // tiles long, because every tile has to be inside the band's sight to reach its frame; what moves
+    // is what distance does to the price. **Distance is a cost, never a wall.**
     const RUN: u32 = 4;
     let run: Vec<UVec2> = (0..RUN)
         .map(|step| tile_east_of(&app, camp, step))
         .collect();
+    // Seat once next door to read what the ground under this run charges, then re-seat the whole run
+    // far enough out that one keeper cannot cover it.
+    seat_a_dirt_road(&mut app, run[0], (faction, id));
+    let near_bill = the_bill_one_road_owes(&app, run[0]);
+    let supply = a_road_keepers_own_output();
+    assert!(
+        near_bill > 0.0 && supply > 0.0,
+        "fixture: a dirt road owes something and a keeper delivers something"
+    );
+    // One keeper covers `supply / bill` roads at this price; take the run past that, with a whole
+    // multiple of headroom for the terrain varying tile to tile along the run.
+    let remoteness = (supply / (RUN as f32 * near_bill)).ceil().max(1.0) + 1.0;
     for tile in &run {
-        seat_a_dirt_road(&mut app, *tile, (faction, id));
+        seat_a_remote_dirt_road(&mut app, *tile, (faction, id), remoteness);
     }
     staff_roadwork(&mut app, band, 1);
     app.update();
@@ -576,6 +791,8 @@ struct PublishedRouteRung {
     grants_sight: bool,
     earns_knowledge: String,
     build_work_per_worker_turn: f32,
+    build_material_cost: f32,
+    build_material_id: String,
 }
 
 /// **The `routeRungs` catalog off the encoded envelope**, through the accessor chain a client uses.
@@ -624,8 +841,112 @@ fn published_route_rungs(app: &App) -> Vec<PublishedRouteRung> {
                 .expect("the lesson is published, empty or not")
                 .to_string(),
             build_work_per_worker_turn: row.buildWorkPerWorkerTurn(),
+            build_material_cost: row.buildMaterialCost(),
+            build_material_id: row
+                .buildMaterialId()
+                .expect("the material id is published, empty or not")
+                .to_string(),
         })
         .collect()
+}
+
+/// ⛔ **A PRICED RUNG NAMES WHAT IT EATS, AND A FREE ONE NAMES NOTHING.**
+///
+/// `buildMaterialCost` shipped as a bare float on the reasoning that *"the branch eats exactly one
+/// material"* — true of the **amount** and not of the **name**. The client's rung row read
+/// **"+ 20 to raise it"**: twenty of what? An amount with no noun cannot be rendered into a sentence.
+///
+/// ⛔ **AND THE CLIENT MUST NOT SUPPLY THE NOUN.** *"The route branch eats stone"* is a fact about
+/// `intensification_ladder.json`, so a client holding it is a second authority that goes stale in
+/// silence the day a rung is retuned — the transcription mistake `buildWorkPerWorkerTurn` beside it
+/// exists to have prevented. Which is why this asserts the id against the **rung record's own**
+/// declared material rather than against the literal `"stone"`: a retune must reach the wire with no
+/// edit here.
+///
+/// **The pairing is asserted BOTH WAYS**, because either half alone passes on a broken wire: a rung
+/// that eats something must name it, and a rung that eats nothing must name nothing — an id beside a
+/// zero amount is as meaningless as an amount beside no id.
+#[test]
+fn a_route_rung_that_eats_a_material_publishes_which_one() {
+    let app = spawn_world();
+    let ladder = LadderConfig::builtin();
+    let published = published_route_rungs(&app);
+    let mut named = 0;
+    for row in &published {
+        let rung = route_rungs_in_climb_order(&ladder)
+            .into_iter()
+            .find(|def| def.wire_key() == row.rung_key)
+            .expect("every published rung is one the config declares");
+        let declared: Option<(&str, f32)> = rung.build_materials().next();
+        match declared {
+            Some((id, amount)) => {
+                assert_eq!(
+                    row.build_material_id, id,
+                    "{}: the published noun is the rung record's own, never a client-side \
+                     transcription",
+                    row.rung_key
+                );
+                assert_eq!(
+                    row.build_material_cost, amount,
+                    "{}: and the amount beside it is that same declaration - the pair is resolved \
+                     from one lookup so it cannot disagree",
+                    row.rung_key
+                );
+                named += 1;
+            }
+            None => assert!(
+                row.build_material_id.is_empty(),
+                "{}: a rung that eats nothing must name nothing - an id beside a zero amount is a \
+                 noun with no quantity, which says as little as a quantity with no noun",
+                row.rung_key
+            ),
+        }
+    }
+    assert_eq!(
+        named, 1,
+        "**LIVENESS**: exactly one route rung eats a material on the shipped ladder \
+         (`route:paved_road`); a catalog publishing an empty id everywhere would satisfy the `None` \
+         arm on every row and assert nothing at all"
+    );
+}
+
+/// ⛔ **THE PILE ON THE CATALOG IS THE LADDER'S OWN, AND IT IS FLAT.**
+///
+/// Two claims, and the second is the one that needs a test. The first is the ordinary catalog rule:
+/// the figure is read off the rung record, so a retune reaches the wire with no edit here.
+///
+/// **The second is the asymmetry.** `workCost` beside it is quoted *unscaled* because a tile's own
+/// `keeperRemoteness` still has to be applied to it; `buildMaterialCost` takes no such multiplier at
+/// all, so the catalog figure is already the whole truth for every tile on the map. A client that
+/// scaled the stone the way it scales the work would over-quote every remote road — which is why
+/// this asserts against the **unscaled ladder record** rather than against anything a tile carries.
+#[test]
+fn the_route_rung_catalog_publishes_the_flat_material_pile() {
+    let app = spawn_world();
+    let ladder = LadderConfig::builtin();
+    let published = published_route_rungs(&app);
+    let mut rungs_that_eat = 0;
+    for row in &published {
+        let rung = route_rungs_in_climb_order(&ladder)
+            .into_iter()
+            .find(|def| def.wire_key() == row.rung_key)
+            .expect("every published rung is one the config declares");
+        let declared: f32 = rung.build_materials().map(|(_, pile)| pile).sum();
+        assert_eq!(
+            row.build_material_cost, declared,
+            "{}: the published pile is the rung's own, unscaled and unrounded",
+            row.rung_key
+        );
+        if declared > 0.0 {
+            rungs_that_eat += 1;
+        }
+    }
+    assert_eq!(
+        rungs_that_eat, 1,
+        "**LIVENESS**: exactly one route rung eats a material on the shipped ladder \
+         (`route:paved_road`); a catalog publishing 0 everywhere would pass the loop above and \
+         assert nothing"
+    );
 }
 
 /// ⛔ **THE CATALOG IS `intensification_ladder.json`'S OWN ROUTE BRANCH, IN CLIMB ORDER** — one row

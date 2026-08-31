@@ -66,4 +66,37 @@ pub struct RouteState {
     /// pools a pair within `max(reach_tiles, path_reach_tiles(..))`, so a road is what lets two camps
     /// pool at a distance where they simply cannot without one.
     pub holds_link_to_tiles: u32,
+    /// **WHY THE POOL IS STUCK ON THIS TILE**, `""` when it is not — the same `BuildGate` vocabulary
+    /// `ForagePatchState::build_blocked_reason` uses, one branch over.
+    ///
+    /// ⛔ **A ROAD IS A SOURCE ROW, AND THIS TABLE IS IT.** It was stated for years that a road *has
+    /// no source row for an estimate to be stamped on*, and that claim outlived its truth: this row
+    /// is keyed by tile exactly as a patch row is, so anything a patch publishes about the build in
+    /// front of it a road can publish here. The claim is what made the material half of the route
+    /// branch look impossible.
+    ///
+    /// The causes a road can carry are `"knowledge"` (the faction has not learned
+    /// `roadbuilding`/`paving`), `"owned_by_other"` (another band keeps this tile, or nobody does,
+    /// so this band's entry banks nothing) and `"materials"` (the rung's own gate **holds** and the
+    /// store is what stopped it). **Empty is not "fine"** — a road nobody has queued is not blocked,
+    /// it is simply not being built.
+    #[serde(default)]
+    pub build_blocked_reason: String,
+    /// **THIS TURN'S SHARE OF THE RUNG'S BUILD PILE**, and what the band's stores actually paid of
+    /// it — the material twin of [`Self::upkeep_demand`] / [`Self::upkeep_supplied`], obeying the
+    /// same rule: **`demand − supplied` is the shortfall, verbatim on the wire.**
+    ///
+    /// The demand is what the accrual would draw *at full coverage*, spread over the rung's whole
+    /// span, so a turn's share of `route:paved_road`'s twenty stone is small.
+    /// [`crate::state::RouteRungState::build_material_cost`] is the whole pile.
+    ///
+    /// ⛔ **A SHORT STORE STALLS THE BUILD PROPORTIONALLY AND NEVER REFUSES IT.** The covered
+    /// fraction scales **both** the work banked and the stone drawn, and the uncovered remainder is
+    /// wasted rather than carried. A store with nothing in it blocks the head, which is the
+    /// `"materials"` cause above. `0` on every rung that eats nothing.
+    #[serde(default)]
+    pub build_material_demand: f32,
+    /// See [`Self::build_material_demand`].
+    #[serde(default)]
+    pub build_material_supplied: f32,
 }

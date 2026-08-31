@@ -2060,6 +2060,12 @@ pub(crate) fn snapshot_ladder_knowledge(ladder: &LadderConfig) -> Vec<LadderKnow
 /// where a road already stands, so there is no pile to raise.
 const NO_BUILD_WORK: f32 = 0.0;
 
+/// **A RUNG THAT EATS NOTHING SWALLOWS NO PILE** — the `build_material_cost` a rung declaring no
+/// `build.materials` publishes, and it rides with an empty `build_material_id`: the pair is one
+/// reading, so *"no amount"* and *"no noun"* are the same answer said twice. Every route rung but
+/// `route:paved_road` sits here.
+const NO_BUILD_MATERIAL: f32 = 0.0;
+
 /// **WHAT A ROAD MAY BECOME** — the route branch's rung catalog, once per world and carrying no
 /// tile. `RouteState` publishes the rung a tile **stands on**; this publishes the whole climb, so a
 /// client can price a rung nothing has built yet.
@@ -2091,6 +2097,15 @@ pub(crate) fn snapshot_route_rungs(ladder: &LadderConfig) -> Vec<RouteRungState>
                 .route_payoff
                 .as_ref()
                 .expect("validate requires a route_payoff on every route rung");
+            // **THE PILE AND ITS NOUN, FROM ONE LOOKUP** — so the amount and the material it is
+            // counted in can never disagree. `None` for a rung that eats nothing, which is every
+            // route rung but `route:paved_road`.
+            //
+            // ⛔ **THE FIRST ENTRY, NOT A SUM.** One material per rung is the branch's model: the
+            // wire carries a single float, so a second declared material would make the *amount*
+            // meaningless before the id had to choose between them. Summing would publish a number
+            // no id could honestly name.
+            let pile = rung.build_materials().next();
             RouteRungState {
                 rung_key: rung.wire_key(),
                 order: rung.order,
@@ -2122,9 +2137,22 @@ pub(crate) fn snapshot_route_rungs(ladder: &LadderConfig) -> Vec<RouteRungState>
                 //
                 // It is the same figure for every rung — the sim's one answer to *what does a
                 // worker bank in a turn* — so it rides the CATALOG and not the tile row. A road
-                // has no source row to carry it, and a client left to transcribe the constant
-                // instead would go stale in silence the day that sum grows.
+                // does not repeat it on its own row for that reason, and a client left to
+                // transcribe the constant instead would go stale in silence the day that sum grows.
                 build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
+                // ⛔ **THE PILE, AND IT IS FLAT WHERE `work_cost` ABOVE IS NOT.** The work is quoted
+                // unscaled here because the *tile's* remoteness still has to be applied to it; the
+                // material takes no such multiplier at all, so this figure is already the whole
+                // truth for every tile on the map. A tile of road needs the same stone wherever it
+                // lies, and remoteness already taxes the getting there.
+                //
+                build_material_cost: pile.map_or(NO_BUILD_MATERIAL, |(_, amount)| amount),
+                // ⛔ **THE NOUN, BECAUSE THE AMOUNT ALONE CANNOT BE A SENTENCE.** The rung row read
+                // *"+ 20 to raise it"* without it — twenty of *what*. The client must not supply
+                // `stone` itself: which material a rung eats is a fact about the **config**, so a
+                // transcribed noun is a second authority that goes stale the day a rung is retuned,
+                // which is the mistake `build_work_per_worker_turn` above exists to have prevented.
+                build_material_id: pile.map_or_else(String::new, |(id, _)| id.to_string()),
             }
         })
         .collect()

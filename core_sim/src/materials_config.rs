@@ -874,11 +874,14 @@ mod tests {
     const TEA: &str = "tea";
     const TOBACCO: &str = "tobacco";
     /// The pen's two, added by the material half of the standing upkeep
-    /// (`docs/plan_standing_upkeep.md` §2.7). `wood` is the only material on the roster with a
-    /// `start_stock` — nothing produces it yet, so a spawn is where every stick comes from — and
-    /// `hurdles` is the fence panel that used to be a piece of equipment.
+    /// (`docs/plan_standing_upkeep.md` §2.7). `hurdles` is the fence panel that used to be a piece
+    /// of equipment; `wood` is what a panel is woven from.
     const WOOD: &str = "wood";
     const HURDLES: &str = "hurdles";
+    /// **The paved road's**, and the second material on the roster with no producer. It reaches the
+    /// player through `start_stock` alone — quarrying belongs to the minerals arc (issue #583) —
+    /// which is why the *unproduced* set below is two rather than one.
+    const STONE: &str = "stone";
 
     fn builtin() -> MaterialsConfig {
         MaterialsConfig::from_json_str(BUILTIN_MATERIALS_CONFIG).expect("builtin parses")
@@ -904,18 +907,22 @@ mod tests {
     /// **What ships, and the line between the two kinds of shipped material.**
     ///
     /// The three organics and `wood` are **crafted** — each names a craft and yields to bare hands.
-    /// The three luxury crops and `hurdles` are **uncrafted**: `craft` and `hand_working` are both
-    /// absent, which is the deliberate statement *nothing works this yet* for the crops and
-    /// *nothing takes this as an INPUT* for the fence panels — they are consumed by an improvement,
-    /// not by a bench (`docs/plan_standing_upkeep.md` §2.7). Only `wood` is *unproduced*, and the
-    /// `start_stock` beside it is what keeps it reachable until forest foraging lands.
+    /// The three luxury crops, `hurdles` and `stone` are **uncrafted**: `craft` and `hand_working`
+    /// are both absent, which is the deliberate statement *nothing works this yet* for the crops and
+    /// *nothing takes this as an INPUT* for the fence panels and the roadstone — they are consumed
+    /// by an improvement, not by a bench (`docs/plan_standing_upkeep.md` §2.7).
+    ///
+    /// **Two are *unproduced*, and their `start_stock` is what keeps them reachable**: `wood` until
+    /// forest foraging lands, `stone` until quarrying does (issue #583). The pairing is the point of
+    /// the second assertion — an unproduced material with no opening pile is dead content, and an
+    /// opening pile on a material that *has* a producer is a duplicate source nobody asked for.
     #[test]
     fn the_builtin_table_parses_and_validates() {
         let config = builtin();
         let ids: Vec<&str> = config.materials().map(|(id, _)| id).collect();
         assert_eq!(
             ids,
-            vec![BONE, FIBRE, GRAPE, HIDE, HURDLES, TEA, TOBACCO, WOOD]
+            vec![BONE, FIBRE, GRAPE, HIDE, HURDLES, STONE, TEA, TOBACCO, WOOD]
         );
         assert_eq!(
             config
@@ -923,8 +930,10 @@ mod tests {
                 .filter(|(_, def)| def.start_stock.is_some())
                 .map(|(id, _)| id)
                 .collect::<Vec<_>>(),
-            vec![WOOD],
-            "only `wood` is stocked at a spawn - every other material has a producer"
+            vec![STONE, WOOD],
+            "`stone` and `wood` are the two materials nothing produces, so a spawn is where every \
+             stick and every block comes from; every other material has a producer and must not be \
+             stocked as well"
         );
         for (id, def) in config.materials() {
             let crafted = [BONE, FIBRE, HIDE, WOOD].contains(&id);

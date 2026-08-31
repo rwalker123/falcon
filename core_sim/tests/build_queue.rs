@@ -2940,6 +2940,201 @@ fn resolve_a_turn_with_roads(app: &mut App) {
     resolve_a_turn(app);
 }
 
+/// **THE MATERIAL THE PAVED ROAD EATS.** Read off the ladder rather than written, so a retune of the
+/// rung's pile moves every fixture below with it.
+const ROAD_MATERIAL: &str = "stone";
+
+/// The `route:paved_road` rung's declared pile — what a whole tile of pavement swallows.
+fn paving_pile() -> f32 {
+    core_sim::LadderConfig::builtin()
+        .rung(core_sim::RungKey::RoutePavedRoad)
+        .build_materials()
+        .map(|(_, amount)| amount)
+        .sum()
+}
+
+/// Seat a road at the **top of the dirt rung** and make the fixture band its keeper, with the
+/// faction knowing `paving` — the state a `pave` is typed into, where the next work banked is the
+/// first stone the tile has ever eaten.
+fn pave_a_road(app: &mut App, tile: UVec2) {
+    let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+    let (base, width) = core_sim::road_rung_span(
+        core_sim::RungKey::RouteDirtRoad,
+        &ladder,
+        core_sim::NEAR_ENOUGH_TO_KEEP,
+    );
+    {
+        let mut roads = app.world.resource_mut::<core_sim::RoadRegistry>();
+        let road = roads.road_or_trail(tile, &ladder);
+        // Position before keeper, on `grade_a_road`'s own rule: seating releases a keeper written
+        // first.
+        road.set_position(base + width, &ladder);
+        road.take_keeper(
+            core_sim::RoadKeeper {
+                faction: FactionId(0),
+                band: core_sim::BandId(FIXTURE_BAND),
+            },
+            core_sim::NEAR_ENOUGH_TO_KEEP,
+            &ladder,
+        );
+    }
+    app.world
+        .resource_mut::<core_sim::DiscoveryProgressLedger>()
+        .add_progress(FactionId(0), core_sim::PAVING_DISCOVERY_ID, scalar_one());
+}
+
+/// Put `units` of the paving material in the fixture band's stores. The characteristics come from
+/// the roster's own opening pile, which is the only source of this material in the game — it has no
+/// producer (issue #583).
+fn stock_road_material(app: &mut App, band: Entity, units: f32) {
+    let materials = core_sim::MaterialsConfig::builtin();
+    let characteristics = materials
+        .materials()
+        .find(|(id, _)| *id == ROAD_MATERIAL)
+        .and_then(|(_, def)| def.start_stock.as_ref())
+        .map(|stock| stock.characteristics.clone())
+        .expect("the shipped roster stocks the paving material at a spawn");
+    let key = materials
+        .band_key(ROAD_MATERIAL, &characteristics)
+        .expect("the shipped roster rates the paving material");
+    let mut cohort = app
+        .world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band");
+    cohort.stores = LocalStore::new();
+    cohort
+        .stores
+        .deposit_material(ROAD_MATERIAL, key, scalar_from_f32(units), &characteristics);
+}
+
+/// Where this road stands on the branch, in work units.
+fn road_position(app: &App, tile: UVec2) -> f32 {
+    app.world
+        .resource::<core_sim::RoadRegistry>()
+        .road(tile)
+        .expect("the fixture road survives")
+        .position()
+}
+
+/// Seat a `pave` at the head of the band's queue, ahead of whatever else it holds.
+fn queue_a_pave(app: &mut App, band: Entity, tile: UVec2) {
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .build_queue
+        .insert(
+            0,
+            core_sim::BuildQueueEntry {
+                source: BuildSource::Road(tile),
+                declared: BuildJob::Rung(Improvement::Pave),
+                kit: Some(bare_builders()),
+            },
+        );
+}
+
+/// ⛔ **AN EMPTY STORE STALLS A PAVING; IT DOES NOT PAVE FOR FREE.**
+///
+/// This is the pen's own stated rule — *"a short store stalls the build proportionally and never
+/// refuses it"* — and the road was the one build that broke it. The settlement debited the stone at
+/// the covered fraction while the arm banked a **full** turn of work, so a band with nothing on the
+/// shelf laid pavement at full speed. The departure ran in the player's favour, which is why nothing
+/// reported it.
+///
+/// **Three arms, because a proportion needs three points to be a proportion**: a full store banks a
+/// whole turn, an empty one banks nothing at all, and a store that can cover part of the pile banks
+/// strictly between the two.
+#[test]
+fn an_empty_store_stalls_a_paving_and_a_part_store_stalls_it_proportionally() {
+    /// Enough stone that a single turn's small share is never the binding term.
+    const PLENTY: f32 = 1_000.0;
+    /// Nothing at all — the arm that used to pave for free.
+    const NONE: f32 = 0.0;
+
+    let banked_in_one_turn = |stock: f32| {
+        let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
+        let road_tile = sources[0];
+        pave_a_road(&mut app, road_tile);
+        queue_a_pave(&mut app, band, road_tile);
+        stock_road_material(&mut app, band, stock);
+        let before = road_position(&app, road_tile);
+        resolve_a_turn_with_roads(&mut app);
+        road_position(&app, road_tile) - before
+    };
+
+    let full = banked_in_one_turn(PLENTY);
+    assert!(
+        full > 0.0,
+        "**LIVENESS**: a stocked band must actually lay pavement, or every arm below is trivially \
+         equal and this test asserts nothing"
+    );
+
+    let empty = banked_in_one_turn(NONE);
+    assert_eq!(
+        empty, 0.0,
+        "⛔ a band with NO stone must bank NO work: the store scales the work exactly as it scales \
+         the pile, and an empty shelf paving at full speed is the defect this guards ({empty} \
+         banked against {full} with a full store)"
+    );
+
+    // **The proportional middle.** Stocked with a share of what one turn wants, so the settlement
+    // covers part of the pile and the arm must bank exactly that part.
+    let one_turns_pile = full * paving_pile()
+        / core_sim::road_rung_span(
+            core_sim::RungKey::RoutePavedRoad,
+            &core_sim::LadderConfig::builtin(),
+            core_sim::NEAR_ENOUGH_TO_KEEP,
+        )
+        .1;
+    let part = banked_in_one_turn(one_turns_pile / 2.0);
+    assert!(
+        part > 0.0 && part < full,
+        "a store covering half a turn's pile banks strictly between nothing and a whole turn: \
+         {part} against 0 and {full}"
+    );
+}
+
+/// ⛔ **A ROAD AT THE HEAD OF THE QUEUE MUST NOT BLOCK EVERYTHING BEHIND IT.**
+///
+/// `publish_build_chain` mints [`BuildTurns::Blocked`] for a staffed head that recorded no
+/// `BuildQuote`, with `blocked_reason(None)` — the cause `unworked` — and then **carries that same
+/// answer down the whole queue and onto every unqueued source the band works**. A road pushed no
+/// quote, so a band that typed `grade` and staffed its builders published `⚠ Blocked` on its patches
+/// and its herds while the road was building perfectly well.
+///
+/// The assertion is on the **patch behind the road**, because that is where the damage landed: a
+/// test that only checked the road would pass on a fix that left the rest of the queue poisoned.
+#[test]
+fn a_road_at_the_head_does_not_publish_a_blocked_countdown_onto_the_patch_behind_it() {
+    let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
+    let patch = sources[0];
+    // A road on a DIFFERENT tile, so the patch behind it is untouched ground.
+    let road_tile = UVec2::new(patch.x + 1, patch.y);
+    pave_a_road(&mut app, road_tile);
+    queue_a_pave(&mut app, band, road_tile);
+    stock_road_material(&mut app, band, paving_pile() * 10.0);
+
+    resolve_a_turn_with_roads(&mut app);
+
+    assert_eq!(
+        queued_sources(&app, band),
+        vec![BuildSource::Road(road_tile), BuildSource::Patch(patch)],
+        "fixture: the road must be the HEAD and the patch must be behind it, or the carry this \
+         guards cannot happen"
+    );
+    let waiting = app
+        .world
+        .resource::<core_sim::ForageRegistry>()
+        .patch(patch)
+        .expect("the fixture patch survives")
+        .build_blocked_reason;
+    assert!(
+        waiting.holds(),
+        "the patch behind a road that is building perfectly well must publish NO block: it got \
+         `{}` carried down from a head that recorded no quote",
+        waiting.key()
+    );
+}
+
 /// ⛔ **A ROAD ENTRY IS RETIRED THE TURN THE BAND STOPS BEING THE KEEPER — AND THE POOL BEHIND IT IS
 /// RELEASED.**
 ///

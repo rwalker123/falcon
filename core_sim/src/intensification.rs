@@ -503,7 +503,24 @@ pub enum BuildGate {
     /// **The rung below is not built** — a `Corral` on a herd that is not domesticated yet.
     RungBelow,
     /// Another faction holds the source.
+    ///
+    /// ⛔ **IT MEANS SOMEBODY ELSE HOLDS IT, AND NEVER *NOBODY DOES*** — see [`Self::NoKeeper`],
+    /// which exists for exactly that distinction.
     OwnedByOther,
+    /// **NOBODY HOLDS THIS SOURCE AT ALL** — the route branch's `routes::Road::keeper` is `None`, so
+    /// there is no band whose job the tile is and no pool that will ever put work on it.
+    ///
+    /// ⛔ **IT IS NOT [`Self::OwnedByOther`], AND COLLAPSING THE TWO PUBLISHES A FALSE SENTENCE.**
+    /// *"Another band owns this road"* said of a road **nobody** keeps sends the player looking for
+    /// a rival that does not exist. The two states have different remedies and that is the whole
+    /// reason this variant is here: an owned source is a negotiation or a dead end, an **unkept** one
+    /// is a job going begging — re-issue `grade` / `pave` and the band adopts it, which is why the
+    /// route branch ships no separate adoption verb.
+    ///
+    /// **A road loses its keeper without anybody deciding to drop it**: `Road::set_position` releases
+    /// the keeper the moment decay or disuse takes the tile back below `traffic_ceiling`, so this is
+    /// the ordinary end of a road nobody walked, not an edge case.
+    NoKeeper,
     /// The ground does not admit the rung ([`RungSiteRequirement`]) — `Sow`'s fresh-water and
     /// gathering-site rule, and the same term in a projection's gate. The other three rung arms
     /// carry no site term: rungs 1–2 are already standing on ground a crew was allowed onto.
@@ -555,6 +572,7 @@ impl BuildGate {
             BuildGate::SpeciesCeiling => "species_ceiling",
             BuildGate::RungBelow => "rung_below",
             BuildGate::OwnedByOther => "owned_by_other",
+            BuildGate::NoKeeper => "no_keeper",
             BuildGate::Site => "site",
             BuildGate::Undeclared => "undeclared",
             BuildGate::RingIdle => "ring_idle",

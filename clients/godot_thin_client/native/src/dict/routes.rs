@@ -108,6 +108,41 @@ pub(crate) fn routes_to_array(list: Vector<'_, ForwardsUOffset<fb::RouteState<'_
         //                         too, not a parked dial.
         let _ = dict.insert("friction_multiplier", f64::from(route.frictionMultiplier()));
         let _ = dict.insert("holds_link_to_tiles", route.holdsLinkToTiles() as i64);
+        // ⛔ **WHY THE POOL IS STUCK ON THIS TILE — a free-form CAUSE STRING, never an enum.** The
+        // same `BuildGate` vocabulary a patch publishes, so one reader answers for both branches:
+        // `"knowledge"`, `"owned_by_other"`, `"no_keeper"` and `"materials"`. **`""` is not *fine***
+        // — it is *nothing is being built here*, which is a different sentence from *nothing is
+        // wrong*.
+        //
+        // **A ROAD IS A SOURCE ROW.** This table is keyed by tile exactly as a patch row is, so the
+        // claim that a road "has no source row for an estimate to be stamped on" is retired; it is
+        // what made the material half of this branch look impossible.
+        let _ = dict.insert(
+            "build_blocked_reason",
+            route.buildBlockedReason().unwrap_or_default(),
+        );
+        // …and THIS TURN'S DRAW against the band's stores — what full coverage would take, and what
+        // the shelf actually paid of it. **`demand - supplied` IS the shortfall, verbatim**, the
+        // same identity `upkeep_demand`/`upkeep_supplied` hold one block up, so nothing here
+        // recomputes a third number.
+        //
+        // ⛔ **A SHORT STORE STALLS THE BUILD IN PROPORTION AND NEVER REFUSES IT.** The covered
+        // fraction scales the work banked AND the stone drawn together, and the uncovered remainder
+        // is WASTED rather than carried — so a stalled road banks *less*, never zero, and a readout
+        // that drew it as a refusal would be describing a state the sim cannot produce. Only a shelf
+        // with nothing on it at all blocks the head, and that arrives as `"materials"` above.
+        //
+        // **TWO FLOATS AND NO MATERIAL ID HERE** — the branch eats exactly one material per rung and
+        // the RUNG row names it (`build_material_id`), so a per-tile copy would be a second place
+        // for the same noun to be wrong in.
+        let _ = dict.insert(
+            "build_material_demand",
+            f64::from(route.buildMaterialDemand()),
+        );
+        let _ = dict.insert(
+            "build_material_supplied",
+            f64::from(route.buildMaterialSupplied()),
+        );
         array.push(&dict.to_variant());
     }
     array
@@ -190,6 +225,38 @@ pub(crate) fn route_rungs_to_array(
         let _ = dict.insert(
             "build_work_per_worker_turn",
             f64::from(rung.buildWorkPerWorkerTurn()),
+        );
+        // ⛔ **THE RUNG'S DECLARED PILE — 20 stone on `route:paved_road`, `0` on every other rung of
+        // the branch — AND IT IS FLAT WHERE `work_cost` ABOVE IS NOT.**
+        //
+        // ⛔⛔ **DO NOT PASS IT THROUGH `keeper_remoteness`.** The tile's own multiplier scales the
+        // WORK span and does not touch this: a tile of road needs the same twenty stone wherever it
+        // lies, and remoteness already taxes the getting there. The sim proves it by cancellation —
+        // it quotes the leg at the scaled width and draws `pile × (accrual / width)`, so a whole
+        // climb banks exactly `width` and swallows exactly `pile` at any distance. A remote road
+        // draws its stone MORE SLOWLY, over more turns, never more of it. Scaling it here
+        // over-quotes every remote road on the map and looks perfectly plausible while doing so.
+        //
+        // ⛔ **THE AMOUNT AND ITS NOUN ARE ONE READING — decoded together, read together.** `20` with
+        // no word for it cannot be rendered into a sentence (the row said `+ 20 to raise it`, and
+        // *twenty of what?* is the whole reason the id was appended), and a noun with no amount says
+        // nothing. The sim resolves the pair from ONE lookup at capture so they cannot disagree.
+        //
+        // ⛔ **AND THE CLIENT MUST NOT SUPPLY THE NOUN ITSELF.** *The route branch eats stone* is a
+        // fact about the CONFIG; a client holding it is a second authority that goes stale the day a
+        // rung is retuned to eat something else — the transcription mistake
+        // `build_work_per_worker_turn` above exists to have prevented.
+        //
+        // **ONE ID RATHER THAN A `MaterialPayoff` LIST**, unlike the plant and animal piles: one
+        // material per rung IS the model here, `build_material_cost` being a single float, so a
+        // second material would make the AMOUNT meaningless before the name mattered.
+        //
+        // **`""` WITH `0` BESIDE IT IS *THIS RUNG EATS NOTHING*** — every route rung but
+        // `route:paved_road` — and never *a pile we cannot name*.
+        let _ = dict.insert("build_material_cost", f64::from(rung.buildMaterialCost()));
+        let _ = dict.insert(
+            "build_material_id",
+            rung.buildMaterialId().unwrap_or_default(),
         );
         array.push(&dict.to_variant());
     }

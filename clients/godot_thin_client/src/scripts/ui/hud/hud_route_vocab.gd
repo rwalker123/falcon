@@ -370,6 +370,76 @@ static func upkeep_demand_of(road: Dictionary) -> float:
 static func upkeep_shortfall_of(road: Dictionary) -> float:
 	return float(road.get("upkeep_shortfall", SourceForecast.NO_UPKEEP_DEMAND))
 
+# ---- THE MATERIAL HALF OF A ROAD BEING BUILT --------------------------------------------------
+
+## **A RUNG THAT EATS NOTHING, and it is a reading rather than a sentinel** — every route rung but
+## `route:paved_road` declares no material at all, and the honest rendering of that is NO clause,
+## never a `0`.
+const ROAD_MATERIAL_NONE := 0.0
+
+## ⛔ **NO MATERIAL AT ALL — THE ID SIDE OF `ROAD_MATERIAL_NONE`, AND THE PAIR IS ONE READING.**
+## A rung that eats nothing publishes `""` here and `0` there, together; every route rung but
+## `route:paved_road` does, and the honest rendering is NO clause rather than a `0` or a bare number.
+##
+## ⛔ **AN EMPTY ID IS *NOTHING TO EAT*, NEVER *A PILE WE CANNOT NAME*.** The wire named the material
+## for one slice and did not (`RouteRungState.buildMaterialId` was appended after the row shipped
+## reading `+ 20 to raise it` — *twenty of what?*), and the nameless-pile reading died with that gap.
+## Re-adding a fall-back noun here would be the client transcribing a config constant — *the route
+## branch eats stone* is a fact about `intensification_ladder.json`, and a second authority for it
+## goes stale in silence the day a rung is retuned. The sim owns the vocabulary.
+const ROAD_MATERIAL_NO_ID := ""
+
+## **WHAT THIS TURN'S ACCRUAL WOULD DRAW AT FULL COVERAGE, AND WHAT THE SHELF ACTUALLY PAID.**
+## The material twin of `upkeep_demand`/`upkeep_supplied`, obeying the same identity: ⛔ **`demand -
+## supplied` IS the shortfall, verbatim on the wire** — nothing here recomputes a third number.
+static func material_demand_of(road: Dictionary) -> float:
+	return maxf(float(road.get("build_material_demand", ROAD_MATERIAL_NONE)), ROAD_MATERIAL_NONE)
+
+static func material_supplied_of(road: Dictionary) -> float:
+	return maxf(float(road.get("build_material_supplied", ROAD_MATERIAL_NONE)), ROAD_MATERIAL_NONE)
+
+## **HOW MUCH OF THIS TURN'S DRAW THE STORE COVERED, as a fraction.** `1.0` where nothing is being
+## drawn at all, which is the un-stalled reading: a rung that eats nothing is not short of anything.
+##
+## ⛔ **IT IS THE SIM'S OWN RESOLVED PAIR, never a store divided by a pile here.** The plant branch
+## derives its share client-side because its pile names its goods and the band's shelf lists them;
+## a road can do neither, and it does not have to — the sim already struck the draw against the
+## store and published both halves.
+static func material_coverage_of(road: Dictionary) -> float:
+	var wanted := material_demand_of(road)
+	if wanted <= ROAD_MATERIAL_NONE:
+		return ROAD_MATERIAL_COVERED
+	return clampf(material_supplied_of(road) / wanted, 0.0, ROAD_MATERIAL_COVERED)
+
+## Full coverage, and the answer for a road drawing nothing.
+const ROAD_MATERIAL_COVERED := 1.0
+
+## ⛔ **WHY THE POOL IS STUCK ON THIS TILE — the sim's own `BuildGate` cause, and `""` IS NOT "fine".**
+## An empty reading is *nothing is being built here*, which is a different sentence from *nothing is
+## wrong*, so every caller tests the cause it means rather than testing for emptiness.
+static func build_blocked_reason_of(road: Dictionary) -> String:
+	return String(road.get("build_blocked_reason", "")).strip_edges()
+
+## The one cause this branch's material half mints. **`owned_by_other` and `no_keeper` are NOT one
+## cause** — a road nobody keeps reported as a rival's sends the player after somebody who does not
+## exist — and `no_keeper` has no wording anywhere in this client on purpose: `prune_build_queue`
+## drops the queue entry of any road its band does not keep, so no unkept road survives to publish
+## it. It is load-bearing for the sim's gate and dead on the wire.
+const ROAD_BLOCKED_MATERIALS := "materials"
+
+## **IS THE STORE WHAT IS HOLDING THIS ROAD UP?** — either the shelf is bare and the sim blocked the
+## head outright, or it is covering only part of the turn's draw.
+##
+## ⛔ **A SHORT STORE STALLS THE BUILD IN PROPORTION AND NEVER REFUSES IT.** The covered fraction
+## scales the work banked and the stone drawn together and the uncovered remainder is WASTED, so a
+## stalled road banks *less* — never zero, and never "refused". Only a shelf with nothing on it at
+## all blocks the head, which arrives as `ROAD_BLOCKED_MATERIALS`.
+static func is_material_short(road: Dictionary) -> bool:
+	if build_blocked_reason_of(road) == ROAD_BLOCKED_MATERIALS:
+		return true
+	return material_demand_of(road) > ROAD_MATERIAL_NONE \
+		and material_coverage_of(road) < ROAD_MATERIAL_COVERED
+
 ## **THE SIM'S OWN KEEPER COUNT.** `ceil(demand / per-worker output)`, struck against the same stamped
 ## basis the bill is — never re-derived here, because the client holds neither the per-worker rate nor
 ## the epsilon the sim rounds with.
@@ -760,6 +830,15 @@ const RUNG_CATALOG_VERB := "verb"
 const RUNG_CATALOG_UNLOCK_KNOWLEDGE := "unlock_knowledge"
 const RUNG_CATALOG_REQUIRES_RUNG := "requires_rung"
 const RUNG_CATALOG_WORK_COST := "work_cost"
+## ⛔ **THE RUNG'S DECLARED PILE AND THE NOUN FOR IT — ONE READING, READ TOGETHER OR NOT AT ALL.**
+## An amount with no word cannot be rendered into a sentence and a word with no amount says nothing,
+## so `catalog_material_pile` answers for both and no caller reads either key alone. It is ONE id
+## rather than a `MaterialPayoff` list, unlike the plant and animal piles: one material per rung IS
+## the model here, the cost being a single float.
+##
+## The pile is FLAT where `work_cost` beside it is not — see `catalog_material_cost`.
+const RUNG_CATALOG_MATERIAL_COST := "build_material_cost"
+const RUNG_CATALOG_MATERIAL_ID := "build_material_id"
 const RUNG_CATALOG_UPKEEP := "upkeep_work_per_turn"
 const RUNG_CATALOG_FRICTION := "friction_multiplier"
 const RUNG_CATALOG_LINK := "holds_link_to_tiles"
@@ -837,6 +916,47 @@ static func catalog_work_cost(entry: Dictionary) -> float:
 
 static func catalog_upkeep(entry: Dictionary) -> float:
 	return float(entry.get(RUNG_CATALOG_UPKEEP, SourceForecast.NO_UPKEEP_DEMAND))
+
+## ⛔⛔ **THE PILE THIS RUNG SWALLOWS — QUOTED AS PUBLISHED, AND *NEVER* THROUGH `keeper_remoteness`.**
+## `catalog_work_cost` one line up is a BASE the tile's own multiplier still has to be applied to;
+## this is already the whole truth for every tile on the map. A tile of road needs the same twenty
+## stone wherever it lies, and remoteness already taxes the getting there.
+##
+## The sim gets that flatness by cancellation rather than by a special case — it spreads the pile over
+## the leg's OWN priced width (`pile x accrual / width`) and the whole climb banks exactly that width
+## — so a remote road draws its stone MORE SLOWLY, over more turns, never more of it. Multiplying
+## here over-quotes every remote road on the map, and it looks entirely plausible while doing so.
+##
+## `ROAD_MATERIAL_NONE` on every rung of the branch but `route:paved_road`, which is a real reading —
+## *this rung eats nothing* — and never *nothing is known*.
+static func catalog_material_cost(entry: Dictionary) -> float:
+	return maxf(float(entry.get(RUNG_CATALOG_MATERIAL_COST, ROAD_MATERIAL_NONE)),
+		ROAD_MATERIAL_NONE)
+
+## …and the noun for it. `ROAD_MATERIAL_NO_ID` on every rung that eats nothing.
+##
+## ⛔ **IT JOINS TO THE IDS THE BAND'S OWN STORES LIST PUBLISHES**, which is what makes a shelf
+## lookup possible at all — and it is the SIM'S word, never one this client holds.
+static func catalog_material_id(entry: Dictionary) -> String:
+	return String(entry.get(RUNG_CATALOG_MATERIAL_ID, ROAD_MATERIAL_NO_ID)).strip_edges()
+
+## ⛔ **THE PAIR, OR NOTHING — the one reader every caller goes through.** `{}` unless the rung
+## declares BOTH a noun and an amount above zero, which is how *this rung eats nothing* and *this rung
+## eats 20 stone* are the only two answers a caller can get. A half-answer — an amount with no word,
+## a word with no amount — is a sentence nobody can render, and reading the two keys separately is
+## exactly how one of those reached the card.
+##
+## Shaped as a `MaterialPayoff` row so the SHARED aside composer takes it unchanged: the route pile
+## and the pen's hurdles are the same object by the time `RungLadder._build_price_asides` sees them.
+static func catalog_material_pile(entry: Dictionary) -> Dictionary:
+	var wanted := catalog_material_cost(entry)
+	var id := catalog_material_id(entry)
+	if wanted <= ROAD_MATERIAL_NONE or id == ROAD_MATERIAL_NO_ID:
+		return {}
+	return {
+		SourceForecast.MATERIAL_PAYOFF_ID_KEY: id,
+		SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY: wanted,
+	}
 
 ## One catalog row's bare per-worker work rate — the reader for a caller that already holds an entry
 ## (`RungLadder._route_turns`, pricing one rung).
@@ -1103,6 +1223,23 @@ const ROAD_LADDER_QUEUE_HEAD_KEY := "head"
 ## state and the honest thing is the REMEDY, in the ladder's own aside shape — a blank column where
 ## every other row states a duration reads as a client that failed to work it out.
 const ROAD_LADDER_NO_BUILDERS_ASIDE := "nobody on builders — staff the pool and it starts"
+
+## ⛔ **THE STALL WARNING FOR A ROAD, AND IT IS A ROUTE-ONLY SPELLING FOR ONE REASON: THE NOUN.**
+## `HudWorkVocab.RUNG_TRACK_STALL_FORMAT` reads *"you have %s — it will stall at about %s"*, and its
+## two terms are one arithmetic: the band's STOCK of the good, and the fraction of the PILE that
+## stock covers. A road's fraction is not that — it is the sim's own per-turn coverage
+## (`buildMaterialSupplied / buildMaterialDemand`), struck against every other claim on the store at
+## the sim's own priority — so pairing it with a stock would read as one calculation and be another.
+##
+## **The noun is no longer what stops the sharing** (`RouteRungState.buildMaterialId` names it now);
+## the ARITHMETIC is. This sentence therefore states the shortfall and the reach and quotes no stock
+## — and the FRACTION still comes through the shared `RungLadder._stall_fraction_word` ladder, which
+## is the half that could drift.
+##
+## ⛔ **IT SAYS *STALL*, NEVER *BLOCKED*.** A short store scales the work banked and the material
+## drawn together and wastes the remainder, so the build goes on — slower. Only a shelf with nothing
+## at all on it blocks the head, and that arrives as `ROAD_BLOCKED_MATERIALS`.
+const ROAD_LADDER_STALL_FORMAT := "the store is short — it will stall at about %s"
 
 ## The tooltip's lines, one fact each. **Newline rather than a middot**, because these are sentences
 ## and a hover has the room a 292px row does not.

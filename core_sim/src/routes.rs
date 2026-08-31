@@ -95,6 +95,12 @@ use crate::{
 // anything could ask it (`docs/plan_standing_upkeep.md` §4.13a). **The id 2011 is retired, not
 // reused**, and the two ids below are deliberately *not* renumbered down onto it: a gap is safer than
 // a renumber, because a renumber silently re-points every start profile that already names one.
+/// **NO MATERIAL ASKED FOR OR PAID THIS TURN** — the neutral of `Road::build_material_demanded` and
+/// its supplied twin, named rather than a bare `0.0` because the pair is an identity on the wire
+/// (`demand - supplied == shortfall`) and a zero there means *nothing was drawn*, never *nothing is
+/// owed*. Every route rung but `route:paved_road` sits here permanently: they eat nothing.
+pub const NO_MATERIAL_DRAWN: f32 = 0.0;
+
 /// **Roadbuilding** — taught by a trail carrying traffic, gates `route:dirt_road` and its `grade`
 /// verb. The first lesson on the branch that gates something a player actually decides.
 pub const ROADBUILDING_DISCOVERY_ID: u32 = 2012;
@@ -208,6 +214,28 @@ pub struct Road {
     /// into the free floor arrives there with an honest reading rather than a zero that would buy it
     /// a second grace it has not earned.
     pub idle_turns: u16,
+    /// **WHY THE POOL IS STUCK ON THIS TILE** — [`crate::intensification::BuildGate::Open`] when it
+    /// is not stuck, which is also what a tile nobody has queued reads.
+    ///
+    /// ⛔ **A ROAD IS A SOURCE ROW AND THIS IS ITS BUILD SCRATCH**, the exact twin of
+    /// `ForagePatch::build_blocked_reason`. It was believed for a long time that a road *had no
+    /// source row for an estimate to be stamped on*; `RouteState` is keyed by tile precisely as a
+    /// patch row is, and that mistaken claim is what made the material half of this branch look
+    /// impossible to build.
+    ///
+    /// **Cleared at the top of every turn** by the decay pass, alongside `upkeep_demanded`, so a
+    /// cause is a statement about *this* turn and a road that stops being blocked stops saying so.
+    pub build_blocked_reason: crate::intensification::BuildGate,
+    /// **THIS TURN'S SHARE OF THE BUILD PILE, AND WHAT THE STORE PAID OF IT** — the material twin of
+    /// [`Self::upkeep_demanded`] / [`Self::upkeep_supplied`], and it holds the same identity on the
+    /// wire: `demand − supplied` is the shortfall.
+    ///
+    /// **A total across materials rather than a map**, because the route branch eats exactly one
+    /// (`route:paved_road`'s stone) and a per-material map would be a second vocabulary for a single
+    /// row. Both are cleared with the keeping pair on the one-turn cycle.
+    pub build_material_demanded: f32,
+    /// See [`Self::build_material_demanded`].
+    pub build_material_supplied: f32,
 }
 
 impl Road {
@@ -226,6 +254,9 @@ impl Road {
             neglect_turns: NEGLECT_NONE,
             traffic_work: NO_TRAFFIC,
             idle_turns: NEGLECT_NONE,
+            build_blocked_reason: crate::intensification::BuildGate::Open,
+            build_material_demanded: NO_MATERIAL_DRAWN,
+            build_material_supplied: NO_MATERIAL_DRAWN,
         }
     }
 
@@ -710,6 +741,29 @@ pub fn road_keeping_basis(road: &Road, measure: f32, ladder: &LadderConfig) -> f
         .unwrap_or_else(|| road_upkeep_demand(road, measure, ladder))
 }
 
+/// **WHAT THIS ROAD'S METER LOSES THIS TURN** — the plant web's [`crate::forage::patch_meter_rot`],
+/// one branch over, and the term a build countdown nets its supply against.
+///
+/// **It is the rot the DECAY PASS will actually apply**, resolved through the same three seams
+/// `advance_roads` bleeds through — [`road_at_risk_rung`], the stamped bill
+/// ([`road_keeping_basis`]) and the road's own `neglect_turns` — so a quote cannot promise a road
+/// will finish while the pass takes more off it than the crew puts on.
+///
+/// [`crate::intensification::NO_UPKEEP_DECAY`] on the free floor, whose rungs declare no `upkeep` and
+/// therefore can never be short: what takes a trail back is **disuse**, which is not a meter rot and
+/// is not netted off anybody's build.
+pub fn road_meter_rot(road: &Road, measure: f32, ladder: &LadderConfig) -> f32 {
+    let rung = ladder.rung(road_at_risk_rung(&road.standing()));
+    if rung.upkeep.is_none() {
+        return crate::intensification::NO_UPKEEP_DECAY;
+    }
+    rung.meter_rot_against(
+        road_keeping_basis(road, measure, ladder),
+        road.upkeep_supplied,
+        road.neglect_turns,
+    )
+}
+
 /// **THE RUNG AT RISK ON THIS ROAD** — the newest rung carrying work, which is the rung a decay eats
 /// and the rung whose grace and rot rate govern.
 ///
@@ -1049,9 +1103,15 @@ pub fn advance_roads(
             let bled = road.position() - decay;
             road.set_position(bled, &ladder);
         }
-        // **3 — the bill and this turn's payment, cleared on the one-turn cycle.**
+        // **3 — the bill and this turn's payment, cleared on the one-turn cycle.** The BUILD's
+        // material pair and its blocked cause clear with them and for the same reason: each is a
+        // statement about the turn just resolved, and a stale one would leave a road that is
+        // building perfectly well still saying it was short of stone.
         road.upkeep_demanded = None;
         road.upkeep_supplied = NO_UPKEEP_DEMAND;
+        road.build_blocked_reason = crate::intensification::BuildGate::Open;
+        road.build_material_demanded = NO_MATERIAL_DRAWN;
+        road.build_material_supplied = NO_MATERIAL_DRAWN;
     }
 
     // ## Phase 4 — bank this turn's traffic, ON EVERY TILE THE JOURNEY CROSSED.

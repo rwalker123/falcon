@@ -786,7 +786,9 @@ const ROAD_WANTS_DIRT_REMOTE := 7
 ## which is a DIFFERENT rung, and `1.0` means nothing is rising.
 func _road_fixture(rung: String, meter: float, demand: float, shortfall: float,
 		workers_needed: int, grace: int, lit: bool, friction: float, link: int,
-		keeper: int = ROAD_NO_KEEPER, remoteness: float = ROAD_REMOTENESS_AT_HOME) -> Dictionary:
+		keeper: int = ROAD_NO_KEEPER, remoteness: float = ROAD_REMOTENESS_AT_HOME,
+		material_demand: float = 0.0, material_supplied: float = 0.0,
+		blocked_reason: String = "") -> Dictionary:
 	return {
 		# THE TILE IS THE ROW'S IDENTITY — there is no id and no path beside it.
 		"tile_x": ROAD_TILE.x,
@@ -812,6 +814,16 @@ func _road_fixture(rung: String, meter: float, demand: float, shortfall: float,
 		"grants_sight": lit,
 		"friction_multiplier": friction,
 		"holds_link_to_tiles": link,
+		# ⛔ **THIS TURN'S MATERIAL DRAW, AND `demand - supplied` IS THE SHORTFALL VERBATIM** — the
+		# same identity the upkeep pair above holds, so a fixture that broke it would be testing the
+		# client against a frame the sim cannot produce. Both `0.0` on every road that is not being
+		# built, which is every state but the stone-short one below.
+		"build_material_demand": material_demand,
+		"build_material_supplied": material_supplied,
+		# **WHY THE POOL IS STUCK, `""` WHERE IT IS NOT** — and `""` means *nothing is being built
+		# here*, never *nothing is wrong*. A PARTIAL cover carries no cause at all: the sim blocks
+		# the head only on a shelf with nothing on it.
+		"build_blocked_reason": blocked_reason,
 	}
 
 ## The hex the road crosses — the river fixture's ground with a road on it, so the two frames differ
@@ -835,6 +847,39 @@ func _road_lines(road: Dictionary) -> Array[String]:
 ## band roster, and an id nobody holds resolves to nothing — which is a truthful state but the wrong
 ## one to spend five frames on. `ROAD_NO_KEEPER` where the walk holds no player band, which draws the
 ## keeperless case rather than a wrong name.
+## ⛔ **A RESOLVED `kit_tiers` ROW FOR THE PAVING KIT, BOUND TO THE PAVED RUNG.** Shaped as
+## `dict/population.rs` writes one: the worth, the crew it arms, the branch, and — the term this
+## state is about — the RUNG. A row carrying the first three and not the fourth is exactly the wire
+## the client used to read, and it is the one that quotes this tool on a `grade`.
+##
+## **It is appended to whatever each band already publishes**, so the kits the chapters before this
+## one staged keep their rows and only the road tool is new.
+##
+## ⛔ **IT WALKS THE ROSTER *AND* THE SINGLE `player_band()`, which is `BandFx.staff_builders`' own
+## rule and is silent when it is forgotten.** This chapter restores its acting band from a
+## `duplicate(true)`, so the single band and the roster entry of the same name are DIFFERENT objects
+## — and the road ladder resolves its actor through the roster (`player_band_by_entity`). Staging the
+## row on the single one alone left the card reading a band with no road tool at all, which renders
+## as the ungeared estimate on both rows: the exact reading this state exists to tell apart.
+func _stage_paving_kit(band_labor) -> void:
+	var bands: Array = band_labor.player_bands().duplicate()
+	var single: Dictionary = band_labor.player_band()
+	if not single.is_empty() and not bands.has(single):
+		bands.append(single)
+	for band_variant in bands:
+		if not (band_variant is Dictionary):
+			continue
+		var band: Dictionary = band_variant
+		var rows: Array = band.get(KitRoster.BAND_KIT_TIERS_KEY, []) as Array
+		rows.append({
+			KitRoster.BAND_KIT_TIERS_ID_KEY: LADDER_PAVING_KIT_ID,
+			KitRoster.KIT_BUILD_WORK_KEY: LADDER_PAVING_WORK_PER_WORKER,
+			KitRoster.KIT_BUILD_SATURATING_CREW_KEY: LADDER_PAVING_ARMS_CREW,
+			KitRoster.KIT_BUILD_BRANCH_KEY: KitRoster.BUILD_BRANCH_ROUTE,
+			KitRoster.KIT_BUILD_RUNG_KEY: HudRouteVocab.RUNG_KEY_PAVED_ROAD,
+		})
+		band[KitRoster.BAND_KIT_TIERS_KEY] = rows
+
 func _road_keeper_band() -> int:
 	var bands: Array = h._hud._band_labor.player_bands()
 	if bands.is_empty() or not (bands[0] is Dictionary):
@@ -2172,6 +2217,151 @@ func run(harness) -> void:
 	h._hud.update_intensification([{"faction": 0, "knowledges": inherited_knowledge}])
 	await h._settle()
 
+	# ⛔ **STATE road-ladder-rung-kit — A BUILD TOOL BOUND TO ONE RUNG, AND THE CARD PRICES ROW BY
+	# ROW.** The two road kits each declare `build_work` on the route branch AND name their own rung
+	# (`equipment.json` → `_comment_road_tools`), so a dressing hammer is worth its offset on a `pave`
+	# and EXACTLY nothing on the `grade` underneath it. This band is holding the PAVING kit.
+	#
+	# ⛔ **THE DEFECT THIS STATE EXISTS FOR IS ONE GEAR TERM SPENT ON EVERY ROW.** The card used to
+	# resolve `build_gear` once, for the branch, and hand the answer to all four rungs — which quotes
+	# the paving kit's `2.0` a worker against a road being graded, an uplift the sim pays nothing for.
+	# The rows ARE the rungs, so the two estimates below have to come out different, and the geared
+	# one has to land on the PAVED row.
+	#
+	# **The claims are on the HOVER, and that is where the estimate lives.** A priced row spends its
+	# one face clause on the price; `ROAD_LADDER_TIP_TURNS_FORMAT` is the surface that carries a
+	# duration, which is why no PNG could catch this and an assertion has to.
+	h._hud.update_intensification([{"faction": 0, "knowledges": {
+		HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING: 1.0,
+		HudFloraVocab.KNOWLEDGE_TRACK_PAVING: 1.0}}])
+	# **THE BAND HAS TO PUBLISH A RESOLVED ROW FOR THE KIT**, or the geared reading is the ungeared
+	# one for a reason that has nothing to do with the rung bound. It is the BAND's row and not the
+	# roster's on purpose: `KitOption` carries no rung on the wire, so the resolved row is the only
+	# place this client can read one at all.
+	_stage_paving_kit(h._hud._band_labor)
+	BandFx.staff_builders(h._hud._band_labor, LADDER_BUILDERS, LADDER_PAVING_KIT_ID)
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_COMPLETE, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL)))
+	await h._settle()
+	if not await _open_road_ladder():
+		h._assert_hud("the road ladder opens for a band holding a road kit", false)
+	else:
+		var kit_tips := _road_ladder_tooltips()
+		var dirt_tip := String(kit_tips.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, ""))
+		var paved_tip := String(kit_tips.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
+		print("ui_preview: rung-bound kit  dirt=%s  paved=%s" % [dirt_tip, paved_tip])
+		# ⛔ **THE ROW THE TOOL IS NOT FOR IS PRICED AT BARE HANDS** — the same count the card
+		# quotes a band carrying nothing. This is the assertion the whole rung bound exists for.
+		h._assert_hud("a tool bound to the PAVED rung takes nothing off a `grade` — `%s`"
+				% TIP_DIRT_TURNS_UNGEARED,
+			dirt_tip.contains(TIP_DIRT_TURNS_UNGEARED))
+		# …and the row it IS for is quoted the shorter job, which is what says the term was resolved
+		# rather than merely withheld everywhere.
+		h._assert_hud("…while the rung it IS bound to banks the tool's own work — `%s`"
+				% TIP_PAVED_TURNS_GEARED,
+			paved_tip.contains(TIP_PAVED_TURNS_GEARED))
+		# ⛔ **AND THE NEGATIVE THAT NAMES THE DEFECT.** One gear term spent on every row quotes the
+		# geared count on BOTH rows, so the positive above it would pass while the `grade` was being
+		# promised work the sim will not pay — this is what says the dirt row is not carrying the
+		# paved row's answer.
+		h._assert_hud("…so the `grade` cannot be quoted the paving kit's own count",
+			not dirt_tip.contains(TIP_PAVED_TURNS_GEARED)
+				and TIP_DIRT_TURNS_UNGEARED != TIP_PAVED_TURNS_GEARED)
+		await h._save("road_ladder_rung_kit")
+	_dismiss_road_ladder()
+
+	# ⛔ **STATE road-ladder-paved-pile — THE TOP RUNG PRICED IN STONE AS WELL AS IN WORK, ON A
+	# REMOTE ROAD.** The paved rung is the only one of the four that eats a material at all, and the
+	# clause arrives through `RungLadder._build_price_asides` — the SAME composer the plant and
+	# animal tracks open with — so the pile, its wording and its order have one spelling on every
+	# branch rather than a route-shaped copy.
+	#
+	# ⛔⛔ **THE ROAD IS REMOTE ON PURPOSE, AND THAT IS THE WHOLE CLAIM.** `keeper_remoteness` is the
+	# shipped x2 and it multiplies the WORK span; it does not touch the stone. A tile of road needs
+	# the same twenty wherever it lies, and the sim gets that by cancellation rather than by a
+	# special case — it spreads the pile over the leg's own priced width, so the remoteness in the
+	# width cancels and a distant road simply draws its stone more slowly. A client that passed the
+	# pile through the term it passes `work_cost` through reads `40` here, which is the negative
+	# below and the reason this frame is the REMOTE one.
+	h._hud.update_intensification([{"faction": 0, "knowledges": {
+		HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING: 1.0,
+		HudFloraVocab.KNOWLEDGE_TRACK_PAVING: 1.0}}])
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT_REMOTE, 0.0,
+		ROAD_WANTS_DIRT_REMOTE, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT,
+		_road_keeper_band(), ROAD_REMOTENESS_REMOTE)))
+	await h._settle()
+	if not await _open_road_ladder():
+		h._assert_hud("the road ladder opens on a remote dirt road", false)
+	else:
+		var pile_text := _road_ladder_text()
+		var paved_pile := _pile_clause(LADDER_PAVED_MATERIAL, LADDER_PAVED_MATERIAL_ID)
+		var scaled_pile := _pile_clause(LADDER_PAVED_MATERIAL * ROAD_REMOTENESS_REMOTE,
+			LADDER_PAVED_MATERIAL_ID)
+		h._assert_hud("the paved rung names the good it eats as well as the work — `%s` (got \"%s\")"
+				% [paved_pile, pile_text],
+			pile_text.contains(paved_pile))
+		# ⛔⛔ **THE NEGATIVE THAT CATCHES A SCALED PILE.** `work_cost` IS quoted at the base and the
+		# remoteness stated apart; a reader that folded this figure through the same multiple would
+		# print the doubled pile here and every other claim on this card would still pass.
+		h._assert_hud("…and the pile is FLAT — remoteness never doubles it to `%s`"
+				% scaled_pile,
+			not pile_text.contains(scaled_pile))
+		# **ABSENCE — a rung that eats nothing says nothing.** Three of the four declare no material
+		# at all, so exactly ONE pile clause may appear on this card; a producer stating `0` would
+		# read as a rung that eats badly rather than one that eats nothing.
+		h._assert_hud("…and no other rung states a pile, three of the four eating nothing",
+			pile_text.count(PILE_CLAUSE_MARK) == PILE_CLAUSES_ON_CARD)
+		# **ABSENCE — nothing is being built here, so nothing is stalling.** The draw is a fact about
+		# a road under construction; a warning on a rung nobody has ordered is an alarm about nothing.
+		h._assert_hud("…and no stall warning, this road drawing nothing this turn",
+			not pile_text.contains(PILE_STALL_MARK))
+		await h._save("road_ladder_paved_pile")
+	_dismiss_road_ladder()
+
+	# ⛔ **STATE road-ladder-stone-short — THE SHELF CANNOT KEEP UP, AND THE BUILD GOES ON ANYWAY.**
+	# The same road with `paved_road` rising on it: the band's store covers part of this turn's draw,
+	# and the row wears the warning in WARN ink.
+	#
+	# ⛔ **THE FIXTURE STAGES A STATE THE SIM CAN ACTUALLY REACH, and the shape is the point.** A
+	# short store STALLS a build in proportion and never refuses it: the covered fraction scales the
+	# work banked and the stone drawn together and the uncovered remainder is WASTED, so a stalled
+	# road banks LESS rather than zero. So `supplied` is a real part of `demand` (never `0`), the
+	# meter is genuinely rising, and `build_blocked_reason` is EMPTY — the sim blocks the head with
+	# `materials` only on a shelf with nothing at all on it, which is a different frame from this one.
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_RISING, ROAD_DEMAND_DIRT, 0.0,
+		ROAD_WANTS_DIRT, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT,
+		_road_keeper_band(), ROAD_REMOTENESS_AT_HOME,
+		STONE_DRAW_PER_TURN, STONE_PAID_PER_TURN)))
+	await h._settle()
+	if not await _open_road_ladder():
+		h._assert_hud("the road ladder opens on a road short of stone", false)
+	else:
+		var short_text := _road_ladder_text()
+		h._assert_hud("a road whose shelf cannot keep up says how far it gets — `%s`"
+				% STONE_STALL_CLAUSE,
+			short_text.contains(STONE_STALL_CLAUSE))
+		# ⛔ **AND IT IS THE ONE LOUD LINE ON THIS CARD.** Every other aside is quiet ink; a stall a
+		# player has to hunt for is the invisibility the warning exists to end. Asserted on the
+		# LABEL'S OWN COLOUR, because a PNG cannot testify about a colour and the text claim above
+		# passes just as well on a line rendered in the faint register.
+		h._assert_hud("…in the WARN register, which is what makes it findable",
+			_road_ladder_aside_colour(STONE_STALL_CLAUSE) == HudStyle.WARN)
+		# ⛔ **AND IT SAYS *STALL*, NEVER *BLOCKED*.** The build is still banking work — less of it —
+		# so a card that read as a refusal would be describing a state the sim cannot produce.
+		h._assert_hud("…and never claims the build is refused, a short store only slowing it",
+			not short_text.contains(STONE_REFUSAL_WORD))
+		await h._save("road_ladder_stone_short")
+	_dismiss_road_ladder()
+
+	# ⛔ **THE PICKER'S OWN CLAIM, AND IT IS PNG-LESS.** With the rung bound live on BOTH tables, the
+	# roster must name exactly ONE kit per rung — the sim pins the same thing on its side. Asserted on
+	# the producer rather than on a control: the derivation is what a picker opens on, and a frame
+	# would test the control's chrome instead of the answer.
+	_assert_the_roster_names_one_road_kit_per_rung()
+
 	# **PUT THE ROSTER BACK.** Everything after this chapter renders against whatever roster it
 	# inherits, and a band left standing here is a band the next chapter never asked for.
 	_restore_band_roster(inherited_bands)
@@ -2207,6 +2397,33 @@ const LADDER_PAVED_WORK_COST := 800.0
 ## …and the two built rungs' standing bills, per turn, BEFORE a tile's own load scales them.
 const LADDER_DIRT_UPKEEP := 0.45
 const LADDER_PAVED_UPKEEP := 0.95
+
+## ⛔ **THE MATERIAL HALF, TRANSCRIBED FROM THE SHIPPED LADDER — 20 stone on the top rung and NOTHING
+## anywhere else on the branch.** `LADDER_NO_MATERIAL` is a real reading rather than an unset value:
+## a graded roadbed is cut earth and the earth is already there, so three of the four rungs eat
+## nothing and must state no clause at all — never a `0`.
+##
+## ⛔⛔ **IT IS FLAT WHERE THE WORK COSTS ABOVE ARE NOT, AND THAT ASYMMETRY IS THE CLAIM.** The frames
+## below quote it on a REMOTE road (`ROAD_REMOTENESS_REMOTE`, the shipped ×2), where a client that
+## passed the pile through the same remoteness term it passes `work_cost` through would read `40` —
+## so the expectation is written out and the remote frame is what catches it.
+const LADDER_NO_MATERIAL := 0.0
+const LADDER_PAVED_MATERIAL := 20.0
+
+## ⛔ **AND THE NOUN, WHICH IS HALF OF ONE READING WITH THE AMOUNT ABOVE.** The wire pairs
+## `buildMaterialCost` with `buildMaterialId` and the client reads them together or not at all: an
+## amount with no word cannot be rendered into a sentence (the row read `+ 20 to raise it` for a
+## slice — *twenty of what?*) and a word with no amount says nothing.
+##
+## **`LADDER_NO_MATERIAL_ID` IS *THIS RUNG EATS NOTHING*, never *a pile we cannot name*.** The pair
+## `("" , 0.0)` is what three of the four rungs publish, and the honest rendering of it is no clause
+## at all.
+##
+## ⛔ **THE EXPECTATIONS BELOW ARE COMPOSED FROM THIS CONSTANT AND NEVER FROM THE LITERAL `stone`** —
+## the sim's own test does the same — so a retune of the route branch to a different material reaches
+## the wire without an edit in either test.
+const LADDER_NO_MATERIAL_ID := ""
+const LADDER_PAVED_MATERIAL_ID := "stone"
 
 ## A faction part-way through Roadbuilding — the gate's live progress, and the reading its reason
 ## quotes. **Deliberately not zero**: a `0%` reason passes a composer that had stopped reading the
@@ -2280,6 +2497,89 @@ const DIRT_QUEUED_ZERO_FACE := "0% · ≈150 turns"
 ## …and the same figure as the hover states it, on a REFUSED row, where the face has spent its one
 ## clause on the refusal.
 const TIP_PAVED_TURNS := "≈400 turns with this band's builders."
+
+## ⛔ **THE ROAD TOOLS, AND EACH IS BOUND TO ONE RUNG OF THE BRANCH THEY SHARE** (`equipment.json`
+## → `_comment_road_tools`). The paving kit is the one staged here: `2.0` a worker, arming a gang of
+## six, on `route:paved_road` and on nothing else.
+const LADDER_PAVING_KIT_ID := "paving"
+const LADDER_PAVING_WORK_PER_WORKER := 2.0
+const LADDER_PAVING_ARMS_CREW := 6
+
+## …and the two counts that tool produces on one card, WRITTEN OUT and each a claim about a different
+## row. `SourceForecast.pool_work_supply` is `crew x bare + min(crew, armed) x worth`, so at two
+## builders the rung the tool is NOT bound to banks `2 x 1.0 = 2` a turn and owes `ceil(300 / 2)`,
+## while the rung it IS bound to banks `2 x 1.0 + 2 x 2.0 = 6` and owes `ceil(800 / 6)`. A card
+## spending ONE gear term on every row quotes `ceil(300 / 6) = 50` on the first of them.
+const TIP_DIRT_TURNS_UNGEARED := "≈150 turns with this band's builders."
+const TIP_PAVED_TURNS_GEARED := "≈134 turns with this band's builders."
+
+## ⛔ **THE PILE CLAUSE, WRITTEN OUT — AND IT NAMES NO GOOD, WHICH IS THE WIRE'S OWN SHAPE.**
+## `RouteRungState.buildMaterialCost` is a bare float: the branch eats exactly one material and the
+## schema withholds the id deliberately, so a road says HOW MUCH and not OF WHAT. The plant and
+## animal branches ship `MaterialPayoff` rows whose id IS the noun; spelling `stone` in this
+## expectation would be asserting a word no wire sends.
+## **THE PILE CLAUSE, COMPOSED THROUGH THE SHIPPED FORMATS from the fixture's OWN declared pair.**
+## `_pile_clause` runs the same two format strings the producer runs, over the amount and the noun
+## this chapter staged — so the claim is that the row states THE FIXTURE'S material, and a retune to
+## `timber` moves the expectation with the config rather than needing an edit here.
+##
+## ⛔ **The producer is not re-implemented — it is re-INVOKED.** These are `HudWorkVocab`'s own
+## strings, so a card that stopped composing them fails; what is deliberately not borrowed is the
+## NUMBER, which is written out.
+func _pile_clause(amount: float, material_id: String) -> String:
+	return HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT % (
+		HudWorkVocab.RUNG_TRACK_MATERIAL_TERM % [
+			DetailFormat.format_trimmed(amount, HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
+			material_id])
+
+## ⛔⛔ **THE READING A CLIENT THAT SCALED THE PILE BY REMOTENESS WOULD PRINT.** The frame is a road at
+## the shipped `ROAD_REMOTENESS_REMOTE` (x2), so the two figures are `20 stone` and `40 stone` and
+## exactly one of them is the truth. Composed the same way, so the two differ in the FIGURE alone —
+## the whole failure being that the wrong one looks right.
+
+## The needle for *this row states a pile at all*, and the count that says only ONE row may.
+## `HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT`'s own lead-in, which no other clause on this card
+## uses — three of the four rungs eat nothing and must state nothing rather than `0`.
+const PILE_CLAUSE_MARK := "to raise it"
+const PILE_CLAUSES_ON_CARD := 1
+
+## …and the needle for *this card carries a stall warning*, for the ABSENCE half.
+const PILE_STALL_MARK := "it will stall at about"
+
+## ⛔ **THIS TURN'S DRAW AND WHAT THE SHELF PAID OF IT — a PARTIAL cover, which is the state the sim
+## actually reaches.** A short store scales the work banked and the stone drawn together and wastes
+## the remainder, so a stalled road banks LESS and never zero; `supplied` is therefore a real part of
+## `demand` rather than `0`, which would be the blocked-head frame and carries its own cause.
+##
+## Half of the draw, so the coverage is exactly `0.5` and the shared `_stall_fraction_word` ladder has
+## a named rung to land on rather than a boundary to round.
+const STONE_DRAW_PER_TURN := 0.8
+const STONE_PAID_PER_TURN := 0.4
+
+## …and the sentence that comes out, WRITTEN OUT. The fraction word is the SHARED ladder's
+## (`RungLadder._stall_fraction_word`), which is the half that could drift; the wording around it is
+## the route branch's own, because the shared sentence names the good the band holds and a road's
+## pile has no name to give.
+const STONE_STALL_CLAUSE := "the store is short — it will stall at about half"
+
+## ⛔ **THE WORD A SHORT STORE MUST NEVER PRODUCE.** The build goes on, slower; only a shelf with
+## nothing at all on it blocks the head, and that is a different frame with a different cause.
+const STONE_REFUSAL_WORD := "blocked"
+
+## ⛔ **THE TWO ROAD KITS AS THE ROSTER PUBLISHES THEM, AND THE RUNG IS THE THIRD TERM.** Both declare
+## the route branch and the same worth; the ONLY thing that tells them apart is the rung each names,
+## which is exactly why worth + branch alone answered *two kits serve a grade*.
+const ROSTER_ROADBUILDING_KIT := "roadbuilding"
+const ROSTER_PAVING_KIT := "paving"
+const ROSTER_ROAD_KIT_WORTH := 2.0
+const ROSTER_ROAD_KIT_ARMS := 1
+
+## …and the gear each one carries. **`kit_supplies_any` reads the ITEM LIST, never an axis** — a kit
+## that names no item is the null kit and is never withheld from anything, so a roster fixture that
+## omitted these would have every greying claim pass for the wrong reason. `earthmoving` is the pick
+## and spade a GRADE is cut with; `stone_dressing` is the maul and wedges a PAVE is laid with.
+const ROSTER_EARTHMOVING_ITEM := "earthmoving"
+const ROSTER_STONE_DRESSING_ITEM := "stone_dressing"
 
 ## ⛔ **THE MARKER FOR "THIS ROW SHOWS A METER"**, for the ABSENCE claim. A face leads with a
 ## PERCENTAGE only where the rung is worn in by traffic or is being BUILT; a rung nobody has ordered
@@ -2370,6 +2670,8 @@ func _route_rung_catalog() -> Array:
 			"verb": "", "unlock_knowledge": "", "requires_rung": "", "earns_knowledge": "",
 			"work_cost": 0.0, "upkeep_work_per_turn": 0.0,
 			"friction_multiplier": ROAD_FRICTION_PATH, "holds_link_to_tiles": ROAD_LINK_PATH,
+			"build_material_cost": LADDER_NO_MATERIAL,
+			"build_material_id": LADDER_NO_MATERIAL_ID,
 			"grants_sight": false,
 			"build_work_per_worker_turn": LADDER_BARE_WORK_RATE,
 		},
@@ -2385,6 +2687,8 @@ func _route_rung_catalog() -> Array:
 			"earns_knowledge": HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING,
 			"work_cost": LADDER_TRAIL_WORK_COST, "upkeep_work_per_turn": 0.0,
 			"friction_multiplier": ROAD_FRICTION_TRAIL, "holds_link_to_tiles": ROAD_LINK_TRAIL,
+			"build_material_cost": LADDER_NO_MATERIAL,
+			"build_material_id": LADDER_NO_MATERIAL_ID,
 			"grants_sight": false,
 			"build_work_per_worker_turn": LADDER_BARE_WORK_RATE,
 		},
@@ -2396,6 +2700,8 @@ func _route_rung_catalog() -> Array:
 			"earns_knowledge": HudFloraVocab.KNOWLEDGE_TRACK_PAVING,
 			"work_cost": LADDER_DIRT_WORK_COST, "upkeep_work_per_turn": LADDER_DIRT_UPKEEP,
 			"friction_multiplier": ROAD_FRICTION_DIRT, "holds_link_to_tiles": ROAD_LINK_DIRT,
+			"build_material_cost": LADDER_NO_MATERIAL,
+			"build_material_id": LADDER_NO_MATERIAL_ID,
 			"grants_sight": true,
 			"build_work_per_worker_turn": LADDER_BARE_WORK_RATE,
 		},
@@ -2408,6 +2714,8 @@ func _route_rung_catalog() -> Array:
 			"earns_knowledge": "",
 			"work_cost": LADDER_PAVED_WORK_COST, "upkeep_work_per_turn": LADDER_PAVED_UPKEEP,
 			"friction_multiplier": ROAD_FRICTION_PAVED, "holds_link_to_tiles": ROAD_LINK_PAVED,
+			"build_material_cost": LADDER_PAVED_MATERIAL,
+			"build_material_id": LADDER_PAVED_MATERIAL_ID,
 			"grants_sight": true,
 			"build_work_per_worker_turn": LADDER_BARE_WORK_RATE,
 		},
@@ -2583,6 +2891,87 @@ func _press_road_ladder_row(rung_key: String) -> bool:
 ## Everything the open card SAYS, joined — its title, its row faces and every aside beneath them.
 ## The gate reasons and the price asides are composed sentences, so what is asserted about them is
 ## the exact wording rather than a node's presence.
+## **ONE ASIDE'S OWN INK** — the `font_color` override on the Label whose text is `text`, and
+## `HudStyle.INK_FAINT` when the card carries no such line. A PNG cannot testify about a colour and a
+## text claim passes just as well on a line rendered quiet, so the register is asserted here.
+func _road_ladder_aside_colour(text: String) -> Color:
+	var card := _road_ladder_card(h._hud)
+	if card == null:
+		return HudStyle.INK_FAINT
+	for node in _all_nodes(card, []):
+		if node is Label and (node as Label).text == text:
+			# ⛔ **`get_theme_color`, NOT `get_theme_color_override`.** The latter answers a bare
+			# `Color()` — opaque BLACK — for a control that has one, which equals neither ink and
+			# reads as *the aside is quiet* on a line that is not.
+			return (node as Label).get_theme_color("font_color")
+	return HudStyle.INK_FAINT
+
+## ⛔ **THE ROSTER MUST NAME EXACTLY ONE ROAD KIT PER RUNG, AND THE THIRD ARM MUST NAME NONE.**
+##
+## Both road tools declare `build_work` on the route branch at the same worth; the rung each names is
+## the only thing between them. Before the bound reached `KitOption` the derivation walked the roster
+## in order and handed back the FIRST match for either rung — so a `pave` entry opened on the
+## roadbuilding kit, quoting a tool the sim pays nothing for on that job.
+##
+## **THE ROSTER IS LOCAL, not the shared fixture.** These claims are about the DERIVATION over a
+## roster shaped exactly as the wire ships one; adding two kits to `BandFx.kit_roster_fixture` would
+## put them in every picker in every chapter and test the fixture's reach instead of the rule.
+func _assert_the_roster_names_one_road_kit_per_rung() -> void:
+	var roster := _road_kit_roster()
+	h._assert_hud("a `pave` opens on `%s` — the rung it is bound to, not the roster's first match"
+			% ROSTER_PAVING_KIT,
+		KitRoster.build_kit_for_branch(roster, KitRoster.BUILD_BRANCH_ROUTE,
+			HudRouteVocab.RUNG_KEY_PAVED_ROAD) == ROSTER_PAVING_KIT)
+	h._assert_hud("…and a `grade` opens on `%s`, which is the pair and not a coincidence of order"
+			% ROSTER_ROADBUILDING_KIT,
+		KitRoster.build_kit_for_branch(roster, KitRoster.BUILD_BRANCH_ROUTE,
+			HudRouteVocab.RUNG_KEY_DIRT_ROAD) == ROSTER_ROADBUILDING_KIT)
+	# ⛔ **THE THIRD ARM, AND IT IS REACHABLE NOW THAT THE ROSTER CARRIES THE BOUND.** A caller that
+	# cannot say which rung is being priced is quoted NOTHING — never the roster's first road tool,
+	# which is the generous answer that fails silently. Flipping this arm to *serve* hands back
+	# `roadbuilding` here.
+	var unqualified := KitRoster.build_kit_for_branch(roster, KitRoster.BUILD_BRANCH_ROUTE,
+		KitRoster.BUILD_RUNG_ANY)
+	h._assert_hud("…and a caller that names NO rung is handed no road tool at all (got \"%s\")"
+			% unqualified,
+		unqualified == KitRoster.NO_KIT_ID)
+	# …and the picker GREYS the other rung's tool with a reason that is true of it. *Its tools are no
+	# use on a road build* would be plainly false of a paving hammer in front of a `grade`.
+	var offer := KitRoster.kit_offer(roster, KitRoster.kit_by_id(roster, ROSTER_PAVING_KIT),
+		KitRoster.JOB_BUILDERS, {}, "", KitRoster.BUILD_BRANCH_ROUTE,
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD)
+	h._assert_hud("…and the other rung's tool is greyed for the RUNG, not for the branch — `%s`"
+			% HudComposeVocab.KIT_WITHHELD_REASON_BUILD_RUNG,
+		not bool(offer[KitRoster.OFFER_OFFERED_KEY])
+			and String(offer[KitRoster.OFFER_REASON_KEY])
+				== HudComposeVocab.KIT_WITHHELD_REASON_BUILD_RUNG)
+
+## The two road tools and the bare kit, shaped exactly as `dict/subsistence.rs` writes a `KitOption`
+## row — the worth, the branch and the RUNG. The bare entry is what `kit_uses` measures the other two
+## against, so a roster without it would answer that no kit supplies the axis at all.
+func _road_kit_roster() -> Array:
+	return [
+		{KitRoster.KIT_ID_KEY: ROSTER_ROADBUILDING_KIT,
+			KitRoster.KIT_JOBS_KEY: [KitRoster.JOB_BUILDERS],
+			KitRoster.KIT_BUILD_WORK_KEY: ROSTER_ROAD_KIT_WORTH,
+			KitRoster.KIT_BUILD_SATURATING_CREW_KEY: ROSTER_ROAD_KIT_ARMS,
+			KitRoster.KIT_BUILD_BRANCH_KEY: KitRoster.BUILD_BRANCH_ROUTE,
+			KitRoster.KIT_BUILD_RUNG_KEY: HudRouteVocab.RUNG_KEY_DIRT_ROAD,
+			KitRoster.KIT_ITEM_IDS_KEY: [ROSTER_EARTHMOVING_ITEM]},
+		{KitRoster.KIT_ID_KEY: ROSTER_PAVING_KIT,
+			KitRoster.KIT_JOBS_KEY: [KitRoster.JOB_BUILDERS],
+			KitRoster.KIT_BUILD_WORK_KEY: ROSTER_ROAD_KIT_WORTH,
+			KitRoster.KIT_BUILD_SATURATING_CREW_KEY: ROSTER_ROAD_KIT_ARMS,
+			KitRoster.KIT_BUILD_BRANCH_KEY: KitRoster.BUILD_BRANCH_ROUTE,
+			KitRoster.KIT_BUILD_RUNG_KEY: HudRouteVocab.RUNG_KEY_PAVED_ROAD,
+			KitRoster.KIT_ITEM_IDS_KEY: [ROSTER_STONE_DRESSING_ITEM]},
+		{KitRoster.KIT_ID_KEY: BandFx.KIT_ID_NONE,
+			KitRoster.KIT_JOBS_KEY: [KitRoster.JOB_BUILDERS],
+			KitRoster.KIT_BUILD_WORK_KEY: KitRoster.BUILD_WORK_NONE,
+			KitRoster.KIT_BUILD_BRANCH_KEY: KitRoster.BUILD_BRANCH_NONE,
+			KitRoster.KIT_BUILD_RUNG_KEY: KitRoster.BUILD_RUNG_ANY},
+	]
+
 func _road_ladder_text() -> String:
 	var card := _road_ladder_card(h._hud)
 	if card == null:

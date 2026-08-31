@@ -598,3 +598,96 @@ fn equipment_batches_survive_a_checkpoint_round_trip() {
         before.remaining(SPEARS, &equipment)
     );
 }
+
+/// ⛔ **EVERY UNPRODUCED MATERIAL REACHES A SPAWNED BAND, AND NOTHING ELSE IS STOCKED TWICE.**
+///
+/// Two materials on the roster have **no producer** — `wood` until forest foraging lands and `stone`
+/// until quarrying does (issue #583) — and `start_stock` is the whole of how a player ever holds
+/// either. An improvement that eats one of them (`animal:pen`'s hurdles are woven from wood;
+/// `route:paved_road` swallows stone) would otherwise declare a pile nobody could ever draw: dead
+/// content that reports nothing, because a rung short of a material simply stalls.
+///
+/// **The seeding is automatic and this is what says so.** `worldgen::start_stocked_materials` walks
+/// the roster and deposits for every entry that declares a `start_stock`, so a new unproduced
+/// material is reachable the moment its roster row names an opening pile — no code edit. The test is
+/// therefore driven off the **config** rather than a literal list, and would catch the seeding pass
+/// being narrowed to the materials it happened to know about.
+///
+/// **The second half is the pairing**: a material that *has* a producer must NOT also be stocked, or
+/// the opening pile is a duplicate source nobody asked for.
+#[test]
+fn a_spawned_band_holds_every_material_nothing_produces() {
+    let mut app = build_test_app();
+    // One update, so worldgen has run and its spawns are on the ground.
+    app.update();
+    let materials = app.world.resource::<MaterialsConfigHandle>().get();
+    let stocked: Vec<&str> = materials
+        .materials()
+        .filter(|(_, def)| def.start_stock.is_some())
+        .map(|(id, _)| id)
+        .collect();
+    assert!(
+        !stocked.is_empty(),
+        "**LIVENESS**: the roster must declare at least one opening pile, or the loop below asserts \
+         nothing"
+    );
+
+    let mut query = app.world.query::<(&PopulationCohort, &ResidentBand)>();
+    let (cohort, _) = query
+        .iter(&app.world)
+        .next()
+        .expect("the campaign spawns at least one resident band");
+    for id in &stocked {
+        let held = cohort.stores.material_total(id).to_f32();
+        assert!(
+            held > 0.0,
+            "'{id}' declares a `start_stock` and nothing produces it, so a spawned band must be \
+             holding some — it is holding {held}, which makes every rung that eats it unbuildable"
+        );
+    }
+    for (id, def) in materials.materials() {
+        if def.start_stock.is_some() {
+            continue;
+        }
+        assert_eq!(
+            cohort.stores.material_total(id).to_f32(),
+            0.0,
+            "'{id}' has a producer, so a spawn must not hand it out as well - an opening pile \
+             beside a producer is a second source nobody chose"
+        );
+    }
+
+    // ⛔ **AND THE OTHER DIRECTION: EVERY MATERIAL AN IMPROVEMENT EATS MUST BE OBTAINABLE.** The
+    // half above says *what is stocked arrives*; on its own it passes a roster that quietly dropped
+    // an unproduced material's opening pile, because the material simply leaves the stocked list.
+    // What makes a pile dead content is a rung declaring it with **no way in at all** — no recipe
+    // that outputs it and no spawn that hands it over — and that is a rung whose builds stall
+    // for ever with no fault reported anywhere.
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let recipes = core_sim::RecipesConfig::builtin();
+    let produced: Vec<&str> = recipes
+        .recipes()
+        .flat_map(|(_, recipe)| recipe.outputs.iter())
+        .filter_map(|output| output.material_id())
+        .collect();
+    let mut eaten = 0;
+    for rung in &ladder.rungs {
+        for (id, _) in rung.build_materials().chain(rung.upkeep_materials()) {
+            eaten += 1;
+            let has_producer = produced.contains(&id);
+            let has_opening_pile = materials
+                .materials()
+                .any(|(other, def)| other == id && def.start_stock.is_some());
+            assert!(
+                has_producer || has_opening_pile,
+                "rung '{}' eats '{id}', which no recipe makes and no spawn hands out - the rung's \
+                 builds would stall for ever with nothing reporting why",
+                rung.wire_key()
+            );
+        }
+    }
+    assert!(
+        eaten > 0,
+        "**LIVENESS**: some rung must declare a material pile, or the loop above asserts nothing"
+    );
+}

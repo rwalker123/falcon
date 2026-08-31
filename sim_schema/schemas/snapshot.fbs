@@ -2714,10 +2714,23 @@ table ForagePatchState {
   //   no_crop        - the patch has no committed plant, or nothing in its basket climbs this rung
   //   species_ceiling- the species' `husbandry_ceiling` stops below this rung
   //   rung_below     - the rung under this one is not built (a Corral on an untamed herd)
-  //   owned_by_other - another faction holds the source
+  //   owned_by_other - another faction holds the source. IT NEVER MEANS "nobody holds it" - see
+  //                    `no_keeper` below, which is a different state with a different remedy
+  //   no_keeper      - NOBODY holds this source at all. Route-only today: a road's keeper is
+  //                    released the moment decay or disuse takes the tile back below the free
+  //                    floor's top, so it is the ordinary end of a road nobody walked rather than an
+  //                    edge case. The remedy is to TAKE IT ON - re-issuing `grade`/`pave` adopts an
+  //                    unkept road, which is why the branch ships no separate adoption verb.
+  //                    *** Rendering this as "another band owns it" is a FALSE SENTENCE ***: it
+  //                    sends the player looking for a rival that does not exist, past a road they
+  //                    could simply have claimed
   //   site           - the ground does not admit the rung (Sow's gathering-site + fresh-water rule)
   //   ring_idle      - an `extend_pen` entry whose ring is not running
   //   undeclared     - the band's queue entry does not name the rung its meter is on
+  //   materials      - the rung's own gate HOLDS and the band's stores are what stopped it: not one
+  //                    of any rung's `eligible` conjuncts but the countdown's own, minted off a
+  //                    material coverage of zero. The remedy is off the build line - a bench or a
+  //                    trade - so naming the GOOD is the point
   //   unworked       - the source produced no quote at all this turn: not a gate refusing, but the
   //                    labor loop never reaching it. A real and different state
   //
@@ -4899,6 +4912,23 @@ table KitOption {
   // so a picker must grey a builders kit whose branch disagrees with the build it is being offered
   // for, exactly as it greys a snare against a Red Deer.
   buildWorkBranch:string;
+  // WHICH RUNG OF THAT WEB `buildWorkPerWorker` IS FOR (appended) - a "<branch>:<id>" rung key such
+  // as "route:paved_road", and "" when this kit's build tool serves EVERY rung on its branch, which
+  // is every kit that ships today but the two road tools.
+  //
+  // *** THE READING IS A TRIPLE: worth, branch AND rung, or none of them. *** A consumer reading the
+  // worth alone is wrong, and one reading worth+branch is wrong on exactly the branch this field was
+  // added for. The route ladder is the first whose rungs want DIFFERENT tools - the pick and spade
+  // are worth their offset on a `grade` and NOTHING on the `pave` above it, and the stone-dressing
+  // tools are the exact reverse - so a picker must grey a road kit against the rung of the entry in
+  // front of it, not merely against its branch.
+  //
+  // IT MUST BE READ HERE AND NOT ONLY ON `BandKitTiers`. That table is the band's RESOLVED row and
+  // already carries the rung; THIS table is the ROSTER the picker reads, so a client without this
+  // field sees an unbound tool on both road kits and answers with whichever the roster lists first -
+  // offering the GRADING kit for a `pave`. An absent field decodes as "" = serves every rung, which
+  // is the generous answer the bound exists to refuse.
+  buildWorkRung:string;
 }
 
 // ==============================================================================================
@@ -5267,10 +5297,49 @@ table RouteRungState {
   // copy would repeat it once per road on the map.
   //
   // ⛔ IT IS READ, NEVER ASSUMED. Every SOURCE publishes its own `buildWorkPerWorkerTurn` because the
-  // sim writes worker output as a SUM OF TERMS; a road has no source row, so without this a client
-  // has to transcribe the constant and goes stale in silence the day a second term lands. A reader
-  // that finds this missing or `0` states NO ESTIMATE rather than substituting a rate of its own.
+  // sim writes worker output as a SUM OF TERMS; a road's own row (`RouteState`) does not repeat it,
+  // because it is the same number for every road in the world and a per-tile copy would ship it once
+  // per tile. Without it a client has to transcribe the constant and goes stale in silence the day a
+  // second term lands. A reader that finds this missing or `0` states NO ESTIMATE rather than
+  // substituting a rate of its own.
   buildWorkPerWorkerTurn:float = 0;
+  // --- WHAT REACHING THIS RUNG COSTS IN MATERIAL (appended last) ---------------------------------
+  // The rung's declared build pile, in units of the material it eats - 20 stone on
+  // `route:paved_road`, and 0 on every other rung of the branch, which eat nothing at all.
+  //
+  // *** IT IS FLAT, WHERE `workCost` BESIDE IT IS NOT. *** A tile's own remoteness multiplies the
+  // work (`RouteState.keeperRemoteness`) and does NOT multiply this: a tile of road needs the same
+  // twenty stone wherever it lies, and remoteness already taxes the getting there. So the figure
+  // here is the WHOLE truth for every tile on the map, while `workCost` is a base the tile's own
+  // multiplier still has to be applied to - the one asymmetry between the two prices, and the reason
+  // this rides the catalog with no per-tile twin.
+  //
+  // *** IT IS SPENT AS THE METER CLIMBS, NOT ON COMPLETION, AND DECAY REFUNDS NOTHING. *** A roadbed
+  // a third laid has swallowed a third of the pile; if it then washes out, the stone is gone.
+  // `RouteState.buildMaterialDemand`/`buildMaterialSupplied` are this turn's share of it.
+  //
+  // WHICH material it is rides beside it in `buildMaterialId` - see there for why the amount alone
+  // was not enough.
+  buildMaterialCost:float = 0;
+  // WHICH MATERIAL THAT PILE IS OF (appended) - "stone" on `route:paved_road`, and "" on every rung
+  // that eats nothing. Joins to the ids the band's own stores list publishes.
+  //
+  // *** IT IS READ WITH `buildMaterialCost` OR NOT AT ALL ***, exactly as buildWorkPerWorker /
+  // buildWorkBranch / buildWorkRung are one reading: an amount with no noun cannot be rendered into
+  // a sentence, and a noun with no amount says nothing. Shipped without this, the client's rung row
+  // read "+ 20 to raise it" - twenty of what?
+  //
+  // *** AND THE CLIENT MUST NOT SUPPLY THE NOUN ITSELF. *** "The route branch eats stone" is a fact
+  // about the CONFIG, so a client holding it is a second authority that goes stale in silence the
+  // day a rung is retuned to eat something else - the same transcription mistake
+  // `buildWorkPerWorkerTurn` above exists to have prevented. The sim owns the vocabulary.
+  //
+  // ONE ID RATHER THAN A `[MaterialPayoff]` LIST, unlike the plant and animal branches' piles. One
+  // material per rung IS the model here: `buildMaterialCost` is a single float, so a second material
+  // would make the AMOUNT meaningless before the name mattered, and there is no defined reading of
+  // the flat-pile arithmetic for two. The id and the amount are resolved from ONE lookup at capture
+  // so they cannot disagree.
+  buildMaterialId:string;
 }
 
 table SubsistenceSection {
@@ -5609,6 +5678,39 @@ table RouteState {
   // beats a field a client has to guess at.
   frictionMultiplier:float = 1;
   holdsLinkToTiles:uint = 0;
+  // --- THE BUILD IN FRONT OF THIS TILE (appended last) -------------------------------------------
+  //
+  // *** A ROAD IS A SOURCE ROW, AND THIS TABLE IS IT. *** It was stated for years that a road "has no
+  // source row for an estimate to be stamped on", and that claim outlived its truth: this table is
+  // keyed by tile exactly as a patch row is keyed by tile, so anything a patch publishes about the
+  // build in front of it a road can publish here. The claim is what made the material half of the
+  // route branch look impossible.
+  //
+  // buildBlockedReason      = WHY the pool is stuck on this tile, "" when it is not. The same
+  //                           `BuildGate` vocabulary `ForagePatchState.buildBlockedReason` uses -
+  //                           "knowledge" (the faction has not learned `roadbuilding`/`paving`),
+  //                           "owned_by_other" (another band keeps this tile), "no_keeper"
+  //                           (NOBODY does, so the tile is going begging and re-issuing the verb
+  //                           adopts it) and "materials" (the rung's gate HOLDS and the store is
+  //                           what stopped it). *** THE FIRST TWO ARE NOT ONE CAUSE ***: a road with
+  //                           no keeper reported as another band's sends the player after a rival
+  //                           that does not exist. Empty is not "fine": a road nobody has queued is
+  //                           not blocked, it is simply not being built.
+  // buildMaterialDemand     = what THIS TURN'S accrual would draw from the band's stores at full
+  //                           coverage, per the rung's `build.materials` pile - 20 stone spread over
+  //                           the paved rung's whole span, so a turn's share is small. 0 for a rung
+  //                           that eats nothing, which is every route rung but `route:paved_road`.
+  // buildMaterialSupplied   = what the store actually paid of it. The pair is the material twin of
+  //                           `upkeepDemand`/`upkeepSupplied` above, and it obeys the same rule:
+  //                           *** demand - supplied == the shortfall, VERBATIM ON THE WIRE. ***
+  //
+  // *** A SHORT STORE STALLS THE BUILD PROPORTIONALLY AND NEVER REFUSES IT. *** The covered fraction
+  // scales BOTH the work banked and the stone drawn, so a store covering a third of the turn's pile
+  // banks a third of the turn's work; the uncovered remainder is wasted, not carried. A store with
+  // nothing in it at all blocks the head - that is the "materials" cause above.
+  buildBlockedReason:string;
+  buildMaterialDemand:float = 0;
+  buildMaterialSupplied:float = 0;
 }
 
 table RouteSection {

@@ -94,6 +94,13 @@ pub(crate) fn route_states(
                 grants_sight: road.grants_sight(),
                 friction_multiplier: payoff.friction_multiplier,
                 holds_link_to_tiles: payoff.holds_link_to_tiles,
+                // **THE BUILD IN FRONT OF THIS TILE** — a road is a source row and this table is it,
+                // so the three fields are the twins a patch row publishes one branch over. All three
+                // are stamped by the build arm and cleared by the decay pass on the one-turn cycle,
+                // so they describe the turn just resolved rather than a stale stall.
+                build_blocked_reason: road.build_blocked_reason.key().to_string(),
+                build_material_demand: road.build_material_demanded,
+                build_material_supplied: road.build_material_supplied,
             }
         })
         .collect()
