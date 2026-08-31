@@ -1986,11 +1986,13 @@ pub struct IntensificationKnowledgeState {
 ///
 /// ⛔ **EVERY FIELD IS DERIVED FROM `intensification_ladder.json`; NOTHING HERE IS AUTHORED
 /// SEPARATELY** — the same discipline [`LadderKnowledgeState`] follows, and for the same reason: a
-/// rung added to that config appears in the ladder with no client edit and no schema edit.
+/// rung added to that config appears in the ladder with no client edit and no schema edit. The one
+/// exception is [`Self::build_work_per_worker_turn`], which is the *sim's* rate and not the rung's.
 ///
 /// **It rides the section and not the tile row.** These are properties of the *branch*, identical
 /// for every road in the world; carried on `RouteState` they would repeat the same four rows on
-/// every road tile.
+/// every road tile — which is the same reason the bare work rate rides here rather than on the
+/// road.
 ///
 /// **Route branch only, deliberately.** A generic `LadderRungState` filled for one branch is a
 /// promise the code does not keep; the plant and animal branches publishing the same is their own
@@ -2057,6 +2059,20 @@ pub struct RouteRungState {
     /// [`Self::unlock_knowledge`] uses.
     #[serde(default)]
     pub earns_knowledge: String,
+    /// **What one bare-handed worker banks in a turn** — `intensification::PER_WORKER_OUTPUT`,
+    /// unscaled: before gear and before any multiplier, in work units per worker per turn.
+    ///
+    /// **The same figure for every rung, which is why it rides the catalog.** These rows are the
+    /// branch's own numbers, identical for every road in the world; a per-tile copy on
+    /// `RouteState` would repeat one constant once per road on the map.
+    ///
+    /// ⛔ **IT IS READ, NEVER ASSUMED.** Every source row publishes its own
+    /// `build_work_per_worker_turn` because the sim writes worker output as a *sum of terms* — a
+    /// road has no source row, so a client without this has to transcribe the constant and goes
+    /// stale in silence the day a second term lands. A reader that finds it missing or `0` states
+    /// *no estimate* rather than substituting a rate of its own.
+    #[serde(default)]
+    pub build_work_per_worker_turn: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

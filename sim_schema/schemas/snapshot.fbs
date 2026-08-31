@@ -5182,11 +5182,13 @@ table CraftKnowledgeState {
 // above it, so no readout could state what a paved road would cost or what it would buy until the
 // tile already held one. Every field below is DERIVED from `intensification_ladder.json` through
 // the sim's own rung types and nothing here is separately authored, so a rung added to that config
-// appears in the ladder with no client edit and no schema edit.
+// appears in the ladder with no client edit and no schema edit. The one exception is
+// `buildWorkPerWorkerTurn`, which is the SIM's rate rather than the rung's — see its own note.
 //
 // IT RIDES THE SECTION AND NOT THE TILE ROW. These are properties of the BRANCH, identical for
 // every road in the world — carried on `RouteState` they would repeat the same four rows on every
-// road tile.
+// road tile. That is also why the sim's bare work rate rides here: it is the same for every rung,
+// so quoting it costs one field for the world rather than one per road on the map.
 //
 // ROUTE BRANCH ONLY, deliberately: a generic `LadderRungState` filled for one branch is a promise
 // the code does not keep. The plant and animal branches publishing the same is their own change.
@@ -5246,6 +5248,17 @@ table RouteRungState {
   //
   // Joins to `LadderKnowledgeState.knowledgeId`, the same vocabulary `unlockKnowledge` above uses.
   earnsKnowledge:string;
+  // --- WHAT ONE BARE-HANDED WORKER BANKS IN A TURN (appended last) -------------------------------
+  // `intensification::PER_WORKER_OUTPUT`, unscaled — before gear and before any multiplier, in work
+  // units per worker per turn. THE SAME FIGURE FOR EVERY RUNG, which is exactly why it rides the
+  // catalog: the catalog is the number that is the same for every road in the world, and a per-tile
+  // copy would repeat it once per road on the map.
+  //
+  // ⛔ IT IS READ, NEVER ASSUMED. Every SOURCE publishes its own `buildWorkPerWorkerTurn` because the
+  // sim writes worker output as a SUM OF TERMS; a road has no source row, so without this a client
+  // has to transcribe the constant and goes stale in silence the day a second term lands. A reader
+  // that finds this missing or `0` states NO ESTIMATE rather than substituting a rate of its own.
+  buildWorkPerWorkerTurn:float = 0;
 }
 
 table SubsistenceSection {

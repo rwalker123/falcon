@@ -62,8 +62,8 @@ pub struct RouteState {
     /// journey's saving is the **mean** of its tiles' readings, so a partly-roaded run pays partly.
     pub friction_multiplier: f32,
     /// How far this tile's rung holds a pooling link open, in tiles. A journey's reach is the
-    /// **weakest** tile it crosses — one gap breaks the run. **Authored and not yet consumed by the
-    /// sim** (it is slice 13b's), and published anyway because it is half of the client's *"what this
-    /// road buys"* line.
+    /// **weakest** tile it crosses — one gap breaks the run. **Live**: `supply::balance_supply_networks`
+    /// pools a pair within `max(reach_tiles, path_reach_tiles(..))`, so a road is what lets two camps
+    /// pool at a distance where they simply cannot without one.
     pub holds_link_to_tiles: u32,
 }

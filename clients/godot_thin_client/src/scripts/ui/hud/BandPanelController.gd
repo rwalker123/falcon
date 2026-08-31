@@ -2485,6 +2485,14 @@ func _build_queue_models(band: Dictionary, models: Array) -> Array:
     var by_key: Dictionary = {}
     for model_variant in models:
         by_key[String((model_variant as Dictionary).get("key", ""))] = model_variant
+    # ⛔ **A ROAD HAS A SOURCE AND IS NOT A LABOR ROW, WHICH IS WHY THE SKIP BELOW WAS DROPPING IT.**
+    # `_work_source_models` walks the band's labor rows and admits `forage` / `hunt` alone; a road is
+    # the one build source with no labor row at all — deliberately, since a road is not worked like a
+    # patch or a herd and has no take crew to staff — so the entry fell through `by_key` and vanished
+    # from the block. **The rule the skip states is unchanged and stays right**: an entry whose source
+    # this client genuinely cannot resolve still spends its rank. What was wrong is that a road's
+    # source is resolvable, off `HudBandLaborState.roads()`, and nothing was resolving it.
+    var road_models := _road_queue_models(band)
     var queued: Array = []
     for rank in range(rank_keys.size()):
         var key := String(rank_keys[rank])
@@ -2494,9 +2502,11 @@ func _build_queue_models(band: Dictionary, models: Array) -> Array:
         # above has the path, and that state persists across turns), and one the player has just
         # withdrawn, whose `✕` is covered for the round trip by an overlay while `buildQueue` still
         # lists it.
-        if withdrawn.has(key) or not by_key.has(key):
+        if withdrawn.has(key):
             continue
-        var entry: Dictionary = by_key[key]
+        if not by_key.has(key) and not road_models.has(key):
+            continue
+        var entry: Dictionary = by_key[key] if by_key.has(key) else road_models[key]
         entry[BUILD_QUEUE_ROW_PENDING_KEY] = false
         entry[BUILD_QUEUE_ROW_RANK_KEY] = rank
         queued.append(entry)
@@ -2524,6 +2534,134 @@ func _build_queue_models(band: Dictionary, models: Array) -> Array:
         return String((a as Dictionary).get("key", "")) < String((b as Dictionary).get("key", "")))
     queued.append_array(awaiting)
     return queued
+
+## ⛔ **ONE MODEL PER ROAD THIS BAND HAS QUEUED, keyed the way the wire queue keys it** —
+## `{pending_key: model}` over `HudBandLaborState.roads()`, joined on the entry's own `target_x` /
+## `target_y`, which is the road row's identity too.
+##
+## **Reported from play: a graded tile showed NOTHING anywhere.** The keeper was set, the entry was on
+## the wire, and the road was banking zero for the correct reason (a Tame sat at the head of that
+## band's queue and the head takes every builder) — but with no row drawn, that state is
+## indistinguishable from the command having failed. The player could not see the road was queued,
+## could not see what it was waiting behind, and **could not reorder it**, which is the fix that
+## matters: the arrows are what let a road be put in front of the Tame.
+##
+## **EVERY WORD COMES FROM `HudRouteVocab`** — the rung the road holds, the rung being raised, the
+## meter — so the queue row and the tile card cannot say different things about one road. The
+## destination is `next_rung_key`'s derivation (the rung above the held one) and never a rung read off
+## the entry, whose `kind` is `roadwork` and names no rung; the tile card's own queued clause reads the
+## same step, so the two name one rung by construction.
+##
+## **`{}` where the band has queued no road, and a road tile the snapshot does not carry is SKIPPED** —
+## which is `_build_queue_models`' unresolvable-source case arriving honestly, rank spent and no row.
+func _road_queue_models(band: Dictionary) -> Dictionary:
+    var models: Dictionary = {}
+    if _band_labor == null:
+        return models
+    var entries: Variant = band.get("build_queue", [])
+    if not (entries is Array):
+        return models
+    var ladder := HudRouteVocab.route_ladder(_topbar.route_rungs() if _topbar != null else [])
+    var roads := _band_labor.roads()
+    for entry_variant in (entries as Array):
+        if not (entry_variant is Dictionary):
+            continue
+        var wire: Dictionary = entry_variant
+        if String(wire.get("kind", "")).strip_edges().to_lower() \
+                != HudConst.LABOR_KIND_ROADWORK:
+            continue
+        var x := int(wire.get("target_x", -1))
+        var y := int(wire.get("target_y", -1))
+        if x < 0 or y < 0:
+            continue
+        var road := _road_at(roads, x, y)
+        if road.is_empty():
+            continue
+        models[_band_labor.pending_key(HudConst.LABOR_KIND_ROADWORK, x, y, "")] = \
+            _road_queue_model(road, ladder, x, y)
+    return models
+
+## The road row on this tile, `{}` when the snapshot carries none — a road out of sight, which is
+## ordinary: the `routes` section is fog-filtered.
+func _road_at(roads: Array, x: int, y: int) -> Dictionary:
+    var tile := Vector2i(x, y)
+    for road_variant in roads:
+        if road_variant is Dictionary \
+                and HudRouteVocab.tile_of(road_variant as Dictionary) == tile:
+            return road_variant as Dictionary
+    return {}
+
+## ONE road's queue model — the `_work_source_models` shape, filled from the road row and the rung
+## catalog instead of from a labor row.
+##
+## **IT CARRIES A LEG, AND THE LEG IS NOT DECORATION.** `_queue_settings_content` decides whether a row
+## is expandable, and the `✕` that withdraws the entry lives in that expansion — so a road with no
+## legs, no crop and no kit would draw a row nobody could take back. A road's climb genuinely IS one
+## leg (the rung above the one it holds), so the strip states something true rather than existing to
+## host a button.
+##
+## ⛔ **`unqueue` IS THE `✕`, NOT `abandon`.** Withdrawing a declaration and putting a road down are
+## different verbs with different consequences — the meter and the keeper survive the first and not the
+## second — and the road ladder's own `Stop keeping this road` already owns the second.
+##
+## ⛔ **NO DATE, AND THE SENTINEL IS `BUILD_TURNS_NOT_YET_ESTIMATED` RATHER THAN `NO_ESTIMATE`.** A
+## road publishes no chained `buildTurnsRemaining` at all — it has no source row for the sim to stamp
+## one on — so the client picks which *there is no number* this is, and the two render very
+## differently: `-1` on a ranked entry reads **`⚠ Stalled 0%`**, which claims something is wrong, and
+## nothing is. The road is queued, behind a head that is taking every builder, exactly as designed.
+## `-5` is that state's own reading — **`Queued 0%`**, no hazard mark — and its note says why in the
+## same words: *"a build one command old with a staffed pool on it is not a stall"*.
+##
+## **Putting `⚠ Stalled` on a correctly-waiting road would be the reported defect one column over**:
+## a readout that makes a working command look like a failed one.
+func _road_queue_model(road: Dictionary, ladder: Array[Dictionary], x: int, y: int) -> Dictionary:
+    var destination := HudRouteVocab.next_rung_key(HudRouteVocab.rung_of(road))
+    var rung_entry := HudRouteVocab.ladder_entry_of(ladder, destination)
+    var work_cost := HudRouteVocab.catalog_work_cost(rung_entry)
+    var rung_name := HudRouteVocab.ladder_rung_name(ladder, destination)
+    return {
+        "key": _band_labor.pending_key(HudConst.LABOR_KIND_ROADWORK, x, y, ""),
+        "kind": HudConst.LABOR_KIND_ROADWORK,
+        "x": x, "y": y, "herd_id": "",
+        # The VERB that raises the destination rung, `""` on a rung nobody declares. It is read for
+        # the ring test alone (a road is never one), and it is the catalog's rather than a guess.
+        "improvement": HudRouteVocab.catalog_verb(rung_entry),
+        # **THE RUNG BEING RAISED, AS THE CATALOG NAMES IT** — the face's own word, and never
+        # `RUNG_LABELS`, which is the tile card's hard-coded four and would render a fifth rung as its
+        # raw wire key.
+        "build_destination": destination,
+        "road_rung_name": rung_name,
+        "building_policy": "",
+        # ⛔ **`queued_progress`, NEVER THE RAW METER.** A road in this list is by definition queued,
+        # and the wire's `buildFraction` answers for the rung at RISK — which on a road that has
+        # banked nothing is the rung it already HOLDS, i.e. `METER_FULL`. Reported from play as
+        # `Queued 100%` on a dirt road ordered that turn.
+        "building_progress": HudRouteVocab.queued_progress(road),
+        "build_ring_progress": SourceForecast.PEN_EXTEND_EMPTY_METER,
+        "build_turns": SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED,
+        "build_work_cost": work_cost,
+        "build_upkeep_demand": HudRouteVocab.catalog_upkeep(rung_entry),
+        "build_blocked_lines": [],
+        "build_legs": [{
+            SourceForecast.BUILD_LEG_RUNG_KEY: destination,
+            SourceForecast.BUILD_LEG_IMPROVEMENT_KEY: HudRouteVocab.catalog_verb(rung_entry),
+            SourceForecast.BUILD_LEG_NAME_KEY: rung_name,
+            # The work still OWED, off the same corrected meter — the raw one reads a full trail as a
+            # finished dirt road and quotes a leg of zero on a job nobody has started.
+            SourceForecast.BUILD_LEG_WORK_KEY: work_cost * maxf(
+                HudRouteVocab.ROAD_METER_COMPLETE - HudRouteVocab.queued_progress(road), 0.0),
+            SourceForecast.BUILD_LEG_TURNS_KEY: SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+        }],
+    }
+
+## The source kind a queue row's PRICE CLAUSE is keyed by. `SourceForecast.source_kind_for_labor` is a
+## two-way alias over the two FOOD WEBS and its `else` is `SOURCE_KIND_HERD`, so a road handed to it
+## comes back an animal and the clause names `Husbandry` — a card that cannot move a road's bill.
+func _queue_source_kind(model: Dictionary) -> String:
+    var kind := String(model.get("kind", ""))
+    if kind == HudConst.LABOR_KIND_ROADWORK:
+        return SourceForecast.SOURCE_KIND_ROUTE
+    return SourceForecast.source_kind_for_labor(kind)
 
 ## The model slot `_build_queue_models` stamps its verdict into. A MODEL key rather than a node meta
 ## because the answer is a property of the ENTRY, and three of its four readers hold the model before
@@ -3036,8 +3174,12 @@ func _build_queue_leg_line(leg: Dictionary, in_flight: bool) -> HBoxContainer:
     marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(marker)
     var improvement := String(leg.get("improvement", ""))
-    var name := HudWorkVocab.RUNG_TRACK_NAME_FORMAT % [
-        FoodIcons.for_policy(improvement), DetailFormat.rung_badge_word(improvement)]
+    # **A LEG NAMES ITSELF WHERE ITS PRODUCER CAN SAY SO.** The two food webs derive the word from the
+    # verb, which the route branch's verbs are not in — see `SourceForecast.BUILD_LEG_NAME_KEY`.
+    var name := String(leg.get(SourceForecast.BUILD_LEG_NAME_KEY, ""))
+    if name == "":
+        name = HudWorkVocab.RUNG_TRACK_NAME_FORMAT % [
+            FoodIcons.for_policy(improvement), DetailFormat.rung_badge_word(improvement)]
     var work := DetailFormat.format_work_units(
         float(leg.get(SourceForecast.BUILD_LEG_WORK_KEY, 0.0)))
     var turns := DetailFormat.build_turns_clause(
@@ -3264,7 +3406,7 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
         float(model.get("build_work_cost", SourceForecast.BUILD_WORK_COST_NONE)),
         SourceForecast.BUILD_TURNS_NO_ESTIMATE,
         float(model.get("build_upkeep_demand", SourceForecast.NO_UPKEEP_DEMAND)),
-        SourceForecast.source_kind_for_labor(String(model.get("kind", ""))))
+        _queue_source_kind(model))
     if price != "":
         tooltip_lines.append(price)
     tooltip_lines.append_array(blocked_lines)
@@ -3696,6 +3838,14 @@ func _build_build_queue_overflow_row(remaining: int) -> PanelContainer:
 ## in-progress axis states in its own tooltip and the map badge draws. A second table of verb names
 ## here is how one rung comes to be called two things on one screen.
 func _build_queue_job_face(model: Dictionary) -> String:
+    # ⛔ **A ROAD IS NAMED BY THE RUNG IT IS BEING RAISED TO, NOT BY ITS VERB.** `Grade (64, 17)` names
+    # one STEP of the branch and would have to be renamed the day a non-road rung lands, and a tile can
+    # carry a road AND a patch at once — so the coordinates alone would draw two rows a player cannot
+    # tell apart. The rung is what says which job this is.
+    if String(model.get("kind", "")) == HudConst.LABOR_KIND_ROADWORK:
+        return HudRouteVocab.ROAD_QUEUE_FACE_FORMAT % [
+            String(model.get("road_rung_name", "")),
+            int(model.get("x", -1)), int(model.get("y", -1))]
     # **THE FACE NAMES WHERE THE ENTRY IS GOING, NOT THE LEG IT IS ON** (`docs/plan_standing_upkeep.md`
     # §2.8). An entry climbs every rung between where the source stands and its destination, so a row
     # headed `Cultivate` on a `sow` the player ordered would rename their job to its first leg — and

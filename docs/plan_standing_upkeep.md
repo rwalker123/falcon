@@ -2517,6 +2517,30 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > > basis of roads."* Its own issue, and still open: nothing in the sim banks route work for an
     > > animal today, which is why the floor rung is spelled `path` rather than `game_trail`.
     >
+    > > #### ⛔ AND THE `Roadwork` POOL HAS NOTHING TO POINT AT — THE ROSTER IS THIS STEP'S TOO
+    > >
+    > > **Reported from play at turn 122**, alongside the five UX defects 13b fixed. The Work board
+    > > shows `Roadwork 2`, and **nothing anywhere in the client lists which roads those two are
+    > > keeping**. Agriculture and Husbandry each have per-source work rows; roads deliberately have
+    > > none, and that was the right call — Ray: *"a road isn't active like hunting or foraging is so
+    > > you don't need the tile workers"* — but it leaves a band paying a standing bill for a set of
+    > > tiles it has **no way to enumerate**.
+    > >
+    > > **THE POOL IS THE ONE PLACE THE PER-ROAD CHOICE IS EXERCISED**, which is what makes the
+    > > absence bite rather than merely being untidy: `abandon` is *"pay for this road and not that
+    > > one"*, and a player cannot choose among things they cannot see. Today the only way to find a
+    > > road you are paying for is to remember where you put it.
+    > >
+    > > **It lands HERE rather than in 13b because it is the same object this step is already
+    > > drawing.** The overlay answers *"where are my roads"* on the map; the roster answers it in the
+    > > dock, off `RoadRegistry::kept_by` — which the wire already carries per tile
+    > > (`hasKeeper` / `keeperBandId`), so this needs no new field. A step that draws the network and
+    > > leaves the pool blind would have built half of one readout twice.
+    > >
+    > > ⛔ **IT IS A ROSTER, NOT A WORK BOARD.** Rows here carry no stepper and no crew: the hands are
+    > > the band-wide `roadwork` pool and the per-road decision is `abandon`, so a row that offered a
+    > > worker count would re-introduce exactly the per-tile work row §4.13b retired.
+    >
     > **13d — WHAT A STRANGER MAY DO WITH A ROAD.**
     > - Unreachable in play today: worldgen creates `FactionId(0)` and one start profile, so a normal
     >   game is single-faction. **Decide it before a second people lands, not after.**

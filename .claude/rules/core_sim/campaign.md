@@ -250,7 +250,9 @@ unit-tested `balance_commodity`. Config: `supply_network_config.json`.
 > **An undirected logistics link exists between two resident bands iff both hold** (`supply::tie_is_live`,
 > arc #527 §Q4):
 >
-> 1. `hex_distance_wrapped(a, b) <= reach_tiles` — the geometry; and
+> 1. `hex_distance_wrapped(a, b) <= max(reach_tiles, path_reach_tiles(roads, trace_path(a, b, ..)))`
+>    — the geometry, **widened by whatever road runs between them** (`supply::link_holds`; the payoff
+>    and its weakest-tile reading belong to `routes.md`); and
 > 2. `ConnectionLedger` holds a live tie (`strength > NO_TIE`) between their `BandId`s in **at least
 >    one direction**.
 >
@@ -266,11 +268,17 @@ unit-tested `balance_commodity`. Config: `supply_network_config.json`.
 > `reach_tiles: 3` finally means three hexes.
 >
 > **The spatial-hash neighbourhood is unchanged by the metric.** The union bins nodes into
-> `reach_tiles`-wide cells and compares only against neighbouring cells (±1 in y, ±2 in x across the
+> `cell_size`-wide cells and compares only against neighbouring cells (±1 in y, ±2 in x across the
 > wrap seam). That is a superset under either metric for the same reason `hex_range_tiles` may scan
 > a bounding box: every hex step changes the offset column and row by at most 1
 > (`HEX_NEIGHBOR_OFFSETS`), so a tile `reach` steps away is within `reach` columns and rows — the
 > same offset box `dx² + dy² <= reach²` implies.
+>
+> ⛔ **BUT THE CELL IS SIZED BY THE WIDEST DISTANCE THE TEST ACCEPTS, NOT BY `reach_tiles`.**
+> `cell_size = max(reach_tiles, routes::max_route_reach_tiles(ladder))`, because rule 1 now accepts a
+> routed pair out to a paved road's reach. Sizing it by `reach_tiles` alone would drop long routed
+> pairs **silently** — it fails as *some long roads just don't work*, with nothing erroring anywhere.
+> The seam is what keeps the neighbourhood following a retuned rung with no call site moving.
 >
 > The edge used to be derived from proximity alone, which made this a second independent
 > implementation of *"goods move between two bands"* beside a trade shipment's tie gate
@@ -279,7 +287,9 @@ unit-tested `balance_commodity`. Config: `supply_network_config.json`.
 >
 > **`reach_tiles` stopped meaning "who shares" and now means "the distance at which a link holds
 > itself for free".** It has to stay: without it two bands that once met would pool across the whole
-> map, which is exactly the distant-splinter case a shipment exists to serve.
+> map, which is exactly the distant-splinter case a shipment exists to serve. **Beyond it, a road is
+> what holds the link open** — and that is purely additive: a pair inside `reach_tiles` pools exactly
+> as it always did.
 >
 > **Either direction, not both.** A connection is directed — *who found whom* — and whether a rider
 > requires mutuality is the rider's business. Pooling is one undirected mechanism, and requiring both
@@ -604,8 +614,8 @@ short distance it is cheap enough to hold itself — so two bands standing near 
 exactly as they did before, by construction (the pre-refactor numbers are pinned as literals). The
 cross-faction half is a **shipment or a priced exchange**, because what a rider *does* over a link is
 its own policy and free equalization is a same-faction one. What holds a link open *beyond*
-`reach_tiles` is a **route**, and that state belongs to the route ladder — there is deliberately no
-`LogisticsLink` component or resource. See "The link is a rider on a CONNECTION" above. *v1:* population is the universal balancing weight, so a zero-population storage
+`reach_tiles` is a **route** (`routes::path_reach_tiles`, read by `supply::link_holds`), and that
+state belongs to the route ladder — there is deliberately no `LogisticsLink` component or resource. See "The link is a rider on a CONNECTION" above. *v1:* population is the universal balancing weight, so a zero-population storage
 node would compute a 0 fair share — revisit (→ capacity weight) when storage-pits land. The
 connected-components pass is also what Phase 4 will use to derive settlement clusters.
 

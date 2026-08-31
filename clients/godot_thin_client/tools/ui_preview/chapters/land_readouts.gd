@@ -22,6 +22,10 @@ const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 ## through `Main.format_improvement`, the pure static `Main._on_hud_improvement` dispatches to.
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
+## …and real pointer input, for the ladder's rung press. **A rung is pressed through the viewport and
+## never by `pressed.emit()`**: a faked signal passes on a button the engine would refuse to route to,
+## and what fix 3 changed is what the engine DOES with that press.
+const InputProbe := preload("res://tools/ui_preview/input_probe.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -696,12 +700,60 @@ const ROAD_SHORTFALL_DIRT := 1.7
 ## reading is the wire's exact `1.0`, never derived by subtraction.
 const ROAD_METER_RISING := 0.3
 const ROAD_METER_COMPLETE := 1.0
+## ⛔ **A ROAD DECLARED AND BANKING NOTHING** — the state the reported defect was found in, and the one
+## a fixture cannot reach with `ROAD_METER_RISING`: a `grade` queued behind another job banks nothing
+## for dozens of turns, because the head of the queue takes every builder the band has.
+const ROAD_METER_UNSTARTED := 0.0
+## ⛔ **WHAT A FRESHLY-GRADED ROAD ACTUALLY PUBLISHES, AND IT IS NOT `ROAD_METER_UNSTARTED`.**
+## `RouteState.buildFraction` is the meter on the rung at RISK, and `routes::road_at_risk_rung` falls
+## back to the rung the road HOLDS whenever nothing is banked above it — so a `grade` that landed this
+## turn ships `METER_FULL`, its TRAIL being complete.
+##
+## **A fixture staging `0.0` there stages a state no server can produce**, and that is exactly how
+## `Queued 100%` reached play: the queued frames asserted a reading off a meter the sim never sends,
+## so the real one went untested. Every declared-road fixture states this instead.
+const ROAD_METER_FRESHLY_GRADED := 1.0
 ## …the same meter as the percent the row prints, so the assertion reads the producer's own floor.
 const ROAD_METER_RISING_PERCENT := 30
 
 ## The number of `roadwork` keepers the middle rung's bill wants. The SIM's answer on the wire; a
 ## client that recomputed it would need the per-worker rate, which it does not hold.
 const ROAD_WANTS_DIRT := 4
+
+## ⛔ **THE BILL RAY WAS SHOWN, AND IT IS THE WHOLE REASON THE ROW WAS REBUILT.** A trail carrying 2%
+## of the dirt road banked owes ~`0.009` work a turn: `DetailFormat.format_work_units` rounds that
+## DOWN to `0.0` while the sim's own `ceil` rounds the same number UP to one keeper, and the row
+## printed both — `0.0 work a turn · wants 1 keepers`. It is above `SourceForecast.UPKEEP_WORK_MIN`,
+## so the row is genuinely owed and genuinely rendered; nothing here is a degenerate case.
+const ROAD_DEMAND_HAIRLINE := 0.009
+const ROAD_WANTS_HAIRLINE := 1
+
+## …and the hands the dirt road's shortfall is worth — `ceil(1.7 / PER_WORKER_OUTPUT)`. **Written out
+## rather than computed**, and deliberately PLURAL: the shipped row said `wants 1 keepers`.
+const ROAD_SHORT_WORKERS_DIRT := 2
+
+## ⛔ **THE METER OF A ROAD THAT HAS BEEN ORDERED AND HAS BANKED NOTHING — the reported state.** The
+## road is behind a Tame at the head of its band's queue, and the head takes every builder, so it
+## reads zero for dozens of turns. The row printed a bare `Trail` throughout, identical to ground
+## nobody has touched, which made a working `grade` indistinguishable from a failed one.
+const ROAD_METER_DECLARED := 0.0
+const ROAD_METER_DECLARED_PERCENT := 0
+
+## …and a shortfall worth exactly ONE hand, which is what proves the row pluralizes: the shipped one
+## said `wants 1 keepers`.
+const ROAD_SHORTFALL_TRAIL := 0.4
+const ROAD_ONE_WORKER_SHORT := 1
+
+## ⛔ **THE RETIRED ROW'S KEY, SPELLED AS A LITERAL ON PURPOSE.** `HudRouteVocab.ROAD_KEEPER_ROW` is
+## gone, so a claim that the card no longer draws it cannot be written against the const it retired —
+## an assertion referring to a deleted symbol does not fail, it fails to compile, and the chapter
+## would go silent rather than red.
+const RETIRED_KEEPER_ROW_KEY := "Kept by"
+
+## …and the two phrases the bill itself must never print again, for the same reason: both consts they
+## came from are gone, so the claim has to state the words.
+const RETIRED_UPKEEP_RATE_WORDS := "work a turn"
+const RETIRED_UPKEEP_WANTS_WORD := "wants"
 
 ## The tile the road fixtures sit on — the river fixture's own hex, so the two frames differ in
 ## exactly the thing under test. It is the row's IDENTITY now, the retired `RouteId` having gone with
@@ -831,8 +883,13 @@ func _restore_band_roster(inherited: Dictionary) -> void:
 ## …and the same block with the keeper already NAMED. It calls the composer the drawer calls one line
 ## after resolving that name, which is the only way to state a claim about the WORDS a named keeper
 ## reads in without staging a band roster this chapter would then have to put back.
-func _road_lines_named(road: Dictionary, keeper_label: String) -> Array[String]:
-	return HudRouteVocab.road_lines(road, keeper_label)
+## ⛔ **THE RATE IS THREADED IN, THE WAY THE REAL DRAWER THREADS IT.** `road_lines` takes the branch's
+## bare work rate as a parameter (the leaf holds no catalog, so the road→catalog join stays at the call
+## site), and the `Upkeep` row needs it to state a shortfall in HANDS. Passing the catalog's own value
+## rather than a local literal is what makes these claims about the WIRE's number.
+func _road_lines_named(road: Dictionary, keeper_label: String,
+		per_worker_turn: float = LADDER_BARE_WORK_RATE) -> Array[String]:
+	return HudRouteVocab.road_lines(road, keeper_label, null, per_worker_turn)
 
 ## ---- WHAT THE ROAD ROWS SAY -------------------------------------------------------------------
 ##
@@ -856,8 +913,12 @@ func _assert_road_rows_are_conditional() -> void:
 		Readout.detail_row_index(trail_lines, HudRouteVocab.ROAD_UPKEEP_ROW) < 0)
 	h._assert_hud("…no payoff row, because a path buys nothing on any axis",
 		Readout.detail_row_index(trail_lines, HudRouteVocab.ROAD_BONUS_ROW) < 0)
-	h._assert_hud("…no keeper row, because there is no job to be on the hook for",
-		Readout.detail_row_index(trail_lines, HudRouteVocab.ROAD_KEEPER_ROW) < 0)
+	# ⛔ **AND THE `Kept by` ROW IS GONE FROM EVERY ROAD IN THE GAME**, not merely from this one. It
+	# said WHOSE JOB the road is directly beneath a bill that said how much and how many, and the pair
+	# read `Upkeep: 0.0 work a turn · wants 1 keepers` / `Kept by: Band 3`. The name is the bill's
+	# headline now, so a card that still drew the second row would be saying it twice.
+	h._assert_hud("…and the retired `Kept by` row is drawn on no road at all",
+		not "\n".join(trail_lines).contains(RETIRED_KEEPER_ROW_KEY))
 	h._assert_hud("…and no countdown, because a rung with no upkeep has nothing to lose",
 		Readout.detail_row_index(trail_lines, HudRouteVocab.ROAD_REVERTING_ROW) < 0)
 
@@ -919,11 +980,23 @@ func _assert_road_rows_are_conditional() -> void:
 	h._assert_hud("a complete rung states the rung BARE — no progress clause at all",
 		Readout.detail_row_value(dirt_lines, HudRouteVocab.ROAD_ROW)
 			== HudRouteVocab.RUNG_LABELS[HudRouteVocab.RUNG_KEY_DIRT_ROAD])
-	h._assert_hud("…its bill reads `Upkeep`, the word the wire and the band card both use (%d keepers)"
-			% ROAD_WANTS_DIRT,
+	# ⛔ **THE BILL NAMES WHOEVER IS ON THE HOOK, AND THIS FIXTURE HAS NOBODY.** A road that owes and
+	# nobody keeps is decaying towards nobody, and re-issuing the verb is how another band picks it up
+	# — adoption being the same act as building, which is what the clause says rather than naming a
+	# verb that does not exist.
+	h._assert_hud("…its bill reads `Upkeep`, the word the wire and the band card both use",
 		Readout.detail_row_value(dirt_lines, HudRouteVocab.ROAD_UPKEEP_ROW)
-			== HudRouteVocab.ROAD_UPKEEP_FORMAT % [
-				DetailFormat.format_work_units(ROAD_DEMAND_DIRT), ROAD_WANTS_DIRT])
+			== HudRouteVocab.ROAD_KEEPER_NOBODY)
+	# ⛔ **AND THE FIGURES ARE ONE HOVER AWAY, NOT GONE.** The exact bill and the keepers it wants are
+	# the sim's own numbers and stay available; what changed is that they stopped being the headline,
+	# which is the only way `0.0 work a turn` can never render as one.
+	h._assert_hud("…with the exact bill and the %d keepers it wants on the hover" % ROAD_WANTS_DIRT,
+		HudRouteVocab.upkeep_tooltip(_road_fixture(
+			HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT, 0.0,
+			ROAD_WANTS_DIRT, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT))
+			== HudRouteVocab.ROAD_UPKEEP_TIP_FORMAT % [
+				DetailFormat.format_work_units(ROAD_DEMAND_DIRT), ROAD_WANTS_DIRT,
+				HudRouteVocab.ROAD_UPKEEP_PLURAL_SUFFIX])
 	h._assert_hud("…and it saves %d%% of what is lost hauling" % ROAD_SAVING_DIRT_PERCENT,
 		Readout.detail_row_value(dirt_lines, HudRouteVocab.ROAD_BONUS_ROW).begins_with(
 			HudRouteVocab.ROAD_BONUS_FRICTION_FORMAT % ROAD_SAVING_DIRT_PERCENT))
@@ -932,9 +1005,11 @@ func _assert_road_rows_are_conditional() -> void:
 	var paved_lines := _road_lines(_road_fixture(
 		HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_PAVED, 0.0, 7,
 		ROAD_GRACE_PAVED, true, ROAD_FRICTION_PAVED, ROAD_LINK_PAVED))
-	h._assert_hud("the top rung is DEARER to keep than the one below it, and says so",
-		Readout.detail_row_value(paved_lines, HudRouteVocab.ROAD_UPKEEP_ROW).begins_with(
-			DetailFormat.format_work_units(ROAD_DEMAND_PAVED)))
+	h._assert_hud("the top rung is DEARER to keep than the one below it, and the hover says so",
+		HudRouteVocab.upkeep_tooltip(_road_fixture(
+			HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_PAVED, 0.0, 7,
+			ROAD_GRACE_PAVED, true, ROAD_FRICTION_PAVED, ROAD_LINK_PAVED)).begins_with(
+				DetailFormat.format_work_units(ROAD_DEMAND_PAVED)))
 	h._assert_hud("…and RICHER: %d%% saved, above the dirt road's" % ROAD_SAVING_PAVED_PERCENT,
 		Readout.detail_row_value(paved_lines, HudRouteVocab.ROAD_BONUS_ROW)
 			== HudRouteVocab.ROAD_BONUS_FRICTION_FORMAT % ROAD_SAVING_PAVED_PERCENT)
@@ -963,11 +1038,11 @@ func _assert_road_rows_are_conditional() -> void:
 	# ⛔ **THE SHORTFALL IS THE SIM'S FIELD.** The fixture's demand and shortfall are deliberately
 	# different numbers, so a row that printed `demand − supplied` would still pass — and one that
 	# printed the GROSS demand as the shortfall would not.
-	h._assert_hud("…and states the SHORTFALL against the bill, both figures off the wire",
+	# **A SHORT ROAD NOBODY KEEPS STILL READS *nobody*** — there is no band to be short. The *short N*
+	# clause belongs to a NAMED keeper and is asserted where one exists, below.
+	h._assert_hud("…and a short road with no keeper says so, rather than blaming a band",
 		Readout.detail_row_value(risk_lines, HudRouteVocab.ROAD_UPKEEP_ROW)
-			== HudRouteVocab.ROAD_UPKEEP_SHORT_FORMAT % [
-				DetailFormat.format_work_units(ROAD_SHORTFALL_DIRT),
-				DetailFormat.format_work_units(ROAD_DEMAND_DIRT), ROAD_WANTS_DIRT])
+			== HudRouteVocab.ROAD_KEEPER_NOBODY)
 	h._assert_hud("…and counts DOWN to losing the rung (%d turns left)" % ROAD_GRACE_LEFT,
 		Readout.detail_row_value(risk_lines, HudRouteVocab.ROAD_REVERTING_ROW)
 			== HudRouteVocab.ROAD_REVERTING_FORMAT % [
@@ -1007,36 +1082,102 @@ func _assert_road_rows_are_conditional() -> void:
 func _assert_road_rows_say_whose_job_it_is() -> void:
 	var band_label := "Band 2"
 
-	# A KEPT ROAD NAMES ITS KEEPER, in the words this client names every band.
+	# ⛔ **A KEPT ROAD'S BILL IS A NAME.** `Upkeep: Band 2` — nothing else, because nothing else is a
+	# decision. It was `Upkeep: 3.4 work a turn · wants 4 keepers` over `Kept by: Band 2`: two rows and
+	# three figures, and the one thing a player can act on spread across both.
 	var kept_road := _road_fixture(
 		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT, 0.0,
 		ROAD_WANTS_DIRT, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT,
 		ROAD_KEEPER_BAND)
 	var kept := _road_lines_named(kept_road, band_label)
-	h._assert_hud("a kept road says WHOSE JOB it is, by the band's own name",
-		Readout.detail_row_value(kept, HudRouteVocab.ROAD_KEEPER_ROW) == band_label)
+	h._assert_hud("a kept road's `Upkeep` row is the band's own name, and nothing else",
+		Readout.detail_row_value(kept, HudRouteVocab.ROAD_UPKEEP_ROW) == band_label)
+	# ⛔ **THE NEGATIVE IS THE HALF THAT NAMES THE DEFECT.** `0.0 work a turn · wants 1 keepers` was two
+	# roundings of one number in opposite directions, printed side by side; neither phrase may appear
+	# on the row again, whatever the figures behind it are.
+	h._assert_hud("…and never the retired figures — no work rate and no keeper count on the row",
+		not "\n".join(kept).contains(RETIRED_UPKEEP_RATE_WORDS)
+			and not "\n".join(kept).contains(RETIRED_UPKEEP_WANTS_WORD))
 
-	# ⛔ **AND A REMOTE ONE SAYS IT IS COSTING MORE FOR BEING FAR FROM THEM.** The clause rides the
-	# KEEPER's row rather than the bill's, because distance is a fact about the job and not about the
-	# rung — and the multiple is the SIM's, presented rather than derived.
-	var remote := _road_lines_named(_road_fixture(
+	# ⛔ **RAY'S OWN ROW, AT THE FIGURES HE WAS SHOWN.** A bill of `0.009` work a turn wanting one
+	# keeper: `format_work_units` floors it to `0.0` and the sim's `ceil` lifts it to `1`, which is the
+	# pair that read as gibberish. The row says `Band 2`, and the absurdity is gone rather than
+	# reworded — while the hover still carries both figures exactly as the sim published them.
+	var hairline := _road_fixture(
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_RISING, ROAD_DEMAND_HAIRLINE, 0.0,
+		ROAD_WANTS_HAIRLINE, ROAD_GRACE_TRAIL, true, ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL,
+		ROAD_KEEPER_BAND)
+	h._assert_hud("the bill that read `0.0 work a turn · wants 1 keepers` now reads `%s`" % band_label,
+		Readout.detail_row_value(_road_lines_named(hairline, band_label),
+			HudRouteVocab.ROAD_UPKEEP_ROW) == band_label)
+	# **AND THE HOVER KEEPS THE HAIRLINE, SINGULAR** — one keeper, not `1 keepers`.
+	h._assert_hud("…with the exact bill and its ONE keeper, singular, one hover away",
+		HudRouteVocab.upkeep_tooltip(hairline) == HudRouteVocab.ROAD_UPKEEP_TIP_FORMAT % [
+			DetailFormat.format_work_units(ROAD_DEMAND_HAIRLINE), ROAD_WANTS_HAIRLINE, ""])
+
+	# ⛔ **SHORT SAYS *SHORT N WORKERS*, AND THE N IS OFF `upkeepShortfall`.** Never `wants − assigned`:
+	# `roadwork` is a band-wide pool, the client holds no per-road head count to subtract from, and this
+	# branch has shipped that subtraction as a defect twice. The fixture's demand and shortfall are
+	# deliberately different numbers, so a row converting the DEMAND (which would say `4`) fails here.
+	var short_road := _road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT,
+		ROAD_SHORTFALL_DIRT, ROAD_WANTS_DIRT, ROAD_GRACE_LEFT, false, ROAD_FRICTION_DIRT,
+		ROAD_LINK_DIRT, ROAD_KEEPER_BAND)
+	h._assert_hud("a keeper falling short is named and the gap is stated in WORKERS (%d, plural)"
+			% ROAD_SHORT_WORKERS_DIRT,
+		Readout.detail_row_value(_road_lines_named(short_road, band_label),
+			HudRouteVocab.ROAD_UPKEEP_ROW)
+			== HudRouteVocab.ROAD_UPKEEP_SHORT_FORMAT % [band_label,
+				HudRouteVocab.ROAD_UPKEEP_SHORT_MARK, ROAD_SHORT_WORKERS_DIRT,
+				HudRouteVocab.ROAD_UPKEEP_WORKER_PLURAL])
+	# ⛔ **AND WITH NO CATALOG ON THE WIRE THERE IS NO CLAUSE AT ALL — the containment half.** The rate
+	# is `RouteRungState.buildWorkPerWorkerTurn` now, not a constant this client spells, so a client
+	# that has not been sent a catalog cannot price the gap in hands. **It must not fall back**: a
+	# substituted `1.0` is the retired transcription returning through the side door, and it would go
+	# stale in silence the day the sim writes worker output as a sum of more terms. The keeper is still
+	# named — they are still on the hook — and `(short 0 workers)` never renders.
+	h._assert_hud("with no rate on the wire the row names the keeper and states no gap at all",
+		Readout.detail_row_value(
+			_road_lines_named(short_road, band_label, LADDER_NO_BARE_WORK_RATE),
+			HudRouteVocab.ROAD_UPKEEP_ROW) == band_label)
+	# **AND IT PLURALIZES**, which the shipped row did not: `wants 1 keepers` is what a fixed count and
+	# a fixed noun produce. One worker short reads `worker`.
+	var barely_short := _road_fixture(
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_COMPLETE, ROAD_DEMAND_TRAIL,
+		ROAD_SHORTFALL_TRAIL, 2, ROAD_GRACE_LEFT, false, ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL,
+		ROAD_KEEPER_BAND)
+	h._assert_hud("…and one worker short reads `worker`, never `1 workers`",
+		Readout.detail_row_value(_road_lines_named(barely_short, band_label),
+			HudRouteVocab.ROAD_UPKEEP_ROW)
+			== HudRouteVocab.ROAD_UPKEEP_SHORT_FORMAT % [band_label,
+				HudRouteVocab.ROAD_UPKEEP_SHORT_MARK, ROAD_ONE_WORKER_SHORT,
+				HudRouteVocab.ROAD_UPKEEP_WORKER_SINGULAR])
+
+	# ⛔ **AND A REMOTE ONE SAYS IT IS COSTING MORE FOR BEING FAR FROM THE KEEPER — ON THE HOVER.** The
+	# multiple is the SIM's, presented rather than derived, and it is a real fact with no other surface;
+	# it left the row because Ray's complaint was LENGTH and it is both rare and long.
+	var remote := _road_fixture(
 		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT_REMOTE, 0.0,
 		ROAD_WANTS_DIRT_REMOTE, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT,
-		ROAD_KEEPER_BAND, ROAD_REMOTENESS_REMOTE), band_label)
-	h._assert_hud("…and a road far from its keeper says it costs ×%s the rung's price"
+		ROAD_KEEPER_BAND, ROAD_REMOTENESS_REMOTE)
+	h._assert_hud("…and the row of a remote road is STILL just the name",
+		Readout.detail_row_value(_road_lines_named(remote, band_label),
+			HudRouteVocab.ROAD_UPKEEP_ROW) == band_label)
+	h._assert_hud("…with what distance charges them (×%s) on the hover"
 			% (HudRouteVocab.ROAD_REMOTENESS_FORMAT % ROAD_REMOTENESS_REMOTE),
-		Readout.detail_row_value(remote, HudRouteVocab.ROAD_KEEPER_ROW)
-			== HudRouteVocab.ROAD_KEEPER_REMOTE_FORMAT % [band_label,
-				HudRouteVocab.ROAD_REMOTENESS_FORMAT % ROAD_REMOTENESS_REMOTE])
+		HudRouteVocab.upkeep_tooltip(remote).contains(
+			HudRouteVocab.ROAD_KEEPER_REMOTE_FORMAT % (
+				HudRouteVocab.ROAD_REMOTENESS_FORMAT % ROAD_REMOTENESS_REMOTE)))
 	# …and the BILL it quotes is the dearer one, straight off the wire. The two fixtures differ in
-	# their demand as well as their multiple, so a row that printed the rung's base price fails here
+	# their demand as well as their multiple, so a hover that stated the rung's base price fails here
 	# while one that multiplied the base by the multiple itself would pass — which is why the client
 	# must do neither, and why the number is stated rather than computed.
-	h._assert_hud("…and the upkeep beside it is the dearer one the sim quoted (%s)"
+	h._assert_hud("…and the bill beside it is the dearer one the sim quoted (%s)"
 			% DetailFormat.format_work_units(ROAD_DEMAND_DIRT_REMOTE),
-		Readout.detail_row_value(remote, HudRouteVocab.ROAD_UPKEEP_ROW)
-			== HudRouteVocab.ROAD_UPKEEP_FORMAT % [
-				DetailFormat.format_work_units(ROAD_DEMAND_DIRT_REMOTE), ROAD_WANTS_DIRT_REMOTE])
+		HudRouteVocab.upkeep_tooltip(remote).begins_with(
+			HudRouteVocab.ROAD_UPKEEP_TIP_FORMAT % [
+				DetailFormat.format_work_units(ROAD_DEMAND_DIRT_REMOTE), ROAD_WANTS_DIRT_REMOTE,
+				HudRouteVocab.ROAD_UPKEEP_PLURAL_SUFFIX]))
 
 	# **A BAND OUTSIDE THE PLAYER'S ROSTER HAS NO NAME THE PLAYER CAN USE**, and a raw id would be a
 	# fact they cannot act on. This one goes through the REAL PRODUCER, which is what makes it a claim
@@ -1044,7 +1185,7 @@ func _assert_road_rows_say_whose_job_it_is() -> void:
 	# rule, gets nothing, and the row says so in words.
 	var foreign := _road_lines(kept_road)
 	h._assert_hud("a road kept by a people you merely know of is named as such, never by an id",
-		Readout.detail_row_value(foreign, HudRouteVocab.ROAD_KEEPER_ROW)
+		Readout.detail_row_value(foreign, HudRouteVocab.ROAD_UPKEEP_ROW)
 			== HudRouteVocab.ROAD_KEEPER_FOREIGN)
 
 	# **A ROAD THAT OWES A BILL WITH NOBODY PAYING IT** — the keeping band is gone, so it is decaying
@@ -1054,8 +1195,168 @@ func _assert_road_rows_say_whose_job_it_is() -> void:
 		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT, 0.0,
 		ROAD_WANTS_DIRT, ROAD_GRACE_DIRT, true, ROAD_FRICTION_DIRT, ROAD_LINK_DIRT))
 	h._assert_hud("a road with a bill and no keeper says so, and says how to take it on",
-		Readout.detail_row_value(orphan, HudRouteVocab.ROAD_KEEPER_ROW)
+		Readout.detail_row_value(orphan, HudRouteVocab.ROAD_UPKEEP_ROW)
 			== HudRouteVocab.ROAD_KEEPER_NOBODY)
+
+## ⛔ **THE DRAWER'S OWN RATE LOOKUP, ASSERTED THROUGH THE SHIPPED PRODUCER.** `_road_lines_named` is
+## handed a rate; this is not. `SubjectDrawerController` holds `_topbar` for exactly one field and
+## resolves `branch_build_work_per_worker_turn` off the rung catalog before composing the block — the
+## road→catalog join lives at the CALL SITE, so `HudRouteVocab` stays a leaf with no catalog
+## dependency. Nothing but this asserts that the drawer actually does it.
+func _assert_the_real_drawer_prices_a_shortfall() -> void:
+	var short_road := _road_fixture(
+		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT,
+		ROAD_SHORTFALL_DIRT, ROAD_WANTS_DIRT, ROAD_GRACE_LEFT, false, ROAD_FRICTION_DIRT,
+		ROAD_LINK_DIRT, _road_keeper_band())
+	var keeper := HudFormat.band_display_name(h._hud._band_labor.player_bands()[0], 1)
+	h._assert_hud("the REAL drawer resolves the rate off the catalog and states `short %d workers`"
+			% ROAD_SHORT_WORKERS_DIRT,
+		Readout.detail_row_value(_road_lines(short_road), HudRouteVocab.ROAD_UPKEEP_ROW)
+			== HudRouteVocab.ROAD_UPKEEP_SHORT_FORMAT % [keeper,
+				HudRouteVocab.ROAD_UPKEEP_SHORT_MARK, ROAD_SHORT_WORKERS_DIRT,
+				HudRouteVocab.ROAD_UPKEEP_WORKER_PLURAL])
+
+## ⛔ **A DECLARED ROAD STOPS LOOKING UN-DECLARED — fix 3, and the pair is the whole claim.**
+##
+## Reported from play: Ray graded a tile and the `Road` row went on reading a bare `Trail`. Three
+## things were true at once and only the third was wrong — the `grade` landed, the road was banking
+## zero for the correct reason, and no surface said so.
+##
+## **THE SPELLING IS `ROAD_PROGRESS_FORMAT`, THE ONE THE ROW ALREADY USES ABOVE ZERO.** Ray asked for
+## a percentage — *"it should show a % complete in the road panel"* — so `0% to dirt road` and
+## `30% to dirt road` are one sentence about one climb, and there is no second phrasing to tell apart
+## from the first.
+##
+## **THE NEGATIVE IS THE HALF THAT MAKES IT A CLAIM.** Ground nobody has ordered anything on has no
+## climb to report, and a `0%` there would invent one — so the SAME fixture with no queue entry must
+## state the rung bare.
+func _assert_a_declared_road_says_it_is_climbing() -> void:
+	var road := _road_fixture(
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_DECLARED, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL, _road_keeper_band())
+	var approach := "%s%s%s" % [
+		HudRouteVocab.RUNG_LABELS[HudRouteVocab.RUNG_KEY_TRAIL],
+		HudRouteVocab.ROAD_CLAUSE_SEPARATOR,
+		HudRouteVocab.ROAD_PROGRESS_FORMAT % [ROAD_METER_DECLARED_PERCENT,
+			String(HudRouteVocab.RUNG_LABELS[HudRouteVocab.RUNG_KEY_DIRT_ROAD]).to_lower()]]
+
+	# ⛔ **THE NEGATIVE, AND IT RUNS FIRST.** With no entry on the wire the row states the rung and
+	# nothing else — which is also the state every frame above this block renders in, so a producer
+	# that had started printing `0%` unconditionally fails here.
+	h._assert_hud("a road nobody has ordered anything on states its rung BARE, with no `0%` on it",
+		Readout.detail_row_value(_road_lines(road), HudRouteVocab.ROAD_ROW)
+			== String(HudRouteVocab.RUNG_LABELS[HudRouteVocab.RUNG_KEY_TRAIL]))
+
+	# ⛔ **AND THE QUEUE IS SEEDED, not assumed.** A frame named for the queued reading that draws the
+	# un-queued one is this arc's own recurring trap: the join is road tile → `build_queue` entry, so a
+	# state that stages no entry renders the fallback while claiming the interesting case.
+	var inherited := _with_a_road_queued(ROAD_TILE)
+	h._assert_hud("…and the SAME road, once its `grade` is on the wire, says it is climbing — `%s`"
+			% approach,
+		Readout.detail_row_value(_road_lines(road), HudRouteVocab.ROAD_ROW) == approach)
+	# ⛔ **AND THE `Upkeep` ROW STAYS ABSENT.** A road on the free floor owes nothing, and a
+	# DECLARATION must not conjure a bill — that is a different row answering a different question, and
+	# making it appear here would be a second defect dressed as this fix.
+	h._assert_hud("…and declaring it conjures no bill: the free floor still draws no `%s` row"
+			% HudRouteVocab.ROAD_UPKEEP_ROW,
+		Readout.detail_row_index(_road_lines(road), HudRouteVocab.ROAD_UPKEEP_ROW) < 0)
+	# **A ROAD ALREADY CARRYING WORK IS UNTOUCHED**, which is what says the fix opened the zero case
+	# rather than replacing the reading above it.
+	var working := _road_fixture(
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_RISING, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL, _road_keeper_band())
+	h._assert_hud("…while a road with work banked still states its real percentage, unchanged",
+		Readout.detail_row_value(_road_lines(working), HudRouteVocab.ROAD_ROW)
+			== "%s%s%s" % [HudRouteVocab.RUNG_LABELS[HudRouteVocab.RUNG_KEY_TRAIL],
+				HudRouteVocab.ROAD_CLAUSE_SEPARATOR,
+				HudRouteVocab.ROAD_PROGRESS_FORMAT % [ROAD_METER_RISING_PERCENT,
+					String(HudRouteVocab.RUNG_LABELS[HudRouteVocab.RUNG_KEY_DIRT_ROAD]).to_lower()]])
+	_restore_road_queue(inherited)
+
+## ⛔ **PUT A ROAD'S `grade` ON THE ACTING BAND'S WIRE QUEUE — and put the band back afterwards.** The
+## roster is SHARED WALK STATE (the chapters after this one render against whatever they inherit), so
+## the queue is captured by value first and restored verbatim, this chapter's own rule for the roster
+## it stages.
+##
+## The entry is shaped exactly as the sim publishes one: `kind: "roadwork"` carrying the road's TILE,
+## which is what the road row's own `tile_x` / `tile_y` join on.
+func _with_a_road_queued(tile: Vector2i) -> Array:
+	var bands: Array = h._hud._band_labor.player_bands()
+	var inherited: Array = []
+	for band_variant in bands:
+		if not (band_variant is Dictionary):
+			continue
+		var band: Dictionary = band_variant
+		inherited.append((band.get("build_queue", []) as Array).duplicate(true))
+		band["build_queue"] = [{"kind": HudConst.LABOR_KIND_ROADWORK,
+			"target_x": tile.x, "target_y": tile.y, "fauna_id": ""}]
+	return inherited
+
+## ⛔ **A BAND WITH TWO JOBS ALREADY IN FRONT OF THE PRESS** — a patch at the head and a second behind
+## it, so the aside has both a head to NAME and a remainder to COUNT. Restored through
+## `_restore_road_queue`, the roster being shared walk state.
+##
+## **FORAGE entries rather than a hunt**, deliberately: a herd's name is resolved through the walk's
+## herd roster, which this chapter does not stage — a subject that came back empty would leave the
+## expected sentence agreeing with a producer that had stopped naming anything.
+const LADDER_QUEUE_HEAD_TILE := Vector2i(70, 30)
+const LADDER_QUEUE_SECOND_TILE := Vector2i(71, 31)
+const LADDER_QUEUE_AHEAD := 2
+
+func _with_a_busy_queue() -> Array:
+	var bands: Array = h._hud._band_labor.player_bands()
+	var inherited: Array = []
+	for band_variant in bands:
+		if not (band_variant is Dictionary):
+			continue
+		var band: Dictionary = band_variant
+		inherited.append((band.get("build_queue", []) as Array).duplicate(true))
+		band["build_queue"] = [
+			{"kind": SourceForecast.LABOR_KIND_FORAGE, "target_x": LADDER_QUEUE_HEAD_TILE.x,
+				"target_y": LADDER_QUEUE_HEAD_TILE.y, "fauna_id": ""},
+			{"kind": SourceForecast.LABOR_KIND_FORAGE, "target_x": LADDER_QUEUE_SECOND_TILE.x,
+				"target_y": LADDER_QUEUE_SECOND_TILE.y, "fauna_id": ""},
+		]
+	return inherited
+
+## ⛔ **…AND THE SAME QUEUE WITH THE ROAD ITSELF ON IT** — a `grade` standing on the fixture's own
+## tile, LAST, behind the two jobs `_with_a_busy_queue` staged. That is the reported state: the head
+## takes every builder, so this entry banks nothing and the row must say so.
+##
+## **The `kind` token is `roadwork` and the tile is what tells two roads apart** — it is a band-wide
+## keeping ROLE and a per-tile build SOURCE under one spelling, so an entry without its tile collapses
+## onto every other road the band keeps.
+func _with_a_queued_road() -> void:
+	for band_variant in h._hud._band_labor.player_bands():
+		if not (band_variant is Dictionary):
+			continue
+		var queue: Array = (band_variant as Dictionary).get("build_queue", []) as Array
+		queue.append({"kind": HudConst.LABOR_KIND_ROADWORK,
+			"target_x": ROAD_FIXTURE_TILE.x, "target_y": ROAD_FIXTURE_TILE.y, "fauna_id": ""})
+
+## The tile every road fixture in this chapter stands on, so a queue entry naming it and the road row
+## itself cannot drift apart.
+const ROAD_FIXTURE_TILE := Vector2i(9, 36)
+
+## …and the sentence that queue must produce, composed from the shipped formats but with the SUBJECT
+## and the COUNT written out — an expectation recomposed whole from the producer would pass against a
+## producer that had stopped composing it.
+## ⛔ **AND IT CARRIES NO ESTIMATE NOTE — nor does any road row now.** The clause used to end
+## *"— the estimate runs from when it starts"*, which only means anything beside a duration; a priced
+## row no longer quotes one. The `waiting behind …` aside that DID quote one is retired outright
+## (`HudRouteVocab`'s own retirement note), so this sentence is the only placement the card composes,
+## and it rides a row merely OFFERED — never the row being built.
+func _expected_queue_aside() -> String:
+	return HudRouteVocab.ROAD_LADDER_QUEUE_BEHIND_PLAIN_FORMAT % [
+		HudWorkVocab.BUILD_QUEUE_TILE_SUBJECT_FORMAT % [
+			LADDER_QUEUE_HEAD_TILE.x, LADDER_QUEUE_HEAD_TILE.y],
+		HudRouteVocab.ROAD_LADDER_QUEUE_MORE_FORMAT % (LADDER_QUEUE_AHEAD - 1)]
+
+func _restore_road_queue(inherited: Array) -> void:
+	var bands: Array = h._hud._band_labor.player_bands()
+	for index in range(mini(bands.size(), inherited.size())):
+		if bands[index] is Dictionary:
+			(bands[index] as Dictionary)["build_queue"] = inherited[index]
 
 func run(harness) -> void:
 	h = harness
@@ -1250,6 +1551,16 @@ func run(harness) -> void:
 	# surface in this client names one. Put back below.
 	var inherited_bands := _with_a_band_roster([BandFx.band_fixture()])
 	#
+	# ⛔ **AND THE RUNG CATALOG BEFORE ANY OF THE FRAMES, BECAUSE A PLAYER NEVER SEES A CARD WITHOUT
+	# ONE.** It is a per-world constant that arrives with the FIRST snapshot, so a road frame rendered
+	# without it draws a state the game cannot reach — and it draws it *quietly*, because the missing
+	# rate suppresses the `Upkeep` row's shortfall clause rather than failing. The at-risk frame is
+	# where that bites: the one picture whose whole job is to show a road in trouble rendered
+	# `Upkeep  Band 1` with the gap silently absent. **A frame named for the interesting case must not
+	# render the fallback** — the degraded path is asserted where it belongs, in `_road_lines_named`'s
+	# own `LADDER_NO_BARE_WORK_RATE` claim, which states it without spending a picture on it.
+	h._hud.update_route_rungs(_route_rung_catalog())
+	#
 	# The ladder's third branch, one frame per rung, on the same piece of ground. Read as a set they
 	# are the whole argument the branch exists to make: the block GROWS down the four — the `Upkeep`
 	# row gets dearer and the unlabelled payoff gets richer — which is what makes paving a decision
@@ -1321,6 +1632,10 @@ func run(harness) -> void:
 	# …and the claims a picture cannot carry, over the REAL producer's lines.
 	_assert_road_rows_are_conditional()
 
+	# ⛔ **AND THE ONE A DECLARED ROAD MAKES — fix 3.** It runs here, with the roster staged and the
+	# catalog not yet pushed, because the claim is about the `Road` ROW alone and needs neither.
+	_assert_a_declared_road_says_it_is_climbing()
+
 	# ---- THE ROAD LADDER, the tile card's route ACTION (arc #532 slice 13) ------------------------
 	#
 	# ⛔ **ONE ACTION OPENS THE WHOLE BRANCH.** Read as a set these frames are the argument the
@@ -1328,7 +1643,13 @@ func run(harness) -> void:
 	# remedy, so a branch the player cannot climb today is still a branch they can read and plan
 	# against. A button per verb could state none of that, and a single verb-named button could state
 	# exactly one refusal.
-	h._hud.update_route_rungs(_route_rung_catalog())
+	# ⛔ **THE REAL PRODUCER PRICES A SHORTFALL IN HANDS.** Every claim above ran the composer directly
+	# with a rate handed in; this one runs `SubjectDrawerController._tile_terrain_lines`, which must
+	# resolve the rate off `_topbar.route_rungs()` for itself. **That resolution is the thing under
+	# test**, and what gives the claim teeth is the SABOTAGE rather than an ordering: gating the
+	# drawer's lookup off fails exactly this claim and nothing else in the run. The catalog is seeded
+	# up at the head of the road block, where a player's first snapshot puts it.
+	_assert_the_real_drawer_prices_a_shortfall()
 	var inherited_knowledge: Dictionary = h._hud._topbar.faction_tracks(HudConst.PLAYER_FACTION_ID).duplicate(true)
 
 	# ⛔ **STATE road-ladder-none — A TILE WITH NO ROAD OFFERS NO ACTION.** PNG-less, because the
@@ -1412,8 +1733,16 @@ func run(harness) -> void:
 	h._hud.update_intensification([{"faction": 0, "knowledges": {
 		HudFloraVocab.KNOWLEDGE_TRACK_ROADBUILDING: 1.0,
 		HudFloraVocab.KNOWLEDGE_TRACK_PAVING: 0.0}}])
+	# ⛔ **STAFF THE BUILD POOL, because the turns estimate is the ACTING BAND'S.** The fixture band
+	# has nobody on `builders`, which is a real state with its own frame below — but the ordinary
+	# reading of this card is a band that can actually raise the rung, and that is this one.
+	BandFx.staff_builders(h._hud._band_labor, LADDER_BUILDERS)
+	# ⛔ **AND THE ROAD HAS BANKED NOTHING AND IS QUEUED NOWHERE, which is what makes this the PRICED
+	# face.** The approach row takes two faces now — a price on a rung nobody has ordered, its progress
+	# on the one being built — so a fixture carrying banked work would render the OTHER one and this
+	# state would quietly stop being about the offer at all.
 	h._show_tile(_road_tile_fixture(_road_fixture(
-		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_RISING, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_DECLARED, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
 		ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL)))
 	await h._settle()
 	if not await _open_road_ladder():
@@ -1429,7 +1758,37 @@ func run(harness) -> void:
 			% DIRT_PRICE_FACE,
 			String(live_states.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, "")) == RungLadder.STATE_OPEN
 				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_DIRT_ROAD) != null
-				and String(live_faces.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, "")) == DIRT_PRICE_FACE)
+				and String(live_faces.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, ""))
+					== DIRT_PRICE_FACE)
+		# ⛔ **AND THE OTHER HALF OF THAT PAIR: NO DURATION, ANYWHERE ON THE CARD.** The estimate was
+		# divided by the acting band's CURRENT builders — in the reported game all of them on a Tame —
+		# and it ignored the queue the press would join, so it moved with a crew that was not going to
+		# work this road. Ray: *"the turns make no sense and change when the number of builders
+		# change."* The positive above passes on a producer that merely REORDERED the clauses; this is
+		# what says the estimate is gone from the rows.
+		h._assert_hud("…and no row on a card of priced rungs quotes a turns estimate at all",
+			not _road_ladder_text().contains(LADDER_TURNS_MARK))
+		# ⛔ **THE PLAYER PICKS WHO KEEPS IT, AND THE CARD SAYS SO BEFORE THE RUNG DOES.** It was
+		# `_resolve_assign_band()` alone — whichever band the left panel happened to be showing — so a
+		# tile graded while reading another band's page became that band's job for good. The row is the
+		# compose sheet's own `Band:` field, so the two cannot line up differently or be named
+		# differently, and the acting band opens SELECTED rather than blank.
+		h._assert_hud("the card carries a `%s` picker, and it opens on the acting band"
+				% HudWorkVocab.BAND_PICKER_LABEL,
+			_road_ladder_band_face() == HudFormat.band_display_name(
+				h._hud._band_labor.player_bands()[0], 1))
+		# ⛔ **ABSENCE — nothing to put down on a road nobody keeps.** The abandon control is offered
+		# only where the keeper is in the player's roster: there is nothing to release otherwise, and a
+		# button that emitted a command the sim refuses is the shape the ladder's rows exist to avoid.
+		h._assert_hud("…and offers nothing to put down, this road having no keeper",
+			_road_ladder_abandon_button() == null)
+		# ⛔ **THE PRESS QUEUES A JOB, AND THE CARD SAYS SO AT THE MOMENT OF THE DECISION.** Ray:
+		# *"it isn't obvious that the road will show up in the build queue, so we need something to
+		# indicate that when the job is selected."* With this band's queue empty, the press really does
+		# start it — and saying so is what makes the other reading legible when it appears.
+		h._assert_hud("the buildable rung says where the press LANDS — `%s`"
+				% HudRouteVocab.ROAD_LADDER_QUEUE_EMPTY_ASIDE,
+			_road_ladder_text().contains(HudRouteVocab.ROAD_LADDER_QUEUE_EMPTY_ASIDE))
 		# ⛔ **ABSENCE — the meter does NOT ride a priced row.** It belongs to the rung being raised,
 		# and the tile card's `Road` line one block up already states it; repeating it beside a price
 		# is the duplication this cut removed. Here the first row above the standing rung is a PRICED
@@ -1467,6 +1826,117 @@ func run(harness) -> void:
 			line == _expected_grade_line())
 	_dismiss_road_ladder()
 
+	# ⛔ **STATE road-ladder-no-builders — ZERO BUILDERS IS AN ANSWER, NOT AN ABSENCE.** The same trail,
+	# the same craft, the same live `grade` row — with nobody on the band's `builders` pool. There is no
+	# pace to divide by, so the row states its price bare and the REMEDY rides beneath it in the
+	# ladder's own aside shape: a blank column where every other row states a duration reads as a
+	# client that failed to work it out rather than as a crew that is missing.
+	BandFx.staff_builders(h._hud._band_labor, LADDER_NO_BUILDERS)
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_RISING, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL)))
+	await h._settle()
+	if not await _open_road_ladder():
+		h._assert_hud("the road ladder opens with nobody on builders", false)
+	else:
+		h._assert_hud("with nobody on builders the row states its progress alone — `%s`"
+			% DIRT_BUILDING_FACE,
+			String(_road_ladder_faces().get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, ""))
+				== DIRT_BUILDING_FACE)
+		h._assert_hud("…and the card says WHY, and what to do about it",
+			_road_ladder_text().contains(HudRouteVocab.ROAD_LADDER_NO_BUILDERS_ASIDE))
+		# ⛔ **AND IT IS STILL PRESSABLE.** Declaring a road with an empty pool is a legal, ordinary
+		# act — the entry waits at the head of the queue for hands — so the remedy is a note and never
+		# a gate. A row greyed for this would refuse something the sim accepts.
+		h._assert_hud("…and the rung is still orderable, an empty pool being a note and not a refusal",
+			_road_ladder_row_button(HudRouteVocab.RUNG_KEY_DIRT_ROAD) != null)
+		await h._save("road_ladder_no_builders")
+	_dismiss_road_ladder()
+	BandFx.staff_builders(h._hud._band_labor, LADDER_BUILDERS)
+
+	# ⛔ **STATE road-ladder-queued — WHAT THE PRESS WOULD WAIT BEHIND.** The same live `grade` row on a
+	# band whose queue already holds two jobs. This is the reported game: a road declared behind a Tame
+	# banks nothing for dozens of turns, and the card said only `110 work · ≈39 turns` — a figure that
+	# silently promises the builders are free. **The estimate is kept**, because it is the right number;
+	# what the row adds is what it is measured FROM and what stands in front of it.
+	#
+	# ⛔ **THE QUEUE IS SEEDED, NOT ASSUMED.** A state named for the queued reading that renders the
+	# empty one is this arc's own recurring trap, so the entries are staged and put back below.
+	var inherited_queue := _with_a_busy_queue()
+	# ⛔ **THE METER IS THE ONE A ROAD HOLDING A TRAIL CAN ACTUALLY PUBLISH.** With nothing banked
+	# above it the at-risk rung IS the trail, so the wire ships `METER_FULL`; a `0.0` there is a state
+	# no server produces, which is what let `Queued 100%` reach play.
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_FRESHLY_GRADED, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL)))
+	await h._settle()
+	if not await _open_road_ladder():
+		h._assert_hud("the road ladder opens on a band with a queue", false)
+	else:
+		# **THE HEAD IS NAMED AND THE REST ARE COUNTED**, which is the shape of the decision: the head
+		# is what the road would wait behind (it takes every builder), and the count is what a reorder
+		# in the BUILD QUEUE block is measured against.
+		h._assert_hud("the row names what the press would wait behind — `%s`" % _expected_queue_aside(),
+			_road_ladder_text().contains(_expected_queue_aside()))
+		# ⛔ **AND THE ROW IS STILL A PRICE, BECAUSE THIS ROAD IS NOT QUEUED — THE QUEUE AHEAD IS.**
+		# The distinction is the whole reason the aside exists: the entries are on OTHER tiles, so what
+		# the row states is what the press would COST, and the aside states what it would wait behind.
+		# The queued reading is the state below, where an entry stands on this tile.
+		h._assert_hud("…and the row still quotes its price, this road not being queued yet — `%s`"
+			% DIRT_PRICE_FACE,
+			String(_road_ladder_faces().get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, ""))
+				== DIRT_PRICE_FACE)
+		# ⛔ **ABSENCE — the empty-queue reading is GONE from the card.** Without this, a producer that
+		# printed both sentences passes the claim above.
+		h._assert_hud("…and the card no longer claims the press starts now",
+			not _road_ladder_text().contains(HudRouteVocab.ROAD_LADDER_QUEUE_EMPTY_ASIDE))
+		await h._save("road_ladder_queued")
+	_dismiss_road_ladder()
+
+	# ⛔ **STATE road-ladder-declared — THE REPORTED SCREENSHOT, and the reading this whole cut exists
+	# for.** The same road, with a `grade` now standing on THIS tile behind the two jobs above. It has
+	# banked nothing and will bank nothing for dozens of turns, because the head of the queue takes
+	# every builder the band has — and the `110 work` that used to stand here was indistinguishable
+	# from a `grade` that never landed. `0%` is the receipt for the press.
+	_with_a_queued_road()
+	h._show_tile(_road_tile_fixture(_road_fixture(
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_FRESHLY_GRADED, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL)))
+	await h._settle()
+	if not await _open_road_ladder():
+		h._assert_hud("the road ladder opens on a road already queued", false)
+	else:
+		# ⛔ **AND THE ROW CARRIES NO PLACEMENT ASIDE AT ALL.** Reported from play on this very card:
+		# the row one line up already states the progress AND the turns, so a note explaining what
+		# that estimate runs from qualified a number the player was looking at — and the head of the
+		# queue on that screenshot was this road, so the sentence named it as the thing it waited
+		# behind. **The claim is the PAIR with `road_ladder_queued` one state above**, which still
+		# draws its `joins …` sentence: a producer that had dropped every aside would pass this
+		# negative on its own. The two surviving forms are named individually rather than by a shared
+		# needle, so a producer resurrecting either is caught.
+		h._assert_hud("a road already on the list draws NO placement aside — neither `joins … behind`"
+			+ " nor `starts now`",
+			not _road_ladder_text().contains(_expected_queue_aside())
+				and not _road_ladder_text().contains(
+					HudRouteVocab.ROAD_LADDER_QUEUE_EMPTY_ASIDE))
+		h._assert_hud("a DECLARED road reads its progress, not its price — `%s`"
+			% DIRT_QUEUED_ZERO_FACE,
+			String(_road_ladder_faces().get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, ""))
+				== DIRT_QUEUED_ZERO_FACE)
+		# ⛔ **THE ABSENCE HALF — the price is GONE from that row.** Without it, a producer that printed
+		# both would pass the claim above, which is the shape of the defect being fixed.
+		h._assert_hud("…and the price it used to quote is gone from the row",
+			not String(_road_ladder_faces().get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, ""))
+				.contains(LADDER_UPKEEP_WORD))
+		# …and the rung ABOVE it is untouched, which is what says only the row being built swaps.
+		h._assert_hud("…while the rung above it still quotes its price, `%s`" % ROW_PAVED_GATED_FACE,
+			String(_road_ladder_faces().get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
+				== ROW_PAVED_GATED_FACE)
+		await h._save("road_ladder_declared")
+	_dismiss_road_ladder()
+	_restore_road_queue(inherited_queue)
+	await h._settle()
+
 	# ⛔ **STATE road-ladder-pave — THE TOP OF THE BRANCH, KEPT FROM FAR AWAY.** Paving is learned, the
 	# ground is a dirt road, and the row is live. The keeper is beyond the base keeping range, so the
 	# ROW states the rung's BASE price and the HOVER states the multiple distance charges: the client
@@ -1492,6 +1962,11 @@ func run(harness) -> void:
 				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_PAVED_ROAD) != null
 				and String(pave_faces.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
 					== PAVED_PRICE_FACE)
+		# **AND THE HOVER STATES THE SAME DURATION**, which is the surface a REFUSED rung has left once
+		# its one face clause is spent on the refusal — so a rung the player is planning toward is still
+		# a rung they can plan against.
+		h._assert_hud("…and the hover states the duration too, for the rows whose face cannot",
+			pave_tip.contains(TIP_PAVED_TURNS))
 		h._assert_hud("…and the hover states what distance does to that price, never folded in",
 			pave_tip.contains(TIP_REMOTE))
 		h._assert_hud("…the richest payoff on the branch, and the dearest bill to hold",
@@ -1501,7 +1976,28 @@ func run(harness) -> void:
 		# this a plain comparison.
 		h._assert_hud("a road with nothing rising above it states no meter at all",
 			not _road_ladder_text().contains(LADDER_METER_MARK))
+		# ⛔ **AND THIS ROAD IS ALREADY YOURS, SO IT CAN BE PUT DOWN.** `unqueue` withdraws a
+		# DECLARATION; the moment any work is banked the verb that releases a keeper is `abandon`,
+		# which was command-line only — so a road handed to the wrong band could not be taken back from
+		# the UI at all. With a band picker above making the keeper a real choice, this is what makes
+		# it a reversible one.
+		h._assert_hud("a road this band keeps offers a way to stop keeping it",
+			_road_ladder_abandon_button() != null)
 		await h._save("road_ladder_pave")
+		# ⛔ **WHAT THE PRESS WOULD TRANSMIT, through the REAL formatter — and it names a PLACE.**
+		# `abandon <faction> <x> <y>` carries NO band token: it drops every band of the faction's
+		# holding on that hex, road and patch alike. A client that invented a narrower, road-only form
+		# would be lying about what the button does.
+		var dropped: Array[Dictionary] = []
+		var drop_sink := func(p: Dictionary) -> void: dropped.append(p)
+		h._hud.abandon_requested.connect(drop_sink)
+		_road_ladder_abandon_button().pressed.emit()
+		h._hud.abandon_requested.disconnect(drop_sink)
+		var drop_line := "" if dropped.is_empty() \
+			else String(MAIN_SCRIPT.format_abandon(dropped[0]).get("line", ""))
+		print("ui_preview: road ladder abandon -> %s" % drop_line)
+		h._assert_hud("pressing it would transmit `%s`" % _expected_abandon_line(),
+			drop_line == _expected_abandon_line())
 	_dismiss_road_ladder()
 
 	# ⛔ **STATE road-ladder-other-keeper — THE TILE IS ALREADY SOMEBODY ELSE'S JOB.**
@@ -1523,6 +2019,26 @@ func run(harness) -> void:
 	if not await _open_road_ladder():
 		h._assert_hud("the road ladder opens on a road another band keeps", false)
 	else:
+		# ⛔ **THE CARD OPENS ON THE KEEPER, and that is fix 1's second rule rendered.** Re-issuing on a
+		# road you already keep is the ORDINARY case (trail → dirt → paved); a default that took the
+		# nearest band instead would open this card on a rung the sim refuses outright, greying its own
+		# live row on the frame it appeared.
+		h._assert_hud("the card opens on the band that already KEEPS the road, not the nearest one",
+			_road_ladder_band_face() == HudFormat.band_display_name(
+				h._hud._band_labor.player_bands()[1], 2))
+		h._assert_hud("…so the top rung is OPEN for its own keeper, refused for nobody",
+			String(_road_ladder_states().get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
+					== RungLadder.STATE_OPEN
+				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_PAVED_ROAD) != null)
+		# ⛔ **NOW PICK THE OTHER BAND — AND THE CARD MUST STAY UP AND RE-RENDER.** Every gate on the
+		# track is resolved against the acting band, so a pick that left the rows standing would offer
+		# a rung the newly chosen band cannot have. This is the pick, the re-render and the gate in one
+		# claim: after it the top rung must be refused and must name the keeper.
+		await _pick_road_ladder_band(0)
+		h._assert_hud("picking another band RE-RENDERS the card in place rather than closing it",
+			_road_ladder_card(h._hud) != null and not _road_ladder_states().is_empty()
+				and _road_ladder_band_face() == HudFormat.band_display_name(
+					h._hud._band_labor.player_bands()[0], 1))
 		var taken_states := _road_ladder_states()
 		var taken_faces := _road_ladder_faces()
 		var taken_tip := String(_road_ladder_tooltips().get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
@@ -1531,7 +2047,7 @@ func run(harness) -> void:
 					== RungLadder.STATE_LOCKED
 				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_PAVED_ROAD) == null)
 		# ⛔ **THE ROW NAMES WHO, by the band's own name** — resolved through this client's one
-		# band-naming rule, the same one the tile card's `Kept by:` row above it uses, so a road's
+		# band-naming rule, the same one the tile card's `Upkeep:` row above it uses, so a road's
 		# keeper cannot be called two different things on one card. **It OUTRANKS the craft gate**:
 		# no amount of learning helps a tile that is already somebody else's job.
 		h._assert_hud("…and the ROW leads with the price and names the band whose job it is",
@@ -1658,6 +2174,21 @@ func run(harness) -> void:
 ## `route:trail` declares a `work_cost` and NO verb. Inside the free floor that figure is a duration
 ## in TRAFFIC rather than a crew's job, which is exactly why the ladder must state no price on that
 ## row — the fixture carries it so the suppression is tested against a real number.
+## ⛔ **THE SIM'S BARE WORKER OUTPUT, ON EVERY ROW — `intensification::PER_WORKER_OUTPUT`.** It is the
+## one field on `RouteRungState` that is not derived from the rung, and it is the same value on all
+## four: the catalog is where a number identical for every road in the world belongs, and the client
+## reads it off the FIRST row on that strength (`core_sim/tests/route_wire.rs` asserts the agreement).
+##
+## **Stated on all four here anyway, deliberately.** A fixture that carried it on one row would let a
+## client that started walking rows pass while a client reading a different row failed, which is a
+## fixture testing its own shape rather than the wire's.
+const LADDER_BARE_WORK_RATE := 1.0
+
+## …and the reading of a client that has not been sent a catalog. **A measured nothing, not a
+## sentinel**: it is what `branch_build_work_per_worker_turn` answers for an empty ladder, and every
+## caller must state nothing rather than substitute a rate of its own.
+const LADDER_NO_BARE_WORK_RATE := 0.0
+
 const LADDER_TRAIL_WORK_COST := 40.0
 const LADDER_DIRT_WORK_COST := 110.0
 const LADDER_PAVED_WORK_COST := 260.0
@@ -1684,21 +2215,64 @@ const LADDER_ROADBUILDING_PERCENT := 40
 
 ## The rung nobody orders leads with its METER, that being the only figure it has.
 const ROW_TRAIL_FACE := "30% · wearing in"
-## …and a refused rung leads with its PRICE. Both of these rungs have TWO unmet gates and state one:
-## the craft, because the ground gate names a rung the ladder is already showing two lines up.
-const ROW_DIRT_GATED_FACE := "110 work · needs Roadbuilding"
-const ROW_PAVED_GATED_FACE := "260 work · needs Paving"
+## …and a rung nobody has started leads with its PRICE — **the pile AND the standing bill**, which is
+## the whole commitment: one-off against per-turn. Both of these rungs have TWO unmet gates and state
+## one, the craft, because the ground gate names a rung the ladder is already showing two lines up.
+##
+## ⛔ **THE RATE IS WRITTEN TO TWO DECIMALS** (`HudRouteVocab.ROAD_LADDER_RATE_DECIMALS`). The shared
+## `DetailFormat.format_work_units` rounds to ONE, which prints the config's `0.45` as `0.5` and its
+## `0.95` as `1.0` — an 11% lie about the figure the player is deciding against. An expectation
+## written to the one-decimal spelling would pass a client that had gone back to it.
+const ROW_DIRT_GATED_FACE := "110 work · 0.45/turn upkeep · needs Roadbuilding"
+const ROW_PAVED_GATED_FACE := "260 work · 0.95/turn upkeep · needs Paving"
 ## …the keeper pair, which outrank the craft — no amount of learning helps a tile that is taken, and
 ## picking a band is the one gate on the card closed with a click.
-const ROW_PAVED_TAKEN_FACE := "260 work · Band 2 keeps it"
-const ROW_PAVED_NO_BAND_FACE := "260 work · pick a band"
-## …and a BUILDABLE rung, whose price is the button and which has no refusal to state beside it.
-const DIRT_PRICE_FACE := "110 work"
-const PAVED_PRICE_FACE := "260 work"
+const ROW_PAVED_TAKEN_FACE := "260 work · 0.95/turn upkeep · Band 2 keeps it"
+const ROW_PAVED_NO_BAND_FACE := "260 work · 0.95/turn upkeep · pick a band"
+## …and a BUILDABLE rung nobody has started, whose price is the button and which has no refusal to
+## state beside it. **It states no DURATION at all**, and that is deliberate rather than an omission:
+## the estimate was divided by the acting band's CURRENT builders and ignored the queue the press
+## would join, so it moved with a crew that was not going to work this road.
+const DIRT_PRICE_FACE := "110 work · 0.45/turn upkeep"
+const PAVED_PRICE_FACE := "260 work · 0.95/turn upkeep"
 
-## ⛔ **THE MARKER FOR "THIS ROW SHOWS A METER"**, for the ABSENCE claim. A face is either
-## `NN% · <word>` or `<price> · <refusal>`, and only the first carries a percent — so this needle
-## finds the meter clause and nothing else.
+## ⛔ **THE NEEDLE FOR "THIS ROW QUOTES A DURATION"**, for the ABSENCE half of the pair above. The
+## glyph is `DetailFormat`'s own approximation mark, which no other clause on this card uses, so it
+## finds a turns estimate and nothing else.
+const LADDER_TURNS_MARK := "≈"
+
+## ⛔ **AND THE WORD A ROW THAT OWES NOTHING TO HOLD MUST NOT CARRY.** The free floor declares
+## `upkeep_work_per_turn` of `0`, and `0/turn upkeep` there would be a bill where there is no bill.
+const LADDER_UPKEEP_WORD := "upkeep"
+
+## ⛔ **AND THE FACE OF THE RUNG THAT IS BEING BUILT — its PROGRESS, and how long is left.** A rung
+## already ordered is not a purchase being weighed, so a price on it answers a question nobody is
+## asking; what the player pressed the ladder to find out is whether the press LANDED.
+##
+## **THE NUMBERS ARE WRITTEN OUT, and each one is a claim about a different term.** The trail already
+## carries 30% of the dirt road banked, so the pile left is `110 x 0.7 = 77` and at two builders that
+## is `ceil(77 / 2) = 39` - a row quoting the WHOLE price would say `55` and fail here. The QUEUED
+## road two states on has banked nothing at all, so its pile is the full `110` and
+## `ceil(110 / 2) = 55`, which is what says both readings come out of the same arithmetic.
+const LADDER_BUILDERS := 2
+## …and the pool the fixture band ships with, which is nobody. Named because it is the STATE the frame
+## below is about (a band that has staffed no builders), not an unset value.
+const LADDER_NO_BUILDERS := 0
+const DIRT_BUILDING_TURNS_FACE := "30% · ≈39 turns"
+## …and the same row with nobody on `builders`: there is no pace to divide by, so the progress stands
+## alone. **`30%` and not a blank** — the meter is a fact about the road, not about the crew.
+const DIRT_BUILDING_FACE := "30%"
+## ⛔ **…AND THE READING THIS WHOLE CUT EXISTS FOR: a road QUEUED and banking nothing yet.** `0%` is
+## the receipt for the press — a road queued behind another job banks nothing for dozens of turns, and
+## the `110 work` that used to stand here was indistinguishable from a `grade` that never landed.
+const DIRT_QUEUED_ZERO_FACE := "0% · ≈55 turns"
+## …and the same figure as the hover states it, on a REFUSED row, where the face has spent its one
+## clause on the refusal.
+const TIP_PAVED_TURNS := "≈130 turns with this band's builders."
+
+## ⛔ **THE MARKER FOR "THIS ROW SHOWS A METER"**, for the ABSENCE claim. A face leads with a
+## PERCENTAGE only where the rung is worn in by traffic or is being BUILT; a rung nobody has ordered
+## leads with its price, so this needle finds a meter clause and nothing else.
 const LADDER_METER_MARK := "% · "
 
 ## ⛔ **THE WORD THAT MUST NOT APPEAR ON ANY ROW.** A row reading `locked` above a reason said it
@@ -1707,13 +2281,11 @@ const LADDER_LOCKED_WORD := "locked"
 
 # ---- WHAT THE HOVER SAYS: everything the row stopped saying ------------------------------------
 
-## The price PAIRED with the standing bill, which is the decision the row's single figure cannot make.
-## **The figures are ROUNDED BY THE SHIPPED FORMATTER** (`DetailFormat.format_work_units`, one
-## decimal), so the config's 0.45 reads `0.5` and its 0.95 reads `0.9` — an `f32` rounding DOWN.
-## Written as they render, not as the config reads: an expectation "corrected" to the config's digits
-## would fail against a client doing nothing wrong.
-const TIP_DIRT_PRICE := "110 work to build, 0.5 work a turn to keep."
-const TIP_PAVED_PRICE := "260 work to build, 0.9 work a turn to keep."
+## The price PAIRED with the standing bill, as a sentence — the ROW now states those same two figures
+## one line away, and **the hover spells the rate exactly as the row spells it**: one number told two
+## ways on one card is the defect, and the one-decimal spelling (`0.5`, `0.9`) was the wrong one.
+const TIP_DIRT_PRICE := "110 work to build, 0.45 work a turn to keep."
+const TIP_PAVED_PRICE := "260 work to build, 0.95 work a turn to keep."
 
 ## What each rung does, in plain English — the jargon (`buys`, `lost hauling`, `lights its tiles`,
 ## `links N tiles out`) is retired from every road surface.
@@ -1754,6 +2326,13 @@ func _expected_grade_line() -> String:
 	return "%s %d %d %d %d" % [SourceForecast.IMPROVEMENT_GRADE, HudConst.PLAYER_FACTION_ID,
 		_road_keeper_band(), ROAD_TILE.x, ROAD_TILE.y]
 
+## **AND THE LINE THE ABANDON ROW WOULD TRANSMIT — three tokens, and NO BAND.** `abandon` names a
+## faction and a PLACE: it drops every band of that faction's holding on the hex, the road's keeper and
+## its queue entry with it. The band token that `grade` carries is absent here on purpose, and stating
+## the whole line is the only way to see that a builder has not helpfully added one.
+func _expected_abandon_line() -> String:
+	return "abandon %d %d %d" % [HudConst.PLAYER_FACTION_ID, ROAD_TILE.x, ROAD_TILE.y]
+
 ## ---- THE ROAD LADDER, the tile card's route ACTION (arc #532 slice 13) -------------------------
 ##
 ## ⛔ **THE UNIT THE PLAYER PRESSES IS THE LADDER, NOT THE VERB**, and the frames below exist to hold
@@ -1781,6 +2360,7 @@ func _route_rung_catalog() -> Array:
 			"work_cost": 0.0, "upkeep_work_per_turn": 0.0,
 			"friction_multiplier": ROAD_FRICTION_PATH, "holds_link_to_tiles": ROAD_LINK_PATH,
 			"grants_sight": false,
+			"build_work_per_worker_turn": LADDER_BARE_WORK_RATE,
 		},
 		{
 			# **A TRAIL COSTS 40 WORK AND DECLARES NO VERB**, which is the config's own shape: inside
@@ -1795,6 +2375,7 @@ func _route_rung_catalog() -> Array:
 			"work_cost": LADDER_TRAIL_WORK_COST, "upkeep_work_per_turn": 0.0,
 			"friction_multiplier": ROAD_FRICTION_TRAIL, "holds_link_to_tiles": ROAD_LINK_TRAIL,
 			"grants_sight": false,
+			"build_work_per_worker_turn": LADDER_BARE_WORK_RATE,
 		},
 		{
 			"rung_key": HudRouteVocab.RUNG_KEY_DIRT_ROAD, "order": 3, "display_name": "Dirt Road",
@@ -1805,6 +2386,7 @@ func _route_rung_catalog() -> Array:
 			"work_cost": LADDER_DIRT_WORK_COST, "upkeep_work_per_turn": LADDER_DIRT_UPKEEP,
 			"friction_multiplier": ROAD_FRICTION_DIRT, "holds_link_to_tiles": ROAD_LINK_DIRT,
 			"grants_sight": true,
+			"build_work_per_worker_turn": LADDER_BARE_WORK_RATE,
 		},
 		{
 			"rung_key": HudRouteVocab.RUNG_KEY_PAVED_ROAD, "order": 4, "display_name": "Paved Road",
@@ -1816,6 +2398,7 @@ func _route_rung_catalog() -> Array:
 			"work_cost": LADDER_PAVED_WORK_COST, "upkeep_work_per_turn": LADDER_PAVED_UPKEEP,
 			"friction_multiplier": ROAD_FRICTION_PAVED, "holds_link_to_tiles": ROAD_LINK_PAVED,
 			"grants_sight": true,
+			"build_work_per_worker_turn": LADDER_BARE_WORK_RATE,
 		},
 	]
 
@@ -1915,6 +2498,41 @@ func _road_ladder_tooltips() -> Dictionary:
 		out[String(control.get_meta(HudWorkVocab.RUNG_TRACK_RUNG_META))] = control.tooltip_text
 	return out
 
+## ⛔ **THE `Band:` PICKER'S CURRENT FACE** — who the card is acting FOR, which every gate and the
+## turns estimate are resolved against. Found by walking the card for an `OptionButton`: the ladder's
+## rung rows build plain `Button`s and `Label`s, so the selector is unambiguous, and matching on its
+## label text would testify about the row rather than about the control.
+func _road_ladder_band_face() -> String:
+	var card := _road_ladder_card(h._hud)
+	if card == null:
+		return ""
+	for node in _all_nodes(card, []):
+		if node is OptionButton:
+			return (node as OptionButton).text
+	return ""
+
+## **DRIVE THE PICKER, the way a player does.** `OptionButton` fires `item_selected` with the row
+## index, which `HudWidgets.build_option_picker` routes to that entry's `on_pick` — so emitting it is
+## the press, and the re-render that follows is the thing under test. The card must survive it.
+func _pick_road_ladder_band(index: int) -> void:
+	var card := _road_ladder_card(h._hud)
+	if card == null:
+		return
+	for node in _all_nodes(card, []):
+		if node is OptionButton:
+			(node as OptionButton).item_selected.emit(index)
+			break
+	await h._settle()
+
+## …and the control that puts the road down, by META rather than by its face: the button's label is a
+## sentence, and a harness matching on the words would break the day it is reworded. `null` where the
+## card offers nothing to put down, which is the ABSENCE half of the claim.
+func _road_ladder_abandon_button() -> Button:
+	for control in _collect_meta(h._hud, HudRouteVocab.ROAD_LADDER_ABANDON_META, []):
+		if control is Button:
+			return control as Button
+	return null
+
 ## The PRESSABLE row for one rung, or `null` where the ladder refuses it. **The shape IS the
 ## statement** — a rung the branch offers is a `Button`, a rung it does not is a `Label` — so this is
 ## how *may I order this* is asked without reading a word.
@@ -1926,6 +2544,30 @@ func _road_ladder_row_button(rung_key: String) -> Button:
 			if child is Button:
 				return child as Button
 	return null
+
+## ⛔ **PRESS A RUNG THE WAY A PLAYER DOES — through the CARD'S OWN viewport.** The ladder is a
+## `PopupPanel`, which is a `Window` and therefore a `Viewport` of its own, so an event pushed into
+## the HUD's viewport lands on whatever the card is floating over instead of on the row. A probe is
+## the only shape that tests fix 3 at all: `pressed.emit()` calls the handler directly and would pass
+## on a control the engine never routes to.
+##
+## **THE PRESS FREES THE ROW** — it dismisses the card — so nothing may touch the control afterwards.
+## `false` where the ladder offers no button for that rung, which every caller reports as its own
+## failure rather than asserting about a press that never happened.
+func _press_road_ladder_row(rung_key: String) -> bool:
+	var button := _road_ladder_row_button(rung_key)
+	if button == null:
+		return false
+	var viewport := button.get_viewport()
+	var point := InputProbe.canvas_to_window(viewport, button.get_window(),
+		button.get_global_rect().get_center())
+	InputProbe.hover(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.press_left(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.release_left(viewport, point)
+	await h._settle()
+	return true
 
 ## Everything the open card SAYS, joined — its title, its row faces and every aside beneath them.
 ## The gate reasons and the price asides are composed sentences, so what is asserted about them is

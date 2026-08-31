@@ -295,6 +295,8 @@ func _ready() -> void:
             hud.connect("improvement_requested", Callable(self, "_on_hud_improvement"))
         if hud.has_signal("unqueue_requested") and not hud.is_connected("unqueue_requested", Callable(self, "_on_hud_unqueue")):
             hud.connect("unqueue_requested", Callable(self, "_on_hud_unqueue"))
+        if hud.has_signal("abandon_requested") and not hud.is_connected("abandon_requested", Callable(self, "_on_hud_abandon")):
+            hud.connect("abandon_requested", Callable(self, "_on_hud_abandon"))
         if hud.has_signal("build_kit_requested") and not hud.is_connected("build_kit_requested", Callable(self, "_on_hud_build_kit")):
             hud.connect("build_kit_requested", Callable(self, "_on_hud_build_kit"))
         if hud.has_signal("upkeep_kit_requested") and not hud.is_connected("upkeep_kit_requested", Callable(self, "_on_hud_upkeep_kit")):
@@ -1384,7 +1386,8 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
 ## is non-empty, which is the only way a caller can state the herd form unambiguously.
 ##
 ## **IT IS THE UNDO FOR A DECLARATION, NEVER FOR A BUILD WITH WORK ON IT.** `abandon` is what puts a
-## source with a live meter down, and it is deliberately command-line only in this slice.
+## source with a live meter down, and it has its own builder one block up (`format_abandon`) reached
+## from the road ladder's own control.
 static func format_unqueue(payload: Dictionary) -> Dictionary:
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
     var herd_id := String(payload.get("herd_id", "")).strip_edges()
@@ -1400,6 +1403,45 @@ static func format_unqueue(payload: Dictionary) -> Dictionary:
     return {
         "line": "unqueue %d %d %d" % [faction, x, y],
         "message": "Withdraw the build queued on (%d, %d)." % [x, y],
+    }
+
+## **`abandon <faction> <x> <y>` | `abandon <faction> <herd_id>` — PUT THE HOLDING DOWN.**
+##
+## ⛔ **IT IS NOT `unqueue`, AND THE PAIR IS THE WHOLE POINT OF HAVING TWO BUILDERS.** `unqueue` drops
+## a source's build-queue ENTRY and leaves the row, its crew, its kit and the meter exactly as they
+## are — the undo for a declaration. This releases the HOLDING: the band's grip on the source and, for
+## a road, its keeping and its place in the queue together. Once any work is banked it is the only one
+## of the two that does anything, which is why a road handed to the wrong band could not be taken back
+## from the UI at all while this had no builder.
+##
+## ⛔ **IT NAMES A PLACE, NOT A HOLDING, AND THAT HAS A CONSEQUENCE THE CALLER MUST STATE.**
+## `handle_abandon` drops the faction's labor rows on that tile as well as the road's keeper, because
+## a tile may carry a road AND a patch and putting one down without the other would be silently partial
+## on exactly the tiles where a band both farms and keeps a road. **There is no road-only form and this
+## client must not invent one** — a command narrower than the sim implements would lie about what the
+## button does — so the road ladder's own row says what else goes down with it.
+##
+## **The two source shapes are told apart the way `format_unqueue` tells them apart**, which is the way
+## the sim's parser does: two integer tokens are a TILE, one token is a HERD id, and a non-empty herd
+## id wins.
+##
+## **`abandon_improvement` IS A DIFFERENT, RETIRED VERB** — see its epitaph further down: it cleared an
+## assignment's STORED improvement, which no longer exists, and the server refuses that form outright.
+static func format_abandon(payload: Dictionary) -> Dictionary:
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var herd_id := String(payload.get("herd_id", "")).strip_edges()
+    if herd_id != "":
+        return {
+            "line": "abandon %d %s" % [faction, herd_id],
+            "message": "Put down what your people hold on %s." % herd_id,
+        }
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if x < 0 or y < 0:
+        return {}
+    return {
+        "line": "abandon %d %d %d" % [faction, x, y],
+        "message": "Put down what your people hold at (%d, %d)." % [x, y],
     }
 
 ## **`build_kit <faction> <x> <y> [kit <id>]` | `build_kit <faction> <herd_id> [kit <id>]` — THE
@@ -1783,6 +1825,12 @@ func _on_hud_improvement(payload: Dictionary) -> void:
 func _on_hud_unqueue(payload: Dictionary) -> void:
     if not _send_formatted_command(format_unqueue(payload)):
         _hud_invoke("drop_pending_unqueue", [payload])
+
+## PUT A HOLDING DOWN — the undo for a build with work already banked on it, and the road ladder's own
+## release. **No rollback**: the HUD writes nothing optimistic for it, a road having no labor row to
+## shadow, so there is nothing a refused send would have to take back.
+func _on_hud_abandon(payload: Dictionary) -> void:
+    _send_formatted_command(format_abandon(payload))
 
 ## NAME THE KIT one queued build is raised with (`docs/plan_standing_upkeep.md` §4.7a ②) — its own
 ## handler because its own command and its own scope: it names a SOURCE and sets a property of that

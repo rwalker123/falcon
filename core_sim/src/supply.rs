@@ -163,6 +163,47 @@ fn pools_freely(a: &Node, b: &Node) -> bool {
     a.faction == b.faction
 }
 
+/// ⛔ **CAN THESE TWO CAMPS POOL AT THIS DISTANCE — THE FREE REACH, **OR** WHAT THE ROAD BETWEEN
+/// THEM HOLDS OPEN?**
+///
+/// ```text
+/// hex_distance(a, b) <= max(reach_tiles, path_reach_tiles(roads, trace_path(a, b, ..)))
+/// ```
+///
+/// **Purely additive**: a pair inside `reach_tiles` pools exactly as it does today, and the other two
+/// gates ([`pools_freely`], [`tie_is_live`]) are untouched. This is the first consumer
+/// `RungRoutePayoff::holds_link_to_tiles` has ever had — the reach the client was rendering in the
+/// future tense — and it is what makes the top rungs a **capability** rather than a discount: without
+/// a road two bands six tiles apart cannot pool at all.
+///
+/// **Reach takes the run's weakest tile** ([`crate::routes::path_reach_tiles`]), so one bare tile in
+/// an otherwise paved run holds nothing open — a link goods must get *through* is not
+/// most-of-the-way-there.
+///
+/// **Cost**: the trace only runs once the free test has already failed **and** the pair is within
+/// `widest_route_reach`, so a game with no roads — the shipped turn-1 state — traces nothing.
+#[allow(clippy::too_many_arguments)] // The geometry a hex distance needs, plus the two reaches.
+fn link_holds(
+    roads: &crate::routes::RoadRegistry,
+    a: UVec2,
+    b: UVec2,
+    free_reach: u32,
+    widest_route_reach: u32,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> bool {
+    let distance = hex_distance_wrapped(a, b, width, wrap);
+    if distance <= free_reach {
+        return true;
+    }
+    if distance > widest_route_reach {
+        return false;
+    }
+    let path = crate::routes::trace_path(a, b, width, height, wrap, roads);
+    distance <= crate::routes::path_reach_tiles(roads, &path)
+}
+
 /// ⛔ **WHAT A COMPONENT'S POOLING LOSES IN TRANSIT, as a multiple of the base friction — DERIVED
 /// FROM THE TILES, never stored** (`docs/plan_standing_upkeep.md` §4.13b).
 ///
@@ -196,7 +237,8 @@ fn component_friction(
         .iter()
         .filter(|(i, j)| members.contains(i) && members.contains(j))
         .map(|(i, j)| {
-            let path = crate::routes::trace_path(nodes[*i].pos, nodes[*j].pos, width, height, wrap);
+            let path =
+                crate::routes::trace_path(nodes[*i].pos, nodes[*j].pos, width, height, wrap, roads);
             crate::routes::path_friction_multiplier(roads, &path)
         })
         .fold(crate::intensification::FRICTION_UNCHANGED, f32::min)
@@ -313,6 +355,10 @@ pub fn balance_supply_networks(
     // *previous* turn, exactly as the connection ledger above is. Both are accepted rather than
     // reordered: a supply pass that raised a road itself would be a second producer of a position.
     roads: Res<crate::routes::RoadRegistry>,
+    // **The ladder, for the ROUTE PAYOFF's own numbers** — the widest reach any rung holds open
+    // (`routes::max_route_reach_tiles`, which the binning below sizes its cells by) and the rate a
+    // recorded link banks. Both are read through their seams rather than off a rung record.
+    ladder: Res<crate::intensification::LadderConfigHandle>,
     mut route_traffic: ResMut<crate::routes::RouteTrafficLog>,
     // `With<ResidentBand>`: an expedition manages its own larder — its drop-off is the explicit
     // fold-back on arrival, not a passive supply-network leak — so it is excluded here.
@@ -326,6 +372,7 @@ pub fn balance_supply_networks(
     // Recomputed from scratch every turn; a 0/1-band map (early return below) leaves it empty.
     membership.0.clear();
     let cfg = config.get();
+    let ladder = ladder.get();
     let width = tile_registry.width;
     let height = tile_registry.height;
     let wrap = sim_config.map_topology.wrap_horizontal;
@@ -387,10 +434,18 @@ pub fn balance_supply_networks(
     // `|dx|, |dy| <= reach`). A delta of at most `cell_size` moves a floor-division cell index by at
     // most one, so ±1 cells cover it, and the ±2 in x below still covers the runt seam cell.
     // Changing the metric therefore did not change the required neighbourhood at all.
+    //
+    // ⛔ **AND THAT IS WHY THE CELL IS SIZED BY THE ROUTE PAYOFF TOO.** The distance test below
+    // accepts a pair out to `max(reach_tiles, path_reach_tiles(..))`, so a road holding a link open
+    // at 16 tiles against a cell size of 3 would drop long routed pairs **silently** — it fails as
+    // *some long roads just don't work*, with nothing erroring anywhere.
+    // `routes::max_route_reach_tiles` is the seam that answers it, so retuning a rung's reach moves
+    // the neighbourhood with it and no call site moves.
     let count = nodes.len();
     let mut parent: Vec<usize> = (0..count).collect();
 
-    let cell_size = cfg.reach_tiles.max(1);
+    let widest_route_reach = crate::routes::max_route_reach_tiles(&ladder);
+    let cell_size = cfg.reach_tiles.max(widest_route_reach).max(1);
     let num_cells_x = width.div_ceil(cell_size).max(1) as i32;
     let cell_of =
         |pos: UVec2| -> (i32, i32) { ((pos.x / cell_size) as i32, (pos.y / cell_size) as i32) };
@@ -430,8 +485,16 @@ pub fn balance_supply_networks(
                         continue; // each unordered pair once; also skips self
                     }
                     if pools_freely(&nodes[i], &nodes[j])
-                        && hex_distance_wrapped(nodes[i].pos, nodes[j].pos, width, wrap)
-                            <= cfg.reach_tiles
+                        && link_holds(
+                            &roads,
+                            nodes[i].pos,
+                            nodes[j].pos,
+                            cfg.reach_tiles,
+                            widest_route_reach,
+                            width,
+                            height,
+                            wrap,
+                        )
                         && tie_is_live(&ledger, nodes[i].band, nodes[j].band)
                     {
                         // **THE COMMONEST TRAFFIC IN THE GAME, recorded where it is known.** Two
@@ -440,7 +503,7 @@ pub fn balance_supply_networks(
                         // typed a command"*. The road is worn by `routes::advance_routes` later in
                         // this stage rather than here, so this turn's pooling cannot read a road
                         // this turn's pooling created.
-                        route_traffic.walked(nodes[i].pos, nodes[j].pos);
+                        route_traffic.walked(nodes[i].pos, nodes[j].pos, &ladder);
                         // **THE LINKS THEMSELVES, kept for the friction reading below.** A road's
                         // payoff is derived from *the tiles a journey crosses*, so a component's
                         // friction is read off its own pooling links rather than off whatever roads
