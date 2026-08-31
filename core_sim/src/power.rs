@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
@@ -8,7 +9,7 @@ use crate::{
 };
 
 /// Identifier assigned to each power node in the grid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct PowerNodeId(pub u32);
 
 impl PowerNodeId {
@@ -26,7 +27,7 @@ impl PowerNodeId {
 /// reinstated a handle naming a tile that had just been despawned. `PowerNodeId` is `y * width + x`
 /// and is the key this map is already stored under, so there was nothing for the entity to say
 /// that the id did not say durably.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PowerGridNodeTelemetry {
     pub node_id: PowerNodeId,
     pub supply: Scalar,
@@ -55,13 +56,13 @@ impl Default for PowerGridNodeTelemetry {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PowerIncidentSeverity {
     Warning,
     Critical,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PowerIncident {
     pub node_id: PowerNodeId,
     pub severity: PowerIncidentSeverity,
@@ -84,7 +85,7 @@ impl PowerDiscoveryEffects {
 }
 
 /// Aggregated power grid state exported to telemetry and snapshot layers.
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PowerGridState {
     pub nodes: HashMap<PowerNodeId, PowerGridNodeTelemetry>,
     pub total_supply: Scalar,

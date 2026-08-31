@@ -140,7 +140,7 @@ impl FoodSiteKind {
     }
 }
 
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct FoodModuleTag {
     pub module: FoodModule,
     pub seasonal_weight: f32,

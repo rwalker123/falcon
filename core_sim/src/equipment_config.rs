@@ -1126,7 +1126,7 @@ impl KitCoverage {
 /// **Resolved once, then carried.** A detached party stores its choice at launch and prices its
 /// whole life from it — re-resolving against the band's current stock would silently re-arm a party
 /// sent out bare the moment the band's spears were counted again.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KitChoice {
     id: Arc<str>,
     uses: Arc<[Arc<str>]>,

@@ -16,7 +16,7 @@ use std::{
 
 use bevy::prelude::Resource;
 use rand::{rngs::SmallRng, Rng};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sim_runtime::TerrainType;
 
 use thiserror::Error;
@@ -61,7 +61,7 @@ impl Diet {
 
 /// Coarse size band. Drives roaming range + group size; also lets Phase B/C offer
 /// the right verbs (big/small game are huntable one-shot; migratory herds follow).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SizeClass {
     #[default]
@@ -98,7 +98,7 @@ impl SizeClass {
 /// accrues, `tame`/`corral`/`extend_pen` reject); `Pastoral` tames + roams but never pens
 /// (`corral`/`extend_pen` reject); `Pen` is the full ladder. **Default `Pen`** preserves the pre-δ
 /// universal-full-ladder behaviour for any untagged/future species.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HusbandryCeiling {
     /// Hunt-only. Domestication never accrues.

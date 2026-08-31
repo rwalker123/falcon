@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
 use std::f32::consts::TAU;
@@ -163,7 +164,7 @@ pub const FODDERING_DISCOVERY_ID: u32 = 2007;
 /// capacity (thresholds in `EcologyConfig`). Surfaced to the client as an early
 /// overhunting warning, and the seam the later domestication / industrialized-hunting
 /// arc keys off (e.g. a long Sustain-follow on a `Thriving` herd → husbandry progress).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum EcologyPhase {
     /// At or above the stressed band — a healthy, self-sustaining group.
     #[default]
@@ -219,7 +220,7 @@ pub(crate) fn classify_ecology_phase(
 /// Game groups graze-wander their local cluster forever; migratory groups alternate loitering near
 /// a route anchor and a directed 1-hex/turn migration to the next anchor. See
 /// `docs/plan_wildlife_hunting_overlay.md` "Herd Movement".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoamState {
     /// Wild game (`Big`/`Small`): permanent graze-wander toward the current cluster waypoint.
     GrazeWander,
@@ -266,7 +267,7 @@ impl RoamState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Herd {
     pub id: String,
     pub label: String,
@@ -1694,7 +1695,7 @@ pub const NOT_HERDED: f32 = 0.0;
 // yield by **nothing at Sustain** and everything at every other floor: the pen was already taking an
 // escapement ceiling, it just refused to read the player's dial.
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HerdTelemetryEntry {
     pub id: String,
     pub label: String,
@@ -1720,7 +1721,7 @@ pub struct HerdTelemetryEntry {
     pub next_position: Option<UVec2>,
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HerdRegistry {
     pub herds: Vec<Herd>,
 }
@@ -1752,7 +1753,7 @@ impl HerdRegistry {
     }
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HerdTelemetry {
     pub entries: Vec<HerdTelemetryEntry>,
 }

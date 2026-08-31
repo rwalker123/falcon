@@ -6,7 +6,7 @@ use std::{
 
 use bevy::prelude::*;
 use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::{
@@ -28,14 +28,14 @@ use sim_runtime::{
 const MIN_GRID_DIMENSION: u32 = 1;
 const HERD_DENSITY_CRISIS_WEIGHT: f32 = 0.35;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CrisisSeverityBand {
     Safe,
     Warn,
     Critical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CrisisMetricKind {
     R0,
     GridStressPct,
@@ -73,7 +73,7 @@ impl CrisisMetricKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CrisisTrendSample {
     pub tick: u64,
     pub value: f32,
@@ -88,7 +88,7 @@ impl Default for CrisisTrendSample {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrisisGaugeSnapshot {
     pub kind: CrisisMetricKind,
     pub raw: f32,
@@ -119,7 +119,7 @@ impl Default for CrisisGaugeSnapshot {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CrisisMetricsSnapshot {
     pub gauges: Vec<CrisisGaugeSnapshot>,
     pub modifiers_active: u32,
@@ -158,7 +158,7 @@ struct GaugeParameters {
     trend_window: usize,
 }
 
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct CrisisTelemetry {
     r0: CrisisGauge,
     grid_stress_pct: CrisisGauge,
@@ -391,7 +391,7 @@ impl Default for CrisisTelemetry {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CrisisGauge {
     kind: CrisisMetricKind,
     warn_threshold: f32,
@@ -571,7 +571,7 @@ struct CrisisArchetypeRuntime {
     _annotation_glyph: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CrisisHotspot {
     position: UVec2,
     radius: f32,
@@ -606,7 +606,7 @@ struct ActiveModifier {
     effects: ModifierEffects,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CrisisAnnotationMarker {
     label: String,
     severity: CrisisSeverityBand,
@@ -940,13 +940,13 @@ impl ActiveCrisisLedger {
 /// and [`crate::knowledge_ledger::KnowledgeLedgerCheckpoint`]; unlike those three it re-resolves by
 /// key rather than merely leaving a field alone, because the config here is held by value inside a
 /// `Vec` of entries rather than behind one handle.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActiveCrisisLedgerCheckpoint {
     entries: Vec<ActiveCrisisCheckpoint>,
 }
 
 /// One active crisis, named by the archetype id it was seeded from rather than by its tuning.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ActiveCrisisCheckpoint {
     archetype_id: String,
     faction: FactionId,

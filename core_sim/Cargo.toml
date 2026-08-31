@@ -31,8 +31,21 @@ bevy = { version = "0.13", default-features = false, features = [
 # TODO: narrow feature set for pure headless build
 rand = { version = "0.8", features = ["small_rng"] }
 rand_chacha = "0.3"
-serde = { version = "1.0", features = ["derive"] }
+# `rc` is what lets `Arc<str>` / `Arc<[Arc<str>]>` serialize, which `KitChoice` — and therefore the
+# whole `SimState` save format — needs. It is currently ALSO switched on by `sim_schema`, so
+# dropping it here would appear to change nothing; naming it is what stops a future edit to a
+# sibling crate's features from silently making the checkpoint unencodable.
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
+# The save format's codec. JSON cannot express this checkpoint: `serde_json` admits only keys that
+# serialize to a string or an integer, and the sim-state maps are keyed by `UVec2`, by tuples and by
+# composite structs (`ConnectionKey`, `BandKey`). CBOR takes all three.
+ciborium = "0.2"
+# `UVec2` and every other glam type in `SimState` serializes only with this feature. It arrives
+# transitively today via `bevy_reflect`'s `bevy_math` feature — which is exactly why it is named
+# here: the `# TODO: narrow feature set for pure headless build` above is a live intention to prune
+# bevy's features, and pruning the wrong one would take serde off glam and break saves.
+glam = { version = "0.25", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 bevy_reflect = "0.13"

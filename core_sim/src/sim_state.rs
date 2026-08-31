@@ -48,6 +48,7 @@
 
 use bevy::prelude::*;
 use bevy::utils::HashMap;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     components::{
@@ -83,7 +84,7 @@ use crate::{
 };
 
 /// One tile, keyed by its position.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TileRecord {
     pub tile: Tile,
     /// The tile's power node, if it has one. Carries `base_generation` / `base_demand`, which no
@@ -97,14 +98,14 @@ pub struct TileRecord {
 }
 
 /// An in-flight expedition, with its home band named by id rather than by entity.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExpeditionRecord {
     pub home_band: BandId,
     pub expedition: Expedition,
 }
 
 /// One band, keyed by [`BandId`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BandRecord {
     pub id: BandId,
     /// The cohort. Its `home` / `current_tile` are [`Entity::PLACEHOLDER`]; the real positions are
@@ -142,14 +143,14 @@ pub struct BandRecord {
 }
 
 /// A settlement and its town centre.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettlementRecord {
     pub settlement: Settlement,
     pub town_center: Option<TownCenter>,
 }
 
 /// The simulation's state at one tick.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimState {
     pub tick: SimulationTick,
     pub tiles: Vec<TileRecord>,

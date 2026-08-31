@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     components::{PopulationCohort, Tile},
@@ -9,7 +10,7 @@ use crate::{
     scalar::{scalar_from_u32, Scalar},
 };
 
-#[derive(Resource, Default, Debug, Clone)]
+#[derive(Resource, Default, Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationMetrics {
     pub turn: u64,
     pub avg_temperature: f64,

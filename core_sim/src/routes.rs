@@ -70,6 +70,7 @@
 //! **Traffic converts to WORK UNITS**, the same currency `RungBuild::work_cost` is quoted in, so
 //! *"what does it cost to raise this"* has one answer in one unit whichever branch is asked.
 
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::prelude::*;
@@ -132,7 +133,7 @@ pub const NEAR_ENOUGH_TO_KEEP: f32 = 1.0;
 ///
 /// The faction rides beside the band because the two consumers ask different questions: the sight
 /// grant lights the **faction's** fog, and the keeping payment is the **band's** pool.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoadKeeper {
     pub faction: FactionId,
     pub band: BandId,
@@ -145,7 +146,7 @@ pub struct RoadKeeper {
 /// fractional turn's traffic banks as a fraction of a work unit and crosses a rung boundary when the
 /// sum crosses it. **No separate traffic accumulator may be added**; that would be a second producer
 /// of the same number.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Road {
     /// The tile this road is on — its registry key, the plant web's `ForagePatch::tile` exactly.
     pub tile: UVec2,
@@ -357,7 +358,7 @@ const KEEPING_EPSILON: f32 = 1.0e-4;
 /// **`BTreeMap`, not `HashMap`** — the iteration order is observed by the snapshot and by the
 /// checkpoint, so it has to be an order and not an accident. Keyed `(y, x)` so that order is
 /// row-major, like every other tile sweep in the engine.
-#[derive(Resource, Default, Debug, Clone)]
+#[derive(Resource, Default, Debug, Clone, Serialize, Deserialize)]
 pub struct RoadRegistry {
     roads: BTreeMap<(u32, u32), Road>,
 }

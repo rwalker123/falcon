@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::VecDeque};
 
 use bevy::prelude::*;
@@ -36,7 +37,7 @@ pub enum TerrainBand {
     InlandSea,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MountainType {
     Fold,
     Fault,

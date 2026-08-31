@@ -687,7 +687,7 @@ pub fn load_simulation_config_for_new_world(outgoing: &SimulationConfig) -> Simu
 }
 
 /// Tracks total simulation ticks elapsed.
-#[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SimulationTick(pub u64);
 
 /// Monotonic world-build counter, identical for every snapshot within one world and incremented on
@@ -707,7 +707,7 @@ pub struct WorldEpoch(pub u32);
 /// duplicate ids alias silently rather than failing to resolve.
 ///
 /// Starts at 1 so `BandId(0)` is available as an unmistakable "unset".
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BandIdAllocator {
     next: u64,
 }
@@ -792,7 +792,7 @@ impl StartLocation {
 /// - **Policy levers** (`policy`): long-lived adjustments driven by enacted reforms or manual tweaks.
 /// - **Incident deltas** (`incidents`): short-lived shocks produced by exposed scandals, crises, etc.
 /// - **Influencer output** (`influencer`): procedurally generated contributions from the influencer roster.
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct SentimentAxisBias {
     policy: [Scalar; 4],
     incidents: [Scalar; 4],
@@ -893,7 +893,7 @@ impl TileRegistry {
 }
 
 /// Tracks corruption intensity across subsystems for snapshot export.
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CorruptionLedgers {
     ledger: CorruptionLedger,
 }
@@ -917,7 +917,7 @@ impl CorruptionLedgers {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CorruptionExposureRecord {
     pub incident_id: u64,
     pub subsystem: CorruptionSubsystem,
@@ -925,7 +925,7 @@ pub struct CorruptionExposureRecord {
     pub trust_delta: i64,
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CorruptionTelemetry {
     pub active_incidents: usize,
     pub exposures_this_turn: Vec<CorruptionExposureRecord>,
@@ -986,7 +986,7 @@ impl DiplomacyLeverage {
     }
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PendingCrisisSeeds {
     pub seeds: Vec<(FactionId, u16)>,
 }
@@ -1001,7 +1001,7 @@ impl PendingCrisisSeeds {
     }
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PendingCrisisSpawns {
     pub spawns: Vec<(FactionId, String)>,
 }
@@ -1016,7 +1016,7 @@ impl PendingCrisisSpawns {
     }
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DiscoveryProgressLedger {
     pub progress: HashMap<FactionId, HashMap<u32, Scalar>>,
 }
@@ -1040,7 +1040,7 @@ impl DiscoveryProgressLedger {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeDiffusionRecord {
     pub tick: u64,
     pub from: FactionId,
@@ -1051,7 +1051,7 @@ pub struct TradeDiffusionRecord {
     pub herd_density: f32,
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TradeTelemetry {
     pub tech_diffusion_applied: u32,
     pub migration_transfers: u32,
@@ -1076,7 +1076,7 @@ impl TradeTelemetry {
 /// writes `StartProfileOverrides::inventory` here at worldgen and the Startup-only
 /// `apply_trade_goods_bonus` drains the `TRADE_GOODS` grant into the opening trade-link openness
 /// bonus. Ongoing production banks into the producing band's [`crate::LocalStore`] instead.
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FactionInventory {
     stockpiles: HashMap<FactionId, HashMap<String, i64>>,
 }
@@ -1202,7 +1202,7 @@ impl FactionInventory {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommandEventKind {
     Scout,
     FollowHerd,
@@ -1395,7 +1395,7 @@ impl CommandEventKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandEventEntry {
     pub tick: u64,
     pub kind: CommandEventKind,
@@ -1453,7 +1453,7 @@ const FIRST_COMMAND_EVENT_SEQ: u64 = 1;
 /// per band, a count-bounded ring evicts a wolf raid within two turns — the bound would eat exactly
 /// what it exists to preserve. A turn window drops whole turns off the back instead, which is the
 /// unit the player (and the client's grouped log) thinks in.
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct CommandEventLog {
     entries: Vec<CommandEventEntry>,
     retention_turns: u64,

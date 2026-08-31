@@ -8,6 +8,7 @@
 //! Visibility decays over time: tiles that haven't been seen for a configurable
 //! number of turns revert from Discovered back to Unexplored.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use bevy::math::UVec2;
@@ -25,7 +26,7 @@ use crate::orders::FactionId;
 ///
 /// The `#[repr(u8)]` ensures stable discriminant values across compilations.
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum VisibilityState {
     #[default]
     Unexplored = 0,
@@ -60,14 +61,14 @@ impl VisibilityState {
 }
 
 /// Per-tile visibility metadata for a single faction.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TileVisibility {
     pub state: VisibilityState,
     pub last_seen_turn: u64,
 }
 
 /// Per-faction visibility map tracking all tiles.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FactionVisibilityMap {
     pub faction: FactionId,
     pub width: u32,
@@ -212,7 +213,7 @@ impl FactionVisibilityMap {
 }
 
 /// Global visibility state resource tracking all factions.
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VisibilityLedger {
     faction_maps: HashMap<FactionId, FactionVisibilityMap>,
 }

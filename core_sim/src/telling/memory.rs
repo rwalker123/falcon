@@ -17,12 +17,13 @@
 //! registration is generic over the kinds the catalog declares, so a modder adding a thread kind
 //! needs no engine change — the boundary `docs/plan_the_telling.md` §1b draws.
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use super::nouns::Noun;
 
 /// One remembered noun, snapshotted at first sight.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Thread {
     /// Content-defined family (`"place"`, `"beast"`, …). Never an engine enum.
     pub kind: String,

@@ -30,9 +30,10 @@ use super::{
     config::{BeatConfig, VoiceMedium, DEFAULT_VOICE_MEDIUM},
     predicate::EvalContext,
 };
+use serde::{Deserialize, Serialize};
 
 /// The rung a medium ladder currently reads at.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttainedMedium {
     pub index: u32,
     pub id: String,

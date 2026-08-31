@@ -12,7 +12,8 @@
 //! Sites are **rare**, so discovery iterates the (few) `SiteTag` tiles × the visibility
 //! ledger's factions rather than sweeping the whole map. Design: `docs/plan_exploration_and_sites.md` §3.
 
-use std::collections::{HashMap, HashSet};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeSet, HashMap};
 
 use bevy::prelude::*;
 use rand::{rngs::SmallRng, seq::SliceRandom, SeedableRng};
@@ -40,13 +41,13 @@ const SITE_PLACEMENT_SEED_SALT: u64 = 0x517E_5EED;
 
 /// Marks a tile entity as holding a Wondrous Site. `site_id` keys into the sites catalog
 /// (`SitesConfig::catalog`). One site per tile; hidden under fog until discovered.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct SiteTag {
     pub site_id: String,
 }
 
 /// One discovered site in a faction's registry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscoveredSiteRecord {
     pub pos: UVec2,
     pub site_id: String,
@@ -55,10 +56,14 @@ pub struct DiscoveredSiteRecord {
 /// Per-faction registry of discovered sites. Snapshot-persisted (a rollback must not
 /// un-discover, nor leak discoveries made after the restore point — `restore_sim_state`
 /// rebuilds it from the snapshot). A `seen` set backs an O(1) `contains(faction, pos)` check.
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DiscoveredSites {
     by_faction: HashMap<FactionId, Vec<DiscoveredSiteRecord>>,
-    seen: HashSet<(u32, u32, u32)>,
+    /// **A `BTreeSet` so the encoded checkpoint is byte-reproducible.** It is a pure membership
+    /// index — `contains`, `insert`, `clear`, never iterated — so the ordering is invisible to the
+    /// sim and visible only to serde, where a `HashSet`'s per-process order made two encodings of
+    /// one checkpoint differ. Same reason `BandEquipment` holds `BTreeMap`s.
+    seen: BTreeSet<(u32, u32, u32)>,
 }
 
 impl DiscoveredSites {

@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
@@ -19,7 +20,7 @@ use crate::{
 };
 
 /// Represents a discrete tile in the simulation grid.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct Tile {
     pub position: UVec2,
     pub element: ElementKind,
@@ -157,7 +158,7 @@ impl Tile {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct MountainMetadata {
     pub kind: MountainType,
     pub relief: f32,
@@ -165,7 +166,7 @@ pub struct MountainMetadata {
 
 /// Procedural element categories used to vary material behavior.
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ElementKind {
     Ferrite,
     Arborite,
@@ -275,7 +276,7 @@ pub const FODDER: &str = "fodder";
 ///
 /// See `docs/plan_crafting_and_materials.md` §1 → "Bands: categories on screen, exact numbers
 /// underneath".
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MaterialBatch {
     /// How much of the material this batch holds. Fixed-point, so a fractional per-turn arrival
     /// accumulates toward a whole unit instead of rounding away.
@@ -315,7 +316,7 @@ pub struct MaterialDraw {
 /// **This store stores; it does not interpret.** Deriving a band from a reading needs the material's
 /// axis list, so that lives on [`crate::materials_config::MaterialsConfig`] and the key arrives here
 /// already resolved.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LocalStore {
     goods: BTreeMap<String, Scalar>,
     /// `material id → band key → batch`. `BTreeMap` on both levels so the checkpoint and any
@@ -660,11 +661,29 @@ fn spend_order(
     order
 }
 
+/// **What an `Entity` field decodes to: nothing.**
+///
+/// Rule 1 of the checkpoint format is that no `Entity` crosses it
+/// (`.claude/rules/core_sim/checkpoints.md`) — a handle is an ECS allocation detail that the very
+/// restore reading it has already renumbered. `capture_sim_state` sets the three `Entity` fields in
+/// this module to [`Entity::PLACEHOLDER`] for that reason, and the serde derives must not quietly
+/// reintroduce what capture deliberately threw away: `bevy_ecs` implements `Serialize` for `Entity`
+/// unconditionally, so a plain derive **compiles and encodes a stale handle** rather than failing.
+///
+/// So each of those fields is `#[serde(skip, default = "entity_placeholder")]`, and a decoded value
+/// lands exactly where a capture leaves it. `Entity` has no `Default`, which is why the path is
+/// spelled out rather than left to `skip`'s implicit one.
+fn entity_placeholder() -> Entity {
+    Entity::PLACEHOLDER
+}
+
 /// Population representation bound to a home tile.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct PopulationCohort {
+    #[serde(skip, default = "entity_placeholder")]
     pub home: Entity,
     /// Current position during travel (equals home when stationary).
+    #[serde(skip, default = "entity_placeholder")]
     pub current_tile: Entity,
     /// Cached total head-count (`= round(children + working + elders)`), kept in sync by
     /// `simulate_population` so the many `.size` readers stay valid.
@@ -772,7 +791,7 @@ pub struct PopulationCohort {
 ///
 /// Snapshot wire encoding (see [`MoraleCause::as_u8`]): `0 = None, 1 = Terrain, 2 = Cold,
 /// 3 = Unrest`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum MoraleCause {
     /// Morale rose or held this turn — no dominant negative driver.
     #[default]
@@ -793,7 +812,7 @@ pub enum MoraleCause {
 /// produced it is gone — post-turn brackets and a refilled larder cannot say what emptied them —
 /// so the cause is recorded when the deaths accrue and carried on
 /// [`DemographicFlowAccumulator`] until the whole-person event fires.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum DeathCause {
     /// The food deficit dominated (or the terms tied — a starving band is the louder reading).
     #[default]
@@ -838,7 +857,7 @@ impl DeathCause {
 ///
 /// One per band, alongside the cohort. Checkpointed with it (`sim_state::BandRecord`): the carry is
 /// real state, and a rollback that dropped it would re-time every event after the restore.
-#[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct DemographicFlowAccumulator {
     /// Fractional births not yet reported.
     pub births: Scalar,
@@ -922,7 +941,7 @@ pub enum MoraleFactor {
 /// `last_morale_delta`). A fixed struct rather than a `Vec` to stay allocation-free; a future
 /// factor adds a field + a `MoraleFactor` variant. Surfaced in the snapshot so the client can
 /// itemize *why* morale is moving.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct MoraleContributions {
     /// `+population_growth_rate` (base settling growth).
     pub settling: Scalar,
@@ -946,7 +965,7 @@ pub struct MoraleContributions {
 /// It is unambiguous because a *computed* set can never carry `reserve == 0`: `reserve` is
 /// `1 + bonus × ramp` with both terms ≥ 0, so it is ≥ 1 by construction. `hunger` and `trend` both
 /// legitimately reach 0 (an empty larder, a `deficit_penalty` of 1.0), so neither could serve.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct FertilityFactors {
     /// **Gate** — did the band eat this turn (`consumed / demand`).
     pub hunger: Scalar,
@@ -1048,7 +1067,7 @@ impl PopulationCohort {
 }
 
 /// Power node metadata bound to a tile entity.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct PowerNode {
     pub id: PowerNodeId,
     pub base_generation: Scalar,
@@ -1065,7 +1084,7 @@ pub struct PowerNode {
 }
 
 /// Marks a starting population cohort spawned from a scenario profile.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct StartingUnit {
     pub kind: String,
     pub tags: Vec<String>,
@@ -1109,14 +1128,16 @@ pub struct ResidentBand;
 /// It is also the key a band's **culture layer** is filed under
 /// (`CultureOwner::from_band`) — which only works because the id survives a restore; an entity-bit
 /// key would orphan every band's culture on a rollback, exactly as it did for tiles.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Component, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 pub struct BandId(pub u64);
 
 /// What an expedition was sent to do: `Scout` (explore + report the map, PR 1) or `Hunt` (follow a
 /// migratory herd, harvest food, deliver it, PR 2) — two verbs on one traveling-party system.
 // `Eq` is deliberately absent: the mission carries an `f32` floor, and float equality is not an
 // equivalence relation. Nothing compares missions for identity — `same_source` keys on the herd id.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ExpeditionMission {
     /// Explore toward a target and report the map + any Wondrous Sites it uncovers.
     Scout,
@@ -1428,7 +1449,7 @@ impl ExpeditionMission {
 /// the target (the decision point — chain a `move_band` waypoint or `recall_expedition`). Hunt:
 /// `Hunting` (chase the herd + harvest) and `Delivering` (run carried food to the band, then
 /// auto-relaunch). Shared: `Returning` chasing the home band's live tile to fold back on recall.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExpeditionPhase {
     Outbound,
     AwaitingOrders,
@@ -1468,10 +1489,11 @@ impl ExpeditionPhase {
 /// buffers the tiles it observes in `pending_reveal` and `advance_expeditions` flushes them to the
 /// faction map as `Discovered` only while within comm range of the home band. Snapshot-persisted so
 /// a rollback preserves an in-flight expedition and its unreported findings.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct Expedition {
     /// The real band that outfitted this party. `Returning` chases this band's **live** tile (bands
     /// are nomadic), and fold-back deposits the party's workers + leftover provisions here.
+    #[serde(skip, default = "entity_placeholder")]
     pub home_band: Entity,
     pub mission: ExpeditionMission,
     pub phase: ExpeditionPhase,
@@ -1536,14 +1558,14 @@ pub struct Expedition {
 }
 
 /// Permanent settlement seeded by a founding action.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct Settlement {
     pub faction: FactionId,
     pub position: UVec2,
 }
 
 /// Anchor component for the initial hub within a settlement.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct TownCenter {
     pub construction_radius: u32,
     pub logistics_radius: u32,
@@ -1572,7 +1594,7 @@ pub fn available_workers(working: Scalar) -> u32 {
 /// unsorted state unrepresentable rather than merely unusual, so no call site has to remember to
 /// sort. Blank keys are dropped at construction for the same reason a blank
 /// [`LaborTarget::Forage::species`] is: `""` is not a plant.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TakeSelection {
     /// Private so the ordered, blank-free invariant has exactly one enforcing constructor.
     species: BTreeSet<String>,
@@ -1684,7 +1706,7 @@ impl TakeSelection {
 /// an in-range food source (Forage tile / Hunt herd) or a band-wide role (Scout / Warrior).
 /// The band is a labor pool drawing subsistence from many sources at once
 /// (`docs/plan_early_game_labor.md`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LaborTarget {
     /// Gather food from a food-module tile within `band_work_range`, stopping at a **floor**. Stored
     /// as coordinates (not an entity) so a moving band re-resolves the tile each turn — and a tile
@@ -1903,7 +1925,9 @@ impl LaborTarget {
 ///
 /// **The wire numbering is deliberately NOT this order** (`snapshot.fbs`: `Normal = 0`, so the
 /// default costs no bytes), which is why the codec maps the two rather than casting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 pub enum SourcePriority {
     /// **Give this up first.** The row a scarcity handler reaches for before any other candidate in
     /// the same step.
@@ -1964,7 +1988,7 @@ impl SourcePriority {
 ///
 /// The *pressure* — where the crew stops — still rides the target as its **floor**, and **the sim
 /// never writes it**.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LaborAssignment {
     pub target: LaborTarget,
     pub workers: u32,
@@ -2504,7 +2528,7 @@ pub enum ShedStep {
 /// is positive in every slot, which is a **continuous** source correctly rendered as a solid run.
 /// Projected from the source's **post-take** state, so slot 0 is genuinely the *next* delivery and not
 /// the one this turn already paid.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SourceYield {
     pub actual: f32,
     pub sustainable: f32,
@@ -2591,7 +2615,7 @@ pub struct SourceYield {
 /// is a point at a staffing where the underlying draw genuinely varies. Publishing `wariness` and
 /// `hit_chance` as terms instead would put a second, non-linear copy of the model in a language with
 /// no tests over it, which is the same reason `regrowthSamples` ships sampled.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct YieldRange {
     /// The pessimistic bound on the provisions component.
     pub low: f32,
@@ -2656,7 +2680,7 @@ impl SourceYield {
 /// *"the grade is fixed at craft time and never moves"* structural rather than remembered: a recipe
 /// retuned under a running world cannot re-grade a sled already in the band's hands, and neither can
 /// the recipe being swapped off the bench. It is the same reason [`DrawnInputs`] carries its reading.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BatchGrade {
     /// The grade id the draw selected — a `characteristic_bands` name (`poor` / `fair` / `good` /
     /// `excellent`), because there is **one quality ladder for the whole game**: the same four words
@@ -2676,7 +2700,7 @@ pub struct BatchGrade {
 ///
 /// **Idle stock does not rot.** Nothing charges a batch that did not go out, and nothing decays one
 /// over turns, so stockpiling ahead of a hard season is a real strategy rather than a slow loss.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EquipmentBatch {
     /// Whole units left in this batch, the one in hand included. A batch that reaches `0` is
     /// removed rather than kept at zero, so *"does the band own one"* is a question about presence.
@@ -2721,7 +2745,7 @@ pub struct EquipmentBatch {
 ///
 /// **Persisted** (`SimState`'s `BandRecord::equipment`) — a checkpoint that forgot how worn your
 /// spears were would silently re-stock them on rollback.
-#[derive(Component, Debug, Clone, Default, PartialEq)]
+#[derive(Component, Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BandEquipment {
     /// Batches per item id. A `BTreeMap` rather than a `HashMap` so the checkpoint and the wire
     /// serialize in a stable order — a rollback that reordered this would diff as a change every
@@ -3196,7 +3220,7 @@ fn usable_uses(uses: f32) -> f32 {
 /// **The grade is resolved HERE, at draw time, and never moves.** It is not a taper: an item made
 /// from the last good hide in the pile is that good however poor the pile gets while it is being
 /// made, and a tool that runs dry mid-craft does not retroactively coarsen the thing on the bench.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DrawnInputs {
     /// The amount-weighted average reading of everything drawn on the recipe's `reads` axis.
     /// `None` for a recipe that reads nothing (an alloy).
@@ -3217,7 +3241,7 @@ pub struct DrawnInputs {
 ///
 /// Distinct from [`MaterialDraw`], which is one *batch* of one material: a draw walks the store
 /// worst-first and may take from several batches, and what the bench holds afterwards is the total.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DrawnMaterial {
     /// The `materials.json` id — **generic**, `hide` and never `deer_hide`.
     pub material: String,
@@ -3238,7 +3262,7 @@ pub struct DrawnMaterial {
 ///
 /// **Persisted** (`SimState`'s `BandRecord::bench`) — a checkpoint that forgot a half-finished craft
 /// would silently hand back the materials it had already drawn.
-#[derive(Component, Debug, Clone, Default, PartialEq)]
+#[derive(Component, Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BandBench {
     /// The recipe on the bench, or `None` for an idle bench. An id from `recipes.json`, resolved at
     /// the command boundary so an unknown one is a command failure rather than a bench that quietly
@@ -3388,7 +3412,7 @@ impl BandWorkforce {
 /// single-task model (`HarvestAssignment`/`ScoutAssignment`/`FaunaPursuit`): a band now draws from
 /// many sources at once, with the invariant `Σ assignments.workers ≤ available_workers(working)`.
 /// Unassigned workers are **idle** — they eat but produce nothing (no auto-forage).
-#[derive(Component, Debug, Clone, Default)]
+#[derive(Component, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LaborAllocation {
     pub assignments: Vec<LaborAssignment>,
     /// Per-turn, per-source yield telemetry — one entry per `assignments` in the **same iteration
@@ -3619,7 +3643,7 @@ impl PartialEq for LaborAllocation {
 /// source and not about building on it; keying the queue by one would make "is this the entry for
 /// that patch" depend on a stance the player might have changed since, and would invite the floor
 /// to be read at a build site that has no business with it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BuildSource {
     /// A forage patch, by tile.
     Patch(UVec2),
@@ -3694,7 +3718,7 @@ impl BuildSource {
 }
 
 /// **WHAT AN ENTRY SAYS IT IS RAISING.**
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BuildJob {
     /// One of the four rung verbs. It is the **declaration**, and it answers only while the meter it
     /// names is at zero: `forage::patch_build_verb` / `fauna::herd_build_verb` derive the live rung
@@ -3738,7 +3762,7 @@ impl BuildJob {
 
 /// One declared build: which source, **where the player said the land should end up**
 /// ([`BuildJob::destination`]), and **what this job is raised with** ([`Self::kit`]).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BuildQueueEntry {
     pub source: BuildSource,
     pub declared: BuildJob,
@@ -4876,7 +4900,7 @@ impl LaborAllocation {
 /// `band_move_tiles_per_turn`/turn, updating `current_tile`/`home` until it arrives, then the
 /// component is removed. On the client wire as `PopulationCohortState.is_traveling` +
 /// `travel_target_x`/`travel_target_y`, so the client can draw the destination it is walking to.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BandTravel {
     pub target: UVec2,
 }
@@ -5008,7 +5032,7 @@ pub fn raid_is_recurring(floor: f32) -> bool {
 /// (`docs/plan_harvest_floor.md` §3.2) — it stopped accrual outright, which under a continuous dial
 /// would have made a whole stretch of the dial silently inert, with no lapse state left to explain
 /// it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Improvement {
     /// **Plant-only.** Prepare the patch into a tended crop (plant rung 2).
     Cultivate,
@@ -5160,7 +5184,7 @@ impl Default for PowerNode {
 }
 
 /// Knowledge fragment payload carried between factions by migration.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KnowledgeFragment {
     pub discovery_id: u32,
     pub progress: Scalar,
@@ -5208,7 +5232,7 @@ pub fn fragments_from_contract(fragments: &[ContractKnowledgeFragment]) -> Vec<K
 }
 
 /// Pending migration payload queued on a population cohort.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PendingMigration {
     pub destination: FactionId,
     pub eta: u16,

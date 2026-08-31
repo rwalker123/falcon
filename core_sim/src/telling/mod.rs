@@ -33,6 +33,7 @@ pub mod select;
 pub mod signals;
 pub mod stance;
 
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use bevy::{ecs::system::SystemParam, prelude::*};
@@ -85,7 +86,7 @@ use signals::{
 ///
 /// Per-turn scratch (the tier budget counters) is **not** here — it is recomputed each turn, so
 /// a rehydrated ledger starts the turn neutral (the `fauna.rs` convention).
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BeatLedger {
     /// Beat id → the ticks it fired on. Backs `once`, cooldowns, and `fired within`.
     fired: BTreeMap<String, Vec<u64>>,
@@ -156,7 +157,7 @@ impl Eq for BeatLedger {}
 /// it"*, which is absurd the turn after the word was given. Without the tick, the only way to
 /// express elapsed time was a `turn.index` trend, which rises unconditionally and therefore means
 /// nothing more than "we are past turn 20". `answered`'s `min_turns_since` is the honest version.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Answer {
     pub choice: String,
     /// The tick the fork was answered on — including an expiry auto-defer, which resolves through
@@ -168,7 +169,7 @@ pub struct Answer {
 pub type VoiceLines = BTreeMap<String, String>;
 
 /// An answer offered by a [`PendingFork`], rendered at post time in every register.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RenderedChoice {
     pub id: String,
     /// Computed here, not re-derived downstream: a consumer must not have to know that an empty
@@ -186,7 +187,7 @@ pub struct RenderedChoice {
 /// rendered string would freeze the fork in whichever voice happened to be active when it fired.
 /// Rendering all of them also pins noun resolution to that moment, which is correct — the herd you
 /// were chasing *then* is what the question is about.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingFork {
     pub beat_id: String,
     pub wardrobe_id: String,

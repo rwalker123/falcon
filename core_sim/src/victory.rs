@@ -5,7 +5,7 @@ use std::{
 };
 
 use bevy::prelude::{Res, ResMut, Resource};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::config_load::{load_config_from_env, ConfigLoadError};
@@ -26,7 +26,7 @@ fn default_continue_after_win() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash, Default, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VictoryModeKind {
     #[default]
@@ -66,7 +66,7 @@ pub struct VictoryModeDefinition {
     pub requires_capabilities: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Default, Serialize)]
 #[serde(transparent)]
 pub struct VictoryModeId(pub String);
 
@@ -100,7 +100,7 @@ impl VictoryConfig {
     }
 }
 
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct VictoryState {
     pub modes: Vec<VictoryModeState>,
     pub winner: Option<VictoryResult>,
@@ -123,7 +123,7 @@ impl VictoryState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VictoryModeState {
     pub id: VictoryModeId,
     pub kind: VictoryModeKind,
@@ -156,7 +156,7 @@ impl VictoryModeState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VictoryResult {
     pub mode: VictoryModeId,
     pub faction: FactionId,

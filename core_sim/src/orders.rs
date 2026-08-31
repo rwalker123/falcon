@@ -1,10 +1,11 @@
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use bevy::prelude::Resource;
 
 /// Identifier for a faction participating in the turn loop.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct FactionId(pub u32);
 
 impl fmt::Display for FactionId {
