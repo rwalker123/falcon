@@ -93,6 +93,21 @@ signal work_tab_requested(band_entity: int)
 ## back. The payload therefore carries no `pending_entity`.
 signal road_improvement_requested(payload: Dictionary)
 
+## ⛔ **PUT A ROAD DOWN — `abandon <faction> <x> <y>`, and it is the only undo a BUILT road has.**
+## `unqueue` withdraws a DECLARATION and nothing else; the moment any work is banked the verb that
+## releases a keeper is `abandon`, which was command-line only — so a road handed to the wrong band
+## could not be taken back from the UI at all.
+##
+## ⛔ **IT NAMES A PLACE, NOT A ROAD.** `handle_abandon` drops the faction's labor rows on that tile as
+## well as the road's keeper and its queue entry, because a tile may carry a road AND a patch and
+## putting one down without the other would be silently partial. The row says so where the tile also
+## carries work of this faction's. **There is no road-only abandon and this client must not invent
+## one** — a command narrower than the sim implements would lie about what the button does.
+##
+## Relayed by `HudLayer` onto its own `abandon_requested`, which `Main.format_abandon` builds. **No
+## optimistic write**, exactly as the declaration beside it: a road has no labor row to shadow.
+signal road_abandon_requested(payload: Dictionary)
+
 ## **THERE IS NO KEEPING SIGNAL HERE** (`docs/plan_standing_upkeep.md` §2.5). `maintain_requested`
 ## retired with the `maintain` command it carried: maintenance left the tile, so the keeping is
 ## staffed as a band-wide standing role from the Band panel's WORKFORCE zone and this sheet has no
@@ -147,6 +162,17 @@ var _road_drawer_shape: Array = []
 ## correctly once and opens onto an empty card ever after).
 var _road_ladder: PopupPanel = null
 var _road_ladder_body: MarginContainer = null
+## ⛔ **WHICH BAND THE OPEN CARD IS ACTING FOR, and it is the card's own state rather than the HUD's.**
+## The keeper of a road is decided by the verb that raises it, so the ladder had to grow a picker (see
+## `_open_road_ladder`); the pick lives only as long as the card, because the next road is a different
+## question. `ComposeState.NO_BAND_ENTITY` between opens.
+##
+## **THE TILE AND THE ROW INDEX RIDE WITH IT** so a pick can re-render the rows in place: every gate on
+## the track is resolved against the acting band, so a stale row would offer a rung the newly-chosen
+## band cannot have.
+var _road_ladder_band_entity: int = ComposeState.NO_BAND_ENTITY
+var _road_ladder_tile: Dictionary = {}
+var _road_ladder_index: int = -1
 ## **RETIRED — `_pen_extend_crew`, the ring's own dialled crew** (`docs/plan_standing_upkeep.md`
 ## §2.5). It held the number a stepper beside the Extend-pen button had dialled, because
 ## `extend_pen` took a trailing worker count; the verb DECLARES now — it appends a queue entry and the
@@ -4402,7 +4428,36 @@ func _open_road_ladder(tile_info: Dictionary, index: int, anchor: Control) -> vo
         push_warning("DrawerComposeController: a Road ▸ was pressed with no route rung catalog on " +
             "the wire — the ladder cannot state a single rung")
         return
-    var band := _resolve_assign_band()
+    # ⛔ **THE ACTING BAND IS PICKED HERE AND THE PLAYER CAN CHANGE IT.** It was
+    # `_resolve_assign_band()` alone — *whichever band the left panel happens to be showing* — so a
+    # tile graded while reading Band 3's page became Band 3's job for good, a decision the player never
+    # made. That is the same defect `_band_working_source` was written to close for the compose sheet,
+    # and roads escaped it because a road has no work row to infer an owner from.
+    _road_ladder_tile = tile_info
+    _road_ladder_index = index
+    _road_ladder_band_entity = int(_default_road_band(road, tile_info).get(
+        "entity", ComposeState.NO_BAND_ENTITY))
+    var card := _ensure_road_ladder()
+    _fill_road_ladder()
+    card.popup(_road_ladder_anchor_rect(anchor))
+
+## **THE CARD'S CONTENTS, REBUILT IN PLACE** — the band row, the track, and the abandon row beneath it.
+##
+## ⛔ **A PICK RE-RENDERS AND MUST NOT CLOSE THE CARD.** Every gate on the track is resolved against
+## the acting band (`RungGates.route_gates(…, band, keeper_label)`) and the turns estimate is priced at
+## that band's own `builders` pool, so a row left standing after a pick would offer a rung the newly
+## chosen band cannot have, at a pace it cannot keep. `popup()` is the OPEN's business alone; this
+## refills the same Window.
+func _fill_road_ladder() -> void:
+    var margin := _road_ladder_body
+    if margin == null or not is_instance_valid(margin):
+        return
+    var roads := _tile_roads(_road_ladder_tile)
+    if _road_ladder_index < 0 or _road_ladder_index >= roads.size():
+        return
+    var road: Dictionary = roads[_road_ladder_index]
+    var ladder := HudRouteVocab.route_ladder(_topbar.route_rungs())
+    var band := _band_labor.player_band_by_entity(_road_ladder_band_entity)
     # ⛔ **THE KEEPER'S NAME IS RESOLVED HERE AND NOWHERE ELSE**, the tile card's own rule one block
     # up: a road carries a `band_id`, this client has exactly one band-naming rule, and the gate
     # layer is stateless and holds no roster. `""` for a band outside the player's roster, which the
@@ -4411,18 +4466,160 @@ func _open_road_ladder(tile_info: Dictionary, index: int, anchor: Control) -> vo
     var keeper_label := ""
     if HudRouteVocab.has_keeper(road):
         keeper_label = _band_labor.band_label_for_id(HudRouteVocab.keeper_band_id_of(road))
+    # **THE CREW IS THE ACTING BAND'S `builders` POOL**, pending-aware, and the kit is what that pool
+    # carries for the ROUTE branch — `{}` today, no shipped kit declaring a build tool that serves it,
+    # which prices a road at bare hands and is the truth about the shipped equipment rather than a gap.
+    var builders := int(_band_labor.effective_role_workers(
+        band, HudConst.LABOR_KIND_BUILDERS).get("workers", SourceForecast.BUILD_CREW_NONE))
+    var kit_gear := KitRoster.build_gear(band,
+        HudBandLaborState.role_kit_id(band, HudConst.LABOR_KIND_BUILDERS),
+        KitRoster.BUILD_BRANCH_ROUTE)
     var rows := RungLadder.route_track(road, ladder, _player_knowledge(),
-        _topbar.knowledge_labels(), band, keeper_label)
-    var card := _ensure_road_ladder()
-    var margin := _road_ladder_body
+        _topbar.knowledge_labels(), band, keeper_label, builders, kit_gear)
     HudWidgets.clear_children(margin)
-    margin.add_child(RungLadder.build_track(rows, func(verb: String) -> void:
+    var column := VBoxContainer.new()
+    column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
+    # **THE BAND ROW LEADS THE CARD**, above `RAISE IT TO…`: who keeps it is decided before which
+    # rung, and every row below reads differently once it moves.
+    var picker := _build_road_band_picker(band)
+    if picker != null:
+        column.add_child(picker)
+    column.add_child(RungLadder.build_track(rows, func(verb: String) -> void:
         # The press closes the card BEFORE it emits, the destination track's own rule: the declaration
         # re-renders the drawer this card is anchored to.
         _dismiss_road_ladder()
-        _emit_road_improvement(band, tile_info, verb),
+        _emit_road_improvement(band, _road_ladder_tile, verb),
         HudRouteVocab.ROAD_LADDER_TITLE))
-    card.popup(_road_ladder_anchor_rect(anchor))
+    var abandon := _build_road_abandon_row(road, band)
+    if abandon != null:
+        column.add_child(abandon)
+    margin.add_child(column)
+
+## ⛔ **WHICH BAND THE CARD OPENS ON, AND THE DEFAULT IS THE ONE A PLAYER WOULD HAVE PICKED ANYWAY.**
+##
+## **THE NEAREST BAND, wrap-aware — and the reason is a PRICE rather than a convenience.** Distance
+## multiplies BOTH the build pile and the standing bill (`keeper_remoteness`), so the nearest band is
+## also the cheapest keeper this road can have.
+##
+## ⛔ **EXCEPT WHERE THE ROAD ALREADY HAS A KEEPER IN THE PLAYER'S ROSTER — THEN IT IS THE KEEPER.**
+## Re-issuing on a road you already keep is the ordinary case (trail → dirt → paved), and defaulting
+## away from the keeper would open the card on a rung the sim refuses outright (*another band keeps
+## it*) — a card greying its own live row on the frame it opens.
+##
+## `{}` where the player holds no bands at all, which the rows' `pick a band` gate then states.
+func _default_road_band(road: Dictionary, tile_info: Dictionary) -> Dictionary:
+    if HudRouteVocab.has_keeper(road):
+        var keeper := _band_labor.player_band_by_band_id(HudRouteVocab.keeper_band_id_of(road))
+        if not keeper.is_empty():
+            return keeper
+    var target_x := int(tile_info.get("x", -1))
+    var target_y := int(tile_info.get("y", -1))
+    var nearest := {}
+    var nearest_distance := SourceForecast.HEX_DISTANCE_UNKNOWN
+    for band_variant in _band_labor.current_player_bands():
+        if not (band_variant is Dictionary):
+            continue
+        var band: Dictionary = band_variant
+        var tile := SourceForecast.band_tile(band)
+        var distance := SourceForecast.hex_distance_wrapped(tile.x, tile.y, target_x, target_y,
+            _band_labor.grid_width(), _band_labor.wrap_horizontal())
+        # **A DISTANCE THE GRID CANNOT ANSWER IS NOT A NEAR ONE.** `hex_distance_wrapped` reports
+        # `SourceForecast.HEX_DISTANCE_UNKNOWN` for a band or a tile it cannot place, and taking that as zero would
+        # make an unplaceable band the default keeper of every road on the map.
+        if distance == SourceForecast.HEX_DISTANCE_UNKNOWN:
+            continue
+        # **THE FIRST BAND IN ROSTER ORDER WINS A TIE**, so the default is deterministic rather than
+        # dependent on which row the walk happened to reach first.
+        if nearest.is_empty() or distance < nearest_distance:
+            nearest = band
+            nearest_distance = distance
+    # Nobody placeable: the roster's own first band, which is what every other unplaced-band fall-back
+    # in this controller answers, and `{}` only where there is no roster at all.
+    if nearest.is_empty():
+        var bands := _band_labor.current_player_bands()
+        return bands[0] if not bands.is_empty() and bands[0] is Dictionary else {}
+    return nearest
+
+## The `Band:` row itself — `_build_band_picker`'s own family, so `Band:` here and `Band:` on the
+## compose sheet line their value controls up at one declared key width and cannot drift.
+##
+## `null` where the player holds no bands: an empty selector states nothing, and the rows' own
+## `pick a band` gate is what says so in that state.
+func _build_road_band_picker(selected: Dictionary) -> HBoxContainer:
+    if _band_labor.current_player_bands().is_empty():
+        return null
+    return _build_band_picker(selected, func(picked: Dictionary) -> void:
+        _road_ladder_band_entity = int(picked.get("entity", ComposeState.NO_BAND_ENTITY))
+        _fill_road_ladder())
+
+## ⛔ **THE UNDO FOR A ROAD THAT IS ALREADY SOMEBODY'S JOB**, at the bottom of the card.
+##
+## **OFFERED ONLY WHERE THE KEEPER IS IN THE PLAYER'S ROSTER.** A road nobody keeps has nothing to put
+## down, and a road another people keeps is not yours to drop — in both cases the button would emit a
+## command the sim refuses, which is the shape the ladder's own rows exist to avoid.
+##
+## ⛔ **AND IT NAMES A PLACE, SO IT STATES WHAT ELSE GOES DOWN.** `abandon <faction> <x> <y>` drops the
+## faction's labor rows on that tile as well as the road's keeper: the sim's own note says why — a tile
+## may carry a road AND a patch, and dropping one without the other would be silently partial on
+## exactly the tiles where a band both farms and keeps a road. Where a band of the player's is working
+## this hex the row carries a second line saying so; on bare ground it is a plain button.
+##
+## `null` where there is nothing to put down.
+func _build_road_abandon_row(road: Dictionary, band: Dictionary) -> VBoxContainer:
+    if not HudRouteVocab.has_keeper(road):
+        return null
+    var keeper := _band_labor.player_band_by_band_id(HudRouteVocab.keeper_band_id_of(road))
+    if keeper.is_empty():
+        return null
+    var column := VBoxContainer.new()
+    column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
+    var button := Button.new()
+    button.text = HudRouteVocab.ROAD_LADDER_ABANDON_LABEL
+    button.tooltip_text = HudRouteVocab.ROAD_LADDER_ABANDON_TOOLTIP
+    button.set_meta(HudRouteVocab.ROAD_LADDER_ABANDON_META, true)
+    button.custom_minimum_size = Vector2(HudWorkVocab.RUNG_TRACK_WIDTH, 0.0)
+    HudStyle.apply_button(button, "ghost")
+    HudWidgets.compact(button, HudWorkVocab.RUNG_TRACK_ROW_FONT_SIZE,
+        HudWorkVocab.WORK_PAGER_PADDING_V)
+    button.pressed.connect(func() -> void:
+        # The press closes the card BEFORE it emits, the rung presses' own rule: the drop re-renders
+        # the drawer this card is anchored to.
+        _dismiss_road_ladder()
+        _emit_road_abandon(keeper, _road_ladder_tile))
+    column.add_child(button)
+    if _faction_works_tile(_road_ladder_tile):
+        column.add_child(RungLadder.build_aside(HudRouteVocab.ROAD_LADDER_ABANDON_ALSO, true))
+    return column
+
+## **DOES ANY BAND OF THE PLAYER'S WORK THIS HEX?** — the test behind the abandon row's second line,
+## and it is a TILE test because `abandon` is a tile command. A hunt names a herd rather than a hex, so
+## the forage row is the whole of what `bands_working_source` can find under a tile target.
+func _faction_works_tile(tile_info: Dictionary) -> bool:
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
+    if x < 0 or y < 0:
+        return false
+    for band_variant in _band_labor.current_player_bands():
+        if band_variant is Dictionary \
+                and not _band_labor.forage_assignment_of(band_variant as Dictionary, x, y).is_empty():
+            return true
+    return false
+
+## **PUT THE ROAD DOWN — `abandon <faction> <x> <y>`, built by `Main.format_abandon`.**
+##
+## ⛔ **NO BAND TOKEN, AND THAT IS THE SIM'S GRAMMAR RATHER THAN AN OMISSION.** `abandon` names a
+## faction and a place; it drops every band of that faction's holding there. The band dict is read for
+## its FACTION alone, exactly as `_emit_road_improvement` reads it for the faction beside the band.
+func _emit_road_abandon(band: Dictionary, tile_info: Dictionary) -> void:
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
+    if x < 0 or y < 0:
+        return
+    emit_signal("road_abandon_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "x": x,
+        "y": y,
+    })
 
 ## **DECLARE A ROUTE RUNG — `grade|pave <faction> <band> <x> <y>`, and the command has not moved.**
 ##

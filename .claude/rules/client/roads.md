@@ -17,12 +17,12 @@ here are its traps, arriving one layer out.
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/hud_route_vocab.gd` (`HudRouteVocab`) | The road VOCABULARY leaf — the four rung keys + their labels + `RUNG_ORDER`, the tile card's **five** row keys and their formats, one reader per wire field, and one composer per row (`road_row_value` and its `progress_clause` / `bonus_value` / `upkeep_value` / **`keeper_value`** / `reverting_value`, joined by `road_lines`). It also owns the four `*_value_hex` forks `DetailFormat._value_hex` dispatches to, so a road's ink is decided beside the words it tints. A vocab module with static funcs, the `hud_work_vocab.gd` shape; it reads `SourceForecast` / `DetailFormat` / `HudSelectionVocab` / `HudConst` / `HudStyle` inside functions only, never in a `const`, so it adds no load cycle — **and that contract is what lets `SourceForecast` alias its four `RUNG_KEY_*` at `const` level** rather than spelling the wire's route rungs twice |
+| `ui/hud/hud_route_vocab.gd` (`HudRouteVocab`) | The road VOCABULARY leaf — the four rung keys + their labels + `RUNG_ORDER`, the tile card's **four** row keys and their formats, one reader per wire field, and one composer per row (`road_row_value` and its `progress_clause` / `bonus_value` / **`upkeep_value`** / `reverting_value`, joined by `road_lines`, with `upkeep_tooltip` for the figures that left the row). It also owns the four `*_value_hex` forks `DetailFormat._value_hex` dispatches to, so a road's ink is decided beside the words it tints. A vocab module with static funcs, the `hud_work_vocab.gd` shape; it reads `SourceForecast` / `DetailFormat` / `HudSelectionVocab` / `HudConst` / `HudStyle` inside functions only, never in a `const`, so it adds no load cycle — **and that contract is what lets `SourceForecast` alias its four `RUNG_KEY_*` at `const` level** rather than spelling the wire's route rungs twice |
 | `ui/AnnotationRenderer.gd` → the `ROAD_*` family | The map draw: `draw_road_network` walks `MapView.road_network` (world state read through the `_view` back-ref, exactly as `units` / `herds` are) and `_draw_road` stamps **one HEX per road** — `MapView._hex_center_wrapped` for the placement, `_outline_hex_at` at `ROAD_TILE_RADIUS_FACTOR` of the tile radius for the ring. It is called from `_draw` right after the crisis annotations — above the tile tints, beneath every marker, ring and selection outline, because a road is infrastructure IN the ground rather than something standing on it |
 | `ui/hud/RungLadder.gd` → `route_track` / `build_track`'s `title` | **THE ROUTE BRANCH'S ROW PRODUCER, a SIBLING of `track` and never a widening of it** — `track` takes a labor `kind` and a wire source dict, and a road has neither. It emits `track`'s own `ROW_*` shape so the RENDERER is shared (`build_track` gained one optional heading argument and nothing else), walks `HudRouteVocab.route_ladder`'s ordered catalog, and owns the branch's seventh state, `STATE_UNORDERED` — the rung nobody declares. Its two private leaves are `_route_progress_aside` (the meter, on the row DIRECTLY above the standing rung and no other) and `_route_hold_asides` (the standing bill, in the plant/animal branches' own sentence) |
 | `ui/hud/RungGates.gd` → `route_gates` / `route_knowledge_reason` | **THE ROUTE ARM of the shared gate layer**, keyed **RUNG KEY** rather than verb (two route rungs declare none, so a verb-keyed table cannot tell `path` from `trail`). Four gates in reading order — the ground, the un-orderable rung, the craft, the keeper — each carrying its own remedy. The craft's NAME is threaded in as a `{knowledge_id: display_name}` parameter off the ladder's knowledge roster, never a table here; its REMEDY is the rung whose `earns_knowledge` names that craft, **looked up through `HudRouteVocab.ladder_rung_teaching` and never inferred from `requires_rung`** |
-| `ui/hud/DrawerComposeController.gd` → the `build_road_drawer_actions` family | The tile card's `Road ▸` action and the `PopupPanel` it opens (`_open_road_ladder` / `_emit_road_improvement` / `_ensure_road_ladder` / `_road_ladder_anchor_rect` / `_dismiss_road_ladder`), filling `%RoadLadderControls` — its own container at the BOTTOM of the card, since `%ForageAssignControls` is gated on a gathering site with a band in hand. It emits `road_improvement_requested`, which `HudLayer` relays straight onto `improvement_requested` with **no** optimistic overlay write |
-| `native/src/dict/routes.rs` | `routes_to_array` — **one dict per road TILE**, the `connections.rs` shape. The row's identity is `tile_x` / `tile_y`, which replaced the retired `RouteId`; beside them ride `has_keeper` / `keeper_band_id` (read the bool first — `0` is a real `BandId`) and `keeper_remoteness`, the multiple distance put on that road's price. There is **no path on the row** — a link knows its two endpoints, so the tiles between them are computable. **`route_rungs_to_array` is the file's second producer and answers a different question** — one row per RUNG of the branch, published once per world beside `ladderKnowledge`, carrying no faction and no tile |
+| `ui/hud/DrawerComposeController.gd` → the `build_road_drawer_actions` family | The tile card's `Road ▸` action and the `PopupPanel` it opens (`_open_road_ladder` / `_emit_road_improvement` / `_ensure_road_ladder` / `_road_ladder_anchor_rect` / `_dismiss_road_ladder`), filling `%RoadLadderControls` — its own container at the BOTTOM of the card, since `%ForageAssignControls` is gated on a gathering site with a band in hand. It emits `road_improvement_requested`, which `HudLayer` relays straight onto `improvement_requested`, and `road_abandon_requested`, which it relays onto `abandon_requested` — both with **no** optimistic overlay write. `_fill_road_ladder` is the card's re-render seam (the band picker calls it) and `_default_road_band` decides which band it opens on |
+| `native/src/dict/routes.rs` | `routes_to_array` — **one dict per road TILE**, the `connections.rs` shape. The row's identity is `tile_x` / `tile_y`, which replaced the retired `RouteId`; beside them ride `has_keeper` / `keeper_band_id` (read the bool first — `0` is a real `BandId`) and `keeper_remoteness`, the multiple distance put on that road's price. There is **no path on the row** — a link knows its two endpoints, so the tiles between them are computable. **`route_rungs_to_array` is the file's second producer and answers a different question** — one row per RUNG of the branch, published once per world beside `ladderKnowledge`, carrying no faction and no tile. One field on it is not the rung's: `build_work_per_worker_turn` is the SIM's bare worker output, the same on every row, riding the catalog because the catalog is the set of numbers identical for every road in the world |
 
 ## ⛔ A ROAD IS NOT AN ORDER PATH, AND THE OBVIOUS NAME WAS ALREADY TAKEN
 
@@ -145,8 +145,7 @@ row.
 |---|---|---|---|
 | `Road` | a road exists on the tile — **the only unconditional row** | the rung it HOLDS, plus `N% to <next rung>` while something is rising above it, plus the branch's own hazard word `washing out` when short | ⛔ **THE PERCENTAGE MUST NOT READ AS "THIS ROAD IS 25% BUILT".** A path at 25% is a COMPLETE path a quarter of the way to becoming a trail, so the rung stands alone as the value and the meter is a qualifier naming where it is GOING. The retired `Wearing in: Trail 25%` row said the opposite, and `build_fraction` is a DIFFERENT rung's meter — a reader that thresholded it would call a fully-worn trail a dirt road on the turn its first traffic banked. **Rendered only below `1.0`**: the wire states exactly `1.0` for a rung just finished AND for the top of the ladder, so the test is a plain comparison |
 | *(the bonus)* | the rung saves something on the loss axis | ⛔ **what the rung is BUYING, in ONE clause** — the loss it saves | see below. **UNLABELLED** — `Buys:` was a key doing no work, the value already reading as a benefit. The sight and the span moved to the block's HOVER (`bonus_tooltip`): the row printed all three and wrapped to three lines under a one-word value |
-| `Upkeep` | the road actually owes something — **neither free rung does** | the bill, the SHORTFALL where there is one, and the keepers the bill wants | all three figures are published; `demand − supplied == shortfall` holds verbatim on the wire and the keeper count is the sim's own `ceil`. **The word is `Upkeep`** — see below |
-| `Kept by` | the road has a keeper, or owes a bill nobody is paying | ⛔ **WHOSE JOB THIS ROAD IS**, and what distance is charging them for it | see below |
+| `Upkeep` | the road actually owes something — **neither free rung does** | ⛔ **WHOSE JOB IT IS, and whether they are covering it** — `Band 3`, `Band 3 (short 1 worker)`, `another people`, or `nobody — grade it again to take it on` | the bill and the keeper count are on the block's HOVER. **They were the row, and together they were gibberish** — see below. **The word is `Upkeep`** — see below too |
 | `Reverting` | the road is at risk | the COUNTDOWN, and `now` at zero | `0` means it is reverting NOW. It renders only while the road is genuinely short, because a road whose bill is met reads its rung's full grace + 1 — *"walk away and you have this long"* — which is not news |
 
 **RETIRED — `ROAD_GLYPH` (🛣).** It led the rung row's VALUE on a row whose KEY already reads `Road`,
@@ -168,31 +167,61 @@ runway tint reads the plain ink it always did.
 spent on the absence of a bill, on every road a current game can contain. The floor declares no upkeep
 at all, and the row's ABSENCE states that without a line.
 
-### ⛔ THE `Kept by:` ROW IS THE ONLY SURFACE A REAL DECISION HAS
+### ⛔ THE BILL IS A NAME, AND THE FIGURES ARE ON THE HOVER
 
-**The keeper is the band that BUILT the tile, wherever that band has since walked.** `route_keeping_claims`
-walks the roads a band keeps and never reads that band's position, so a camp four tiles away goes on
-paying and goes on being served. Nothing else in the client can say that, which is why the row exists.
+It was two rows and three figures:
 
-- **The NAME is resolved by the drawer, never by the vocab leaf.** A road carries a `band_id` and this
-  client has exactly one band-naming rule (`HudBandLaborState.band_label_for_id` →
-  `HudFormat.band_display_name`), so `SubjectDrawerController` looks it up and hands `keeper_value` a
-  LABEL. A band outside the player's roster resolves to `""` and reads **`another people`** — a road
-  really can be kept by a people you merely know of, and a raw id is a fact nobody can act on.
-- ⛔ **THE REMOTENESS CLAUSE IS THE POINT.** `keeper_remoteness` is the multiple the sim quoted when
-  the keeper took the tile on, applied to BOTH the build pile and the standing upkeep — so a road
-  beyond `route_range.base_tiles` is dearer for exactly one reason and this is the only row that says
-  which. **Distance is a cost and never a wall**: nothing refuses the road, so without this the player
-  sees a bill larger than the rung says with no explanation anywhere. It is a PRESENTATION of the
-  published multiple; the client never multiplies anything.
-- **It rides the KEEPER's row rather than the bill's** because it is a fact about the job, not about
-  the rung — and it reads in plain ink for the same reason: a keeper at a distance is a price, not an
-  alarm.
-- **NO ROW AT ALL on a road that owes nothing and nobody keeps** — that is the free floor, where there
-  is no job to be on the hook for. A road that OWES a bill with no keeper is the opposite
-  case and says so in **amber**: the keeping band is gone, so it is decaying towards nobody, and
-  **re-issuing `grade` / `pave` is how another band picks it up**. The clause says that rather than
-  naming an adopt verb, because adoption *is* the same act as building.
+```text
+Upkeep      0.0 work a turn · wants 1 keepers
+Kept by     Band 3
+```
+
+**Both numbers are individually correct and together they are nonsense.** A trail holding 2% of the
+dirt road banked owes ~`0.009` work a turn — a meter carrying work is billed a proportional share of
+the rung it is climbing toward — and `DetailFormat.format_work_units` rounds that **down** to `0.0`
+while `road_upkeep_workers_needed`'s `ceil` rounds the same number **up** to `1`. Two roundings in
+opposite directions on one quantity, printed side by side. Reported from play: *"We don't need both
+upkeep and kept by. We can show upkeep warnings, like `Upkeep: Band 3 (short 1 worker)`."*
+
+**`ROAD_KEEPER_ROW` (`Kept by`) IS RETIRED AS A VISIBLE ROW AND `Upkeep:` ABSORBED IT.** One row:
+
+| road | row |
+|---|---|
+| owes nothing | **no row at all** (both free rungs) |
+| keeper in the player's roster, bill met | `Upkeep: Band 3` |
+| keeper in the player's roster, short | `Upkeep: Band 3 (short 1 worker)` |
+| keeper outside the roster | `Upkeep: another people` |
+| owes a bill, nobody keeps it | `Upkeep: nobody — grade it again to take it on` |
+
+- ⛔ **THE WORK FIGURE AND THE KEEPER COUNT LEFT THE ROW ENTIRELY**, to the block hover through
+  `ctx.row_tooltips` — the seam the payoff row already uses (`upkeep_tooltip`). The exact bill stays
+  available and stops being the headline, which is the only arrangement in which `0.0 work a turn`
+  can never render as one. **Nothing was deleted**, and a cut that lost the figures rather than
+  relocating them is this branch's own recurring failure.
+- ⛔ **`short N worker(s)` IS IN WORKERS AND IS DERIVED FROM THE SHORTFALL** —
+  `SourceForecast.workers_for_work(upkeepShortfall)`, `ceil(work / PER_WORKER_OUTPUT)`, which is the
+  arithmetic the sim runs to publish `upkeepWorkersNeeded` from the demand. **Never `wants −
+  assigned`**: `roadwork` is a band-wide POOL and its share of any one road is the sim's answer, so
+  the client holds no per-road head count to subtract from — the rule this branch has already shipped
+  as a defect twice. It **pluralizes**; the shipped row said `wants 1 keepers`.
+- **The remoteness clause moved to the hover with them** (`far from them — ×2.0 the rung's price`).
+  It is a real fact with no other surface — `keeper_remoteness` prices BOTH the build pile and the
+  standing bill, and distance is a cost that refuses nothing — so it is kept rather than cut; but it
+  is rare and long, and length was the complaint.
+- ⛔ **DISPLAY ONLY.** `owes_keeping`'s floor, `road_upkeep_workers_needed`, the interpolated demand
+  and every sim number are untouched. **The billing is correct**; what was wrong was the sentence.
+- **The ink follows the words, not a glyph.** The row carries no hazard mark now, so
+  `upkeep_value_hex` forks on `ROAD_UPKEEP_SHORT_MARK` — the composer's own spelling of `(short ` —
+  and on `ROAD_KEEPER_NOBODY`. One spelling, two readers; two spellings is how a row comes to say
+  *short* in plain ink. It still answers the glyph, because the `Reverting` row dispatches here too.
+
+**The keeper is still the band that BUILT the tile, wherever that band has since walked.**
+`route_keeping_claims` walks the roads a band keeps and never reads that band's position, so a camp
+four tiles away goes on paying and goes on being served. That fact did not move; only the row it is
+stated on did. The NAME is still resolved by the drawer and never by the vocab leaf — a road carries
+a `band_id`, this client has one band-naming rule (`HudBandLaborState.band_label_for_id` →
+`HudFormat.band_display_name`), and `""` reads `another people`, a road being keepable by a people
+you merely know of.
 
 ### ⛔ THE PAYOFF ROW IS THE POINT OF THE WHOLE READOUT, AND IT CARRIES NO LABEL
 
@@ -430,6 +459,142 @@ distance adds, then every refusal. The price line renders **only where the rung 
 rung that is free to hold it would restate the face and add nothing, and a line that says nothing is
 what this cut removed.
 
+### ⛔ THE PLAYER CHOOSES WHO KEEPS IT — a `Band:` picker at the TOP of the card
+
+The acting band was `DrawerComposeController._resolve_assign_band()` alone — **whichever band the
+left panel happened to be showing** — and there was no picker at all. A tile graded while reading
+Band 3's page became Band 3's job for good, and the player never made that decision. **It is the same
+defect `_band_working_source` was written to close for the compose sheet**; roads escaped it because
+a road has no work row to infer an owner from, and there is no third option: `grade` / `pave` carry a
+band token that IS the keeper, so somebody has to be named out loud.
+
+- **A field row ABOVE `RAISE IT TO…`**, built with `HudWidgets.build_field_key` +
+  `build_option_picker` through the compose sheet's own `_build_band_picker` — so `Band:` here and
+  `Band:` there line their value controls up at one declared key width and cannot drift
+  (`labor-ui.md` → "The compose sheet's FIELD ROWS are one family"). Who keeps it is decided before
+  which rung, and every row below reads differently once it moves.
+- **The options are the player's bands in ROSTER order**, named through this client's one band-naming
+  rule, so a band here and the same band on the dock cannot be called two different things.
+- **THE DEFAULT IS THE NEAREST BAND**, wrap-aware (`SourceForecast.hex_distance_wrapped`), and the
+  reason is a PRICE rather than a convenience: distance multiplies **both** the build pile and the
+  standing bill (`keeper_remoteness`), so the nearest band is also the cheapest keeper this road can
+  have — the one a player would have picked anyway. First in roster order wins a tie, so the default
+  is deterministic; a band the grid cannot place is skipped rather than counted as distance zero.
+- ⛔ **EXCEPT WHERE THE ROAD ALREADY HAS A KEEPER IN THE PLAYER'S ROSTER — THEN IT IS THE KEEPER.**
+  Re-issuing on a road you already keep is the ordinary case (trail → dirt → paved), and defaulting
+  away from the keeper would open the card on a rung the sim refuses outright (*another band keeps
+  it*) — a card greying its own live row on the frame it appears.
+- ⛔ **A PICK RE-RENDERS THE ROWS IN PLACE AND MUST NOT CLOSE THE CARD.** `_fill_road_ladder` refills
+  the same Window; `popup()` is the OPEN's business alone. Every gate on the track is resolved against
+  the acting band (`RungGates.route_gates(…, band, keeper_label)`) and the turns estimate is priced at
+  that band's own `builders` pool, so a row left standing after a pick would offer a rung the newly
+  chosen band cannot have, at a pace it cannot keep.
+- **The `pick a band` gate did not become dead.** It fires where the player holds no bands at all,
+  which is also the state in which the picker is not drawn — an empty selector states nothing.
+
+### ⛔ THE ROW SAYS HOW LONG, AND THE CREW IS THE ACTING BAND'S
+
+`Dirt Road — 110 work` at one builder is ~110 turns and the card said nothing about it, while every
+other build surface in the game states a turns estimate. `route_track` had carried
+`ROW_TURNS_KEY: BUILD_TURNS_NO_ESTIMATE` on every row since the branch shipped; it is filled now.
+
+- **ON A BUILDABLE ROW IT RIDES THE FACE** (`110 work · ≈39 turns`, `HudWorkVocab.RUNG_TRACK_COST_FORMAT`),
+  **and on a REFUSED one it rides the HOVER**. The face holds one clause beside the price and on a
+  refused rung that clause is the refusal; `110 work · ≈110 turns · needs Roadbuilding` is exactly the
+  wordiness this card was cut down from. A rung a player plans toward is still one they can plan
+  against, which is what the hover line is for.
+- ⛔ **IT IS THE CLOSED FORM'S OWN SUPPLY SEAM, NOT A SECOND ESTIMATOR.**
+  `SourceForecast.pool_work_supply` is precisely what `build_turns_at` divides by, so a road and a
+  Cultivate are paced by one expression. `build_turns_at` ITSELF cannot be reused: it reads its cost,
+  its banked work and its rate off a prefixed SOURCE dict and **a road has no source row** — which is
+  also why `buildTurnsRemaining` is a no-op for roads sim-side. `RungLadder._route_turns` is the
+  arithmetic, and it is four lines.
+- ⛔ **THE BARE RATE IS READ OFF THE WIRE, AND THE CLIENT SPELLS `PER_WORKER_OUTPUT` NOWHERE.**
+  `RouteRungState.buildWorkPerWorkerTurn` carries it — the sim's own worker output, unscaled, before
+  gear and before any multiplier. `HudRouteVocab.catalog_build_work_per_worker_turn` is the reader for
+  a caller holding a rung; `branch_build_work_per_worker_turn` is the reader for one holding only a
+  road. See "The rate rides the catalog" below for why a branch-wide number lives on a per-rung table
+  and why reading one row is honest.
+- **THE PILE IS THE RUNG'S BASE PRICE, matching the figure beside it**, less whatever the meter has
+  banked against the row DIRECTLY above the standing rung. ⛔ **`build_fraction == 1.0` means *nothing
+  is rising*, not *this rung is paid for*** — the wire states it for a rung just finished AND for the
+  top of the ladder — so it is netted off nothing, or the card quotes `≈1 turn` for a 260-work paving
+  nobody has started. `_route_meter_clause` draws the same boundary for the same reason.
+- **The remoteness multiple is quoted apart from the estimate**, as it is from the price: folding it
+  in would put a copy of the sim's pricing formula here.
+- ⛔ **ZERO BUILDERS IS AN ANSWER, NOT AN ABSENCE.** With nobody on the pool the row states its price
+  bare and the REMEDY rides beneath it as an aside (`ROAD_LADDER_NO_BUILDERS_ASIDE`, `build_aside`,
+  in the warn ink) — a blank column where every other row states a duration reads as a client that
+  failed to work it out. **And the rung stays orderable**: declaring a road with an empty pool is a
+  legal, ordinary act (the entry waits at the head of the queue for hands), so this is a note and
+  never a gate.
+- ⛔ **NO FALLBACK ANYWHERE, IN EITHER READER.** A missing or zero rate answers
+  `BUILD_TURNS_NO_ESTIMATE` on the ladder and `BUILD_CREW_NONE` — no *short N* clause at all — on the
+  tile card. **Never `1.0`, and never an infinity.** A substituted constant is the transcription
+  coming back through the side door, and the sim writes worker output as a SUM OF TERMS: a copy goes
+  stale in silence the day a second term lands, which is precisely what a default would hide. The
+  test is BEFORE the division in `_route_turns` rather than after it — a zero rate reaching
+  `pool_work_supply` would answer whatever the KIT alone pays, which on a branch no kit serves is
+  also `0` and would look like the same refusal for a different reason.
+- **The kit is asked for with `KitRoster.BUILD_BRANCH_ROUTE` (`"route"`, `RungBranch::Route`'s own
+  wire spelling), which answers `{}` for every shipped kit** — no equipment declares a `build_work`
+  effect serving the branch — so a road is priced at bare hands, which is the truth about the shipped
+  roster rather than a gap. **Asking with `BUILD_BRANCH_NONE` instead would be wrong**: that means *no
+  branch test at all* and would credit the crook's 0.5 against a road.
+
+### The rate rides the CATALOG, and one row answers for the branch
+
+`buildWorkPerWorkerTurn` is the one field on `RouteRungState` that is **not derived from the rung** —
+it is `intensification::PER_WORKER_OUTPUT`, identical on every row. It rides the catalog because the
+catalog is exactly the set of numbers that are the same for every road in the world; on `RouteState`
+it would repeat itself once per road tile on the map, which is the same argument that put `workCost`
+and `frictionMultiplier` there.
+
+**So `branch_build_work_per_worker_turn` reads the FIRST row and that is honest rather than sloppy.**
+`core_sim/tests/route_wire.rs` asserts every rung publishes the same value, so a client that walked
+all four looking for agreement would be re-running the sim's own test — and would still have to pick
+one when they disagreed.
+
+⛔ **THE ROAD→CATALOG JOIN STAYS AT THE CALL SITE.** `hud_route_vocab.gd` is a vocabulary leaf that
+holds no catalog, and that is load-bearing: it is what lets `SourceForecast` alias its four
+`RUNG_KEY_*` at `const` level without a load cycle. So the rate is **threaded in as a parameter** to
+`road_lines` / `upkeep_value` / `workers_short_of`, exactly as `keeper_label` already is and for the
+identical stated reason — `SubjectDrawerController` resolves it (it holds `_topbar` for this one
+field) and hands it over. **Do not teach the leaf to join a road to the catalog on `rung_key`.**
+
+`RungLadder` needs no threading: `_route_turns` is already handed the catalog ENTRY it is pricing, so
+it reads `catalog_build_work_per_worker_turn` directly.
+
+### ⛔ AND A ROAD CAN BE PUT DOWN AGAIN — the abandon row at the BOTTOM
+
+The picker above makes the keeper a choice; this is what makes it a reversible one. `unqueue`
+withdraws a DECLARATION and is wired up, but **once any work is banked the verb that releases a
+keeper is `abandon`**, which was command-line only — so a road handed to the wrong band could not be
+taken back from the UI at all.
+
+- **Offered ONLY where the keeper is in the player's roster.** A road nobody keeps has nothing to put
+  down and a road another people keeps is not yours to drop; in both cases the control would emit a
+  command the sim refuses, which is the shape the ladder's own gated rows exist to avoid.
+- **It emits `abandon <faction> <x> <y>`** through `road_abandon_requested` → `HudLayer.abandon_requested`
+  → `Main.format_abandon`, written beside `format_unqueue`, which is its sibling and the shape it was
+  copied from. **The press closes the card before it emits**, the rung presses' own rule.
+- **It carries NO band token**, unlike `grade` / `pave` — see below.
+
+> #### ⛔ IT NAMES A PLACE, NOT A ROAD — AND THE ROW HAS TO SAY SO
+>
+> `handle_abandon` drops **the faction's labor rows on that tile** as well as the road's keeper and
+> its queue entry. The sim's own comment says why: the verb names a *place*, a tile may carry a road
+> as well as a patch, and dropping one without the other would be silently partial on exactly the
+> tiles where a band both farms and keeps a road.
+>
+> **So where the tile also carries work of this faction's, the row carries a second line naming what
+> else goes down with it** (`ROAD_LADDER_ABANDON_ALSO`, over `forage_assignment_of` across the
+> roster — a tile test, because `abandon` is a tile command and a hunt names a herd). On bare ground
+> it is a plain button.
+>
+> ⛔ **DO NOT ADD A ROAD-ONLY ABANDON.** The sim has no such verb, and a client emitting a command
+> narrower than the sim implements would be lying about what the button does.
+
 ### The gates, keyed on the RUNG and not on the verb
 
 `RungGates.route_gates(road, ladder, knowledge, labels, band)` — the shared, stateless layer, because
@@ -492,7 +657,7 @@ the player closes with a click rather than with a campaign.
 > ⛔ **THE KEEPER'S NAME IS RESOLVED BY `DrawerComposeController`, never by the gate layer** — a road
 > carries a `band_id`, this client has exactly one band-naming rule
 > (`HudBandLaborState.band_label_for_id`), and `RungGates` is stateless and holds no roster. The label
-> is threaded in exactly as the tile card's `Kept by:` row threads it, and `""` reads
+> is threaded in exactly as the tile card's `Upkeep:` row threads it, and `""` reads
 > `ROAD_KEEPER_FOREIGN` — a real state, a road being keepable by a people you merely know of.
 
 ⛔ **AND THE CONSEQUENCE IS INTENDED: A ROAD CANNOT BE BUILT ON BARE GROUND.** `dirt_road` requires
@@ -568,17 +733,24 @@ Every row quotes the rung's **BASE** `workCost` as published. Where the road's o
 `Far from your band, so it costs ×2.0.` **The client multiplies nothing**: folding the two would put
 a copy of the sim's pricing formula where it can drift.
 
-The tile card's `Kept by` row keeps its own wording (`far from them — ×2.0 the rung's price`), and
-the two are not a drift: that row states what the EXISTING keeper is being charged, this one states
-what the prospective builder would be. Different subject, different sentence.
+The tile card's `Upkeep` HOVER keeps its own wording (`far from them — ×2.0 the rung's price`), and
+the two are not a drift: that one states what the EXISTING keeper is being charged, this one states
+what the prospective builder would be. Different subject, different sentence — and both are hovers
+now, the row having no room for either.
 
-### The command has not moved
+### The declaration's command has not moved, and the RELEASE gained a builder
 
 `HudLayer.improvement_requested` → `Main.format_improvement`, which already carries the route verbs'
 extra band token (`Main.IMPROVEMENT_BAND_TARGETED`). No new command, no new token, no change to the
 formatter. The relay is `DrawerComposeController.road_improvement_requested` → `HudLayer`, and it is
 deliberately **not** named `improvement_requested` on that controller: that name was retired there
 when the rung checkbox stopped being the commit, and reusing it would read as the pair coming back.
+
+**`abandon` IS THE SECOND EDGE, AND IT IS A NEW BUILDER RATHER THAN A NEW COMMAND**: the verb has
+always existed and had no surface, so `Main.format_abandon` was written beside `format_unqueue` —
+its sibling in shape and its opposite in scope. `DrawerComposeController.road_abandon_requested` →
+`HudLayer.abandon_requested` → that builder; the relay is deliberately not folded into
+`unqueue_requested`, the two commands doing different things to different state.
 
 ⛔ **THE RELAY CARRIES NO OPTIMISTIC OVERLAY WRITE.** `_on_work_row_improvement_requested` records a
 pending LABOR ROW before it relays, which is right for a `⌃` on the work board; a road has no work
@@ -587,15 +759,27 @@ therefore carries no `pending_entity` — the same shape as the `extend_pen` rel
 
 ### Tests
 
-`ui_preview`'s `land_readouts` chapter carries **five frames** and the claims a picture cannot make,
+`ui_preview`'s `land_readouts` chapter carries **six frames** and the claims a picture cannot make,
 driven through the REAL action and the REAL formatter. Read as a set they are the argument the
 feature exists to make: `road_ladder_gated` (a path, with every rung above it refused and each for
 its own reason — nothing on it pressable), `road_ladder_grade` (the same branch one rung up with
-Roadbuilding learned: `grade` OPEN, priced and pressable), `road_ladder_pave` (the top rung on a
-REMOTE dirt road, quoting the base price with the multiple as its own clause),
-`road_ladder_other_keeper` (a dirt road **a second band keeps**, with the actor selected — the top
-rung refused and the keeper NAMED) and `road_ladder_no_keeper` (the same road with no band selected
-— the top rung refused, and refused for that reason ALONE).
+Roadbuilding learned: `grade` OPEN, priced, DATED and pressable, under a `Band:` picker),
+`road_ladder_no_builders` (that same live row with nobody on the pool — the price bare and the remedy
+beneath it), `road_ladder_pave` (the top rung on a REMOTE dirt road, quoting the base price with the
+multiple as its own clause, and offering the abandon row because the road is already this band's),
+`road_ladder_other_keeper` (a dirt road **a second band keeps** — the card OPENS on that keeper with
+the rung live, then the picker is driven to the actor and the same rung goes refused and NAMES the
+keeper, in place) and `road_ladder_no_keeper` (the same road with no band on the roster at all — the
+top rung refused, and refused for that reason ALONE).
+
+**`road_ladder_other_keeper` IS NOW THE PICKER'S OWN CLAIM AS WELL AS THE GATE'S**, and it had to
+become one: with the keeper as the default, the *another band keeps it* refusal is unreachable until
+the player moves the picker. Driving it (`item_selected.emit`, which is what a click does) asserts the
+default, the re-render, the card surviving it, and the gate — in that order, on one frame.
+
+**The turns figures are written out and each one is a claim about a different term.** `≈39 turns` is
+`ceil(110 × 0.7 / 2)` — a row quoting the whole price would say `55`; `≈130 turns` is `ceil(260 / 2)`
+over a meter of exactly `1.0` — a row that netted that `1.0` off would say `≈1 turn`.
 
 **`road_ladder_other_keeper` STAGES A SECOND BAND, and that is what the claim needs.** With only the
 actor on the roster every keeper is either itself or a stranger, and *another people* — a true
@@ -663,7 +847,14 @@ loud — and issuing the verb declares the job and names the keeper in the same 
 
 **An absent band is a REFUSAL, not a default.** `IMPROVEMENT_NO_BAND` builds no line, because a road
 with nobody on the hook is not a road the sim will accept and guessing one would commit somebody
-else's people to a standing bill.
+else's people to a standing bill. **Which band the token names is the PLAYER'S choice** — see the
+`Band:` picker above.
+
+⛔ **AND `abandon` NAMES NO BAND, WHICH IS THE OTHER HALF OF THE SAME CONTRAST.** `Main.format_abandon`
+emits `abandon <faction> <x> <y>`: the verb names a *place* and drops every band of the faction's
+holding on it. A builder that helpfully added a band token there would be inventing grammar, and one
+that dropped `grade`'s would grade the wrong hex — both handles are integers in a positional grammar,
+so either mistake still PARSES. `ui_preview` asserts both whole lines for exactly that reason.
 
 ⛔ **THE EXTRA TOKEN IS WHY `command_guard` DRIVES BOTH VERBS.** Both handles are integers in a
 positional grammar, so a builder that emitted the four-token tile form would still PARSE — the sim
@@ -678,13 +869,27 @@ a REMOTE one whose keeper is being charged a multiple for the distance — and, 
 a picture cannot make, run against the REAL producer
 (`SubjectDrawerController._tile_terrain_lines`) rather than a re-derivation. They assert what the rows
 SAY and, since the block became conditional, **what the card does NOT draw**: the free floor composes
-exactly one line and the other four keys are absent from the producer's output; the rung row reads
+exactly one line and the other three keys are absent from the producer's output; the rung row reads
 `Path · 30% to trail` and **never** the retired `Trail 30%`, which is the wording that read as a
 part-built road; a complete rung states the rung bare and the top rung states no approach at all; the
-bill reads under `Upkeep`; the shortfall is stated against the bill with the keepers it wants; the
-countdown; the gone-dark clause naming *upkeep*; and `0` reading `now` rather than `in 0 turns`. The
-fixture's demand and shortfall are deliberately different numbers, so a row that printed the gross
-demand as the shortfall fails while one that printed a correct subtraction would not.
+countdown; the gone-dark clause naming *upkeep*; and `0` reading `now` rather than `in 0 turns`.
+
+**AND THE `Upkeep` ROW IS ASSERTED IN FIVE READINGS PLUS TWO ABSENCES**, because the shipped row
+passed every claim the chapter then held while saying `0.0 work a turn · wants 1 keepers` — nothing
+asserted what it said. The name alone; the name with `(short 2 workers)`; **one** worker short reading
+`worker`, which the shipped row could not do; `another people`; `nobody — grade it again to take it
+on`. The absences are **`Kept by` on no road at all** and the retired figures — neither `work a turn`
+nor `wants` may appear on the row again, whatever the numbers behind it are. Those two are spelled as
+LITERALS on purpose: the consts they came from are gone, and an assertion naming a deleted symbol
+does not fail, it fails to *compile*, and the chapter goes silent rather than red.
+
+⛔ **ONE FIXTURE IS RAY'S OWN ROW** — `ROAD_DEMAND_HAIRLINE` = `0.009` work a turn wanting one keeper,
+above `UPKEEP_WORK_MIN` and so genuinely rendered. It is the exact pair that read as gibberish (a
+floor to `0.0` beside a `ceil` to `1`), and it asserts both halves of the fix at once: the row says
+`Band 2`, and the hover still carries `0.0 work a turn · 1 keeper` exactly as the sim published it.
+
+The shortfall fixture's demand and shortfall are deliberately different numbers, so a row that
+converted the DEMAND to workers (which would say `4`) fails while one converting the shortfall passes.
 
 **Falsified**: making the `Upkeep` row unconditional again fails exactly two claims, both about the
 free trail — the one-row composition and the absent bill — and nothing else in the run.

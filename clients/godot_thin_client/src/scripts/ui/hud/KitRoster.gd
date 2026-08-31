@@ -140,6 +140,14 @@ const KIT_BUILD_BRANCH_KEY := "build_work_branch"
 ## `none` can never be the derived builders kit and is never greyed for the wrong one either.
 const BUILD_BRANCH_PLANT := "plant"
 const BUILD_BRANCH_ANIMAL := "animal"
+## ⛔ **THE THIRD BRANCH IS NOT A FOOD WEB, AND IT IS SPELLED ANYWAY.** `RungBranch::Route` is
+## `"route"` on the wire, and **no shipped kit declares a `build_work` effect serving it** — so
+## `build_gear` answers `{}` for every kit today and the route ladder prices a road at bare hands,
+## which is the truth about the shipped equipment rather than a gap. **Asking with the branch instead
+## of asking with `BUILD_BRANCH_NONE` is what keeps it true**: `NONE` means *no branch test at all*
+## and would credit the crook's 0.5 against a road. The day a barrow declares one, the estimate picks
+## it up with no client edit.
+const BUILD_BRANCH_ROUTE := "route"
 const BUILD_BRANCH_NONE := ""
 
 ## **WHICH WEB A LABOR KIND'S BUILDS BELONG TO.** The web a queue entry sits on is a fact about the

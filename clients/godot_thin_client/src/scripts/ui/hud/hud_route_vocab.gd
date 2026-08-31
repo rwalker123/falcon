@@ -112,12 +112,19 @@ const ROAD_BONUS_ROW := " "
 ## carries a single `Upkeep` arm that answers for both the band's material bill and this.
 const ROAD_UPKEEP_ROW := "Upkeep"
 
-## ⛔ **WHOSE JOB THIS TILE IS** — the row that says who is on the hook for the bill above it.
-##
-## **The keeper is the band that BUILT it, wherever that band now stands.** It is not *"whoever is
-## standing here"*: `route_keeping_claims` walks the roads a band keeps and never reads that band's
-## position, so a band four tiles away goes on paying. Rendered only where there is something to say.
-const ROAD_KEEPER_ROW := "Kept by"
+# ⛔ **RETIRED — `ROAD_KEEPER_ROW` (`Kept by`), AS A VISIBLE ROW.** It said WHOSE JOB the road is on
+# a line directly beneath a bill that said how much and how many, and the pair read
+# `Upkeep: 0.0 work a turn · wants 1 keepers` / `Kept by: Band 3` — two rows, three figures, and the
+# only thing a player can act on (*who is on the hook, and are they covering it*) spread across both.
+#
+# **`ROAD_UPKEEP_ROW` ABSORBED IT.** The keeper's NAME is the bill's headline now
+# (`Upkeep: Band 3`), the shortfall rides it as a clause in WORKERS (`(short 1 worker)`), and the
+# figures went to the block's hover. Reported from play: *"We don't need both upkeep and kept by. We
+# can show upkeep warnings, like `Upkeep: Band 3 (short 1 worker)`."*
+#
+# **The keeper is still the band that BUILT it, wherever that band now stands** — `route_keeping_claims`
+# walks the roads a band keeps and never reads that band's position, so a band four tiles away goes on
+# paying. That fact did not move; only the row it is stated on did.
 
 ## The neglect COUNTDOWN, rendered only while the road is actually at risk.
 const ROAD_REVERTING_ROW := "Reverting"
@@ -156,13 +163,14 @@ const ROAD_PROGRESS_UNNAMED_FORMAT := "%d%% to the next rung"
 const ROAD_HAZARD_CLAUSE_FORMAT := "%s %s"
 const ROAD_UNDER_KEPT_WORD := "washing out"
 
-## `Kept by:` values. The band's own label, as this client names every band
-## (`HudBandLaborState.band_label_for_id` → `HudFormat.band_display_name`), so a road's keeper and the
-## same band on the dock cannot be called two different things.
+## **THE KEEPER'S NAME, WHICH IS NOW THE `Upkeep:` ROW'S HEADLINE.** The band's own label, as this
+## client names every band (`HudBandLaborState.band_label_for_id` → `HudFormat.band_display_name`), so
+## a road's keeper and the same band on the dock cannot be called two different things.
 const ROAD_KEEPER_FORMAT := "%s"
 
 ## …and what a band OUTSIDE the player's roster reads as. A road may be kept by a people you merely
-## know of, and naming them by a raw id would state a fact the player cannot use.
+## know of, and naming them by a raw id would state a fact the player cannot use. **`RungGates` reads
+## this too**, for the *another band keeps it* refusal, so the two surfaces name a stranger alike.
 const ROAD_KEEPER_FOREIGN := "another people"
 
 ## …and a road that OWES a bill and has nobody paying it: the keeping band is gone, so the road is
@@ -170,12 +178,13 @@ const ROAD_KEEPER_FOREIGN := "another people"
 ## same act as building**, which is what the clause says rather than inventing an adopt verb.
 const ROAD_KEEPER_NOBODY := "nobody — grade it again to take it on"
 
-## ⛔ **WHAT DISTANCE DID TO THE PRICE**, appended to the keeper's name. `keeper_remoteness` is the
+## ⛔ **WHAT DISTANCE DID TO THE PRICE — ON THE HOVER NOW, not on the row.** `keeper_remoteness` is the
 ## multiple the sim quoted when the keeper took the tile on, applied to BOTH the build pile and the
-## standing upkeep — so a road beyond the base keeping range is dearer for exactly one reason and the
-## row says which. **A real decision with no other surface**: distance is a cost and never a wall, so
-## nothing refuses the road and nothing else on the card explains a bill larger than the rung's.
-const ROAD_KEEPER_REMOTE_FORMAT := "%s · far from them — ×%s the rung's price"
+## standing upkeep, so a road beyond the base keeping range is dearer for exactly one reason and this
+## is the only surface that says which. **It is kept because it has no other home** — distance is a
+## cost and never a wall, so nothing refuses the road and nothing else explains a bill larger than the
+## rung's — but it is rare and long, and the row it used to trail is the one Ray asked to shorten.
+const ROAD_KEEPER_REMOTE_FORMAT := "far from them — ×%s the rung's price"
 
 ## The remoteness at which distance costs nothing — the reading inside the base keeping range, and on
 ## every road nobody keeps. Named because it is the TEST the clause above is gated on rather than a
@@ -186,14 +195,47 @@ const ROAD_REMOTENESS_AT_HOME := 1.0
 ## not be whole — and `%s` above rather than `%.1f` inline so the two cannot drift.
 const ROAD_REMOTENESS_FORMAT := "%.1f"
 
-## `Upkeep:` values. The bill and the keeper count are one sentence because they are one decision —
-## *"wants 4, you have 0"* is the readout that makes a standing cost legible.
+## ⛔ **`Upkeep:` NAMES A BAND, NOT A NUMBER — AND THAT IS THE FIX, NOT A REWORDING.** The row read
+## `0.0 work a turn · wants 1 keepers`, which is gibberish assembled out of two individually correct
+## figures: a trail holding 2% of the dirt road banked owes ~`0.009` work a turn, which
+## `DetailFormat.format_work_units` rounds DOWN to `0.0` while the sim's own `ceil` rounds the same
+## number UP to one keeper. Two roundings in opposite directions on one quantity, printed side by side.
 ##
-## **THERE IS NO "free" READING HERE ANY MORE.** The floor declares no upkeep at all, so the row is
-## simply not emitted (see `upkeep_value`) — a sentence saying the bill does not exist is a row spent
-## on nothing, and it was on every road in a current game.
-const ROAD_UPKEEP_FORMAT := "%s work a turn · wants %d keepers"
-const ROAD_UPKEEP_SHORT_FORMAT := "%s short of %s work a turn · wants %d keepers"
+## **SO THE FIGURES LEFT THE ROW ENTIRELY** (`upkeep_tooltip`, registered on the block's hover) and the
+## row states the decision: whose job this is, and whether they are covering it. The exact bill is one
+## hover away, so it can never be the headline and `0.0 work a turn` can never render as one.
+##
+## **THERE IS NO "free" READING HERE.** The floor declares no upkeep at all, so the row is simply not
+## emitted (see `upkeep_value`) — a sentence saying the bill does not exist is a row spent on nothing,
+## and it was on every road in a current game.
+const ROAD_UPKEEP_FORMAT := "%s"
+
+## ⛔ **THE SHORTFALL IS STATED IN WORKERS AND DERIVED FROM `upkeepShortfall`, NEVER FROM
+## `wants − assigned`.** The client does not know what the keeper has on `roadwork` — the assignment is
+## a band-wide pool and its per-road share is the sim's answer — so the only honest conversion is
+## `ceil(shortfall / PER_WORKER_OUTPUT)` off the sim's stamped field. This branch has shipped the
+## subtraction as a defect twice; the shortfall is published precisely so nobody has to take it.
+##
+## **AND IT PLURALIZES.** The shipped row said `wants 1 keepers`.
+##
+## ⛔ **`ROAD_UPKEEP_SHORT_MARK` IS ONE SPELLING SERVING TWO READERS** — the composer that writes the
+## clause and `upkeep_value_hex`, which forks the row's ink on it. Two spellings is how a row comes to
+## say *short* in plain ink.
+const ROAD_UPKEEP_SHORT_MARK := "(short "
+const ROAD_UPKEEP_SHORT_FORMAT := "%s %s%d %s)"
+const ROAD_UPKEEP_WORKER_SINGULAR := "worker"
+const ROAD_UPKEEP_WORKER_PLURAL := "workers"
+
+## …and the figures the row stopped printing, for the block's HOVER. **Both are still exactly the
+## sim's**: the bill is `upkeepDemand` as published and the keeper count is `upkeepWorkersNeeded`, the
+## sim's own `ceil` against the same stamped basis. Nothing here is derived, and nothing here is
+## rounded twice.
+const ROAD_UPKEEP_TIP_FORMAT := "%s work a turn · %d keeper%s"
+const ROAD_UPKEEP_PLURAL_SUFFIX := "s"
+
+## The head count at which both readouts above read SINGULAR. Named because it is the pluralisation
+## test and the shortfall's own floor, not a sentinel: the shipped row said `wants 1 keepers`.
+const ROAD_ONE_WORKER := 1
 
 ## `Reverting:` values — the COUNTDOWN, never the counter. `0` means it is reverting NOW, which is
 ## why zero gets its own word rather than printing `in 0 turns`.
@@ -437,34 +479,73 @@ static func bonus_tooltip(road: Dictionary) -> String:
 ## ⛔ **`""` — NO ROW — WHERE THE ROAD OWES NOTHING.** Both free rungs declare no upkeep at all, and a
 ## sentence saying so (`free — nobody keeps a path`) was a row spent on the absence of a bill,
 ## on every road a current game can contain.
-static func upkeep_value(road: Dictionary) -> String:
+static func upkeep_value(road: Dictionary, label: String = "",
+		per_worker_turn: float = RUNG_CATALOG_NO_BUILD_RATE) -> String:
 	if not owes_keeping(road):
 		return ""
-	var demand := DetailFormat.format_work_units(upkeep_demand_of(road))
-	var wants := upkeep_workers_needed_of(road)
-	if is_short(road):
-		return ROAD_UPKEEP_SHORT_FORMAT % [
-			DetailFormat.format_work_units(upkeep_shortfall_of(road)), demand, wants]
-	return ROAD_UPKEEP_FORMAT % [demand, wants]
-
-## ⛔ `Kept by:` — **WHOSE JOB THIS ROAD IS**, and what distance is charging them for it.
-##
-## `label` is the band's own name as this client resolves it (`""` for a band outside the player's
-## roster — a road really can be kept by a people you merely know of), so this composer never invents
-## one from an id.
-##
-## `""` — no row at all — for a road that owes nothing and nobody keeps: that is the free floor, where
-## there is no job to be on the hook for. A road that OWES a bill with no keeper is the opposite case
-## and says so out loud, because it is decaying towards nobody.
-static func keeper_value(road: Dictionary, label: String) -> String:
 	if not has_keeper(road):
-		return ROAD_KEEPER_NOBODY if owes_keeping(road) else ""
+		return ROAD_KEEPER_NOBODY
 	var named := label.strip_edges()
-	var face: String = ROAD_KEEPER_FORMAT % (named if named != "" else ROAD_KEEPER_FOREIGN)
-	if not is_remote(road):
+	var face: String = ROAD_UPKEEP_FORMAT % (named if named != "" else ROAD_KEEPER_FOREIGN)
+	if not is_short(road):
 		return face
-	return ROAD_KEEPER_REMOTE_FORMAT % [face,
-		ROAD_REMOTENESS_FORMAT % keeper_remoteness_of(road)]
+	# ⛔ **NO RATE, NO CLAUSE — AND THE NAME STILL STANDS.** A catalog this client has not been sent
+	# leaves the gap unpriceable in hands, and `(short 0 workers)` would read as a bill that is met.
+	# The keeper is still on the hook and is still named, which is the row's whole subject.
+	var short := workers_short_of(road, per_worker_turn)
+	if short <= SourceForecast.BUILD_CREW_NONE:
+		return face
+	return ROAD_UPKEEP_SHORT_FORMAT % [face, ROAD_UPKEEP_SHORT_MARK, short,
+		ROAD_UPKEEP_WORKER_SINGULAR if short == ROAD_ONE_WORKER else ROAD_UPKEEP_WORKER_PLURAL]
+
+## ⛔ **HOW MANY HANDS THE GAP IS WORTH — off `upkeepShortfall` and NOTHING ELSE.**
+## `ceil(shortfall / per_worker_turn)`, the same arithmetic the sim runs to publish
+## `upkeepWorkersNeeded` from the demand, so the row's *short N* and the hover's *N keepers* are two
+## readings of one rate rather than two derivations.
+##
+## ⛔ **THE RATE IS THE BRANCH'S, PUBLISHED, AND THE CALLER RESOLVES IT.** It is
+## `RouteRungState.buildWorkPerWorkerTurn` off the rung catalog
+## (`branch_build_work_per_worker_turn`), threaded in exactly as `keeper_label` is and for the
+## identical reason: this leaf holds no catalog and joining road→catalog here would give it one.
+## `SourceForecast.BUILD_CREW_NONE` where no rate has arrived — a state, not a failure, and the row
+## then states the keeper without a gap clause.
+##
+## **NEVER `wants − assigned`.** `roadwork` is a band-wide POOL and its share of any one road is the
+## sim's answer; the client holds no per-road head count to subtract from, and inventing one is the
+## defect this branch has already shipped twice.
+##
+## **THE FLOOR IS ONE, ONCE THERE IS A RATE AT ALL.** A road that is short is short by at least one
+## whole hand — a `0` beside the word *short* would read as a bill that is met — but that floor may
+## not manufacture an answer where there is no rate to strike one against.
+static func workers_short_of(road: Dictionary,
+		per_worker_turn: float = RUNG_CATALOG_NO_BUILD_RATE) -> int:
+	var hands := SourceForecast.workers_for_work(upkeep_shortfall_of(road), per_worker_turn)
+	if hands <= SourceForecast.BUILD_CREW_NONE:
+		return SourceForecast.BUILD_CREW_NONE
+	return maxi(hands, ROAD_ONE_WORKER)
+
+## …and the figures, for the block's HOVER: the exact bill, the keepers it wants, and — where the sim
+## quoted one — what distance is charging the keeper for it. **Every number is published**; the client
+## multiplies nothing and subtracts nothing.
+##
+## `""` on a road that owes nothing, which is both free rungs and leaves the hover empty rather than
+## blank-lined.
+static func upkeep_tooltip(road: Dictionary) -> String:
+	if not owes_keeping(road):
+		return ""
+	var wants := upkeep_workers_needed_of(road)
+	var clauses: Array[String] = [ROAD_UPKEEP_TIP_FORMAT % [
+		DetailFormat.format_work_units(upkeep_demand_of(road)), wants,
+		"" if wants == ROAD_ONE_WORKER else ROAD_UPKEEP_PLURAL_SUFFIX]]
+	if is_remote(road):
+		clauses.append(ROAD_KEEPER_REMOTE_FORMAT % (
+			ROAD_REMOTENESS_FORMAT % keeper_remoteness_of(road)))
+	return ROAD_CLAUSE_SEPARATOR.join(clauses)
+
+# ⛔ **RETIRED — `keeper_value`, the `Kept by:` ROW'S COMPOSER.** Its three readings are all still
+# stated and all on the row above: a named keeper and a stranger are `upkeep_value`'s own face, and a
+# road that owes a bill nobody pays is that composer's first branch. The remoteness clause is the one
+# thing that moved surface rather than composer — it is on `upkeep_tooltip` now.
 
 ## `Reverting:` — the countdown, or `""` where nothing is at risk. **The countdown, not the counter**:
 ## `0` is *it is reverting now*, and a road whose bill is met reads its rung's full grace + 1, which
@@ -493,8 +574,13 @@ static func reverting_value(road: Dictionary) -> String:
 ## `ctx` is the render's tint/hover context, and the payoff row's SPARE CLAUSES are registered on it
 ## (`Context.row_tooltips`) rather than printed. A caller with none — the harness asserting the WORDS,
 ## and any surface with no host label — simply gets the visible lines, which is the honest half.
+## `per_worker_turn` is the BRANCH's bare work rate, resolved by the caller from the rung catalog
+## (`branch_build_work_per_worker_turn`) — threaded in for `keeper_label`'s own reason: this leaf holds
+## no catalog, and a road→catalog join here would give it one. `RUNG_CATALOG_NO_BUILD_RATE` is a legal
+## reading and means *the shortfall cannot be stated in hands*, which the row answers by not stating it.
 static func road_lines(road: Dictionary, keeper_label: String = "",
-		ctx: DetailFormat.Context = null) -> Array[String]:
+		ctx: DetailFormat.Context = null,
+		per_worker_turn: float = RUNG_CATALOG_NO_BUILD_RATE) -> Array[String]:
 	var lines: Array[String] = []
 	lines.append("%s: %s" % [ROAD_ROW, road_row_value(road)])
 	var bonus := bonus_value(road)
@@ -507,12 +593,16 @@ static func road_lines(road: Dictionary, keeper_label: String = "",
 		var spare := bonus_tooltip(road)
 		if spare != "":
 			ctx.row_tooltips[ROAD_BONUS_ROW] = spare
-	var upkeep := upkeep_value(road)
+	# ⛔ **ONE ROW FOR THE STANDING COST, AND IT NAMES THE BAND.** The bill and the keeper were two
+	# rows and three figures; the row states the decision now (*whose job, and are they covering it*)
+	# and the figures ride the hover beside the payoff's.
+	var upkeep := upkeep_value(road, keeper_label, per_worker_turn)
 	if upkeep != "":
 		lines.append("%s: %s" % [ROAD_UPKEEP_ROW, upkeep])
-	var keeper := keeper_value(road, keeper_label)
-	if keeper != "":
-		lines.append("%s: %s" % [ROAD_KEEPER_ROW, keeper])
+		if ctx != null:
+			var bill := upkeep_tooltip(road)
+			if bill != "":
+				ctx.row_tooltips[ROAD_UPKEEP_ROW] = bill
 	var reverting := reverting_value(road)
 	if reverting != "":
 		lines.append("%s: %s" % [ROAD_REVERTING_ROW, reverting])
@@ -541,13 +631,18 @@ static func bonus_value_hex() -> String:
 static func upkeep_value_hex(value: String) -> String:
 	if value.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH):
 		return HudStyle.WARN_HEX
+	# ⛔ **THE ROAD'S BILL CARRIES NO GLYPH ANY MORE, so its two alarming readings are named.** The row
+	# is words now (`Band 3 (short 1 worker)` / `nobody — grade it again to take it on`), and both say
+	# the keeping is not being paid — which is the state the amber is for. `ROAD_UPKEEP_SHORT_MARK` is
+	# the composer's own spelling, so the words and the tint cannot drift apart.
+	if value == ROAD_KEEPER_NOBODY or value.contains(ROAD_UPKEEP_SHORT_MARK):
+		return HudStyle.WARN_HEX
 	return HudStyle.INK_HEX
 
-## The `Kept by:` ink. A road that owes a bill with NOBODY paying it reads in the same amber the
-## unmet bill above it does — it is the same news one row late — and a kept road reads in plain ink,
-## remoteness included: distance is a price, not an alarm.
-static func keeper_value_hex(value: String) -> String:
-	return HudStyle.WARN_HEX if value == ROAD_KEEPER_NOBODY else HudStyle.INK_HEX
+# ⛔ **RETIRED — `keeper_value_hex`, the `Kept by:` ROW'S INK.** Both of its readings are on the
+# `Upkeep` row now and `upkeep_value_hex` answers for them: a road nobody keeps reads amber there
+# (the same news, one row earlier), and a kept road reads plain ink, remoteness included — distance
+# is a price, not an alarm, which is why it went to the hover rather than to a tint.
 
 # ---- THE ROUTE RUNG CATALOG (`SubsistenceSection.routeRungs`) ----------------------------------
 #
@@ -583,6 +678,23 @@ const RUNG_CATALOG_GRANTS_SIGHT := "grants_sight"
 ## `unlock_knowledge` says what a rung WAITS ON; this says what a rung EARNS, and they are different
 ## rungs. See `ladder_rung_teaching` for why the pairing may not be inferred.
 const RUNG_CATALOG_EARNS_KNOWLEDGE := "earns_knowledge"
+
+## ⛔ **WHAT ONE BARE-HANDED WORKER BANKS IN A TURN, AND IT IS THE SIM'S RATE RATHER THAN THE RUNG'S.**
+## `intensification::PER_WORKER_OUTPUT`, unscaled — before gear and before any multiplier. Every field
+## beside it describes ONE rung; this one is identical on every row, and it rides the catalog because
+## the catalog is exactly the set of numbers that are the same for every road in the world.
+##
+## ⛔ **IT REPLACED A TRANSCRIBED CONSTANT, WHICH IS THE POINT OF THE FIELD.** Every SOURCE publishes
+## its own `build_work_per_worker_turn`; a road has no source row, so for one slice the client spelled
+## `PER_WORKER_OUTPUT` itself — and the sim writes worker output as a SUM OF TERMS, so that copy goes
+## stale in silence the day a second term lands. **A missing or `0` reading is answered as *no
+## estimate* and *no clause*, never with a rate of the client's own** (`SourceForecast.workers_for_work`,
+## `RungLadder._route_turns`).
+const RUNG_CATALOG_BUILD_PER_WORKER_TURN := "build_work_per_worker_turn"
+
+## The rate a catalog this client has not been sent reads. **A measured nothing, not a sentinel**: it
+## flows into the two readers above as *there is no rate*, which each answers by stating nothing.
+const RUNG_CATALOG_NO_BUILD_RATE := 0.0
 
 ## ⛔ **THE WIRE'S OWN SPELLING OF *there is none*, AND IT IS A NAMED EMPTY STRING RATHER THAN A
 ## SENTINEL.** `verb` is `""` on a rung nobody declares, `unlock_knowledge` is `""` on one nothing
@@ -635,6 +747,32 @@ static func catalog_work_cost(entry: Dictionary) -> float:
 
 static func catalog_upkeep(entry: Dictionary) -> float:
 	return float(entry.get(RUNG_CATALOG_UPKEEP, SourceForecast.NO_UPKEEP_DEMAND))
+
+## One catalog row's bare per-worker work rate — the reader for a caller that already holds an entry
+## (`RungLadder._route_turns`, pricing one rung).
+static func catalog_build_work_per_worker_turn(entry: Dictionary) -> float:
+	return float(entry.get(RUNG_CATALOG_BUILD_PER_WORKER_TURN, RUNG_CATALOG_NO_BUILD_RATE))
+
+## ⛔ **THE BRANCH'S RATE, OFF THE CATALOG'S FIRST ROW — and reading one row is HONEST here rather
+## than sloppy.**
+##
+## **The rate is one number for the whole branch, not a per-rung figure.** It is the sim's own worker
+## output (`intensification::PER_WORKER_OUTPUT`), identical on every row, and
+## `core_sim/tests/route_wire.rs` asserts exactly that — every rung publishes the same value. It rides
+## the per-rung table only because the catalog is the wire structure the client already has in hand;
+## a reader that walked all four rows looking for agreement would be checking the sim's own test.
+##
+## **It exists for the callers that hold a ROAD but no rung** — the tile card's `Upkeep` row, which
+## needs the rate to state a shortfall in workers and has no reason to know which rung the road is
+## climbing toward.
+##
+## `RUNG_CATALOG_NO_BUILD_RATE` on an empty catalog, which is every frame before the first snapshot
+## and every fixture that stages no ladder: the callers state no clause there rather than inventing
+## one.
+static func branch_build_work_per_worker_turn(ladder: Array[Dictionary]) -> float:
+	if ladder.is_empty():
+		return RUNG_CATALOG_NO_BUILD_RATE
+	return catalog_build_work_per_worker_turn(ladder[0])
 
 static func catalog_friction(entry: Dictionary) -> float:
 	return float(entry.get(RUNG_CATALOG_FRICTION, ROAD_FRICTION_NO_HELP))
@@ -718,6 +856,9 @@ const ROAD_LADDER_ACTION_LABEL := "Road ▸"
 ## label is one word a future rung could change, and the card carries no text of its own at all.
 const ROAD_LADDER_ACTION_META := &"road_ladder_action"
 const ROAD_LADDER_META := &"road_ladder"
+## …and the abandon control's own handle, for the same reason: its face is a sentence and a harness
+## that matched on the words would break the day the sentence is reworded.
+const ROAD_LADDER_ABANDON_META := &"road_ladder_abandon"
 
 ## …and the sheet's heading, in `HudWorkVocab.RUNG_TRACK_TITLE`'s register because it is the same kind
 ## of card one branch over. **`RAISE`, not `TAKE`** — a road is not carried anywhere, and the plant
@@ -769,9 +910,50 @@ const ROAD_LADDER_TIP_REMOTE_FORMAT := "Far from your band, so it costs ×%s."
 ## removed.
 const ROAD_LADDER_TIP_PRICE_FORMAT := "%s work to build, %s work a turn to keep."
 
+## **HOW LONG, AT THE ACTING BAND'S OWN `builders` POOL.** `Dirt Road — 110 work` with one builder is
+## ~110 turns, and nothing on the card said so; every other build surface in the game states a turns
+## estimate. **It names the BAND because the answer is the band's** — a different pool is a different
+## number, which is why the estimate re-renders with the picker above it.
+##
+## ⛔ **ON A BUILDABLE ROW IT RIDES THE FACE, and on a refused one it rides the HOVER.** The face holds
+## one clause beside the price, and on a refused rung that clause is the refusal — a row reading
+## `110 work · ≈110 turns · needs Roadbuilding` is the wordiness this card was cut down from.
+const ROAD_LADDER_TIP_TURNS_FORMAT := "%s with this band's builders."
+
+## ⛔ **ZERO BUILDERS IS AN ANSWER, NOT AN ABSENCE.** With nobody on the pool there is no estimate to
+## state and the honest thing is the REMEDY, in the ladder's own aside shape — a blank column where
+## every other row states a duration reads as a client that failed to work it out.
+const ROAD_LADDER_NO_BUILDERS_ASIDE := "nobody on builders — staff the pool and it starts"
+
 ## The tooltip's lines, one fact each. **Newline rather than a middot**, because these are sentences
 ## and a hover has the room a 292px row does not.
 const ROAD_LADDER_TIP_SEPARATOR := "\n"
+
+# ---- PUTTING A ROAD DOWN — the undo a BUILT road had nowhere else ------------------------------
+#
+# ⛔ **`unqueue` IS NOT ENOUGH, AND THAT IS WHY THIS ROW EXISTS.** It withdraws a DECLARATION; the
+# moment any work is banked the verb that releases a keeper is `abandon`, which was command-line
+# only — so a road handed to the wrong band could not be taken back from the UI at all. With the band
+# picker above making the keeper a real choice, this is what makes it a reversible one.
+
+## The control, at the BOTTOM of the card — under the ladder, because putting a road down is the
+## opposite end of the same decision the rows above it offer. **It names the ACT, not the verb**: the
+## wire word is `abandon`, and *abandon* reads as walking away from the ground rather than as handing
+## back a job.
+const ROAD_LADDER_ABANDON_LABEL := "Stop keeping this road"
+
+## …and what it actually does, on the control's own hover. **The rung STAYS** — the sim leaves the
+## meter alone and the ground rots back down at the rung's own rate with nobody keeping it — which is
+## the half a player must know before pressing, since it is not a demolition.
+const ROAD_LADDER_ABANDON_TOOLTIP := "Drops this band's keeping of the road and its place in the " \
+	+ "queue. The rung stays, and with nobody keeping it rots back down at its own rate."
+
+## ⛔ **AND WHERE THE HEX ALSO CARRIES WORK OF YOURS, THE ROW SAYS SO.** `abandon <faction> <x> <y>`
+## names a PLACE: `handle_abandon` drops the faction's labor rows on that tile as well as the road's
+## keeper, because a tile may carry a road and a patch and putting one down without the other would be
+## silently partial. **There is no road-only abandon** — the sim has no such verb — so the honest thing
+## is to state the consequence rather than to narrow the command.
+const ROAD_LADDER_ABANDON_ALSO := "…and the foraging your people do on this hex goes down with it"
 
 ## ⛔ **THE NAME COLUMN IS NARROWER ON THIS BRANCH, and the wrapping is why.** The shared
 ## `HudWorkVocab.RUNG_TRACK_NAME_WIDTH` (150px) leaves 142px of a 292px card for the value, and

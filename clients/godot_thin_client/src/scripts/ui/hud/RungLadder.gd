@@ -96,7 +96,7 @@ const ROW_NAME_WIDTH_KEY := "name_width"
 const ROW_BUILD_ASIDES_KEY := "build_asides"
 const ROW_HOLD_ASIDES_KEY := "hold_asides"
 
-## One aside's two fields. `warn` picks the ink at render (`_build_aside`), so the producer decides
+## One aside's two fields. `warn` picks the ink at render (`build_aside`), so the producer decides
 ## severity and the renderer never sniffs the text for it.
 const RUNG_ASIDE_TEXT_KEY := "text"
 const RUNG_ASIDE_WARN_KEY := "warn"
@@ -282,9 +282,13 @@ const STATE_UNORDERED := "unordered"
 ## **THE ROWS ARE OTHERWISE `track`'s OWN `ROW_*` SHAPE**, so the renderer is unchanged. Three of the
 ## six original states are unreachable here and that is structural rather than unfinished: `path` and
 ## `target` name legs of a QUEUED entry, and no road publishes one.
+## `builders` is the ACTING BAND'S OWN POOL and `kit_gear` what that pool carries, which is what makes
+## the turns estimate a fact about the band the picker names rather than about the road — a different
+## band with a different pool is a different answer, so both move when the picker does.
 static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: Dictionary,
         labels: Dictionary, band: Dictionary,
-        keeper_label: String = "") -> Array[Dictionary]:
+        keeper_label: String = "", builders: int = SourceForecast.BUILD_CREW_NONE,
+        kit_gear: Dictionary = {}) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
     var gates := RungGates.route_gates(road, ladder, knowledge, labels, band, keeper_label)
     var standing_order := HudRouteVocab.ladder_order_of(ladder, HudRouteVocab.rung_of(road))
@@ -326,7 +330,13 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
         var is_approach_row := not approach_placed
         approach_placed = true
         var refusals := RungGates.route_gates_for(gates, rung_key)
-        row[ROW_TOOLTIP_KEY] = _route_tooltip(entry, refusals, road, remote)
+        # **THE ESTIMATE IS PER ROW, because the pile is** — only the row directly above the standing
+        # rung has anything banked against it, and every row above that is priced whole.
+        var turns := _route_turns(entry, meter if is_approach_row else NOTHING_BANKED,
+            builders, kit_gear)
+        row[ROW_TURNS_KEY] = turns
+        var turns_clause := DetailFormat.build_turns_clause(turns, builders)
+        row[ROW_TOOLTIP_KEY] = _route_tooltip(entry, refusals, road, remote, turns_clause)
         if verb == HudRouteVocab.RUNG_CATALOG_NONE:
             # **A RUNG NOBODY ORDERS LEADS WITH ITS METER**, that being the only figure it has; with
             # nothing rising it states the cause alone.
@@ -346,10 +356,21 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
         var price := HudWorkVocab.RUNG_TRACK_COST_UNDATED_FORMAT % DetailFormat.format_work_units(
             HudRouteVocab.catalog_work_cost(entry))
         if refusals.is_empty():
-            # Buildable: the price IS the button, and there is no refusal to state beside it.
+            # Buildable: the price IS the button, and the one clause beside it is **how long** — the
+            # question the card could not answer at all until now. Where the band has nobody on
+            # `builders` there is no duration to state, so the row states the REMEDY instead, in the
+            # aside shape: a blank column reads as a client that failed rather than as a missing crew.
             row[ROW_STATE_KEY] = STATE_OPEN
             row[ROW_SELECTABLE_KEY] = true
-            row[ROW_FACE_KEY] = price
+            row[ROW_FACE_KEY] = price if turns_clause == "" \
+                else HudWorkVocab.RUNG_TRACK_COST_FORMAT % [
+                    DetailFormat.format_work_units(HudRouteVocab.catalog_work_cost(entry)),
+                    turns_clause]
+            if builders <= SourceForecast.BUILD_CREW_NONE:
+                row[ROW_BUILD_ASIDES_KEY] = [{
+                    RUNG_ASIDE_TEXT_KEY: HudRouteVocab.ROAD_LADDER_NO_BUILDERS_ASIDE,
+                    RUNG_ASIDE_WARN_KEY: true,
+                }] as Array[Dictionary]
             rows.append(row)
             continue
         # ⛔ **ONE REFUSAL ON THE ROW AND ALL OF THEM IN THE HOVER**, and never the word `locked`
@@ -379,19 +400,81 @@ static func _route_meter_clause(meter: float) -> String:
     return HudRouteVocab.ROAD_LADDER_METER_FORMAT % int(
         floor(meter * HudRouteVocab.ROAD_PERCENT_SCALE))
 
+## **THE METER READING FOR A ROW WITH NOTHING BANKED AGAINST IT** — every row but the one directly
+## above the standing rung. Named because it is a MEANING (this rung has not been started) rather
+## than a sentinel: `build_fraction` belongs to exactly one rung and the rest are priced whole.
+const NOTHING_BANKED := 0.0
+
+## ⛔ **HOW MANY TURNS THIS RUNG WOULD TAKE AT THE ACTING BAND'S `builders` POOL** — the answer the
+## card never gave, and the reason `ROW_TURNS_KEY` stopped being a slot nothing filled.
+##
+## ⛔ **IT IS THE CLOSED FORM'S OWN SUPPLY SEAM, NOT A SECOND ESTIMATOR.**
+## `SourceForecast.pool_work_supply` is exactly what `build_turns_at` divides by — `crew × bare rate
+## + min(crew, saturating crew) × gear` — so a road and a Cultivate are paced by one expression. What
+## cannot be reused is `build_turns_at` itself: it reads its cost, its banked work and its RATE off a
+## prefixed SOURCE dict, and a road has no source row at all (which is why `buildTurnsRemaining` is a
+## no-op for roads sim-side).
+##
+## ⛔ **BOTH TERMS COME OFF THE CATALOG ENTRY, AND THE RATE IS READ RATHER THAN ASSUMED.** The cost is
+## `workCost`; the bare rate is `buildWorkPerWorkerTurn`, which the sim publishes on every rung
+## precisely so no client transcribes `PER_WORKER_OUTPUT` — this one did, for a slice, and a copied
+## constant goes stale in silence the day the sim writes worker output as a sum of more terms.
+## **A missing or zero rate is `BUILD_TURNS_NO_ESTIMATE` before any division, never a substituted
+## `1.0`.** The published rate is at BARE HANDS, so the kit addend is still the client's to add and
+## `pool_work_supply` still does it.
+##
+## **THE PILE IS THE RUNG'S BASE PRICE, AS PUBLISHED**, matching the figure the row states beside it.
+## The remoteness multiple is quoted apart from both, exactly as it is on the face — a client that
+## folded it in here would hold a copy of the sim's pricing formula.
+##
+## **THERE IS NO ROT TERM, AND THAT IS NOT AN OMISSION.** `meter_rot_per_turn` is a SOURCE field; a
+## road publishes its shortfall and its grace instead, and the rung being raised here is one nobody
+## is yet keeping. `BUILD_TURNS_NO_ESTIMATE` — no clause at all — for a rung the catalog prices at
+## nothing and for a pool that supplies nothing.
+static func _route_turns(entry: Dictionary, banked_fraction: float, builders: int,
+        kit_gear: Dictionary) -> int:
+    var cost := HudRouteVocab.catalog_work_cost(entry)
+    if cost <= HudRouteVocab.RUNG_CATALOG_NO_WORK_COST:
+        return SourceForecast.BUILD_TURNS_NO_ESTIMATE
+    # **NO PUBLISHED RATE, NO ANSWER — and the test is BEFORE the division rather than after it.** A
+    # zero rate reaching `pool_work_supply` would answer whatever the KIT alone pays, which on a
+    # branch no kit serves is `0` and would look like the same refusal for a different reason.
+    var per_worker_turn := HudRouteVocab.catalog_build_work_per_worker_turn(entry)
+    if per_worker_turn <= SourceForecast.BUILD_WORK_NONE:
+        return SourceForecast.BUILD_TURNS_NO_ESTIMATE
+    var supply := SourceForecast.pool_work_supply(builders, per_worker_turn, kit_gear)
+    if supply <= SourceForecast.BUILD_WORK_NONE:
+        return SourceForecast.BUILD_TURNS_NO_ESTIMATE
+    # ⛔ **`1.0` MEANS *NOTHING IS RISING*, NOT *THIS RUNG IS PAID FOR*.** The wire states exactly that
+    # for a rung just finished AND for the top of the ladder, so a reader that netted it off the pile
+    # would quote `≈1 turn` for a 260-work paving nobody has started — `_route_meter_clause` draws the
+    # same boundary one line up, and for the same reason.
+    var banked := banked_fraction
+    if banked >= HudRouteVocab.ROAD_METER_COMPLETE:
+        banked = NOTHING_BANKED
+    var remaining := cost * maxf(HudRouteVocab.ROAD_METER_COMPLETE - banked, NOTHING_BANKED)
+    if remaining <= SourceForecast.BUILD_WORK_NONE:
+        return SourceForecast.BUILD_FINISHES_IN_ONE_TURN
+    return ceili(remaining / supply)
+
 ## **EVERYTHING THE ROW STOPPED SAYING, as one hover.** In reading order: what it costs to build AND
 ## to keep, what it does, what distance adds, then every refusal in the gate layer's own order.
 ##
 ## ⛔ **THE PRICE LINE RENDERS ONLY WHERE THE RUNG OWES UPKEEP.** On a rung that is free to hold it
 ## would restate the face and add nothing, and a line that says nothing is what this cut removed.
 static func _route_tooltip(entry: Dictionary, refusals: Array, road: Dictionary,
-        remote: bool) -> String:
+        remote: bool, turns_clause: String = "") -> String:
     var lines: Array[String] = []
     var upkeep := HudRouteVocab.catalog_upkeep(entry)
     if upkeep >= SourceForecast.UPKEEP_WORK_MIN:
         lines.append(HudRouteVocab.ROAD_LADDER_TIP_PRICE_FORMAT % [
             DetailFormat.format_work_units(HudRouteVocab.catalog_work_cost(entry)),
             DetailFormat.format_work_units(upkeep)])
+    # **HOW LONG, AND IT IS ON EVERY ORDERED ROW.** A buildable row states it on the face as well; a
+    # REFUSED one has spent its one face clause on the refusal, and this is the surface that keeps the
+    # duration available on a rung the player is planning toward rather than pressing today.
+    if turns_clause != "":
+        lines.append(HudRouteVocab.ROAD_LADDER_TIP_TURNS_FORMAT % turns_clause)
     var payoff := HudRouteVocab.rung_payoff_clause(entry)
     if payoff != "":
         lines.append(payoff)
@@ -434,12 +517,12 @@ static func build_track(rows: Array[Dictionary], on_pick: Callable,
         # reads *may I* before *what does it cost*, and the standing bill last because it is the half
         # of the commitment that outlives the build.
         for reason in (row.get(ROW_REASONS_KEY, []) as Array):
-            column.add_child(_build_aside(String(reason)))
+            column.add_child(build_aside(String(reason)))
         for aside in (row.get(ROW_BUILD_ASIDES_KEY, []) as Array):
-            column.add_child(_build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
+            column.add_child(build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
                 bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
         for aside in (row.get(ROW_HOLD_ASIDES_KEY, []) as Array):
-            column.add_child(_build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
+            column.add_child(build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
                 bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
     return column
 
@@ -504,10 +587,10 @@ static func build_ring_card(row: Dictionary, on_declare: Callable) -> VBoxContai
     line[ROW_REASONS_KEY] = [] as Array[String]
     column.add_child(_build_row(line, func(_verb: String) -> void: on_declare.call()))
     for aside in (row.get(ROW_BUILD_ASIDES_KEY, []) as Array):
-        column.add_child(_build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
+        column.add_child(build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
             bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
     for aside in (row.get(ROW_HOLD_ASIDES_KEY, []) as Array):
-        column.add_child(_build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
+        column.add_child(build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
             bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
     return column
 
@@ -575,7 +658,10 @@ static func _build_row(row: Dictionary, on_pick: Callable) -> Control:
 ## `warn` is the ONE aside on this card that is not quiet — the stall warning, which says the band's
 ## shelf will not carry the build it is about to order. Defaulted false, so the reason and crop-face
 ## callers are untouched and the quiet register stays the rule rather than the exception.
-static func _build_aside(text: String, warn: bool = false) -> Label:
+## **ONE ASIDE — the small wrapped line beneath a row.** Public because the ROUTE card's abandon row
+## states its consequence in exactly this register and must not draw a second small line of its own:
+## an aside is an aside on any surface this ladder builds.
+static func build_aside(text: String, warn: bool = false) -> Label:
     var label := Label.new()
     label.text = text
     label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -900,10 +986,10 @@ static func build_crop_step(rows: Array[Dictionary], on_pick: Callable,
     title.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_TITLE_FONT_SIZE)
     column.add_child(title)
     if rows.is_empty():
-        column.add_child(_build_aside(HudWorkVocab.RUNG_CROP_NONE_NOTE))
+        column.add_child(build_aside(HudWorkVocab.RUNG_CROP_NONE_NOTE))
     for row in rows:
         column.add_child(_build_crop_row(row, on_pick))
-        column.add_child(_build_aside(String(row.get(CROP_FACE_KEY, ""))))
+        column.add_child(build_aside(String(row.get(CROP_FACE_KEY, ""))))
     column.add_child(_build_back_row(on_back))
     return column
 

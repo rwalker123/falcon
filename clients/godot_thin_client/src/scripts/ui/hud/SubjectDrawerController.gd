@@ -36,6 +36,13 @@ extends RefCounted
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _selection: HudSelectionState = null
 var _band_labor: HudBandLaborState = null
+## ⛔ **THE PER-WORLD READOUTS, HELD FOR ONE FIELD: THE ROUTE RUNG CATALOG.** The road block's `Upkeep`
+## row states a shortfall in HANDS, which needs the branch's published bare work rate — and that rate
+## rides the catalog (`RouteRungState.buildWorkPerWorkerTurn`), the wire's only home for a number that
+## is the same for every road in the world. It is resolved HERE and handed to the composer, exactly as
+## the keeper's name is: `HudRouteVocab` is a vocabulary leaf that holds no catalog, and joining
+## road→catalog inside it would give it one.
+var _topbar: FactionReadouts = null
 # Roster/emptiness reads (`tile_contents_unseen`) + the vitals row's `selected_terrain_label`.
 var _selectioncard: SelectionCardController = null
 # The compose half's drawer-action fill (`build_forage_drawer_actions` / `build_herd_drawer_actions`)
@@ -90,9 +97,10 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
         tile_detail: RichTextLabel, occupant_detail: RichTextLabel, allocation_panel: VBoxContainer,
         herd_assign_controls: VBoxContainer, forage_assign_controls: VBoxContainer,
         road_ladder_controls: VBoxContainer, subject_body: VBoxContainer, subject_scroll: ScrollContainer, left_dock_scroll: ScrollContainer,
-        targeting: TargetingController) -> void:
+        targeting: TargetingController, topbar: FactionReadouts) -> void:
     _selection = selection
     _band_labor = band_labor
+    _topbar = topbar
     _selectioncard = selectioncard
     _drawercompose = drawercompose
     _bandpanel = bandpanel
@@ -370,13 +378,25 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # inventing one from an id, and a road's keeper cannot be called something the dock does not.
     # `""` is a band outside the player's roster, which a road really can have: the composer says
     # *another people* rather than printing a number nobody can act on.
+    #
+    # ⛔ **AND THE BRANCH'S BARE WORK RATE IS RESOLVED HERE FOR THE SAME REASON.** The `Upkeep` row
+    # states a shortfall in HANDS (`ceil(shortfall / rate)`), and the rate is published once per world
+    # on the rung catalog rather than on any road row. Reading it here and handing it over keeps the
+    # road→catalog join at the CALL SITE: `HudRouteVocab` stays a leaf with no catalog dependency, the
+    # property that lets `SourceForecast` alias its rung keys at `const` level. `0.0` before a catalog
+    # has arrived, which the composer reads as *the gap cannot be stated in hands* and answers by not
+    # stating it — never by substituting a rate of its own.
+    var build_rate := HudRouteVocab.RUNG_CATALOG_NO_BUILD_RATE
+    if _topbar != null:
+        build_rate = HudRouteVocab.branch_build_work_per_worker_turn(
+            HudRouteVocab.route_ladder(_topbar.route_rungs()))
     for road in Array(tile_info.get("roads", [])):
         if road is Dictionary:
             var keeper_label := ""
             if _band_labor != null and HudRouteVocab.has_keeper(road):
                 keeper_label = _band_labor.band_label_for_id(
                     HudRouteVocab.keeper_band_id_of(road))
-            lines.append_array(HudRouteVocab.road_lines(road, keeper_label, ctx))
+            lines.append_array(HudRouteVocab.road_lines(road, keeper_label, ctx, build_rate))
     # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
     #
     # A REMEMBERED TILE KEEPS BOTH WEBS' CAPACITIES AND LOSES BOTH THEIR STOCKS (issue #462). The rule

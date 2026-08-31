@@ -94,6 +94,12 @@ signal improvement_requested(payload: Dictionary)
 ## declaration again instead of clearing it and left the rung stuck with no undo.
 signal unqueue_requested(payload: Dictionary)
 
+## ⛔ **PUT A SOURCE DOWN — `abandon <faction> <x> <y>`, which is NOT `unqueue`.** That one withdraws a
+## declaration and leaves the row, its crew and its meter alone; this releases the holding itself, and
+## it is the only undo a road with work banked on it has. Emitted by the road ladder's own control and
+## built by `Main.format_abandon`.
+signal abandon_requested(payload: Dictionary)
+
 ## The KIT one queued build is raised with — { faction, x, y, herd_id, kit_id, default_kit_id }, Main
 ## formatting `build_kit <faction> <x> <y> [kit <id>]` / `build_kit <faction> <herd_id> [kit <id>]`
 ## (`docs/plan_standing_upkeep.md` §4.7a ②). RELAYED from `BandPanelController`'s queue-row settings
@@ -630,6 +636,12 @@ func _ready() -> void:
     # nothing a failed send would have to roll back. Same shape as the `extend_pen` relay below.
     _drawercompose.road_improvement_requested.connect(
         func(payload: Dictionary) -> void: improvement_requested.emit(payload))
+    # **AND THE UNDO BESIDE IT.** `unqueue` withdraws a declaration; once work is banked the verb that
+    # releases a keeper is `abandon`, which had no surface at all — so a road handed to the wrong band
+    # could not be taken back. Relayed with no optimistic write for the reason above: a road has no
+    # labor row to shadow, so a failed send has nothing to roll back.
+    _drawercompose.road_abandon_requested.connect(
+        func(payload: Dictionary) -> void: abandon_requested.emit(payload))
     # **THE COMPOSE SHEET ASKS FOR THE WORK TAB; THE PANEL IS REACHED ONLY FROM HERE** (§4.7a ①).
     # `_bandpanel` is constructed BELOW this line, so the relay is a lambda rather than a direct
     # connection to its method — by the time a link can be clicked it is populated, which is the same
@@ -801,7 +813,7 @@ func _ready() -> void:
     _drawer = SubjectDrawerController.new(
         _selection, _band_labor, _selectioncard, _drawercompose, _bandpanel, _banddetail, self,
         tile_detail, occupant_detail, allocation_panel, herd_assign_controls, forage_assign_controls,
-        road_ladder_controls, subject_body, subject_scroll, left_dock_scroll, _targeting)
+        road_ladder_controls, subject_body, subject_scroll, left_dock_scroll, _targeting, _topbar)
     _load_ui_balance_config()
     _connect_zoom_rail()
     # AFTER `_connect_zoom_rail()`: that call applies the nav backing's stylebox, hence its padding,

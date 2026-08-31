@@ -2274,13 +2274,19 @@ static func _wrapped_col_delta(from_col: int, to_col: int, grid_width: int, wrap
             d += grid_width
     return d
 
+## **THE ANSWER FOR A TILE THIS CLIENT CANNOT PLACE**, and it is a MEANING rather than a big number: a
+## band the wire has not positioned yet is not *far away*, it is *not on the map*. Named because
+## comparing against it as if it were a distance — nearest-band pickers do exactly this — silently
+## makes an unplaceable band the nearest thing to everything.
+const HEX_DISTANCE_UNKNOWN := -1
+
 ## Wrap-aware true odd-r hex distance between two offset tiles (mirrors the sim's `hex_distance_wrapped`
 ## / MapView._hex_distance): bring the target into the source's column frame via _wrapped_col_delta,
-## then odd-r offset→axial→cube distance. Returns -1 when either tile is unknown.
+## then odd-r offset→axial→cube distance. `HEX_DISTANCE_UNKNOWN` when either tile is unknown.
 static func hex_distance_wrapped(a_col: int, a_row: int, b_col: int, b_row: int,
         grid_width: int, wrap_horizontal: bool) -> int:
     if a_col < 0 or a_row < 0 or b_col < 0 or b_row < 0:
-        return -1
+        return HEX_DISTANCE_UNKNOWN
     var b_eff_col := a_col + _wrapped_col_delta(a_col, b_col, grid_width, wrap_horizontal)
     var a := _offset_to_axial(a_col, a_row)
     var b := _offset_to_axial(b_eff_col, b_row)
@@ -5173,6 +5179,33 @@ static func gear_per_worker(kit_gear: Dictionary) -> float:
 static func build_work_per_worker_turn(src: Dictionary, prefix: String) -> float:
     return maxf(float(src.get(prefix + FORECAST_BUILD_PER_WORKER_TURN_KEY, BUILD_WORK_NONE)),
         BUILD_WORK_NONE)
+
+# ⛔ **RETIRED — `BARE_WORK_PER_WORKER_TURN`, THIS CLIENT'S TRANSCRIPTION OF
+# `intensification::PER_WORKER_OUTPUT`.** It existed for one slice because the route branch had no
+# published rate to divide by: every SOURCE states its own `build_work_per_worker_turn`, and a road
+# has no source row at all. **`RouteRungState.buildWorkPerWorkerTurn` carries it now**
+# (`HudRouteVocab.branch_build_work_per_worker_turn`), so the rate is read like every other and the
+# constant is gone.
+#
+# ⛔ **DO NOT PUT IT BACK AS A FALLBACK.** The sim writes worker output as a SUM OF TERMS; a
+# transcription goes stale in silence the day a second term lands, which is precisely what a default
+# would hide. A missing or zero rate is answered as *no estimate* and *no clause* — never as `1.0`.
+
+## **HOW MANY HANDS A STANDING WORK RATE IS WORTH**, `ceil(work / per_worker_turn)` — the arithmetic
+## the sim runs to publish `upkeepWorkersNeeded` from a demand, so a client-side conversion of the
+## SHORTFALL lands in the same units as the wire's conversion of the demand.
+##
+## ⛔ **THE RATE IS A PARAMETER AND HAS NO DEFAULT.** The caller resolves it from whatever publishes it
+## — a source row on the two food webs, the rung catalog on the route branch — and
+## `BUILD_CREW_NONE` is the honest answer where nothing does: *this client cannot price the gap*,
+## which renders as no clause rather than as a head count struck against an invented rate.
+##
+## **NEVER a subtraction of two head counts.** The keeping is a band-wide pool and its share of any
+## one source is the sim's answer; the client holds no per-source head count.
+static func workers_for_work(work: float, per_worker_turn: float) -> int:
+    if work <= BUILD_WORK_NONE or per_worker_turn <= BUILD_WORK_NONE:
+        return BUILD_CREW_NONE
+    return ceili(work / per_worker_turn)
 
 ## **HOW MANY TURNS THIS RUNG WOULD TAKE AT A CREW AND A FLOOR THE PLAYER IS PROPOSING** — the ONE
 ## home of the client's turn estimate, and the reason the compose sheet's number moves when the

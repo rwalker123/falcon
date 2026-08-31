@@ -3673,6 +3673,7 @@
   ],
   "route_rungs": [
     {
+      "build_work_per_worker_turn": 53.32,
       "display_name": "route_rungs[0].display_name",
       "earns_knowledge": "route_rungs[0].earns_knowledge",
       "friction_multiplier": 9.48,
@@ -3687,6 +3688,7 @@
       "work_cost": 11.68
     },
     {
+      "build_work_per_worker_turn": 9.01,
       "display_name": "route_rungs[1].display_name",
       "earns_knowledge": "route_rungs[1].earns_knowledge",
       "friction_multiplier": 107.57,

@@ -175,6 +175,22 @@ pub(crate) fn route_rungs_to_array(
         // the config is free to break that pairing, at which point an inference would send the
         // player to stand on the wrong ground. `""` where the rung teaches nothing.
         let _ = dict.insert("earns_knowledge", rung.earnsKnowledge().unwrap_or_default());
+        // ⛔ **WHAT ONE BARE-HANDED WORKER BANKS IN A TURN — the SIM'S rate, not the rung's.**
+        // `intensification::PER_WORKER_OUTPUT`, unscaled: before gear and before any multiplier. **The
+        // same figure for every rung**, which is exactly why it rides the CATALOG — the catalog is the
+        // set of numbers that are identical for every road in the world, and a per-tile copy would
+        // repeat it once per road on the map.
+        //
+        // ⛔ **IT IS DECODED BECAUSE A ROAD HAS NO SOURCE ROW TO CARRY ONE.** Every patch and herd
+        // publishes its own `buildWorkPerWorkerTurn`; roads have no such row, so the client
+        // TRANSCRIBED the sim's constant for a slice — which goes stale in silence the day the sim
+        // writes worker output as a sum of more terms. A reader that finds this missing or `0` states
+        // NO ESTIMATE rather than substituting a rate of its own; there is no fallback anywhere in
+        // the client, and putting one back is the transcription returning through the side door.
+        let _ = dict.insert(
+            "build_work_per_worker_turn",
+            f64::from(rung.buildWorkPerWorkerTurn()),
+        );
         array.push(&dict.to_variant());
     }
     array
