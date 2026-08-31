@@ -15951,11 +15951,20 @@ func _assert_queue_positions_are_the_wires(
 ## and a patch's face can never be confused for one another by coordinate.
 const ROAD_QUEUE_TILE := Vector2i(64, 17)
 
-## The rung the road HOLDS and the one its entry is climbing to. The meter is exactly zero, which is
-## the reported state: an entry declared and behind a Tame banks nothing for dozens of turns.
+## The rung the road HOLDS and the one its entry is climbing to.
+##
+## ⛔ **THE METER IS `METER_FULL`, AND A `0.0` HERE STAGED A STATE NO SERVER PRODUCES.**
+## `RouteState.buildFraction` answers for the rung at RISK, and `routes::road_at_risk_rung` falls back
+## to the rung the road HOLDS whenever nothing is banked above it — so a road holding a trail with an
+## entry that has banked nothing publishes **1.0**, its trail being complete. The fixture stated `0.0`,
+## the row read it straight through, and the frame asserted `Queued 0%` against a number the wire never
+## sends: the real reading reached play as **`Queued 100%`** on a dirt road ordered that turn.
+##
+## So the claim below is now about the CONVERSION rather than about a pass-through — which is the only
+## version of it worth making.
 const ROAD_QUEUE_HELD_RUNG := "route:trail"
 const ROAD_QUEUE_DESTINATION_RUNG := "route:dirt_road"
-const ROAD_QUEUE_METER := 0.0
+const ROAD_QUEUE_METER := 1.0
 ## …and the shipped ladder's price for that rung, transcribed. The leg line states it, so a producer
 ## that quoted the WRONG rung's price fails on the words rather than on a shape.
 const ROAD_QUEUE_WORK_COST := 110.0
@@ -15970,8 +15979,9 @@ const ROAD_QUEUE_RUNG_NAME := "Dirt Road"
 const ROAD_QUEUE_RANK := 1
 const ROAD_QUEUE_DRAWN_ROWS := 2
 
-## The meter the date column quotes beside `Queued`. It is `ROAD_QUEUE_METER` as a whole percent, and
-## it is the number the whole defect is about: zero, for as long as the Tame ahead of it runs.
+## The meter the date column quotes beside `Queued`, and it is the number the whole defect is about:
+## **zero**, for as long as the Tame ahead of it runs. It is deliberately NOT `ROAD_QUEUE_METER` as a
+## percent — that is the wire's `METER_FULL`, and the two differing is the claim.
 const ROAD_QUEUE_ZERO_PERCENT := 0
 
 ## The rung catalog, transcribed from `intensification_ladder.json`'s route branch. **A DERIVATION

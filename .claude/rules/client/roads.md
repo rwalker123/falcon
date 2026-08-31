@@ -352,18 +352,35 @@ Ray: *"it isn't obvious that the road will show up in the build queue, so we nee
 indicate that when the job is selected."* The buildable rung's `ROW_BUILD_ASIDES_KEY` states it:
 
 - **empty queue** — `joins this band's build queue, and starts now`;
-- **anything ahead** — `joins this band's build queue behind <head> and N more — the estimate runs
-  from when it starts`.
+- **anything ahead** — `joins this band's build queue behind <head> and N more`.
+
+⛔ **AND IT RIDES A ROW MERELY OFFERED — THE ROW BEING BUILT CARRIES NO PLACEMENT LINE AT ALL.**
+
+The card used to state the placement a second way once the road was already on the list —
+`waiting behind (4, 33) — the estimate runs from when it starts` — and reported from play it was
+garbage two ways at once. **It explained a number the player was already looking at**: the row one
+line up states the progress AND the turns, so a note saying what that estimate runs from qualified a
+figure nobody had to hunt for. And on the reported screenshot **the head of the band's queue WAS the
+road the card was open on**, so the sentence named the road as the thing it was waiting behind.
+
+The surviving form answers what the row genuinely cannot — *what would this press do* — which is why
+it stays while the other went: the deleted one restated the row. `ROAD_LADDER_QUEUE_WAITING_FORMAT`
+and `ROAD_LADDER_QUEUE_ESTIMATE_NOTE` are retired, and `ROAD_LADDER_QUEUE_BEHIND_FORMAT` with them —
+it shared their `— %s` tail and there was nothing left to fill it. `_route_queue_aside`'s
+`with_estimate_note` parameter went too: with one live value it read as a fork somebody still had to
+think about, so the ONE caller gates on `is_building` instead. **The `builders <= BUILD_CREW_NONE`
+warn aside is untouched and still rides the row being built.**
 
 - ⛔ **THE HEAD IS NAMED BECAUSE IT IS THE WHOLE QUESTION.** The head takes every builder, so it alone
   decides when this road starts; the rest are a count, which is what a reorder is measured against.
   The subject comes from `HudWorkVocab.build_queue_subject` — the queue block's own vocabulary, so the
   two surfaces cannot name one entry two ways — and it is the SUBJECT rather than the row's face,
   `Tame Wild Aurochs` reading mid-sentence as another panel quoted rather than as English.
-- ⛔ **THE TURNS ESTIMATE IS KEPT, AND IT STOPPED IMPLYING IT STARTS NOW.** `110 work · ≈39 turns`
-  silently assumed the builders were free. **Deleting the figure would throw away the one thing the
-  row can say about the price of the job** — it is exact once the builders reach the entry — so the
-  aside names what it is measured FROM instead of hedging the number.
+- ⛔ **THE TURNS ESTIMATE IS KEPT.** `110 work · ≈39 turns` silently assumed the builders were free,
+  and **deleting the figure would throw away the one thing the row can say about the price of the
+  job** — it is exact once the builders reach the entry. The aside named what it was measured FROM
+  for a slice; that clause is retired above, the row being built now stating the progress and the
+  turns together where a qualifier only restated them.
 - **It re-renders with the `Band:` picker**, a different band being a different line to stand in.
 - **An UNKNOWN queue draws no line at all**, never the empty-queue sentence: those are different
   facts and only one of them is reassuring.
@@ -391,6 +408,59 @@ queued."*
   off the entry.
 - ⛔ **THE `Upkeep` ROW IS UNCHANGED AND STAYS ABSENT HERE.** A road on the free floor owes nothing
   and draws no row; **a declaration must not conjure a bill.**
+
+> #### ⛔ A FULL METER ON A QUEUED ROAD MEANS **NOTHING HAS STARTED** — `queued_progress` is the reader
+>
+> Reported from play: a freshly-graded dirt road drew `Queued 100%` in the build queue while the tile
+> card's own climb clause fell silent. Neither surface was lying about the number it was handed.
+>
+> **`buildFraction` ANSWERS FOR THE RUNG AT RISK, WHICH ON A FRESH DECLARATION IS THE RUNG HELD.**
+> `routes::road_build_fraction` measures against `road_at_risk_rung`, which returns `standing.raising`
+> only where something is banked in it and otherwise falls back to `standing.held` — so a road at
+> trail-top with nothing yet banked into `dirt_road` is measured against the TRAIL, which is complete,
+> and the wire honestly publishes `METER_FULL`. The queue row read that raw as *100% of the dirt
+> road*; the tile card, which suppresses its clause at a full meter, read it as *nothing is rising*
+> and said nothing at all.
+>
+> **`HudRouteVocab.queued_progress(road)` is the one reader ALL THREE surfaces go through**: a meter
+> at or above `ROAD_METER_COMPLETE` on a road whose entry is queued reads `ROAD_METER_UNSTARTED`, so
+> the queue row draws `Queued 0%`, the card draws `Trail · 0% to dirt road` and the rung ladder's
+> BUILDING row draws `0% · ≈55 turns`. A road with work banked is untouched, which is what keeps the
+> readings one sentence rather than a fork.
+>
+> ⛔ **THE LADDER WAS THE THIRD SURFACE AND IT WENT ON READING THE METER RAW FOR A SLICE**, drawing
+> `100%` on a road that had not started. Its row is unconditional — a road on the building branch is
+> BY DEFINITION queued — so the call takes no flag. **`_route_climbing` had to move with it**: it
+> answered `false` at a full meter, which is right for a road NOBODY has ordered (the top of the
+> ladder, and a rung just finished, are both *nothing is rising*) and is exactly the misreading here,
+> the full meter belonging to the rung HELD. The queue is tested FIRST and short-circuits, so the
+> un-queued arm is untouched.
+>
+> ⛔ **THE ROW'S TURNS NEEDED NO CHANGE, AND THE REASON IS WORTH KNOWING.** `RungLadder._route_turns`
+> already resets a banked fraction at or above `ROAD_METER_COMPLETE` to `NOTHING_BANKED` before it
+> divides — its own note says a reader that netted `1.0` off the pile would quote `≈1 turn` for a
+> 260-work paving nobody has started — so it draws the same boundary `queued_progress` does and
+> quotes the whole price. `≈55 turns` on a freshly-declared 110-work dirt road at two builders is
+> that working. **`_route_meter_clause` on the `STATE_UNORDERED` approach row is likewise untouched**:
+> that row states a rung being worn in by TRAFFIC, which nobody queues.
+>
+> ⛔ **AND `progress_clause` TAKES THE QUEUED FLAG RATHER THAN A SECOND SPELLING.** Its full-meter
+> suppression is correct for an UN-queued road — the top of the ladder, and a rung just finished, both
+> honestly state their rung bare — so the reader is applied before the suppression test and never
+> beside it.
+>
+> #### ⛔ THREE FIXTURES STAGED A METER THE SIM CANNOT PUBLISH, WHICH IS HOW THIS SHIPPED
+>
+> They set `build_fraction: 0.0` on a road HOLDING a trail — a reading no road can have, since a held
+> rung is by definition complete and a road with nothing banked above it is measured against that
+> rung. So every frame that would have rendered the defect rendered the fix instead, and every
+> assertion on them passed. They state `METER_FULL` now, and `band_panel_preview`'s
+> `ROAD_QUEUE_METER` / `ROAD_QUEUE_ZERO_PERCENT` pair is the claim: **the two differing IS the
+> assertion**, so a reader that passed the wire's meter through fails naming the played
+> `Queued 100%`. Sabotage-verified — exactly one claim fails, and it is that one.
+>
+> **The general rule this file has now paid for twice**: a fixture staging a value the sim cannot
+> produce makes its own frame assert nothing, and it does it silently.
 
 > #### ⛔ ONE PREDICATE, TWO SURFACES, AND THE JOIN STAYS AT THE CALL SITE
 >
@@ -1037,6 +1107,19 @@ asserting the sentence, the SURVIVING estimate beside it, and the ABSENCE of the
 
 **Falsified**: emptying `HudBandLaborState.road_queue_tiles()` fails **exactly one** claim, the
 queued row's, and nothing else in the run.
+
+⛔ **AND `road_ladder_declared` ONE STATE BELOW IT IS THAT SENTENCE'S ABSENCE — THE PAIR IS THE
+CLAIM.** The same road with the `grade` standing on THIS tile draws **no placement aside of either
+form**, and the negative is named per surviving form rather than by a shared needle, so a producer
+resurrecting either is caught. It cannot stand alone: a producer that had dropped every aside passes
+a lone negative, and the state above it drawing its `joins …` sentence is what stops that. Its other
+two claims are Change 2's — `0% · ≈55 turns`, and the price GONE from that row — over the untouched
+rung above still quoting `260 work`.
+
+**Falsified**: passing the raw `build_fraction` back into the building row's figure fails **exactly
+one** claim, the progress one, naming the `100%` the wire honestly publishes for a completed trail.
+The price-absence claim beside it correctly still passes — a raw meter renders a METER face, not a
+price — which is why the progress claim is an EQUALITY against the whole face and not a `contains`.
 
 `band_panel_preview`'s `band_panel_queue_road` is the BUILD QUEUE block's own frame — a road row
 beside a herd row, which is the picture the reported defect made unobtainable — and it carries eight

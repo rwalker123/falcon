@@ -2632,7 +2632,11 @@ func _road_queue_model(road: Dictionary, ladder: Array[Dictionary], x: int, y: i
         "build_destination": destination,
         "road_rung_name": rung_name,
         "building_policy": "",
-        "building_progress": HudRouteVocab.build_fraction_of(road),
+        # ⛔ **`queued_progress`, NEVER THE RAW METER.** A road in this list is by definition queued,
+        # and the wire's `buildFraction` answers for the rung at RISK — which on a road that has
+        # banked nothing is the rung it already HOLDS, i.e. `METER_FULL`. Reported from play as
+        # `Queued 100%` on a dirt road ordered that turn.
+        "building_progress": HudRouteVocab.queued_progress(road),
         "build_ring_progress": SourceForecast.PEN_EXTEND_EMPTY_METER,
         "build_turns": SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED,
         "build_work_cost": work_cost,
@@ -2642,8 +2646,10 @@ func _road_queue_model(road: Dictionary, ladder: Array[Dictionary], x: int, y: i
             SourceForecast.BUILD_LEG_RUNG_KEY: destination,
             SourceForecast.BUILD_LEG_IMPROVEMENT_KEY: HudRouteVocab.catalog_verb(rung_entry),
             SourceForecast.BUILD_LEG_NAME_KEY: rung_name,
+            # The work still OWED, off the same corrected meter — the raw one reads a full trail as a
+            # finished dirt road and quotes a leg of zero on a job nobody has started.
             SourceForecast.BUILD_LEG_WORK_KEY: work_cost * maxf(
-                HudRouteVocab.ROAD_METER_COMPLETE - HudRouteVocab.build_fraction_of(road), 0.0),
+                HudRouteVocab.ROAD_METER_COMPLETE - HudRouteVocab.queued_progress(road), 0.0),
             SourceForecast.BUILD_LEG_TURNS_KEY: SourceForecast.BUILD_TURNS_NO_ESTIMATE,
         }],
     }

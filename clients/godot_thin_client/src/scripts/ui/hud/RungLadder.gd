@@ -393,7 +393,14 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
         var price := HudRouteVocab.road_ladder_price_face(entry)
         var figure := price
         if is_building:
-            figure = HudRouteVocab.ROAD_LADDER_METER_FORMAT % HudRouteVocab.road_percent_of(meter)
+            # ⛔ **`queued_progress`, NEVER THE RAW METER.** A road on this branch is BY DEFINITION
+            # queued, and the meter it publishes belongs to the rung at RISK — which, with nothing
+            # banked above, is the rung it already HOLDS. Read raw, a `grade` ordered this turn draws
+            # `100%` on a job that has not started, which is the reported defect's third surface: the
+            # tile card's `progress_clause` and the band panel's queue rows already read it through
+            # here, and this row is the one that still did not.
+            figure = HudRouteVocab.ROAD_LADDER_METER_FORMAT % HudRouteVocab.road_percent_of(
+                HudRouteVocab.queued_progress(road))
             row[ROW_ROUTE_BUILDING_KEY] = true
         if refusals.is_empty():
             # Buildable, and the second clause is **HOW LONG on the rung being built** and nothing at
@@ -404,21 +411,27 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
             row[ROW_SELECTABLE_KEY] = true
             row[ROW_FACE_KEY] = figure if not is_building or turns_clause == "" \
                 else HudRouteVocab.ROAD_LADDER_FACE_FORMAT % [figure, turns_clause]
-            # ⛔ **WHERE THE PRESS LANDS, STATED AT THE MOMENT OF THE DECISION.** The press DECLARES —
-            # it appends to the acting band's build queue, and the head of that queue takes every
-            # builder — so a card that stated only a price promised work starting on the spot.
+            # ⛔ **WHERE THE PRESS LANDS, STATED AT THE MOMENT OF THE DECISION — AND ONLY WHERE THERE
+            # IS STILL A PRESS TO DESCRIBE.** The press DECLARES: it appends to the acting band's
+            # build queue, and the head of that queue takes every builder, so a row that stated only
+            # a price promised work starting on the spot. That is what the sentence is for, and it is
+            # about a press that HAS NOT HAPPENED.
             #
-            # ⛔ **THE ESTIMATE NOTE GOES WITH THE ESTIMATE.** It says what a DURATION is measured
-            # from, so on a priced row — which no longer quotes one — the clause dangles off a number
-            # the player cannot see. The row being built keeps both: its turns are real, and it can
-            # still be waiting behind a head.
+            # ⛔ **THE ROW BEING BUILT GETS NO PLACEMENT LINE AT ALL.** Reported from play, on the
+            # card itself: *"all the text under Dirt road is meaningless garbage"*. It restated the
+            # row — the face one line up already carries the progress AND the turns, so a note
+            # explaining what that estimate is measured from qualified a number the player was
+            # looking at — and on that screenshot the head of the band's queue WAS this very road,
+            # so the line named the road as the thing it was waiting behind. The row's own figures
+            # are the receipt for the press; there is nothing left for a sentence to add.
             var asides: Array[Dictionary] = []
-            var placement := _route_queue_aside(queue, is_building)
-            if placement != "":
-                asides.append({
-                    RUNG_ASIDE_TEXT_KEY: placement,
-                    RUNG_ASIDE_WARN_KEY: false,
-                })
+            if not is_building:
+                var placement := _route_queue_aside(queue)
+                if placement != "":
+                    asides.append({
+                        RUNG_ASIDE_TEXT_KEY: placement,
+                        RUNG_ASIDE_WARN_KEY: false,
+                    })
             if builders <= SourceForecast.BUILD_CREW_NONE:
                 asides.append({
                     RUNG_ASIDE_TEXT_KEY: HudRouteVocab.ROAD_LADDER_NO_BUILDERS_ASIDE,
@@ -440,13 +453,23 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
 ## queued behind another job has banked nothing (so the meter cannot answer), and a band may bank work
 ## on a rung whose entry has since left the queue (so the queue cannot answer either).
 ##
-## **A COMPLETE METER IS NOT A BUILD.** The wire states exactly `1.0` for a rung just finished AND for
-## the top of the ladder, so it is what *nothing is rising* looks like — the same boundary
-## `_route_meter_clause` and `_route_turns` draw, for the same reason.
+## ⛔ **A DECLARATION SETTLES IT ON ITS OWN, AND THE METER IS NOT ALLOWED A VOTE.** `build_fraction`
+## measures against the rung AT RISK, which on a road with nothing banked above it falls back to the
+## rung HELD — so a `grade` ordered this turn publishes an honest `1.0` for a **completed trail**. Read
+## as evidence about the rung being RAISED it says *nothing is rising* on the exact road that is, which
+## is why the queue is tested FIRST rather than as one term of an `or`.
+##
+## **A COMPLETE METER IS NOT A BUILD** — for a road NOBODY has ordered. There the wire states exactly
+## `1.0` for a rung just finished AND for the top of the ladder, so it is what *nothing is rising*
+## looks like, and the band that banked work on a rung whose entry has since left the queue is still
+## climbing. That is the same boundary `_route_meter_clause` and `_route_turns` draw, for the same
+## reason.
 static func _route_climbing(meter: float, queued: bool) -> bool:
+    if queued:
+        return true
     if meter >= HudRouteVocab.ROAD_METER_COMPLETE:
         return false
-    return queued or meter > HudRouteVocab.ROAD_METER_UNSTARTED
+    return meter > HudRouteVocab.ROAD_METER_UNSTARTED
 
 ## **THE VERB OF THE ROW THAT IS BEING BUILT — `""` where no row is.** The producer already resolved
 ## it (one row can own the meter, and only after both the queue and the meter have been read), so a
@@ -481,9 +504,10 @@ static func _route_meter_clause(meter: float) -> String:
 ## claiming the queue is empty. **An empty queue and an unknown one are different facts**, and the
 ## first of them is the reassuring one, so it is never the fall-back.
 ##
-## `with_estimate_note` is whether this row quotes a duration. The tail clause says what a count is
-## measured FROM, so it may only ride a row that states one — see `route_track`'s aside note.
-static func _route_queue_aside(queue: Dictionary, with_estimate_note: bool = true) -> String:
+## ⛔ **AND IT IS ONLY EVER ASKED ABOUT A ROW MERELY OFFERED.** The sentence answers *what would this
+## press do* — a question the row itself cannot state — so on the row already being BUILT there is no
+## press to describe and `route_track` does not call this at all. It is not a fork in here.
+static func _route_queue_aside(queue: Dictionary) -> String:
     if not queue.has(HudRouteVocab.ROAD_LADDER_QUEUE_AHEAD_KEY):
         return ""
     var ahead := int(queue[HudRouteVocab.ROAD_LADDER_QUEUE_AHEAD_KEY])
@@ -495,14 +519,7 @@ static func _route_queue_aside(queue: Dictionary, with_estimate_note: bool = tru
     if ahead > QUEUE_HEAD_ALONE:
         more = HudRouteVocab.ROAD_LADDER_QUEUE_MORE_FORMAT % (ahead - QUEUE_HEAD_ALONE)
     var head := String(queue.get(HudRouteVocab.ROAD_LADDER_QUEUE_HEAD_KEY, ""))
-    if not with_estimate_note:
-        return HudRouteVocab.ROAD_LADDER_QUEUE_BEHIND_PLAIN_FORMAT % [head, more]
-    # ⛔ **`waiting`, NOT `joins`, ONCE THE ROAD IS ALREADY ON THE LIST.** `with_estimate_note` is the
-    # same test as *is this row being built*, and a row being built is a road whose `grade` is already
-    # on the wire — so the prospective wording would tell the player their press has not happened on
-    # the one card they opened to find out whether it had.
-    return HudRouteVocab.ROAD_LADDER_QUEUE_WAITING_FORMAT % [
-        head, more, HudRouteVocab.ROAD_LADDER_QUEUE_ESTIMATE_NOTE]
+    return HudRouteVocab.ROAD_LADDER_QUEUE_BEHIND_PLAIN_FORMAT % [head, more]
 
 ## The two counts the aside above forks on, named because each is a MEANING: nothing is in the way, and
 ## the only thing in the way is the head this sentence has just named.

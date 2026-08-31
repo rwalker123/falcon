@@ -704,6 +704,15 @@ const ROAD_METER_COMPLETE := 1.0
 ## a fixture cannot reach with `ROAD_METER_RISING`: a `grade` queued behind another job banks nothing
 ## for dozens of turns, because the head of the queue takes every builder the band has.
 const ROAD_METER_UNSTARTED := 0.0
+## ⛔ **WHAT A FRESHLY-GRADED ROAD ACTUALLY PUBLISHES, AND IT IS NOT `ROAD_METER_UNSTARTED`.**
+## `RouteState.buildFraction` is the meter on the rung at RISK, and `routes::road_at_risk_rung` falls
+## back to the rung the road HOLDS whenever nothing is banked above it — so a `grade` that landed this
+## turn ships `METER_FULL`, its TRAIL being complete.
+##
+## **A fixture staging `0.0` there stages a state no server can produce**, and that is exactly how
+## `Queued 100%` reached play: the queued frames asserted a reading off a meter the sim never sends,
+## so the real one went untested. Every declared-road fixture states this instead.
+const ROAD_METER_FRESHLY_GRADED := 1.0
 ## …the same meter as the percent the row prints, so the assertion reads the producer's own floor.
 const ROAD_METER_RISING_PERCENT := 30
 
@@ -1332,10 +1341,11 @@ const ROAD_FIXTURE_TILE := Vector2i(9, 36)
 ## …and the sentence that queue must produce, composed from the shipped formats but with the SUBJECT
 ## and the COUNT written out — an expectation recomposed whole from the producer would pass against a
 ## producer that had stopped composing it.
-## ⛔ **AND IT CARRIES NO ESTIMATE NOTE.** The clause used to end *"— the estimate runs from when it
-## starts"*, which only means anything beside a duration; a priced row no longer quotes one, so the
-## clause would dangle off a number that is not there. The note survives on the row being BUILT, where
-## the turns are real and can still be waiting behind a head.
+## ⛔ **AND IT CARRIES NO ESTIMATE NOTE — nor does any road row now.** The clause used to end
+## *"— the estimate runs from when it starts"*, which only means anything beside a duration; a priced
+## row no longer quotes one. The `waiting behind …` aside that DID quote one is retired outright
+## (`HudRouteVocab`'s own retirement note), so this sentence is the only placement the card composes,
+## and it rides a row merely OFFERED — never the row being built.
 func _expected_queue_aside() -> String:
 	return HudRouteVocab.ROAD_LADDER_QUEUE_BEHIND_PLAIN_FORMAT % [
 		HudWorkVocab.BUILD_QUEUE_TILE_SUBJECT_FORMAT % [
@@ -1853,11 +1863,11 @@ func run(harness) -> void:
 	# ⛔ **THE QUEUE IS SEEDED, NOT ASSUMED.** A state named for the queued reading that renders the
 	# empty one is this arc's own recurring trap, so the entries are staged and put back below.
 	var inherited_queue := _with_a_busy_queue()
-	# ⛔ **THE METER IS ZERO, AND THAT IS THE REPORTED CASE RATHER THAN A TIDY ONE.** The head of the
-	# queue takes every builder the band has, so a road queued behind another job banks NOTHING for
-	# dozens of turns — which is the state that read as a `grade` that never landed.
+	# ⛔ **THE METER IS THE ONE A ROAD HOLDING A TRAIL CAN ACTUALLY PUBLISH.** With nothing banked
+	# above it the at-risk rung IS the trail, so the wire ships `METER_FULL`; a `0.0` there is a state
+	# no server produces, which is what let `Queued 100%` reach play.
 	h._show_tile(_road_tile_fixture(_road_fixture(
-		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_UNSTARTED, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_FRESHLY_GRADED, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
 		ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL)))
 	await h._settle()
 	if not await _open_road_ladder():
@@ -1890,21 +1900,25 @@ func run(harness) -> void:
 	# from a `grade` that never landed. `0%` is the receipt for the press.
 	_with_a_queued_road()
 	h._show_tile(_road_tile_fixture(_road_fixture(
-		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_UNSTARTED, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
+		HudRouteVocab.RUNG_KEY_TRAIL, ROAD_METER_FRESHLY_GRADED, 0.0, 0.0, 0, ROAD_GRACE_NONE, false,
 		ROAD_FRICTION_TRAIL, ROAD_LINK_TRAIL)))
 	await h._settle()
 	if not await _open_road_ladder():
 		h._assert_hud("the road ladder opens on a road already queued", false)
 	else:
-		# ⛔ **AND THE PLACEMENT READS `waiting`, NOT `joins`.** Every other wording on this card is
-		# about a press that has not happened; on a road already on the list the future tense states
-		# something false on the one card the player opened to find out whether the press landed.
-		h._assert_hud("a road already on the list says it is WAITING, not that it would join",
-			_road_ladder_text().contains(HudRouteVocab.ROAD_LADDER_QUEUE_WAITING_FORMAT % [
-				HudWorkVocab.BUILD_QUEUE_TILE_SUBJECT_FORMAT % [
-					LADDER_QUEUE_HEAD_TILE.x, LADDER_QUEUE_HEAD_TILE.y],
-				HudRouteVocab.ROAD_LADDER_QUEUE_MORE_FORMAT % LADDER_QUEUE_AHEAD,
-				HudRouteVocab.ROAD_LADDER_QUEUE_ESTIMATE_NOTE]))
+		# ⛔ **AND THE ROW CARRIES NO PLACEMENT ASIDE AT ALL.** Reported from play on this very card:
+		# the row one line up already states the progress AND the turns, so a note explaining what
+		# that estimate runs from qualified a number the player was looking at — and the head of the
+		# queue on that screenshot was this road, so the sentence named it as the thing it waited
+		# behind. **The claim is the PAIR with `road_ladder_queued` one state above**, which still
+		# draws its `joins …` sentence: a producer that had dropped every aside would pass this
+		# negative on its own. The two surviving forms are named individually rather than by a shared
+		# needle, so a producer resurrecting either is caught.
+		h._assert_hud("a road already on the list draws NO placement aside — neither `joins … behind`"
+			+ " nor `starts now`",
+			not _road_ladder_text().contains(_expected_queue_aside())
+				and not _road_ladder_text().contains(
+					HudRouteVocab.ROAD_LADDER_QUEUE_EMPTY_ASIDE))
 		h._assert_hud("a DECLARED road reads its progress, not its price — `%s`"
 			% DIRT_QUEUED_ZERO_FACE,
 			String(_road_ladder_faces().get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, ""))

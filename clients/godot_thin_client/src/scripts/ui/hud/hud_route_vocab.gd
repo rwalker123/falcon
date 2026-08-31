@@ -319,6 +319,24 @@ static func rung_of(road: Dictionary) -> String:
 static func build_fraction_of(road: Dictionary) -> float:
 	return float(road.get("build_fraction", 0.0))
 
+## ⛔ **HOW FAR A QUEUED ROAD HAS CLIMBED TOWARD THE RUNG IT WAS ORDERED TO — AND A **FULL** METER
+## MEANS NOTHING HAS STARTED.**
+##
+## `RouteState.buildFraction` is the meter on the rung at RISK, and `routes::road_at_risk_rung`
+## resolves that to the rung being RAISED **only where something is banked in it** — otherwise to the
+## rung the road already HOLDS. So a `grade` that landed this turn publishes `METER_FULL`: the road's
+## **trail** is complete and nothing has been banked into the dirt road yet. `routes.rs` names that
+## value for exactly this reading — *"a meter with nothing left to raise"*.
+##
+## **Read raw, it states a finished build on the turn the job was ordered.** Reported from play: a
+## dirt road queued behind a Corral drew `Queued 100%` with not one work unit banked.
+##
+## A road NOT queued keeps `build_fraction_of`: there a full meter honestly means *this rung is done
+## and nothing is rising*, which is what makes the tile card's clause disappear.
+static func queued_progress(road: Dictionary) -> float:
+	var meter := build_fraction_of(road)
+	return ROAD_METER_UNSTARTED if meter >= ROAD_METER_COMPLETE else meter
+
 ## **THE TILE IS THE ROW'S IDENTITY** — it replaced the retired `RouteId`, because with one record per
 ## tile there is nothing left for a separate id to name. Both consumers join on it: the map stamps a
 ## hex here, and the tile card cross-refs the hex under the cursor.
@@ -431,7 +449,10 @@ static func road_percent_of(meter: float) -> int:
 ## derived by subtraction, so the test is a plain comparison and never a tolerance, and it covers both
 ## a rung just finished and the top of the ladder.
 static func progress_clause(road: Dictionary, queued: bool = false) -> String:
-	var meter := build_fraction_of(road)
+	# ⛔ **A QUEUED ROAD READS ITS METER THROUGH `queued_progress`, WHICH TURNS A FULL ONE INTO A
+	# ZERO** — a `grade` that landed this turn publishes `METER_FULL` for the rung it already HOLDS,
+	# and taking that at face value made the card fall silent on the very state the clause exists for.
+	var meter := queued_progress(road) if queued else build_fraction_of(road)
 	if meter >= ROAD_METER_COMPLETE:
 		return ""
 	# ⛔ **A ZERO METER IS A CLIMB ONLY WHERE ONE HAS BEEN ORDERED.** A road queued behind another job
@@ -1055,26 +1076,23 @@ const ROAD_LADDER_QUEUE_EMPTY_ASIDE := "joins this band's build queue, and start
 ## …and a queue with something in it. **The HEAD is named because it is the whole question** — the
 ## head takes every builder, so it alone decides when this road starts — and the rest are a count,
 ## which is what a player reorders against.
-const ROAD_LADDER_QUEUE_BEHIND_FORMAT := "joins this band's build queue behind %s%s — %s"
 const ROAD_LADDER_QUEUE_MORE_FORMAT := " and %d more"
-
-## ⛔ **…AND THE SAME SENTENCE WITHOUT THE QUALIFIER, for a row that quotes no estimate.** The note
-## below says what a DURATION is measured from, and a row stating its pile and its standing bill has
-## no duration on it — the clause would then qualify a number the player cannot see. The placement
-## itself still matters (it is what the press joins), so the sentence stays and only its tail goes.
 const ROAD_LADDER_QUEUE_BEHIND_PLAIN_FORMAT := "joins this band's build queue behind %s%s"
 
-## ⛔ **AND THE SAME PLACEMENT ONCE THE ROAD IS ALREADY ON THE LIST — `waiting`, NEVER `joins`.**
-## Every sentence above is about a press that has not happened yet. On a road whose `grade` is already
-## on the wire the future tense states something false on the one card the player opened to find out
-## whether the press landed — which is the reported defect wearing different words. The clause is what
-## explains a percentage parked at zero, so it is exactly the row that must not sound prospective.
-const ROAD_LADDER_QUEUE_WAITING_FORMAT := "waiting behind %s%s — %s"
-
-## …and the qualifier on the estimate beside it. **It names what the count is measured FROM rather
-## than hedging it**: the number is exact once the builders reach this entry, and a raid on the figure
-## itself would throw away the one thing the row can tell the player about the price of the job.
-const ROAD_LADDER_QUEUE_ESTIMATE_NOTE := "the estimate runs from when it starts"
+## ⛔ **RETIRED — `ROAD_LADDER_QUEUE_WAITING_FORMAT` ("waiting behind %s%s — %s") AND
+## `ROAD_LADDER_QUEUE_ESTIMATE_NOTE` ("the estimate runs from when it starts"), WITH THE
+## `ROAD_LADDER_QUEUE_BEHIND_FORMAT` THAT SHARED THEIR TAIL.**
+##
+## They composed the aside a QUEUED road's own row carried, and reported from play it was garbage two
+## ways at once. **It explained a number the player was already looking at** — the row one line up
+## states the progress AND the turns, so a note saying what that estimate runs from qualifies a
+## figure nobody had to go looking for. And on the reported screenshot **the head of the band's queue
+## WAS the road the card was open on**, so the sentence named the road as the thing it was waiting
+## behind.
+##
+## The two surviving sentences above are the UN-QUEUED road's alone, and they answer a question the
+## row genuinely cannot: *what would this press do*. That is why they stay while this one went — the
+## deleted one restated the row, and these state what pressing it would join.
 
 ## The queue model the ladder is handed — how many entries stand ahead of a press, and what the head
 ## is called. Named keys because a bare pair is two ints a caller can hand over the wrong way round.
