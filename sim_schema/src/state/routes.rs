@@ -76,10 +76,19 @@ pub struct RouteState {
     /// branch look impossible.
     ///
     /// The causes a road can carry are `"knowledge"` (the faction has not learned
-    /// `roadbuilding`/`paving`), `"owned_by_other"` (another band keeps this tile, or nobody does,
-    /// so this band's entry banks nothing) and `"materials"` (the rung's own gate **holds** and the
+    /// `roadbuilding`/`paving`), `"owned_by_other"` (another band keeps this tile, so this band's
+    /// entry banks nothing — the remedy is a negotiation or another tile), `"no_keeper"` (**nobody**
+    /// keeps it, so the tile is a job going begging — the remedy is to take it on, and re-issuing
+    /// `grade`/`pave` adopts an unkept road) and `"materials"` (the rung's own gate **holds** and the
     /// store is what stopped it). **Empty is not "fine"** — a road nobody has queued is not blocked,
     /// it is simply not being built.
+    ///
+    /// ⛔ **`"owned_by_other"` AND `"no_keeper"` ARE NOT ONE CAUSE.** *"Another band owns this
+    /// road"* said of a road nobody keeps is a **false sentence**: it sends the player looking for a
+    /// rival that does not exist, past a road they could simply have claimed. A road loses its keeper
+    /// without anybody deciding to drop it — decay or disuse takes the tile back below the free
+    /// floor's top and the keeper is released — so the unkept state is the ordinary end of a road
+    /// nobody walked rather than an edge case.
     #[serde(default)]
     pub build_blocked_reason: String,
     /// **THIS TURN'S SHARE OF THE RUNG'S BUILD PILE**, and what the band's stores actually paid of

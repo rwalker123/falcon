@@ -54,7 +54,7 @@ pub(crate) const FULLY_SERVED: f32 = 1.0;
 const NO_FODDER_LEDGER: f32 = 0.0;
 
 /// **A BAND STANDING ON NO ROAD AT ALL** — what `LaborAllocation`'s two roadwork rates are cleared
-/// to at the top of every band's iteration in [`settle_route_keeping`], before the exits that can
+/// to at the top of every band's iteration in [`settle_bands_roadwork`], before the exits that can
 /// end it without reaching the sum. [`NO_FODDER_LEDGER`]'s twin, and named for its reason: this is
 /// the exact *"keeps no roads"* reading and not a small quantity of work.
 const NO_ROADWORK_LEDGER: f32 = 0.0;
@@ -1652,7 +1652,7 @@ fn route_keeping_claims(
 /// accrual — is the one point where the bill and the share describe the same position."* Roads billed
 /// **after** their accrual until this pass existed. So this is one correction, not a trade.
 ///
-/// **What stays behind in [`settle_route_keeping`] is the WORK payment alone**, because that half
+/// **What stays behind in [`settle_bands_roadwork`] is the WORK payment alone**, because that half
 /// needs the one thing this pass cannot have: the `roadwork` head count **the shedding order left**,
 /// which does not exist until `advance_labor_allocation` has run.
 ///
@@ -1774,23 +1774,41 @@ pub fn bill_and_stock_roads(
 /// every road a band pays for is one it chose by typing a command — so `Roadwork` covers *the roads
 /// this band is the keeper of*, exactly as `Agriculture` covers the patches it cultivated.
 ///
-/// It runs in `TurnStage::Population` **`.after(advance_labor_allocation)`**, and that edge is
-/// declared rather than left to the ambiguity gate: the pool is *spent* there — the shedding order
-/// may take hands off the `roadwork` row — so the head count this pass divides has to be the one
-/// the band ended the turn with.
+/// # ⛔ IT IS CALLED FROM INSIDE [`advance_labor_allocation`], AND THAT IS THE WHOLE ARRANGEMENT
 ///
-/// # ⛔ (a) THE BILL IS STAMPED ON **EVERY** ROAD, KEEPER OR NOT
+/// **It was a system of its own, `.after(advance_labor_allocation)`, and that ordering published a
+/// false countdown.** [`crate::routes::advance_roads`] clears `Road::upkeep_supplied` a whole stage
+/// earlier, so a payment made *after* the labour pass left that field at **zero for the whole of
+/// it** — and the road build quote struck inside that pass reads exactly that field, through
+/// [`crate::routes::road_meter_rot`]. Every billed road therefore quoted its rot at a work shortfall
+/// of `1.0` whatever its keepers had done, and a road **fully funded** whose `neglect_turns` still
+/// stood above its grace published the full rot in place of the `0` it had earned. Both food webs
+/// settle their keeping *inside* the labour pass, ahead of the quote that reads it; the route branch
+/// was the odd one out.
 ///
-/// This is the load-bearing half. [`crate::routes::Road::keeping_is_met`] answers `true` for a road
-/// with **no stamped bill** — an honest *"it has not been judged this turn"* — so a pass that
-/// stamped only the roads somebody keeps would leave a **keeperless** road reading as kept for ever:
-/// never arming its neglect counter, never decaying, never pruned. That is *"a road whose keeper is
-/// gone decays like any unkept improvement"* deleted outright, and it would fail as **no decay at
-/// all** rather than as a slow one.
+/// **It cannot move any earlier than this.** The head count it divides is the one **the shedding
+/// order left** ([`crate::components::LaborAllocation::normalize`]), which does not exist until that
+/// shed has run — which is why the payment ended up late in the first place. So the seat is: after
+/// the shed, ahead of the band's `continue`s, and a whole assignment loop before the road build arm.
 ///
-/// The stamp is first-write-wins, exactly as a patch's and a herd's is, and the whole free floor
-/// falls out of the arithmetic owing [`crate::intensification::NO_UPKEEP_DEMAND`] rather than being
-/// branched around.
+/// ⛔ **IT DOES NOT MOVE THE STAMP, AND THE TWO BILLS STAY STRUCK AT ONE POSITION.**
+/// [`bill_and_stock_roads`] still strikes `upkeep_demanded` **and** the material pair together,
+/// before the builders run; this pays the WORK half against that same stamp, exactly as it did from
+/// one system later. `demand − supplied` is the shortfall in both currencies, verbatim, unchanged.
+///
+/// ⛔ **AND THE PLANT AND ANIMAL PASSES ARE NOT REORDERED.** `settle_material_upkeep` still
+/// settles both food webs' standing materials and the build pile in one call, ranked by the player's
+/// own `SourcePriority`, exactly where it always ran.
+///
+/// # ⛔ (a) THE BILL IS STAMPED ON **EVERY** ROAD, KEEPER OR NOT — AND NOT HERE
+///
+/// This is the load-bearing half, and it belongs to [`bill_and_stock_roads`].
+/// [`crate::routes::Road::keeping_is_met`] answers `true` for a road with **no stamped bill** — an
+/// honest *"it has not been judged this turn"* — so a pass that stamped only the roads somebody
+/// keeps would leave a **keeperless** road reading as kept for ever: never arming its neglect
+/// counter, never decaying, never pruned. That is *"a road whose keeper is gone decays like any
+/// unkept improvement"* deleted outright, and it would fail as **no decay at all** rather than as a
+/// slow one.
 ///
 /// # (b) THE PAYMENT IS THE SAME SUPPLY EXPRESSION THE OTHER TWO POOLS USE
 ///
@@ -1816,104 +1834,92 @@ pub fn bill_and_stock_roads(
 /// the bill it is failing to pay rather than a zero. That is the alarm, and it is the same reason
 /// the hay need is ungated by Foddering.
 ///
-/// **Both are cleared at the top of every band's iteration, ahead of the `continue`s** — the
-/// `advance_labor_allocation` rule: a band that abandons its last road must stop republishing last
-/// turn's bill.
-pub fn settle_route_keeping(
-    mut registry: ResMut<crate::routes::RoadRegistry>,
-    ladder: Res<LadderConfigHandle>,
-    equipment: Res<EquipmentConfigHandle>,
-    tile_registry: Res<TileRegistry>,
-    tiles: Query<&Tile>,
-    // **`With<BandId>` — a cohort with no durable id is not a band the route layer knows**, exactly
-    // as `balance_supply_networks` refuses one as a pooling endpoint. A keeper *is* a `BandId`, so an
-    // anonymous cohort has nothing to claim with and could never have been named one.
-    mut bands: Query<
-        (
-            // **Read-only: this pass spends no goods.** A paved road's standing stone is drawn by
-            // [`bill_and_stock_roads`] before the builders run, which is what puts a band's
-            // standing roads ahead of a new paving build on the store. What is left here is the
-            // WORK payment, and the cohort is read only for its head count.
-            &PopulationCohort,
-            &mut LaborAllocation,
-            Option<&mut BandEquipment>,
-            &BandId,
-        ),
-        With<BandId>,
-    >,
+/// **Both are cleared ahead of every exit**, the [`advance_labor_allocation`] rule: a band that
+/// abandons its last road must stop republishing last turn's bill. It is also why the call site sits
+/// **above** that pass's `continue`s rather than beside the road arm — a band whose whole allocation
+/// was shed leaves the loop early, and it still owes what its roads cost.
+///
+/// **`band` is the keeper's durable id.** A cohort with no `BandId` is not a band the route layer
+/// knows — exactly as `balance_supply_networks` refuses one as a pooling endpoint — so the caller
+/// skips it: a keeper *is* a `BandId`, and an anonymous cohort has nothing to claim with.
+///
+/// **The cohort is read-only.** A paved road's standing stone is drawn by [`bill_and_stock_roads`]
+/// before the builders run, which is what puts a band's standing roads ahead of a new paving build
+/// on the store. What is left here is the WORK payment, and the cohort is read only for its head
+/// count.
+#[allow(clippy::too_many_arguments)] // The per-band slice of what was a Bevy system's parameter list
+pub fn settle_bands_roadwork(
+    registry: &mut crate::routes::RoadRegistry,
+    cohort: &PopulationCohort,
+    allocation: &mut LaborAllocation,
+    mut band_equipment: Option<&mut BandEquipment>,
+    band: BandId,
+    equipment_cfg: &crate::equipment_config::EquipmentConfig,
+    ladder: &LadderConfig,
+    tile_registry: &TileRegistry,
+    tiles: &Query<&Tile>,
 ) {
-    let ladder = ladder.get();
-    let equipment_cfg = equipment.get();
-
-    // ## The WORK payment only — the bill and the STONE were struck by
-    // [`bill_and_stock_roads`] before the builders ran, so a band's standing roads take their
-    // material before any new build can touch the store.
-    for (cohort, mut allocation, mut band_equipment, band) in bands.iter_mut() {
-        // **(c) cleared ahead of every exit below**, so a band that has put its last road down stops
-        // republishing a bill it no longer owes.
-        allocation.last_roadwork_demand = NO_ROADWORK_LEDGER;
-        allocation.last_roadwork_supplied = NO_ROADWORK_LEDGER;
-        let (kept, claims) = route_keeping_claims(
-            &registry,
-            Some(*band),
-            &equipment_cfg,
-            &tile_registry,
-            &tiles,
-            &ladder,
-        );
-        if claims.is_empty() {
-            continue;
-        }
-        // **(c) THE DEMAND IS SUMMED BEFORE THE HEAD-COUNT GATE.** A band with nobody on the role
-        // owes exactly this much and this is the field that says so — the hay need's own rule.
-        allocation.last_roadwork_demand = claims.iter().map(|claim| claim.demand).sum();
-        let keepers = allocation.workers_on(&LaborTarget::Roadwork);
-        if keepers == NO_CREW_ON_THIS_ACTIVITY {
-            continue;
-        }
-        // **Sized to the band's workers**, `advance_labor_allocation`'s own rule: an absent
-        // component means the gear ledger was never built, which reads as start-stocked.
-        let band_kit = band_equipment.as_deref().cloned().unwrap_or_else(|| {
-            BandEquipment::start_stocked_for(
-                &equipment_cfg,
-                available_workers(cohort.working) as f32,
-            )
-        });
-        let rates = keeping_rates(
-            &equipment_cfg,
-            &band_kit,
-            crate::intensification::RungBranch::Route,
-            keepers,
-            &claims,
-        );
-        let needs: Vec<f32> = claims
+    // **(c) cleared ahead of every exit below**, so a band that has put its last road down stops
+    // republishing a bill it no longer owes.
+    allocation.last_roadwork_demand = NO_ROADWORK_LEDGER;
+    allocation.last_roadwork_supplied = NO_ROADWORK_LEDGER;
+    let (kept, claims) = route_keeping_claims(
+        registry,
+        Some(band),
+        equipment_cfg,
+        tile_registry,
+        tiles,
+        ladder,
+    );
+    if claims.is_empty() {
+        return;
+    }
+    // **(c) THE DEMAND IS SUMMED BEFORE THE HEAD-COUNT GATE.** A band with nobody on the role
+    // owes exactly this much and this is the field that says so — the hay need's own rule.
+    allocation.last_roadwork_demand = claims.iter().map(|claim| claim.demand).sum();
+    let keepers = allocation.workers_on(&LaborTarget::Roadwork);
+    if keepers == NO_CREW_ON_THIS_ACTIVITY {
+        return;
+    }
+    // **Sized to the band's workers**, `advance_labor_allocation`'s own rule: an absent
+    // component means the gear ledger was never built, which reads as start-stocked.
+    let band_kit = band_equipment.as_deref().cloned().unwrap_or_else(|| {
+        BandEquipment::start_stocked_for(equipment_cfg, available_workers(cohort.working) as f32)
+    });
+    let rates = keeping_rates(
+        equipment_cfg,
+        &band_kit,
+        crate::intensification::RungBranch::Route,
+        keepers,
+        &claims,
+    );
+    let needs: Vec<f32> = claims
+        .iter()
+        .zip(&rates)
+        .map(|(claim, rate)| rate.worker_need(claim.demand))
+        .collect();
+    let fund_mode = allocation.upkeep_fund_mode;
+    for ((claim, rate), hands) in
+        claims
             .iter()
             .zip(&rates)
-            .map(|(claim, rate)| rate.worker_need(claim.demand))
-            .collect();
-        let fund_mode = allocation.upkeep_fund_mode;
-        for ((claim, rate), hands) in
-            claims
-                .iter()
-                .zip(&rates)
-                .zip(distribute_upkeep_pool(keepers as f32, &needs, fund_mode))
-        {
-            let supplied = hands * rate.per_worker;
-            if let Some(road) = registry.road_mut(kept[claim.index]) {
-                road.upkeep_supplied += supplied;
-            }
-            // **(c) this band's own contribution**, accumulated across the roads it keeps.
-            allocation.last_roadwork_supplied += supplied;
-            // **The keeper's tools are spent on exactly that work** — billed on what the pool
-            // *supplied* to this road, never on what the rung demanded. Inert with the shipped bare
-            // `none` kit, and wired so a future road kit is a config edit and nothing else.
-            charge_keeping_wear(
-                band_equipment.as_deref_mut(),
-                &equipment_cfg,
-                Some(&rate.wear_kit),
-                supplied,
-            );
+            .zip(distribute_upkeep_pool(keepers as f32, &needs, fund_mode))
+    {
+        let supplied = hands * rate.per_worker;
+        if let Some(road) = registry.road_mut(kept[claim.index]) {
+            road.upkeep_supplied += supplied;
         }
+        // **(c) this band's own contribution**, accumulated across the roads it keeps.
+        allocation.last_roadwork_supplied += supplied;
+        // **The keeper's tools are spent on exactly that work** — billed on what the pool
+        // *supplied* to this road, never on what the rung demanded. Inert with the shipped bare
+        // `none` kit, and wired so a future road kit is a config edit and nothing else.
+        charge_keeping_wear(
+            band_equipment.as_deref_mut(),
+            equipment_cfg,
+            Some(&rate.wear_kit),
+            supplied,
+        );
     }
 }
 
@@ -2731,10 +2737,11 @@ pub fn advance_labor_allocation(
     // this pass writes about a *row* carries, so the event dock can offer that band's Work tab
     // ([`band_detail_token`]) — so a band without one still works, gathers and lapses exactly as
     // before and simply publishes rows the dock cannot link.
-    // **Read-only here.** The shed counts a band's spare road keepers against what the roads it
-    // KEEPS cost ([`route_keeping_claims`]); paying them is `settle_route_keeping`'s, one system
-    // later, and the traffic that wears the free floor in is `routes::advance_roads`', a whole stage
-    // earlier. The build half of a road is this pass's own — see the road arm below.
+    // **Written here, in three separate acts.** The shed counts a band's spare road keepers against
+    // what the roads it KEEPS cost ([`route_keeping_claims`]); the keeping is then **paid** by
+    // [`settle_bands_roadwork`], called from this pass ahead of the band's `continue`s; and the build
+    // half is this pass's own — see the road arm below. Only the traffic that wears the free floor in
+    // belongs elsewhere (`routes::advance_roads`, a whole stage earlier).
     mut roads: ResMut<crate::routes::RoadRegistry>,
     mut cohorts: Query<LaborBandParts>,
 ) {
@@ -2931,9 +2938,10 @@ pub fn advance_labor_allocation(
             .map(|tile| tile.position)
             .ok();
         // **What the roads this band KEEPS cost it to hold** — struck here, off the same seam
-        // `settle_route_keeping` funds them through, so *"more road keepers than the bill needs"*
-        // and *"what each road is owed"* cannot come from two readings of the same ground. The
-        // registry is read-only in this pass: paying a road is `settle_route_keeping`'s.
+        // [`settle_bands_roadwork`] funds them through, so *"more road keepers than the bill needs"*
+        // and *"what each road is owed"* cannot come from two readings of the same ground. This
+        // reading is the **pre-shed** one the shedding order is entitled to; the payment below strikes
+        // its own against what survived.
         let (_, road_claims) = route_keeping_claims(
             &roads,
             band_id,
@@ -2988,6 +2996,38 @@ pub fn advance_labor_allocation(
         allocation.last_material_need.clear();
         allocation.last_material_income.clear();
         allocation.last_fodder_drain = NO_FODDER_LEDGER;
+        // ## ⛔ THE ROADS THIS BAND KEEPS, PAID HERE — AFTER THE SHED AND BEFORE THE QUOTE
+        //
+        // The third keeping pool ([`settle_bands_roadwork`]), and this seat is the whole of what
+        // makes the road build quote further down honest. `routes::advance_roads` clears
+        // `Road::upkeep_supplied` a stage earlier and this is its only writer, so while the payment
+        // ran as a system *after* this pass the quote's `routes::road_meter_rot` read a supply of
+        // **zero** for every road in the world — pinning its work shortfall at `1.0` and publishing
+        // the full rot for roads that were fully funded. Both food webs already settle their keeping
+        // inside this pass ahead of the quote that reads it; the route branch was the odd one out.
+        //
+        // **It cannot sit any earlier**: the pool it divides is the `roadwork` head count the shed
+        // above left, not the one the player typed. **And it cannot sit any later**: below this line
+        // are the two `continue`s, and a band whose whole allocation was shed still owes what its
+        // roads cost — the roll-up clears beside the fodder and material ledgers for that reason.
+        //
+        // **Its own claim reading, deliberately.** `road_claims` above was struck for the shedding
+        // order, off the **pre-shed** allocation; this one funds what survived. The two are the same
+        // number today — a claim is a property of the ROADS, not of the allocation — and keeping
+        // them separate is what stops a later change to one silently retuning the other.
+        if let Some(band_id) = band_id {
+            settle_bands_roadwork(
+                &mut roads,
+                &cohort,
+                &mut allocation,
+                band_equipment.as_deref_mut(),
+                band_id,
+                &equipment_cfg,
+                &ladder,
+                &tile_registry,
+                &tiles,
+            );
+        }
         if allocation.assignments.is_empty() {
             continue;
         }
@@ -5779,11 +5819,11 @@ pub fn advance_labor_allocation(
                     // (`docs/plan_standing_upkeep.md` §2.5).
                 }
                 LaborTarget::Roadwork => {
-                    // **The third keeping pool, and the one this pass does not spend.** A road is
-                    // not a source row and has no arm above to stamp — what it funds is resolved
-                    // from the ground the band is standing on — so the split lives in its own system
-                    // ([`settle_route_keeping`], `.after` this one), and this row is a head count
-                    // that pass reads.
+                    // **The third keeping pool, and the one this LOOP does not spend.** A road is
+                    // not a source row and has no arm above to stamp — what it funds is resolved from
+                    // the roads the band keeps rather than from `assignments` — so the split runs
+                    // once per band in [`settle_bands_roadwork`], above this loop and ahead of the
+                    // band's `continue`s, and this row is only the head count that call divides.
                 }
                 LaborTarget::Builders => {
                     // **And neither do the builders**, for the same reason one level over: their

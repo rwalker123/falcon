@@ -1370,7 +1370,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             })
             .collect(),
         // **THE BAND'S ROADWORK BILL** — the summed keeping of the roads under this band's own tile
-        // (route arc rule 2), struck by `settle_route_keeping` off the same stamped basis the
+        // (route arc rule 2), struck by `settle_bands_roadwork` off the same stamped basis the
         // per-road rows publish. **The sim sums it and a client must not**: route rows are
         // fog-filtered, so a road out of sight would silently drop out of a client-side total the
         // band certainly still owes. The shortfall is derived here from the pair, so the identity

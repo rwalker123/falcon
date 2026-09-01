@@ -2892,8 +2892,26 @@ impl RungDef {
     /// short — see `ForagePatch::upkeep_demanded`, which is the plant web's record of the bill its
     /// keepers were actually handed.
     pub fn meter_rot_against(&self, demand: f32, supplied: f32, shortfall_turns: u16) -> f32 {
+        self.meter_rot_at_fraction(upkeep_shortfall_fraction(demand, supplied), shortfall_turns)
+    }
+
+    /// **[`Self::meter_rot`] AT A SHORTFALL FRACTION THE CALLER RESOLVED** — the form a web whose
+    /// keeping is billed in **more than one currency** must use, because
+    /// [`keeping_shortfall_fraction`]'s worst-of-both reading cannot be reconstructed from a single
+    /// work pair.
+    ///
+    /// ⛔ **THE QUOTE AND THE DECAY PASS MUST RIDE ONE FRACTION.** A source whose rung declares both
+    /// a `meter_decay` and an `upkeep.materials` — `route:paved_road` is the first — bleeds at the
+    /// worst of the work shortfall and each material's own, so a forecast resolved off the work pair
+    /// alone promises a meter *holds* while the pass is taking the material's rot off it. That is not
+    /// a rounding difference: fully staffed with an empty store, the work term is `0` and the
+    /// material term is the **entire** bleed.
+    ///
+    /// The count advance and the grace comparison are [`Self::meter_rot`]'s, unchanged — this is the
+    /// same expression with the fraction supplied rather than derived.
+    pub fn meter_rot_at_fraction(&self, shortfall_fraction: f32, shortfall_turns: u16) -> f32 {
         self.upkeep_decay(
-            upkeep_shortfall_fraction(demand, supplied),
+            shortfall_fraction,
             // **The count the NEXT pass will judge at.** It increments the counter before comparing it
             // to the grace, so a seam describing that pass has to increment it too — see the ordering
             // block above. Saturating because a counter at `u16::MAX` is a source neglected for longer

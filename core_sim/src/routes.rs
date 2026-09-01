@@ -256,7 +256,8 @@ pub struct Road {
     /// ⛔ **STAMPED IN THE SAME BREATH AS THE WORK BILL, and that is load-bearing.** A road being
     /// *paved* has its position moved by the build arm inside the same turn, so a material bill
     /// struck at one position beside a work bill struck at another would be two readings of two
-    /// different roads. `settle_route_keeping` stamps both in its pass (a), before anything moves.
+    /// different roads. [`crate::systems::bill_and_stock_roads`] stamps both in its pass (a), before
+    /// anything moves.
     ///
     /// **The rate tracks the position like the work does** (§2.7): a paved rung half raised owes
     /// half the stone, through the same `interpolate` both webs' demands go through.
@@ -820,9 +821,11 @@ pub fn road_material_keeping_basis<'a>(
 /// `forage::patch_keeping_basis`' rule exactly, and for its reason: a claim and the bill it is
 /// judged against must be one number, and an interpolated demand moves *within* a turn.
 ///
-/// **The fallback is the only reading available to the SHED**, which counts a band's spare road
-/// keepers against this bill inside `advance_labor_allocation` — a whole system before
-/// [`crate::systems::settle_route_keeping`] stamps anything.
+/// **The fallback is what a reader OUTSIDE the stamped window sees.** Every road carries a stamp
+/// for the whole of `TurnStage::Population` — [`crate::systems::bill_and_stock_roads`] strikes it
+/// before the labour pass — so the shed's spare-keeper count, the keeping payment and the build
+/// quote all read one bill. What falls back is a Logistics-stage reader, where [`advance_roads`] has
+/// just cleared the stamp, and a harness that drives the passes by hand.
 pub fn road_keeping_basis(road: &Road, measure: f32, ladder: &LadderConfig) -> f32 {
     road.upkeep_demanded
         .unwrap_or_else(|| road_upkeep_demand(road, measure, ladder))
@@ -831,10 +834,20 @@ pub fn road_keeping_basis(road: &Road, measure: f32, ladder: &LadderConfig) -> f
 /// **WHAT THIS ROAD'S METER LOSES THIS TURN** — the plant web's [`crate::forage::patch_meter_rot`],
 /// one branch over, and the term a build countdown nets its supply against.
 ///
-/// **It is the rot the DECAY PASS will actually apply**, resolved through the same three seams
-/// `advance_roads` bleeds through — [`road_at_risk_rung`], the stamped bill
-/// ([`road_keeping_basis`]) and the road's own `neglect_turns` — so a quote cannot promise a road
-/// will finish while the pass takes more off it than the crew puts on.
+/// **It is the rot the DECAY PASS will actually apply**, resolved through the same four seams
+/// `advance_roads` bleeds through — [`road_at_risk_rung`], the stamped bill in **both** currencies
+/// ([`road_keeping_basis`] and [`road_material_keeping_basis`]) and the road's own `neglect_turns` —
+/// so a quote cannot promise a road will finish while the pass takes more off it than the crew puts
+/// on.
+///
+/// ⛔ **BOTH CURRENCIES, THROUGH `intensification::keeping_shortfall_fraction`** — the
+/// worst of the work shortfall and each material's own, which is exactly what `advance_roads` phase
+/// 2 bleeds at. Reading the work pair alone was correct while no route rung ate anything and became
+/// a **false forecast** the moment `route:paved_road` declared an `upkeep.materials` beside its
+/// `meter_decay`: a road fully staffed with an empty stone store has a work term of `0`, so the
+/// work-only reading published `BuildTurns::Holds` for a meter the very next pass took `0.7` off,
+/// and a road short of both quoted the smaller of the two rots. The bleed and its forecast are one
+/// expression or they are two numbers free to disagree.
 ///
 /// [`crate::intensification::NO_UPKEEP_DECAY`] on the free floor, whose rungs declare no `upkeep` and
 /// therefore can never be short: what takes a trail back is **disuse**, which is not a meter rot and
@@ -844,9 +857,13 @@ pub fn road_meter_rot(road: &Road, measure: f32, ladder: &LadderConfig) -> f32 {
     if rung.upkeep.is_none() {
         return crate::intensification::NO_UPKEEP_DECAY;
     }
-    rung.meter_rot_against(
-        road_keeping_basis(road, measure, ladder),
-        road.upkeep_supplied,
+    rung.meter_rot_at_fraction(
+        crate::intensification::keeping_shortfall_fraction(
+            road_keeping_basis(road, measure, ladder),
+            road.upkeep_supplied,
+            &road_material_keeping_basis(road, measure, ladder),
+            &road.upkeep_materials_supplied,
+        ),
         road.neglect_turns,
     )
 }
@@ -1150,7 +1167,7 @@ pub fn trace_path(
 /// # ⛔ THE ONE-TURN CARRY IS THE ARRANGEMENT, NOT A DEFECT TO FIX
 ///
 /// Logistics runs **before** Population, so the [`Road::upkeep_supplied`] phase 1 judges was stamped
-/// by *last* turn's [`crate::systems::settle_route_keeping`] — the same lag
+/// by *last* turn's [`crate::systems::settle_bands_roadwork`] — the same lag
 /// `forage::advance_cultivation` and `fauna::advance_husbandry` already run on. It runs in
 /// `TurnStage::Logistics` **after `balance_supply_networks`**, which is what lets it see this turn's
 /// links, and the *payoff* is therefore read at the standing as of the **previous** turn. **Do not
@@ -2100,6 +2117,146 @@ mod tests {
                 .keeper
                 .is_none(),
             "and the free floor is nobody's job"
+        );
+    }
+    /// ⛔ **A ROAD OUT OF STONE IS QUOTED THE ROT THE PASS WILL TAKE, NOT ZERO** — the quote and the
+    /// decay both ride [`crate::intensification::keeping_shortfall_fraction`], so they cannot come
+    /// to disagree about how short a road is.
+    ///
+    /// **THE HANDS ARE FULL IN BOTH ARMS, and that is the whole design of the fixture**: the work
+    /// term is `0` by construction (asserted), so the only thing that can produce a rot here is the
+    /// **material** term. A road merely short of keepers would pass this on the work half alone and
+    /// say nothing about the currency that was being dropped.
+    ///
+    /// **The control arm is stocked and genuinely holds**, so a reading that rots everything cannot
+    /// pass either. The sentence each arm publishes is asserted beside the number, because that is
+    /// what the player reads: a parked meter losing `0.7` a turn that says
+    /// [`crate::intensification::BuildTurns::Holding`] — *"the meter holds exactly where it is"* —
+    /// is a false sentence, not an imprecise one.
+    #[test]
+    fn a_paving_out_of_stone_is_quoted_the_rot_the_decay_pass_will_take() {
+        use crate::components::Improvement;
+        use crate::intensification::{
+            build_turns_estimate, keeping_shortfall_fraction, upkeep_shortfall_fraction,
+            BuildTurns, BUILD_BALANCE_HOLDS, FULLY_SUPPLIED, NO_BUILD_GEAR,
+        };
+
+        /// The build is **parked**: nobody is on it, so the balance is the rot alone and the
+        /// sentence is decided by the rot's sign rather than by a crew out-running it.
+        const PARKED: u32 = NO_CREW_ON_THIS_ACTIVITY;
+        /// The pile is not what is under test here — the standing draw is.
+        const PILE_COVERED: f32 = 1.0;
+
+        let ladder = LadderConfig::builtin();
+        let (base, width) = road_rung_span(RungKey::RoutePavedRoad, &ladder, NEAR_ENOUGH_TO_KEEP);
+        let grace = ladder
+            .rung(RungKey::RoutePavedRoad)
+            .upkeep
+            .as_ref()
+            .expect("a paved road is something somebody holds")
+            .grace_turns;
+
+        // A road **half way up the paved rung**, so the rung at risk is the one that declares both a
+        // `meter_decay` and an `upkeep.materials`, and there is banked work for a rot to eat.
+        let seat = |stone_paid: bool| {
+            let mut road = Road::worn_in(UVec2::new(3, 4), &ladder);
+            road.set_position(base + width / 2.0, &ladder);
+            let measure = road_upkeep_measure(TerrainType::AlluvialPlain, NEAR_ENOUGH_TO_KEEP);
+            // The bill, struck exactly as `bill_and_stock_roads` strikes it — both currencies, at one
+            // position.
+            let work = road_upkeep_demand(&road, measure, &ladder);
+            road.upkeep_demanded = Some(work);
+            road.upkeep_materials_demanded = road_upkeep_material_demands(&road, measure, &ladder);
+            // ⛔ **THE HANDS ARE PAID IN FULL, IN BOTH ARMS.**
+            road.upkeep_supplied = work;
+            if stone_paid {
+                road.upkeep_materials_supplied = road.upkeep_materials_demanded.clone();
+            }
+            // The counter **as it stands**; the next pass increments it before comparing it to the
+            // grace, and so does the quote.
+            road.neglect_turns = grace as u16;
+            (road, measure)
+        };
+
+        let (bare, measure) = seat(false);
+        assert!(
+            !bare.upkeep_materials_demanded.is_empty(),
+            "**LIVENESS**: a road raising the paved rung must OWE standing stone, or both arms below \
+             are comparing two roads that eat nothing"
+        );
+        assert_eq!(
+            upkeep_shortfall_fraction(bare.upkeep_basis(), bare.upkeep_supplied),
+            FULLY_SUPPLIED,
+            "⛔ FIXTURE: the WORK half must be met in full, or this test passes on the work term and \
+             says nothing about the stone"
+        );
+
+        // **What the decay pass will actually take** — phase 2's own expression, off the stamped pair.
+        let bleed = ladder
+            .rung(road_at_risk_rung(&bare.standing()))
+            .upkeep_decay(
+                keeping_shortfall_fraction(
+                    bare.upkeep_basis(),
+                    bare.upkeep_supplied,
+                    &bare.upkeep_materials_demanded,
+                    &bare.upkeep_materials_supplied,
+                ),
+                bare.neglect_turns.saturating_add(1),
+            );
+        assert!(
+            bleed > NO_UPKEEP_DECAY,
+            "**LIVENESS**: past its grace with an empty shelf, the pass really does bleed this road \
+             ({bleed})"
+        );
+        let quoted = road_meter_rot(&bare, measure, &ladder);
+        assert_eq!(
+            quoted, bleed,
+            "⛔ THE QUOTE IS THE BLEED: a road fully staffed and out of stone is losing {bleed} a \
+             turn and was quoted {quoted}. Resolving the rot through the WORK pair alone reads a \
+             shortfall of zero here — the stone is the only currency short — so the countdown \
+             promises a meter that is going backwards"
+        );
+
+        let bare_balance = ladder.rung(RungKey::RoutePavedRoad).build_balance(
+            Some(Improvement::Pave),
+            true,
+            PARKED,
+            NO_BUILD_GEAR,
+            quoted,
+            PILE_COVERED,
+        );
+        assert!(
+            bare_balance < BUILD_BALANCE_HOLDS,
+            "a parked meter the pass is bleeding is going BACKWARDS: {bare_balance}"
+        );
+        assert_eq!(
+            build_turns_estimate(width, width / 2.0, bare_balance, true, PARKED),
+            Some(BuildTurns::Rotting),
+            "⛔ AND IT SAYS SO. A road bleeding {bleed} a turn that publishes `Holding` tells the \
+             player their half-built road is parked safely while the ground goes out from under it"
+        );
+
+        // **THE CONTROL** — the same road with its stone paid. It really does hold.
+        let (stocked, measure) = seat(true);
+        let held = road_meter_rot(&stocked, measure, &ladder);
+        assert_eq!(
+            held, NO_UPKEEP_DECAY,
+            "a road whose hands AND stone are both met loses nothing, however long it has been \
+             neglected before now"
+        );
+        let stocked_balance = ladder.rung(RungKey::RoutePavedRoad).build_balance(
+            Some(Improvement::Pave),
+            true,
+            PARKED,
+            NO_BUILD_GEAR,
+            held,
+            PILE_COVERED,
+        );
+        assert_eq!(
+            build_turns_estimate(width, width / 2.0, stocked_balance, true, PARKED),
+            Some(BuildTurns::Holding),
+            "and THAT is the parked half-built road the keeping pool holds indefinitely - the \
+             sentence the bare arm must not be allowed to borrow"
         );
     }
 }

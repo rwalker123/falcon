@@ -595,8 +595,22 @@ const NOTHING_BANKED := 0.0
 ## `SourceForecast.pool_work_supply` is exactly what `build_turns_at` divides by — `crew × bare rate
 ## + min(crew, saturating crew) × gear` — so a road and a Cultivate are paced by one expression. What
 ## cannot be reused is `build_turns_at` itself: it reads its cost, its banked work and its RATE off a
-## prefixed SOURCE dict, and a road has no source row at all (which is why `buildTurnsRemaining` is a
-## no-op for roads sim-side).
+## prefixed forecast SOURCE dict, which a road row is not.
+##
+## ⛔ **IT PRICES AN UNORDERED RUNG, AND IT IS NOT `RouteState.buildTurnsRemaining`** (`roads.md` →
+## *"`RungLadder._route_turns` DID NOT COLLAPSE INTO THIS, and must not"*). That field is LIVE and sim-stamped — the chained
+## countdown for a road actually QUEUED, through the same `published_build_countdown` seam the two
+## food webs use — and it answers `-1`, *no estimate*, for a rung nobody has declared, which is every
+## row this card prices. So the two answer different questions and the split is the design:
+## **an unordered rung → the client estimates, which is this function; a queued entry → the sim's own
+## `buildTurnsRemaining`**, read by `HudRouteVocab.build_turns_remaining_of`.
+##
+## ⛔ **NEITHER COLLAPSE IS AVAILABLE, and both have been tried.** A card quoting the wire field would
+## state *no estimate* on every rung a player is choosing between; a queue row quoting a hardcoded
+## sentinel instead of the field is the `-5`-on-every-road defect that read `Queued 97%` for 147
+## turns, reported from play. The justification both leaned on — *"a road has no source row at all,
+## which is why `buildTurnsRemaining` is a no-op for roads sim-side"* — is false in both halves: the
+## routes table is keyed by tile exactly as a patch row is, and the sim stamps a countdown on it.
 ##
 ## ⛔ **BOTH TERMS COME OFF THE CATALOG ENTRY, AND THE RATE IS READ RATHER THAN ASSUMED.** The cost is
 ## `workCost`; the bare rate is `buildWorkPerWorkerTurn`, which the sim publishes on every rung

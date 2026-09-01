@@ -763,6 +763,198 @@ fn a_paved_road_draws_its_standing_stone_out_of_the_stores_turn_after_turn() {
     );
 }
 
+/// **KEEP THE BAND FED.** [`stage_a_paving`] and [`stock_stone`] both replace the cohort's whole
+/// store to control the stone, which leaves the larder empty — and a starving band loses its people,
+/// sheds its rows and drops out of `advance_labor_allocation` through the empty-assignments
+/// `continue` long before a fifteen-turn neglect run is over. Topped up every turn rather than once,
+/// because what these fixtures measure is the road and never the famine.
+fn keep_the_band_fed(app: &mut App, band: Entity) {
+    /// Far more than a starting band eats in a turn.
+    const A_FULL_LARDER: i64 = 100_000;
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band")
+        .stores
+        .set(core_sim::FOOD, core_sim::Scalar::from_i64(A_FULL_LARDER));
+}
+
+/// **THE HANDS THIS BAND HAS TO GIVE**, read off its own cohort — what
+/// `LaborAllocation::set_assignment` measures its headroom against.
+///
+/// ⛔ **PASSING THE WANTED COUNT HERE SILENTLY APPLIES ZERO.** The headroom is
+/// `available − every hand on every OTHER row`, so a fixture that hands its own ask in as the
+/// available total gets nothing the moment the band already has somebody on something else — and the
+/// row lands staffed `0` with no error anywhere.
+fn hands_the_band_has(app: &App, band: Entity) -> u32 {
+    core_sim::available_workers(
+        app.world
+            .get::<PopulationCohort>(band)
+            .expect("the fixture band")
+            .working,
+    )
+}
+
+/// **Put `workers` on this band's `roadwork` row WITHOUT disturbing anything else it is doing** —
+/// [`staff_roadwork`]'s in-place twin, for a fixture that has already staged a build queue the
+/// wholesale replacement would throw away.
+fn set_roadwork_crew(app: &mut App, band: Entity, workers: u32) {
+    let available = hands_the_band_has(app, band);
+    let mut allocation = app
+        .world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the fixture band keeps its allocation");
+    allocation.set_assignment(LaborTarget::Roadwork, workers, available, None);
+}
+
+/// **Somebody in this band is doing something that is not roadwork and not building.**
+///
+/// ⛔ **A ROLE ROW AT ZERO WORKERS IS DROPPED OUTRIGHT** (`LaborAllocation::set_assignment` —
+/// its `keep_holding` clause covers *sources*, never roles), and `advance_labor_allocation` leaves a
+/// band with no assignments at all through an early `continue`, before the road arm that stamps a
+/// countdown. So a fixture that wants an **unstaffed** `roadwork` row *and* a published road quote
+/// has to give the band some other row to be walked for. `Warrior` is the inert one: a band-wide
+/// standing guard that resolves nothing.
+fn staff_a_bystander_role(app: &mut App, band: Entity, workers: u32) {
+    let available = hands_the_band_has(app, band);
+    let mut allocation = app
+        .world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the fixture band keeps its allocation");
+    allocation.set_assignment(LaborTarget::Warrior, workers, available, None);
+}
+
+/// ⛔ **A ROAD WHOSE KEEPERS CAME BACK STOPS QUOTING A ROT IT NO LONGER OWES.**
+///
+/// **This is the behaviour the roadwork payment's move bought, and it is client-visible.**
+/// `routes::road_meter_rot` reads `Road::upkeep_supplied`, and that field is cleared a whole stage
+/// earlier by `routes::advance_roads`; while the payment ran as a system *after*
+/// `advance_labor_allocation`, the build quote struck **inside** that pass read a supply of zero for
+/// every road in the world. The work shortfall was therefore pinned at `1.0`, and any road whose
+/// `neglect_turns` still stood above its grace published the **full** rot — including one the band
+/// had just re-staffed in full, which is a warning about a meter nothing is going to touch.
+///
+/// **The counter is what makes the state reachable, and it is not an edge case.** `neglect_turns` is
+/// cleared by the *next* turn's Logistics, so the turn a band restores its keepers is a turn with a
+/// tripped counter and a fully paid bill — exactly the turn a player looks at the road to check that
+/// their fix worked.
+///
+/// **A PARKED meter is what says it in a sentence**: with nobody on the build the balance is the rot
+/// alone, so the countdown is decided by the rot's sign — [`sim_schema::BUILD_METER_HOLDS`] for a
+/// meter nothing is taking, [`sim_schema::BUILD_METER_ROTS`] for one going backwards.
+/// `docs/plan_standing_upkeep.md` §2.4's *"parking a half-built improvement"* is the state under
+/// test: the keeping pool holds it indefinitely, at no risk, and the wire has to say so.
+///
+/// **Both arms run the same neglected turns**, so the only difference between them is whether the
+/// keepers came back — the control arm is still unstaffed, still short, and must still read `ROTS`,
+/// or this test would pass on a rot that had simply stopped firing.
+#[test]
+fn a_road_whose_keepers_came_back_stops_quoting_the_rot_it_no_longer_owes() {
+    /// Past `route:paved_road`'s own grace of 12, with room to spare — asserted off the wire below
+    /// rather than trusted.
+    const NEGLECTED_TURNS: u32 = 15;
+    /// **Nobody on the build.** The balance is then the rot alone and the countdown is its sign.
+    const PARKED: u32 = 0;
+    /// Nobody on the road either — the whole of phase 1.
+    const UNKEPT: u32 = 0;
+    /// One hand on the inert role, so the band is walked at all. See [`staff_a_bystander_role`].
+    const ONE_BYSTANDER: u32 = 1;
+    /// Far more than either stone account can eat over the run.
+    const PLENTY: f32 = 1_000.0;
+
+    // A half-raised PAVED rung: the one rung on the branch declaring a `meter_decay` **and** an
+    // `upkeep.materials`, and a meter carrying enough banked work for a rot to be a real loss.
+    let quote_after_neglect = |restaff: bool| {
+        let mut app = spawn_world();
+        let (band, faction, id, camp) = first_band(&mut app);
+        seat_a_dirt_road(&mut app, camp, (faction, id));
+        stage_a_paving(&mut app, band, camp, PARKED, PLENTY);
+        staff_a_bystander_role(&mut app, band, ONE_BYSTANDER);
+        set_roadwork_crew(&mut app, band, UNKEPT);
+        let ladder = LadderConfig::builtin();
+        let (base, width) =
+            core_sim::road_rung_span(RungKey::RoutePavedRoad, &ladder, NEAR_ENOUGH_TO_KEEP);
+        {
+            let mut roads = app.world.resource_mut::<RoadRegistry>();
+            roads
+                .road_mut(camp)
+                .expect("the fixture road is seated")
+                .set_position(base + width / 2.0, &ladder);
+        }
+        // ## Phase 1 — nobody on `roadwork`, until the grace is spent.
+        for _ in 0..NEGLECTED_TURNS {
+            keep_the_band_fed(&mut app, band);
+            app.update();
+        }
+        let neglected = published_road(&app, camp);
+        assert_eq!(
+            neglected.rung, "route:dirt_road",
+            "**FIXTURE**: the road is still HALF WAY UP the paved rung — it holds the dirt road and \
+             is raising the one above it, which is the rung whose grace and rot rate govern below"
+        );
+        assert_eq!(
+            neglected.neglect_grace_remaining, 0,
+            "**FIXTURE**: {NEGLECTED_TURNS} unkept turns must spend `route:paved_road`'s whole \
+             grace, or neither arm below is past the point where a rot can fire at all"
+        );
+        assert!(
+            neglected.shortfall > 0.0,
+            "**FIXTURE**: and the road really is short of hands ({})",
+            neglected.shortfall
+        );
+        assert_eq!(
+            neglected.build_turns_remaining,
+            sim_schema::BUILD_METER_ROTS,
+            "**FIXTURE**: an unkept parked meter reads ROTS — the reading the restaffed arm must \
+             stop giving"
+        );
+
+        // ## Phase 2 — the keepers come back (or, in the control arm, they do not).
+        if restaff {
+            let wanted = keepers_the_bill_wants(&app, camp);
+            set_roadwork_crew(&mut app, band, wanted);
+            stock_stone(&mut app, band, PLENTY);
+        }
+        keep_the_band_fed(&mut app, band);
+        app.update();
+        published_road(&app, camp)
+    };
+
+    let restaffed = quote_after_neglect(true);
+    assert!(
+        restaffed.shortfall.abs() < 1.0e-3,
+        "precondition: the band really did cover the whole bill this turn — {} against {}",
+        restaffed.supplied,
+        restaffed.demand
+    );
+    assert_eq!(
+        restaffed.neglect_grace_remaining, 0,
+        "precondition: and it is judged while the neglect counter is STILL tripped, which is the \
+         whole state under test — the counter clears next turn, the keeping was met this one"
+    );
+    assert_eq!(
+        restaffed.build_turns_remaining,
+        sim_schema::BUILD_METER_HOLDS,
+        "⛔ A ROAD PAID FOR IN FULL IS NOT ROTTING. The next decay pass will take NOTHING off this \
+         meter — the shortfall it would ride is zero — so a parked half-paved road HOLDS. Reading \
+         `Road::upkeep_supplied` before the payment had been made pinned the work shortfall at 1.0 \
+         and published the full rot for a road the player had just fixed"
+    );
+
+    // **THE CONTROL** — the same neglected turns, keepers never came back.
+    let still_short = quote_after_neglect(false);
+    assert!(
+        still_short.shortfall > 0.0,
+        "precondition: the control arm is still short ({})",
+        still_short.shortfall
+    );
+    assert_eq!(
+        still_short.build_turns_remaining,
+        sim_schema::BUILD_METER_ROTS,
+        "⛔ AND A ROAD NOBODY IS KEEPING STILL ROTS. Without this arm the claim above passes on a \
+         rot that had simply stopped firing"
+    );
+}
+
 /// ⛔ **A PAVED ROAD WITH NO STONE DECAYS, AND ONE WITH STONE DOES NOT** — §2.7's *"a short draw is
 /// a shortfall like any other and drives the decay paths that already exist"*.
 ///

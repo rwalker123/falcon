@@ -38,7 +38,7 @@ const NO_KEEPER_BAND: u64 = 0;
 ///
 /// `demand − supplied == shortfall` must hold **verbatim on the wire**, so all three — and the
 /// worker count beside them — resolve through [`road_keeping_basis`], the stamp
-/// `settle_route_keeping` struck this turn.
+/// `settle_bands_roadwork` struck this turn.
 ///
 /// **Order is the registry's own row-major key order**, so the section is stable frame to frame and
 /// diffs out when nothing moved.

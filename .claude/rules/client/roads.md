@@ -1279,8 +1279,12 @@ Every other chapter stayed green through all three.
   `ReadyForImprovement` is unaffected — it reads `current_rung` off patches and herds, and no road
   carries one.
 - **No kit picker on the Roadwork card, and `KitRoster.KEEPING_JOB_BUILD_BRANCHES` gains no entry.**
-  `default_kits.roadwork` is the bare `none` kit, so road keepers work bare today; that is intended,
-  and the day a barrow declares a `build_work` stat serving `route` the existing seam picks it up.
+  ⛔ **Not because road keepers work bare — they no longer do.** `roadbuilding` and `paving` both list
+  `roadwork` among their jobs, so the sim derives a real keeping kit **per road, at the rung that road
+  stands on**. That is precisely why this table cannot carry a `roadwork` row: it answers per **pool**,
+  and one pool spans many roads at many rungs, so there is no single rung a pool-wide lookup could be
+  right about. Nothing would read it either — the road pool card takes supply, demand and shortfall
+  straight off the cohort.
 
 ## `grade` and `pave` are the only TILE verbs that name a BAND
 

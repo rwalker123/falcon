@@ -1121,8 +1121,9 @@ checkpointed like any other row (§2.5).
 > **The route pool reuses this whole seam and adds nothing to it** — the same `keeping_rates` →
 > `KeepingRate::worker_need` → `distribute_upkeep_pool` chain, under the same `upkeep_fund_mode`.
 > Where it differs is that a road is **not a source row**: it is owned by nobody, so what the pool
-> funds is resolved from the ground the band is standing on rather than from `assignments`, in its
-> own system (`systems::settle_route_keeping`) rather than inside `advance_labor_allocation`. See
+> funds is resolved from the ground the band is standing on rather than from `assignments`. It is
+> settled **inside** `advance_labor_allocation`'s band loop (`settle_bands_roadwork`), from the same
+> seat the two food webs settle theirs — reading the `roadwork` pool the shed left. See
 > `.claude/rules/core_sim/routes.md` → "The keeping".
 
 - **WHY IT LEFT THE TILE: an indivisible supplier meeting a per-source demand WASTES what it does not

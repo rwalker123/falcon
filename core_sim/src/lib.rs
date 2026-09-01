@@ -383,7 +383,7 @@ pub use systems::{
     advance_predator_raids, advance_tick, bench_material_rate, bench_tiers, bill_and_stock_roads,
     denial_forecast, expedition_returned_event, expedition_take_provisions, fold_party_into_band,
     hunt_per_worker_provisions, hunt_report_event, hunt_take, hunt_trip_forecast,
-    output_multiplier, party_owes_a_report, settle_route_keeping, simulate_power,
+    output_multiplier, party_owes_a_report, settle_bands_roadwork, simulate_power,
     source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
     DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
     PowerSimParams, SplitBand, SplitRefusal, SplitRefusals, TradeDiffusionEvent,
@@ -989,15 +989,19 @@ pub fn build_headless_app() -> App {
                 // Pure telemetry: writes `TradeTelemetry`, which only `simulate_population`
                 // touches. It rides alongside the whole movement/labor run instead of tailing it.
                 systems::publish_trade_telemetry.after(systems::simulate_population),
-                // **The third keeping pool** (`.claude/rules/core_sim/routes.md`). Both edges are
-                // declared rather than left to the ambiguity gate:
-                //  - `.after(advance_labor_allocation)` — the `roadwork` head count it divides has
-                //    to be the one the shedding order left, not the one the player typed.
-                //  - `.before(advance_crafting)` — it charges this turn's keeping wear on the
-                //    band's gear, exactly as the other two pools do from inside the labour pass, so
-                //    it lands before the bench that may replace what it just wore. Being ahead of
-                //    the bench also puts it ahead of the raids and the migration that follow, which
-                //    is what keeps it reading the band where the labour pass left it.
+                // **RETIRED: `settle_route_keeping`, the third keeping pool as a SYSTEM OF ITS
+                // OWN.** It ran `.after(advance_labor_allocation)` because the `roadwork` head count
+                // it divides has to be the one the shedding order left — and that put the payment a
+                // whole system *behind* the road build quote, which reads `Road::upkeep_supplied`
+                // through `routes::road_meter_rot`. `routes::advance_roads` clears that field a
+                // stage earlier and this was its only writer, so every road quoted its rot at a work
+                // shortfall of `1.0` and a fully funded road past its grace published the full rot
+                // instead of `0`. The payment is now `systems::settle_bands_roadwork`, called from
+                // inside `advance_labor_allocation` after the shed and ahead of that pass's
+                // `continue`s — the seat both food webs already settle their keeping from, and the
+                // only one that is after the shed and before the quote. Its keeping wear still lands
+                // before `advance_crafting` for the same reason it did as a system: it is charged
+                // inside the labour pass, which the bench already follows.
                 // ⛔ **HOLDING WHAT YOU HAVE OUTRANKS EXPANDING** — the roads' bill and the STONE
                 // that pays it are struck BEFORE the builders run, so a band's standing paved roads
                 // take their material before a new paving build may touch the store. While the
@@ -1006,18 +1010,15 @@ pub fn build_headless_app() -> App {
                 // starved the roads already under it. See `bill_and_stock_roads` for why the DRAW
                 // moved rather than the STAMP being split.
                 //
-                // Both edges are declared rather than left to the ambiguity gate, exactly as
-                // `settle_route_keeping`'s are — it takes `PopulationCohort` mutably to spend the
-                // stone, so its order against the movement chain is not the scheduler's to guess:
+                // Both edges are declared rather than left to the ambiguity gate — it takes
+                // `PopulationCohort` mutably to spend the stone, so its order against the movement
+                // chain is not the scheduler's to guess:
                 //  - `.after(advance_expeditions)` — it slots into the chain immediately before
                 //    labor, so the bill is struck on the positions this turn's movement left.
                 //  - `.before(advance_labor_allocation)` — the ordering this system exists for.
                 systems::bill_and_stock_roads
                     .after(systems::advance_expeditions)
                     .before(systems::advance_labor_allocation),
-                systems::settle_route_keeping
-                    .after(systems::advance_labor_allocation)
-                    .before(systems::advance_crafting),
             )
                 .in_set(TurnStage::Population)
                 .run_if(capability_enabled(

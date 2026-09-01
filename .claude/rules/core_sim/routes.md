@@ -657,9 +657,11 @@ and a material bill on the other are two readings of two different roads, and
 pair together **and** puts the material draw ahead of the build's — and the pre-accrual position is
 the right one anyway: both food webs bill there, and roads were the odd branch out.
 
-**What stays in `settle_route_keeping` is the WORK payment alone**, because that half needs the one
-thing the early pass cannot have — the `roadwork` head count *the shedding order left*, which does
-not exist until `advance_labor_allocation` has run.
+**What stays behind is the WORK payment alone**, because that half needs the one thing the early
+pass cannot have — the `roadwork` head count *the shedding order left*. So it runs as
+`settle_bands_roadwork`, called from **inside** `advance_labor_allocation`'s band loop, immediately
+after the shed and before the band's `continue`s — the same seat both food webs settle their keeping
+from.
 
 ⛔ **THE PLANT AND ANIMAL WEBS ARE NOT REORDERED.** `settle_material_upkeep` still settles their
 standing materials and the build pile in one call, ranked by the player's own `SourcePriority`. What
@@ -728,17 +730,6 @@ banked), and clearing it there would undo the command on the turn it was typed.
 ⛔ **A FIXTURE THEREFORE WRITES THE POSITION BEFORE THE KEEPER.** Seating a keeper first and then
 seating the position hands it straight back, silently.
 
-### ⛔ NO ROUTE RUNG DECLARES A MATERIAL, AND THE REASON IS THAT THE MATERIAL DOES NOT EXIST
-
-§4.13 has the paved road swallowing **stone** on both the pile and the rate. It is not declared,
-because `stone` is not in `materials.json` and the ladder's load-time check rightly rejects a rung
-naming a material the table does not carry.
-
-**Adding a stone with no way to obtain one would be worse than declaring none** — it ships a rung that
-can **never be held**, which is a harder failure than one that is cheap to hold. Quarrying is the
-crafting arc's. When a stone material lands, the rung takes `build.materials {stone: 30}` and
-`upkeep.materials {stone: 0.08}` and nothing else changes.
-
 ## The keeping — the `Roadwork` POOL, and the decay it pays for
 
 ⛔ **THE POOL SURVIVED THE PER-TILE MODEL, AND THIS IS A REVERSAL WORTH READING.** An earlier cut of
@@ -754,17 +745,25 @@ it cultivated, and the per-road choice is exercised with `abandon`.
 
 `LaborTarget::Roadwork` is an ordinary band-wide standing role — `assign_labor <faction> <band>
 roadwork <n>`, published as a `laborAssignments` row with `kind: "roadwork"`, shed by `normalize`,
-checkpointed. Its TOE job is `KitJob::Roadwork` and `default_kits.roadwork` is the bare `none` kit, so
-**road keepers work bare today**.
+checkpointed. Its TOE job is `KitJob::Roadwork`, and `default_kits.roadwork` is the bare `none` kit — but that
+is the **fall-back and no longer the answer**: `roadbuilding` and `paving` both list `roadwork` among
+their jobs, so `keeping_kit_for` derives a real kit **per road, at the rung that road stands on** —
+`roadbuilding` for a dirt road, `paving` for a paved one.
 
 ### ⛔ THE BILL IS STAMPED ON EVERY ROAD, KEEPER OR NOT
 
-`systems::settle_route_keeping` runs in `TurnStage::Population`, `.after(advance_labor_allocation)`
-and `.before(advance_crafting)` — both edges declared — and does two things in order:
+The two halves run in **two** passes, both edges declared — see *"holding what you have outranks
+expanding"* above for why the stamp moved earlier:
 
-1. **stamps the interpolated bill on every road in the registry**, first-write-wins;
-2. **pays**, from every band whose `roadwork` row is staffed, against **the roads it keeps**
-   (`RoadRegistry::kept_by`).
+1. `systems::bill_and_stock_roads`, `.before(advance_labor_allocation)` — **stamps the interpolated
+   bill on every road in the registry**, first-write-wins, and spends the standing material;
+2. `settle_bands_roadwork`, called from **inside** `advance_labor_allocation`'s band loop — **pays
+   the WORK half**, from every band whose `roadwork` row is staffed, against **the roads it keeps**
+   (`RoadRegistry::kept_by`). ⛔ **It is not a system of its own, and that is the fix to a false
+   countdown**: paid from one system later, the build quote read a `Road::upkeep_supplied` still at
+   `0`, pinned the work shortfall at `1.0` and published the FULL rot for a road the player had just
+   funded. It sits before the band's `continue`s so a band that sheds its whole allocation still
+   clears the roll-up rather than republishing a stale bill.
 
 **Step 1 is the load-bearing half, and its scope is the trap.** `Road::keeping_is_met` answers `true`
 for a road with **no stamped bill** — an honest *"it has not been judged this turn"* — so a pass that
@@ -1001,7 +1000,7 @@ figure would not be a catalog fact.
 
 ### The band roll-up — `roadworkDemand` / `roadworkSupplied` / `roadworkShortfall`
 
-On `PopulationCohortState`, summed by `settle_route_keeping` over **the roads the band keeps**.
+On `PopulationCohortState`, summed by `settle_bands_roadwork` over **the roads the band keeps**.
 ⛔ **THE SIM SUMS IT AND A CLIENT MUST NOT** — the identical rule `fodderNeed` is minted under: road
 rows are fog-filtered, so a road out of sight would silently drop out of any client-side total while
 the band certainly still owes its keeping.
@@ -1056,8 +1055,10 @@ the `keeping_is_met` filter; and a built road in shortfall carries nothing on ei
 filter is not simply *everything passes*. The road-preferring walk is pinned by seating a road on a
 tile the tie-break would have passed over and asserting the path takes it **at the same length**.
 
-`core_sim/tests/route_traffic.rs` drives the three systems in **stage order** through real turns
-(`balance_supply_networks` + `advance_roads` in Logistics, `settle_route_keeping` in Population): a
+`core_sim/tests/route_traffic.rs` drives the route passes in **stage order** through real turns
+(`balance_supply_networks` + `advance_roads` in Logistics; in Population a local `pay_road_keepers`
+driver calling `settle_bands_roadwork`, **the same function production calls**, so the harness is a
+driver and not a second arithmetic): a
 run of tiles worn in by pooling nobody ordered, the traffic cap, the disuse fade, the friction payoff
 paired against an unrouted run, the off-the-run negative control, the keeping (a road that holds
 beside one that loses its rung, the proportional bleed, the grace, the keeperless road that is finally
@@ -1066,7 +1067,7 @@ pruned), the free floor owing nothing beside a dirt road that does, the remote r
 in two phases so *"each pays only for its own"* is measured rather than assumed.
 
 Its fixture turn runs the five passes in stage order — `balance_supply_networks`, `advance_roads`,
-`credit_route_lessons` (Logistics), then `advance_band_movement`, `settle_route_keeping` (Population)
+`credit_route_lessons` (Logistics), then `advance_band_movement` and `pay_road_keepers` (Population)
 — so a **march's one-turn lag is visible rather than papered over**. On top of the above it carries:
 the march banked on the **following** turn and **exactly once** (a third turn standing still moves
 nothing); the reach payoff as a **capability** (two camps 8 tiles apart deliver nothing, and deliver

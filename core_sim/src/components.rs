@@ -3536,7 +3536,7 @@ pub struct LaborAllocation {
     pub last_material_income: std::collections::BTreeMap<String, f32>,
     /// **WHAT THE ROADS THIS BAND STANDS ON WERE BILLED THIS TURN**, in work units — the summed
     /// **stamped** keeping of every road under the band's own tile (the route arc's rule 2, and
-    /// there is no radius). Written by [`crate::systems::settle_route_keeping`] and exported as
+    /// there is no radius). Written by [`crate::systems::settle_bands_roadwork`] and exported as
     /// `PopulationCohortState.roadwork_demand`.
     ///
     /// ⛔ **The sim sums it, not the client** — [`Self::last_fodder_need`]'s rule, and load-bearing
