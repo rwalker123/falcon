@@ -2668,6 +2668,9 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > tunes a shape about to move. **§4.15 first, then this.** Ray: *"I'd prefer to do tuning [last] to
     > make sure we don't unnecessarily tune."*
     >
+    > **§4.15 HAS LANDED (PR #570), so this dependency is DISCHARGED** — see its own LANDED marker.
+    > The plant web's shape is settled and the numbers below are now tunable against it.
+    >
     > #### TWO PLAYTEST OBSERVATIONS TO DISCUSS BEFORE ANY NUMBER MOVES
     >
     > Reported from play by Ray, recorded here as **items to discuss, not findings to act on** — the
@@ -2746,10 +2749,21 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
 15. **A SOW IS PRICED BY HOW MUCH OF THE TILE IT REPLACES.** A **scale primitive**, of §4.11's and
     §4.13's kind and not §4.14's — the numbers below are §4.14's to own, the shape is not.
 
-    > ⛔ **THIS RUNS BEFORE §4.14, DESPITE THE NUMBER.** It is a shape change and §4.14 is the tuning
-    > spread, which declares itself last; tuning the plant web before this primitive exists would tune
-    > something about to move, by §4.14's own stated rule. See the ordering box on §4.14. **With §4.13
-    > complete at 13c and §4.13d moved to #617, this is the next slice of the arc.**
+    > **LANDED IN FULL, IN PR #570, BEFORE §4.14 — the body below is the AS-BUILT record.** Both
+    > halves shipped on 2026-08-22: the patch price (① – ④) in `cdfc2bb3`, the per-crop picker figure
+    > (⑤) in `f3c3a90b`, together with the prose in this item. `core_sim/tests/sow_share_cost.rs`
+    > covers it in four tests.
+    >
+    > ⛔ **IT RAN BEFORE §4.14, DESPITE THE NUMBER, and that ordering is now SATISFIED rather than
+    > pending.** It is a shape change and §4.14 is the tuning spread, which declares itself last;
+    > tuning the plant web before this primitive existed would have tuned something about to move, by
+    > §4.14's own stated rule. See the ordering box on §4.14 — **§4.14's shape dependency on this item
+    > is discharged.**
+    >
+    > ⛔ **THIS IS NOT THE NEXT SLICE, and a box here said it was.** The claim was written on
+    > 2026-09-01 while §4.13 was being closed out, on top of prose that was already this item's
+    > as-built record, and it cost a session a start. **A pending-work claim on an item belongs
+    > next to a check of what is merged**, which is the guard this marker is.
 
     It is the
     ladder's existing per-source price hook (`RungStanding::at`'s `cost_at`, which the animal web
