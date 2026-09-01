@@ -62,14 +62,23 @@ expressed as OFFSETS from now (a fixed stamp would drift into another bucket as 
 only the date row carries a fixed stamp, since that branch has no bucket to drift out of.
 
 **One check takes no picture at all.** `_assert_text_focus_is_handed_back` covers the keyboard
-handover behind `MapView`'s polled-input guard (`.claude/rules/client/map-renderers.md` → "Typing
-must not drive the map"): typing must leave the Save pane's name field holding focus, and
-`release_text_focus`, a pane switch and a submit must each hand it back. The POSITIVE legs are what
-keep the negative ones honest — an assertion that focus was released passes trivially if focus was
-never taken. `MapView` is not instantiated here, so the suppression itself is NOT tested; what is
-tested is the predicate's input, the exact expression `_text_entry_has_focus` evaluates. Sabotage-
-verified: stubbing `release_text_focus` to return early fails all three release legs, which also
-proves that neither `queue_free` nor hiding the layer releases focus on its own.
+handover behind the client's two polled-input guards
+(`.claude/rules/client/polled-input-focus.md`): typing must leave the
+Save pane's name field holding focus; `release_text_focus`, a pane switch and a submit must each hand
+it back; and a focused **Button** must NOT read as text entry, since widening the predicate would
+kill WASD and every panel toggle after each click on a HUD control. The POSITIVE legs are what keep
+the negative ones honest — an assertion that focus was released passes trivially if focus was never
+taken, and the Button leg first asserts the probe really took focus.
+
+**It calls the SHIPPED predicate** (`TextEntryFocus.held_in`) rather than restating the expression, so
+a drift in it fails here. Neither `MapView` nor `Main` is instantiated in this harness, so neither
+`_process` runs and the suppression itself — that a guarded hotkey does not fire — is NOT tested;
+what is tested is the predicate those two branch on, against a really focused field.
+
+Sabotage-verified three ways: widening the predicate to `is Control` fails the Button leg; making it
+always false fails all three focus-is-taken legs; stubbing `release_text_focus` fails all three
+release legs, which is also the proof that neither `queue_free` nor hiding the layer releases focus on
+its own.
 
 Same `_settle` (`process_frame` → `force_draw` → `process_frame`) + `_save` contract as
 `ui_preview`, and the same rule: `scripts/preview.sh res://tools/menu_preview.tscn`, **NOT

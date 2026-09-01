@@ -10,6 +10,9 @@ extends Node
 ## then read ui_preview_out/menu_landing.png and menu_pause.png.
 
 const MENU_SHELL := preload("res://src/ui/MenuShell.tscn")
+## The SHIPPED predicate both polled-input sites ask. Asserted directly rather than restated here —
+## a harness that re-spelled the expression would keep passing after the real one drifted.
+const TextEntryFocus := preload("res://src/scripts/TextEntryFocus.gd")
 const OUT_DIR := "res://ui_preview_out"
 
 # Window the shell renders into.
@@ -278,17 +281,20 @@ func _run_saves_states() -> void:
 ## **THE KEYBOARD IS BORROWED, NOT TAKEN** — the behavioural half of `MapView`'s polled-input guard,
 ## and it takes no PNG because none of it is visible.
 ##
-## `MapView._process` samples WASD and Q·E with `Input.get_action_strength`, which never touches the
-## event system, so it pans and zooms the map while the player types unless it is told a text control
-## holds the keyboard. That guard's failure in the other direction is worse than the bug it fixes:
-## focus left STUCK after the pane is gone kills WASD for the rest of the session with nothing on
+## The client has TWO polled keyboard reads — `MapView._process` (pan/zoom, `get_action_strength`)
+## and `Main._process` (the five toggle hotkeys, `is_action_just_pressed`). Both sample raw device
+## state and never touch the event system, so both steal keystrokes from a focused field unless told
+## not to, and both ask the ONE predicate this file also asks: `TextEntryFocus.held_in`.
+##
+## That guard's failure in the other direction is worse than the bug it fixes: focus left STUCK after
+## the pane is gone kills WASD *and* every panel toggle for the rest of the session, with nothing on
 ## screen to explain it. So both halves are asserted — the field TAKES focus, and every exit HANDS IT
 ## BACK.
 ##
-## **WHAT THIS HARNESS CANNOT PROVE**: `MapView` is not instantiated here, so `_process` never runs
-## and the suppression itself is untested. What IS tested is the predicate's input — the viewport's
-## focus owner is a `LineEdit` while typing and is not one after each exit — which is the exact
-## expression `MapView._text_entry_has_focus` evaluates.
+## **WHAT THIS HARNESS CANNOT PROVE**: neither `MapView` nor `Main` is instantiated here, so neither
+## `_process` ever runs and the suppression itself — that a guarded hotkey does not fire — is
+## untested. What IS tested is the predicate the two of them branch on, called directly, against a
+## really focused field.
 func _assert_text_focus_is_handed_back() -> void:
 	if _drift_notice != null:
 		_drift_notice.queue_free()
@@ -335,11 +341,25 @@ func _assert_text_focus_is_handed_back() -> void:
 	# Settle the seam so it is not left holding an op nothing will ever answer.
 	_answer_save_op(TYPED_NEW_NAME)
 
+	# **THE PREDICATE MUST STAY NARROW.** A focused Button does not consume letters, so widening this
+	# to "anything focused" would kill WASD and every panel toggle after each click on a HUD control
+	# — a worse bug than the one the guard exists for, and one no PNG would show.
+	var probe := Button.new()
+	_root.add_child(probe)
+	probe.grab_focus()
+	await get_tree().process_frame
+	if get_viewport().gui_get_focus_owner() != probe:
+		_fail("focus: the Button probe would not take focus, so the narrowness check proved nothing")
+	elif _focused_is_text_entry():
+		_fail("focus: a focused Button counts as text entry — the guard would kill the hotkeys")
+	probe.release_focus()
+	probe.queue_free()
 
-## The exact expression `MapView._text_entry_has_focus` evaluates.
+
+## **THE SHIPPED PREDICATE, CALLED** — not a restatement of it. `MapView._text_entry_has_focus` and
+## `Main._process`'s hotkey guard are both exactly this call, so a drift in it fails here.
 func _focused_is_text_entry() -> bool:
-	var focused := get_viewport().gui_get_focus_owner()
-	return focused is LineEdit or focused is TextEdit
+	return TextEntryFocus.held_in(get_viewport())
 
 
 func _answer_save_op(slot: String) -> void:

@@ -390,33 +390,10 @@ Minimap sizing parameters live in `heightfield_config.json` (the file also holds
 
 ---
 
-## Typing must not drive the map — the one POLLED input site
+## Typing must not drive the game
 
-`MapView._process` reads pan and zoom with `Input.get_action_strength("map_pan_*")` /
-`("map_zoom_*")`. **That samples raw device state and never enters the event system**, so a focused
-`LineEdit` consuming the keystroke is irrelevant to it: the map panned and zoomed while the player
-typed a save's name, with W/A/S/D and Q·E doing both jobs at once. It is not a focus bug in the event
-paths — `_unhandled_input` is correctly never reached for a key a Control consumed — and fixing it
-there would have changed nothing.
-
-**These three lines are the only polled input in the client**, which is what makes the guard a
-one-place fix: `_text_entry_has_focus()` returns true when the viewport's focus owner
-`is LineEdit or is TextEdit` (`CodeEdit` subclasses `TextEdit`), and `_process` skips the pan and the
-zoom while it does. Everything else in `_process` — the mouse-pan release latch, the targeting pulse,
-the expedition pulse — is deliberately outside the guard: none of it is a keystroke.
-
-**Scoped to TEXT ENTRY, never to "anything focused".** A focused Button does not consume letters, so
-suppressing WASD whenever a button held focus would kill the map after every click on a HUD control —
-a worse bug than the one being fixed.
-
-**The failure in the other direction is worse than the bug, and it is the caller's to prevent.** A
-field that keeps focus after its surface is dismissed leaves the map permanently unresponsive to WASD
-with nothing on screen to explain why. So the surface that owns a text field owns handing the
-keyboard back — `MenuShell.release_text_focus()`, called on every pane change, after a save is
-submitted, and by `Main._hide_pause_menu`. **Hiding a `CanvasLayer` does not do it for you**:
-`CanvasLayer` is not a `CanvasItem`, so its `visible` never reaches the Controls under it as a
-visibility change. Neither does `queue_free` within the frame it is called — the node holds focus
-until it actually leaves the tree. Both were verified by sabotage:
-`menu_preview`'s `_assert_text_focus_is_handed_back` fails on all three release paths when
-`release_text_focus` is stubbed out.
-
+The client reads the keyboard by POLLING in two places — `MapView._process` (pan/zoom) and
+`Main._process` (the five toggle hotkeys) — and polling never enters the event system, so both steal
+keystrokes from a focused text field unless told not to. The guard, the one shared predicate and the
+focus release it depends on are `.claude/rules/client/polled-input-focus.md`, which loads on all four
+files involved. **`C`/`H`/`T` and the targeting Escape are `_unhandled_input` and need no guard.**

@@ -25,6 +25,10 @@ class_name MenuShell
 
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 const MapSizes = preload("res://src/scripts/MapSizes.gd")
+## **THE ONE "is the player typing?" PREDICATE**, shared with the two polled-input sites it exists
+## for (`MapView`'s pan/zoom, `Main`'s toggle hotkeys). Asked here about a single node rather than
+## about the viewport, so that "this is a text field" has exactly one spelling in the client.
+const TextEntryFocus = preload("res://src/scripts/TextEntryFocus.gd")
 
 signal new_game_requested(preset_id: String, width: int, height: int, seed: int, profile_id: String)
 signal resume_requested
@@ -1437,12 +1441,13 @@ func _on_delete_cancelled() -> void:
 ## **HAND THE KEYBOARD BACK.** Called on every pane change, after a save is submitted, and by the
 ## owner when the shell is dismissed (`Main._hide_pause_menu`).
 ##
-## `MapView._process` polls WASD and Q·E with `Input.get_action_strength`, which never touches the
-## event system, so it is suppressed while a `LineEdit`/`TextEdit` holds focus
-## (`MapView._text_entry_has_focus`). That guard's mirror-image failure is focus left STUCK: a field
-## that keeps the keyboard after its surface is gone makes the map permanently unresponsive with
-## nothing on screen to explain why — strictly worse than the map panning while you type. So this
-## file, which owns the only text fields in the menu, owns the release.
+## The client's two POLLED keyboard reads — `MapView`'s pan/zoom and `Main`'s five toggle hotkeys —
+## sample raw device state and never touch the event system, so both are suppressed while a
+## `LineEdit`/`TextEdit` holds focus (`TextEntryFocus`). That guard's mirror-image failure is focus
+## left STUCK: a field that keeps the keyboard after its surface is gone makes the map permanently
+## unresponsive and the panel toggles dead, with nothing on screen to explain why — strictly worse
+## than the map panning while you type. So this file, which owns the only text fields in the menu,
+## owns the release.
 ##
 ## It releases only a text control **inside this shell**: a focused field elsewhere in the tree is
 ## somebody else's to hand back, and grabbing that decision would be the same overreach as guarding
@@ -1452,9 +1457,7 @@ func release_text_focus() -> void:
 	if viewport == null:
 		return
 	var focused := viewport.gui_get_focus_owner()
-	if focused == null:
-		return
-	if not (focused is LineEdit or focused is TextEdit):
+	if not TextEntryFocus.is_text_entry(focused):
 		return
 	if focused == self or is_ancestor_of(focused):
 		focused.release_focus()

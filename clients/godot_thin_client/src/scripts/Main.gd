@@ -16,6 +16,10 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 @onready var workbench_layer: CanvasLayer = $Workbench
 @onready var event_dock: CanvasLayer = $EventDockPanel
 @onready var pause_layer: CanvasLayer = $PauseLayer
+## **THE ONE "is the player typing?" PREDICATE**, shared with `MapView`'s pan/zoom poll and
+## `MenuShell`'s focus release. See the file for why it is not a private method here.
+const TextEntryFocus := preload("res://src/scripts/TextEntryFocus.gd")
+
 @onready var pause_menu: MenuShell = $PauseLayer/MenuShell
 
 ## The designer surface, built into `workbench_layer` at `_connect_workbench` and hidden until `` ` ``.
@@ -2880,16 +2884,27 @@ func _on_save_op_finished(kind: String, slot: String, ok: bool, error: String, d
 
 func _process(delta: float) -> void:
     _pump_forecast_queries()
-    if Input.is_action_just_pressed("toggle_inspector"):
-        _toggle_inspector_visibility()
-    if Input.is_action_just_pressed("toggle_victory"):
-        _toggle_victory_visibility()
-    if Input.is_action_just_pressed("toggle_event_dock"):
-        _toggle_event_dock_visibility()
-    if Input.is_action_just_pressed("toggle_fow"):
-        _toggle_fow_overlay()
-    if Input.is_action_just_pressed(WORKBENCH_TOGGLE_ACTION):
-        _toggle_workbench_visibility()
+    # **THE FIVE TOGGLE HOTKEYS ARE POLLED, so a focused text field does not starve them.**
+    # `Input.is_action_just_pressed` samples raw device state and never enters the event system: the
+    # `r` in a save's name toggled the event dock behind the menu, and `i`/`v`/`f`/`` ` `` did the
+    # same for their panels. This is the SECOND of the client's two polled keyboard reads — the other
+    # is `MapView`'s pan/zoom — and both ask the one predicate.
+    #
+    # **THE GUARD IS THIS BLOCK AND NOTHING ELSE.** Every line below it must keep running while the
+    # player types: the query pump is what carries the answer to the save they are naming, and the
+    # snapshot drain, the connection poll and the world-request retry all have nothing to do with the
+    # keyboard. A guard around the whole of `_process` would stall the very socket the save needs.
+    if not TextEntryFocus.held_in(get_viewport()):
+        if Input.is_action_just_pressed("toggle_inspector"):
+            _toggle_inspector_visibility()
+        if Input.is_action_just_pressed("toggle_victory"):
+            _toggle_victory_visibility()
+        if Input.is_action_just_pressed("toggle_event_dock"):
+            _toggle_event_dock_visibility()
+        if Input.is_action_just_pressed("toggle_fow"):
+            _toggle_fow_overlay()
+        if Input.is_action_just_pressed(WORKBENCH_TOGGLE_ACTION):
+            _toggle_workbench_visibility()
     if command_client != null:
         command_client.poll()
         command_client.ensure_connected()

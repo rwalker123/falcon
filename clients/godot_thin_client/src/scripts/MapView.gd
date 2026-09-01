@@ -2,6 +2,9 @@ extends Node2D
 class_name MapView
 
 const TerrainDefinitions := preload("res://assets/terrain/TerrainDefinitions.gd")
+## **THE ONE "is the player typing?" PREDICATE**, shared with `Main`'s hotkey block and `MenuShell`'s
+## focus release. See the file for why it is not a private method here.
+const TextEntryFocus := preload("res://src/scripts/TextEntryFocus.gd")
 
 signal hex_selected(col: int, row: int, terrain_id: int)
 signal tile_selected(info: Dictionary)
@@ -4756,30 +4759,21 @@ func _process(delta: float) -> void:
 		_expedition_time += delta
 		queue_redraw()
 
-## **IS THE PLAYER TYPING?** — the guard on the ONLY polled-input site in the client.
+## **IS THE PLAYER TYPING?** — the guard on the PAN AND ZOOM POLL, one of the client's two polled
+## keyboard reads (the other is `Main`'s hotkey block; both ask `TextEntryFocus`).
 ##
 ## `_process` above reads WASD and Q·E with `Input.get_action_strength`, which samples raw device
 ## state and never touches the event system. A focused `LineEdit` consuming the keystroke is
-## therefore irrelevant to it: the map pans and zooms while the player types their save's name, which
-## is what it did until this guard existed. The event-driven paths were never affected — a consumed
-## key genuinely does not reach `_unhandled_input` — so this is the one place the check belongs, and
-## putting it anywhere else would only be guarding something that is already correct.
-##
-## **TEXT ENTRY ONLY, not "anything focused".** A focused Button does not consume letters, and
-## suppressing WASD whenever a button held focus would be a worse bug than the one this fixes — the
-## map would go dead after every click on a HUD control. `TextEdit` covers `CodeEdit`, which
-## subclasses it.
+## therefore irrelevant to it: the map panned and zoomed while the player typed their save's name.
+## The event-driven paths here were never affected — `_unhandled_input` genuinely is not reached for
+## a key a Control consumed — so `C`/`H`/`T` and the targeting Escape need no guard.
 ##
 ## **THE MIRROR-IMAGE FAILURE IS FOCUS LEFT STUCK.** A field that keeps focus after its pane closes
 ## makes the map permanently unresponsive with nothing on screen to explain why, which is strictly
 ## worse than the defect. The release is the FIELD OWNER's to perform, at every exit from the surface
-## that holds it — see `MenuShell._release_text_focus`.
+## that holds it — see `MenuShell.release_text_focus`.
 func _text_entry_has_focus() -> bool:
-	var viewport := get_viewport()
-	if viewport == null:
-		return false
-	var focused := viewport.gui_get_focus_owner()
-	return focused is LineEdit or focused is TextEdit
+	return TextEntryFocus.held_in(get_viewport())
 
 
 ## Mirror the HUD's pending command-targeting state so the map can draw the reticle / valid-target

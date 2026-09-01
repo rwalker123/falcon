@@ -97,9 +97,11 @@ already are:
 ## The name field borrows the keyboard, and hands it back
 
 The slot-name `LineEdit` is the first free-text input in the game, and it exposed a pre-existing
-defect: `MapView._process` polls WASD and Q·E with `Input.get_action_strength`, which never touches
-the event system, so typing a save's name also drove the map. The guard lives where the polling does
-(`.claude/rules/client/map-renderers.md` → "Typing must not drive the map"); what belongs to this
+defect: the client reads the keyboard by POLLING in two places — `MapView._process` (pan/zoom) and
+`Main._process` (the five toggle hotkeys) — and polling never touches the event system, so typing a
+save's name panned the map with W/A/S/D and toggled the event dock with `r`. Both now ask one shared
+predicate, `src/scripts/TextEntryFocus.gd`; the guard lives where the polling does
+(`.claude/rules/client/polled-input-focus.md`). What belongs to this
 file is the other half. **`MenuShell.release_text_focus()` is called on every pane change, after a
 save is submitted, and by `Main._hide_pause_menu`** — because focus left stuck kills WASD for the rest
 of the session with nothing on screen to explain it, which is strictly worse than the bug. Neither
