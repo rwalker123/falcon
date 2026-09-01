@@ -369,11 +369,38 @@ const COMPOSITION_KEY_SEPARATION := 12
 const COMPOSITION_KEY_FONT_SIZE := 11
 
 ## PEOPLE key glyphs + words (the words live in the tooltips the glyphs replaced).
+##
+## **THESE ARE THE FALLBACK HALF NOW** (issue #249) — all three have bundled art in `PEOPLE_MARKS`
+## below and render it; these three render only when a load fails.
 const PEOPLE_GLYPH_CHILDREN := "👶"
 
 const PEOPLE_GLYPH_WORKING := "🛠"
 
 const PEOPLE_GLYPH_ELDERS := "🧓"
+
+## Age bracket → `HudSprites` MARK ID. **THE THREE ARE ONE SET AND MOVE TOGETHER** — they are the
+## segments of a single bar, read left to right as one sentence, so the only thing that may differ
+## between them is the SILHOUETTE: one figure at three ages, same tone pair, same weight. A drawn
+## child beside an emoji elder would be three subjects instead of one.
+const PEOPLE_MARKS := {
+	PEOPLE_GLYPH_CHILDREN: "children",
+	PEOPLE_GLYPH_WORKING: "working_age",
+	PEOPLE_GLYPH_ELDERS: "elders",
+}
+
+## The PEOPLE mark's box, and it is DELIBERATELY LARGER than the 11px type beside it.
+##
+## ⛔ **THE ELDER AND THE WORKING-AGE FIGURE ARE THE SAME SILHOUETTE PLUS A STOOP AND A STAFF, so
+## the box is what decides whether this set works at all.** Measured on the shipped renders: at 14px
+## and 16px the elder's staff MERGES into its body and the two marks are indistinguishable — the
+## trio collapses to *big-headed blob, column, column*. At 18px the staff separates and the stoop
+## reads, and all three are distinct. So 18 is not a taste call, it is the floor, and shrinking this
+## to match the label's own type size silently destroys one third of the key.
+##
+## It is `HudSelectionVocab.ROSTER_ROW_ICON_BOX`'s value for the same reason that one is 18: a
+## figure needs more room than a glyph. Spelled here rather than aliased — the two surfaces share a
+## number, not a reason, and the roster's box has no stake in the elder's staff.
+const PEOPLE_MARK_BOX := 18.0
 
 const PEOPLE_LABEL_CHILDREN := "children"
 

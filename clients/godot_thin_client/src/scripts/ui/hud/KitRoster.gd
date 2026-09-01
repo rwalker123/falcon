@@ -1504,7 +1504,8 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 	# separate `arrow` THEME item — and the face then carries the kit's name alone, art OR glyph and
 	# never both. UNTINTED: `apply_option_button` sets no `icon_*_color` and the stock theme's
 	# resolves to opaque white, so the mark renders in its authored two-tone fill.
-	var job_sprite := HudSprites.for_mark(String(HudComposeVocab.KIT_JOB_MARKS.get(job, "")))
+	var job_sprite := HudSprites.for_mark(String(HudComposeVocab.KIT_JOB_MARKS.get(job,
+		HudComposeVocab.KIT_JOB_MARK_FALLBACK)))
 	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [glyph, kit_display_name(selected)]
 	if job_sprite != null:
 		face = HudComposeVocab.KIT_PICKER_FACE_FORMAT_SPRITE % kit_display_name(selected)

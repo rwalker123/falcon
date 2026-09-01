@@ -1403,14 +1403,21 @@ const KIT_JOB_GLYPHS := {
 ## was a 🛡 there and a 🪓 here, which is one job drawn two ways and exactly the drift `hunt.png` was
 ## written to end.
 ##
-## Coverage is COMPLETE for the four jobs the roster ships; `KIT_JOB_GLYPH_FALLBACK` below is the
-## only face still guaranteed to be a glyph, and it is the one that should be.
+## Coverage is COMPLETE for the four jobs the roster ships, and `KIT_JOB_MARK_FALLBACK` covers the
+## fifth case — a job the table has never heard of — so this picker has no glyph face left at all.
 const KIT_JOB_MARKS := {
 	"hunt": "hunt",
 	"forage": "forage",
 	"scout": "scout",
 	"warrior": "warrior",
 }
+
+## The MARK for a job with no entry above — the art twin of `KIT_JOB_GLYPH_FALLBACK`, and the only
+## mark in `hud/` whose subject is deliberately GENERIC. It is a carrying basket: it must read as
+## *some gear, unspecified* beside four faces that name a specific job, and it must not be
+## `trade.png`'s gathered sack, which is the one other "thing you carry" in the family. A handle and
+## a hard rim against a knotted neck is what keeps those two apart at row size.
+const KIT_JOB_MARK_FALLBACK := "kit_fallback"
 
 ## The picker face once its mark is bundled ART — the kit's name alone, the leading `%s` gone,
 ## because a `Button` carries art on its `icon` PROPERTY and a face that kept the glyph would state

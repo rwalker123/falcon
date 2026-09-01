@@ -9709,12 +9709,25 @@ func _composition_counts(node: Node, title: String) -> Dictionary:
 			if child is HFlowContainer:
 				var counts: Dictionary = {}
 				for chip in child.get_children():
+					# **IDENTIFY BY META, READ THE COUNT OFF THE RENDER.** The chip used to be
+					# identified by splitting its label (`"👶 9"`), which issue #249 broke on the
+					# PEOPLE bar: its key is a `TextureRect` now and the label holds the bare count.
+					# The meta is the stable handle; the number is still whatever the label actually
+					# says, so this stays an assertion about the render rather than about a stash.
+					if not chip.has_meta(HudWidgets.COMPOSITION_SEGMENT_META):
+						continue
+					var key := String(chip.get_meta(HudWidgets.COMPOSITION_SEGMENT_META))
 					for label in chip.get_children():
 						if not (label is Label):
 							continue
-						var parts := (label as Label).text.rsplit(" ", true, 1)
-						if parts.size() == 2 and String(parts[1]).is_valid_int():
-							counts[String(parts[0])] = String(parts[1]).to_int()
+						# The trailing token, so a glyph-faced chip (`"Forage 5"`) and an art-faced
+						# one (`"5"`) are read by one rule.
+						var parts := (label as Label).text.split(" ", false)
+						if parts.is_empty():
+							continue
+						var tail := String(parts[parts.size() - 1])
+						if tail.is_valid_int():
+							counts[key] = tail.to_int()
 				return counts
 	for child in node.get_children():
 		var found := _composition_counts(child, title)
