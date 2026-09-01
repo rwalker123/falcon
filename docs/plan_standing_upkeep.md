@@ -2749,7 +2749,9 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > ⛔ **THIS RUNS BEFORE §4.14, DESPITE THE NUMBER.** It is a shape change and §4.14 is the tuning
     > spread, which declares itself last; tuning the plant web before this primitive exists would tune
     > something about to move, by §4.14's own stated rule. See the ordering box on §4.14. **With §4.13
-    > complete at 13c and §4.13d moved to #617, this is the next slice of the arc.** It is the
+    > complete at 13c and §4.13d moved to #617, this is the next slice of the arc.**
+
+    It is the
     ladder's existing per-source price hook (`RungStanding::at`'s `cost_at`, which the animal web
     already spends on a species' `taming_cost_multiplier`) claimed by the plant web, which passed
     `RUNG_COST_UNSCALED` with a comment saying a plant has no species. **`plant:field` only** —
