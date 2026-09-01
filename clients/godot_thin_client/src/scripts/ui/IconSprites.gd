@@ -1,9 +1,10 @@
 extends RefCounted
 class_name IconSprites
 
-## Shared texture cache behind ALL SIX bundled-art families — `FaunaSprites`, `SiteSprites`,
+## Shared texture cache behind ALL SEVEN bundled-art families — `FaunaSprites`, `SiteSprites`,
 ## `WonderSprites` and `StageSprites` (map markers), `CropRoleSprites` (the tile card's basket-row
-## role marks) and `FloraSprites` (that row's per-species tier).
+## role marks), `FloraSprites` (that row's per-species tier) and `HudSprites` (marks on the HUD's own
+## chrome — a button face, a popover row).
 ##
 ## Every one of them needs the identical three behaviours — a lazily populated path→texture cache,
 ## a `load()` (not `preload()`) so a missing file degrades to its family's fallback instead of
@@ -20,12 +21,12 @@ class_name IconSprites
 static var _textures: Dictionary = {}
 
 ## Bundled texture at `path`, or `null` when it is missing or fails to load — the caller then falls
-## back to **whatever ITS family's fallback is**: the emoji glyph for the four marker tables and
-## `CropRoleSprites`, the crop-ROLE mark for `FloraSprites`. Warns once per bad path, never per
-## frame; the warning's own wording is the five's, which is half of why `warn` exists.
+## back to **whatever ITS family's fallback is**: the emoji glyph for the four marker tables,
+## `CropRoleSprites` and `HudSprites`, the crop-ROLE mark for `FloraSprites`. Warns once per bad path,
+## never per frame; the warning's own wording is the six's, which is half of why `warn` exists.
 ##
 ## **`warn` IS FOR A FAMILY WHOSE COVERAGE IS DELIBERATELY INCOMPLETE, and `FloraSprites` is the
-## only one.** For the five marker/role tables an absent path is a DEFECT — coverage is complete or
+## only one.** For the other six an absent path is a DEFECT — coverage is complete or
 ## guarded, so the load failing means art went missing — and the warning is how that surfaces. Flora
 ## art is drawn species by species and a row with none falls back to its crop-role mark BY DESIGN, so
 ## warning there would fire up to once per roster species per session for the expected state, and
@@ -34,7 +35,7 @@ static var _textures: Dictionary = {}
 ##
 ## It does NOT mean "fail quietly" — `FloraSprites` warns itself, on the one case that IS a defect
 ## (a source PNG present with no imported resource behind it), with a message naming the fallback
-## that family actually takes. The wording here — *the emoji marker* — is the other five's.
+## that family actually takes. The wording here — *the emoji marker* — is the other six's.
 static func texture_for(path: String, warn: bool = true) -> Texture2D:
 	if path == "":
 		return null

@@ -34,7 +34,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 75
+const EXPECTED_CHECKPOINTS := 85
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 ## The ladder's KNOWLEDGE ROSTER and its progress row, in the wire's own shapes. Shared with the
@@ -641,6 +641,17 @@ func _assert_launcher_pip() -> void:
 		panel.action_pip(BandCityPanel.ACTION_KNOWLEDGE) == 1)
 	h._assert_hud("knowledge pip — …and the pill is drawn INSIDE the button, so it cannot widen the bar",
 		_pip_is_inside_its_button(panel))
+	# **THE LAUNCHER'S FACE, IN A FRAME** (issue #581): the cairn is bundled ART on the `Button.icon`
+	# seam, so a picture is the only witness that it is centred in the 24x24 box, still reads as a
+	# stacked tapered tower at that size, and still has the pip sitting over it. Captured on the
+	# SUBJECT-ROW mount a bottom dock takes, then on the collapsed RAIL — the smallest surface the art
+	# has to survive, and the one the other two cannot stand in for.
+	await h._save("knowledge_launcher_mark")
+	panel.set_collapsed(true)
+	await h._settle()
+	await h._save("knowledge_launcher_mark_rail")
+	panel.set_collapsed(false)
+	await h._settle()
 	# **A DELTA THAT CARRIES KNOWLEDGE AND NO POPULATIONS STILL MOVES THE PIP.** `Main` dispatches each
 	# section independently and only when it CHANGED, so a turn that finishes a track and moves nobody
 	# skips `update_band_alerts` entirely — and that was the one seam the pip used to be pushed from.
@@ -669,6 +680,8 @@ func _assert_launcher_pip() -> void:
 	# `action_invoked(ACTION_KNOWLEDGE)`, is relayed as `knowledge_requested`, and opens the screen.
 	panel.set_dock(SIDE_LEFT)
 	await h._settle()
+	# …and the third mount: a vertical dock hangs the actions on their own BAR under the subject block.
+	await h._save("knowledge_launcher_mark_bar")
 	panel.action_invoked.emit(BandCityPanel.ACTION_KNOWLEDGE)
 	await h._settle()
 	h._assert_hud("knowledge launcher — the registry's press OPENS the screen",

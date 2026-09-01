@@ -1,7 +1,7 @@
 # Bundled Icon Generation Prompts
 #
 # The icon twin of assets/terrain/texture_prompts.txt. These prompts generate the
-# bundled PNG art behind the six icon families:
+# bundled PNG art behind the seven icon families:
 #
 #   assets/icons/fauna/    herd map markers      (ui/FaunaSprites.gd)
 #   assets/icons/sites/    food-site markers     (ui/SiteSprites.gd)
@@ -9,30 +9,40 @@
 #   assets/icons/stages/   settlement tokens     (ui/StageSprites.gd)
 #   assets/icons/crops/    crop-ROLE row marks   (ui/CropRoleSprites.gd)
 #   assets/icons/flora/    per-SPECIES row marks (ui/FloraSprites.gd)
+#   assets/icons/hud/      HUD chrome marks      (ui/HudSprites.gd)
 #
-# The first four share ONE pipeline and ONE house style, so both are documented once
-# here rather than per family. THE LAST TWO DO NOT — `crops/` and `flora/` are not map
-# markers, they are inline marks inside a text ROW, and they override several of the
-# clauses below. Read their own sections before generating one; do not start from the
-# house style. Those two share a row, a size and a ground, so `flora/` takes the
-# `crops/` sub-style wholesale and its section documents only what differs.
+# THE FOUR MAP-MARKER FAMILIES — `fauna/`, `sites/`, `wonders/`, `stages/` — share ONE
+# pipeline and ONE house style, so both are documented once here rather than per family.
+# THE OTHER THREE DO NOT. `crops/`, `flora/` and `hud/` are not map markers: they are small
+# marks drawn over a DARK HUD PANEL, in a text row or on a button face, and they override
+# several of the clauses below. Read their own sections before generating one; do not start
+# from the house style. `crops/` states that sub-style, and the other two take it — `flora/`
+# wholesale (it shares the row, the size and the ground), `hud/` per DIRECTORY, its own
+# section documenting only what differs.
 #
-# THE LAST TWO ALSO COMPETE FOR ONE SLOT, which is the thing to know before adding art
-# to either: a basket row draws ONE mark, and a species icon REPLACES its plant's role
-# mark where the art exists (`DetailFormat.flora_composition_lines`). So the two sets
-# must not draw the same subjects — see the `flora/` section's own note.
+# (The classification is by KIND, not by position in the list above, and the list has grown
+# twice. Name the family you mean.)
+#
+# `crops/` AND `flora/` ALSO COMPETE FOR ONE SLOT, which is the thing to know before adding
+# art to either: a basket row draws ONE mark, and a species icon REPLACES its plant's role
+# mark where the art exists (`DetailFormat.flora_composition_lines`). So those two sets
+# must not draw the same subjects — see the `flora/` section's own note. `hud/` is NOT in
+# that contest; its marks never appear in a basket row.
 #
 # NOTE: prompts predating this file were never committed — only the shipped PNGs
 # survive. The house style below is reconstructed from that art plus the wild-fowl
 # prompt (kept verbatim as the reference exemplar). Add every new prompt here.
 #
-# THE SIX ARE THE SIX THAT EXIST. A seventh block — HUD / ACTIVITY MARKS — sits at the
-# BOTTOM of this file and is deliberately not listed above: it has a directory and four
-# shipped PNGs, but NO LOOKUP SCRIPT AND NO CALL SITE — which is the half that keeps it out
-# of the list, since a family is a table plus a resolver and this has neither. It is here
-# rather than nowhere because the
-# reasoning behind each subject is the expensive part and it is settled; whoever picks
-# up #581 or #249 should not re-derive it. Read its own preamble before generating one.
+# THE SEVENTH IS `hud/`, AND ITS COVERAGE IS PARTIAL — that is the one thing to know
+# about the list above. A family is a table plus a resolver, and `hud/` now has both:
+# `ui/HudSprites.gd` resolves `for_mark(mark_id)` against a table holding `cairn` ONLY.
+# The directory also carries three shipped, keyed, committed PNGs — forage, hunt, scout —
+# that no table lists and nothing loads, because their wiring is issue #249's and is still
+# blocked on the ladder-set question in that section. A path with no call site would be dead
+# data in the table rather than coverage, so they stay out of it until #249 wires them.
+# The HUD / ACTIVITY MARKS block at the BOTTOM of this file holds their prompts and the
+# reasoning behind each subject, which is the expensive part and is settled; whoever picks
+# up #249 should not re-derive it. Read its own preamble before generating one.
 #
 # ============================================================================
 # PIPELINE
@@ -1245,16 +1255,16 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 
 
 # ============================================================================
-# HUD / ACTIVITY MARKS  ->  assets/icons/hud/   (NO LOOKUP SCRIPT YET)
+# HUD / ACTIVITY MARKS  ->  assets/icons/hud/   (ui/HudSprites.gd)
 # ============================================================================
 #
-# ⚠ ALL FOUR MARKS EXIST; NONE OF THE WIRING DOES. `assets/icons/hud/{cairn,forage,hunt,scout}.png`
-# are keyed, imported and committed — and NOTHING
-# LOADS ANY OF THEM. There is no `UiSprites.gd` and no call site. That is deliberate: the
-# cairn's wiring is issue #581's own work (a `Button.icon` on the action-bar launcher, a
-# `TextureRect` swapped for a `Label` on the turn orb's row) and the other three are #249's,
-# which is still blocked on the ladder-set question below. Do not read this block as a seventh
-# art family: the six listed at the top of this file are the six with a lookup script.
+# ⚠ ALL FOUR MARKS EXIST; ONLY THE CAIRN IS WIRED. `assets/icons/hud/{cairn,forage,hunt,scout}.png`
+# are keyed, imported and committed. `ui/HudSprites.gd` is this directory's lookup script and its
+# table holds `cairn` alone — wired by issue #581 on the two surfaces that need different
+# mechanisms (a `Button.icon` on the action-bar launcher, a `TextureRect` swapped for a `Label` on
+# the turn orb's row). `forage`, `hunt` and `scout` are listed by NO table and loaded by NOTHING:
+# their wiring is #249's, which is still blocked on the ladder-set question below, and a path with
+# no call site would be dead data in the table rather than coverage.
 #
 # JUDGE ONE OF THESE AT 13px OR NOT AT ALL, and judge it by INK COVERAGE. That single number
 # predicted every outcome in this batch: forage 32% read instantly; hunt survives at 6.8% only
@@ -1291,7 +1301,10 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 # `Label` on the turn orb's `knowledge_learned` row. The art is one file either way.
 # It must read at ~16px on the collapsed rail, which is the smallest thing asked of any
 # art in this repo, so the shape budget is ONE silhouette and at most one interior line.
-# STATUS: ART SHIPPED at `assets/icons/hud/cairn.png`, NOT WIRED — see the section warning.
+# STATUS: ART SHIPPED at `assets/icons/hud/cairn.png` and WIRED, through `ui/HudSprites.gd`'s
+# `for_mark("cairn")`. The collapsed-rail read was checked in a rendered frame at true size
+# (`ui_preview_out/knowledge_launcher_mark_rail.png`): the stepped profile survives, and it is the
+# more legible of the two faces on that rail beside the crafting `⚒` glyph.
 # Keyed at the pale-subject ramp (`--size 256 --lo 85 --hi 240`); coverage 20.4%, magenta
 # residual **0**, the cleanest key in the whole drop.
 # MEASURED — coverage 20.6%, fills at luma 200 and 226 against the panel's 24, i.e. a ground

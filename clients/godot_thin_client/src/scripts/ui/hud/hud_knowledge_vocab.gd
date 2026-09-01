@@ -318,10 +318,16 @@ const ROSTER_ORDER := "order"
 
 # ---- the words -------------------------------------------------------------------------------
 const PANEL_TITLE := "What your people know"
-## The launcher's face. **A PLACEHOLDER ON PURPOSE**: the shipped icon is a drawn CAIRN
-## (`docs/plan_knowledge_screen.md` §1) and the art is a separate piece of work, so the launcher
-## ships on the same text-glyph seam `ACTION_CRAFTING`'s `⚒` uses. `▲` is the cairn's silhouette and
-## is geometric, so it renders reliably where an emoji would not.
+## The launcher's MARK — the key `HudSprites.for_mark` resolves to the drawn CAIRN
+## (`docs/plan_knowledge_screen.md` §1, `assets/icons/hud/cairn.png`). ONE key for BOTH surfaces
+## that wear it, because the mechanisms differ and the art must not: the action-bar launcher takes it
+## as a `Button.icon` and the turn orb's `knowledge_learned` row as a `TextureRect` swapped in for its
+## `Label`.
+const LAUNCH_MARK := "cairn"
+## The launcher's FALLBACK face — what both of those surfaces render when `HudSprites.for_mark`
+## returns `null`, which is the same contract every other art family has with its emoji. `▲` is the
+## cairn's silhouette and is geometric, so it renders reliably where an emoji would not; it is also
+## the text-glyph seam `ACTION_CRAFTING`'s `⚒` still ships on, that one having no art.
 const LAUNCH_GLYPH := "▲"
 const LAUNCH_TOOLTIP := "What your people know"
 const CLOSE_GLYPH := "✕"

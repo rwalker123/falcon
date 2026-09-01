@@ -165,6 +165,21 @@ const SUBJECT_HOVER_CORNER_RADIUS := 5
 const SUBJECT_HOVER_PADDING_H := 4
 const SUBJECT_HOVER_PADDING_V := 2
 const ICON_BUTTON_SIZE := 24.0
+## What an action's bundled ART may occupy on that 24x24 face, through the stock `icon_max_width`
+## theme constant. A cap is needed at all because the source PNGs are 256px and a `Button` reserves
+## its icon's drawn size in its MINIMUM — one art-bearing action would otherwise set the whole icon
+## family's button size and blow the row apart. The compose sheet's quarry picker caps at 20
+## (`HudComposeVocab.COMPOSE_QUARRY_ICON_MAX_WIDTH`), but that is a wide label-bearing button; here
+## the cap plus its padding IS the whole face, so it is the art's size rather than a ceiling it will
+## never reach.
+const ICON_BUTTON_ICON_MAX_WIDTH := 18
+## What the face pads with when it carries ART. **The ghost chrome pads for a LABEL** —
+## `HudStyle.BUTTON_PADDING_H/V` are 11 and 9, which a glyph simply overflows — and on a 24px face
+## that leaves a 2x6 content box. An icon does NOT overflow: Godot lays it out inside that box, so the
+## label padding rendered the cairn as a two-pixel speck. DERIVED, so the art's box and the face's
+## size cannot drift: pad both sides of `ICON_BUTTON_ICON_MAX_WIDTH` and the button's own minimum
+## comes out at exactly `ICON_BUTTON_SIZE`, i.e. an art-bearing action is the same size as a glyph one.
+const ICON_BUTTON_SPRITE_PADDING := (ICON_BUTTON_SIZE - ICON_BUTTON_ICON_MAX_WIDTH) / 2.0
 const DOCK_CELL_SIZE := 16.0
 const DOCK_CELL_SEPARATION := 3
 const DOCK_ACCENT_WIDTH := 4
@@ -456,6 +471,10 @@ const ACTION_SPEC_ID := "id"
 const ACTION_SPEC_GLYPH := "glyph"
 const ACTION_SPEC_TOOLTIP := "tooltip"
 const ACTION_SPEC_ENABLED := "enabled"
+## The action's bundled ART, where it has any — a `Texture2D` or `null`, resolved by the REGISTRANT
+## (e.g. `HudSprites.for_mark`) and stored, so the descriptor stays a declared input rather than a
+## lookup the rebuild redoes per mount.
+const ACTION_SPEC_SPRITE := "sprite"
 ## The Materials & Crafting launcher's registry id — the panel registers its own ⚒ through the same
 ## seam every other action uses, so there is no privileged action.
 const ACTION_CRAFTING := &"crafting"
@@ -1181,9 +1200,13 @@ func _build() -> void:
 	# the crafting controller do it) keeps the button's presence a property of the panel — the ⚒ is
 	# subject-independent chrome that must exist on a band page and on the faction page alike.
 	register_action(ACTION_CRAFTING, CRAFTING_GLYPH, CRAFTING_TOOLTIP)
-	# The knowledge screen's `▲`, on the same footing and for the same reason: what your people know is
-	# a FACTION fact, so it must be reachable from a band page and the faction page alike.
-	register_action(ACTION_KNOWLEDGE, KNOWLEDGE_GLYPH, KNOWLEDGE_TOOLTIP)
+	# The knowledge screen's CAIRN, on the same footing and for the same reason: what your people know is
+	# a FACTION fact, so it must be reachable from a band page and the faction page alike. It is the one
+	# action wearing bundled art (issue #581) — the mark is resolved HERE, once, and `KNOWLEDGE_GLYPH`
+	# is what the face falls back to if it does not load. `ACTION_CRAFTING`'s ⚒ has no art and is
+	# unchanged, which is the proof the sprite is an OPTION on the descriptor and not a new requirement.
+	register_action(ACTION_KNOWLEDGE, KNOWLEDGE_GLYPH, KNOWLEDGE_TOOLTIP, Callable(),
+		HudSprites.for_mark(HudKnowledgeVocab.LAUNCH_MARK))
 	action_invoked.connect(_on_action_invoked)
 
 func _build_header_full() -> HBoxContainer:
@@ -1449,6 +1472,11 @@ func _apply_header_rail_orientation() -> void:
 ##   `unregister_action` takes.
 ## - `glyph` / `tooltip` — the face. Built with `_make_icon_button`, the same builder the collapse
 ##   toggle and the cycler arrows use, so every action reads as a member of the panel's icon family.
+## - `sprite` — bundled ART for that face, or `null`. Where given it REPLACES the glyph (a `Button`
+##   carries art on its own `icon` property, so it is art OR glyph, never both), and the `glyph` is
+##   then what renders when the art is absent. Like `glyph` and unlike a pip it is a DECLARED input,
+##   resolved once at wiring time, which is what keeps it inside the descriptor contract above rather
+##   than making the mount rebuild do a texture lookup per button.
 ## - `enabled` — a zero-argument `Callable` answering `bool`, re-asked by `refresh_actions()`. An
 ##   EMPTY Callable means always enabled; a predicate is never called during layout, only when the
 ##   caller says the world moved, so the bar's geometry can never become a function of band state.
@@ -1458,7 +1486,7 @@ func _apply_header_rail_orientation() -> void:
 ## `set_rail_width` contract. It is a DECLARED input, made at wiring time and not per snapshot, so it
 ## cannot put the reservation on the render's hot path.
 func register_action(id: StringName, glyph: String, tooltip: String,
-		enabled: Callable = Callable()) -> void:
+		enabled: Callable = Callable(), sprite: Texture2D = null) -> void:
 	if id.is_empty():
 		return
 	var spec := {
@@ -1466,6 +1494,7 @@ func register_action(id: StringName, glyph: String, tooltip: String,
 		ACTION_SPEC_GLYPH: glyph,
 		ACTION_SPEC_TOOLTIP: tooltip,
 		ACTION_SPEC_ENABLED: enabled,
+		ACTION_SPEC_SPRITE: sprite,
 	}
 	var at := _action_index(id)
 	if at >= 0:
@@ -1590,7 +1619,8 @@ func _rebuild_action_mount() -> void:
 	var host: BoxContainer = _action_host_for(_action_mount)
 	for spec in _actions:
 		var id := StringName(spec[ACTION_SPEC_ID])
-		var button := _make_icon_button(String(spec[ACTION_SPEC_GLYPH]), String(spec[ACTION_SPEC_TOOLTIP]))
+		var button := _make_icon_button(String(spec[ACTION_SPEC_GLYPH]),
+			String(spec[ACTION_SPEC_TOOLTIP]), spec.get(ACTION_SPEC_SPRITE, null) as Texture2D)
 		button.disabled = not _action_is_enabled(spec)
 		button.pressed.connect(func(): action_invoked.emit(id))
 		host.add_child(button)
@@ -2927,15 +2957,47 @@ func _apply_action_pip(button: Button, count: int) -> void:
 	pill.add_child(label)
 	button.add_child(pill)
 
-func _make_icon_button(glyph: String, tooltip: String) -> Button:
+## The panel's icon-button face. `sprite` is the ART branch: a `Button` carries art on its own `icon`
+## PROPERTY, never as a child, so an action with art draws it there and leaves the text EMPTY — art OR
+## glyph, never both, the rule the compose sheet's quarry picker already follows. `icon_max_width`
+## caps the 256px source so it cannot set the button's minimum, and the face is re-padded for art
+## (`ICON_BUTTON_SPRITE_PADDING`). **`expand_icon` IS DELIBERATELY OFF here**, where the quarry
+## picker turns it on: it fits the art to the box left over after the stylebox padding AND after a
+## further subtraction of `icon_max_width`, which on a 24px face is a negative number — the quarry's
+## button is a row wide and never notices. The cap alone sizes the art exactly, so nothing is lost.
+##
+## UNTINTED, for the same reason the quarry picker is: `apply_button` sets no `icon_*_color` and the
+## stock theme's is opaque white, so the mark renders in its authored two-tone fill.
+func _make_icon_button(glyph: String, tooltip: String, sprite: Texture2D = null) -> Button:
 	var btn := Button.new()
-	btn.text = glyph
+	if sprite != null:
+		btn.icon = sprite
+		btn.add_theme_constant_override("icon_max_width", ICON_BUTTON_ICON_MAX_WIDTH)
+	else:
+		btn.text = glyph
 	btn.tooltip_text = tooltip
 	btn.focus_mode = Control.FOCUS_NONE
 	btn.custom_minimum_size = Vector2(ICON_BUTTON_SIZE, ICON_BUTTON_SIZE)
 	btn.add_theme_font_size_override("font_size", ICON_BUTTON_FONT_SIZE)
 	HudStyle.apply_button(btn, "ghost")
+	if sprite != null:
+		_repad_button_for_sprite(btn)
 	return btn
+
+## Swap an art-bearing face's LABEL padding for ART padding. Re-asks `HudStyle.button_styleboxes` for
+## the same ghost set `apply_button` just installed — fills, border, radius and all — and changes only
+## the content margins, so the two faces cannot drift into two looks the way a hand-built stylebox
+## would. Safe to mutate: `button_styleboxes` constructs a fresh set per call, so these boxes belong
+## to this button alone.
+func _repad_button_for_sprite(btn: Button) -> void:
+	var boxes := HudStyle.button_styleboxes("ghost")
+	for item in boxes:
+		var sb: StyleBoxFlat = boxes[item]
+		sb.content_margin_left = ICON_BUTTON_SPRITE_PADDING
+		sb.content_margin_right = ICON_BUTTON_SPRITE_PADDING
+		sb.content_margin_top = ICON_BUTTON_SPRITE_PADDING
+		sb.content_margin_bottom = ICON_BUTTON_SPRITE_PADDING
+		btn.add_theme_stylebox_override(item, sb)
 
 ## A stage-sprite `TextureRect` sized to the glyph label it sits beside, so it occupies the same
 ## box in the header flow. Starts hidden — `set_header` decides sprite-vs-emoji per stage.

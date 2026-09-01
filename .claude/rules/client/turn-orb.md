@@ -232,6 +232,24 @@ It wears `Open ▸`, so it needs an entry in `ATTENTION_KINDS_WITH_A_PANEL` **an
 no branch renders an affordance that does nothing, which is the state `crew_handoff` avoids by being
 on neither.
 
+### Its icon is BUNDLED ART, and it is the one row face that is UNTINTED
+
+`KIND_ICON_SPRITE` is a second table beside `KIND_ICON` — kind → mark id, resolved through
+`HudSprites` — and `knowledge_learned` is its only entry. A kind listed there builds a `TextureRect`
+in the row where every other kind builds a `Label`, EXACTLY ONE of which is ever constructed (the
+sprite/label pair `BandCityPanel._apply_stage_visual` uses for its stage tokens); a kind absent from
+it, or one whose art fails to load, takes the Label path unchanged. Deliberately a SECOND table rather
+than a widening of `KIND_ICON`: `_kind_icon` answers in Strings and its callers want a glyph, so
+folding a texture lookup into it would change that contract for one kind's sake.
+
+**The `TextureRect` gets NO `modulate` and no `icon_*_color`, where the Label gets `font_color =
+color`.** A glyph has no colours of its own, so the severity accent is the only thing that can carry
+it; this art does — it is authored pale bone/cream in two flat tones, and on the dark panel the FILL
+is what carries the silhouette, so repainting it to a severity accent would flatten the two tones into
+one and destroy the stacked read at 30px. Nothing is lost: the severity is already stated by the
+stripe immediately to the icon's left. `turn_orb_knowledge.png` is the frame — the tapered tower with
+its stone divisions still visible, uncropped in `ROW_ICON_SIZE`.
+
 > ### ⛔ THE UNSPENT BACKLOG IS NOT A SECOND PRODUCER, AND THAT IS A DECISION RATHER THAN AN OMISSION
 >
 > §5 asked for one — an aggregate `"N discoveries unspent"` row — and it was built, rendered and then
