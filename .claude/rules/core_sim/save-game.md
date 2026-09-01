@@ -86,6 +86,17 @@ A file that is not a save, or is one this build cannot read, is **skipped from t
 warning** rather than failing it: one corrupt file must not make the load menu unopenable, which is
 precisely when a player needs it.
 
+**A listing reads a bounded prefix of each file, not the file.** `read_save_header` stops after the
+first CBOR document, but handing it the whole blob still costs the whole blob: ~1.2 MB per slot at
+160x104, re-paid on every pane open and after every save and delete. `read_header_only` reads
+`HEADER_PREFIX_BYTES` (**8 KiB**, against a measured 1,313-byte header — only the
+`config_fingerprint` grows, one entry per boot config, so that is roughly 200 configs of headroom)
+and takes the row's `size_bytes` off the same open handle, since the buffer's length is no longer the
+file's. **A header that outgrew the bound is a bound that is wrong, not a save that is broken**: a
+CBOR document cut short fails exactly as a corrupt one does, so believing it would drop good slots off
+the load menu — and every slot at once, headers being all much the same size. A decode failure on a
+prefix that was cut short therefore re-reads that one file whole and warns naming the constant.
+
 ## What a load owes beyond restoring the world
 
 `handle_load_game` follows `handle_new_game`'s shape because it has the same obligations, plus one
@@ -98,6 +109,10 @@ only a load has:
 - **the `CommandLog` is re-based.** Everything before a load is unreachable, exactly as for
   `new_game` and `reset_map` — without it a rollback would replay across the load into a world that
   never existed.
+- **the runtime-owned config fields are carried.** The replacement app is built by
+  `build_headless_app`, so its whole `SimulationConfig` is the file's — right for every tunable and
+  wrong for the two rows `carry_runtime_owned_fields` owns (`config-loading.md` → "A `load_game`
+  needs the same two"). Left uncarried, the player's fog switch comes back on in the reveal frame.
 
 ### Publishing a loaded world needs a THIRD kind of capture
 

@@ -36,10 +36,10 @@
 //!
 //! | Treatment | Resources | Why |
 //! |---|---|---|
-//! | **Saved** | [`ElevationField`], [`MoistureRaster`], [`HydrologyState`], [`ProvinceMap`], [`FoodSiteRegistry`], [`FoodSiteWaterBiasReport`], [`StartLocation`], [`WorldGenSeed`], [`FactionRegistry`], [`StartProfileLookup`] | Ground truth that nothing can recompute — re-running worldgen would produce a *different map* if any tuning moved |
+//! | **Saved** | [`ElevationField`], [`MoistureRaster`], [`HydrologyState`], [`ProvinceMap`], [`FoodSiteRegistry`], [`FoodSiteWaterBiasReport`], [`StartLocation`], [`WorldGenSeed`], [`FactionRegistry`] | Ground truth that nothing can recompute — re-running worldgen would produce a *different map* if any tuning moved |
 //! | **Rebuilt from the restored entities** | `TileRegistry`, `PowerTopology` | Both were `Entity`-bearing; a handle cannot cross a process. `restore_sim_state` already rebuilds the registry in its pass 4a |
 //! | **Re-derived** | `BiomePalette` | A pure function of (preset, world seed, tile count), all three of which the save carries |
-//! | **Re-resolved from live config by id** | `ActiveStartProfile`, `CampaignLabel`, `GreatDiscoveryRegistry` | Config in disguise. Saving them would reinstall the tuning that was live at capture, which is the second construction rule |
+//! | **Re-resolved from live config by id** | [`StartProfileLookup`], `ActiveStartProfile`, `CampaignLabel`, `GreatDiscoveryRegistry` | Config in disguise. Saving them would reinstall the tuning that was live at capture, which is the second construction rule. `StartProfileLookup` is the *id itself*, and it rides in [`SaveHeader`] (`world.start_profile_id`) because a slot row needs it without a payload — so a copy in the payload would be a second authority for one string |
 //!
 //! `GenerationRegistry` and `GreatDiscoveryRegistry` need no work at all: `build_headless_app` fills
 //! both from live config before any world exists, so a freshly built app already has them.
@@ -97,7 +97,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// |---|---|
 /// | 1 | the initial format |
 /// | 2 | `SimState.crisis_overlay` added — a load published an empty crisis heatmap |
-pub const SAVE_FORMAT_VERSION: u32 = 2;
+/// | 3 | `WorldStatics.start_profile` removed — written into every payload and never read back |
+pub const SAVE_FORMAT_VERSION: u32 = 3;
 
 /// gzip level for the payload document.
 ///
@@ -155,7 +156,6 @@ pub struct WorldStatics {
     pub start_location: StartLocation,
     pub world_seed: WorldGenSeed,
     pub factions: FactionRegistry,
-    pub start_profile: StartProfileLookup,
 }
 
 /// The world itself: the checkpoint, plus the ground it stands on.
@@ -213,7 +213,6 @@ pub fn capture_world_statics(world: &World) -> WorldStatics {
         start_location: *world.resource::<StartLocation>(),
         world_seed: *world.resource::<WorldGenSeed>(),
         factions: world.resource::<FactionRegistry>().clone(),
-        start_profile: world.resource::<StartProfileLookup>().clone(),
     }
 }
 

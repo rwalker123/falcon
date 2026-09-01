@@ -533,4 +533,16 @@ fn a_large_map_save_is_measured() {
         header_only.len()
     );
     assert!(blob.len() > header_only.len());
+
+    // **The bound the slot listing reads to.** `list_slots` reads a prefix rather than the file, so
+    // the header has to fit inside it; a header that outgrew the bound costs a second, whole-file
+    // read per row (`read_header_only` re-reads rather than dropping the slot). The header does not
+    // scale with the map — this is the largest one the suite builds — so failing here means the
+    // `config_fingerprint` grew past the headroom and `HEADER_PREFIX_BYTES` wants raising.
+    assert!(
+        (header_only.len() as u64) < core_sim::save_store::HEADER_PREFIX_BYTES,
+        "the header is {} bytes and the listing reads only {} — raise HEADER_PREFIX_BYTES",
+        header_only.len(),
+        core_sim::save_store::HEADER_PREFIX_BYTES
+    );
 }

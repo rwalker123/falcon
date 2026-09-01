@@ -43,6 +43,24 @@ the save pane or a `save_op` on a compose sheet. Ids are `u64` on the wire and `
 up from 1, so a collision needs four billion forecasts in one session and there is no coordination to
 forget.
 
+**A SECOND SEAM IS NOT A SECOND SESSION, and that floor alone did not cover it.** The worker's answer
+channel is process-global (`QUERY_ANSWERS`, an `OnceLock`) and outlives every scene; a `SaveSlots`
+does not. A load swaps the scene and the world that comes up builds a NEW seam, so an ask still in
+flight across the swap is drained by the new scene and offered to it — and `list_saves` is exactly
+such an ask, `refresh()` being ungated on `is_busy()` and re-armed by `_finish_op` after every save
+and delete. While every instance restarted at `REQUEST_ID_BASE`, that stale list answer carried the id
+the new seam had just spent on `load_game`: `_deliver_one` read the LIST reply's `ok: true`, erased
+the id and finished the LOAD as a success — no drift notice, no re-worded loading overlay, the retry
+latch left set, and a refused load reported to the player as a completed one.
+
+So each instance is handed its own block of `IDS_PER_SESSION` ids at construction, indexed by
+`Time.get_ticks_usec()`. **The clock rather than a `static var`** because a static's lifetime is the
+SCRIPT's, not the process's, and a scene change is precisely when a script may be unloaded; the
+counter beside it exists only to separate two seams built inside the same microsecond, and since both
+terms are non-decreasing while the counter rises by one per call, successive offsets are strictly
+increasing whatever the clock does. Everything stays at or above `REQUEST_ID_BASE`, so the
+disjointness from `ForecastQuery` is unchanged.
+
 ## `MenuShell` is a view over an INJECTED seam
 
 `MenuShell` has no handle to `Main`, the `Inspector` or a `CommandClient` and must not grow one — the
@@ -63,6 +81,18 @@ differ. Every seam answer rebuilds the pane from scratch, which keeps *what is o
 function of the seam's state rather than widgets patched from three directions — and is why
 `_save_name_text` is a member, and why `_on_save_name_changed` re-grabs focus and the caret: the field
 being typed into is a NEW node on every keystroke.
+
+**The caret is CARRIED, not reset**, and restoring it to the end of the string instead made only
+append-at-the-tail editing work: typing `x` between the `a` and `b` of `abcd` correctly produced
+`axbcd` and then put the caret at column 5, so the next character landed at the end (and a backspace
+anywhere but the tail failed the same way). `_on_save_name_changed` reads `caret_column` off the node
+that REPORTED the edit — before the rebuild, while `_show_pane`'s `queue_free` still leaves it alive —
+and `_save_name_caret` carries it onto the new field, clamped to the text. `LineEdit.gui_input`
+inserts the character and moves its own caret BEFORE emitting `text_changed`, which is what makes the
+reported column already the post-edit one for an insert and a delete alike; no adjustment is applied
+and none is correct. The sentinel `SAVE_NAME_CARET_AT_END` is the other case — text that did not come
+from typing, i.e. a name filled in by clicking a slot row — and it is sticky, so a rebuild the player
+did not cause (a list answer landing mid-word) does not move the caret either.
 
 **Only an explicit open re-asks.** `_activate_item` routes the two saves panes through
 `_open_saves_pane`, never `_show_pane` — `refresh()` emits `slots_changed` synchronously, so a rebuild
@@ -165,6 +195,8 @@ is taken a frame later.
 `deliver` — `menu_load_list`, `menu_load_selected`, `menu_load_delete_confirm`, `menu_load_in_run`,
 `menu_save`, `menu_save_overwrite`, `menu_save_reserved_name`, `menu_load_empty`,
 `menu_load_no_server` and `config_drift`. The harness IS the transport, which is what makes the
-failure states renderable at all: none of them is reachable from a healthy stack. It also carries
-`_assert_text_focus_is_handed_back`, which takes no PNG. Details in
-`.claude/rules/client/harness-menu-workbench.md`.
+failure states renderable at all: none of them is reachable from a healthy stack. Three of its checks
+take no PNG — `_assert_text_focus_is_handed_back`, `_assert_caret_survives_a_mid_string_edit` (a
+caret is one blinking pixel column, and the claim is about where the NEXT character lands) and
+`_assert_request_ids_do_not_repeat_across_seams` (bookkeeping, whose failure is a wrong answer rather
+than a wrong picture). Details in `.claude/rules/client/harness-menu-workbench.md`.

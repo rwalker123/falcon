@@ -50,6 +50,17 @@ const FIXTURE_SLOT_SCRATCH := "scratch_2"
 # The name typed into the Save pane's field for the "new slot" frame, and the one that is already on
 # disk for the OVERWRITE frame.
 const TYPED_NEW_NAME := "before the thaw"
+# --- the mid-string edit the caret assertion drives ------------------------------------------------
+# A name already in the field, then a character inserted between its first and second letters and a
+# second one straight after it. Written out rather than derived, so the expected text is a statement
+# about what the player sees and not a restatement of the code under test.
+const CARET_BASE_TEXT := "abcd"
+const CARET_INSERT_COLUMN := 1
+const CARET_FIRST_CHAR := "x"
+const CARET_SECOND_CHAR := "y"
+const CARET_AFTER_FIRST_TEXT := "axbcd"
+const CARET_AFTER_FIRST_COLUMN := 2
+const CARET_AFTER_SECOND_TEXT := "axybcd"
 # What a player might reasonably type that the whitelist refuses — the reserved slot, which is the
 # one refusal the pane exists to make unreachable rather than merely reported.
 const TYPED_RESERVED_NAME := "autosave"
@@ -276,6 +287,8 @@ func _run_saves_states() -> void:
 	await _save("config_drift")
 
 	await _assert_text_focus_is_handed_back()
+	await _assert_caret_survives_a_mid_string_edit()
+	_assert_request_ids_do_not_repeat_across_seams()
 
 
 ## **THE KEYBOARD IS BORROWED, NOT TAKEN** — the behavioural half of `MapView`'s polled-input guard,
@@ -353,6 +366,145 @@ func _assert_text_focus_is_handed_back() -> void:
 		_fail("focus: a focused Button counts as text entry — the guard would kill the hotkeys")
 	probe.release_focus()
 	probe.queue_free()
+
+
+## **THE CARET SURVIVES THE REBUILD, so editing is not append-only.** No PNG: a caret is one blinking
+## pixel column, and what is being asserted is where the NEXT character lands, which no still shows.
+##
+## The pane is rebuilt whole on every keystroke, so the field being typed into is a new node each
+## time. Restoring that node's caret to the end of the string made only tail editing work: `abcd` with
+## `x` typed between `a` and `b` correctly became `axbcd` and then put the caret at column 5, so the
+## following character landed at the end instead of after the `x`.
+##
+## Driven by pushing a real unicode key event at the viewport, not by the harness's `_type` and not
+## by `insert_text_at_caret`: only `LineEdit.gui_input` both moves the caret AND emits `text_changed`,
+## and it is the ORDER of those two — caret first — that makes carrying the reported column correct.
+## `insert_text_at_caret` alone moves the caret and emits nothing, so it would prove neither.
+func _assert_caret_survives_a_mid_string_edit() -> void:
+	_shell.mode = MenuShell.PAUSE
+	_shell._activate_item(SAVE_PANE_ID)
+	_answer_list(_slot_fixtures())
+	_type(CARET_BASE_TEXT)
+	await get_tree().process_frame
+	var field := _shell._save_name_edit
+	if field == null:
+		_fail("caret: the Save pane built no name field")
+		return
+	# STAGE THE REAL CONDITION FIRST — a populated field with the caret parked mid-string. Asserted,
+	# because on an empty field or a caret that would not move every check below passes trivially.
+	if field.text != CARET_BASE_TEXT:
+		_fail("caret: the name field holds %s, not the text this check edits" % field.text)
+		return
+	field.grab_focus()
+	await get_tree().process_frame
+	field.caret_column = CARET_INSERT_COLUMN
+	if field.caret_column != CARET_INSERT_COLUMN:
+		_fail("caret: the caret would not park mid-string, so this check proves nothing")
+		return
+	if get_viewport().gui_get_focus_owner() != field:
+		_fail("caret: the name field does not hold the keyboard, so a key event would go elsewhere")
+		return
+
+	_press_character(CARET_FIRST_CHAR)
+	await get_tree().process_frame
+	if _shell._save_name_text != CARET_AFTER_FIRST_TEXT:
+		_fail("caret: a mid-string insert left the shell holding %s, not %s — the edit never reached the handler" \
+			% [_shell._save_name_text, CARET_AFTER_FIRST_TEXT])
+		return
+	var rebuilt := _shell._save_name_edit
+	if rebuilt == null or rebuilt == field:
+		_fail("caret: the keystroke did not rebuild the pane, so the carried caret was never exercised")
+		return
+	if rebuilt.caret_column != CARET_AFTER_FIRST_COLUMN:
+		_fail("caret: after inserting at column %d the rebuilt field sits at column %d, not %d" \
+			% [CARET_INSERT_COLUMN, rebuilt.caret_column, CARET_AFTER_FIRST_COLUMN])
+
+	# …and the consequence a player actually feels: the NEXT character lands where the caret is.
+	if get_viewport().gui_get_focus_owner() != rebuilt:
+		_fail("caret: the rebuilt field did not take the keyboard back, so the next key went nowhere")
+		return
+	_press_character(CARET_SECOND_CHAR)
+	await get_tree().process_frame
+	if _shell._save_name_text != CARET_AFTER_SECOND_TEXT:
+		_fail("caret: typing on after a mid-string insert produced %s, not %s" \
+			% [_shell._save_name_text, CARET_AFTER_SECOND_TEXT])
+	_type("")
+	_shell.release_text_focus()
+
+
+## One typed character, through `Viewport.push_input` — the same dispatch a keyboard reaches the
+## focused `LineEdit` by. The unicode is what `LineEdit` reads; there is deliberately no keycode, so
+## the event cannot also match a shortcut on its way in.
+func _press_character(ch: String) -> void:
+	var key := InputEventKey.new()
+	key.pressed = true
+	key.unicode = ch.unicode_at(0)
+	get_viewport().push_input(key)
+
+
+## **A REQUEST ID IS NEVER REUSED ACROSS A SCENE CHANGE.** Also no PNG — this is the seam's
+## bookkeeping, and its failure is a wrong answer rather than a wrong picture.
+##
+## A load swaps the scene and the new world builds a NEW `SaveSlots`, but the native worker's answer
+## channel is process-global and hands the new seam whatever the old one left in flight. Every
+## instance starting at `REQUEST_ID_BASE` made the stale `list_saves` answer collide with the id the
+## new seam had just spent on `load_game` — and a LIST reply says `ok: true`, so a load that was
+## refused was reported as having succeeded.
+##
+## Both seams are built here, in the order a scene change builds them, and driven through the real
+## `deliver`.
+func _assert_request_ids_do_not_repeat_across_seams() -> void:
+	# The seam the old scene leaves behind, with an ask genuinely unanswered: an id in flight is the
+	# only kind that can be mis-delivered, so the collision is staged rather than assumed.
+	var outgoing := SaveSlots.new()
+	outgoing.set_sender(_send)
+	outgoing.refresh()
+	var stale_id := _last_request_id
+	if outgoing.list_state != SaveSlots.LIST_PENDING:
+		_fail("request ids: the outgoing seam left no list ask in flight, so nothing could collide")
+		return
+
+	# The seam the loaded world builds, whose FIRST ask is the load itself.
+	var incoming := SaveSlots.new()
+	incoming.set_sender(_send)
+	incoming.request_load(FIXTURE_SLOT_MIDWINTER)
+	var load_id := _last_request_id
+	if incoming.op_in_flight != SaveSlots.KIND_LOAD:
+		_fail("request ids: the incoming seam put no load in flight")
+		return
+	if load_id == stale_id:
+		_fail("request ids: a new seam spent id %d, which the previous seam still has in flight" % load_id)
+
+	var finished: Array = []
+	incoming.op_finished.connect(
+		func(kind: String, _slot: String, ok: bool, _error: String, _drift: Array) -> void:
+			finished.append({"kind": kind, "ok": ok}))
+
+	# THE CONSEQUENCE: the outgoing seam's list answer, arriving after the swap, must reach nothing.
+	# It says `ok: true`, so under the collision it finished the load as a success.
+	incoming.deliver([{
+		"request_id": stale_id,
+		"ok": true,
+		"kind": SaveSlots.KIND_LIST,
+		"slots": _slot_fixtures(),
+	}])
+	if not finished.is_empty():
+		_fail("request ids: the outgoing seam's list answer finished %s on the new seam" % str(finished[0]))
+	if incoming.op_in_flight != SaveSlots.KIND_LOAD:
+		_fail("request ids: the outgoing seam's list answer cleared a load that is still in flight")
+
+	# …and the load's OWN answer still finishes it, so the check above is not passing on a seam that
+	# has simply stopped listening.
+	incoming.deliver([{
+		"request_id": load_id,
+		"ok": true,
+		"kind": "save_op",
+		"slot": FIXTURE_SLOT_MIDWINTER,
+		"error": "",
+		"config_drift": [],
+	}])
+	if finished.size() != 1 or String(finished[0]["kind"]) != SaveSlots.KIND_LOAD:
+		_fail("request ids: the load's own answer did not finish the load (%s)" % str(finished))
 
 
 ## **THE SHIPPED PREDICATE, CALLED** — not a restatement of it. `KeyboardArbiter.owner_for` makes
@@ -438,7 +590,14 @@ func _select(slot: String) -> void:
 
 
 ## Type into the Save pane's name field, through the field's own `text_changed` handler.
+##
+## The FIELD is put in the state a finished piece of typing leaves it in first — the text, and the
+## caret after its last character — because the shipped handler now reads the caret off the node that
+## reported the edit. Assigning `text` emits nothing, so this is still one synthetic `text_changed`.
 func _type(text: String) -> void:
+	if is_instance_valid(_shell._save_name_edit):
+		_shell._save_name_edit.text = text
+		_shell._save_name_edit.caret_column = text.length()
 	_shell._on_save_name_changed(text)
 
 

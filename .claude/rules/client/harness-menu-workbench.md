@@ -61,6 +61,21 @@ four rows cover both size units and all three time buckets plus the absolute-dat
 expressed as OFFSETS from now (a fixed stamp would drift into another bucket as the branch aged) and
 only the date row carries a fixed stamp, since that branch has no bucket to drift out of.
 
+**Two more checks take no picture, and both cover a silent wrong answer.**
+`_assert_caret_survives_a_mid_string_edit` parks the caret mid-string in the real name field, pushes a
+unicode key event through `Viewport.push_input` — `LineEdit.gui_input` is the only path that both
+moves the caret and emits `text_changed`, and it is the ORDER of those two that the fix reads, so
+`insert_text_at_caret` (which emits nothing) would prove neither — and asserts the REBUILT field's
+caret, then types a second character and asserts the text that produces. The second leg is the one a
+player feels: with the caret slammed to the end, `axbcd` + `y` came out `axbcdy`.
+`_assert_request_ids_do_not_repeat_across_seams` builds two seams in the order a scene change builds
+them, leaves a `list_saves` unanswered on the first, and asserts the second's `load_game` id differs
+and that the stale list answer finishes nothing on it — then delivers the load's OWN answer, so the
+negative leg cannot pass on a seam that has simply stopped listening. Sabotage-verified by restoring
+each defect: the caret reset fails both caret legs naming column 5 and `axbcdy`, and a per-instance id
+counter restarting at `REQUEST_ID_BASE` fails three id legs, one of them reporting the load finished
+`ok: true` by a list reply.
+
 **One check takes no picture at all.** `_assert_text_focus_is_handed_back` covers the keyboard
 handover the client's arbiter depends on
 (`.claude/rules/client/keyboard-arbiter.md`): typing must leave the

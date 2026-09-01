@@ -371,10 +371,10 @@ pub use power::{
 };
 pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
-    apply_port_base, apply_port_base_override, load_simulation_config_for_new_world,
-    port_base_override, BandIdAllocator, CapabilityFlags, CommandEventEntry, CommandEventKind,
-    CommandEventLog, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
-    DiscoveryProgressLedger, FactionInventory, FoodSiteEntry, FoodSiteRegistry,
+    apply_port_base, apply_port_base_override, carry_runtime_owned_fields,
+    load_simulation_config_for_new_world, port_base_override, BandIdAllocator, CapabilityFlags,
+    CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
+    DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FoodSiteEntry, FoodSiteRegistry,
     FoodSiteWaterBiasReport, HydrologyOverrides, MapTopology, MoistureRaster, PendingCrisisSeeds,
     PendingCrisisSpawns, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata,
     SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry, WorldEpoch,

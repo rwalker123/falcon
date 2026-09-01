@@ -26,15 +26,15 @@ use core_sim::port_base_override;
 use core_sim::sim_state::{restore_sim_state, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
-    apply_port_base, available_workers, floor_is_valid, forage_source_yield_preview,
-    herd_build_verb, hunt_source_yield_preview, knows, load_simulation_config_for_new_world,
-    output_multiplier, patch_build_verb, patch_composition, resolve_active_profile,
-    resolve_committed_species, resolve_take_selection, rung_site_refusal, species_stands_in,
-    tile_flora_composition, tile_is_fresh_watered, ActiveStartProfile, BandBench, BandEquipment,
-    BandTravel, BandWorkforce, BeatCatalogHandle, BeatConfigHandle, BeatLedger, BuildJob,
-    BuildSource, CampaignLabel, CombatConfigHandle, CreaturesConfigHandle, Expedition,
-    ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle, FoodModuleTag,
-    ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget,
+    apply_port_base, available_workers, carry_runtime_owned_fields, floor_is_valid,
+    forage_source_yield_preview, herd_build_verb, hunt_source_yield_preview, knows,
+    load_simulation_config_for_new_world, output_multiplier, patch_build_verb, patch_composition,
+    resolve_active_profile, resolve_committed_species, resolve_take_selection, rung_site_refusal,
+    species_stands_in, tile_flora_composition, tile_is_fresh_watered, ActiveStartProfile,
+    BandBench, BandEquipment, BandTravel, BandWorkforce, BeatCatalogHandle, BeatConfigHandle,
+    BeatLedger, BuildJob, BuildSource, CampaignLabel, CombatConfigHandle, CreaturesConfigHandle,
+    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle,
+    FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget,
     LadderConfigHandle, LocalStore, MaterialsConfigHandle, RecipesConfigHandle, ResidentBand,
     RungKey, SiteRefusal, SourcePriority, SpeciesRefusal, StartProfile, StartProfileOverrides,
     TakeSelection, UpkeepFundMode, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR,
@@ -1953,8 +1953,20 @@ fn handle_load_game(
     // resource, so inserting it is what stops worldgen overwriting the map about to be installed.
     new_app.insert_resource(core_sim::save::SuppressWorldgen);
 
+    // The replacement app's `SimulationConfig` came straight off the file (`build_headless_app`),
+    // which is right for every tunable and wrong for the two things the file cannot know — see
+    // `carry_runtime_owned_fields`. `new_game` gets this via `load_simulation_config_for_new_world`;
+    // a load has to ask for the same set, or the player's fog switch is undone by opening a save and
+    // the loaded world starts naming the ports the file asked for rather than the ones bound.
+    {
+        let outgoing = app.world.resource::<SimulationConfig>().clone();
+        let mut config = new_app.world.resource_mut::<SimulationConfig>();
+        carry_runtime_owned_fields(&mut config, &outgoing);
+    }
+
     let resolved_port_base = ResolvedPortBase(
-        app.world
+        new_app
+            .world
             .resource::<SimulationConfig>()
             .port_base_bind
             .port(),
@@ -10488,6 +10500,118 @@ mod tests {
         assert!(
             entry.encoded_snapshot_flat.is_some(),
             "the loaded world's baseline must be a FULL frame, not a delta"
+        );
+
+        std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
+    }
+
+    /// **A load carries the two things the config FILE cannot know** — the player's fog switch and
+    /// the port block this process actually bound.
+    ///
+    /// `handle_load_game` builds its replacement app with `build_headless_app`, so the whole
+    /// `SimulationConfig` arrives straight off the file. That is right for every tunable and wrong
+    /// for `carry_runtime_owned_fields`' two rows, and the fog half is the one a player sees: fog
+    /// off, save, load, and the reveal frame the load publishes comes back **fogged**, with the
+    /// herds filtered out of it, until the client's own reconcile round-trips a `set_fog` and forces
+    /// a recapture.
+    ///
+    /// Asserting on the published frame and not only on the config is the point — the config is what
+    /// the carry writes, the frame is what the player looks at.
+    #[test]
+    fn a_load_carries_the_fields_the_config_file_cannot_know() {
+        let _guard = lock_save_dir_for_test();
+        let dir = save_scratch("runtime_owned");
+        std::env::set_var(core_sim::save_store::SAVE_DIR_ENV, &dir);
+
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let mut app = a_world_for_saving(&mut world_active, &mut world_epoch, &flat);
+        assert!(
+            app.world.resource::<SimulationConfig>().fog_enabled,
+            "the shipped config must have fog ON, or this test proves nothing"
+        );
+
+        // The player turns fog off, through the command that owns the preference, and the process
+        // lands on a bumped block — the two states the file cannot reproduce.
+        apply_command(&mut app, Command::SetFogEnabled { enabled: false }, &flat);
+        {
+            let mut config = app.world.resource_mut::<SimulationConfig>();
+            let bumped = config.port_base_bind.port() + port_alloc::PORT_BLOCK_STRIDE;
+            assert!(
+                apply_port_base(&mut config, bumped),
+                "the bumped base must be in range"
+            );
+        }
+        let held_binds = {
+            let config = app.world.resource::<SimulationConfig>();
+            (
+                config.port_base_bind,
+                config.command_bind,
+                config.snapshot_flat_bind,
+                config.log_bind,
+            )
+        };
+        resolve_turn_with_auto_orders(&mut app);
+
+        assert!(handle_save_game(&app, world_active, "runtime owned").ok);
+
+        let mut command_log = None;
+        let answer = handle_load_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut command_log,
+            "runtime owned",
+            &flat,
+        );
+        assert!(answer.ok, "the load must land: {}", answer.error);
+
+        let config = app.world.resource::<SimulationConfig>();
+        assert!(
+            !config.fog_enabled,
+            "a load handed the player's fog switch back to the config file"
+        );
+        assert_eq!(
+            (
+                config.port_base_bind,
+                config.command_bind,
+                config.snapshot_flat_bind,
+                config.log_bind
+            ),
+            held_binds,
+            "a loaded world must describe the ports the process holds, not the ones the file asks for"
+        );
+        assert_eq!(
+            app.world.resource::<ResolvedPortBase>().0,
+            held_binds.0.port(),
+            "and the resource a later `reload_config` re-applies must agree with them"
+        );
+
+        // **The half a player sees.** The baseline frame the load published is the reveal frame.
+        let entry = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a loaded world publishes a baseline frame");
+        assert!(
+            !entry.snapshot.fog_enabled,
+            "the loaded world's reveal frame was published FOGGED"
+        );
+        let raster = &entry.snapshot.visibility_raster;
+        assert!(
+            !raster.samples.is_empty(),
+            "the baseline frame must carry a visibility raster to assert on"
+        );
+        let fogged = raster
+            .samples
+            .iter()
+            .filter(|sample| **sample != core_sim::Scalar::SCALE)
+            .count();
+        assert_eq!(
+            fogged,
+            0,
+            "with fog off every tile publishes Active; {fogged} of {} did not",
+            raster.samples.len()
         );
 
         std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);

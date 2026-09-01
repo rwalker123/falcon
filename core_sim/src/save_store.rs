@@ -9,13 +9,14 @@
 
 use std::fs;
 use std::io;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use sim_runtime::commands::SaveSlotInfo;
 use thiserror::Error;
 
-use crate::save::{read_save_header, SaveError};
+use crate::save::{read_save_header, SaveError, SaveHeader};
 
 /// Where saves live. Overrides [`DEFAULT_SAVE_DIR`]; the same environment-override idiom as
 /// `SIM_PORT_BASE` and the `*_CONFIG_PATH` family (`core_sim/CLAUDE.md`).
@@ -27,6 +28,21 @@ pub const DEFAULT_SAVE_DIR: &str = "saves";
 
 /// Extension of a save file. Distinct enough that a directory listing says what these are.
 pub const SAVE_FILE_EXTENSION: &str = "shdw";
+
+/// How much of a save file [`list_slots`] reads to get at its header.
+///
+/// The whole point of the uncompressed-header-first layout is that a listing costs a header rather
+/// than a world, and a listing that read the file whole threw that away: at 160x104 a slot is
+/// ~1.2 MB, so ten slots cost ~12 MB of I/O on every pane open, every save and every delete.
+///
+/// **8 KiB, against a measured 1,313-byte header** on the shipped config catalog
+/// (`save_round_trip.rs` -> `a_large_map_save_is_measured`, which asserts the fit). The header does
+/// not grow with the map -- the only part of it that grows at all is the [`crate::save::SaveHeader`]
+/// `config_fingerprint`, one `(file name, u64)` entry per boot config at roughly 30 bytes -- so the
+/// headroom is worth about 200 more config files.
+///
+/// A header that outgrew this is **not** treated as a corrupt file: see [`read_header_only`].
+pub const HEADER_PREFIX_BYTES: u64 = 8 * 1024;
 
 /// The longest slot name accepted.
 ///
@@ -139,6 +155,8 @@ pub enum SlotStoreError {
 /// A file that is not a save, or is a save this build cannot read, is **skipped with a warning**
 /// rather than failing the listing: one corrupt file in the directory must not make the load menu
 /// unopenable, which is precisely when a player needs it.
+///
+/// Each file costs one open, one stat and a [`HEADER_PREFIX_BYTES`] read -- never the payload.
 pub fn list_slots(dir: &Path) -> Vec<SaveSlotInfo> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -169,11 +187,10 @@ pub fn list_slots(dir: &Path) -> Vec<SaveSlotInfo> {
             continue;
         }
 
-        // ONLY the header. `read_save_header` stops after the first CBOR document and never touches
-        // the gzipped payload behind it.
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(err) => {
+        // ONLY the header, and only a bounded prefix of the file to get it.
+        let (header, metadata) = match read_header_only(&path) {
+            Ok(read) => read,
+            Err(SlotStoreError::Io(err)) => {
                 tracing::warn!(
                     target: "shadow_scale::save",
                     path = %path.display(),
@@ -182,9 +199,6 @@ pub fn list_slots(dir: &Path) -> Vec<SaveSlotInfo> {
                 );
                 continue;
             }
-        };
-        let header = match read_save_header(&bytes) {
-            Ok(header) => header,
             Err(err) => {
                 tracing::warn!(
                     target: "shadow_scale::save",
@@ -196,10 +210,9 @@ pub fn list_slots(dir: &Path) -> Vec<SaveSlotInfo> {
             }
         };
 
-        let metadata = entry.metadata().ok();
         let modified_unix_seconds = metadata
-            .as_ref()
-            .and_then(|meta| meta.modified().ok())
+            .modified()
+            .ok()
             .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
             .map(|since| since.as_secs())
             .unwrap_or_default();
@@ -213,9 +226,7 @@ pub fn list_slots(dir: &Path) -> Vec<SaveSlotInfo> {
             height: header.world.height,
             world_seed: header.world.world_seed,
             start_profile_id: header.world.start_profile_id,
-            size_bytes: metadata
-                .map(|meta| meta.len())
-                .unwrap_or(bytes.len() as u64),
+            size_bytes: metadata.len(),
             modified_unix_seconds,
         });
     }
@@ -228,6 +239,46 @@ pub fn list_slots(dir: &Path) -> Vec<SaveSlotInfo> {
             .then_with(|| a.slot.cmp(&b.slot))
     });
     slots
+}
+
+/// **Read one slot's header without reading its world.**
+///
+/// The bounded read is the whole point of the layout ([`HEADER_PREFIX_BYTES`]); the metadata comes
+/// off the same open handle, so `size_bytes` is the file's true length rather than the length of
+/// what was read.
+///
+/// **A header bigger than the bound is a bound that is wrong, not a save that is broken.** Truncating
+/// a CBOR document mid-way makes `ciborium` fail exactly as a corrupt file does, and a listing that
+/// believed it would drop a perfectly good slot off the load menu -- silently, and every slot at
+/// once, since every save's header is about the same size. So a decode failure on a prefix that was
+/// *cut short* re-reads that one file whole and warns naming the bound: one full read in a case that
+/// does not currently arise, and no way to lose a save to a constant.
+fn read_header_only(path: &Path) -> Result<(SaveHeader, fs::Metadata), SlotStoreError> {
+    let file = fs::File::open(path).map_err(SlotStoreError::Io)?;
+    let metadata = file.metadata().map_err(SlotStoreError::Io)?;
+    let mut prefix = Vec::new();
+    file.take(HEADER_PREFIX_BYTES)
+        .read_to_end(&mut prefix)
+        .map_err(SlotStoreError::Io)?;
+
+    match read_save_header(&prefix) {
+        Ok(header) => Ok((header, metadata)),
+        // Only a decode error can be truncation: a bad magic or a version mismatch is answered by
+        // the leading bytes and would read the same from the whole file.
+        Err(err @ SaveError::Header(_)) if metadata.len() > HEADER_PREFIX_BYTES => {
+            tracing::warn!(
+                target: "shadow_scale::save",
+                path = %path.display(),
+                bound = HEADER_PREFIX_BYTES,
+                error = %err,
+                "save.list.header_over_prefix -- re-reading the file whole; raise HEADER_PREFIX_BYTES"
+            );
+            let bytes = fs::read(path).map_err(SlotStoreError::Io)?;
+            let header = read_save_header(&bytes)?;
+            Ok((header, metadata))
+        }
+        Err(err) => Err(SlotStoreError::Format(err)),
+    }
 }
 
 #[cfg(test)]
@@ -325,6 +376,36 @@ mod tests {
         write_slot(&dir, "broken", b"not a save at all").expect("write");
         fs::write(dir.join("notes.txt"), "ignore me").expect("write");
         assert!(list_slots(&dir).is_empty());
+    }
+
+    /// **A listing costs a prefix, and still reports the whole file.**
+    ///
+    /// A real save, because the two things worth asserting only exist on one: that a file far larger
+    /// than [`HEADER_PREFIX_BYTES`] lists from that prefix alone, and that `size_bytes` is the
+    /// **file's** length. The listing used to read the file whole and could therefore fall back on
+    /// the buffer's length for the size; a bounded read makes that fallback a lie, so the size now
+    /// comes off the same open handle the prefix was read from.
+    #[test]
+    fn a_listing_reads_a_prefix_and_still_reports_the_whole_file() {
+        let dir = scratch("prefix");
+        let mut app = crate::build_test_app();
+        app.update();
+        let blob = crate::save::encode_save(&app.world).expect("the world encodes");
+        let path = write_slot(&dir, "one world", &blob).expect("write");
+
+        let on_disk = fs::metadata(&path).expect("stat").len();
+        assert!(
+            on_disk > HEADER_PREFIX_BYTES,
+            "the fixture must be bigger than the prefix or it proves nothing: {on_disk} bytes"
+        );
+
+        let slots = list_slots(&dir);
+        assert_eq!(slots.len(), 1, "the slot must list from its header alone");
+        assert_eq!(slots[0].slot, "one world");
+        assert_eq!(
+            slots[0].size_bytes, on_disk,
+            "a row reports the size of the FILE, not of the prefix that was read"
+        );
     }
 
     #[test]

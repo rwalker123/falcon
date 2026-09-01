@@ -677,10 +677,9 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
 /// panel would install, log, and do nothing, which is precisely the bug this function was written to
 /// fix. So the carried set is a consequence of that principle, not a list of conveniences.
 ///
-/// | Carried field | Why the file cannot know it |
-/// |---|---|
-/// | `fog_enabled` | Not a tunable at all: a **player preference** with its own persisted home in the client (`.claude/rules/client/fog-of-war.md`), pushed to the server as a `set_fog` command. It would never appear on the tuning panel, and resetting it every New Game would be a visible regression. |
-/// | the four bind addresses | `crate::port_alloc::allocate` at boot — port allocation auto-bumps on a collision, so after a bump these are *not* what the file says and a fresh load could never reproduce them. The in-world config must describe the ports the process actually holds. |
+/// The carried set itself is [`carry_runtime_owned_fields`], because a **load** needs the same set
+/// against a config it did not obtain here (`handle_load_game` gets its fresh config from
+/// `build_headless_app`), and a carried-field list written at two sites is a list that will disagree.
 ///
 /// **`crisis_auto_seed` is deliberately NOT carried**, though `set_crisis_auto_seed` writes it at
 /// runtime: it lives in `simulation_config.json` alongside exactly the levers the tuning panel
@@ -693,14 +692,33 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
 /// `grid_size` / `map_preset_id` / `map_seed`, which are arguments of the rebuild command.
 pub fn load_simulation_config_for_new_world(outgoing: &SimulationConfig) -> SimulationConfig {
     let (mut config, _metadata) = load_simulation_config_from_env();
+    carry_runtime_owned_fields(&mut config, outgoing);
+    config
+}
 
+/// **Copy the fields the running process owns from `outgoing` onto a freshly loaded `config`.**
+///
+/// The one home of the carried set, for the reason stated in
+/// [`load_simulation_config_for_new_world`]: the rule is narrow — *the file is the authority at
+/// world start; only what the file CANNOT know gets carried* — and it is only a rule while there is
+/// exactly one list.
+///
+/// | Carried field | Why the file cannot know it |
+/// |---|---|
+/// | `fog_enabled` | Not a tunable at all: a **player preference** with its own persisted home in the client (`.claude/rules/client/fog-of-war.md`), pushed to the server as a `set_fog` command. It would never appear on the tuning panel, and resetting it every New Game would be a visible regression. |
+/// | the four bind addresses | `crate::port_alloc::allocate` at boot — port allocation auto-bumps on a collision, so after a bump these are *not* what the file says and a fresh load could never reproduce them. The in-world config must describe the ports the process actually holds. |
+///
+/// **Both callers are world *replacements***: `new_game` / `ResetMap` through
+/// [`load_simulation_config_for_new_world`], and `load_game`, which builds its replacement app from
+/// `build_headless_app` and therefore arrives holding the file's values for both rows — the fog the
+/// player switched off would come back on in the reveal frame, and a process whose port block
+/// auto-bumped would start naming sockets it does not hold.
+pub fn carry_runtime_owned_fields(config: &mut SimulationConfig, outgoing: &SimulationConfig) {
     config.fog_enabled = outgoing.fog_enabled;
     config.port_base_bind = outgoing.port_base_bind;
     config.snapshot_flat_bind = outgoing.snapshot_flat_bind;
     config.command_bind = outgoing.command_bind;
     config.log_bind = outgoing.log_bind;
-
-    config
 }
 
 /// Tracks total simulation ticks elapsed.

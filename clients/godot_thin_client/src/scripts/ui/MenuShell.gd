@@ -119,6 +119,10 @@ const SAVE_BUTTON_FORMAT := "Save to “%s”"
 const SAVE_BUTTON_OVERWRITE_FORMAT := "Overwrite “%s”"
 const SAVE_BUTTON_IDLE := "Save to slot"
 const SAVE_NAME_FIELD_MIN_WIDTH := 300.0
+## **NOTHING CARRIED A CARET ACROSS THIS REBUILD** — put it at the end of the text, which is where a
+## field opened fresh, or just filled from a slot row, should start. Any real column is ≥ 0, so a
+## negative sentinel cannot be confused with one.
+const SAVE_NAME_CARET_AT_END := -1
 
 ## Delete is a two-step in the actions row rather than a modal: press once to arm, and the armed
 ## button says what it will destroy. Same shape as the Theme row's "Apply now — ends this run".
@@ -262,6 +266,10 @@ var _selected_slot := ""
 ## was typed instead of clearing it under the player's hands.
 var _save_name_edit: LineEdit = null
 var _save_name_text := ""
+## Where the NEXT build of that field puts its caret: the column the editing field reported, or
+## `SAVE_NAME_CARET_AT_END` when the text came from somewhere other than typing. Sticky, so a rebuild
+## the player did not cause (a list answer landing mid-word) does not move the caret either.
+var _save_name_caret := SAVE_NAME_CARET_AT_END
 ## The slot the Delete button is ARMED for (`""` = not armed). Cleared by any rebuild that is not the
 ## confirm press itself, so an arm cannot survive a changed selection.
 var _delete_armed_slot := ""
@@ -652,7 +660,7 @@ func _build_saves_pane(is_save: bool) -> void:
 		_save_name_edit.max_length = SaveSlots.MAX_SLOT_NAME_LEN
 		_save_name_edit.custom_minimum_size.x = SAVE_NAME_FIELD_MIN_WIDTH
 		_save_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_save_name_edit.caret_column = _save_name_text.length()
+		_save_name_edit.caret_column = _save_name_caret_column()
 		_style_line_edit(_save_name_edit)
 		_save_name_edit.text_changed.connect(_on_save_name_changed)
 		_save_name_edit.text_submitted.connect(func(_t): _on_save_pressed())
@@ -1375,17 +1383,38 @@ func _on_slot_row_input(event: InputEvent, slot_name: String, is_save: bool) -> 
 		# which is also what turns the button into the armed "Overwrite" form. The autosave row fills
 		# nothing: it is the one name the field may not carry.
 		_save_name_text = "" if SaveSlots.is_reserved(slot_name) else slot_name
+		# The text did not come from typing, so no caret carries over: a name filled from a row reads
+		# as one just finished being typed, with the caret after its last character.
+		_save_name_caret = SAVE_NAME_CARET_AT_END
 	_refresh_saves_pane()
 
 
 func _on_save_name_changed(text: String) -> void:
+	# **THE CARET COMES FROM THE FIELD THAT REPORTED THE EDIT**, read before the rebuild while that
+	# node is still alive (`_show_pane` only `queue_free`s it). `LineEdit` defers `text_changed` until
+	# after it has moved its own caret, so the column read here is already the post-edit one — for an
+	# insert and for a backspace alike — and it is carried across verbatim.
+	#
+	# Restoring the END of the text instead, as this did, made only append-at-the-tail editing work:
+	# typing `x` between `a` and `b` of `abcd` correctly produced `axbcd` and then put the caret at
+	# column 5, so the next character landed at the end.
+	if _save_name_edit != null:
+		_save_name_caret = _save_name_edit.caret_column
 	_save_name_text = text
 	_refresh_saves_pane()
 	# The pane is rebuilt whole on every keystroke, so the field the player is typing into is a NEW
 	# node each time. Focus and caret are restored onto it, or typing would stop after one character.
 	if _save_name_edit != null:
 		_save_name_edit.grab_focus()
-		_save_name_edit.caret_column = _save_name_text.length()
+		_save_name_edit.caret_column = _save_name_caret_column()
+
+
+## The column a rebuilt name field opens at: the one carried across from the field being typed into,
+## clamped to the text it is applied to, or the end of that text when nothing carried one.
+func _save_name_caret_column() -> int:
+	if _save_name_caret == SAVE_NAME_CARET_AT_END:
+		return _save_name_text.length()
+	return clampi(_save_name_caret, 0, _save_name_text.length())
 
 
 func _on_saves_retry_pressed() -> void:
