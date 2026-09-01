@@ -57,7 +57,9 @@ use crate::{
         TownCenter,
     },
     connections::ConnectionLedger,
-    crisis::{ActiveCrisisLedger, ActiveCrisisLedgerCheckpoint, CrisisTelemetry},
+    crisis::{
+        ActiveCrisisLedger, ActiveCrisisLedgerCheckpoint, CrisisOverlayCache, CrisisTelemetry,
+    },
     crisis_config::{CrisisArchetypeCatalogHandle, CrisisModifierCatalogHandle},
     culture::{CultureManager, CultureManagerCheckpoint},
     espionage::{
@@ -199,19 +201,27 @@ pub struct SimState {
     pub trade_telemetry: TradeTelemetry,
     pub victory: VictoryState,
     pub visibility: VisibilityLedger,
-    /// Three resources the classification tables call *derived*, carried anyway.
+    /// Four resources whose *names* say derived, carried anyway.
     ///
     /// "Derived" is only safe if nothing **publishes** the value before the system that rebuilds it
-    /// next runs. These three fail that test: `capture_snapshot` reads `SimulationMetrics.crisis`
-    /// for the published crisis telemetry, `PowerGridState` for `power_metrics`, and
-    /// `HerdTelemetry` for the display herd list — all in the same turn, and all written by systems
-    /// that will not have run again by the time a restored world is next captured. `HerdTelemetry`
-    /// is the sharpest case: it is a mid-system snapshot of herd biomass, not a pure function of
-    /// `HerdRegistry`, so rebuilding it from the registry produces a *different* number rather than
-    /// a stale one.
+    /// next runs. These four fail that test: `capture_snapshot` reads `SimulationMetrics.crisis`
+    /// for the published crisis telemetry, `PowerGridState` for `power_metrics`,
+    /// `HerdTelemetry` for the display herd list and `CrisisOverlayCache` for the crisis overlay —
+    /// all in the same turn, and all written by systems that will not have run again by the time a
+    /// restored world is next captured. `HerdTelemetry` is the sharpest case: it is a mid-system
+    /// snapshot of herd biomass, not a pure function of `HerdRegistry`, so rebuilding it from the
+    /// registry produces a *different* number rather than a stale one.
+    ///
+    /// **`CrisisOverlayCache` is the one a save load caught rather than a rollback.** A rollback
+    /// republishes a stored ring entry, so the gap never showed; a load has no ring, and
+    /// `publish_baseline_snapshot` captures the client's very first frame straight off the restored
+    /// world with no turn in between. Left out, that frame carried a `0x0` heatmap against the live
+    /// world's full-size one, and the client only got the real raster a turn later. It is not
+    /// rebuildable at restore time either — the rebuild `advance`s every live crisis.
     pub metrics: crate::metrics::SimulationMetrics,
     pub power_grid: crate::power::PowerGridState,
     pub herd_telemetry: crate::fauna::HerdTelemetry,
+    pub crisis_overlay: CrisisOverlayCache,
 
     // --- resources whose config is deliberately left behind ---
     /// The live crises, named by the archetype id each was seeded from. **Not the ledger itself**:
@@ -386,6 +396,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
             .clone(),
         power_grid: world.resource::<crate::power::PowerGridState>().clone(),
         herd_telemetry: world.resource::<crate::fauna::HerdTelemetry>().clone(),
+        crisis_overlay: world.resource::<CrisisOverlayCache>().clone(),
         culture: world.resource::<CultureManager>().checkpoint(),
         influencers: world.resource::<InfluentialRoster>().checkpoint(),
         knowledge: world.resource::<KnowledgeLedger>().checkpoint(),
@@ -563,6 +574,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.metrics.clone());
     world.insert_resource(state.power_grid.clone());
     world.insert_resource(state.herd_telemetry.clone());
+    world.insert_resource(state.crisis_overlay.clone());
 
     // --- pass 4c: resources whose config must NOT come from the checkpoint --------------------
     // `restore_checkpoint` writes state and leaves the config field alone, so each of these keeps

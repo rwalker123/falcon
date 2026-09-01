@@ -85,7 +85,19 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 ///
 /// There is no migration path by design — see the module note. A save from a different version is
 /// refused with [`SaveError::VersionMismatch`].
-pub const SAVE_FORMAT_VERSION: u32 = 1;
+///
+/// **A field added to `SimState` is a shape change and must bump this**, which is the case that
+/// actually arises: `SimState` gained `crisis_overlay` and the old blobs stopped being decodable.
+/// Without a bump, `ciborium` fails on the missing field somewhere inside a world and the player is
+/// told their save is `unreadable` — a sentence that describes corruption rather than the truth,
+/// which is that this build reads a newer format. The bump is what turns that into an error naming
+/// both versions.
+///
+/// | version | shape |
+/// |---|---|
+/// | 1 | the initial format |
+/// | 2 | `SimState.crisis_overlay` added — a load published an empty crisis heatmap |
+pub const SAVE_FORMAT_VERSION: u32 = 2;
 
 /// gzip level for the payload document.
 ///

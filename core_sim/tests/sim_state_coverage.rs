@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 39] = [
+const SIM_STATE_RESOURCES: [&str; 40] = [
     "ActiveCrisisLedger",
     // The band-id counter. Restoring the bands without it re-issues a live id after a rollback.
     "BandIdAllocator",
@@ -95,18 +95,26 @@ const SIM_STATE_RESOURCES: [&str; 39] = [
     "VictoryState",
     // Permanent-memory fog: the ledger IS the record of what has ever been seen.
     "VisibilityLedger",
-    // The three below look derived and are not, because **"derived" is only safe if nothing
+    // The four below look derived and are not, because **"derived" is only safe if nothing
     // publishes the value before the system that rebuilds it next runs.** `capture_snapshot` reads
     // `SimulationMetrics.crisis` for the published crisis telemetry, `PowerGridState` for
-    // `power_metrics`, and `HerdTelemetry` for the display herd list — all in the same turn, all
-    // written by systems that will not have run again when a restored world is next captured.
-    // `HerdTelemetry` is the sharpest: it is a mid-system snapshot of herd biomass rather than a
-    // pure function of `HerdRegistry`, so rebuilding it from the registry yields a *different*
-    // number, not a stale one. The restore-fidelity oracle is what distinguished these from the
-    // genuinely derived four.
+    // `power_metrics`, `HerdTelemetry` for the display herd list and `CrisisOverlayCache` for the
+    // crisis overlay — all in the same turn, all written by systems that will not have run again
+    // when a restored world is next captured. `HerdTelemetry` is the sharpest: it is a mid-system
+    // snapshot of herd biomass rather than a pure function of `HerdRegistry`, so rebuilding it from
+    // the registry yields a *different* number, not a stale one. The restore-fidelity oracle is
+    // what distinguished the first three from the genuinely derived ones.
+    //
+    // **`CrisisOverlayCache` was moved here by a SAVE LOAD, not by the oracle**, and that is the
+    // hole this bucket had: a rollback republishes a stored ring entry, so a derived resource it
+    // drops is invisible, while a load publishes the client's first frame straight off the restored
+    // world with no turn in between. Filed as derived, it shipped a `0x0` crisis heatmap on that
+    // frame where the live world had published a full-size one. It cannot be rebuilt at restore
+    // time to stay derived, either: `rebuild_overlay` runs `ActiveCrisis::advance` on every entry.
     "SimulationMetrics",
     "PowerGridState",
     "HerdTelemetry",
+    "CrisisOverlayCache",
     // Previous-turn positions, so `calculate_visibility` can sweep the corridor a band crossed.
     "VisibilitySweepTracker",
 ];
@@ -116,14 +124,10 @@ const SIM_STATE_RESOURCES: [&str; 39] = [
 /// The second half is the load-bearing one, and it is why `HerdTelemetry`, `PowerGridState` and
 /// `SimulationMetrics` are not here despite each having a system that rebuilds it: `capture_snapshot`
 /// publishes all three within the same turn. See the comment on them in `SIM_STATE_RESOURCES`.
-const DERIVED_RESOURCES: [(&str, &str); 6] = [
+const DERIVED_RESOURCES: [(&str, &str); 5] = [
     // Filled by `calculate_visibility` (and the expedition comm flush) and drained + cleared by
     // `advance_connections` in the SAME stage, so it is empty at the end of every turn.
     ("ContactsThisTurn", "connections::advance_connections"),
-    (
-        "CrisisOverlayCache",
-        "advance_crisis_system -> rebuild_overlay",
-    ),
     ("CultureEffectsCache", "reconcile_culture_layers"),
     ("HerdDensityMap", "advance_herds"),
     // Written by `balance_supply_networks` and DRAINED by `advance_routes` in the SAME stage, so it

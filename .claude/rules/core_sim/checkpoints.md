@@ -166,16 +166,36 @@ change detection, no retained deltas, no assumption it ran last turn. That is wh
 The tempting shortcut is to leave a resource out of the checkpoint because some system recomputes it
 each turn. That holds only when nothing reads it in between.
 
-`SimulationMetrics`, `PowerGridState` and `HerdTelemetry` all fail the test: `capture_snapshot`
-reads `SimulationMetrics.crisis` for the published crisis telemetry, `PowerGridState` for
-`power_metrics`, and `HerdTelemetry` for the display herd list — all in the same turn, all written
-by systems that will not have run again by the time a restored world is next captured. They are
-carried.
+`SimulationMetrics`, `PowerGridState`, `HerdTelemetry` and `CrisisOverlayCache` all fail the test:
+`capture_snapshot` reads `SimulationMetrics.crisis` for the published crisis telemetry,
+`PowerGridState` for `power_metrics`, `HerdTelemetry` for the display herd list and
+`CrisisOverlayCache` for the crisis overlay — all in the same turn, all written by systems that will
+not have run again by the time a restored world is next captured. They are carried.
 
 **`HerdTelemetry` is the worked example**, because it produced a *plausible wrong number* rather
 than an obviously stale one. It is a mid-system snapshot of herd biomass, not a pure function of
 `HerdRegistry`, so rebuilding it from the registry — which is what a reviewer would wave through —
 yields a number that is close, well-formed, and different. Only a bit-exact oracle catches that.
+
+### A save load reads the world with **no turn in between**, and that is a second way to fail it
+
+`CrisisOverlayCache` was the fourth, and it was classified derived for years because *a rollback
+cannot show this class of bug*: a rollback republishes a stored ring entry rather than re-capturing,
+so a derived resource it drops never reaches a frame. A **load** has no ring. `apply_save` installs
+the world and `publish_baseline_snapshot` captures the client's very first frame straight off it, so
+anything the restore left at `Default` ships in that frame. Left out, the loaded world published a
+`0x0` crisis heatmap where the live world at the same tick had published an 80x52 one with 4,160
+samples, and the client only saw the real raster once a turn had run.
+
+**It is not rebuildable at restore time either**, which is what forced the checkpoint rather than a
+pass-4d rebuild beside `HerdDensityMap` and `CultureEffectsCache`: `rebuild_overlay` calls
+`ActiveCrisis::advance` on every live crisis, so calling it outside `advance_crisis_system` would
+step the crises forward a turn. The name says cache; the contents are a mid-system snapshot, exactly
+like `HerdTelemetry`.
+
+The guard is `save_round_trip.rs`'s `a_loaded_world_publishes_the_frame_the_live_one_did`, which
+compares the two published frames field by field and exempts only `header.frame_seq` (it counts
+publications and resets with the world epoch, so a loaded world's first is `1` by design).
 
 ## Capture records component presence, not only values
 
@@ -401,6 +421,12 @@ and every other assertion in the file still passes. That is a hole shaped exactl
 the guard exists to catch, and it opened where this document says the danger is: `HerdTelemetry`,
 `PowerGridState` and `SimulationMetrics` — the three worked examples of the derived/state
 distinction above — sat in `SIM_STATE_RESOURCES` and `DERIVED_RESOURCES` at once.
+
+**It catches an unclassified resource, never a mis-classified one.** `DERIVED_RESOURCES` takes a
+plausible system name and asks nothing further, so `CrisisOverlayCache` sat there naming a real
+rebuilder while shipping an empty raster on every load (see "A save load reads the world with no
+turn in between"). What catches that class is a behavioural oracle — the replay-determinism suite
+for the rollback path, and `save_round_trip.rs`'s same-tick frame comparison for the load path.
 
 **Its scope is the library's resources, which is narrower than "omission" makes it sound.** The app
 it walks is `build_headless_app`, so anything the `server` **binary** inserts is invisible to it —

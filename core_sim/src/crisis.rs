@@ -963,7 +963,18 @@ struct ActiveCrisisCheckpoint {
     modifier_ids: Vec<String>,
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+/// The crisis heat raster and its annotations, as `capture_snapshot` publishes them.
+///
+/// **Serde-carried, because this is checkpoint state and not the derived cache its name promises.**
+/// `advance_crisis_system` rebuilds it every turn, which is why it sat in the coverage test's
+/// `DERIVED_*` bucket — but "derived" is only safe if nothing *publishes* the value before the
+/// system that rebuilds it next runs, and a **save load** publishes exactly that: `apply_save`
+/// installs the world and `publish_baseline_snapshot` captures the client's first frame from it
+/// without resolving a turn, so a cache left at `Default` shipped a `0x0` heatmap where the live
+/// world had published a full-size one. It cannot be rebuilt at restore time either: the rebuild
+/// runs `ActiveCrisis::advance` on every entry, so calling it outside the turn would step the
+/// crises forward — the `HerdTelemetry` case exactly (`.claude/rules/core_sim/checkpoints.md`).
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct CrisisOverlayCache {
     pub raster: ScalarRasterState,
     pub annotations: Vec<CrisisOverlayAnnotationState>,

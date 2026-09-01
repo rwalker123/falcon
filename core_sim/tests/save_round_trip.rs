@@ -21,15 +21,30 @@ use core_sim::save::{
 use core_sim::sim_state::capture_sim_state;
 
 mod common;
-use common::canonical_tree;
+use common::{canonical_tree, differing_paths};
 use core_sim::{
-    build_test_app, run_turn, BiomePalette, FoodSiteRegistry, HydrologyState, MoistureRaster,
-    PowerTopology, ProvinceMap, SimulationConfig, StartLocation, Tile, TileRegistry, WorldGenSeed,
+    build_test_app, publish_baseline_snapshot, run_turn, scalar_one, BiomePalette,
+    DiscoveryProgressLedger, FactionId, FoodSiteRegistry, HydrologyState, MoistureRaster,
+    PowerTopology, ProvinceMap, SimulationConfig, SnapshotHistory, StartLocation, Tile,
+    TileRegistry, WorldGenSeed, CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID,
+    SEED_SELECTION_DISCOVERY_ID,
 };
+use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
 /// Turns resolved before saving, so the blob holds a world that has run rather than bare worldgen
 /// output.
+///
+/// ⛔ **FOUR TURNS CANNOT EXHIBIT ANYTHING THE WORLD HAD TO EARN**, and that is why a whole suite
+/// passed while a reported "everything the faction knew was announced again after a load" defect
+/// went looking for a home here. A four-turn world has learned nothing, so a checkpoint that
+/// dropped every ladder discovery would round-trip an empty ledger to an empty ledger and every
+/// assertion in this file would still be green. The tests that need a world with *state worth
+/// losing* build one deliberately — see [`a_world_with_earned_state`].
 const TURNS_BEFORE_SAVE: usize = 4;
+
+/// Turns resolved after [`a_world_with_earned_state`] seeds the ladder, so the knowledge is not the
+/// only thing in the world that moved after worldgen and the save carries a world mid-flight.
+const TURNS_AFTER_SEEDING: usize = 6;
 
 /// Turns simulated on both sides after the load. Agreement at N is much weaker than agreement at
 /// N+k, because a missing input only diverges once something reads it.
@@ -169,6 +184,239 @@ fn a_loaded_world_simulates_forward_identically() {
             "a loaded world diverged from the saved one at step {step}"
         );
     }
+}
+
+/// The three ladder tracks a played world has behind it, and the ones a playtest reported being
+/// announced as freshly learned on the turn after a load.
+///
+/// Named by id here because that is what the checkpoint carries; the wire names them by the
+/// `knowledge_id` strings the ladder config declares, which is what [`ladder_progress_on_the_wire`]
+/// reads back.
+const EARNED_TRACKS: [(&str, u32); 3] = [
+    ("cultivation", CULTIVATION_DISCOVERY_ID),
+    ("herding", HERDING_DISCOVERY_ID),
+    ("seed_selection", SEED_SELECTION_DISCOVERY_ID),
+];
+
+/// **A world that has something to lose** — worldgen, some turns, the three ladder tracks known,
+/// and more turns on top so the knowledge is not the newest thing in it.
+///
+/// ⛔ **THE KNOWLEDGE IS SEEDED THROUGH THE LEDGER, NOT EARNED BY WORKING SOURCES**, and that is a
+/// deliberate limit on what these tests claim. Earning it needs bands assigned to a thriving patch
+/// and a thriving herd for ~20 turns each, which means picking tiles out of a generated map — a
+/// fixture that would break whenever worldgen tuning moved, to prove something
+/// `systems/labor.rs`'s own tests already prove. `add_progress` is the same seam
+/// `RungDef::knowledge_accrual` writes through, and it is the idiom the forage and husbandry
+/// suites already use (`forage_cultivation.rs::grant_cultivation_knowledge`).
+///
+/// What is under test here is the **checkpoint and the frame**, so a ledger that got there by hand
+/// is the same ledger.
+fn a_world_with_earned_state() -> App {
+    let mut app = spawn_world();
+    for _ in 0..TURNS_BEFORE_SAVE {
+        run_turn(&mut app);
+    }
+    {
+        let mut ledger = app.world.resource_mut::<DiscoveryProgressLedger>();
+        for (_, discovery) in EARNED_TRACKS {
+            ledger.add_progress(FactionId(0), discovery, scalar_one());
+        }
+    }
+    for _ in 0..TURNS_AFTER_SEEDING {
+        run_turn(&mut app);
+    }
+    app
+}
+
+/// The ladder progress the CLIENT reads, decoded from a published frame rather than read off the
+/// struct that produced it.
+///
+/// Returns `None` when the frame carries no `intensificationKnowledge` at all — which on a delta is
+/// the ordinary "this section did not change" and on a full snapshot is the defect.
+fn ladder_progress_on_the_wire(frame: &[u8]) -> Option<Vec<(String, f32)>> {
+    let envelope = fb::root_as_envelope(frame).expect("a published frame is a valid envelope");
+    let subsistence = match envelope.payload_type() {
+        fb::SnapshotPayload::snapshot => envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a full snapshot")
+            .subsistence(),
+        fb::SnapshotPayload::delta => envelope
+            .payload_as_delta()
+            .expect("the envelope carries a delta")
+            .subsistence(),
+        other => panic!("unexpected payload {other:?}"),
+    };
+    let rows = subsistence?.intensificationKnowledge()?;
+    let row = rows.iter().find(|row| row.faction() == 0)?;
+    Some(
+        row.knowledges()?
+            .iter()
+            .map(|entry| {
+                (
+                    entry.knowledgeId().unwrap_or_default().to_string(),
+                    entry.progress(),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn assert_tracks_known_on_the_wire(frame: &[u8], moment: &str) {
+    let published =
+        ladder_progress_on_the_wire(frame).unwrap_or_else(|| panic!("{moment}: the frame carries no intensificationKnowledge at all, so the client has no ladder to read"));
+    for (knowledge, _) in EARNED_TRACKS {
+        let progress = published
+            .iter()
+            .find(|(id, _)| id == knowledge)
+            .map(|(_, progress)| *progress)
+            .unwrap_or_else(|| panic!("{moment}: `{knowledge}` is missing from the published roster; the whole roster was {published:?}"));
+        assert_eq!(
+            progress, 1.0,
+            "{moment}: `{knowledge}` reads {progress} on the wire, so the client sees a track this \
+             faction earned long ago as unlearned — and will announce it as new the moment the \
+             section is published again"
+        );
+    }
+}
+
+/// **A world that KNOWS things still knows them after a load, on the wire the client reads.**
+///
+/// The regression for a playtest report: a save loaded at turn 71 announced *"Cultivation learned"*,
+/// *"Seed Selection learned"* and *"Herding learned"* on the next turn, all earned dozens of turns
+/// before the save. Three separate places have to carry the knowledge for that not to happen, and
+/// each is asserted below, because they fail differently:
+///
+/// 1. the **checkpoint** inside the blob — `SimState::discovery_progress`;
+/// 2. the **restored world** — the ledger `apply_save` leaves behind;
+/// 3. the **published baseline frame** — the first thing a loaded world puts on the wire, captured
+///    by `publish_baseline_snapshot` with no turn in between. This is the one that decides what the
+///    client's "learned this turn" diff seeds itself from; a world that is right and a frame that is
+///    empty produce exactly the reported symptom.
+///
+/// And then a turn is resolved, because the announcement the player saw came *after* pressing next
+/// turn: a section that arrives late reads as a discovery, so the delta must either leave the
+/// knowledge alone or restate it as known.
+#[test]
+fn a_world_that_has_learned_keeps_its_knowledge_across_a_load() {
+    let original = a_world_with_earned_state();
+
+    for (knowledge, discovery) in EARNED_TRACKS {
+        assert_eq!(
+            original
+                .world
+                .resource::<DiscoveryProgressLedger>()
+                .get_progress(FactionId(0), discovery),
+            scalar_one(),
+            "the fixture must KNOW `{knowledge}` before the save, or this test cannot lose it"
+        );
+    }
+
+    let blob = encode_save(&original.world).expect("the world encodes");
+
+    // 1 — the checkpoint in the bytes.
+    let (header, payload) = decode_save(&blob).expect("the save decodes");
+    for (knowledge, discovery) in EARNED_TRACKS {
+        assert_eq!(
+            payload
+                .sim
+                .discovery_progress
+                .get_progress(FactionId(0), discovery),
+            scalar_one(),
+            "the checkpoint dropped `{knowledge}`"
+        );
+    }
+
+    // 2 — the world the checkpoint rebuilds.
+    let (mut loaded, _) = load_save(&blob).expect("the save loads");
+    for (knowledge, discovery) in EARNED_TRACKS {
+        assert_eq!(
+            loaded
+                .world
+                .resource::<DiscoveryProgressLedger>()
+                .get_progress(FactionId(0), discovery),
+            scalar_one(),
+            "the restored world forgot `{knowledge}` — the checkpoint carried it and a pass \
+             dropped it"
+        );
+    }
+
+    // 3 — the first frame the loaded world publishes, which is what the client's diff seeds from.
+    publish_baseline_snapshot(&mut loaded.world);
+    let baseline = loaded
+        .world
+        .resource::<SnapshotHistory>()
+        .encoded_snapshot_flat()
+        .expect("a loaded world's first publication is a FULL frame, not a delta");
+    assert_tracks_known_on_the_wire(&baseline, "the loaded world's baseline frame");
+
+    // …and the turn the player presses next must not re-teach any of it.
+    run_turn(&mut loaded);
+    for (knowledge, discovery) in EARNED_TRACKS {
+        assert_eq!(
+            loaded
+                .world
+                .resource::<DiscoveryProgressLedger>()
+                .get_progress(FactionId(0), discovery),
+            scalar_one(),
+            "the turn after the load un-learned `{knowledge}`"
+        );
+    }
+    let history = loaded.world.resource::<SnapshotHistory>();
+    if let Some(delta) = history.encoded_delta_flat() {
+        // A delta that omits the section is the correct answer — nothing changed. One that carries
+        // it must still say KNOWN, because a client applies what it is sent.
+        if ladder_progress_on_the_wire(&delta).is_some() {
+            assert_tracks_known_on_the_wire(&delta, "the delta for the turn after the load");
+        }
+    }
+    // The fixture is deep enough to have earned something, which is the property four turns could
+    // not carry. `spawn_world`'s own `update()` resolves the first turn, hence the `+ 1`.
+    assert_eq!(
+        header.turn,
+        1 + TURNS_BEFORE_SAVE as u64 + TURNS_AFTER_SEEDING as u64,
+        "the fixture must run past the point where a played world has knowledge to lose"
+    );
+}
+
+/// **A loaded world publishes the frame the live one did**, field for field, at the same tick.
+///
+/// The general form of the test above, and the one that actually caught something: `CrisisOverlayCache`
+/// was classified *derived*, so nothing carried it — and a load has no turn between `apply_save` and
+/// the client's first frame, so that frame went out with a `0x0` crisis heatmap where the live world
+/// had published an 80x52 one with 4,160 samples. A rollback could never show it, because a rollback
+/// republishes a stored ring entry instead of re-capturing.
+///
+/// **`frame_seq` is the one exemption, and it is not a fudge**: it counts publications rather than
+/// ticks and is reset with the world epoch, so a freshly loaded world's first publication is `1` by
+/// design. Everything else in the frame is a statement about the world and must match.
+#[test]
+fn a_loaded_world_publishes_the_frame_the_live_one_did() {
+    let original = a_world_with_earned_state();
+    let live = original
+        .world
+        .resource::<SnapshotHistory>()
+        .last_snapshot()
+        .expect("the live world has published its turn");
+
+    let blob = encode_save(&original.world).expect("the world encodes");
+    let (mut loaded, _) = load_save(&blob).expect("the save loads");
+    publish_baseline_snapshot(&mut loaded.world);
+    let restored = loaded
+        .world
+        .resource::<SnapshotHistory>()
+        .last_snapshot()
+        .expect("the loaded world published a baseline");
+
+    let differences: Vec<String> = differing_paths(live.as_ref(), restored.as_ref())
+        .into_iter()
+        .filter(|path| !path.starts_with(".header.frame_seq"))
+        .collect();
+    assert!(
+        differences.is_empty(),
+        "the loaded world's first frame differs from the live world's at the same tick, so the \
+         client sees these fields change across a load and change back a turn later:\n  {}",
+        differences.join("\n  ")
+    );
 }
 
 /// Byte reproducibility, made true in the pass that removed two `HashSet`s from the checkpoint

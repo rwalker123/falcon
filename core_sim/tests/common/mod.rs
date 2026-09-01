@@ -65,6 +65,77 @@ pub fn canonical(value: &Value) -> Value {
     }
 }
 
+/// **Every field path on which two serializable values disagree, named.**
+///
+/// `assert_eq!` on two whole worlds is unusable as a failure report: it prints both, and the one
+/// field that moved is somewhere inside megabytes of identical structure. This walks the two in
+/// step and returns `section.field[i].leaf: <before> -> <after>` for each disagreement, so a failing
+/// assertion *names the section that broke* rather than asking a reader to diff two dumps.
+///
+/// Object keys are matched by name and arrays pairwise by index, with a length line where they
+/// differ — deliberately not a set comparison, because a `Vec`'s order is meaningful state
+/// everywhere in this schema (see this module's header).
+///
+/// Leaf values are truncated to [`DIFF_VALUE_CHARS`]: the point of the line is *which* field, and a
+/// 4,160-sample raster printed whole would bury the twenty other paths beside it.
+pub fn differing_paths<T: serde::Serialize>(before: &T, after: &T) -> Vec<String> {
+    let before = serde_json::to_value(before).expect("the value serializes");
+    let after = serde_json::to_value(after).expect("the value serializes");
+    let mut paths = Vec::new();
+    walk_difference("", &before, &after, &mut paths);
+    paths
+}
+
+/// How much of a differing leaf value a path line quotes. See [`differing_paths`].
+const DIFF_VALUE_CHARS: usize = 120;
+
+fn walk_difference(
+    path: &str,
+    before: &serde_json::Value,
+    after: &serde_json::Value,
+    out: &mut Vec<String>,
+) {
+    use serde_json::Value;
+    match (before, after) {
+        (Value::Object(before_fields), Value::Object(after_fields)) => {
+            let mut names: Vec<&std::string::String> =
+                before_fields.keys().chain(after_fields.keys()).collect();
+            names.sort();
+            names.dedup();
+            for name in names {
+                let child = format!("{path}.{name}");
+                match (before_fields.get(name), after_fields.get(name)) {
+                    (Some(a), Some(b)) => walk_difference(&child, a, b, out),
+                    (Some(_), None) => out.push(format!("{child}: present before, absent after")),
+                    (None, Some(_)) => out.push(format!("{child}: absent before, present after")),
+                    (None, None) => {}
+                }
+            }
+        }
+        (Value::Array(before_items), Value::Array(after_items)) => {
+            if before_items.len() != after_items.len() {
+                out.push(format!(
+                    "{path}: length {} -> {}",
+                    before_items.len(),
+                    after_items.len()
+                ));
+            }
+            for (index, (a, b)) in before_items.iter().zip(after_items.iter()).enumerate() {
+                walk_difference(&format!("{path}[{index}]"), a, b, out);
+            }
+        }
+        _ if before != after => {
+            let (a, b) = (before.to_string(), after.to_string());
+            out.push(format!(
+                "{path}: {} -> {}",
+                &a[..a.len().min(DIFF_VALUE_CHARS)],
+                &b[..b.len().min(DIFF_VALUE_CHARS)]
+            ));
+        }
+        _ => {}
+    }
+}
+
 /// Whether any map in the tree carries `key` as a text key.
 pub fn mentions_key(value: &Value, key: &str) -> bool {
     match value {
