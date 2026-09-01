@@ -3201,6 +3201,47 @@ pub struct SnapshotCaptureMode {
     pub refresh_in_place: bool,
 }
 
+/// **Publish a world's BASELINE frame: a full capture that pushes a ring entry, without advancing
+/// the turn.**
+///
+/// The third thing, distinct from both of its neighbours:
+///
+/// | | ring entry | tick | first frame |
+/// |---|---|---|---|
+/// | `run_turn` | pushed | advanced by `advance_tick` | full |
+/// | [`recapture_snapshot_in_place`] | **refreshed, never pushed** | held | delta |
+/// | this | pushed | held | full |
+///
+/// It exists because a world can arrive **already resolved** — a save loaded into a fresh app. Such
+/// a world must not run a turn (it would age the population it just restored) and must not merely
+/// recapture: a recapture refreshes `history.back_mut()`, and on a freshly built app the ring is
+/// empty, so there is nothing to refresh. The entry is never pushed, `latest_entry()` stays `None`,
+/// `Resync` answers `resync.no_world` forever, and the client's first frame for the new epoch is a
+/// **delta** rather than the baseline its world-handoff gate waits for. That is not a hypothetical:
+/// it is what a loaded game did.
+///
+/// `capture_snapshot` reads `SimulationTick` through a `Res` and never writes it — the advance lives
+/// in `advance_tick`, a different system in the same stage — which is what makes "full capture
+/// without a turn" expressible at all.
+///
+/// The frame reaches the socket without any further call: the publisher thread broadcasts every
+/// `PublishRequest::Frame` it handles, whatever its [`Publication`] kind.
+pub fn publish_baseline_snapshot(world: &mut World) {
+    // Same gate, same reason as the recapture path below: a rollback is one publication, and
+    // `run_system_once` bypasses the schedule's run conditions.
+    if world
+        .get_resource::<crate::sim_state::Replaying>()
+        .is_some_and(|replaying| replaying.0)
+    {
+        return;
+    }
+    // Set explicitly rather than trusted to be false: this is the one property that decides between
+    // `history.update` and `history.refresh_latest`, and a leaked `true` from an earlier path would
+    // reproduce the exact defect this function exists to remove.
+    world.resource_mut::<SnapshotCaptureMode>().refresh_in_place = false;
+    world.run_system_once(capture_snapshot);
+}
+
 /// Re-capture the current world into the latest broadcast snapshot **in place** — no ring-entry
 /// push, no turn/`TurnQueue` advance. Runs [`capture_snapshot`] with
 /// `SnapshotCaptureMode::refresh_in_place` toggled on, so a mid-turn command's world mutation

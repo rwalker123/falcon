@@ -43,23 +43,23 @@ use core_sim::{
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
     fold_party_into_band, hunt_trip_forecast, install_config_override, party_owes_a_report,
-    recapture_snapshot_in_place, run_turn, scalar_from_f32, split_band_from_parent,
-    AgentAssignment, BandId, BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog,
-    CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
-    CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
-    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
-    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
-    EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
-    EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate, EspionageRoster,
-    FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle,
-    FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement, LaborConfigHandle,
-    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
-    Scalar, SecurityPolicy, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
-    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
-    StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter,
-    TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
-    WorldEpoch, FOOD,
+    publish_baseline_snapshot, recapture_snapshot_in_place, run_turn, scalar_from_f32,
+    split_band_from_parent, AgentAssignment, BandId, BandIdAllocator, CommandEventEntry,
+    CommandEventKind, CommandEventLog, CounterIntelBudgets, CrisisArchetypeCatalog,
+    CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata, CrisisModifierCatalog,
+    CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata, CrisisTelemetry,
+    CrisisTelemetryConfig, CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata,
+    DiscoveryProgressLedger, EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog,
+    EspionageMissionId, EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate,
+    EspionageRoster, FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies,
+    FaunaConfigHandle, FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement,
+    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
+    QueueMissionParams, Scalar, SecurityPolicy, Settlement, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
+    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
+    SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
+    TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FOOD,
 };
 use sim_runtime::{
     commands::{
@@ -1996,19 +1996,30 @@ fn handle_load_game(
     }
 }
 
-/// **Publish the restored world without running a turn.**
+/// **Publish the restored world's BASELINE without running a turn.**
 ///
 /// `rebuild_world_from_config` ends in `run_turn` because a generated world needs `Startup` to run
 /// and then wants its baseline frame. A loaded world needs neither: `Startup` holds only the
 /// worldgen chain, which [`core_sim::save::SuppressWorldgen`] has already switched off, and the world
 /// is already the one that was saved.
 ///
-/// Running a turn here was the first shape and it was **wrong in a way the tick alone did not
-/// show**: `run_turn` resolves a real turn, so the population aged, food was eaten and the world
-/// advanced — restoring the tick number afterwards only hid it. A load must land on the world that
-/// was saved, or "save, load, save" produces two different worlds.
+/// **Both obvious answers here are wrong, and each shipped once.**
+///
+/// `run_turn` was the first, and it was wrong in a way the tick alone did not show: it resolves a
+/// *real* turn, so the population aged and food was eaten, and restoring the tick number afterwards
+/// only hid it. A load must land on the world that was saved.
+///
+/// `recapture_snapshot_in_place` was the second, and it was wrong in a way a *published frame* did
+/// not show. A recapture refreshes `history.back_mut()`; a freshly built app's publication ring is
+/// **empty**, so there is nothing to refresh, no entry is pushed, and `latest_entry()` stays `None`.
+/// The live symptom was a client stuck on the loading overlay forever: `Resync` answered
+/// `resync.no_world`, and the first frame the new epoch ever saw was a *delta* rather than the full
+/// baseline the world-handoff gate waits for.
+///
+/// [`publish_baseline_snapshot`] is the third thing — a full capture that pushes a ring entry and
+/// leaves the tick alone.
 fn publish_loaded_world(app: &mut bevy::prelude::App) {
-    recapture_snapshot_in_place(&mut app.world);
+    publish_baseline_snapshot(&mut app.world);
 }
 
 /// **Rewrite the autosave slot, if this turn is one of the cadence's.**
@@ -10437,7 +10448,156 @@ mod tests {
             "the published frame carries the loaded world's epoch"
         );
 
+        // **AND A RING ENTRY EXISTS.** The assertion above — "a frame was published" — passed for a
+        // load that pushed no ring entry at all, because `last_snapshot()` is set by BOTH publication
+        // kinds while only a `Turn` reaches `history.push_back`. That gap shipped: a loaded world
+        // answered `Resync` with `resync.no_world` forever and the client sat on the loading overlay.
+        // What the client actually depends on is the entry, so that is what is asserted.
+        let entry = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a loaded world must push a publication ring entry");
+        assert_eq!(
+            entry.tick, saved_tick,
+            "the ring entry is the saved world's tick, not an advanced one"
+        );
+        assert_eq!(
+            entry.snapshot.header.world_epoch, world_epoch,
+            "the ring entry carries the loaded world's epoch"
+        );
+        // A world's FIRST publication is the only one that carries full encoded bytes — which is
+        // exactly the baseline frame the client's world-handoff reveal gate waits for. A recapture
+        // publishes a delta instead, and a delta is not equivalent: a field that happens to equal
+        // its default compares unchanged and is never sent.
+        assert!(
+            entry.encoded_snapshot_flat.is_some(),
+            "the loaded world's baseline must be a FULL frame, not a delta"
+        );
+
         std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
+    }
+
+    /// **A `Resync` after a load publishes**, rather than logging `resync.no_world`.
+    ///
+    /// That log line is the exact signature the live server produced: the client re-sent
+    /// `load_game` every 30s forever because its resync was answered with nothing. Driving the real
+    /// handler is the point — the branch it takes is `history.latest_entry().is_some()`, so a test
+    /// that asserted the predicate alone would restate the fix rather than exercise it.
+    #[test]
+    fn a_resync_after_a_load_publishes_a_full_frame() {
+        let _guard = lock_save_dir_for_test();
+        let dir = save_scratch("resync");
+        std::env::set_var(core_sim::save_store::SAVE_DIR_ENV, &dir);
+
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let mut app = a_world_for_saving(&mut world_active, &mut world_epoch, &flat);
+        for _ in 0..3 {
+            resolve_turn_with_auto_orders(&mut app);
+        }
+        assert!(handle_save_game(&app, world_active, "resync_me").ok);
+
+        let mut command_log = None;
+        assert!(
+            handle_load_game(
+                &mut app,
+                &mut world_active,
+                &mut world_epoch,
+                &mut command_log,
+                "resync_me",
+                &flat,
+            )
+            .ok
+        );
+
+        // The sequence number before the resync. `publish_full_frame` claims a fresh one, so it
+        // moving is what says a frame went out — the `no_world` branch touches nothing.
+        let seq_before = app
+            .world
+            .resource::<SnapshotHistory>()
+            .last_snapshot()
+            .expect("the loaded world published")
+            .header
+            .frame_seq;
+
+        apply_command(&mut app, Command::Resync, &flat);
+
+        let history = app.world.resource::<SnapshotHistory>();
+        let after = history
+            .last_snapshot()
+            .expect("a resync republishes the world");
+        assert!(
+            after.header.frame_seq > seq_before,
+            "a resync must claim a live sequence number; it did not publish at all \
+             (frame_seq stayed {seq_before}) — this is `resync.no_world`"
+        );
+        assert_eq!(
+            after.header.world_epoch, world_epoch,
+            "the resynced frame carries the loaded world's epoch"
+        );
+        assert!(
+            history.encoded_snapshot_flat().is_some(),
+            "a resync answers with a FULL frame, which is what the client's reveal gate waits for"
+        );
+
+        std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
+    }
+
+    /// **`new_game` has no such hole**, confirmed rather than assumed.
+    ///
+    /// It goes through `rebuild_world_from_config`, which ends in `run_turn` — the `Publication::Turn`
+    /// path, which does push a ring entry. Asserted here because "a neighbouring path is surely fine"
+    /// is exactly the reasoning that let the load defect through.
+    #[test]
+    fn a_new_game_pushes_a_publication_ring_entry() {
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let mut app = a_world_for_saving(&mut world_active, &mut world_epoch, &flat);
+
+        let entry = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("new_game must push a publication ring entry");
+        assert_eq!(entry.snapshot.header.world_epoch, world_epoch);
+        assert!(
+            entry.encoded_snapshot_flat.is_some(),
+            "a fresh world's baseline is a FULL frame"
+        );
+
+        // And a resync off it publishes, which is the same property from the client's side.
+        let seq_before = app
+            .world
+            .resource::<SnapshotHistory>()
+            .last_snapshot()
+            .expect("published")
+            .header
+            .frame_seq;
+        apply_command(&mut app, Command::Resync, &flat);
+        assert!(
+            app.world
+                .resource::<SnapshotHistory>()
+                .last_snapshot()
+                .expect("published")
+                .header
+                .frame_seq
+                > seq_before,
+            "a resync on a generated world must publish"
+        );
+
+        // `reset_map` shares `rebuild_world_from_config` with `new_game`, so it shares this
+        // property by construction; the shared seam is asserted once here rather than twice.
+        for _ in 0..2 {
+            resolve_turn_with_auto_orders(&mut app);
+        }
+        assert!(
+            app.world
+                .resource::<SnapshotHistory>()
+                .latest_entry()
+                .is_some(),
+            "and every resolved turn keeps pushing entries"
+        );
     }
 
     /// **A load re-bases the command log.** Everything before it is unreachable — without this a

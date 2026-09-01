@@ -6,6 +6,8 @@ paths:
   - "core_sim/src/bin/server.rs"
   - "sim_runtime/proto/command.proto"
   - "core_sim/tests/save_round_trip.rs"
+  - "core_sim/src/snapshot/capture.rs"
+  - "core_sim/src/snapshot/publish.rs"
 ---
 
 # Save game: the blob, the slots, and what a load owes the client
@@ -96,12 +98,39 @@ only a load has:
   `new_game` and `reset_map` — without it a rollback would replay across the load into a world that
   never existed.
 
-**A load does not run a turn.** `rebuild_world_from_config` ends in `run_turn` because a generated
-world needs `Startup`; a loaded world needs neither that (the worldgen chain is suppressed) nor a
-turn (it is already the world that was saved), so it publishes with `recapture_snapshot_in_place`.
-Running one was the first shape and it was wrong in a way the tick alone did not show: `run_turn`
-resolves a *real* turn, so the population aged and food was eaten, and restoring the tick number
-afterwards only hid it.
+### Publishing a loaded world needs a THIRD kind of capture
+
+A world that arrives already resolved is neither of the two cases the snapshot layer had, and both
+obvious answers shipped as defects.
+
+| | ring entry | tick | first frame |
+|---|---|---|---|
+| `run_turn` | pushed | advanced by `advance_tick` | full |
+| `recapture_snapshot_in_place` | **refreshed, never pushed** | held | delta |
+| `publish_baseline_snapshot` | pushed | held | full |
+
+**`run_turn` was wrong in a way the tick did not show.** It resolves a *real* turn, so the population
+aged and food was eaten; restoring the tick number afterwards only hid it.
+
+**`recapture_snapshot_in_place` was wrong in a way a published frame did not show.** A recapture
+refreshes `history.back_mut()`, and a freshly built app's publication ring is **empty** — so nothing
+is refreshed, no entry is pushed, and `latest_entry()` stays `None`. The live symptom was a client
+stuck on the loading overlay forever: `Resync` answered `resync.no_world`, and the only frame the new
+epoch ever saw was a *delta*, which is not a baseline (a field that happens to equal its default
+compares unchanged and is never sent).
+
+`publish_baseline_snapshot` is the third thing, and it is expressible only because `capture_snapshot`
+takes `SimulationTick` as a read-only `Res` — the advance lives in `advance_tick`, a separate system
+in the same stage. The frame reaches the socket with no further call: the publisher thread broadcasts
+every `PublishRequest::Frame` whatever its `Publication` kind.
+
+`new_game` and `reset_map` share `rebuild_world_from_config`, which ends in `run_turn`, so they never
+had this hole — asserted rather than assumed, because the assumption is what let it through.
+
+> **The test that passed while this was broken asserted the wrong thing.** It checked that a frame was
+> *published* — `last_snapshot()`, which **both** publication kinds set — rather than that a ring entry
+> *exists*, which only `Publication::Turn` does. Assert on the state a client reads (`latest_entry()`,
+> and that the entry carries `encoded_snapshot_flat`), never on "something was sent".
 
 **Decoding happens before anything about the running world changes**, so a save this build cannot
 read leaves the player where they were rather than half-way into a world that failed to arrive.
