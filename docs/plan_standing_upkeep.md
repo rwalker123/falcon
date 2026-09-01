@@ -2552,6 +2552,15 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > > worker count would re-introduce exactly the per-tile work row §4.13b retired.
     >
     > **13d — WHAT A STRANGER MAY DO WITH A ROAD.**
+    >
+    > > ### ⛔ MOVED OUT — **#617**, under the multi-faction arc **#616**. THIS PLAN WILL NOT DO 13d.
+    > >
+    > > It is unreachable in play and cannot be verified here: worldgen creates `FactionId(0)` and one
+    > > start profile, so a normal game is single-faction and there is no stranger to test against.
+    > > The question belongs beside the work that creates one. **The reasoning below is kept rather
+    > > than deleted** — #617 carries it forward, and a reader who arrives here from §4.13's step list
+    > > should find why the step existed, not a dangling number.
+    >
     > - Unreachable in play today: worldgen creates `FactionId(0)` and one start profile, so a normal
     >   game is single-faction. **Decide it before a second people lands, not after.**
     >
@@ -2575,6 +2584,31 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > > proposal that re-introduces a possessive road is answering a question nobody asked.
     >
     > **13e — THE ROUTE BRANCH'S OWN TUNING PASS. CONFIG ONLY, AND LAST.**
+    >
+    > > ### ⛔ DECLINED AFTER PLAYTEST — the numbers stand, and its TWO MEASURED DEBTS MOVE TO §4.14
+    > >
+    > > Ray, having played the shipped tuning: *"I've playtested and it isn't horrible, we can keep the
+    > > current tuning."* So the route branch ships at its shape-chosen values and **item 13 is
+    > > complete at 13c**.
+    > >
+    > > ⛔ **DECLINING THE SLICE DOES NOT RETIRE THE MEASUREMENTS.** Both offenders below were measured
+    > > in a live game, not estimated, and both were left uncompensated ON PURPOSE so a model change
+    > > could not hide behind a retune. They are now **§4.14's to price**, and they must not be lost
+    > > with the slice that would have paid them:
+    > >
+    > > 1. **A road takes ~114 turns to form** — `work_per_link_tile_per_turn` 0.35 against a trail's
+    > >    `work_cost` 40. Seven path tiles between three bands sat at 24–52% worn at turn 32 and none
+    > >    could have changed rung.
+    > > 2. **Neglect bites 2.7× and 3.1× slower than the rates were chosen against** — the two built
+    > >    rungs' `work_cost` went to 300 / 800 while `meter_decay` stayed at 0.55 / 0.70.
+    > >
+    > > And a third, which the slice named and nobody has priced: `disuse_grace_turns` /
+    > > `disuse_loss_per_turn` make an unwalked trail fade in ~44 turns against ~114 to form, which this
+    > > document already calls *"very likely backwards"*.
+    > >
+    > > **A CORRECTION TO THE PROSE BELOW.** It attributes the `work_cost` tripling to *"Slice 13c"*.
+    > > `git log` on `intensification_ladder.json` shows it landed in an EARLIER route PR; 13c never
+    > > touched that file. The debt is real; the attribution is not.
     > - **Why it is a step rather than deferred to §4.14**: §4.14 owns the *arc's* numbers and waits on
     >   the whole arc. The route branch can be tuned as soon as **13a–13d** are in, without waiting for
     >   the plant and animal spreads — and it needs to be, because the shipped pace is visibly wrong.
@@ -2620,6 +2654,37 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > the PRs *inside* item 13.
 14. **The tuning spread.** Config-only, and **last** — §4.10 changes what the numbers do to the curve,
     so tuning before it would be tuning a shape that is about to move.
+
+    > ### ⛔ IT RUNS **AFTER** §4.15, WHICH IS A SHAPE CHANGE AND NOT A NUMBER
+    >
+    > The numbering is not the order. This item calls itself **last**, and §4.15 says of itself that it
+    > is *"of §4.11's and §4.13's kind and **not** §4.14's — the numbers below are §4.14's to own, the
+    > shape is not."* Both cannot be true with 14 running first.
+    >
+    > **The rule is this item's own, one paragraph down**: *"a flat per-rung demand and a size-scaled
+    > one are different shapes, not different numbers, so tuning the plant demands before the scale
+    > primitive exists would tune something about to move."* §4.15 is exactly such a primitive — it
+    > prices a Sow by how much of the tile the crop replaces — so tuning the plant web before it lands
+    > tunes a shape about to move. **§4.15 first, then this.** Ray: *"I'd prefer to do tuning [last] to
+    > make sure we don't unnecessarily tune."*
+    >
+    > #### TWO PLAYTEST OBSERVATIONS TO DISCUSS BEFORE ANY NUMBER MOVES
+    >
+    > Reported from play by Ray, recorded here as **items to discuss, not findings to act on** — the
+    > detail comes when this slice opens.
+    >
+    > - **The early game is much easier on gathering than on hunting.** Growing a band by harvesting is
+    >   comparatively easy; *"if you start with mostly hunt sites, it is very difficult to survive."*
+    >   Whether that asymmetry is intended is the question.
+    > - **A sown Field is extremely effective once reached.** Not stated as overpowered — it may be
+    >   what the design wants — but effective enough that it changes what the player has any reason to
+    >   do afterwards.
+    >
+    > Both are about the **shape of the plant web against its alternatives**, which is why they sit
+    > here and not in a bug. ⛔ **And the second one is a further reason §4.15 lands first**: that item
+    > changes what a Sow COSTS as a function of the crop's share of the tile, which is a lever directly
+    > on the Field's effectiveness. Tuning the Field's numbers before it would price a shape about to
+    > move.
     > **§4.11 LANDS FIRST, for this item's own reason.** A flat per-rung demand and a size-scaled one
     > are different shapes, not different numbers, so tuning the plant demands before the scale
     > primitive exists would tune something about to move — the same argument that put this slice
@@ -2679,7 +2744,12 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     >   means what it looks like it means. It is the **fauna** arc's edit, not this one's.
 
 15. **A SOW IS PRICED BY HOW MUCH OF THE TILE IT REPLACES.** A **scale primitive**, of §4.11's and
-    §4.13's kind and not §4.14's — the numbers below are §4.14's to own, the shape is not. It is the
+    §4.13's kind and not §4.14's — the numbers below are §4.14's to own, the shape is not.
+
+    > ⛔ **THIS RUNS BEFORE §4.14, DESPITE THE NUMBER.** It is a shape change and §4.14 is the tuning
+    > spread, which declares itself last; tuning the plant web before this primitive exists would tune
+    > something about to move, by §4.14's own stated rule. See the ordering box on §4.14. **With §4.13
+    > complete at 13c and §4.13d moved to #617, this is the next slice of the arc.** It is the
     ladder's existing per-source price hook (`RungStanding::at`'s `cost_at`, which the animal web
     already spends on a species' `taming_cost_multiplier`) claimed by the plant web, which passed
     `RUNG_COST_UNSCALED` with a comment saying a plant has no species. **`plant:field` only** —
