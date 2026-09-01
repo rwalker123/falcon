@@ -1897,6 +1897,9 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > seam, it **builds** the traffic counting — and #232 becomes a **consumer** of it (phase 13c
     > below), not a supplier to it. Budget for that.
     >
+    > > **OUTCOME: #232 is CLOSED as superseded.** The traffic counting this slice built IS its
+    > > deriving half, and the drawing half is #600. Nothing was left that was the issue's own.
+    >
     > **③ THE REMAINING GAP IS THE REAL WORK, AND IT IS UNTOUCHED** — *"a route is an edge, not a
     > source… the site and behavior primitives are source-shaped and need route-shaped siblings."*
     > That is what everything below answers.
@@ -2284,7 +2287,7 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > road*), and a radius would be the "close enough" constant rule 2 exists to avoid.
     >
     > **THE TILE-OWNED SUCCESSOR IS NO LONGER A SUCCESSOR — this IS the ground-shaped model.** What
-    > phase 13c adds is the *drawing* of it (#232), not a different ownership.
+    > phase 13c adds is the *drawing* of it (#600), not a different ownership.
     >
     > #### ⛔ A MAINTAINED ROAD IS TRAFFIC, SO ITS TILES ARE `Seen` — and the keystone is UNTOUCHED
     >
@@ -2334,8 +2337,8 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > Verified: **there is none today.** Every `route` hit in the client is the English word, except
     > `map_preview.gd`'s `"routes"` annotation state, which draws **order paths** — the player's own
     > movement waypoints — and is unrelated. **That name is therefore already taken in the client's
-    > vocabulary and this branch must not reuse it**; the ladder's object is a *route network*, which
-    > is #232's phrase.
+    > vocabulary and this branch must not reuse it**; the ladder's object is a *route network*, the
+    > phrase #232 was filed under before it was closed as superseded.
     >
     > The minimum readout, landing **with** the branch and not after it: a per-route row wherever a
     > band's connections are shown — the rung held, its meter, the upkeep demand and shortfall on the
@@ -2467,10 +2470,17 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > > and `pave`, their gates, the ladder rows and the build-queue arm are all unreachable in play
     > > until this step lands.
     >
-    > **13c — DRAW THE ROAD NETWORK ON THE MAP (#232).**
-    > - The overlay, fed by the roads 13a/13b now hold. #232 is a **consumer** of this work, not a
-    >   supplier to it — see correction ② above. `map_preview.gd`'s existing `"routes"` annotation
-    >   state is **order paths** and is a different thing; do not reuse that name.
+    > **13c — DRAW THE ROAD NETWORK ON THE MAP (#600).**
+    > - The overlay, fed by the roads 13a/13b now hold. **#600 carries this work** — "Road surfaces on
+    >   the map", whose art is already done (PR #608) and which names this step as its own.
+    >   `map_preview.gd`'s existing `"routes"` annotation state is **order paths** and is a different
+    >   thing; do not reuse that name.
+    >
+    > > ⛔ **IT IS NOT #232, AND THAT POINTER COST A READER AN HOUR.** #232 ("Derive RouteNetwork
+    > > overlay from movement/logistics traversals") was a one-line stub labelled `sys:core_sim` /
+    > > `sys:runtime` — the DERIVING, not the drawing — and correction ② below found nothing built
+    > > behind it. Its deriving half is what 13a's per-tile traffic accrual now IS, so the issue had
+    > > nothing of its own left and is **closed as superseded**.
     > - This is also where `map_preview.gd` earns back a frame it lost with the trade-link substrate.
     >
     > > **⛔ 13a ABSORBED THE BASIC DRAWING, so this step is smaller and sharper than it was written.**
