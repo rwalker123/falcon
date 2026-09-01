@@ -62,7 +62,7 @@ fn published_build_turns(turns: crate::intensification::BuildTurns) -> i32 {
 /// **`queued_live` is read off the bands' own queues** ([`BuildKitIds`]), not off the turn-written
 /// row, for the reason the kit beside it is: the row's scratch lags a command by a whole turn, and
 /// this state exists precisely in the frame before that turn.
-fn published_build_countdown(
+pub(crate) fn published_build_countdown(
     turns: Option<crate::intensification::BuildTurns>,
     stamped_position: i32,
     queued_live: bool,
@@ -163,6 +163,12 @@ fn published_build_legs(
 pub(crate) struct BuildKitIds {
     patches: HashMap<UVec2, String>,
     herds: HashMap<String, String>,
+    /// **The road tiles some band has queued**, as a set rather than a map: a road's *kit* is
+    /// published through `RouteState`'s own row and needs no entry here, but *"is this source in a
+    /// band's LIVE queue"* is the term the countdown's `queued_live` test reads and it has to be
+    /// answered off the bands' queues rather than off the turn-written row — the row's scratch lags
+    /// a command by a whole turn, and the state this separates exists precisely in that frame.
+    roads: std::collections::HashSet<UVec2>,
 }
 
 impl BuildKitIds {
@@ -174,6 +180,12 @@ impl BuildKitIds {
     /// The animal twin, keyed by herd id.
     fn herd(&self, id: &str) -> String {
         self.herds.get(id).cloned().unwrap_or_default()
+    }
+
+    /// **Is this road tile in some band's live build queue?** — the route twin of
+    /// `patch_is_queued`, and the `queued_live` term of [`published_build_countdown`].
+    pub(crate) fn road_is_queued(&self, tile: UVec2) -> bool {
+        self.roads.contains(&tile)
     }
 
     /// **IS THIS PATCH IN SOME BAND'S LIVE QUEUE?** — membership of the same index the kit comes
@@ -219,8 +231,11 @@ pub(crate) fn resolve_build_kit_ids<'a>(
                 }
             };
             // **The one resolution seam**, so the row cannot state a kit the pool is not using.
+            // The rung is the entry's **destination**, on `LaborAllocation::builders_kit`'s own
+            // rule and for its reason: this pass walks a queue and holds no source standing.
+            let destination = entry.declared.destination().wire_key();
             let kit = equipment
-                .builders_kit_for(entry.kit.as_ref(), Some(branch))
+                .builders_kit_for(entry.kit.as_ref(), Some(branch), Some(&destination))
                 .id()
                 .to_string();
             let position = position as i32;
@@ -249,11 +264,18 @@ pub(crate) fn resolve_build_kit_ids<'a>(
                         claimed_herds.insert(id.clone());
                     }
                 }
-                // **A road publishes no `buildKitId`**, because it has no source row to publish one
-                // on: the two food webs key this map by patch tile and herd id, which are the rows
-                // the wire carries. A road's kit is `default_kits.builders` bare-handed and states
-                // itself; when the route branch gains a per-tile build readout it takes a key here.
-                crate::components::BuildSource::Road(_) => {}
+                // **A road publishes no `buildKitId` YET**, and the reason is not that it has
+                // nowhere to put one: `RouteState` is the road's source row and carries its build
+                // state. This map is keyed by patch tile and herd id because those are the two rows
+                // that publish a kit field today, and adding a third is a wire change nobody has
+                // needed — a road's kit is the roster's own answer for the rung in flight
+                // (`roadbuilding` or `paving`) and no surface asks the sim for it.
+                // **A road records only its MEMBERSHIP here.** Its kit rides its own row, but
+                // whether some band has it queued is the term the published countdown needs, and
+                // this pass is the one place that reads the bands' live queues.
+                crate::components::BuildSource::Road(tile) => {
+                    resolved.roads.insert(*tile);
+                }
             }
         }
     }
@@ -312,27 +334,38 @@ impl UpkeepKitIds {
 /// **The one place a band's live rows become the wire's `upkeepKitId`** — see [`UpkeepKitIds`].
 pub(crate) fn resolve_upkeep_kits<'a>(
     allocations: impl Iterator<Item = &'a crate::components::LaborAllocation>,
+    // **Both webs' registries, for the RUNG each worked site stands on** — a keeping tool may be
+    // bound to a rung, so the derivation cannot be answered off the row alone.
+    forage: &ForageRegistry,
+    herds: &HerdRegistry,
     equipment: &crate::equipment_config::EquipmentConfig,
 ) -> UpkeepKitIds {
     let mut resolved = UpkeepKitIds::default();
     for allocation in allocations {
         for assignment in &allocation.assignments {
-            let (branch, key) = match &assignment.target {
+            // **The site's own rung beside its web**, because a keeping tool may be bound to
+            // one ([`crate::equipment_config::EquipmentEffect::rung`]) — the same pair
+            // `systems::labor::keeping_claims` resolves the live kit at, so the published row and
+            // the keepers cannot name two different tools.
+            let (branch, rung, key) = match &assignment.target {
                 crate::components::LaborTarget::Forage { tile, .. } => (
                     crate::intensification::RungBranch::Plant,
+                    forage.patch(*tile).map(crate::forage::patch_rung_key),
                     SourceKey::Patch(*tile),
                 ),
                 crate::components::LaborTarget::Hunt { fauna_id, .. } => (
                     crate::intensification::RungBranch::Animal,
+                    herds.find(fauna_id).map(crate::fauna::herd_rung_key),
                     SourceKey::Herd(fauna_id.clone()),
                 ),
                 // A band-wide role stands on no ground, so it keeps nothing.
                 _ => continue,
             };
+            let rung = rung.map(|rung| rung.wire_key());
             // **The one resolution seam**, so the row cannot state a kit the keepers are not using.
             let entry = ResolvedUpkeepKit {
                 id: equipment
-                    .keeping_kit_for(assignment.upkeep_kit.as_ref(), branch)
+                    .keeping_kit_for(assignment.upkeep_kit.as_ref(), branch, rung.as_deref())
                     .id()
                     .to_string(),
                 named: assignment.upkeep_kit.is_some(),
@@ -2046,6 +2079,12 @@ pub(crate) fn snapshot_ladder_knowledge(ladder: &LadderConfig) -> Vec<LadderKnow
 /// where a road already stands, so there is no pile to raise.
 const NO_BUILD_WORK: f32 = 0.0;
 
+/// **A RUNG THAT EATS NOTHING SWALLOWS NO PILE** — the `build_material_cost` a rung declaring no
+/// `build.materials` publishes, and it rides with an empty `build_material_id`: the pair is one
+/// reading, so *"no amount"* and *"no noun"* are the same answer said twice. Every route rung but
+/// `route:paved_road` sits here.
+const NO_BUILD_MATERIAL: f32 = 0.0;
+
 /// **WHAT A ROAD MAY BECOME** — the route branch's rung catalog, once per world and carrying no
 /// tile. `RouteState` publishes the rung a tile **stands on**; this publishes the whole climb, so a
 /// client can price a rung nothing has built yet.
@@ -2064,7 +2103,8 @@ const NO_BUILD_WORK: f32 = 0.0;
 /// **`build_work_per_worker_turn` is the one field that is the SIM'S and not the config rung's**,
 /// and it rides here for that same reason: it is identical for every rung and for every road in the
 /// world, which is the only kind of number a ladder can quote. Every source row publishes its own
-/// copy; a road has no source row, so without this the client would have to hold a transcription of
+/// copy; a road's own row does not repeat it — one constant per road on the map — so without this
+/// the client would have to hold a transcription of
 /// [`crate::intensification::PER_WORKER_OUTPUT`] and would not learn of a second term landing in it.
 pub(crate) fn snapshot_route_rungs(ladder: &LadderConfig) -> Vec<RouteRungState> {
     crate::routes::route_rungs_in_climb_order(ladder)
@@ -2077,6 +2117,15 @@ pub(crate) fn snapshot_route_rungs(ladder: &LadderConfig) -> Vec<RouteRungState>
                 .route_payoff
                 .as_ref()
                 .expect("validate requires a route_payoff on every route rung");
+            // **THE PILE AND ITS NOUN, FROM ONE LOOKUP** — so the amount and the material it is
+            // counted in can never disagree. `None` for a rung that eats nothing, which is every
+            // route rung but `route:paved_road`.
+            //
+            // ⛔ **THE FIRST ENTRY, NOT A SUM.** One material per rung is the branch's model: the
+            // wire carries a single float, so a second declared material would make the *amount*
+            // meaningless before the id had to choose between them. Summing would publish a number
+            // no id could honestly name.
+            let pile = rung.build_materials().next();
             RouteRungState {
                 rung_key: rung.wire_key(),
                 order: rung.order,
@@ -2108,9 +2157,22 @@ pub(crate) fn snapshot_route_rungs(ladder: &LadderConfig) -> Vec<RouteRungState>
                 //
                 // It is the same figure for every rung — the sim's one answer to *what does a
                 // worker bank in a turn* — so it rides the CATALOG and not the tile row. A road
-                // has no source row to carry it, and a client left to transcribe the constant
-                // instead would go stale in silence the day that sum grows.
+                // does not repeat it on its own row for that reason, and a client left to
+                // transcribe the constant instead would go stale in silence the day that sum grows.
                 build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
+                // ⛔ **THE PILE, AND IT IS FLAT WHERE `work_cost` ABOVE IS NOT.** The work is quoted
+                // unscaled here because the *tile's* remoteness still has to be applied to it; the
+                // material takes no such multiplier at all, so this figure is already the whole
+                // truth for every tile on the map. A tile of road needs the same stone wherever it
+                // lies, and remoteness already taxes the getting there.
+                //
+                build_material_cost: pile.map_or(NO_BUILD_MATERIAL, |(_, amount)| amount),
+                // ⛔ **THE NOUN, BECAUSE THE AMOUNT ALONE CANNOT BE A SENTENCE.** The rung row read
+                // *"+ 20 to raise it"* without it — twenty of *what*. The client must not supply
+                // `stone` itself: which material a rung eats is a fact about the **config**, so a
+                // transcribed noun is a second authority that goes stale the day a rung is retuned,
+                // which is the mistake `build_work_per_worker_turn` above exists to have prevented.
+                build_material_id: pile.map_or_else(String::new, |(id, _)| id.to_string()),
             }
         })
         .collect()

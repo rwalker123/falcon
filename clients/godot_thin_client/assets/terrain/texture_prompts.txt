@@ -170,3 +170,103 @@
 # seam becomes noise, and a repeating feature (one candidate's moss blobs) becomes a visible
 # lattice when tiled.
 37_navigable_river: Seamless tileable river floodplain bank texture, top-down view, damp silty gravel and fine sand, scattered smooth pebbles, sparse patchy grass tufts, muted earthy browns and grey-greens, low contrast, soft even lighting, no water, no shoreline, no river, painterly style, 512x512 game asset
+# ============================================================================
+# ROAD SURFACE TEXTURES (the route ladder — issue #600)
+#
+# These are NOT base terrain, and they are the RIVER's kind of asset rather than the ocean's.
+# A road runs THROUGH hex centres the way a minor river runs along hex edges: the shader draws a
+# noise-perturbed band and these supply only the surface inside it. Nothing here is a shape.
+#
+# THE SHAPE PROBLEM WAS SOLVED BY READING THE RIVER CODE, and it is worth saying how, because the
+# obvious route is expensive and wrong. A road is a per-tile improvement with 6 neighbours, so
+# there are 2^6 = 64 connection patterns per rung; the first plan was a kit of drawn pieces —
+# spokes, a hub, a terminus — at 3 plates per rung, 15 in all. It does not survive contact:
+# butt-jointed spokes read as one road STRAIGHT THROUGH and as two planks at every bend, because
+# each piece carries its own squared end and its own edge lines through the junction.
+# `terrain_blend.gdshader`'s navigable-trunk pass already computes the exact piece that was being
+# drawn — *"the arm SEGMENT: own centre -> the shared edge's midpoint"*, clamped so it stops at the
+# boundary while the neighbour paints its own half — and it rounds every junction for free by
+# keeping the direction of MAXIMUM COVERAGE (*"that max-coverage (== min-distance) pick is what
+# rounds a 120 degree corner join for free — no spline math"*). So the whole kit collapses to ONE
+# surface per rung, and a sixth rung later costs one image rather than 64.
+#
+# Requirements:
+#   - RGB PNG, 512x512, saved to assets/terrain/textures/roads/
+#   - Naming: XX_name.png -> 00_path.png .. 04_rail.png (the rivers/ convention)
+#   - ⛔ THE STEM IS THE RUNG ID, NOT A DESCRIPTION, and the floor rung is `path`. The route
+#     ladder's rungs are `route:path` / `route:trail` / `route:dirt_road` / `route:paved_road`
+#     (`hud_route_vocab.gd`), and the wiring is expected to key each layer off the `NN_`
+#     prefix the way `_build_river_texture_array` does — so a stem that drifts from its rung
+#     id is a layer bound to the wrong rung. The floor was named `00_game_trail` for one
+#     commit and renamed: `intensification_ladder.json` retired that word deliberately —
+#     *"RENAMED FROM `game_trail`, BECAUSE NOTHING IN THE SIM LETS AN ANIMAL WEAR A ROAD
+#     IN"* — and `hud_route_vocab.gd` carries it as its own correction. Do not reintroduce
+#     it here, in a filename or in a prompt body. (A `game_trail` DOES survive elsewhere: it
+#     is the hunting food-site kind. Grep before renaming either.)
+#   - FULLY OPAQUE, and never keyed. There is no background to remove and no alpha to author —
+#     the shader's coverage decides the band's shape, exactly as it does for a river.
+#   - NOTHING IN THE PLATE MAY BE OPEN. An early game-trail prompt asked for a track "broken by a
+#     few short gaps" and the model painted the magenta plate THROUGH the band; keying made it
+#     worse, not better (15% of the OPAQUE pixels carried a magenta cast at full alpha, so it was
+#     not an edge artifact and no ramp touched it). Whatever the art leaves see-through becomes a
+#     hole or a smear.
+#   - THE ART MUST NEVER ENCODE FAINTNESS. `AnnotationRenderer._road_rung_opacity` already fades
+#     each rung, and §4.13c fades a road in as it is worn. A prompt asking the plate to look faint
+#     is asking it to do the renderer's job twice.
+#   - Width, taper, meander and the fade are CONFIG, not art — the levers the river keeps in
+#     terrain_config.json. Do not draw a narrow rung narrow.
+#   - Seamless in both axes. Verify by tiling 3x3 and looking; a numeric wrap-vs-interior ratio
+#     under about 2x is invisible on a noisy surface, and the eye is the judge.
+#
+# THE LADDER SEPARATES ON TWO AXES, and it has to, because width is now a config lever rather than
+# a property of the art. Measured over the shipped five:
+#
+#     roads/00_path        (129, 119, 107)  bright 120  sat 22   cool scuffed grey
+#     roads/01_trail       (191, 168, 132)  bright 170  sat 59   pale warm sand
+#     roads/02_dirt_road   (124,  93,  62)  bright  98  sat 62   dark warm brown
+#     roads/03_paved_road  (106, 107, 109)  bright 107  sat  2   neutral grey stone
+#     roads/04_rail        (106, 102,  94)  bright 102  sat 11   dark ballast + steel
+#
+# No two are close on both axes. The pair to watch when regenerating is path vs paved_road —
+# both desaturated, only 13 bright apart — and what keeps them apart is STRUCTURE: paved carries
+# large stone cells with dark joints, the trail is a flat grain. Judge that pair together.
+#
+# GROUND CONTRAST IS A DIFFERENT QUESTION FROM THE LADDER, and the crowded band is the MIDDLE.
+# A road sits on all 38 base textures, whose brightness runs 31..198, so counting how many land
+# terrains fall within 15 of a candidate is the useful measure — not distance from any one of
+# them. Measured: bright 110 collides with SEVEN (an exact tie with prairie_steppe and
+# aquifer_ceiling), 98 and 121 with six each, and the pale trail at 170 with only THREE. Aiming a
+# road at "mid grey-brown" is aiming at the most crowded value on the map.
+#
+# ⚠ RAIL IS THE ONE RUNG THE RIVER MECHANISM DOES NOT CARRY UNCHANGED. The river samples
+# `v_map / (2.0 * hex_radius) * river_scale + best_tangent * (TIME * river_flow_speed)` —
+# continuous MAP-SPACE UV, "exactly like the canopy", with the tangent used only as a scroll
+# offset for flow and never to rotate the frame. Water has no orientation so that is free.
+# Sleepers do: sampled that way they would stay locked to one screen direction whichever way the
+# track ran. The fix is small and the shader already holds both parts — `best_tangent` and the
+# signed distance to the centreline — so a rail pass samples a LOCAL frame,
+# `vec2(dot(v_map, best_tangent) * scale, signed_dist / half_width)`.
+# **Project the world position onto the tangent, NOT the per-hex segment parameter**: that
+# parameter restarts at every hex boundary, so sleepers would step out of line tile to tile, while
+# the projection stays continuous down a straight run and shifts only where the direction changes —
+# which is where real track curves anyway. None of this blocks the four shipped rungs.
+# ============================================================================
+
+00_path: Seamless tileable top-down texture of ground worn bare by footfall, thin scuffed soil with the vegetation rubbed away, a faintly uneven trodden surface with scattered loose grit, pale dust-grey earth over a slightly darker scuffed undertone, SOLID CONTINUOUS with no gaps, no breaks and no background showing through, painterly stylised hand-painted game-art style matching a painted biome atlas, not photoreal, even flat overhead lighting with no directional shadow, no edges, no borders, no kerbs, no road markings, no vegetation, no vehicles, no people, the pattern continuing seamlessly and repeating cleanly across all four sides, 512x512 game asset
+
+01_trail: Seamless tileable top-down texture of a footpath surface worn smooth by walking, packed bare earth with a fine even grain and a few small trodden pebbles pressed into it, no wheel ruts, pale bone-dust colour, painterly stylised hand-painted game-art style matching a painted biome atlas, not photoreal, even flat overhead lighting with no directional shadow, no edges, no borders, no kerbs, no road markings, no vegetation, no vehicles, no people, the pattern continuing seamlessly and repeating cleanly across all four sides, 512x512 game asset
+
+02_dirt_road: Seamless tileable top-down texture of a packed dirt road surface, bare compacted earth worn smooth by traffic, with faint parallel wheel ruts and a scattering of small embedded stones and dust, a MID dust brown clearly darker than bright desert sand and clearly lighter than dark forest soil, never pale sandy and never bright, painterly stylised hand-painted game-art style matching a painted biome atlas, not photoreal, even flat overhead lighting with no directional shadow, no edges, no borders, no kerbs, no road markings, no vegetation, no vehicles, no people, the pattern continuing seamlessly and repeating cleanly across all four sides, 512x512 game asset
+
+# 03_paved_road — the only rung that changes MATERIAL rather than tone, which is what makes it
+# unmistakable at a glance against four warm earth rungs. Ask for a FEW LARGE cells: the joints are
+# the finest detail in the set and the first thing to dissolve at band width.
+03_paved_road: Seamless tileable top-down texture of a road paved with fitted flagstones, a small number of LARGE irregular stone blocks with bold simple dark joints between them rather than many small cobbles, cool grey stone that reads clearly distinct from warm brown earth, painterly stylised hand-painted game-art style matching a painted biome atlas, not photoreal, even flat overhead lighting with no directional shadow, no edges, no borders, no kerbs, no road markings, no vegetation, no vehicles, no people, the pattern continuing seamlessly and repeating cleanly across all four sides, 512x512 game asset
+
+# 04_rail — NOT A RUNG TODAY (#603 is the upper two). Generated now as the cheapest possible proof
+# that one-surface-per-rung scales. THE ONLY DIRECTIONAL PLATE: verify it wraps LEFT-TO-RIGHT, in
+# the band's own frame, before anything else — the shipped one measures an along-track wrap BELOW
+# its own interior step, i.e. better than seamless, and the rejected twin was 1.8x. The tell is
+# visible in the plate: the shipped one's sleepers are CUT at both edges so the rhythm continues;
+# the reject's sat inside with margins.
+04_rail: Seamless tileable top-down texture of railway track, two parallel dark steel rails running horizontally across the full width of the image over evenly spaced chunky dark timber sleepers laid across them, resting on a pale grey gravel ballast bed that fills the rest of the image, only a small number of large clearly separated sleepers rather than many thin ones, the rails continuing off both the left and right edges so the pattern repeats seamlessly left to right along the track, and tiling cleanly top to bottom as well, painterly stylised hand-painted game-art style matching a painted biome atlas, not photoreal, even flat overhead lighting with no directional shadow, no vegetation, no trains, no people, 512x512 game asset

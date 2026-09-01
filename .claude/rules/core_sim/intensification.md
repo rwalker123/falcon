@@ -1121,8 +1121,9 @@ checkpointed like any other row (§2.5).
 > **The route pool reuses this whole seam and adds nothing to it** — the same `keeping_rates` →
 > `KeepingRate::worker_need` → `distribute_upkeep_pool` chain, under the same `upkeep_fund_mode`.
 > Where it differs is that a road is **not a source row**: it is owned by nobody, so what the pool
-> funds is resolved from the ground the band is standing on rather than from `assignments`, in its
-> own system (`systems::settle_route_keeping`) rather than inside `advance_labor_allocation`. See
+> funds is resolved from the ground the band is standing on rather than from `assignments`. It is
+> settled **inside** `advance_labor_allocation`'s band loop (`settle_bands_roadwork`), from the same
+> seat the two food webs settle theirs — reading the `roadwork` pool the shed left. See
 > `.claude/rules/core_sim/routes.md` → "The keeping".
 
 - **WHY IT LEFT THE TILE: an indivisible supplier meeting a per-source demand WASTES what it does not
@@ -2032,10 +2033,12 @@ reason rather than a second guess at its own.
 | `no_crop` | no committed species (Cultivate) / no commitment (Sow) |
 | `species_ceiling` | `can_domesticate()` / `can_pen()` — one fact about the animal, two rungs |
 | `rung_below` | Corral on a herd that is not tamed |
-| `owned_by_other` | the source is another faction's |
+| `owned_by_other` | the source is another faction's. **Never *nobody's*** — see `no_keeper` |
+| `no_keeper` | **nobody holds the source at all.** Route-only today: a road's keeper is released the moment decay or disuse takes the tile below the free floor's top. The remedy is the opposite of `owned_by_other`'s — take it on, by re-issuing `grade`/`pave` |
 | `site` | the land does not admit the rung |
 | `ring_idle` | a pen-ring entry with no extension running |
 | `undeclared` | the meter's rung is not the one this entry declared — a DEAD entry |
+| `materials` | **not a conjunct** — the rung's gate HOLDS and the stores are what stopped it, minted by the countdown off a coverage of zero |
 | `unworked` | **not a conjunct** — no quote at all, the band's row on the source having lapsed |
 
 **THE KEY SET IS READ OFF THE ARMS, NOT AUTHORED.** Each is a term of some rung's own `eligible`, and

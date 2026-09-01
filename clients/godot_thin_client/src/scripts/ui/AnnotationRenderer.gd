@@ -421,7 +421,13 @@ func _draw_road(road: Dictionary, radius: float, origin: Vector2) -> void:
 	if not _road_tile_known(tile):
 		return
 	var rung := HudRouteVocab.rung_of(road)
-	var short := HudRouteVocab.is_short(road)
+	# ⛔ **EITHER CURRENCY PUTS THE ROAD AT RISK, AND ASKING ONLY THE WORK ARM LEFT IT ROTTING IN
+	# SILENCE.** `route:paved_road` owes standing STONE as well as standing work, and the sim trips
+	# its single `neglect_turns` on whichever is short — so a road with its keepers fully paid and its
+	# shelf empty is genuinely being lost while `is_short` alone drew it in the calm ink.
+	# `is_keeping_short` is the `or`, and it is deliberately never a sum: the decay rides the WORSE of
+	# the two fractions, so there is no combined severity for a width or an opacity to encode.
+	var short := HudRouteVocab.is_keeping_short(road)
 	# **AT RISK OUTRANKS THE RUNG LADDER**, and it takes the client's existing danger ink rather than
 	# a colour of its own: a road washing out is losing an investment the player paid for, and the
 	# one thing the map has to say about it is that it is being lost. The width holds at a mid rung's

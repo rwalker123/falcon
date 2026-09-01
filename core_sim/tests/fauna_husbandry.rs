@@ -4001,12 +4001,13 @@ fn two_bands_keeping_one_herd_sum_their_hands() {
     let one_keeper = core_sim::pool_work_supply(
         1,
         equipment
-            .keeping_kit_for_branch(core_sim::RungBranch::Animal)
+            .keeping_kit_for_branch(core_sim::RungBranch::Animal, None)
             .map(|kit| {
                 equipment.build_work_per_worker(
                     &kit,
                     &core_sim::BandEquipment::start_stocked(&equipment),
                     core_sim::RungBranch::Animal,
+                    None,
                 )
             })
             .expect("the shipped roster serves the animal web's keeping"),
@@ -4927,12 +4928,13 @@ const HALF_A_FENCE: f32 = 0.5;
 fn animal_keeper_supply(keepers: u32) -> f32 {
     let equipment = core_sim::EquipmentConfig::builtin();
     let per_worker = equipment
-        .keeping_kit_for_branch(core_sim::RungBranch::Animal)
+        .keeping_kit_for_branch(core_sim::RungBranch::Animal, None)
         .map(|kit| {
             equipment.build_work_per_worker(
                 &kit,
                 &core_sim::BandEquipment::start_stocked(&equipment),
                 core_sim::RungBranch::Animal,
+                None,
             )
         })
         .expect("the shipped roster serves the animal web's keeping");

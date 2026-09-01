@@ -366,6 +366,50 @@
         }
       }
     },
+    "earthmoving": {
+      "display_name": "Earthmoving tools",
+      "craft": "weaving",
+      "work": 8.0,
+      "inputs": [
+        {
+          "material": "wood",
+          "amount": 3.0,
+          "reads": "hardness"
+        },
+        {
+          "material": "bone",
+          "amount": 2.0
+        }
+      ],
+      "outputs": [
+        {
+          "equipment": "earthmoving",
+          "amount": 1.0
+        }
+      ]
+    },
+    "stone_dressing": {
+      "display_name": "Stone-dressing tools",
+      "craft": "weaving",
+      "work": 8.0,
+      "inputs": [
+        {
+          "material": "wood",
+          "amount": 3.0,
+          "reads": "pliancy"
+        },
+        {
+          "material": "bone",
+          "amount": 2.0
+        }
+      ],
+      "outputs": [
+        {
+          "equipment": "stone_dressing",
+          "amount": 1.0
+        }
+      ]
+    },
     "wayfinding": {
       "display_name": "Wayfinding gear",
       "craft": "bone_working",
@@ -471,8 +515,9 @@
       ]
     }
   },
-  "_comment_hurdles": "HURDLES ARE A MATERIAL NOW, NOT A PIECE OF EQUIPMENT (docs/plan_standing_upkeep.md section 2.7): a fence panel goes into the ground and stays there, so it is spent by the `animal:pen` rung's build pile and its upkeep rate rather than carried to the next job. That is why this is the one shipped recipe whose output is a `material` rather than an `equipment` row - and why it declares no `grades`, exactly as it did as a kit item: a material-only output may not be graded, and a quality axis on a hurdle would invite 'a better fence contains better', the containment-scaling this slice defers. IT IS WOVEN WITHIES LASHED WITH HIDE THONG, so it costs 4 wood and 2 hide. THE HIDE IS LOAD-BEARING AND MUST NOT BE SIMPLIFIED OUT: this is the ONLY recipe in the book that reads `suppleness`, and _comment_reads_pairs' whole pillar is that each material's two axes are split between two recipes wanting opposite ends. A wood-only hurdle orphans that axis and makes the Thunder Mammoth strictly the best hide, deleting a decision the crafting arc built on purpose. AND THE CRAFT FOLLOWS THE `reads`, NOT THE OTHER WAY ROUND: `craft` is DERIVED (see _comment_craft_is_derived) - it is the craft of the material the recipe reads, validated - so reading hide's `suppleness` makes this a `tanning` bench, unchanged from when hurdles were kit. Wood's own `pliancy` therefore has no reader today, which is the same standing hurdles' two axes have and is deliberate.",
+  "_comment_hurdles": "HURDLES ARE A MATERIAL NOW, NOT A PIECE OF EQUIPMENT (docs/plan_standing_upkeep.md section 2.7): a fence panel goes into the ground and stays there, so it is spent by the `animal:pen` rung's build pile and its upkeep rate rather than carried to the next job. That is why this is the one shipped recipe whose output is a `material` rather than an `equipment` row - and why it declares no `grades`, exactly as it did as a kit item: a material-only output may not be graded, and a quality axis on a hurdle would invite 'a better fence contains better', the containment-scaling this slice defers. IT IS WOVEN WITHIES LASHED WITH HIDE THONG, so it costs 4 wood and 2 hide. THE HIDE IS LOAD-BEARING AND MUST NOT BE SIMPLIFIED OUT: this is the ONLY recipe in the book that reads `suppleness`, and _comment_reads_pairs' whole pillar is that each material's two axes are split between two recipes wanting opposite ends. A wood-only hurdle orphans that axis and makes the Thunder Mammoth strictly the best hide, deleting a decision the crafting arc built on purpose. AND THE CRAFT FOLLOWS THE `reads`, NOT THE OTHER WAY ROUND: `craft` is DERIVED (see _comment_craft_is_derived) - it is the craft of the material the recipe reads, validated - so reading hide's `suppleness` makes this a `tanning` bench, unchanged from when hurdles were kit. Wood's own `pliancy` is read a recipe away, by the stone-dressing tool whose haft has to give rather than shatter (see _comment_road_tools), so this recipe reading hide instead orphans nothing. THE PAIR WITH NO READER IS HURDLES' OWN (`stoutness` / `span`), and that one is deliberate.",
   "_comment_crook": "THE KIT ITEM HURDLES USED TO BE, minus the butchering quantum and the pen collection rate (docs/plan_standing_upkeep.md section 4.9 item 12). Removing hurdles-as-equipment emptied two kits, and the `hurdling` kit takes this instead - one animal kit serving both husbandry keeping and animal builds, the shape `tillage` already has for plants; without it every tame, pen build and turn of herd keeping drops to bare-handed speed. Bone + fibre on `hoes`' own shape, and `reads: length` because a crook is a long staff - it joins `wayfinding` as a second reader of that axis, which breaks nothing since bone's pair already has a reader on each end. `work: 5.0` sits beside the hoes' own, deliberately: the two are the same class of tool on the two webs.",
-  "_comment_reads_pairs": "THE AXIS PAIRS ARE THE POINT, NOT THE ROWS. Each material's two axes are split between two recipes that want opposite ends, so no source is the upgrade: HIDE - the sled reads `toughness` (a drag harness wants a hide that will not tear) and the hurdles read `suppleness` (the thong the withies are lashed with has to be bent and knotted tight, not merely strong), so a Thunder Mammoth (tough 0.92 / supple 0.10) makes an excellent sled and poor lashings and a Snow Hare (0.14 / 0.92) does the exact reverse. That pairing is the reason the hurdles recipe KEEPS its hide input now that it is a weave off wood: this is the book's only reader of `suppleness`, and dropping it would make the mammoth strictly the best hide. FIBRE - baskets read `fineness` (a close weave holds small loose things) and traps read `strength` (a snare is a cord that has to hold), so Cotton (fine 0.92 / strong 0.35) makes excellent baskets and fair snares while Mesquite bast (0.30 / 0.70) is the other way; Flax (0.88 / 0.80) is good at both, which is why it is worth sowing. BONE - spears and clubs read `density` (how well it holds a point, how hard it hits) and wayfinding gear and the crook read `length` (a tally stave and a shepherd's staff both need a long piece), so a Thunder Mammoth tusk (dense 0.88 / long 0.95) is excellent for either while a Rabbit Warren's (0.28 / 0.06) is barely a piece at all. WOOD's own pair (`hardness` / `pliancy`) has no reader yet and neither does HURDLES' (`stoutness` / `span`): a material must be rated to exist, and nothing in the sim consults either - deliberately, since a quality axis on a fence panel invites 'a better fence contains better'.",
+  "_comment_road_tools": "THE TWO ROAD TOOLS ARE WOOD'S PAIR'S FIRST READERS, AND THEY WANT OPPOSITE ENDS OF IT. `hardness` / `pliancy` had no reader at all until now (see _comment_reads_pairs), which is why these two recipes are where the split lands rather than a third copy of bone's. EARTHMOVING READS `hardness`: a mattock is levered against packed ground turn after turn, so the haft has to hold its shape and not spring. STONE-DRESSING READS `pliancy`: a dressing hammer swung against stone sends the whole blow back up the shaft, and a haft that gives is a haft that does not shatter. So a hard, brittle timber makes excellent spades and poor mauls and a supple one does the exact reverse - the same trade the sled and the hurdles make of hide, one material over, and the reason neither wood is the upgrade. THE BONE IS THE WORKING END - the shod edge and the wedges - AND IT CARRIES NO `reads`, because a recipe may read exactly ONE axis (one reading selects one grade, and validate refuses a second). The wood is what the two tools disagree about, so the wood is what they read; bone's own pair is already answered for by spears/clubs on `density` and the crook and the wayfinding gear on `length`. WOOD 3 TO BONE 2 because these are big tools - mostly shaft, with a working end - and `work` 8.0 puts them above the crook's and the hoes' 5.0 for the same reason. `craft` IS WOOD'S OWN (weaving), not bone's, and that is validate's rule rather than a choice: a recipe's craft must be the craft of the material it WORKS - the one carrying `reads` - which is exactly why the hurdles are `tanning` off a wood-and-hide weave. These are shaped timber with a knapped end set into it, so the shaping is the craft. PLAYTEST DIALS: what these cost is what decides whether a faction roads its first link at turn 40 or turn 100.",
+  "_comment_reads_pairs": "THE AXIS PAIRS ARE THE POINT, NOT THE ROWS. Each material's two axes are split between two recipes that want opposite ends, so no source is the upgrade: HIDE - the sled reads `toughness` (a drag harness wants a hide that will not tear) and the hurdles read `suppleness` (the thong the withies are lashed with has to be bent and knotted tight, not merely strong), so a Thunder Mammoth (tough 0.92 / supple 0.10) makes an excellent sled and poor lashings and a Snow Hare (0.14 / 0.92) does the exact reverse. That pairing is the reason the hurdles recipe KEEPS its hide input now that it is a weave off wood: this is the book's only reader of `suppleness`, and dropping it would make the mammoth strictly the best hide. FIBRE - baskets read `fineness` (a close weave holds small loose things) and traps read `strength` (a snare is a cord that has to hold), so Cotton (fine 0.92 / strong 0.35) makes excellent baskets and fair snares while Mesquite bast (0.30 / 0.70) is the other way; Flax (0.88 / 0.80) is good at both, which is why it is worth sowing. BONE - spears and clubs read `density` (how well it holds a point, how hard it hits) and wayfinding gear and the crook read `length` (a tally stave and a shepherd's staff both need a long piece), so a Thunder Mammoth tusk (dense 0.88 / long 0.95) is excellent for either while a Rabbit Warren's (0.28 / 0.06) is barely a piece at all. WOOD - the two ROAD TOOLS are that pair's readers and they want opposite ends of it: earthmoving reads `hardness` (a mattock haft is levered against packed ground and must hold its shape) and stone-dressing reads `pliancy` (a maul haft takes the blow back up the shaft and must give rather than shatter), so a hard brittle timber makes excellent spades and poor mauls - see _comment_road_tools. HURDLES' own pair (`stoutness` / `span`) is the one with no reader: a material must be rated to exist, and nothing in the sim consults either of those - deliberately, since a quality axis on a fence panel invites 'a better fence contains better'.",
   "_comment_tools": "THE THREE BENCH TOOLS, AND THE TWO RULES THEY EXIST TO DEMONSTRATE. (1) A MATERIAL'S TOOL IS NEVER MADE FROM THAT MATERIAL: the tanning frame is fibre and bone, the loom is bone and hide, the bone awl is fibre and hide. Otherwise you would need the scarce material to make the thing that stretches it, which is the opposite of what a tool is for. (2) A TOOL IS GATED ON THE CRAFTS OF WHAT IT IS MADE FROM, NEVER ON THE CRAFT IT UNLOCKS - the tanning frame needs Weaving and Bone-working (its two materials) and pointedly NOT Tanning (the craft it serves). Otherwise metal needs a crucible, the crucible needs metalworking, and nothing can start. Both rules are enforced by validate, and together they make the deadlock unwriteable. THE LADDER THEN FALLS OUT WITH NOTHING ADDED: weave baskets bare-handed -> learn Weaving -> knap spears bare-handed -> learn Bone-working -> build a tanning frame -> hide work gets faster, cheaper and can reach `excellent` -> and the same shape repeats the day clay and metal have producers. WHAT EACH TOOL BUYS is on the item in equipment.json, beside its durability."
 }

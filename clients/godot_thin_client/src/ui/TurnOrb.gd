@@ -97,6 +97,14 @@ const KIND_ICON := {
 	KIND_KNOWLEDGE_LEARNED: HudKnowledgeVocab.LAUNCH_GLYPH,
 }
 const KIND_ICON_FALLBACK := "●"
+## Kind → BUNDLED-ART mark id, resolved through `HudSprites`. A kind listed here draws a `TextureRect`
+## in place of its `KIND_ICON` Label; a kind absent from it (every other one, for now) keeps the text
+## glyph, and so does a listed kind whose art fails to load. Deliberately a SECOND table rather than
+## a widening of `KIND_ICON`: `_kind_icon` answers in Strings and is asked by callers that want a
+## glyph, so folding a texture lookup into it would change that contract for one kind's sake.
+const KIND_ICON_SPRITE := {
+	KIND_KNOWLEDGE_LEARNED: HudKnowledgeVocab.LAUNCH_MARK,
+}
 
 # ---- geometry (named constants; no magic literals) -------------------------
 # The cluster is the last, right-flush BottomBar child, sitting on the window's
@@ -1084,15 +1092,35 @@ func _reason_row(entry: Variant) -> Button:
 	stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(stripe)
 
-	var icon := Label.new()
-	icon.text = _kind_icon(String(entry.get("kind", "")))
-	icon.custom_minimum_size = Vector2(ROW_ICON_SIZE, ROW_ICON_SIZE)
-	icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	icon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	icon.add_theme_color_override("font_color", color)
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(icon)
+	# The kind's face: bundled ART where the kind has any, else its text glyph — a `TextureRect`
+	# swapped in for the `Label`, exactly one of which is ever built (the pattern
+	# `BandCityPanel._apply_stage_visual` uses for its stage tokens).
+	var kind := String(entry.get("kind", ""))
+	var kind_sprite := HudSprites.for_mark(String(KIND_ICON_SPRITE.get(kind, "")))
+	if kind_sprite != null:
+		var icon_rect := TextureRect.new()
+		icon_rect.texture = kind_sprite
+		icon_rect.custom_minimum_size = Vector2(ROW_ICON_SIZE, ROW_ICON_SIZE)
+		icon_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon_rect.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		icon_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# **UNTINTED — no `modulate`, deliberately.** The Label branch takes `color`, the severity
+		# accent, because a glyph has no colours of its own. This art does: it is authored pale
+		# bone/cream in two flat tones, and the fill IS the silhouette against the panel, so tinting it
+		# to a severity accent would flatten the two tones into one and destroy the thing that makes it
+		# read at row size. The severity is already carried, to its immediate left, by the stripe.
+		row.add_child(icon_rect)
+	else:
+		var icon := Label.new()
+		icon.text = _kind_icon(kind)
+		icon.custom_minimum_size = Vector2(ROW_ICON_SIZE, ROW_ICON_SIZE)
+		icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		icon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		icon.add_theme_color_override("font_color", color)
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(icon)
 
 	var text_box := VBoxContainer.new()
 	text_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL

@@ -2030,13 +2030,15 @@ fn the_per_world_catalogues_round_trip() {
         hide.4, "tanning_frame",
         "the material names the tool that bounds it, which is what the 'No loom' refusal reads"
     );
-    // **Eight ship: four crafted (the three organics plus `wood`) and four uncrafted.** An
-    // *unreachable* material would still be dead content the catalogue publishes; the uncrafted four
+    // **Nine ship: four crafted (the three organics plus `wood`) and five uncrafted.** An
+    // *unreachable* material would still be dead content the catalogue publishes; the uncrafted five
     // are reachable — a plant grows the three luxury crops, a band banks them, and no bench works
-    // them yet; `hurdles` are made at a bench and eaten by the `animal:pen` rung, and nothing takes
-    // them as an INPUT (`docs/plan_standing_upkeep.md` §2.7). Their published `craft` is the empty
-    // string, which is what tells a client there is nothing to make *out of* them.
-    assert_eq!(published.materials.len(), 8);
+    // them yet; `hurdles` are made at a bench and eaten by the `animal:pen` rung; and `stone` is
+    // eaten by `route:paved_road` and reaches the player through the roster's own `start_stock`.
+    // Nothing takes any of the five as an INPUT (`docs/plan_standing_upkeep.md` §2.7), so their
+    // published `craft` is the empty string — which is what tells a client there is nothing to make
+    // *out of* them.
+    assert_eq!(published.materials.len(), 9);
     let uncrafted: Vec<&str> = published
         .materials
         .iter()
@@ -2045,8 +2047,8 @@ fn the_per_world_catalogues_round_trip() {
         .collect();
     assert_eq!(
         uncrafted,
-        vec!["grape", "hurdles", "tea", "tobacco"],
-        "exactly the three luxury crops and the fence panels publish no craft"
+        vec!["grape", "hurdles", "stone", "tea", "tobacco"],
+        "exactly the three luxury crops, the fence panels and the roadstone publish no craft"
     );
     for (id, craft, _, hand_workable, tool) in &published.materials {
         if !craft.is_empty() {

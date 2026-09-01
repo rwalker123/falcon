@@ -135,6 +135,32 @@ const KIT_BUILD_SATURATING_CREW_KEY := "build_work_saturating_crew"
 ## sheet quoting the hurdles' contribution against a garden promises a build that cannot land.
 const KIT_BUILD_BRANCH_KEY := "build_work_branch"
 
+## **AND WHICH RUNG OF THAT BRANCH THE TOOL IS FOR** — `route:dirt_road` on the roadbuilding kit,
+## `route:paved_road` on the paving one, and `BUILD_RUNG_ANY` on every other kit shipped, whose tool
+## serves every rung its branch has.
+##
+## ⛔ **THE READING IS THREE FIELDS NOW, AND THE THIRD IS WHERE A SHEET LIES MOST QUIETLY.** A
+## dressing hammer is worth `2.0` a worker on a `pave` and EXACTLY `BUILD_WORK_NONE` on the `grade`
+## underneath it — the branch matches on both, so a reader that stopped at the branch would quote the
+## paving kit's uplift on a road being graded, which is the same defect one axis further in as
+## quoting a worth with no branch at all.
+##
+## ⛔ **IT RIDES BOTH TABLES, AND THE TRIPLE IS READ TOGETHER ON EACH.** `KitOption.buildWorkRung` is
+## the ROSTER's fresh answer — what `kit_serves_build`, `work_kit_for_branch` and `kit_offer`'s
+## greying read — and `BandKitTiers.buildWorkRung` is the BAND's resolved one, which `build_gear`
+## reads. Worth + branch alone is wrong on exactly the branch the field was added for: with both road
+## kits declaring `route` and nothing else, the roster answered *two kits serve a `grade`* and the
+## derivation handed back whichever it listed FIRST, so a `pave` entry opened on the roadbuilding
+## kit. The sim pins the roster side (`the roster must name EXACTLY ONE kit for a grade`).
+const KIT_BUILD_RUNG_KEY := "build_work_rung"
+
+## **`""` — AND IT MEANS TWO DIFFERENT THINGS ON THE TWO SIDES OF THE TEST, WHICH IS WHY ONE SPELLING
+## IS ENOUGH.** On the KIT it is *this tool serves every rung on its branch*; on the CALLER it is *I
+## cannot say which rung is being priced*. `kit_serves_build` reads the kit's side FIRST, so the two
+## never have to be told apart — the same shape as the sim's `Option` pair
+## (`EquipmentEffect::serves_build`).
+const BUILD_RUNG_ANY := ""
+
 ## The ladder's own two webs, spelled as the wire spells them (`RungBranch`), and the empty answer
 ## that is a real reading rather than a gap: a kit with no build tool serves NO branch, which is why
 ## `none` can never be the derived builders kit and is never greyed for the wrong one either.
@@ -154,9 +180,18 @@ const BUILD_BRANCH_NONE := ""
 ## SOURCE — a patch is plant, a herd is animal — which is exactly how `systems::labor` stamps an
 ## entry, so a compose sheet knows its entry's branch from the job it is composing and needs no new
 ## wire field to ask.
+##
+## ⛔ **A ROAD IS THE THIRD, AND IT ARRIVES THROUGH THE SAME DOOR.** `BuildSource::Road` publishes
+## `kind = roadwork` — `ROADWORK_ROLE_KEY`, the band-wide keeping row's own token, because a road has
+## no take row of its own for the queue to join to. So a road entry reaches this table exactly as a
+## patch does, and while the row was missing every road entry answered `BUILD_BRANCH_NONE`: not *no
+## gear*, but **no branch test at all**, which is what `build_gear` reads as *quote whatever the row
+## holds*. A band carrying the paving kit was therefore quoted its `2.0` on every job in the queue.
+const LABOR_KIND_ROADWORK := "roadwork"
 const LABOR_KIND_BUILD_BRANCHES := {
 	SourceForecast.LABOR_KIND_FORAGE: BUILD_BRANCH_PLANT,
 	SourceForecast.LABOR_KIND_HUNT: BUILD_BRANCH_ANIMAL,
+	LABOR_KIND_ROADWORK: BUILD_BRANCH_ROUTE,
 }
 
 ## The build branch of a source worked on this labor kind; `BUILD_BRANCH_NONE` for a kind that raises
@@ -177,6 +212,8 @@ static func build_branch_noun(branch: String) -> String:
 			return HudComposeVocab.KIT_BUILD_BRANCH_PLANT_NOUN
 		BUILD_BRANCH_ANIMAL:
 			return HudComposeVocab.KIT_BUILD_BRANCH_ANIMAL_NOUN
+		BUILD_BRANCH_ROUTE:
+			return HudComposeVocab.KIT_BUILD_BRANCH_ROUTE_NOUN
 		_:
 			return branch
 
@@ -443,15 +480,22 @@ static func default_kit_for(job: String, source: Dictionary, job_default_id: Str
 ## from surviving into a Red Deer's sheet as a greyed row the picker is nonetheless opened on.
 ##
 ## **`kit_offer` is asked at the FRESH tier, so this list never reshuffles as gear wears** — see there.
+## ⛔ **THE BRANCH TRAVELS WITH ITS RUNG HERE TOO, and it did not.** The filter below is
+## `kit_offer`'s, which reads the rung — so a caller that named a route BRANCH and no rung had both
+## road kits refused by the third arm, the `selectable` list collapse back to the unfiltered `offered`,
+## and the "which kits may this pool hold" question silently answered as though the branch had never
+## been passed. It is the same omission that put `No kit` on the build queue header, one function
+## along; the two are fixed together because `_role_kit_id` calls both in one breath.
 static func resolve_selection(kits: Array, job: String, default_id: String,
 		composed_id: String, quarry: Dictionary = {}, prefix: String = "",
-		build_branch: String = BUILD_BRANCH_NONE) -> String:
+		build_branch: String = BUILD_BRANCH_NONE,
+		build_rung: String = BUILD_RUNG_ANY) -> String:
 	var offered := kits_for_job(kits, job)
 	if offered.is_empty():
 		return NO_KIT_ID
 	var selectable: Array = []
 	for kit_variant in offered:
-		if kit_is_offered(kits, kit_variant, job, quarry, prefix, build_branch):
+		if kit_is_offered(kits, kit_variant, job, quarry, prefix, build_branch, build_rung):
 			selectable.append(kit_variant)
 	# A roster whose every hunt kit is withheld cannot happen while it carries a null kit (one is
 	# always offered), but a config is free to drop that entry — and a picker with no entries at all
@@ -840,7 +884,8 @@ static func kit_supplies_any(kit: Dictionary) -> bool:
 ## because a picker that reshuffled between turns would leave the player unable to tell a kit that
 ## *cannot* work on this animal from one that has merely worn out.
 static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Dictionary,
-		prefix: String, build_branch: String = BUILD_BRANCH_NONE) -> Dictionary:
+		prefix: String, build_branch: String = BUILD_BRANCH_NONE,
+		build_rung: String = BUILD_RUNG_ANY) -> Dictionary:
 	# **THE BUILDERS ROW HAS ITS OWN APPLICABILITY QUESTION, and it is the same one asked of a snare
 	# against a Red Deer**: can what this kit carries change the outcome of the job in front of it? A
 	# hoe adds nothing to a `Tame` and a crook nothing to a `Cultivate` — the axis is the EXTRA work a
@@ -851,8 +896,21 @@ static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Diction
 	if job == JOB_BUILDERS:
 		if kit.is_empty() or build_branch == BUILD_BRANCH_NONE or not kit_supplies_any(kit):
 			return _kit_offered()
-		if kit_serves_build_branch(kits, kit, build_branch):
+		if kit_serves_build(kits, kit, build_branch, build_rung):
 			return _kit_offered()
+		# ⛔ **A ROAD TOOL ON THE WRONG RUNG IS REFUSED FOR A DIFFERENT REASON, AND THE SENTENCE HAS
+		# TO SAY SO.** *"its tools are no use on a road build"* is FALSE of the paving kit in front of
+		# a `grade` — a dressing hammer is exactly a road tool — and a reason a player can see is
+		# wrong is worse than none. What is true is that its worth resolves to the neutral on every
+		# rung but the one it names, so the rung-bound refusal says THAT.
+		#
+		# ⛔ **THE FORK IS `kit_serves_branch`, NEVER `kit_serves_build` ASKED WITH NO RUNG.** The
+		# unqualified ask is the THIRD ARM and it answers `false` for exactly the tools this line is
+		# trying to recognise — so using it here sends every rung-bound kit down the BRANCH sentence,
+		# which is the false one. *Does this tool serve the branch* and *would it serve an
+		# unqualified caller* are different questions with different answers.
+		if kit_serves_branch(kits, kit, build_branch):
+			return _kit_withheld(HudComposeVocab.KIT_WITHHELD_REASON_BUILD_RUNG)
 		return _kit_withheld(HudComposeVocab.KIT_WITHHELD_REASON_BUILD_BRANCH_FORMAT
 			% build_branch_noun(build_branch))
 	# No quarry in hand and no hunt to have: the forage sheets, and a sheet composed before the wire
@@ -888,22 +946,69 @@ static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Diction
 
 ## The boolean half of the verdict, for callers with nothing to say about the reason.
 static func kit_is_offered(kits: Array, kit: Dictionary, job: String, quarry: Dictionary,
-		prefix: String, build_branch: String = BUILD_BRANCH_NONE) -> bool:
-	return bool(kit_offer(kits, kit, job, quarry, prefix, build_branch)[OFFER_OFFERED_KEY])
+		prefix: String, build_branch: String = BUILD_BRANCH_NONE,
+		build_rung: String = BUILD_RUNG_ANY) -> bool:
+	return bool(kit_offer(kits, kit, job, quarry, prefix, build_branch,
+		build_rung)[OFFER_OFFERED_KEY])
 
-## **DOES THIS KIT'S BUILD TOOL SERVE THIS WEB?** — the fresh-tier pair read as one answer: a worth
-## above the neutral AND a branch that matches. Either half alone is a lie about a two-kit roster —
-## the worth alone offers hurdles for a garden, the branch alone offers a kit whose tool has no
-## contribution to make at all.
+## **DOES THIS KIT'S BUILD TOOL SERVE THIS BUILD?** — the fresh-tier trio read as one answer: a worth
+## above the neutral, a branch that matches, and — where the tool names one — the RUNG that matches.
+## Any part alone is a lie about the shipped roster: the worth alone offers the crook for a garden,
+## the branch alone offers a kit whose tool has no contribution to make, and the branch-and-worth pair
+## offers the PAVING kit on a road being graded.
+##
+## ⛔ **THE THREE ARMS, AND THE THIRD IS THE ONE THAT FAILS SILENTLY AND GENEROUSLY.** They are the
+## sim's, in the sim's order (`EquipmentEffect::serves_build`):
+##
+## | the tool names… | the caller names… | answer |
+## |---|---|---|
+## | no rung | anything | **serves** — every rung on its branch |
+## | a rung | that same rung | **serves** |
+## | a rung | NO rung | **does not serve** |
+##
+## The last arm is `false` on purpose. A surface that cannot say which rung is being priced must be
+## quoted NOTHING rather than the tool's headline worth: the turn always knows its rung, so an answer
+## given to a caller that does not is a promise made where the pairing was lost. Getting it backwards
+## reads as a working uplift on every road in the game, which is why it is written as a table here
+## rather than as a boolean expression a reader has to run in their head.
 ##
 ## **RESOLVED OFF THE ROSTER, never off the band's worn row**, like every other applicability test
-## here: which web a kit serves is a property of (kit × roster), and a band whose hoes are spent has
+## here: which build a kit serves is a property of (kit × roster), and a band whose hoes are spent has
 ## picked the right kit and worn it out, which is a different sentence from picking the wrong one.
-static func kit_serves_build_branch(kits: Array, kit: Dictionary, branch: String) -> bool:
+## **DOES THIS KIT'S BUILD TOOL SERVE THIS BRANCH AT ALL — the first two terms of the trio, without
+## the third.** It is the question *is this a road tool* as against *is this the road tool for THIS
+## rung*, and the two must not be collapsed: `kit_serves_build` asked with no rung is the THIRD ARM,
+## which answers `false` for every rung-bound tool by design.
+##
+## Its one caller is `kit_offer`, choosing which refusal is the true one to print.
+static func kit_serves_branch(kits: Array, kit: Dictionary, branch: String) -> bool:
 	if branch == BUILD_BRANCH_NONE:
 		return false
 	return kit_uses(kits, kit, KIT_BUILD_WORK_KEY) \
 		and String(kit.get(KIT_BUILD_BRANCH_KEY, BUILD_BRANCH_NONE)) == branch
+
+## ⛔ **`rung` HAS NO DEFAULT, AND THAT IS THE GUARD RATHER THAN AN INCONVENIENCE.** It carried
+## `BUILD_RUNG_ANY` as a default and a caller that simply forgot the argument got the THIRD ARM —
+## `false` for every rung-bound tool — with no error and no warning anywhere. That shipped twice: the
+## build queue HEADER read `1 builders · No kit` over an entry whose own dropdown named the
+## Roadbuilding kit the sim was demonstrably using. A missing argument is a GDScript parse error, so a
+## caller that cannot name a rung now has to SAY so by passing `BUILD_RUNG_ANY` — which is the
+## sentence the third arm answers, stated on purpose instead of arrived at by omission.
+##
+## `work_kit_for_branch` and `build_kit_for_branch` are required for the same reason, they being the
+## two lookups whose answer this predicate decides.
+static func kit_serves_build(kits: Array, kit: Dictionary, branch: String,
+		rung: String) -> bool:
+	if branch == BUILD_BRANCH_NONE:
+		return false
+	if not kit_uses(kits, kit, KIT_BUILD_WORK_KEY):
+		return false
+	if String(kit.get(KIT_BUILD_BRANCH_KEY, BUILD_BRANCH_NONE)) != branch:
+		return false
+	var declared := String(kit.get(KIT_BUILD_RUNG_KEY, BUILD_RUNG_ANY))
+	if declared == BUILD_RUNG_ANY:
+		return true
+	return rung != BUILD_RUNG_ANY and declared == rung
 
 ## Freshly built each call rather than returned from a `const` Dictionary — a `const` container is not
 ## deeply read-only in GDScript, so one caller mutating the shared verdict would poison every later
@@ -1082,23 +1187,35 @@ const ROLE_GEAR_STATED_KEY := "stated"
 ## that lands sooner than it can. `band_kit_tiers` is the one reader of that row, which is what keeps
 ## this and the band panel's gear line from coming from two different ones.
 ##
-## **THE BRANCH IS PART OF THE READING, NOT A FILTER ON TOP OF IT.** A row whose
-## `build_work_branch` disagrees with the build being priced contributes the neutral `0.0`, exactly
-## as the sim's `EquipmentEffect::serves_branch` does — so a sheet handed the wrong web's kit quotes
-## an ungeared build rather than the crook's `0.5` per worker against a garden. `BUILD_BRANCH_NONE`
-## asks for no branch test at all, which is what a caller with no build in front of it wants.
+## **THE BRANCH AND THE RUNG ARE PART OF THE READING, NOT A FILTER ON TOP OF IT.** A row whose
+## `build_work_branch` disagrees with the build being priced contributes the neutral `0.0`, and so
+## does one whose `build_work_rung` names a DIFFERENT rung of the branch they agree on — exactly as
+## the sim's `EquipmentEffect::serves_build` does. So a sheet handed the wrong web's kit quotes an
+## ungeared build rather than the crook's `0.5` against a garden, and a road being GRADED quotes an
+## ungeared build rather than the paving kit's `2.0`. `BUILD_BRANCH_NONE` asks for no branch test at
+## all, which is what a caller with no build in front of it wants.
+##
+## ⛔ **`BUILD_RUNG_ANY` IS NOT THE BRANCH'S `NONE`, and the asymmetry is deliberate.** A caller that
+## names no BRANCH is asking for no test; a caller that names no RUNG has asked a question it could
+## not qualify, and a rung-bound row answers it `{}` rather than with a worth the sim will not pay.
+## `kit_serves_build` owns the three arms.
 ##
 ## `{}` for a kit this band publishes no row for, which `SourceForecast.build_turns_at` reads as the
 ## ungeared case — the same direction `TIER_ABSENT` errs in, and the honest answer for a wire this
 ## client cannot read.
 static func build_gear(band: Dictionary, kit_id: String,
-		build_branch: String = BUILD_BRANCH_NONE) -> Dictionary:
+		build_branch: String = BUILD_BRANCH_NONE,
+		build_rung: String = BUILD_RUNG_ANY) -> Dictionary:
 	var resolved := band_kit_tiers(band, kit_id)
 	if resolved.is_empty():
 		return {}
-	if build_branch != BUILD_BRANCH_NONE \
-			and String(resolved.get(KIT_BUILD_BRANCH_KEY, BUILD_BRANCH_NONE)) != build_branch:
-		return {}
+	if build_branch != BUILD_BRANCH_NONE:
+		if String(resolved.get(KIT_BUILD_BRANCH_KEY, BUILD_BRANCH_NONE)) != build_branch:
+			return {}
+		var declared := String(resolved.get(KIT_BUILD_RUNG_KEY, BUILD_RUNG_ANY))
+		if declared != BUILD_RUNG_ANY \
+				and (build_rung == BUILD_RUNG_ANY or declared != build_rung):
+			return {}
 	return {
 		SourceForecast.BUILD_GEAR_PER_WORKER: float(resolved.get(KIT_BUILD_WORK_KEY, TIER_ABSENT)),
 		SourceForecast.BUILD_GEAR_SATURATING_CREW: int(resolved.get(
@@ -1133,16 +1250,21 @@ static func build_gear(band: Dictionary, kit_id: String,
 ## here from one who named nothing. Rule 3 then prices a plant entry at `tillage` where the sim will
 ## keep the pin and take nothing off it. Closing it needs the stored id (or a "was it named" flag)
 ## beside the resolved one on the wire; every other combination is resolved above.
+## **AND EVERY RULE ABOVE IS ASKED AT THE RUNG BEING WORKED, NOT AT THE ENTRY'S DESTINATION.** A
+## `pave` declared on bare ground grades first, so the tool that entry wants TODAY is the mattock;
+## quoting the dressing hammer because the player named the top of the ladder would price a job
+## nobody is doing yet. The rung a caller asks with is `next_rung_key` off the rung the source HOLDS.
 static func builders_kit_for(kits: Array, row_kit_id: String, branch: String,
-		head_branch: String = BUILD_BRANCH_NONE) -> String:
+		head_branch: String = BUILD_BRANCH_NONE, rung: String = BUILD_RUNG_ANY,
+		head_rung: String = BUILD_RUNG_ANY) -> String:
 	var row_kit := kit_by_id(kits, row_kit_id)
-	if not row_kit.is_empty() and kit_serves_build_branch(kits, row_kit, branch):
+	if not row_kit.is_empty() and kit_serves_build(kits, row_kit, branch, rung):
 		return row_kit_id
 	if head_branch != BUILD_BRANCH_NONE \
-			and build_kit_for_branch(kits, head_branch) != NO_KIT_ID \
-			and not kit_serves_build_branch(kits, row_kit, head_branch):
+			and build_kit_for_branch(kits, head_branch, head_rung) != NO_KIT_ID \
+			and not kit_serves_build(kits, row_kit, head_branch, head_rung):
 		return row_kit_id
-	var derived := build_kit_for_branch(kits, branch)
+	var derived := build_kit_for_branch(kits, branch, rung)
 	return derived if derived != NO_KIT_ID else row_kit_id
 
 ## **THE ROSTER'S OWN ANSWER FOR ONE WEB** — the earliest `builders` entry, in roster order, whose
@@ -1152,24 +1274,39 @@ static func builders_kit_for(kits: Array, row_kit_id: String, branch: String,
 ## **The sim's `EquipmentConfig::build_kit_for_branch`, asked of the published roster** — same order,
 ## same fresh-tier test, and the same reason it is a lookup rather than a table: ⛔ no `web → kit id`
 ## match is spelled anywhere, so a third build tool is a roster edit on both halves.
-static func build_kit_for_branch(kits: Array, branch: String) -> String:
-	return work_kit_for_branch(kits, JOB_BUILDERS, branch)
+static func build_kit_for_branch(kits: Array, branch: String, rung: String) -> String:
+	return work_kit_for_branch(kits, JOB_BUILDERS, branch, rung)
 
 ## **THE ROSTER'S ANSWER FOR ONE JOB AND ONE WEB** — the earliest entry offering `job`, in roster
 ## order, whose build tool serves `branch` at the fresh tier. The sim's `EquipmentConfig::work_kit_for`,
 ## which is the ONE lookup both its derivations are: the builders' kit and the KEEPING pool's are the
 ## same question asked of two job lists, so a second walk here could only drift from this one.
-static func work_kit_for_branch(kits: Array, job: String, branch: String) -> String:
+static func work_kit_for_branch(kits: Array, job: String, branch: String,
+		rung: String) -> String:
 	if branch == BUILD_BRANCH_NONE:
 		return NO_KIT_ID
 	for kit_variant in kits_for_job(kits, job):
-		if kit_serves_build_branch(kits, kit_variant, branch):
+		if kit_serves_build(kits, kit_variant, branch, rung):
 			return String((kit_variant as Dictionary).get(KIT_ID_KEY, NO_KIT_ID))
 	return NO_KIT_ID
 
 ## The two KEEPING roles and the web each keeps — `agriculture` keeps ground, `husbandry` keeps
 ## animals. Spelled here as the file spells `JOB_SCOUT` and `JOB_BUILDERS`, so this layer keeps
 ## depending on nothing but `SourceForecast` and the leaves below it.
+##
+## ⛔ **THERE IS NO `roadwork` ROW, AND ITS ABSENCE IS THE FINDING RATHER THAN THE GAP.** The sim does
+## gear road upkeep — `RungBranch::Route` maps to `KitJob::Roadwork` and both road kits list that job
+## — but it asks per ROAD, at the rung that road STANDS on (`systems::labor`'s keeping claim), and
+## this table answers per POOL. A band keeps many roads at many rungs, so there is no one rung for a
+## pool-wide lookup to name, and the third arm of `kit_serves_build` would answer `NO_KIT_ID` for
+## every rung-bound tool anyway.
+##
+## **Nothing on this client would read the answer either.** The two keeping surfaces are
+## `BandPanelController`'s pool coverage — which takes the ROAD pool's supply, demand and shortfall
+## straight off the cohort, because the road rows are fog-filtered and summing them would understate
+## a real bill — and the work inspector's upkeep picker, whose job is `agriculture` or `husbandry` by
+## construction (a road has no labor row to inspect). Adding a row here would add a derivation with
+## no reader and no rung to be right about.
 const JOB_AGRICULTURE := "agriculture"
 const JOB_HUSBANDRY := "husbandry"
 const KEEPING_JOB_BUILD_BRANCHES := {
@@ -1192,9 +1329,15 @@ const KEEPING_JOB_BUILD_BRANCHES := {
 ##
 ## `NO_KIT_ID` for a role that keeps no web, and for a roster carrying no tool that serves it — a real
 ## answer meaning the pool works bare-handed.
+## ⛔ **AND IT ASKS `BUILD_RUNG_ANY` OUT LOUD, which the table two blocks up is the reason for.** The
+## two branches this can name are the PLANT and ANIMAL webs, whose kits bind no rung, so every one of
+## their tools serves every rung of its branch and the unqualified ask is the right one. It is stated
+## rather than defaulted because `work_kit_for_branch` takes no default — a lookup that cannot name a
+## rung has to say so, so that the day a ROUTE row joins that table the omission is a decision on the
+## page instead of a `NO_KIT_ID` nobody can see.
 static func keeping_kit_for(kits: Array, role_kind: String) -> String:
 	return work_kit_for_branch(kits, role_kind,
-		String(KEEPING_JOB_BUILD_BRANCHES.get(role_kind, BUILD_BRANCH_NONE)))
+		String(KEEPING_JOB_BUILD_BRANCHES.get(role_kind, BUILD_BRANCH_NONE)), BUILD_RUNG_ANY)
 
 ## **THE ROSTER'S BARE ENTRY FOR ONE JOB — the kit that carries nothing.** `kit_supplies_any` is the
 ## derived reading of "the null kit" (`item_ids` empty), which is why nothing here spells the id
@@ -1534,7 +1677,8 @@ const KIT_ENTRIES_SELECTED_KEY := "selected"
 ## for that entry's own food web.
 static func kit_entries(kits: Array, job: String, selected_id: String, default_id: String,
 		on_pick: Callable, quarry: Dictionary = {}, prefix: String = "",
-		build_branch: String = BUILD_BRANCH_NONE) -> Dictionary:
+		build_branch: String = BUILD_BRANCH_NONE,
+		build_rung: String = BUILD_RUNG_ANY) -> Dictionary:
 	var entries: Array = []
 	# **THE SELECTION IS AN INDEX, because an `OptionButton` marks the current entry itself.** The
 	# roster order IS the list order (this layer sorts nothing), so the index of the resolved kit is
@@ -1548,7 +1692,7 @@ static func kit_entries(kits: Array, job: String, selected_id: String, default_i
 			label += HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX
 		if kit_id == selected_id:
 			selected_index = entries.size()
-		var offer := kit_offer(kits, kit, job, quarry, prefix, build_branch)
+		var offer := kit_offer(kits, kit, job, quarry, prefix, build_branch, build_rung)
 		var reason := String(offer[OFFER_REASON_KEY])
 		# The reason rides the ENTRY'S OWN FACE, not only its tooltip: a disabled popup row is the one
 		# control in this HUD a player cannot hover to interrogate on every platform, and a grey row

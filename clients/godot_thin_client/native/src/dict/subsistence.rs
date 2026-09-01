@@ -809,6 +809,18 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
         // Decoding the worth without the branch is how a single number comes to be believed on both
         // webs — the same failure `attack_max_body_mass` exists to prevent one axis over.
         let _ = dict.insert("build_work_branch", kit.buildWorkBranch().unwrap_or(""));
+        // ⛔ **AND WHICH RUNG OF THAT BRANCH — the third term, and the roster's half of the bound.**
+        // `""` where the tool serves every rung its branch has, which is every kit but the two road
+        // tools; `route:dirt_road` on the pick-and-spade and `route:paved_road` on the stone
+        // dressing.
+        //
+        // **THE TRIPLE IS READ TOGETHER ON BOTH TABLES.** Worth + branch alone is wrong on exactly
+        // the branch this field was added for: it answers *the roster serves a `grade` with two
+        // kits* and `work_kit_for_branch` then hands back whichever is listed FIRST, so a `pave`
+        // entry opened on the roadbuilding kit. `KitRoster.kit_serves_build` owns the three arms —
+        // and its third, *a caller that cannot name the rung is quoted NOTHING*, is the one that
+        // fails silently and generously.
+        let _ = dict.insert("build_work_rung", kit.buildWorkRung().unwrap_or(""));
         // What the kit does BESIDES the tiers. `dispersion` multiplies the quarry's own retreat and
         // `exposure` the hunt's injury hazard, both neutral at 1. The two mass bounds say which
         // quarry `attack` above actually applies to — 0 on an end is unbounded — so a picker can

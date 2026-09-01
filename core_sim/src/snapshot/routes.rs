@@ -38,7 +38,7 @@ const NO_KEEPER_BAND: u64 = 0;
 ///
 /// `demand − supplied == shortfall` must hold **verbatim on the wire**, so all three — and the
 /// worker count beside them — resolve through [`road_keeping_basis`], the stamp
-/// `settle_route_keeping` struck this turn.
+/// `settle_bands_roadwork` struck this turn.
 ///
 /// **Order is the registry's own row-major key order**, so the section is stable frame to frame and
 /// diffs out when nothing moved.
@@ -52,6 +52,10 @@ pub(crate) fn route_states(
     viewer: FactionId,
     fog_enabled: bool,
     ladder: &LadderConfig,
+    // **Which tiles some band has QUEUED** — the `queued_live` term of the countdown below, read off
+    // the bands' own queues because the row's scratch lags a command by a whole turn and the state
+    // it separates exists precisely in that frame.
+    build_kits: &crate::snapshot::subsistence::BuildKitIds,
     terrain_at: impl Fn(UVec2) -> Option<sim_runtime::TerrainType>,
 ) -> Vec<sim_runtime::RouteState> {
     registry
@@ -94,6 +98,34 @@ pub(crate) fn route_states(
                 grants_sight: road.grants_sight(),
                 friction_multiplier: payoff.friction_multiplier,
                 holds_link_to_tiles: payoff.holds_link_to_tiles,
+                // **THE BUILD IN FRONT OF THIS TILE** — a road is a source row and this table is it,
+                // so the three fields are the twins a patch row publishes one branch over. All three
+                // are stamped by the build arm and cleared by the decay pass on the one-turn cycle,
+                // so they describe the turn just resolved rather than a stale stall.
+                build_blocked_reason: road.build_blocked_reason.key().to_string(),
+                build_material_demand: road.build_material_demanded,
+                build_material_supplied: road.build_material_supplied,
+                // ⛔ **THE COUNTDOWN, THROUGH THE SEAM BOTH FOOD WEBS GO THROUGH** — so a road
+                // cannot publish a state as a different number than a patch does. The road shipped
+                // publishing nothing here and the client filled the silence with a hardcoded *"not
+                // yet estimated"*, which is why a road under way read `Queued 97%` for 147 turns.
+                //
+                // **Only a QUEUED road has a real number.** A rung nobody ordered has no quote, so
+                // this is the honest *no estimate* rather than a `0` that would render as a
+                // finished build; a client estimating an unbuilt rung against a hypothetical crew
+                // is doing its own arithmetic and is right to.
+                // ⛔ **THE STANDING MATERIAL BILL — THE HALF THAT SAYS *SHORT OF STONE* RATHER
+                // THAN *SHORT OF KEEPERS*.** Summed across the materials the rung names because the
+                // wire carries one number and the branch eats exactly one; the noun is the rung
+                // catalog's. Both read the **stamped** bill, so `demand - supplied` is the shortfall
+                // verbatim, exactly as the work pair above it is.
+                upkeep_material_demand: road.upkeep_materials_demanded.values().sum(),
+                upkeep_material_supplied: road.upkeep_materials_supplied.values().sum(),
+                build_turns_remaining: crate::snapshot::subsistence::published_build_countdown(
+                    road.build_turns_remaining,
+                    road.build_queue_position,
+                    build_kits.road_is_queued(tile),
+                ),
             }
         })
         .collect()

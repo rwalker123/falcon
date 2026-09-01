@@ -372,12 +372,12 @@ second producer of a rung's position, the failure this arc has had three of.
 
 `path → trail → dirt road → paved road`, in `intensification_ladder.json`.
 
-| rung | verb | `unlock_knowledge` | `earns_knowledge` | `build` | `upkeep` |
-|---|---|---|---|---|---|
-| `path` | — | — | — | null | null |
-| `trail` | **— (it forms from use)** | **—** | `roadbuilding` | 40 work | **null** |
-| `dirt_road` | **`grade`** | `roadbuilding` | `paving` | 110 work | yes |
-| `paved_road` | **`pave`** | `paving` | — | 260 work | yes |
+| rung | verb | `unlock_knowledge` | `earns_knowledge` | `build` | `build.materials` | `upkeep` |
+|---|---|---|---|---|---|---|
+| `path` | — | — | — | null | — | null |
+| `trail` | **— (it forms from use)** | **—** | `roadbuilding` | 40 work | — | **null** |
+| `dirt_road` | **`grade`** | `roadbuilding` | `paving` | 300 work | **none — cut earth is already there** | yes |
+| `paved_road` | **`pave`** | `paving` | — | 800 work | **20 stone** | yes |
 
 - **The floor is TWO rungs.** A path is what traffic wears in before anybody decides to make a road,
   and a trail is the floor's second storey. Neither costs anything to hold, neither takes a verb,
@@ -532,21 +532,172 @@ pass `components::road_holding_unchanged`, because clearing a labor row cannot c
 `enqueue_build` passes it too: `grade` / `pave` write the keeper immediately before declaring, and no
 other path can produce a `BuildSource::Road`.
 
+⛔ **`head_rung_gate` ANSWERS THE ROUTE BRANCH BEFORE ITS LABOR-ROW LOOKUP, AND THAT IS WHAT MADE
+THE MATERIAL HALF REACHABLE AT ALL.** Every other source is found by matching the queue entry against
+`assignments`, and `BuildSource::of` never yields a `Road` — so a road head fell through to
+`BuildGate::Unworked`, `source_banking_its_first_work` filtered it out, `banking.source` was
+permanently `None` for a road, and no pile was ever struck for a `pave`. `route_head_gate` answers it
+from the same two terms the build arm resolves — *does this band still keep the tile* (`OwnedByOther`)
+and *does the faction know the rung* (`Knowledge`) — so the claim side and the payment side cannot
+disagree about whether a road banks this turn. It leaks nothing into the keeping claim:
+`SourceBankingFirstWork::declared_on` also goes through `BuildSource::of` and still answers `None` for
+every row.
+
 **The build is its own arm in `advance_labor_allocation`, after the assignment loop**, because that
 loop visits `assignments` and can never reach a road. It banks the whole `builders` pool at the
 entry's own kit, capped at the destination rung's top, and **banks nothing unless the ordering band is
 still the keeper** — a band whose `grade` was superseded (the tile decayed back into the free floor,
 or another band adopted it) puts no work on ground that is no longer its job.
 
-- **No shipped tool declares a `build_work` serving `route`**, so `BuildersGear`'s route reading lands
-  on `default_kits.builders` and road builders work **bare-handed** — the same intended emptiness
-  `default_kits.roadwork` ships for their keepers. `FOOD_WEB_BRANCHES` still excludes `Route` for that
-  reason, and is what gets widened the day a barrow declares the stat.
-- **A road publishes no build estimate.** `buildTurnsRemaining` and its four siblings are per-patch and
-  per-herd scratch, and a road has no source row to stamp them on; the arms are stated as no-ops so a
-  future row cannot be forgotten.
-- **No material pile.** No route rung declares a material (see below), so `head_build_legs` answers
-  `None` for a road and the draw is exact rather than defaulted.
+- **The route branch has its own builders kits, and they are bound PER RUNG.** `roadbuilding`
+  (earthmoving tools) serves `route:dirt_road` and `paving` (stone-dressing tools) serves
+  `route:paved_road`; each is worth its offset on its own rung and `NO_BUILD_GEAR` on the other, off
+  `EquipmentEffect::rung`. `BuildersGear` therefore resolves the kit at the rung **in flight** rather
+  than at the entry's destination — a `pave` on a road that has decayed below a dirt road is doing
+  grading work, and must resolve and wear the grading tool.
+- **The store scales the work, exactly as it scales the pile.** The arm's accrual is multiplied by
+  the head entry's material coverage before it is banked, which is `animal:pen`'s stated rule — *a
+  short store stalls the build proportionally and never refuses it*, and the unbanked remainder is
+  wasted rather than carried.
+- **A road publishes a chained countdown like any other source.** `RouteState.buildTurnsRemaining`
+  carries **the same quantity with the same sentinels** a patch and a herd publish, through the same
+  `published_build_countdown` seam — there is deliberately no route dialect, so a client renders a
+  road through the identical fork. Only the **queue** can answer it (an entry is dated as everything
+  above it plus its own span), so `publish_entry` stamps it and the decay pass clears it, exactly as
+  the two food webs do. **Only a queued road has a number**: an unordered rung has no quote and reads
+  the honest *no estimate*, never a `0` that renders as a finished build.
+
+  ⛔ **It shipped stamping nothing, and the client filled the silence with a constant** — every road
+  queue model hardcoded the `-5` *not yet estimated* sentinel, so a road read `Queued 97%` on turn 1
+  and on turn 147 alike. The justification was *"a road has no source row for the sim to stamp one
+  on"*, which was never true of `RouteState`. **No claims object arbitrates it**, unlike the two food
+  webs': one keeper per tile, and each band's own `prune_build_queue` drops the entry for a road it
+  does not keep *before* that band's queue is walked, so at most one band can hold an entry for a
+  tile by the time the pass runs.
+
+> #### ⛔ EVERY ROAD ENTRY RECORDS A `BuildQuote`, AND THE COST OF NOT DOING SO WAS NOT CONFINED TO ROADS
+>
+> `publish_build_chain` mints `BuildTurns::Blocked` for a **staffed head that recorded no quote**,
+> with `blocked_reason(None)` — the cause `unworked` — and `carried` then hands that same `−4` to
+> **every entry behind it and every unqueued source the band works**. A road pushed no quote, so a
+> band that typed `grade` and staffed its builders published `⚠ Blocked` on its patches and its herds
+> while the road was building perfectly well. It is the hole the pen ring fell into, and it is closed
+> the same way: the arm records a quote for **every** road entry, head or waiting.
+>
+> The invariant is now stated where it is broken. A staffed head whose source `source_is_on_the_ground`
+> can resolve must carry a quote, `debug_assert`ed in the chain pass. A source that is genuinely *not*
+> there — a `sow` on bare ground the faction cannot seed, which places no patch — is the case the
+> `unworked` cause is honest for, and it is the term that keeps the assertion true.
+
+### ⛔ THE STONE: FLAT WHERE THE WORK IS REMOTENESS-SCALED
+
+`route:paved_road` declares **both halves** — `build.materials { stone: 20 }` to lay it and
+`upkeep.materials { stone: 0.1667 }` to hold it, which is `plan_standing_upkeep.md` §4.13's *"a paved
+road declares stone on the pile **and on the rate**"* and correction ②'s *"the paved road was to
+swallow stone on the pile and the rate"*. Every other rung on the branch declares neither: a graded
+roadbed is cut earth, and the earth is already there.
+
+> **The rate shipped missing for one slice**, on a stated default that paving owes no standing stone.
+> The plan says the opposite twice. A road that holds for free is the failure that produced.
+
+**The rate is the PEN's ratio, not a second arithmetic.** `animal:pen` sets a 6-hurdle pile against a
+`0.05`/turn rate — it replaces its whole pile every **120 turns**. A paved road's pile is 20 stone, so
+the same relationship gives `20 / 120 = 0.1667` a turn: one stone every six turns, a roadbed
+re-dressed at exactly the pace a fence is re-panelled. The road's own internal ratio
+(`20 stone / 800 work × 0.95 work/turn ≈ 0.024`) would have been **seven times lighter**, replacing
+the pile every 840 turns; the pen is the worked precedent and one precedent beats a second sum.
+Opening value — **§4.13e owns the retune**, as it owns every route number.
+
+| | scaled by `keeper_remoteness` / `infrastructure_cost`? | tracks the position? |
+|---|---|---|
+| the **pile** (`build.materials`) | **no** — flat, see above | draws as the meter climbs |
+| the **rate** (`upkeep.materials`) | **yes**, through the same `scaled_by` the work reads | owes in proportion to how much stands |
+
+The rate's scaling is §2.7's *"the land is a SCALE term, not an offset"*: a road over a range costs
+more stone to hold **and** more hands, which is the one thing this branch says about ground. The
+pile's flatness is the deliberate exception, for the reason above it.
+
+### A FRACTIONAL RATE IS NOT A ROUNDING PROBLEM, AND MUST NEVER BECOME ONE
+
+`0.1667` a turn is far below one whole stone, and there is **no accumulator beside the stock because
+the stock IS the accumulator**: a material is a **continuous** fixed-point quantity (`Scalar`,
+micro-units), not a count of discrete items, so a draw of `0.1667` subtracts exactly `0.1667` and the
+stock crosses whole units by itself. Rounding the per-turn draw would either lose every charge below
+half a unit — a road held for nothing while the wire still reports a bill — or bill a whole stone
+every turn. **The seam is exercised rather than new**: the pen has drawn `0.05`/turn since it shipped.
+
+### ⛔ THE TWO SHORTFALLS COMPOSE AS A MAXIMUM, AND CANNOT DOUBLE-COUNT
+
+`intensification::keeping_shortfall_fraction` takes the **worst** of the work fraction and each
+material's own — never their sum — and `keeping_is_short` trips **one** `neglect_turns` on **one**
+grace. So a road fully staffed with no stone rots at the stone's rate, one with stone and no hands at
+the hands' rate, and one short of both rots **once**, at the worse of the two. Summing would let a
+full store cover a band's missing hands, which is the papering-over §4.9 item 12 forbids. `advance_roads`
+was work-only until this rung declared a rate, which was correct while nothing ate anything and became
+*"a paved road holds for free"* the moment one did.
+
+**And the shortfall must name the right thing.** §2.7: *"you cannot mend a road with no stone, so a
+shortfall message that names the **pool** is wrong advice."* The row publishes both pairs so a client
+can tell them apart — `upkeepDemand − upkeepSupplied` is **short of keepers**, `upkeepMaterialDemand −
+upkeepMaterialSupplied` is **short of stone**, and only one of those two sentences helps at a time.
+
+### ⛔ HOLDING WHAT YOU HAVE OUTRANKS EXPANDING
+
+**A band's standing paved roads take their stone before a new paving build may touch the store.**
+`bill_and_stock_roads` runs `.before(advance_labor_allocation)`; it strikes both of a road's bills and
+spends the standing material, and only then do the builders draw their pile. While the build pile
+settled *inside* the labour pass and the standing rate settled *after* it, the build simply got there
+first — an ordering nobody chose, in which pushing a road out quietly stripped the stone from every
+road the band was already holding.
+
+**Both bills are stamped in one pass, and that is why the DRAW moved rather than the STAMP.** The
+build arm moves a paving road's meter inside the same turn, so a work bill struck on one side of it
+and a material bill on the other are two readings of two different roads, and
+`demand − supplied == shortfall` goes false in whichever lagged. Moving the stamp *earlier* keeps the
+pair together **and** puts the material draw ahead of the build's — and the pre-accrual position is
+the right one anyway: both food webs bill there, and roads were the odd branch out.
+
+**What stays behind is the WORK payment alone**, because that half needs the one thing the early
+pass cannot have — the `roadwork` head count *the shedding order left*. So it runs as
+`settle_bands_roadwork`, called from **inside** `advance_labor_allocation`'s band loop, immediately
+after the shed and before the band's `continue`s — the same seat both food webs settle their keeping
+from.
+
+⛔ **THE PLANT AND ANIMAL WEBS ARE NOT REORDERED.** `settle_material_upkeep` still settles their
+standing materials and the build pile in one call, ranked by the player's own `SourcePriority`. What
+changed is that the **route** branch's standing draw happens before that call rather than after it, so
+a road's keeping outranks a *build* — including a pen's — on any material they share. On the shipped
+roster nothing is shared: a pen eats hurdles and a road eats stone.
+
+**A starved build STALLS, it is not refused.** §2.7's rule holds unchanged: the covered fraction
+scales both the work banked and the stone drawn, so a build the standing roads have left short banks
+proportionally less. A build the store cannot cover *at all* publishes `materials` as its
+`buildBlockedReason` — the rung's own gate is `Open` there, so a surface reading the gate alone would
+show an unexplained freeze.
+
+| | scaled by `keeper_remoteness`? | why |
+|---|---|---|
+| the **work** (`road_rung_span`) | **yes** | a road far from the band that keeps it is dearer to reach and dearer to hold |
+| the **stone** (`build.materials`) | **no** | a tile of road needs the same twenty stone wherever it lies, and remoteness already taxes the getting there |
+
+**The flatness falls out of the draw's own arithmetic, not out of a special case.** The pile is spread
+over the leg's own priced width (`pile × accrual / width`) and a whole climb banks exactly that width,
+so the remoteness in the denominator is cancelled by the remoteness in the work that fills it. A
+remote road therefore draws its stone **more slowly, over more turns**, and swallows the same twenty.
+`head_build_legs` quoting the leg at the *unscaled* span is the one-line mistake that would inflate
+the pile by the remoteness; `labor.rs`'s
+`a_remote_road_costs_more_work_and_exactly_the_same_stone` asserts the leg's width against
+`road_rung_span` directly rather than leaving it to be inferred from a total.
+
+**Drawn as the meter climbs, and decay refunds nothing.** A roadbed a third laid has swallowed seven
+stone; if it then washes out, the stone is gone. That is what makes neglect self-limiting rather than
+a store bleeding for ever. A store with nothing in it at all blocks the head with
+`BuildGate::Materials` — the cause a rung whose *own* gate holds publishes, read off
+`BuildQuote::blocking_gate` and never off the gate directly.
+
+**`stone` has no producer.** It reaches the player through `materials.json`'s `start_stock` alone
+(`12.5` per worker — about ten paved tiles to the shipped band), seeded by worldgen for every material
+that declares one. Quarrying belongs to the minerals arc, issue #583.
 
 ## ⛔ TWO DECAY TRIGGERS, BECAUSE A FREE RUNG CANNOT BE SHORT
 
@@ -579,17 +730,6 @@ banked), and clearing it there would undo the command on the turn it was typed.
 ⛔ **A FIXTURE THEREFORE WRITES THE POSITION BEFORE THE KEEPER.** Seating a keeper first and then
 seating the position hands it straight back, silently.
 
-### ⛔ NO ROUTE RUNG DECLARES A MATERIAL, AND THE REASON IS THAT THE MATERIAL DOES NOT EXIST
-
-§4.13 has the paved road swallowing **stone** on both the pile and the rate. It is not declared,
-because `stone` is not in `materials.json` and the ladder's load-time check rightly rejects a rung
-naming a material the table does not carry.
-
-**Adding a stone with no way to obtain one would be worse than declaring none** — it ships a rung that
-can **never be held**, which is a harder failure than one that is cheap to hold. Quarrying is the
-crafting arc's. When a stone material lands, the rung takes `build.materials {stone: 30}` and
-`upkeep.materials {stone: 0.08}` and nothing else changes.
-
 ## The keeping — the `Roadwork` POOL, and the decay it pays for
 
 ⛔ **THE POOL SURVIVED THE PER-TILE MODEL, AND THIS IS A REVERSAL WORTH READING.** An earlier cut of
@@ -605,17 +745,25 @@ it cultivated, and the per-road choice is exercised with `abandon`.
 
 `LaborTarget::Roadwork` is an ordinary band-wide standing role — `assign_labor <faction> <band>
 roadwork <n>`, published as a `laborAssignments` row with `kind: "roadwork"`, shed by `normalize`,
-checkpointed. Its TOE job is `KitJob::Roadwork` and `default_kits.roadwork` is the bare `none` kit, so
-**road keepers work bare today**.
+checkpointed. Its TOE job is `KitJob::Roadwork`, and `default_kits.roadwork` is the bare `none` kit — but that
+is the **fall-back and no longer the answer**: `roadbuilding` and `paving` both list `roadwork` among
+their jobs, so `keeping_kit_for` derives a real kit **per road, at the rung that road stands on** —
+`roadbuilding` for a dirt road, `paving` for a paved one.
 
 ### ⛔ THE BILL IS STAMPED ON EVERY ROAD, KEEPER OR NOT
 
-`systems::settle_route_keeping` runs in `TurnStage::Population`, `.after(advance_labor_allocation)`
-and `.before(advance_crafting)` — both edges declared — and does two things in order:
+The two halves run in **two** passes, both edges declared — see *"holding what you have outranks
+expanding"* above for why the stamp moved earlier:
 
-1. **stamps the interpolated bill on every road in the registry**, first-write-wins;
-2. **pays**, from every band whose `roadwork` row is staffed, against **the roads it keeps**
-   (`RoadRegistry::kept_by`).
+1. `systems::bill_and_stock_roads`, `.before(advance_labor_allocation)` — **stamps the interpolated
+   bill on every road in the registry**, first-write-wins, and spends the standing material;
+2. `settle_bands_roadwork`, called from **inside** `advance_labor_allocation`'s band loop — **pays
+   the WORK half**, from every band whose `roadwork` row is staffed, against **the roads it keeps**
+   (`RoadRegistry::kept_by`). ⛔ **It is not a system of its own, and that is the fix to a false
+   countdown**: paid from one system later, the build quote read a `Road::upkeep_supplied` still at
+   `0`, pinned the work shortfall at `1.0` and published the FULL rot for a road the player had just
+   funded. It sits before the band's `continue`s so a band that sheds its whole allocation still
+   clears the roll-up rather than republishing a stale bill.
 
 **Step 1 is the load-bearing half, and its scope is the trap.** `Road::keeping_is_met` answers `true`
 for a road with **no stamped bill** — an honest *"it has not been judged this turn"* — so a pass that
@@ -739,10 +887,14 @@ you seen that tile"*. It **fails closed** on an absent faction map.
 | `buildFraction` | the meter on the rung being **raised**, through `routes::road_build_fraction` → `intensification::rung_work_done` / `build_fraction` |
 | `hasKeeper` / `keeperBandId` | **whose job this tile is.** Read the bool first — `0` is a real `BandId`. `false` across the whole free floor, which is the commonest road in the game |
 | `keeperRemoteness` | what distance did to the price, as a multiple — the only way a client can explain a bill larger than the rung says |
-| `upkeepDemand` / `upkeepSupplied` / `upkeepShortfall` / `upkeepWorkersNeeded` | the standing bill, all four off the **stamped** `road_keeping_basis` |
+| `upkeepDemand` / `upkeepSupplied` / `upkeepShortfall` / `upkeepWorkersNeeded` | the standing bill in **work**, all four off the **stamped** `road_keeping_basis` |
+| `upkeepMaterialDemand` / `upkeepMaterialSupplied` | the standing bill in **goods**, off the stamped material basis, on the same `demand − supplied == shortfall` rule. ⛔ **This is the pair that separates *short of stone* from *short of keepers*** — a surface reading only the work pair tells the player to staff `roadwork` for an empty shelf. The noun is `RouteRungState.buildMaterialId`. They do **not** add: the decay rides the worse fraction, never the sum |
 | `hasNeglectGrace` / `neglectGraceRemaining` | the **countdown**, through `routes::road_neglect_grace_remaining` at the at-risk rung |
 | `grantsSight` | the resolved *"is this road lighting its tile"* |
 | `frictionMultiplier` / `holdsLinkToTiles` | what the rung is buying, off the tile's stamped `payoff()` — the first a MEAN along a journey, the second the journey's MINIMUM |
+| `buildTurnsRemaining` | **the chained countdown** — everything above this entry in its band's queue plus its own span, with the two food webs' sentinel vocabulary verbatim (`-1` no estimate, `-2` holds, `-3` rots, `-4` blocked, `-5` not yet estimated, `>= 0` a real count). ⛔ **Only a QUEUED road has a number**; an unordered rung reads `-1`, never `0` |
+| `buildBlockedReason` | **why the pool is stuck on this tile**, `""` when it is not — the same `BuildGate` vocabulary a patch row uses. A road can carry `knowledge`, `owned_by_other` (another band keeps the tile), `no_keeper` (**nobody** does — the tile is going begging, and re-issuing the verb adopts it) and `materials`. ⛔ The first two are **not one cause**: an unkept road reported as another band's sends the player after a rival that does not exist. Read off `BuildQuote::blocking_gate`, never off the rung gate, because a head the store emptied has an **open** rung gate |
+| `buildMaterialDemand` / `buildMaterialSupplied` | this turn's share of the rung's pile and what the stores paid of it — the material twin of the four above, on the same rule: `demand − supplied` is the shortfall, verbatim |
 
 ### ⛔ THE FOUR RULES THE ROW IS WRITTEN UNDER
 
@@ -791,6 +943,7 @@ coded climb has never heard of is in the catalog, and `RungDef::wire_key` /
 | `frictionMultiplier` / `holdsLinkToTiles` | the rung's `route_payoff`, which `validate` requires on every route rung — so the capture `expect`s it exactly as `road_payoff_at` does, rather than publishing a quieter neutral for a config that cannot load |
 | `grantsSight` | **does a road at this rung light its tile while its keeping is met** — `routes::rung_grants_sight`, which asks whether the record declares an `upkeep` |
 | `buildWorkPerWorkerTurn` | **what one bare-handed worker banks in a turn** — `intensification::build_work_per_worker_turn(NO_BUILD_GEAR)`, i.e. `PER_WORKER_OUTPUT` before gear and before any multiplier. The one field that is the **sim's** and not the rung's record |
+| `buildMaterialCost` / `buildMaterialId` | the rung's declared pile **and the material it is counted in**, resolved from one lookup so they cannot disagree. ⛔ **Unlike `workCost` beside it the amount is FLAT** — the tile's own `keeperRemoteness` multiplies the work and not the stone, so the catalog figure is already the whole truth for every tile on the map and a client that scaled it would over-quote every remote road. ⛔ **And they are read as a PAIR**: an amount with no noun cannot be made into a sentence — the row shipped reading *"+ 20 to raise it"* — and the client must not supply `stone` itself, because which material a rung eats is a fact about the config and a transcribed noun is a second authority. One id rather than a `MaterialPayoff` list: one material per rung **is** the model, and a second would make the single-float amount meaningless before the name mattered |
 
 ⛔ **THE REMEDY IS PUBLISHED BECAUSE IT CANNOT BE INFERRED FROM `requiresRung`.** A gate states what a
 player does not yet know; what they *do* about it is stand on the rung that **teaches** that lesson,
@@ -810,10 +963,10 @@ in the world, which is the only one a ladder can quote.
 RATHER THAN THE CONFIG RUNG'S.** Worker output is written as a **sum of terms**
 (`intensification::build_work_per_worker_turn` = `PER_WORKER_OUTPUT` + the kit's addend), so every
 SOURCE row publishes its own resolved rate and its readers are told to *read it, never assume it* — a
-transcribed `1.0` goes stale in silence the day a second bare term lands. A road has no source row at
-all, which is why `buildTurnsRemaining` is a no-op for roads sim-side, so the route ladder's turn
-estimate and its *short N workers* clause had no published rate to divide by and the client held a
-constant instead. The rate is identical for every rung and every road in the world, which is the
+transcribed `1.0` goes stale in silence the day a second bare term lands. A road's own row does not repeat it,
+which is why `buildTurnsRemaining` is a no-op for roads sim-side, so the route ladder's turn estimate
+and its *short N workers* clause had no published rate to divide by and the client held a constant
+instead. The rate is identical for every rung and every road in the world, which is the
 catalog's own definition of what belongs on it; on `RouteState` it would be one copy of one constant
 per road on the map. It is published at `NO_BUILD_GEAR` — bare hands — because gear is the crew's
 fact and the ladder prices a job, not a kit: the client adds the kit's addend itself through
@@ -847,7 +1000,7 @@ figure would not be a catalog fact.
 
 ### The band roll-up — `roadworkDemand` / `roadworkSupplied` / `roadworkShortfall`
 
-On `PopulationCohortState`, summed by `settle_route_keeping` over **the roads the band keeps**.
+On `PopulationCohortState`, summed by `settle_bands_roadwork` over **the roads the band keeps**.
 ⛔ **THE SIM SUMS IT AND A CLIENT MUST NOT** — the identical rule `fodderNeed` is minted under: road
 rows are fog-filtered, so a road out of sight would silently drop out of any client-side total while
 the band certainly still owes its keeping.
@@ -902,8 +1055,10 @@ the `keeping_is_met` filter; and a built road in shortfall carries nothing on ei
 filter is not simply *everything passes*. The road-preferring walk is pinned by seating a road on a
 tile the tie-break would have passed over and asserting the path takes it **at the same length**.
 
-`core_sim/tests/route_traffic.rs` drives the three systems in **stage order** through real turns
-(`balance_supply_networks` + `advance_roads` in Logistics, `settle_route_keeping` in Population): a
+`core_sim/tests/route_traffic.rs` drives the route passes in **stage order** through real turns
+(`balance_supply_networks` + `advance_roads` in Logistics; in Population a local `pay_road_keepers`
+driver calling `settle_bands_roadwork`, **the same function production calls**, so the harness is a
+driver and not a second arithmetic): a
 run of tiles worn in by pooling nobody ordered, the traffic cap, the disuse fade, the friction payoff
 paired against an unrouted run, the off-the-run negative control, the keeping (a road that holds
 beside one that loses its rung, the proportional bleed, the grace, the keeperless road that is finally
@@ -912,7 +1067,7 @@ pruned), the free floor owing nothing beside a dirt road that does, the remote r
 in two phases so *"each pays only for its own"* is measured rather than assumed.
 
 Its fixture turn runs the five passes in stage order — `balance_supply_networks`, `advance_roads`,
-`credit_route_lessons` (Logistics), then `advance_band_movement`, `settle_route_keeping` (Population)
+`credit_route_lessons` (Logistics), then `advance_band_movement` and `pay_road_keepers` (Population)
 — so a **march's one-turn lag is visible rather than papered over**. On top of the above it carries:
 the march banked on the **following** turn and **exactly once** (a third turn standing still moves
 nothing); the reach payoff as a **capability** (two camps 8 tiles apart deliver nothing, and deliver

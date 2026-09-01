@@ -79,6 +79,8 @@ mod tests {
                     build_work_per_worker: 0.0,
                     // ...and names no web, because there is no tool here to serve one.
                     build_work_branch: String::new(),
+                    // ...nor a rung, for the same reason.
+                    build_work_rung: String::new(),
                     // Carrying nothing is a real answer, and an EMPTY vector is how it is said.
                     item_ids: Vec::new(),
                 },

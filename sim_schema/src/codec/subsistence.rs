@@ -332,6 +332,8 @@ fn create_kits<'a>(
         // Which web this kit's build gear serves — `""` for a kit carrying none, which is most of
         // the roster.
         let build_work_branch = builder.create_string(&state.build_work_branch);
+        // Which rung of that web — `""` for a tool bound to none, i.e. all of them.
+        let build_work_rung = builder.create_string(&state.build_work_rung);
         entries.push(fb::KitOption::create(
             builder,
             &fb::KitOptionArgs {
@@ -353,6 +355,7 @@ fn create_kits<'a>(
                 buildRate: state.build_rate,
                 buildWorkPerWorker: state.build_work_per_worker,
                 buildWorkBranch: Some(build_work_branch),
+                buildWorkRung: Some(build_work_rung),
             },
         ));
     }
@@ -993,6 +996,8 @@ fn create_route_rungs<'a>(
         let unlock_knowledge = builder.create_string(&state.unlock_knowledge);
         let requires_rung = builder.create_string(&state.requires_rung);
         let earns_knowledge = builder.create_string(&state.earns_knowledge);
+        // The noun the pile beside it is counted in — `""` for a rung that eats nothing.
+        let build_material_id = builder.create_string(&state.build_material_id);
         entries.push(fb::RouteRungState::create(
             builder,
             &fb::RouteRungStateArgs {
@@ -1009,6 +1014,8 @@ fn create_route_rungs<'a>(
                 grantsSight: state.grants_sight,
                 earnsKnowledge: Some(earns_knowledge),
                 buildWorkPerWorkerTurn: state.build_work_per_worker_turn,
+                buildMaterialCost: state.build_material_cost,
+                buildMaterialId: Some(build_material_id),
             },
         ));
     }

@@ -1796,8 +1796,12 @@ corner.
 
 ### `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
 
-**Appended LAST in `CHAPTERS`**, so no existing frame moves. Four frames and 82 assertions (its
-`EXPECTED_CHECKPOINTS` floor is the measured 86 — frames count too), and **most
+**Appended LAST in `CHAPTERS`**, so no existing frame moves. Seven frames and 89 assertions (its
+`EXPECTED_CHECKPOINTS` floor is the measured **96** — frames count too, so the three launcher-face
+frames the cairn arc appended moved it 75 → 85, and the loaded-world block moved it again to 96;
+the floor is RE-MEASURED, never the old number plus the claims anyone remembers adding, and the
+surplus over that arithmetic is the drift that says why. **Two branches each raising this number is
+a merge conflict whose answer is neither side** — take the measurement of the merged file), and **most
 of it is PNG-less on purpose**: every claim this screen makes renders as a plausible picture whatever
 it says — a pill reading `2`, a greyed row, the clause *"nothing is using it"*, a `3` on the launcher's
 pip — so the derivation is asked of `KnowledgeRoster` directly, with models staged in the chapter, and
@@ -1846,7 +1850,9 @@ is reported distinguishably too: a roster that dropped a track answers `false` t
 of it, and "the node is missing" is not the same failure as "the node says in use".
 
 **Frames:** `knowledge_panel` · `knowledge_panel_untouched` (**the frame this arc is about**) ·
-`knowledge_panel_detail` · `knowledge_panel_filtered`.
+`knowledge_panel_detail` · `knowledge_panel_filtered` · `knowledge_launcher_mark` / `_rail` / `_bar`
+(the launcher's bundled cairn at each of the three action mounts, captured inside the pip block
+because that block is the only one standing a REAL `BandCityPanel` up).
 
 **A clean run is 384 frames / 1710 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
 figure recorded when this chapter landed was 353 / 1405, and the loaded-world block added eleven

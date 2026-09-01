@@ -999,7 +999,8 @@ button entirely.
 width, its height or which dock it is on** — the reserved-edge registry's shape, and its reason:
 
 ```gdscript
-register_action(id: StringName, glyph: String, tooltip: String, enabled: Callable = Callable())
+register_action(id: StringName, glyph: String, tooltip: String, enabled: Callable = Callable(),
+		sprite: Texture2D = null)
 unregister_action(id: StringName)
 refresh_actions()                      # re-ask every predicate
 has_action(id: StringName) -> bool
@@ -1011,6 +1012,15 @@ signal action_invoked(id: StringName)  # THE outbound edge
 - **`enabled`** is a zero-argument `Callable` answering `bool`; an EMPTY one means always enabled. It
   is asked at registration and by `refresh_actions()` — **never during a layout pass**, which is what
   keeps the mount's geometry out of reach of band state.
+- **`sprite`** is bundled ART for the face, or `null`. Where given it REPLACES the glyph — a `Button`
+  carries art on its own `icon` property, so it is art OR glyph, never both — and the `glyph` becomes
+  what renders when the art is absent. It is resolved by the REGISTRANT (the knowledge launcher's
+  cairn comes in as `HudSprites.for_mark(…)`), which keeps it a DECLARED input like `glyph` rather
+  than a lookup the mount rebuild redoes per button, i.e. inside the descriptor contract and not
+  beside it like the pip. An art face is re-padded to `ICON_BUTTON_SPRITE_PADDING` and capped at
+  `ICON_BUTTON_ICON_MAX_WIDTH`, derived from each other so its minimum stays `ICON_BUTTON_SIZE` — see
+  `knowledge-panel.md` → "The face is bundled art" for why the ghost chrome's label padding and
+  `expand_icon` are both wrong on a 24px face.
 - **The row is rebuilt wholesale from `_actions`, never patched**, so registration order is the only
   thing that decides the order on screen.
 - **No orientation argument, ever.** A caller must not know or care which mount is live; adding one
@@ -1038,6 +1048,32 @@ discovery unlocks a verb across the whole map and no band owns it, so there is n
 > unregistering the `⚒` alone and then measuring a bar that was still carrying the `▲`.
 > `_assert_action_registry` reads `_panel._actions.size()` once and states every claim against it, so a
 > third launcher costs that block no edit.
+
+> #### ⛔ AND THEY MUST NOT ASK A BUTTON'S **FACE** WHETHER ITS ACTION IS MOUNTED
+>
+> "retiring every action clears the subject row" tested `not _header_button_glyphs().has(KNOWLEDGE_GLYPH)`
+> — the row's `Button.text` values. A face wearing bundled art carries it on `Button.icon` with `text`
+> left EMPTY, so the day the ▲ became the cairn (issue #581) that half went TRUE on a panel with the
+> launcher still mounted: **the claim passed either way, and so did the "the TOP dock's strip does not
+> move by a pixel" measurement standing on it.** Nothing failed. It is the `_assert_rung_labels_are_hoverable`
+> shape — a guard that walks a REPRESENTATION stops guarding when the representation changes, silently.
+>
+> `_subject_row_carries_action(id)` is the replacement, and it is the same handle the registry itself
+> uses: `_panel._action_buttons.get(id)`, then `_header_full.is_ancestor_of(button)`. The id cannot be
+> repainted, and the ancestry is what keeps the claim about the SUBJECT ROW rather than about the
+> registry — `_action_buttons` holds whichever mount built the button, so on its own it would answer
+> the same on a panel that had merely re-homed the verbs to the bar. **BOTH halves go through it**,
+> the ⚒'s text face included: one mechanism for two actions is what stops the next art face from
+> silently retiring half a claim, and the glyph list stays in the failure message as the diagnostic it
+> always was. Verified live in both directions — leaving `ACTION_KNOWLEDGE` registered fails with
+> `knowledge mounted true, faces ["◀", "▶", "", "", "", "", "", "▾"]` (the `""` IS the bug: the dock
+> chooser's four blank cells wear the same empty face, so even an "is any face empty" test could not
+> have told them apart), and leaving `ACTION_CRAFTING` registered fails with `crafting mounted true`.
+>
+> **The harness re-registers the SHIPPED descriptor, sprite and all.** The block puts both launchers
+> back so later frames run against a full panel; restoring the ▲ from `KNOWLEDGE_GLYPH` alone gave
+> every frame after it a text face the product does not draw, so the restore passes
+> `HudSprites.for_mark(HudKnowledgeVocab.LAUNCH_MARK)` exactly as the panel's own `_build()` registration does.
 
 ### A PIP IS NOT PART OF THE DESCRIPTOR, and the separation is load-bearing
 

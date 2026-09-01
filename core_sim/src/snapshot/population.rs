@@ -800,14 +800,26 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 // `kit_roster_states`, where a unit count is not a fact about the kit at all. This
                 // is a fact about **this band's ledger**, so it is answered only here.
                 //
-                // **At the kit's own branch**, so it caps the worth published beside it; a kit with
-                // no build tool has no branch and saturates nobody.
+                // **WHICH RUNG OF THAT WEB**, `""` when the kit's build tool serves every rung on
+                // its branch — which is every kit but the two road tools. It is the third term of
+                // one reading: a stone-dressing tool is worth its offset on a `pave` and nothing at
+                // all on the `grade` that has to happen first, so a sheet quoting the worth without
+                // this promises an uplift on a job the sim pays nothing for.
+                build_work_rung: tiers
+                    .build_work_rung
+                    .map(|rung| rung.wire_key())
+                    .unwrap_or_default(),
+                // **At the kit's own branch AND rung**, so it caps the worth published beside it; a
+                // kit with no build tool has no branch and saturates nobody.
                 build_work_saturating_crew: tiers
                     .build_work_branch
                     .map(|branch| {
-                        kit_levers
-                            .config
-                            .build_work_saturating_crew(&choice, &kit, branch)
+                        kit_levers.config.build_work_saturating_crew(
+                            &choice,
+                            &kit,
+                            branch,
+                            tiers.build_work_rung.map(|rung| rung.wire_key()).as_deref(),
+                        )
                     })
                     .unwrap_or(crate::equipment_config::NO_SATURATING_CREW),
             })
@@ -1358,7 +1370,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             })
             .collect(),
         // **THE BAND'S ROADWORK BILL** — the summed keeping of the roads under this band's own tile
-        // (route arc rule 2), struck by `settle_route_keeping` off the same stamped basis the
+        // (route arc rule 2), struck by `settle_bands_roadwork` off the same stamped basis the
         // per-road rows publish. **The sim sums it and a client must not**: route rows are
         // fog-filtered, so a road out of sight would silently drop out of a client-side total the
         // band certainly still owes. The shortfall is derived here from the pair, so the identity

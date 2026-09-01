@@ -1591,6 +1591,59 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
     var noun := SourceForecast.MAX_USEFUL_NOUN_ONE if useful == 1 else SourceForecast.MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": SourceForecast.MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
+## **THE ROAD LADDER'S GEAR TERM, ONE ANSWER PER RUNG** — `{rung_key: build_gear}`, which
+## `RungLadder.route_track` looks each row's answer up in.
+##
+## ⛔ **THE KIT IS DERIVED PER RUNG, NOT READ OFF THE `builders` ROW.** The row publishes the kit the
+## sim RESOLVED for whatever is at the head of the queue, which on a card offering four rungs is the
+## answer to at most one of them; `KitRoster.builders_kit_for` is the same three-rule derivation the
+## compose sheets use, so a band whose row says `none` because it has nothing queued is quoted the
+## tool the roster will hand it when the press lands rather than bare hands.
+##
+## **A rung the roster serves with nothing answers `{}`**, which `SourceForecast.build_turns_at`
+## reads as the ungeared case — the honest reading for a branch no tool on this roster helps.
+func _road_ladder_kit_gear(band: Dictionary, ladder: Array[Dictionary]) -> Dictionary:
+    var kits := _band_labor.kits()
+    var row_kit := HudBandLaborState.role_kit_id(band, HudConst.LABOR_KIND_BUILDERS)
+    var head_branch := _band_labor.head_build_branch(band)
+    var head_rung := _band_labor.head_build_rung(band)
+    var by_rung: Dictionary = {}
+    for entry in ladder:
+        var rung_key := HudRouteVocab.catalog_rung_key(entry)
+        if rung_key == "":
+            continue
+        by_rung[rung_key] = KitRoster.build_gear(band,
+            KitRoster.builders_kit_for(kits, row_kit, KitRoster.BUILD_BRANCH_ROUTE,
+                head_branch, rung_key, head_rung),
+            KitRoster.BUILD_BRANCH_ROUTE, rung_key)
+    return by_rung
+
+## **THE GEAR TERM OF THIS SHEET'S BUILD, AT THE KIT THE QUEUE ENTRY IMPLIES** — never at the kit the
+## sheet's own picker is showing.
+##
+## The picker above this control chooses what the TAKE crew carries; what speeds a build is what the
+## BUILDERS carry, and those are two different rows. Both sheets used to pass their own selection —
+## so a Cultivate was priced at the Gathering kit's build axis (nothing at all) and a Tame at
+## whichever hunt kit was picked — which is the whole of §1.2's defect.
+##
+## **The kit is derived per ENTRY, and the entry's web is the sheet's own** (`KitRoster.builders_kit_for`
+## → `equipment.md` → "THE BUILDERS' KIT IS DERIVED PER QUEUE ENTRY"): a patch is a plant build and a
+## herd an animal one, so the sheet knows its branch from the job it composes. `build_gear` then zeroes
+## a row whose branch disagrees, exactly as the sim's own `serves_build` does.
+##
+## ⛔ **THIS SHEET NAMES NO RUNG, AND THAT IS THE CORRECT ASK RATHER THAN A GAP.** Only a road tool
+## binds a rung, and a road has no compose sheet — it is composed on the road ladder, which asks per
+## row. What the HEAD may be is another matter: a road at the head of this band's queue is holding
+## the builders, so its rung is threaded through, and `kit_serves_build`'s unqualified arm keeps a
+## rung-bound tool off this sheet's own estimate either way.
+func _build_gear_for(band: Dictionary, kind: String) -> Dictionary:
+    var branch := KitRoster.build_branch_for_kind(kind)
+    var builders_kit := KitRoster.builders_kit_for(_band_labor.kits(),
+        HudBandLaborState.role_kit_id(band, HudConst.LABOR_KIND_BUILDERS), branch,
+        _band_labor.head_build_branch(band), KitRoster.BUILD_RUNG_ANY,
+        _band_labor.head_build_rung(band))
+    return KitRoster.build_gear(band, builders_kit, branch)
+
 ## **THE IMPROVEMENT CONTROL** (issue #442 §3) — the second axis, in whichever ONE of its states this
 ## source is in. Shared verbatim by both webs: the plant ladder
 ## (Cultivate → Sow) and the animal one (Tame → Corral) get the same control, the same states and the
@@ -1659,25 +1712,6 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
 ## ⛔ **DO NOT GIVE IT A HYPOTHETICAL CREW SLIDER.** With the pool at zero the sim honestly publishes
 ## *no estimate*, and the tempting repair is a proposed crew to re-price it — which is exactly the
 ## per-source build staffing this slice deletes, re-implied by a control.
-## **THE GEAR TERM OF THIS SHEET'S BUILD, AT THE KIT THE QUEUE ENTRY IMPLIES** — never at the kit the
-## sheet's own picker is showing.
-##
-## The picker above this control chooses what the TAKE crew carries; what speeds a build is what the
-## BUILDERS carry, and those are two different rows. Both sheets used to pass their own selection —
-## so a Cultivate was priced at the Gathering kit's build axis (nothing at all) and a Tame at
-## whichever hunt kit was picked — which is the whole of §1.2's defect.
-##
-## **The kit is derived per ENTRY, and the entry's web is the sheet's own** (`KitRoster.builders_kit_for`
-## → `equipment.md` → "THE BUILDERS' KIT IS DERIVED PER QUEUE ENTRY"): a patch is a plant build and a
-## herd an animal one, so the sheet knows its branch from the job it composes. `build_gear` then zeroes
-## a row whose branch disagrees, exactly as the sim's own `serves_branch` does.
-func _build_gear_for(band: Dictionary, kind: String) -> Dictionary:
-    var branch := KitRoster.build_branch_for_kind(kind)
-    var builders_kit := KitRoster.builders_kit_for(_band_labor.kits(),
-        HudBandLaborState.role_kit_id(band, HudConst.LABOR_KIND_BUILDERS), branch,
-        _band_labor.head_build_branch(band))
-    return KitRoster.build_gear(band, builders_kit, branch)
-
 func _build_improvement_control(kind: String, source: Dictionary, prefix: String, floor: float,
         composed: String, band: Dictionary, workers: int, kit_gear: Dictionary,
         works_the_ground: bool, target: VBoxContainer, build_crew: int = 0) -> void:
@@ -4471,14 +4505,17 @@ func _fill_road_ladder() -> void:
     var keeper_label := ""
     if HudRouteVocab.has_keeper(road):
         keeper_label = _band_labor.band_label_for_id(HudRouteVocab.keeper_band_id_of(road))
-    # **THE CREW IS THE ACTING BAND'S `builders` POOL**, pending-aware, and the kit is what that pool
-    # carries for the ROUTE branch — `{}` today, no shipped kit declaring a build tool that serves it,
-    # which prices a road at bare hands and is the truth about the shipped equipment rather than a gap.
+    # **THE CREW IS THE ACTING BAND'S `builders` POOL**, pending-aware, and the gear is what that pool
+    # carries for the ROUTE branch — **resolved PER RUNG**, which is what the road tools made
+    # necessary.
+    #
+    # ⛔ **ONE GEAR TERM FOR THE WHOLE CARD WOULD QUOTE THE PAVING KIT'S `2.0` ON A `grade`.** Both
+    # road tools declare the route branch and each names its own rung, so a card that asked once and
+    # spent the answer on every row would promise an uplift the sim pays on exactly one of them. The
+    # rows are the rungs, so the ask is per rung and `route_track` looks its row's answer up by key.
     var builders := int(_band_labor.effective_role_workers(
         band, HudConst.LABOR_KIND_BUILDERS).get("workers", SourceForecast.BUILD_CREW_NONE))
-    var kit_gear := KitRoster.build_gear(band,
-        HudBandLaborState.role_kit_id(band, HudConst.LABOR_KIND_BUILDERS),
-        KitRoster.BUILD_BRANCH_ROUTE)
+    var kit_gear := _road_ladder_kit_gear(band, ladder)
     # **WHETHER THIS ROAD IS ALREADY ORDERED IS A FACTION QUESTION, not the acting band's** — the
     # same set the tile card's `Road` row joins on, so the card and the ladder cannot disagree about
     # one road while the picker names a band that is not its keeper.

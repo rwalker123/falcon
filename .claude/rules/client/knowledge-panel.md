@@ -302,11 +302,40 @@ axis has collapsed there and the clause would be a lie on the other three.
 
 ## THE LAUNCHER, AND THE PIP THAT IS NOT PART OF THE DESCRIPTOR
 
-A second `register_action` entry beside `ACTION_CRAFTING` — the same `{id, glyph, tooltip, enabled}`
-descriptor, the same `action_invoked` edge, the same three mounts. **The second entry is what proves
-the registry is one**: it took a descriptor and a relay and no geometry at all. `knowledge_requested`
-is its named relay, and unlike the `⚒`'s it resolves NOTHING — knowledge is per-FACTION, so there is
-no subject to look up and no empty-subject case to guard.
+A second `register_action` entry beside `ACTION_CRAFTING` — the same
+`{id, glyph, tooltip, enabled, sprite}` descriptor, the same `action_invoked` edge, the same three
+mounts. **The second entry is what proves the registry is one**: it took a descriptor and a relay and
+no geometry at all. `knowledge_requested` is its named relay, and unlike the `⚒`'s it resolves NOTHING
+— knowledge is per-FACTION, so there is no subject to look up and no empty-subject case to guard.
+
+### THE FACE IS BUNDLED ART, ON THE BUTTON'S OWN `icon` SEAM
+
+The launcher wears the drawn CAIRN (`assets/icons/hud/cairn.png`, resolved by
+`HudSprites.for_mark(HudKnowledgeVocab.LAUNCH_MARK)`), and it wears it as the `Button.icon` PROPERTY,
+never as a child — a `Button` is not a Container, so a child of one lays out by anchors and would draw
+beside the face rather than on it. `ACTION_SPEC_SPRITE` is the descriptor key that carries it, and it
+sits INSIDE the descriptor contract rather than beside it like the pip does: the texture is resolved
+ONCE by the registrant at wiring time, so the mount rebuild copies a value and never performs a
+lookup. Art OR glyph, never both — the sprite branch leaves `text` empty, and `LAUNCH_GLYPH` (`▲`) is
+now the FALLBACK face rather than a placeholder, drawn when `for_mark` returns `null`. The `⚒` passes
+no sprite, which is what makes the parameter an option on the descriptor rather than a new
+requirement.
+
+**`expand_icon` IS OFF here and ON for the compose sheet's quarry picker, and the difference is the
+button's WIDTH.** Godot's expanded-icon layout fits the art into the box left after the stylebox
+padding *and* after a further subtraction of `icon_max_width`; on a row-wide picker that is
+imperceptible, on a 24px face it is a negative number, and the first cut of this rendered the cairn as
+a two-pixel speck. `icon_max_width` alone sizes the art exactly, so nothing is lost by turning
+expansion off.
+
+**An art face is re-padded, because the ghost chrome pads for a LABEL.**
+`HudStyle.BUTTON_PADDING_H/V` are 11 and 9 — a glyph simply overflows that box, an icon does not — so
+`_repad_button_for_sprite` re-asks `HudStyle.button_styleboxes` for the same ghost set and changes
+only the content margins to `ICON_BUTTON_SPRITE_PADDING`. That constant is DERIVED
+(`(ICON_BUTTON_SIZE - ICON_BUTTON_ICON_MAX_WIDTH) / 2`), so an art-bearing action's minimum comes out
+at exactly `ICON_BUTTON_SIZE` and it cannot grow the icon family apart from a glyph one. Verified in a
+frame at all three mounts, the collapsed rail included, in `knowledge_launcher_mark{,_rail,_bar}.png`
+— and with the pip over it, which is the normal case here rather than an edge one.
 
 **The PIP is pushed through its own seam (`set_action_pip`), and that separation is load-bearing.**
 `register_action`'s contract is that a descriptor is DECLARED at wiring time and never a function of
@@ -447,7 +476,9 @@ keeps `_standing_knowledge_row` and `_standing_knowledge_tracks` under separate 
 frame this arc is about** — a faction that knows nothing, every node drawn and greyed, where the old
 faction-page block rendered an empty zone) · `knowledge_panel_detail` (a node selected, the pane's
 three sections, the selection bar) · `knowledge_panel_filtered` (a filter live, so the DIMMING is in a
-frame).
+frame) · `knowledge_launcher_mark` / `_rail` / `_bar` (the CAIRN on the launcher's face, one per action
+mount — subject row, collapsed rail, bar — with the pip over it on the first two, which is the normal
+state for this action rather than an edge one).
 
 ## A world that arrives already knowing things must not announce them
 
