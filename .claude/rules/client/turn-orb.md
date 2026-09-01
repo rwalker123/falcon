@@ -41,8 +41,16 @@ paths:
   knows nothing about producers; it renders a list of generic **Attention** dicts:
   `{kind, severity ("info"|"warn"|"critical" → SIGNAL/WARN/DANGER), label, detail, x, y}` where
   `x < 0` = non-locating (renders `Open ▸`, a no-op stub for now). Kind→icon (in `TurnOrb.gd`):
-  `starving`→🍖, `losing_population`→📉, `idle_workers`→🛠, `awaiting_orders`→▮▮ (read from
-  `FoodIcons.STATUS_ICONS` — the same glyph the Band panel's awaiting row wears), unknown→●.
+  since issue #249 the PICTOGRAPHIC kinds draw bundled art (`starving`, `idle_workers` and
+  `crew_handoff` — the last two share ONE file, both rows being about the HANDS; see
+  `KIND_ICON_SPRITE` below), and what stays in `KIND_ICON` is the SYMBOLIC set plus the art's own
+  fallbacks: `losing_population`→▼ (a falling TREND arrow, the glyph this client already spells a
+  falling value with — it was 📉, a symbolic arrow wearing an emoji codepoint that drew in its own
+  colours where every neighbour takes the row's severity tint), `awaiting_orders`→▮▮ (read from
+  `FoodIcons.STATUS_ICONS` — the same glyph the Band panel's awaiting row wears), `decision`→?,
+  unknown→●. **`starving_pen` is the one PICTOGRAPHIC glyph left in this column** — it borrows
+  `FoodIcons.POLICY_ICONS[POLICY_CORRAL]` (🐄), which is the animal ladder's rung-3 mark and cannot
+  move until that four-mark ladder does (`assets/icons/icon_prompts.txt` → THE #249 GAP LIST).
   Row labels **clip** and `POPOVER_WIDTH` is sized to the widest producer row: a row's inner HBox is
   anchored to its Button (not a container child), so an over-wide label used to spill its `Jump →`
   outside the card instead of widening it. Wiring stays stable via Hud
@@ -235,12 +243,22 @@ on neither.
 ### Its icon is BUNDLED ART, and it is the one row face that is UNTINTED
 
 `KIND_ICON_SPRITE` is a second table beside `KIND_ICON` — kind → mark id, resolved through
-`HudSprites` — and `knowledge_learned` is its only entry. A kind listed there builds a `TextureRect`
+`HudSprites` — and it holds FOUR entries over three files: `knowledge_learned`→`cairn` (#581), then
+`starving`→`starving` and `idle_workers`/`crew_handoff`→`workers` (#249). **The last two share one
+file deliberately**: `KIND_ICON` already spelled both 🛠 because both rows are about the HANDS — one
+says nobody is using them, the other that they have moved to another job — and the art follows the
+MEANING rather than the emoji it replaced. A kind listed there builds a `TextureRect`
 in the row where every other kind builds a `Label`, EXACTLY ONE of which is ever constructed (the
 sprite/label pair `BandCityPanel._apply_stage_visual` uses for its stage tokens); a kind absent from
 it, or one whose art fails to load, takes the Label path unchanged. Deliberately a SECOND table rather
 than a widening of `KIND_ICON`: `_kind_icon` answers in Strings and its callers want a glyph, so
-folding a texture lookup into it would change that contract for one kind's sake.
+folding a texture lookup into it would change that contract for the sprited kinds' sake.
+
+**THIS COLUMN RENDERS AT 30px (`ROW_ICON_SIZE`), which is the largest thing `hud/` draws and is what
+its art must be judged at.** Most of that family is judged at 13px, where PIECE COUNT costs more than
+any single piece's size; here there is room for the interior, and `workers.png` was picked on a
+fingertip profile that would not have survived a row mark. Do not carry a 13px verdict onto this
+surface, or the reverse (`assets/icons/icon_prompts.txt` → `workers.png`).
 
 **The `TextureRect` gets NO `modulate` and no `icon_*_color`, where the Label gets `font_color =
 color`.** A glyph has no colours of its own, so the severity accent is the only thing that can carry

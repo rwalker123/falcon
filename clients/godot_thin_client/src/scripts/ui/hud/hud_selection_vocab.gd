@@ -95,13 +95,13 @@ const ACTIVITY_GLYPHS := {
     "warrior": "🛡",
 }
 
-# Activity → `HudSprites` MARK ID, for the three activities the client ships art for. An activity
+# Activity → `HudSprites` MARK ID, for the four activities the client ships art for. An activity
 # listed here draws a `TextureRect` in place of its `ACTIVITY_GLYPHS` `Label`; one absent from it
 # keeps the glyph, and so does a listed one whose art fails to load.
 #
 # **A SECOND TABLE RATHER THAN A WIDENING OF THE FIRST**, exactly as `TurnOrb.KIND_ICON_SPRITE` is:
 # `_activity_glyph` answers in Strings and its callers want a glyph, so folding a texture lookup
-# into it would change that contract for three activities' sake.
+# into it would change that contract for four activities' sake.
 #
 # **THE IDS ARE THE ACTIVITY'S, NOT THIS SURFACE'S** — `hunt` is the same file the work board's hunt
 # filter chip wears. One activity, one mark, wherever in the HUD it is drawn.

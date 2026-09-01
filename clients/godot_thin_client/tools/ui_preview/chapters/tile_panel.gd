@@ -266,7 +266,8 @@ func _no_flash_tile_fixture(habitability: float, biomass: float) -> Dictionary:
 
 ## THE FLASH GUARD's band: a player band foraging the no-flash hex with `workers` on it at `yield_val`
 ## food/turn, so the drawer renders a standing summary (`♻ N foragers · +X /turn`) and the land row a
-## `N 🌾` staffing meta — both of which must UPDATE in place (not rebuild) when the numbers change.
+## staffing meta — the bare COUNT, with the forage mark its own sibling node since #249 — both of
+## which must UPDATE in place (not rebuild) when the numbers change.
 ## Sustain + `overdraws:false` and no `workers_needed` keep the summary's SHAPE stable across restates
 ## (no warn/overstaff labels appear/disappear), so only values move.
 func _no_flash_band_fixture(workers: int, yield_val: float) -> Dictionary:
@@ -503,8 +504,9 @@ func run(harness) -> void:
 
 	# State 3e-staffed — the SAME hex, with the bison actually being hunted BOTH ways at once: a
 	# standing local hunt (4 workers assigned by Band Fen) and a detached hunting party of 6
-	# committed to the same herd. The wildlife row's meta must read the SUM, `10 🏹`, right-aligned
-	# exactly like the land row's `N 🌾` — one herd, two mechanisms, one staffing number. The drawer
+	# committed to the same herd. The wildlife row's meta must read the SUM — `10`, under the row's
+	# drawn hunt mark — right-aligned exactly like the land row's own count. One herd, two
+	# mechanisms, one staffing number. The drawer
 	# leads with `Size: Big game`, the class that used to ride the row.
 	var hunted_bands: Array = WorldFx.occupied_units_fixture()
 	hunted_bands[0]["labor_assignments"] = [
@@ -583,7 +585,8 @@ func run(harness) -> void:
 	# visible, the drawer must CAP (scrolling internally on the selected band's allocation block),
 	# and the whole card must fit the dock without the dock itself scrolling.
 	# The player faction really IS these three bands here, and the first of them forages this very
-	# hex — so the land row must report the hex's STAFFING (`5 🌾`), not restate the module name the
+	# hex — so the land row must report the hex's STAFFING (the count `5`, beside the row's forage
+	# mark), not restate the module name the
 	# drawer and the sheet header already carry (§20). Leaving `_player_bands` empty made the row
 	# fall back to the module label and ellipsise it, which is the defect, not the fixture's intent.
 	h._hud._band_labor._player_bands = _crowded_bands_fixture()

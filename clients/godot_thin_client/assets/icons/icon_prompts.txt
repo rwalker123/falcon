@@ -35,9 +35,10 @@
 #
 # THE SEVENTH IS `hud/`, AND IT IS COMPLETE FOR WHAT IT SHIPS. A family is a table plus a
 # resolver, and `hud/` has both: `ui/HudSprites.gd` resolves `for_mark(mark_id)` against a
-# table now holding all four committed PNGs — `cairn` (issue #581) and `forage` / `hunt` /
-# `scout` (issue #249). Every path in it has a call site, which is the condition that lets it
-# take `IconSprites.texture_for`'s `warn: true` honestly.
+# table now holding all THIRTEEN committed PNGs — `cairn` (issue #581) and the twelve wired by
+# issue #249 (`forage`, `hunt`, `scout`, `warrior`, `deny`, `trade`, `workers`, `starving`,
+# `children`, `working_age`, `elders`, `kit_fallback`). Every path in it has a call site, which
+# is the condition that lets it take `IconSprites.texture_for`'s `warn: true` honestly.
 # The HUD / ACTIVITY MARKS block at the BOTTOM of this file holds their prompts and the
 # reasoning behind each subject, which is the expensive part and is settled; do not re-derive
 # it. Read its own preamble before generating one.
@@ -1261,22 +1262,29 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 # HUD / ACTIVITY MARKS  ->  assets/icons/hud/   (ui/HudSprites.gd)
 # ============================================================================
 #
-# ALL THIRTEEN MARKS EXIST AND ALL THIRTEEN ARE WIRED — this directory is COMPLETE, and the HUD has
-# no pictographic emoji left on any surface `hud/` covers.
+# ALL THIRTEEN MARKS EXIST AND ALL THIRTEEN ARE WIRED — every mark this directory SHIPS has a call
+# site, which is the completeness claim `warn: true` rests on. It is NOT the claim that the HUD has
+# run out of pictographic emoji: ⛔ the turn orb's STARVING-PEN row still draws the 🐄 text glyph
+# (`TurnOrb.KIND_ICON[KIND_STARVING_PEN]` = `FoodIcons.POLICY_ICONS[POLICY_CORRAL]`), in the very
+# same row column that `cairn` / `workers` / `starving` draw art into. It is held by the ladder
+# vocabulary question in THE #249 GAP LIST at the end of this file, not by a missing file.
 # `assets/icons/hud/{cairn,forage,hunt,scout,warrior,deny,trade,workers,starving,children,
 # working_age,elders,kit_fallback}.png` are keyed, imported, committed and listed in
 # `ui/HudSprites.gd`, this directory's lookup script. The cairn came first (#581) on the two
 # surfaces that need different mechanisms — a `Button.icon` on the action-bar launcher, a
-# `TextureRect` swapped for a `Label` on the turn orb's row — and #249 wired the other twelve on
-# both of those same two mechanisms and nothing new:
+# `TextureRect` swapped for a `Label` on the turn orb's row — and #249 wired the other twelve
+# across THREE host mechanisms in all, the third being `HudWidgets.build_marker_icon`:
 #
 #   `Button.icon`      the work board's forage and hunt FILTER CHIPS; the compose sheet's KIT
 #                      PICKER face (an `OptionButton`, whose `icon` is free — its dropdown chevron
-#                      is the separate `arrow` THEME item, not the icon property); and the parties
-#                      footer's five MISSION LAUNCH buttons
-#   `TextureRect`      the subject list's trailing ACTIVITY MARK, on all three row kinds
-#                      (a band's activity, a hex's foragers, a herd's hunters); the turn orb's
-#                      attention rows; and the PEOPLE composition key's three age brackets
+#                      is the separate `arrow` THEME item, not the icon property); and FOUR of the
+#                      parties footer's five MISSION LAUNCH buttons — `⌂ Split` keeps its symbolic
+#                      glyph (`HudComposeVocab.MISSION_MARKS` has four entries), so that grid reads
+#                      four drawn marks and one glyph
+#   `TextureRect`      built by `HudWidgets.build_marker_icon`: the subject list's trailing
+#                      ACTIVITY MARK, on all three row kinds (a band's activity, a hex's foragers,
+#                      a herd's hunters); the turn orb's attention rows; and the PEOPLE composition
+#                      key's three age brackets
 #
 # **ONE FILE SERVES EVERY SURFACE THAT MEANS THE SAME THING**, which is what the id being the
 # ACTIVITY buys: `hunt.png` is the roster's herd row, the work board's hunt chip, the kit picker's
@@ -1291,7 +1299,7 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 # predicted every outcome in this batch: forage 32% read instantly; hunt survives at 6.8% only
 # because its ink is ONE continuous bar; scout v1 at 7.7-10% did not survive at all. The
 # cheapest test there is: key it, resize to 13x13, and composite it on #111A1E.
-# THE DIRECTORY IS `hud/`, AND ALL FOUR SHARE IT. The cairn briefly had an `ui/` of its own —
+# THE DIRECTORY IS `hud/`, AND ALL THIRTEEN SHARE IT. The cairn briefly had an `ui/` of its own —
 # #581 says only "beside `stages/` and `fauna/`" — and it was folded in here rather than left
 # as a second one-file directory. One home for every mark drawn against the dark HUD panel is
 # also what makes the sub-style below a property of the DIRECTORY rather than a coincidence:
@@ -1527,6 +1535,13 @@ scout: Flat vector interface mark of two bare human footprints in the dirt, one 
 #                                                                            VOCABULARY decision
 #                                                                            before it is an art
 #                                                                            one. Unchanged.
+#                           ⛔ 🐄 IS NOT ONLY A LADDER MARK. It is also
+#                           `TurnOrb.KIND_ICON[KIND_STARVING_PEN]`, so it renders as text in the
+#                           orb's attention-row COLUMN, beside the drawn `cairn` / `workers` /
+#                           `starving`. That surface is already wired for art-or-glyph; what is
+#                           missing is the file, and it stays missing while the ladder's
+#                           vocabulary question above is open — the same mark cannot be drawn on
+#                           the orb and spelled 🐄 one row down the ladder.
 #
 # NOT ON THE LIST, AND EACH FOR A STATED REASON:
 #

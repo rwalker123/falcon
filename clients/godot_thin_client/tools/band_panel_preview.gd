@@ -13679,11 +13679,17 @@ func _kit_hunt_forecast(quarry: Dictionary, dispersion: float) -> Dictionary:
 ## dropped the glyph while never setting the icon would render the job namelessly and fail the icon.
 ## Checking only the text would pass on exactly that second bug.
 ##
-## The glyph branch survives for `KIT_JOB_GLYPH_FALLBACK`'s case — a job the client's table has never
-## heard of — which is the one face still guaranteed to be text.
+## ⛔ **THE MARK IS RESOLVED EXACTLY AS `KitRoster.build_kit_row` RESOLVES IT, fallback and all.**
+## A job absent from `KIT_JOB_MARKS` still draws art — `KIT_JOB_MARK_FALLBACK`'s satchel — so a
+## harness that resolved the id without that default would take the glyph branch and assert a face
+## the picker never renders: a FALSE failure on a job the client simply has not heard of.
+##
+## With `kit_fallback.png` shipped, NO job reaches the glyph face any more; the branch below survives
+## only for a failed LOAD, which `HudSprites`' `warn: true` would already be shouting about.
 func _assert_kit_picker_face(picker: OptionButton, job: String, kit_name: String,
 		label: String) -> void:
-	var sprite := HudSprites.for_mark(String(HudComposeVocab.KIT_JOB_MARKS.get(job, "")))
+	var sprite := HudSprites.for_mark(String(HudComposeVocab.KIT_JOB_MARKS.get(job,
+		HudComposeVocab.KIT_JOB_MARK_FALLBACK)))
 	if sprite != null:
 		_assert_band_panel(label,
 			picker.text == HudComposeVocab.KIT_PICKER_FACE_FORMAT_SPRITE % kit_name

@@ -1085,8 +1085,9 @@ const COMPOSE_MISSION_TRADE := "trade"
 const COMPOSE_MISSION_LABEL_TRADE := "📦 Trade"
 
 ## Mission → `HudSprites` MARK ID, for the launch buttons whose glyph is PICTOGRAPHIC (issue #249).
-## A mission listed here puts its mark on the `Button`'s own `icon` property and drops the leading
-## glyph from its label (`COMPOSE_MISSION_LABEL_*_SPRITE`); one absent from it keeps the glyph.
+## A mission listed here puts its mark on the `Button`'s own `icon` property and takes its label from
+## `MISSION_LABELS_SPRITE` below, the verb without the leading glyph; one absent from it keeps its
+## `COMPOSE_MISSION_LABEL_*` glyph face.
 ##
 ## **THE IDS ARE THE ACTIVITY'S AGAIN** — `hunt` is the file the roster row, the work board's filter
 ## chip and the kit picker all draw, so a hunting party is marked the same way wherever it is spoken

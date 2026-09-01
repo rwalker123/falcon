@@ -415,9 +415,11 @@ func _land_row_meta(tile_info: Dictionary) -> String:
 	# Gated on the module KEY, never on its label: a tile with no module still ships the label
 	# `"None"`, which would render as a source called "None" instead of the honest "No forage".
 	if workers > 0 or DetailFormat.tile_is_gathering_site(tile_info):
-		# An UNWORKED patch reads `0 🌾`, not its module label. The row already LEADS with that
-		# module's own glyph, so the label restated it — and at dock width the row was the ONE
-		# place the name truncated (`Savanna Gras…`) while the drawer's `Forage:` row and the
+		# An UNWORKED patch states the ZERO — a bare `0` under the row's trailing forage mark —
+		# rather than its module label. (The count and the mark are two nodes since issue #249;
+		# `HudSelectionVocab.LAND_META_WORKERS_FORMAT` records why.) The row already LEADS with
+		# that module's own glyph, so the label restated it — and at dock width the row was the
+		# ONE place the name truncated (`Savanna Gras…`) while the drawer's `Forage:` row and the
 		# compose sheet's header both printed it whole. The zero form is parallel to the staffed
 		# one, so "nobody is working this" reads at a glance instead of needing a comparison.
 		return HudSelectionVocab.LAND_META_WORKERS_FORMAT % workers
@@ -592,10 +594,12 @@ func _update_herd_row(button: Button, herd: Dictionary) -> void:
 	button.tooltip_text = label
 
 ## The herd row's meta — the deliberate twin of `_land_row_meta`'s rule: a workable source states
-## its staffing, anything else states nothing. A huntable herd with nobody on it reads `0 🏹`,
-## parallel to the staffed form (and to the land row's `0 🌾`), so "nobody is working this" reads at
-## a glance. A NON-huntable herd is not a source at all, so it earns no meta — exactly as a
-## module-less tile earns no worker meta.
+## its staffing, anything else states nothing. A huntable herd with nobody on it states the ZERO,
+## parallel to the staffed form (and to the land row's own zero), so "nobody is working this" reads
+## at a glance. The meta is the COUNT ALONE since issue #249 — the hunt mark is the row's own
+## trailing node, not part of this string — so the row reads `0` under a drawn bow. A NON-huntable
+## herd is not a source at all, so it earns no meta — exactly as a module-less tile earns no worker
+## meta.
 func _herd_row_meta(herd: Dictionary) -> String:
 	var herd_id := String(herd.get("id", "")).strip_edges()
 	var workers := _hunt_workers_on_herd(herd_id)
@@ -681,8 +685,9 @@ func _make_roster_row(selected: bool, dot_color: Color) -> HBoxContainer:
 ## activity mark — a different question in a different place, and folding them would make one meta
 ## key mean two things.
 ##
-## **`glyph_label` IS A `Control` TOO SINCE ISSUE #249** — it holds bundled art for forage / hunt /
-## scout and a glyph `Label` for the two activities without any, so it crosses the same art⇄glyph
+## **`glyph_label` IS A `Control` TOO SINCE ISSUE #249** — it holds bundled art for every activity in
+## `HudSelectionVocab.ACTIVITY_MARKS` (forage / hunt / scout / warrior) and a glyph `Label` for
+## `idle`, the one activity #249's rule leaves as text permanently, so it crosses the same art⇄glyph
 ## line the `icon` slot does and is patched by the same node-swapping rule (`_set_row_activity_mark`).
 ## The name is kept because every `get_meta` reader and both harnesses address it by that key.
 func _store_row_refs(button: Button, row: HBoxContainer, name_label: Label, meta_label, glyph_label,
@@ -825,10 +830,17 @@ func _roster_meta_label(text: String) -> Label:
 ## dim/faint colour it has always had, while the art is drawn untinted — it is authored in two flat
 ## pale tones whose fill IS the silhouette, and a tint flattens them into one.
 ##
-## **AN EMPTY ACTIVITY STILL GETS A NODE, at a zero box so it costs the row no width.** A land row
-## can BECOME a gathering site and a herd can become huntable between restates, and these rows are
-## patched rather than rebuilt — so a slot created only where a mark was wanted could never be filled
-## in later. The zero-width empty `Label` is what lets `_set_row_activity_mark` swap art into it.
+## **AN EMPTY ACTIVITY STILL GETS A NODE, at a zero box so it costs the row no width.** The LAND row
+## (key `["land"]`) can BECOME a gathering site between restates and is PATCHED rather than rebuilt
+## across that flip — so a slot created only where a mark was wanted could never be filled in later.
+## The zero-width empty `Label` is what lets `_set_row_activity_mark` swap art into it.
+##
+## **THE HERD ROW IS NOT THE SAME CASE: its huntability rides its ROW KEY** — `_subject_row_descriptors`
+## keys a herd `["herd", id, _herd_row_meta(h) != ""]` — so a herd that becomes huntable changes key
+## and the list REBUILDS that row (`_update_herd_row` states the same thing from the patch side).
+## ⛔ A future change must not drop that flag from the key on the grounds that the mark can be patched
+## in: it can, but the COUNT cannot. `meta_label` is stashed only when the meta existed at build
+## time, so a newly-huntable herd would draw the hunt mark with no number beside it.
 func _roster_activity_mark(activity: String) -> Control:
 	var key := activity.strip_edges().to_lower()
 	if key == "":
@@ -848,12 +860,17 @@ func _activity_mark_ink(activity: String) -> Color:
 ## Patch a row's activity mark in place — and REPLACE the node when the art⇄glyph kind flips.
 ##
 ## **THIS IS `_set_row_icon`'S TRAP, ONE SLOT OVER, and a row crosses the line by doing its job**:
-## the mark is a `TextureRect` while a band forages and a glyph `Label` the turn its people take up
-## arms, because `warrior` has no art — and it is an empty `Label` on a hex nobody can gather from
-## until the moment somebody can. Writing `.text` to a `TextureRect` is a SILENT no-op, so a patch
-## that only wrote to the existing node would leave a foraging sprig beside a band now standing
-## guard, which is the exact staleness this whole in-place path exists to avoid. Same kind ⇒ patch
-## the properties; different kind ⇒ swap the node at its own index and re-stash it.
+## the mark is a `TextureRect` while a band forages and a glyph `Label` the turn its crew goes IDLE
+## — and it is an empty `Label` on a hex nobody can gather from until the moment somebody can.
+## Writing `.text` to a `TextureRect` is a SILENT no-op, so a patch that only wrote to the existing
+## node would leave a foraging sprig beside a band with nobody working, which is the exact staleness
+## this whole in-place path exists to avoid. Same kind ⇒ patch the properties; different kind ⇒ swap
+## the node at its own index and re-stash it.
+##
+## ⛔ **`idle` IS WHY THIS FLIP IS PERMANENT, and it is the anchor the harness asserts on.** It is
+## `·`, a tinted symbolic glyph that #249's rule leaves as text for good, so the art⇄glyph line stays
+## crossable no matter how much art ships. Anchoring the reasoning on an art-PENDING activity does
+## not survive: `warrior` was that anchor until `warrior.png` shipped and joined `ACTIVITY_MARKS`.
 func _set_row_activity_mark(button: Button, activity: String) -> void:
 	if not button.has_meta("glyph_label"):
 		return

@@ -313,14 +313,29 @@ left a drawn sprig beside an emoji bow two rows under it, which is the *half a s
 
 **THE PATCH PATH OWES THE SAME NODE SWAP, and a row crosses the line by doing its job.**
 `_set_row_activity_mark` is `_set_row_icon`'s twin: the mark is a `TextureRect` while a band forages
-and a glyph `Label` the turn its people take up arms, `warrior` having no art. Writing `.text` to a
-`TextureRect` is a silent no-op, so same kind ⇒ patch the property, different kind ⇒ swap the node at
-its own index and re-stash it.
+and a glyph `Label` the turn its crew goes IDLE. Writing `.text` to a `TextureRect` is a silent
+no-op, so same kind ⇒ patch the property, different kind ⇒ swap the node at its own index and
+re-stash it.
 
-**AN EMPTY ACTIVITY STILL GETS A NODE, at a zero box.** A hex can BECOME a gathering site and a herd
-can become huntable between restates, and these rows are patched rather than rebuilt — so a slot
-created only where a mark was wanted could never be filled in later. The zero-width empty `Label` is
-what the swap has to work with, and it costs the row nothing while it is empty. **The box travels with
+⛔ **`idle` IS THE ANCHOR, AND IT IS THE ONLY PERMANENT ONE.** It is `·`, a tinted symbolic glyph
+that #249's rule keeps as text forever, so the flip stays reachable for good — every other activity
+in `ACTIVITY_MARKS` is drawn. This was first written against `warrior` as "the activity with no
+art", and `ui_preview`'s assertion built on that anchor FAILED the moment `warrior.png` shipped
+later in the same branch. An art-pending activity is a moving anchor; do not re-anchor on one.
+
+**AN EMPTY ACTIVITY STILL GETS A NODE, at a zero box.** A hex can BECOME a gathering site between
+restates while its row is PATCHED rather than rebuilt — the land row's key is `["land"]` and carries
+no such flag — so a slot created only where a mark was wanted could never be filled in later. The
+zero-width empty `Label` is what the swap has to work with, and it costs the row nothing while it is
+empty.
+
+⛔ **THE HERD ROW IS NOT THE SAME CASE, and the difference is its ROW KEY.** A herd's huntability
+rides that key (`["herd", id, _herd_row_meta(h) != ""]`), so a herd becoming huntable is a
+STRUCTURAL change that REBUILDS the list rather than patching it — `_update_herd_row`'s own doc says
+as much. The always-present node still earns its place there (one builder, one shape for all three
+row kinds), but do not read this paragraph as licence to drop that flag from the herd key: without
+it a newly-huntable herd would patch in the drawn hunt mark and show NO count, `meta_label` being
+stashed only when it existed at build time. **The box travels with
 the text on the patch path** for the mirror reason: an activity that goes away must give its width
 back, or an unstaffed row keeps a mark-sized hole.
 

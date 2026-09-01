@@ -505,7 +505,9 @@ stretch, and widening it into that gap would put it over a live HUD column.
   acts on. `HudFormat.dependency_tooltip` is deliberately SHORT: what a dependent is (children and elders, who
   eat but cannot be put to work), how many adults carry them, and — only when heavy — "More mouths
   than hands."
-  **The top-bar strip no longer carries a dependency figure at all** (`Pop 30 👶9 🛠16 🧓5`): it is
+  **The top-bar strip no longer carries a dependency figure at all** (`Pop 30` + a per-bracket count
+  each side of its own mark — the three emoji that sketch used to spell are bundled art since issue
+  #249, `HudWorkVocab.PEOPLE_MARKS`, at a declared 18px box): it is
   the FACTION total across every band, and dependents are fed per BAND — a band in trouble is in
   trouble whatever the faction average says, and a healthy average hides it. `_dependency_color` went
   with it.
@@ -674,7 +676,11 @@ stretch, and widening it into that gap would put it over a live HUD column.
   `PARTIES_INSPECTOR_LINE_SEPARATION` to keep row + strip + pinned footer inside the height-capped T/B
   zone. **That box is ~300px and it CLIPS, so the strip's height is a budget and both halves of it have
   now been spent** — see "The parties strip's SEVEN lines" below.
-  The footer offers the two missions **DIRECTLY** — `⚑ Scout` and `🏹 Hunt`, side by side —
+  The footer offers the two missions **DIRECTLY** — Scout and Hunt, side by side —
+  (⚠ **the glyph-prefixed faces this file spells throughout — `⚑ Scout`, `🏹 Hunt`, `💀 Deny`,
+  `📦 Trade` — are NAMES for those buttons, not what they render.** Since issue #249 four of the five
+  carry a 16px `Button.icon` and a bare verb; only `⌂ Split` is still a glyph-prefixed string. Read
+  them as labels here, and measure the shipped face before re-deriving any width from one) —
   and **both stay VISIBLE and DISABLED with their reason when idle == 0** (the section vanishing is
   what made expeditions look removed from the game). Pressing one swaps in the **compose sheet already
   on that mission**, titled `Setup a scouting/hunting party…`, with the `✕` as the only way back. The
@@ -2633,10 +2639,18 @@ card now reads
 ```
 Scout                                      Warrior
       [−]  1  [+]                                [−]  0  [+]
-[🧭 Wayfinding kit  ⌄]                     [🪓 Warrior kit  ⌄]
+[▩ Wayfinding kit  ⌄]                      [▩ Warrior kit  ⌄]
 2-tile sight per vantage · Wayfinding 66   attack 6 defending the camp · Clubs 22
 Posts scouts that see around …             Guards the band — matters once …
 ```
+
+**`▩` IN THAT SKETCH IS BUNDLED ART, NOT A GLYPH** (issue #249). The job mark rides the
+`OptionButton`'s own `icon` property — free on that widget, its dropdown chevron being the separate
+`arrow` THEME item — and the face carries the kit's NAME alone. All four jobs have art
+(`HudComposeVocab.KIT_JOB_MARKS`) and a job the table has never heard of draws
+`KIT_JOB_MARK_FALLBACK`, so no face here is a glyph except on a failed load. The mark is the
+ACTIVITY's, shared with the roster row and the mission button for the same job — the compass and axe
+this sketch used to draw were that job spelled a second way.
 
 **THE CONTROLS LEAD AND THE PROSE TRAILS, and the gear line is the PICKER's help text.** A card is
 read every turn and acted on with two controls; the description is what a player reads ONCE, to learn
@@ -5781,9 +5795,17 @@ verbs follow. What bounds a shipment is the meter, not a head count.
 
 ### THE FIFTH BUTTON MADE THE FOOTER A GRID
 
-Four launch buttons fit a 354px column at ~62px each; a fifth takes them to ~48, which `📦 Trade`
-does not fit — and the zone `clip_contents`, so what shipped for one render was a button **sliced off
-the edge** rather than a narrower row. The footer is a `GridContainer` at
+Four launch buttons fit a 354px column at ~62px each; a fifth takes them to ~48, which the Trade
+button did not fit — and the zone `clip_contents`, so what shipped for one render was a button
+**sliced off the edge** rather than a narrower row.
+
+> ⚠ **THE FACE THIS WAS MEASURED AGAINST NO LONGER RENDERS, so re-measure before re-deriving it.**
+> The figure above was taken when the face was the string `📦 Trade` — a glyph welded into the
+> label. Since issue #249 four of the five faces are a 16px `Button.icon`
+> (`HudComposeVocab.MISSION_ICON_MAX_WIDTH`) plus a bare verb, and only `⌂ Split` is still a
+> glyph-prefixed string. The GRID stands either way and nothing here has been re-fitted; what is
+> stale is the WIDTH EVIDENCE, so anyone revisiting `PARTY_FOOTER_COLUMNS` must measure the shipped
+> icon-plus-word face rather than trusting the number above. The footer is a `GridContainer` at
 `HudComposeVocab.PARTY_FOOTER_COLUMNS` (3) now, wrapping 3 + 2 — the treatment `build_floor_picker`
 already gives its six rungs. The second row costs the footer one row of height, which the parties
 LIST above it gives up (it is the `EXPAND_FILL` child).

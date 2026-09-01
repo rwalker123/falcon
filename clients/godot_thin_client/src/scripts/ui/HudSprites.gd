@@ -2,8 +2,10 @@ extends RefCounted
 class_name HudSprites
 
 ## Bundled PNG art for HUD MARKS — the sprite half of the text glyphs the HUD's own chrome wears:
-## the knowledge screen's launcher (`HudKnowledgeVocab.LAUNCH_MARK`) and the three ACTIVITY marks the
-## work board's filter chips and the roster's band rows wear (`HudWorkVocab` / `HudSelectionVocab`).
+## the knowledge screen's launcher (`HudKnowledgeVocab.LAUNCH_MARK`), the four ACTIVITY marks the work
+## board's filter chips and the roster's rows wear (`HudWorkVocab` / `HudSelectionVocab`), the mission
+## grid's launch faces and the kit picker's (`HudComposeVocab`), and the turn orb's attention rows and
+## the PEOPLE composition key (`TurnOrb` / `HudWorkVocab`).
 ##
 ## HOW THIS FAMILY DIFFERS from the map-marker families (`FaunaSprites`/`SiteSprites`/
 ## `WonderSprites`/`StageSprites`): those draw over the MAP, at marker size, in whatever colours the
@@ -12,10 +14,18 @@ class_name HudSprites
 ## the map's, so the art takes the `crops/` sub-style (no outline, front-on, pale fill on near-black)
 ## and `assets/icons/icon_prompts.txt` documents it per DIRECTORY: everything in `hud/` takes it.
 ##
-## **THE TABLE NOW CARRIES ALL FOUR MARKS `assets/icons/hud/` SHIPS** — the `cairn` of issue #581,
-## and `forage` / `hunt` / `scout` wired by issue #249. It held the cairn alone while the other three
-## had no call site, because a path nothing loads is dead data rather than coverage; giving them
-## call sites is what let them in.
+## **THE TABLE CARRIES ALL THIRTEEN MARKS `assets/icons/hud/` SHIPS** — the `cairn` of issue #581,
+## and the twelve wired by issue #249: `forage` / `hunt` / `scout` / `warrior` (activities and kit
+## faces), `deny` / `trade` (mission launches), `workers` / `starving` (turn-orb rows), `children` /
+## `working_age` / `elders` (the PEOPLE key) and `kit_fallback`. It held the cairn alone while the
+## rest had no call site, because a path nothing loads is dead data rather than coverage; giving
+## them call sites is what let them in.
+##
+## **THREE HOST MECHANISMS, and a mark is written for whichever it lands on.** `Button.icon` carries
+## the work board's filter chips, the kit picker's `OptionButton` face and the mission-launch
+## buttons; `HudWidgets.build_marker_icon` builds a `TextureRect` for the subject list's trailing
+## activity mark, the turn orb's attention rows and the PEOPLE composition key. Same files, same
+## sub-style, either way.
 ##
 ## **THE MARK ID IS THE ACTIVITY, NOT THE SURFACE, and that is why `hunt` is one entry rather than
 ## two.** It replaces `FoodIcons.HUNT` (the work board's filter chip) and the roster's activity glyph
@@ -48,9 +58,9 @@ const SPRITE_PATHS := {
 ## contract every other art family has with its emoji.
 ##
 ## Takes `IconSprites.texture_for`'s DEFAULT `warn: true`: this family's coverage is complete for
-## what it declares — every key here has a committed, imported PNG behind it — so a failed load is a
-## DEFECT and must surface. (Contrast `FloraSprites`, the one family that passes `false` because a
-## species without art is its expected state.)
+## what it declares — all THIRTEEN keys above have a committed, imported PNG behind them — so a
+## failed load is a DEFECT and must surface. (Contrast `FloraSprites`, the one family that passes
+## `false` because a species without art is its expected state.)
 static func for_mark(mark_id: String) -> Texture2D:
 	if mark_id == "" or not SPRITE_PATHS.has(mark_id):
 		return null
