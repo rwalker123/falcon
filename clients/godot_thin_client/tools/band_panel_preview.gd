@@ -6325,10 +6325,15 @@ func _assert_action_registry() -> void:
 	_panel.unregister_action(BandCityPanel.ACTION_KNOWLEDGE)
 	await _settle()
 	var horizontal_strip_bare := _panel.current_reservation_size()
-	# VACUITY for it: BOTH glyphs really did leave the row, so "unchanged" is not "nothing happened".
-	_assert_band_panel("retiring every action clears the subject row (%s)" % [_header_button_glyphs()],
-		not _header_button_glyphs().has(BandCityPanel.CRAFTING_GLYPH)
-			and not _header_button_glyphs().has(BandCityPanel.KNOWLEDGE_GLYPH))
+	# VACUITY for it: BOTH launchers really did leave the row, so "unchanged" is not "nothing happened".
+	# Asked of the REGISTRY for BOTH halves — see `_subject_row_carries_action` for why the ▲'s half
+	# was vacuous the moment its face became art, and why the ⚒'s text face does not earn a second
+	# mechanism here. The faces are still printed, as the diagnostic they are.
+	_assert_band_panel("retiring every action clears the subject row (crafting mounted %s, knowledge mounted %s, faces %s)"
+		% [_subject_row_carries_action(BandCityPanel.ACTION_CRAFTING),
+			_subject_row_carries_action(BandCityPanel.ACTION_KNOWLEDGE), _header_button_glyphs()],
+		not _subject_row_carries_action(BandCityPanel.ACTION_CRAFTING)
+			and not _subject_row_carries_action(BandCityPanel.ACTION_KNOWLEDGE))
 	_assert_band_panel("…and the TOP dock's strip does not move by a pixel (%.0f -> %.0fpx) — the registry costs a horizontal dock NOTHING"
 		% [horizontal_strip_with_actions, horizontal_strip_bare],
 		absf(horizontal_strip_with_actions - horizontal_strip_bare) <= ACTION_BAR_MEASURE_TOLERANCE)
@@ -6354,11 +6359,14 @@ func _assert_action_registry() -> void:
 
 	# Put BOTH shipped registrations back, so nothing after this runs against a panel missing a
 	# launcher — and assert the RE-HOME the other way, the glyphs landing back on the bar the vertical
-	# dock mounts on.
+	# dock mounts on. **THE SPRITE IS PART OF THE SHIPPED DESCRIPTOR AND IS RESTORED WITH IT**: the
+	# panel registers the ▲ with the cairn art (issue #581), so dropping the argument here would hand
+	# every frame after this block a text face the product does not draw.
 	_panel.register_action(BandCityPanel.ACTION_CRAFTING, BandCityPanel.CRAFTING_GLYPH,
 		BandCityPanel.CRAFTING_TOOLTIP)
 	_panel.register_action(BandCityPanel.ACTION_KNOWLEDGE, BandCityPanel.KNOWLEDGE_GLYPH,
-		BandCityPanel.KNOWLEDGE_TOOLTIP)
+		BandCityPanel.KNOWLEDGE_TOOLTIP, Callable(),
+		HudSprites.for_mark(HudKnowledgeVocab.LAUNCH_MARK))
 	await _settle()
 	_assert_action_mount_pairing("re-docking TOP -> LEFT", BandCityPanel.ACTION_MOUNT_BAR)
 
@@ -6627,6 +6635,20 @@ func _header_button_glyphs() -> Array[String]:
 	for node in buttons:
 		glyphs.append((node as Button).text)
 	return glyphs
+
+## Does the SUBJECT ROW carry the action `id`'s live button? Answered off the REGISTRY the mount
+## rebuild fills (`_action_buttons`, keyed by id) and then by ANCESTRY, never off the button's face.
+##
+## **A FACE TEST SELF-HEALS INTO VACUITY, and it did.** `_header_button_glyphs()` reads `Button.text`,
+## and an action wearing bundled art carries its face on `Button.icon` with `text` left EMPTY — so the
+## day the ▲ became the cairn (issue #581), "the ▲ is not among the row's glyphs" started answering
+## TRUE on a panel that still had the launcher mounted, and the retirement claim below stopped
+## guarding without failing once. The id is the one handle that cannot be repainted.
+func _subject_row_carries_action(id: StringName) -> bool:
+	var button_variant: Variant = _panel._action_buttons.get(id)
+	if not (button_variant is Button):
+		return false
+	return _panel._header_full.is_ancestor_of(button_variant as Button)
 
 ## Every glyph on the ACTION BAR's own row — the other half of every pairing claim.
 func _bar_button_glyphs() -> Array[String]:

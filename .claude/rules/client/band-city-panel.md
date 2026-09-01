@@ -1049,6 +1049,32 @@ discovery unlocks a verb across the whole map and no band owns it, so there is n
 > `_assert_action_registry` reads `_panel._actions.size()` once and states every claim against it, so a
 > third launcher costs that block no edit.
 
+> #### ⛔ AND THEY MUST NOT ASK A BUTTON'S **FACE** WHETHER ITS ACTION IS MOUNTED
+>
+> "retiring every action clears the subject row" tested `not _header_button_glyphs().has(KNOWLEDGE_GLYPH)`
+> — the row's `Button.text` values. A face wearing bundled art carries it on `Button.icon` with `text`
+> left EMPTY, so the day the ▲ became the cairn (issue #581) that half went TRUE on a panel with the
+> launcher still mounted: **the claim passed either way, and so did the "the TOP dock's strip does not
+> move by a pixel" measurement standing on it.** Nothing failed. It is the `_assert_rung_labels_are_hoverable`
+> shape — a guard that walks a REPRESENTATION stops guarding when the representation changes, silently.
+>
+> `_subject_row_carries_action(id)` is the replacement, and it is the same handle the registry itself
+> uses: `_panel._action_buttons.get(id)`, then `_header_full.is_ancestor_of(button)`. The id cannot be
+> repainted, and the ancestry is what keeps the claim about the SUBJECT ROW rather than about the
+> registry — `_action_buttons` holds whichever mount built the button, so on its own it would answer
+> the same on a panel that had merely re-homed the verbs to the bar. **BOTH halves go through it**,
+> the ⚒'s text face included: one mechanism for two actions is what stops the next art face from
+> silently retiring half a claim, and the glyph list stays in the failure message as the diagnostic it
+> always was. Verified live in both directions — leaving `ACTION_KNOWLEDGE` registered fails with
+> `knowledge mounted true, faces ["◀", "▶", "", "", "", "", "", "▾"]` (the `""` IS the bug: the dock
+> chooser's four blank cells wear the same empty face, so even an "is any face empty" test could not
+> have told them apart), and leaving `ACTION_CRAFTING` registered fails with `crafting mounted true`.
+>
+> **The harness re-registers the SHIPPED descriptor, sprite and all.** The block puts both launchers
+> back so later frames run against a full panel; restoring the ▲ from `KNOWLEDGE_GLYPH` alone gave
+> every frame after it a text face the product does not draw, so the restore passes
+> `HudSprites.for_mark(HudKnowledgeVocab.LAUNCH_MARK)` exactly as the panel's own `_build()` registration does.
+
 ### A PIP IS NOT PART OF THE DESCRIPTOR, and the separation is load-bearing
 
 `set_action_pip(id, count)` / `action_pip(id)`. A registered action can wear a small count badge over

@@ -11,17 +11,23 @@
 #   assets/icons/flora/    per-SPECIES row marks (ui/FloraSprites.gd)
 #   assets/icons/hud/      HUD chrome marks      (ui/HudSprites.gd)
 #
-# The first four share ONE pipeline and ONE house style, so both are documented once
-# here rather than per family. THE LAST TWO DO NOT — `crops/` and `flora/` are not map
-# markers, they are inline marks inside a text ROW, and they override several of the
-# clauses below. Read their own sections before generating one; do not start from the
-# house style. Those two share a row, a size and a ground, so `flora/` takes the
-# `crops/` sub-style wholesale and its section documents only what differs.
+# THE FOUR MAP-MARKER FAMILIES — `fauna/`, `sites/`, `wonders/`, `stages/` — share ONE
+# pipeline and ONE house style, so both are documented once here rather than per family.
+# THE OTHER THREE DO NOT. `crops/`, `flora/` and `hud/` are not map markers: they are small
+# marks drawn over a DARK HUD PANEL, in a text row or on a button face, and they override
+# several of the clauses below. Read their own sections before generating one; do not start
+# from the house style. `crops/` states that sub-style, and the other two take it — `flora/`
+# wholesale (it shares the row, the size and the ground), `hud/` per DIRECTORY, its own
+# section documenting only what differs.
 #
-# THE LAST TWO ALSO COMPETE FOR ONE SLOT, which is the thing to know before adding art
-# to either: a basket row draws ONE mark, and a species icon REPLACES its plant's role
-# mark where the art exists (`DetailFormat.flora_composition_lines`). So the two sets
-# must not draw the same subjects — see the `flora/` section's own note.
+# (The classification is by KIND, not by position in the list above, and the list has grown
+# twice. Name the family you mean.)
+#
+# `crops/` AND `flora/` ALSO COMPETE FOR ONE SLOT, which is the thing to know before adding
+# art to either: a basket row draws ONE mark, and a species icon REPLACES its plant's role
+# mark where the art exists (`DetailFormat.flora_composition_lines`). So those two sets
+# must not draw the same subjects — see the `flora/` section's own note. `hud/` is NOT in
+# that contest; its marks never appear in a basket row.
 #
 # NOTE: prompts predating this file were never committed — only the shipped PNGs
 # survive. The house style below is reconstructed from that art plus the wild-fowl

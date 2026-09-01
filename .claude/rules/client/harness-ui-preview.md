@@ -1796,8 +1796,10 @@ corner.
 
 ### `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
 
-**Appended LAST in `CHAPTERS`**, so no existing frame moves. Four frames and 68 assertions (its
-`EXPECTED_CHECKPOINTS` floor is the measured 72 — frames count too), and **most
+**Appended LAST in `CHAPTERS`**, so no existing frame moves. Seven frames and 78 assertions (its
+`EXPECTED_CHECKPOINTS` floor is the measured **85** — frames count too, so the three launcher-face
+frames the cairn arc appended moved it 75 → 85; the floor is RE-MEASURED, never the old number plus
+three, and the eight-checkpoint surplus over that arithmetic is the drift that says why), and **most
 of it is PNG-less on purpose**: every claim this screen makes renders as a plausible picture whatever
 it says — a pill reading `2`, a greyed row, the clause *"nothing is using it"*, a `3` on the launcher's
 pip — so the derivation is asked of `KnowledgeRoster` directly, with models staged in the chapter, and
