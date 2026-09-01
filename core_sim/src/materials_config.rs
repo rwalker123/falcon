@@ -32,7 +32,7 @@ use std::{
 };
 
 use bevy::prelude::Resource;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -193,7 +193,7 @@ impl MaterialDef {
 /// a `Vec` rather than a map because the axis order is already the material's contract. `Ord` so the
 /// batch map serializes and iterates in a stable order — the same reason `BandEquipment` is a
 /// `BTreeMap`.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
 pub struct BandKey(pub Vec<usize>);
 
 /// **What one unit of a source's biomass yields, in ONE material** — the yield edge, and it is the
@@ -648,7 +648,7 @@ fn reading_in_range(value: f32) -> bool {
 ///
 /// **Never sum a vector of these into one number.** That is the retired trade-goods axis under a new
 /// name (arc #527), and it collapses the distinction the whole materials model exists to keep.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MaterialPayoff {
     /// The `materials.json` id — `fibre`, `hide`, `tobacco`. Resolved client-side for display.
     pub material: String,

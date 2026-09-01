@@ -62,6 +62,7 @@
 //! is now rung 4 (Farm)'s identity — the first rung to drop the gathering-site term, with a fertility
 //! floor back in its place. Design: `docs/plan_intensification_ladder.md` §2.
 
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap},
@@ -137,7 +138,7 @@ pub const NO_FORAGE_SEASON: f32 = 0.0;
 /// A live depletable forage patch on a `FoodModuleTag` tile. Mirrors the herd biomass model's
 /// ecology subset, including cultivation (`cultivation_progress`/`owner`) — the plant analog of a
 /// herd's domestication (Phase 1a).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForagePatch {
     /// Tile the patch sits on (its registry key).
     pub tile: UVec2,
@@ -1080,7 +1081,7 @@ pub fn patch_rung_work_done(patch: &ForagePatch, rung: RungKey, ladder: &LadderC
     )
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ForageRegistry {
     /// Live patches keyed by tile coord. Iteration order is non-deterministic; the snapshot capture
     /// sorts by coord for a stable rollback record.

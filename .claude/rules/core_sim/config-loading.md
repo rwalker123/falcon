@@ -122,6 +122,20 @@ fresh load like any other tunable. The cost is re-issuing one debug command afte
 `apply_start_profile` re-applies the profile the command names right after. `ResetMap` keeps cloning
 the running config: it is a map reroll, not a retune.
 
+**A `load_game` needs the same two, and asks the same list for them.** `handle_load_game` does not
+go through `rebuild_world_from_config` — it builds its replacement app with `build_headless_app` and
+therefore arrives holding the *file's* fog switch and the *file's* four binds. Both callers get the
+set from `carry_runtime_owned_fields` (`resources.rs`), and
+`load_simulation_config_for_new_world` is now a fresh load plus that call, because a carried-field
+list written at two sites is a list that will disagree. Fog is the half a player sees: turn it off,
+save, load, and the reveal frame `publish_loaded_world` captures comes back **fogged** — with the
+herds filtered out of the payload — until the client's reconcile round-trips a `set_fog` and forces a
+recapture. The ports half is quieter and just as wrong: a process whose block auto-bumped would go
+back to naming the file's sockets, and the next `reload_config` would log a spurious
+`socket_changed=restart_required`. `bin/server.rs`'s
+`a_load_carries_the_fields_the_config_file_cannot_know` asserts both, on the config *and* on the
+published frame.
+
 **The staged file is never the watched file.** The rebuild keeps the outgoing world's
 `SimulationConfigMetadata` path, so the config watcher still watches the shipped
 `simulation_config.json`. Pointing it at `config_overrides/simulation.json` would make each staged
@@ -131,6 +145,12 @@ reloads the shipped file, dropping the override from the live world until the ne
 
 `resolve_config` stays **pure** — the registry lookup lives in `load_config_from_env` only, so the
 rule above is still unit-testable without touching any process-global state.
+
+**Both override seams also write the config fingerprint** — `load_config_from_env` records the bytes
+that actually loaded, and `install_config_override` records the merged text it stages. See
+`.claude/rules/core_sim/checkpoints.md` → "The config fingerprint is per file, and it has two seams"
+for what that is for; the fact worth having here is that neither seam may change what loads without
+also saying so.
 
 `config_override.rs` is the seam the `set_config_override` command lands on. Per kind it holds the
 env var, the shipped path, the builtin, and a `validate` fn that runs the kind's **own

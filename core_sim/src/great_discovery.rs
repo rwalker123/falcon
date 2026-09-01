@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use bevy::prelude::*;
@@ -15,7 +15,7 @@ use crate::{
 
 use rand::{distributions::uniform::SampleUniform, rngs::SmallRng, Rng, SeedableRng};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sim_runtime::{
     GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryRequirementState,
     GreatDiscoveryState, GreatDiscoveryTelemetryState, KnowledgeField,
@@ -142,7 +142,7 @@ fn default_requirement_weight() -> NumericBand<f32> {
     NumericBand::Scalar(1.0)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct GreatDiscoveryId(pub u16);
 
 impl GreatDiscoveryId {
@@ -473,7 +473,7 @@ impl GreatDiscoveryRegistry {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct ConstellationProgress {
     pub progress: Scalar,
     pub observation_deficit: u32,
@@ -504,7 +504,7 @@ impl ConstellationProgress {
     }
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GreatDiscoveryReadiness {
     per_faction: HashMap<FactionId, HashMap<GreatDiscoveryId, ConstellationProgress>>,
 }
@@ -637,7 +637,7 @@ impl ObservationLedger {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GreatDiscoveryRecord {
     pub id: GreatDiscoveryId,
     pub faction: FactionId,
@@ -647,10 +647,12 @@ pub struct GreatDiscoveryRecord {
     pub effect_flags: u32,
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GreatDiscoveryLedger {
     records: Vec<GreatDiscoveryRecord>,
-    index: HashSet<(FactionId, GreatDiscoveryId)>,
+    /// **A `BTreeSet` so the encoded checkpoint is byte-reproducible** — a pure membership index,
+    /// never iterated. See `DiscoveredSites::seen` for the reason in full.
+    index: BTreeSet<(FactionId, GreatDiscoveryId)>,
 }
 
 impl GreatDiscoveryLedger {
@@ -702,7 +704,7 @@ pub struct GreatDiscoveryFlag {
     pub faction: FactionId,
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GreatDiscoveryTelemetry {
     pub pending_candidates: u32,
     pub active_constellations: u32,

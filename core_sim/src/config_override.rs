@@ -240,12 +240,17 @@ pub fn install_config_override(
             })?;
         }
     }
-    fs::write(&path, merged_text).map_err(|source| ConfigOverrideError::Write {
+    fs::write(&path, &merged_text).map_err(|source| ConfigOverrideError::Write {
         kind: label,
         path: path.clone(),
         source,
     })?;
     set_override_path(spec.env_var, path.clone());
+    // Keep the config fingerprint describing EFFECTIVE tuning. The merged text is what the next
+    // `new_game` will boot on, and it exists only in this scratch file — a fingerprint taken from
+    // the shipped files would call a world whose numbers were edited from the tuning panel
+    // "unchanged", which is the silent false negative the fingerprint exists to prevent.
+    crate::config_fingerprint::record_config_text(spec.default_rel_path, &merged_text);
 
     Ok(InstalledOverride { kind, path })
 }

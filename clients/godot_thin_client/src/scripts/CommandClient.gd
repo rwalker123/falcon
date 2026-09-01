@@ -1,9 +1,19 @@
 extends RefCounted
 class_name CommandClient
 
-var host: String = "127.0.0.1"
-var port: int = 41001
-var proto_port: int = 41001
+## The hardcoded tail of the endpoint precedence — env var -> ports file -> these
+## (`.claude/rules/core_sim/ports.md`). They live here rather than only on `Main` because `Main` is
+## no longer the sole owner of a command client: the LANDING screen needs one too, to list and load
+## saves before any world exists, and two copies of this precedence would drift.
+const DEFAULT_HOST := "127.0.0.1"
+const DEFAULT_PORT := 41001
+const ENV_HOST := "COMMAND_HOST"
+const ENV_PORT := "COMMAND_PORT"
+const ENV_PROTO_PORT := "COMMAND_PROTO_PORT"
+
+var host: String = DEFAULT_HOST
+var port: int = DEFAULT_PORT
+var proto_port: int = DEFAULT_PORT
 
 var _bridge: Object = null
 var _proto_port_override: bool = false
@@ -105,6 +115,43 @@ func set_proto_port(value: int) -> void:
 
 func get_proto_port() -> int:
     return proto_port
+
+## **THE COMMAND ENDPOINT, RESOLVED ONCE.** Env var -> ports file -> the constant above.
+static func resolve_host() -> String:
+    var env_host: String = OS.get_environment(ENV_HOST)
+    if env_host != "":
+        return env_host
+    var discovered_host: String = ServerPortsFile.get_host()
+    if discovered_host != "":
+        return discovered_host
+    return DEFAULT_HOST
+
+
+static func resolve_port() -> int:
+    var env_port: String = OS.get_environment(ENV_PORT)
+    if env_port != "":
+        var parsed: int = int(env_port)
+        if parsed > 0:
+            return parsed
+    var discovered_port: int = ServerPortsFile.get_port(ServerPortsFile.KEY_COMMAND)
+    if discovered_port > 0:
+        return discovered_port
+    return DEFAULT_PORT
+
+
+## No explicit `COMMAND_PROTO_PORT` override: the command endpoint is a single socket, so the
+## protobuf port must FOLLOW the resolved command port rather than a stale hardcoded default.
+## `run_stack` exports both, but this fallback keeps any launcher that sets only `COMMAND_PORT` (or a
+## bare `--port-base` run) correct — without it a non-default port base would send commands to 41001
+## while the server binds `PORT_BASE+1`, giving "connection refused" on every command.
+static func resolve_proto_port() -> int:
+    var env_port: String = OS.get_environment(ENV_PROTO_PORT)
+    if env_port != "":
+        var parsed: int = int(env_port)
+        if parsed > 0:
+            return parsed
+    return resolve_port()
+
 
 func _try_init_bridge() -> void:
     if _bridge != null:

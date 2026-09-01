@@ -2,6 +2,10 @@ extends Node2D
 class_name MapView
 
 const TerrainDefinitions := preload("res://assets/terrain/TerrainDefinitions.gd")
+## **WHO OWNS THE KEYBOARD** — the registry of every gameplay key and the arbiter that says which
+## classes may act. This node reads two classes: `CLASS_MAP_MOTION` (polled, in `_process`) and
+## `CLASS_MAP_VIEW` (raw keys, in `_unhandled_input`); both ask it first.
+const KeyboardArbiter := preload("res://src/scripts/KeyboardArbiter.gd")
 
 signal hex_selected(col: int, row: int, terrain_id: int)
 signal tile_selected(info: Dictionary)
@@ -905,6 +909,8 @@ var _inset_top: float = 0.0
 var _inset_bottom: float = 0.0
 var mouse_pan_active: bool = false
 var mouse_pan_button: int = -1
+## Mirror of `Main`'s pause overlay, pushed in by `set_modal_menu_open`. See `_keyboard_owner`.
+var _modal_menu_open: bool = false
 
 var faction_colors: Dictionary = {
 	"Aurora": Color(0.55, 0.85, 1.0, 1.0),
@@ -2075,9 +2081,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _is_pointer_navigation_input(event) and _pointer_claimed_by_ui():
 		return
 	# While a command is targeting, Esc / right-click back out of it (instead of
-	# panning), matching the targeting-mode contract.
+	# panning), matching the targeting-mode contract. **ESC IS ALLOWED UNDER EVERY OWNER** — it is
+	# how the player leaves a surface — so this block sits ahead of the arbiter, and it matches a
+	# modified Escape too (`is_escape_key`, not `is_bare_key`): a stray held modifier must not
+	# strand a player inside a targeting flow.
 	if _annotations.is_targeting_active():
-		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		if KeyboardArbiter.is_escape_key(event):
 			emit_signal("targeting_cancel_requested")
 			_mark_input_handled()
 			return
@@ -2085,20 +2094,25 @@ func _unhandled_input(event: InputEvent) -> void:
 			emit_signal("targeting_cancel_requested")
 			_mark_input_handled()
 			return
-	if event is InputEventKey and event.pressed and event.keycode == KEY_C:
-		_fit_map_to_view()
-		_mark_input_handled()
-		return
-	if event is InputEventKey and event.pressed and event.keycode == KEY_H:
-		_show_grid_lines = not _show_grid_lines
-		_invalidate_map_cache()  # grid lines are baked into the cached texture; force a re-render
-		queue_redraw()
-		_mark_input_handled()
-		return
-	if event is InputEventKey and event.pressed and event.keycode == KEY_T:
-		_terrain.toggle_terrain_textures()
-		_mark_input_handled()
-		return
+	# **THE VIEW KEYS ARE ARBITRATED AND EXACT.** `_unhandled_input` is reached for every key a
+	# focused Control did not consume — a `LineEdit` uses printable keys and lets the rest fall
+	# through — so focus alone never starved these; and `event.keycode == KEY_C` was true for
+	# `Ctrl+C`, which re-centred the map while the player copied a save's name.
+	if event is InputEventKey and KeyboardArbiter.allows(_keyboard_owner(), KeyboardArbiter.CLASS_MAP_VIEW):
+		if KeyboardArbiter.is_bare_key(event, KEY_C):
+			_fit_map_to_view()
+			_mark_input_handled()
+			return
+		if KeyboardArbiter.is_bare_key(event, KEY_H):
+			_show_grid_lines = not _show_grid_lines
+			_invalidate_map_cache()  # grid lines are baked into the cached texture; force a re-render
+			queue_redraw()
+			_mark_input_handled()
+			return
+		if KeyboardArbiter.is_bare_key(event, KEY_T):
+			_terrain.toggle_terrain_textures()
+			_mark_input_handled()
+			return
 	if event is InputEventMouseButton:
 		var mouse_event: InputEventMouseButton = event
 		if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP and mouse_event.pressed:
@@ -4732,19 +4746,23 @@ func _process(delta: float) -> void:
 	if mouse_pan_active and mouse_pan_button != -1 and not Input.is_mouse_button_pressed(mouse_pan_button):
 		mouse_pan_active = false
 		mouse_pan_button = -1
-	var pan_input := Vector2(
-		Input.get_action_strength("map_pan_right") - Input.get_action_strength("map_pan_left"),
-		Input.get_action_strength("map_pan_down") - Input.get_action_strength("map_pan_up")
-	)
-	if pan_input != Vector2.ZERO:
-		if pan_input.length_squared() > 1.0:
-			pan_input = pan_input.normalized()
-		_apply_pan(pan_input * KEYBOARD_PAN_SPEED * ClientSettings.pan_speed_multiplier * delta)
-	var zoom_direction: float = Input.get_action_strength("map_zoom_in") - Input.get_action_strength("map_zoom_out")
-	if not is_zero_approx(zoom_direction):
-		# `_apply_zoom`'s pivot is in LOCAL coords, so the centre is measured in them too.
-		var viewport_center: Vector2 = screen_size_local() * 0.5
-		_apply_zoom(zoom_direction * KEYBOARD_ZOOM_SPEED * ClientSettings.zoom_speed_multiplier * delta, viewport_center)
+	if KeyboardArbiter.allows(_keyboard_owner(), KeyboardArbiter.CLASS_MAP_MOTION):
+		# `exact_match = true` on every polled read: without it `Input` matches an action
+		# NON-exactly, so the bare-`W` binding fires for `Cmd+W` and the map panned while the
+		# player closed a window.
+		var pan_input := Vector2(
+			Input.get_action_strength("map_pan_right", true) - Input.get_action_strength("map_pan_left", true),
+			Input.get_action_strength("map_pan_down", true) - Input.get_action_strength("map_pan_up", true)
+		)
+		if pan_input != Vector2.ZERO:
+			if pan_input.length_squared() > 1.0:
+				pan_input = pan_input.normalized()
+			_apply_pan(pan_input * KEYBOARD_PAN_SPEED * ClientSettings.pan_speed_multiplier * delta)
+		var zoom_direction: float = Input.get_action_strength("map_zoom_in", true) - Input.get_action_strength("map_zoom_out", true)
+		if not is_zero_approx(zoom_direction):
+			# `_apply_zoom`'s pivot is in LOCAL coords, so the centre is measured in them too.
+			var viewport_center: Vector2 = screen_size_local() * 0.5
+			_apply_zoom(zoom_direction * KEYBOARD_ZOOM_SPEED * ClientSettings.zoom_speed_multiplier * delta, viewport_center)
 	# Animate the targeting overlay (pulsing glow / reticle) while a command is
 	# being targeted.
 	if _annotations.is_targeting_active():
@@ -4754,6 +4772,31 @@ func _process(delta: float) -> void:
 	if _has_awaiting_expedition:
 		_expedition_time += delta
 		queue_redraw()
+
+## **WHO OWNS THE KEYBOARD THIS FRAME** — asked by both of this node's keyboard readers, the polled
+## pan/zoom in `_process` and the raw view keys in `_unhandled_input`.
+##
+## `_process` reads WASD and Q·E with `Input.get_action_strength`, which samples raw device state and
+## never touches the event system, so a focused `LineEdit` consuming the keystroke is irrelevant to
+## it: the map panned and zoomed while the player typed their save's name. `_unhandled_input` looked
+## safe by comparison and was not — a `LineEdit` consumes the keys it USES and lets every other one
+## fall through, so `C`/`H`/`T` reached the map from inside a text field too.
+##
+## **THE MIRROR-IMAGE FAILURE IS FOCUS LEFT STUCK.** A field that keeps focus after its pane closes
+## makes the map permanently unresponsive with nothing on screen to explain why, which is strictly
+## worse than the defect. The release is the FIELD OWNER's to perform, at every exit from the surface
+## that holds it — see `MenuShell.release_text_focus`.
+func _keyboard_owner() -> String:
+	return KeyboardArbiter.owner_for(get_viewport(), _modal_menu_open)
+
+
+## **IS A MODAL MENU OPEN?** — pushed in by `Main`, which owns the pause overlay, rather than
+## discovered from the tree. The overlay is `Main`'s `$PauseLayer`, and reaching up for it would tie
+## the map to a scene layout the preview harnesses do not have. Defaults to `false`, so a `MapView`
+## standing alone in a harness is fully drivable.
+func set_modal_menu_open(open: bool) -> void:
+	_modal_menu_open = open
+
 
 ## Mirror the HUD's pending command-targeting state so the map can draw the reticle / valid-target
 ## glow / hover ETA. Pass {} to clear. THIN PASS-THROUGH to AnnotationRenderer, and the NAME cannot
@@ -5011,29 +5054,10 @@ func _pointer_claimed_by_ui() -> bool:
 		control = control.get_parent() as Control
 	return false
 
+## The pan/zoom bindings come from the REGISTRY, not from a table here — a second copy of the key
+## roster is how a hotkey ends up governed by a class it is not in.
 func _ensure_input_actions() -> void:
-	var action_keys := {
-		"map_pan_left": KEY_A,
-		"map_pan_right": KEY_D,
-		"map_pan_up": KEY_W,
-		"map_pan_down": KEY_S,
-		"map_zoom_in": KEY_E,
-		"map_zoom_out": KEY_Q,
-	}
-	for action in action_keys.keys():
-		if not InputMap.has_action(action):
-			InputMap.add_action(action)
-		var keycode: int = action_keys[action]
-		var needs_event: bool = true
-		for existing_event in InputMap.action_get_events(action):
-			if existing_event is InputEventKey and existing_event.keycode == keycode:
-				needs_event = false
-				break
-		if needs_event:
-			var key_event := InputEventKey.new()
-			key_event.keycode = keycode
-			key_event.physical_keycode = keycode
-			InputMap.action_add_event(action, key_event)
+	KeyboardArbiter.ensure_action_bindings(KeyboardArbiter.CLASS_MAP_MOTION)
 
 func _fit_map_to_view() -> void:
 	zoom_factor = 1.0

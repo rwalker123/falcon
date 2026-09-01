@@ -1,8 +1,12 @@
 ---
 paths:
   - "core_sim/src/sim_state.rs"
+  - "core_sim/src/save.rs"
+  - "core_sim/src/config_fingerprint.rs"
   - "core_sim/src/snapshot/capture.rs"
   - "core_sim/tests/sim_state_coverage.rs"
+  - "core_sim/tests/save_round_trip.rs"
+  - "core_sim/tests/sim_state_codec.rs"
   - "integration_tests/tests/replay_determinism.rs"
   - "integration_tests/tests/determinism.rs"
 ---
@@ -119,12 +123,39 @@ is a stable sim id: tiles and settlements by `(x, y)`, power nodes by `y * width
 `Entity::PLACEHOLDER` at capture, so a stale one cannot be read by accident rather than merely
 should not be.
 
-**No config.** Three sim-state types hold configuration, and `checkpoint()` on each leaves it
-behind: `InfluentialRoster.config` and `KnowledgeLedger.config` behind `Arc`s, and
-`CultureManager.settings` **by value** — which a search for `Arc<*Config>` does not find. Cloning
-them whole would capture the tuning that was live when the checkpoint was taken, so a rollback would
-silently reinstall it: hot-reload a config, roll back, and the reload is undone with nothing logged.
-Restore re-attaches whatever config is live by leaving the field alone.
+The rule held everywhere except one field, and the exception is the instructive part: **the only
+`Entity` in the closure was one nothing read.** `PowerGridNodeTelemetry` carried an `entity`
+alongside the `node_id` its map was already keyed by, and because no consumer outside the system
+that wrote it ever dereferenced the handle, a restore reinstating a despawned tile's id produced no
+symptom at all. A rule with no reader to break it is not enforced by anything — the field is gone,
+and `PowerNodeId` (`y * width + x`) says durably what the handle said transiently.
+
+**A dead `Entity` still costs**, which is why `PowerTopology` stores a `node_count: usize` and not
+the `node_entities: Vec<Entity>` it once did. Worldgen builds that resource and nothing rewrites it,
+so after a restore every one of its handles was stale — 4160 of 4160 on the standard test map, while
+`TileRegistry` was correctly rebuilt beside it in pass 4a. The grid still routed correctly, because
+the only thing anything ever asked that vector was its `.len()` and a stale handle still counts.
+Everything the routing actually reads — `PowerNodeId`, `adjacency` — is position-keyed and holds
+across a renumber by construction.
+
+**No config.** Four sim-state types hold configuration, and `checkpoint()` on each leaves it
+behind: `InfluentialRoster.config` and `KnowledgeLedger.config` behind `Arc`s,
+`CultureManager.settings` **by value** — which a search for `Arc<*Config>` does not find — and
+`ActiveCrisisLedger`, where the config sits by value *inside each entry* rather than behind one
+handle. Cloning them whole would capture the tuning that was live when the checkpoint was taken, so
+a rollback would silently reinstall it: hot-reload a config, roll back, and the reload is undone with
+nothing logged.
+
+The first three restore by **leaving a field alone**. The crisis ledger cannot: every `ActiveCrisis`
+holds a `CrisisArchetypeRuntime` parsed out of `crisis_archetypes.json`, and every `ActiveModifier`
+holds its `ModifierEffects` out of `crisis_modifiers.json`, one copy per live crisis. So
+`ActiveCrisisLedgerCheckpoint` carries **ids**, and `restore_checkpoint` re-resolves them against the
+catalogs live at restore — which also means a crisis whose archetype was renamed by a reload reports
+its new name. **A crisis whose archetype a reload deleted is dropped, loudly.** It is not a case that
+can be carried: growth, the r0 band, the telemetry weights and the incident table all come from the
+archetype, so an unresolved crisis could only be advanced against invented defaults. An unresolved
+*modifier* is dropped on its own and the crisis survives, a modifier being an add-on rather than the
+thing that defines a crisis.
 
 **Capture is a pure function of the world.** `capture_sim_state(&World)` reads nothing else — no
 change detection, no retained deltas, no assumption it ran last turn. That is what keeps
@@ -135,16 +166,36 @@ change detection, no retained deltas, no assumption it ran last turn. That is wh
 The tempting shortcut is to leave a resource out of the checkpoint because some system recomputes it
 each turn. That holds only when nothing reads it in between.
 
-`SimulationMetrics`, `PowerGridState` and `HerdTelemetry` all fail the test: `capture_snapshot`
-reads `SimulationMetrics.crisis` for the published crisis telemetry, `PowerGridState` for
-`power_metrics`, and `HerdTelemetry` for the display herd list — all in the same turn, all written
-by systems that will not have run again by the time a restored world is next captured. They are
-carried.
+`SimulationMetrics`, `PowerGridState`, `HerdTelemetry` and `CrisisOverlayCache` all fail the test:
+`capture_snapshot` reads `SimulationMetrics.crisis` for the published crisis telemetry,
+`PowerGridState` for `power_metrics`, `HerdTelemetry` for the display herd list and
+`CrisisOverlayCache` for the crisis overlay — all in the same turn, all written by systems that will
+not have run again by the time a restored world is next captured. They are carried.
 
 **`HerdTelemetry` is the worked example**, because it produced a *plausible wrong number* rather
 than an obviously stale one. It is a mid-system snapshot of herd biomass, not a pure function of
 `HerdRegistry`, so rebuilding it from the registry — which is what a reviewer would wave through —
 yields a number that is close, well-formed, and different. Only a bit-exact oracle catches that.
+
+### A save load reads the world with **no turn in between**, and that is a second way to fail it
+
+`CrisisOverlayCache` was the fourth, and it was classified derived for years because *a rollback
+cannot show this class of bug*: a rollback republishes a stored ring entry rather than re-capturing,
+so a derived resource it drops never reaches a frame. A **load** has no ring. `apply_save` installs
+the world and `publish_baseline_snapshot` captures the client's very first frame straight off it, so
+anything the restore left at `Default` ships in that frame. Left out, the loaded world published a
+`0x0` crisis heatmap where the live world at the same tick had published an 80x52 one with 4,160
+samples, and the client only saw the real raster once a turn had run.
+
+**It is not rebuildable at restore time either**, which is what forced the checkpoint rather than a
+pass-4d rebuild beside `HerdDensityMap` and `CultureEffectsCache`: `rebuild_overlay` calls
+`ActiveCrisis::advance` on every live crisis, so calling it outside `advance_crisis_system` would
+step the crises forward a turn. The name says cache; the contents are a mid-system snapshot, exactly
+like `HerdTelemetry`.
+
+The guard is `save_round_trip.rs`'s `a_loaded_world_publishes_the_frame_the_live_one_did`, which
+compares the two published frames field by field and exempts only `header.frame_seq` (it counts
+publications and resets with the world epoch, so a loaded world's first is `1` by design).
 
 ## Capture records component presence, not only values
 
@@ -329,13 +380,30 @@ regression and was a different world.
 Nothing in `SimState` derives `Serialize`. The checkpoint is an in-memory `Clone`, which is what an
 in-process rollback needs.
 
-- **17 sim-state maps are keyed by `FactionId`, `UVec2` or tuples.** `serde_json` admits only string
-  keys, and JSON is the repo's only serde codec today (`sim_schema`).
-- **The sim-state closure is 119 types and contains no trait objects, function pointers, closures,
-  raw pointers, interior mutability, lock types or manual `Drop` impls.** The only constructs serde
-  could not derive through were a `SmallRng` — deleted; the influencer roster draws from derived
-  seeds now, like every other RNG consumer — and `Entity`, which the first construction rule
-  removes.
+- **JSON cannot encode this checkpoint, but the reason is narrower than "only string keys".**
+  `serde_json`'s map-key serializer *stringifies integers*, and a newtype over an integer is
+  transparent — so `FactionId(u32)`, `BandId`, `PowerNodeId`, `GreatDiscoveryId`, `CultureLayerId`
+  and `GenerationId` keys all encode. What it cannot express is a key that serializes to a **struct
+  or a sequence**: `UVec2` (`ForageRegistry`, `GrazeRegistry`), tuple keys (`GreatDiscoveryLedger`,
+  `KnowledgeLedgerCheckpoint`, `RoadRegistry`, `DiscoveredSites`) and composite struct keys
+  (`ConnectionKey`, `BandKey`). About ten fields, not seventeen — and one is enough, so the
+  conclusion is unchanged: a save format needs a codec with arbitrary map keys, and JSON is the
+  repo's only serde codec today (`sim_schema`).
+- **The sim-state closure is 188 types and contains no trait objects, function pointers, closures,
+  raw pointers, interior mutability, lock types or manual `Drop` impls.** Twenty of them already
+  derive `Serialize`/`Deserialize`, including all thirteen that come from `sim_schema`, so the
+  remaining work is `core_sim`-only. The only constructs serde could not derive through were a
+  `SmallRng` — deleted; the influencer roster draws from derived seeds now, like every other RNG
+  consumer — and `Entity`, which the first construction rule removes.
+- **Two dependency features the closure needs are on transitively rather than by request.**
+  `glam/serde` reaches `UVec2` through `bevy_reflect`'s `bevy_math` feature, and `serde/rc` — which
+  `KitChoice`'s `Arc<str>` / `Arc<[Arc<str>]>` require — is enabled by `sim_schema`. Both are
+  consequences of the current feature set rather than of anything `core_sim` asks for; narrowing
+  `core_sim`'s bevy features, which its `Cargo.toml` carries a TODO for, can take the first away.
+  Losing either is a compile error, not silent corruption.
+- **`bevy::utils::HashMap` needs nothing** — `bevy_utils` already depends on `hashbrown` with its
+  `serde` feature, and the impls are generic over the hasher. `CapabilityFlags` is the only
+  `bitflags` type in the closure and already derives both halves.
 
 ## Omission fails a test, not a rollback
 
@@ -353,6 +421,12 @@ and every other assertion in the file still passes. That is a hole shaped exactl
 the guard exists to catch, and it opened where this document says the danger is: `HerdTelemetry`,
 `PowerGridState` and `SimulationMetrics` — the three worked examples of the derived/state
 distinction above — sat in `SIM_STATE_RESOURCES` and `DERIVED_RESOURCES` at once.
+
+**It catches an unclassified resource, never a mis-classified one.** `DERIVED_RESOURCES` takes a
+plausible system name and asks nothing further, so `CrisisOverlayCache` sat there naming a real
+rebuilder while shipping an empty raster on every load (see "A save load reads the world with no
+turn in between"). What catches that class is a behavioural oracle — the replay-determinism suite
+for the rollback path, and `save_round_trip.rs`'s same-tick frame comparison for the load path.
 
 **Its scope is the library's resources, which is narrower than "omission" makes it sound.** The app
 it walks is `build_headless_app`, so anything the `server` **binary** inserts is invisible to it —
@@ -373,6 +447,93 @@ that motivated the guard. Registered components are walked rather than live ones
 `Expedition` has no instances in a fresh world and an archetype walk would miss exactly the state a
 rollback is most likely to drop.
 
-The world-static bucket's reason carries an expiry: those resources survive a rollback only because
-a restore rebuilds into the same live `World`, which still holds the map worldgen built. That stops
-being true the day a checkpoint becomes a save file loaded into a fresh process.
+**"Survives a rollback" is a weaker claim than it sounds, and `PowerTopology` is where it was
+weakest.** A world-static resource is not rebuilt by a restore, so anything in one that names an
+`Entity` is stale immediately afterwards — it survives only in the sense that the bytes are still
+there. `TileRegistry` is the exception that hides this: `restore_sim_state` rebuilds it in pass 4a
+precisely because it is a `Vec<Entity>`, and nothing else in the bucket got the same treatment.
+Everything world-static is now either position-keyed or rebuilt, which is what makes the bucket's
+reason true rather than merely untested.
+
+## A save file loads into a fresh process, and that is what the world-static bucket is FOR
+
+> The FEATURE built on this format — the wire verbs, the slot files, the load path's obligations,
+> the config-drift warning and the autosave cadence — is
+> `.claude/rules/core_sim/save-game.md`. What follows is the format only.
+
+The world-static bucket's reason used to carry an expiry — those resources survive a rollback only
+because a restore rebuilds into the same live `World`, which still holds the map worldgen built.
+`core_sim/src/save.rs` is where that expiry was collected. A save is loaded into a process where **no
+worldgen has run**, so every entry in the bucket has one of four stated treatments, and a new entry
+needs one of those answers rather than just a place to sit:
+
+| Treatment | Resources | Why |
+|---|---|---|
+| **Saved** | `ElevationField`, `MoistureRaster`, `HydrologyState`, `ProvinceMap`, `FoodSiteRegistry`, `FoodSiteWaterBiasReport`, `StartLocation`, `WorldGenSeed`, `FactionRegistry` | Ground truth nothing can recompute |
+| **Rebuilt from the restored entities** | `TileRegistry`, `PowerTopology` | Both were `Entity`-bearing, and a handle cannot cross a process |
+| **Re-derived** | `BiomePalette` | A pure function of preset, world seed and tile count — all three of which the save carries |
+| **Re-resolved from live config by id** | `StartProfileLookup`, `ActiveStartProfile`, `CampaignLabel`, `GreatDiscoveryRegistry` | Config in disguise; the save carries the **profile id**, never the profile. `StartProfileLookup` *is* that id, and it rides in the **header** (`world.start_profile_id`) because a slot row must render without a payload — so a second copy in the payload would be a second authority for one string, and it was one: it was written into every blob and never read back |
+
+**Re-running worldgen on load would be the bug**, which is why the rasters are saved rather than
+regenerated from the seed. Worldgen is a function of config as well as seed, so a preset edited
+between the save and the load would silently produce a *different map* under a population that
+remembers the old one. `GenerationRegistry` and `GreatDiscoveryRegistry` need no load-path work at
+all: `build_headless_app` fills both from live config before any world exists.
+
+The blob is **magic bytes, then a header as one CBOR document, then the payload as a second**, in
+that order so a slot list can be rendered without decoding a world — the menu pays a ~1.3 KB header
+per row instead of ~20 MB. `SAVE_FORMAT_VERSION` is checked before the payload is looked at and a
+mismatch is a typed refusal: with no back-compat there is no migration code, so the version exists to
+make a stale save *rejected* rather than *mis-read* into a plausible wrong world.
+
+`build_headless_app` runs worldgen in `Startup`, so a load suppresses it with a `SuppressWorldgen`
+resource read by a run condition on that chain. **Absence means "generate a world"**, so every
+existing caller is unaffected; it is the same shape as `Replaying`, a flag whose only job is to make
+one scheduled thing not happen.
+
+## Byte-reproducibility holds within one world, not across two
+
+Encoding one world twice gives identical bytes. Encoding **two worlds that hold equal content** does
+not, and the difference is worth knowing before anything content-addresses a save.
+
+`HashMap` iteration order is a function of a map's contents *and its table capacity*. Encoding one
+instance twice walks the same table; a map the sim grew entry by entry and a map serde rebuilt from a
+size hint have different capacities, so they list the same entries in different orders. Eight
+checkpoint fields still hold `HashMap`s — `ForageRegistry::patches`, `GrazeRegistry::patches`,
+`PowerGridState::nodes`, the three `CultureManagerCheckpoint` layer maps,
+`DiscoveryProgressLedger::progress` and `GreatDiscoveryReadiness::per_faction`.
+
+So a test that compares two worlds compares **canonical trees**, not bytes: every map sorted by the
+encoded form of its key, recursively (`core_sim/tests/common`). Arrays keep their order, because a
+`Vec`'s order is meaningful state — `SimState::tiles` is sorted by `(y, x)` and `bands` by `BandId`
+precisely so a checkpoint compares, and sorting arrays too would blind the comparison to a real
+reordering. The sets that *were* order-unstable are gone: `DiscoveredSites::seen` and
+`GreatDiscoveryLedger::index` are `BTreeSet`s, both pure membership indices that nothing iterates.
+
+**`PartialEq` is not the instrument for any of this.** `LaborAllocation` has a hand-written impl that
+compares assignments, upkeep mode and build queue and skips all of its telemetry — correct for
+comparing intent, and silently blind to exactly the class of field a checkpoint is most likely to
+drop. serde walks every field regardless of what `PartialEq` thinks.
+
+## The config fingerprint is per file, and it has two seams
+
+`ConfigFingerprint` (`core_sim/src/config_fingerprint.rs`) records what tuning a world booted on, as
+a `BTreeMap` from shipped file name to a `ConfigDigest` that distinguishes `Builtin` from
+`File(u64)`. Per file rather than one global hash, because *"config changed"* is not actionable and
+*"`fauna_config.json` and `recipes.json` changed"* is. `Builtin` is deliberately not a hash of the
+compiled-in text: "no file was there" and "a file was there and hashed to N" are different facts.
+
+Hashing is `FnvHasher` — the repo's deterministic hasher. `DefaultHasher` is randomized per process,
+so a digest built with it would differ between the save and the load for reasons unrelated to tuning.
+
+Two seams write it, and the second is not optional. `load_config_from_env` records the bytes that
+**actually loaded**, from whichever rung of the precedence ladder won. `install_config_override`
+records the merged text it just staged — a tuning-panel edit changes effective tuning without
+touching any shipped file, so a fingerprint taken from `src/data/` alone would report "unchanged" for
+a world whose numbers were edited.
+
+The registry is process-global (the ~37 boot configs resolve through a free function called before
+any `World` exists) and the **resource is a snapshot of it taken when the app is built**. That split
+is what keeps a staged override honest: staging one moves the registry — the tuning the *next*
+`new_game` boots on — and leaves the running world's resource describing what it is actually
+simulating.

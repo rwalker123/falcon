@@ -445,3 +445,28 @@ emits NO further `advance_requested`, and that the popover's Advance wears "Reso
 **`turn_orb_resolving`** (mid-orbit, the frame the flying digits and the sweep arc are judged on at
 true size), and **`turn_orb_hint_advance` / `turn_orb_hint_review` / `turn_orb_hint_4digit`** (the two
 hover hints, plus the widest number's clearance).
+
+## The first frame of a loaded world raises fewer rows, and that is correct
+
+A player who saves with 4 attention rows and loads into 2 has not lost anything. The orb's producers
+split into two kinds, and only one kind can speak on the first frame of a world:
+
+- **STANDING conditions**, read straight off the snapshot in front of them — starving (Producer 1),
+  idle workers (3), awaiting orders (4), the starving pen (5) and the unkept plant/animal rungs
+  (6, 7). These survive a load intact, because the frame that restores the world states them.
+- **DIFFS and EVENTS**, which need a previous turn *this client process has actually seen* —
+  losing-population (2), the crew hand-off (8), and the knowledge `learned` rows. A load reloads
+  `Main.tscn`, so `HudBandLaborState`, `_handoffs` and the knowledge diff are all new and empty.
+
+**Producer 2's guard is the shape to copy**: `prev_band_sizes().has(entity)` asks *"do I have a
+previous observation of this band"* and says nothing when it does not. It does **not** compare
+against `0` and announce a collapse, which is the tempting bug — a freshly loaded world genuinely has
+no previous turn to compare against, and inventing one would report a population crash that never
+happened. The row returns on the next tick, on a comparison that is real.
+
+**So the missing rows are honest and no code should make them appear.** What was NOT honest is the
+other direction: until the knowledge turn-diff was fixed
+(`.claude/rules/client/knowledge-panel.md` → "A world that arrives already knowing things"), the tick
+after a load *grew* three false `"<Track> learned"` rows for knowledge earned long before the save.
+A count that changes across a load is expected; rows that appear out of nothing were the defect.
+

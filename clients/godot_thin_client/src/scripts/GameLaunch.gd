@@ -15,7 +15,7 @@ var pending_new_game = null
 ## (fresh launch, nothing revealed yet); `Main` writes the revealed epoch here on reveal.
 var last_world_epoch: int = 0
 
-## The parameters the CURRENT run's world was actually built from — what `Main._build_new_game_command`
+## The parameters the CURRENT run's world was actually built from — what `Main._build_world_request`
 ## resolved AFTER the dev-default fallback, so it is populated on every path into `Main.tscn`, handoff
 ## or not. `pending_new_game` cannot answer this: it is consumed and cleared on the first `_ready`, and
 ## a scene reload re-runs that `_ready` with an empty slot. `apply_theme_now` re-arms the pending slot
@@ -26,6 +26,24 @@ var last_world_epoch: int = 0
 ## Same shape as `pending_new_game`. A run whose seed is 0 ("derive from the run clock") still lands on
 ## a different map, because 0 is what gets re-sent — the request is for a NEW world either way.
 var active_new_game = null
+
+## **THE LOAD HANDOFF — the same slot mechanism, for the other way a world arrives.** The landing
+## screen (or `Main`'s pause menu, which reloads its own scene) writes the SLOT NAME here and
+## `Main._ready` consumes it, sending `load_game` instead of `new_game`. A load rebuilds the world
+## server-side and bumps the world epoch exactly as `new_game` does, so the reveal gate, the
+## retry-until-answered and the per-world cache reset all apply unchanged
+## (`.claude/rules/core_sim/world-handoff.md`) — which is the whole reason a load reuses this path
+## rather than inventing one.
+##
+## `""` when no load is pending. It takes PRECEDENCE over `pending_new_game`: the two are never armed
+## together, and a load is the more specific request.
+var pending_load_slot: String = ""
+
+## The slot the CURRENT run was loaded from, `""` for a generated world — the load's counterpart to
+## `active_new_game`, and held for the same reason. `apply_theme_now` rebuilds the scene, which
+## re-runs `Main._ready`; without this a theme applied after a load would find only `active_new_game`
+## armed and silently GENERATE a fresh world in place of the save the player was playing.
+var active_load_slot: String = ""
 
 
 ## Install the saved theme and rebuild the scene so it takes effect now.
@@ -56,7 +74,11 @@ var active_new_game = null
 ## `active_new_game` is null (fresh boot) or cleared (a run was abandoned), so nothing is armed and a
 ## direct `Main.tscn` launch still gets the dev default.
 func apply_theme_now() -> void:
-	if active_new_game is Dictionary:
+	# The LOADED slot wins when there is one: the run in progress is that save, and re-arming the
+	# generated-world parameters instead would swap a different world in under the player.
+	if active_load_slot != "":
+		pending_load_slot = active_load_slot
+	elif active_new_game is Dictionary:
 		pending_new_game = active_new_game
 	HudPalette.apply(ClientSettings.theme)
 	get_tree().reload_current_scene()

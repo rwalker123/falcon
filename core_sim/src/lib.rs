@@ -20,6 +20,7 @@ pub mod climate;
 pub mod combat;
 mod combat_config;
 mod components;
+pub mod config_fingerprint;
 mod config_load;
 pub mod config_override;
 pub mod connections;
@@ -64,6 +65,8 @@ mod provinces;
 mod recipes_config;
 mod resources;
 pub mod routes;
+pub mod save;
+pub mod save_store;
 mod scalar;
 mod sedentarization;
 mod sedentarization_config;
@@ -116,6 +119,9 @@ pub use components::{
     ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
     SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, YieldRange,
     DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
+};
+pub use config_fingerprint::{
+    current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
 };
 pub use config_load::ConfigLoadError;
 pub use config_override::{
@@ -273,6 +279,7 @@ pub use labor_config::{
     BUILTIN_LABOR_CONFIG, NO_FORAGE_CAPACITY,
 };
 pub use map_preset::{ErosionConfig, MapPreset, MapPresets, MapPresetsHandle, BUILTIN_MAP_PRESETS};
+pub use mapgen::WorldGenSeed;
 pub use materials_config::{
     credit_material_yield, load_materials_config_from_env, material_yield_totals, BandKey,
     CharacteristicBand, HandWorking, MaterialDef, MaterialPayoff, MaterialYieldDef,
@@ -364,18 +371,18 @@ pub use power::{
 };
 pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
-    apply_port_base, apply_port_base_override, load_simulation_config_for_new_world,
-    port_base_override, BandIdAllocator, CapabilityFlags, CommandEventEntry, CommandEventKind,
-    CommandEventLog, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
-    DiscoveryProgressLedger, FactionInventory, FoodSiteEntry, FoodSiteRegistry,
+    apply_port_base, apply_port_base_override, carry_runtime_owned_fields,
+    load_simulation_config_for_new_world, port_base_override, BandIdAllocator, CapabilityFlags,
+    CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
+    DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FoodSiteEntry, FoodSiteRegistry,
     FoodSiteWaterBiasReport, HydrologyOverrides, MapTopology, MoistureRaster, PendingCrisisSeeds,
     PendingCrisisSpawns, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata,
     SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry, WorldEpoch,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{
-    command_events_to_state, recapture_snapshot_in_place, FrameSink, SnapshotHistory,
-    StoredSnapshot, NOT_FOOD_LIMITED_TURNS,
+    command_events_to_state, publish_baseline_snapshot, recapture_snapshot_in_place, FrameSink,
+    SnapshotHistory, StoredSnapshot, NOT_FOOD_LIMITED_TURNS,
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
@@ -633,6 +640,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(start_profiles_metadata)
         .insert_resource(knowledge_tags_handle)
         .insert_resource(knowledge_tags_metadata)
+        // Snapshotted AFTER every `load_*_from_env` above, so it describes the tuning this world
+        // actually booted on. Staging an override later moves the process-global registry — what the
+        // NEXT `new_game` will boot on — and deliberately leaves this resource alone.
+        .insert_resource(config_fingerprint::current_config_fingerprint())
         .insert_resource(active_profile_resource)
         .insert_resource(profile_lookup)
         .insert_resource(campaign_label)
@@ -846,7 +857,8 @@ pub fn build_headless_app() -> App {
                 spawn_initial_graze,
                 espionage::initialise_espionage_roster,
             )
-                .chain(),
+                .chain()
+                .run_if(save::worldgen_wanted),
         )
         .add_systems(
             Update,

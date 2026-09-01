@@ -148,9 +148,16 @@ pub struct SimulationConfig {
     /// I was away", short enough to bound a full snapshot. Published as
     /// `CampaignSection.commandEventsRetentionTurns` so the client can say how much history exists.
     pub command_events_retention_turns: u64,
+    /// **How often the autosave slot is rewritten, in turns.** `0` switches autosave off.
+    ///
+    /// A lever rather than "every turn" because writing one is not free: measured on a 160x104
+    /// world, `encode_save` is ~118 ms against a ~30 ms turn, so autosaving every turn would make
+    /// one turn cost five. Turns are human-paced and a save is a cadence thing, so the honest shape
+    /// is "how often", decided here rather than assumed in the hook.
+    pub autosave_interval_turns: u64,
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MoistureRaster {
     pub width: u32,
     pub height: u32,
@@ -305,6 +312,8 @@ struct SimulationConfigData {
     fog_enabled: bool,
     #[serde(default = "default_command_events_retention_turns")]
     command_events_retention_turns: u64,
+    #[serde(default = "default_autosave_interval_turns")]
+    autosave_interval_turns: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -493,6 +502,7 @@ impl SimulationConfigData {
             crisis_auto_seed: self.crisis_auto_seed,
             fog_enabled: self.fog_enabled,
             command_events_retention_turns: self.command_events_retention_turns,
+            autosave_interval_turns: self.autosave_interval_turns,
         })
     }
 }
@@ -507,6 +517,13 @@ fn default_fog_enabled() -> bool {
 /// cannot disagree.
 fn default_command_events_retention_turns() -> u64 {
     20
+}
+
+/// Every 10th turn. At 160x104 that is ~118 ms of encode amortised over ten ~30 ms turns — the
+/// autosave costs one turn in ten roughly five times its usual price, which a human-paced game
+/// absorbs, rather than every turn paying it.
+fn default_autosave_interval_turns() -> u64 {
+    10
 }
 
 fn default_map_preset_id() -> String {
@@ -660,10 +677,9 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
 /// panel would install, log, and do nothing, which is precisely the bug this function was written to
 /// fix. So the carried set is a consequence of that principle, not a list of conveniences.
 ///
-/// | Carried field | Why the file cannot know it |
-/// |---|---|
-/// | `fog_enabled` | Not a tunable at all: a **player preference** with its own persisted home in the client (`.claude/rules/client/fog-of-war.md`), pushed to the server as a `set_fog` command. It would never appear on the tuning panel, and resetting it every New Game would be a visible regression. |
-/// | the four bind addresses | `crate::port_alloc::allocate` at boot — port allocation auto-bumps on a collision, so after a bump these are *not* what the file says and a fresh load could never reproduce them. The in-world config must describe the ports the process actually holds. |
+/// The carried set itself is [`carry_runtime_owned_fields`], because a **load** needs the same set
+/// against a config it did not obtain here (`handle_load_game` gets its fresh config from
+/// `build_headless_app`), and a carried-field list written at two sites is a list that will disagree.
 ///
 /// **`crisis_auto_seed` is deliberately NOT carried**, though `set_crisis_auto_seed` writes it at
 /// runtime: it lives in `simulation_config.json` alongside exactly the levers the tuning panel
@@ -676,18 +692,37 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
 /// `grid_size` / `map_preset_id` / `map_seed`, which are arguments of the rebuild command.
 pub fn load_simulation_config_for_new_world(outgoing: &SimulationConfig) -> SimulationConfig {
     let (mut config, _metadata) = load_simulation_config_from_env();
+    carry_runtime_owned_fields(&mut config, outgoing);
+    config
+}
 
+/// **Copy the fields the running process owns from `outgoing` onto a freshly loaded `config`.**
+///
+/// The one home of the carried set, for the reason stated in
+/// [`load_simulation_config_for_new_world`]: the rule is narrow — *the file is the authority at
+/// world start; only what the file CANNOT know gets carried* — and it is only a rule while there is
+/// exactly one list.
+///
+/// | Carried field | Why the file cannot know it |
+/// |---|---|
+/// | `fog_enabled` | Not a tunable at all: a **player preference** with its own persisted home in the client (`.claude/rules/client/fog-of-war.md`), pushed to the server as a `set_fog` command. It would never appear on the tuning panel, and resetting it every New Game would be a visible regression. |
+/// | the four bind addresses | `crate::port_alloc::allocate` at boot — port allocation auto-bumps on a collision, so after a bump these are *not* what the file says and a fresh load could never reproduce them. The in-world config must describe the ports the process actually holds. |
+///
+/// **Both callers are world *replacements***: `new_game` / `ResetMap` through
+/// [`load_simulation_config_for_new_world`], and `load_game`, which builds its replacement app from
+/// `build_headless_app` and therefore arrives holding the file's values for both rows — the fog the
+/// player switched off would come back on in the reveal frame, and a process whose port block
+/// auto-bumped would start naming sockets it does not hold.
+pub fn carry_runtime_owned_fields(config: &mut SimulationConfig, outgoing: &SimulationConfig) {
     config.fog_enabled = outgoing.fog_enabled;
     config.port_base_bind = outgoing.port_base_bind;
     config.snapshot_flat_bind = outgoing.snapshot_flat_bind;
     config.command_bind = outgoing.command_bind;
     config.log_bind = outgoing.log_bind;
-
-    config
 }
 
 /// Tracks total simulation ticks elapsed.
-#[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SimulationTick(pub u64);
 
 /// Monotonic world-build counter, identical for every snapshot within one world and incremented on
@@ -707,7 +742,7 @@ pub struct WorldEpoch(pub u32);
 /// duplicate ids alias silently rather than failing to resolve.
 ///
 /// Starts at 1 so `BandId(0)` is available as an unmistakable "unset".
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BandIdAllocator {
     next: u64,
 }
@@ -767,7 +802,7 @@ impl Default for CapabilityFlags {
     }
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default)]
+#[derive(Resource, Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct StartLocation {
     position: Option<UVec2>,
 }
@@ -792,7 +827,7 @@ impl StartLocation {
 /// - **Policy levers** (`policy`): long-lived adjustments driven by enacted reforms or manual tweaks.
 /// - **Incident deltas** (`incidents`): short-lived shocks produced by exposed scandals, crises, etc.
 /// - **Influencer output** (`influencer`): procedurally generated contributions from the influencer roster.
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct SentimentAxisBias {
     policy: [Scalar; 4],
     incidents: [Scalar; 4],
@@ -893,7 +928,7 @@ impl TileRegistry {
 }
 
 /// Tracks corruption intensity across subsystems for snapshot export.
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CorruptionLedgers {
     ledger: CorruptionLedger,
 }
@@ -917,7 +952,7 @@ impl CorruptionLedgers {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CorruptionExposureRecord {
     pub incident_id: u64,
     pub subsystem: CorruptionSubsystem,
@@ -925,7 +960,7 @@ pub struct CorruptionExposureRecord {
     pub trust_delta: i64,
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CorruptionTelemetry {
     pub active_incidents: usize,
     pub exposures_this_turn: Vec<CorruptionExposureRecord>,
@@ -986,7 +1021,7 @@ impl DiplomacyLeverage {
     }
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PendingCrisisSeeds {
     pub seeds: Vec<(FactionId, u16)>,
 }
@@ -1001,7 +1036,7 @@ impl PendingCrisisSeeds {
     }
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PendingCrisisSpawns {
     pub spawns: Vec<(FactionId, String)>,
 }
@@ -1016,7 +1051,7 @@ impl PendingCrisisSpawns {
     }
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DiscoveryProgressLedger {
     pub progress: HashMap<FactionId, HashMap<u32, Scalar>>,
 }
@@ -1040,7 +1075,7 @@ impl DiscoveryProgressLedger {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeDiffusionRecord {
     pub tick: u64,
     pub from: FactionId,
@@ -1051,7 +1086,7 @@ pub struct TradeDiffusionRecord {
     pub herd_density: f32,
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TradeTelemetry {
     pub tech_diffusion_applied: u32,
     pub migration_transfers: u32,
@@ -1076,12 +1111,12 @@ impl TradeTelemetry {
 /// writes `StartProfileOverrides::inventory` here at worldgen and the Startup-only
 /// `apply_trade_goods_bonus` drains the `TRADE_GOODS` grant into the opening trade-link openness
 /// bonus. Ongoing production banks into the producing band's [`crate::LocalStore`] instead.
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FactionInventory {
     stockpiles: HashMap<FactionId, HashMap<String, i64>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FoodSiteEntry {
     pub position: UVec2,
     pub module: FoodModule,
@@ -1101,12 +1136,38 @@ pub struct FoodSiteEntry {
 /// may only stand on a site, so *which* site a band can reach is the early game's real decision.
 /// Do not confuse it with `FoodModuleTag`, which sits on ~every land tile and says only which food
 /// web the ground belongs to.
-#[derive(Resource, Debug, Clone, Default)]
+/// **Only `sites` is encoded**, via [`FoodSiteRegistrySaved`]. `positions` is a pure function of it
+/// — an index rebuilt by both writers below — so encoding it would spend bytes on a derived value
+/// AND make the save non-reproducible, because a `HashSet` serializes as an array whose order is a
+/// per-process property. `#[serde(from/into)]` reconstructs the index on decode, which keeps
+/// `is_site` correct without a post-decode fixup anyone could forget to call.
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(from = "FoodSiteRegistrySaved", into = "FoodSiteRegistrySaved")]
 pub struct FoodSiteRegistry {
     sites: Vec<FoodSiteEntry>,
     /// The positions of `sites`, for the per-command `is_site` test. Rebuilt with the vec by the two
     /// writers below, so it cannot drift out of step with the list it indexes.
     positions: HashSet<UVec2>,
+}
+
+/// The encoded form of [`FoodSiteRegistry`]: the curated list, and nothing derived from it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FoodSiteRegistrySaved {
+    sites: Vec<FoodSiteEntry>,
+}
+
+impl From<FoodSiteRegistrySaved> for FoodSiteRegistry {
+    fn from(saved: FoodSiteRegistrySaved) -> Self {
+        Self::new(saved.sites)
+    }
+}
+
+impl From<FoodSiteRegistry> for FoodSiteRegistrySaved {
+    fn from(registry: FoodSiteRegistry) -> Self {
+        Self {
+            sites: registry.sites,
+        }
+    }
 }
 
 /// **What the fresh-water bias pass actually did to the curated marker list** (issue #466).
@@ -1119,7 +1180,7 @@ pub struct FoodSiteRegistry {
 ///
 /// Every field is written on **every** run of the pass, including the zero-weight early return: a
 /// stale count left over from a previous build would defeat the assertion it exists to support.
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FoodSiteWaterBiasReport {
     /// Markers relocated to a higher-scoring hex in their own bucket.
     pub moved: usize,
@@ -1202,7 +1263,7 @@ impl FactionInventory {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommandEventKind {
     Scout,
     FollowHerd,
@@ -1395,7 +1456,7 @@ impl CommandEventKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandEventEntry {
     pub tick: u64,
     pub kind: CommandEventKind,
@@ -1453,7 +1514,7 @@ const FIRST_COMMAND_EVENT_SEQ: u64 = 1;
 /// per band, a count-bounded ring evicts a wolf raid within two turns — the bound would eat exactly
 /// what it exists to preserve. A turn window drops whole turns off the back instead, which is the
 /// unit the player (and the client's grouped log) thinks in.
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct CommandEventLog {
     entries: Vec<CommandEventEntry>,
     retention_turns: u64,

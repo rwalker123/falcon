@@ -157,6 +157,10 @@ pub fn load_config_from_env<T, E: ConfigLoadError + std::fmt::Display>(
             ),
         };
 
+    // The fingerprint records the bytes that ACTUALLY loaded, whichever rung of the precedence
+    // ladder won — so a staged override is already covered here, not just the shipped file.
+    crate::config_fingerprint::record_loaded_config(default_rel_path, source.as_deref());
+
     match source.as_ref() {
         Some(path) => tracing::info!(
             target: "shadow_scale::config",

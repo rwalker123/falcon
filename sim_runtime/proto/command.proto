@@ -698,6 +698,94 @@ message BenchPriorityCommand {
 }
 
 // ---------------------------------------------------------------------------------------------
+// SAVE GAME — four operations over three envelopes and one query.
+//
+// `save_game`, `load_game` and `delete_save` MUTATE (a file, or the world), so they are commands.
+// `list_saves` mutates nothing and is therefore a query, which is also what lets it answer on the
+// reply channel without a second mechanism. All four correlate by `request_id` and are answered with
+// a `QueryReplyEnvelope`: the client needs to know whether its save landed, and a load has a
+// config-drift warning to deliver that no snapshot carries.
+//
+// A slot name is free-form but validated server-side — it becomes a filename. `autosave` is
+// RESERVED: only the autosave hook writes it, and an explicit save naming it is refused.
+
+message SaveGameCommand {
+  uint64 request_id = 1;
+  string slot = 2;
+}
+
+message LoadGameCommand {
+  uint64 request_id = 1;
+  string slot = 2;
+}
+
+message DeleteSaveCommand {
+  uint64 request_id = 1;
+  string slot = 2;
+}
+
+// "What is on disk?" Answered from each file's HEADER alone — the save format puts the header in its
+// own uncompressed document precisely so a listing never inflates or decodes a world.
+message ListSavesQuery {}
+
+// One row of the slot list. Everything here comes out of the save header.
+message SaveSlotInfo {
+  string slot = 1;
+  uint64 turn = 2;
+  string campaign_title = 3;
+  string map_preset_id = 4;
+  uint32 width = 5;
+  uint32 height = 6;
+  uint64 world_seed = 7;
+  string start_profile_id = 8;
+  // Size of the file on disk, so a client can show it without stat-ing anything itself.
+  uint64 size_bytes = 9;
+  // Seconds since the Unix epoch. 0 when the filesystem would not say.
+  uint64 modified_unix_seconds = 10;
+}
+
+message ListSavesReply {
+  // Newest first, so a client that draws the first row draws the most recent save.
+  repeated SaveSlotInfo slots = 1;
+}
+
+// Where a config's tuning came from. `BUILTIN` and `FILE` are a REAL difference, not two spellings
+// of the same thing: "no file was there, so the compiled-in copy loaded" and "a file was there and
+// hashed to N" are different facts about a world's tuning, and a drift row that collapsed them would
+// say nothing changed when the shipped file appeared or vanished.
+enum ConfigDigestKind {
+  // Not recorded on that side at all — which is why it, rather than an UNSPECIFIED, holds 0: a
+  // field the wire omits reads as "this side said nothing about that config", which is exactly
+  // the fact `ABSENT` names.
+  CONFIG_DIGEST_KIND_ABSENT = 0;
+  CONFIG_DIGEST_KIND_BUILTIN = 1;
+  CONFIG_DIGEST_KIND_FILE = 2;
+}
+
+// ONE config file whose tuning differs between the save and this process.
+//
+// Per file rather than one "config changed" flag, because a player can act on
+// "fauna_config.json moved" and cannot act on "something moved". Two `FILE` kinds means the file's
+// bytes changed; the mixed cases mean it appeared, vanished, or swapped with the builtin.
+message ConfigDriftEntry {
+  string file_name = 1;
+  ConfigDigestKind saved = 2;
+  ConfigDigestKind live = 3;
+}
+
+// The answer to a save / load / delete.
+message SaveOpReply {
+  bool ok = 1;
+  string slot = 2;
+  // A machine-readable snake_case token when `ok` is false; the client owns the prose.
+  string error = 3;
+  // Only ever populated on a successful LOAD, and empty is the good case. These are the config files
+  // whose tuning moved between writing the save and loading it — the world is restored exactly as
+  // saved, but the turns it runs from here use the tuning live now.
+  repeated ConfigDriftEntry config_drift = 4;
+}
+
+// ---------------------------------------------------------------------------------------------
 // THE QUERY CHANNEL — the one message on this socket the server ANSWERS.
 //
 // Every other envelope here is an order: it mutates the world, it is logged for replay, and the
@@ -720,6 +808,8 @@ message QueryCommand {
     HuntTripForecastQuery hunt_trip_forecast = 2;
     DenialRaidForecastQuery denial_raid_forecast = 3;
     HuntCrewTakeQuery hunt_crew_take = 4;
+    // 4 is held by `hunt_crew_take`, so the slot listing takes 5 (append-only; never renumber).
+    ListSavesQuery list_saves = 5;
   }
 }
 
@@ -815,6 +905,12 @@ message QueryReplyEnvelope {
     DenialRaidForecastReply denial_raid_forecast = 3;
     QueryError error = 4;
     HuntCrewTakeReply hunt_crew_take = 5;
+    // 5 is held by `hunt_crew_take`, so the save replies take 6-7 (append-only; never renumber).
+    // `save_op` answers `save_game` / `load_game` / `delete_save`, which are COMMANDS rather than
+    // queries — they ride this envelope because it is the socket's one way back, not because they
+    // are questions.
+    ListSavesReply list_saves = 6;
+    SaveOpReply save_op = 7;
   }
 }
 
@@ -1110,5 +1206,11 @@ message CommandEnvelope {
     // never renumber).
     GradeCommand grade = 64;
     PaveCommand pave = 65;
+    // 65 is held by `pave`, so the save-game verbs take 66-68 (append-only; never renumber). The
+    // fourth save operation, `list_saves`, is a QueryCommand rather than one of these: it mutates
+    // nothing, and the query channel is already the socket's way back.
+    SaveGameCommand save_game = 66;
+    LoadGameCommand load_game = 67;
+    DeleteSaveCommand delete_save = 68;
   }
 }

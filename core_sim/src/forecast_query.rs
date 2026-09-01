@@ -69,6 +69,11 @@ pub fn answer_forecast_query(world: &mut World, query: &QueryPayload) -> QueryRe
         QueryPayload::HuntTripForecast(ask) => answer_hunt_trip_forecast(world, ask),
         QueryPayload::DenialRaidForecast(ask) => answer_denial_raid_forecast(world, ask),
         QueryPayload::HuntCrewTake(ask) => answer_hunt_crew_take(world, ask),
+        // **Answered by the server, from disk.** The slot list is a question about the filesystem,
+        // not about a world — it has no `World` to resolve against and must be answerable while the
+        // server is idle, which is exactly when a player opens the load menu. Reaching here means
+        // the dispatch routed it wrong, so it says so rather than inventing an empty list.
+        QueryPayload::ListSaves => QueryReply::Error(query_error::WRONG_ANSWERER.to_string()),
     }
 }
 

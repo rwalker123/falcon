@@ -16,6 +16,11 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 @onready var workbench_layer: CanvasLayer = $Workbench
 @onready var event_dock: CanvasLayer = $EventDockPanel
 @onready var pause_layer: CanvasLayer = $PauseLayer
+## **WHO OWNS THE KEYBOARD** — the registry of every gameplay key and the arbiter that says which
+## classes may act. This node reads `CLASS_PANEL_TOGGLE` (polled, in `_process`) and `CLASS_ESCAPE`
+## (in `_unhandled_input`), and it PUSHES the modal-menu half of the arbiter's state to `MapView`.
+const KeyboardArbiter := preload("res://src/scripts/KeyboardArbiter.gd")
+
 @onready var pause_menu: MenuShell = $PauseLayer/MenuShell
 
 ## The designer surface, built into `workbench_layer` at `_connect_workbench` and hidden until `` ` ``.
@@ -49,6 +54,19 @@ var _victory_analytics_signature: String = ""
 # lower-priority reservers on its edge. The map/HUD inset still uses the per-edge SUM (owned by
 # MapView/Hud), which is unchanged — this registry only drives the Band panel's leading offset.
 var _reservations: Dictionary = {}
+# The save channel (list / save / load / delete). Owned here for the same reason `ForecastQuery`
+# is: the seam holds no socket, and the pause menu that drives it must not reach the network.
+var save_slots: SaveSlots = null
+# The slot this run is being LOADED from ("" = this run generates a world instead). Set from the
+# GameLaunch handoff in _build_world_request; it is what makes _try_send_world_request send
+# `load_game` rather than `new_game`, through the same retry and the same reveal gate.
+var _pending_load_slot: String = ""
+# The config files whose tuning moved between writing the save and loading it, held from the load's
+# reply until the loaded world REVEALS — the notice belongs over the world it is warning about, and
+# the reply lands while the loading overlay is still up.
+var _pending_config_drift: Array = []
+var _drift_notice: ConfigDriftNotice = null
+
 # Pending world-generation command (built from GameLaunch or the dev default) and a sent-once
 # latch. Held so it can be retried in _process if the command socket wasn't ready at _ready.
 var _new_game_command: Dictionary = {}
@@ -112,10 +130,6 @@ const LOADING_OVERLAY_LAYER = 150
 ## side of the tie (the surface being toggled is the one that should be legible mid-reflow), and the
 ## two never overlap in steady state anyway: the Band panel offsets past the Workbench's reservation.
 const WORKBENCH_LAYER = 103
-## Toggle action for the designer surface. **Backquote**, which nothing else in the client binds (the
-## hotkey table in `clients/godot_thin_client/CLAUDE.md` is the roster) and which costs the game no
-## letter it may still want.
-const WORKBENCH_TOGGLE_ACTION := "toggle_workbench"
 const WORKBENCH_RESERVER := &"workbench"
 ## Receipt the command log shows for a Workbench-issued command; `%s` is the command's verb. The verb
 ## alone, because the argument is a JSON patch that would swamp the feed.
@@ -182,6 +196,10 @@ const NEW_GAME_ANSWER_TIMEOUT := 30.0
 ## redundant `resync` costs the server one full encode. Much shorter than the new_game timeout
 ## because nothing has to be generated — the server already holds the world and only re-encodes it.
 const RESYNC_ANSWER_TIMEOUT := 2.0
+## The config-drift notice sits above the HUD and the Inspector but BELOW the pause menu: it is a
+## thing to read about the world, not a modal that should outrank ESC.
+const DRIFT_NOTICE_LAYER := 150
+
 const SNAPSHOT_DELTA_FIELDS := [
     "influencer_updates",
     "population_updates",
@@ -252,10 +270,16 @@ func _ready() -> void:
         inspector.call("set_command_client", command_client, command_err == OK)
     if inspector != null and inspector.has_method("set_hud_layer"):
         inspector.call("set_hud_layer", hud)
-    # The server now boots idle and only generates a world on `new_game`; build that command from
-    # the landing-screen handoff (or a dev default) and fire it (retried in _process if not yet sent).
-    _build_new_game_command()
-    _try_send_new_game()
+    # The save channel rides the same command client. Built BEFORE the world request, because the
+    # world request may itself be a `load_game` that goes out through this seam.
+    save_slots = SaveSlots.new()
+    save_slots.set_sender(Callable(self, "_send_query"))
+    save_slots.op_finished.connect(_on_save_op_finished)
+    # The server now boots idle and only generates a world on `new_game` (or restores one on
+    # `load_game`); build that request from the landing-screen handoff (or a dev default) and fire it
+    # (retried in _process if not yet sent).
+    _build_world_request()
+    _try_send_world_request()
     script_host_manager = ScriptHostManager.new()
     add_child(script_host_manager)
     script_host_manager.setup(command_client)
@@ -319,7 +343,7 @@ func _ready() -> void:
         # question out of what it is already rendering; the socket is `Main`'s. `_process` pumps the
         # answers back the other way — a query triggers NO snapshot, so nothing else ever would.
         if hud.has_method("forecast_query"):
-            hud.call("forecast_query").set_sender(Callable(self, "_send_forecast_query"))
+            hud.call("forecast_query").set_sender(Callable(self, "_send_query"))
         if hud.has_signal("next_turn_requested") and not hud.is_connected("next_turn_requested", Callable(self, "_on_hud_next_turn")):
             hud.connect("next_turn_requested", Callable(self, "_on_hud_next_turn"))
         if hud.has_signal("roster_occupant_selected") and not hud.is_connected("roster_occupant_selected", Callable(self, "_on_hud_roster_occupant_selected")):
@@ -383,11 +407,9 @@ func _ready() -> void:
                 hud.connect("faction_knowledge_changed", Callable(map_view, "set_faction_knowledge"))
     if inspector != null and inspector.has_method("set_streaming_active"):
         inspector.call("set_streaming_active", streaming_mode)
-    _ensure_action_binding("toggle_inspector", Key.KEY_I)
-    _ensure_action_binding("toggle_victory", Key.KEY_V)
-    _ensure_action_binding("toggle_event_dock", Key.KEY_R)
-    _ensure_action_binding("toggle_fow", Key.KEY_F)
-    _ensure_action_binding(WORKBENCH_TOGGLE_ACTION, Key.KEY_QUOTELEFT)
+    # The five panel-toggle bindings come from the REGISTRY, not from five literals here — a second
+    # copy of the key roster is how a hotkey ends up governed by a class it is not in.
+    KeyboardArbiter.ensure_action_bindings(KeyboardArbiter.CLASS_PANEL_TOGGLE)
     if inspector != null and inspector.has_signal("reserved_width_changed") and not inspector.is_connected("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed")):
         inspector.connect("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed"))
     if inspector != null and inspector.has_method("reserved_width"):
@@ -401,8 +423,7 @@ func _ready() -> void:
 ## returns to the landing screen, Exit quits. New Game is deliberately absent in pause mode —
 ## Abandon routes back to the landing screen, which owns the New Game flow.
 func _connect_pause_menu() -> void:
-    if pause_layer != null:
-        pause_layer.visible = false
+    _set_pause_menu_open(false)
     if pause_menu == null:
         return
     pause_menu.mode = MenuShell.PAUSE
@@ -414,14 +435,38 @@ func _connect_pause_menu() -> void:
         pause_menu.exit_requested.connect(_on_pause_exit)
     if not pause_menu.apply_theme_requested.is_connected(_on_pause_apply_theme):
         pause_menu.apply_theme_requested.connect(_on_pause_apply_theme)
+    if not pause_menu.load_requested.is_connected(_on_pause_load):
+        pause_menu.load_requested.connect(_on_pause_load)
+    pause_menu.set_save_slots(save_slots)
 
 func _show_pause_menu() -> void:
-    if pause_layer != null:
-        pause_layer.visible = true
+    _set_pause_menu_open(true)
 
 func _hide_pause_menu() -> void:
+    # **HIDING A `CanvasLayer` DOES NOT RELEASE FOCUS.** `CanvasLayer` is not a `CanvasItem`, so its
+    # `visible` never reaches the Controls under it as a visibility change and a focused field keeps
+    # the keyboard after the menu is gone. That is the stuck-focus half of `MapView`'s polled-input
+    # guard: WASD would stay dead for the rest of the session with nothing on screen to explain it.
+    if pause_menu != null and pause_menu.has_method("release_text_focus"):
+        pause_menu.call("release_text_focus")
+    _set_pause_menu_open(false)
+
+## **THE ONE WRITER OF `pause_layer.visible`**, because the overlay is now an ARBITER INPUT and not
+## just a picture: an open modal menu owns the keyboard, so every other consumer has to learn about
+## it the instant it opens. `MapView` cannot see `$PauseLayer` — it is `Main`'s node — so the flag is
+## pushed, the same coordinator mediation every other cross-node fact here uses. Routing all three
+## call sites through one setter is what keeps the push from being forgotten at one of them.
+func _set_pause_menu_open(open: bool) -> void:
     if pause_layer != null:
-        pause_layer.visible = false
+        pause_layer.visible = open
+    if map_view != null and map_view.has_method("set_modal_menu_open"):
+        map_view.call("set_modal_menu_open", open)
+
+## **WHO OWNS THE KEYBOARD THIS FRAME**, for this node's polled hotkey block. `pause_layer.visible`
+## is read live here — the same expression `escape_claimant` is driven with — rather than mirrored,
+## because this is the node the overlay belongs to.
+func _keyboard_owner() -> String:
+    return KeyboardArbiter.owner_for(get_viewport(), pause_layer != null and pause_layer.visible)
 
 ## Abandon ENDS the run, so the parameters it was built from stop being anybody's answer: the landing
 ## screen owns the next world's, and leaving this run's armed would let a later theme apply there
@@ -430,6 +475,7 @@ func _on_pause_abandon() -> void:
     var launch: Node = get_node_or_null("/root/GameLaunch")
     if launch != null:
         launch.set("active_new_game", null)
+        launch.set("active_load_slot", "")
     get_tree().change_scene_to_file("res://src/ui/LandingScreen.tscn")
 
 func _on_pause_exit() -> void:
@@ -442,14 +488,46 @@ func _on_pause_exit() -> void:
 func _on_pause_apply_theme() -> void:
     GameLaunch.apply_theme_now()
 
-## Build the `new_game <preset> <w> <h> <seed> <profile>` command from the GameLaunch handoff, or
-## the dev default when launched directly. Clears the handoff so a later scene reload starts fresh,
-## and records the RESOLVED parameters as `GameLaunch.active_new_game` — the handoff slot is empty
-## from here on, so that record is the only thing that can tell a later reload (a theme apply) which
-## world this run was configured with rather than sending it to the dev default.
-func _build_new_game_command() -> void:
+## **LOADING FROM INSIDE A RUN DISCARDS THAT RUN**, which is what the pause pane's armed
+## "Load — discards this run" button says in its own label. It is performed as a SCENE RELOAD with
+## the slot armed, not as a `load_game` sent from here: the reload re-runs `_ready`, which puts the
+## loading overlay back up, re-captures the reveal baseline and sends the load through the ordinary
+## retry-until-answered path (`.claude/rules/core_sim/world-handoff.md`). Sending it in place would
+## leave a live HUD rendering the old world while the server built another one.
+func _on_pause_load(slot: String) -> void:
+    var launch: Node = get_node_or_null("/root/GameLaunch")
+    if launch != null:
+        launch.set("pending_load_slot", slot)
+        launch.set("pending_new_game", null)
+    get_tree().reload_current_scene()
+
+## **DECIDE WHICH WORLD THIS RUN IS, AND HOW TO ASK FOR IT.** Either a `load_game <slot>` (the
+## `GameLaunch.pending_load_slot` handoff) or a `new_game <preset> <w> <h> <seed> <profile>` built
+## from `pending_new_game`, or the dev default when the scene was launched directly.
+##
+## Clears whichever handoff it consumed so a later scene reload starts fresh, and records what it
+## RESOLVED to — `GameLaunch.active_new_game` / `active_load_slot`. The handoff slots are empty from
+## here on, so that record is the only thing that can tell a later reload (a theme apply) which world
+## this run was, rather than sending it to the dev default.
+func _build_world_request() -> void:
     var params: Dictionary = DEV_DEFAULT_NEW_GAME
     var launch: Node = get_node_or_null("/root/GameLaunch")
+    # **A PENDING LOAD WINS.** The two slots are never armed together, and a load is the more
+    # specific request: it names the exact world to stand up, where new_game only names how to
+    # generate one. Consume-and-clear, the same contract `pending_new_game` follows.
+    if launch != null:
+        _pending_load_slot = String(launch.get("pending_load_slot"))
+        if _pending_load_slot != "":
+            launch.set("pending_load_slot", "")
+            launch.set("pending_new_game", null)
+            launch.set("active_load_slot", _pending_load_slot)
+            launch.set("active_new_game", null)
+            _new_game_command = {
+                "line": "",
+                "message": "Loading “%s”." % _pending_load_slot,
+            }
+            return
+        launch.set("active_load_slot", "")
     if launch != null and launch.get("pending_new_game") is Dictionary:
         params = launch.get("pending_new_game")
         launch.set("pending_new_game", null)
@@ -476,13 +554,25 @@ func _build_new_game_command() -> void:
             "profile_id": profile,
         })
 
-## Send the pending new_game command through the SAME transport MapPanel uses for map_size
-## (inspector.send_runtime_command → command socket). Retried from _process until it lands, so a
-## command socket still connecting at _ready doesn't drop the world-generation request.
-## `_new_game_command` is deliberately KEPT after a successful send — `_tick_new_game_retry`'s
-## answer timeout re-sends the very same line, and clearing it here would leave nothing to re-send.
-func _try_send_new_game() -> void:
+## Send the pending world request. A `new_game` goes through the SAME transport MapPanel uses for
+## map_size (inspector.send_runtime_command → command socket); a `load_game` goes through the save
+## seam, because it is answered rather than merely accepted. Retried from _process until it lands, so
+## a command socket still connecting at _ready doesn't drop the request.
+##
+## `_new_game_command` is deliberately KEPT after a successful send — `_tick_new_game_retry`'s answer
+## timeout re-sends the very same request, and clearing it here would leave nothing to re-send.
+func _try_send_world_request() -> void:
     if _new_game_sent or _new_game_command.is_empty():
+        return
+    if _pending_load_slot != "":
+        # A load is not a text command: it carries a request id and is ANSWERED on the query channel
+        # (`.claude/rules/core_sim/save-game.md`), so it goes out through the save seam. The latch is
+        # set on a successful dispatch exactly as it is for `new_game` — the reveal gate, not the
+        # reply, is what ends the retry.
+        if save_slots == null or save_slots.is_busy():
+            return
+        if save_slots.request_load(_pending_load_slot):
+            _new_game_sent = true
         return
     if inspector == null or not inspector.has_method("send_runtime_command"):
         return
@@ -525,7 +615,7 @@ func _tick_new_game_retry(delta: float) -> void:
     if _new_game_retry_accum < NEW_GAME_RETRY_INTERVAL:
         return
     _new_game_retry_accum = 0.0
-    _try_send_new_game()
+    _try_send_world_request()
     if not _new_game_sent and _new_game_elapsed >= NEW_GAME_RETRY_DEADLINE:
         _new_game_sent = true  # stop retrying this burst; likely a permanent rejection
 
@@ -555,6 +645,39 @@ func _show_loading_overlay() -> void:
 func _hide_loading_overlay() -> void:
     if loading_overlay != null:
         loading_overlay.visible = false
+
+## Re-word the overlay that is already up. Its only caller is a REFUSED load: the overlay is the one
+## surface the player is looking at, and "Generating world…" is a lie once the server has said no.
+func _set_loading_overlay_text(text: String) -> void:
+    if loading_overlay == null:
+        return
+    for child in loading_overlay.get_children():
+        if child is Label:
+            (child as Label).text = text
+            return
+
+
+## **THE CONFIG-DRIFT NOTICE, over the world it is about.** Raised once, on the reveal that follows a
+## successful load, and only when the drift list is non-empty — empty is the good case and gets no
+## interruption. The sim deliberately does not save config, so a save written before a balance change
+## plays under this build's tuning; the notice names the files so the player knows which numbers moved
+## (`.claude/rules/core_sim/save-game.md`).
+func _show_config_drift_notice() -> void:
+    if _pending_config_drift.is_empty():
+        return
+    var rows: Array = _pending_config_drift
+    # Consumed here, so a later world reveal in the same process cannot re-raise the previous load's
+    # warning.
+    _pending_config_drift = []
+    var layer := CanvasLayer.new()
+    layer.layer = DRIFT_NOTICE_LAYER
+    _drift_notice = ConfigDriftNotice.new()
+    layer.add_child(_drift_notice)
+    add_child(layer)
+    _drift_notice.show_drift(rows)
+    _drift_notice.dismissed.connect(func():
+        _drift_notice = null
+        layer.queue_free())
 
 ## Push one decoded snapshot (or delta) through the whole client: map render, HUD fan-out,
 ## Inspector, selection refresh, script host.
@@ -2721,7 +2844,7 @@ func _sync_fog_of_war(snapshot: Dictionary, is_delta: bool) -> void:
 
 ## Put one composed forecast question on the command socket. Injected into the HUD's `ForecastQuery`
 ## as its sender; `true` means the frame reached the socket, never that it was answered.
-func _send_forecast_query(request_id: int, ask: Dictionary) -> bool:
+func _send_query(request_id: int, ask: Dictionary) -> bool:
     if command_client == null:
         return false
     return command_client.send_query(request_id, ask)
@@ -2729,25 +2852,68 @@ func _send_forecast_query(request_id: int, ask: Dictionary) -> bool:
 ## Drain the forecast answers that landed this frame into the HUD's seam, and let it retire any
 ## superseded answer whose stale window has closed. **This is the only path an answer takes** — a
 ## query deliberately triggers no re-capture server-side, so no snapshot will ever carry one.
+## **DRAINED ONCE, DELIVERED TO BOTH SEAMS.** `poll_query_replies` is destructive — it empties the
+## native queue — so two drains would race, each swallowing answers meant for the other. The two
+## seams tell their own replies apart by `request_id`, and their id spaces are disjoint by
+## construction (`SaveSlots.REQUEST_ID_BASE`), so handing each the whole batch is correct.
 func _pump_forecast_queries() -> void:
-    if hud == null or command_client == null or not hud.has_method("forecast_query"):
+    if command_client == null:
+        return
+    var replies: Array = command_client.poll_query_replies()
+    if save_slots != null:
+        save_slots.deliver(replies)
+    if hud == null or not hud.has_method("forecast_query"):
         return
     var query: ForecastQuery = hud.call("forecast_query")
-    query.deliver(command_client.poll_query_replies())
+    query.deliver(replies)
     query.expire_stale()
+
+
+## The save channel's answers that `Main` itself cares about — which is only the LOAD's.
+##
+## A save or a delete is the pause pane's business and is reported there. A load's `config_drift` is
+## nobody else's: the menu shell is about to be gone, and this is the only place that will still be
+## standing when the loaded world appears.
+func _on_save_op_finished(kind: String, slot: String, ok: bool, error: String, drift: Array) -> void:
+    if kind != SaveSlots.KIND_LOAD:
+        return
+    if not ok:
+        # The world we asked for is not coming. Say so where the player is looking — the loading
+        # overlay — rather than leaving them on "Generating world…" forever.
+        push_warning("load_game(%s) refused: %s" % [slot, error])
+        _set_loading_overlay_text(SaveSlots.error_prose(error))
+        # **ONLY A TRANSPORT FAILURE IS RE-ASKED** — the same split `ForecastQuery` makes. A token the
+        # server spelled (`no_such_slot`, `unreadable`) is a statement about THIS slot and re-asking
+        # cannot change it, so the retry latch stays set and the reason stands on the overlay. A dead
+        # socket says nothing about the ask and heals on its own, so that one is chased.
+        if error == SaveSlots.ERROR_TRANSPORT:
+            _new_game_sent = false
+        return
+    _pending_config_drift = drift
 
 func _process(delta: float) -> void:
     _pump_forecast_queries()
-    if Input.is_action_just_pressed("toggle_inspector"):
-        _toggle_inspector_visibility()
-    if Input.is_action_just_pressed("toggle_victory"):
-        _toggle_victory_visibility()
-    if Input.is_action_just_pressed("toggle_event_dock"):
-        _toggle_event_dock_visibility()
-    if Input.is_action_just_pressed("toggle_fow"):
-        _toggle_fow_overlay()
-    if Input.is_action_just_pressed(WORKBENCH_TOGGLE_ACTION):
-        _toggle_workbench_visibility()
+    # **THE FIVE TOGGLE HOTKEYS ARE POLLED, so a focused text field does not starve them.**
+    # `Input.is_action_just_pressed` samples raw device state and never enters the event system: the
+    # `r` in a save's name toggled the event dock behind the menu, and `i`/`v`/`f`/`` ` `` did the
+    # same for their panels. `exact_match = true` is the other half — polled matching is NON-exact by
+    # default, so the bare-`r` binding fired for `Ctrl+R` as well.
+    #
+    # **THE GUARD IS THIS BLOCK AND NOTHING ELSE.** Every line below it must keep running while the
+    # player types: the query pump is what carries the answer to the save they are naming, and the
+    # snapshot drain, the connection poll and the world-request retry all have nothing to do with the
+    # keyboard. A guard around the whole of `_process` would stall the very socket the save needs.
+    if KeyboardArbiter.allows(_keyboard_owner(), KeyboardArbiter.CLASS_PANEL_TOGGLE):
+        if Input.is_action_just_pressed("toggle_inspector", true):
+            _toggle_inspector_visibility()
+        if Input.is_action_just_pressed("toggle_victory", true):
+            _toggle_victory_visibility()
+        if Input.is_action_just_pressed("toggle_event_dock", true):
+            _toggle_event_dock_visibility()
+        if Input.is_action_just_pressed("toggle_fow", true):
+            _toggle_fow_overlay()
+        if Input.is_action_just_pressed("toggle_workbench", true):
+            _toggle_workbench_visibility()
     if command_client != null:
         command_client.poll()
         command_client.ensure_connected()
@@ -2824,6 +2990,7 @@ func _try_reveal_world(streamed: Dictionary) -> void:
         launch_node.set("last_world_epoch", epoch)
     _apply_snapshot(streamed)
     _apply_startup_view()
+    _show_config_drift_notice()
 
 ## Per-world-reveal view defaults that need the LOADED world: seat the startup zoom and centre on the
 ## player's starting band. Called from _try_reveal_world AFTER the reveal snapshot is applied (so the
@@ -2843,20 +3010,6 @@ func _apply_startup_view() -> void:
         band_tile = hud.call("get_player_band_tile")
     if band_tile.x >= 0 and band_tile.y >= 0 and map_view.has_method("focus_on_tile"):
         map_view.call("focus_on_tile", band_tile.x, band_tile.y)
-
-func _ensure_action_binding(action_name: String, keycode: Key) -> void:
-    if not InputMap.has_action(action_name):
-        InputMap.add_action(action_name)
-    var events := InputMap.action_get_events(action_name)
-    for event in events:
-        if event is InputEventKey:
-            var key_event := event as InputEventKey
-            if key_event.physical_keycode == keycode or key_event.keycode == keycode:
-                return
-    var ev := InputEventKey.new()
-    ev.physical_keycode = keycode
-    ev.keycode = keycode
-    InputMap.action_add_event(action_name, ev)
 
 ## Is this frame a delta? Read off `frame_kind`, which the decoder stamps from the envelope's own
 ## payload discriminant — the authoritative answer, not an inference.

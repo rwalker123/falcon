@@ -502,7 +502,36 @@ pub enum CommandPayload {
         request_id: u64,
         query: QueryPayload,
     },
+    /// **Write the world to a named slot.** Proto field 66.
+    ///
+    /// Answered on the query channel with a [`QueryReply::SaveOp`], because a client that cannot
+    /// tell whether its save landed has not saved. `slot` is free-form but validated server-side —
+    /// it becomes a filename — and [`AUTOSAVE_SLOT`] is refused here: only the autosave hook writes
+    /// that one, or an explicit save would silently destroy the rolling backup.
+    SaveGame {
+        request_id: u64,
+        slot: String,
+    },
+    /// **Replace the running world with a saved one.** Proto field 67.
+    ///
+    /// Not replayable, and it **re-bases the command log**: everything before a load is unreachable,
+    /// exactly as for `NewGame` and `ResetMap`. The reply carries the config drift, which is the one
+    /// thing about a load no snapshot can tell the client.
+    LoadGame {
+        request_id: u64,
+        slot: String,
+    },
+    /// **Remove a slot from disk.** Proto field 68.
+    DeleteSave {
+        request_id: u64,
+        slot: String,
+    },
 }
+
+/// **The slot the autosave hook owns.** An explicit [`CommandPayload::SaveGame`] naming it is
+/// refused with [`save_error::RESERVED_SLOT`]: the point of a rolling autosave is that the player
+/// cannot overwrite it by accident, and a name collision is exactly that accident.
+pub const AUTOSAVE_SLOT: &str = "autosave";
 
 /// Which question a [`CommandPayload::Query`] asks. Mirrors the proto `QueryCommand.query` oneof.
 #[derive(Debug, Clone, PartialEq)]
@@ -510,6 +539,9 @@ pub enum QueryPayload {
     HuntTripForecast(HuntTripForecastQuery),
     DenialRaidForecast(DenialRaidForecastQuery),
     HuntCrewTake(HuntCrewTakeQuery),
+    /// *"What is on disk?"* Answered from each save's **header alone** — the format keeps the header
+    /// in its own uncompressed document so a listing never inflates or decodes a world.
+    ListSaves,
 }
 
 /// *"What does this party, off this band, carrying this kit, take off this herd at this floor?"*
@@ -590,6 +622,86 @@ pub enum QueryReply {
     DenialRaidForecast(DenialRaidForecastReply),
     HuntCrewTake(HuntCrewTakeReply),
     Error(String),
+    /// The slot list, newest first.
+    ListSaves(Vec<SaveSlotInfo>),
+    /// The answer to a save, load or delete. Those are commands rather than queries; they ride this
+    /// envelope because it is the socket's one way back, not because they are questions.
+    SaveOp(SaveOpReply),
+}
+
+/// One row of the save-slot list. Every field comes out of the save's header.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SaveSlotInfo {
+    pub slot: String,
+    pub turn: u64,
+    pub campaign_title: String,
+    pub map_preset_id: String,
+    pub width: u32,
+    pub height: u32,
+    pub world_seed: u64,
+    pub start_profile_id: String,
+    pub size_bytes: u64,
+    /// Seconds since the Unix epoch; `0` when the filesystem would not say.
+    pub modified_unix_seconds: u64,
+}
+
+/// Where a config's tuning came from.
+///
+/// `Builtin` and `File` are a **real difference**, not two spellings of one: *"no file was there, so
+/// the compiled-in copy loaded"* and *"a file was there and hashed to N"* are different facts about a
+/// world's tuning, and a drift row that collapsed them would report no change when the shipped file
+/// appeared or vanished.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConfigDigestKind {
+    /// The config was not recorded on that side at all.
+    #[default]
+    Absent,
+    Builtin,
+    File,
+}
+
+/// One config file whose tuning differs between the save and the loading process.
+///
+/// Per file rather than one "config changed" flag: a player can act on *"fauna_config.json moved"*
+/// and cannot act on *"something moved"*.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigDriftEntry {
+    pub file_name: String,
+    pub saved: ConfigDigestKind,
+    pub live: ConfigDigestKind,
+}
+
+/// The answer to a save, load or delete.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SaveOpReply {
+    pub ok: bool,
+    pub slot: String,
+    /// A machine-readable snake_case token when `ok` is false ([`save_error`]); the client owns the
+    /// prose.
+    pub error: String,
+    /// **Only ever populated on a successful load, and empty is the good case.** The world is
+    /// restored exactly as saved; these are the config files whose tuning the turns from here will
+    /// run under instead.
+    pub config_drift: Vec<ConfigDriftEntry>,
+}
+
+/// **The refusal tokens a [`SaveOpReply::error`] can carry.** Named constants rather than literals
+/// at the raising sites, so the client's match arms and the server's answers cannot drift apart —
+/// the same arrangement [`query_error`] uses.
+pub mod save_error {
+    /// No world has been generated yet, so there is nothing to save.
+    pub const NO_ACTIVE_WORLD: &str = "no_active_world";
+    /// The slot name is empty, too long, or carries a character that must never reach a filename.
+    pub const INVALID_SLOT: &str = "invalid_slot";
+    /// An explicit save named the autosave slot, which only the autosave hook may write.
+    pub const RESERVED_SLOT: &str = "reserved_slot";
+    /// No save exists under that slot name.
+    pub const NO_SUCH_SLOT: &str = "no_such_slot";
+    /// The file could not be read or written.
+    pub const IO_FAILED: &str = "io_failed";
+    /// The bytes on disk are not a save this build can read — wrong magic, wrong format version, or
+    /// a payload that would not decode.
+    pub const UNREADABLE: &str = "unreadable";
 }
 
 /// **The refusal tokens a [`QueryReply::Error`] can carry.** Named constants rather than literals at
@@ -615,6 +727,11 @@ pub mod query_error {
     /// rather than a large answer. Refused, never clamped — the same rule an out-of-range floor
     /// follows, for the same reason: a clamp answers a question nobody asked.
     pub const INVALID_CREW: &str = "invalid_crew";
+    /// **A routing bug, not a user error.** The ask reached a module that does not answer it —
+    /// today only `QueryPayload::ListSaves`, which is answered from disk by the server rather than
+    /// from a world. It exists so a mis-routed query says so instead of returning a plausible empty
+    /// answer.
+    pub const WRONG_ANSWERER: &str = "wrong_answerer";
 }
 
 /// **The FOOD commodity key a shipment's food line names** — the same string `core_sim`'s
@@ -1548,6 +1665,24 @@ impl CommandEnvelope {
                     pb::ClearConfigOverridesCommand {},
                 )
             }
+            CommandPayload::SaveGame { request_id, slot } => {
+                pb::command_envelope::Command::SaveGame(pb::SaveGameCommand {
+                    request_id: *request_id,
+                    slot: slot.clone(),
+                })
+            }
+            CommandPayload::LoadGame { request_id, slot } => {
+                pb::command_envelope::Command::LoadGame(pb::LoadGameCommand {
+                    request_id: *request_id,
+                    slot: slot.clone(),
+                })
+            }
+            CommandPayload::DeleteSave { request_id, slot } => {
+                pb::command_envelope::Command::DeleteSave(pb::DeleteSaveCommand {
+                    request_id: *request_id,
+                    slot: slot.clone(),
+                })
+            }
             CommandPayload::Query { request_id, query } => {
                 pb::command_envelope::Command::Query(pb::QueryCommand {
                     request_id: *request_id,
@@ -1585,6 +1720,9 @@ impl CommandEnvelope {
                                 floor: ask.floor,
                                 max_workers: ask.max_workers,
                             })
+                        }
+                        QueryPayload::ListSaves => {
+                            pb::query_command::Query::ListSaves(pb::ListSavesQuery {})
                         }
                     }),
                 })
@@ -1691,6 +1829,18 @@ impl CommandEnvelope {
                     path: cmd.path,
                 }
             }
+            pb::command_envelope::Command::SaveGame(cmd) => CommandPayload::SaveGame {
+                request_id: cmd.request_id,
+                slot: cmd.slot,
+            },
+            pb::command_envelope::Command::LoadGame(cmd) => CommandPayload::LoadGame {
+                request_id: cmd.request_id,
+                slot: cmd.slot,
+            },
+            pb::command_envelope::Command::DeleteSave(cmd) => CommandPayload::DeleteSave {
+                request_id: cmd.request_id,
+                slot: cmd.slot,
+            },
             pb::command_envelope::Command::SetCrisisAutoSeed(cmd) => {
                 CommandPayload::SetCrisisAutoSeed {
                     enabled: cmd.enabled,
@@ -1983,6 +2133,7 @@ impl CommandEnvelope {
                             max_party_workers: ask.max_party_workers,
                         })
                     }
+                    pb::query_command::Query::ListSaves(_) => QueryPayload::ListSaves,
                     pb::query_command::Query::HuntCrewTake(ask) => {
                         QueryPayload::HuntCrewTake(HuntCrewTakeQuery {
                             faction_id: ask.faction_id,
@@ -2005,6 +2156,89 @@ impl CommandEnvelope {
             payload,
             correlation_id: proto.correlation_id,
         })
+    }
+}
+
+/// Save-slot and config-drift conversions, shared by the command and reply directions.
+fn config_digest_kind_to_proto(kind: ConfigDigestKind) -> pb::ConfigDigestKind {
+    match kind {
+        ConfigDigestKind::Absent => pb::ConfigDigestKind::Absent,
+        ConfigDigestKind::Builtin => pb::ConfigDigestKind::Builtin,
+        ConfigDigestKind::File => pb::ConfigDigestKind::File,
+    }
+}
+
+fn config_digest_kind_from_proto(raw: i32) -> ConfigDigestKind {
+    match pb::ConfigDigestKind::try_from(raw) {
+        Ok(pb::ConfigDigestKind::Builtin) => ConfigDigestKind::Builtin,
+        Ok(pb::ConfigDigestKind::File) => ConfigDigestKind::File,
+        // An unknown discriminant reads as "not recorded", which is the conservative direction: a
+        // row that cannot say what one side held still says the two sides differ.
+        Ok(pb::ConfigDigestKind::Absent) | Err(_) => ConfigDigestKind::Absent,
+    }
+}
+
+fn save_slot_info_to_proto(info: &SaveSlotInfo) -> pb::SaveSlotInfo {
+    pb::SaveSlotInfo {
+        slot: info.slot.clone(),
+        turn: info.turn,
+        campaign_title: info.campaign_title.clone(),
+        map_preset_id: info.map_preset_id.clone(),
+        width: info.width,
+        height: info.height,
+        world_seed: info.world_seed,
+        start_profile_id: info.start_profile_id.clone(),
+        size_bytes: info.size_bytes,
+        modified_unix_seconds: info.modified_unix_seconds,
+    }
+}
+
+fn save_slot_info_from_proto(proto: pb::SaveSlotInfo) -> SaveSlotInfo {
+    SaveSlotInfo {
+        slot: proto.slot,
+        turn: proto.turn,
+        campaign_title: proto.campaign_title,
+        map_preset_id: proto.map_preset_id,
+        width: proto.width,
+        height: proto.height,
+        world_seed: proto.world_seed,
+        start_profile_id: proto.start_profile_id,
+        size_bytes: proto.size_bytes,
+        modified_unix_seconds: proto.modified_unix_seconds,
+    }
+}
+
+fn save_op_reply_to_proto(reply: &SaveOpReply) -> pb::SaveOpReply {
+    pb::SaveOpReply {
+        ok: reply.ok,
+        slot: reply.slot.clone(),
+        error: reply.error.clone(),
+        config_drift: reply
+            .config_drift
+            .iter()
+            .map(|entry| pb::ConfigDriftEntry {
+                file_name: entry.file_name.clone(),
+                saved: config_digest_kind_to_proto(entry.saved) as i32,
+                live: config_digest_kind_to_proto(entry.live) as i32,
+            })
+            .collect(),
+    }
+}
+
+fn save_op_reply_from_proto(proto: pb::SaveOpReply) -> SaveOpReply {
+    SaveOpReply {
+        ok: proto.ok,
+        slot: proto.slot,
+        error: proto.error,
+        config_drift: proto
+            .config_drift
+            .into_iter()
+            .map(|entry| ConfigDriftEntry {
+                file_name: entry.file_name,
+                saved: config_digest_kind_from_proto(entry.saved),
+                live: config_digest_kind_from_proto(entry.live),
+            })
+            .collect(),
     }
 }
 
@@ -2058,6 +2292,14 @@ impl QueryReplyEnvelope {
                         .collect(),
                 })
             }
+            QueryReply::ListSaves(slots) => {
+                pb::query_reply_envelope::Reply::ListSaves(pb::ListSavesReply {
+                    slots: slots.iter().map(save_slot_info_to_proto).collect(),
+                })
+            }
+            QueryReply::SaveOp(reply) => {
+                pb::query_reply_envelope::Reply::SaveOp(save_op_reply_to_proto(reply))
+            }
             QueryReply::Error(reason) => pb::query_reply_envelope::Reply::Error(pb::QueryError {
                 reason: reason.clone(),
             }),
@@ -2108,6 +2350,16 @@ impl QueryReplyEnvelope {
                         })
                         .collect(),
                 })
+            }
+            pb::query_reply_envelope::Reply::ListSaves(reply) => QueryReply::ListSaves(
+                reply
+                    .slots
+                    .into_iter()
+                    .map(save_slot_info_from_proto)
+                    .collect(),
+            ),
+            pb::query_reply_envelope::Reply::SaveOp(reply) => {
+                QueryReply::SaveOp(save_op_reply_from_proto(reply))
             }
             pb::query_reply_envelope::Reply::Error(error) => QueryReply::Error(error.reason),
         };
@@ -2393,6 +2645,126 @@ mod tests {
         let bytes = envelope.encode_to_vec().expect("encode");
         let decoded = CommandEnvelope::decode(&bytes).expect("decode");
         assert_eq!(decoded.payload, payload);
+    }
+
+    /// The three save verbs survive the envelope, `request_id` and all — a reply that could not be
+    /// correlated is a reply the client cannot show.
+    #[test]
+    fn the_save_verbs_round_trip_through_the_envelope() {
+        for payload in [
+            CommandPayload::SaveGame {
+                request_id: 11,
+                slot: "Second Age 12".to_string(),
+            },
+            CommandPayload::LoadGame {
+                request_id: 12,
+                slot: "autosave".to_string(),
+            },
+            CommandPayload::DeleteSave {
+                request_id: 13,
+                slot: "old-one".to_string(),
+            },
+        ] {
+            let envelope = CommandEnvelope {
+                payload: payload.clone(),
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encode");
+            assert_eq!(
+                CommandEnvelope::decode(&bytes).expect("decode").payload,
+                payload
+            );
+        }
+    }
+
+    /// The slot listing is a QUERY — it mutates nothing, and it is the one save operation that is
+    /// therefore not a command.
+    #[test]
+    fn the_slot_listing_round_trips_as_a_query() {
+        let payload = CommandPayload::Query {
+            request_id: 21,
+            query: QueryPayload::ListSaves,
+        };
+        let envelope = CommandEnvelope {
+            payload: payload.clone(),
+            correlation_id: None,
+        };
+        let bytes = envelope.encode_to_vec().expect("encode");
+        assert_eq!(
+            CommandEnvelope::decode(&bytes).expect("decode").payload,
+            payload
+        );
+    }
+
+    #[test]
+    fn a_slot_list_reply_round_trips_through_the_wire() {
+        let reply = QueryReplyEnvelope {
+            request_id: 31,
+            reply: QueryReply::ListSaves(vec![SaveSlotInfo {
+                slot: "Second Age 12".to_string(),
+                turn: 140,
+                campaign_title: "The Long Winter".to_string(),
+                map_preset_id: "earthlike".to_string(),
+                width: 160,
+                height: 104,
+                world_seed: 0xDEAD_BEEF,
+                start_profile_id: "late_forager_tribe".to_string(),
+                size_bytes: 1_257_874,
+                modified_unix_seconds: 1_700_000_000,
+            }]),
+        };
+        let bytes = reply.encode_to_vec().expect("encode");
+        assert_eq!(QueryReplyEnvelope::decode(&bytes).expect("decode"), reply);
+    }
+
+    /// **The drift warning survives the wire naming files, and `Builtin` does not collapse into
+    /// `File`.** Those are different facts about where a world's tuning came from, and a client that
+    /// received them as one could not tell a shipped config appearing from one being edited.
+    #[test]
+    fn a_config_drift_warning_round_trips_with_its_kinds_intact() {
+        let reply = QueryReplyEnvelope {
+            request_id: 41,
+            reply: QueryReply::SaveOp(SaveOpReply {
+                ok: true,
+                slot: "before_tuning".to_string(),
+                error: String::new(),
+                config_drift: vec![
+                    ConfigDriftEntry {
+                        file_name: "fauna_config.json".to_string(),
+                        saved: ConfigDigestKind::File,
+                        live: ConfigDigestKind::File,
+                    },
+                    ConfigDriftEntry {
+                        file_name: "recipes.json".to_string(),
+                        saved: ConfigDigestKind::Builtin,
+                        live: ConfigDigestKind::File,
+                    },
+                    ConfigDriftEntry {
+                        file_name: "only_in_save.json".to_string(),
+                        saved: ConfigDigestKind::File,
+                        live: ConfigDigestKind::Absent,
+                    },
+                ],
+            }),
+        };
+        let bytes = reply.encode_to_vec().expect("encode");
+        assert_eq!(QueryReplyEnvelope::decode(&bytes).expect("decode"), reply);
+    }
+
+    /// A refusal carries its token, and no drift — drift is a load-only, success-only field.
+    #[test]
+    fn a_refused_save_round_trips_with_its_token() {
+        let reply = QueryReplyEnvelope {
+            request_id: 51,
+            reply: QueryReply::SaveOp(SaveOpReply {
+                ok: false,
+                slot: AUTOSAVE_SLOT.to_string(),
+                error: save_error::RESERVED_SLOT.to_string(),
+                config_drift: Vec::new(),
+            }),
+        };
+        let bytes = reply.encode_to_vec().expect("encode");
+        assert_eq!(QueryReplyEnvelope::decode(&bytes).expect("decode"), reply);
     }
 
     /// `0` is the protobuf default, so an unset `kind` field decodes as UNSPECIFIED. Accepting it

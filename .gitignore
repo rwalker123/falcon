@@ -2,8 +2,14 @@
 **/target/
 # Scratch directory for `export_map` command output (map JSON dumps).
 /exports/
-# Scratch directory for `set_config_override` output (merged per-kind configs).
-/config_overrides/
+# Scratch directory for `set_config_override` output (merged per-kind configs). NOT root-anchored:
+# the path is resolved against the process's cwd, which for a test is the *package* root, so a test
+# that reaches `handle_set_config_override` drops one in `core_sim/` where a `/`-anchored rule would
+# not match it.
+config_overrides/
+# Save slots (`SIM_SAVE_DIR`, default `./saves`). Same reasoning as above — the default is relative
+# to the server's cwd, which is the package root under `cargo test`.
+saves/
 # Cross-compiled Windows playtest packages (scripts/build_windows.sh output).
 /dist/
 **/*.rs.bk

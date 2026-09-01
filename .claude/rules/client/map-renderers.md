@@ -390,3 +390,11 @@ Minimap sizing parameters live in `heightfield_config.json` (the file also holds
 
 ---
 
+## Typing must not drive the game
+
+Both of this node's keyboard readers ask `KeyboardArbiter` first: the POLLED pan/zoom in `_process`
+(which never enters the event system, so a focused field does not starve it) and the RAW `C`/`H`/`T`
+in `_unhandled_input` (which a focused `LineEdit` does not starve either — it consumes the keys it
+USES and lets the rest fall through). The registry, the three-owner policy, exact matching and the
+focus release they depend on are `.claude/rules/client/keyboard-arbiter.md`. **The targeting Escape
+is the one deliberately unarbitrated key here** — `ESCAPE` acts under every owner.

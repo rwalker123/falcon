@@ -8,6 +8,7 @@
 //! this is the first slice of the pastoral→settlement chain (`Camp`, corrals, and wiring
 //! `found_settlement` to the hard prompt stay deferred).
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use bevy::prelude::*;
@@ -24,7 +25,7 @@ use crate::{
 
 /// Which settle-prompt threshold a faction has currently crossed. Ordered so a *rising* stage
 /// (`new > stored`) edge-gates the prompt emission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
 pub enum SedentarizationStage {
     /// Below the soft threshold — still comfortably nomadic.
     #[default]
@@ -57,7 +58,7 @@ impl SedentarizationStage {
 }
 
 /// One faction's current sedentarization pressure.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct SedentarizationEntry {
     /// EMA-smoothed 0–100 score.
     pub score: f32,
@@ -66,7 +67,7 @@ pub struct SedentarizationEntry {
 }
 
 /// Per-faction sedentarization scores (mirrors `FactionInventory`'s per-faction map shape).
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SedentarizationScore {
     entries: HashMap<FactionId, SedentarizationEntry>,
 }

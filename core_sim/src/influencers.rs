@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use bevy::prelude::*;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::resources::SimulationTick;
 use crate::{
@@ -256,7 +256,7 @@ const CHANNEL_COUNT: usize = 4;
 
 const CHANNEL_NAMES: [&str; CHANNEL_COUNT] = ["Popular", "Peer", "Institutional", "Humanitarian"];
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct InfluencerCultureResonance {
     pub global: [Scalar; CULTURE_TRAIT_AXES],
     pub regional: [Scalar; CULTURE_TRAIT_AXES],
@@ -273,7 +273,7 @@ impl Default for InfluencerCultureResonance {
     }
 }
 
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct InfluencerImpacts {
     pub logistics_multiplier: Scalar,
     pub morale_delta: Scalar,
@@ -310,7 +310,7 @@ impl InfluencerImpacts {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum InfluencerStatus {
     Potential,
     Active,
@@ -347,7 +347,7 @@ impl InfluencerStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct InfluentialIndividual {
     id: InfluentialId,
     name: String,
@@ -611,7 +611,7 @@ pub struct InfluentialRoster {
 /// would silently reinstall that tuning — hot-reload a config, roll back, and the reload is undone
 /// with nothing logged. Restore re-attaches whatever config is live *now* by leaving
 /// `InfluentialRoster::config` untouched.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InfluentialRosterCheckpoint {
     seed: u64,
     individuals: Vec<InfluentialIndividual>,

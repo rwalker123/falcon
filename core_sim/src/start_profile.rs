@@ -6,7 +6,7 @@ use std::{
 };
 
 use bevy::prelude::Resource;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sim_schema::{
     CampaignInventoryEntryState, CampaignLabel as SchemaCampaignLabel, CampaignProfileState,
@@ -586,7 +586,7 @@ impl ActiveStartProfile {
     }
 }
 
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct StartProfileLookup {
     pub id: String,
 }

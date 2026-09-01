@@ -9,15 +9,26 @@ class_name MenuShell
 ## - pause: a centered card floating over a dark scrim.
 ##
 ## Styled entirely through `HudStyle` so it matches the in-game command console. Functional
-## items (New Game, Resume, Abandon, Exit) emit signals the owner acts on; the rest
-## (Map Selection, Load, Save, Options) render inert placeholder panes.
+## items (New Game, Resume, Abandon, Exit) emit signals the owner acts on; Map Selection still
+## renders an inert placeholder pane.
+##
+## **The Load and Save panes are LIVE**, over the injected `SaveSlots` seam (`set_save_slots`): they
+## list what is on disk, write a slot, delete one, and emit `load_requested` for the one act that
+## replaces a world. The seam is injected rather than built here for the same reason the fog row
+## writes only `ClientSettings` — this file has no handle to `Main`, the `Inspector` or a
+## `CommandClient`, and must not grow one.
 ##
 ## Signals out — the owner (LandingScreen / Main's PauseLayer) wires these:
 ##   new_game_requested(preset_id, width, height, seed, profile_id)
+##   load_requested(slot)
 ##   resume_requested / abandon_requested / exit_requested / apply_theme_requested
 
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 const MapSizes = preload("res://src/scripts/MapSizes.gd")
+## **THE ONE "is the player typing?" PREDICATE**, shared with the two polled-input sites it exists
+## for (`MapView`'s pan/zoom, `Main`'s toggle hotkeys). Asked here about a single node rather than
+## about the viewport, so that "this is a text field" has exactly one spelling in the client.
+const TextEntryFocus = preload("res://src/scripts/TextEntryFocus.gd")
 
 signal new_game_requested(preset_id: String, width: int, height: int, seed: int, profile_id: String)
 signal resume_requested
@@ -26,6 +37,12 @@ signal exit_requested
 ## The Theme row's "Apply now" button. Installing the palette and rebuilding the scene is the
 ## OWNER's to perform (via the `GameLaunch` autoload) — this file's items emit, they do not act.
 signal apply_theme_requested
+## The Load pane's "Load selected". **The world handoff is the OWNER's**, exactly as `new_game` is:
+## `LandingScreen` stashes the slot and swaps to `Main.tscn`, `Main` re-runs its own `_ready` against
+## it, and the reveal gate decides when the loaded world is shown
+## (`.claude/rules/core_sim/world-handoff.md`). This file sends `save_game` / `delete_save` itself —
+## those change a file and no world — but it never sends `load_game`.
+signal load_requested(slot: String)
 
 const LANDING := "landing"
 const PAUSE := "pause"
@@ -65,13 +82,65 @@ const PRESETS := [
 	},
 ]
 
-# Static fixtures for the placeholder Load/Save panes (display-only; wiring is server-side work).
-const SAVE_SLOTS := [
-	{"who": "Trail Sovereigns", "meta": "Turn 47 · Late Thaw · 3 bands, 94 souls", "when": "12 min ago", "auto": true},
-	{"who": "Trail Sovereigns", "meta": "Turn 31 · First Frost · 2 bands, 61 souls", "when": "Yesterday 22:14", "auto": false},
-	{"who": "Trail Sovereigns", "meta": "Turn 12 · High Sun · 1 band, 30 souls", "when": "18 Jul, 09:02", "auto": false},
-	{"empty": true},
-]
+# ---- Load / Save panes ---------------------------------------------------------------------------
+# The rows come from the `SaveSlots` seam (a real `list_saves` round trip), never from a fixture. The
+# pane is a VIEW over that seam: it reads its state, calls its verbs, and emits `load_requested` for
+# the one action that replaces a world.
+
+## The two pane ids the saves builder serves, matched on rather than compared to literals at the
+## three call sites that re-open or rebuild them.
+const PANE_LOAD := "load"
+const PANE_SAVE := "save"
+
+## Meta-line separator, the same middot the setup pane's summary uses.
+const SLOT_META_SEPARATOR := " · "
+## Appended to the timestamp on the slot the game writes itself.
+const SLOT_AUTO_TAG := "AUTO"
+const SLOT_DIMENSIONS_FORMAT := "%d × %d"
+const SLOT_TURN_FORMAT := "Turn %d"
+## Shown in place of a campaign title a save did not carry one for.
+const SLOT_TITLE_FALLBACK := "Untitled run"
+
+## The Load pane's blurb, in its two modes. **The pause-mode one carries the consequence**, because
+## loading from inside a run throws that run away — the same "say it in the surface, not in a modal"
+## rule the Abandon pane and the Theme row follow.
+const LOAD_BLURB_LANDING := "Pick a saved run to continue. The world is rebuilt exactly as it was written."
+const LOAD_BLURB_PAUSE := "Loading rebuilds the world from the save. The run in progress is discarded and is not saved first."
+## …and the button labels that go with them. The pause label states the loss in its own text and takes
+## the `armed` variant, which is this shell's whole confirmation pattern for a destructive action.
+const LOAD_BUTTON_LABEL := "Load selected"
+const LOAD_BUTTON_LABEL_IN_RUN := "Load — discards this run"
+
+const SAVE_BLURB := "Write the current run to a slot. The game keeps its own autosave slot, rewritten every few turns — ten by default — and it cannot be saved over by hand."
+const SAVE_NAME_FIELD_LABEL := "Slot name"
+const SAVE_NAME_PLACEHOLDER := "Name this save"
+const SAVE_NAME_HINT := "Pick a slot below to overwrite it, or type a new name."
+const SAVE_BUTTON_FORMAT := "Save to “%s”"
+const SAVE_BUTTON_OVERWRITE_FORMAT := "Overwrite “%s”"
+const SAVE_BUTTON_IDLE := "Save to slot"
+const SAVE_NAME_FIELD_MIN_WIDTH := 300.0
+## **NOTHING CARRIED A CARET ACROSS THIS REBUILD** — put it at the end of the text, which is where a
+## field opened fresh, or just filled from a slot row, should start. Any real column is ≥ 0, so a
+## negative sentinel cannot be confused with one.
+const SAVE_NAME_CARET_AT_END := -1
+
+## Delete is a two-step in the actions row rather than a modal: press once to arm, and the armed
+## button says what it will destroy. Same shape as the Theme row's "Apply now — ends this run".
+const DELETE_BUTTON_LABEL := "Delete"
+const DELETE_CONFIRM_FORMAT := "Delete “%s” permanently"
+const DELETE_CANCEL_LABEL := "Cancel"
+
+## The list's four states, as lines. `LIST_READY` with no rows is the genuine "nothing saved yet" and
+## reads as an invitation, not as a failure.
+const SLOTS_PENDING_LINE := "Reading the saves folder…"
+const SLOTS_EMPTY_LINE := "No saved runs yet."
+const SLOTS_EMPTY_LINE_SAVE := "No saved runs yet — this will be the first."
+const SLOTS_RETRY_LABEL := "Try again"
+const SAVE_IN_FLIGHT_LINE := "Writing the save…"
+const LOAD_IN_FLIGHT_LINE := "Loading…"
+const DELETE_IN_FLIGHT_LINE := "Deleting…"
+const SAVE_DONE_FORMAT := "Saved to “%s”."
+const DELETE_DONE_FORMAT := "Deleted “%s”."
 
 # ---- layout constants (named; no bare literals) ----
 const LANDING_PAD_X := 72.0
@@ -185,6 +254,27 @@ var _option_toggles: Array = []
 var _theme_picker: OptionButton = null
 var _theme_caption: Label = null
 var _theme_apply: Button = null
+
+## **THE SAVE CHANNEL SEAM, INJECTED** (`set_save_slots`). `MenuShell` holds no socket and no handle
+## to `Main` — the same boundary the fog row keeps — so the owner builds the seam over its command
+## client and hands it in. Null until then, which is exactly the state a harness renders in.
+var _save_slots: SaveSlots = null
+## Which row the Load/Save panes are pointed at (`""` = none). Shared across the two panes on purpose:
+## a player who just saved over "midwinter" and switches to Load is still talking about that slot.
+var _selected_slot := ""
+## The Save pane's name field and its live text, held so a rebuild (an answer landing) restores what
+## was typed instead of clearing it under the player's hands.
+var _save_name_edit: LineEdit = null
+var _save_name_text := ""
+## Where the NEXT build of that field puts its caret: the column the editing field reported, or
+## `SAVE_NAME_CARET_AT_END` when the text came from somewhere other than typing. Sticky, so a rebuild
+## the player did not cause (a list answer landing mid-word) does not move the caret either.
+var _save_name_caret := SAVE_NAME_CARET_AT_END
+## The slot the Delete button is ARMED for (`""` = not armed). Cleared by any rebuild that is not the
+## confirm press itself, so an arm cannot survive a changed selection.
+var _delete_armed_slot := ""
+## The last finished op, as a line under the actions row: `{"text": String, "ok": bool}`, or `{}`.
+var _last_op_note := {}
 
 
 func set_mode(value: String) -> void:
@@ -405,6 +495,11 @@ func _activate_item(id: String) -> void:
 		return
 	_active_pane = id
 	_refresh_nav_active()
+	if _is_saves_pane(id):
+		# The saves panes are the only ones whose content lives on the server, so opening one is also
+		# an ASK. Every other pane is a pure function of what this file already knows.
+		_open_saves_pane()
+		return
 	_show_pane(id)
 
 
@@ -452,6 +547,10 @@ func _nav_stylebox(active: bool, hover: bool, danger: bool) -> StyleBox:
 
 # ---- panes ------------------------------------------------------------------
 func _show_pane(pane_id: String) -> void:
+	# The outgoing pane may hold the keyboard (the Save pane's name field, the setup pane's seed
+	# field). `queue_free` releases focus only when the node actually leaves the tree at the end of
+	# the frame, so the release is made HERE, before the rebuild — see `release_text_focus`.
+	release_text_focus()
 	for child in _pane_body.get_children():
 		child.queue_free()
 	match pane_id:
@@ -459,10 +558,10 @@ func _show_pane(pane_id: String) -> void:
 			_build_setup_pane()
 		"map_selection":
 			_build_map_selection_pane()
-		"load":
-			_build_saves_pane("Load Game", "Saved runs", false)
-		"save":
-			_build_saves_pane("Save Game", "Turn 47 · Late Thaw", true)
+		PANE_LOAD:
+			_build_saves_pane(false)
+		PANE_SAVE:
+			_build_saves_pane(true)
 		"options":
 			_build_options_pane()
 		"abandon":
@@ -537,25 +636,163 @@ func _build_map_selection_pane() -> void:
 	_pane_body.add_child(actions)
 
 
-func _build_saves_pane(title: String, eyebrow: String, is_save: bool) -> void:
-	_add_pane_header(title, eyebrow)
+## **THE ONE BUILDER FOR BOTH SAVE PANES.** They share the slot list, the selection and every state
+## the seam can be in; only the blurb, the field and the action row differ, exactly as the landing and
+## pause shells share one nav.
+##
+## Rebuilt whole on every answer from the seam (`_on_slots_changed` / `_on_save_op_finished`). That is
+## cheap here — a pane is a few dozen Labels — and it is what keeps "what is on screen" a pure
+## function of the seam's state rather than a set of widgets patched from three directions.
+func _build_saves_pane(is_save: bool) -> void:
+	var in_run := mode == PAUSE
 	if is_save:
-		_add_paragraph("Write the current run to a slot. The autosave slot is rewritten at the end of every turn and cannot be overwritten by hand.")
-	for slot in SAVE_SLOTS:
-		_pane_body.add_child(_make_slot_row(slot))
+		_add_pane_header("Save Game", "This run")
+		_add_paragraph(SAVE_BLURB)
+	else:
+		_add_pane_header("Load Game", "Saved runs")
+		_add_paragraph(LOAD_BLURB_PAUSE if in_run else LOAD_BLURB_LANDING)
+
+	if is_save:
+		_add_field_label(SAVE_NAME_FIELD_LABEL)
+		_save_name_edit = LineEdit.new()
+		_save_name_edit.text = _save_name_text
+		_save_name_edit.placeholder_text = SAVE_NAME_PLACEHOLDER
+		_save_name_edit.max_length = SaveSlots.MAX_SLOT_NAME_LEN
+		_save_name_edit.custom_minimum_size.x = SAVE_NAME_FIELD_MIN_WIDTH
+		_save_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_save_name_edit.caret_column = _save_name_caret_column()
+		_style_line_edit(_save_name_edit)
+		_save_name_edit.text_changed.connect(_on_save_name_changed)
+		_save_name_edit.text_submitted.connect(func(_t): _on_save_pressed())
+		_pane_body.add_child(_save_name_edit)
+		# The whitelist's refusal, live under the field — never discovered by pressing a button and
+		# getting `invalid_slot` back from a round trip that had no chance of succeeding.
+		var problem := SaveSlots.slot_name_error(_save_name_text)
+		if _save_name_text.strip_edges().is_empty():
+			_add_note(SAVE_NAME_HINT)
+		elif problem != "":
+			_add_warning_note(problem)
+		else:
+			_add_note(SAVE_NAME_HINT)
+
+	_build_slot_list(is_save)
+	_pane_body.add_child(_build_saves_actions(is_save))
+	if not _last_op_note.is_empty():
+		_add_status_line(String(_last_op_note.get("text", "")), bool(_last_op_note.get("ok", false)))
+
+
+## The rows, or the one line that honestly describes why there are none.
+func _build_slot_list(is_save: bool) -> void:
+	if _save_slots == null:
+		# No seam at all — the owner never injected one. A harness, or a client whose command bridge
+		# is missing; either way there is nothing to ask and nothing to promise.
+		_add_status_line(SaveSlots.error_prose(SaveSlots.ERROR_TRANSPORT), false)
+		return
+	match _save_slots.list_state:
+		SaveSlots.LIST_PENDING:
+			_add_note(SLOTS_PENDING_LINE)
+			return
+		SaveSlots.LIST_FAILED:
+			_add_status_line(SaveSlots.error_prose(_save_slots.list_error), false)
+			# A dead server heals on its own, so the pane offers the ask again rather than making the
+			# player leave and come back. `refresh` is NOT re-armed automatically: it emits on failure,
+			# and a rebuild that re-asked would spin the socket for as long as the pane is open.
+			var retry_row := _make_actions_row()
+			var retry := Button.new()
+			retry.text = SLOTS_RETRY_LABEL
+			HudStyle.apply_button(retry, "ghost")
+			retry.pressed.connect(_on_saves_retry_pressed)
+			retry_row.add_child(retry)
+			_pane_body.add_child(retry_row)
+			return
+		SaveSlots.LIST_IDLE:
+			_add_note(SLOTS_PENDING_LINE)
+			return
+	if _save_slots.slots.is_empty():
+		_add_note(SLOTS_EMPTY_LINE_SAVE if is_save else SLOTS_EMPTY_LINE)
+		return
+	for slot_variant in _save_slots.slots:
+		if slot_variant is Dictionary:
+			_pane_body.add_child(_make_slot_row(slot_variant as Dictionary, is_save))
+
+
+## The action row for whichever pane is up, including the delete two-step and every reason a button
+## is unavailable. **A disabled button here always has a visible reason above it** — the status line,
+## the empty-list note or the name-field caption — so nothing is inert without saying why.
+func _build_saves_actions(is_save: bool) -> HBoxContainer:
 	var actions := _make_actions_row()
-	var primary := Button.new()
-	primary.text = "Save to slot" if is_save else "Load selected"
-	HudStyle.apply_button(primary, "primary")
-	primary.disabled = true  # inert placeholder — save/load is server-side work
-	actions.add_child(primary)
-	if not is_save:
+	var busy := _save_slots != null and _save_slots.is_busy()
+	if is_save:
+		var typed := _save_name_text.strip_edges()
+		var primary := Button.new()
+		if typed.is_empty():
+			primary.text = SAVE_BUTTON_IDLE
+		elif _slot_exists(typed):
+			primary.text = SAVE_BUTTON_OVERWRITE_FORMAT % typed
+		else:
+			primary.text = SAVE_BUTTON_FORMAT % typed
+		# Overwriting an existing save destroys what was there, so it takes the `armed` variant and
+		# says "Overwrite" — the label IS the confirmation, as everywhere else in this shell.
+		HudStyle.apply_button(primary, "armed" if _slot_exists(typed) else "primary")
+		primary.disabled = busy or _save_slots == null or SaveSlots.slot_name_error(typed) != ""
+		primary.pressed.connect(_on_save_pressed)
+		actions.add_child(primary)
+		if busy:
+			_last_op_note = {}
+			_add_pending_after(actions, SAVE_IN_FLIGHT_LINE)
+		return actions
+
+	var load_button := Button.new()
+	var in_run := mode == PAUSE
+	load_button.text = LOAD_BUTTON_LABEL_IN_RUN if in_run else LOAD_BUTTON_LABEL
+	HudStyle.apply_button(load_button, "armed" if in_run else "primary")
+	load_button.disabled = busy or _selected_slot == ""
+	load_button.pressed.connect(_on_load_pressed)
+	actions.add_child(load_button)
+
+	if _delete_armed_slot != "" and _delete_armed_slot == _selected_slot:
+		var confirm := Button.new()
+		confirm.text = DELETE_CONFIRM_FORMAT % _delete_armed_slot
+		HudStyle.apply_button(confirm, "armed")
+		confirm.disabled = busy
+		confirm.pressed.connect(_on_delete_confirmed)
+		actions.add_child(confirm)
+		var cancel := Button.new()
+		cancel.text = DELETE_CANCEL_LABEL
+		HudStyle.apply_button(cancel, "ghost")
+		cancel.pressed.connect(_on_delete_cancelled)
+		actions.add_child(cancel)
+	else:
 		var del := Button.new()
-		del.text = "Delete"
+		del.text = DELETE_BUTTON_LABEL
 		HudStyle.apply_button(del, "armed")
-		del.disabled = true
+		# The autosave slot is the one save a player cannot re-make by hand, so it is not deletable
+		# from here for the same reason it is not writable.
+		del.disabled = busy or _selected_slot == "" or SaveSlots.is_reserved(_selected_slot)
+		del.pressed.connect(_on_delete_pressed)
 		actions.add_child(del)
-	_pane_body.add_child(actions)
+	if busy:
+		_last_op_note = {}
+		_add_pending_after(actions, LOAD_IN_FLIGHT_LINE if _save_slots.op_in_flight == SaveSlots.KIND_LOAD else DELETE_IN_FLIGHT_LINE)
+	return actions
+
+
+## The in-flight line, added to the pane AFTER the actions row the caller is still building.
+func _add_pending_after(actions: HBoxContainer, text: String) -> void:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", NOTE_SIZE)
+	label.add_theme_color_override("font_color", HudStyle.SIGNAL)
+	actions.add_child(label)
+
+
+func _slot_exists(name: String) -> bool:
+	if _save_slots == null:
+		return false
+	for row_variant in _save_slots.slots:
+		if row_variant is Dictionary and String((row_variant as Dictionary).get("slot", "")) == name:
+			return true
+	return false
 
 
 func _build_options_pane() -> void:
@@ -986,40 +1223,273 @@ func _restyle_selectable_children(node: Node) -> void:
 			_restyle_selectable_children(child)
 
 
-func _make_slot_row(slot: Dictionary) -> PanelContainer:
+## One real slot, in the fixture's own who / meta / when shape — the row design outlived the fixtures
+## because it was the right shape: the name the player gave it, what run it is, and how old it is.
+##
+## `row` is a `SaveSlotInfo` as the bridge hands it over. Every header field is on screen: the name and
+## the AUTO tag on the left, turn + campaign + world + grid in the meta line, and the age over the
+## blob size on the right.
+func _make_slot_row(row: Dictionary, is_save: bool) -> PanelContainer:
+	var slot_name := String(row.get("slot", ""))
+	var reserved := SaveSlots.is_reserved(slot_name)
+	var selected := slot_name != "" and slot_name == _selected_slot
 	var card := PanelContainer.new()
-	var sb := _selectable_stylebox(false)
-	if bool(slot.get("auto", false)):
+	var sb := _selectable_stylebox(selected)
+	if reserved and not selected:
 		sb.border_color = HudStyle.WARN
 	card.add_theme_stylebox_override("panel", sb)
-	if bool(slot.get("empty", false)):
-		var empty := Label.new()
-		empty.text = "Empty slot"
-		empty.add_theme_font_size_override("font_size", CARD_NAME_SIZE)
-		empty.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-		card.add_child(empty)
-		return card
+	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	card.gui_input.connect(_on_slot_row_input.bind(slot_name, is_save))
+
 	var hb := HBoxContainer.new()
+	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(hb)
+
 	var left := VBoxContainer.new()
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hb.add_child(left)
 	var who := Label.new()
-	who.text = String(slot["who"])
+	who.text = slot_name
 	who.add_theme_font_size_override("font_size", CARD_NAME_SIZE)
-	who.add_theme_color_override("font_color", HudStyle.INK)
+	who.add_theme_color_override("font_color", HudStyle.SIGNAL if selected else HudStyle.INK)
 	left.add_child(who)
 	var meta := Label.new()
-	meta.text = String(slot["meta"])
+	meta.text = _slot_meta_line(row)
 	meta.add_theme_font_size_override("font_size", HINT_SIZE)
 	meta.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 	left.add_child(meta)
+
+	var right := VBoxContainer.new()
+	right.alignment = BoxContainer.ALIGNMENT_CENTER
+	hb.add_child(right)
 	var when := Label.new()
-	when.text = String(slot.get("when", "")) + (" · AUTO" if bool(slot.get("auto", false)) else "")
+	when.text = SaveSlots.format_when(int(row.get("modified_unix_seconds", 0)))
+	if reserved:
+		when.text += SLOT_META_SEPARATOR + SLOT_AUTO_TAG
+	when.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	when.add_theme_font_size_override("font_size", HINT_SIZE)
-	when.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-	hb.add_child(when)
+	when.add_theme_color_override("font_color", HudStyle.WARN if reserved else HudStyle.INK_FAINT)
+	right.add_child(when)
+	var size_label := Label.new()
+	size_label.text = SaveSlots.format_size(int(row.get("size_bytes", 0)))
+	size_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	size_label.add_theme_font_size_override("font_size", HINT_SIZE)
+	size_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	right.add_child(size_label)
 	return card
+
+
+## `Turn 47 · Trail Sovereigns · Earthlike · 80 × 52`. The preset id is resolved through `PRESETS` so
+## the row reads the world's NAME; an id this build does not ship falls back to the id itself rather
+## than to nothing, because an unknown preset is exactly when the player wants to see it.
+func _slot_meta_line(row: Dictionary) -> String:
+	var parts: Array[String] = []
+	parts.append(SLOT_TURN_FORMAT % int(row.get("turn", 0)))
+	var title := String(row.get("campaign_title", "")).strip_edges()
+	parts.append(title if title != "" else SLOT_TITLE_FALLBACK)
+	parts.append(_preset_display_name(String(row.get("map_preset_id", ""))))
+	parts.append(SLOT_DIMENSIONS_FORMAT % [int(row.get("width", 0)), int(row.get("height", 0))])
+	return SLOT_META_SEPARATOR.join(parts)
+
+
+## The short form of a preset's name — the parenthetical is dropped exactly as the setup summary drops
+## it, so "Earthlike (Oceans & Continents)" reads as "Earthlike" in a one-line meta.
+func _preset_display_name(preset_id: String) -> String:
+	for preset in PRESETS:
+		if String(preset["id"]) == preset_id:
+			var preset_name := String(preset["name"])
+			var paren := preset_name.find(" (")
+			return preset_name.substr(0, paren) if paren >= 0 else preset_name
+	return preset_id
+
+
+# ---- saves: injection, seam signals, and the actions ----------------------------------------------
+
+## **INJECT THE SAVE CHANNEL.** The owner (`LandingScreen` / `Main`) builds the seam over its command
+## client and hands it in; this file never builds one. Safe to call before or after `_ready`, and safe
+## to call twice — the connections are guarded the way the nav's are.
+func set_save_slots(seam: SaveSlots) -> void:
+	_save_slots = seam
+	if _save_slots == null:
+		return
+	if not _save_slots.slots_changed.is_connected(_on_slots_changed):
+		_save_slots.slots_changed.connect(_on_slots_changed)
+	if not _save_slots.op_finished.is_connected(_on_save_op_finished):
+		_save_slots.op_finished.connect(_on_save_op_finished)
+	if _built and _is_saves_pane(_active_pane):
+		_open_saves_pane()
+
+
+func _is_saves_pane(pane_id: String) -> bool:
+	return pane_id == PANE_LOAD or pane_id == PANE_SAVE
+
+
+## Opening a saves pane ASKS. Deliberately only from an explicit open (a nav click, or a seam arriving
+## while the pane is up) and never from `_show_pane`, which also runs on every rebuild: `refresh`
+## emits `slots_changed` synchronously, so a rebuild that re-asked would recurse.
+func _open_saves_pane() -> void:
+	_delete_armed_slot = ""
+	_last_op_note = {}
+	_show_pane(_active_pane)
+	if _save_slots != null:
+		_save_slots.refresh()
+
+
+## Rebuild the pane in place, without re-asking. Every seam answer lands here.
+func _refresh_saves_pane() -> void:
+	if _built and _is_saves_pane(_active_pane):
+		_show_pane(_active_pane)
+
+
+func _on_slots_changed() -> void:
+	# A slot that has vanished from the list cannot stay selected — the buttons would act on a name
+	# that is no longer on disk, and the row highlighting it is gone.
+	if _selected_slot != "" and _save_slots != null \
+			and _save_slots.list_state == SaveSlots.LIST_READY and not _slot_exists(_selected_slot):
+		_selected_slot = ""
+		_delete_armed_slot = ""
+	_refresh_saves_pane()
+
+
+## **THE DRIFT IS NOT THIS PANE'S TO SHOW** and is deliberately dropped here: it only ever rides a
+## successful LOAD, and a successful load is already tearing this shell down to stand the loaded world
+## up. `Main` surfaces it against that world (`ConfigDriftNotice`), where the numbers it warns about
+## are the ones on screen.
+func _on_save_op_finished(kind: String, slot: String, ok: bool, error: String, _drift: Array) -> void:
+	_delete_armed_slot = ""
+	if ok:
+		match kind:
+			SaveSlots.KIND_SAVE:
+				_last_op_note = {"text": SAVE_DONE_FORMAT % slot, "ok": true}
+				_selected_slot = slot
+			SaveSlots.KIND_DELETE:
+				_last_op_note = {"text": DELETE_DONE_FORMAT % slot, "ok": true}
+				if _selected_slot == slot:
+					_selected_slot = ""
+			_:
+				_last_op_note = {}
+	else:
+		_last_op_note = {"text": SaveSlots.error_prose(error), "ok": false}
+	_refresh_saves_pane()
+
+
+func _on_slot_row_input(event: InputEvent, slot_name: String, is_save: bool) -> void:
+	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+	_selected_slot = slot_name
+	_delete_armed_slot = ""
+	if is_save:
+		# Picking a row in the SAVE pane means "overwrite this one", so it fills the name field —
+		# which is also what turns the button into the armed "Overwrite" form. The autosave row fills
+		# nothing: it is the one name the field may not carry.
+		_save_name_text = "" if SaveSlots.is_reserved(slot_name) else slot_name
+		# The text did not come from typing, so no caret carries over: a name filled from a row reads
+		# as one just finished being typed, with the caret after its last character.
+		_save_name_caret = SAVE_NAME_CARET_AT_END
+	_refresh_saves_pane()
+
+
+func _on_save_name_changed(text: String) -> void:
+	# **THE CARET COMES FROM THE FIELD THAT REPORTED THE EDIT**, read before the rebuild while that
+	# node is still alive (`_show_pane` only `queue_free`s it). `LineEdit` defers `text_changed` until
+	# after it has moved its own caret, so the column read here is already the post-edit one — for an
+	# insert and for a backspace alike — and it is carried across verbatim.
+	#
+	# Restoring the END of the text instead, as this did, made only append-at-the-tail editing work:
+	# typing `x` between `a` and `b` of `abcd` correctly produced `axbcd` and then put the caret at
+	# column 5, so the next character landed at the end.
+	if _save_name_edit != null:
+		_save_name_caret = _save_name_edit.caret_column
+	_save_name_text = text
+	_refresh_saves_pane()
+	# The pane is rebuilt whole on every keystroke, so the field the player is typing into is a NEW
+	# node each time. Focus and caret are restored onto it, or typing would stop after one character.
+	if _save_name_edit != null:
+		_save_name_edit.grab_focus()
+		_save_name_edit.caret_column = _save_name_caret_column()
+
+
+## The column a rebuilt name field opens at: the one carried across from the field being typed into,
+## clamped to the text it is applied to, or the end of that text when nothing carried one.
+func _save_name_caret_column() -> int:
+	if _save_name_caret == SAVE_NAME_CARET_AT_END:
+		return _save_name_text.length()
+	return clampi(_save_name_caret, 0, _save_name_text.length())
+
+
+func _on_saves_retry_pressed() -> void:
+	if _save_slots != null:
+		_save_slots.refresh()
+
+
+func _on_save_pressed() -> void:
+	if _save_slots == null:
+		return
+	var typed := _save_name_text.strip_edges()
+	if SaveSlots.slot_name_error(typed) != "":
+		return
+	_last_op_note = {}
+	_save_slots.request_save(typed)
+	_refresh_saves_pane()
+	# Submitting ENDS the typing act — by Enter as much as by the button — so the keyboard goes back
+	# to the game rather than staying in a field the player is done with.
+	release_text_focus()
+
+
+## **THE LOAD IS EMITTED, NOT SENT.** Rebuilding the world is a world-handoff act and belongs to the
+## owner; this file has said everything it can say about it.
+func _on_load_pressed() -> void:
+	if _selected_slot == "":
+		return
+	emit_signal("load_requested", _selected_slot)
+
+
+func _on_delete_pressed() -> void:
+	if _selected_slot == "" or SaveSlots.is_reserved(_selected_slot):
+		return
+	_delete_armed_slot = _selected_slot
+	_last_op_note = {}
+	_refresh_saves_pane()
+
+
+func _on_delete_confirmed() -> void:
+	if _save_slots == null or _delete_armed_slot == "":
+		return
+	var slot := _delete_armed_slot
+	_delete_armed_slot = ""
+	_last_op_note = {}
+	_save_slots.request_delete(slot)
+	_refresh_saves_pane()
+
+
+func _on_delete_cancelled() -> void:
+	_delete_armed_slot = ""
+	_refresh_saves_pane()
+
+
+## **HAND THE KEYBOARD BACK.** Called on every pane change, after a save is submitted, and by the
+## owner when the shell is dismissed (`Main._hide_pause_menu`).
+##
+## The client's two POLLED keyboard reads — `MapView`'s pan/zoom and `Main`'s five toggle hotkeys —
+## sample raw device state and never touch the event system, so both are suppressed while a
+## `LineEdit`/`TextEdit` holds focus (`TextEntryFocus`, read by `KeyboardArbiter`). Its mirror-image failure is focus
+## left STUCK: a field that keeps the keyboard after its surface is gone makes the map permanently
+## unresponsive and the panel toggles dead, with nothing on screen to explain why — strictly worse
+## than the map panning while you type. So this file, which owns the only text fields in the menu,
+## owns the release.
+##
+## It releases only a text control **inside this shell**: a focused field elsewhere in the tree is
+## somebody else's to hand back, and grabbing that decision would be the same overreach as guarding
+## on "anything focused".
+func release_text_focus() -> void:
+	var viewport := get_viewport()
+	if viewport == null:
+		return
+	var focused := viewport.gui_get_focus_owner()
+	if not TextEntryFocus.is_text_entry(focused):
+		return
+	if focused == self or is_ancestor_of(focused):
+		focused.release_focus()
 
 
 # ---- summary ----------------------------------------------------------------
@@ -1101,8 +1571,35 @@ func _add_field_label(text: String) -> void:
 func _add_note(text: String) -> void:
 	var l := Label.new()
 	l.text = text
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	l.add_theme_font_size_override("font_size", NOTE_SIZE)
 	l.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	_pane_body.add_child(l)
+
+
+## A note the player has to ACT on — a name the whitelist will not take. `WARN`, not `DANGER`: nothing
+## has gone wrong yet, the field simply cannot be used as typed.
+func _add_warning_note(text: String) -> void:
+	var l := Label.new()
+	l.text = text
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.add_theme_font_size_override("font_size", NOTE_SIZE)
+	l.add_theme_color_override("font_color", HudStyle.WARN)
+	_pane_body.add_child(l)
+
+
+## The outcome of an ask, in one line: `HEALTHY` for a thing that worked, `DANGER` for a refusal or a
+## dead socket. It is the surface every "no saves / no server / that failed" state lands on, so no
+## disabled button in the saves panes is ever unexplained.
+func _add_status_line(text: String, ok: bool) -> void:
+	var l := Label.new()
+	l.text = text
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.add_theme_font_size_override("font_size", BODY_SIZE)
+	l.add_theme_color_override("font_color", HudStyle.HEALTHY if ok else HudStyle.DANGER)
 	_pane_body.add_child(l)
 
 

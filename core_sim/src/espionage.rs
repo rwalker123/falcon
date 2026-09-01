@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use bevy::{ecs::system::SystemParam, prelude::*};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::hashing::FnvHasher;
@@ -26,7 +26,7 @@ pub const BUILTIN_ESPIONAGE_AGENT_CATALOG: &str = include_str!("data/espionage_a
 pub const BUILTIN_ESPIONAGE_MISSION_CATALOG: &str = include_str!("data/espionage_missions.json");
 pub const BUILTIN_ESPIONAGE_CONFIG: &str = include_str!("data/espionage_config.json");
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EspionageAgentId(pub String);
 
 impl EspionageAgentId {
@@ -35,7 +35,7 @@ impl EspionageAgentId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EspionageMissionId(pub String);
 
 impl EspionageMissionId {
@@ -44,10 +44,10 @@ impl EspionageMissionId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EspionageAgentHandle(pub u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EspionageMissionInstanceId(pub u64);
 
 #[derive(Debug, Clone)]
@@ -711,7 +711,7 @@ impl EspionageCatalog {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EspionageAgent {
     pub handle: EspionageAgentHandle,
     pub template_id: EspionageAgentId,
@@ -725,13 +725,13 @@ pub struct EspionageAgent {
     pub generated: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentAssignment {
     Available,
     Assigned(EspionageMissionInstanceId),
 }
 
-#[derive(Resource, Debug, Default, Clone)]
+#[derive(Resource, Debug, Default, Clone, Serialize, Deserialize)]
 pub struct EspionageRoster {
     agents: HashMap<FactionId, Vec<EspionageAgent>>,
     next_agent_handle: u32,
@@ -846,7 +846,7 @@ impl EspionageRoster {
     }
 }
 
-#[derive(Resource, Debug, Default, Clone)]
+#[derive(Resource, Debug, Default, Clone, Serialize, Deserialize)]
 pub struct EspionageMissionState {
     active: Vec<ScheduledEspionageMission>,
     next_instance: u64,
@@ -939,7 +939,7 @@ impl EspionageMissionState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledEspionageMission {
     pub instance_id: EspionageMissionInstanceId,
     pub mission_id: EspionageMissionId,
@@ -1428,7 +1428,7 @@ pub fn initialise_espionage_roster(
     roster.seed_from_catalog(&factions.factions, &catalog);
 }
 
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct CounterIntelBudgets {
     reserves: HashMap<FactionId, Scalar>,
 }
@@ -1537,7 +1537,7 @@ impl CounterIntelBudgets {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SecurityPolicy {
     Lenient,
     Standard,
@@ -1545,7 +1545,7 @@ pub enum SecurityPolicy {
     Crisis,
 }
 
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct FactionSecurityPolicies {
     policies: HashMap<FactionId, SecurityPolicy>,
     default_policy: SecurityPolicy,

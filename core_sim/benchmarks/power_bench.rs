@@ -47,8 +47,12 @@ fn configure_power_app(width: u32, height: u32, specs: &[NodeSpec], default_capa
     )));
 
     let entities = spawn_power_nodes(&mut app.world, width, height, specs);
-    let topology =
-        PowerTopology::from_grid(&entities, width, height, scalar_from_f32(default_capacity));
+    let topology = PowerTopology::from_grid(
+        entities.len(),
+        width,
+        height,
+        scalar_from_f32(default_capacity),
+    );
     app.insert_resource(topology);
 
     app

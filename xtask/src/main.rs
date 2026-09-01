@@ -16,6 +16,7 @@ mod command_guard;
 mod decode_fixture;
 mod decode_guard;
 mod fauna_icon_guard;
+mod hotkey_guard;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);
@@ -29,6 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("decode-guard") => decode_guard::run(args.collect()),
         Some("command-guard") => command_guard::run(args.collect()),
         Some("fauna-icon-guard") => fauna_icon_guard::run(args.collect()),
+        Some("hotkey-guard") => hotkey_guard::run(args.collect()),
         Some("manifest-schema") => generate_manifest_schema(),
         Some("validate-manifests") => validate_manifests(),
         Some("help") | None => {
@@ -50,6 +52,7 @@ fn print_usage() {
     eprintln!("       cargo xtask decode-guard [--write-golden] [--no-build]");
     eprintln!("       cargo xtask command-guard [--no-build]");
     eprintln!("       cargo xtask fauna-icon-guard");
+    eprintln!("       cargo xtask hotkey-guard");
     eprintln!("       cargo xtask manifest-schema");
     eprintln!("       cargo xtask validate-manifests");
     eprintln!("       cargo xtask command [OPTIONS] <verb> [args...]");

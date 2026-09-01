@@ -50,6 +50,7 @@
 //! exist and have no current tie"*, which is what keeps the third clock a genuinely separate lever
 //! rather than a duplicate of the second.
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use bevy::prelude::*;
@@ -76,7 +77,7 @@ pub const NO_TIE: Scalar = Scalar(0);
 /// mechanic: the scout on the ridge watching a settlement that has no idea anyone is there. A
 /// mutual relationship is simply both edges existing, and whether a given rider *requires* both is
 /// the rider's business, not the connection's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ConnectionKey {
     pub observer: BandId,
     pub subject: BandId,
@@ -89,7 +90,7 @@ impl ConnectionKey {
 }
 
 /// One directed tie and its three clocks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Connection {
     /// **Clock 2.** `0..=1`, as a fixed-point [`Scalar`] rather than an `f32` — this is
     /// checkpointed state, and a float would put replay determinism at risk. Raised on contact,
@@ -115,7 +116,7 @@ pub struct Connection {
 ///
 /// **`BTreeMap`, not `HashMap`** — the iteration order is observed by the snapshot and by the
 /// checkpoint, so it has to be an order and not an accident.
-#[derive(Resource, Default, Debug, Clone)]
+#[derive(Resource, Default, Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionLedger {
     edges: BTreeMap<ConnectionKey, Connection>,
 }

@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
@@ -8,7 +9,7 @@ use crate::{
 };
 
 /// Identifier assigned to each power node in the grid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct PowerNodeId(pub u32);
 
 impl PowerNodeId {
@@ -19,9 +20,15 @@ impl PowerNodeId {
 }
 
 /// Telemetry captured for each power node after the power phase resolves.
-#[derive(Debug, Clone)]
+///
+/// **Keyed by [`PowerNodeId`], never by `Entity`.** This carried an `entity: Entity` alongside
+/// `node_id` until it was found to be the only `Entity` anywhere in the `SimState` closure, in
+/// breach of the checkpoint's first construction rule — and one that nothing read, so a restore
+/// reinstated a handle naming a tile that had just been despawned. `PowerNodeId` is `y * width + x`
+/// and is the key this map is already stored under, so there was nothing for the entity to say
+/// that the id did not say durably.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PowerGridNodeTelemetry {
-    pub entity: Entity,
     pub node_id: PowerNodeId,
     pub supply: Scalar,
     pub demand: Scalar,
@@ -36,7 +43,6 @@ pub struct PowerGridNodeTelemetry {
 impl Default for PowerGridNodeTelemetry {
     fn default() -> Self {
         Self {
-            entity: Entity::from_bits(0),
             node_id: PowerNodeId(0),
             supply: scalar_zero(),
             demand: scalar_zero(),
@@ -50,13 +56,13 @@ impl Default for PowerGridNodeTelemetry {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PowerIncidentSeverity {
     Warning,
     Critical,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PowerIncident {
     pub node_id: PowerNodeId,
     pub severity: PowerIncidentSeverity,
@@ -79,7 +85,7 @@ impl PowerDiscoveryEffects {
 }
 
 /// Aggregated power grid state exported to telemetry and snapshot layers.
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PowerGridState {
     pub nodes: HashMap<PowerNodeId, PowerGridNodeTelemetry>,
     pub total_supply: Scalar,
@@ -107,21 +113,29 @@ impl PowerGridState {
 }
 
 /// Static representation of power line adjacency across the simulation grid.
+///
+/// **Everything here is keyed by position, never by `Entity`.** A [`PowerNodeId`] is
+/// `y * width + x`, and [`Self::adjacency`] is indexed by it, so the whole structure holds across a
+/// checkpoint restore — which renumbers every tile entity — by construction.
+///
+/// This used to carry a `node_entities: Vec<Entity>` whose only use anywhere was its `.len()`. A
+/// restore despawns and respawns every tile and never rebuilt the vector, so all of its handles
+/// were stale afterwards; the grid still routed correctly only because nothing dereferenced them.
+/// Storing the count directly removes the stale handles rather than refreshing them, and takes a
+/// world-sized `Vec<Entity>` (130 KiB at 160x104) out of the resource with it.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct PowerTopology {
-    pub node_entities: Vec<Entity>,
+    /// How many nodes the grid had when this topology was built. `simulate_power` compares it
+    /// against the live node count and skips inter-node transfer when they disagree, which is the
+    /// guard against routing over an adjacency table built for a different world.
+    node_count: usize,
     pub adjacency: Vec<Vec<PowerNodeId>>,
     pub default_capacity: Scalar,
 }
 
 impl PowerTopology {
-    pub fn from_grid(
-        entities: &[Entity],
-        width: u32,
-        height: u32,
-        default_capacity: Scalar,
-    ) -> Self {
-        let count = entities.len();
+    pub fn from_grid(node_count: usize, width: u32, height: u32, default_capacity: Scalar) -> Self {
+        let count = node_count;
         let mut adjacency = vec![Vec::new(); count];
         for y in 0..height {
             for x in 0..width {
@@ -144,7 +158,7 @@ impl PowerTopology {
         }
 
         Self {
-            node_entities: entities.to_vec(),
+            node_count,
             adjacency,
             default_capacity,
         }
@@ -152,7 +166,7 @@ impl PowerTopology {
 
     #[inline]
     pub fn node_count(&self) -> usize {
-        self.node_entities.len()
+        self.node_count
     }
 
     #[inline]

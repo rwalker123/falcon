@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::VecDeque};
 
 use bevy::prelude::*;
@@ -9,7 +10,7 @@ use crate::{
     map_preset::{BiomeTransitionConfig, IslandConfig, MacroLandConfig, OceanConfig, ShelfConfig},
 };
 
-#[derive(Resource, Debug, Clone, Copy)]
+#[derive(Resource, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct WorldGenSeed(pub u64);
 
 #[derive(Debug, Clone)]
@@ -36,7 +37,7 @@ pub enum TerrainBand {
     InlandSea,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MountainType {
     Fold,
     Fault,

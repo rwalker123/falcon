@@ -6,7 +6,7 @@ use std::{
 
 use bevy::prelude::*;
 use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::{
@@ -28,14 +28,14 @@ use sim_runtime::{
 const MIN_GRID_DIMENSION: u32 = 1;
 const HERD_DENSITY_CRISIS_WEIGHT: f32 = 0.35;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CrisisSeverityBand {
     Safe,
     Warn,
     Critical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CrisisMetricKind {
     R0,
     GridStressPct,
@@ -73,7 +73,7 @@ impl CrisisMetricKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CrisisTrendSample {
     pub tick: u64,
     pub value: f32,
@@ -88,7 +88,7 @@ impl Default for CrisisTrendSample {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrisisGaugeSnapshot {
     pub kind: CrisisMetricKind,
     pub raw: f32,
@@ -119,7 +119,7 @@ impl Default for CrisisGaugeSnapshot {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CrisisMetricsSnapshot {
     pub gauges: Vec<CrisisGaugeSnapshot>,
     pub modifiers_active: u32,
@@ -158,7 +158,7 @@ struct GaugeParameters {
     trend_window: usize,
 }
 
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct CrisisTelemetry {
     r0: CrisisGauge,
     grid_stress_pct: CrisisGauge,
@@ -391,7 +391,7 @@ impl Default for CrisisTelemetry {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CrisisGauge {
     kind: CrisisMetricKind,
     warn_threshold: f32,
@@ -571,7 +571,7 @@ struct CrisisArchetypeRuntime {
     _annotation_glyph: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CrisisHotspot {
     position: UVec2,
     radius: f32,
@@ -600,11 +600,13 @@ impl ModifierEffects {
 
 #[derive(Debug, Clone)]
 struct ActiveModifier {
-    _id: String,
+    /// The catalog id this modifier was drawn from. **This, not [`Self::effects`], is what a
+    /// checkpoint carries** — the effects are config and are re-resolved from the live catalog.
+    id: String,
     effects: ModifierEffects,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CrisisAnnotationMarker {
     label: String,
     severity: CrisisSeverityBand,
@@ -628,10 +630,16 @@ impl CrisisAnnotationMarker {
 
 #[derive(Debug, Clone)]
 struct ActiveCrisis {
-    _id: String,
+    /// The catalog id this crisis was seeded from. **The checkpoint key** — a restore re-resolves
+    /// [`Self::runtime`] through it against whatever catalog is live then.
+    archetype_id: String,
     name: String,
-    _faction: FactionId,
-    _seed_tick: u64,
+    faction: FactionId,
+    seed_tick: u64,
+    /// **Config, not state.** Derived from `crisis_archetypes.json` by [`archetype_runtime`] and
+    /// held by value, which is why a checkpoint must not clone it: doing so would reinstall the
+    /// tuning that was live when the checkpoint was taken, so a hot-reload followed by a rollback
+    /// would be silently undone. See [`ActiveCrisisLedgerCheckpoint`].
     runtime: CrisisArchetypeRuntime,
     centers: Vec<CrisisHotspot>,
     intensity: f32,
@@ -654,10 +662,10 @@ impl ActiveCrisis {
         modifiers: Vec<ActiveModifier>,
     ) -> Self {
         Self {
-            _id: runtime.id.clone(),
+            archetype_id: runtime.id.clone(),
             name: runtime.name.clone(),
-            _faction: faction,
-            _seed_tick: seed_tick,
+            faction,
+            seed_tick,
             runtime,
             centers,
             intensity: 0.18,
@@ -804,9 +812,169 @@ impl ActiveCrisisLedger {
     fn total_modifiers(&self) -> usize {
         self.entries.iter().map(|entry| entry.modifiers.len()).sum()
     }
+
+    /// Snapshot the ledger's state, leaving the archetype and modifier tuning behind.
+    ///
+    /// See [`ActiveCrisisLedgerCheckpoint`] for why this is not a plain `clone`.
+    pub fn checkpoint(&self) -> ActiveCrisisLedgerCheckpoint {
+        ActiveCrisisLedgerCheckpoint {
+            entries: self
+                .entries
+                .iter()
+                .map(|entry| ActiveCrisisCheckpoint {
+                    archetype_id: entry.archetype_id.clone(),
+                    faction: entry.faction,
+                    seed_tick: entry.seed_tick,
+                    centers: entry.centers.clone(),
+                    intensity: entry.intensity,
+                    r0: entry.r0,
+                    grid_stress_pct: entry.grid_stress_pct,
+                    queue_pressure_pct: entry.queue_pressure_pct,
+                    swarms_active: entry.swarms_active,
+                    phage_density: entry.phage_density,
+                    incident_timers: entry.incident_timers.clone(),
+                    annotations: entry.annotations.clone(),
+                    modifier_ids: entry
+                        .modifiers
+                        .iter()
+                        .map(|modifier| modifier.id.clone())
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Restore state, re-resolving every crisis's tuning against the catalogs that are live **now**.
+    ///
+    /// A crisis whose archetype the live catalog no longer defines is **dropped, loudly**. It is not
+    /// a case that can be carried: every number [`ActiveCrisis::advance`] reads — growth, the r0
+    /// band, the telemetry weights, the incident table — comes from the archetype, so an unresolved
+    /// crisis could only be advanced against invented defaults. Dropping it and saying so is the
+    /// same choice `restore_sim_state` makes for a band whose home tile is missing, and it is the
+    /// honest one: the alternative is a crisis that keeps a name and an intensity while behaving
+    /// like nothing the catalog describes.
+    ///
+    /// An unresolved **modifier** is dropped on its own and the crisis survives, because a modifier
+    /// is an add-on to a crisis rather than the thing that defines it.
+    pub fn restore_checkpoint(
+        &mut self,
+        checkpoint: &ActiveCrisisLedgerCheckpoint,
+        archetypes: &CrisisArchetypeCatalog,
+        modifiers: &CrisisModifierCatalog,
+    ) {
+        self.entries.clear();
+        for entry in &checkpoint.entries {
+            let Some(runtime) = archetypes
+                .archetypes
+                .iter()
+                .find(|archetype| archetype.id == entry.archetype_id)
+                .and_then(archetype_runtime)
+            else {
+                warn!(
+                    target: "shadow_scale::crisis",
+                    archetype = %entry.archetype_id,
+                    faction = %entry.faction.0,
+                    "checkpoint.restore.crisis_archetype_missing"
+                );
+                continue;
+            };
+
+            let restored_modifiers = entry
+                .modifier_ids
+                .iter()
+                .filter_map(|id| {
+                    let found = modifiers
+                        .modifiers
+                        .iter()
+                        .find(|modifier| &modifier.id == id);
+                    if found.is_none() {
+                        warn!(
+                            target: "shadow_scale::crisis",
+                            modifier = %id,
+                            archetype = %entry.archetype_id,
+                            "checkpoint.restore.crisis_modifier_missing"
+                        );
+                    }
+                    found.map(|modifier| ActiveModifier {
+                        id: modifier.id.clone(),
+                        effects: parse_modifier_effects(modifier),
+                    })
+                })
+                .collect();
+
+            self.entries.push(ActiveCrisis {
+                archetype_id: entry.archetype_id.clone(),
+                // Re-read from the live catalog, so an archetype renamed by a reload reports its
+                // new name rather than the one frozen at capture.
+                name: runtime.name.clone(),
+                faction: entry.faction,
+                seed_tick: entry.seed_tick,
+                runtime,
+                centers: entry.centers.clone(),
+                intensity: entry.intensity,
+                r0: entry.r0,
+                grid_stress_pct: entry.grid_stress_pct,
+                queue_pressure_pct: entry.queue_pressure_pct,
+                swarms_active: entry.swarms_active,
+                phage_density: entry.phage_density,
+                incident_timers: entry.incident_timers.clone(),
+                annotations: entry.annotations.clone(),
+                modifiers: restored_modifiers,
+            });
+        }
+    }
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+/// Everything [`ActiveCrisisLedger`] holds **except the tuning its crises were seeded from**.
+///
+/// Config is not simulation state. `ActiveCrisis` carries a [`CrisisArchetypeRuntime`] **by value**
+/// — parsed out of `crisis_archetypes.json` — and each `ActiveModifier` carries its
+/// [`ModifierEffects`] the same way out of `crisis_modifiers.json`. Cloning the ledger whole into a
+/// checkpoint would capture both, so a rollback would silently reinstall the tuning that was live
+/// when the checkpoint was taken: hot-reload a crisis archetype, roll back, and the reload is undone
+/// with nothing logged.
+///
+/// So the checkpoint carries **ids**, and [`ActiveCrisisLedger::restore_checkpoint`] re-resolves
+/// them against whatever catalog is live then. This is the same arrangement as
+/// [`crate::culture::CultureManagerCheckpoint`], [`crate::influencers::InfluentialRosterCheckpoint`]
+/// and [`crate::knowledge_ledger::KnowledgeLedgerCheckpoint`]; unlike those three it re-resolves by
+/// key rather than merely leaving a field alone, because the config here is held by value inside a
+/// `Vec` of entries rather than behind one handle.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ActiveCrisisLedgerCheckpoint {
+    entries: Vec<ActiveCrisisCheckpoint>,
+}
+
+/// One active crisis, named by the archetype id it was seeded from rather than by its tuning.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ActiveCrisisCheckpoint {
+    archetype_id: String,
+    faction: FactionId,
+    seed_tick: u64,
+    centers: Vec<CrisisHotspot>,
+    intensity: f32,
+    r0: f32,
+    grid_stress_pct: f32,
+    queue_pressure_pct: f32,
+    swarms_active: f32,
+    phage_density: f32,
+    incident_timers: HashMap<String, u32>,
+    annotations: Vec<CrisisAnnotationMarker>,
+    modifier_ids: Vec<String>,
+}
+
+/// The crisis heat raster and its annotations, as `capture_snapshot` publishes them.
+///
+/// **Serde-carried, because this is checkpoint state and not the derived cache its name promises.**
+/// `advance_crisis_system` rebuilds it every turn, which is why it sat in the coverage test's
+/// `DERIVED_*` bucket — but "derived" is only safe if nothing *publishes* the value before the
+/// system that rebuilds it next runs, and a **save load** publishes exactly that: `apply_save`
+/// installs the world and `publish_baseline_snapshot` captures the client's first frame from it
+/// without resolving a turn, so a cache left at `Default` shipped a `0x0` heatmap where the live
+/// world had published a full-size one. It cannot be rebuilt at restore time either: the rebuild
+/// runs `ActiveCrisis::advance` on every entry, so calling it outside the turn would step the
+/// crises forward — the `HerdTelemetry` case exactly (`.claude/rules/core_sim/checkpoints.md`).
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct CrisisOverlayCache {
     pub raster: ScalarRasterState,
     pub annotations: Vec<CrisisOverlayAnnotationState>,
@@ -1000,7 +1168,7 @@ fn choose_modifiers(rng: &mut SmallRng, catalog: &CrisisModifierCatalog) -> Vec<
         .take(count)
         .filter_map(|idx| catalog.modifiers.get(idx))
         .map(|modifier| ActiveModifier {
-            _id: modifier.id.clone(),
+            id: modifier.id.clone(),
             effects: parse_modifier_effects(modifier),
         })
         .collect()
@@ -1489,5 +1657,209 @@ mod tests {
             has_signal,
             "crisis overlay auto-seeding should produce non-zero samples"
         );
+    }
+
+    /// The archetype this suite seeds, and a `base_r0` no builtin archetype carries — so an
+    /// assertion that the restored crisis reads it cannot pass by coincidence.
+    const RELOAD_ARCHETYPE: &str = "plague_bloom";
+    const RELOADED_BASE_R0: f32 = 0.31;
+
+    /// A world with one live crisis, plus the catalogs it was seeded from.
+    fn app_with_one_crisis() -> App {
+        let mut app = App::new();
+        app.insert_resource(SimulationConfig {
+            grid_size: UVec2::new(8, 6),
+            ..SimulationConfig::default()
+        });
+        app.insert_resource(SimulationTick(0));
+        app.insert_resource(PendingCrisisSeeds::default());
+        app.insert_resource(PendingCrisisSpawns::default());
+        app.insert_resource(ActiveCrisisLedger::default());
+        app.insert_resource(CrisisOverlayCache::default());
+        app.insert_resource(HerdDensityMap::default());
+
+        let archetypes = CrisisArchetypeCatalog::builtin();
+        let modifiers = CrisisModifierCatalog::builtin();
+        let telemetry_cfg = CrisisTelemetryConfig::builtin();
+        app.insert_resource(CrisisArchetypeCatalogHandle::new(archetypes));
+        app.insert_resource(CrisisModifierCatalogHandle::new(modifiers));
+        app.insert_resource(CrisisTelemetryConfigHandle::new(telemetry_cfg.clone()));
+        app.insert_resource(CrisisTelemetry::from_config(telemetry_cfg.as_ref()));
+
+        app.world
+            .resource_mut::<PendingCrisisSpawns>()
+            .push(FactionId(0), RELOAD_ARCHETYPE);
+        app.world.run_system_once(advance_crisis_system);
+        app
+    }
+
+    /// The builtin archetype catalog with one archetype's `base_r0` overwritten — what a
+    /// `reload_config crisis_archetypes` against an edited file produces.
+    fn catalog_with_retuned_r0() -> CrisisArchetypeCatalog {
+        let mut catalog = (*CrisisArchetypeCatalog::builtin()).clone();
+        let propagation = catalog
+            .archetypes
+            .iter_mut()
+            .find(|archetype| archetype.id == RELOAD_ARCHETYPE)
+            .and_then(|archetype| archetype.extra.get_mut("propagation"))
+            .and_then(|value| value.as_object_mut())
+            .expect("the builtin plague archetype carries a propagation block");
+        propagation.insert(
+            "base_r0".to_string(),
+            serde_json::json!(RELOADED_BASE_R0 as f64),
+        );
+        catalog
+    }
+
+    /// The builtin catalog with that archetype deleted — a reload that dropped it.
+    fn catalog_without_the_archetype() -> CrisisArchetypeCatalog {
+        let mut catalog = (*CrisisArchetypeCatalog::builtin()).clone();
+        catalog
+            .archetypes
+            .retain(|archetype| archetype.id != RELOAD_ARCHETYPE);
+        catalog
+    }
+
+    /// **Hot-reload the tuning, then roll back: the reload must survive.**
+    ///
+    /// This is the defect the checkpoint type exists to remove. `ActiveCrisis` holds its
+    /// `CrisisArchetypeRuntime` by value, so a ledger cloned whole into a checkpoint carried
+    /// `crisis_archetypes.json` with it, and a restore silently reinstalled the tuning that was live
+    /// at capture — undoing the reload with nothing logged.
+    #[test]
+    fn a_rollback_keeps_the_crisis_tuning_that_is_live_now() {
+        let mut app = app_with_one_crisis();
+
+        let captured_base_r0 = {
+            let ledger = app.world.resource::<ActiveCrisisLedger>();
+            assert_eq!(ledger.entries().len(), 1, "the spawn must have taken");
+            ledger.entries()[0].runtime.base_r0
+        };
+        assert!(
+            (captured_base_r0 - RELOADED_BASE_R0).abs() > f32::EPSILON,
+            "the reloaded value must differ from the shipped one, or this proves nothing"
+        );
+
+        let checkpoint = app.world.resource::<ActiveCrisisLedger>().checkpoint();
+
+        let reloaded = catalog_with_retuned_r0();
+        let modifiers = CrisisModifierCatalog::builtin();
+        app.world
+            .resource_mut::<ActiveCrisisLedger>()
+            .restore_checkpoint(&checkpoint, &reloaded, &modifiers);
+
+        let ledger = app.world.resource::<ActiveCrisisLedger>();
+        assert_eq!(ledger.entries().len(), 1, "the crisis survives the restore");
+        assert_eq!(
+            ledger.entries()[0].runtime.base_r0,
+            RELOADED_BASE_R0,
+            "a restored crisis must read the tuning live NOW, not the tuning frozen at capture"
+        );
+    }
+
+    /// Stripping the config must not strip the state riding beside it.
+    #[test]
+    fn a_rollback_restores_the_crisis_state_the_config_rode_beside() {
+        let mut app = app_with_one_crisis();
+
+        // Advance the crisis so its state is something other than its spawn defaults.
+        {
+            let mut ledger = app.world.resource_mut::<ActiveCrisisLedger>();
+            let crisis = &mut ledger.entries_mut()[0];
+            crisis.advance();
+            crisis.advance();
+        }
+        let (intensity, r0, centers, modifiers_held) = {
+            let ledger = app.world.resource::<ActiveCrisisLedger>();
+            let crisis = &ledger.entries()[0];
+            (
+                crisis.intensity,
+                crisis.r0,
+                crisis.centers.len(),
+                crisis.modifiers.len(),
+            )
+        };
+        assert!(intensity > 0.0, "the crisis must have advanced");
+
+        let checkpoint = app.world.resource::<ActiveCrisisLedger>().checkpoint();
+        app.world
+            .resource_mut::<ActiveCrisisLedger>()
+            .entries
+            .clear();
+
+        let archetypes = CrisisArchetypeCatalog::builtin();
+        let modifiers = CrisisModifierCatalog::builtin();
+        app.world
+            .resource_mut::<ActiveCrisisLedger>()
+            .restore_checkpoint(&checkpoint, &archetypes, &modifiers);
+
+        let ledger = app.world.resource::<ActiveCrisisLedger>();
+        let crisis = &ledger.entries()[0];
+        assert_eq!(crisis.intensity, intensity);
+        assert_eq!(crisis.r0, r0);
+        assert_eq!(crisis.centers.len(), centers);
+        assert_eq!(
+            crisis.modifiers.len(),
+            modifiers_held,
+            "modifiers are re-resolved by id, so a catalog that still defines them restores them all"
+        );
+        assert_eq!(crisis.archetype_id, RELOAD_ARCHETYPE);
+    }
+
+    /// A reload that DELETED an archetype leaves an active crisis with no tuning to advance
+    /// against. It is dropped rather than advanced on invented defaults.
+    #[test]
+    fn a_crisis_whose_archetype_a_reload_removed_is_dropped() {
+        let mut app = app_with_one_crisis();
+        let checkpoint = app.world.resource::<ActiveCrisisLedger>().checkpoint();
+        assert_eq!(checkpoint.entries.len(), 1);
+
+        let reloaded = catalog_without_the_archetype();
+        let modifiers = CrisisModifierCatalog::builtin();
+        app.world
+            .resource_mut::<ActiveCrisisLedger>()
+            .restore_checkpoint(&checkpoint, &reloaded, &modifiers);
+
+        assert!(
+            app.world
+                .resource::<ActiveCrisisLedger>()
+                .entries()
+                .is_empty(),
+            "a crisis the live catalog can no longer describe must not be resurrected"
+        );
+    }
+
+    /// A reload that deleted a MODIFIER drops only that modifier — the crisis is still a crisis.
+    #[test]
+    fn a_modifier_a_reload_removed_is_dropped_without_the_crisis() {
+        let mut app = app_with_one_crisis();
+        {
+            // Give the crisis a modifier drawn from the live catalog, whatever the spawn rolled.
+            let catalog = CrisisModifierCatalog::builtin();
+            let first = catalog
+                .modifiers
+                .first()
+                .expect("the builtin modifier catalog is not empty");
+            let mut ledger = app.world.resource_mut::<ActiveCrisisLedger>();
+            ledger.entries_mut()[0].modifiers = vec![ActiveModifier {
+                id: first.id.clone(),
+                effects: parse_modifier_effects(first),
+            }];
+        }
+
+        let checkpoint = app.world.resource::<ActiveCrisisLedger>().checkpoint();
+        let archetypes = CrisisArchetypeCatalog::builtin();
+        let emptied = CrisisModifierCatalog::default();
+        app.world
+            .resource_mut::<ActiveCrisisLedger>()
+            .restore_checkpoint(&checkpoint, &archetypes, &emptied);
+
+        let ledger = app.world.resource::<ActiveCrisisLedger>();
+        assert_eq!(
+            ledger.entries().len(),
+            1,
+            "a missing modifier is not a reason to delete the crisis"
+        );
+        assert!(ledger.entries()[0].modifiers.is_empty());
     }
 }

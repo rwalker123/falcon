@@ -1796,10 +1796,12 @@ corner.
 
 ### `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
 
-**Appended LAST in `CHAPTERS`**, so no existing frame moves. Seven frames and 78 assertions (its
-`EXPECTED_CHECKPOINTS` floor is the measured **85** — frames count too, so the three launcher-face
-frames the cairn arc appended moved it 75 → 85; the floor is RE-MEASURED, never the old number plus
-three, and the eight-checkpoint surplus over that arithmetic is the drift that says why), and **most
+**Appended LAST in `CHAPTERS`**, so no existing frame moves. Seven frames and 89 assertions (its
+`EXPECTED_CHECKPOINTS` floor is the measured **96** — frames count too, so the three launcher-face
+frames the cairn arc appended moved it 75 → 85, and the loaded-world block moved it again to 96;
+the floor is RE-MEASURED, never the old number plus the claims anyone remembers adding, and the
+surplus over that arithmetic is the drift that says why. **Two branches each raising this number is
+a merge conflict whose answer is neither side** — take the measurement of the merged file), and **most
 of it is PNG-less on purpose**: every claim this screen makes renders as a plausible picture whatever
 it says — a pill reading `2`, a greyed row, the clause *"nothing is using it"*, a `3` on the launcher's
 pip — so the derivation is asked of `KnowledgeRoster` directly, with models staged in the chapter, and
@@ -1823,6 +1825,7 @@ shape of the drive.
 | the pip's count, and that it survives a dock change | on a REAL `BandCityPanel`; the retention is invisible in any frame |
 | a knowledge-only delta moves the pip | pushed with NOTHING else, which is what makes it a claim about the SECTION rather than about the frame |
 | the pip clears when a tended patch appears | the honest trigger — opening the screen deliberately does not clear it |
+| **a LOADED world does not announce what it arrived knowing** | the roster and the progress row pushed on ONE turn in `Main`'s order, then a tick — the shape a save/load actually produces, and the reason it is the ladder twin of the late-catalogue block. Four legs: the roster really carries the three as KNOWN (**first**, or the rest is vacuous), no `learned_this_turn`, no `new_this_turn`, no row out of `AttentionController.knowledge_attention` — the orb asked in its OWN terms, since the orb is the surface that shouted — and a track completing AFTER the load that must still be announced, without which a fix that merely went quiet passes |
 
 **THE FIXTURES DERIVE THEIR STANDING RUNG** (`fixtures_rung.gd`), this tree's rule.
 ⛔ **AND A HERD FIXTURE IS KEYED `id`, NOT `herd_id`** — `HudBandLaborState.find_world_herd` matches on
@@ -1851,10 +1854,10 @@ of it, and "the node is missing" is not the same failure as "the node says in us
 (the launcher's bundled cairn at each of the three action mounts, captured inside the pip block
 because that block is the only one standing a REAL `BandCityPanel` up).
 
-**A clean run is 353 frames / 1405 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
-recorded figure before this arc was 352 / 1302, and this arc added FOUR frames and sixty-one claims,
-which does not add up to the measurement — so the surplus is drift that had accumulated un-recorded,
-exactly as it had the three times before. Measure; do not sum.
+**A clean run is 384 frames / 1710 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+figure recorded when this chapter landed was 353 / 1405, and the loaded-world block added eleven
+claims and no frame; everything else between the two is drift accumulated un-recorded, exactly as it
+had been the three times before. Measure; do not sum.
 
 **NINE SABOTAGES, each failing a DISJOINT subset and each naming what it caught:**
 
@@ -1869,6 +1872,7 @@ exactly as it had the three times before. Measure; do not sum.
 | the pip count living only on the button | the mount-rebuild claim and the inside-the-button claim |
 | patch ownership ignored | the RIVAL's-patch claim alone |
 | every herd on the wire counted as the faction's | the unworked-pen claim alone |
+| the same-turn baseline fold narrowed back to `first_seen` | **5 of the loaded-world legs** — two tracks not-learned, their two roster nodes, and the orb's row count (`2 rows`) — with the three non-vacuous legs still PASSING, which is what shows the block was really staging known tracks. **The live defect, in its own words.** Only two of the three tracks fail, because this long-lived HUD had already folded `cultivation` in an earlier block; the sabotage is still decisive |
 
 ### TWO FRAMES MOVED FOR A REASON THAT WAS NOT THIS ARC, and proving that took a revert run
 

@@ -17,12 +17,14 @@
 //! inside cloned components are overwritten on restore and are
 //! set to [`Entity::PLACEHOLDER`] at capture so nothing can read a stale one by accident.
 //!
-//! **2. No config.** Three sim-state types hold configuration —
-//! [`InfluentialRoster::checkpoint`], [`KnowledgeLedger::checkpoint`] and
-//! [`CultureManager::checkpoint`] exist precisely to leave it behind. Cloning them whole would
-//! capture the tuning that was live when the checkpoint was taken, so a rollback would silently
-//! reinstall it: hot-reload a config, roll back, and the reload is undone with nothing logged.
-//! Restore re-attaches whatever config is live now.
+//! **2. No config.** Four sim-state types hold configuration —
+//! [`InfluentialRoster::checkpoint`], [`KnowledgeLedger::checkpoint`],
+//! [`CultureManager::checkpoint`] and [`ActiveCrisisLedger::checkpoint`] exist precisely to leave it
+//! behind. Cloning them whole would capture the tuning that was live when the checkpoint was taken,
+//! so a rollback would silently reinstall it: hot-reload a config, roll back, and the reload is
+//! undone with nothing logged. The first three re-attach whatever config is live now by leaving a
+//! field alone; the crisis ledger holds its config **by value inside each entry**, so it carries
+//! archetype and modifier *ids* and re-resolves them against the catalogs live at restore.
 //!
 //! **3. Capture is a pure function of the world.** [`capture_sim_state`] takes `&World` and
 //! reads nothing else — no change detection, no retained deltas, no assumption that it ran last
@@ -46,6 +48,7 @@
 
 use bevy::prelude::*;
 use bevy::utils::HashMap;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     components::{
@@ -54,7 +57,10 @@ use crate::{
         TownCenter,
     },
     connections::ConnectionLedger,
-    crisis::{ActiveCrisisLedger, CrisisTelemetry},
+    crisis::{
+        ActiveCrisisLedger, ActiveCrisisLedgerCheckpoint, CrisisOverlayCache, CrisisTelemetry,
+    },
+    crisis_config::{CrisisArchetypeCatalogHandle, CrisisModifierCatalogHandle},
     culture::{CultureManager, CultureManagerCheckpoint},
     espionage::{
         CounterIntelBudgets, EspionageMissionState, EspionageRoster, FactionSecurityPolicies,
@@ -80,7 +86,7 @@ use crate::{
 };
 
 /// One tile, keyed by its position.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TileRecord {
     pub tile: Tile,
     /// The tile's power node, if it has one. Carries `base_generation` / `base_demand`, which no
@@ -94,14 +100,14 @@ pub struct TileRecord {
 }
 
 /// An in-flight expedition, with its home band named by id rather than by entity.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExpeditionRecord {
     pub home_band: BandId,
     pub expedition: Expedition,
 }
 
 /// One band, keyed by [`BandId`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BandRecord {
     pub id: BandId,
     /// The cohort. Its `home` / `current_tile` are [`Entity::PLACEHOLDER`]; the real positions are
@@ -139,14 +145,14 @@ pub struct BandRecord {
 }
 
 /// A settlement and its town centre.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettlementRecord {
     pub settlement: Settlement,
     pub town_center: Option<TownCenter>,
 }
 
 /// The simulation's state at one tick.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimState {
     pub tick: SimulationTick,
     pub tiles: Vec<TileRecord>,
@@ -155,7 +161,6 @@ pub struct SimState {
 
     // --- resources, cloned whole ---
     pub band_ids: BandIdAllocator,
-    pub active_crises: ActiveCrisisLedger,
     pub beat_ledger: BeatLedger,
     pub capability_flags: CapabilityFlags,
     pub command_events: CommandEventLog,
@@ -196,21 +201,33 @@ pub struct SimState {
     pub trade_telemetry: TradeTelemetry,
     pub victory: VictoryState,
     pub visibility: VisibilityLedger,
-    /// Three resources the classification tables call *derived*, carried anyway.
+    /// Four resources whose *names* say derived, carried anyway.
     ///
     /// "Derived" is only safe if nothing **publishes** the value before the system that rebuilds it
-    /// next runs. These three fail that test: `capture_snapshot` reads `SimulationMetrics.crisis`
-    /// for the published crisis telemetry, `PowerGridState` for `power_metrics`, and
-    /// `HerdTelemetry` for the display herd list — all in the same turn, and all written by systems
-    /// that will not have run again by the time a restored world is next captured. `HerdTelemetry`
-    /// is the sharpest case: it is a mid-system snapshot of herd biomass, not a pure function of
-    /// `HerdRegistry`, so rebuilding it from the registry produces a *different* number rather than
-    /// a stale one.
+    /// next runs. These four fail that test: `capture_snapshot` reads `SimulationMetrics.crisis`
+    /// for the published crisis telemetry, `PowerGridState` for `power_metrics`,
+    /// `HerdTelemetry` for the display herd list and `CrisisOverlayCache` for the crisis overlay —
+    /// all in the same turn, and all written by systems that will not have run again by the time a
+    /// restored world is next captured. `HerdTelemetry` is the sharpest case: it is a mid-system
+    /// snapshot of herd biomass, not a pure function of `HerdRegistry`, so rebuilding it from the
+    /// registry produces a *different* number rather than a stale one.
+    ///
+    /// **`CrisisOverlayCache` is the one a save load caught rather than a rollback.** A rollback
+    /// republishes a stored ring entry, so the gap never showed; a load has no ring, and
+    /// `publish_baseline_snapshot` captures the client's very first frame straight off the restored
+    /// world with no turn in between. Left out, that frame carried a `0x0` heatmap against the live
+    /// world's full-size one, and the client only got the real raster a turn later. It is not
+    /// rebuildable at restore time either — the rebuild `advance`s every live crisis.
     pub metrics: crate::metrics::SimulationMetrics,
     pub power_grid: crate::power::PowerGridState,
     pub herd_telemetry: crate::fauna::HerdTelemetry,
+    pub crisis_overlay: CrisisOverlayCache,
 
     // --- resources whose config is deliberately left behind ---
+    /// The live crises, named by the archetype id each was seeded from. **Not the ledger itself**:
+    /// an `ActiveCrisis` holds its `CrisisArchetypeRuntime` by value, so cloning the ledger would
+    /// carry `crisis_archetypes.json` into the checkpoint and a rollback would reinstall it.
+    pub active_crises: ActiveCrisisLedgerCheckpoint,
     pub culture: CultureManagerCheckpoint,
     pub influencers: InfluentialRosterCheckpoint,
     pub knowledge: KnowledgeLedgerCheckpoint,
@@ -344,7 +361,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         bands,
         settlements,
         band_ids: *world.resource::<BandIdAllocator>(),
-        active_crises: world.resource::<ActiveCrisisLedger>().clone(),
+        active_crises: world.resource::<ActiveCrisisLedger>().checkpoint(),
         beat_ledger: world.resource::<BeatLedger>().clone(),
         capability_flags: *world.resource::<CapabilityFlags>(),
         command_events: world.resource::<CommandEventLog>().clone(),
@@ -379,6 +396,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
             .clone(),
         power_grid: world.resource::<crate::power::PowerGridState>().clone(),
         herd_telemetry: world.resource::<crate::fauna::HerdTelemetry>().clone(),
+        crisis_overlay: world.resource::<CrisisOverlayCache>().clone(),
         culture: world.resource::<CultureManager>().checkpoint(),
         influencers: world.resource::<InfluentialRoster>().checkpoint(),
         knowledge: world.resource::<KnowledgeLedger>().checkpoint(),
@@ -517,7 +535,6 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     // --- pass 4b: resources -------------------------------------------------------------------
     world.insert_resource(state.tick);
     world.insert_resource(state.band_ids);
-    world.insert_resource(state.active_crises.clone());
     world.insert_resource(state.beat_ledger.clone());
     world.insert_resource(state.capability_flags);
     // Installing the checkpoint's copy IS the truncation: the log is append-only, so the captured
@@ -557,10 +574,21 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.metrics.clone());
     world.insert_resource(state.power_grid.clone());
     world.insert_resource(state.herd_telemetry.clone());
+    world.insert_resource(state.crisis_overlay.clone());
 
     // --- pass 4c: resources whose config must NOT come from the checkpoint --------------------
     // `restore_checkpoint` writes state and leaves the config field alone, so each of these keeps
-    // whatever config is live now. That is the whole reason these three are not plain clones.
+    // whatever config is live now. That is the whole reason these four are not plain clones.
+    //
+    // The crisis ledger is the one that re-resolves by KEY rather than leaving a field alone: its
+    // config sits by value inside each entry (`CrisisArchetypeRuntime`, `ModifierEffects`) rather
+    // than behind a single handle, so the checkpoint carries ids and the catalogs live now supply
+    // the tuning. Both catalogs are read before the ledger is borrowed mutably.
+    let crisis_archetypes = world.resource::<CrisisArchetypeCatalogHandle>().get();
+    let crisis_modifiers = world.resource::<CrisisModifierCatalogHandle>().get();
+    world
+        .resource_mut::<ActiveCrisisLedger>()
+        .restore_checkpoint(&state.active_crises, &crisis_archetypes, &crisis_modifiers);
     world
         .resource_mut::<CultureManager>()
         .restore_checkpoint(&state.culture);

@@ -28,6 +28,7 @@
 //! - **Density.** Forage patches are sparse (food-module tiles only); graze sits on *nearly every land
 //!   tile*, so the wire readout is per-`TileState` (see `snapshot.rs`), not a per-patch list.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use bevy::prelude::*;
@@ -41,7 +42,7 @@ use crate::{
 
 /// A live grazeable patch on one land tile — the animal-edible mirror of a [`crate::forage::ForagePatch`],
 /// minus cultivation (graze is wild ground, never owned or tended).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrazePatch {
     /// Tile the patch sits on (its registry key).
     pub tile: UVec2,
@@ -76,7 +77,7 @@ impl GrazePatch {
 /// The authoritative per-tile graze layer. Keyed by tile coord; **only tiles with a positive capacity
 /// hold a patch**, so a barren biome (water, glacier, bare rock) is simply absent rather than present
 /// with a zero — "no pasture here" and "eaten-out pasture" must never be the same reading.
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GrazeRegistry {
     /// Live patches keyed by tile coord. Iteration order is non-deterministic; the snapshot capture
     /// sorts by coord for a stable rollback record.

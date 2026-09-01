@@ -24,7 +24,7 @@
 //! than a term inside them.
 
 use rand::{rngs::SmallRng, Rng, SeedableRng};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// **Which range band a unit fights in** — combat's neutral range type, persisted-enum convention
 /// (`as_str` / `from_key`, default [`RangeBand::Melee`]). Artillery is `Ranged` (lethal at distance,
@@ -597,7 +597,7 @@ const WHOLE_UNIT_EPSILON: f32 = 1e-4;
 /// mechanism: capping the bank at `standing × durability` would make a `standing` under one body a
 /// permanent zero rather than a slow kill (see [`DamageLedger::strike`]), which is the one shape this
 /// type exists to rule out.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct DamageLedger {
     /// Damage banked toward the next body, always `< durability`.
     pending: f32,

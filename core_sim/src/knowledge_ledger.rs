@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sim_runtime::knowledge::{
     KnowledgeTelemetryEvent, KnowledgeTelemetryFrame, KnowledgeTelemetryMission,
     KNOWLEDGE_TELEMETRY_TOPIC,
@@ -139,7 +139,7 @@ impl KnowledgeLedgerConfigHandle {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnowledgeCountermeasure {
     pub kind: KnowledgeCountermeasureKind,
     pub potency: Scalar,
@@ -147,7 +147,7 @@ pub struct KnowledgeCountermeasure {
     pub remaining_ticks: u16,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InfiltrationRecord {
     pub faction: FactionId,
     pub blueprint_fidelity: Scalar,
@@ -156,7 +156,7 @@ pub struct InfiltrationRecord {
     pub last_activity_tick: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnowledgeModifier {
     pub source: KnowledgeModifierSource,
     pub delta_half_life: i16,
@@ -164,7 +164,7 @@ pub struct KnowledgeModifier {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnowledgeLedgerEntry {
     pub discovery_id: u32,
     pub owner_faction: FactionId,
@@ -226,7 +226,7 @@ impl KnowledgeLedgerEntry {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnowledgeTimelineEvent {
     pub tick: u64,
     pub kind: KnowledgeTimelineEventKind,
@@ -249,7 +249,7 @@ pub struct KnowledgeLedger {
 
 /// Everything [`KnowledgeLedger`] holds **except its config handle** — see
 /// [`crate::influencers::InfluentialRosterCheckpoint`] for why config stays out of a checkpoint.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnowledgeLedgerCheckpoint {
     entries: HashMap<(FactionId, u32), KnowledgeLedgerEntry>,
     timeline: VecDeque<KnowledgeTimelineEvent>,

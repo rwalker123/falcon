@@ -42,6 +42,59 @@ same contamination one step worse. The pending pair also carries the button's tw
 visible when the pick differs, absent when it does not — because a frame that quietly lost the button
 still looks like a deliberate layout. **Nothing here ever presses it**: it relaunches the process.
 
+**It also drives the SAVE CHANNEL, and it is the transport itself.** `_run_saves_states` injects a
+real `SaveSlots` seam whose sender only records the request id, then answers it with canned dicts
+shaped exactly as `bridge/query.rs` composes them — so the seam's real decode, routing and formatting
+run, with no server. That is what makes the failure states renderable at all: **no saves yet**
+(`menu_load_empty`), **no server** (`menu_load_no_server`) and a **refused slot name**
+(`menu_save_reserved_name`) are unreachable from a healthy stack, and they are precisely the states a
+player meets first. The set is `menu_load_list` / `_selected` / `_delete_confirm` / `_in_run`,
+`menu_save` / `_overwrite` / `_reserved_name`, `menu_load_empty` / `_no_server`, and `config_drift`
+— the last of which is not the shell at all but `ConfigDriftNotice`, added to the harness root,
+because this is the only harness that can see it.
+
+Three assertions ride with them: a delivered answer must leave the seam `LIST_READY` and a refusal
+`LIST_FAILED` (a pane that renders its own placeholder either way looks identical in a PNG), and **the
+armed delete button must NAME the slot it would destroy** — that label IS the confirmation, so a
+generic "Confirm" would quietly remove the only thing between a click and a lost save. The fixture's
+four rows cover both size units and all three time buckets plus the absolute-date branch; the ages are
+expressed as OFFSETS from now (a fixed stamp would drift into another bucket as the branch aged) and
+only the date row carries a fixed stamp, since that branch has no bucket to drift out of.
+
+**Two more checks take no picture, and both cover a silent wrong answer.**
+`_assert_caret_survives_a_mid_string_edit` parks the caret mid-string in the real name field, pushes a
+unicode key event through `Viewport.push_input` — `LineEdit.gui_input` is the only path that both
+moves the caret and emits `text_changed`, and it is the ORDER of those two that the fix reads, so
+`insert_text_at_caret` (which emits nothing) would prove neither — and asserts the REBUILT field's
+caret, then types a second character and asserts the text that produces. The second leg is the one a
+player feels: with the caret slammed to the end, `axbcd` + `y` came out `axbcdy`.
+`_assert_request_ids_do_not_repeat_across_seams` builds two seams in the order a scene change builds
+them, leaves a `list_saves` unanswered on the first, and asserts the second's `load_game` id differs
+and that the stale list answer finishes nothing on it — then delivers the load's OWN answer, so the
+negative leg cannot pass on a seam that has simply stopped listening. Sabotage-verified by restoring
+each defect: the caret reset fails both caret legs naming column 5 and `axbcdy`, and a per-instance id
+counter restarting at `REQUEST_ID_BASE` fails three id legs, one of them reporting the load finished
+`ok: true` by a list reply.
+
+**One check takes no picture at all.** `_assert_text_focus_is_handed_back` covers the keyboard
+handover the client's arbiter depends on
+(`.claude/rules/client/keyboard-arbiter.md`): typing must leave the
+Save pane's name field holding focus; `release_text_focus`, a pane switch and a submit must each hand
+it back; and a focused **Button** must NOT read as text entry, since widening the predicate would
+kill WASD and every panel toggle after each click on a HUD control. The POSITIVE legs are what keep
+the negative ones honest — an assertion that focus was released passes trivially if focus was never
+taken, and the Button leg first asserts the probe really took focus.
+
+**It calls the SHIPPED predicate** (`TextEntryFocus.held_in`) rather than restating the expression, so
+a drift in it fails here. Neither `MapView` nor `Main` is instantiated in this harness, so neither
+`_process` runs and the suppression itself — that a guarded hotkey does not fire — is NOT tested;
+what is tested is the predicate those two branch on, against a really focused field.
+
+Sabotage-verified three ways: widening the predicate to `is Control` fails the Button leg; making it
+always false fails all three focus-is-taken legs; stubbing `release_text_focus` fails all three
+release legs, which is also the proof that neither `queue_free` nor hiding the layer releases focus on
+its own.
+
 Same `_settle` (`process_frame` → `force_draw` → `process_frame`) + `_save` contract as
 `ui_preview`, and the same rule: `scripts/preview.sh res://tools/menu_preview.tscn`, **NOT
 `--headless`** (the dummy renderer yields a null viewport texture and the frames are skipped with a

@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use bevy::prelude::*;
@@ -37,7 +38,7 @@ pub type CultureLayerId = u32;
 /// all 384 tiles, `culture_raster` went to zero, and `reconcile_culture_layers` then minted a
 /// second set of layers for the new entities. A position cannot be renumbered, so the key holds
 /// across a restore by construction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct CultureOwner(pub u64);
 
 /// Set on tile-owned keys so they occupy a range disjoint from region ids and band ids. Without it
@@ -72,7 +73,7 @@ impl CultureOwner {
 pub const FALLBACK_CULTURE_REGION_ID: u32 = 0;
 
 /// Scope classification for a culture layer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CultureLayerScope {
     Global,
     Regional,
@@ -142,14 +143,14 @@ impl CultureTraitAxis {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CultureTensionKind {
     DriftWarning,
     AssimilationPush,
     SchismRisk,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CultureTensionRecord {
     pub layer_id: CultureLayerId,
     pub scope: CultureLayerScope,
@@ -249,7 +250,7 @@ impl Default for CultureEffectsCache {
 }
 
 /// Stores baseline, modifier, and resolved trait values for a layer.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CultureTraitVector {
     baseline: [Scalar; CULTURE_TRAIT_AXES],
     modifier: [Scalar; CULTURE_TRAIT_AXES],
@@ -303,7 +304,7 @@ impl CultureTraitVector {
 }
 
 /// Book-keeping for divergence tracking against thresholds.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CultureDivergence {
     pub magnitude: Scalar,
     pub soft_threshold: Scalar,
@@ -446,7 +447,7 @@ impl CultureManagerSettings {
 }
 
 /// Culture layer data structure.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CultureLayer {
     pub id: CultureLayerId,
     pub scope: CultureLayerScope,
@@ -588,7 +589,7 @@ pub struct CultureManager {
 /// `CultureManagerSettings` is the subtle one: it is config held **by value**, not behind an `Arc`,
 /// so a search for `Arc<*Config>` misses it entirely. It is derived at boot from
 /// `culture_corruption_config`, and cloning the manager whole would carry it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CultureManagerCheckpoint {
     next_id: CultureLayerId,
     global: Option<CultureLayer>,

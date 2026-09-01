@@ -298,7 +298,6 @@ pub fn simulate_power(mut params: PowerSimParams) {
         grid_state.nodes.insert(
             node.id,
             PowerGridNodeTelemetry {
-                entity: node.entity,
                 node_id: node.id,
                 supply: node.generation,
                 demand: node.demand,
@@ -556,7 +555,7 @@ mod power_tests {
         ];
 
         let entities = spawn_power_nodes(&mut app.world, 3, 1, &specs);
-        let topology = PowerTopology::from_grid(&entities, 3, 1, scalar_zero());
+        let topology = PowerTopology::from_grid(entities.len(), 3, 1, scalar_zero());
         app.insert_resource(topology);
 
         run_power_system(&mut app);
@@ -619,7 +618,7 @@ mod power_tests {
         ];
 
         let entities = spawn_power_nodes(&mut app.world, 2, 2, &specs);
-        let topology = PowerTopology::from_grid(&entities, 2, 2, scalar_from_f32(4.0));
+        let topology = PowerTopology::from_grid(entities.len(), 2, 2, scalar_from_f32(4.0));
         app.insert_resource(topology);
 
         run_power_system(&mut app);

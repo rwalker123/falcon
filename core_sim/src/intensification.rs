@@ -381,7 +381,7 @@ pub fn build_turns_remaining(cost: f32, done: f32, work_this_turn: f32) -> Optio
 /// **The animal web cannot reach [`BuildTurns::Rotting`], and that is not an omission**: neither
 /// animal rung declares a `meter_decay` (their penalty is the shed), so their rot is always
 /// [`NO_UPKEEP_DECAY`] and an animal build with any crew on it publishes a real count.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BuildTurns {
     /// `ceil((cost − done) / (build_work − rot))` at the crew that is on it.
     Turns(u32),
@@ -475,7 +475,7 @@ pub fn build_turns_estimate(
 /// **Each variant is a CAUSE, not a sentence.** [`Self::key`] is a short lowercase token on the
 /// free-form-string convention `species` / `ecologyPhase` / `sowSiteRefusal` already use; the client
 /// owns the wording.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BuildGate {
     /// Every conjunct held. The wire key is `""` — *"this entry is not blocked"* — which is what a
     /// finishing, holding or rotting build publishes too.
@@ -670,7 +670,7 @@ pub struct BuildQuote {
 /// A patch already 30 units into a Cultivate owes **20** on that leg, not 50. That is the whole of
 /// *"a previous improvement is a receipt, not a discount"*: the player is never asked to buy work
 /// they have already paid for, and never given work they have not.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct BuildLeg {
     /// The rung this leg raises.
     pub rung: RungKey,
@@ -685,7 +685,7 @@ pub struct BuildLeg {
 /// plus its own span at the band's full builders pool, so the last leg's number equals the entry's
 /// `buildTurnsRemaining`. It is separate from `BuildLeg` because the work is a fact about the
 /// *source* while the date is a fact about the *queue*, and only the publish pass can see the latter.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PublishedBuildLeg {
     pub leg: BuildLeg,
     /// `None` is the wire's *"no estimate"*, exactly as the entry's own countdown uses it.
@@ -974,7 +974,7 @@ pub fn upkeep_shortfall_fraction(demand: f32, supplied: f32) -> f32 {
 ///
 /// It rides [`crate::components::LaborAllocation`], so it is `SimState` and a checkpoint restores
 /// the allocation it produced.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum UpkeepFundMode {
     /// **Everything degrades a little** — each source is funded in proportion to its demand, so a
     /// band at 60% of its total holds every source at 60%. The default, because it is what an
@@ -1152,7 +1152,7 @@ impl RungBranch {
 /// the config actually defines, so [`LadderConfig::rung`] is infallible and a broken override can
 /// never silently no-op a shipped rung. Appending a *new* rung record is still free — this list only
 /// pins the ones a system reaches for by name today.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RungKey {
     /// A wild, depletable forage patch.
     PlantWild,
@@ -1363,7 +1363,7 @@ pub const NO_RUNG_CREDIT: f32 = 0.0;
 ///
 /// A source part-way up a rung is entitled to everything below it **in full**, plus its fraction of
 /// the step it is on — see [`interpolate`], which is the only thing that reads [`Self::credit`].
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RungStanding {
     /// **The highest rung whose meter is FULL** — what the source is entitled to in full. Never
     /// `None`: a position of zero already holds its branch's [`RungBranch::root_rung`], which costs
@@ -2274,7 +2274,7 @@ pub struct RungDef {
 /// construction" guarantee: a rung can only widen the set of links and lower a loss, never the
 /// reverse. The third payoff — `Seen` along a kept road — is not here because it is not a number: it
 /// is `routes::Route::grants_sight`, a yes/no that the **path** answers no to.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RungRoutePayoff {
     /// **HOW FAR THIS ROAD HOLDS A POOLING LINK OPEN, in tiles.** A logistics link forms within
