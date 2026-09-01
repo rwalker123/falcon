@@ -2068,11 +2068,51 @@ pub struct RouteRungState {
     ///
     /// ⛔ **IT IS READ, NEVER ASSUMED.** Every source row publishes its own
     /// `build_work_per_worker_turn` because the sim writes worker output as a *sum of terms* — a
-    /// road has no source row, so a client without this has to transcribe the constant and goes
-    /// stale in silence the day a second term lands. A reader that finds it missing or `0` states
-    /// *no estimate* rather than substituting a rate of its own.
+    /// road's own row ([`crate::state::RouteState`]) does not repeat it, for the reason above, so a
+    /// client without this has to transcribe the constant and goes stale in silence the day a second
+    /// term lands. A reader that finds it missing or `0` states *no estimate* rather than
+    /// substituting a rate of its own.
     #[serde(default)]
     pub build_work_per_worker_turn: f32,
+    /// **WHAT REACHING THIS RUNG COSTS IN MATERIAL** — the rung's declared build pile, in units of
+    /// the material it eats. `20` on `route:paved_road`; `0` on every other rung of the branch,
+    /// which eat nothing at all.
+    ///
+    /// ⛔ **IT IS FLAT, WHERE [`Self::work_cost`] BESIDE IT IS NOT.** A tile's own remoteness
+    /// multiplies the work (`RouteState::keeper_remoteness`) and does **not** multiply this: a tile
+    /// of road needs the same twenty stone wherever it lies, and remoteness already taxes the
+    /// getting there. So this figure is the whole truth for every tile on the map, while `work_cost`
+    /// is a base the tile's own multiplier still has to be applied to — the one asymmetry between
+    /// the branch's two prices, and why this needs no per-tile twin.
+    ///
+    /// **Spent as the meter climbs, never on completion, and decay refunds nothing**
+    /// (`docs/plan_standing_upkeep.md` §2.7): a roadbed a third laid has swallowed a third of the
+    /// pile, and if it then washes out the stone is gone.
+    /// `RouteState::build_material_demand` / `build_material_supplied` are this turn's share of it.
+    ///
+    /// **Which material it is** rides beside it in [`Self::build_material_id`].
+    #[serde(default)]
+    pub build_material_cost: f32,
+    /// **WHICH MATERIAL [`Self::build_material_cost`] IS OF** — `"stone"` on `route:paved_road`, and
+    /// `""` on every rung that eats nothing. Joins to the ids a band's own stores list publishes.
+    ///
+    /// ⛔ **READ IT WITH THE AMOUNT OR NOT AT ALL**, exactly as `build_work_per_worker` /
+    /// `build_work_branch` / `build_work_rung` are one reading: an amount with no noun cannot be
+    /// rendered into a sentence and a noun with no amount says nothing. Shipped without this, the
+    /// client's rung row read *"+ 20 to raise it"* — twenty of what?
+    ///
+    /// ⛔ **AND THE CLIENT MUST NOT SUPPLY THE NOUN ITSELF.** *"The route branch eats stone"* is a
+    /// fact about the **config**, so a client holding it is a second authority that goes stale in
+    /// silence the day a rung is retuned to eat something else — the same transcription mistake
+    /// [`Self::build_work_per_worker_turn`] exists to have prevented.
+    ///
+    /// **One id rather than a `MaterialPayoff` list**, unlike the plant and animal branches' piles:
+    /// one material per rung *is* the model here, [`Self::build_material_cost`] is a single float so
+    /// a second material would make the **amount** meaningless before the name mattered, and the
+    /// flat-pile arithmetic has no defined reading for two. The pair is resolved from **one** lookup
+    /// at capture so the two cannot disagree. Appended (append-only).
+    #[serde(default)]
+    pub build_material_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -2200,6 +2240,23 @@ pub struct KitOptionState {
     /// A free-form string on the `species` / `ecology_phase` convention. Appended (append-only).
     #[serde(default)]
     pub build_work_branch: String,
+    /// **WHICH RUNG OF THAT WEB [`Self::build_work_per_worker`] IS FOR** — a `"<branch>:<id>"` rung
+    /// key such as `"route:paved_road"`, and **`""`** when the kit's build tool serves *every* rung
+    /// on its branch, which is every kit that ships today but the two road tools.
+    ///
+    /// ⛔ **THE READING IS A TRIPLE — worth, branch AND rung, or none of them.** A consumer reading
+    /// the worth alone is wrong, and one reading worth + branch is wrong on exactly the branch this
+    /// field was added for: the route ladder is the first whose rungs want *different* tools, so a
+    /// picker must grey a road kit against the **rung** of the entry in front of it rather than
+    /// against its branch.
+    ///
+    /// **It has to be here and not only on [`crate::state::BandKitTiersState`].** That is the band's
+    /// **resolved** row; this is the **roster** the picker reads, so a client without this field
+    /// sees an unbound tool on both road kits and answers with whichever the roster lists first —
+    /// offering the *grading* kit for a `pave`. An absent field decodes as `""` = *serves every
+    /// rung*, the generous answer the bound exists to refuse. Appended (append-only).
+    #[serde(default)]
+    pub build_work_rung: String,
 }
 
 /// **Hand-written rather than derived, for the same reason [`HerdTelemetryState`]'s is**: three of
@@ -2232,6 +2289,9 @@ impl Default for KitOptionState {
             // Empty is the honest reading of a kit with no build tool — naming a web by omission
             // would price a build off gear the kit does not hold.
             build_work_branch: String::new(),
+            // Empty is *"bound to no rung"*, which is what every kit but the two road tools
+            // declares — so the default is also the shipped answer nearly everywhere.
+            build_work_rung: String::new(),
         }
     }
 }

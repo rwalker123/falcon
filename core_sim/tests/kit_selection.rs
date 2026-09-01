@@ -2106,3 +2106,109 @@ fn a_fully_armed_band_publishes_exactly_one_hunt_crew() {
         "the spears reach every hunter — the reserve above the head count arms nobody extra"
     );
 }
+
+/// ⛔ **THE ROSTER TELLS THE TWO ROAD KITS APART, OR A `pave` IS OFFERED THE GRADING TOOL.**
+///
+/// `BandKitTiers.buildWorkRung` is the **band's resolved** row and has carried the bound since the
+/// rung narrowing landed. `KitOption` is the **roster** the picker reads, and it did not — so every
+/// roster-side consumer saw an unbound `build_work` on *both* road kits and answered with whichever
+/// the roster lists first. `roadbuilding` precedes `paving` in `equipment.json`, so a `pave` entry
+/// opened on the **grading** kit: precisely the failure the bound was added to prevent, arriving
+/// through the one table that had not been told.
+///
+/// **The assertion is the PICKER'S OWN RESOLUTION, off the encoded envelope**, not a field-by-field
+/// echo of the config: it asks the published roster *"which kit serves this rung"* exactly as a
+/// client must, and a re-derivation from `EquipmentConfig` would agree with itself while the wire
+/// stayed silent. A client cannot decode a field that is not there, and an absent one reads `""` =
+/// **serves every rung** — the generous answer, which is why silence here is not a safe default.
+///
+/// **Three arms, because each alone passes on a broken wire.** The unbound kits must publish `""`
+/// (a roster stamping every row would pass the two below); each road kit must be the unique answer
+/// for its own rung; and the two answers must differ from each other.
+#[test]
+fn the_published_roster_names_which_rung_each_road_kit_serves() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let mut app = placid_world();
+    recapture_snapshot_in_place(&mut app.world);
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let kits = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .subsistence()
+        .and_then(|section| section.kits())
+        .expect("the subsistence section carries the kit roster");
+
+    // The roster as a picker sees it: id, what its build tool is worth, and the two bounds that say
+    // where that worth is real.
+    let rows: Vec<(String, f32, String, String)> = kits
+        .iter()
+        .map(|kit| {
+            (
+                kit.id().expect("a kit publishes its id").to_string(),
+                kit.buildWorkPerWorker(),
+                kit.buildWorkBranch()
+                    .expect("the branch is published, empty or not")
+                    .to_string(),
+                kit.buildWorkRung()
+                    .expect("the rung is published, empty or not")
+                    .to_string(),
+            )
+        })
+        .collect();
+
+    // **A kit bound to no rung serves every rung on its branch** — the plant and animal tools, and
+    // every kit carrying no build tool at all. If this were not so, the two arms below would pass on
+    // a roster that stamped a rung onto everything.
+    for (id, _, _, rung) in &rows {
+        if id == "roadbuilding" || id == "paving" {
+            continue;
+        }
+        assert!(
+            rung.is_empty(),
+            "'{id}' carries no rung-bound tool, so it must publish an empty rung, not '{rung}'"
+        );
+    }
+
+    // **THE PICKER'S OWN QUESTION**, asked of the wire: which kit serves this rung? A kit qualifies
+    // when its branch matches and its rung either matches or is unbound.
+    let serving = |branch: &str, rung: &str| -> Vec<String> {
+        rows.iter()
+            .filter(|(_, worth, kit_branch, kit_rung)| {
+                *worth > 0.0 && kit_branch == branch && (kit_rung.is_empty() || kit_rung == rung)
+            })
+            .map(|(id, ..)| id.clone())
+            .collect()
+    };
+
+    let grade = core_sim::RungKey::RouteDirtRoad.wire_key();
+    let pave = core_sim::RungKey::RoutePavedRoad.wire_key();
+    assert_eq!(
+        serving("route", &grade),
+        vec!["roadbuilding".to_string()],
+        "the roster must name EXACTLY ONE kit for a grade - a second answer here is the paving tool \
+         offering itself for earthwork it takes nothing off"
+    );
+    assert_eq!(
+        serving("route", &pave),
+        vec!["paving".to_string()],
+        "⛔ and EXACTLY ONE for a pave. `roadbuilding` precedes `paving` in the roster, so an \
+         unbound tool on either row makes the GRADING kit the answer a picker lands on for a job it \
+         is worth nothing on"
+    );
+    assert_ne!(
+        serving("route", &grade),
+        serving("route", &pave),
+        "**LIVENESS**: the two road rungs must resolve to DIFFERENT kits, or the bound is doing \
+         nothing and both assertions above are one assertion"
+    );
+}

@@ -14,6 +14,8 @@ fn create_routes<'a>(
         .iter()
         .map(|route| {
             let rung = builder.create_string(&route.rung);
+            // Why the pool is stuck on this tile — `""` when it is not stuck at all.
+            let build_blocked_reason = builder.create_string(&route.build_blocked_reason);
             fb::RouteState::create(
                 builder,
                 &fb::RouteStateArgs {
@@ -33,6 +35,12 @@ fn create_routes<'a>(
                     grantsSight: route.grants_sight,
                     frictionMultiplier: route.friction_multiplier,
                     holdsLinkToTiles: route.holds_link_to_tiles,
+                    buildBlockedReason: Some(build_blocked_reason),
+                    buildMaterialDemand: route.build_material_demand,
+                    buildMaterialSupplied: route.build_material_supplied,
+                    buildTurnsRemaining: route.build_turns_remaining,
+                    upkeepMaterialDemand: route.upkeep_material_demand,
+                    upkeepMaterialSupplied: route.upkeep_material_supplied,
                 },
             )
         })

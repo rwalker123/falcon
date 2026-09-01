@@ -411,8 +411,11 @@ func _drive_assign_labor_kits() -> void:
 ## can be: `band_panel_preview` reads it off `Main.format_build_kit` on the live picker.
 func _drive_build_kit() -> void:
 	var band: Dictionary = _hud._band_labor.panel_band()
+	# **`BUILD_RUNG_ANY` IS STATED, NOT DEFAULTED** — no plant or animal kit binds a rung, so the
+	# unqualified ask is the right one here; the lookup takes no default so that a caller which
+	# cannot name a rung has to say so rather than arrive at the refusal by omission.
 	var derived := KitRoster.build_kit_for_branch(_hud._band_labor.kits(),
-		KitRoster.BUILD_BRANCH_PLANT)
+		KitRoster.BUILD_BRANCH_PLANT, KitRoster.BUILD_RUNG_ANY)
 	_hud._bandpanel._emit_build_kit(band, {
 		"kind": SourceForecast.LABOR_KIND_FORAGE, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
 	}, BandFx.KIT_ID_NONE, derived)
@@ -420,7 +423,7 @@ func _drive_build_kit() -> void:
 	_hud._bandpanel._emit_build_kit(band, {
 		"kind": SourceForecast.LABOR_KIND_HUNT, "x": -1, "y": -1, "herd_id": NEAR_HERD_ID,
 	}, BandFx.KIT_ID_NONE, KitRoster.build_kit_for_branch(_hud._band_labor.kits(),
-		KitRoster.BUILD_BRANCH_ANIMAL))
+		KitRoster.BUILD_BRANCH_ANIMAL, KitRoster.BUILD_RUNG_ANY))
 	await _settle()
 
 ## **`build_order` — THE QUEUE'S REORDER** (`docs/plan_standing_upkeep.md` §4.7b ③), both source

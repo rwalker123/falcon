@@ -425,6 +425,36 @@ const IMPROVEMENT_RUNNING_LABELS := {
     "corral": "Penning",
 }
 
+# ⛔ **THE TABLE ABOVE IS AN OVERRIDE LIST, NOT THE ROSTER OF VERBS THAT MAY RUN.** It holds the four
+# whose participle English (or this game's own vocabulary) does not give for free — `corral` reads
+# `Penning`, which no morphology derives — and every other verb is gerunded here.
+#
+# **THAT IS WHAT LETS A RUNG NAME ITSELF.** The ROUTE branch's verbs (`grade`, `pave`) arrive from the
+# published rung catalog, so a fifth rung added to `intensification_ladder.json` reads `Grading` /
+# `Paving` / its own participle in the build queue's date column with no client edit at all — the same
+# property the catalog's `display_name` already buys the queue row's FACE. A hard-coded pair here
+# would have had to be extended by hand for every rung the config ever grows.
+#
+# **THE DERIVATION IS THE ONE REGULAR ENGLISH RULE and nothing more**: drop a silent trailing `e`,
+# append `ing`, capitalize. It is deliberately not a conjugator — a verb it gets wrong is a verb that
+# belongs in the override table above, which is what that table is for.
+#
+# `""` in and `""` out, because an entry with no verb has no participle and the callers' own bare
+# dated face is the right answer there (see `DetailFormat.build_completion_value`).
+const IMPROVEMENT_RUNNING_SUFFIX := "ing"
+const IMPROVEMENT_RUNNING_SILENT_E := "e"
+
+static func improvement_running_label(verb: String) -> String:
+    var stem := verb.strip_edges().to_lower()
+    if stem == "":
+        return ""
+    var named := String(IMPROVEMENT_RUNNING_LABELS.get(stem, ""))
+    if named != "":
+        return named
+    if stem.ends_with(IMPROVEMENT_RUNNING_SILENT_E):
+        stem = stem.substr(0, stem.length() - IMPROVEMENT_RUNNING_SILENT_E.length())
+    return (stem + IMPROVEMENT_RUNNING_SUFFIX).capitalize()
+
 # The STATE the finished rung leaves the source in — a noun, because nothing is happening any more.
 # These are the same four words the work board's rung marks use, and they carry the same glyphs
 # (`DetailFormat`'s, resolved at the call site) so a Tended Patch reads identically on the compose
@@ -1384,6 +1414,21 @@ const KIT_WITHHELD_REASON_BUILD_BRANCH_FORMAT := "its tools are no use on %s"
 ## the whole client — and `KitRoster` already reads this file.
 const KIT_BUILD_BRANCH_PLANT_NOUN := "a crop build"
 const KIT_BUILD_BRANCH_ANIMAL_NOUN := "an animal build"
+## …and the third branch, which is not a food web at all. `route` is the wire's token; what the
+## player is looking at is a road.
+const KIT_BUILD_BRANCH_ROUTE_NOUN := "a road build"
+
+## ⛔ **THE RUNG-BOUND REFUSAL, AND IT IS A DIFFERENT SENTENCE FROM THE BRANCH ONE ON PURPOSE.** The
+## paving kit in front of a `grade` shares the road's branch — *its tools are no use on a road build*
+## would be plainly false, and a reason a player can see is wrong is worse than no reason at all.
+## What is true is that a tool bound to one rung resolves to the neutral on every other, so this says
+## that instead, in the ladder's own word (`ROAD_PROGRESS_UNNAMED_FORMAT` already says *rung* to the
+## player).
+##
+## **It names no rung**, deliberately: this leaf holds no catalog and the rung's display name lives on
+## one, so a format taking a key would print `route:paved_road` at the player the first time a caller
+## passed the wrong string.
+const KIT_WITHHELD_REASON_BUILD_RUNG := "its tools are for a different rung"
 
 ## **THE JOB'S DEFAULT IS MARKED, NOT SEPARATED.** The player needs to know which kit the verb takes
 ## when they name none; that is a note on an ordinary entry, and a divider would imply the roster has

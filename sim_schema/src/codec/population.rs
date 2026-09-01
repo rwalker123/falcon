@@ -399,6 +399,8 @@ fn create_populations<'a>(
                         let kit_id = builder.create_string(&tiers.kit_id);
                         // Which web this kit's build gear serves — `""` for a kit carrying none.
                         let build_work_branch = builder.create_string(&tiers.build_work_branch);
+                        // Which rung of that web — `""` for a tool bound to none, i.e. all of them.
+                        let build_work_rung = builder.create_string(&tiers.build_work_rung);
                         fb::BandKitTiers::create(
                             builder,
                             &fb::BandKitTiersArgs {
@@ -415,6 +417,7 @@ fn create_populations<'a>(
                                 buildWorkPerWorker: tiers.build_work_per_worker,
                                 buildWorkSaturatingCrew: tiers.build_work_saturating_crew,
                                 buildWorkBranch: Some(build_work_branch),
+                                buildWorkRung: Some(build_work_rung),
                             },
                         )
                     })

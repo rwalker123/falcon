@@ -442,6 +442,14 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 "build_work_branch",
                 row.buildWorkBranch().unwrap_or_default(),
             );
+            // …and **WHICH RUNG OF THAT WEB**, `""` where the tool serves every rung on its branch,
+            // which is every kit but the two road tools. The reading is three fields now, not two: a
+            // stone-dressing tool is worth its offset on a `pave` and EXACTLY NOTHING on the `grade`
+            // beneath it, so `build_gear` reading the worth and the branch alone would quote the
+            // paving kit's uplift on a road being graded. `KitRoster.kit_serves_build` holds the
+            // three arms, and its third — a caller that cannot name the rung is quoted NOTHING — is
+            // the one that fails silently and generously if it is got backwards.
+            let _ = entry.insert("build_work_rung", row.buildWorkRung().unwrap_or_default());
             kit_tiers.push(&entry.to_variant());
         }
     }

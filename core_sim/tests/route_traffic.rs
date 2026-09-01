@@ -1,9 +1,9 @@
 //! **Roads form under the traffic that was already there, and the band that graded a tile pays for
 //! it** (`docs/plan_standing_upkeep.md` §4.13b, issue #532).
 //!
-//! These drive the turn's three route systems in **stage order** — `balance_supply_networks` and
-//! `routes::advance_roads` in Logistics, then `settle_route_keeping` in Population — because that
-//! ordering is load-bearing twice over:
+//! These drive the turn's route passes in **stage order** — `balance_supply_networks` and
+//! `routes::advance_roads` in Logistics, then `bill_and_stock_roads` and the roadwork payment in
+//! Population — because that ordering is load-bearing twice over:
 //!
 //! - the supply pass records the links and the route pass spends them, so the payoff is read at the
 //!   *previous* turn's standing. A fixture that ran those two the other way round would measure a
@@ -20,22 +20,22 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
-use bevy::prelude::Entity;
+use bevy::prelude::{Entity, Query, Res, ResMut, With};
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_band_movement, advance_roads, balance_supply_networks, credit_route_lessons, knows,
-    road_at_risk_rung, road_upkeep_demand, road_upkeep_measure, scalar_zero, settle_route_keeping,
-    spawn_initial_world, BandId, BandTravel, ConnectionKey, ConnectionLedger, ConnectionsConfig,
-    CultureManager, DiscoveryProgressLedger, EquipmentConfigHandle, FactionId, FactionInventory,
-    GenerationId, GenerationRegistry, LaborAllocation, LaborConfigHandle, LaborTarget,
-    LadderConfig, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
-    PopulationCohort, ResidentBand, Road, RoadKeeper, RoadRegistry, RouteTrafficLog, RungKey,
-    Scalar, SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
-    SupplyNetworkConfigHandle, SupplyNetworkMembership, Tile, TileRegistry, FOOD, FULL_TIE,
-    NEAR_ENOUGH_TO_KEEP, NO_UPKEEP_DEMAND, PAVING_DISCOVERY_ID, PER_WORKER_OUTPUT,
-    ROADBUILDING_DISCOVERY_ID,
+    advance_band_movement, advance_roads, balance_supply_networks, bill_and_stock_roads,
+    credit_route_lessons, knows, road_at_risk_rung, road_upkeep_demand, road_upkeep_measure,
+    scalar_zero, settle_bands_roadwork, spawn_initial_world, BandEquipment, BandId, BandTravel,
+    ConnectionKey, ConnectionLedger, ConnectionsConfig, CultureManager, DiscoveryProgressLedger,
+    EquipmentConfigHandle, FactionId, FactionInventory, GenerationId, GenerationRegistry,
+    LaborAllocation, LaborConfigHandle, LaborTarget, LadderConfig, LadderConfigHandle, LocalStore,
+    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Road, RoadKeeper,
+    RoadRegistry, RouteTrafficLog, RungKey, Scalar, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, SupplyNetworkConfigHandle, SupplyNetworkMembership, Tile,
+    TileRegistry, FOOD, FULL_TIE, NEAR_ENOUGH_TO_KEEP, NO_UPKEEP_DEMAND, PAVING_DISCOVERY_ID,
+    PER_WORKER_OUTPUT, ROADBUILDING_DISCOVERY_ID,
 };
 
 const TEST_FACTION: FactionId = FactionId(7);
@@ -191,6 +191,53 @@ fn set_food(app: &mut App, band: Entity, food: i64) {
         .set(FOOD, Scalar::from_i64(food));
 }
 
+/// **THE ROADWORK PAYMENT, DRIVEN BY HAND — this harness does not run the labour pass.**
+///
+/// The payment is `core_sim::settle_bands_roadwork`, and in production it is called from **inside**
+/// `advance_labor_allocation`: it divides the `roadwork` head count the shedding order left, and it
+/// has to land before the road build quote struck in that same pass reads `Road::upkeep_supplied`.
+/// It was a system of its own (`settle_route_keeping`, `.after` the labour pass) until that ordering
+/// was found to publish a full rot for every road, funded or not.
+///
+/// This file drives the **route** passes in stage order and deliberately runs none of the labour
+/// pass's hunting, foraging, building or wear — so it calls the one payer directly rather than
+/// standing that whole system up. ⛔ **It is a driver, not a second arithmetic**: every number it
+/// produces comes out of the same function production calls, so a change to the split cannot pass
+/// here and fail there.
+fn pay_road_keepers(
+    mut registry: ResMut<RoadRegistry>,
+    ladder: Res<LadderConfigHandle>,
+    equipment: Res<EquipmentConfigHandle>,
+    tile_registry: Res<TileRegistry>,
+    tiles: Query<&Tile>,
+    // `With<BandId>` — a keeper *is* a `BandId`, so a cohort without one has nothing to claim with.
+    mut bands: Query<
+        (
+            &PopulationCohort,
+            &mut LaborAllocation,
+            Option<&mut BandEquipment>,
+            &BandId,
+        ),
+        With<BandId>,
+    >,
+) {
+    let ladder = ladder.get();
+    let equipment_cfg = equipment.get();
+    for (cohort, mut allocation, mut band_equipment, band) in bands.iter_mut() {
+        settle_bands_roadwork(
+            &mut registry,
+            cohort,
+            &mut allocation,
+            band_equipment.as_deref_mut(),
+            *band,
+            &equipment_cfg,
+            &ladder,
+            &tile_registry,
+            &tiles,
+        );
+    }
+}
+
 /// One turn, in stage order: the three Logistics passes, then the two Population ones.
 ///
 /// ⛔ **`advance_band_movement` IS ON THE POPULATION SIDE OF THE LINE**, which is what makes a
@@ -202,7 +249,16 @@ fn resolve_turn(app: &mut App) {
     app.world.run_system_once(advance_roads);
     app.world.run_system_once(credit_route_lessons);
     app.world.run_system_once(advance_band_movement);
-    app.world.run_system_once(settle_route_keeping);
+    // **THE BILL AND THE STONE, THEN THE HANDS.** `bill_and_stock_roads` stamps both of a road's
+    // bills at the pre-accrual position and spends the standing material; the roadwork payment
+    // settles the WORK half afterwards, against that same stamp. The split is what puts a band's
+    // standing roads ahead of a new paving build on the store — see `bill_and_stock_roads`.
+    //
+    // **`pay_road_keepers` stands in for `advance_labor_allocation`**, which is where the payment
+    // runs in production — see that driver for why this harness does not stand the whole labour pass
+    // up.
+    app.world.run_system_once(bill_and_stock_roads);
+    app.world.run_system_once(pay_road_keepers);
 }
 
 fn resolve_turns(app: &mut App, turns: u32) {

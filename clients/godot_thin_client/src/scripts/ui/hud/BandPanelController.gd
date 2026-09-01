@@ -1532,7 +1532,14 @@ func _role_kit_key(band: Dictionary, kind: String) -> String:
 ## role has no assignment row at all, and `resolve_selection` then lands on the job default, which is
 ## exactly what the sim would resolve for the first `+`.
 func _role_kit_id(band: Dictionary, kind: String) -> String:
-    var branch := _role_build_branch(band, kind)
+    # ⛔ **THE BRANCH AND ITS RUNG COME OUT OF ONE CALL, so neither can be fetched without the other.**
+    # This line read `_role_build_branch(band, kind)` and handed the branch alone to both lookups
+    # below; both then took `BUILD_RUNG_ANY` by default, both road kits hit `kit_serves_build`'s third
+    # arm, and the header printed `1 builders · No kit` over an entry whose own dropdown named the
+    # Roadbuilding kit. There is no single-value accessor left to make that mistake with.
+    var target := _role_build_target(band, kind)
+    var branch := String(target[BUILD_TARGET_BRANCH_KEY])
+    var rung := String(target[BUILD_TARGET_RUNG_KEY])
     var composed := _composed_role_kit_id(band, kind)
     if composed == KitRoster.NO_KIT_ID:
         composed = HudBandLaborState.role_kit_id(band, kind)
@@ -1541,7 +1548,7 @@ func _role_kit_id(band: Dictionary, kind: String) -> String:
     # what the sim will resolve for that role's first `+` — so the card states the kit the pool would
     # actually be handed, rather than whichever builders kit the roster happens to author first.
     if composed == KitRoster.NO_KIT_ID and kind == HudConst.LABOR_KIND_BUILDERS:
-        composed = KitRoster.build_kit_for_branch(_band_labor.kits(), branch)
+        composed = KitRoster.build_kit_for_branch(_band_labor.kits(), branch, rung)
         # **…AND AN EMPTY QUEUE DERIVES NOTHING, WHICH IS THE `No kit` FACE AND NOT ROSTER ORDER.**
         # `resolve_selection`'s terminal fall-through is `selectable[0]` — the first entry the roster
         # authors for the job, `hurdling` on the shipped config — so with nothing composed, nothing on
@@ -1552,7 +1559,7 @@ func _role_kit_id(band: Dictionary, kind: String) -> String:
         if composed == KitRoster.NO_KIT_ID:
             composed = KitRoster.bare_kit_id(_band_labor.kits(), kind)
     return KitRoster.resolve_selection(_band_labor.kits(), kind,
-        _band_labor.default_kit_id(kind), composed, {}, "", branch)
+        _band_labor.default_kit_id(kind), composed, {}, "", branch, rung)
 
 ## The pick the PLAYER made on this card in this session, `NO_KIT_ID` when they have made none — a
 ## different question from `_role_kit_id`, which falls back to the wire. The BUILDERS row is where
@@ -1607,13 +1614,31 @@ func _commanded_role_kit_id(band: Dictionary, kind: String) -> String:
 ## confirmed entries and then the pending ones, so its first entry is the head whichever kind it is,
 ## and a source's web is a property of the source. `bare_kit_id` survives for a queue with genuinely
 ## nothing in it, which is the case it was written for.
-func _role_build_branch(band: Dictionary, kind: String) -> String:
+## ⛔ **AND IT ANSWERS THE PAIR, BECAUSE A BRANCH ALONE IS NOT AN ANSWER.** A build kit may bind a
+## RUNG of its branch (`roadbuilding` serves `route:dirt_road`, `paving` serves `route:paved_road`),
+## and `KitRoster.kit_serves_build`'s third arm refuses every rung-bound tool to a caller that names
+## no rung — correctly, since a surface that cannot say which rung is being priced must not quote an
+## uplift the sim will never pay. So the two travel together out of ONE call and there is no accessor
+## that hands back half of it. Returning the branch alone is precisely how this panel shipped
+## `1 builders · No kit` over a road the sim was demonstrably grading at the kitted rate.
+##
+## `BUILD_TARGET_BRANCH_KEY` / `BUILD_TARGET_RUNG_KEY`, both always present: `BUILD_BRANCH_NONE` and
+## `BUILD_RUNG_ANY` on every role but the builders', none of which raises anything.
+const BUILD_TARGET_BRANCH_KEY := "branch"
+const BUILD_TARGET_RUNG_KEY := "rung"
+
+func _role_build_target(band: Dictionary, kind: String) -> Dictionary:
     if kind != HudConst.LABOR_KIND_BUILDERS:
-        return KitRoster.BUILD_BRANCH_NONE
+        return {BUILD_TARGET_BRANCH_KEY: KitRoster.BUILD_BRANCH_NONE,
+            BUILD_TARGET_RUNG_KEY: KitRoster.BUILD_RUNG_ANY}
+    # **THE WIRE'S HEAD FIRST, AND ITS RUNG COMES OFF THE SAME ENTRY.** `head_build_rung` resolves a
+    # ROAD head's rung through the routes section (the step above the one that tile HOLDS) and answers
+    # `BUILD_RUNG_ANY` for a patch or a herd, no plant or animal kit binding a rung.
     var branch := _band_labor.head_build_branch(band)
     if branch != KitRoster.BUILD_BRANCH_NONE:
-        return branch
-    return _pending_head_build_branch(band)
+        return {BUILD_TARGET_BRANCH_KEY: branch,
+            BUILD_TARGET_RUNG_KEY: _band_labor.head_build_rung(band)}
+    return _pending_head_build_target(band)
 
 ## The branch of the FIRST entry in this band's queue as the client renders it — confirmed entries in
 ## wire order, then the declarations the wire has not placed, which is `_build_queue_models`' own
@@ -1622,11 +1647,27 @@ func _role_build_branch(band: Dictionary, kind: String) -> String:
 ## **IT IS THE SAME LIST THE BLOCK DRAWS**, deliberately: a second walk of the overlay would be a
 ## second opinion about which entry is at the head, and the header names the kit the block's own top
 ## row is being raised with.
-func _pending_head_build_branch(band: Dictionary) -> String:
+func _pending_head_build_target(band: Dictionary) -> Dictionary:
     var queued := _build_queue_models(band, _work_source_models(band, 0))
     if queued.is_empty():
-        return KitRoster.BUILD_BRANCH_NONE
-    return KitRoster.build_branch_for_kind(String((queued[0] as Dictionary).get("kind", "")))
+        return {BUILD_TARGET_BRANCH_KEY: KitRoster.BUILD_BRANCH_NONE,
+            BUILD_TARGET_RUNG_KEY: KitRoster.BUILD_RUNG_ANY}
+    var head: Dictionary = queued[0]
+    var branch := KitRoster.build_branch_for_kind(String(head.get("kind", "")))
+    # **THE RUNG IS THE HEAD MODEL'S OWN `build_destination`, exactly as `_queue_kit_listing` reads
+    # it** — and for the same reason it forks there: only the ROAD model puts a rung in that key, a
+    # patch's and a herd's putting a VERB in it, which is not a rung and must never be offered as one.
+    return {BUILD_TARGET_BRANCH_KEY: branch,
+        BUILD_TARGET_RUNG_KEY: _queue_model_build_rung(head, branch)}
+
+## **THE RUNG A QUEUE MODEL IS BEING RAISED TO — `BUILD_RUNG_ANY` unless it is a road.** ONE
+## derivation, so the queue ROW's kit picker and the queue HEADER's kit line cannot read the same
+## model two ways; the header saying `No kit` over a row whose dropdown named the Roadbuilding kit is
+## exactly what two readings of one model looks like on screen.
+func _queue_model_build_rung(model: Dictionary, branch: String) -> String:
+    if branch != KitRoster.BUILD_BRANCH_ROUTE:
+        return KitRoster.BUILD_RUNG_ANY
+    return String(model.get("build_destination", "")).strip_edges()
 
 ## A kit picked on a role card. **It EMITS on the press, like the work inspector's policy picker and
 ## unlike a compose sheet's** — this card has no Send to commit at, so a pick that only sat in client
@@ -2604,16 +2645,27 @@ func _road_at(roads: Array, x: int, y: int) -> Dictionary:
 ## different verbs with different consequences — the meter and the keeper survive the first and not the
 ## second — and the road ladder's own `Stop keeping this road` already owns the second.
 ##
-## ⛔ **NO DATE, AND THE SENTINEL IS `BUILD_TURNS_NOT_YET_ESTIMATED` RATHER THAN `NO_ESTIMATE`.** A
-## road publishes no chained `buildTurnsRemaining` at all — it has no source row for the sim to stamp
-## one on — so the client picks which *there is no number* this is, and the two render very
-## differently: `-1` on a ranked entry reads **`⚠ Stalled 0%`**, which claims something is wrong, and
-## nothing is. The road is queued, behind a head that is taking every builder, exactly as designed.
-## `-5` is that state's own reading — **`Queued 0%`**, no hazard mark — and its note says why in the
-## same words: *"a build one command old with a staffed pool on it is not a stall"*.
+## ⛔ **THE DATE IS THE SIM'S OWN, AND THE HARDCODED SENTINEL THAT USED TO STAND HERE IS RETIRED.**
+## `RouteState.buildTurnsRemaining` publishes the chained countdown for a road — the same quantity
+## through the same `published_build_countdown` seam the two food webs use, carrying the identical
+## five sentinels — so the model reads it (`HudRouteVocab.build_turns_remaining_of`) and
+## `DetailFormat.build_sentinel_value` renders a road through the identical fork with no branch of
+## its own.
 ##
-## **Putting `⚠ Stalled` on a correctly-waiting road would be the reported defect one column over**:
-## a readout that makes a working command look like a failed one.
+## **WHAT THE HARDCODE COST: `Queued 97%` FOREVER.** `BUILD_TURNS_NOT_YET_ESTIMATED` (`-5`) means
+## *the sim has not looked at this entry yet*, so stamping it on every road made a road under way for
+## 147 turns read exactly as one ordered this turn. Reported from play. Its justification — *"a road
+## publishes no chained `buildTurnsRemaining`; it has no source row for the sim to stamp one on"* —
+## was never true of the routes table, which is keyed by tile exactly as a patch row is.
+##
+## **EVERY SENTINEL IS GENUINELY REACHABLE FOR A ROAD, which is why none is filtered here.** `-5` on
+## the turn the grade is ordered (still `Queued`, and correct there); `-4` when a rung's own gate
+## refuses the head; `-2`/`-3` on a meter that holds or reverts; `-1` where nobody is on it.
+##
+## **AND THE LEG VERB RIDES `building_policy`, the plant and animal rows' own slot** — the catalog's
+## `grade` / `pave`, gerunded by `HudComposeVocab.improvement_running_label`, so the column reads
+## `Grading 97% · turn 155` in the same words and the same shape a `Cultivate` does. A road's climb
+## is one leg, so its leg IS its destination and the two cannot disagree.
 func _road_queue_model(road: Dictionary, ladder: Array[Dictionary], x: int, y: int) -> Dictionary:
     var destination := HudRouteVocab.next_rung_key(HudRouteVocab.rung_of(road))
     var rung_entry := HudRouteVocab.ladder_entry_of(ladder, destination)
@@ -2631,14 +2683,17 @@ func _road_queue_model(road: Dictionary, ladder: Array[Dictionary], x: int, y: i
         # raw wire key.
         "build_destination": destination,
         "road_rung_name": rung_name,
-        "building_policy": "",
+        # **THE LEG THE CREW IS ON, in the slot the plant and animal models put theirs in** — which is
+        # what the date column gerunds into `Grading 97% · turn 155`. A road's climb is ONE leg, so
+        # the leg and the destination are the same rung and the catalog's verb answers for both.
+        "building_policy": HudRouteVocab.catalog_verb(rung_entry),
         # ⛔ **`queued_progress`, NEVER THE RAW METER.** A road in this list is by definition queued,
         # and the wire's `buildFraction` answers for the rung at RISK — which on a road that has
         # banked nothing is the rung it already HOLDS, i.e. `METER_FULL`. Reported from play as
         # `Queued 100%` on a dirt road ordered that turn.
         "building_progress": HudRouteVocab.queued_progress(road),
         "build_ring_progress": SourceForecast.PEN_EXTEND_EMPTY_METER,
-        "build_turns": SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED,
+        "build_turns": HudRouteVocab.build_turns_remaining_of(road),
         "build_work_cost": work_cost,
         "build_upkeep_demand": HudRouteVocab.catalog_upkeep(rung_entry),
         "build_blocked_lines": [],
@@ -3973,11 +4028,21 @@ func _queue_kit_listing(band: Dictionary, model: Dictionary) -> Dictionary:
             KitRoster.KIT_ENTRIES_SELECTED_KEY: HudWidgets.NO_ENTRY_SELECTED,
             QUEUE_KIT_DERIVED_KEY: KitRoster.NO_KIT_ID}
     var kits := _band_labor.kits()
-    var derived := KitRoster.build_kit_for_branch(kits, branch)
+    # ⛔ **THE RUNG IS THE ONE BEING WORKED, AND ONLY THE ROAD MODEL CARRIES ONE.**
+    # `_road_queue_model` fills `build_destination` with `next_rung_key` off the rung the road HOLDS
+    # — the step being worked, never the far end of a multi-leg order — so a `pave` declared on a
+    # trail is quoted the mattock it needs first and not the dressing hammer it will want later.
+    #
+    # **A patch's and a herd's models put a VERB in that same key** (`build_destination_rung` maps a
+    # rung key to its improvement), which is not a rung and must never be offered as one. They ask
+    # unqualified instead, and `kit_serves_build`'s first arm answers for them: no plant or animal
+    # kit binds a rung, so every one of their tools serves every rung of its branch.
+    var rung := _queue_model_build_rung(model, branch)
+    var derived := KitRoster.build_kit_for_branch(kits, branch, rung)
     var listing := KitRoster.kit_entries(kits, KitRoster.JOB_BUILDERS,
         _queue_kit_selection(model, derived), derived,
         func(kit_id: String) -> void: _emit_build_kit(band, model, kit_id, derived),
-        {}, "", branch)
+        {}, "", branch, rung)
     listing[QUEUE_KIT_DERIVED_KEY] = derived
     return listing
 

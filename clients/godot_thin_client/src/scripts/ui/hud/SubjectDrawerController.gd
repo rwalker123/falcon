@@ -386,10 +386,18 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # property that lets `SourceForecast` alias its rung keys at `const` level. `0.0` before a catalog
     # has arrived, which the composer reads as *the gap cannot be stated in hands* and answers by not
     # stating it — never by substituting a rate of its own.
+    # ⛔ **AND THE GOOD ITS STANDING BILL IS DENOMINATED IN, per road, for the identical reason.**
+    # `route:paved_road` owes stone every turn it stands, and the `Upkeep` row has to be able to say
+    # WHICH currency is short — *"you cannot mend a road with no stone, so a shortfall message that
+    # names the pool is wrong advice"* (`docs/plan_standing_upkeep.md` §2.7). The noun is
+    # `RouteRungState.buildMaterialId` for the rung the tile **holds**, not the one it is climbing
+    # toward, so it is resolved per ROAD below off the same ladder this rate comes from — and never
+    # spelled `stone` in this client, which would be a second authority for a config fact.
+    var ladder: Array[Dictionary] = []
     var build_rate := HudRouteVocab.RUNG_CATALOG_NO_BUILD_RATE
     if _topbar != null:
-        build_rate = HudRouteVocab.branch_build_work_per_worker_turn(
-            HudRouteVocab.route_ladder(_topbar.route_rungs()))
+        ladder = HudRouteVocab.route_ladder(_topbar.route_rungs())
+        build_rate = HudRouteVocab.branch_build_work_per_worker_turn(ladder)
     # ⛔ **AND WHICH ROADS THIS FACTION HAS QUEUED, for the identical reason.** A road declared but
     # not yet started banks nothing for as long as it waits behind the head of its band's queue, and
     # the rung row read as a bare `Trail` throughout — indistinguishable from ground nobody has
@@ -404,8 +412,10 @@ func _tile_terrain_lines(tile_info: Dictionary,
             if _band_labor != null and HudRouteVocab.has_keeper(road):
                 keeper_label = _band_labor.band_label_for_id(
                     HudRouteVocab.keeper_band_id_of(road))
+            var upkeep_material := HudRouteVocab.catalog_material_id(
+                HudRouteVocab.ladder_entry_of(ladder, HudRouteVocab.rung_of(road)))
             lines.append_array(HudRouteVocab.road_lines(road, keeper_label, ctx, build_rate,
-                queued_tiles))
+                queued_tiles, upkeep_material))
     # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
     #
     # A REMEMBERED TILE KEEPS BOTH WEBS' CAPACITIES AND LOSES BOTH THEIR STOCKS (issue #462). The rule

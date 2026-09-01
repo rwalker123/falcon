@@ -503,7 +503,24 @@ pub enum BuildGate {
     /// **The rung below is not built** — a `Corral` on a herd that is not domesticated yet.
     RungBelow,
     /// Another faction holds the source.
+    ///
+    /// ⛔ **IT MEANS SOMEBODY ELSE HOLDS IT, AND NEVER *NOBODY DOES*** — see [`Self::NoKeeper`],
+    /// which exists for exactly that distinction.
     OwnedByOther,
+    /// **NOBODY HOLDS THIS SOURCE AT ALL** — the route branch's `routes::Road::keeper` is `None`, so
+    /// there is no band whose job the tile is and no pool that will ever put work on it.
+    ///
+    /// ⛔ **IT IS NOT [`Self::OwnedByOther`], AND COLLAPSING THE TWO PUBLISHES A FALSE SENTENCE.**
+    /// *"Another band owns this road"* said of a road **nobody** keeps sends the player looking for
+    /// a rival that does not exist. The two states have different remedies and that is the whole
+    /// reason this variant is here: an owned source is a negotiation or a dead end, an **unkept** one
+    /// is a job going begging — re-issue `grade` / `pave` and the band adopts it, which is why the
+    /// route branch ships no separate adoption verb.
+    ///
+    /// **A road loses its keeper without anybody deciding to drop it**: `Road::set_position` releases
+    /// the keeper the moment decay or disuse takes the tile back below `traffic_ceiling`, so this is
+    /// the ordinary end of a road nobody walked, not an edge case.
+    NoKeeper,
     /// The ground does not admit the rung ([`RungSiteRequirement`]) — `Sow`'s fresh-water and
     /// gathering-site rule, and the same term in a projection's gate. The other three rung arms
     /// carry no site term: rungs 1–2 are already standing on ground a crew was allowed onto.
@@ -555,6 +572,7 @@ impl BuildGate {
             BuildGate::SpeciesCeiling => "species_ceiling",
             BuildGate::RungBelow => "rung_below",
             BuildGate::OwnedByOther => "owned_by_other",
+            BuildGate::NoKeeper => "no_keeper",
             BuildGate::Site => "site",
             BuildGate::Undeclared => "undeclared",
             BuildGate::RingIdle => "ring_idle",
@@ -1077,18 +1095,20 @@ pub enum RungBranch {
 pub const ALL_BRANCHES: [RungBranch; 3] =
     [RungBranch::Plant, RungBranch::Animal, RungBranch::Route];
 
-/// **The two FOOD WEBS**, for the sweeps that mean *"a ladder a crew builds with tools"* rather than
-/// *"a ladder"*.
-///
-/// The distinction is real and not a convenience. A builders' kit is a **tool roster** entry
-/// declaring a `build_work` that serves a branch, and **no shipped item declares one serving
-/// `route`**: a band's builders do grade and pave a road (so the branch is no longer crew-free — see
-/// [`RungBranch::Route`]), but they do it **bare-handed**, exactly as `default_kits.roadwork` sends
-/// its keepers out bare. A route rung appearing in
-/// `every_branch_of_the_ladder_has_a_builders_kit_that_serves_only_it` would demand a roster entry
-/// that deliberately does not exist yet; the day a barrow declares `build_work` serving `route`, the
-/// existing derivation picks it up with no code change and this constant is what gets widened.
-pub const FOOD_WEB_BRANCHES: [RungBranch; 2] = [RungBranch::Plant, RungBranch::Animal];
+// **RETIRED: `FOOD_WEB_BRANCHES`** — the two webs, for the sweeps that meant *"a ladder a crew
+// builds with tools"* rather than *"a ladder"*. It existed for exactly one reason, stated in its own
+// doc: **no shipped item declared a `build_work` serving `route`**, so a route rung in the roster
+// sweep would have demanded an entry that deliberately did not exist, and the constant was *"what
+// gets widened the day a barrow declares the stat"*.
+//
+// **That day arrived** (`equipment.json`'s `earthmoving` / `stone_dressing`), and widening it was
+// the wrong move rather than the pending one: the two road tools are bound to a **rung** as well as
+// a branch ([`crate::equipment_config::EquipmentEffect::rung`]), so a branch-level sweep asks
+// `build_kit_for_branch(Route, None)` and is answered `None` — a roster whose kits exist reported as
+// a roster with none. Its sole consumer now sweeps the **crew-built rungs** instead, which is the
+// question the turn itself asks
+// (`equipment_config::tests::every_crew_built_rung_has_a_builders_kit_that_serves_no_other_web`).
+// [`ALL_BRANCHES`] survives, because *"every ladder"* still means every ladder.
 
 impl RungBranch {
     /// Stable key (the JSON `branch` value), used in validation messages.
@@ -1267,6 +1287,20 @@ impl RungKey {
     /// wire and the error text name a rung identically.
     pub fn wire_key(self) -> String {
         format!("{}:{}", self.branch().as_str(), self.id())
+    }
+
+    /// **[`Self::wire_key`] READ BACK** — the rung a `"<branch>:<id>"` token names, or `None` for a
+    /// token no rung answers to.
+    ///
+    /// It resolves by **sweeping [`Self::ALL`] and comparing each rung's own `wire_key`**, never by
+    /// splitting the string and matching the halves: a second spelling of the branch/id pair is a
+    /// second authority, and the day a rung is renamed it is the parser that would go on accepting
+    /// the old token. Sweeping ten variants is free at the one place it is asked — config load.
+    ///
+    /// The caller is `equipment.json`'s `build_work` rung bound, which is authored as a wire key so
+    /// the roster, the wire and every validation message name a rung with one spelling.
+    pub fn from_wire_key(key: &str) -> Option<RungKey> {
+        RungKey::ALL.into_iter().find(|rung| rung.wire_key() == key)
     }
 
     /// **THE VERB THAT RAISES THIS RUNG** — the inverse of [`RungKey::built_by`], answered
@@ -2858,8 +2892,26 @@ impl RungDef {
     /// short — see `ForagePatch::upkeep_demanded`, which is the plant web's record of the bill its
     /// keepers were actually handed.
     pub fn meter_rot_against(&self, demand: f32, supplied: f32, shortfall_turns: u16) -> f32 {
+        self.meter_rot_at_fraction(upkeep_shortfall_fraction(demand, supplied), shortfall_turns)
+    }
+
+    /// **[`Self::meter_rot`] AT A SHORTFALL FRACTION THE CALLER RESOLVED** — the form a web whose
+    /// keeping is billed in **more than one currency** must use, because
+    /// [`keeping_shortfall_fraction`]'s worst-of-both reading cannot be reconstructed from a single
+    /// work pair.
+    ///
+    /// ⛔ **THE QUOTE AND THE DECAY PASS MUST RIDE ONE FRACTION.** A source whose rung declares both
+    /// a `meter_decay` and an `upkeep.materials` — `route:paved_road` is the first — bleeds at the
+    /// worst of the work shortfall and each material's own, so a forecast resolved off the work pair
+    /// alone promises a meter *holds* while the pass is taking the material's rot off it. That is not
+    /// a rounding difference: fully staffed with an empty store, the work term is `0` and the
+    /// material term is the **entire** bleed.
+    ///
+    /// The count advance and the grace comparison are [`Self::meter_rot`]'s, unchanged — this is the
+    /// same expression with the fraction supplied rather than derived.
+    pub fn meter_rot_at_fraction(&self, shortfall_fraction: f32, shortfall_turns: u16) -> f32 {
         self.upkeep_decay(
-            upkeep_shortfall_fraction(demand, supplied),
+            shortfall_fraction,
             // **The count the NEXT pass will judge at.** It increments the counter before comparing it
             // to the grace, so a seam describing that pass has to increment it too — see the ordering
             // block above. Saturating because a counter at `u16::MAX` is a source neglected for longer
@@ -4740,9 +4792,14 @@ mod tests {
             let cost = rung
                 .build_cost(RUNG_COST_UNSCALED)
                 .expect("a rung the climb names has a build meter");
+            // **Asked at the rung under test**, which is the pair every pricing seam resolves
+            // at: a tool bound to another rung must not lend this one its offset.
+            let rung_key = key.wire_key();
             let per_worker = equipped
-                .build_kit_for_branch(key.branch())
-                .map(|kit| equipped.build_work_per_worker(&kit, &fresh, key.branch()))
+                .build_kit_for_branch(key.branch(), Some(&rung_key))
+                .map(|kit| {
+                    equipped.build_work_per_worker(&kit, &fresh, key.branch(), Some(&rung_key))
+                })
                 .expect("the shipped roster serves both webs");
             assert!(
                 per_worker > NO_BUILD_GEAR,
@@ -4894,8 +4951,8 @@ mod tests {
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
         let fresh = crate::components::BandEquipment::start_stocked(&equipment);
         let per_worker = equipment
-            .build_kit_for_branch(RungBranch::Animal)
-            .map(|kit| equipment.build_work_per_worker(&kit, &fresh, RungBranch::Animal))
+            .build_kit_for_branch(RungBranch::Animal, None)
+            .map(|kit| equipment.build_work_per_worker(&kit, &fresh, RungBranch::Animal, None))
             .expect("the shipped roster carries an animal build tool");
         assert_eq!(
             build_work_per_worker_turn(per_worker),
@@ -5006,8 +5063,8 @@ mod tests {
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
         let fresh = crate::components::BandEquipment::start_stocked(&equipment);
         let per_worker = equipment
-            .build_kit_for_branch(RungBranch::Animal)
-            .map(|kit| equipment.build_work_per_worker(&kit, &fresh, RungBranch::Animal))
+            .build_kit_for_branch(RungBranch::Animal, None)
+            .map(|kit| equipment.build_work_per_worker(&kit, &fresh, RungBranch::Animal, None))
             .expect("the shipped roster carries an animal build tool");
 
         let quote = |keepers: u32| {

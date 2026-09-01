@@ -3160,12 +3160,13 @@ fn seat_second_tended_patch(app: &mut App, near: UVec2, cost: f32) -> UVec2 {
 fn plant_keeper_supply(keepers: u32) -> f32 {
     let equipment = core_sim::EquipmentConfig::builtin();
     let per_worker = equipment
-        .keeping_kit_for_branch(core_sim::RungBranch::Plant)
+        .keeping_kit_for_branch(core_sim::RungBranch::Plant, None)
         .map(|kit| {
             equipment.build_work_per_worker(
                 &kit,
                 &core_sim::BandEquipment::start_stocked(&equipment),
                 core_sim::RungBranch::Plant,
+                None,
             )
         })
         .expect("the shipped roster serves the plant web's keeping");
@@ -3423,7 +3424,7 @@ fn keeper_rate(kit_id: &str, keepers: u32, ledger: &core_sim::BandEquipment) -> 
     let gear = equipment
         .coverage(&kit, keepers as f32, ledger)
         .weighted_rate(|crew| {
-            equipment.build_work_per_worker(crew, ledger, core_sim::RungBranch::Plant)
+            equipment.build_work_per_worker(crew, ledger, core_sim::RungBranch::Plant, None)
         });
     core_sim::build_work_per_worker_turn(gear)
 }
