@@ -681,24 +681,30 @@ func run(harness) -> void:
 	h._assert_hud("…and it does NOT follow the module away: the crew is still on this hex",
 		_land_row_mark_class() == "TextureRect")
 	# **AND THE SWAP ITSELF IS CLAIMED ON THE BAND ROW, because that is where a live game crosses the
-	# line.** `warrior` is the one activity with no art (`icon_prompts.txt` → THE #249 GAP LIST), so a
-	# band that takes up arms flips its mark from `TextureRect` to glyph `Label` between two restates
-	# — and writing `.text` to the old TextureRect is a SILENT no-op that would leave a foraging sprig
-	# beside a band now standing guard. Same membership (one entity, one id), so the roster patches.
+	# line.** A band whose crew goes IDLE flips its mark from `TextureRect` to glyph `Label` between
+	# two restates — and writing `.text` to the old TextureRect is a SILENT no-op that would leave a
+	# foraging sprig beside a band with nobody working. Same membership (one entity, one id), so the
+	# roster patches rather than rebuilding, which is the only path the stale mark can survive on.
+	#
+	# ⛔ **`idle` IS THE ANCHOR BECAUSE IT CAN NEVER GAIN ART.** It is `·`, a tinted symbolic glyph,
+	# which #249's rule leaves as text permanently — so this flip stays reachable for good. It was
+	# written against `warrior` first and that assertion FAILED the moment `warrior.png` shipped,
+	# which is the assertion working: an art-pending activity is a moving anchor, and every other
+	# activity in the table is now drawn.
 	h._assert_hud("precondition: a foraging band's activity mark is the drawn forage art",
 		_band_row_mark_class() == "TextureRect")
 	# It keeps the module ERASED, so the only key moving is the band's activity — and so the
 	# module-less land row the ink claims below are made against is still the one on screen.
-	var mark_flip_armed := _no_flash_tile_fixture(0.06, 61.0)
-	var armed_band := _no_flash_band_fixture(5, 1.40)
-	armed_band["activity"] = "warrior"
-	mark_flip_armed["units"] = [armed_band]
-	mark_flip_armed.erase("food_module")
-	h._hud.reapply_selection("tile", mark_flip_armed)
+	var mark_flip_idle := _no_flash_tile_fixture(0.06, 61.0)
+	var idle_band := _no_flash_band_fixture(5, 1.40)
+	idle_band["activity"] = HudSelectionVocab.BAND_ACTIVITY_IDLE
+	mark_flip_idle["units"] = [idle_band]
+	mark_flip_idle.erase("food_module")
+	h._hud.reapply_selection("tile", mark_flip_idle)
 	await h._settle()
-	h._assert_hud("precondition: the took-up-arms restate PATCHED the roster rows, not rebuilt them",
+	h._assert_hud("precondition: the went-idle restate PATCHED the roster rows, not rebuilt them",
 		_child_instance_ids(h._hud.subject_list) == icon_flip_row_ids and not icon_flip_row_ids.is_empty())
-	h._assert_hud("…and a band with no art for its activity SWAPS that node for the glyph Label",
+	h._assert_hud("…and a band whose activity has no art SWAPS that node for the glyph Label",
 		_band_row_mark_class() == "Label")
 	# THE UNLIT half of the ink claim `tile_panel_no_forage` makes for the lit one — and the half that
 	# can only be made on the PATCH path. The land row is lit here; selecting the band beside it dims

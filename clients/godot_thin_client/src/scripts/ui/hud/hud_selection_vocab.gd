@@ -83,10 +83,10 @@ const MOVE_BAND_BUTTON_TOOLTIP := "Relocate the band, then click a destination t
 # Per-activity glyph for a player band's roster row. `activity` is the kind with the
 # most workers (Early-Game Labor): idle | forage | hunt | scout | warrior.
 #
-# **THIS IS THE FALLBACK HALF NOW** (issue #249). Three of the five have bundled art in
+# **THIS IS THE FALLBACK HALF NOW** (issue #249). Four of the five have bundled art in
 # `ACTIVITY_MARKS` below and draw it; this table is what they fall back to when a load fails, and
-# what the other two still render from. Nothing was deleted, which is the same contract every other
-# art family in the client has with its emoji.
+# what `idle` — the one symbolic entry, which will never have art — still renders from. Nothing was
+# deleted, which is the same contract every other art family in the client has with its emoji.
 const ACTIVITY_GLYPHS := {
     "idle": "·",
     "forage": "🌾",
@@ -106,15 +106,15 @@ const ACTIVITY_GLYPHS := {
 # **THE IDS ARE THE ACTIVITY'S, NOT THIS SURFACE'S** — `hunt` is the same file the work board's hunt
 # filter chip wears. One activity, one mark, wherever in the HUD it is drawn.
 #
-# ⛔ **`idle` AND `warrior` ARE ABSENT FOR DIFFERENT REASONS, AND ONLY ONE OF THEM IS A GAP.**
-# `idle` is `·`, a tinted symbolic glyph, which #249 leaves as text on purpose — it says *nothing is
-# being done*, and nothing is not a picture. `warrior` (🛡) is PICTOGRAPHIC and simply has no art in
-# `assets/icons/hud/` yet; it is the one emoji left in this column, and `assets/icons/icon_prompts.txt`
-# carries it as art still to generate.
+# ⛔ **`idle` IS THE ONLY ONE ABSENT, AND IT IS NOT A GAP.** It is `·`, a tinted symbolic glyph,
+# which #249 leaves as text on purpose — it says *nothing is being done*, and nothing is not a
+# picture. Every PICTOGRAPHIC activity in `ACTIVITY_GLYPHS` above now has art, so this column is
+# complete: there is no emoji left in it to tell apart from a drawn neighbour.
 const ACTIVITY_MARKS := {
     "forage": "forage",
     "hunt": "hunt",
     "scout": "scout",
+    "warrior": "warrior",
 }
 
 # The activity mark's box and glyph size, the pair `HudWidgets.build_marker_icon` needs. Sized to the

@@ -1261,13 +1261,16 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 # HUD / ACTIVITY MARKS  ->  assets/icons/hud/   (ui/HudSprites.gd)
 # ============================================================================
 #
-# ALL FOUR MARKS EXIST AND ALL FOUR ARE WIRED. `assets/icons/hud/{cairn,forage,hunt,scout}.png`
-# are keyed, imported, committed and listed in `ui/HudSprites.gd`, this directory's lookup script.
-# The cairn came first (#581) on the two surfaces that need different mechanisms — a `Button.icon`
-# on the action-bar launcher, a `TextureRect` swapped for a `Label` on the turn orb's row — and
-# #249 wired the other three on both of those same two mechanisms:
+# ALL FIVE MARKS EXIST AND ALL FIVE ARE WIRED.
+# `assets/icons/hud/{cairn,forage,hunt,scout,warrior}.png` are keyed, imported, committed and listed
+# in `ui/HudSprites.gd`, this directory's lookup script. The cairn came first (#581) on the two
+# surfaces that need different mechanisms — a `Button.icon` on the action-bar launcher, a
+# `TextureRect` swapped for a `Label` on the turn orb's row — and #249 wired the other four on both
+# of those same two mechanisms and nothing new:
 #
-#   `Button.icon`      the work board's forage and hunt FILTER CHIPS
+#   `Button.icon`      the work board's forage and hunt FILTER CHIPS, and the compose sheet's
+#                      KIT PICKER face (an `OptionButton`, whose `icon` is free — its dropdown
+#                      chevron is the separate `arrow` THEME item, not the icon property)
 #   `TextureRect`      the subject list's trailing ACTIVITY MARK, on all three row kinds
 #                      (a band's activity, a hex's foragers, a herd's hunters)
 #
@@ -1425,8 +1428,8 @@ scout: Flat vector interface mark of two bare human footprints in the dirt, one 
 #
 #   mark            emoji   surface                                          can it move alone?
 #   ------------    -----   ----------------------------------------------   ------------------
-#   warrior         🛡      the subject list's activity mark, AND the         YES — its three
-#                   🪓      compose sheet's kit-picker face                   siblings are drawn
+#   warrior     ✅ DONE     the subject list's activity mark, AND the         (kept for the record)
+#                           compose sheet's kit-picker face                   YES — its three
 #                           (`ACTIVITY_GLYPHS` + `KIT_JOB_GLYPHS`)            ALREADY, so it
 #                                                                            CLOSES a set rather
 #                                                                            than opening one.
@@ -1557,6 +1560,42 @@ scout: Flat vector interface mark of two bare human footprints in the dirt, one 
 # confused with.
 
 
+# ⛔⛔ THE RAMP IS NOT A CONSTANT — A COOL SUBJECT NEEDS `--hi 200`, NOT `--hi 240`.
+# Learned on `warrior` and it will bite the rest of this batch, so it is here rather than in that
+# icon's own note. This section's header says to "expect the pale-subject ramp (`--lo 85 --hi 240`)"
+# and that is right for the four WARM marks it was written from. `warrior` is deliberately COOL —
+# slate blue-grey, the one hue that separates it from its three column siblings — and blue is
+# hue-ADJACENT to the magenta key, which is the variable `icon_key.py`'s alpha ramp actually keys on
+# (the `--lo`/`--hi` note in the fauna pipeline says so in as many words: "what decides the safe
+# `--hi` is the subject's hue proximity to the key, not its LIGHTNESS").
+#
+# **THE SYMPTOM IS INVISIBLE IN THE PNG AND IN THE FRAME.** At `--hi 240` both warrior candidates
+# keyed with their whole body at alpha 180-230 instead of 230-255 — a shield that composites at
+# ~78% over the panel, so it renders slightly washed beside siblings that are fully opaque, and
+# NOTHING says so: the key reports a healthy coverage, the magenta residual is 0, the composite
+# looks fine to the eye, and no assertion reads a pixel of art.
+#
+# **THE TEST IS THE ALPHA HISTOGRAM AGAINST THE SHIPPED FOUR, AND IT IS UNAMBIGUOUS.** Every mark in
+# this directory puts its ink in the 230-255 bucket — forage 31.1%, cairn 30.7%, scout 18.4%,
+# hunt 6.6% — with under 1% in 180-230 (that band is antialiasing and nothing else). A candidate
+# with mass in 180-230 has been half-keyed. Measured on `warrior`:
+#
+#     --hi 240   45.2% at 180-230,  0.2% at 230-255   <- half-keyed
+#     --hi 220    1.9% at 180-230, 43.6% at 230-255
+#     --hi 200    0.1% at 180-230, 45.4% at 230-255   <- shipped
+#     --hi 180 .. 140   unchanged to a tenth of a percent
+#
+# 200 was taken rather than 220 because the numbers go FLAT from 200 down: it sits in the middle of
+# the plateau rather than on its edge, so a re-key of a slightly different render lands in the same
+# place. The clear fraction moves 53.8% -> 53.6% across the whole sweep, i.e. narrowing the ramp
+# costs the subject nothing — there is no trade being made here, only a wrong default.
+#
+# WHICH OF THE REMAINING PROMPTS THIS APPLIES TO: `starving` (cool pale grey) certainly, and
+# `deny` (bone-white with a COOL mid grey) probably. The five warm ones — `trade`, `workers`, and
+# the bone-cream PEOPLE trio — should key at 240 as the shipped four did. **Check the histogram
+# either way; do not infer it from the prompt's colour words.**
+
+
 # warrior.png — the roster's activity mark AND the kit picker's warrior face. ONE FILE, TWO
 # SURFACES: `ACTIVITY_GLYPHS` and `KIT_JOB_GLYPHS` are both keyed by JOB, so this retires 🛡 and
 # 🪓 together — they were one job drawn two ways, the drift `hunt.png` exists to end.
@@ -1566,7 +1605,24 @@ scout: Flat vector interface mark of two bare human footprints in the dirt, one 
 # names. The shield says GUARDS, which is what the row means ("Guards the band — matters once
 # threats arrive"), and it is a large single mass, the best shape budget in this batch.
 # Cool slate: the only mark in `hud/` that is not warm, so it separates from its three column
-# siblings by hue as well as by shape.
+# siblings by hue as well as by shape — and that hue is what forced the `--hi 200` key above.
+# STATUS: SHIPPED at `assets/icons/hud/warrior.png` and WIRED on BOTH surfaces —
+# `HudSelectionVocab.ACTIVITY_MARKS` (the roster's trailing mark) and `HudComposeVocab.KIT_JOB_MARKS`
+# (the kit picker's face, an `OptionButton.icon`; the dropdown chevron is the separate `arrow` THEME
+# item, so the `icon` property is free there). Keyed `--size 256 --lo 85 --hi 200`; coverage 44.0%,
+# magenta residual 0, bbox 163x225.
+# THE CHOSEN RENDER — of two candidates that were near-identical in silhouette and within 1.5
+# points of coverage, the one with the BRIGHTER BAND won, and the reason is the only thing a shield
+# has to say at 13px. Both are a blue teardrop with a horizontal band; the band is the sole interior
+# feature, so if it closes up the mark is a plain blob. The rejected candidate banded at luma 207
+# against a 180 body — a 27-luma step that greys out at row size, leaving a shape uncomfortably
+# close to `forage.png`'s leafy sprig two rows up the same column. The chosen one bands at 229
+# against 181, a 48-luma step that survives, and its flatter, squarer shoulders read as a SHIELD
+# rather than as a teardrop. Judge any future candidate on the BAND CONTRAST at 13px, not on the
+# outline.
+# ⚠ IT IS THE HEAVIEST MARK IN THE FAMILY at 44% coverage, against forage 31%, scout 18% and hunt
+# 7%. That is what a shield is, and the 18px box caps it, but a future mark should not take this as
+# the family's target — the four before it average 22%.
 warrior: Flat vector interface mark of a simple round-topped wooden shield seen straight on from the front in a symmetrical upright pose, one broad rounded shape tapering to a blunt point at the bottom with a single plain horizontal band across its middle, no sword, no spear, no axe, no bow, no arrow, no weapon of any kind, no hand, no arm, no heraldry, no emblem, no crest, no animal, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a cool pale slate blue-grey and a light silver in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, at most one interior division line, the band no thinner than one sixth of the icon width, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the shield on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
 
 

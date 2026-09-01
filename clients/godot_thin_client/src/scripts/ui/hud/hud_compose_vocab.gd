@@ -1338,14 +1338,53 @@ const KIT_PICKER_FACE_FORMAT := "%s %s"
 ## `equipment.json` and a client-side table keyed on them goes stale the moment a kit is added. The
 ## glyph says what the crew is walking out to do, which is the same for every kit on one sheet.
 ## **The two BAND-WIDE roles have faces here too**, since the WORKFORCE zone's role cards mount the
-## same picker: a compass for the scout who is walking out to look, an axe for the warrior who stays
-## by the fire. Keyed by job like the two above, so a roster that adds a wayfinding kit needs no entry.
+## same picker. Keyed by job like the two above, so a roster that adds a wayfinding kit needs no entry.
+##
+## **THIS TABLE IS THE FALLBACK HALF NOW** (issue #249): all four jobs have bundled art in
+## `KIT_JOB_MARKS` below and render it, so these four render only when a load fails. The subjects
+## they name are the EMOJI's — a compass for the scout, an axe for the warrior — and the art
+## deliberately does not follow them: the drawn scout is FOOTPRINTS (a compass is several thousand
+## years early for this roster) and the drawn warrior is a SHIELD (an axe collides with `hunt.png`'s
+## bow in this very control, where the two faces alternate). Read the art's subject off
+## `assets/icons/icon_prompts.txt`, never off the glyph it replaced.
 const KIT_JOB_GLYPHS := {
 	"hunt": "🏹",
 	"forage": "🧺",
 	"scout": "🧭",
 	"warrior": "🪓",
 }
+
+## The picker face's BUNDLED ART, keyed by the same JOB (issue #249). A job listed here puts its
+## mark on the `OptionButton`'s own `icon` property and drops the leading `%s` from the face
+## (`KIT_PICKER_FACE_FORMAT_SPRITE`); one absent from it, or one whose art fails to load, keeps the
+## glyph above.
+##
+## **THE IDS ARE `HudSelectionVocab.ACTIVITY_MARKS`' OWN, AND THAT IS THE POINT.** Both tables are
+## keyed by the same four jobs, so the file the roster row draws for a hunting band is the file this
+## picker draws on the hunt sheet — one activity, one mark, wherever it renders. The four emoji above
+## did NOT have that property: the roster spelled forage 🌾 and this table spells it 🧺, and warrior
+## was a 🛡 there and a 🪓 here, which is one job drawn two ways and exactly the drift `hunt.png` was
+## written to end.
+##
+## Coverage is COMPLETE for the four jobs the roster ships; `KIT_JOB_GLYPH_FALLBACK` below is the
+## only face still guaranteed to be a glyph, and it is the one that should be.
+const KIT_JOB_MARKS := {
+	"hunt": "hunt",
+	"forage": "forage",
+	"scout": "scout",
+	"warrior": "warrior",
+}
+
+## The picker face once its mark is bundled ART — the kit's name alone, the leading `%s` gone,
+## because a `Button` carries art on its `icon` PROPERTY and a face that kept the glyph would state
+## its job twice. Art OR glyph, never both.
+const KIT_PICKER_FACE_FORMAT_SPRITE := "%s"
+
+## What the mark may occupy on that face, through the stock `icon_max_width` theme constant. The
+## source PNGs are 256px and a `Button` reserves its icon's drawn size in its MINIMUM, so without a
+## cap one art-bearing picker would set the whole compose row's height. Sized to the face's own text,
+## so the mark reads as the glyph it replaced rather than as a picture beside a word.
+const KIT_PICKER_ICON_MAX_WIDTH := 16
 
 ## The fallback face glyph for a job with no glyph of its own — the roster's `jobs` is wire data, so a
 ## job this table has never heard of must still render a legible face rather than an empty one.

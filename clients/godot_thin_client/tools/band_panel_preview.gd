@@ -7398,10 +7398,8 @@ func _assert_one_role_card_gear(role_name: String, job: String, kit_name: String
 	if picker == null:
 		_fail("the %s card has no kit picker" % role_name)
 		return
-	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
-		String(HudComposeVocab.KIT_JOB_GLYPHS[job]), kit_name]
-	_assert_band_panel("…whose face names this role's own kit (\"%s\")" % picker.text,
-		picker.text == face)
+	_assert_kit_picker_face(picker, job, kit_name,
+		"…whose face names this role's own kit (\"%s\")" % picker.text)
 	var hint := _find_meta_control(card, KitRoster.KIT_HINT_META) as Label
 	if hint == null:
 		_fail("the %s card has no gear line" % role_name)
@@ -13659,6 +13657,28 @@ func _kit_hunt_forecast(quarry: Dictionary, dispersion: float) -> Dictionary:
 		SourceForecast.SOURCE_KIND_HERD, "",
 		SourceForecast.floor_for_preset(SourceForecast.FLOOR_PRESET_STRIP))
 
+## A kit picker's FACE, judged art-or-glyph (issue #249) — the one place both assertion sites agree
+## on what a face is, so a change to the mechanism moves them together.
+##
+## **THE TWO BRANCHES ARE DIFFERENT CLAIMS, and the art one is the stronger.** With a mark the face
+## is the kit's NAME ALONE and the mark rides the `OptionButton`'s `icon` property, so the assertion
+## checks both halves: a face that still carried the glyph would fail the text, and a face that
+## dropped the glyph while never setting the icon would render the job namelessly and fail the icon.
+## Checking only the text would pass on exactly that second bug.
+##
+## The glyph branch survives for `KIT_JOB_GLYPH_FALLBACK`'s case — a job the client's table has never
+## heard of — which is the one face still guaranteed to be text.
+func _assert_kit_picker_face(picker: OptionButton, job: String, kit_name: String,
+		label: String) -> void:
+	var sprite := HudSprites.for_mark(String(HudComposeVocab.KIT_JOB_MARKS.get(job, "")))
+	if sprite != null:
+		_assert_band_panel(label,
+			picker.text == HudComposeVocab.KIT_PICKER_FACE_FORMAT_SPRITE % kit_name
+				and picker.icon == sprite)
+		return
+	_assert_band_panel(label, picker.text == HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
+		String(HudComposeVocab.KIT_JOB_GLYPHS[job]), kit_name])
+
 func _assert_kit_picker_closed() -> void:
 	var picker := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as OptionButton
 	_assert_band_panel("the denial sheet carries a Kit picker", picker != null)
@@ -13667,10 +13687,8 @@ func _assert_kit_picker_closed() -> void:
 	# **THE FACE CARRIES NO `(default)` SUFFIX AND NO CARET**, which is the whole of what the
 	# `OptionButton` conversion has to get right: `select()` writes the item's own text into `text`,
 	# so a face equal to the LIST entry means the override never ran, and the equality catches it.
-	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
-		String(HudComposeVocab.KIT_JOB_GLYPHS[KitRoster.JOB_HUNT]), "Stalking kit"]
-	_assert_band_panel("…whose face names the selected kit (\"%s\")" % picker.text,
-		picker.text == face)
+	_assert_kit_picker_face(picker, KitRoster.JOB_HUNT, "Stalking kit",
+		"…whose face names the selected kit (\"%s\")" % picker.text)
 	var hint := HudComposeVocab.KIT_HINT_SEPARATOR.join([
 		HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_EQUIPPED,
 			HudComposeVocab.KIT_TIER_DECIMALS),

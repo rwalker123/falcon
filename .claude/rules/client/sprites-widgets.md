@@ -376,6 +376,25 @@ leading `%s` from its text (`WORK_CHIP_KIND_SPRITE_FORMAT` — art OR glyph, nev
 mark is a `Label` in an `HBoxContainer`, so it goes through `HudWidgets.build_marker_icon` and gets a
 `TextureRect`. Same texture, two hosts, two mechanisms, no shared builder between them.
 
+**AN `OptionButton`'s `icon` IS FREE, WHICH IS NOT OBVIOUS AND IS WHY THE KIT PICKER COULD TAKE ART.**
+That widget already draws a dropdown chevron on its face, so the `icon` slot looks spoken for — and it
+is not: the chevron is the `arrow` THEME ITEM, resolved off the theme like the `CheckBox` indicator two
+sections up, while `icon` is the Button PROPERTY and untouched by `HudStyle.apply_option_button`. So
+`KitRoster.build_kit_row` sets `picker.icon` and takes the job glyph out of the face
+(`KIT_PICKER_FACE_FORMAT_SPRITE`), and the chevron is undisturbed. Checking that before assuming a
+third mechanism was needed is what kept `warrior` to one file across two surfaces.
+
+**THE KEYING RAMP IS NOT A CONSTANT, AND THE FAILURE IS SILENT IN EVERY CHANNEL WE CHECK.** This
+family's documented ramp (`icon_key.py --lo 85 --hi 240`) was derived from four WARM marks. `warrior`
+is cool slate — the hue that separates it from its three column siblings — and blue sits next to the
+magenta key, which is what the alpha ramp actually measures against. At 240 its whole body keyed to
+alpha ~180-230 instead of opaque, so it would have rendered translucent beside four opaque siblings —
+with a healthy coverage figure, a magenta residual of 0, a composite that looks right, and no
+assertion anywhere reading a pixel of art. **The test is the alpha histogram against the shipped
+files**: every one of them puts its ink in 230-255 and under 1% in 180-230; mass in 180-230 means
+half-keyed. `assets/icons/icon_prompts.txt` carries the measured sweep and which of the pending
+prompts it is likely to bite.
+
 **COVERAGE IS COMPLETE FOR WHAT THE TABLE DECLARES, AND THAT IS WHAT LETS IT WARN.** `for_mark` takes
 `IconSprites.texture_for`'s default `warn: true`, so a failed load is a DEFECT that surfaces — which
 is only honest while every key has a committed PNG behind it. The corollary held for two art drops:
