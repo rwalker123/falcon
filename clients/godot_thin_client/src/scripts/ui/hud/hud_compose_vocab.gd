@@ -1084,6 +1084,43 @@ const COMPOSE_MISSION_TRADE := "trade"
 ## is drawn.
 const COMPOSE_MISSION_LABEL_TRADE := "📦 Trade"
 
+## Mission → `HudSprites` MARK ID, for the launch buttons whose glyph is PICTOGRAPHIC (issue #249).
+## A mission listed here puts its mark on the `Button`'s own `icon` property and drops the leading
+## glyph from its label (`COMPOSE_MISSION_LABEL_*_SPRITE`); one absent from it keeps the glyph.
+##
+## **THE IDS ARE THE ACTIVITY'S AGAIN** — `hunt` is the file the roster row, the work board's filter
+## chip and the kit picker all draw, so a hunting party is marked the same way wherever it is spoken
+## about. `scout` likewise retires the ⚑ FLAG for the drawn footprints, which is a vocabulary change
+## and not just an art one: the flag was this grid's own mark for a mission the rest of the client
+## already spelled with a compass, and one job may not have two drawings.
+##
+## ⛔ **`split` IS ABSENT AND IT IS NOT A GAP.** `⌂` is a text-presentation SYMBOLIC glyph, which
+## #249 leaves as text — and a split is not a mission at all (it makes a band rather than sending a
+## party), so the grid reading four drawn marks and one glyph states that difference rather than
+## hiding it.
+const MISSION_MARKS := {
+	COMPOSE_MISSION_SCOUT: "scout",
+	COMPOSE_MISSION_HUNT: "hunt",
+	COMPOSE_MISSION_DENY: "deny",
+	COMPOSE_MISSION_TRADE: "trade",
+}
+
+## The launch faces once their mark is bundled ART — the verb alone, the glyph gone, because a
+## `Button` carries art on its `icon` PROPERTY and a face that kept the glyph would say its mission
+## twice. Art OR glyph, never both — the rule the work chips and the kit picker already follow.
+const MISSION_LABELS_SPRITE := {
+	COMPOSE_MISSION_SCOUT: "Scout",
+	COMPOSE_MISSION_HUNT: "Hunt",
+	COMPOSE_MISSION_DENY: "Deny",
+	COMPOSE_MISSION_TRADE: "Trade",
+}
+
+## What a launch button's art may occupy, through the stock `icon_max_width` theme constant. The
+## sources are 256px and a `Button` reserves its icon's drawn size in its MINIMUM, so uncapped art
+## would set the whole 3+2 grid's cell size. Sized to the face's own text so the mark reads as the
+## glyph it replaced.
+const MISSION_ICON_MAX_WIDTH := 16
+
 ## **HOW MANY LAUNCH BUTTONS FIT ONE ROW OF THE PARTIES FOOTER, and the fifth is what forced the
 ## question.** Four fit a 354px dock column at ~62px each; a fifth takes them to ~48, which
 ## `📦 Trade` does not fit — and the zone `clip_contents`, so what shipped for one render was a

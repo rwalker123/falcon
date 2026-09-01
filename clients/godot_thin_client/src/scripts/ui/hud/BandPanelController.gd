@@ -6556,7 +6556,17 @@ func _build_party_footer(band: Dictionary) -> VBoxContainer:
 func _build_mission_launch_button(mission: String, label: String, hint: String,
         idle: int) -> Button:
     var btn := Button.new()
+    # **THE MARK IS ART WHERE THE MISSION HAS ANY** (issue #249), the glyph-prefixed label where it
+    # does not — which today is `split` alone, whose `⌂` is symbolic and stays. The art rides the
+    # `Button`'s own `icon` property with an `icon_max_width` cap (an uncapped 256px source would set
+    # the whole 3+2 grid's cell size), and the face drops to the bare verb: art OR glyph, never both.
+    # UNTINTED, like every other mark — `apply_button` sets no `icon_*_color`.
+    var mark := HudSprites.for_mark(String(HudComposeVocab.MISSION_MARKS.get(mission, "")))
     btn.text = label
+    if mark != null:
+        btn.text = String(HudComposeVocab.MISSION_LABELS_SPRITE.get(mission, label))
+        btn.icon = mark
+        btn.add_theme_constant_override("icon_max_width", HudComposeVocab.MISSION_ICON_MAX_WIDTH)
     btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     HudStyle.apply_button(btn, "primary")
     btn.tooltip_text = hint

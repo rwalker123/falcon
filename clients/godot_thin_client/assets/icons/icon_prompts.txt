@@ -1261,18 +1261,25 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 # HUD / ACTIVITY MARKS  ->  assets/icons/hud/   (ui/HudSprites.gd)
 # ============================================================================
 #
-# ALL FIVE MARKS EXIST AND ALL FIVE ARE WIRED.
-# `assets/icons/hud/{cairn,forage,hunt,scout,warrior}.png` are keyed, imported, committed and listed
-# in `ui/HudSprites.gd`, this directory's lookup script. The cairn came first (#581) on the two
-# surfaces that need different mechanisms — a `Button.icon` on the action-bar launcher, a
-# `TextureRect` swapped for a `Label` on the turn orb's row — and #249 wired the other four on both
-# of those same two mechanisms and nothing new:
+# ALL EIGHT MARKS EXIST AND ALL EIGHT ARE WIRED.
+# `assets/icons/hud/{cairn,forage,hunt,scout,warrior,deny,trade,workers}.png` are keyed, imported,
+# committed and listed in `ui/HudSprites.gd`, this directory's lookup script. The cairn came first
+# (#581) on the two surfaces that need different mechanisms — a `Button.icon` on the action-bar
+# launcher, a `TextureRect` swapped for a `Label` on the turn orb's row — and #249 wired the other
+# seven on both of those same two mechanisms and nothing new:
 #
-#   `Button.icon`      the work board's forage and hunt FILTER CHIPS, and the compose sheet's
-#                      KIT PICKER face (an `OptionButton`, whose `icon` is free — its dropdown
-#                      chevron is the separate `arrow` THEME item, not the icon property)
+#   `Button.icon`      the work board's forage and hunt FILTER CHIPS; the compose sheet's KIT
+#                      PICKER face (an `OptionButton`, whose `icon` is free — its dropdown chevron
+#                      is the separate `arrow` THEME item, not the icon property); and the parties
+#                      footer's five MISSION LAUNCH buttons
 #   `TextureRect`      the subject list's trailing ACTIVITY MARK, on all three row kinds
-#                      (a band's activity, a hex's foragers, a herd's hunters)
+#                      (a band's activity, a hex's foragers, a herd's hunters); and the turn orb's
+#                      attention rows
+#
+# **ONE FILE SERVES EVERY SURFACE THAT MEANS THE SAME THING**, which is what the id being the
+# ACTIVITY buys: `hunt.png` is the roster's herd row, the work board's hunt chip, the kit picker's
+# hunt face and the mission grid's Hunt button — four surfaces, one drawing, and no way for them to
+# drift. `workers.png` is two turn-orb kinds. `warrior.png` is a roster row and a kit face.
 #
 # **THE MARK ID IS THE ACTIVITY, NOT THE SURFACE** — `hunt` is ONE file behind the chip and the
 # roster row alike, which is what `hunt.png`'s own note below asked for when it collapsed the 🦌
@@ -1451,8 +1458,8 @@ scout: Flat vector interface mark of two bare human footprints in the dirt, one 
 #                                                                            written to end.
 #                                                                            HIGHEST VALUE HERE.
 #
-#   deny            💀      the parties footer's mission-launch buttons       NO — same GRID as
-#   trade           📦      (`HudComposeVocab.COMPOSE_MISSION_LABEL_*`)       each other. `⚑ Scout`
+#   deny        ✅ DONE     the parties footer's mission-launch buttons       (done together, as
+#   trade       ✅ DONE     (`HudComposeVocab.COMPOSE_MISSION_LABEL_*`)       this row said they
 #                                                                            and `⌂ Split` are
 #                                                                            text-presentation
 #                                                                            SYMBOLIC glyphs and
@@ -1481,7 +1488,7 @@ scout: Flat vector interface mark of two bare human footprints in the dirt, one 
 #                                                                            honest. Skipping it
 #                                                                            is defensible.
 #
-#   workers         🛠      the turn orb's `idle_workers` AND                 YES — the orb's row
+#   workers     ✅ DONE     the turn orb's `idle_workers` AND                 YES — the orb's row
 #                           `crew_handoff` rows (`TurnOrb.KIND_ICON`)         column has been
 #   starving        🍖      the turn orb's `starving` row                     MIXED since #581 put
 #                                                                            the drawn cairn in
@@ -1590,10 +1597,24 @@ scout: Flat vector interface mark of two bare human footprints in the dirt, one 
 # place. The clear fraction moves 53.8% -> 53.6% across the whole sweep, i.e. narrowing the ramp
 # costs the subject nothing — there is no trade being made here, only a wrong default.
 #
-# WHICH OF THE REMAINING PROMPTS THIS APPLIES TO: `starving` (cool pale grey) certainly, and
-# `deny` (bone-white with a COOL mid grey) probably. The five warm ones — `trade`, `workers`, and
-# the bone-cream PEOPLE trio — should key at 240 as the shipped four did. **Check the histogram
-# either way; do not infer it from the prompt's colour words.**
+# ⛔ **"COOL IS RISKY, WARM IS SAFE" IS THE WRONG RULE — that was written here after `warrior` and
+# the very next batch disproved it in both directions.** MAGENTA IS HIGH-RED *AND* HIGH-BLUE, so
+# BOTH ends of the spectrum sit near the key and only GREEN is genuinely far from it. Measured:
+#
+#     warrior   cool slate blue    half-keyed at 240, clean at 200
+#     trade     warm gold/amber    half-keyed at 240, clean at 200   <- the warm one that broke it
+#     workers   warm pale tan      keyed at 200 (not retested at 240)
+#     deny      bone-white         CLEAN at 240 — the prediction here said it would probably fail
+#     forage    sage green         clean at 240, and it is the ~110deg outlier that explains why
+#
+# So `deny` was predicted to fail and did not, and `trade` was predicted to be safe and did not
+# key. **The prompt's colour words predict nothing.** The cheap and correct move is to key at
+# `--hi 200` FIRST — it costs the subject nothing anywhere it has been measured (the clear fraction
+# moves by ~0.2 points across the whole 240..140 sweep) — and then confirm on the histogram.
+#
+# **THE HISTOGRAM IS THE ONLY TEST.** Ink in 230-255 with under ~1% in 180-230 is a clean key; mass
+# in 180-230 is half-keyed and will ship translucent beside its siblings, with a healthy coverage
+# figure, a magenta residual of 0 and a composite that looks right to the eye.
 
 
 # warrior.png — the roster's activity mark AND the kit picker's warrior face. ONE FILE, TWO
@@ -1627,6 +1648,14 @@ warrior: Flat vector interface mark of a simple round-topped wooden shield seen 
 
 
 # deny.png — the parties footer's `💀 Deny` mission button (a denial raid).
+# STATUS: SHIPPED at `assets/icons/hud/deny.png` and WIRED on the parties footer's mission grid.
+# Keyed `--size 256 --lo 85 --hi 240` — this one really was clean at 240; coverage 37.6%, magenta
+# residual 0, bbox 181x225.
+# THE CHOSEN RENDER — of two, the one with the LARGER, ROUNDER sockets AND a magenta nasal. The
+# rejected twin drew smaller ovals and filled the nasal in MID GREY, and at 13px both washed out:
+# grey-on-cream is a ~95 luma step where a keyed hole against the panel is ~221, so its whole lower
+# face flattened into a blob while this one still reads as two eyes and a nose. Judge a skull on its
+# HOLES, never on its outline — they are the only features it has.
 # ⚠ THE EYE SOCKETS ARE DRAWN IN THE BACKGROUND MAGENTA, NOT IN A DARK TONE, and that is the
 # whole trick: the keyer turns magenta transparent, so they come out as real holes with the
 # near-black panel showing through. Painted dark instead they would key as fill and close up into
@@ -1637,6 +1666,16 @@ deny: Flat vector interface mark of an animal skull seen straight on from the fr
 
 
 # trade.png — the parties footer's `📦 Trade` mission button (a shipment party).
+# STATUS: SHIPPED at `assets/icons/hud/trade.png` and WIRED on the mission grid.
+# Keyed `--size 256 --lo 85 --hi 200` — a WARM gold that half-keyed at 240, and the render that
+# disproved the "cool is risky, warm is safe" rule above. Coverage 34.0%, residual 0, bbox 144x223.
+# THE CHOSEN RENDER — of two, the one with a GOLD body under a CREAM neck, a 23-luma step. The
+# rejected twin was pale sand throughout at luma 217/215/215, i.e. effectively ONE tone, so its
+# gathered neck vanished and it read as a featureless pale blob at 13px. This family's whole premise
+# is that the FILL carries the silhouette, and a monotone fill cannot.
+# ⚠ NO COLLISION WITH `hunt.png` DESPITE SHARING THE AMBER LANE — checked at true size rather than
+# assumed, because the two sit ADJACENT on the mission grid. `hunt` is a thin dark-ochre linear bow
+# and this is a bright solid mass; SHAPE separates them completely where hue would not have.
 # ⚠ IT MUST NOT BE A BOX, and the reason is this file's own standing rule rather than taste: every
 # prompt here forbids "no rounded square, no tile, no card, no badge", and a squared crate drawn
 # dead centre IS that shape — it would read as a boxed icon rather than as a subject. A gathered
@@ -1650,6 +1689,15 @@ trade: Flat vector interface mark of a bound cloth bundle of trade goods, a plum
 # workers.png — the turn orb's `idle_workers` AND `crew_handoff` rows. ONE FILE for both kinds:
 # `KIND_ICON` already spells them with the same 🛠 because both rows are about the HANDS — one
 # says nobody is using them, the other says they have moved to another job.
+# STATUS: SHIPPED at `assets/icons/hud/workers.png` and WIRED on BOTH turn-orb kinds.
+# Keyed `--size 256 --lo 85 --hi 200`; coverage 38.1%, magenta residual 0.
+# ⛔ **THIS ONE DRAWS AT 30px, NOT 13** — `TurnOrb.ROW_ICON_SIZE` is 30, so the prompt's "merge the
+# fingers into one broad blade" clause was OVER-CAUTIOUS: it applies the 13px piece-count lesson to
+# a mark that never renders at 13px. Both candidates read fine at 30, and the one CHOSEN has the
+# STEPPIER fingertip profile (visibly separate bumps) where the rejected twin's flatter top reads as
+# a mitten — the cairn's rule again, that at size the interior goes and the OUTLINE is what is left.
+# ⚠ SIZE THE JUDGEMENT TO THE SURFACE. Nothing else in `hud/` renders this large, so a turn-orb mark
+# may carry more detail than a 13px row mark — and a row mark may not carry this one's.
 # ⚠ IT MUST NOT BE A TOOL. The 🛠 it replaces is a hammer-and-wrench, which is anachronistic for a
 # forager tribe, collides with the crafting `⚒`, and is TWO crossed pieces — the shape budget
 # `scout` v1 died of. An open palm is one mass and says *hands* directly, which is what both rows

@@ -102,8 +102,15 @@ const KIND_ICON_FALLBACK := "●"
 ## glyph, and so does a listed kind whose art fails to load. Deliberately a SECOND table rather than
 ## a widening of `KIND_ICON`: `_kind_icon` answers in Strings and is asked by callers that want a
 ## glyph, so folding a texture lookup into it would change that contract for one kind's sake.
+## **`workers` IS ONE FILE FOR TWO KINDS, and `KIND_ICON` already said why**: both rows spell
+## themselves 🛠 because both are about the HANDS — one says nobody is using them, the other says
+## they have moved to another job. The art follows that rather than the emoji, which drew a
+## hammer-and-wrench: two crossed pieces, anachronistic for a forager tribe, and colliding with the
+## crafting `⚒`. An open palm is one mass and says *hands* directly (issue #249).
 const KIND_ICON_SPRITE := {
 	KIND_KNOWLEDGE_LEARNED: HudKnowledgeVocab.LAUNCH_MARK,
+	KIND_IDLE_WORKERS: "workers",
+	KIND_CREW_HANDOFF: "workers",
 }
 
 # ---- geometry (named constants; no magic literals) -------------------------

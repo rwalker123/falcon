@@ -33,6 +33,9 @@ const SPRITE_PATHS := {
 	"hunt": SPRITE_DIR + "hunt.png",
 	"scout": SPRITE_DIR + "scout.png",
 	"warrior": SPRITE_DIR + "warrior.png",
+	"deny": SPRITE_DIR + "deny.png",
+	"trade": SPRITE_DIR + "trade.png",
+	"workers": SPRITE_DIR + "workers.png",
 }
 
 ## Bundled sprite for a HUD mark, or `null` when the key is unknown — the caller then falls back to
