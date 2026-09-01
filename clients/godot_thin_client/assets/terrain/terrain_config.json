@@ -61,6 +61,21 @@
     "river_min_radius": 3.0,
     "flow_speed": 0.03
   },
+  "roads_enabled": true,
+  "roads": {
+    "path_width": 0.080,
+    "trail_width": 0.100,
+    "dirt_road_width": 0.118,
+    "paved_road_width": 0.135,
+    "path_opacity": 0.58,
+    "trail_opacity": 0.70,
+    "dirt_road_opacity": 0.82,
+    "paved_road_opacity": 0.94,
+    "softness_width": 0.03,
+    "texture_scale": 1.4,
+    "at_risk_tint": 0.75,
+    "road_min_radius": 3.0
+  },
   "terrains": [
     { "id": 0, "name": "deep_ocean", "label": "Deep Ocean", "category": "water", "blend_class": "water", "color": [11, 30, 61], "shore_profile": { "sand_scale": 0.0, "foam_scale": 1.0, "wisp_scale": 1.0 } },
     { "id": 1, "name": "continental_shelf", "label": "Continental Shelf", "category": "water", "blend_class": "water", "color": [20, 64, 94], "shore_profile": { "sand_scale": 1.0, "foam_scale": 0.75, "wisp_scale": 0.5 } },

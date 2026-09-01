@@ -247,6 +247,55 @@ const RIVER_CHANNEL_MASK := 0b111111  # the 6 exit bits, one per odd-r direction
 # neighbor_offset(), which is the wire contract. MapView itself no longer walks hex neighbours for rivers:
 # the connectivity now comes from the sim's river_channel mask, not from the terrain around a hex.)
 
+# ---- ROADS IN THE GROUND (arc #532) — the road-map splatmap + the shader's road pass ---------------
+# Config defaults for the `roads` block of terrain_config.json, one per uniform, in the river block's
+# idiom: the four WIDTHS are hex-radius fractions turned into px here, exactly like blend_width.
+#
+# ⛔ **THE OPACITY LADDER WAS RE-DERIVED FOR THE TEXTURE PASS AND MUST NOT BE PUT BACK.** The retired
+# AnnotationRenderer drew a near-black INK stroke, where 0.30 alpha is a visible dark line; here the
+# same number means "70% of the ground shows through" a low-saturation grey SURFACE sitting near the
+# prairie's own luminance, and the path rung dissolved into it. The ladder therefore compresses UPWARD
+# FROM BELOW — paved is unchanged and stays the anchor — while staying monotone in both width and
+# opacity. Prominence still rides opacity rather than four palette colours (see the rule file); what
+# changed is the medium the alphas are measured in, not the principle.
+const ROAD_DEFAULT_PATH_WIDTH := 0.080
+const ROAD_DEFAULT_TRAIL_WIDTH := 0.100
+const ROAD_DEFAULT_DIRT_ROAD_WIDTH := 0.118
+const ROAD_DEFAULT_PAVED_ROAD_WIDTH := 0.135
+const ROAD_DEFAULT_PATH_OPACITY := 0.58
+const ROAD_DEFAULT_TRAIL_OPACITY := 0.70
+const ROAD_DEFAULT_DIRT_ROAD_OPACITY := 0.82
+const ROAD_DEFAULT_PAVED_ROAD_OPACITY := 0.94
+const ROAD_DEFAULT_SOFTNESS_WIDTH := 0.03
+const ROAD_DEFAULT_TEXTURE_SCALE := 1.4
+const ROAD_DEFAULT_AT_RISK_TINT := 0.75
+const ROAD_DEFAULT_MIN_RADIUS := 3.0
+# Bounds on the config levers. A width may not be zero (a rung that draws nothing is not a rung) and an
+# opacity is a fraction; both are stated here rather than inline so the road block reads as one contract.
+const ROAD_WIDTH_MIN := 0.005
+const ROAD_WIDTH_MAX := 1.0
+const ROAD_SOFTNESS_MIN := 0.002
+# The road-map splatmap is RGBA8: R = the 6-bit CONNECTION mask, G = the rung index, B = the build
+# fraction, A = flags. See the shader's road_map uniform for the full packing contract.
+const ROAD_MAP_CHANNELS := 4
+const ROAD_LINK_MASK := 0b111111          # the 6 connection bits, one per odd-r direction
+const ROAD_FLAG_PRESENT := 1              # bit0: this hex carries a road at all
+const ROAD_FLAG_AT_RISK := 2              # bit1: its keeping is short in EITHER currency
+const ROAD_BUILD_FRACTION_SCALE := 255.0  # 0..1 meter → the B channel's byte
+# ⛔ **THE ODD-R DIRECTION TABLE, AND ITS ORDER IS THE WIRE CONTRACT.** It must match the shader's
+# `neighbor_offset()` index for index — the road pass reads bit `d` of the R channel and arms an arm
+# toward `neighbor_offset(row, d)`, so a reordering here would draw every road arm toward the WRONG
+# NEIGHBOUR while still looking like a plausible road. The same table the sim's `HEX_NEIGHBOR_OFFSETS`
+# carries; row parity picks the column shift. Index: 0 E, 1 SE, 2 SW, 3 W, 4 NW, 5 NE.
+const ROAD_NEIGHBOR_OFFSETS_EVEN_ROW := [
+	Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 1),
+	Vector2i(-1, 0), Vector2i(-1, -1), Vector2i(0, -1),
+]
+const ROAD_NEIGHBOR_OFFSETS_ODD_ROW := [
+	Vector2i(1, 0), Vector2i(1, 1), Vector2i(0, 1),
+	Vector2i(-1, 0), Vector2i(0, -1), Vector2i(1, -1),
+]
+
 var _view: MapView = null
 
 # Terrain texture system for 2D view (textures loaded via TerrainTextureManager autoload)
@@ -274,6 +323,9 @@ var _terrain_river_channel_map_tex: ImageTexture = null # R8: the 6-bit river-CH
 var _terrain_navigable_underlying_map_tex: ImageTexture = null # R8: the per-hex UNDERLYING terrain id (the
                                                 # valley biome on a navigable hex). Shader reads it on navigable
                                                 # hexes only, so non-navigable texels are don't-care.
+var _terrain_road_map_tex: ImageTexture = null   # RGBA8: R = the 6-bit road CONNECTION mask, G = rung
+                                                # index, B = build fraction, A = flags (present / at risk).
+                                                # See the shader's road_map uniform for the full contract.
 
 func _init(view: MapView) -> void:
 	_view = view
@@ -496,6 +548,12 @@ func _setup_terrain_blend_shader() -> void:
 	var has_navigable_layer: bool = river_arr != null and river_arr.get_layers() > RIVER_NAVIGABLE_LAYER
 	_terrain_blend_material.set_shader_parameter("river_navigable_enabled", has_navigable_layer)
 	_terrain_blend_material.set_shader_parameter("river_navigable_terrain_id", _terrain_id_for_name(TERRAIN_NAME_NAVIGABLE_RIVER))
+	# Roads: a FIFTH Texture2DArray in the same canvas shader — one opaque SURFACE per route rung, indexed
+	# by HudRouteVocab.RUNG_ORDER's index (0 path … 3 paved road). Disabled (sampler harmlessly bound to the
+	# base array) with no road asset, exactly like the canopy/peak/river arrays.
+	var road_arr: Texture2DArray = TerrainTextureManager.road_textures
+	_terrain_blend_material.set_shader_parameter("roads_enabled", road_arr != null and road_arr.get_layers() > 0)
+	_terrain_blend_material.set_shader_parameter("road_tex", road_arr if road_arr != null else TerrainTextureManager.terrain_textures)
 	var QuadScript: GDScript = preload("res://src/scripts/TerrainBlendQuad.gd")
 	_terrain_blend_quad = QuadScript.new()
 	_terrain_blend_quad.name = "TerrainBlendQuad"
@@ -685,6 +743,44 @@ func update_shader_quad(radius: float, origin: Vector2, viewport_size: Vector2) 
 	m.set_shader_parameter("river_scale", river_scale)
 	m.set_shader_parameter("river_flow_speed", river_flow_speed)
 	m.set_shader_parameter("river_highlight", _view.highlight_rivers)
+	# Roads (arc #532): widths/softness are hex-radius fractions → px, exactly like the river's. LOD is
+	# decoupled from the flat↔flat blend gate the same way, on the roads' own road_min_radius.
+	#
+	# ⛔ **THE TWO LADDERS ARE `Vector4`s, ONE COMPONENT PER RUNG, AND MUST STAY IN RUNG_ORDER.** The shader
+	# indexes them with a value it computes per fragment (rung + build_fraction), so the component order IS
+	# the ladder — swapping two would make a road get wider as it decayed.
+	# TWO GATES, AND THEY ARE DELIBERATELY SEPARATE. The `roads_enabled` UNIFORM is the ASSET gate,
+	# set once when the material is built (is there a road texture array at all?) — the canopy/peak/river
+	# idiom. The config's own `roads_enabled` is the DESIGNER gate and rides the per-frame LOD one below,
+	# so flipping it in terrain_config takes effect on the next redraw without rebuilding the material.
+	var roads: Dictionary = config.get("roads", {})
+	var roads_config_enabled: bool = bool(config.get("roads_enabled", true))
+	var road_min_radius: float = maxf(float(roads.get("road_min_radius", ROAD_DEFAULT_MIN_RADIUS)), 0.0)
+	var road_widths := Vector4(
+		clampf(float(roads.get("path_width", ROAD_DEFAULT_PATH_WIDTH)), ROAD_WIDTH_MIN, ROAD_WIDTH_MAX),
+		clampf(float(roads.get("trail_width", ROAD_DEFAULT_TRAIL_WIDTH)), ROAD_WIDTH_MIN, ROAD_WIDTH_MAX),
+		clampf(float(roads.get("dirt_road_width", ROAD_DEFAULT_DIRT_ROAD_WIDTH)), ROAD_WIDTH_MIN, ROAD_WIDTH_MAX),
+		clampf(float(roads.get("paved_road_width", ROAD_DEFAULT_PAVED_ROAD_WIDTH)), ROAD_WIDTH_MIN, ROAD_WIDTH_MAX))
+	var road_opacities := Vector4(
+		clampf(float(roads.get("path_opacity", ROAD_DEFAULT_PATH_OPACITY)), 0.0, 1.0),
+		clampf(float(roads.get("trail_opacity", ROAD_DEFAULT_TRAIL_OPACITY)), 0.0, 1.0),
+		clampf(float(roads.get("dirt_road_opacity", ROAD_DEFAULT_DIRT_ROAD_OPACITY)), 0.0, 1.0),
+		clampf(float(roads.get("paved_road_opacity", ROAD_DEFAULT_PAVED_ROAD_OPACITY)), 0.0, 1.0))
+	var road_soft_frac: float = clampf(
+		float(roads.get("softness_width", ROAD_DEFAULT_SOFTNESS_WIDTH)), ROAD_SOFTNESS_MIN, ROAD_WIDTH_MAX)
+	m.set_shader_parameter("roads_lod_enabled", roads_config_enabled and radius >= road_min_radius)
+	m.set_shader_parameter("road_half_width_ladder", road_widths * radius)  # per-rung half-width (px)
+	m.set_shader_parameter("road_opacity_ladder", road_opacities)
+	m.set_shader_parameter("road_softness", road_soft_frac * radius)        # edge ramp half-width (px)
+	m.set_shader_parameter("road_texture_scale",
+		maxf(float(roads.get("texture_scale", ROAD_DEFAULT_TEXTURE_SCALE)), 0.05))
+	m.set_shader_parameter("road_at_risk_tint",
+		clampf(float(roads.get("at_risk_tint", ROAD_DEFAULT_AT_RISK_TINT)), 0.0, 1.0))
+	# ⛔ **READ LIVE, NOT CACHED.** `HudStyle.DANGER` is a `static var`, and the retired `_draw_road` read it
+	# per draw precisely so a theme swap was picked up with no installation hook of the road family's own.
+	# Pushing it here — once per frame, beside the rest — keeps that property.
+	m.set_shader_parameter("road_at_risk_color",
+		Vector3(HudStyle.DANGER.r, HudStyle.DANGER.g, HudStyle.DANGER.b))
 	m.set_shader_parameter("fow_enabled", _view._fow_enabled)
 	m.set_shader_parameter("bg_color", _view.TERRAIN_BG_COLOR)
 	m.set_shader_parameter("fog_color", _view._fow_fog_fill_color)
@@ -713,7 +809,8 @@ func rebuild_shader_maps() -> void:
 	## vis-map (R8: FoW state) + elev-map (R8: per-hex relative height for peak prominence/shadow) +
 	## river-map (RGBA8: the 12-bit river-EDGE mask in R/G, the 12-bit river-INFLOW mask in B/A, each as
 	## low 8 bits / high 4) + river-channel-map (R8: the 6-bit channel-EXIT mask) splatmaps, one texel per
-	## hex, from the current terrain + FoW + elevation + river edges/inflow/channel. Called each snapshot.
+	## hex, from the current terrain + FoW + elevation + river edges/inflow/channel + the ROADS IN THE
+	## GROUND (road-map, RGBA8 — connection mask / rung / build fraction / flags). Called each snapshot.
 	## NEAREST-sampled in-shader. All four id-map channels are taken, hence the rivers' own texture — and
 	## all four of THAT one's are taken too (2 x 12 bits), hence the channel mask's own R8 on top.
 	if _view.grid_width <= 0 or _view.grid_height <= 0 or _cached_terrain_ids.is_empty():
@@ -732,6 +829,11 @@ func rebuild_shader_maps() -> void:
 	river_channel_bytes.resize(w * h)
 	var navigable_underlying_bytes := PackedByteArray()  # R8: per-hex underlying (valley) terrain id
 	navigable_underlying_bytes.resize(w * h)
+	var road_bytes := PackedByteArray()   # RGBA8: connection mask / rung index / build fraction / flags
+	road_bytes.resize(w * h * ROAD_MAP_CHANNELS)
+	# Hoisted out of the double loop: with no roads on the map at all (the whole early game) the per-hex
+	# dictionary lookup below is skipped entirely and the texels stay at their zeroed "no road" value.
+	var has_roads: bool = not _view.road_tile_lookup.is_empty()
 	# Hoist the per-hex-invariant raster fetches + sea-level math out of the double loop:
 	# both the FoW visibility channel and the elevation channel (plus its sea-level rescale
 	# constants) are the same for every hex, so fetch/compute them once here instead of
@@ -795,6 +897,12 @@ func rebuild_shader_maps() -> void:
 			# this hex's own terrain id when the tile carried none — non-navigable texels are don't-care anyway.
 			var underlying_id: int = int(_view.tile_underlying_terrain.get(hex_key, tid))
 			navigable_underlying_bytes[idx] = clampi(underlying_id, 0, 255) if underlying_id >= 0 else 0
+			# --- THE ROADS IN THE GROUND (arc #532) ---
+			# Derived client-side from `MapView.road_network` / `road_tile_lookup` — there is no road mask
+			# on the wire and none is wanted: a road row is per-TILE and its neighbours are computable, so
+			# the connection mask is a projection of the rows this client already holds.
+			if has_roads:
+				_pack_road_texel(road_bytes, idx, x, y, w, h, vis_raster)
 	var id_img := Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, id_bytes)
 	_terrain_id_map_tex = ImageTexture.create_from_image(id_img)
 	var vis_img := Image.create_from_data(w, h, false, Image.FORMAT_R8, vis_bytes)
@@ -807,6 +915,8 @@ func rebuild_shader_maps() -> void:
 	_terrain_river_channel_map_tex = ImageTexture.create_from_image(river_channel_img)
 	var navigable_underlying_img := Image.create_from_data(w, h, false, Image.FORMAT_R8, navigable_underlying_bytes)
 	_terrain_navigable_underlying_map_tex = ImageTexture.create_from_image(navigable_underlying_img)
+	var road_img := Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, road_bytes)
+	_terrain_road_map_tex = ImageTexture.create_from_image(road_img)
 	if _terrain_blend_material != null:
 		_terrain_blend_material.set_shader_parameter("id_map", _terrain_id_map_tex)
 		_terrain_blend_material.set_shader_parameter("vis_map", _terrain_vis_map_tex)
@@ -814,7 +924,82 @@ func rebuild_shader_maps() -> void:
 		_terrain_blend_material.set_shader_parameter("river_map", _terrain_river_map_tex)
 		_terrain_blend_material.set_shader_parameter("river_channel_map", _terrain_river_channel_map_tex)
 		_terrain_blend_material.set_shader_parameter("navigable_underlying_map", _terrain_navigable_underlying_map_tex)
+		_terrain_blend_material.set_shader_parameter("road_map", _terrain_road_map_tex)
 	_warn_orphan_navigable_rivers(navigable_hexes)
+
+func _pack_road_texel(
+	road_bytes: PackedByteArray, idx: int, x: int, y: int, w: int, h: int,
+	vis_raster: PackedFloat32Array
+) -> void:
+	## Stamp ONE hex's road texel — R connection mask / G rung index / B build fraction / A flags. See the
+	## shader's `road_map` uniform for the packing contract and its road pass for what each channel drives.
+	##
+	## ⛔ **THE RUNG AND THE METER ARE TWO DIFFERENT RUNGS, AND THIS IS WHERE THAT IS EASIEST TO GET
+	## BACKWARDS.** `rung` is the rung the road HOLDS; `build_fraction` is the meter on the rung being
+	## RAISED, which is the one above (`native/src/dict/routes.rs` — "the rung string is the bool"). Both go
+	## on the wire verbatim, in their own channels, and the shader adds them into the single ladder scalar
+	## it draws from. Thresholding one to derive the other here would call a fully-worn trail a dirt road on
+	## the turn its first traffic banked.
+	var roads: Array = _view.road_tile_lookup.get(Vector2i(x, y), [])
+	if roads.is_empty():
+		return
+	# One row per tile on the wire; if a malformed frame ever carried two, the first is the tile's road.
+	var road: Dictionary = roads[0]
+	# ⛔ **THE FOG GATE IS `Discovered` OR `Active`, NOT `Active`** — deliberately looser than every other
+	# marker family, and it is the sim's own publication gate: a road does not wander off, so remembering
+	# one is remembering something true. This reproduces the retired `AnnotationRenderer._road_tile_known`
+	# exactly, fog-off included.
+	if not _road_tile_known(vis_raster, x, y):
+		return
+	var rung: String = HudRouteVocab.rung_of(road)
+	var rung_index: int = HudRouteVocab.RUNG_ORDER.find(rung)
+	if rung_index < 0:
+		# The path AND any rung this client has never heard of — the bottom of the ladder, matching the
+		# retired opacity table's rule that an unknown rung DRAWS rather than vanishing.
+		rung_index = 0
+	var flags: int = ROAD_FLAG_PRESENT
+	# Either currency puts a road at risk, and the test is an `or`, never a sum — the sim's decay rides the
+	# WORSE of the two fractions and trips one grace, so there is no combined severity to encode.
+	if HudRouteVocab.is_keeping_short(road):
+		flags |= ROAD_FLAG_AT_RISK
+	# CONNECTION MASK — bit `d` set only when the neighbour that way is ALSO a road AND is known. A bit
+	# toward fog or off-map stays CLEAR, which is what makes a road stop at the fog edge instead of leaking
+	# the existence of the hex beyond it, and is also what keeps the shader from fetching a texel it has no
+	# business reading.
+	var links: int = 0
+	var offsets: Array = ROAD_NEIGHBOR_OFFSETS_ODD_ROW if (y & 1) == 1 else ROAD_NEIGHBOR_OFFSETS_EVEN_ROW
+	for dir in range(offsets.size()):
+		var off: Vector2i = offsets[dir]
+		var ny: int = y + off.y
+		if ny < 0 or ny >= h:
+			continue
+		var nx: int = x + off.x
+		if _view._wrap_horizontal:
+			nx = posmod(nx, w)
+		elif nx < 0 or nx >= w:
+			continue
+		if not _view.road_tile_lookup.has(Vector2i(nx, ny)):
+			continue
+		if not _road_tile_known(vis_raster, nx, ny):
+			continue
+		links |= 1 << dir
+	var base: int = idx * ROAD_MAP_CHANNELS
+	road_bytes[base] = links & ROAD_LINK_MASK
+	road_bytes[base + 1] = clampi(rung_index, 0, HudRouteVocab.RUNG_ORDER.size() - 1)
+	road_bytes[base + 2] = clampi(
+		int(round(HudRouteVocab.build_fraction_of(road) * ROAD_BUILD_FRACTION_SCALE)), 0, 255)
+	road_bytes[base + 3] = flags
+
+
+func _road_tile_known(vis_raster: PackedFloat32Array, x: int, y: int) -> bool:
+	## Has the player's faction ever stood on this tile? `Discovered` OR `Active`. Reproduces
+	## `MapView._visibility_state_at(x, y) != HudConst.VISIBILITY_UNEXPLORED` against the hoisted raster,
+	## the same way the vis-map byte above reproduces the three-way classification — the two must agree, so
+	## they read the same thresholds. Fog off knows everything.
+	if not _view._fow_enabled:
+		return true
+	return _view._value_at(vis_raster, x, y) > FOW_EXPLORED_THRESHOLD
+
 
 func _warn_orphan_navigable_rivers(navigable_hexes: Array[Vector2i]) -> void:
 	## Diagnostic mirror of the shader's navigable ARM rule (terrain_blend.gdshader, navigable pass): a

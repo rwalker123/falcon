@@ -30,6 +30,13 @@ var peak_layer_by_id: Dictionary = {}
 # navigable pass paints over a NavigableRiver hex's bank floor (that terrain's own base texture is the
 # BANK ground, not water — see terrain_blend.gdshader's navigable pass).
 var river_textures: Texture2DArray = null
+
+# ROAD SURFACE ARRAY — the roads in the GROUND (arc #532), one layer per RUNG of the route ladder, keyed
+# by the file's numeric prefix exactly as the river array is: `00_path` → 0, `01_trail` → 1,
+# `02_dirt_road` → 2, `03_paved_road` → 3. **The layer index IS `HudRouteVocab.RUNG_ORDER`'s index**, which
+# is what lets the shader interpolate between two adjacent rungs with a plain `mix` of layer i and layer
+# i+1 (terrain_blend.gdshader's road pass — the ladder is ONE scalar there, not four discrete looks).
+var road_textures: Texture2DArray = null
 var terrain_config: Dictionary = {}
 var use_terrain_textures: bool = false
 var use_edge_blending: bool = false
@@ -177,6 +184,8 @@ func _load_textures() -> void:
 		peak_textures = _build_peak_texture_array()
 		# Build the companion river array (flowing water bands) for the shader's hex-edge river pass.
 		river_textures = _build_river_texture_array()
+		# …and the road array (one opaque surface per route rung) for the shader's road pass.
+		road_textures = _build_road_texture_array()
 
 
 func _load_asset_image(res_path: String) -> Image:
@@ -578,6 +587,99 @@ func _build_river_texture_array() -> Texture2DArray:
 		push_error("[TerrainTextureManager] Failed to create river Texture2DArray: %d" % err)
 		return null
 	print("[TerrainTextureManager] Loaded river textures: %d layers" % images.size())
+	return array_tex
+
+
+func _build_road_texture_array() -> Texture2DArray:
+	## Build the ROAD Texture2DArray from `textures/roads/NN_rung.png` — the road SURFACES the blend
+	## shader's road pass paints through hex centres (arc #532). Mirrors `_build_river_texture_array`
+	## exactly (once-only `_load_asset_image`, mipmaps so a thin road averages to a stable line at far
+	## zoom instead of shimmering, an anchor layer that must be present, holes densified from it) with
+	## one difference of MEANING: the layer index is the ROUTE RUNG's index in `HudRouteVocab.RUNG_ORDER`
+	## — 0 = path, 1 = trail, 2 = dirt road, 3 = paved road. That is what makes the shader's ladder a
+	## single scalar it can `mix` across, instead of four unrelated looks it would have to switch between.
+	## Returns null when no road asset exists, or when layer 0 is missing (shader runs road-disabled).
+	const ROAD_PATH := "res://assets/terrain/textures/roads/"
+	# One layer per rung of the SHIPPED four-rung route ladder.
+	const ROAD_MAX_LAYERS := 4
+	# ⛔ **`04_rail.png` IS SHIPPED AND IS DELIBERATELY NOT LOADED.** The rail rung is issue #603's, and
+	# it needs a TANGENT-PROJECTED UV that this pass does not compute (sleepers have an orientation; no
+	# rung drawn here does), so a fifth layer would be a thing nothing can sample. It is skipped in
+	# SILENCE rather than through the out-of-range warning below: a launch-log warning that describes
+	# correct, intended behaviour is how people learn to stop reading the log.
+	const ROAD_RESERVED_RAIL_LAYER := 4
+	# A directory listing does NOT report the authored `NN_rung.png` verbatim — see the river builder.
+	const RESOURCE_REMAP_SUFFIX := ".remap"
+	const RESOURCE_IMPORT_SUFFIX := ".import"
+	var by_layer: Dictionary = {}   # layer index (RUNG_ORDER index) -> Image
+	var dir := DirAccess.open(ROAD_PATH)
+	if dir == null:
+		print("[TerrainTextureManager] No road textures found (road overlay disabled)")
+		return null
+	var first_size: Vector2i = Vector2i.ZERO
+	var seen_files: Dictionary = {}
+	for entry: String in dir.get_files():
+		var filename: String = entry
+		if filename.ends_with(RESOURCE_REMAP_SUFFIX):
+			filename = filename.trim_suffix(RESOURCE_REMAP_SUFFIX)
+		elif filename.ends_with(RESOURCE_IMPORT_SUFFIX):
+			filename = filename.trim_suffix(RESOURCE_IMPORT_SUFFIX)
+		if not filename.ends_with(".png"):
+			continue
+		if seen_files.has(filename):
+			continue
+		seen_files[filename] = true
+		var prefix: String = filename.split("_")[0]
+		if not prefix.is_valid_int():
+			push_warning("[TerrainTextureManager] Road texture '%s' has no NN_ layer prefix — skipped" % filename)
+			continue
+		var layer := int(prefix)
+		if layer == ROAD_RESERVED_RAIL_LAYER:
+			continue  # reserved for #603 — see ROAD_RESERVED_RAIL_LAYER
+		if layer < 0 or layer >= ROAD_MAX_LAYERS:
+			push_warning("[TerrainTextureManager] Road texture '%s' layer %d out of range — skipped" % [filename, layer])
+			continue
+		var img: Image = _load_asset_image(ROAD_PATH + filename)
+		if img == null:
+			continue
+		if first_size == Vector2i.ZERO:
+			first_size = Vector2i(img.get_width(), img.get_height())
+		elif Vector2i(img.get_width(), img.get_height()) != first_size:
+			img.resize(first_size.x, first_size.y)
+		if img.get_format() != Image.FORMAT_RGBA8:
+			img.convert(Image.FORMAT_RGBA8)
+		img.generate_mipmaps()
+		by_layer[layer] = img
+
+	if by_layer.is_empty():
+		print("[TerrainTextureManager] No road textures found (road overlay disabled)")
+		return null
+
+	# The shader indexes the array by RUNG_ORDER index, so layer 0 IS the path and the layers must be
+	# dense from 0. Without layer 0 the indexing premise is void — the bottom of the ladder, which is the
+	# COMMONEST road in the game, would sample the trail — so bail rather than densify a lie.
+	const ROAD_ANCHOR_LAYER := 0
+	if not by_layer.has(ROAD_ANCHOR_LAYER):
+		push_warning("[TerrainTextureManager] Road layer %d (path) missing — the array is indexed by route-rung order, so without it every rung would sample the wrong surface. Road overlay disabled." % ROAD_ANCHOR_LAYER)
+		return null
+
+	# Any remaining hole is densified from the anchor (never from "the lowest present layer").
+	var layers: Array = by_layer.keys()
+	layers.sort()
+	var images: Array[Image] = []
+	for layer: int in range(int(layers[layers.size() - 1]) + 1):
+		if by_layer.has(layer):
+			images.append(by_layer[layer])
+		else:
+			push_warning("[TerrainTextureManager] Road layer %d missing — reusing layer %d" % [layer, ROAD_ANCHOR_LAYER])
+			images.append(by_layer[ROAD_ANCHOR_LAYER])
+
+	var array_tex := Texture2DArray.new()
+	var err := array_tex.create_from_images(images)
+	if err != OK:
+		push_error("[TerrainTextureManager] Failed to create road Texture2DArray: %d" % err)
+		return null
+	print("[TerrainTextureManager] Loaded road textures: %d layers" % images.size())
 	return array_tex
 
 

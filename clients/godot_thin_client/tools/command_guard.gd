@@ -216,6 +216,7 @@ func _ready() -> void:
 	await _drive_build_order()
 	await _drive_send_trade_expedition()
 	_drive_road_verbs()
+	await _drive_road_abandon()
 
 	_assert_every_command_emitted()
 	_assert_every_role_is_emittable()
@@ -594,6 +595,8 @@ func _connect_recorders() -> void:
 		_record("build_order", p, MAIN_SCRIPT.format_build_order(p)))
 	_hud.cancel_order_requested.connect(func(band: Dictionary, scope: String) -> void:
 		_record("cancel_order", band, MAIN_SCRIPT.format_cancel_order(band, scope)))
+	_hud.abandon_requested.connect(func(p: Dictionary) -> void:
+		_record("abandon", p, MAIN_SCRIPT.format_abandon(p)))
 	# **THE SHIPMENT RECORDS ITS PILES BESIDE ITS LINE.** They are the only thing the emitted amounts
 	# mean anything against, and they are stated in the sim's own TICKS so the comparison is exact —
 	# see the header. The cargo ids are the sender's own store keys, which is what the parser rebuilds.
@@ -641,6 +644,46 @@ func _drive_road_verbs() -> void:
 	}
 	if not MAIN_SCRIPT.format_improvement(bandless).is_empty():
 		_fail("grade: a road verb with no band built a line — the keeper token is not optional")
+
+## ⛔ **`abandon <faction> <x> <y>` — THE ONE VERB THIS GUARD DRIVES THAT NAMES NO BAND AT ALL**, and
+## that is the sim's grammar rather than an omission: it drops every band-of-that-faction's holding on
+## the tile, a forage assignment there included. The Rust half classifies it `PlaceAddressed` for the
+## same reason `build_kit` is `SourceAddressed` — *this verb has no band* stays a stated fact about one
+## variant instead of a hole any un-listed command falls through.
+##
+## **DRIVEN THROUGH THE ROADWORK ROSTER'S OWN `✕`** (arc #532, issue #600), which is a real control on
+## the shipped HUD now — the road verbs above still go through `Main.format_improvement` directly
+## because `grade`/`pave` have no click path yet. The roster is the ONLY surface that emits this verb
+## for a road, so this is the whole of the client's side of it.
+##
+## The road is pushed and then cleared again: this drive runs last, but a roster block left standing
+## would still be in the zone every later assertion measures.
+func _drive_road_abandon() -> void:
+	_hud.update_road_network([{
+		"tile_x": TARGET_X, "tile_y": TARGET_Y,
+		# Read the bool before the id — `0` is a real `BandId` (`native/src/dict/routes.rs`).
+		"has_keeper": true, "keeper_band_id": BAND_ID, "keeper_remoteness": 1.0,
+		"rung": HudRouteVocab.RUNG_KEY_DIRT_ROAD,
+		"build_fraction": HudRouteVocab.ROAD_METER_COMPLETE,
+		"upkeep_demand": 0.0, "upkeep_supplied": 0.0, "upkeep_shortfall": 0.0,
+		"upkeep_workers_needed": 1,
+		"has_neglect_grace": false, "neglect_grace_remaining": 0,
+		"grants_sight": false, "friction_multiplier": 0.6, "holds_link_to_tiles": 10,
+		"build_turns_remaining": SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+	}])
+	_panel.set_active_tab(BandCityPanel.ZONE_WORK)
+	_hud._bandpanel.rerender()
+	await _settle()
+	var drop := _find_meta_button(_panel, HudWorkVocab.ROADWORK_ROSTER_ABANDON_META)
+	if drop == null:
+		_fail("abandon: the roadwork roster drew no `%s` for a road this band keeps, so the verb has no emitter to drive"
+			% HudWorkVocab.ROADWORK_ROSTER_ABANDON_GLYPH)
+		return
+	drop.pressed.emit()
+	await _settle()
+	_hud.update_road_network([])
+	_hud._bandpanel.rerender()
+	await _settle()
 
 ## The commands whose grammar carries a `kit <id>` tail. Every OTHER kind records `expected_kit` as
 ## `""` — a command with no kit axis names no kit, which is what the Rust half's `NotKitBearing`
@@ -798,6 +841,9 @@ const EXPECTED_KINDS := {
 	# the BAND token in the middle. See `_drive_road_verbs`.
 	"grade": 1,
 	"pave": 1,
+	# ONE — the roadwork roster's `✕`, the route branch's only `abandon` emitter and the only command
+	# here that names a PLACE rather than a band.
+	"abandon": 1,
 }
 
 func _assert_every_command_emitted() -> void:

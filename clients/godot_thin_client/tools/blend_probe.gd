@@ -701,6 +701,129 @@ const BANK_VARIANTS := [
 	{"name": "BANK_v3", "width_scale": 3.4, "noise_scale": 2.8, "noise_cell_scale": 3.2},
 ]
 
+# --- states 18–21: THE ROADS IN THE GROUND (arc #532) ---------------------------------------------
+# ⛔ **EVERY ROAD FRAME IS RENDERED AT `ISO_HEX_RADIUS`, ON THE ISOLATED-HEXES GRID's DIMENSIONS.** This
+# file's header states the rule and it applies here with force: the road pass's widths and its softness
+# ramp are hex-radius fractions, so a road judged in a fitted frame at some other radius is a judgement
+# about nothing. 14×10 at 1920×1080 lands r ≈ 75, which is the radius the player's own map runs at.
+#
+# The ground is UNIFORM PRAIRIE — no biome seam anywhere in these frames. Every pixel that differs
+# between two road cells is the road pass's doing, which is the whole point: three of the defects this
+# slice exists to fix are invisible in a frame that also has terrain variation to explain them away.
+const ROAD_GRID_W := ISO_GRID_W
+const ROAD_GRID_H := ISO_GRID_H
+const ROAD_FIELD_ID := ISO_ISLAND_ID    # prairie — the tan steppe the opacity ladder was measured on
+
+# State 18 (ROADS): the RUNG SWEEP. Four contiguous runs, one per rung, each at build_fraction 0.0, so
+# every surface is seen at its OWN rung's width and opacity with no wear mixed in. Contiguous because a
+# run of separated tiles is not a road under the connection-mask model — it is four lone centre discs.
+const ROAD_SWEEP_COL_START := 2
+const ROAD_SWEEP_COL_END := 12          # exclusive
+const ROAD_SWEEP_ROWS := [1, 3, 5, 7]   # one per rung, two rows apart so no run touches another
+
+# State 19 (WEAR): **THE DEFECT FRAME.** Five contiguous runs of the SAME rung (path), each uniform at
+# its own build_fraction. This is the bug reported from play — seven path tiles at 24–52% worn all drew
+# IDENTICALLY, so a half-worn road looked exactly like one nobody had touched. Under the one-scalar
+# ladder these span s = 0.00 … 1.00 and must differ visibly in width AND opacity, run to run.
+# **If these five look alike, the slice has failed, whatever else passes.**
+const ROAD_WEAR_ROWS := [1, 3, 5, 7, 9]
+const ROAD_WEAR_FRACTIONS := [0.0, 0.25, 0.5, 0.75, 1.0]
+
+# ⛔ **THE WEAR LADDER'S OWN GUARD, and it is the only assertion in this file's road states.** It walks
+# ROAD_WEAR_FRACTIONS one step at a time, handing each step over as a frame whose manifest names
+# `routes` and NOTHING else, and requires the rendered map to MOVE at every step. That single loop
+# holds two properties at once, and both of them fail silently otherwise:
+#   1. **the reported defect** — seven path tiles at 24–52% worn all drew IDENTICALLY, because nothing
+#      downstream of `build_fraction` reached the width, the opacity or the surface;
+#   2. **the delta subscription** — the road-map splatmap is rebuilt only for the sections in
+#      `MapView.SHADER_INPUT_SECTIONS`, so with `routes` missing from that list `road_network` would
+#      update faithfully while the MAP went on showing the rung each road held whenever some unrelated
+#      section last moved. Every static frame in this harness would still look correct.
+# The whole field is re-stated at one fraction per step (not five runs at five fractions), so a step
+# moves the full width of the frame and the count is nowhere near the threshold from either side.
+const ROAD_WEAR_STEP_MIN_CHANGED_PX := 2000
+
+# State 20 (JUNCT): the GEOMETRY frame — a straight run, a 120° bend, a 3-way junction, a 4-way
+# crossroads, a dead-end terminus and a LONE tile, in one shot. This is where "a junction reads as two
+# planks meeting" would show, and where the centre disc's three jobs are visible: the lone tile draws at
+# all, the terminus gets a rounded cap instead of a squared-off plank end, and the junction hub is filled.
+#
+# Every tile below is written out as an explicit odd-r coordinate rather than walked, because the walk is
+# exactly what the frame is testing. Direction order is the wire's: 0 E, 1 SE, 2 SW, 3 W, 4 NW, 5 NE.
+const ROAD_JUNCT_STRAIGHT := [Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1), Vector2i(4, 1), Vector2i(5, 1)]
+# (10,1) odd row → SE is (+1,+1); (11,2) even row → SE is (0,+1). Two 60° steps = a 120° interior corner.
+const ROAD_JUNCT_BEND := [Vector2i(8, 1), Vector2i(9, 1), Vector2i(10, 1), Vector2i(11, 2), Vector2i(11, 3), Vector2i(12, 3)]
+# Hub (3,5), odd row: W arm, E arm, SE arm. Three arms is the largest junction whose arm tiles do NOT
+# touch each other, so this one reads as three clean spokes off a filled hub.
+const ROAD_JUNCT_THREE_WAY := [
+	Vector2i(1, 5), Vector2i(2, 5), Vector2i(3, 5), Vector2i(4, 5), Vector2i(5, 5),
+	Vector2i(4, 6), Vector2i(4, 7),
+]
+# Hub (9,6), even row: E, W, NW and SE arms. ⛔ **A 4-WAY JUNCTION ALWAYS HAS TWO PAIRS OF ARM TILES
+# THAT TOUCH EACH OTHER**, and that is hex geometry, not a fixture mistake: the six directions form a
+# 6-cycle whose largest independent set is 3, so any four arms include two adjacent pairs. Those tiles
+# are genuinely adjacent roads and the mask genuinely links them, so the frame shows two filled
+# quadrants. That is the truth about a crossroads on a hex grid — do not "fix" it by thinning the arms.
+const ROAD_JUNCT_FOUR_WAY := [
+	Vector2i(7, 6), Vector2i(8, 6), Vector2i(9, 6), Vector2i(10, 6), Vector2i(11, 6),
+	Vector2i(8, 5), Vector2i(8, 4), Vector2i(9, 7), Vector2i(10, 8),
+]
+# A run that simply STOPS — its east end is a terminus and must cap round, not square.
+const ROAD_JUNCT_TERMINUS := [Vector2i(2, 9), Vector2i(3, 9), Vector2i(4, 9)]
+# **A LONE ROAD TILE, AND IT MUST DRAW.** Per tile this is the ORDINARY case — a road forms tile by
+# tile, so the first tile of every road in the game is exactly this. No arms at all: pure centre disc.
+# Placed mid-frame, clear of every run above (none of its six neighbours is a road) AND clear of the
+# minimap's own CanvasLayer in the bottom-right corner, which is not hidden with the map and would
+# otherwise sit squarely on top of the one tile this cell exists to show.
+const ROAD_JUNCT_LONE := [Vector2i(6, 3)]
+const ROAD_JUNCT_RUNG_INDEX := 2        # dirt road — wide enough that the geometry is legible
+
+# ⛔ **THE LONE TILE'S OWN GUARD, and the frame CANNOT be read for it by eye.** The disc a linkless
+# road paints is ONE ROAD-WIDTH ACROSS — at this fixture's rung and radius a blob ~17 px wide — which
+# on the prairie's own high-frequency texture is indistinguishable from a bare patch of ground. Two
+# readers hunting for it in `road_junctions.png` both concluded the disc was missing when it was in
+# fact drawing correctly; a caption pointing at something no one can find is not verification. So the
+# property is MEASURED: the same fixture is re-stated with the lone tile removed, and the frame must
+# MOVE by the disc's own footprint. The disc is what makes an isolated road tile draw at all — a road
+# forms tile by tile, so the FIRST tile of every road in the game is exactly this case.
+#
+# Floor derivation, not a taste number: the disc's footprint is pi*(half_width + softness)^2 at the
+# fixture's rung and radius — pi*(0.118*75 + 0.03*75)^2 ~= 387 px. The floor sits well under that (so
+# retuning the ladder's middle rungs cannot trip it) and enormously above the EXACTLY ZERO a disc that
+# never drew would move.
+const ROAD_LONE_MIN_CHANGED_PX := 120
+
+# State 21 (ATRISK): §7's rule, which is the one thing the slice must preserve EXACTLY. An at-risk road
+# takes the PAVED rung's width and opacity whatever rung it holds (an alarm that faded with the rung
+# would be quietest on the trail nobody notices going) while its SURFACE stays its own rung's, tinted
+# toward DANGER. Three runs prove both halves at once: a kept dirt road (the surface control), the same
+# dirt road at risk, and a kept paved road (the geometry control the at-risk run must match in width).
+const ROAD_RISK_ROWS := [2, 5, 8]
+# The bill a road in shortfall carries, driven through the REAL published fields — `upkeep_shortfall` is
+# what `HudRouteVocab.is_short` reads, and `demand - supplied` is the shortfall verbatim, exactly as the
+# sim emits it. Any figure at or above `SourceForecast.UPKEEP_WORK_MIN` (0.005) is short; these are a
+# middle rung's own numbers, so the fixture states a road the sim can actually produce.
+const ROAD_UPKEEP_DEMAND := 3.4
+const ROAD_UPKEEP_SHORTFALL := 1.7
+const ROAD_UPKEEP_KEPT := 0.0
+# Whose job a kept road is. The draw reads no keeper — a road's look is its rung, its wear and its
+# at-risk state, never who holds it — so this is here to make the row the shape the wire sends.
+const ROAD_KEEPER_BAND := 1
+const ROAD_REMOTENESS_AT_HOME := 1.0
+const ROAD_UPKEEP_WORKERS := 4
+const ROAD_NEGLECT_GRACE_REMAINING := 2
+
+# In-frame cell captions. `Image` has no text drawing, so the labels ride a throwaway `CanvasLayer` of
+# `Label`s over the map (the contact sheet's idiom) and are freed again after the capture. Without them
+# a reviewer has to count rows to know which run is which rung, which is how a swapped ladder ships.
+const ROAD_LABEL_LAYER := SHEET_LAYER
+const ROAD_LABEL_FONT_SIZE := 22
+const ROAD_LABEL_COLOR := Color(1.0, 1.0, 1.0)
+const ROAD_LABEL_OUTLINE_COLOR := Color(0.0, 0.0, 0.0)
+const ROAD_LABEL_OUTLINE_SIZE := 6
+# Nudge off the hex centre so the caption sits beside the road rather than on top of the pixels it names.
+const ROAD_LABEL_OFFSET := Vector2(-48.0, -74.0)
+
 # The state filter's cmdline flag (after the scene's `--`), e.g. `-- --only=G` / `-- --only=1,4,G`.
 const ONLY_ARG_PREFIX := "--only="
 
@@ -930,6 +1053,22 @@ func _ready() -> void:
 	if _want("17/BANK"):
 		# --- state 17 (BANK): the NavigableRiver BANK corridor reads as a CHAIN OF HEXAGONS ---
 		await _render_bank_state()
+
+	if _want("18/ROADS"):
+		# --- state 18 (ROADS): the road RUNG SWEEP — four runs, one per rung (see the ROAD_* consts) ---
+		await _render_road_sweep_state()
+
+	if _want("19/WEAR"):
+		# --- state 19 (WEAR): THE DEFECT FRAME — one rung, five wear steps, which MUST differ ---
+		await _render_road_wear_state()
+
+	if _want("20/JUNCT"):
+		# --- state 20 (JUNCT): bend / 3-way / 4-way / terminus / lone tile, in one shot ---
+		await _render_road_junction_state()
+
+	if _want("21/ATRISK"):
+		# --- state 21 (ATRISK): paved GEOMETRY, own SURFACE, DANGER tint (see the ROAD_RISK_* consts) ---
+		await _render_road_at_risk_state()
 
 	_finish()
 
@@ -1861,6 +2000,259 @@ func _snapshot_water_patch(visibility := PackedFloat32Array()) -> Dictionary:
 	for hex: Vector2i in WATER_DEEP_HEXES:
 		arr[hex.y * WATER_GRID_W + hex.x] = WATER_DEEP_ID
 	return _snapshot(arr, WATER_GRID_W, WATER_GRID_H, visibility)
+
+
+func _render_road_sweep_state() -> void:
+	## State 18 (ROADS): one contiguous run per rung, all at build_fraction 0.0, so each surface is judged
+	## at its own rung's width and opacity with no wear folded in. Read for: four clearly DIFFERENT roads,
+	## climbing in both width and prominence, and no seam where a run meets the bare ground at its ends.
+	var rows: Array = []
+	var labels: Array = []
+	for i in ROAD_SWEEP_ROWS.size():
+		var row: int = int(ROAD_SWEEP_ROWS[i])
+		var rung: String = String(HudRouteVocab.RUNG_ORDER[i])
+		rows.append_array(_road_run(row, rung, 0.0, ROAD_UPKEEP_KEPT))
+		labels.append({
+			"tile": Vector2i(ROAD_SWEEP_COL_START, row),
+			"text": "%s  (rung %d, wear 0%%)" % [HudRouteVocab.rung_label(rung), i],
+		})
+	await _render_road_frame(rows, labels, "road_rungs")
+
+
+func _render_road_wear_state() -> void:
+	## State 19 (WEAR): five runs of the SAME rung at five wear steps. THE defect frame — see
+	## ROAD_WEAR_FRACTIONS. Read for: five visibly different roads. Identical-looking rows here mean the
+	## ladder scalar is not reaching the width/opacity mixes, whatever else in this run is green.
+	var rows: Array = []
+	var labels: Array = []
+	var rung: String = HudRouteVocab.RUNG_KEY_PATH
+	for i in ROAD_WEAR_ROWS.size():
+		var row: int = int(ROAD_WEAR_ROWS[i])
+		var frac: float = float(ROAD_WEAR_FRACTIONS[i])
+		rows.append_array(_road_run(row, rung, frac, ROAD_UPKEEP_KEPT))
+		labels.append({
+			"tile": Vector2i(ROAD_SWEEP_COL_START, row),
+			"text": "path, wear %d%%  (s = %.2f)" % [int(round(frac * 100.0)), frac],
+		})
+	await _render_road_frame(rows, labels, "road_wear")
+	await _assert_road_wear_ladder(rung)
+
+
+func _assert_road_wear_ladder(rung: String) -> void:
+	## Walk `ROAD_WEAR_FRACTIONS` one step at a time and require the rendered map to MOVE at each step.
+	## See ROAD_WEAR_STEP_MIN_CHANGED_PX for the two properties this holds and why neither can be seen
+	## in a still frame. Each step is delivered the way a real turn delivers it: the decoder patches its
+	## cached world and republishes it WHOLE, so every key is present on every frame and
+	## `changed_sections` is the only signal that says what actually moved (`SnapshotSections`).
+	var previous: Image = null
+	var previous_fraction: float = 0.0
+	for i in ROAD_WEAR_FRACTIONS.size():
+		var fraction: float = float(ROAD_WEAR_FRACTIONS[i])
+		var rows: Array = []
+		for row in ROAD_WEAR_ROWS:
+			rows.append_array(_road_run(int(row), rung, fraction, ROAD_UPKEEP_KEPT))
+		var frame: Dictionary = _snapshot_roads(rows)
+		if previous != null:
+			# Only after the first: the opening frame establishes the world, every later one is a DELTA
+			# whose manifest names the road section alone.
+			frame[SnapshotSections.CHANGED_SECTIONS_KEY] = PackedStringArray([MAP_VIEW.SECTION_ROUTES])
+		_map.display_snapshot(frame)
+		_map.queue_redraw()
+		await _settle()
+		var current: Image = await _capture()
+		if current == null:
+			return
+		if previous != null:
+			var changed: int = _changed_pixel_count(previous, current)
+			if changed < ROAD_WEAR_STEP_MIN_CHANGED_PX:
+				_fail(("wear %.2f → %.2f moved only %d px (min %d) — either the ladder scalar is not "
+					+ "reaching the width/opacity/surface (the reported defect: tiles at different wear "
+					+ "drawing identically), or a `%s`-only delta is not rebuilding the road map (check "
+					+ "MapView.SHADER_INPUT_SECTIONS lists SECTION_ROUTES).")
+					% [previous_fraction, fraction, changed, ROAD_WEAR_STEP_MIN_CHANGED_PX,
+						MAP_VIEW.SECTION_ROUTES])
+			else:
+				print("blend_probe: wear %.2f → %.2f moved %d px (routes-only delta)"
+					% [previous_fraction, fraction, changed])
+		previous = current
+		previous_fraction = fraction
+
+
+func _changed_pixel_count(before: Image, after: Image) -> int:
+	## How many pixels differ between two captures. Same-size by construction here (both come from the
+	## pinned canvas), but a mismatch is reported rather than crashed on — a resized window mid-state is
+	## a real failure mode this harness has hit before.
+	if before.get_size() != after.get_size():
+		_fail("capture size changed mid-state (%s vs %s) — the WM resized the window and the comparison is void"
+			% [before.get_size(), after.get_size()])
+		return 0
+	var changed: int = 0
+	for y in range(before.get_height()):
+		for x in range(before.get_width()):
+			if before.get_pixel(x, y) != after.get_pixel(x, y):
+				changed += 1
+	return changed
+
+
+func _render_road_junction_state() -> void:
+	## State 20 (JUNCT): the geometry frame. Read for: the bend rounding rather than mitring, the two
+	## junction hubs reading as ONE BODY rather than as planks meeting, the terminus capping round, and
+	## the lone tile drawing at all.
+	var rung: String = String(HudRouteVocab.RUNG_ORDER[ROAD_JUNCT_RUNG_INDEX])
+	var rows: Array = []
+	var labels: Array = []
+	for piece: Array in [
+		[ROAD_JUNCT_STRAIGHT, "straight run"],
+		[ROAD_JUNCT_BEND, "120° bend"],
+		[ROAD_JUNCT_THREE_WAY, "3-way junction"],
+		[ROAD_JUNCT_FOUR_WAY, "4-way crossroads"],
+		[ROAD_JUNCT_TERMINUS, "dead-end terminus"],
+		[ROAD_JUNCT_LONE, "lone tile (centre disc, one road-width across)"],
+	]:
+		var tiles: Array = piece[0]
+		for tile: Vector2i in tiles:
+			rows.append(_road_row(tile, rung, 0.0, ROAD_UPKEEP_KEPT))
+		labels.append({"tile": tiles[0], "text": String(piece[1])})
+	await _render_road_frame(rows, labels, "road_junctions")
+	await _assert_road_lone_tile_draws(rows, rung)
+
+
+func _assert_road_lone_tile_draws(junction_rows: Array, rung: String) -> void:
+	## Require the LONE tile's centre disc to paint. See ROAD_LONE_MIN_CHANGED_PX for why this cannot be
+	## left to the eye. The captured frame is the one just saved (its captions are already freed), and the
+	## comparison frame is the identical fixture with the lone tile's row dropped — so the ONLY thing that
+	## can move a pixel is the disc. Both frames are whole snapshots: the routes-only DELTA path is the
+	## wear ladder's business, and folding the two properties into one assertion would let either mask the
+	## other.
+	var lone: Vector2i = ROAD_JUNCT_LONE[0]
+	var with_lone: Image = await _capture()
+	if with_lone == null:
+		return
+	var without: Array = []
+	for road: Dictionary in junction_rows:
+		if Vector2i(int(road["tile_x"]), int(road["tile_y"])) != lone:
+			without.append(road)
+	if without.size() != junction_rows.size() - ROAD_JUNCT_LONE.size():
+		_fail("the lone tile %s is not in the junction fixture — the guard is asserting nothing" % lone)
+		return
+	_map.display_snapshot(_snapshot_roads(without))
+	_map.queue_redraw()
+	await _settle()
+	var absent: Image = await _capture()
+	if absent == null:
+		return
+	var changed: int = _changed_pixel_count(with_lone, absent)
+	if changed < ROAD_LONE_MIN_CHANGED_PX:
+		_fail(("the lone %s tile at %s moved only %d px (min %d) — a road tile whose connection mask is "
+			+ "0 is drawing NOTHING, so the first tile of every road in the game is invisible. The "
+			+ "centre disc in the road pass is what draws it (terrain_blend.gdshader, road pass).")
+			% [HudRouteVocab.rung_label(rung), lone, changed, ROAD_LONE_MIN_CHANGED_PX])
+	else:
+		print("blend_probe: lone %s tile at %s paints %d px (centre disc)"
+			% [HudRouteVocab.rung_label(rung), lone, changed])
+	# Put the full fixture back so the map is left in the state the saved frame shows.
+	_map.display_snapshot(_snapshot_roads(junction_rows))
+	_map.queue_redraw()
+	await _settle()
+
+
+func _render_road_at_risk_state() -> void:
+	## State 21 (ATRISK): §7's rule in one frame. Read for: the at-risk run matching the PAVED control's
+	## WIDTH and prominence exactly while still wearing the DIRT road's surface under a DANGER tint — the
+	## alarm must not also be a claim about which rung is standing.
+	var rows: Array = []
+	rows.append_array(_road_run(int(ROAD_RISK_ROWS[0]), HudRouteVocab.RUNG_KEY_DIRT_ROAD, 0.0, ROAD_UPKEEP_KEPT))
+	rows.append_array(_road_run(int(ROAD_RISK_ROWS[1]), HudRouteVocab.RUNG_KEY_DIRT_ROAD, 0.0, ROAD_UPKEEP_SHORTFALL))
+	rows.append_array(_road_run(int(ROAD_RISK_ROWS[2]), HudRouteVocab.RUNG_KEY_PAVED_ROAD, 0.0, ROAD_UPKEEP_KEPT))
+	var labels: Array = [
+		{"tile": Vector2i(ROAD_SWEEP_COL_START, int(ROAD_RISK_ROWS[0])), "text": "dirt road, kept"},
+		{"tile": Vector2i(ROAD_SWEEP_COL_START, int(ROAD_RISK_ROWS[1])), "text": "dirt road, AT RISK"},
+		{"tile": Vector2i(ROAD_SWEEP_COL_START, int(ROAD_RISK_ROWS[2])), "text": "paved road, kept (width control)"},
+	]
+	await _render_road_frame(rows, labels, "road_at_risk")
+
+
+func _render_road_frame(rows: Array, labels: Array, name: String) -> void:
+	## Display a road fixture on the uniform prairie field, fit to ISO_HEX_RADIUS, caption the cells, and
+	## capture. The captions are freed again immediately so they cannot leak into a later state's frame.
+	_map.display_snapshot(_snapshot_roads(rows))
+	await _refit(ISO_HEX_RADIUS)
+	var layer: CanvasLayer = _label_hexes(labels)
+	await _settle()
+	await _save(name)
+	layer.queue_free()
+	await _settle()
+
+
+func _label_hexes(entries: Array) -> CanvasLayer:
+	## Caption hexes IN the frame — a throwaway CanvasLayer of Labels over the map, the contact sheet's
+	## idiom (Image has no text drawing). Positioned off each named tile's own screen centre, so a caption
+	## follows its road whatever the fit landed on.
+	var layer := CanvasLayer.new()
+	layer.layer = ROAD_LABEL_LAYER
+	add_child(layer)
+	for entry: Dictionary in entries:
+		var tile: Vector2i = entry["tile"]
+		var label := Label.new()
+		label.text = String(entry["text"])
+		label.add_theme_font_size_override("font_size", ROAD_LABEL_FONT_SIZE)
+		label.add_theme_color_override("font_color", ROAD_LABEL_COLOR)
+		label.add_theme_color_override("font_outline_color", ROAD_LABEL_OUTLINE_COLOR)
+		label.add_theme_constant_override("outline_size", ROAD_LABEL_OUTLINE_SIZE)
+		label.position = _map._hex_center(
+			tile.x, tile.y, _map.last_hex_radius, _map.last_origin) + ROAD_LABEL_OFFSET
+		layer.add_child(label)
+	return layer
+
+
+func _road_run(row: int, rung: String, build_fraction: float, shortfall: float) -> Array:
+	## One CONTIGUOUS west→east run of road tiles on `row`. Contiguity is load-bearing: the connection
+	## mask is built from adjacency, so a run with gaps in it is not a road — it is a line of lone tiles.
+	var rows: Array = []
+	for col in range(ROAD_SWEEP_COL_START, ROAD_SWEEP_COL_END):
+		rows.append(_road_row(Vector2i(col, row), rung, build_fraction, shortfall))
+	return rows
+
+
+func _road_row(tile: Vector2i, rung: String, build_fraction: float, shortfall: float) -> Dictionary:
+	## ONE ROAD ROW, shaped exactly like the native decoder's `routes` entry (`routes_to_array`) — one row
+	## per TILE, whose `tile_x`/`tile_y` pair is its identity, with no id and no path on it.
+	##
+	## ⛔ **EVERY VALUE HERE IS ONE THE SIM CAN ACTUALLY PRODUCE.** `rung` is one of the four shipped rung
+	## keys; `build_fraction` is in 0..1 and **1.0 is legal and normal** — it reads that both on a rung
+	## just completed and at the top of the ladder, because the sim never derives it by subtraction; and
+	## the shortfall is driven through the published `upkeep_*` trio with `demand - supplied` as the
+	## shortfall verbatim, never by inventing a flag the wire has no way to emit.
+	return {
+		"tile_x": tile.x,
+		"tile_y": tile.y,
+		# Read the bool before the id — `0` is a real `BandId`.
+		"has_keeper": true,
+		"keeper_band_id": ROAD_KEEPER_BAND,
+		"keeper_remoteness": ROAD_REMOTENESS_AT_HOME,
+		"rung": rung,
+		"build_fraction": build_fraction,
+		"upkeep_demand": ROAD_UPKEEP_DEMAND,
+		"upkeep_supplied": ROAD_UPKEEP_DEMAND - shortfall,
+		"upkeep_shortfall": shortfall,
+		"upkeep_workers_needed": ROAD_UPKEEP_WORKERS,
+		"has_neglect_grace": true,
+		"neglect_grace_remaining": ROAD_NEGLECT_GRACE_REMAINING,
+		"grants_sight": shortfall <= ROAD_UPKEEP_KEPT,
+		"friction_multiplier": 1.0,
+		"holds_link_to_tiles": 0,
+	}
+
+
+func _snapshot_roads(rows: Array) -> Dictionary:
+	## A UNIFORM prairie field carrying `rows` under the wire's own `routes` key. No biome seam anywhere,
+	## so every difference between two road cells is the road pass's own doing.
+	var arr: Array = []
+	arr.resize(ROAD_GRID_W * ROAD_GRID_H)
+	arr.fill(ROAD_FIELD_ID)
+	var snap: Dictionary = _snapshot(arr, ROAD_GRID_W, ROAD_GRID_H)
+	snap["routes"] = rows
+	return snap
 
 
 func _v8_visibility() -> PackedFloat32Array:

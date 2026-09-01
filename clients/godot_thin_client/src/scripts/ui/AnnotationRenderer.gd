@@ -102,57 +102,6 @@ const ROUTE_MIN_POINTS := 2                # fewer than this is not a line
 # Factions MapView has no colour for (and unowned orders) draw in neutral parchment amber.
 const ROUTE_FALLBACK_COLOR := Color(0.95, 0.9, 0.6, 0.8)
 
-# --- THE ROAD NETWORK (the roads in the GROUND, arc #532) ----------------------------------------
-#
-# ⛔ **NOT the ROUTES family above.** That one draws ORDER PATHS — waypoints a player's own
-# movement orders are following, which vanish with the order. This draws roads: world objects in the
-# ground, belonging to no faction, that outlive every band that walks them — kept by one band each,
-# which is a JOB rather than ownership. The obvious name was taken by the
-# other thing first, so this family is spelled `ROAD_*` and its state lives on
-# `MapView.road_network` (world state, like `units` and `herds`) rather than here.
-#
-# ⛔ **A ROAD IS ONE HEX, SO THE DRAW IS A TILE AND NOT A POLYLINE.** Each tile carries its own rung,
-# its own meter, its own keeper and its own decay, and the row has no path on it. A run of road
-# therefore reads as a run of stamped hexes — which is the honest picture, because the two ends of a
-# long road can genuinely be at different rungs and kept by different bands.
-
-## The per-rung STROKE WIDTH ladder, faintest rung to strongest. Four steps because the branch has
-## four rungs; the widths climb because a paved road is a bigger thing on the ground than a game
-## trail, and the eye reads thickness before it reads tint at map zoom.
-const ROAD_WIDTH_PATH := 1.5
-const ROAD_WIDTH_TRAIL := 2.0
-const ROAD_WIDTH_DIRT_ROAD := 3.0
-const ROAD_WIDTH_PAVED_ROAD := 4.0
-
-## ⛔ **THE RUNG LADDER IS ONE INK AT FOUR OPACITIES, NOT FOUR PALETTE ENTRIES — and that is a
-## CORRECTION, made against a rendered frame.** The first cut walked the palette's own ink ladder
-## (`LINE_SOFT` → `INK_FAINT` → `INK_DIM` → `INK`), which is faintest-to-strongest **on the HUD's dark
-## ground and INVERTED on the map's**: rendered over tan steppe, the path drew as a near-black
-## hairline with the most contrast on the frame while the paved road drew as pale grey. A road's rung
-## has to read as prominence on ground of ANY tone, and only opacity does that.
-##
-## `HudStyle.INK` at these four, derived at draw time — the map's own idiom for a themed overlay
-## tint (`MapView.SUPPLY_LINK_COLOR` is `SIGNAL` at its own opacity for the same reason). Read live
-## rather than cached so a theme swap is picked up with no installation hook of this family's own.
-const ROAD_OPACITY_PATH := 0.30
-const ROAD_OPACITY_TRAIL := 0.52
-const ROAD_OPACITY_DIRT_ROAD := 0.74
-const ROAD_OPACITY_PAVED_ROAD := 0.94
-
-## A road whose keeping is short draws in DANGER — the client's existing at-risk ink, not a colour of
-## this family's own. It is losing a real investment, which is the same news a starving pen's ring
-## carries, so it reads in the same language, and it draws at the TOP of the opacity ladder because
-## an alarm that faded with the rung would be quietest on the trail nobody notices going.
-const ROAD_AT_RISK_WIDTH := ROAD_WIDTH_DIRT_ROAD
-const ROAD_AT_RISK_OPACITY := ROAD_OPACITY_PAVED_ROAD
-
-## ⛔ **HOW BIG THE STAMPED HEX IS, as a fraction of the tile's own radius.** Inset rather than flush,
-## for two reasons that both matter at map zoom: a flush ring would sit exactly on the hex grid's own
-## edges and read as a GRID LINE rather than as a thing on the ground, and two adjacent road tiles
-## would share that edge so a run of road would draw its interior seams twice as heavily as its
-## outside. Inset, the run reads as a chain of stamps with the ground showing between them.
-const ROAD_TILE_RADIUS_FACTOR := 0.62
-
 # --- COMMAND TARGETING (HUD → map) --------------------------------------------------------------
 # What the pending command is asking the player to click. `_draw_targeting` branches on it.
 const TARGETING_NEED_BAND := "band"
@@ -398,81 +347,6 @@ func _draw_route(order: Dictionary, radius: float, origin: Vector2) -> void:
 	var points := _view._unwrapped_path_points(tiles, radius, origin)
 	for i in range(points.size() - 1):
 		_view.draw_line(points[i], points[i + 1], color, ROUTE_WIDTH)
-
-## **EVERY ROAD IN THE GROUND, one stamped HEX apiece.**
-##
-## Reads `MapView.road_network` through the back-ref rather than holding a copy: a road is world
-## state, like `units` and `herds`, and this renderer already reads both that way. It is therefore
-## cleared by `MapView.reset_world_state` with the rest of the world, not by this file's own reset.
-func draw_road_network(radius: float, origin: Vector2) -> void:
-	for road in _view.road_network:
-		if road is Dictionary:
-			_draw_road(road, radius, origin)
-
-## One road — one hex. Styled by the RUNG IT HOLDS, never by the meter beside it, which belongs to the
-## rung above (`HudRouteVocab`'s own rule: the rung string is the bool).
-func _draw_road(road: Dictionary, radius: float, origin: Vector2) -> void:
-	var tile: Vector2i = road.get(MapView.ROAD_TILE_KEY, MapView.ROAD_TILE_NONE)
-	if tile.x < 0 or tile.y < 0:
-		return
-	# ⛔ **ONE ROAD, ONE VISIBILITY QUESTION.** The per-SEGMENT gate this replaced existed because a
-	# stored path could run off the explored map with only one of its tiles seen; a road is a single
-	# hex now, so the sim's own gate — *have you seen that tile* — is the whole of the test.
-	if not _road_tile_known(tile):
-		return
-	var rung := HudRouteVocab.rung_of(road)
-	# ⛔ **EITHER CURRENCY PUTS THE ROAD AT RISK, AND ASKING ONLY THE WORK ARM LEFT IT ROTTING IN
-	# SILENCE.** `route:paved_road` owes standing STONE as well as standing work, and the sim trips
-	# its single `neglect_turns` on whichever is short — so a road with its keepers fully paid and its
-	# shelf empty is genuinely being lost while `is_short` alone drew it in the calm ink.
-	# `is_keeping_short` is the `or`, and it is deliberately never a sum: the decay rides the WORSE of
-	# the two fractions, so there is no combined severity for a width or an opacity to encode.
-	var short := HudRouteVocab.is_keeping_short(road)
-	# **AT RISK OUTRANKS THE RUNG LADDER**, and it takes the client's existing danger ink rather than
-	# a colour of its own: a road washing out is losing an investment the player paid for, and the
-	# one thing the map has to say about it is that it is being lost. The width holds at a mid rung's
-	# so the alarm cannot also be a claim about which rung is standing.
-	var color := Color(HudStyle.DANGER, ROAD_AT_RISK_OPACITY) if short \
-		else Color(HudStyle.INK, _road_rung_opacity(rung))
-	var width := ROAD_AT_RISK_WIDTH if short else _road_rung_width(rung)
-	# A road names its tile by its DATA column, so the stamp goes on the copy of that column the
-	# viewport is actually over — `_hex_center_wrapped`, the single-tile idiom every marker family
-	# here uses. The polygon is then struck at the INSET radius off that true centre, which is why the
-	# two calls take different radii: the placement is the tile's, the drawing is the stamp's.
-	var center: Vector2 = _view._hex_center_wrapped(tile.x, tile.y, radius, origin)
-	_view._outline_hex_at(center, radius * ROAD_TILE_RADIUS_FACTOR, color, width)
-
-## Has the player's faction ever stood on this tile? `Discovered` OR `Active` — the same gate the sim
-## publishes a road under, and deliberately NOT `_is_tile_visible`, which demands `Active`: a road
-## does not wander off, so a remembered one is remembered truly. `""` is fog-off, which knows
-## everything. **One call per ROAD now**, the per-segment walk having gone with the stored path.
-func _road_tile_known(tile: Vector2i) -> bool:
-	var state := _view._visibility_state_at(tile.x, tile.y)
-	return state != HudConst.VISIBILITY_UNEXPLORED
-
-## How solid one rung's road draws — see the opacity ladder above for why prominence rides opacity
-## rather than four palette entries.
-static func _road_rung_opacity(rung: String) -> float:
-	match rung:
-		HudRouteVocab.RUNG_KEY_PAVED_ROAD:
-			return ROAD_OPACITY_PAVED_ROAD
-		HudRouteVocab.RUNG_KEY_DIRT_ROAD:
-			return ROAD_OPACITY_DIRT_ROAD
-		HudRouteVocab.RUNG_KEY_TRAIL:
-			return ROAD_OPACITY_TRAIL
-	# The path AND any rung this client has never heard of: the faintest step there is. A road
-	# is a real thing whatever it is called, so an unknown rung draws rather than vanishing.
-	return ROAD_OPACITY_PATH
-
-static func _road_rung_width(rung: String) -> float:
-	match rung:
-		HudRouteVocab.RUNG_KEY_PAVED_ROAD:
-			return ROAD_WIDTH_PAVED_ROAD
-		HudRouteVocab.RUNG_KEY_DIRT_ROAD:
-			return ROAD_WIDTH_DIRT_ROAD
-		HudRouteVocab.RUNG_KEY_TRAIL:
-			return ROAD_WIDTH_TRAIL
-	return ROAD_WIDTH_PATH
 
 ## The command-targeting overlay: which things on the map are valid targets for the command the HUD
 ## is currently asking the player to aim, plus a reticle on the hovered hex.

@@ -1829,6 +1829,97 @@ static func pools_block_height(has_fund_mode: bool) -> float:
         height += float(ZONE_BLOCK_SEPARATION) + UPKEEP_MODE_ROW_HEIGHT
     return height
 
+# ---- THE ROADWORK ROSTER — WHICH roads the pool above is paying for (arc #532) --------------------
+#
+# ⛔ **IT IS A ROSTER, NOT A WORK BOARD.** The pool card one line up says `Roadwork 2` and nothing
+# else in the client said WHICH two roads those were; the per-road decision is `abandon`, and a
+# player cannot choose among things they cannot see. Reported from play at turn 122.
+#
+# **NO STEPPER AND NO CREW COUNT.** The hands are the band-wide `roadwork` pool above — a road is not
+# worked the way a hunt or a forage is, which is exactly why it has no per-tile work row — so a row
+# offering a worker count here would re-introduce the row §4.13b retired, by the back door.
+#
+# **IT SITS INSIDE THE WORK ZONE AS A BLOCK, DIRECTLY UNDER THE POOLS BLOCK THAT RAISES THE
+# QUESTION** — not as a fourth zone, which would move `wide_shell_min_width()`, the shell-flip
+# threshold and every per-dock reservation for nothing this readout needs.
+
+const ZONE_HEADER_ROADWORK_ROSTER := "Roads kept"
+
+## **A ROAD HAS NO NAME; ITS IDENTITY IS ITS PLACE**, so the name cell is a distance and an 8-point
+## bearing from the band's own camp — `4 tiles E`. Three rows all reading `Dirt road` would not be a
+## roster, which is why the rung is the VALUE cell and never the name.
+const ROADWORK_ROSTER_LOCATOR_FORMAT := "%d tiles %s"
+
+## …and the singular, because `1 tiles NE` is the tell that a list was built by a format string.
+const ROADWORK_ROSTER_LOCATOR_ONE := "1 tile %s"
+
+## **THE ANSWER FOR A ROAD THIS CLIENT CANNOT PLACE** — the band has no position on the wire yet, or
+## the road does. It is a MEANING rather than a fabricated bearing: the row still draws (the road is
+## real and abandonable), it simply does not claim to know where it is.
+const ROADWORK_ROSTER_LOCATOR_UNKNOWN := "Somewhere unmapped"
+
+## …and the road the band is CAMPED ON, which is a real and common state — a band grades the hex it
+## stands on first. `0 tiles ` would be a bearing-shaped hole rather than an answer.
+const ROADWORK_ROSTER_HERE := "Here, in camp"
+
+## ⛔ **THE ROSTER CAN BE HONESTLY SHORTER THAN THE POOL, and this line is what stops that reading as
+## a lie.** Road rows are FOG-FILTERED, while the pool card's totals come cohort-level from the sim
+## precisely because summing the visible rows would understate the bill — so a band can legitimately
+## show `Roadwork 2` beside a one-row roster, or beside none at all. An empty roster drawn next to a
+## non-zero `Roadwork` count would say *this band keeps nothing*, which is a readout that lies.
+const ROADWORK_ROSTER_UNSEEN_LINE := "The roads this band keeps are not in sight."
+
+## The `+N more` foot, the build queue block's own word for the same thing — a roster longer than the
+## zone can hold states what it is not showing rather than truncating in silence.
+const ROADWORK_ROSTER_OVERFLOW_FORMAT := "+%d more"
+
+## **ROWS BEFORE THE FOOT TAKES OVER.** Small on purpose: this block sits above the build queue and
+## the board in a zone that clips, and every row it draws is a board row that does not. Three is the
+## build queue's own ceiling one block down, so the two lists cap alike.
+const ROADWORK_ROSTER_ROWS_MAX := 3
+
+## The drop. Same `✕`, same steady full-opacity DANGER ink and same no-confirm rule as the build
+## queue's withdrawal and the parties zone's recall — a destructive single-item control reads as one.
+const ROADWORK_ROSTER_ABANDON_GLYPH := "✕"
+
+## **AND ITS COLUMN IS THE QUEUE WITHDRAWAL'S**, for the identical measured reason: `HudWidgets.compact`
+## squeezes the type size and the VERTICAL padding only, so the ghost button keeps the side margins
+## `HudStyle` authored and a 22px reservation is 10px under what the glyph draws.
+const ROADWORK_ROSTER_ABANDON_WIDTH := BUILD_QUEUE_UNQUEUE_WIDTH
+
+## The block's stable handle, valued the number of road rows it drew — so a harness can say *this
+## band's roster has N rows* rather than *a roster exists somewhere in the zone*.
+const ROADWORK_ROSTER_BLOCK_META := "roadwork_roster_block"
+
+## One row, valued its road's own TILE — the roster's only identity, and what the `✕` beside it names.
+const ROADWORK_ROSTER_ROW_META := "roadwork_roster_row"
+
+## The `✕` on a row, valued that row's tile for the same reason.
+const ROADWORK_ROSTER_ABANDON_META := "roadwork_roster_abandon"
+
+## The muted case-2 line, so its presence is assertable rather than inferred from a row count.
+const ROADWORK_ROSTER_UNSEEN_META := "roadwork_roster_unseen"
+
+## **THE HEIGHT THE BLOCK RESERVES *AND* DRAWS AT — one function, two callers**, the rule both blocks
+## beside it keep. The work zone `clip_contents`, so a block that drew without being paid for in
+## `_work_board_capacity`'s chrome term silently slices board rows off the bottom.
+##
+## `0` where the block does not render at all — no roads visible AND no roadwork demand — which is the
+## expeditions block's rule stated in arithmetic.
+##
+## `visible` is the count of KEPT ROADS THIS BAND CAN SEE; `unseen_line` is whether the muted line
+## above is drawn (case 2: a bill with nothing in sight). They are the block's two inputs rather than
+## its height, so the arithmetic stays in one place.
+static func roadwork_roster_height(visible: int, unseen_line: bool) -> float:
+    if visible <= 0 and not unseen_line:
+        return 0.0
+    var lines := mini(visible, ROADWORK_ROSTER_ROWS_MAX)
+    if visible > ROADWORK_ROSTER_ROWS_MAX:
+        lines += 1
+    if unseen_line:
+        lines += 1
+    return ZONE_HEAD_HEIGHT + float(lines) * WORK_ROW_HEIGHT
+
 # ---- The BUILD QUEUE block (`docs/plan_standing_upkeep.md` §4.6b) ---------------------------------
 #
 # The band's ordered build queue, above the filter chips in the WORK zone. **Above them deliberately:**
@@ -1889,12 +1980,18 @@ const BUILD_QUEUE_ROOM_GAP_COUNT := 5.0
 ## draws a `+N more` row BESIDE the capped entries rather than in place of one, so a zone that affords
 ## two rows and is handed four entries shows ONE entry and the overflow — the drawn count is the same
 ## either way, and computing it here is what stops the reservation and the render disagreeing.
-static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, entries: int) -> int:
+## ⛔ **`roster_height` IS THE ROADWORK ROSTER'S SHARE, AND IT IS A TERM HERE FOR THE SAME REASON THE
+## POOLS BLOCK IS** (arc #532). The roster renders BETWEEN the pools and this queue, so a ceiling that
+## did not subtract it would hand the queue rows the roster is already standing in — and the zone
+## clips, so the overflow comes silently off the bottom. `0.0` on a band with no roster, which is the
+## shipped case for most of the early game.
+static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, entries: int,
+        roster_height: float = 0.0) -> int:
     # The board row this leaves room for is a SOURCE row, so it is the two-line height; the rows this
     # divides for are QUEUE rows, which are one line each.
     var reserved := ZONE_HEAD_HEIGHT + WORK_CHIPS_HEIGHT + pools_block_height(pools_fund_mode) \
         + ZONE_HEAD_HEIGHT + WORK_ROW_TWO_LINE_HEIGHT + WORK_PAGER_HEIGHT \
-        + BUILD_QUEUE_ROOM_SETTINGS_HEIGHT \
+        + BUILD_QUEUE_ROOM_SETTINGS_HEIGHT + roster_height \
         + float(ZONE_BLOCK_SEPARATION) * BUILD_QUEUE_ROOM_GAP_COUNT
     var afforded := int((box_height - reserved) / WORK_ROW_HEIGHT)
     if entries > afforded:

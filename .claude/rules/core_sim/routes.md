@@ -1015,7 +1015,8 @@ the band certainly still owes its keeping.
 
 `native/src/dict/routes.rs` publishes the row (`tile_x` / `tile_y` / `has_keeper` / `keeper_band_id` /
 `keeper_remoteness`, and no path halves) and the GDScript side reads it: `MapView._ingest_road_network`
-joins on the tile pair, `AnnotationRenderer.draw_road_network` stamps one HEX per road, and the tile
+joins on the tile pair, `TerrainRenderer.rebuild_shader_maps` packs each row into the per-hex
+`road_map` splatmap the terrain shader's road pass draws from, and the tile
 card gained a `Kept by:` row naming the keeping band and the multiple distance put on its price.
 `.claude/rules/client/roads.md` is that half.
 

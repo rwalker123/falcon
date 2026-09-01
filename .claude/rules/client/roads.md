@@ -2,6 +2,8 @@
 paths:
   - "clients/godot_thin_client/src/scripts/ui/hud/hud_route_vocab.gd"
   - "clients/godot_thin_client/src/scripts/ui/AnnotationRenderer.gd"
+  - "clients/godot_thin_client/assets/terrain/terrain_blend.gdshader"
+  - "clients/godot_thin_client/src/scripts/ui/TerrainRenderer.gd"
   - "clients/godot_thin_client/native/src/dict/routes.rs"
   - "clients/godot_thin_client/src/scripts/ui/hud/RungLadder.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/RungGates.gd"
@@ -18,10 +20,14 @@ here are its traps, arriving one layer out.
 | Script | Purpose |
 |--------|---------|
 | `ui/hud/hud_route_vocab.gd` (`HudRouteVocab`) | The road VOCABULARY leaf — the four rung keys + their labels + `RUNG_ORDER`, the tile card's **four** row keys and their formats, one reader per wire field — **`build_turns_remaining_of` among them, the sim's own chained countdown for a queued road, defaulting to the `-1` sentinel and never `0`; and the standing-material trio `upkeep_material_demand_of` / `_supplied_of` / `_shortfall_of`** — the three-way keeping verdict (`is_short` the KEEPERS arm, `is_material_upkeep_short` the STONE arm, `is_keeping_short` their `or` and **never** their sum), and one composer per row (`road_row_value` and its `progress_clause` / `bonus_value` / **`upkeep_value`** / `reverting_value`, joined by `road_lines`, with `upkeep_tooltip` for the figures that left the row). It also owns the four `*_value_hex` forks `DetailFormat._value_hex` dispatches to, so a road's ink is decided beside the words it tints. A vocab module with static funcs, the `hud_work_vocab.gd` shape; it reads `SourceForecast` / `DetailFormat` / `HudSelectionVocab` / `HudConst` / `HudStyle` inside functions only, never in a `const`, so it adds no load cycle — **and that contract is what lets `SourceForecast` alias its four `RUNG_KEY_*` at `const` level** rather than spelling the wire's route rungs twice |
-| `ui/AnnotationRenderer.gd` → the `ROAD_*` family | The map draw: `draw_road_network` walks `MapView.road_network` (world state read through the `_view` back-ref, exactly as `units` / `herds` are) and `_draw_road` stamps **one HEX per road** — `MapView._hex_center_wrapped` for the placement, `_outline_hex_at` at `ROAD_TILE_RADIUS_FACTOR` of the tile radius for the ring. It is called from `_draw` right after the crisis annotations — above the tile tints, beneath every marker, ring and selection outline, because a road is infrastructure IN the ground rather than something standing on it |
+| `assets/terrain/terrain_blend.gdshader` → the **road pass** | Where a road is actually drawn. Modelled on the NAVIGABLE-TRUNK arm (own centre → shared edge midpoint, projection clamped to the segment), **not** on the Minor/Major edge pass, which draws along a hex SIDE — a road runs through hex CENTRES. Every arm plus an always-on CENTRE DISC are unioned by the river's max-coverage (== min-distance) pick, so bends round, junction hubs fill and dead-ends cap with no join geometry at all. Composited after the navigable-river pass, **over** the canopy and under peaks/FoW. `road_ladder_scalar` / `road_ladder_mix` are its two helpers; `best_tangent` is tracked and unused, and is where #603's rail rung plugs its sleeper UV in |
+| `ui/TerrainRenderer.gd` → the `ROAD_*` family + `_pack_road_texel` | Builds the per-hex **`road_map`** splatmap (RGBA8: R connection mask / G rung index / B build fraction / A flags) inside `rebuild_shader_maps`, derived client-side from `MapView.road_tile_lookup` — there is no road mask on the wire and none is wanted, a road row being per-TILE with computable neighbours. Also binds the `road_tex` array and pushes the `roads` config block's uniforms, including `road_at_risk_color` read LIVE off `HudStyle.DANGER` so a theme swap is picked up. `_road_tile_known` is the fog gate, reproducing the retired `AnnotationRenderer._road_tile_known` exactly |
 | `ui/hud/RungLadder.gd` → `route_track` / `build_track`'s `title` | **THE ROUTE BRANCH'S ROW PRODUCER, a SIBLING of `track` and never a widening of it** — `track` takes a labor `kind` and a wire source dict, and a road has neither. It emits `track`'s own `ROW_*` shape so the RENDERER is shared (`build_track` gained one optional heading argument and nothing else), walks `HudRouteVocab.route_ladder`'s ordered catalog, and owns the branch's seventh state, `STATE_UNORDERED` — the rung nobody declares. Its private leaves are `_route_meter_clause` (the meter, on the row DIRECTLY above the standing rung and no other), `_route_pile` / `_route_stall_clause` (the pile and its shortfall, through the SHARED `_build_price_asides`) and `_route_queue_aside` (where the press lands). ⛔ **The STANDING bill is on the row's HOVER (`_route_tooltip`), not on a `hold_asides` leaf** — `route_track` leaves `ROW_HOLD_ASIDES_KEY` empty on every row, deliberately: the plant and animal branches' `_hold_price_asides` reads a prefixed forecast SOURCE dict, and a road is not one |
 | `ui/hud/RungGates.gd` → `route_gates` / `route_knowledge_reason` | **THE ROUTE ARM of the shared gate layer**, keyed **RUNG KEY** rather than verb (two route rungs declare none, so a verb-keyed table cannot tell `path` from `trail`). Four gates in reading order — the ground, the un-orderable rung, the craft, the keeper — each carrying its own remedy. The craft's NAME is threaded in as a `{knowledge_id: display_name}` parameter off the ladder's knowledge roster, never a table here; its REMEDY is the rung whose `earns_knowledge` names that craft, **looked up through `HudRouteVocab.ladder_rung_teaching` and never inferred from `requires_rung`** |
 | `ui/hud/DrawerComposeController.gd` → the `build_road_drawer_actions` family | The tile card's `Road ▸` action and the `PopupPanel` it opens (`_open_road_ladder` / `_emit_road_improvement` / `_ensure_road_ladder` / `_road_ladder_anchor_rect` / `_dismiss_road_ladder`), filling `%RoadLadderControls` — its own container at the BOTTOM of the card, since `%ForageAssignControls` is gated on a gathering site with a band in hand. It emits `road_improvement_requested`, which `HudLayer` relays straight onto `improvement_requested`, and `road_abandon_requested`, which it relays onto `abandon_requested` — both with **no** optimistic overlay write. `_fill_road_ladder` is the card's re-render seam (the band picker calls it) and `_default_road_band` decides which band it opens on |
+| `ui/hud/BandPanelController.gd` → the `_roadwork_roster_*` family | **THE ROADWORK ROSTER** — `_roadwork_roster_models` (the `has_keeper`-before-`keeper_band_id` filter, the distance/bearing locator, the stable nearest-first sort), `_roadwork_roster_unseen` (case 2, off the cohort's published `roadwork_demand` and never a sum of the fog-filtered rows), `_build_roadwork_roster_block` / `_row` / `_abandon_button`. It emits its OWN `road_abandon_requested`, relayed by `HudLayer` onto `abandon_requested` — the same path the drawer's button takes, never a second builder. Its reserved height is resolved once in `_fill_work_zone_column` and spent in BOTH `build_queue_rows_max` and `_work_board_capacity` |
+| `ui/hud/hud_work_vocab.gd` → the `ROADWORK_ROSTER_*` family | The roster's words, metas and its `roadwork_roster_height` — the one expression the block reserves AND draws at, `pools_block_height`'s rule one block down. It lives here rather than in `HudRouteVocab` because the geometry of the Work zone belongs beside the two blocks it shares that zone with |
+| `ui/hud/SourceForecast.gd` → `compass_bearing` + `COMPASS_*` | The roster's 8-point bearing, beside `hex_distance_wrapped` and using the same private wrap-aware column delta. **Taken in DRAWN space** (`sqrt(3)` across a column, `1.5` down a row) — an angle off raw offset coordinates skews every diagonal by up to a whole sector |
 | `native/src/dict/routes.rs` | `routes_to_array` — **one dict per road TILE**, the `connections.rs` shape. The row's identity is `tile_x` / `tile_y`, which replaced the retired `RouteId`; beside them ride `has_keeper` / `keeper_band_id` (read the bool first — `0` is a real `BandId`) and `keeper_remoteness`, the multiple distance put on that road's price, and `build_turns_remaining`, the sim's chained countdown for a QUEUED road (the same five sentinels a patch publishes; `-1`, never `0`, for a rung nobody has ordered), and the **standing** `upkeep_material_demand` / `upkeep_material_supplied` pair — what HOLDING the rung swallows per turn and what the store paid of it, which is not the `build_material_*` pair beside it. There is **no path on the row** — a link knows its two endpoints, so the tiles between them are computable. **`route_rungs_to_array` is the file's second producer and answers a different question** — one row per RUNG of the branch, published once per world beside `ladderKnowledge`, carrying no faction and no tile. One field on it is not the rung's: `build_work_per_worker_turn` is the SIM's bare worker output, the same on every row, riding the catalog because the catalog is the set of numbers identical for every road in the world |
 
 ## ⛔ A ROAD IS NOT AN ORDER PATH, AND THE OBVIOUS NAME WAS ALREADY TAKEN
@@ -35,10 +41,12 @@ having nobody on the hook: exactly one band KEEPS each tile, which is a JOB. **T
 retired from this arc.**)
 
 **So the client noun for this branch is `road` everywhere** — `MapView.road_network` /
-`road_tile_lookup`, `AnnotationRenderer.draw_road_network`, `HudRouteVocab`, `ui_preview`'s
-`road_tile_*` frames and `map_preview`'s `map_road_network`. Do not rename either into the other, and
-do not "unify" the two draw passes: they read different sections, live in different layers of `_draw`
-and answer different questions.
+`road_tile_lookup`, `TerrainRenderer`'s `road_map` and the shader's road pass, `HudRouteVocab`,
+`ui_preview`'s `road_tile_*` frames and `map_preview`'s `map_road_network`. Do not rename either into
+the other, and do not "unify" the two draws: the order paths are an ANNOTATION over the map while a
+road is painted INTO the terrain composite, they read different sections, and they answer different
+questions. `blend_probe`'s road states must likewise never be called `routes` — `map_preview` already
+has a `"routes"` state and it is the order-path one.
 
 ## ⛔ THE FLOOR RUNG IS `route:path` / `Path`, AND IT WAS RENAMED OUT OF A FALSE ORIGIN
 
@@ -57,17 +65,20 @@ removing only the sentence left the cause standing in the value beside it. The w
 `HudBandLaborState.FOOD_SITE_KIND_GAME_TRAIL`, the `MapView` marker colour table, `SiteSprites`' art
 key. That one names where game is hunted, which the sim does model. Grep before renaming either.
 
-## THE DRAW IS A HEX, NOT A POLYLINE — and the stamp is INSET
+## THE DATA IS PER-TILE AND THERE IS NO POLYLINE — but the DRAW is one connected body
 
-A road is one tile, so the draw stamps its own hex and a run of road reads as a chain of stamps. That
-is the honest picture rather than a concession: the two ends of a long road can genuinely stand at
-different rungs and be kept by different bands, which a single polyline could not say.
+A road row is one tile, with its own rung, its own meter, its own keeper and its own decay, and no
+stored path. That is the honest model rather than a concession: the two ends of a long road can
+genuinely stand at different rungs and be kept by different bands, which a single polyline could not
+say. **The DRAW must not repeat that structure back at the player, though.** It stamped one inset
+hexagonal ring per tile for a slice, and a run of road came out as a chain of separate stamps —
+which read as a row of markers rather than as a road, and made a junction two planks meeting.
 
-**`ROAD_TILE_RADIUS_FACTOR` (0.62) is why the ring is inset rather than flush**, and both halves of
-the reason are visual. A flush ring sits exactly on the hex grid's own edges and reads as a GRID LINE
-rather than as a thing on the ground; and two adjacent road tiles SHARE that edge, so a run would
-draw its interior seams at twice the weight of its outside. Inset, the run reads as a chain of stamps
-with ground showing between them.
+The road now draws as a **coverage field** in `terrain_blend.gdshader` instead: a centre disc per
+tile, an arm out to each connected neighbour's shared edge, and everything unioned by a `max` over
+distance. The per-tile data is untouched — the connection mask is derived from adjacency, client-side
+— but what the player sees is one continuous body with rounded bends, filled junction hubs and capped
+dead ends. `.claude/rules/client/terrain-blend-shader.md` → "Roads" has the pass.
 
 **The placement is `_hex_center_wrapped`, the single-tile idiom** — a road names its tile by its DATA
 column, so the stamp goes on the copy of that column the viewport is over. `_unwrapped_path_points`
@@ -80,11 +91,39 @@ which is faintest-to-strongest **on the HUD's dark ground and INVERTED on the ma
 tan steppe in `map_road_network`, the path drew as a near-black hairline carrying the most
 contrast on the frame while the paved road drew as pale grey — the ladder read backwards.
 
-**A rung has to read as PROMINENCE on ground of any tone, and only opacity does that.** So the
-prominence ladder is `HudStyle.INK` at `ROAD_OPACITY_PATH` → `_TRAIL` → `_DIRT_ROAD` →
-`_PAVED_ROAD` (0.30 / 0.52 / 0.74 / 0.94), derived at draw time — the map's own idiom for a themed
-overlay tint, the one `MapView.SUPPLY_LINK_COLOR` already uses. The WIDTH ladder rides beside it
-because thickness reads before tint at map zoom.
+**A rung has to read as PROMINENCE on ground of any tone, and only opacity does that.** The finding
+OUTLIVED the ink it was made about: the ladder is no longer `HudStyle.INK` at four opacities but four
+authored SURFACE textures, composited at the alphas in `terrain_config.json`'s `roads` block
+(`path_opacity` → `paved_road_opacity`). The WIDTH ladder rides beside it, because thickness reads
+before tint at map zoom. **Do not re-pick either from taste** — both are measured against a rendered
+frame, and the reason prominence rides opacity rather than four tints is the paragraph above.
+
+> #### ⛔ THE ALPHAS WERE RE-DERIVED WHEN THE MEDIUM CHANGED, AND THE OLD ONES MUST NOT COME BACK
+>
+> The measured ladder was **0.30 / 0.52 / 0.74 / 0.94**, and it carried over verbatim from the
+> retired `AnnotationRenderer` — where the thing being faded was a near-black INK STROKE, and 0.30
+> alpha is a visible dark line. In a TEXTURE pass the same number means *70% of the prairie shows
+> through*, and the path rung's surface is a low-saturation grey near the ground's own luminance, so
+> it dissolved into it. `road_rungs.png` and `map_road_network.png` both showed the same thing on
+> different biomes: paved, dirt and the at-risk red were all identifiable and **the path rung simply
+> was not there** — which fails the branch's own done-criterion, *a road at the game-trail rung is
+> recognisable as a road*, on the two rungs that matter most. Path and trail are the FREE FLOOR,
+> which `.claude/rules/core_sim/routes.md` calls *"the commonest road in the game rather than an edge
+> case"*.
+>
+> **Same number, different medium.** The ladder now compresses UPWARD FROM BELOW — width
+> 0.080 / 0.100 / 0.118 / 0.135, opacity **0.58 / 0.70 / 0.82 / 0.94** — monotone in both, with paved
+> UNCHANGED as the anchor it already was. The rungs stay distinguishable because the four SURFACES
+> differ (grey scuff → pale sand → brown → grey cobble) on top of the width step, which is the whole
+> reason a compressed opacity ladder is affordable here and was not on a single ink.
+>
+> ⛔ **THE WEAR FADE HAD TO SURVIVE THAT COMPRESSION, and it is measured rather than assumed.** The
+> path→trail opacity ramp narrowed from 0.30→0.52 to 0.58→0.70, so the WIDTH ramp (0.080→0.100) now
+> carries more of it. Row-mean luminance over the bare field across `blend_probe`'s five wear steps
+> went **+5.0 / +6.7 / +14.9 / +27.1 / +28.4** → **+7.9 / +11.7 / +23.5 / +36.6 / +39.8** per 255:
+> every step is more visible than before, not less. `blend_probe`'s `19/WEAR` guard is the standing
+> assertion and **its threshold may not be lowered to fit a retune** — a ramp that genuinely
+> collapsed is a reason to widen the WIDTH spread, not to move the bar.
 
 - **A road in SHORTFALL draws in `HudStyle.DANGER`, at the TOP of the opacity ladder** and at a fixed
   mid-rung width. It is losing a real investment, which is the same news a starving pen's ring
@@ -98,6 +137,25 @@ because thickness reads before tint at map zoom.
   of the test, and `_road_tile_known` is called once per road. `_is_tile_visible` would be the wrong
   test in the other direction — it demands `Active`, and a road does not wander off, so a remembered
   one is remembered truly.
+
+## ⛔ THE LONE TILE DRAWS, AND TWO READERS IN A ROW CONCLUDED IT DID NOT
+
+A road tile with **no connections** — the first tile of every road in the game, so the ordinary case
+rather than an edge one — is drawn by the road pass's always-on CENTRE DISC and nothing else. The
+disc is **one road-width across**: at the dirt rung and the player's own map radius, a blob about
+17px wide. On the prairie's high-frequency texture that is indistinguishable by eye from a bare
+patch of ground, and `blend_probe`'s `20/JUNCT` frame captions one specifically so it can be judged.
+
+**Both readers of that frame reported the disc missing. It was drawing correctly the whole time** —
+measured at 372px of moved pixels, against a footprint of π·(half_width + softness)² ≈ 387. What was
+missing was a way to tell, since a caption pointing at something nobody can find is not verification.
+
+`blend_probe._assert_road_lone_tile_draws` is now that way: the junction fixture is re-stated with
+the lone tile's row removed and the frame must MOVE by the disc's own footprint
+(`ROAD_LONE_MIN_CHANGED_PX`, floored well under the derived figure and enormously above the EXACTLY
+ZERO a disc that never drew would move). **Whether a lone tile should read LARGER than one
+road-width is a design question and deliberately not settled here** — the disc's size is the road's
+own width, which is the honest geometry.
 
 ## The tile card is the road's readout, and it sits ABOVE the remembered-tile early return
 
@@ -573,6 +631,88 @@ is where that fails. Four cards fit a 356px strip only while each is ~83px, and 
 while a fixed METRIC is the floor rather than a role NAME, which is content: the moment a name
 becomes the floor, one longer role name silently pushes the row past the zone's edge.
 
+## THE ROADWORK ROSTER — the pool says how many, the roster says WHICH
+
+The pool card above says `Roadwork 2` and, for a slice, **nothing anywhere in the client said which
+two roads those were.** Reported from play at turn 122. That is not untidiness: `abandon` is *"pay
+for this road and not that one"*, so the pool is the one place the per-road choice is exercised, and
+a player cannot choose among things they cannot see. The only way to find a road you were paying for
+was to remember where you put it.
+
+The roster is a **block inside the existing Work zone, directly under the POOLS block that raises the
+question** — `BandPanelController._build_roadwork_roster_block`, modelled on the expeditions block:
+small, self-contained, one row per item, omitted entirely when there is nothing to say. **Not a
+fourth zone**, which would move `wide_shell_min_width()`, the shell-flip threshold and every per-dock
+reservation for nothing this readout needs.
+
+⛔ **IT IS A ROSTER, NOT A WORK BOARD: no stepper, no crew count, no kit picker.** The hands are the
+band-wide `roadwork` pool one block up, and the per-road decision is `abandon`. A row offering a
+worker count would re-introduce, by the back door, exactly the per-tile work row §4.13b retired —
+and the reason that row was retired is that *a road is not worked the way a hunt or a forage is*.
+`band_panel_preview` asserts the absence directly, on the stepper's own `−`/`+` faces.
+
+**The name cell is a LOCATOR because a road has no name.** Distance plus an 8-point compass bearing
+from the band's own camp (`4 tiles E`, `2 tiles NW`) is what makes rows distinguishable; three rows
+all reading `Dirt road` would not be a roster, which is why the RUNG is the value cell instead.
+`SourceForecast.compass_bearing` is the bearing, and it is taken in **drawn space, not in offset
+coordinates** — odd rows are shifted half a column, so a raw `col`/`row` delta skews every diagonal
+by up to a whole sector and a tile due north-east reads north. The column delta is the wrap-aware
+one, so a road just across the seam bears E rather than most of the way W.
+
+⛔ **THE VALUE CELL IS `HudRouteVocab.road_row_value`, VERBATIM.** It already composes
+`Dirt road · 25% to paved · ⚠ washing out` for the tile card, and the point of reusing it rather than
+writing roster strings is that the map, the card and the roster then **cannot disagree about a
+road's state** — one composer, one answer. The row's INK forks on the same `is_keeping_short` the
+composer's own hazard clause does.
+
+**The filter reads `has_keeper` BEFORE `keeper_band_id`**, which is the trap `native/src/dict/routes.rs`
+names at the field: `0` is a real `BandId`, so the bool is what answers *does anybody keep this*, and
+an id-first filter hands the whole free floor to whichever band holds it. Rows sort by distance
+ascending, tie-broken by tile, so the order is stable frame to frame — an unstable sort would move
+the `✕` a player was aiming at.
+
+**Row click → `alert_focus_requested(x, y)`**, the same signal `jump_to_band_entity` uses. A road IS
+its tile, so there is no band-style entity resolution to do.
+
+### The `✕` is the EXISTING abandon path, and it must not be quieter than the tile card
+
+The row's `✕` emits `BandPanelController.road_abandon_requested`, which `HudLayer` relays onto
+`abandon_requested` → `Main.format_abandon` → `abandon <faction> <x> <y>`. That is the **same**
+command path `DrawerComposeController.road_abandon_requested` already takes, and a second builder was
+deliberately not written: two emitters converging on one relay is what stops the verb's grammar
+drifting. Steady, full-opacity DANGER `✕`, no confirm — the single-item idiom the build-queue
+withdrawal and the parties recall already use.
+
+⛔ **`abandon` NAMES A FACTION AND A PLACE AND CARRIES NO BAND TOKEN**, so it drops every
+band-of-that-faction's holding on the tile — **a forage assignment there included**. The tile card
+warns about this in a second line; the roster carries the identical `ROAD_LADDER_ABANDON_ALSO` string
+on the `✕`'s hover, because a one-click destructive action that under-states what it destroys is
+worse in a roster than on a card: **a roster invites bulk use.**
+
+### ⛔ THE ROSTER CAN HONESTLY BE SHORTER THAN THE POOL
+
+Road rows are **fog-filtered**; the pool card's totals come cohort-level from the sim precisely
+because summing the visible rows would understate the bill (`HudBandLaborState.roadwork_pool_state`).
+So a band can legitimately show `Roadwork 2` beside a one-row roster, or beside none at all. Three
+cases, and the middle one is the one that must not be got wrong:
+
+1. **Nothing kept in sight AND no roadwork demand** → no block at all (the expeditions idiom, stated
+   in arithmetic by `HudWorkVocab.roadwork_roster_height` answering `0`).
+2. **Demand > 0 but zero kept roads visible** → the block renders with ONE muted line saying the
+   roads being kept are not in sight. **Never an empty roster beside a non-zero `Roadwork` count** —
+   that is a readout that lies, and `band_panel_preview` sabotage-checks exactly it.
+3. **Roads visible** → the rows, capped at `ROADWORK_ROSTER_ROWS_MAX` with the build queue's own
+   `+N more` foot.
+
+### Its height is paid for in BOTH reservations
+
+The Work zone `clip_contents`, and the roster renders BETWEEN the pools block and the build queue. So
+`HudWorkVocab.roadwork_roster_height` is resolved ONCE in `_fill_work_zone_column` and handed to
+**both** `build_queue_rows_max` and `_work_board_capacity` — one answer, so the block that draws and
+the two terms that pay for it cannot disagree. A block that drew without being paid for takes the
+difference silently off the bottom of the board; `band_panel_preview._assert_zone_content_fits`
+catches it across every state, which is how the unconditional-block sabotage was seen to fail.
+
 ## ⛔ THE ROUTE BRANCH'S SURFACE IS A LADDER, NOT A BUTTON PER VERB
 
 `grade` and `pave` worked on the command channel and **nothing in the HUD issued them**. Every other
@@ -926,7 +1066,7 @@ no clause rather than a `0`.
 > with an empty shelf drawing no amber, no `Reverting:` row and no at-risk hex while it was genuinely
 > being lost — the sim's neglect trips on **either** currency. So `is_at_risk` (the countdown), the
 > rung row's `⚠ washing out` clause (`road_row_value`, whose glyph `road_value_hex` tints on) and
-> `AnnotationRenderer._draw_road`'s at-risk stamp all ask the OR. **It may never become a sum**, for
+> `TerrainRenderer._pack_road_texel`'s at-risk FLAG BIT all ask the OR. **It may never become a sum**, for
 > the reason above: there is no combined severity for a width or an opacity to encode.
 >
 > **Measured on `road_tile_stone_short`** (paved, keepers paid in full, shelf empty): the card reads
@@ -1313,6 +1453,53 @@ deliberately different number.
 
 ## Tests
 
+### The roadwork roster — `band_panel_preview`
+
+One chapter, appended after the build-queue states because the roster renders BETWEEN the pools and
+the queue: every claim above it is a claim about a zone that did not have it, and reordering these
+would move the frames that follow. Two frames — `band_panel_roadwork_roster` and
+`band_panel_roadwork_roster_unseen`.
+
+The claims: three rows for a band keeping three roads it can see; **the two negatives**, which are
+what make the count mean anything — a rival's road, and a road with `has_keeper == false` whose
+`keeper_band_id` reads as this band's; nearest-first order off a wire list deliberately in a
+different one; the three locators; the value cell equal to `HudRouteVocab.road_row_value`'s own
+output **character for character**, with the hazard glyph on the at-risk road; no stepper face
+anywhere in the block; the `✕`'s hover carrying `ROAD_LADDER_ABANDON_ALSO` verbatim; and the `✕`
+pressed **through the viewport** — a `BaseButton` fires from its own `_gui_input`, which
+`gui_input.emit` does not reach and `pressed.emit()` bypasses, so only a pushed event can see a
+control that is covered, zero-size or filtered out of the hit test. Then case 2 (the muted line) and
+case 1 (no block at all).
+
+**Falsified**, each naming what it found: reading `keeper_band_id` without `has_keeper` fails the
+trap claim by tile (the count stayed at 3, the cap having absorbed the extra road — which is exactly
+why the negatives are asserted by NAME and not left to the total); dropping the case-2 line fails the
+muted-line claim; rendering the block unconditionally fails the case-1 claim **and** floods
+`_assert_zone_content_fits` across every state, the reservation being real; a stepper on the row
+fails the roster/work-board claim naming the `−`/`+` faces it found; composing the value cell from
+`rung_label` instead of `road_row_value` fails the verbatim and hazard claims; reversing the sort
+fails the order and locator claims; and pointing the `✕` at the band's tile fails the abandon claim
+with the wrong coordinates in it.
+
+**And the line itself goes through the real server parser.** `command_guard._drive_road_abandon`
+stands the roster up headlessly, presses its `✕`, and records `abandon <faction> <x> <y>`; the Rust
+half classifies `CommandPayload::Abandon` as `BandHandle::PlaceAddressed` — its own outcome beside
+`SourceAddressed`, so *"this verb names no band"* stays a stated fact about one variant instead of a
+hole any un-listed command falls through. **Falsified**: removing that arm fails with *"parsed to a
+command variant that names no band"*; removing the `✕` from the row fails in the Godot half with
+*"the roadwork roster drew no `✕` … so the verb has no emitter to drive"* and then again on the
+expected-count check.
+
+### The lone tile and the wear ladder — `blend_probe`
+
+`19/WEAR` walks the five build fractions one step at a time and requires the frame to MOVE at each,
+which holds the reported wear defect and the `routes` delta subscription at once.
+`20/JUNCT`'s `_assert_road_lone_tile_draws` re-states the same fixture without the lone tile and
+requires the disc's own footprint to move — see "THE LONE TILE DRAWS" above for why the frame cannot
+be read for it by eye. **Falsified**: gating the centre disc on `links != 0` fails with *moved only 0
+px*, naming the pass and the line.
+
+
 `ui_preview`'s `land_readouts` chapter carries the six frames — one per rung, a road in shortfall, and
 a REMOTE one whose keeper is being charged a multiple for the distance — and, beside them, the claims
 a picture cannot make, run against the REAL producer
@@ -1379,10 +1566,49 @@ wire rank, the head marker being on the Tame in front of it, its `▲` being ENA
 settings strip, and the `unqueue 0 64 17` that `✕` transmits through the REAL formatter. **Falsified**:
 breaking `_road_at`'s tile join fails **exactly one** claim — the row count — and nothing else.
 
-`map_preview`'s `map_road_network` is the draw's own frame: five RUNS laid parallel, one at each rung
-and one in shortfall, plus a **lone tile that must DRAW**. That last one inverted with the model — it
-was the degenerate case a one-point polyline had to bail on, and per tile it is the ordinary case, so
-a renderer that still thinks in polylines fails visibly on it.
+`map_preview`'s `map_road_network` is the composite's own frame: five CONTIGUOUS runs laid parallel,
+one at each rung and one in shortfall, plus a **lone tile that must DRAW**. That last one inverted
+with the model — it was the degenerate case a one-point polyline had to bail on, and per tile it is
+the ordinary case, so a renderer that still thinks in polylines fails visibly on it.
+
+> #### ⛔ THAT STATE NEEDS TEXTURES AND EDGE BLENDING ON, AND IT ONCE INHERITED THEM OFF
+>
+> Roads are drawn by the terrain shader, and `TerrainRenderer.shader_active()` requires terrain
+> textures AND `use_edge_blending`. `map_road_network` sits directly below the ORDER-PATH state, which
+> sets `enable_terrain_textures(false)` — harmless while roads were an annotation drawn over any
+> renderer, and after the move it would have rendered a map with no roads on it at all, at exit 0,
+> asserting nothing. The state now turns both back on explicitly.
+>
+> **Its runs are also CONTIGUOUS now, and that is not cosmetic.** They were written at a stride of two
+> columns, which asked nothing of the draw while it stamped one hex per row. The road pass arms itself
+> from a CONNECTION MASK built out of adjacency, so a gapped run is not a road — it is five lone
+> tiles, each drawing its centre disc and nothing else.
+
+`map_preview`'s `map_road_vs_herd_trail` is the ONE frame where the two ambers can be judged together:
+herd trails stayed in the annotation layer while a road went into the terrain composite, so nowhere
+else shows both. Measured against `MapView.HERD_TRAIL_COLOR` (0.97, 0.69, 0.25), **every** road
+surface sits within 0.8°–6.3° of the herd trail's HUE — dirt is amber by nature and that cannot be
+designed away — and the entire separation is carried by SATURATION, 0.09–0.33 against the trail's
+0.92. `01_trail.png` is the closest call of the four (0.8° of hue, 0.64 vs 0.61 luminance), which is
+why the frame stages the TRAIL rung rather than dirt, with the herd crossing the road at a right
+angle. A road has been read as a herd trail once already.
+
+`blend_probe`'s four road states are where the pass itself is judged, all rendered at `ISO_HEX_RADIUS`
+because the road's widths and its softness ramp are hex-radius fractions and a frame at any other
+radius is a judgement about nothing: **18/ROADS** (`road_rungs.png`) the rung sweep, four contiguous
+runs at wear 0; **19/WEAR** (`road_wear.png`) the reported defect's own frame, one rung at five wear
+steps; **20/JUNCT** (`road_junctions.png`) straight run, 120° bend, 3-way, 4-way, terminus and lone
+tile in one shot; **21/ATRISK** (`road_at_risk.png`) a kept dirt road, the same road at risk, and a
+kept paved road as the width control. Ground is uniform prairie in all four, so every difference
+between two cells is the road pass's own doing, and the cells carry in-frame captions.
+
+**State 19 also carries the road states' ONE assertion**, and it holds two properties no still frame
+can show. It walks the wear ladder a step at a time, handing each step over as a frame whose manifest
+names `routes` and nothing else, and requires the map to MOVE at every step — which fails if the
+ladder scalar is not reaching the width/opacity/surface (the reported defect: tiles at different wear
+drawing identically) **and** fails if a `routes`-only delta does not rebuild the road-map splatmap.
+Falsified both ways: dropping `build_fraction` from `road_ladder_scalar` fails all four steps at 0 px
+moved, and removing `SECTION_ROUTES` from `MapView.SHADER_INPUT_SECTIONS` does the same.
 
 **`command_guard` sweeps the role**, which is what proves `assign_labor … roadwork` survives
 `sim_runtime::command_text::parse_command_line` — the parser the native bridge runs BEFORE it sends,

@@ -136,6 +136,11 @@ signal recall_expedition_requested(payload: Dictionary)
 # **Its own signal, not a mode on the recall above**: a split makes a band where a recall dissolves a
 # party, and their grammars are separate closed verbs.
 signal split_band_requested(payload: Dictionary)
+# A road on the Roadwork roster was dropped (arc #532) — relayed to HudLayer.abandon_requested, the
+# SAME command path `DrawerComposeController.road_abandon_requested` already takes. The roster emits
+# its own signal rather than reaching that controller, this panel's rule: controllers never talk to
+# each other, and HudLayer is the one place the two emitters converge on `Main.format_abandon`.
+signal road_abandon_requested(payload: Dictionary)
 # Recenter + select a hex (a zone row / cycler jump) — relayed to HudLayer.alert_focus_requested.
 signal alert_focus_requested(x: int, y: int)
 # Pin an exact occupant on the map after that recenter — relayed to HudLayer.roster_occupant_selected.
@@ -1838,6 +1843,16 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     var queued := _build_queue_models(band, models)
     var pools := _build_pools_block(band, queued)
     col.add_child(pools)
+    # **AND DIRECTLY UNDER IT, WHICH ROADS THAT POOL IS PAYING FOR** (arc #532). The block answers the
+    # question the card above it raises, so it renders between the pools and the queue rather than
+    # anywhere the two are separated. It is omitted entirely on a band with nothing to say, and its
+    # reserved height is threaded into BOTH capacity terms below — the zone clips.
+    var roster_models := _roadwork_roster_models(band)
+    var roster_h := HudWorkVocab.roadwork_roster_height(roster_models.size(),
+        _roadwork_roster_unseen(band, roster_models.size()))
+    var roster := _build_roadwork_roster_block(band, roster_models)
+    if roster != null:
+        col.add_child(roster)
     # **THE QUEUE SITS ABOVE THE CHIPS, DELIBERATELY.** The chips filter the BOARD; the queue is the
     # band's own ordered list rather than a view of that board, so a block beneath them would read as
     # a filtered subset of it. It is derived from the FULL model set for the same reason — a chip must
@@ -1860,7 +1875,7 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
         col.add_child(_build_build_queue_expanded(band, queued, pools_fund_mode))
         return
     var queue_rows_max := HudWorkVocab.build_queue_rows_max(_zone_box().y,
-        pools_fund_mode, queued.size())
+        pools_fund_mode, queued.size(), roster_h)
     if not queued.is_empty():
         col.add_child(_build_build_queue_block(band, queued, queue_rows_max))
     # BEFORE the chips are built, so the pressed chip is always one that actually renders.
@@ -1909,7 +1924,7 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     var capacity := _work_board_capacity(filtered.size(), queued.size(),
         queue_rows_max, pools_fund_mode,
         int(queue_settings["legs"]), bool(queue_settings["crop"]),
-        bool(queue_settings["kit"]), bool(queue_settings["one_line"]))
+        bool(queue_settings["kit"]), bool(queue_settings["one_line"]), roster_h)
     var page_size := int(capacity["page_size"])
     var pages := int(capacity["pages"])
     _work_page = clampi(_work_page, 0, maxi(pages - 1, 0))
@@ -1950,10 +1965,14 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
 ## **AND SO IS THE POOLS BLOCK** (§4.7), through the identical arrangement —
 ## `HudWorkVocab.pools_block_height` is both the block's own `custom_minimum_size` and this term, plus
 ## one more separation for the gap. Unlike the queue's it is ALWAYS charged: the block always renders.
+## **`roster_height` IS THE ROADWORK ROSTER'S SHARE OF THE CHROME** (arc #532), resolved once by the
+## fill and handed to both this and `build_queue_rows_max` — one answer, so the block that draws and
+## the two reservations that pay for it cannot disagree. `0.0` where the block does not render, and
+## the block's own gap is counted only then, exactly as the queue's is.
 func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
         pools_fund_mode: bool, queue_settings_legs: int = 0,
         queue_settings_crop: bool = false, queue_settings_kit: bool = false,
-        queue_settings_one_line: bool = true) -> Dictionary:
+        queue_settings_one_line: bool = true, roster_height: float = 0.0) -> Dictionary:
     var box := _zone_box()
     var queue_h := HudWorkVocab.build_queue_block_height(queue_rows, queue_rows_max,
         queue_settings_legs, queue_settings_crop, queue_settings_kit, queue_settings_one_line)
@@ -1961,8 +1980,11 @@ func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
     var gaps := HudWorkVocab.WORK_ZONE_GAP_COUNT + 1.0
     if queue_h > 0.0:
         gaps += 1.0
+    if roster_height > 0.0:
+        gaps += 1.0
     var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT \
-        + queue_h + pools_h + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * gaps
+        + queue_h + pools_h + roster_height \
+        + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * gaps
     var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT))
     var layout := _declare_work_layout(count, rows)
     var pages := ceili(float(count) / float(maxi(int(layout["page_size"]), 1)))
@@ -2261,6 +2283,170 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     block.set_meta(HudWorkVocab.POOLS_BLOCK_META, fund_mode != null)
     block.custom_minimum_size = Vector2(0.0, HudWorkVocab.pools_block_height(fund_mode != null))
     return block
+
+## **WHICH ROADS THIS BAND IS PAYING FOR** — one entry per kept road it can see, nearest first.
+##
+## ⛔ **`has_keeper` IS READ BEFORE `keeper_band_id`, and the order is the whole filter.** `0` is a
+## real `BandId` (`native/src/dict/routes.rs` says so at the field), so the bool is the field that
+## answers *does anybody keep this*; testing the id first would hand every unkept road in the world
+## to band 0, which on the free floor is most of the map.
+##
+## **THE LOCATOR IS THE ROW'S NAME because a road has none of its own.** Distance plus an 8-point
+## bearing from the band's own camp is what makes three dirt roads three distinguishable rows; the
+## rung is the VALUE, one cell over.
+##
+## Sorted by distance ascending and tie-broken by TILE, so the order is stable frame to frame — a
+## roster that reshuffled under an unstable sort would move the `✕` a player was aiming at.
+func _roadwork_roster_models(band: Dictionary) -> Array:
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var camp := SourceForecast.band_tile(band)
+    var models: Array = []
+    for road_variant in _band_labor.roads():
+        if not (road_variant is Dictionary):
+            continue
+        var road: Dictionary = road_variant
+        if not HudRouteVocab.has_keeper(road):
+            continue
+        if HudRouteVocab.keeper_band_id_of(road) != band_id:
+            continue
+        var tile := HudRouteVocab.tile_of(road)
+        if tile.x < 0 or tile.y < 0:
+            continue
+        var distance := SourceForecast.hex_distance_wrapped(camp.x, camp.y, tile.x, tile.y,
+            _band_labor.grid_width(), _band_labor.wrap_horizontal())
+        models.append({
+            "road": road,
+            "tile": tile,
+            "distance": distance,
+            "locator": _roadwork_roster_locator(distance, camp, tile),
+        })
+    models.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+        if int(a["distance"]) != int(b["distance"]):
+            return int(a["distance"]) < int(b["distance"])
+        var ta: Vector2i = a["tile"]
+        var tb: Vector2i = b["tile"]
+        if ta.y != tb.y:
+            return ta.y < tb.y
+        return ta.x < tb.x)
+    return models
+
+## `4 tiles E` — the row's name cell. **`SourceForecast.HEX_DISTANCE_UNKNOWN` is a MEANING rather
+## than a distance**, so a road the client cannot place says so instead of claiming a bearing: the
+## row still draws, the road being real and abandonable either way.
+func _roadwork_roster_locator(distance: int, camp: Vector2i, tile: Vector2i) -> String:
+    if distance == SourceForecast.HEX_DISTANCE_UNKNOWN:
+        return HudWorkVocab.ROADWORK_ROSTER_LOCATOR_UNKNOWN
+    var bearing := SourceForecast.compass_bearing(camp.x, camp.y, tile.x, tile.y,
+        _band_labor.grid_width(), _band_labor.wrap_horizontal())
+    if bearing == "":
+        # The band is standing ON the road it keeps — a real and common state, and `0 tiles ` would
+        # be a bearing-shaped hole rather than an answer.
+        return HudWorkVocab.ROADWORK_ROSTER_LOCATOR_UNKNOWN if distance > 0 \
+            else HudWorkVocab.ROADWORK_ROSTER_HERE
+    if distance == 1:
+        return HudWorkVocab.ROADWORK_ROSTER_LOCATOR_ONE % bearing
+    return HudWorkVocab.ROADWORK_ROSTER_LOCATOR_FORMAT % [distance, bearing]
+
+## Does this band owe roadwork it cannot show a row for? — **case 2 of the honesty rule**, and the
+## one that must not be got wrong. The demand is the cohort's own published figure, which is summed
+## sim-side precisely because the fog-filtered rows would understate it.
+func _roadwork_roster_unseen(band: Dictionary, visible: int) -> bool:
+    if visible > 0:
+        return false
+    return SourceForecast.has_upkeep(_band_labor.roadwork_pool_state(band))
+
+## **THE ROSTER BLOCK** — the roads the pool above is paying for, each with the one decision that can
+## be taken about it. `null` where the band keeps nothing visible AND owes nothing, which is the
+## expeditions block's omit-entirely rule.
+##
+## ⛔ **NO STEPPER, NO CREW COUNT.** See `HudWorkVocab.ZONE_HEADER_ROADWORK_ROSTER`.
+func _build_roadwork_roster_block(band: Dictionary, models: Array) -> VBoxContainer:
+    var unseen := _roadwork_roster_unseen(band, models.size())
+    if models.is_empty() and not unseen:
+        return null
+    var block := VBoxContainer.new()
+    block.set_meta(HudWorkVocab.ROADWORK_ROSTER_BLOCK_META, models.size())
+    block.add_theme_constant_override("separation", 0)
+    block.custom_minimum_size = Vector2(0.0,
+        HudWorkVocab.roadwork_roster_height(models.size(), unseen))
+    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_ROADWORK_ROSTER, ""))
+    if unseen:
+        var line := HudWidgets.alloc_hint_label(HudWorkVocab.ROADWORK_ROSTER_UNSEEN_LINE)
+        line.set_meta(HudWorkVocab.ROADWORK_ROSTER_UNSEEN_META, true)
+        line.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+        block.add_child(line)
+    var drawn := mini(models.size(), HudWorkVocab.ROADWORK_ROSTER_ROWS_MAX)
+    for index in range(drawn):
+        block.add_child(_build_roadwork_roster_row(band, models[index] as Dictionary))
+    if models.size() > drawn:
+        var more := HudWidgets.alloc_hint_label(
+            HudWorkVocab.ROADWORK_ROSTER_OVERFLOW_FORMAT % (models.size() - drawn))
+        more.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+        block.add_child(more)
+    return block
+
+## One roster row: where the road is, what state it is in, and the `✕` that puts it down.
+##
+## ⛔ **THE VALUE CELL IS `HudRouteVocab.road_row_value`, VERBATIM.** It already composes
+## `Dirt road · 25% to paved · ⚠ washing out` for the tile card and the map's own readout, and the
+## point of reusing it rather than writing roster strings is that the three surfaces then cannot
+## disagree about a road's state — one composer, one answer.
+##
+## **THE NAME JUMPS AND THE REST DROPS**, the `FactionRollup._summary_row` split: a road IS its tile,
+## so the jump is `alert_focus_requested` on the road's own coordinates with no entity resolution.
+func _build_roadwork_roster_row(band: Dictionary, model: Dictionary) -> PanelContainer:
+    var tile: Vector2i = model["tile"]
+    var road: Dictionary = model["road"]
+    var row := PanelContainer.new()
+    row.set_meta(HudWorkVocab.ROADWORK_ROSTER_ROW_META, tile)
+    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(false))
+    var line := HBoxContainer.new()
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    row.add_child(line)
+    var jump := HudWidgets.build_inline_link(String(model["locator"]), HudStyle.SIGNAL,
+        func() -> void: emit_signal("alert_focus_requested", tile.x, tile.y))
+    line.add_child(jump)
+    var value := Label.new()
+    value.text = HudRouteVocab.road_row_value(road, _band_labor.road_queue_tiles())
+    value.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    # The hazard clause is the reused composer's own, so the row's INK forks on the same answer the
+    # tile card's does rather than on a second test of the same road.
+    value.add_theme_color_override("font_color",
+        HudStyle.DANGER if HudRouteVocab.is_keeping_short(road) else HudStyle.INK_DIM)
+    value.clip_text = true
+    value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    line.add_child(value)
+    line.add_child(_build_roadwork_roster_abandon_button(band, tile))
+    return row
+
+## **THE DROP — the same `abandon <faction> <x> <y>` the road ladder's own button sends, and no second
+## command path.**
+##
+## ⛔ **AND IT SAYS WHAT ELSE GOES DOWN.** `abandon` names a FACTION AND A PLACE and carries no band
+## token: it drops every band-of-that-faction's holding on that tile, a forage assignment there
+## included. The tile card warns about this in a second line; a roster invites BULK use, so it must
+## not be quieter about the same consequence — the warning rides the tooltip, which is where it fits.
+func _build_roadwork_roster_abandon_button(band: Dictionary, tile: Vector2i) -> Button:
+    var drop := Button.new()
+    drop.set_meta(HudWorkVocab.ROADWORK_ROSTER_ABANDON_META, tile)
+    drop.text = HudWorkVocab.ROADWORK_ROSTER_ABANDON_GLYPH
+    drop.focus_mode = Control.FOCUS_NONE
+    drop.tooltip_text = "%s\n%s" % [HudRouteVocab.ROAD_LADDER_ABANDON_TOOLTIP,
+        HudRouteVocab.ROAD_LADDER_ABANDON_ALSO]
+    drop.custom_minimum_size = Vector2(HudWorkVocab.ROADWORK_ROSTER_ABANDON_WIDTH, 0.0)
+    HudStyle.apply_button(drop, "ghost")
+    HudWidgets.compact(drop, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
+    drop.add_theme_color_override("font_color", HudStyle.DANGER)
+    # **NO CONFIRM** — the single-item idiom the queue withdrawal and the parties recall already use.
+    drop.pressed.connect(func() -> void:
+        emit_signal("road_abandon_requested", {
+            "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+            "x": tile.x,
+            "y": tile.y,
+        }))
+    return drop
 
 ## **WHAT ONE KEEPING POOL SUPPLIES AGAINST WHAT IT IS ASKED FOR** — `{supply, asked}` in work units,
 ## the ONE input the pool card's mark and its hover both fork on.

@@ -15477,6 +15477,13 @@ func _render_queue_control_states() -> void:
 	# to sit there until the turn resolved. The PAIRED claim is that the OTHER entries stay: a block
 	# that emptied itself would pass "the row is gone".
 	await _render_queue_withdrawal_state()
+	# **(f) THE ROADWORK ROSTER — WHICH roads the pool is paying for** (arc #532, issue #600). The
+	# pool card says `Roadwork 2` and nothing in the client said which two roads those were, so
+	# `abandon` — *pay for this road and not that one* — could not be exercised on anything a player
+	# could see. Appended after the queue states rather than folded among them: this block renders
+	# BETWEEN the pools and the queue, so every claim above it is a claim about a zone that did not
+	# have it, and re-ordering these would move the frames that follow.
+	await _assert_the_roadwork_roster_names_its_roads()
 
 ## One queued entry's key by web, off the block's own model list.
 func _queue_entry_key(animal: bool) -> String:
@@ -16359,6 +16366,274 @@ func _restore_road_kit_roster() -> void:
 
 ## Put the roads and the catalog back where the states after this one expect them — SHARED harness
 ## state, the road frames' own rule: a road left on the model is a road the next state never staged.
+# ---- THE ROADWORK ROSTER (arc #532, issue #600) --------------------------------------------------
+#
+# ⛔ **IT IS A ROSTER, NOT A WORK BOARD.** No stepper, no crew count: the hands are the band-wide
+# `roadwork` pool and the per-road decision is `abandon`. A row offering a worker count would
+# re-introduce the per-tile work row §4.13b deliberately retired.
+
+## The band's own camp, restated from `_band_fixture` so the bearings below are read against a stated
+## origin rather than against whatever that fixture happens to carry.
+const ROSTER_CAMP := Vector2i(71, 18)
+
+## The three roads this band keeps, at three DISTANCES and three RUNGS — the distance is what makes
+## the rows distinguishable (a road has no name) and the rung is what the reused value composer says.
+## Odd-r geometry, worked against `ROSTER_CAMP`: (72,18) is one hex due east; (68,18) three due west;
+## (71,12) six due north (six rows at half a column of drift each, which cancels on the same parity).
+const ROSTER_NEAR_TILE := Vector2i(72, 18)
+const ROSTER_MID_TILE := Vector2i(68, 18)
+const ROSTER_FAR_TILE := Vector2i(71, 12)
+const ROSTER_NEAR_LOCATOR := "1 tile E"
+const ROSTER_MID_LOCATOR := "3 tiles W"
+const ROSTER_FAR_LOCATOR := "6 tiles N"
+
+## ⛔ **THE TWO NEGATIVES, AND THE SECOND IS THE TRAP `routes.rs` NAMES AT THE FIELD.** A road kept by
+## ANOTHER band must not appear; and a road with `has_keeper == false` must not appear EVEN THOUGH its
+## `keeper_band_id` reads as this band's — `0` is a real `BandId`, so a filter that tested the id
+## first would hand the whole free floor to whichever band holds it.
+const ROSTER_OTHER_BAND_TILE := Vector2i(60, 18)
+const ROSTER_UNKEPT_TILE := Vector2i(73, 18)
+
+## The band the roster is drawn for, and the OTHER band whose road must stay off it. Both are wire
+## `band_id`s, so they carry `_push_bands`' own offset — a fixture stating a raw `entity` here would
+## filter against a handle the panel never sees.
+const ROSTER_BAND_ID := 904 + FIXTURE_BAND_ID_OFFSET
+const ROSTER_OTHER_BAND_ID := 905 + FIXTURE_BAND_ID_OFFSET
+
+## The bill the band owes, through the cohort's own published trio — `demand - supplied == shortfall`
+## holds verbatim on the wire (`HudBandLaborState.roadwork_pool_state`), so the fixture states three
+## numbers the sim can actually produce rather than a flag.
+const ROSTER_ROADWORK_DEMAND := 1.35
+const ROSTER_ROADWORK_SUPPLIED := 0.90
+const ROSTER_ROADWORK_SHORTFALL := 0.45
+
+## The at-risk road's own shortfall, in the same published shape `blend_probe`'s at-risk frame uses.
+## Anything at or above `SourceForecast.UPKEEP_WORK_MIN` is short.
+const ROSTER_ROAD_DEMAND := 0.45
+const ROSTER_ROAD_SHORTFALL := 0.45
+
+## Hands on the pool. **Stated because the pool card renders whatever the roster does**, and a card
+## reading `0` beside a roster of three is a different frame from the one under test.
+const ROSTER_ROADWORK_WORKERS := 2
+
+## One road row, shaped exactly as `native/src/dict/routes.rs` writes one — the TILE is its identity,
+## and `has_keeper` leads because that is the field the filter must read first.
+func _roster_road_row(tile: Vector2i, rung: String, keeper: int, kept: bool,
+		shortfall: float = 0.0) -> Dictionary:
+	return {
+		"tile_x": tile.x, "tile_y": tile.y,
+		"has_keeper": kept, "keeper_band_id": keeper, "keeper_remoteness": 1.0,
+		"rung": rung, "build_fraction": HudRouteVocab.ROAD_METER_COMPLETE,
+		"upkeep_demand": ROSTER_ROAD_DEMAND if shortfall > 0.0 else 0.0,
+		"upkeep_supplied": ROSTER_ROAD_DEMAND - shortfall if shortfall > 0.0 else 0.0,
+		"upkeep_shortfall": shortfall,
+		"upkeep_workers_needed": 1,
+		"has_neglect_grace": shortfall > 0.0, "neglect_grace_remaining": 2,
+		"grants_sight": false, "friction_multiplier": 0.85, "holds_link_to_tiles": 6,
+		"build_turns_remaining": SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+	}
+
+## The five roads the roster is filtered out of — three of this band's and the two negatives.
+func _roster_roads() -> Array:
+	return [
+		# Deliberately NOT in distance order on the wire, so the sort is doing work.
+		_roster_road_row(ROSTER_FAR_TILE, HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROSTER_BAND_ID, true),
+		_roster_road_row(ROSTER_MID_TILE, HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROSTER_BAND_ID, true,
+			ROSTER_ROAD_SHORTFALL),
+		_roster_road_row(ROSTER_NEAR_TILE, HudRouteVocab.RUNG_KEY_PATH, ROSTER_BAND_ID, true),
+		_roster_road_row(ROSTER_OTHER_BAND_TILE, HudRouteVocab.RUNG_KEY_TRAIL,
+			ROSTER_OTHER_BAND_ID, true),
+		# **THE TRAP**: unkept, but its `keeper_band_id` reads as this band's.
+		_roster_road_row(ROSTER_UNKEPT_TILE, HudRouteVocab.RUNG_KEY_PATH, ROSTER_BAND_ID, false),
+	]
+
+## The band, carrying the roadwork bill and a real `roadwork` ROLE row — band-wide, no tile, keyed
+## like scout/warrior, which is the only shape the wire carries for this pool.
+func _roster_band_fixture(demand: float) -> Dictionary:
+	var band := _band_fixture()
+	band["roadwork_demand"] = demand
+	band["roadwork_supplied"] = ROSTER_ROADWORK_SUPPLIED if demand > 0.0 else 0.0
+	band["roadwork_shortfall"] = ROSTER_ROADWORK_SHORTFALL if demand > 0.0 else 0.0
+	var rows: Array = band["labor_assignments"]
+	rows.append({
+		"kind": HudConst.LABOR_KIND_ROADWORK, "workers": ROSTER_ROADWORK_WORKERS,
+		"target_x": -1, "target_y": -1, "fauna_id": "",
+	})
+	return band
+
+## The roster block, its rows and its `✕`s, off the live panel.
+func _roster_block() -> Control:
+	return _find_meta_control(_panel, HudWorkVocab.ROADWORK_ROSTER_BLOCK_META)
+
+func _roster_rows() -> Array[Control]:
+	return _collect_meta_controls(_panel, HudWorkVocab.ROADWORK_ROSTER_ROW_META, [])
+
+func _roster_row_locator(row: Control) -> String:
+	for child in row.find_children("*", "Button", true, false):
+		if child is Button and not (child as Button).has_meta(
+				HudWorkVocab.ROADWORK_ROSTER_ABANDON_META):
+			return (child as Button).text
+	return ""
+
+func _roster_row_value(row: Control) -> String:
+	for child in row.find_children("*", "Label", true, false):
+		return (child as Label).text
+	return ""
+
+func _assert_the_roadwork_roster_names_its_roads() -> void:
+	## ⛔ **THE POOL SAYS `Roadwork 2` AND THE ROSTER SAYS WHICH TWO.** Reported from play at turn 122:
+	## nothing in the client named the roads a band was paying for, so the one per-road decision the
+	## pool exists to raise — `abandon`, *pay for this one and not that one* — could not be taken on
+	## anything visible.
+	_hud.update_route_rungs(_road_queue_catalog())
+	_hud.update_road_network(_roster_roads())
+	_push_bands([_roster_band_fixture(ROSTER_ROADWORK_DEMAND)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	# **PRECONDITION: the bearings below are worked against THIS camp.** `_band_fixture` is shared with
+	# every other state in this file, so a move there would silently turn `1 tile E` into a wrong
+	# answer that fails as a copy mismatch rather than as what it is.
+	_assert_band_panel("precondition: the roster band is camped at %s, which the locators are worked from"
+			% ROSTER_CAMP,
+		SourceForecast.band_tile(_hud._band_labor.panel_band()) == ROSTER_CAMP)
+	await _save("band_panel_roadwork_roster")
+	_assert_zone_content_fits()
+	var block := _roster_block()
+	_assert_band_panel("a band keeping roads draws the ROADWORK ROSTER block", block != null)
+	if block == null:
+		_restore_roadwork_roster_fixture()
+		await _settle()
+		return
+	var rows := _roster_rows()
+	# ⛔ **THE TWO NEGATIVES COME FIRST, and they are what make the count mean anything.** A rival's
+	# road and an UNKEPT road whose `keeper_band_id` reads as this band's are both on the wire, so a
+	# filter that let either through would be caught by NAME here rather than only as a wrong total.
+	var tiles: Array = []
+	for row in rows:
+		tiles.append(row.get_meta(HudWorkVocab.ROADWORK_ROSTER_ROW_META))
+	_assert_band_panel("…and never a road ANOTHER band keeps (%s not listed, got %s)"
+			% [ROSTER_OTHER_BAND_TILE, tiles],
+		not tiles.has(ROSTER_OTHER_BAND_TILE))
+	_assert_band_panel(("…nor one with `has_keeper == false` whose `keeper_band_id` reads as this "
+			+ "band's — `0` is a real BandId, so the BOOL is what answers (%s not listed, got %s)")
+			% [ROSTER_UNKEPT_TILE, tiles],
+		not tiles.has(ROSTER_UNKEPT_TILE))
+	_assert_band_panel("…with one row per road THIS band keeps and can see — 3 (got %d)" % rows.size(),
+		rows.size() == 3)
+	# **The bail is a FLOOR, not an equality**: a filter that let an extra road through must go on to
+	# fail the ORDER and the VALUE claims below by name, not take them out of the run with it.
+	if rows.size() < 3:
+		_restore_roadwork_roster_fixture()
+		await _settle()
+		return
+	# **NEAREST FIRST**, which is what makes the order stable frame to frame — the wire order is
+	# deliberately not this one.
+	_assert_band_panel("…sorted nearest-first off the band's own camp (%s, want [%s, %s, %s])"
+			% [tiles, ROSTER_NEAR_TILE, ROSTER_MID_TILE, ROSTER_FAR_TILE],
+		tiles.slice(0, 3) == [ROSTER_NEAR_TILE, ROSTER_MID_TILE, ROSTER_FAR_TILE])
+	# **THE NAME CELL IS A LOCATOR, because a road has no name.** Three rows all reading `Dirt road`
+	# would not be a roster; distance + bearing is what tells them apart.
+	var locators: Array = [_roster_row_locator(rows[0]), _roster_row_locator(rows[1]),
+		_roster_row_locator(rows[2])]
+	_assert_band_panel("…each named by its distance and 8-point bearing from camp (%s, want [%s, %s, %s])"
+			% [locators, ROSTER_NEAR_LOCATOR, ROSTER_MID_LOCATOR, ROSTER_FAR_LOCATOR],
+		locators == [ROSTER_NEAR_LOCATOR, ROSTER_MID_LOCATOR, ROSTER_FAR_LOCATOR])
+	# ⛔ **AND THE VALUE CELL IS `HudRouteVocab.road_row_value` VERBATIM.** The claim is the REUSE: the
+	# map, the tile card and this roster compose a road's state through one function, so they cannot
+	# disagree about one road. The at-risk row is the one that proves it — its hazard clause is the
+	# composer's own and nothing here re-words it.
+	var risk_road := _roster_road_row(ROSTER_MID_TILE, HudRouteVocab.RUNG_KEY_DIRT_ROAD,
+		ROSTER_BAND_ID, true, ROSTER_ROAD_SHORTFALL)
+	var wanted_value := HudRouteVocab.road_row_value(risk_road, _hud._band_labor.road_queue_tiles())
+	var got_value := _roster_row_value(rows[1])
+	_assert_band_panel("…and its value is `road_row_value` verbatim — `%s` (got \"%s\")"
+			% [wanted_value, got_value],
+		got_value == wanted_value)
+	_assert_band_panel("…which carries the branch's own hazard word on the AT-RISK road (`%s`)"
+			% HudSelectionVocab.RUNG_HAZARD_GLYPH,
+		got_value.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH))
+	# ⛔ **NO STEPPER AND NO CREW COUNT ANYWHERE IN THE BLOCK.** A road is not worked the way a hunt or
+	# a forage is; a worker control here would re-introduce the per-tile work row §4.13b retired, and
+	# it would do so silently — the block would simply look busier.
+	var stepper_faces: Array = []
+	for control in block.find_children("*", "Button", true, false):
+		var face := (control as Button).text
+		if face == HudWorkVocab.STEPPER_MINUS_FACE or face == HudWorkVocab.STEPPER_PLUS_FACE:
+			stepper_faces.append(face)
+	_assert_band_panel(("…and the block carries NO stepper — it is a roster, not a work board, and "
+			+ "the hands are the band-wide pool above (found %s)") % [stepper_faces],
+		stepper_faces.is_empty())
+
+	# ---- THE DROP, THROUGH REAL INPUT, ON THE ROW'S OWN TILE -------------------------------------
+	# **THE SAME `abandon` PATH THE ROAD LADDER'S BUTTON TAKES**, and no second command builder: the
+	# roster's signal is relayed onto `HudLayer.abandon_requested` exactly as the drawer's is.
+	var drop := _find_meta_control(rows[0], HudWorkVocab.ROADWORK_ROSTER_ABANDON_META) as Button
+	_assert_band_panel("every roster row carries a `%s` that puts the road down"
+			% HudWorkVocab.ROADWORK_ROSTER_ABANDON_GLYPH,
+		drop != null)
+	if drop != null:
+		# ⛔ **AND ITS HOVER SAYS WHAT ELSE GOES DOWN.** `abandon` names a faction and a PLACE and
+		# carries no band token, so it drops a forage assignment on that hex too. The tile card warns
+		# in a second line; a roster invites BULK use and must not be quieter about it.
+		_assert_band_panel("…whose hover carries the tile card's own `also` warning, verbatim",
+			drop.tooltip_text.contains(HudRouteVocab.ROAD_LADDER_ABANDON_ALSO))
+		# ⛔ **THROUGH THE VIEWPORT, NOT THROUGH `pressed.emit()`.** A `BaseButton` fires from its own
+		# `_gui_input`, which `gui_input.emit` does not reach and `pressed.emit()` bypasses entirely —
+		# so only a pushed event can see a `✕` that is covered, zero-size or filtered out of the hit
+		# test, which on a row with two pixels of slack is the failure worth catching.
+		var seen: Array = []
+		var sink := func(payload: Dictionary) -> void: seen.append(payload)
+		_hud.abandon_requested.connect(sink)
+		await _drive_click(_canvas_to_window(drop.get_global_rect().get_center()))
+		await _settle()
+		_hud.abandon_requested.disconnect(sink)
+		var line := "" if seen.is_empty() \
+			else String(MAIN_SCRIPT.format_abandon(seen[0] as Dictionary).get("line", ""))
+		var wanted_line := "abandon %d %d %d" % [HudConst.PLAYER_FACTION_ID,
+			ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y]
+		print("band_panel_preview: roadwork roster drop -> %s" % line)
+		_assert_band_panel("…and pressing it sends `%s` for that row's OWN tile (got \"%s\")"
+				% [wanted_line, line],
+			line == wanted_line)
+
+	# ---- CASE 2: A BILL WITH NOTHING IN SIGHT ----------------------------------------------------
+	# ⛔ **THE ROSTER CAN HONESTLY BE SHORTER THAN THE POOL.** Road rows are fog-filtered; the pool
+	# card's totals come cohort-level from the sim precisely because summing the visible rows would
+	# understate the bill. So a band can show `Roadwork` demand beside NO rows — and an empty roster
+	# drawn there would say *this band keeps nothing*, which is a readout that lies.
+	_hud.update_road_network([])
+	_push_bands([_roster_band_fixture(ROSTER_ROADWORK_DEMAND)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_roadwork_roster_unseen")
+	_assert_zone_content_fits()
+	var unseen_block := _roster_block()
+	_assert_band_panel("a roadwork bill with NO road in sight still draws the block",
+		unseen_block != null)
+	_assert_band_panel("…with no rows at all (got %d)" % _roster_rows().size(),
+		_roster_rows().is_empty())
+	_assert_band_panel("…and ONE muted line saying the kept roads are not in sight, never a silent empty roster",
+		unseen_block != null and _find_meta_control(unseen_block,
+			HudWorkVocab.ROADWORK_ROSTER_UNSEEN_META) != null)
+
+	# ---- CASE 1: NOTHING KEPT AND NOTHING OWED — NO BLOCK AT ALL ---------------------------------
+	# The expeditions block's rule, and the paired negative without which every claim above is
+	# satisfied by a block that renders unconditionally.
+	_push_bands([_roster_band_fixture(0.0)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	_assert_band_panel("a band keeping nothing and owing nothing draws NO roster block at all",
+		_roster_block() == null)
+	_restore_roadwork_roster_fixture()
+	await _settle()
+
+## Put the world back the way the states after this one expect it — the road catalogue and the road
+## network both cleared, exactly as `_restore_road_queue_fixture` does.
+func _restore_roadwork_roster_fixture() -> void:
+	_hud.update_road_network([])
+	_hud.update_route_rungs([])
+	_restore_queue_reorder_fixture()
+
 func _restore_road_queue_fixture() -> void:
 	# **THE EXPANSION IS CLOSED ON EVERY EXIT, INCLUDING THE EARLY ONE.** This state opens a settings
 	# strip to reach the `✕`, and the bail-out path above returns before that — so closing it here
