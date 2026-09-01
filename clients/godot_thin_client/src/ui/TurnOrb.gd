@@ -84,7 +84,13 @@ const KIND_KNOWLEDGE_LEARNED := "knowledge_learned"
 const KIND_ICON := {
 	KIND_IDLE_WORKERS: "🛠",
 	KIND_STARVING: "🍖",
-	KIND_LOSING_POPULATION: "📉",
+	# **A FALLING TREND ARROW, AND IT NEEDS NO ART** (issue #249). It was 📉, which is a symbolic
+	# arrow wearing an emoji codepoint — a chart, drawn in ITS OWN colours, sitting untinted in a
+	# column where every other glyph takes the row's severity. So it is the plain `▼` this client
+	# already spells a falling value with (`BandDetailLines.MORALE_TREND_FALLING_GLYPH`), which the
+	# Label branch then inks WARN like its neighbours. Drawing it would have spent a file on the one
+	# mark #249's own rule says to leave as text.
+	KIND_LOSING_POPULATION: "▼",
 	KIND_AWAITING_ORDERS: FoodIcons.STATUS_ICONS[FoodIcons.STATUS_AWAITING],
 	KIND_STARVING_PEN: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_CORRAL],
 	KIND_UNDER_KEPT_RUNG: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_SOW],
@@ -111,6 +117,12 @@ const KIND_ICON_SPRITE := {
 	KIND_KNOWLEDGE_LEARNED: HudKnowledgeVocab.LAUNCH_MARK,
 	KIND_IDLE_WORKERS: "workers",
 	KIND_CREW_HANDOFF: "workers",
+	# **AN EMPTY BOWL, NOT THE 🍖 IT REPLACES.** A meat cut is the state this alert does NOT
+	# describe, and it collides with the hunted-herd art besides; the absence is the whole message.
+	# The mark is deliberately the weaker half of this row — an empty bowl and a full one are one
+	# silhouette — and it does not have to carry the meaning alone: the row's DANGER stripe is
+	# immediately to its left and its label is immediately to its right.
+	KIND_STARVING: "starving",
 }
 
 # ---- geometry (named constants; no magic literals) -------------------------

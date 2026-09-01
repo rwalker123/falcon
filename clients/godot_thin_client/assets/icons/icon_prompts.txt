@@ -1261,12 +1261,12 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 # HUD / ACTIVITY MARKS  ->  assets/icons/hud/   (ui/HudSprites.gd)
 # ============================================================================
 #
-# ALL EIGHT MARKS EXIST AND ALL EIGHT ARE WIRED.
-# `assets/icons/hud/{cairn,forage,hunt,scout,warrior,deny,trade,workers}.png` are keyed, imported,
+# ALL NINE MARKS EXIST AND ALL NINE ARE WIRED.
+# `assets/icons/hud/{cairn,forage,hunt,scout,warrior,deny,trade,workers,starving}.png` are keyed, imported,
 # committed and listed in `ui/HudSprites.gd`, this directory's lookup script. The cairn came first
 # (#581) on the two surfaces that need different mechanisms — a `Button.icon` on the action-bar
 # launcher, a `TextureRect` swapped for a `Label` on the turn orb's row — and #249 wired the other
-# seven on both of those same two mechanisms and nothing new:
+# eight on both of those same two mechanisms and nothing new:
 #
 #   `Button.icon`      the work board's forage and hunt FILTER CHIPS; the compose sheet's KIT
 #                      PICKER face (an `OptionButton`, whose `icon` is free — its dropdown chevron
@@ -1490,7 +1490,7 @@ scout: Flat vector interface mark of two bare human footprints in the dirt, one 
 #
 #   workers     ✅ DONE     the turn orb's `idle_workers` AND                 YES — the orb's row
 #                           `crew_handoff` rows (`TurnOrb.KIND_ICON`)         column has been
-#   starving        🍖      the turn orb's `starving` row                     MIXED since #581 put
+#   starving    ✅ DONE     the turn orb's `starving` row                     MIXED since #581 put
 #                                                                            the drawn cairn in
 #                                                                            it beside eight
 #                                                                            glyphs, so this set
@@ -1500,7 +1500,7 @@ scout: Flat vector interface mark of two bare human footprints in the dirt, one 
 #                                                                            kinds — both rows
 #                                                                            are about the HANDS.
 #
-#   losing_pop      📉      ⛔ **NEEDS NO ART — IT IS A SYMBOLIC GLYPH        n/a. This is a code
+#   losing_pop  ✅ DONE     ⛔ **NEEDED NO ART — IT WAS A SYMBOLIC GLYPH        n/a. This is a code
 #                           WEARING AN EMOJI CODEPOINT.** Its content is a    change, not an art
 #                           falling TREND ARROW, and the client already       one: point
 #                           spells that `▼` in two places                     `KIND_LOSING_POP`
@@ -1706,6 +1706,17 @@ workers: Flat vector interface mark of a single open human hand seen palm-on fro
 
 
 # starving.png — the turn orb's `starving` row.
+# STATUS: SHIPPED at `assets/icons/hud/starving.png` and WIRED on the turn orb's `starving` row.
+# Keyed `--size 256 --lo 85 --hi 200`; coverage 31.1%, magenta residual 0, bbox 225x117.
+# THE CHOSEN RENDER — of two near-identical bowls, the DEEPER one (aspect 1.92 against 2.21). Both
+# key clean and both carry the bright rim; the shallower twin flattens toward a horizontal bar at
+# row size, and a bowl that is not obviously a bowl is not carrying anything. Judged at 30px, not
+# 13 — see `workers.png` for why this family's judging size is per-surface.
+# ⚠ THIS IS THE WEAKEST MARK IN THE FAMILY BY DESIGN, and that is worth stating so nobody "fixes"
+# it. An empty bowl and a full one are ONE silhouette, so the art cannot say *empty* by itself — it
+# says *this row is about eating* and lets the row say the rest. It does not have to carry the
+# meaning alone: the DANGER stripe is immediately left of it and the label immediately right. A
+# candidate that tried to draw emptiness (a thin hollow ring) would lose the mass instead.
 # ⚠ IT MUST NOT BE FOOD. The 🍖 it replaces draws a MEAT CUT, which is the opposite of what the
 # row says — a full larder is exactly the state this alert does not describe — and it collides
 # with the hunted-herd art besides. An EMPTY bowl states the absence, which is the alert.
