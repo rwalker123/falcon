@@ -15227,8 +15227,10 @@ const QUEUE_BUILDERS := 3
 const QUEUE_BLOCKED_HERD_REASON := "knowledge"
 
 ## The take crew on each queued source. Non-zero, because `_work_source_models` admits a row on its
-## TAKE crew — which is also why every queue entry is guaranteed a model (`prune_build_queue` keeps
-## an entry only while its source holds an assignment).
+## TAKE crew — the ordinary admission. **A QUEUED source is admitted at zero crew as well**, which is
+## what `_assert_an_uncrewed_queued_source_still_draws` pins; between the two, every entry whose
+## source is a labor row has a model (`prune_build_queue` keeps an entry only while its source holds
+## an assignment).
 const QUEUE_ROW_WORKERS := 1
 
 ## **WHAT THE HORIZONTAL WORK ZONE AFFORDS THE QUEUE once the POOLS block is above it** (§4.7).
@@ -15453,10 +15455,10 @@ func _render_queue_control_states() -> void:
 	# button that is covered, zero-size or filtered out of the hit test.
 	await _assert_queue_reorder_arrows()
 	# **(d4) …AND EVERY ONE OF THOSE POSITIONS COUNTED IN THE **WIRE** QUEUE, NOT IN THE DRAWN LIST.**
-	# The two lists are not the same length: a band keeps its row on a QUEUED source at zero take crew
-	# (the sim declines to drop it precisely because it is queued), and the work board admits a row on
-	# its take crew — so that entry has no model and the block cannot draw it. Every claim above is
-	# blind to the difference, its fixture having a model for every entry.
+	# The two lists are not the same length: a road entry names a tile, and the `routes` section it is
+	# joined against is fog-filtered — so an entry whose tile is out of sight has no model and the
+	# block cannot draw it. Every claim above is blind to the difference, its fixture having a model
+	# for every entry. (The zero-crew source this fixture used to hide by is drawn now, at (g).)
 	await _assert_queue_positions_are_the_wires()
 	# **(d4b) …AND THE ENTRY WHOSE SOURCE IS NOT A LABOR ROW AT ALL: a ROAD** (arc #532). (d4) above
 	# proves an UNRESOLVABLE source still spends its rank; this proves a road is not one of those. It
@@ -15484,6 +15486,13 @@ func _render_queue_control_states() -> void:
 	# BETWEEN the pools and the queue, so every claim above it is a claim about a zone that did not
 	# have it, and re-ordering these would move the frames that follow.
 	await _assert_the_roadwork_roster_names_its_roads()
+	# **(g) THE QUEUED SOURCE WITH NOBODY GATHERING ON IT** — reported from play, and the state (d4)
+	# used to STAGE as its hidden entry. The board admitted on the take crew while the sim keeps the
+	# row and the entry on a row-exists rule, so a `cultivate` whose harvesters the player had moved
+	# away held the funded head with no row anywhere in the client and everything queued behind it
+	# stalled in silence. Appended at the end of the chapter: it pushes a band of its own and restores
+	# the reorder fixture, so no frame above it moves.
+	await _assert_an_uncrewed_queued_source_still_draws()
 
 ## One queued entry's key by web, off the block's own model list.
 func _queue_entry_key(animal: bool) -> String:
@@ -15838,19 +15847,28 @@ func _assert_queue_arrow_click(row_index: int, meta: String, glyph: String,
 	_assert_band_panel("…and a REAL click on it sends `%s` (got \"%s\")" % [want, line],
 		line == want)
 
-## **THE QUEUE ENTRY THE WORK BOARD CANNOT DRAW** — a fourth patch the band holds with **no take
-## crew**, put at the HEAD of its wire queue.
+## **THE QUEUE ENTRY THE BLOCK CANNOT DRAW — A ROAD THE FOG KEEPS OUT OF THE `routes` SECTION**, put
+## at the HEAD of the band's wire queue.
 ##
-## It is not a contrived state. The sim keeps a source's labor row when the take crew goes to zero
-## (`LaborAllocation::set_assignment` → `keep_holding`), the `assign_labor` command declines to drop
-## that row while the source is QUEUED, and the membership test behind `prune_build_queue`
-## (`holds_build_source`) asks only whether a row exists — never how many hands are on it. So the
-## entry survives, turn after turn, while `_work_source_models` drops the row for having no crew.
-const QUEUE_HIDDEN_PATCH := Vector2i(74, 18)
+## ⛔ **IT USED TO BE A ZERO-CREW PATCH, AND THAT CAUSE IS GONE.** The sim keeps a source's labor row
+## when the take crew goes to zero and keeps the entry beside it, and `_work_source_models` used to
+## drop that row for having no crew — so the entry had no model and no row anywhere in the client
+## while it sat at the funded head of the queue. That is the defect
+## `_assert_an_uncrewed_queued_source_still_draws` now pins, and the filter admits the row, so a
+## fixture hiding its entry that way would state a thing the client no longer does.
+##
+## **THE ROAD IS THE REMAINING CAUSE, and it is the client's own resolution rather than a crew rule.**
+## A road entry names a TILE and is joined to the snapshot's `routes` section
+## (`BandPanelController._road_at`), which `core_sim::snapshot::routes::route_states` publishes only
+## for tiles the viewer has DISCOVERED — and fails closed, publishing no road at all, where the
+## faction has no visibility map yet. So an entry whose tile carries no row resolves to no model,
+## exactly as the entry `_road_queue_models` skips.
+const QUEUE_HIDDEN_ROAD_TILE := Vector2i(74, 18)
 
-## …and the crew it is held with. **Zero is the whole fixture**: it is what takes the row off the work
-## board, and therefore what takes the entry out of the drawn queue while leaving it in the wire's.
-const QUEUE_HIDDEN_WORKERS := 0
+## **THE ROAD NETWORK THE FIXTURE PUSHES: none at all** — the fail-closed reading of the fog gate, and
+## what makes the hidden entry's tile unresolvable. Stated rather than inherited, so the state does not
+## depend on which road network the state before it happened to leave behind.
+const QUEUE_HIDDEN_ROAD_NETWORK: Array = []
 
 ## How many rows a three-entry wire queue draws when one of its entries has no model.
 const QUEUE_HIDDEN_DRAWN_ROWS := 2
@@ -15869,19 +15887,16 @@ const QUEUE_HIDDEN_WIRE_TAIL := 2
 ## the row at.
 const QUEUE_GESTURE_DROP_BELOW_FRACTION := 0.75
 
-## The band whose wire queue names three sources and can draw only two: the hidden patch at the head,
-## then the reference band's own head patch and its herd.
+## The band whose wire queue names three sources and can draw only two: the out-of-sight road at the
+## head, then the reference band's own head patch and its herd.
 ##
-## The hidden patch gets a real labor row — the band HOLDS it, which is what keeps its entry alive —
-## carrying `QUEUE_HIDDEN_WORKERS` hands and the declaration its entry states.
+## **THE ROAD GETS NO LABOR ROW, AND THAT IS THE WIRE'S OWN SHAPE** — a road is the one build source
+## with no labor row at all, so the band's `labor_assignments` are the reference band's untouched and
+## the only thing naming the road is its queue entry.
 func _build_hidden_queue_band_fixture() -> Dictionary:
 	var band := _build_queue_band_fixture(2)
-	var rows: Array = band["labor_assignments"]
-	var held := _build_queue_forage_row(QUEUE_HIDDEN_PATCH, SourceForecast.IMPROVEMENT_CULTIVATE)
-	held["workers"] = QUEUE_HIDDEN_WORKERS
-	rows.insert(0, held)
 	band["build_queue"] = [
-		_queue_forage_entry(QUEUE_HIDDEN_PATCH),
+		_queue_road_entry(QUEUE_HIDDEN_ROAD_TILE),
 		_queue_forage_entry(QUEUE_HEAD_PATCH),
 		_queue_hunt_entry(QUEUE_HERD_ID),
 	]
@@ -15904,15 +15919,19 @@ func _build_hidden_queue_band_fixture() -> Dictionary:
 func _assert_queue_positions_are_the_wires(
 		state_name: String = "band_panel_queue_hidden_entry") -> void:
 	_set_forage_patches(_build_queue_patches(2))
-	# The herd is the wire queue's LAST entry here, not its second — the hidden patch took index 0.
+	# The herd is the wire queue's LAST entry here, not its second — the hidden road took index 0.
 	_set_world_herds(_build_queue_herds(QUEUE_HIDDEN_DRAWN_ROWS, QUEUE_TURNS_SECOND))
+	# **THE FOG, STATED AS THE FIXTURE'S OWN INPUT** — no `routes` row for the queued tile, which is
+	# what leaves the head entry with no model. `_assert_a_queued_road_draws_its_row` is the paired
+	# positive: the same kind of entry, its tile IN sight, draws its row.
+	_hud.update_road_network(QUEUE_HIDDEN_ROAD_NETWORK)
 	_push_bands([_build_hidden_queue_band_fixture()])
 	_hud._bandpanel.rerender()
 	await _settle()
 	await _save(state_name)
 	_assert_zone_content_fits()
 	var rows := _build_queue_rows()
-	_assert_band_panel("a wire queue of 3 whose head has no take crew draws %d rows — the held-but-uncrewed entry has no model to draw (got %d)"
+	_assert_band_panel("a wire queue of 3 whose head is a road out of sight draws %d rows — the fogged entry has no model to draw (got %d)"
 			% [QUEUE_HIDDEN_DRAWN_ROWS, rows.size()],
 		rows.size() == QUEUE_HIDDEN_DRAWN_ROWS)
 	if rows.size() != QUEUE_HIDDEN_DRAWN_ROWS:
@@ -15967,6 +15986,201 @@ func _assert_queue_positions_are_the_wires(
 	# re-insert after `herd` — position 2, where the drawn list computes a dead 1.
 	await _assert_queue_drag_sends(0, 1, QUEUE_GESTURE_DROP_BELOW_FRACTION, head_source,
 		QUEUE_HIDDEN_WIRE_TAIL)
+	_restore_queue_reorder_fixture()
+	await _settle()
+
+# ---- A QUEUED SOURCE WITH NO TAKE CREW -----------------------------------------------------------
+#
+# ⛔ **REPORTED FROM PLAY: THE BUILDERS WORKED A JOB WITH NO ROW ANYWHERE IN THE CLIENT.** The player
+# declared `cultivate` on patch A, then moved A's harvesters onto something else; A's row left the
+# work board and, with it, the build-queue block. They then queued `cultivate` on patch B and watched
+# B make no progress for several turns — A was still at wire index 0, still the only entry the pool
+# funds, and nothing on screen said so. The way out was an enabled `▲` on B, which worked by
+# REORDERING the vector rather than by revealing anything.
+#
+# **THE TWO RULES HAD COME APART.** The sim keeps the labor row and the entry on a ROW-EXISTS rule —
+# `LaborAllocation::set_assignment` → `keep_holding`, `handle_assign_labor` declining to drop a row
+# whose source is QUEUED, and `holds_build_source` asking only whether a row exists — and the client
+# admitted the row on a CREW rule. The client now admits a zero-crew row **whose source this band has
+# queued**, off the same `build_queue_keys` the block ranks on.
+
+## The patch the player emptied: a source the band still holds, with a `cultivate` declared on it and
+## **no harvesters at all**. Its tile is distinct from every other queue patch, so a row found at it is
+## unambiguously this one.
+const QUEUE_UNCREWED_PATCH := Vector2i(75, 18)
+
+## …and the crew on it. **Zero is the whole fixture.**
+const QUEUE_UNCREWED_WORKERS := 0
+
+## The band's wire queue in the reproduction: the emptied patch at the funded head, the crewed patch
+## the player queued after it behind — so `[0, 1]`, and the second entry is the one that made no
+## progress.
+const QUEUE_UNCREWED_HEAD_RANK := 0
+const QUEUE_UNCREWED_BEHIND_RANK := 1
+
+## How many rows that two-entry queue draws. **Both of them**, which is the claim: it drew ONE.
+const QUEUE_UNCREWED_DRAWN_ROWS := 2
+
+## …and how many the paired negative draws — the same emptied row, NOT queued, which must stay off the
+## board and out of the block. Without it "the row is drawn" passes on a filter that admits every
+## zero-crew row the sim keeps, which would repopulate the board with every source a player has
+## deliberately emptied.
+const QUEUE_UNCREWED_NEGATIVE_ROWS := 1
+
+## The patches for that reproduction — the reference set, plus the emptied one at the queue's HEAD.
+## The head patch is moved to the position BEHIND it, so the per-source positions agree with the wire
+## order the band publishes rather than naming two heads.
+func _uncrewed_queue_patches() -> Array:
+	var patches: Array = _build_queue_patches(1)
+	var uncrewed: Dictionary = (patches[0] as Dictionary).duplicate(true)
+	uncrewed["x"] = QUEUE_UNCREWED_PATCH.x
+	uncrewed["y"] = QUEUE_UNCREWED_PATCH.y
+	uncrewed["build_queue_position"] = QUEUE_UNCREWED_HEAD_RANK
+	(patches[0] as Dictionary)["build_queue_position"] = QUEUE_UNCREWED_BEHIND_RANK
+	patches.append(uncrewed)
+	return patches
+
+## The band of the reproduction — **the player's two harvested tiles and nothing else**, so the board
+## is one page and a row that is missing is missing because it was filtered rather than because it was
+## paged off. `queued` states whether the emptied patch's ENTRY is on the wire, which is the only
+## difference between the claim and its paired negative: the labor row, its zero crew and its declared
+## improvement are identical in both.
+func _build_uncrewed_queue_band_fixture(queued: bool) -> Dictionary:
+	var band := _band_fixture()
+	band["idle_workers"] = 0
+	var emptied := _build_queue_forage_row(QUEUE_UNCREWED_PATCH,
+		SourceForecast.IMPROVEMENT_CULTIVATE)
+	emptied["workers"] = QUEUE_UNCREWED_WORKERS
+	var entries: Array = [_queue_forage_entry(QUEUE_HEAD_PATCH)]
+	if queued:
+		entries.insert(QUEUE_UNCREWED_HEAD_RANK, _queue_forage_entry(QUEUE_UNCREWED_PATCH))
+	band["build_queue"] = entries
+	band["labor_assignments"] = [
+		emptied,
+		_build_queue_forage_row(QUEUE_HEAD_PATCH, SourceForecast.IMPROVEMENT_CULTIVATE),
+		{"kind": HudConst.LABOR_KIND_BUILDERS, "workers": QUEUE_BUILDERS,
+			"target_x": -1, "target_y": -1, "fauna_id": ""},
+	]
+	return band
+
+## Whether the WORK BOARD drew a row for this source, read off the row's own build slot — which
+## carries the model the row was built from (`WORK_ROW_MODEL_META`), so the answer is the render's
+## and not a re-derivation of its input.
+func _work_board_draws_source(key: String) -> bool:
+	for slot in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_MODEL_META, []):
+		var model: Dictionary = slot.get_meta(HudWorkVocab.WORK_ROW_MODEL_META, {})
+		if String(model.get("key", "")) == key:
+			return true
+	return false
+
+## ⛔ **THE JOB THE BUILDERS ARE ON IS DRAWN EVEN WITH NOBODY GATHERING ON IT** — Ray's reproduction,
+## rendered.
+##
+## **THE NEGATIVE IS HALF THE STATE.** The sim keeps the row of ANY source a player empties, so a
+## filter that simply stopped asking about the crew would pass every claim below and put every emptied
+## source back on the work board. The entry is what admits it, and the negative is the only thing that
+## says so.
+func _assert_an_uncrewed_queued_source_still_draws() -> void:
+	var emptied_key := _hud._band_labor.pending_key(SourceForecast.LABOR_KIND_FORAGE,
+		QUEUE_UNCREWED_PATCH.x, QUEUE_UNCREWED_PATCH.y, "")
+	_set_forage_patches(_uncrewed_queue_patches())
+	# The band hunts nothing in this reproduction, so the world's herd is queued nowhere and estimated
+	# for nothing — the sentinels a source no band has declared on publishes.
+	_set_world_herds(_build_queue_herds(SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
+		SourceForecast.BUILD_TURNS_NO_ESTIMATE))
+
+	# ---- THE NEGATIVE FIRST: the same emptied row, no entry on the wire --------------------------
+	_push_bands([_build_uncrewed_queue_band_fixture(false)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	_assert_band_panel("an emptied source the band has NOT queued stays OFF the work board — the deliberate emptying still hides it",
+		not _work_board_draws_source(emptied_key))
+	var lone_rows := _build_queue_rows()
+	_assert_band_panel("…and the block draws the %d entry the wire really carries (got %d)"
+			% [QUEUE_UNCREWED_NEGATIVE_ROWS, lone_rows.size()],
+		lone_rows.size() == QUEUE_UNCREWED_NEGATIVE_ROWS)
+	if lone_rows.size() == QUEUE_UNCREWED_NEGATIVE_ROWS:
+		# **AND ITS `▲` IS DISABLED** — the state the player's screenshot should have shown. A lone
+		# entry is the head, and an enabled `▲` on it is precisely how the hidden entry gave itself
+		# away.
+		var lone_promote := _find_meta_control(lone_rows[0],
+			HudWorkVocab.BUILD_QUEUE_PROMOTE_META) as Button
+		_assert_band_panel("…whose `%s` is DISABLED, a genuinely lone entry having nothing to climb above"
+				% HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH,
+			lone_promote != null and lone_promote.disabled)
+
+	# ---- THE REPRODUCTION: the emptied patch queued, at the head ---------------------------------
+	_push_bands([_build_uncrewed_queue_band_fixture(true)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_queue_uncrewed_head")
+	_assert_zone_content_fits()
+	_assert_band_panel("a QUEUED source with no take crew is drawn on the work board — it is the row the builders pool is spending on",
+		_work_board_draws_source(emptied_key))
+	var rows := _build_queue_rows()
+	_assert_band_panel("…and the block draws BOTH entries, %d rows (got %d)"
+			% [QUEUE_UNCREWED_DRAWN_ROWS, rows.size()],
+		rows.size() == QUEUE_UNCREWED_DRAWN_ROWS)
+	if rows.size() != QUEUE_UNCREWED_DRAWN_ROWS:
+		_restore_queue_reorder_fixture()
+		await _settle()
+		return
+	var ranks: Array = []
+	for row in rows:
+		ranks.append(int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)))
+	_assert_band_panel("…wearing the WIRE's ranks %s — the emptied source at the head, the one queued after it behind (got %s)"
+			% [str([QUEUE_UNCREWED_HEAD_RANK, QUEUE_UNCREWED_BEHIND_RANK]), str(ranks)],
+		ranks == [QUEUE_UNCREWED_HEAD_RANK, QUEUE_UNCREWED_BEHIND_RANK])
+	# ⛔ **THE `▸` IS ON THE EMPTIED ENTRY**, because that is where every builder is going. The whole
+	# report is that the second entry made no progress, and this mark is the answer to why.
+	var head_marker := _find_meta_control(rows[QUEUE_UNCREWED_HEAD_RANK],
+		HudWorkVocab.BUILD_QUEUE_MARKER_META)
+	_assert_band_panel("…with the `%s` on the emptied entry, which is where the pool actually is"
+			% HudWorkVocab.BUILD_QUEUE_HEAD_MARKER,
+		head_marker != null and bool(head_marker.get_meta(HudWorkVocab.BUILD_QUEUE_MARKER_META)))
+	var behind_marker := _find_meta_control(rows[QUEUE_UNCREWED_BEHIND_RANK],
+		HudWorkVocab.BUILD_QUEUE_MARKER_META)
+	_assert_band_panel("…and NOT on the entry behind it, which is funded nothing",
+		behind_marker != null
+			and not bool(behind_marker.get_meta(HudWorkVocab.BUILD_QUEUE_MARKER_META)))
+	# ⛔ **AND THE END-STOPS READ THE TRUTH NOW.** The head cannot climb, and the entry the player
+	# watched stall can — visibly second rather than silently stalled.
+	var head_promote := _find_meta_control(rows[QUEUE_UNCREWED_HEAD_RANK],
+		HudWorkVocab.BUILD_QUEUE_PROMOTE_META) as Button
+	_assert_band_panel("the head row's `%s` is DISABLED — it is already the entry being funded"
+			% HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH,
+		head_promote != null and head_promote.disabled)
+	var behind_promote := _find_meta_control(rows[QUEUE_UNCREWED_BEHIND_RANK],
+		HudWorkVocab.BUILD_QUEUE_PROMOTE_META) as Button
+	_assert_band_panel("…and the row behind it has an ENABLED `%s`, at rank %d and above a row the player can now SEE"
+			% [HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH, QUEUE_UNCREWED_BEHIND_RANK],
+		behind_promote != null and not behind_promote.disabled)
+	# ⛔ **AND THE `✕` IS REACHABLE ON IT** — seeing the job that is taking the hands is worth little
+	# if the row cannot be withdrawn, which is the other half of what the hidden entry cost.
+	_hud._bandpanel._queue_open_key = ""
+	_hud._bandpanel._toggle_queue_settings(emptied_key)
+	await _settle()
+	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+	var withdraw: Button = null if strip == null \
+		else _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_UNQUEUE_META) as Button
+	_assert_band_panel("the re-admitted row opens a settings strip carrying the `%s` withdrawal"
+			% HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH,
+		withdraw != null)
+	if withdraw != null:
+		var seen: Array = []
+		var sink := func(payload: Dictionary) -> void: seen.append(payload)
+		_hud.unqueue_requested.connect(sink)
+		withdraw.pressed.emit()
+		_hud.unqueue_requested.disconnect(sink)
+		var line := "" if seen.is_empty() \
+			else String(MAIN_SCRIPT.format_unqueue(seen[0] as Dictionary).get("line", ""))
+		var wanted_line := "unqueue %d %d %d" % [HudConst.PLAYER_FACTION_ID,
+			QUEUE_UNCREWED_PATCH.x, QUEUE_UNCREWED_PATCH.y]
+		print("band_panel_preview: uncrewed head withdrawal -> %s" % line)
+		_assert_band_panel("…and pressing it sends `%s` for the emptied source's own tile (got \"%s\")"
+				% [wanted_line, line],
+			line == wanted_line)
+	_hud._bandpanel._queue_open_key = ""
 	_restore_queue_reorder_fixture()
 	await _settle()
 

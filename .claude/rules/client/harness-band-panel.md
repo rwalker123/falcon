@@ -1282,17 +1282,55 @@ machinery run: that is the WIRING — whether `mouse_focus` resolves to the hand
 the parent chain finds a `get_drag_data`, whether a drag ever begins at all.
 
 ⛔ **EVERY FIXTURE ABOVE HAS A MODEL FOR EVERY QUEUE ENTRY, AND THAT IS WHAT MADE THEM ALL BLIND TO
-ONE CLASS OF DEFECT.** A band keeps its labor row on a source it has taken to zero take crew while
-that source is QUEUED, and the work board admits a row on its take crew — so the wire queue can carry
-an entry the block cannot draw, turn after turn. On a self-consistent fixture a position counted in
-the DRAWN list and one counted in the WIRE queue are the same number, so no claim could tell them
-apart. `_build_hidden_queue_band_fixture` is the one that can: three wire entries, the first held at
-zero crew. `_assert_queue_positions_are_the_wires` then makes the claims the others cannot — the
+ONE CLASS OF DEFECT.** On a self-consistent fixture a position counted in the DRAWN list and one
+counted in the WIRE queue are the same number, so no claim could tell them apart.
+`_build_hidden_queue_band_fixture` is the one that can: three wire entries, the first of them an entry
+with no model. `_assert_queue_positions_are_the_wires` then makes the claims the others cannot — the
 ranks are `[1, 2]`, the top drawn row's `▲` is ENABLED and only the bottom's `▼` is disabled, neither
 row wears the `▸`, and all **three** senders of `build_order` (`▲`, `▼`, and the drag through
 `_assert_queue_drag_sends`) send the wire's index. Three separate arithmetics over one list: a fix to
 any one of them proves nothing about the other two. Reverting the rank to the drawn index fails eight
 of them. The frame is `band_panel_queue_hidden_entry`.
+
+> #### ⛔ IT HID ITS ENTRY BY A RULE THE CLIENT NO LONGER HAS, AND WAS RE-POINTED RATHER THAN RELAXED
+>
+> The hidden entry used to be a fourth patch held at ZERO TAKE CREW — the state the sim keeps
+> deliberately and the work board dropped, which is the defect
+> `_assert_an_uncrewed_queued_source_still_draws` now pins. That row is admitted, so a fixture hiding
+> its entry that way would stage a thing the client does not do and the state's own row-count claim
+> would fail. **The remaining cause is the client's own RESOLUTION rather than a crew rule**: a road
+> entry names a TILE and is joined against the snapshot's `routes` section, which
+> `core_sim::snapshot::routes::route_states` publishes only for DISCOVERED tiles and not at all where
+> the faction has no visibility map yet — so `_road_at` answers `{}` and `_road_queue_models` skips it.
+> The fixture pushes an EMPTY road network as its own stated input, and every assertion above is kept
+> at full strength; `_assert_a_queued_road_draws_its_row` two states later is the paired positive, the
+> same kind of entry with its tile IN sight.
+
+⛔ **AND THE ZERO-CREW QUEUED SOURCE IS A STATE OF ITS OWN NOW** —
+`_assert_an_uncrewed_queued_source_still_draws`, appended at the END of the queue chapter (it pushes a
+band of its own and restores the reorder fixture, so no frame above it moves). Its fixture is Ray's
+reproduction and nothing else: **the player's two harvested tiles**, one of them emptied and queued at
+the head, the other crewed and queued behind it — no herd, no spare patches — so the board is ONE PAGE
+and a row that is missing is missing because it was filtered rather than because it was paged off.
+
+**THE PAIRED NEGATIVE IS HALF THE CLAIM AND RUNS FIRST**: the same emptied row with NO entry on the
+wire must stay off the board and out of the block, or "the row is drawn" is satisfied by a filter that
+admits every zero-crew row the sim keeps — which would repopulate the work board with every source the
+player deliberately emptied. Its lone drawn entry additionally carries the **DISABLED `▲`** that the
+player's own screenshot should have shown. The positive then asserts the board row, both queue rows,
+the wire ranks `[0, 1]`, the `▸` on the emptied entry and NOT on the one behind it, the head's `▲`
+disabled and the second's enabled, and the `✕` reachable on the re-admitted row (read back through
+`Main.format_unqueue`, so the withdrawal names the emptied source's own tile).
+
+**Sabotage-verified on two DISJOINT mutations of the one filter.** Restoring the crew-only test fails
+**exactly two** — *a QUEUED source with no take crew is drawn on the work board* and *the block draws
+BOTH entries, 2 rows (got 1)* — i.e. the reported defect in its own words. Dropping the crew test
+altogether (admitting every zero-crew row) fails **exactly one**, and it is the negative: *an emptied
+source the band has NOT queued stays OFF the work board*. Neither mutation touches the other's claim,
+which is what says the two halves are independent. **MEASURED, BEFORE AND AFTER**: `1101 : PASS` →
+`1113`, exit 0 both times. One frame added (`band_panel_queue_uncrewed_head`); the two hidden-entry
+frames re-render on the re-pointed fixture and are expected to differ from their pre-change
+baselines — they draw the same two queue rows off a road entry rather than a patch one.
 
 ⛔ **AND EVERY BUTTON THE QUEUE GREW WITH THE ARROWS IS DRIVEN THE SAME WAY.** `_drive_click` — a real
 `push_input` press and release on a window point — is what `_assert_queue_arrow_click` and

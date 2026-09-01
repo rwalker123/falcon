@@ -3128,9 +3128,10 @@ nothing on a non-head row.
 - ⛔ **AND THE POSITION IS AN INDEX INTO THE BAND'S WIRE QUEUE — NOT INTO THE ROWS THE BLOCK DREW.**
   Both the arrows and the drag count in `_queue_rank_keys` (`HudBandLaborState.build_queue_keys`),
   and `_build_queue_models` stamps each drawn row's rank from the same walk. The two lists are not
-  the same length: see "AN ENTRY CAN OUTLIVE ITS ROW'S CREW" below for the reachable, persistent
-  state in which the wire carries an entry the block cannot draw. Counting in the drawn list instead
-  makes every position below a hidden entry short by the number hidden, which the sim resolves
+  the same length: see "AN ENTRY CAN OUTLIVE ITS ROW'S CREW" below for the state in which the wire
+  carries an entry the block cannot draw — a queued ROAD whose tile the fog keeps out of the `routes`
+  section. Counting in the drawn list instead makes every position below a hidden entry short by the
+  number hidden, which the sim resolves
   against its own full queue — a `▼` that silently does nothing, or a row that jumps above something
   the player cannot see.
 - ⛔ **THERE IS NO OPTIMISTIC ORDERING, AND THERE MUST NOT BE ONE** (§4.9 item 9a). This slice shipped
@@ -3508,11 +3509,10 @@ index into `build_queue_keys(band)`, `NOT_IN_ANY_BUILD_QUEUE` when pending — r
 source-addressed wire position, because all five of its readers were band-scoped too. It is **not**
 the block's index into the rows it drew; the section below is why.
 
-### AN ENTRY CAN OUTLIVE ITS ROW'S CREW, SO THE DRAWN LIST IS SHORTER THAN THE WIRE'S
+### AN ENTRY CAN OUTLIVE ITS ROW'S CREW, AND THE CLIENT ADMITS IT ON THE SIM'S OWN RULE
 
 The membership argument above — *an entry requires a row, and the board admits any source with a take
-crew* — quietly equates a **row** with a **crew**, and the sim does not. The gap is reachable and it
-persists:
+crew* — quietly equates a **row** with a **crew**, and the sim does not:
 
 | step | seam |
 |---|---|
@@ -3520,18 +3520,47 @@ persists:
 | …and `assign_labor` declines to drop that row while the source is QUEUED | `handle_assign_labor` → `if applied == 0 && !source_holds_something && !queued` |
 | the membership test asks only whether a row EXISTS, never how many hands are on it | `holds_build_source`, so `prune_build_queue` keeps the entry |
 | …and the turn pass spares it for the same reason, so the state survives every turn | `queued.is_none()` guards the lapse in `advance_labor_allocation` |
-| the client then drops that row, the board admitting on the take crew | `_work_source_models` → `if workers <= 0 and not pending` |
+| the client used to drop that row, the board admitting on the take crew | **fixed**: `_work_source_models` admits a zero-crew row whose source is in this same band's wire queue |
 
-So a wire queue of `[A, B, C]` legitimately draws as `[B, C]`. **Membership is the drawn list's;
-every ARITHMETIC is the wire's** — `_build_queue_models` walks the wire with its own index and lets a
-skipped entry spend its rank, the `▼` end-stop is the wire queue's LENGTH (so `B`'s `▲` is enabled,
-and only `C`'s `▼` is disabled), and `_queue_drop` removes and re-inserts in the wire's key list,
-using the drawn row only to NAME the drop target. The `▸` is the wire's head too: an entry with no row
-is still the one the builders pool is standing on, so neither drawn row wears it.
+**WHAT THE GAP COST, REPORTED FROM PLAY.** Only the HEAD of `build_queue` is funded, one entry at a
+time and the whole pool, and the head is never skipped even when it is blocked — so a `cultivate`
+whose harvesters the player moved away sat at index 0 taking every builder, every turn, with **no row
+anywhere in the client**: not on the work board, and therefore not in the build-queue block, which
+joins the wire's entries against those models. The `cultivate` queued behind it made no progress for
+several turns and nothing said why. The way out was the enabled `▲` on the second entry, which worked
+by REORDERING the vector rather than by revealing anything.
 
-**The zero-crew row is deliberately NOT re-admitted to fix this.** Admitting it would put it back on
-the WORK BOARD as well, which `docs/plan_standing_upkeep.md` §2.5 reverted on purpose — a separate
-design question. `band_panel_queue_hidden_entry` is the frame.
+**THE CLIENT NOW ADMITS ON THE SAME RULE THE SIM HOLDS THE ROW ON, narrowed by one term.** The sim's
+rule is *a row exists*; the client's is *a row exists AND this band has queued it*, read from
+`HudBandLaborState.build_queue_keys(band)` — the same wire list `_queue_rank_keys` ranks the block on,
+so the board and the block cannot disagree about which sources are queued. ⛔ **The queue entry is
+what admits it, never the zero crew on its own**: `keep_holding` keeps the row of ANY source the
+player empties, so admitting on the sim's rule verbatim would put every deliberately-emptied source
+back on the work board, which `docs/plan_standing_upkeep.md` §2.5 reverted. The entry is what makes
+hiding actively harmful, because that row is the one spending the pool.
+
+**A PLACEHOLDER ROW WAS THE OTHER CANDIDATE AND IS STILL REFUSED** — it has no face, no date, no legs
+and no price to state. So is dropping the entry sim-side when its crew hits zero: that contradicts
+`keep_holding` and the test at `core_sim/src/components.rs` — *"unstaffing the gatherers must not
+withdraw the declaration beside them"*.
+
+**THE SKIP REMAINS, AND SO DOES EVERY ARITHMETIC BUILT ON IT.** A wire queue of `[A, B, C]` can still
+draw as `[B, C]`, because a queued **ROAD** names a tile and is joined against the snapshot's `routes`
+section, which is fog-filtered and fails closed (`core_sim::snapshot::routes::route_states` publishes
+a road only for a tile the viewer has DISCOVERED, and publishes none at all where the faction has no
+visibility map yet). **Membership is the drawn list's; every ARITHMETIC is the wire's** —
+`_build_queue_models` walks the wire with its own index and lets a skipped entry spend its rank, the
+`▼` end-stop is the wire queue's LENGTH (so `B`'s `▲` is enabled, and only `C`'s `▼` is disabled), and
+`_queue_drop` removes and re-inserts in the wire's key list, using the drawn row only to NAME the drop
+target. The `▸` is the wire's head too: an entry with no row is still the one the builders pool is
+standing on, so neither drawn row wears it.
+
+**Two frames, and they are opposite claims.** `band_panel_queue_hidden_entry` stages the surviving
+skip (a fogged road at the head, ranks `[1, 2]`, no head marker on either drawn row);
+`band_panel_queue_uncrewed_head` stages the reproduction (the emptied patch drawn at rank 0 wearing
+the `▸`, the entry behind it visibly second with an enabled `▲`, and the `✕` reachable on the
+re-admitted row) beside the paired negative that the same emptied row, NOT queued, stays off the
+board.
 
 > **THE COMPOSE-SHEET ONE RE-OPENED A REPORTED PLAY DEFECT BY A SECOND DOOR.** The DECLARED-vs-RUNNING
 > fork exists because rendering a mere declaration as a running build was a one-way trap —

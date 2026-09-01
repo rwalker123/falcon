@@ -2638,25 +2638,43 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
 ## **IT IS DERIVED FROM THE FULL MODEL SET AND NEVER FROM `filtered`.** The chips filter the BOARD;
 ## the queue is the band's own list, so a chip press must leave it alone.
 ##
-## ⛔ **AN ENTRY WITH NO MODEL IS SKIPPED, AND THAT IS A REACHABLE, PERSISTENT STATE — which is
-## exactly why the RANK IS THE WIRE QUEUE'S INDEX AND NEVER THIS LIST'S.** An earlier note here
-## claimed the skip could not normally happen, on the strength of *"an entry requires a row"*. The
-## rule is real and the conclusion drawn from it was false: the rule says a ROW, and a row is not a
-## CREW.
+## ⛔ **AN ENTRY WITH NO MODEL IS STILL SKIPPED, AND THE SKIP IS STILL REACHABLE — which is why the
+## RANK IS THE WIRE QUEUE'S INDEX AND NEVER THIS LIST'S.** Two notes stood here before and both were
+## wrong in turn: the first claimed the skip could not normally happen (*"an entry requires a row"* —
+## the rule says a ROW, and a row is not a CREW), and the second named the ZERO-CREW SOURCE as its
+## standing cause. **That cause is gone**, and the seam table below records what closed it.
 ##
-## The path, end to end — a queued source whose take crew the player has taken to zero:
+## The path it used to take, end to end — a queued source whose take crew the player took to zero:
 ##
 ## | step | seam |
 ## |---|---|
-## | unstaffing a source the band already held KEEPS its row, at zero workers | `LaborAllocation::set_assignment` → `keep_holding` (`core_sim/src/components.rs:3526`) |
-## | …and the command declines to drop that row because the source is QUEUED | `handle_assign_labor` → `if applied == 0 && !source_holds_something && !queued` (`core_sim/src/bin/server.rs:3134`) |
-## | the membership test asks only whether a row EXISTS, never how many hands are on it | `holds_build_source` (`core_sim/src/components.rs:3721`), so `prune_build_queue` keeps the entry |
-## | …and the turn pass spares it for the same reason, so the state SURVIVES EVERY TURN | `queued.is_none()` guards the lapse (`core_sim/src/systems/labor.rs:1866`) |
-## | the client then drops that row: the board admits on the take crew | `_work_source_models` — `if workers <= 0 and not pending: continue` |
+## | unstaffing a source the band already held KEEPS its row, at zero workers | `LaborAllocation::set_assignment` → `keep_holding` (`core_sim/src/components.rs`) |
+## | …and the command declines to drop that row because the source is QUEUED | `handle_assign_labor` → `if applied == 0 && !source_holds_something && !queued` (`core_sim/src/bin/server.rs`) |
+## | the membership test asks only whether a row EXISTS, never how many hands are on it | `holds_build_source` (`core_sim/src/components.rs`), so `prune_build_queue` keeps the entry |
+## | …and the turn pass spares it for the same reason, so the state SURVIVES EVERY TURN | `queued.is_none()` guards the lapse (`core_sim/src/systems/labor.rs`) |
+## | the client dropped that row, admitting on the take crew | **fixed**: `_work_source_models` admits a zero-crew row whose source is in this same wire queue |
 ##
-## So the wire queue `[A, B, C]` legitimately draws as `[B, C]`, and a position counted off the DRAWN
-## list is short by every entry hidden above it — `▼` on `B` would send `1`, which the sim resolves
-## back to `[A, B, C]`: a button that reads as broken because it silently did nothing.
+## **WHAT IT COST, REPORTED FROM PLAY.** Only the HEAD of `build_queue` is funded and it is never
+## skipped, so `A` at index 0 with no harvesters ate the whole builders pool every turn while the
+## `cultivate` the player queued behind it sat at index 1 and never moved — with no row anywhere in
+## the client for the job that was taking the hands. The `▲` on `B` was the only way out, and it
+## worked by reordering the vector rather than by revealing anything.
+##
+## **THE CLIENT NOW ADMITS ON THE SAME RULE THE SIM HOLDS THE ROW ON.** The sim's rule is *a row
+## exists*; the client's is *a row exists AND this band has queued it*, which is the strictly narrower
+## of the two — deliberately, because admitting every row `keep_holding` keeps would put every source
+## the player deliberately emptied back on the work board, which §2.5 reverted.
+##
+## **WHAT REMAINS UNRENDERABLE, and it is neither hypothetical nor a crew:**
+##
+## | remaining cause | why the entry has no row |
+## |---|---|
+## | a queued ROAD the snapshot's `routes` section does not carry | that section is FOG-FILTERED and **fails closed** (`core_sim::snapshot::routes::route_states`): it publishes a road only for a tile the viewer has DISCOVERED, and publishes none at all where the faction has no visibility map yet. An entry whose tile carries no row resolves to no model in `_road_queue_models`, which is the state `band_panel_queue_hidden_entry` stages |
+## | an entry the player has just withdrawn | the `✕`'s optimistic overlay covers the round trip while `buildQueue` still lists it |
+##
+## So the wire queue `[A, B, C]` can still legitimately draw as `[B, C]`, and a position counted off
+## the DRAWN list is short by every entry hidden above it — `▼` on `B` would send `1`, which the sim
+## resolves back to `[A, B, C]`: a button that reads as broken because it silently did nothing.
 ##
 ## **THE RANK IS THEREFORE STAMPED HERE, from the entry's place in `build_queue_keys`**
 ## (`BUILD_QUEUE_ROW_RANK_KEY`), and every `build_order` the block sends — both arrows and the drag —
@@ -2664,9 +2682,8 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
 ## `[B, C]`, `B`'s `▲` is ENABLED (it can climb above `A`) and only `C`'s `▼` is disabled.
 ##
 ## **Skipping rather than inventing a placeholder is still the right fallback**: a placeholder has no
-## face, no date, no legs and no price to state. Admitting the zero-crew row instead would put it back
-## on the WORK BOARD as well, which §2.5 deliberately reverted — a separate design question, and not
-## this list's to decide.
+## face, no date, no legs and no price to state — and for the one source that can reach this skip, a
+## road, there is nothing to say about a tile this client cannot see.
 ##
 ## **…AND THE DECLARATIONS THE WIRE HAS NOT PLACED YET RIDE ITS TAIL.** The queue is captured live,
 ## so a declaration lands in it on its own command's recapture — but that recapture is a network hop
@@ -2725,10 +2742,11 @@ func _build_queue_models(band: Dictionary, models: Array) -> Array:
         var key := String(rank_keys[rank])
         # ⛔ **AN ENTRY THAT DOES NOT DRAW STILL SPENDS ITS RANK** — that is the whole point of
         # walking the wire's list with its own index rather than appending and counting. Two kinds
-        # skip, and the WIRE still carries both: one whose source has no work-source model (the note
-        # above has the path, and that state persists across turns), and one the player has just
-        # withdrawn, whose `✕` is covered for the round trip by an overlay while `buildQueue` still
-        # lists it.
+        # skip, and the WIRE still carries both: one whose source this client cannot RESOLVE — a
+        # queued road on a tile the fog-filtered `routes` section does not carry (the zero-crew patch
+        # that used to be the other one is admitted now, at `_work_source_models` itself) — and one
+        # the player has just withdrawn, whose `✕` is covered for the round trip by an overlay while
+        # `buildQueue` still lists it.
         if withdrawn.has(key):
             continue
         if not by_key.has(key) and not road_models.has(key):
@@ -3682,9 +3700,10 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
 ##
 ## ⛔ **BOTH END-STOPS ARE THE WIRE QUEUE'S, NOT THE DRAWN LIST'S.** `confirmed` is how many entries
 ## the BAND's wire queue carries and the rank is this entry's index in it, so with `[A, B, C]` drawn
-## as `[B, C]` — `A` having no work-source model, which `_build_queue_models`' note shows is a
-## reachable and persistent state — `B`'s `▲` is ENABLED, because there really is somewhere above it
-## to go. An entry at the bottom of a truncated page likewise still has somewhere to fall to.
+## as `[B, C]` — `A` having no model at all, which `_build_queue_models`' note shows is a reachable
+## state (a queued road the fog keeps out of the `routes` section) — `B`'s `▲` is ENABLED, because
+## there really is somewhere above it to go. An entry at the bottom of a truncated page likewise still
+## has somewhere to fall to.
 func _build_queue_reorder_column(band: Dictionary, model: Dictionary,
         confirmed: int) -> Control:
     var column := HBoxContainer.new()
@@ -5640,6 +5659,14 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
     # this panel follows — a player who has just staffed the role must not read a ⚠ they have fixed.
     var builders := int(_band_labor.effective_role_workers(
         band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
+    # **AND THE BAND'S OWN WIRE QUEUE, RESOLVED ONCE BESIDE IT** — the keys of its
+    # `PopulationCohortState.buildQueue`, through `HudBandLaborState.build_queue_keys`, which is the
+    # same list `_queue_rank_keys` ranks the queue block on. It is read here because a queued source
+    # is admitted to the board with no take crew at all (the ⛔ note at the filter below), and asking
+    # ONE list is what keeps the board and the block from disagreeing about which sources are queued.
+    var queued_keys: Dictionary = {}
+    for queued_variant in _band_labor.build_queue_keys(band):
+        queued_keys[String(queued_variant)] = true
     for key in merged:
         var m: Dictionary = merged[key]
         var kind := String(m.get("kind", "")).strip_edges().to_lower()
@@ -5652,7 +5679,24 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var pending := bool(m.get("pending", false))
         if not (kind == SourceForecast.LABOR_KIND_FORAGE or kind == SourceForecast.LABOR_KIND_HUNT):
             continue
-        if workers <= 0 and not pending:
+        # ⛔ **A QUEUED SOURCE IS ADMITTED WITH NO TAKE CREW AT ALL, AND THAT IS THE ONE EXCEPTION.**
+        # Reported from play: the player declared `cultivate` on a patch, then took that patch's
+        # harvesters to zero. The sim KEEPS both the labor row and the queue entry, deliberately —
+        # `LaborAllocation::set_assignment` → `keep_holding`, `handle_assign_labor` declining to drop
+        # a row whose source is QUEUED, and `holds_build_source` asking only whether a ROW exists — so
+        # the entry stayed at the HEAD of the band's queue, taking the whole builders pool every turn,
+        # while this filter took its row off the board and with it out of the queue block. The next
+        # `cultivate` the player queued sat at index 1 and never advanced, behind a job that had no
+        # row anywhere in the client. **The sim admits on a ROW and the client admitted on a CREW**,
+        # and the gap between the two rules was a job the builders were working that the player could
+        # not see, could not reorder and could not withdraw.
+        #
+        # ⛔ **THE QUEUE ENTRY IS WHAT ADMITS IT, NEVER THE ZERO CREW ON ITS OWN.** `keep_holding`
+        # keeps the row of ANY source the player empties, so admitting on the sim's rule verbatim
+        # would put every deliberately-emptied source back on the work board — §2.5's revert arriving
+        # by the back door. The entry is what makes hiding actively harmful, because that row is the
+        # one spending the pool.
+        if workers <= 0 and not pending and not queued_keys.has(String(key)):
             continue
         var yld := SourceForecast.source_yield_readout(m, kind)
         var x := int(m.get("x", -1))
