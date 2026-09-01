@@ -733,6 +733,12 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: split_band_requested.emit(payload))
     _bandpanel.alert_focus_requested.connect(
         func(x: int, y: int) -> void: alert_focus_requested.emit(x, y))
+    # **THE ROADWORK ROSTER'S `✕`, ONTO THE SAME `abandon` THE ROAD LADDER'S BUTTON TAKES** (arc
+    # #532). Two emitters, one relay target and one `Main.format_abandon` — a second command path
+    # would be a second place for the verb's grammar to drift. No optimistic write, for the reason
+    # the drawer's relay above states: a road has no labor row to shadow.
+    _bandpanel.road_abandon_requested.connect(
+        func(payload: Dictionary) -> void: abandon_requested.emit(payload))
     _bandpanel.roster_occupant_selected.connect(
         func(kind: String, id: Variant) -> void: roster_occupant_selected.emit(kind, id))
     # MATERIALS & CRAFTING. Constructed after `_bandpanel` because the launch edge comes off it, and

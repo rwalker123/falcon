@@ -14,7 +14,8 @@ class_name HudRouteVocab
 ## are following, which vanish when the order does. A road is a WORLD OBJECT in the ground that
 ## outlives every band that walks it, and it does not follow a camp. The obvious name was taken by
 ## the other thing first, so the client noun for this one is **road** throughout
-## (`MapView.road_network`, `AnnotationRenderer.draw_road_network`, `ui_preview`'s `road_*` states).
+## (`MapView.road_network`, `TerrainRenderer`'s `road_map` + the terrain shader's road pass,
+## `ui_preview`'s `road_*` states).
 ##
 ## ⛔ **NOTHING HERE RE-DERIVES A NUMBER THE SIM ALREADY ANSWERED.** The bill, its shortfall, the
 ## keeper count and the neglect countdown are four published fields, and the composers below read

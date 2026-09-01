@@ -210,9 +210,10 @@
 #     worse, not better (15% of the OPAQUE pixels carried a magenta cast at full alpha, so it was
 #     not an edge artifact and no ramp touched it). Whatever the art leaves see-through becomes a
 #     hole or a smear.
-#   - THE ART MUST NEVER ENCODE FAINTNESS. `AnnotationRenderer._road_rung_opacity` already fades
-#     each rung, and §4.13c fades a road in as it is worn. A prompt asking the plate to look faint
-#     is asking it to do the renderer's job twice.
+#   - THE ART MUST NEVER ENCODE FAINTNESS. The shader's `road_opacity_ladder` already fades each
+#     rung, and it fades a road IN as it is worn (the ladder scalar is rung + build_fraction, so
+#     opacity is a continuous function of it). A prompt asking the plate to look faint is asking it
+#     to do the renderer's job twice.
 #   - Width, taper, meander and the fade are CONFIG, not art — the levers the river keeps in
 #     terrain_config.json. Do not draw a narrow rung narrow.
 #   - Seamless in both axes. Verify by tiling 3x3 and looking; a numeric wrap-vs-interior ratio

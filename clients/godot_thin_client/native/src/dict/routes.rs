@@ -16,8 +16,11 @@
 //!
 //!   * `MapView._ingest_road_network` -> `MapView.road_network` / `road_tile_lookup`, the world-state
 //!     cache the other four read through;
-//!   * `AnnotationRenderer.draw_road_network`, which stamps ONE HEX per row -- **never a polyline**,
-//!     there being no stored path to draw;
+//!   * `TerrainRenderer.rebuild_shader_maps` -> the per-hex `road_map` splatmap, which
+//!     `terrain_blend.gdshader`'s road pass draws the road FROM. It packs `rung` and `build_fraction`
+//!     into two separate channels and the shader adds them into one ladder position, so a road
+//!     half-way to its next rung draws half-way between the two -- **never a polyline**, there being
+//!     no stored path to draw, and never one derived from the other;
 //!   * `SubjectDrawerController._tile_terrain_lines`, the tile card's road block, via
 //!     `MapView._tile_info_at`'s `roads` key;
 //!   * `DrawerComposeController`'s road ladder (`RungLadder.route_track` / `RungGates.route_gates`),

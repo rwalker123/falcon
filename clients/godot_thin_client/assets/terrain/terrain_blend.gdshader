@@ -104,6 +104,35 @@ uniform sampler2D river_channel_map : filter_nearest;
 // hex, where the base biome is swapped from terrain id 37 (the navigability signal, kept on the id_map) to
 // this valley biome the river cut. Non-navigable texels are don't-care.
 uniform sampler2D navigable_underlying_map : filter_nearest;
+
+// ROADS IN THE GROUND (arc #532) — a road runs through hex CENTRES, unlike a Minor/Major river, which runs
+// along a hex SIDE. Its surface array carries ONE LAYER PER RUNG of the route ladder (0 path, 1 trail,
+// 2 dirt road, 3 paved road) and is a FIFTH Texture2DArray in this same canvas shader.
+uniform sampler2DArray road_tex : filter_linear_mipmap, repeat_enable;
+uniform bool roads_enabled;        // false when no road asset exists / config disables → skip the pass
+uniform bool roads_lod_enabled;    // road LOD gate — its own road_min_radius, like the river's
+// ⛔ **THE LADDER IS FOUR `vec4` COMPONENTS, NOT A `uniform float[4]`, AND THAT IS DELIBERATE.** The road
+// pass indexes both of these with a value it COMPUTES per fragment (see road_ladder_mix), and dynamic
+// indexing of a vector is guaranteed in GLSL ES 3.0 while dynamic indexing of a uniform ARRAY is not.
+// #603's fifth (rail) rung is the issue that gets to widen this, not this pass.
+uniform vec4 road_half_width_ladder;  // per-rung half-width, in px (rung_width * radius), path → paved
+uniform vec4 road_opacity_ladder;     // per-rung opacity, path → paved — the MEASURED ladder (see below)
+uniform float road_softness;       // edge ramp half-width, in px (softness_width * radius)
+uniform float road_texture_scale;  // world-UV scale multiplier for the road surface (like canopy_scale)
+uniform vec3 road_at_risk_color;   // HudStyle.DANGER, pushed live so a theme swap is picked up
+uniform float road_at_risk_tint;   // 0..1: how hard an at-risk road's surface is pulled onto that colour
+// road-map splatmap, RGBA8 — one texel per hex, built client-side from the `routes` section:
+//   R = CONNECTION mask, 1 bit per odd-r direction (the same neighbor_offset order the river masks use):
+//       set when the neighbour that way is ALSO a road AND is known to the player. A bit toward fog or
+//       off-map stays clear, so a road visibly STOPS at the fog edge instead of leaking what is past it.
+//   G = RUNG INDEX 0..3 (HudRouteVocab.RUNG_ORDER's index) — the rung the road HOLDS.
+//   B = CLIMB TOWARD THE NEXT RUNG * 255, ALREADY COLLAPSED — the wire's `build_fraction` measures the
+//       rung AT RISK, so a full meter means *nothing is rising* and TerrainRenderer._pack_road_texel
+//       maps it to 0 before packing. So B is 0 on every idle road and strictly inside (0, 1) on one
+//       actually being raised. Never infer one channel from the other.
+//   A = FLAGS: bit0 present (this hex is a road at all), bit1 at risk (keeping short in either currency).
+//       **A == 0 IS THE ONLY "no road" ANSWER.** An idle path is R=G=B=0 and is a real road.
+uniform sampler2D road_map : filter_nearest;
 // Per-base-layer MEAN LUMINANCE, a 1×N single-channel texture fetched by layer index (N = terrain count,
 // so the layer count is never baked into this shader as a fixed array size). Height blending uses each
 // texture's per-pixel luminance as a pseudo-height (we have no height maps); subtracting the layer's mean
@@ -385,6 +414,27 @@ const int RIVER_CHANNEL_HEAD_MAX_EXITS = 1;
 // corner's position is just own_c + hex_radius * (cos, sin) of that angle: no neighbour fetch, no table.
 const float RIVER_CORNER_ANGLE_STEP = PI / 3.0;    // 60° between adjacent corners
 const float RIVER_CORNER_ANGLE_OFFSET = PI / 6.0;  // 30° — flat-top-up hex, first corner at lower-right
+
+// --- roads (arc #532) ---
+// The top rung's index. `s`, the ladder scalar, is CLAMPED to it — the belt to the packer's braces: the
+// B channel arrives already collapsed (a full meter is *nothing is rising*, so an idle paved road packs 0),
+// but a rung 4 is not a thing this pass can index, so the clamp stays as the last word rather than as the
+// reason the top of the ladder works.
+const int ROAD_RUNG_MAX = 3;
+const float ROAD_RUNG_MAX_F = 3.0;
+// road_map A-channel flags. Presence is its own bit because a rung-0 / fraction-0 road is all zeroes in
+// R, G and B and must still draw.
+const int ROAD_FLAG_PRESENT = 1;
+const int ROAD_FLAG_AT_RISK = 2;
+// ⛔ **AT RISK DRAWS AT THE TOP OF THE LADDER — geometry only.** An alarm that faded with the rung would
+// be quietest on the trail nobody notices going, so a road losing its keeping takes the PAVED rung's width
+// and opacity whatever rung it actually holds. Its SURFACE still comes from the rung it holds: an at-risk
+// dirt road is not made of stone.
+const float ROAD_AT_RISK_RUNG = 3.0;
+// Floor on the drawn half-width, in px — the twin of RIVER_MIN_HALF_WIDTH and for the same reason. The
+// plan's rule is that "a road never fades to nothing while it still holds a rung"; without a floor the
+// path rung would sub-pixel out of existence at far zoom, which is exactly fading to nothing.
+const float ROAD_MIN_HALF_WIDTH = 1.0;
 // --- PEAK CAST SHADOW: it must die off with DISTANCE FROM THE RELIEF, never with the hex grid ---
 // The occlusion term (the multi-tap look back toward the light) is near-CONSTANT across a whole neighbour hex,
 // because the peak art is near-opaque almost everywhere it is sampled. On its own it therefore painted a flat
@@ -572,6 +622,38 @@ vec3 river_harmonize(vec3 c) {
 	vec3 graded = c * (lc / max(l, RIVER_LUMA_EPSILON));          // same pixel, re-exposed to that luma
 	vec3 hue = RIVER_SHARED_HUE * (lc / luma(RIVER_SHARED_HUE));  // shared hue AT that luma
 	return clamp(mix(graded, hue, river_tint_strength), vec3(0.0), vec3(1.0));
+}
+
+// --- the ROAD LADDER AS ONE SCALAR (arc #532) — the heart of the road pass ---
+// ⛔ **`rung` AND THE PACKED CLIMB ARE ONE POSITION ON ONE LADDER, AND EVERY VISUAL PROPERTY IS A
+// FUNCTION OF IT.** `rung` is the rung the road HOLDS; B is how far it has climbed toward the NEXT one,
+// which is the wire's `build_fraction` AFTER the packer collapsed a full meter to zero (a full meter is
+// the wire's way of saying nothing is rising — TerrainRenderer._pack_road_texel). So `s = rung + climb` is
+// where the road actually stands, and a road half-way to a trail is drawn half-way between a path and a
+// trail — in width, in opacity and in surface. That is the ladder's OWN interpolation rather than a second
+// mechanism bolted beside it, and it is what fixes the defect this pass exists for: seven path tiles at
+// 24–52% worn drew IDENTICALLY, so a half-worn road looked exactly like one nobody had touched.
+//
+// The two ends must be checked against the ladder, not just against each other:
+//   · path at climb = 0 is exactly the path's own look — this is the IDLE road, the commonest state on
+//     the map, and the ramp is BETWEEN rungs rather than up from zero, so a road never fades to nothing
+//     while it still holds a rung;
+//   · path approaching climb = 1 approaches the trail's look, one turn before it becomes a trail —
+//     continuous. The endpoint itself is never packed: it is the idle reading, collapsed to 0 above;
+//   · the paved rung has no rung above it to raise, so it packs climb = 0 and lands exactly on
+//     ROAD_RUNG_MAX_F. The clamp guards the arithmetic rather than carrying the top of the ladder.
+float road_ladder_scalar(vec4 road_px) {
+	float rung = float(int(road_px.g * 255.0 + 0.5));
+	return min(rung + road_px.b, ROAD_RUNG_MAX_F);
+}
+
+// Sample a per-rung `vec4` ladder (half-widths, opacities) at a fractional rung position. Dynamic vector
+// indexing, which GLSL ES 3.0 guarantees — see the uniform declarations for why these are not arrays.
+float road_ladder_mix(vec4 ladder, float s) {
+	float sc = clamp(s, 0.0, ROAD_RUNG_MAX_F);
+	int i = int(floor(sc));
+	int j = min(i + 1, ROAD_RUNG_MAX);
+	return mix(ladder[i], ladder[j], sc - float(i));
 }
 
 // --- the river "organic" machinery, SHARED by the edge (Minor/Major) and navigable-channel passes ---
@@ -1482,6 +1564,126 @@ void fragment() {
 					vec2 cuv = v_map / (2.0 * hex_radius) * canopy_scale; // map-space, continuous + pan/zoom-anchored
 					vec4 crown = texture(canopy_tex, vec3(cuv, float(forest_code - 1)));
 					result = mix(result, crown.rgb, crown.a * dens);
+				}
+			}
+		}
+
+		// --- road pass: the ROADS IN THE GROUND run through hex CENTRES (arc #532) ---
+		// ⛔ **THIS IS MODELLED ON THE NAVIGABLE-TRUNK ARM ABOVE, *NOT* ON THE MINOR/MAJOR EDGE PASS.** The
+		// edge pass builds its arm as the SHARED HEX SIDE (mid ± perp·radius·RIVER_HALF_SIDE), which draws a
+		// band along the BOUNDARY between two hexes. A road runs through hex CENTRES. So the arm here is the
+		// trunk's: own centre → the shared edge's MIDPOINT, with the projection CLAMPED to the segment so the
+		// arm stops at the hex boundary instead of smearing along an infinite ray — the neighbour paints its
+		// own half and the two meet there.
+		//
+		// Every arm and the centre disc are unioned by the same MAX-COVERAGE (== min-distance) pick the river
+		// passes use, and that is the whole reason this is a coverage field rather than textured polygons:
+		// **a union of coverage fields has no squared ends to hide.** It rounds a 120° bend, fills a 3- or
+		// 4-way junction into one body, and caps a dead-end — with no spline math and no join geometry. A
+		// junction reading as "two planks meeting" is one of the three defects this pass exists to fix.
+		//
+		// Composited AFTER the canopy and BEFORE the peaks and FoW. Under FoW so a road in a Discovered tile
+		// dims with the mist rather than punching through it, like the water. **OVER the canopy, which is the
+		// one place this pass departs from the river's order, and deliberately: a road through forest IS a cut
+		// through the canopy, and painting whole tree crowns over it would re-create the defect that a player
+		// looking straight at seven road tiles did not know what they were — on exactly the terrain where a
+		// cleared road is most legible in reality.** Peaks stay on top; a road over a snowline is rare enough
+		// not to trade the common case for it.
+		if (roads_enabled && roads_lod_enabled) {
+			vec4 rdpx = texture(road_map, id_uv);
+			int road_flags = int(rdpx.a * 255.0 + 0.5);
+			// A == 0 is the ONLY "no road here" answer — a path at build_fraction 0 is all zeroes in R/G/B.
+			if ((road_flags & ROAD_FLAG_PRESENT) != 0) {
+				int links = int(rdpx.r * 255.0 + 0.5);
+				bool own_at_risk = (road_flags & ROAD_FLAG_AT_RISK) != 0;
+				// Two positions on the ladder per tile: where the road STANDS (surface) and where it DRAWS
+				// (geometry). They differ only for an at-risk road — see ROAD_AT_RISK_RUNG.
+				float s_own = road_ladder_scalar(rdpx);
+				float geom_own = own_at_risk ? ROAD_AT_RISK_RUNG : s_own;
+				float tint_own = own_at_risk ? road_at_risk_tint : 0.0;
+				// ⛔ **THE WINNING ARM CARRIES ITS OWN SURFACE AND OPACITY, NOT JUST ITS TANGENT.** Tracking
+				// only best_cov and reading the ladder back off the OWN tile would pick geometry from one arm
+				// and colour from another wherever two arms overlap — a bug that looks almost right.
+				float best_cov = -1e9;   // coverage = half_width - distance; > 0 inside the road
+				float best_s = s_own;
+				float best_geom = geom_own;
+				float best_tint = tint_own;
+				vec2 best_tangent = vec2(1.0, 0.0);   // #603 projects the rail's sleeper UV along this
+				// CENTRE DISC, always — three jobs for one line. A road tile with NO connections (a lone
+				// tile, the first tile of a road, which is an ORDINARY case per-tile) still draws; a dead-end
+				// terminus gets a rounded cap instead of a squared-off plank end; and a junction's HUB is
+				// filled, so three or four arms meeting read as one body rather than as spokes.
+				best_cov = max(road_ladder_mix(road_half_width_ladder, geom_own), ROAD_MIN_HALF_WIDTH)
+					- distance(v_world, own_c);
+				for (int dir = 0; dir < 6; dir++) {
+					if (((links >> dir) & 1) == 0) { continue; }
+					ivec2 off = neighbor_offset(row, dir);
+					int ncol = col + off.x;
+					int nrow = row + off.y;
+					// The bit is only ever SET toward an in-map, known neighbour (TerrainRenderer stamps it
+					// that way), so these guards cannot fire on a well-formed map — they are here because the
+					// texel index still has to be resolved through the wrap, and an out-of-range fetch would
+					// read another row's road.
+					if (nrow < 0 || nrow >= grid_h) { continue; }
+					int ncol_id = ncol;
+					if (wrap_h) {
+						ncol_id = wrap_col(ncol);
+					} else if (ncol < 0 || ncol >= grid_w) {
+						continue;
+					}
+					vec2 nb_c = hex_center(ncol, nrow);
+					// The arm SEGMENT: own centre → shared edge midpoint, clamped (the trunk pass's shape).
+					vec2 ab = (own_c + nb_c) * 0.5 - own_c;
+					// ⛔ **THIS PROJECTION IS WHAT KILLS THE RUNG-CHANGE SEAM, and it only works because it
+					// is UNWARPED.** Every fragment on the shared edge projects to EXACTLY 1.0 along the arm's
+					// axis (the projection of that whole edge line onto the arm direction is the apothem,
+					// whatever the lateral offset). A road takes no meander warp — it is built, not
+					// meandering — so the distance projection IS the unwarped one and there is nothing to
+					// keep in step here, unlike the river's separate t / t_head.
+					float t = clamp(dot(v_world - own_c, ab) / dot(ab, ab), 0.0, 1.0);
+					// Two adjacent road tiles at DIFFERENT rungs is the normal case — a road upgrades tile by
+					// tile — and it would step in width, opacity AND surface at the shared edge. So each arm
+					// ramps from the own tile's ladder position at the centre to the MEAN OF THE TWO at the
+					// edge midpoint. Both flanking hexes compute the same mean from the same two rungs and
+					// both land on it at exactly t == 1, so nothing steps.
+					vec4 nbpx = texture(road_map, (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim);
+					bool nb_at_risk = (int(nbpx.a * 255.0 + 0.5) & ROAD_FLAG_AT_RISK) != 0;
+					float s_nb = road_ladder_scalar(nbpx);
+					float geom_nb = nb_at_risk ? ROAD_AT_RISK_RUNG : s_nb;
+					float tint_nb = nb_at_risk ? road_at_risk_tint : 0.0;
+					float s_arm = mix(s_own, 0.5 * (s_own + s_nb), t);
+					float geom_arm = mix(geom_own, 0.5 * (geom_own + geom_nb), t);
+					float tint_arm = mix(tint_own, 0.5 * (tint_own + tint_nb), t);
+					float half_arm = max(road_ladder_mix(road_half_width_ladder, geom_arm),
+						ROAD_MIN_HALF_WIDTH);
+					float cov = half_arm - distance(v_world, own_c + ab * t);
+					if (cov > best_cov) {
+						best_cov = cov;
+						best_s = s_arm;
+						best_geom = geom_arm;
+						best_tint = tint_arm;
+						best_tangent = normalize(ab);
+					}
+				}
+				if (best_cov > -road_softness) {
+					float alpha = smoothstep(-road_softness, road_softness, best_cov)
+						* road_ladder_mix(road_opacity_ladder, best_geom);
+					// Continuous MAP-space UV, exactly like the canopy and the river's water — and with NO
+					// TIME term. The river scrolls its UV along the flow tangent because water flows; a road
+					// does not, and a crawling road surface would read as a bug.
+					// (#603's rail rung needs a TANGENT-PROJECTED UV instead — vec2(dot(v_map, best_tangent)
+					// * scale, signed_distance / half_width) — because sleepers have an orientation. No rung
+					// drawn here does, so best_tangent is tracked and unused.)
+					vec2 ruv = v_map / (2.0 * hex_radius) * road_texture_scale;
+					// THE SURFACE READS best_s, NOT best_geom: an at-risk dirt road is not made of stone.
+					int i = int(floor(best_s));
+					int j = min(i + 1, ROAD_RUNG_MAX);
+					vec3 surf = mix(texture(road_tex, vec3(ruv, float(i))).rgb,
+						texture(road_tex, vec3(ruv, float(j))).rgb, best_s - float(i));
+					// …and the alarm is a TINT toward the client's existing danger ink, pushed live from
+					// HudStyle.DANGER rather than being a colour of this pass's own.
+					surf = mix(surf, road_at_risk_color, best_tint);
+					result = mix(result, surf, alpha);
 				}
 			}
 		}

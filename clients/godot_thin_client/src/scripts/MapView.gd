@@ -1023,9 +1023,15 @@ const SECTION_OVERLAY_VISIBILITY := "overlays.visibility"
 const SECTION_OVERLAY_ELEVATION := "overlays.elevation"
 
 ## Everything `TerrainRenderer.rebuild_shader_maps` reads: the terrain id grid, the FoW visibility
-## raster, the elevation raster, and the per-tile river edge/inflow/channel + underlying-terrain
-## masks. Six full-grid `PackedByteArray`s (7.7 ms measured), so it must not ride on a tile moving
-## its biomass.
+## raster, the elevation raster, the per-tile river edge/inflow/channel + underlying-terrain masks,
+## and — since the roads moved into the terrain shader (arc #532) — the `routes` section. Seven
+## full-grid `PackedByteArray`s, so it must not ride on a tile moving its biomass.
+##
+## ⛔ **`SECTION_ROUTES` IS THE FIFTH INPUT, AND LEAVING IT OUT FAILS IN SILENCE.** A road wears in a
+## fraction of a rung per turn, and the delta that carries that names `routes` and nothing else. With
+## the section unsubscribed, `_ingest_road_network` above would faithfully update `road_network` and
+## the road's TEXEL would never be re-uploaded: the map would show the rung the road held when some
+## unrelated section last moved, and every static frame in every harness would still look right.
 ## A plain `Array`, not a `PackedStringArray`: a constructor call is not a constant expression in
 ## GDScript, so the packed form cannot be a `const` at all (it parses, then fails to compile).
 const SHADER_INPUT_SECTIONS := [
@@ -1033,6 +1039,7 @@ const SHADER_INPUT_SECTIONS := [
 	SECTION_OVERLAY_VISIBILITY,
 	SECTION_OVERLAY_ELEVATION,
 	SECTION_TILES_RIVERS,
+	SECTION_ROUTES,
 ]
 
 ## Everything `MinimapController._rebuild_image` reads: the terrain id grid and the visibility
@@ -1409,11 +1416,11 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	# new terrain/fog/elevation/river-edges. Runs AFTER the tile loop, not beside the terrain ingest above:
 	# the river-map is built from `tile_river_edges`, which only exists once the tiles have been read.
 	var t_shader: int = profile.begin(PROFILE_SHADER)
-	# Six full-grid `PackedByteArray` rebuilds, 7.7 ms measured. Its inputs are terrain / fog /
-	# elevation / the river + underlying-terrain masks and NOTHING else — which is why the decoder
-	# reports `tiles.rivers` apart from `tiles`: 600 tiles moving their graze biomass must not force
-	# the splatmaps to be rebuilt, and before the manifest existed there was no way to tell the two
-	# apart.
+	# Seven full-grid `PackedByteArray` rebuilds. Its inputs are terrain / fog / elevation / the river +
+	# underlying-terrain masks / the ROADS, and nothing else — which is why the decoder reports
+	# `tiles.rivers` apart from `tiles`: 600 tiles moving their graze biomass must not force the
+	# splatmaps to be rebuilt, and before the manifest existed there was no way to tell the two apart.
+	# The road-map is why `routes` is on that list too; see SHADER_INPUT_SECTIONS.
 	if dimensions_changed or SnapshotSections.any_changed(snapshot, SHADER_INPUT_SECTIONS):
 		_terrain.rebuild_shader_maps()
 	profile.end(PROFILE_SHADER, t_shader)
@@ -1840,12 +1847,11 @@ func _draw() -> void:
 	# per-tile river-edge mask — the water is drawn exactly on the edge the future crossing cost applies to.)
 	_annotations.draw_crisis_annotations(radius, origin)
 
-	# THE ROADS IN THE GROUND (arc #532), drawn HERE — above the tile tints and BENEATH every marker,
-	# overlay ring and selection outline below. A road is infrastructure in the ground rather than
-	# something standing on it, so nothing that stands on the map may be painted over by it; drawing
-	# it with the annotations rather than at the end (where the ORDER-PATH routes go, two different
-	# things — see `MapView.road_network`) is what puts it in that layer.
-	_annotations.draw_road_network(radius, origin)
+	# (No road draw here: the ROADS IN THE GROUND (arc #532) are painted by terrain_blend.gdshader's road
+	# pass, off the per-tile road-map. A road is infrastructure IN the ground rather than ink laid over
+	# it, so it is part of the terrain composite — above the canopy it cuts through, below the peaks, and
+	# under the FoW mist — rather than an annotation drawn on top. Not to be confused with the ORDER-PATH
+	# routes drawn further down, which are a different thing that merely shares a word.)
 
 	# SECONDARY MARKER SLOTS ARE COMPUTED HERE, not beside the marker draws below, because the
 	# worked-source marks dock a ring to the SOURCE's own marker and therefore need its slot before

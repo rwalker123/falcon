@@ -10,7 +10,7 @@ paths:
      clients/godot_thin_client/CLAUDE.md itself is now the hub, where the routing table lives).
      Regenerate with scripts/split_claude_md.sh -->
 
-# The terrain blend shader — edge blending, shore, canopy, peaks, rivers
+# The terrain blend shader — edge blending, shore, canopy, peaks, rivers, roads
 
 ## Edge Blending — per-pixel biome-blend shader (Approach B)
 When `use_edge_blending` is enabled, biome **seams** blend per-pixel in a **fragment shader**
@@ -908,8 +908,9 @@ as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` p
   (clockwise from E — the wire contract) DECODES the mask, and a **compass display order** (clockwise
   from NE) lists the directions within a line, because a compass reading is what a player parses.
   ui_preview: `river_tile_both` (two-class) / `river_tile_minor` (single-class) / `river_tile_none` (no row).
-- **Caveat — rivers are shader-only** (same as canopy/peaks): the blend-OFF **per-hex CPU path** renders no
-  rivers. That is the reference/fallback path only; the live client runs blend-on.
+- **Caveat — rivers are shader-only** (same as canopy/peaks and now roads): the blend-OFF **per-hex CPU
+  path** renders no rivers. See "Everything this shader draws exists ONLY in this shader" below for the
+  full reach of that, which is wider than the blend toggle.
 - Verify via `tools/map_preview.gd` State **rivers** → `map_rivers.png` (a Minor→Major edge river wandering
   west→east with corner turns, joining a NavigableRiver chain that turns corners of its own and drains to
   the eastern sea — **with a real InlandSea lake in the same frame as the control**: the lake keeps its
@@ -932,6 +933,119 @@ as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` p
   the boundary wrap 4+ sides of the same hexagon, manufacturing a honeycomb that real hydrology (a downhill
   walk on the corner lattice) never produces — the original fixture did exactly that and made the render
   look far worse than it is.
+
+## Everything this shader draws exists ONLY in this shader — and a map OVERLAY turns it off
+
+`TerrainRenderer.shader_active()` is
+
+```gdscript
+_terrain_blend_ready and TerrainTextureManager.use_edge_blending
+    and _view.active_overlay_key == "" and _has_terrain_textures()
+```
+
+and when it answers `false`, `MapView._draw` hides the shader quad and renders terrain from the
+per-hex CPU cache instead. **That path draws no canopy, no peaks, no rivers and no roads** — every one
+of those features is a pass in this file and has no CPU twin.
+
+Two of the four clauses are dev levers (`use_edge_blending` ships `true`; `T` toggles textures).
+**`active_overlay_key == ""` is not**: it is the player's own map-overlay selection, so opening the
+elevation / culture / pasture / forage / terrain-tags overlay drops the whole map to the CPU path and
+takes the water and the roads with it. Rivers have behaved this way since they landed; roads joined
+them when the road pass replaced `AnnotationRenderer._draw_road`, which — being an annotation over
+whatever renderer was running — had survived the overlay views.
+
+## Roads — the roads in the GROUND run through hex CENTRES
+
+Arc #532. The per-tile `routes` section becomes an RGBA8 **`road_map`** splatmap in
+`TerrainRenderer.rebuild_shader_maps` (R = a 6-bit connection mask in the wire's odd-r direction
+order, G = the rung index, B = the build fraction, A = flags: bit0 present, bit1 at risk), and the
+road pass draws from it. The mask is derived **client-side** from `MapView.road_tile_lookup`: a road
+row is per-TILE and its neighbours are computable, so nothing new goes on the wire.
+
+**⛔ THE PASS IS MODELLED ON THE NAVIGABLE-TRUNK ARM, NOT ON THE MINOR/MAJOR EDGE PASS.** The edge
+pass builds its arm as the shared hex SIDE (`mid ± perp · radius · RIVER_HALF_SIDE`), which is
+correct for water running along a boundary and wrong for a road, which runs through hex **centres**.
+The road's arm is the trunk's: `ab = (own_c + nb_c) * 0.5 - own_c`, with the projection **clamped**
+to the segment so the arm stops at the hex boundary and the neighbour paints its own half.
+
+**The ladder is ONE SCALAR, and that is the whole design.** `rung` is the rung a road HOLDS;
+`build_fraction` is the meter on the rung being RAISED, which is a *different* rung
+(`native/src/dict/routes.rs` — "the rung string is the bool"). So `s = min(rung + build_fraction, 3)`
+is where the road stands, and **width, opacity and surface are all functions of `s`** — a road
+half-way to a trail draws half-way between a path and a trail, which is the ladder's own
+interpolation rather than a second mechanism beside it. The `min(…, 3.0)` clamp is load-bearing: the
+paved rung reads `build_fraction == 1.0` (the sim never derives it by subtraction), and without the
+clamp the top of the ladder would index a rung 4 that does not exist. This is the fix for the
+reported defect — **seven path tiles at 24–52% worn all drew identically**.
+
+**No seam where the rung changes.** Two adjacent road tiles at different rungs is the ordinary case,
+and it would step in width, opacity *and* surface at the shared edge. So each arm ramps from the own
+tile's `s` at the centre to the **mean of the two** at the edge midpoint, using the projection `t`.
+Both flanking hexes compute the same mean from the same two rungs and both reach it at exactly
+`t == 1` — the trunk pass's own guarantee, that every fragment on a shared edge projects to exactly
+1.0 along the arm axis. The projection is unwarped, which here is free: a road takes no meander warp
+(it is built, not meandering), so there is no second `t_head` to keep in step.
+
+**The centre disc is unioned in ALWAYS, and does three jobs for one line** — a lone road tile (the
+first tile of every road in the game) draws at all, a dead-end terminus caps round instead of
+squared-off, and a junction hub fills so three or four arms read as one body. The union is the
+river's `max` coverage pick, and **a union of coverage fields has no squared ends to hide**, which is
+why this is a coverage field and not textured polygons. The winning arm carries its own `best_s` /
+`best_geom` / `best_tint` alongside `best_tangent`: tracking only `best_cov` and reading the ladder
+back off the own tile would take geometry from one arm and colour from another wherever two overlap.
+
+**At risk takes the TOP of the ladder for GEOMETRY ONLY.** An alarm that faded with the rung would be
+quietest on the trail nobody notices going, so an at-risk road draws at the paved rung's width and
+opacity whatever rung it holds — but its SURFACE still comes from the rung it holds (an at-risk dirt
+road is not made of stone), tinted toward `road_at_risk_color`, which is `HudStyle.DANGER` pushed
+live rather than a colour of the pass's own. The at-risk geometry and the tint ramp across an arm by
+the same neighbour-mean rule, so the alarm does not step at a hex boundary either.
+
+**UV is continuous map-space with NO `TIME` term** — `v_map / (2 · hex_radius) · road_texture_scale`,
+exactly like the canopy. The river scrolls along `best_tangent` because water flows; a road does not,
+and a crawling road surface reads as a bug. `best_tangent` is computed and unused, and is where
+**#603's rail rung** plugs in: sleepers have an orientation, so rail needs a tangent-projected UV
+(`vec2(dot(v_map, best_tangent) · scale, signed_dist / half_width)`). For the same reason `04_rail.png`
+is **shipped but deliberately not loaded** — `ROAD_MAX_LAYERS` is 4 and the reserved layer is skipped
+in silence, since a launch-log warning describing intended behaviour teaches people to stop reading
+the log.
+
+**Composited after the navigable-river pass, OVER the canopy, before peaks and FoW.** Under FoW is
+the same rule the water follows — a road in a Discovered tile dims with the mist rather than punching
+through it. **Over the canopy is where this pass departs from the river's order, deliberately: a road
+through forest IS a cut through the canopy**, and painting whole tree crowns over it would re-create
+the defect that a player looking straight at seven road tiles did not know what they were, on exactly
+the terrain where a cleared road is most legible in reality. Peaks stay on top; a road over a
+snowline is rare enough not to trade the common case for it.
+
+**Config** — `terrain_config.json` → `roads` block (plus `roads_enabled`), the rivers' idiom: four
+`*_width` half-widths and four `*_opacity` steps in rung order, `softness_width`, `texture_scale`,
+`at_risk_tint` and `road_min_radius` (its own LOD gate, like `river_min_radius`). The widths and the
+softness are hex-radius fractions turned into px in `update_shader_quad`. The two ladders reach the
+shader as `uniform vec4`s, one component per rung, **not** as uniform arrays: the pass indexes them
+with a value it computes per fragment, and dynamic indexing of a vector is guaranteed in GLSL ES 3.0
+while dynamic indexing of a uniform array is not.
+
+⛔ **THE FOUR OPACITIES ARE THIS PASS'S OWN, RE-DERIVED FOR THE TEXTURE MEDIUM — the retired ink
+ladder must NOT come back.** The shipped values are **0.58 / 0.70 / 0.82 / 0.94**. The annotation
+draw's measured **0.30 / 0.52 / 0.74 / 0.94** was measured for a near-black INK STROKE, where 0.30
+alpha is a visible dark line; in a texture pass the same number means "70% of the ground shows
+through", and the path surface is a low-saturation grey close to prairie's own luminance, so it
+dissolved — the two commonest rungs, the free floor, were the two a player could not see. What
+OUTLIVED the ink is the FINDING that prominence must ride opacity rather than four palette tints, not
+the numbers it was made with. `.claude/rules/client/roads.md` carries both ladders and the
+re-derivation; a revision of this paragraph attributed the shipped values to the ink measurement,
+which would send the next reader to restore the ladder that arc explicitly bans.
+
+**Fog** — the presence bit AND every connection bit are gated on `Discovered` OR `Active`, which is
+looser than other markers on purpose (a road does not wander off, so remembering one is remembering
+something true) and is the sim's own publication gate. A bit toward an unexplored neighbour stays
+clear, so a road visibly STOPS at the fog edge instead of leaking that hex's existence — and the
+shader then never fetches a texel it has no business reading.
+
+**Verify** via `tools/blend_probe.gd` states **18/ROADS**, **19/WEAR**, **20/JUNCT**, **21/ATRISK**,
+and `map_preview`'s `map_road_network` + `map_road_vs_herd_trail`. `.claude/rules/client/roads.md`
+describes what each frame is for and which assertion falsifies which half.
 
 **Texture readback fix (kept from A):** `TerrainTextureManager` retains the CPU-side layer Images
 (`_layer_images`) captured once at build time; `get_terrain_image` serves duplicates from it and

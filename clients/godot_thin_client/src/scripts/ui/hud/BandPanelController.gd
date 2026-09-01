@@ -136,6 +136,11 @@ signal recall_expedition_requested(payload: Dictionary)
 # **Its own signal, not a mode on the recall above**: a split makes a band where a recall dissolves a
 # party, and their grammars are separate closed verbs.
 signal split_band_requested(payload: Dictionary)
+# A road on the Roadwork roster was dropped (arc #532) — relayed to HudLayer.abandon_requested, the
+# SAME command path `DrawerComposeController.road_abandon_requested` already takes. The roster emits
+# its own signal rather than reaching that controller, this panel's rule: controllers never talk to
+# each other, and HudLayer is the one place the two emitters converge on `Main.format_abandon`.
+signal road_abandon_requested(payload: Dictionary)
 # Recenter + select a hex (a zone row / cycler jump) — relayed to HudLayer.alert_focus_requested.
 signal alert_focus_requested(x: int, y: int)
 # Pin an exact occupant on the map after that recenter — relayed to HudLayer.roster_occupant_selected.
@@ -1838,6 +1843,16 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     var queued := _build_queue_models(band, models)
     var pools := _build_pools_block(band, queued)
     col.add_child(pools)
+    # **AND DIRECTLY UNDER IT, WHICH ROADS THAT POOL IS PAYING FOR** (arc #532). The block answers the
+    # question the card above it raises, so it renders between the pools and the queue rather than
+    # anywhere the two are separated. It is omitted entirely on a band with nothing to say, and its
+    # reserved height is threaded into BOTH capacity terms below — the zone clips.
+    var roster_models := _roadwork_roster_models(band)
+    var roster_h := HudWorkVocab.roadwork_roster_height(roster_models.size(),
+        _roadwork_roster_unseen(band, roster_models.size()))
+    var roster := _build_roadwork_roster_block(band, roster_models)
+    if roster != null:
+        col.add_child(roster)
     # **THE QUEUE SITS ABOVE THE CHIPS, DELIBERATELY.** The chips filter the BOARD; the queue is the
     # band's own ordered list rather than a view of that board, so a block beneath them would read as
     # a filtered subset of it. It is derived from the FULL model set for the same reason — a chip must
@@ -1860,7 +1875,7 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
         col.add_child(_build_build_queue_expanded(band, queued, pools_fund_mode))
         return
     var queue_rows_max := HudWorkVocab.build_queue_rows_max(_zone_box().y,
-        pools_fund_mode, queued.size())
+        pools_fund_mode, queued.size(), roster_h)
     if not queued.is_empty():
         col.add_child(_build_build_queue_block(band, queued, queue_rows_max))
     # BEFORE the chips are built, so the pressed chip is always one that actually renders.
@@ -1909,7 +1924,7 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     var capacity := _work_board_capacity(filtered.size(), queued.size(),
         queue_rows_max, pools_fund_mode,
         int(queue_settings["legs"]), bool(queue_settings["crop"]),
-        bool(queue_settings["kit"]), bool(queue_settings["one_line"]))
+        bool(queue_settings["kit"]), bool(queue_settings["one_line"]), roster_h)
     var page_size := int(capacity["page_size"])
     var pages := int(capacity["pages"])
     _work_page = clampi(_work_page, 0, maxi(pages - 1, 0))
@@ -1950,10 +1965,14 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
 ## **AND SO IS THE POOLS BLOCK** (§4.7), through the identical arrangement —
 ## `HudWorkVocab.pools_block_height` is both the block's own `custom_minimum_size` and this term, plus
 ## one more separation for the gap. Unlike the queue's it is ALWAYS charged: the block always renders.
+## **`roster_height` IS THE ROADWORK ROSTER'S SHARE OF THE CHROME** (arc #532), resolved once by the
+## fill and handed to both this and `build_queue_rows_max` — one answer, so the block that draws and
+## the two reservations that pay for it cannot disagree. `0.0` where the block does not render, and
+## the block's own gap is counted only then, exactly as the queue's is.
 func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
         pools_fund_mode: bool, queue_settings_legs: int = 0,
         queue_settings_crop: bool = false, queue_settings_kit: bool = false,
-        queue_settings_one_line: bool = true) -> Dictionary:
+        queue_settings_one_line: bool = true, roster_height: float = 0.0) -> Dictionary:
     var box := _zone_box()
     var queue_h := HudWorkVocab.build_queue_block_height(queue_rows, queue_rows_max,
         queue_settings_legs, queue_settings_crop, queue_settings_kit, queue_settings_one_line)
@@ -1961,8 +1980,11 @@ func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
     var gaps := HudWorkVocab.WORK_ZONE_GAP_COUNT + 1.0
     if queue_h > 0.0:
         gaps += 1.0
+    if roster_height > 0.0:
+        gaps += 1.0
     var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT \
-        + queue_h + pools_h + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * gaps
+        + queue_h + pools_h + roster_height \
+        + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * gaps
     var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT))
     var layout := _declare_work_layout(count, rows)
     var pages := ceili(float(count) / float(maxi(int(layout["page_size"]), 1)))
@@ -2262,6 +2284,170 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     block.custom_minimum_size = Vector2(0.0, HudWorkVocab.pools_block_height(fund_mode != null))
     return block
 
+## **WHICH ROADS THIS BAND IS PAYING FOR** — one entry per kept road it can see, nearest first.
+##
+## ⛔ **`has_keeper` IS READ BEFORE `keeper_band_id`, and the order is the whole filter.** `0` is a
+## real `BandId` (`native/src/dict/routes.rs` says so at the field), so the bool is the field that
+## answers *does anybody keep this*; testing the id first would hand every unkept road in the world
+## to band 0, which on the free floor is most of the map.
+##
+## **THE LOCATOR IS THE ROW'S NAME because a road has none of its own.** Distance plus an 8-point
+## bearing from the band's own camp is what makes three dirt roads three distinguishable rows; the
+## rung is the VALUE, one cell over.
+##
+## Sorted by distance ascending and tie-broken by TILE, so the order is stable frame to frame — a
+## roster that reshuffled under an unstable sort would move the `✕` a player was aiming at.
+func _roadwork_roster_models(band: Dictionary) -> Array:
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var camp := SourceForecast.band_tile(band)
+    var models: Array = []
+    for road_variant in _band_labor.roads():
+        if not (road_variant is Dictionary):
+            continue
+        var road: Dictionary = road_variant
+        if not HudRouteVocab.has_keeper(road):
+            continue
+        if HudRouteVocab.keeper_band_id_of(road) != band_id:
+            continue
+        var tile := HudRouteVocab.tile_of(road)
+        if tile.x < 0 or tile.y < 0:
+            continue
+        var distance := SourceForecast.hex_distance_wrapped(camp.x, camp.y, tile.x, tile.y,
+            _band_labor.grid_width(), _band_labor.wrap_horizontal())
+        models.append({
+            "road": road,
+            "tile": tile,
+            "distance": distance,
+            "locator": _roadwork_roster_locator(distance, camp, tile),
+        })
+    models.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+        if int(a["distance"]) != int(b["distance"]):
+            return int(a["distance"]) < int(b["distance"])
+        var ta: Vector2i = a["tile"]
+        var tb: Vector2i = b["tile"]
+        if ta.y != tb.y:
+            return ta.y < tb.y
+        return ta.x < tb.x)
+    return models
+
+## `4 tiles E` — the row's name cell. **`SourceForecast.HEX_DISTANCE_UNKNOWN` is a MEANING rather
+## than a distance**, so a road the client cannot place says so instead of claiming a bearing: the
+## row still draws, the road being real and abandonable either way.
+func _roadwork_roster_locator(distance: int, camp: Vector2i, tile: Vector2i) -> String:
+    if distance == SourceForecast.HEX_DISTANCE_UNKNOWN:
+        return HudWorkVocab.ROADWORK_ROSTER_LOCATOR_UNKNOWN
+    var bearing := SourceForecast.compass_bearing(camp.x, camp.y, tile.x, tile.y,
+        _band_labor.grid_width(), _band_labor.wrap_horizontal())
+    if bearing == "":
+        # The band is standing ON the road it keeps — a real and common state, and `0 tiles ` would
+        # be a bearing-shaped hole rather than an answer.
+        return HudWorkVocab.ROADWORK_ROSTER_LOCATOR_UNKNOWN if distance > 0 \
+            else HudWorkVocab.ROADWORK_ROSTER_HERE
+    if distance == 1:
+        return HudWorkVocab.ROADWORK_ROSTER_LOCATOR_ONE % bearing
+    return HudWorkVocab.ROADWORK_ROSTER_LOCATOR_FORMAT % [distance, bearing]
+
+## Does this band owe roadwork it cannot show a row for? — **case 2 of the honesty rule**, and the
+## one that must not be got wrong. The demand is the cohort's own published figure, which is summed
+## sim-side precisely because the fog-filtered rows would understate it.
+func _roadwork_roster_unseen(band: Dictionary, visible: int) -> bool:
+    if visible > 0:
+        return false
+    return SourceForecast.has_upkeep(_band_labor.roadwork_pool_state(band))
+
+## **THE ROSTER BLOCK** — the roads the pool above is paying for, each with the one decision that can
+## be taken about it. `null` where the band keeps nothing visible AND owes nothing, which is the
+## expeditions block's omit-entirely rule.
+##
+## ⛔ **NO STEPPER, NO CREW COUNT.** See `HudWorkVocab.ZONE_HEADER_ROADWORK_ROSTER`.
+func _build_roadwork_roster_block(band: Dictionary, models: Array) -> VBoxContainer:
+    var unseen := _roadwork_roster_unseen(band, models.size())
+    if models.is_empty() and not unseen:
+        return null
+    var block := VBoxContainer.new()
+    block.set_meta(HudWorkVocab.ROADWORK_ROSTER_BLOCK_META, models.size())
+    block.add_theme_constant_override("separation", 0)
+    block.custom_minimum_size = Vector2(0.0,
+        HudWorkVocab.roadwork_roster_height(models.size(), unseen))
+    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_ROADWORK_ROSTER, ""))
+    if unseen:
+        var line := HudWidgets.alloc_hint_label(HudWorkVocab.ROADWORK_ROSTER_UNSEEN_LINE)
+        line.set_meta(HudWorkVocab.ROADWORK_ROSTER_UNSEEN_META, true)
+        line.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+        block.add_child(line)
+    var drawn := mini(models.size(), HudWorkVocab.ROADWORK_ROSTER_ROWS_MAX)
+    for index in range(drawn):
+        block.add_child(_build_roadwork_roster_row(band, models[index] as Dictionary))
+    if models.size() > drawn:
+        var more := HudWidgets.alloc_hint_label(
+            HudWorkVocab.ROADWORK_ROSTER_OVERFLOW_FORMAT % (models.size() - drawn))
+        more.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+        block.add_child(more)
+    return block
+
+## One roster row: where the road is, what state it is in, and the `✕` that puts it down.
+##
+## ⛔ **THE VALUE CELL IS `HudRouteVocab.road_row_value`, VERBATIM.** It already composes
+## `Dirt road · 25% to paved · ⚠ washing out` for the tile card and the map's own readout, and the
+## point of reusing it rather than writing roster strings is that the three surfaces then cannot
+## disagree about a road's state — one composer, one answer.
+##
+## **THE NAME JUMPS AND THE REST DROPS**, the `FactionRollup._summary_row` split: a road IS its tile,
+## so the jump is `alert_focus_requested` on the road's own coordinates with no entity resolution.
+func _build_roadwork_roster_row(band: Dictionary, model: Dictionary) -> PanelContainer:
+    var tile: Vector2i = model["tile"]
+    var road: Dictionary = model["road"]
+    var row := PanelContainer.new()
+    row.set_meta(HudWorkVocab.ROADWORK_ROSTER_ROW_META, tile)
+    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(false))
+    var line := HBoxContainer.new()
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    row.add_child(line)
+    var jump := HudWidgets.build_inline_link(String(model["locator"]), HudStyle.SIGNAL,
+        func() -> void: emit_signal("alert_focus_requested", tile.x, tile.y))
+    line.add_child(jump)
+    var value := Label.new()
+    value.text = HudRouteVocab.road_row_value(road, _band_labor.road_queue_tiles())
+    value.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    # The hazard clause is the reused composer's own, so the row's INK forks on the same answer the
+    # tile card's does rather than on a second test of the same road.
+    value.add_theme_color_override("font_color",
+        HudStyle.DANGER if HudRouteVocab.is_keeping_short(road) else HudStyle.INK_DIM)
+    value.clip_text = true
+    value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    line.add_child(value)
+    line.add_child(_build_roadwork_roster_abandon_button(band, tile))
+    return row
+
+## **THE DROP — the same `abandon <faction> <x> <y>` the road ladder's own button sends, and no second
+## command path.**
+##
+## ⛔ **AND IT SAYS WHAT ELSE GOES DOWN.** `abandon` names a FACTION AND A PLACE and carries no band
+## token: it drops every band-of-that-faction's holding on that tile, a forage assignment there
+## included. The tile card warns about this in a second line; a roster invites BULK use, so it must
+## not be quieter about the same consequence — the warning rides the tooltip, which is where it fits.
+func _build_roadwork_roster_abandon_button(band: Dictionary, tile: Vector2i) -> Button:
+    var drop := Button.new()
+    drop.set_meta(HudWorkVocab.ROADWORK_ROSTER_ABANDON_META, tile)
+    drop.text = HudWorkVocab.ROADWORK_ROSTER_ABANDON_GLYPH
+    drop.focus_mode = Control.FOCUS_NONE
+    drop.tooltip_text = "%s\n%s" % [HudRouteVocab.ROAD_LADDER_ABANDON_TOOLTIP,
+        HudRouteVocab.ROAD_LADDER_ABANDON_ALSO]
+    drop.custom_minimum_size = Vector2(HudWorkVocab.ROADWORK_ROSTER_ABANDON_WIDTH, 0.0)
+    HudStyle.apply_button(drop, "ghost")
+    HudWidgets.compact(drop, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
+    drop.add_theme_color_override("font_color", HudStyle.DANGER)
+    # **NO CONFIRM** — the single-item idiom the queue withdrawal and the parties recall already use.
+    drop.pressed.connect(func() -> void:
+        emit_signal("road_abandon_requested", {
+            "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+            "x": tile.x,
+            "y": tile.y,
+        }))
+    return drop
+
 ## **WHAT ONE KEEPING POOL SUPPLIES AGAINST WHAT IT IS ASKED FOR** — `{supply, asked}` in work units,
 ## the ONE input the pool card's mark and its hover both fork on.
 ##
@@ -2452,25 +2638,43 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
 ## **IT IS DERIVED FROM THE FULL MODEL SET AND NEVER FROM `filtered`.** The chips filter the BOARD;
 ## the queue is the band's own list, so a chip press must leave it alone.
 ##
-## ⛔ **AN ENTRY WITH NO MODEL IS SKIPPED, AND THAT IS A REACHABLE, PERSISTENT STATE — which is
-## exactly why the RANK IS THE WIRE QUEUE'S INDEX AND NEVER THIS LIST'S.** An earlier note here
-## claimed the skip could not normally happen, on the strength of *"an entry requires a row"*. The
-## rule is real and the conclusion drawn from it was false: the rule says a ROW, and a row is not a
-## CREW.
+## ⛔ **AN ENTRY WITH NO MODEL IS STILL SKIPPED, AND THE SKIP IS STILL REACHABLE — which is why the
+## RANK IS THE WIRE QUEUE'S INDEX AND NEVER THIS LIST'S.** Two notes stood here before and both were
+## wrong in turn: the first claimed the skip could not normally happen (*"an entry requires a row"* —
+## the rule says a ROW, and a row is not a CREW), and the second named the ZERO-CREW SOURCE as its
+## standing cause. **That cause is gone**, and the seam table below records what closed it.
 ##
-## The path, end to end — a queued source whose take crew the player has taken to zero:
+## The path it used to take, end to end — a queued source whose take crew the player took to zero:
 ##
 ## | step | seam |
 ## |---|---|
-## | unstaffing a source the band already held KEEPS its row, at zero workers | `LaborAllocation::set_assignment` → `keep_holding` (`core_sim/src/components.rs:3526`) |
-## | …and the command declines to drop that row because the source is QUEUED | `handle_assign_labor` → `if applied == 0 && !source_holds_something && !queued` (`core_sim/src/bin/server.rs:3134`) |
-## | the membership test asks only whether a row EXISTS, never how many hands are on it | `holds_build_source` (`core_sim/src/components.rs:3721`), so `prune_build_queue` keeps the entry |
-## | …and the turn pass spares it for the same reason, so the state SURVIVES EVERY TURN | `queued.is_none()` guards the lapse (`core_sim/src/systems/labor.rs:1866`) |
-## | the client then drops that row: the board admits on the take crew | `_work_source_models` — `if workers <= 0 and not pending: continue` |
+## | unstaffing a source the band already held KEEPS its row, at zero workers | `LaborAllocation::set_assignment` → `keep_holding` (`core_sim/src/components.rs`) |
+## | …and the command declines to drop that row because the source is QUEUED | `handle_assign_labor` → `if applied == 0 && !source_holds_something && !queued` (`core_sim/src/bin/server.rs`) |
+## | the membership test asks only whether a row EXISTS, never how many hands are on it | `holds_build_source` (`core_sim/src/components.rs`), so `prune_build_queue` keeps the entry |
+## | …and the turn pass spares it for the same reason, so the state SURVIVES EVERY TURN | `queued.is_none()` guards the lapse (`core_sim/src/systems/labor.rs`) |
+## | the client dropped that row, admitting on the take crew | **fixed**: `_work_source_models` admits a zero-crew row whose source is in this same wire queue |
 ##
-## So the wire queue `[A, B, C]` legitimately draws as `[B, C]`, and a position counted off the DRAWN
-## list is short by every entry hidden above it — `▼` on `B` would send `1`, which the sim resolves
-## back to `[A, B, C]`: a button that reads as broken because it silently did nothing.
+## **WHAT IT COST, REPORTED FROM PLAY.** Only the HEAD of `build_queue` is funded and it is never
+## skipped, so `A` at index 0 with no harvesters ate the whole builders pool every turn while the
+## `cultivate` the player queued behind it sat at index 1 and never moved — with no row anywhere in
+## the client for the job that was taking the hands. The `▲` on `B` was the only way out, and it
+## worked by reordering the vector rather than by revealing anything.
+##
+## **THE CLIENT NOW ADMITS ON THE SAME RULE THE SIM HOLDS THE ROW ON.** The sim's rule is *a row
+## exists*; the client's is *a row exists AND this band has queued it*, which is the strictly narrower
+## of the two — deliberately, because admitting every row `keep_holding` keeps would put every source
+## the player deliberately emptied back on the work board, which §2.5 reverted.
+##
+## **WHAT REMAINS UNRENDERABLE, and it is neither hypothetical nor a crew:**
+##
+## | remaining cause | why the entry has no row |
+## |---|---|
+## | a queued ROAD the snapshot's `routes` section does not carry | that section is FOG-FILTERED and **fails closed** (`core_sim::snapshot::routes::route_states`): it publishes a road only for a tile the viewer has DISCOVERED, and publishes none at all where the faction has no visibility map yet. An entry whose tile carries no row resolves to no model in `_road_queue_models`, which is the state `band_panel_queue_hidden_entry` stages |
+## | an entry the player has just withdrawn | the `✕`'s optimistic overlay covers the round trip while `buildQueue` still lists it |
+##
+## So the wire queue `[A, B, C]` can still legitimately draw as `[B, C]`, and a position counted off
+## the DRAWN list is short by every entry hidden above it — `▼` on `B` would send `1`, which the sim
+## resolves back to `[A, B, C]`: a button that reads as broken because it silently did nothing.
 ##
 ## **THE RANK IS THEREFORE STAMPED HERE, from the entry's place in `build_queue_keys`**
 ## (`BUILD_QUEUE_ROW_RANK_KEY`), and every `build_order` the block sends — both arrows and the drag —
@@ -2478,9 +2682,8 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
 ## `[B, C]`, `B`'s `▲` is ENABLED (it can climb above `A`) and only `C`'s `▼` is disabled.
 ##
 ## **Skipping rather than inventing a placeholder is still the right fallback**: a placeholder has no
-## face, no date, no legs and no price to state. Admitting the zero-crew row instead would put it back
-## on the WORK BOARD as well, which §2.5 deliberately reverted — a separate design question, and not
-## this list's to decide.
+## face, no date, no legs and no price to state — and for the one source that can reach this skip, a
+## road, there is nothing to say about a tile this client cannot see.
 ##
 ## **…AND THE DECLARATIONS THE WIRE HAS NOT PLACED YET RIDE ITS TAIL.** The queue is captured live,
 ## so a declaration lands in it on its own command's recapture — but that recapture is a network hop
@@ -2539,10 +2742,11 @@ func _build_queue_models(band: Dictionary, models: Array) -> Array:
         var key := String(rank_keys[rank])
         # ⛔ **AN ENTRY THAT DOES NOT DRAW STILL SPENDS ITS RANK** — that is the whole point of
         # walking the wire's list with its own index rather than appending and counting. Two kinds
-        # skip, and the WIRE still carries both: one whose source has no work-source model (the note
-        # above has the path, and that state persists across turns), and one the player has just
-        # withdrawn, whose `✕` is covered for the round trip by an overlay while `buildQueue` still
-        # lists it.
+        # skip, and the WIRE still carries both: one whose source this client cannot RESOLVE — a
+        # queued road on a tile the fog-filtered `routes` section does not carry (the zero-crew patch
+        # that used to be the other one is admitted now, at `_work_source_models` itself) — and one
+        # the player has just withdrawn, whose `✕` is covered for the round trip by an overlay while
+        # `buildQueue` still lists it.
         if withdrawn.has(key):
             continue
         if not by_key.has(key) and not road_models.has(key):
@@ -3496,9 +3700,10 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
 ##
 ## ⛔ **BOTH END-STOPS ARE THE WIRE QUEUE'S, NOT THE DRAWN LIST'S.** `confirmed` is how many entries
 ## the BAND's wire queue carries and the rank is this entry's index in it, so with `[A, B, C]` drawn
-## as `[B, C]` — `A` having no work-source model, which `_build_queue_models`' note shows is a
-## reachable and persistent state — `B`'s `▲` is ENABLED, because there really is somewhere above it
-## to go. An entry at the bottom of a truncated page likewise still has somewhere to fall to.
+## as `[B, C]` — `A` having no model at all, which `_build_queue_models`' note shows is a reachable
+## state (a queued road the fog keeps out of the `routes` section) — `B`'s `▲` is ENABLED, because
+## there really is somewhere above it to go. An entry at the bottom of a truncated page likewise still
+## has somewhere to fall to.
 func _build_queue_reorder_column(band: Dictionary, model: Dictionary,
         confirmed: int) -> Control:
     var column := HBoxContainer.new()
@@ -5479,6 +5684,14 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
     # this panel follows — a player who has just staffed the role must not read a ⚠ they have fixed.
     var builders := int(_band_labor.effective_role_workers(
         band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
+    # **AND THE BAND'S OWN WIRE QUEUE, RESOLVED ONCE BESIDE IT** — the keys of its
+    # `PopulationCohortState.buildQueue`, through `HudBandLaborState.build_queue_keys`, which is the
+    # same list `_queue_rank_keys` ranks the queue block on. It is read here because a queued source
+    # is admitted to the board with no take crew at all (the ⛔ note at the filter below), and asking
+    # ONE list is what keeps the board and the block from disagreeing about which sources are queued.
+    var queued_keys: Dictionary = {}
+    for queued_variant in _band_labor.build_queue_keys(band):
+        queued_keys[String(queued_variant)] = true
     for key in merged:
         var m: Dictionary = merged[key]
         var kind := String(m.get("kind", "")).strip_edges().to_lower()
@@ -5491,7 +5704,24 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var pending := bool(m.get("pending", false))
         if not (kind == SourceForecast.LABOR_KIND_FORAGE or kind == SourceForecast.LABOR_KIND_HUNT):
             continue
-        if workers <= 0 and not pending:
+        # ⛔ **A QUEUED SOURCE IS ADMITTED WITH NO TAKE CREW AT ALL, AND THAT IS THE ONE EXCEPTION.**
+        # Reported from play: the player declared `cultivate` on a patch, then took that patch's
+        # harvesters to zero. The sim KEEPS both the labor row and the queue entry, deliberately —
+        # `LaborAllocation::set_assignment` → `keep_holding`, `handle_assign_labor` declining to drop
+        # a row whose source is QUEUED, and `holds_build_source` asking only whether a ROW exists — so
+        # the entry stayed at the HEAD of the band's queue, taking the whole builders pool every turn,
+        # while this filter took its row off the board and with it out of the queue block. The next
+        # `cultivate` the player queued sat at index 1 and never advanced, behind a job that had no
+        # row anywhere in the client. **The sim admits on a ROW and the client admitted on a CREW**,
+        # and the gap between the two rules was a job the builders were working that the player could
+        # not see, could not reorder and could not withdraw.
+        #
+        # ⛔ **THE QUEUE ENTRY IS WHAT ADMITS IT, NEVER THE ZERO CREW ON ITS OWN.** `keep_holding`
+        # keeps the row of ANY source the player empties, so admitting on the sim's rule verbatim
+        # would put every deliberately-emptied source back on the work board — §2.5's revert arriving
+        # by the back door. The entry is what makes hiding actively harmful, because that row is the
+        # one spending the pool.
+        if workers <= 0 and not pending and not queued_keys.has(String(key)):
             continue
         var yld := SourceForecast.source_yield_readout(m, kind)
         var x := int(m.get("x", -1))

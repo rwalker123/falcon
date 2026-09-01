@@ -464,18 +464,64 @@ const ROUTE_DEGENERATE_PATH := [[5, 11]]
 # One run per rung, laid parallel so the four opacity steps and the four widths read against each
 # other in one frame — a faint path through to a strong paved road — plus a fifth in SHORTFALL,
 # which must read in the DANGER ink whatever rung it holds.
-const ROAD_PATH_TILES := [[1, 1], [3, 1], [5, 2], [7, 2], [9, 3]]
-const ROAD_TRAIL_TILES := [[1, 3], [3, 3], [5, 4], [7, 4], [9, 5]]
-const ROAD_DIRT_TILES := [[1, 5], [3, 5], [5, 6], [7, 6], [9, 7]]
-const ROAD_PAVED_TILES := [[1, 7], [3, 7], [5, 8], [7, 8], [9, 9]]
-const ROAD_AT_RISK_TILES := [[1, 9], [3, 9], [5, 10], [7, 10], [9, 11]]
+#
+# ⛔ **EACH RUN IS CONTIGUOUS, AND THAT IS NOT COSMETIC.** These tiles were once written at a stride of
+# two columns, which was harmless while the draw stamped one hex per row and asked nothing about the
+# neighbours. The road now draws from a CONNECTION MASK built out of adjacency, so a run with gaps in
+# it is not a road at all — it is five lone tiles, each drawing its centre disc and nothing else, and
+# the frame would silently stop showing what its name says it shows. Runs sit two rows apart so no two
+# of them touch (odd-r neighbours are all ±1 row), which is what keeps five roads from fusing into one.
+const ROAD_RUN_COL_START := 2
+const ROAD_RUN_COL_END := 12    # exclusive
+const ROAD_PATH_ROW := 1
+const ROAD_TRAIL_ROW := 3
+const ROAD_DIRT_ROW := 5
+const ROAD_PAVED_ROW := 7
+const ROAD_AT_RISK_ROW := 9
 # **A LONE ROAD TILE, AND IT MUST DRAW.** Under the stored-path model this was the degenerate case a
 # one-point polyline had to bail on; per tile it is the ORDINARY case — a road forms tile by tile, and
-# the first tile of one is a road. The frame keeps it precisely because the old draw would have
-# skipped it, so a renderer that still thinks in polylines fails visibly here.
-const ROAD_LONE_TILE := [[11, 11]]
+# the first tile of one is a road. It is kept as its own separate run because under the connection-mask
+# model it is now a genuinely DISTINCT rendering case — a centre disc with no arms — rather than the
+# accident it used to be. Placed clear of every run above, so nothing links to it.
+# Placed clear of the runs above (row 11 is two rows from row 9, so no odd-r neighbour is a road) AND
+# clear of the minimap's own CanvasLayer in the bottom-right, which is not hidden with the map and sat
+# squarely on top of the one tile this case exists to show.
+const ROAD_LONE_TILE := [[4, 11]]
+# State "road vs herd trail". ⛔ **THE ONE FRAME WHERE THE TWO AMBERS CAN BE JUDGED TOGETHER.** Herd
+# trails stay in the ANNOTATION layer while a road is now painted into the terrain composite, so this
+# is the only place a reviewer can see both at once and check they do not read as the same thing.
+#
+# The measured reason it is staged at the TRAIL rung specifically, and not at dirt: against
+# `MapView.HERD_TRAIL_COLOR` (0.97, 0.69, 0.25) every road surface sits within 0.8°–6.3° of the herd
+# trail's HUE — dirt is amber by nature and that cannot be designed away — so the entire separation is
+# carried by SATURATION, 0.09–0.33 against the trail's 0.92. `01_trail.png` is the closest call of the
+# four: 0.8° of hue and near-identical luminance (0.64 vs 0.61). A road has been read as a herd trail
+# once already; this frame is what stops it recurring.
+const ROAD_TRAIL_CROSS_ROW := 6
+const ROAD_TRAIL_CROSS_COL_START := 3
+const ROAD_TRAIL_CROSS_COL_END := 13   # exclusive
+# The herd walks NORTH→SOUTH across the road, so the two inks cross at a right angle rather than
+# running alongside each other — a parallel pair is the easy case, and it is not the one that misled.
+const ROAD_TRAIL_HERD_ID := "game_deer_road"
+# Clear of BAND_X/BAND_Y (8, 6) — the fixture band's tent marker stands on that hex in every state
+# built from `_base_snapshot`, and it landed squarely on the crossing this frame exists to show.
+const ROAD_TRAIL_HERD_COL := 5
+const ROAD_TRAIL_HERD_ROWS := [3, 4, 5, 6, 7, 8, 9]
+const ROAD_TRAIL_HERD_BIOMASS := 600.0
+
 # The bill a road in shortfall carries. Any figure at or above `SourceForecast.UPKEEP_WORK_MIN` puts
 # it in the danger ink; these are the middle rung's own numbers so the frame states a real road.
+# **A ROAD THAT HAS REACHED ITS RUNG AND HAS NOTHING RISING ABOVE IT.** Every road frame here stages
+# this, because it is the state a road sits in for as long as nobody is raising the next rung — the whole
+# free floor, most of the time.
+#
+# ⛔ **THAT STATE PUBLISHES A *FULL* METER, AND THIS CONST USED TO STAGE `0.0`.** `build_fraction`
+# measures the rung AT RISK, which is the HELD rung while nothing is banked (`routes::road_at_risk_rung`),
+# so `ROAD_METER_COMPLETE` is what an idle road actually sends and `0.0` is a reading the sim can never
+# produce — a road that IS raising has banked work and therefore a meter strictly above zero. Staged at
+# the impossible value these frames agreed with the renderer about something the wire never says, which
+# is how every idle road came to draw one rung too high with the map frames still looking right.
+const ROAD_IDLE_RUNG_METER := HudRouteVocab.ROAD_METER_COMPLETE
 const ROAD_DEMAND := 3.4
 const ROAD_SHORTFALL := 1.7
 const ROAD_KEPT := 0.0
@@ -1550,17 +1596,44 @@ func _ready() -> void:
 	await _save("map_routes")
 
 	# State "road network" — THE ROADS IN THE GROUND (arc #532), which is a different thing from the
-	# order paths one state up and is drawn by a different pass. **A road is ONE TILE, so the draw
-	# stamps a hex apiece** and a run of them reads as a road across the map. Five runs laid parallel:
-	# one at each of the four rungs, faintest at the top and strongest at the bottom, and a fifth in
+	# order paths one state up and is drawn by a different pass. Five CONTIGUOUS runs laid parallel: one
+	# at each of the four rungs, faintest at the top and strongest at the bottom, and a fifth in
 	# SHORTFALL reading in the danger ink whatever rung it stands on. A sixth is a LONE tile and must
-	# DRAW — the stored-path draw bailed on it, so it is the frame's own regression guard. Fog OFF, so
-	# the tile's visibility gate is not what is under test here.
+	# DRAW — a road forms tile by tile, so the first tile of every road in the game is exactly that, and
+	# under the connection-mask model it is the distinct "centre disc, no arms" case. Fog OFF, so the
+	# tile's visibility gate is not what is under test here.
+	#
+	# ⛔ **TEXTURES AND EDGE BLENDING MUST BE ON FOR THIS STATE, AND THE FRAME IS WORTHLESS WITHOUT
+	# THEM.** Roads are painted by `terrain_blend.gdshader`'s road pass, and `TerrainRenderer.shader_
+	# active()` requires terrain textures AND `use_edge_blending`. This state used to INHERIT
+	# `enable_terrain_textures(false)` from the order-path state above it, which was harmless while the
+	# roads were an annotation drawn over any renderer — it would now render a map with no roads on it
+	# at all, exit 0, and assert nothing. Do not let the inherit come back.
+	_map.enable_terrain_textures(true)
+	TerrainTextureManager.use_edge_blending = true
 	_map.display_snapshot(_snapshot_road_network())
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_road_network")
+
+	# State "road vs herd trail" — THE ONE FRAME WHERE THE TWO AMBERS MEET. A herd trail is an
+	# annotation drawn OVER the map; a road is painted INTO the terrain composite; and they are within a
+	# degree of hue of each other (see the ROAD_TRAIL_CROSS_* consts for the measurement). Staged at the
+	# TRAIL rung, the closest call of the four, with the herd crossing the road at a right angle. Read
+	# for: the trail's saturated amber line staying obviously a LINE ON the map while the road stays
+	# obviously part of the ground — if the crossing point is ambiguous, the road art is too saturated.
+	_map.display_snapshot(_snapshot_road_vs_herd_trail())
+	_map.selected_unit_id = -1
+	_map._fit_map_to_view()
+	var road_herd_trail: Array = []
+	for row in ROAD_TRAIL_HERD_ROWS:
+		road_herd_trail.append(Vector2i(ROAD_TRAIL_HERD_COL, int(row)))
+	_map.herd_trails[ROAD_TRAIL_HERD_ID] = road_herd_trail
+	_map.queue_redraw()
+	await _settle()
+	await _save("map_road_vs_herd_trail")
+	_map.herd_trails.clear()
 
 	# State "max zoom" — the ZOOM CAP raised from 4× to 7× in issue #375. Every other state renders at
 	# the cover fit (MIN_ZOOM_FACTOR), so nothing here had ever judged the OTHER end of the rail, and
@@ -4535,7 +4608,7 @@ func _route_order(faction: Variant, path: Array) -> Dictionary:
 ## One ROAD row, shaped exactly like the native decoder's `routes` entry — **ONE ROW PER TILE**, whose
 ## `tile_x`/`tile_y` pair is its identity. There is no id and no path: a road is a per-tile
 ## improvement, and a run of them is what a player reads as a road.
-func _road(tile: Array, rung: String, shortfall: float) -> Dictionary:
+func _road(tile: Array, rung: String, shortfall: float, build_fraction: float) -> Dictionary:
 	return {
 		"tile_x": int(tile[0]),
 		"tile_y": int(tile[1]),
@@ -4544,7 +4617,15 @@ func _road(tile: Array, rung: String, shortfall: float) -> Dictionary:
 		"keeper_band_id": ROAD_KEEPER_BAND,
 		"keeper_remoteness": ROAD_REMOTENESS_AT_HOME,
 		"rung": rung,
-		"build_fraction": 1.0,
+		# ⛔ **THE METER IS A PARAMETER, AND THE FRAME THAT CAME OUT AS trail / dirt / paved / paved WAS
+		# THE RENDERER'S FAULT, NOT THIS FIXTURE'S.** `build_fraction` measures the rung AT RISK, which is
+		# the HELD rung whenever nothing is banked (`routes::road_at_risk_rung`), so a full meter is the
+		# wire saying *nothing is rising* — the ordinary state of a road nobody is upgrading, and what
+		# `ROAD_IDLE_RUNG_METER` stages. The one-run-per-rung frame drew a rung too high because the
+		# packer took that full meter for progress; it is collapsed in `TerrainRenderer._pack_road_texel`
+		# now. **Staging `0.0` to make the frame look right hid the bug** — the sim cannot emit `0.0`, so
+		# the corrected frame agreed with the renderer about a state that does not exist.
+		"build_fraction": build_fraction,
 		"upkeep_demand": ROAD_DEMAND,
 		"upkeep_supplied": ROAD_DEMAND - shortfall,
 		"upkeep_shortfall": shortfall,
@@ -4558,24 +4639,50 @@ func _road(tile: Array, rung: String, shortfall: float) -> Dictionary:
 
 ## Every tile of one run, at one rung. The rows are independent — that is the model — so the run is
 ## expanded here rather than carried as an object.
-func _road_run(tiles: Array, rung: String, shortfall: float) -> Array:
+func _road_run(tiles: Array, rung: String, shortfall: float, build_fraction: float) -> Array:
 	var rows: Array = []
 	for tile in tiles:
-		rows.append(_road(tile, rung, shortfall))
+		rows.append(_road(tile, rung, shortfall, build_fraction))
 	return rows
+
+## One CONTIGUOUS west→east run on `row`, spanning ROAD_RUN_COL_START … ROAD_RUN_COL_END. Contiguity is
+## what makes the run a ROAD rather than a line of lone tiles — see the const block.
+func _road_row_run(row: int, rung: String, shortfall: float) -> Array:
+	var tiles: Array = []
+	for col in range(ROAD_RUN_COL_START, ROAD_RUN_COL_END):
+		tiles.append([col, row])
+	return _road_run(tiles, rung, shortfall, ROAD_IDLE_RUNG_METER)
 
 ## The road-network backdrop: a run at each of the four rungs, a fifth in shortfall, and a LONE tile —
 ## which under the per-tile model must DRAW rather than be skipped.
 func _snapshot_road_network() -> Dictionary:
 	var snap := _base_snapshot(_band([], 2, 0), [])
 	var rows: Array = []
-	rows.append_array(_road_run(ROAD_PATH_TILES, HudRouteVocab.RUNG_KEY_PATH, ROAD_KEPT))
-	rows.append_array(_road_run(ROAD_TRAIL_TILES, HudRouteVocab.RUNG_KEY_TRAIL, ROAD_KEPT))
-	rows.append_array(_road_run(ROAD_DIRT_TILES, HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_KEPT))
-	rows.append_array(_road_run(ROAD_PAVED_TILES, HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_KEPT))
-	rows.append_array(_road_run(ROAD_AT_RISK_TILES, HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_SHORTFALL))
-	rows.append_array(_road_run(ROAD_LONE_TILE, HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_KEPT))
+	rows.append_array(_road_row_run(ROAD_PATH_ROW, HudRouteVocab.RUNG_KEY_PATH, ROAD_KEPT))
+	rows.append_array(_road_row_run(ROAD_TRAIL_ROW, HudRouteVocab.RUNG_KEY_TRAIL, ROAD_KEPT))
+	rows.append_array(_road_row_run(ROAD_DIRT_ROW, HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_KEPT))
+	rows.append_array(_road_row_run(ROAD_PAVED_ROW, HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_KEPT))
+	rows.append_array(_road_row_run(ROAD_AT_RISK_ROW, HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_SHORTFALL))
+	rows.append_array(_road_run(
+		ROAD_LONE_TILE, HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_KEPT, ROAD_IDLE_RUNG_METER))
 	snap["routes"] = rows
+	return snap
+
+## The road-vs-herd-trail backdrop: a TRAIL-rung road running west→east, and one herd standing on it.
+## The herd's own trail is written straight into `MapView.herd_trails` by the state (the snapshot banks
+## exactly ONE tile per herd, and a one-point trail draws nothing) — the seam guard's idiom.
+func _snapshot_road_vs_herd_trail() -> Dictionary:
+	var snap := _base_snapshot(_band([], 2, 0), [{
+		"id": ROAD_TRAIL_HERD_ID, "label": "Red Deer (%s)" % ROAD_TRAIL_HERD_ID,
+		"x": ROAD_TRAIL_HERD_COL,
+		"y": int(ROAD_TRAIL_HERD_ROWS[ROAD_TRAIL_HERD_ROWS.size() - 1]),
+		"biomass": ROAD_TRAIL_HERD_BIOMASS, "huntable": true,
+	}])
+	var tiles: Array = []
+	for col in range(ROAD_TRAIL_CROSS_COL_START, ROAD_TRAIL_CROSS_COL_END):
+		tiles.append([col, ROAD_TRAIL_CROSS_ROW])
+	snap["routes"] = _road_run(
+		tiles, HudRouteVocab.RUNG_KEY_TRAIL, ROAD_KEPT, ROAD_IDLE_RUNG_METER)
 	return snap
 
 ## The routes backdrop: flat terrain, the resident band for scale, and four orders — three multi-hop

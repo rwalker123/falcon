@@ -2307,6 +2307,49 @@ static func hex_distance_wrapped(a_col: int, a_row: int, b_col: int, b_row: int,
     var dr: int = a.y - b.y
     return int((abs(dq) + abs(dr) + abs(dq + dr)) / 2)
 
+## **THE 8-POINT COMPASS, ANTICLOCKWISE FROM EAST** — the order `atan2` produces, so the sector index
+## is the arithmetic and there is no lookup table to get out of step with it. Screen +y is DOWN, so
+## the bearing is taken against `-dy` and `N` genuinely means up the map.
+const COMPASS_POINTS: Array[String] = ["E", "NE", "N", "NW", "W", "SW", "S", "SE"]
+
+## Half a sector, in turns — what centres `E` on 0° instead of straddling it. Named because the `+`
+## in the sector arithmetic below is the whole of the rounding rule.
+const COMPASS_HALF_SECTOR := 0.5 / float(8)
+
+## **WHICH WAY `to` LIES FROM `from`, as one of the eight compass words** — `""` when either tile is
+## unknown, which callers state as an unlocated thing rather than as a direction they cannot vouch
+## for.
+##
+## ⛔ **THE ANGLE IS TAKEN IN DRAWN SPACE, NOT IN OFFSET COORDINATES.** Odd rows are shifted half a
+## column, and a bearing taken off raw `col`/`row` deltas therefore skews every diagonal by up to a
+## whole sector — a tile due north-east reads north. The two spacings are the hex grid's own
+## (`MapView._hex_center`: `sqrt(3) * radius` across, `1.5 * radius` down) expressed as ratios, since
+## only their ratio can affect an angle.
+##
+## The column delta is the WRAP-AWARE one, so a road just across the seam bears E rather than most of
+## the way W — the same rule `hex_distance_wrapped` above applies to the same pair of tiles.
+static func compass_bearing(from_col: int, from_row: int, to_col: int, to_row: int,
+        grid_width: int, wrap_horizontal: bool) -> String:
+    if from_col < 0 or from_row < 0 or to_col < 0 or to_row < 0:
+        return ""
+    var d_col := float(_wrapped_col_delta(from_col, to_col, grid_width, wrap_horizontal))
+    # The half-column stagger of an odd row, which is what makes this a DRAWN-space delta.
+    var stagger := 0.5 * float((to_row & 1) - (from_row & 1))
+    var dx := (d_col + stagger) * COMPASS_COLUMN_SPACING
+    var dy := float(to_row - from_row) * COMPASS_ROW_SPACING
+    if is_zero_approx(dx) and is_zero_approx(dy):
+        return ""
+    # `-dy` because screen +y runs DOWN; turns rather than radians so the sector index is a floor.
+    var turns := atan2(-dy, dx) / TAU
+    var sector := int(floor(fposmod(turns + COMPASS_HALF_SECTOR, 1.0) * float(COMPASS_POINTS.size())))
+    return COMPASS_POINTS[clampi(sector, 0, COMPASS_POINTS.size() - 1)]
+
+## The hex grid's drawn spacings as RATIOS of the hex radius — `MapView._hex_center`'s own numbers
+## (`sqrt(3)` across a column, `1.5` down a row). Only their ratio reaches `compass_bearing`, so the
+## radius itself is not a term.
+const COMPASS_COLUMN_SPACING := 1.7320508
+const COMPASS_ROW_SPACING := 1.5
+
 ## Round-trip TRAVEL turns for a raid party walking from `band` out to `herd` and back — the honest
 ## remainder of the trip length the sim's answer does not carry: `turns_to_fill` counts HUNTING turns
 ## only, whichever band asked. Matches the sim launch feed EXACTLY: ceil(2 × wrap-aware hex_distance(band, herd)

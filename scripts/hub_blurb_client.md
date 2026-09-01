@@ -36,14 +36,14 @@ wrapped `##` section instead. Follow the shape the file already uses.
 | `crafting-panel.md` | Materials & Crafting: the material rail, the bench, the kit ledger, and the rule that the sim resolves the refusal | `CraftingPanel.gd`, `CraftingPanelController.gd`, `hud_crafting_vocab.gd` |
 | `knowledge-panel.md` | The knowledge screen: what your people know, the derived "nothing is using it", and the action-bar launcher | `KnowledgePanel.gd`, `KnowledgeRoster.gd`, `hud_knowledge_vocab.gd` |
 | `panel-framework.md` | Docked `PanelCard`s, `DockScrollFit`, `AutoSizingPanel` | `PanelCard.gd`, `PanelDock.gd` |
-| `terrain-blend-shader.md` | The per-pixel biome-blend shader: blend, shore, canopy, peaks, rivers | `*.gdshader`, `TerrainRenderer.gd` |
+| `terrain-blend-shader.md` | The per-pixel biome-blend shader: blend, shore, canopy, peaks, rivers, roads | `*.gdshader`, `TerrainRenderer.gd` |
 | `terrain-textures.md` | Atlas assets, `terrain_config.json`, loading, the 2D pipeline | `TerrainTextureManager.gd` |
 | `map-renderers.md` | `MapView`'s renderer decomposition and the 2D minimap | `MapView.gd`, `Minimap*.gd`, `*Renderer.gd` |
 | `fog-of-war.md` | Fog of war is server-owned: preference → command → snapshot → render | `MapView.gd`, `Main.gd`, `MenuShell.gd`, `ClientSettings.gd` |
 | `interface-scale.md` | The Options interface-scale slider: the UI scales, the map counter-scales to hold still | `ui_scaler.gd`, `ClientSettings.gd`, `MenuShell.gd`, `MapView.gd` |
 | `keyboard-arbiter.md` | Who owns the keyboard: the registry of every gameplay key, the three-owner arbiter, exact matching, and the focus release it depends on | `KeyboardArbiter.gd`, `TextEntryFocus.gd`, `MapView.gd`, `Main.gd`, `MenuShell.gd` |
 | `map-markers.md` | The layered hex-icon stack UX | `BandMarkerRenderer.gd`, `SecondaryMarkerRenderer.gd` |
-| `roads.md` | The roads in the ground: the rung ladder on the map, the tile card's road readout, the `roadwork` pool | `hud_route_vocab.gd`, `AnnotationRenderer.gd`, `dict/routes.rs` |
+| `roads.md` | The roads in the ground: the rung ladder painted INTO the terrain composite, the tile card's road readout, the `roadwork` pool | `hud_route_vocab.gd`, `terrain_blend.gdshader`, `TerrainRenderer.gd`, `dict/routes.rs` |
 | `overlay-channels.md` | Selected-band/herd overlays, annotations, worked-source marks | `BandOverlayRenderer.gd`, `AnnotationRenderer.gd` |
 | `save-load-menu.md` | The save/load menu: the query-worker seam, the panes and their four list states, the load handoff, the config-drift notice | `SaveSlots.gd`, `ConfigDriftNotice.gd`, `MenuShell.gd`, `LandingScreen.gd` |
 | `inspector-panels.md` | Every `ui/inspector/` panel | `Inspector.gd`, `ui/inspector/**` |
