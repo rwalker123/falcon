@@ -34,7 +34,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 75
+const EXPECTED_CHECKPOINTS := 86
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 ## The ladder's KNOWLEDGE ROSTER and its progress row, in the wire's own shapes. Shared with the
@@ -105,6 +105,7 @@ func run(harness) -> void:
 	await _assert_launcher_pip()
 	await _assert_opens_on_filter()
 	await _assert_late_catalogue_is_not_learned()
+	await _assert_loaded_world_is_not_learned()
 
 # ---- the greyed `0.0` track --------------------------------------------------
 
@@ -802,6 +803,20 @@ func _live_filter() -> StringName:
 const TURN_LATE_CATALOGUE_SEED := 45
 const TURN_LATE_CATALOGUE := 46
 
+## The loaded-world block's own turn pair, for the same reason the block above has one: it seeds a
+## baseline of its OWN, and a turn the diff has already rolled on would seed it from what the
+## previous block left. Deliberately far from every other turn in this file, and high — a load
+## restores a world mid-campaign, which is the whole premise.
+const TURN_LOADED_WORLD_SEED := 71
+const TURN_LOADED_WORLD := 72
+
+## The three tracks the reported save (`thirdsave.shdw`, turn 71) carried as long-finished.
+const LOADED_WORLD_KNOWN_TRACKS := ["cultivation", "seed_selection", "herding"]
+
+## …and one the save did NOT carry, so the block can prove the diff still WORKS after a load rather
+## than merely that it has gone quiet.
+const LOADED_WORLD_LEARNED_TRACK := "penning"
+
 ## **A CRAFT THE FACTION ALREADY KNEW MUST NOT REPORT AS LEARNED — and the real dispatch ORDER is what
 ## makes that hard.** `Main._apply_snapshot` sends `update_intensification` BEFORE
 ## `update_crafting_catalogues`, and both reach the diff. So the pass that seeds the baseline sees the
@@ -856,6 +871,87 @@ func _assert_late_catalogue_is_not_learned() -> void:
 	h._assert_hud("knowledge late-catalogue — …and its roster node does not carry `%s` either"
 			% HudKnowledgeVocab.NODE_NEW,
 		not bool(tanning.get(HudKnowledgeVocab.NODE_NEW, false)))
+
+## **A WORLD THAT ARRIVES ALREADY KNOWING THINGS MUST NOT ANNOUNCE THEM** — the ladder twin of the
+## craft block above, and the one that shipped.
+##
+## Loading a save reloads `Main.tscn`, so every controller here is a NEW object with `_diff_turn` at
+## `UNSEEN_TURN`: the first frame of the loaded world is what seeds the baseline, and that frame
+## carries tracks the faction finished forty turns ago. `Main._apply_snapshot` sends the ladder's
+## ROSTER (a per-world constant, so a load is exactly when it moves) BEFORE the faction's PROGRESS
+## row, and BOTH reach the diff — so the baseline was seeded from a model that declared all seven
+## knowledges and carried progress for none. `_seen_keys` took the roster, `_known_at_turn_start`
+## took nothing, and the progress row landing a moment later on the same turn could not repair it:
+## the fold was over keys seen for the FIRST time, and those keys had been spent one refresh earlier.
+## The next tick announced *"Cultivation learned"*, *"Seed Selection learned"* and *"Herding
+## learned"*. Reported from play.
+##
+## **THE SECTIONS GO IN `Main`'s OWN ORDER, and that IS the claim** — roster, then progress, both on
+## the seeding turn. Pushing them together, or progress first, stages a snapshot no server sends and
+## the block passes with the fix reverted.
+func _assert_loaded_world_is_not_learned() -> void:
+	var controller: KnowledgePanelController = h._hud.knowledge_panel()
+	# The craft vector goes out through the wire first, for the reason the block above states: a
+	# catalogue outlives `reset_world_state`, and crafts left standing here would be seen by the
+	# seeding pass and take no part in the claim.
+	h._hud.update_crafting_catalogues([], [], [], [])
+	controller.reset_world_state()
+	var wire_tracks := {}
+	for track in LOADED_WORLD_KNOWN_TRACKS:
+		wire_tracks[track] = PROGRESS_KNOWN
+
+	# THE FIRST FRAME OF THE LOADED WORLD, in `Main._apply_snapshot`'s order: the turn, the roster,
+	# then the progress row.
+	h._hud.update_overlay(TURN_LOADED_WORLD_SEED, {})
+	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	h._hud.update_intensification([_wire_tracks(wire_tracks)])
+	await h._settle()
+
+	# **NON-VACUOUS FIRST, AND THIS IS THE LEG THE WHOLE BLOCK RESTS ON.** A seeding pass that staged
+	# no KNOWN track satisfies "nothing was announced" for a reason that has nothing to do with the
+	# diff, so the roster is asked whether it is really carrying all three as KNOWN before it is asked
+	# whether any of them is new.
+	var seeded := controller.nodes()
+	for track in LOADED_WORLD_KNOWN_TRACKS:
+		var node := _node_in(seeded, track)
+		var state := String(node.get(HudKnowledgeVocab.NODE_STATE, "")) \
+			if not node.is_empty() else "absent from the roster"
+		h._assert_hud("knowledge loaded-world — the loaded frame really does carry `%s` as KNOWN (%s)"
+				% [track, state],
+			state == HudKnowledgeVocab.NODE_STATE_KNOWN)
+
+	# THE NEXT TURN, with nothing whatever changed — the tick the player presses after loading.
+	h._hud.update_overlay(TURN_LOADED_WORLD, {})
+	h._hud.update_intensification([_wire_tracks(wire_tracks)])
+	await h._settle()
+
+	var learned := controller.learned_this_turn()
+	var roster := controller.nodes()
+	for track in LOADED_WORLD_KNOWN_TRACKS:
+		h._assert_hud("knowledge loaded-world — `%s` was known before the save and is not learned on the tick after it (%s)"
+				% [track, str(learned.keys())],
+			not learned.has(track))
+		# …and the ROSTER agrees, which is the half the turn orb's row actually reads.
+		h._assert_hud("knowledge loaded-world — …and `%s`'s roster node does not carry `%s` either"
+				% [track, HudKnowledgeVocab.NODE_NEW],
+			not bool(_node_in(roster, track).get(HudKnowledgeVocab.NODE_NEW, false)))
+	# **THE ORB IS THE SURFACE THAT ACTUALLY SHOUTED**, so it is asked in its own terms rather than
+	# inferred from the roster: this is the array `_push_knowledge_attention` hands the orb.
+	var announced := AttentionController.knowledge_attention(roster)
+	h._assert_hud("knowledge loaded-world — the turn orb raises NO `learned` row after a load (%d rows)"
+			% announced.size(),
+		announced.is_empty())
+
+	# **AND THE DIFF IS STILL ALIVE** — a fix that simply stopped announcing would pass every claim
+	# above. One more turn, with a track that genuinely completes now, must still be announced.
+	var with_penning := wire_tracks.duplicate()
+	with_penning[LOADED_WORLD_LEARNED_TRACK] = PROGRESS_KNOWN
+	h._hud.update_overlay(TURN_LOADED_WORLD + 1, {})
+	h._hud.update_intensification([_wire_tracks(with_penning)])
+	await h._settle()
+	h._assert_hud("knowledge loaded-world — a track that completes AFTER the load is still announced (%s)"
+			% str(controller.learned_this_turn().keys()),
+		controller.learned_this_turn().has(LOADED_WORLD_LEARNED_TRACK))
 
 ## The pip's rect must sit inside its button's. It is an anchored, mouse-transparent child of a
 ## `Button` — which is not a `Container`, so it contributes nothing to the parent's minimum size — and

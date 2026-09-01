@@ -310,15 +310,28 @@ func _update_learned_this_turn() -> void:
 		return
 	if turn == _diff_turn:
 		# A second snapshot inside one turn (an optimistic reconcile, a re-render) must not wipe what
-		# the turn has already taught — the baseline is the TURN's, not the frame's.
+		# the turn has already taught — the baseline is the TURN's, not the frame's. `_learned_this_turn`
+		# is deliberately left standing, so an announcement survives every later frame of its own turn.
 		#
-		# **BUT A SECTION THAT ARRIVES ON ONE OF THOSE LATER FRAMES STILL HAS TO REACH THE BASELINE**,
-		# and this is the path the craft column actually takes: `update_intensification` seeds the
-		# baseline, `update_crafting_catalogues` lands afterwards on the SAME turn, and without this
-		# fold every craft the faction already knew reports as learned on the next tick.
-		for key in first_seen:
-			if known_now.has(key):
-				_known_at_turn_start[key] = true
+		# **BUT ANYTHING THAT BECOMES KNOWN WHILE THE TURN NUMBER HAS NOT MOVED IS A SECTION
+		# ARRIVING, NEVER A DISCOVERY**, so it has to reach the baseline. A discovery is resolved by
+		# the sim at a turn boundary and the frame reporting it carries the NEW turn number — it goes
+		# through the transition branch below and is announced there. Nothing the client does can make
+		# a track become known without the turn advancing.
+		#
+		# **THIS FOLD IS OVER EVERY KNOWN KEY, and restricting it to keys seen for the FIRST time is
+		# what shipped the "learned" storm after a load.** `Main._apply_snapshot` dispatches the
+		# ladder's ROSTER (a per-world constant, line ~752) before the faction's PROGRESS row
+		# (~759), and both refresh the readouts — so on the first frame of a loaded world the diff
+		# rolled once against a model that declared all seven knowledges and carried progress for
+		# none, seeding `_seen_keys` with the roster and `_known_at_turn_start` with nothing. The
+		# progress row landed a moment later on the SAME turn, but by then those keys were no longer
+		# first-seen, the fold skipped them, and the next tick announced "Cultivation learned",
+		# "Seed Selection learned" and "Herding learned" for tracks finished forty turns before the
+		# save. A new game hides it completely: its tracks are all 0.0, so the empty baseline is the
+		# truth. Reported from play against `thirdsave.shdw` (turn 71).
+		for key in known_now:
+			_known_at_turn_start[key] = true
 		return
 	var fresh := {}
 	for key in known_now:

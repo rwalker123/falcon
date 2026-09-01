@@ -448,3 +448,63 @@ frame this arc is about** — a faction that knows nothing, every node drawn and
 faction-page block rendered an empty zone) · `knowledge_panel_detail` (a node selected, the pane's
 three sections, the selection bar) · `knowledge_panel_filtered` (a filter live, so the DIMMING is in a
 frame).
+
+## A world that arrives already knowing things must not announce them
+
+`_update_learned_this_turn` answers *"what became known since the turn ticked"* by comparing the
+roster's KNOWN set against `_known_at_turn_start`. Three pieces carry it: `_seen_keys` (every key the
+roster has ever declared), `_known_at_turn_start` (the baseline) and `_diff_turn` (the turn the
+baseline belongs to).
+
+**The baseline is seeded from ONE frame, and `Main` does not deliver a knowledge world in one
+frame.** `Main._apply_snapshot` dispatches sections independently and only when they CHANGED, in a
+fixed order: the ladder's ROSTER (`update_ladder_knowledge`, a per-world constant) before the
+faction's PROGRESS row (`update_intensification`), with `update_crafting_catalogues` later still —
+**and all three refresh the readouts**, so the diff can roll against a half-populated model.
+
+**That is what shipped the "learned" storm after a load.** Loading a save reloads `Main.tscn`, so
+every controller is a NEW object with `_diff_turn` at `UNSEEN_TURN` — `reset_world_state` is not
+even involved, and a partial reset was never the candidate. The first frame of the loaded world then
+rolled the diff twice:
+
+| | `_seen_keys` | `_known_at_turn_start` |
+|---|---|---|
+| after the ROSTER (refresh #1, turn 71) | all 7 knowledges | **empty** — no progress had arrived |
+| after the PROGRESS row (refresh #2, same turn) | unchanged | **still empty** |
+
+The second pass is where the repair should have happened, and it could not: the same-turn fold was
+over keys seen for the **FIRST time**, and those keys had been spent one refresh earlier. Turn 72
+then found three long-finished tracks known and absent from the baseline, and the orb announced
+*"Cultivation learned"*, *"Seed Selection learned"* and *"Herding learned"* for knowledge earned
+forty turns before the save. Reproduced against the reported save (`thirdsave.shdw`, turn 71) by
+driving the real entry points in `Main`'s order.
+
+**A new game hides it completely**, which is why it survived so long: turn one's tracks are all
+`0.0`, so an empty baseline is the truth and the bug has nothing to say.
+
+**The rule that actually holds is about the TURN NUMBER, not about novelty.** A discovery is resolved
+by the sim at a turn boundary and the frame reporting it carries the NEW turn number, so it goes
+through the transition branch and is announced there. **Nothing the client does can make a track
+become known while the turn number stands still** — an optimistic reconcile invents no knowledge, and
+a load republishes the SAME turn (`recapture_snapshot_in_place`). So anything that becomes known on a
+later frame of the baseline's own turn is a SECTION ARRIVING, and the fold is over every known key.
+`_learned_this_turn` is still left standing by that branch, so an announcement survives every later
+frame of its own turn.
+
+**The craft column takes the identical path** and is the case the narrow fold was written for —
+`update_crafting_catalogues` lands after `update_intensification` on the same turn. Widening the fold
+subsumes it; both are guarded, as siblings, in `ui_preview`'s `knowledge_panel` chapter.
+
+### Verify
+
+`chapters/knowledge_panel.gd` → `_assert_loaded_world_is_not_learned`, the ladder twin of
+`_assert_late_catalogue_is_not_learned`. **It asserts the POSITIVE first**: the roster really is
+carrying all three tracks as `known` on the seeded frame — without that leg, "nothing was announced"
+passes on a fixture that staged nothing at all. Then no `learned_this_turn` entry, no `new_this_turn`
+on the roster node, no row out of `AttentionController.knowledge_attention` (the orb is asked in its
+own terms, since the orb is the surface that shouted), and finally a track completing AFTER the load
+that must still be announced — a fix that merely went quiet would pass every other leg.
+
+Sabotage-verified: narrowing the fold back to `first_seen` fails 5 of those legs, with the three
+non-vacuous legs still passing.
+
