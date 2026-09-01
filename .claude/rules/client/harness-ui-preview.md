@@ -1845,7 +1845,9 @@ is reported distinguishably too: a roster that dropped a track answers `false` t
 of it, and "the node is missing" is not the same failure as "the node says in use".
 
 **Frames:** `knowledge_panel` · `knowledge_panel_untouched` (**the frame this arc is about**) ·
-`knowledge_panel_detail` · `knowledge_panel_filtered`.
+`knowledge_panel_detail` · `knowledge_panel_filtered` · `knowledge_launcher_mark` / `_rail` / `_bar`
+(the launcher's bundled cairn at each of the three action mounts, captured inside the pip block
+because that block is the only one standing a REAL `BandCityPanel` up).
 
 **A clean run is 353 frames / 1405 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
 recorded figure before this arc was 352 / 1302, and this arc added FOUR frames and sixty-one claims,

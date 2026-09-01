@@ -25,7 +25,7 @@ sitting on discoveries they have not spent.
 | **Jump on knowledge rows** | **Dropped.** A discovery unlocks a verb across the whole map; there is no one hex, and `focus_on_tile` needs one. Knowledge rows are non-locating and open the screen. |
 | **The bottom-bar slot** | **Cut.** The action-bar pip carries the unspent count. |
 | **The overlay picker** | Moves out of the Inspector onto the **minimap border**. The Inspector is a modding tool and is not normally on screen. |
-| **The `⌃` glyph** | Rejected. Ships as a drawn icon on the `_stage_glyph_sprite` seam. Direction: the **cairn**. |
+| **The `⌃` glyph** | Rejected. Ships as a drawn icon on the `_stage_glyph_sprite` seam. Direction: the **cairn**. *(As built, issue #581: the cairn ships from `ui/HudSprites.gd`; the launcher takes it on `Button.icon` rather than that seam, which is for a Label — see §8.)* |
 
 ---
 
@@ -277,6 +277,16 @@ the **aggregate** view and the teaching.
 - **The Routes / War / Telling domains.** No nodes exist. The screen must not draw empty columns.
 - **The icon asset.** The cairn in the prototype is an SVG sketch. Shipping needs bundled art at the
   action bar's and the collapsed rail's sizes.
+
+> **AS BUILT (issue #581): the cairn SHIPPED, on TWO mechanisms chosen by the HOST WIDGET.**
+> `assets/icons/hud/cairn.png`, resolved through the new `ui/HudSprites.gd`
+> (`for_mark(HudKnowledgeVocab.LAUNCH_MARK)`). The action-bar launcher takes it as the `Button.icon`
+> PROPERTY — a `Button` carries art there, never as a child — on all three mounts, collapsed rail
+> included; the turn orb's `knowledge_learned` row takes it as a `TextureRect` built in place of its
+> `Label`, exactly one of the pair ever existing. `HudKnowledgeVocab.LAUNCH_GLYPH` (`▲`) is no longer
+> a placeholder: it is the FALLBACK both surfaces draw when the art fails to load. The orb's copy is
+> UNTINTED — the fill is what carries the silhouette, and the severity accent is on the stripe beside
+> it. `.claude/rules/client/knowledge-panel.md` and `turn-orb.md` carry the mechanics.
 - **A "never used" record.** See §2 — derived "nothing is using it" ships now; a true history needs
   a sim field.
 

@@ -999,7 +999,8 @@ button entirely.
 width, its height or which dock it is on** — the reserved-edge registry's shape, and its reason:
 
 ```gdscript
-register_action(id: StringName, glyph: String, tooltip: String, enabled: Callable = Callable())
+register_action(id: StringName, glyph: String, tooltip: String, enabled: Callable = Callable(),
+		sprite: Texture2D = null)
 unregister_action(id: StringName)
 refresh_actions()                      # re-ask every predicate
 has_action(id: StringName) -> bool
@@ -1011,6 +1012,15 @@ signal action_invoked(id: StringName)  # THE outbound edge
 - **`enabled`** is a zero-argument `Callable` answering `bool`; an EMPTY one means always enabled. It
   is asked at registration and by `refresh_actions()` — **never during a layout pass**, which is what
   keeps the mount's geometry out of reach of band state.
+- **`sprite`** is bundled ART for the face, or `null`. Where given it REPLACES the glyph — a `Button`
+  carries art on its own `icon` property, so it is art OR glyph, never both — and the `glyph` becomes
+  what renders when the art is absent. It is resolved by the REGISTRANT (the knowledge launcher's
+  cairn comes in as `HudSprites.for_mark(…)`), which keeps it a DECLARED input like `glyph` rather
+  than a lookup the mount rebuild redoes per button, i.e. inside the descriptor contract and not
+  beside it like the pip. An art face is re-padded to `ICON_BUTTON_SPRITE_PADDING` and capped at
+  `ICON_BUTTON_ICON_MAX_WIDTH`, derived from each other so its minimum stays `ICON_BUTTON_SIZE` — see
+  `knowledge-panel.md` → "The face is bundled art" for why the ghost chrome's label padding and
+  `expand_icon` are both wrong on a 24px face.
 - **The row is rebuilt wholesale from `_actions`, never patched**, so registration order is the only
   thing that decides the order on screen.
 - **No orientation argument, ever.** A caller must not know or care which mount is live; adding one
