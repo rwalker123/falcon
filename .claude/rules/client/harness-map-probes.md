@@ -50,19 +50,36 @@ hex — the only frame where the whole art set is judged at once for swapped/cli
 
 **The four cervids lead the list, adjacent** (issue #439): Red Deer / Wild Elk / Wild Reindeer /
 Desert Gazelle all drew `deer.png` for the life of the roster, and what hid it was that no frame
-ever stood them side by side. It is **rows of eight — two full and a short third** (18 entries) —
-the roster outgrew a single spaced row across `GRID_W` (16), and `seal` + `catfish` were absent
-entirely from a frame whose whole job is coverage, as later were `steppe_runner` + `marsh_grazer`.
+ever stood them side by side. It is **rows of eleven from origin (3, 4)** (21 entries, so two rows
+with the second one short) — the roster outgrew a single spaced row across `GRID_W` (16), and `seal`
++ `catfish` were absent entirely from a frame whose whole job is coverage, as later were
+`steppe_runner` + `marsh_grazer`, and later still `snow_hare` + `ibex` + `grouse`.
 It STARTS on row **4, not 5**, because the band camp stands on `(BAND_X, BAND_Y) = (8, 6)` and a
 roster entry landing there renders STACKED under the camp marker instead of alone at true marker
 size — which is what happened to the Jungle Fowl when the origin was 5.
 
-**The roster does reach row 6 today** (entries 17-18, the two species added last), and that is safe
-only because it wraps at column 4, nowhere near the camp's column 8.
+**Eleven columns keep the whole roster on rows 4-5, so the camp's row 6 is EMPTY** — a stronger
+property than dodging one column on an occupied row, and the reason to widen rather than shift when
+it next overflows. The span is columns 3-13, inside the known-surviving crop.
 
-**Past 20 entries the wrap reaches column 8 on row 6 and the collision returns**, so move the origin
-or widen `FAUNA_ROSTER_COLUMNS` at that point; the arithmetic lives on the constants in
-`map_preview.gd`.
+> ### ⛔ THE PREDICTED COLLISION HAPPENED, AND THE HARNESS DID NOT CATCH IT
+>
+> This section used to say *"past 20 entries the wrap reaches column 8 on row 6 and the collision
+> returns, so move the origin or widen `FAUNA_ROSTER_COLUMNS` at that point rather than discovering
+> it in a frame."* The roster then went to 21 in one commit and **entry 20 (Marsh Grazers) landed on
+> `(8, 6)`** — `col = 4 + (20 % 8) = 8`, `row = 4 + (20 / 8) = 6` — rendering stacked under the camp
+> marker in the one frame that judges the whole sprite set.
+>
+> **It shipped because `map_preview` asserts no marker POSITIONS.** The run completed, printed no
+> `FAIL`, and exited 0, and that clean status was cited as evidence the new art rendered correctly.
+> This is `test-harnesses.md`'s *"the exit status IS the verdict"* one turn further out: the status
+> is the right thing to read for an assertion that exists, and says nothing about a defect no
+> assertion covers. A prediction written in a rule file is not a check — nothing enforced it, so the
+> arithmetic had to be redone by hand in review to find it.
+>
+> **The next recurrence is index 27 (roster size 28).** If a guard is wanted rather than another
+> prediction, the natural one is a `PASS` line in the fauna-sprites state asserting that no roster
+> hex equals `(BAND_X, BAND_Y)` — it is pure arithmetic over the constants and needs no pixels.
 
 **This frame does NOT prove coverage** — it enumerates a hand-written CLIENT-side list, so it is
 blind to a species that list has never heard of; that claim belongs to `cargo xtask

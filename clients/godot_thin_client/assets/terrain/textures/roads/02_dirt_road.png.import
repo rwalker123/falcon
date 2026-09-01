@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://qy7sxdu7ab6q"
-path="res://.godot/imported/00_game_trail.png-bfd9aa13b3e2fff01caf001161092fbb.ctex"
+uid="uid://dyhr6hmyk4qpv"
+path="res://.godot/imported/02_dirt_road.png-fdd869de32d20e012fba8eb221800958.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/terrain/textures/roads/00_game_trail.png"
-dest_files=["res://.godot/imported/00_game_trail.png-bfd9aa13b3e2fff01caf001161092fbb.ctex"]
+source_file="res://assets/terrain/textures/roads/02_dirt_road.png"
+dest_files=["res://.godot/imported/02_dirt_road.png-fdd869de32d20e012fba8eb221800958.ctex"]
 
 [params]
 

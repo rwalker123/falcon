@@ -27,8 +27,10 @@
 # prompt (kept verbatim as the reference exemplar). Add every new prompt here.
 #
 # THE SIX ARE THE SIX THAT EXIST. A seventh block — HUD / ACTIVITY MARKS — sits at the
-# BOTTOM of this file and is deliberately not listed above: it has no directory, no
-# lookup script and no shipped PNG, only prompts. It is written down here because the
+# BOTTOM of this file and is deliberately not listed above: it has a directory and four
+# shipped PNGs, but NO LOOKUP SCRIPT AND NO CALL SITE — which is the half that keeps it out
+# of the list, since a family is a table plus a resolver and this has neither. It is here
+# rather than nowhere because the
 # reasoning behind each subject is the expensive part and it is settled; whoever picks
 # up #581 or #249 should not re-derive it. Read its own preamble before generating one.
 #
@@ -185,16 +187,18 @@
 # ⚠ THE OTHER HALF OF #439 — three species were in it long after it closed, and `grouse.png`,
 # `ibex.png` and `snow_hare.png` are what closed it. `fauna-icon-guard` NOW CHECKS THIS: it fails
 # when two roster species resolve to the same PNG, naming both.
-# `fauna-icon-guard` passes green while three roster species draw ANOTHER SPECIES' marker
-# through an alias. That is not a hole in the guard's implementation, it is the question it
-# asks: it walks each `display_name` to a sprite and stats the PNG plus its `.import`
-# sidecar, so it verifies REACHABILITY — every one of these reaches a real file. It never
-# asks whether two species reach the SAME file, which is the whole of what #439 was about,
-# and no client-side check can, since the collision is only visible from the sim's roster.
+# WHAT LET THEM THROUGH was that the guard asked only about REACHABILITY: it walked each
+# `display_name` to a sprite and stat'd the PNG plus its `.import` sidecar, and every one of
+# the three reached a real file. It never asked whether two species reached the SAME file,
+# which is the whole of what #439 was about. That gap is closed — but the SHAPE of it is the
+# part worth keeping: a check over the client's own table can only ever ask the weaker
+# question, because the collision is visible from the sim's roster.
 #
-#     Alpine Ibex        -> `ibex`   -> goat.png     shared with Crag Goats
-#     Forest Grouse      -> `grouse` -> fowl.png     shared with Wild Fowl
-#     Snow Hare Warren   -> `hare`   -> rabbit.png   shared with Rabbit Warren
+# The three that were sharing, and what each drew instead of its own art:
+#
+#     Alpine Ibex        -> `ibex`   -> goat.png     WAS shared with Crag Goats
+#     Forest Grouse      -> `grouse` -> fowl.png     WAS shared with Wild Fowl
+#     Snow Hare Warren   -> `hare`   -> rabbit.png   WAS shared with Rabbit Warren
 #
 # By the PIPELINE section's own rule — an alias is only honest when NO roster species is
 # behind it — all three were dishonest. They now point at their own art, leaving
@@ -346,8 +350,8 @@ deer: Flat vector game icon of a wild red deer stag with large branching antlers
 # and bright snowfield before shipping; a mid-brown elk that reads fine on tundra is not verified.
 elk: Flat vector game icon of a wild elk, a large heavy-bodied deer with a thick shaggy dark mane hanging beneath its throat, tall sturdy legs and long antlers that sweep BACKWARD over the shoulders in a single long beam with short upward tines rather than branching up into a crown, head carried level in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette with a deep chocolate-brown neck and mane and a mid tawny-brown body that stays clearly lighter than the outline, and a distinctly PALE cream rump patch and pale underside, strong two-tone contrast between the dark neck and the pale rump so the shape reads over both dark forest ground and bright snow, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the elk floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
-# fowl.png — Wild Fowl. IT ALSO SERVES `grouse` TODAY, and that is the collision in the
-# header warning: Forest Grouse is its own roster species. `grouse.png` below replaces it.
+# fowl.png — Wild Fowl ONLY. It also served `grouse` until `grouse.png` split it off; Forest
+# Grouse is its own roster species, and that pairing was the collision the header describes.
 fowl: Flat vector game icon of a wild jungle fowl rooster with an upright arched tail, a red comb and wattle, and a compact rounded body, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm copper brown and dark bronze tones that stay clearly lighter than the outline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the bird floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # gazelle.png — Desert Gazelle (issue #439; drew deer.png until then)
@@ -383,14 +387,14 @@ fowl: Flat vector game icon of a wild jungle fowl rooster with an upright arched
 # known defect: the check is one number, and it came back fine.
 gazelle: Flat vector game icon of a desert gazelle, a small slender antelope with a short compact body, a long thin neck, long delicate legs and a pair of slim upright ringed HORNS curving gently backward in a shallow lyre shape, never branching antlers, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in a warm mid rufous-tan that stays clearly lighter than the outline but distinctly DARKER than pale desert sand so the shape stands out over bright sand and salt flats, a bold dark chocolate-brown horizontal stripe running along the flank, a crisp white belly and a white stripe on the face, strong two-tone contrast between the tan back and the white underside, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the gazelle floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
-# goat.png — Crag Goats. IT ALSO SERVES `ibex` TODAY, and that is the collision in the
-# header warning: Alpine Ibex is its own roster species. `ibex.png` below replaces it.
+# goat.png — Crag Goats ONLY. It also served `ibex` until `ibex.png` split it off; Alpine
+# Ibex is its own roster species, and that pairing was the collision the header describes.
 goat: Flat vector game icon of a wild goat, a small slender animal with long backward-sweeping curved horns and a pointed chin beard, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm sandy tan earth tones that stay clearly lighter than the outline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # grouse.png — Forest Grouse. STATUS: SHIPPED. Keyed at the plain JPEG default
 # (`--size 256 --lo 55 --hi 170`); coverage 30.4%, magenta residual **8** — near the clean end
 # of the shipped band (0 catfish/elk/gazelle .. 151 ibex, median 11).
-# It exists to split `grouse` off `fowl.png`, which Wild Fowl also holds — the header warning
+# It exists to split `grouse` off `fowl.png`, which Wild Fowl held too — the header warning
 # has the collision. THE SEPARATION IS ANATOMICAL, because both are compact brown-ish birds and
 # hue cannot be trusted at 24px: `fowl.png` is a ROOSTER, identified by a red comb and wattle and
 # an upright arched tail. This one has NEITHER, and its tail is BROAD, FANNED and carried LOW.
@@ -427,7 +431,7 @@ horse: Flat vector game icon of a wild horse with a short upright bristly mane, 
 # directory, and left alone deliberately: `cattle.png` shipped at 149 and the file's own rule is
 # that a residual is judged against the shipped band, not against how it looks at 4x. Widening
 # the ramp to chase it would eat the horn ridges, which are the whole icon.
-# It exists to split `ibex` off `goat.png`, which Crag Goats also holds — the header warning has
+# It exists to split `ibex` off `goat.png`, which Crag Goats held too — the header warning has
 # the collision. THE SEPARATION IS ANATOMICAL AND PROPORTIONAL, because both are horned caprids:
 # `goat.png` is SMALL AND SLENDER with a chin beard and slim backward-sweeping horns. This one is
 # STOCKY — deep chest, short thick legs, body_mass 10 against the crag goat's 6 — and its horns are
@@ -520,7 +524,7 @@ sheep: Flat vector game icon of a sheep with a thick rounded woolly fleece, a sm
 # (`--size 256 --lo 55 --hi 170`); coverage 23.0%, magenta residual **105**, against
 # `rabbit.png`'s 106 — the icon it exists to stop sharing, and the same neighbourhood of the
 # band. The wide ramp the pale v1 would have needed was never required.
-# It exists to split `hare` off `rabbit.png`, which Rabbit Warren also holds — the header warning
+# It exists to split `hare` off `rabbit.png`, which Rabbit Warren held too — the header warning
 # has the collision. Separation from the rabbit is size, limb and COLOUR TEMPERATURE: this animal
 # is longer-bodied and lankier, with longer ears and powerful elongated hind legs, and it is COOL
 # grey-white where the rabbit is warm brown.

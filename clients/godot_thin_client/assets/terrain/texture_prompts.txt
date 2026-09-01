@@ -192,7 +192,17 @@
 #
 # Requirements:
 #   - RGB PNG, 512x512, saved to assets/terrain/textures/roads/
-#   - Naming: XX_name.png -> 00_game_trail.png .. 04_rail.png (the rivers/ convention)
+#   - Naming: XX_name.png -> 00_path.png .. 04_rail.png (the rivers/ convention)
+#   - ⛔ THE STEM IS THE RUNG ID, NOT A DESCRIPTION, and the floor rung is `path`. The route
+#     ladder's rungs are `route:path` / `route:trail` / `route:dirt_road` / `route:paved_road`
+#     (`hud_route_vocab.gd`), and the wiring is expected to key each layer off the `NN_`
+#     prefix the way `_build_river_texture_array` does — so a stem that drifts from its rung
+#     id is a layer bound to the wrong rung. The floor was named `00_game_trail` for one
+#     commit and renamed: `intensification_ladder.json` retired that word deliberately —
+#     *"RENAMED FROM `game_trail`, BECAUSE NOTHING IN THE SIM LETS AN ANIMAL WEAR A ROAD
+#     IN"* — and `hud_route_vocab.gd` carries it as its own correction. Do not reintroduce
+#     it here, in a filename or in a prompt body. (A `game_trail` DOES survive elsewhere: it
+#     is the hunting food-site kind. Grep before renaming either.)
 #   - FULLY OPAQUE, and never keyed. There is no background to remove and no alpha to author —
 #     the shader's coverage decides the band's shape, exactly as it does for a river.
 #   - NOTHING IN THE PLATE MAY BE OPEN. An early game-trail prompt asked for a track "broken by a
@@ -211,13 +221,13 @@
 # THE LADDER SEPARATES ON TWO AXES, and it has to, because width is now a config lever rather than
 # a property of the art. Measured over the shipped five:
 #
-#     roads/00_game_trail  (129, 119, 107)  bright 120  sat 22   cool scuffed grey
+#     roads/00_path        (129, 119, 107)  bright 120  sat 22   cool scuffed grey
 #     roads/01_trail       (191, 168, 132)  bright 170  sat 59   pale warm sand
-#     roads/02_dirt        (124,  93,  62)  bright  98  sat 62   dark warm brown
-#     roads/03_paved       (106, 107, 109)  bright 107  sat  2   neutral grey stone
+#     roads/02_dirt_road   (124,  93,  62)  bright  98  sat 62   dark warm brown
+#     roads/03_paved_road  (106, 107, 109)  bright 107  sat  2   neutral grey stone
 #     roads/04_rail        (106, 102,  94)  bright 102  sat 11   dark ballast + steel
 #
-# No two are close on both axes. The pair to watch when regenerating is game_trail vs paved —
+# No two are close on both axes. The pair to watch when regenerating is path vs paved_road —
 # both desaturated, only 13 bright apart — and what keeps them apart is STRUCTURE: paved carries
 # large stone cells with dark joints, the trail is a flat grain. Judge that pair together.
 #
@@ -242,16 +252,16 @@
 # which is where real track curves anyway. None of this blocks the four shipped rungs.
 # ============================================================================
 
-00_game_trail: Seamless tileable top-down texture of ground worn bare by animal traffic, thin scuffed soil with the vegetation rubbed away, a faintly uneven trodden surface with scattered loose grit, pale dust-grey earth over a slightly darker scuffed undertone, SOLID CONTINUOUS with no gaps, no breaks and no background showing through, painterly stylised hand-painted game-art style matching a painted biome atlas, not photoreal, even flat overhead lighting with no directional shadow, no edges, no borders, no kerbs, no road markings, no vegetation, no vehicles, no people, the pattern continuing seamlessly and repeating cleanly across all four sides, 512x512 game asset
+00_path: Seamless tileable top-down texture of ground worn bare by footfall, thin scuffed soil with the vegetation rubbed away, a faintly uneven trodden surface with scattered loose grit, pale dust-grey earth over a slightly darker scuffed undertone, SOLID CONTINUOUS with no gaps, no breaks and no background showing through, painterly stylised hand-painted game-art style matching a painted biome atlas, not photoreal, even flat overhead lighting with no directional shadow, no edges, no borders, no kerbs, no road markings, no vegetation, no vehicles, no people, the pattern continuing seamlessly and repeating cleanly across all four sides, 512x512 game asset
 
 01_trail: Seamless tileable top-down texture of a footpath surface worn smooth by walking, packed bare earth with a fine even grain and a few small trodden pebbles pressed into it, no wheel ruts, pale bone-dust colour, painterly stylised hand-painted game-art style matching a painted biome atlas, not photoreal, even flat overhead lighting with no directional shadow, no edges, no borders, no kerbs, no road markings, no vegetation, no vehicles, no people, the pattern continuing seamlessly and repeating cleanly across all four sides, 512x512 game asset
 
-02_dirt: Seamless tileable top-down texture of a packed dirt road surface, bare compacted earth worn smooth by traffic, with faint parallel wheel ruts and a scattering of small embedded stones and dust, a MID dust brown clearly darker than bright desert sand and clearly lighter than dark forest soil, never pale sandy and never bright, painterly stylised hand-painted game-art style matching a painted biome atlas, not photoreal, even flat overhead lighting with no directional shadow, no edges, no borders, no kerbs, no road markings, no vegetation, no vehicles, no people, the pattern continuing seamlessly and repeating cleanly across all four sides, 512x512 game asset
+02_dirt_road: Seamless tileable top-down texture of a packed dirt road surface, bare compacted earth worn smooth by traffic, with faint parallel wheel ruts and a scattering of small embedded stones and dust, a MID dust brown clearly darker than bright desert sand and clearly lighter than dark forest soil, never pale sandy and never bright, painterly stylised hand-painted game-art style matching a painted biome atlas, not photoreal, even flat overhead lighting with no directional shadow, no edges, no borders, no kerbs, no road markings, no vegetation, no vehicles, no people, the pattern continuing seamlessly and repeating cleanly across all four sides, 512x512 game asset
 
-# 03_paved — the only rung that changes MATERIAL rather than tone, which is what makes it
+# 03_paved_road — the only rung that changes MATERIAL rather than tone, which is what makes it
 # unmistakable at a glance against four warm earth rungs. Ask for a FEW LARGE cells: the joints are
 # the finest detail in the set and the first thing to dissolve at band width.
-03_paved: Seamless tileable top-down texture of a road paved with fitted flagstones, a small number of LARGE irregular stone blocks with bold simple dark joints between them rather than many small cobbles, cool grey stone that reads clearly distinct from warm brown earth, painterly stylised hand-painted game-art style matching a painted biome atlas, not photoreal, even flat overhead lighting with no directional shadow, no edges, no borders, no kerbs, no road markings, no vegetation, no vehicles, no people, the pattern continuing seamlessly and repeating cleanly across all four sides, 512x512 game asset
+03_paved_road: Seamless tileable top-down texture of a road paved with fitted flagstones, a small number of LARGE irregular stone blocks with bold simple dark joints between them rather than many small cobbles, cool grey stone that reads clearly distinct from warm brown earth, painterly stylised hand-painted game-art style matching a painted biome atlas, not photoreal, even flat overhead lighting with no directional shadow, no edges, no borders, no kerbs, no road markings, no vegetation, no vehicles, no people, the pattern continuing seamlessly and repeating cleanly across all four sides, 512x512 game asset
 
 # 04_rail — NOT A RUNG TODAY (#603 is the upper two). Generated now as the cheapest possible proof
 # that one-surface-per-rung scales. THE ONLY DIRECTIONAL PLATE: verify it wraps LEFT-TO-RIGHT, in

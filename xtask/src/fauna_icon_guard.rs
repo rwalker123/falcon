@@ -172,30 +172,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // ⛔ DISTINCTNESS — the OTHER half of issue #439, and the half no reachability check can see.
-    // Every assertion above asks whether a species reaches SOME file. This one asks whether two
-    // species reach the SAME one, which is what the cervid split was actually about and what let
-    // Alpine Ibex draw `goat.png` beside Crag Goats, Forest Grouse draw `fowl.png` beside Wild Fowl,
-    // and Snow Hare Warren draw `rabbit.png` beside the Rabbit Warren long after #439 closed.
-    //
-    // NO ALLOWLIST, and that is a property of what is being counted rather than an omission. The
-    // honest aliases (`bison`, `buffalo`, `oxen`, `caribou`) are honest precisely because NO ROSTER
-    // SPECIES is named any of them — `species_key_for` takes the longest match, so "Wild Reindeer"
-    // resolves via `reindeer` and nothing ever arrives here through `caribou`. A collision counted
-    // over SPECIES therefore cannot be raised by an alias; two species on one file is always a bug.
-    for (file, users) in &species_by_file {
-        if users.len() > 1 {
-            species_failures.push(format!(
-                "{} species share `{}`: {}. Each of them reaches real art, so every reachability \
-                 check passes — but the map cannot tell them apart, which is the whole of what \
-                 issue #439 was about. Give each its own PNG, or confirm the roster really does \
-                 ship only one of them.",
-                users.len(),
-                file.display(),
-                users.join(", ")
-            ));
-        }
-    }
+    // Two species on one PNG — the half of issue #439 every check above is blind to, because each
+    // of them does reach real art. `check_distinct` carries the reasoning.
+    species_failures.extend(check_distinct(&species_by_file));
 
     if !species_failures.is_empty() || !table_failures.is_empty() {
         // Printed rather than carried in the error, because `main` renders a returned error with
@@ -234,6 +213,40 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         keywords.len()
     );
     Ok(())
+}
+
+/// ⛔ DISTINCTNESS — the OTHER half of issue #439, and the half no reachability check can see.
+///
+/// Every assertion `run` makes before this one asks whether a species reaches SOME file. This one
+/// asks whether two species reach the SAME one, which is what the cervid split was actually about
+/// and what let Alpine Ibex draw `goat.png` beside Crag Goats, Forest Grouse draw `fowl.png` beside
+/// Wild Fowl, and Snow Hare Warren draw `rabbit.png` beside the Rabbit Warren long after #439
+/// closed.
+///
+/// NO ALLOWLIST, and that is a property of what is being counted rather than an omission. The
+/// honest aliases (`bison`, `buffalo`, `oxen`, `caribou`) are honest precisely because NO ROSTER
+/// SPECIES is named any of them — `species_key_for` takes the longest match, so "Wild Reindeer"
+/// resolves via `reindeer` and nothing ever arrives here through `caribou`. A collision counted
+/// over SPECIES therefore cannot be raised by an alias; two species on one file is always a bug.
+///
+/// Takes the whole `file -> species` map and RETURNS its findings rather than pushing into the
+/// caller's vector, so the assertion has a surface a unit test can hold.
+fn check_distinct(species_by_file: &BTreeMap<PathBuf, Vec<String>>) -> Vec<String> {
+    species_by_file
+        .iter()
+        .filter(|(_, users)| users.len() > 1)
+        .map(|(file, users)| {
+            format!(
+                "{} species share `{}`: {}. Each of them reaches real art, so every reachability \
+                 check passes — but the map cannot tell them apart, which is the whole of what \
+                 issue #439 was about. Give each its own PNG, or confirm the roster really does \
+                 ship only one of them.",
+                users.len(),
+                file.display(),
+                users.join(", ")
+            )
+        })
+        .collect()
 }
 
 /// `(species id, display name)` for every species entry that has one.
@@ -515,6 +528,48 @@ mod tests {
         assert_eq!(art_state(&png), ArtState::Bundled);
 
         fs::remove_dir_all(&dir).expect("clean up");
+    }
+
+    fn species_by_file(entries: &[(&str, &[&str])]) -> BTreeMap<PathBuf, Vec<String>> {
+        entries
+            .iter()
+            .map(|(file, users)| {
+                (
+                    PathBuf::from(*file),
+                    users.iter().map(|user| (*user).to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// Two species on one PNG is the collision no reachability check can see: both reach real art,
+    /// so the finding has to name BOTH of them or the reader cannot tell which pair to split.
+    #[test]
+    fn shared_sprite_is_reported_naming_every_species_on_it() {
+        let findings = check_distinct(&species_by_file(&[
+            ("assets/icons/fauna/goat.png", &["ibex", "crag_goat"]),
+            ("assets/icons/fauna/elk.png", &["elk"]),
+        ]));
+
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        let finding = &findings[0];
+        assert!(finding.starts_with("2 species share"), "{finding}");
+        assert!(finding.contains("goat.png"), "{finding}");
+        assert!(finding.contains("ibex"), "{finding}");
+        assert!(finding.contains("crag_goat"), "{finding}");
+    }
+
+    /// One species per file is the shipping state, and it has to stay SILENT — a finding here would
+    /// fail the gate on a clean roster.
+    #[test]
+    fn one_species_per_sprite_reports_nothing() {
+        let findings = check_distinct(&species_by_file(&[
+            ("assets/icons/fauna/goat.png", &["crag_goat"]),
+            ("assets/icons/fauna/ibex.png", &["ibex"]),
+            ("assets/icons/fauna/elk.png", &["elk"]),
+        ]));
+
+        assert!(findings.is_empty(), "{findings:?}");
     }
 
     #[test]
