@@ -26,7 +26,7 @@
 # survive. The house style below is reconstructed from that art plus the wild-fowl
 # prompt (kept verbatim as the reference exemplar). Add every new prompt here.
 #
-# THE SIX ARE THE SIX THAT EXIST. A seventh block — UI / ACTIVITY MARKS — sits at the
+# THE SIX ARE THE SIX THAT EXIST. A seventh block — HUD / ACTIVITY MARKS — sits at the
 # BOTTOM of this file and is deliberately not listed above: it has no directory, no
 # lookup script and no shipped PNG, only prompts. It is written down here because the
 # reasoning behind each subject is the expensive part and it is settled; whoever picks
@@ -1241,11 +1241,11 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 
 
 # ============================================================================
-# UI / ACTIVITY MARKS  ->  assets/icons/ui/ + assets/icons/hud/   (NO LOOKUP SCRIPT YET)
+# HUD / ACTIVITY MARKS  ->  assets/icons/hud/   (NO LOOKUP SCRIPT YET)
 # ============================================================================
 #
-# ⚠ ALL FOUR MARKS EXIST; NONE OF THE WIRING DOES. `assets/icons/ui/cairn.png` and
-# `assets/icons/hud/{forage,hunt,scout}.png` are keyed, imported and committed — and NOTHING
+# ⚠ ALL FOUR MARKS EXIST; NONE OF THE WIRING DOES. `assets/icons/hud/{cairn,forage,hunt,scout}.png`
+# are keyed, imported and committed — and NOTHING
 # LOADS ANY OF THEM. There is no `UiSprites.gd` and no call site. That is deliberate: the
 # cairn's wiring is issue #581's own work (a `Button.icon` on the action-bar launcher, a
 # `TextureRect` swapped for a `Label` on the turn orb's row) and the other three are #249's,
@@ -1256,8 +1256,11 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 # predicted every outcome in this batch: forage 32% read instantly; hunt survives at 6.8% only
 # because its ink is ONE continuous bar; scout v1 at 7.7-10% did not survive at all. The
 # cheapest test there is: key it, resize to 13x13, and composite it on #111A1E.
-# THE DIRECTORY IS A PROVISIONAL CHOICE. #581 says only "beside `stages/` and `fauna/`";
-# `ui/` is where the cairn went so the PNG had a home, not a decision #581 has to keep.
+# THE DIRECTORY IS `hud/`, AND ALL FOUR SHARE IT. The cairn briefly had an `ui/` of its own —
+# #581 says only "beside `stages/` and `fauna/`" — and it was folded in here rather than left
+# as a second one-file directory. One home for every mark drawn against the dark HUD panel is
+# also what makes the sub-style below a property of the DIRECTORY rather than a coincidence:
+# everything in `hud/` takes it, and a mark that would not is a mark that belongs elsewhere.
 #
 # THEY TAKE THE `crops/` SUB-STYLE, NOT THE HOUSE STYLE, and that is the one thing to get
 # right before generating any of them. Every subject here is an inline mark inside a HUD
@@ -1284,7 +1287,7 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 # `Label` on the turn orb's `knowledge_learned` row. The art is one file either way.
 # It must read at ~16px on the collapsed rail, which is the smallest thing asked of any
 # art in this repo, so the shape budget is ONE silhouette and at most one interior line.
-# STATUS: ART SHIPPED at `assets/icons/ui/cairn.png`, NOT WIRED — see the section warning.
+# STATUS: ART SHIPPED at `assets/icons/hud/cairn.png`, NOT WIRED — see the section warning.
 # Keyed at the pale-subject ramp (`--size 256 --lo 85 --hi 240`); coverage 20.4%, magenta
 # residual **0**, the cleanest key in the whole drop.
 # MEASURED — coverage 20.6%, fills at luma 200 and 226 against the panel's 24, i.e. a ground
