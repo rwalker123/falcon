@@ -380,8 +380,8 @@ pub use snapshot::{
 pub use systems::spawn_initial_world;
 pub use systems::{
     advance_band_movement, advance_crafting, advance_expeditions, advance_labor_allocation,
-    advance_predator_raids, advance_tick, bench_material_rate, bench_tiers, denial_forecast,
-    expedition_returned_event, expedition_take_provisions, fold_party_into_band,
+    advance_predator_raids, advance_tick, bench_material_rate, bench_tiers, bill_and_stock_roads,
+    denial_forecast, expedition_returned_event, expedition_take_provisions, fold_party_into_band,
     hunt_per_worker_provisions, hunt_report_event, hunt_take, hunt_trip_forecast,
     output_multiplier, party_owes_a_report, settle_route_keeping, simulate_power,
     source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
@@ -998,6 +998,23 @@ pub fn build_headless_app() -> App {
                 //    it lands before the bench that may replace what it just wore. Being ahead of
                 //    the bench also puts it ahead of the raids and the migration that follow, which
                 //    is what keeps it reading the band where the labour pass left it.
+                // ⛔ **HOLDING WHAT YOU HAVE OUTRANKS EXPANDING** — the roads' bill and the STONE
+                // that pays it are struck BEFORE the builders run, so a band's standing paved roads
+                // take their material before a new paving build may touch the store. While the
+                // build pile settled inside `advance_labor_allocation` and the standing rate
+                // settled after it, the build simply got there first: pushing a road out quietly
+                // starved the roads already under it. See `bill_and_stock_roads` for why the DRAW
+                // moved rather than the STAMP being split.
+                //
+                // Both edges are declared rather than left to the ambiguity gate, exactly as
+                // `settle_route_keeping`'s are — it takes `PopulationCohort` mutably to spend the
+                // stone, so its order against the movement chain is not the scheduler's to guess:
+                //  - `.after(advance_expeditions)` — it slots into the chain immediately before
+                //    labor, so the bill is struck on the positions this turn's movement left.
+                //  - `.before(advance_labor_allocation)` — the ordering this system exists for.
+                systems::bill_and_stock_roads
+                    .after(systems::advance_expeditions)
+                    .before(systems::advance_labor_allocation),
                 systems::settle_route_keeping
                     .after(systems::advance_labor_allocation)
                     .before(systems::advance_crafting),

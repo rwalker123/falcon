@@ -2,7 +2,8 @@
 //! it** (`docs/plan_standing_upkeep.md` §4.13b, issue #532).
 //!
 //! These drive the turn's three route systems in **stage order** — `balance_supply_networks` and
-//! `routes::advance_roads` in Logistics, then `settle_route_keeping` in Population — because that
+//! `routes::advance_roads` in Logistics, then `bill_and_stock_roads` and `settle_route_keeping` in
+//! Population — because that
 //! ordering is load-bearing twice over:
 //!
 //! - the supply pass records the links and the route pass spends them, so the payoff is read at the
@@ -24,18 +25,18 @@ use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_band_movement, advance_roads, balance_supply_networks, credit_route_lessons, knows,
-    road_at_risk_rung, road_upkeep_demand, road_upkeep_measure, scalar_zero, settle_route_keeping,
-    spawn_initial_world, BandId, BandTravel, ConnectionKey, ConnectionLedger, ConnectionsConfig,
-    CultureManager, DiscoveryProgressLedger, EquipmentConfigHandle, FactionId, FactionInventory,
-    GenerationId, GenerationRegistry, LaborAllocation, LaborConfigHandle, LaborTarget,
-    LadderConfig, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
-    PopulationCohort, ResidentBand, Road, RoadKeeper, RoadRegistry, RouteTrafficLog, RungKey,
-    Scalar, SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
-    SupplyNetworkConfigHandle, SupplyNetworkMembership, Tile, TileRegistry, FOOD, FULL_TIE,
-    NEAR_ENOUGH_TO_KEEP, NO_UPKEEP_DEMAND, PAVING_DISCOVERY_ID, PER_WORKER_OUTPUT,
-    ROADBUILDING_DISCOVERY_ID,
+    advance_band_movement, advance_roads, balance_supply_networks, bill_and_stock_roads,
+    credit_route_lessons, knows, road_at_risk_rung, road_upkeep_demand, road_upkeep_measure,
+    scalar_zero, settle_route_keeping, spawn_initial_world, BandId, BandTravel, ConnectionKey,
+    ConnectionLedger, ConnectionsConfig, CultureManager, DiscoveryProgressLedger,
+    EquipmentConfigHandle, FactionId, FactionInventory, GenerationId, GenerationRegistry,
+    LaborAllocation, LaborConfigHandle, LaborTarget, LadderConfig, LadderConfigHandle, LocalStore,
+    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Road, RoadKeeper,
+    RoadRegistry, RouteTrafficLog, RungKey, Scalar, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, SupplyNetworkConfigHandle, SupplyNetworkMembership, Tile,
+    TileRegistry, FOOD, FULL_TIE, NEAR_ENOUGH_TO_KEEP, NO_UPKEEP_DEMAND, PAVING_DISCOVERY_ID,
+    PER_WORKER_OUTPUT, ROADBUILDING_DISCOVERY_ID,
 };
 
 const TEST_FACTION: FactionId = FactionId(7);
@@ -202,6 +203,11 @@ fn resolve_turn(app: &mut App) {
     app.world.run_system_once(advance_roads);
     app.world.run_system_once(credit_route_lessons);
     app.world.run_system_once(advance_band_movement);
+    // **THE BILL AND THE STONE, THEN THE HANDS.** `bill_and_stock_roads` stamps both of a road's
+    // bills at the pre-accrual position and spends the standing material; `settle_route_keeping`
+    // pays the WORK half afterwards, against that same stamp. The split is what puts a band's
+    // standing roads ahead of a new paving build on the store — see `bill_and_stock_roads`.
+    app.world.run_system_once(bill_and_stock_roads);
     app.world.run_system_once(settle_route_keeping);
 }
 

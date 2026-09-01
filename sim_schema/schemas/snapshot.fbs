@@ -5734,6 +5734,29 @@ table RouteState {
   // read `Queued` on turn 1 and turn 147 alike. The claim behind that - "a road has no source row
   // for the sim to stamp one on" - was never true of this table.
   buildTurnsRemaining:int = -1;
+  // --- WHAT HOLDING THIS ROAD COSTS IN GOODS (appended) -----------------------------------------
+  // The STANDING material bill and what the keeper's stores actually paid of it - the material twin
+  // of `upkeepDemand`/`upkeepSupplied` above, obeying the same rule:
+  // *** demand - supplied == the shortfall, VERBATIM ON THE WIRE. ***
+  //
+  // 0 on every rung that owes no material, which is every route rung but `route:paved_road`. The
+  // NOUN is `RouteRungState.buildMaterialId` for the rung this tile holds - the branch eats one
+  // material and both halves of its keeping are counted in it.
+  //
+  // *** THIS IS THE FIELD THAT SEPARATES "SHORT OF STONE" FROM "SHORT OF KEEPERS", AND THAT
+  // DISTINCTION IS THE POINT. *** §2.7: "you cannot mend a road with no stone, so a shortfall
+  // message that names the POOL is wrong advice." A client MUST read both pairs and name the one
+  // that is actually short:
+  //   upkeepDemand - upkeepSupplied                 > 0  ->  short of KEEPERS (staff `roadwork`)
+  //   upkeepMaterialDemand - upkeepMaterialSupplied > 0  ->  short of STONE   (the pool cannot help)
+  // Both can be short at once, and then both sentences are true. Telling a player to add roadwork
+  // hands when the shelf is empty points them at a stepper that cannot fix it.
+  //
+  // *** THEY DO NOT DOUBLE-COUNT IN THE DECAY. *** The rot rides the WORST of the two fractions,
+  // never their sum, on one neglect counter and one grace - so a road short of both rots once, at
+  // the worse rate, and a reader must not add the two shortfalls into a single severity.
+  upkeepMaterialDemand:float = 0;
+  upkeepMaterialSupplied:float = 0;
 }
 
 table RouteSection {

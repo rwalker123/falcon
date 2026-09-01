@@ -80,9 +80,9 @@ use crate::{
     grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT},
     intensification::{
         build_fraction, interpolate, neglect_grace_remaining, rung_work_done, upkeep_shortfall,
-        upkeep_shortfall_fraction, LadderConfig, RungBranch, RungDef, RungKey, RungRoutePayoff,
-        RungStanding, FRICTION_UNCHANGED, FULLY_SUPPLIED, NEGLECT_NONE, NO_CREW_ON_THIS_ACTIVITY,
-        NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_UNSTARTED,
+        LadderConfig, RungBranch, RungDef, RungKey, RungRoutePayoff, RungStanding,
+        FRICTION_UNCHANGED, NEGLECT_NONE, NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_WORK_BANKED,
+        NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_UNSTARTED,
     },
     orders::FactionId,
     resources::TileRegistry,
@@ -249,6 +249,20 @@ pub struct Road {
     /// road nobody has queued keeps `None` — the honest *no estimate*, never a `0` that would render
     /// as a finished build.
     pub build_turns_remaining: Option<crate::intensification::BuildTurns>,
+    /// **WHAT THIS ROAD'S KEEPING WAS BILLED IN GOODS THIS TURN**, and what its keeper actually
+    /// paid — the material twin of [`Self::upkeep_demanded`] / [`Self::upkeep_supplied`], and the
+    /// exact shape `ForagePatch` and `Herd` carry (`docs/plan_standing_upkeep.md` §2.7).
+    ///
+    /// ⛔ **STAMPED IN THE SAME BREATH AS THE WORK BILL, and that is load-bearing.** A road being
+    /// *paved* has its position moved by the build arm inside the same turn, so a material bill
+    /// struck at one position beside a work bill struck at another would be two readings of two
+    /// different roads. `settle_route_keeping` stamps both in its pass (a), before anything moves.
+    ///
+    /// **The rate tracks the position like the work does** (§2.7): a paved rung half raised owes
+    /// half the stone, through the same `interpolate` both webs' demands go through.
+    pub upkeep_materials_demanded: BTreeMap<String, f32>,
+    /// See [`Self::upkeep_materials_demanded`].
+    pub upkeep_materials_supplied: BTreeMap<String, f32>,
     /// **THIS ROAD'S 0-BASED PLACE IN ITS KEEPER'S BUILD QUEUE**, or
     /// [`sim_schema::NOT_IN_ANY_BUILD_QUEUE`] when no pass has placed it.
     ///
@@ -281,6 +295,8 @@ impl Road {
             build_material_supplied: NO_MATERIAL_DRAWN,
             build_turns_remaining: None,
             build_queue_position: sim_schema::NOT_IN_ANY_BUILD_QUEUE,
+            upkeep_materials_demanded: BTreeMap::new(),
+            upkeep_materials_supplied: BTreeMap::new(),
         }
     }
 
@@ -751,6 +767,53 @@ pub fn road_upkeep_demand(road: &Road, measure: f32, ladder: &LadderConfig) -> f
     })
 }
 
+/// **EVERY MATERIAL THIS ROAD'S KEEPING WILL BE BILLED FOR THIS TURN**, with the interpolated
+/// per-turn amount — the route twin of `fauna::herd_upkeep_material_demands` and
+/// `forage::patch_upkeep_material_demands`, walking **both** standing endpoints for their stated
+/// reason (`intensification::standing_material_ids`).
+///
+/// **`measure` is the road's own scale term and it is the SAME ONE THE WORK READS**
+/// ([`road_upkeep_measure`] — `infrastructure_cost × remoteness`). §2.7: *"the land is a SCALE term,
+/// not an offset"*, and it multiplies **the demand**, both currencies of it. A road over a range
+/// costs more stone to hold as well as more hands, which is the one statement this branch makes
+/// about ground.
+///
+/// ⛔ **This is the RATE, not the pile.** `route:paved_road` declares both: 20 stone to lay
+/// (`build.materials`) and a trickle to hold. Re-dressing a road is not re-laying it.
+pub fn road_upkeep_material_demands(
+    road: &Road,
+    measure: f32,
+    ladder: &LadderConfig,
+) -> BTreeMap<String, f32> {
+    let standing = road.standing();
+    let mut demands = BTreeMap::new();
+    for id in crate::intensification::standing_material_ids(&standing, ladder) {
+        let amount = interpolate(&standing, |rung| {
+            ladder.rung(rung).upkeep_material_demand(&id, measure)
+        });
+        if amount > NO_UPKEEP_DEMAND {
+            demands.insert(id, amount);
+        }
+    }
+    demands
+}
+
+/// **THE MATERIAL BILL THE KEEPING IS JUDGED AGAINST** — the **stamped**
+/// [`Road::upkeep_materials_demanded`] where this turn's pass has struck one, and the live
+/// [`road_upkeep_material_demands`] where it has not. [`road_keeping_basis`]' rule in the second
+/// currency, and for its reason.
+pub fn road_material_keeping_basis<'a>(
+    road: &'a Road,
+    measure: f32,
+    ladder: &LadderConfig,
+) -> std::borrow::Cow<'a, BTreeMap<String, f32>> {
+    if road.upkeep_demanded.is_some() {
+        std::borrow::Cow::Borrowed(&road.upkeep_materials_demanded)
+    } else {
+        std::borrow::Cow::Owned(road_upkeep_material_demands(road, measure, ladder))
+    }
+}
+
 /// **THE BILL A CLAIM IS PRICED AT** — the **stamped** demand where this turn's keeping pass has
 /// already struck one, and the live [`road_upkeep_demand`] where it has not.
 ///
@@ -1106,12 +1169,39 @@ pub fn advance_roads(
 
     // ## Phases 1-3, over every road that already existed when this turn began.
     for road in registry.iter_mut() {
-        // **1 — HOW SHORT, as a fraction of what was asked**, off the stamped basis and through the
-        // ladder's own seam, so the three branches share one reading of *"how short"*. A road nobody
-        // billed reads [`FULLY_SUPPLIED`] and is forgiven.
-        let shortfall_fraction =
-            upkeep_shortfall_fraction(road.upkeep_basis(), road.upkeep_supplied);
-        if shortfall_fraction > FULLY_SUPPLIED {
+        // **1 — HOW SHORT, as a fraction of what was asked, ACROSS BOTH CURRENCIES** — off the
+        // stamped basis and through the ladder's own seam, so the three branches share one reading
+        // of *"how short"*. A road nobody billed reads [`FULLY_SUPPLIED`] and is forgiven.
+        //
+        // ⛔ **THE TWO SHORTFALLS DO NOT COMPOSE AND CANNOT DOUBLE-COUNT.**
+        // [`crate::intensification::keeping_shortfall_fraction`] takes the **worst** of the work
+        // fraction and each material's own, never their sum — so a road fully staffed with no stone
+        // rots at the stone's rate, one with stone and no hands rots at the hands' rate, and one
+        // short of both rots at the worse of the two. There is **one** decay, **one**
+        // `neglect_turns` and **one** grace, exactly as §2.7's *"a short draw is a shortfall like
+        // any other ... no new penalty"* requires. Summing would let a full store of stone cover a
+        // band's missing hands, which is the papering-over §4.9 item 12 forbids.
+        //
+        // **It was work-only until `route:paved_road` declared a rate**, which was correct while no
+        // route rung ate anything and became *"a paved road holds for free"* the moment one did.
+        //
+        // **It reads the STAMPED bill, exactly as [`Road::upkeep_basis`] does for the work** — never
+        // a live re-derivation. A road nobody billed this turn has an empty map and owes no stone,
+        // which is the same forgiveness an unbilled work demand gets.
+        let shortfall_fraction = crate::intensification::keeping_shortfall_fraction(
+            road.upkeep_basis(),
+            road.upkeep_supplied,
+            &road.upkeep_materials_demanded,
+            &road.upkeep_materials_supplied,
+        );
+        // **The grace is tripped by EITHER**, on the same single counter — no second dial free to
+        // disagree with the first.
+        if crate::intensification::keeping_is_short(
+            road.upkeep_basis(),
+            road.upkeep_supplied,
+            &road.upkeep_materials_demanded,
+            &road.upkeep_materials_supplied,
+        ) {
             road.neglect_turns = road.neglect_turns.saturating_add(1);
         } else {
             road.neglect_turns = NEGLECT_NONE;
@@ -1142,6 +1232,11 @@ pub fn advance_roads(
         // Leaving either standing would date a road off a queue that has since moved.
         road.build_turns_remaining = None;
         road.build_queue_position = sim_schema::NOT_IN_ANY_BUILD_QUEUE;
+        // **And the KEEPING's material pair, with the work pair above it** — one turn's statement,
+        // cleared on one cycle, so a road that has been re-stocked stops reporting last turn's
+        // shortage.
+        road.upkeep_materials_demanded.clear();
+        road.upkeep_materials_supplied.clear();
     }
 
     // ## Phase 4 — bank this turn's traffic, ON EVERY TILE THE JOURNEY CROSSED.

@@ -3736,6 +3736,8 @@
       "tile_x": 157,
       "tile_y": 168,
       "upkeep_demand": 45.200001,
+      "upkeep_material_demand": 86.739998,
+      "upkeep_material_supplied": 4.92,
       "upkeep_shortfall": 79.529999,
       "upkeep_supplied": 10.98,
       "upkeep_workers_needed": 86
@@ -3758,6 +3760,8 @@
       "tile_x": 12,
       "tile_y": 1,
       "upkeep_demand": 101.57,
+      "upkeep_material_demand": 102.339996,
+      "upkeep_material_supplied": 67.660004,
       "upkeep_shortfall": 14.27,
       "upkeep_supplied": 55.990002,
       "upkeep_workers_needed": 57

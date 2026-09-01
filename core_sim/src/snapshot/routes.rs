@@ -114,6 +114,13 @@ pub(crate) fn route_states(
                 // this is the honest *no estimate* rather than a `0` that would render as a
                 // finished build; a client estimating an unbuilt rung against a hypothetical crew
                 // is doing its own arithmetic and is right to.
+                // ⛔ **THE STANDING MATERIAL BILL — THE HALF THAT SAYS *SHORT OF STONE* RATHER
+                // THAN *SHORT OF KEEPERS*.** Summed across the materials the rung names because the
+                // wire carries one number and the branch eats exactly one; the noun is the rung
+                // catalog's. Both read the **stamped** bill, so `demand - supplied` is the shortfall
+                // verbatim, exactly as the work pair above it is.
+                upkeep_material_demand: road.upkeep_materials_demanded.values().sum(),
+                upkeep_material_supplied: road.upkeep_materials_supplied.values().sum(),
                 build_turns_remaining: crate::snapshot::subsistence::published_build_countdown(
                     road.build_turns_remaining,
                     road.build_queue_position,

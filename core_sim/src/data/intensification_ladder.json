@@ -316,13 +316,17 @@
           "stone": 20.0
         }
       },
+      "_comment_upkeep_materials": "THE STANDING HALF OF THE STONE, AND IT IS THE PEN'S OWN RATIO APPLIED TO A ROAD. docs/plan_standing_upkeep.md section 4.13 says a paved road swallows stone ON THE PILE AND ON THE RATE, and correction (2) of section 4.13a says the same; the rate was omitted for one slice on a stated default that paving owes no standing stone, which the plan contradicts twice. THE NUMBER IS DERIVED FROM `animal:pen`, NOT INVENTED: the pen declares a 6-hurdle build pile against a 0.05/turn upkeep rate, so it replaces its whole pile every 120 turns. A paved road's pile is 20 stone, so the same relationship gives 20 / 120 = 0.1667 stone a turn - one stone every six turns, and the roadbed re-dressed at exactly the pace a fence is re-panelled. THE ROAD'S OWN INTERNAL RATIO WOULD HAVE GIVEN ~0.024 (20 stone / 800 work x 0.95 work per turn), a seven-times lighter trickle replacing the pile every 840 turns; the PEN is the worked precedent and one precedent beats a second arithmetic. IT IS THE RATE AND NOT THE PILE - re-dressing a road is not re-laying it - and it TRACKS THE POSITION like every other upkeep term (section 2.7): a paved rung half raised owes half the stone, through the same interpolate both food webs' demands go through. `scaled_by` carries it as it carries the work, so the tile's own infrastructure_cost x remoteness multiplies BOTH currencies - section 2.7's 'the land is a SCALE term, not an offset', and the one thing this branch says about ground. A FRACTIONAL RATE IS NOT A ROUNDING PROBLEM AND MUST NEVER BECOME ONE: a material store is a CONTINUOUS fixed-point quantity (Scalar, micro-units), not a count of discrete items, so a draw of 0.1667 subtracts exactly 0.1667 and the stock crosses whole units by itself. Rounding the per-turn draw would either lose every charge below half a unit or bill a whole stone every turn. The pen has run below one unit a turn since it shipped, so this seam is exercised rather than new. SHORTFALL IS THE DECAY AND THE TWO CURRENCIES DO NOT DOUBLE-COUNT: intensification::keeping_shortfall_fraction takes the WORST of the work shortfall and each material's own, never their sum, on one neglect counter and one grace - so a road fully staffed with no stone rots at the stone's rate, one with stone and no hands at the hands' rate, and one short of both at the worse of the two. AND DECAY REFUNDS NOTHING: stone goes into the bed and does not come back out when the position falls, which is what makes neglect self-limiting. `route:dirt_road` declares no material on either half - a graded roadbed is cut earth, and the earth is already there. OPENING VALUE CHOSEN FOR SHAPE, NOT BALANCE - section 4.13e is the step that owns the retune of every route number.",
       "upkeep": {
         "work_per_turn": 0.95,
         "scaled_by": "source_load",
         "meter_decay": {
           "per_turn": 0.7
         },
-        "grace_turns": 12
+        "grace_turns": 12,
+        "materials": {
+          "stone": 0.1667
+        }
       },
       "route_payoff": {
         "holds_link_to_tiles": 16,

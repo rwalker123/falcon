@@ -1627,6 +1627,139 @@ fn route_keeping_claims(
     (kept, claims)
 }
 
+/// **THE ROADS' BILL, AND THE STONE THAT PAYS IT** — struck **before** the builders run, and that
+/// ordering is the whole reason this is its own system.
+///
+/// # ⛔ HOLDING WHAT YOU HAVE OUTRANKS EXPANDING
+///
+/// A band's **standing** paved roads take their stone before a new paving build may touch the store.
+/// Pushing a road out can no longer quietly starve the roads already under it — which is what
+/// happened while the build pile settled in `advance_labor_allocation` and the standing rate settled
+/// after it: the build simply got there first, an ordering nobody chose.
+///
+/// # WHY THE ORDERING MOVED HERE RATHER THAN THE BILL MOVING LATER
+///
+/// ⛔ **BOTH OF A ROAD'S BILLS MUST BE STRUCK AT ONE POSITION.** The build arm moves a paving road's
+/// meter inside the same turn, so a work bill struck on one side of it and a material bill on the
+/// other are two readings of two different roads, and `demand − supplied == shortfall` goes false in
+/// whichever currency lagged. That invariant is not negotiable, so the **draw** had to move rather
+/// than the **stamp** being split — and moving the stamp *earlier* keeps the pair together while
+/// putting the material draw ahead of the build's.
+///
+/// **The pre-accrual position is also the RIGHT one, and roads were the odd branch out.** Both food
+/// webs stamp `upkeep_demanded` *before* the turn's build accrual, for the reason
+/// `advance_labor_allocation` states at its own stamp: *"here — between the split and the first
+/// accrual — is the one point where the bill and the share describe the same position."* Roads billed
+/// **after** their accrual until this pass existed. So this is one correction, not a trade.
+///
+/// **What stays behind in [`settle_route_keeping`] is the WORK payment alone**, because that half
+/// needs the one thing this pass cannot have: the `roadwork` head count **the shedding order left**,
+/// which does not exist until `advance_labor_allocation` has run.
+///
+/// ⛔ **THE PLANT AND ANIMAL WEBS ARE NOT REORDERED.** `settle_material_upkeep` still settles their
+/// standing materials and the build pile in one call, ranked by the player's own `SourcePriority`.
+/// What changed is that the ROUTE branch's standing draw now happens before that call rather than
+/// after it — so a road's keeping outranks a *build*, including a pen's, on any material they share.
+/// Nothing reorders *within* the two food webs, and on the shipped roster nothing is shared at all:
+/// a pen eats hurdles and a road eats stone.
+pub fn bill_and_stock_roads(
+    mut registry: ResMut<crate::routes::RoadRegistry>,
+    ladder: Res<LadderConfigHandle>,
+    equipment: Res<EquipmentConfigHandle>,
+    tile_registry: Res<TileRegistry>,
+    tiles: Query<&Tile>,
+    mut bands: Query<(&mut PopulationCohort, &BandId), With<BandId>>,
+) {
+    let ladder = ladder.get();
+    let equipment_cfg = equipment.get();
+
+    // ## (a) The bill, on every road in the world — **both currencies, in one pass**.
+    //
+    // ⛔ **THE TWO STAMPS ARE STRUCK TOGETHER, AT THE PRE-ACCRUAL POSITION** — see this system's own
+    // note. The `get_or_insert` shape is kept: a road already billed this turn keeps that bill, and
+    // `advance_roads` is what clears it — one turn's statement on one cycle.
+    for road in registry.iter_mut() {
+        if road.upkeep_demanded.is_some() {
+            continue;
+        }
+        let measure = crate::routes::road_measure(road, &tile_registry, &tiles);
+        road.upkeep_demanded = Some(crate::routes::road_upkeep_demand(road, measure, &ladder));
+        road.upkeep_materials_demanded =
+            crate::routes::road_upkeep_material_demands(road, measure, &ladder);
+    }
+
+    // ## (b) The STONE, out of each keeper's own stores.
+    for (mut cohort, band) in bands.iter_mut() {
+        let (kept, claims) = route_keeping_claims(
+            &registry,
+            Some(*band),
+            &equipment_cfg,
+            &tile_registry,
+            &tiles,
+            &ladder,
+        );
+        if claims.is_empty() {
+            continue;
+        }
+        // **Through [`settle_scarce_store`], the seam every other material claim goes through**: a
+        // short store splits by the player's own `SourcePriority` and then in proportion to demand,
+        // so no road's place in the registry decides anything.
+        //
+        // ⛔ **A FRACTIONAL RATE IS NOT A ROUNDING PROBLEM HERE, AND MUST NEVER BECOME ONE.** The
+        // shipped rate is far below one whole stone a turn, and a material store is a **continuous**
+        // fixed-point quantity (`Scalar`, micro-units) rather than a count of discrete items — so a
+        // draw of `0.1667` simply subtracts `0.1667`, exactly, and the stock crosses whole units on
+        // its own. Rounding the per-turn draw would either lose every charge below half a unit or
+        // bill a whole stone every turn; the accumulation *is* the stock, and there is deliberately
+        // no second accumulator beside it.
+        let material_claims: Vec<(SourcePriority, BTreeMap<String, f32>)> = claims
+            .iter()
+            .map(|claim| {
+                let demand = registry
+                    .road(kept[claim.index])
+                    .map(|road| road.upkeep_materials_demanded.clone())
+                    .unwrap_or_default();
+                // A road carries no per-row rank for a player to set, so every road bids at the
+                // default tier — the same answer `build_priority` gives a road's build pile.
+                (SourcePriority::default(), demand)
+            })
+            .collect();
+        let material_ids: BTreeSet<String> = material_claims
+            .iter()
+            .flat_map(|(_, demand)| demand.keys().cloned())
+            .collect();
+        for id in &material_ids {
+            let bids: Vec<(SourcePriority, f32)> = material_claims
+                .iter()
+                .map(|(priority, demand)| {
+                    (
+                        *priority,
+                        demand.get(id.as_str()).copied().unwrap_or(NOTHING_DEMANDED),
+                    )
+                })
+                .collect();
+            let settled =
+                settle_scarce_store(&bids, cohort.stores.material_total(id.as_str()).to_f32());
+            for (claim, paid) in claims.iter().zip(&settled) {
+                if *paid <= NOTHING_DEMANDED {
+                    continue;
+                }
+                // **Spent, and decay refunds nothing** (§2.7): stone goes into the roadbed and does
+                // not come back out when the position falls.
+                cohort
+                    .stores
+                    .take_material_batches(id, crate::scalar::scalar_from_f32(*paid));
+                if let Some(road) = registry.road_mut(kept[claim.index]) {
+                    *road
+                        .upkeep_materials_supplied
+                        .entry(id.clone())
+                        .or_insert(NOTHING_DEMANDED) += *paid;
+                }
+            }
+        }
+    }
+}
+
 /// **PAY FOR THE ROADS THIS BAND KEEPS** — the `Roadwork` keeping pool, the third of the three and
 /// the one whose sites carry no **labor row** (`docs/plan_standing_upkeep.md` §4.13b, issue #532):
 /// a road is held by its `routes::Road::keeper`, not by an entry in `assignments`. It has a wire
@@ -1697,6 +1830,10 @@ pub fn settle_route_keeping(
     // anonymous cohort has nothing to claim with and could never have been named one.
     mut bands: Query<
         (
+            // **Read-only: this pass spends no goods.** A paved road's standing stone is drawn by
+            // [`bill_and_stock_roads`] before the builders run, which is what puts a band's
+            // standing roads ahead of a new paving build on the store. What is left here is the
+            // WORK payment, and the cohort is read only for its head count.
             &PopulationCohort,
             &mut LaborAllocation,
             Option<&mut BandEquipment>,
@@ -1708,14 +1845,9 @@ pub fn settle_route_keeping(
     let ladder = ladder.get();
     let equipment_cfg = equipment.get();
 
-    // ## (a) The bill, on every road in the world.
-    for road in registry.iter_mut() {
-        let measure = crate::routes::road_measure(road, &tile_registry, &tiles);
-        let demand = crate::routes::road_upkeep_demand(road, measure, &ladder);
-        road.upkeep_demanded.get_or_insert(demand);
-    }
-
-    // ## (b) The payment, from each road's own keeper, and (c) that band's roll-up.
+    // ## The WORK payment only — the bill and the STONE were struck by
+    // [`bill_and_stock_roads`] before the builders ran, so a band's standing roads take their
+    // material before any new build can touch the store.
     for (cohort, mut allocation, mut band_equipment, band) in bands.iter_mut() {
         // **(c) cleared ahead of every exit below**, so a band that has put its last road down stops
         // republishing a bill it no longer owes.

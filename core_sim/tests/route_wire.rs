@@ -50,6 +50,8 @@ struct PublishedRoad {
     build_material_demand: f32,
     build_material_supplied: f32,
     build_turns_remaining: i32,
+    upkeep_material_demand: f32,
+    upkeep_material_supplied: f32,
 }
 
 /// The band's `roadwork*` trio, read off the encoded envelope.
@@ -118,6 +120,8 @@ fn published_roads(app: &App) -> Vec<PublishedRoad> {
             build_material_demand: row.buildMaterialDemand(),
             build_material_supplied: row.buildMaterialSupplied(),
             build_turns_remaining: row.buildTurnsRemaining(),
+            upkeep_material_demand: row.upkeepMaterialDemand(),
+            upkeep_material_supplied: row.upkeepMaterialSupplied(),
         })
         .collect()
 }
@@ -369,6 +373,510 @@ fn stage_a_paving(app: &mut App, band: Entity, tile: UVec2, builders: u32, stone
             &characteristics,
         );
     }
+}
+
+/// Put `units` of the paving material in this band's stores, replacing whatever was there.
+fn stock_stone(app: &mut App, band: Entity, units: f32) {
+    let materials = core_sim::MaterialsConfig::builtin();
+    let characteristics = materials
+        .materials()
+        .find(|(id, _)| *id == "stone")
+        .and_then(|(_, def)| def.start_stock.as_ref())
+        .map(|stock| stock.characteristics.clone())
+        .expect("the shipped roster stocks the paving material at a spawn");
+    let key = materials
+        .band_key("stone", &characteristics)
+        .expect("the shipped roster rates the paving material");
+    let mut cohort = app
+        .world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band");
+    cohort.stores = core_sim::LocalStore::new();
+    if units > 0.0 {
+        cohort.stores.deposit_material(
+            "stone",
+            key,
+            core_sim::scalar_from_f32(units),
+            &characteristics,
+        );
+    }
+}
+
+/// How much stone this band is holding.
+fn stone_held(app: &App, band: Entity) -> f32 {
+    app.world
+        .get::<PopulationCohort>(band)
+        .expect("the fixture band")
+        .stores
+        .material_total("stone")
+        .to_f32()
+}
+
+/// Seat a **finished paved road** on `tile`, kept by this band — the state the standing stone bill
+/// is owed in. `seat_a_dirt_road`'s twin one rung up.
+fn seat_a_paved_road(app: &mut App, tile: UVec2, keeper: (FactionId, BandId)) {
+    let ladder = LadderConfig::builtin();
+    let (base, width) = core_sim::road_rung_span(
+        RungKey::RoutePavedRoad,
+        &ladder,
+        core_sim::NEAR_ENOUGH_TO_KEEP,
+    );
+    seat_road(app, tile, base + width, Some(keeper));
+}
+
+/// A band with **one finished paved road** and **one paving build in flight**, both in sight of the
+/// camp — the arrangement in which the two stone accounts compete for one store.
+///
+/// Returns `(standing tile, building tile)`.
+fn a_road_held_and_a_road_being_built(
+    app: &mut App,
+    band: Entity,
+    faction: FactionId,
+    id: BandId,
+    camp: UVec2,
+    builders: u32,
+    stone: f32,
+) -> (UVec2, UVec2) {
+    let standing = camp;
+    let building = tile_east_of(app, camp, 1);
+    seat_a_paved_road(app, standing, (faction, id));
+    seat_a_dirt_road(app, building, (faction, id));
+    // Stages the queue, the builders and the `paving` knowledge on `building`, and stocks the store.
+    stage_a_paving(app, band, building, builders, stone);
+    // …and hands enough for the STANDING road's work bill, so the only thing either road can be
+    // short of below is stone.
+    let wanted = keepers_the_bill_wants(app, standing);
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band keeps its allocation");
+        allocation.set_assignment(LaborTarget::Roadwork, wanted, wanted.max(1), None);
+    }
+    (standing, building)
+}
+
+/// ⛔ **HOLDING WHAT YOU HAVE OUTRANKS EXPANDING: A NEW PAVING CANNOT STARVE THE ROADS ALREADY UNDER
+/// IT.**
+///
+/// The build pile settled inside `advance_labor_allocation` and the standing rate settled *after*
+/// it, so on a store too small for both the **build simply got there first** — an ordering nobody
+/// chose, and one that let pushing a road out quietly strip the stone from every road the band was
+/// already holding. `bill_and_stock_roads` now strikes the bill and spends the standing stone before
+/// the builders run.
+///
+/// **The store is sized between the two bills, which is what makes the ordering the only variable.**
+/// Both figures are read off the wire from a run where the store covers everything, so the fixture
+/// cannot go stale on a retune of either rate.
+///
+/// ⛔ **AND THE CONTROL ARM IS LOAD-BEARING**: with a store that covers both, *neither* goes short.
+/// Without it this passes on a rule that starves the build unconditionally — the mirror defect, and
+/// §2.7 is explicit that a short store **stalls proportionally and never refuses**.
+#[test]
+fn a_bands_standing_roads_take_their_stone_before_a_new_paving_may() {
+    const BUILDERS: u32 = 4;
+    const PLENTY: f32 = 500.0;
+
+    let run = |stone: f32| {
+        let mut app = spawn_world();
+        let (band, faction, id, camp) = first_band(&mut app);
+        let (standing, building) =
+            a_road_held_and_a_road_being_built(&mut app, band, faction, id, camp, BUILDERS, stone);
+        app.update();
+        (
+            published_road(&app, standing),
+            published_road(&app, building),
+        )
+    };
+
+    // **The control**: a store that covers both, so neither account goes short. It is also where the
+    // two bills are measured.
+    let (held_rich, built_rich) = run(PLENTY);
+    assert!(
+        held_rich.upkeep_material_demand > 0.0 && built_rich.build_material_demand > 0.0,
+        "fixture: the standing road must owe stone ({}) and the paving must want some ({}), or \
+         there is no contest to order",
+        held_rich.upkeep_material_demand,
+        built_rich.build_material_demand
+    );
+    assert!(
+        (held_rich.upkeep_material_supplied - held_rich.upkeep_material_demand).abs() < 1.0e-4,
+        "CONTROL: with stone to spare the standing road is paid in full: {} against {}",
+        held_rich.upkeep_material_supplied,
+        held_rich.upkeep_material_demand
+    );
+    assert!(
+        (built_rich.build_material_supplied - built_rich.build_material_demand).abs() < 1.0e-4,
+        "⛔ CONTROL: and so is the BUILD - {} against {}. Without this arm the test passes on a rule \
+         that starves every build unconditionally, which is the mirror defect: §2.7 says a short \
+         store stalls a build proportionally and never refuses it",
+        built_rich.build_material_supplied,
+        built_rich.build_material_demand
+    );
+
+    // **The contest**: enough for the standing road and not enough for both. The ordering is now the
+    // only thing that can decide who goes short.
+    let held_bill = held_rich.upkeep_material_demand;
+    let build_bill = built_rich.build_material_demand;
+    let scarce = held_bill + build_bill * 0.25;
+    let (held, built) = run(scarce);
+
+    assert!(
+        (held.upkeep_material_supplied - held_bill).abs() < 1.0e-4,
+        "⛔ THE ROADS ALREADY STANDING ARE PAID FIRST: the standing road owed {held_bill} and was \
+         given {}, out of a store of {scarce}. A band pushing a new road out must not strip the \
+         stone from the roads under it",
+        held.upkeep_material_supplied
+    );
+    assert!(
+        built.build_material_supplied < build_bill - 1.0e-4,
+        "…and the BUILD is the account that goes short: it wanted {build_bill} and was given {}",
+        built.build_material_supplied
+    );
+    assert!(
+        built.build_material_supplied > 0.0,
+        "…but it is STALLED, not refused - it must still draw the share the store could cover \
+         ({}), which is §2.7's 'a short store stalls the build proportionally and never refuses \
+         it'. A build reduced to nothing by a store that could still part-fund it is the mirror \
+         defect of the one this ordering fixes",
+        built.build_material_supplied
+    );
+    assert_eq!(
+        built.build_blocked_reason, "",
+        "…and a build that is drawing SOMETHING is not blocked: it read '{}'. `materials` means the \
+         store could not cover a single unit, which is the arm below",
+        built.build_blocked_reason
+    );
+
+    // **The floor of the same rule**: a store that covers the standing bill *exactly* leaves the
+    // build nothing. That is a legitimate stall — but it must SAY why, or the player sees a paving
+    // that simply stopped.
+    let (_, starved) = run(held_bill);
+    assert_eq!(
+        starved.build_material_supplied, 0.0,
+        "a store the standing roads empty leaves the build nothing: it drew {}",
+        starved.build_material_supplied
+    );
+    assert_eq!(
+        starved.build_blocked_reason, "materials",
+        "⛔ and a build the STORE is what stopped must say so - it read '{}'. The rung's own gate is \
+         Open here, so a surface reading the gate alone shows an unexplained freeze",
+        starved.build_blocked_reason
+    );
+}
+
+/// **The tile's own scale term** — `infrastructure_cost × remoteness`, the multiplier both
+/// currencies of a road's keeping are quoted through.
+fn measure_of(app: &App, tile: UVec2) -> f32 {
+    let road = app
+        .world
+        .resource::<RoadRegistry>()
+        .road(tile)
+        .expect("the road is in the registry");
+    let terrain = app
+        .world
+        .resource::<TileRegistry>()
+        .index(tile.x, tile.y)
+        .and_then(|entity| app.world.get::<Tile>(entity))
+        .expect("a seated road stands on a real tile")
+        .terrain;
+    core_sim::road_upkeep_measure(terrain, road.keeper_remoteness)
+}
+
+/// ⛔ **BOTH OF A ROAD'S BILLS ARE STRUCK AT ONE POSITION, ON THE VERY TURN ITS METER MOVES.**
+///
+/// This is the invariant the account reorder could have broken. The build arm moves a paving road's
+/// meter inside the turn, so a work bill struck on one side of it and a material bill on the other
+/// are two readings of two different roads — and `demand − supplied == shortfall` goes false in
+/// whichever currency lagged. Both are stamped together and **pre-accrual**, which is also the
+/// position the two food webs bill at.
+///
+/// ⛔ **EACH DEMAND IS CHECKED AGAINST THE POSITION SEPARATELY, NOT AS A RATIO.** A ratio hides a
+/// shift in one currency behind the other: moving only the *work* stamp a whole turn down the rung
+/// changes their quotient by under a part in ten thousand, which any honest tolerance lets through.
+/// Solving each published demand against the pre-accrual position catches either one moving alone.
+///
+/// **The liveness half is that the two positions imply genuinely different bills**, so a lagging
+/// stamp is distinguishable from a paired one at all.
+#[test]
+fn a_paving_roads_two_bills_are_struck_at_the_same_position() {
+    /// A crew big enough that one turn of paving moves the meter a visible share of the rung — the
+    /// gap between the pre- and post-accrual bills is what this test resolves.
+    const BUILDERS: u32 = 20;
+    const PLENTY: f32 = 500.0;
+    /// **RELATIVE**, because the two currencies differ by an order of magnitude at this position —
+    /// an absolute epsilon tight enough for the stone is noise on the work. A part in a thousand of
+    /// the expected value is far tighter than the gap the liveness arm insists on and far looser
+    /// than the arithmetic's own `f32` noise.
+    const CLOSE: f32 = 1.0e-3;
+    /// How far apart the pre- and post-accrual bills must be, as a fraction, for a stamp taken at
+    /// the wrong one to be caught rather than absorbed.
+    const A_VISIBLE_GAP: f32 = 0.02;
+
+    let mut app = spawn_world();
+    let (band, faction, id, camp) = first_band(&mut app);
+    seat_a_dirt_road(&mut app, camp, (faction, id));
+    stage_a_paving(&mut app, band, camp, BUILDERS, PLENTY);
+
+    let ladder = LadderConfig::builtin();
+    let (base, width) = core_sim::road_rung_span(
+        RungKey::RoutePavedRoad,
+        &ladder,
+        core_sim::NEAR_ENOUGH_TO_KEEP,
+    );
+    let position = |app: &App| {
+        app.world
+            .resource::<RoadRegistry>()
+            .road(camp)
+            .expect("the fixture road")
+            .position()
+    };
+
+    // One turn of paving first, so the meter is genuinely part-way up the rung rather than at its
+    // foot — a bill at the foot is the same number pre- and post-accrual in the stone's currency.
+    app.update();
+    let before = position(&app);
+    app.update();
+    let after = position(&app);
+    assert!(
+        after > before,
+        "**LIVENESS**: the meter must MOVE on the turn under test ({before} -> {after}), or the two \
+         positions are one number and this asserts nothing"
+    );
+
+    // What each currency is owed at a given credit, off the ladder's own records — never typed.
+    let dirt = ladder.rung(RungKey::RouteDirtRoad);
+    let paved = ladder.rung(RungKey::RoutePavedRoad);
+    const UNSCALED: f32 = 1.0;
+    let measure = measure_of(&app, camp);
+    let credit_of = |position: f32| ((position - base) / width).clamp(0.0, 1.0);
+    let work_at = |c: f32| {
+        measure
+            * (dirt.upkeep_demand(UNSCALED)
+                + c * (paved.upkeep_demand(UNSCALED) - dirt.upkeep_demand(UNSCALED)))
+    };
+    let stone_at = |c: f32| {
+        let lo = dirt.upkeep_material_demand("stone", UNSCALED);
+        let hi = paved.upkeep_material_demand("stone", UNSCALED);
+        measure * (lo + c * (hi - lo))
+    };
+    let (c_before, c_after) = (credit_of(before), credit_of(after));
+
+    // **LIVENESS**: the pre- and post-accrual bills must be far enough apart, in BOTH currencies,
+    // that a stamp taken at the wrong one is caught rather than absorbed by the tolerance.
+    for (name, lo, hi) in [
+        ("work", work_at(c_before), work_at(c_after)),
+        ("stone", stone_at(c_before), stone_at(c_after)),
+    ] {
+        assert!(
+            (hi - lo).abs() > A_VISIBLE_GAP * lo.abs().max(hi.abs()),
+            "**LIVENESS**: the {name} bill must differ materially between the pre-accrual position \
+             ({lo}) and the post-accrual one ({hi}), or a lagging stamp is indistinguishable from a \
+             paired one"
+        );
+    }
+
+    let row = published_road(&app, camp);
+    assert!(
+        (row.demand - work_at(c_before)).abs() < CLOSE * work_at(c_before),
+        "⛔ THE WORK BILL IS STRUCK PRE-ACCRUAL: published {}, pre-accrual {}, post-accrual {}",
+        row.demand,
+        work_at(c_before),
+        work_at(c_after)
+    );
+    assert!(
+        (row.upkeep_material_demand - stone_at(c_before)).abs() < CLOSE * stone_at(c_before),
+        "⛔ AND SO IS THE STONE, AT THE SAME POSITION: published {}, pre-accrual {}, post-accrual \
+         {}. A pair struck either side of the build arm is two readings of two different roads",
+        row.upkeep_material_demand,
+        stone_at(c_before),
+        stone_at(c_after)
+    );
+    // And the identity itself, in the currency the wire states it in.
+    assert!(
+        (row.demand - row.supplied - row.shortfall).abs() < CLOSE * row.demand.max(1.0),
+        "demand - supplied == shortfall, verbatim: {} - {} != {}",
+        row.demand,
+        row.supplied,
+        row.shortfall
+    );
+}
+
+/// ⛔ **A PAVED ROAD OWES STONE EVERY TURN IT STANDS, AND THE STONE COMES OUT OF THE STORES.**
+///
+/// `docs/plan_standing_upkeep.md` §4.13: *"a paved road declares stone on the pile **and on the
+/// rate**"*. The rate shipped missing for one slice, so a paved road held for free.
+///
+/// ⛔ **THE RUN OF TURNS IS THE ASSERTION, NOT ONE TURN.** The rate is far below one whole stone a
+/// turn, and a material store is a **continuous** fixed-point quantity — so the charge accumulates
+/// in the stock itself. Rounding the per-turn draw would either **lose** every charge
+/// (`round(0.17) = 0`, a road held for nothing while the wire still reported a bill) or
+/// **over-bill** it a whole stone a turn. Only measuring the stock across many turns tells those
+/// apart from the truth; a single turn's assertion passes on all three.
+#[test]
+fn a_paved_road_draws_its_standing_stone_out_of_the_stores_turn_after_turn() {
+    /// Long enough that a sub-unit rate has crossed several whole units.
+    const TURNS: u32 = 20;
+    /// Far more than the run can eat, so the store is never the limiter.
+    const PLENTY: f32 = 500.0;
+
+    let mut app = spawn_world();
+    let (band, faction, id, camp) = first_band(&mut app);
+    seat_a_paved_road(&mut app, camp, (faction, id));
+    // Enough hands that the WORK half is met — this test is about the other currency.
+    let wanted = keepers_the_bill_wants(&app, camp);
+    staff_roadwork(&mut app, band, wanted);
+    stock_stone(&mut app, band, PLENTY);
+    app.update();
+
+    let row = published_road(&app, camp);
+    assert!(
+        row.upkeep_material_demand > 0.0,
+        "⛔ a paved road must OWE stone every turn it stands - it read {}, which is a road held for \
+         free",
+        row.upkeep_material_demand
+    );
+    assert!(
+        (row.upkeep_material_supplied - row.upkeep_material_demand).abs() < 1.0e-4,
+        "a band holding plenty pays the whole standing bill: {} against {}",
+        row.upkeep_material_supplied,
+        row.upkeep_material_demand
+    );
+    let per_turn = row.upkeep_material_demand;
+    assert!(
+        per_turn < 1.0,
+        "fixture: the rate must be SUB-UNIT ({per_turn}), or the rounding this test exists to catch \
+         is not exercised at all"
+    );
+
+    let before = stone_held(&app, band);
+    for _ in 0..TURNS {
+        app.update();
+    }
+    let spent = before - stone_held(&app, band);
+    let expected = per_turn * TURNS as f32;
+    assert!(
+        (spent - expected).abs() < 0.05 * expected,
+        "⛔ THE FRACTIONAL DRAW ACCUMULATES EXACTLY: {TURNS} turns at {per_turn} a turn must spend \
+         about {expected} stone, and the stores gave up {spent}. Rounding each turn either loses \
+         every charge below half a unit (spend 0) or bills a whole unit a turn (spend {TURNS})"
+    );
+}
+
+/// ⛔ **A PAVED ROAD WITH NO STONE DECAYS, AND ONE WITH STONE DOES NOT** — §2.7's *"a short draw is
+/// a shortfall like any other and drives the decay paths that already exist"*.
+///
+/// **Both arms in one sweep**, because either alone passes on a broken rule: a road that decays in
+/// both arms is one whose keeping is simply unmet, and a road that decays in neither holds for free.
+/// The hands are fully staffed in **both**, so the only difference between them is the shelf.
+#[test]
+fn a_paved_road_short_of_stone_decays_and_one_that_is_stocked_holds() {
+    /// Past `route:paved_road`'s own grace of 12, with room for the bleed to be visible.
+    const TURNS: u32 = 20;
+    const PLENTY: f32 = 500.0;
+
+    let position_after = |stone: f32| {
+        let mut app = spawn_world();
+        let (band, faction, id, camp) = first_band(&mut app);
+        seat_a_paved_road(&mut app, camp, (faction, id));
+        let wanted = keepers_the_bill_wants(&app, camp);
+        staff_roadwork(&mut app, band, wanted);
+        stock_stone(&mut app, band, stone);
+        app.update();
+        let before = app
+            .world
+            .resource::<RoadRegistry>()
+            .road(camp)
+            .expect("the fixture road")
+            .position();
+        for _ in 0..TURNS {
+            app.update();
+        }
+        let after = app
+            .world
+            .resource::<RoadRegistry>()
+            .road(camp)
+            .expect("the fixture road")
+            .position();
+        (before, after)
+    };
+
+    let (stocked_before, stocked_after) = position_after(PLENTY);
+    assert!(
+        stocked_after >= stocked_before - 1.0e-3,
+        "a paved road whose hands AND stone are both met must hold its meter: {stocked_before} -> \
+         {stocked_after}"
+    );
+
+    let (bare_before, bare_after) = position_after(0.0);
+    assert!(
+        bare_after < bare_before - 1.0e-3,
+        "⛔ a paved road with NO STONE must decay however well it is staffed: {bare_before} -> \
+         {bare_after}. Twelve keepers do not mend a road with no stone, and a rung that holds for \
+         free is one whose material half was never declared"
+    );
+}
+
+/// ⛔ **SHORT OF STONE AND SHORT OF KEEPERS ARE DIFFERENT SENTENCES, AND THE WIRE SAYS WHICH.**
+///
+/// §2.7: *"you cannot mend a road with no stone. So a shortfall message that names the **pool** is
+/// wrong advice."* A surface that reads only `upkeepShortfall` tells a player to staff `roadwork`
+/// when the shelf is empty — pointing them at a stepper that cannot help.
+///
+/// **Two arms, and each is the other's control**: fully staffed with a bare shelf must be short in
+/// **stone only**; unstaffed with plenty must be short in **work only**. One arm alone passes on a
+/// wire that reports every shortage in one currency.
+#[test]
+fn a_road_short_of_stone_and_one_short_of_keepers_are_told_apart_on_the_wire() {
+    const PLENTY: f32 = 500.0;
+
+    let published = |staffed: bool, stone: f32| {
+        let mut app = spawn_world();
+        let (band, faction, id, camp) = first_band(&mut app);
+        seat_a_paved_road(&mut app, camp, (faction, id));
+        let wanted = if staffed {
+            keepers_the_bill_wants(&app, camp)
+        } else {
+            0
+        };
+        staff_roadwork(&mut app, band, wanted);
+        stock_stone(&mut app, band, stone);
+        app.update();
+        published_road(&app, camp)
+    };
+
+    // **Hands in full, shelf bare** — the stone is the shortage and only the material pair may say
+    // so.
+    let starved = published(true, 0.0);
+    assert!(
+        starved.upkeep_material_demand - starved.upkeep_material_supplied > 1.0e-4,
+        "⛔ a road with no stone must publish a MATERIAL shortfall - demand {} supplied {}. Without \
+         it the only shortage on the row is a work one, and the client tells the player to staff \
+         `roadwork` for a shelf that is empty",
+        starved.upkeep_material_demand,
+        starved.upkeep_material_supplied
+    );
+    assert!(
+        starved.shortfall <= 1.0e-4,
+        "…and its WORK bill is met, so the work pair must report nothing: {}",
+        starved.shortfall
+    );
+
+    // **Shelf full, nobody on the role** — the mirror, and the control that stops the assertion
+    // above passing on a row that reports every shortage in both currencies.
+    let unstaffed = published(false, PLENTY);
+    assert!(
+        unstaffed.shortfall > 1.0e-4,
+        "a road nobody keeps is short of HANDS: {}",
+        unstaffed.shortfall
+    );
+    assert!(
+        unstaffed.upkeep_material_demand - unstaffed.upkeep_material_supplied <= 1.0e-4,
+        "…and its stone was paid in full, so the material pair must report nothing: demand {} \
+         supplied {}",
+        unstaffed.upkeep_material_demand,
+        unstaffed.upkeep_material_supplied
+    );
 }
 
 /// ⛔ **A ROAD UNDER WAY PUBLISHES A REAL COUNTDOWN, AND IT MOVES.**

@@ -164,6 +164,34 @@ pub(crate) fn routes_to_array(list: Vector<'_, ForwardsUOffset<fb::RouteState<'_
         // — "a road has no source row for the sim to stamp an estimate on" — was never true of this
         // table, which is keyed by tile exactly as a patch row is.
         let _ = dict.insert("build_turns_remaining", route.buildTurnsRemaining() as i64);
+        // ⛔ **WHAT HOLDING THIS ROAD COSTS IN GOODS, AND IT IS A SECOND CURRENCY RATHER THAN A
+        // SECOND SIZE.** The STANDING material bill and what the keeper's stores actually paid of it
+        // — the material twin of `upkeep_demand`/`upkeep_supplied` above, obeying the same identity:
+        // **`demand - supplied` IS the shortfall, verbatim**. `0` on every rung that owes no
+        // material, which is every route rung but `route:paved_road`.
+        //
+        // **THE NOUN IS `RouteRungState.buildMaterialId` FOR THE RUNG THE TILE HOLDS** — not the one
+        // it is climbing toward. The branch eats one material and both halves of its keeping are
+        // counted in it, so there is no per-tile noun to publish here.
+        //
+        // ⛔ **THIS PAIR IS WHAT SEPARATES *SHORT OF STONE* FROM *SHORT OF KEEPERS*, WHICH IS THE
+        // WHOLE POINT OF IT** (`docs/plan_standing_upkeep.md` §2.7): *"you cannot mend a road with no
+        // stone, so a shortfall message that names the POOL is wrong advice."* A reader MUST test
+        // both pairs and name the one actually short — telling a player to add `roadwork` hands when
+        // the shelf is empty points them at a stepper that cannot fix it.
+        //
+        // ⛔ **AND THE TWO ARE NEVER ADDED INTO ONE SEVERITY.** The sim's decay rides the WORST of
+        // the work fraction and each material's own — never their sum — on ONE neglect counter and
+        // ONE grace, so a road short of both rots once, at the worse rate. A client that summed them
+        // would invent a severity the sim does not have and disagree with the decay on screen.
+        let _ = dict.insert(
+            "upkeep_material_demand",
+            f64::from(route.upkeepMaterialDemand()),
+        );
+        let _ = dict.insert(
+            "upkeep_material_supplied",
+            f64::from(route.upkeepMaterialSupplied()),
+        );
         array.push(&dict.to_variant());
     }
     array

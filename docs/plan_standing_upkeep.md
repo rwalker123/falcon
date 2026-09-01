@@ -2581,6 +2581,17 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > per tile where it used to drive one path object — and was deliberately left uncompensated, because
     > a model change must not hide behind a retune. **This is where that debt is paid.**
     >
+    > **A SECOND MEASURED OFFENDER, AND IT IS THIS BRANCH'S OWN DOING.** Slice 13c tripled the two
+    > built rungs' `work_cost` — dirt `110 → 300`, paved `260 → 800` — and deliberately did **not**
+    > touch `meter_decay`, which stands where it was at `0.55` and `0.70` per turn. The decay is an
+    > absolute number of work units off the meter, so **a road now rots proportionally slower than it
+    > did**: a wholly unkept dirt road used to lose its whole rung in `110 / 0.55 = 200` turns and now
+    > takes `300 / 0.55 = 545`; a paved road went from `260 / 0.70 = 371` turns to `800 / 0.70 = 1143`.
+    > Neglect is **2.7× and 3.1× slower to bite** than the shape those rates were chosen against. That
+    > is a fact about the numbers rather than a defect in the mechanism — the rates were left alone so
+    > a cost change would not hide behind a compensating retune, which is the same discipline the
+    > traffic rate above was left uncompensated under. **This is where both debts are paid.**
+    >
     > **Everything else this step owns**: `route_traffic.disuse_grace_turns` / `disuse_loss_per_turn`
     > (how fast an unwalked trail fades — currently ~44 turns against ~114 to form, which is very likely
     > backwards); `route_range.base_tiles` / `remote_cost_multiplier`; the four rungs' `work_cost`,

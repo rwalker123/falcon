@@ -39,6 +39,8 @@ fn create_routes<'a>(
                     buildMaterialDemand: route.build_material_demand,
                     buildMaterialSupplied: route.build_material_supplied,
                     buildTurnsRemaining: route.build_turns_remaining,
+                    upkeepMaterialDemand: route.upkeep_material_demand,
+                    upkeepMaterialSupplied: route.upkeep_material_supplied,
                 },
             )
         })

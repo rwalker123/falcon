@@ -591,11 +591,87 @@ or another band adopted it) puts no work on ground that is no longer its job.
 
 ### ⛔ THE STONE: FLAT WHERE THE WORK IS REMOTENESS-SCALED
 
-`route:paved_road` declares `build.materials { stone: 20 }`; every other rung on the branch declares
-none, because a graded roadbed is cut earth and the earth is already there. There is **no
-`upkeep.materials`** on any route rung: holding a road costs work and no standing stone, so §2.7's
-*rate* half is the pen's alone — a made road is re-dressed by the hands that keep it, and a second
-standing draw would charge the same maintenance twice.
+`route:paved_road` declares **both halves** — `build.materials { stone: 20 }` to lay it and
+`upkeep.materials { stone: 0.1667 }` to hold it, which is `plan_standing_upkeep.md` §4.13's *"a paved
+road declares stone on the pile **and on the rate**"* and correction ②'s *"the paved road was to
+swallow stone on the pile and the rate"*. Every other rung on the branch declares neither: a graded
+roadbed is cut earth, and the earth is already there.
+
+> **The rate shipped missing for one slice**, on a stated default that paving owes no standing stone.
+> The plan says the opposite twice. A road that holds for free is the failure that produced.
+
+**The rate is the PEN's ratio, not a second arithmetic.** `animal:pen` sets a 6-hurdle pile against a
+`0.05`/turn rate — it replaces its whole pile every **120 turns**. A paved road's pile is 20 stone, so
+the same relationship gives `20 / 120 = 0.1667` a turn: one stone every six turns, a roadbed
+re-dressed at exactly the pace a fence is re-panelled. The road's own internal ratio
+(`20 stone / 800 work × 0.95 work/turn ≈ 0.024`) would have been **seven times lighter**, replacing
+the pile every 840 turns; the pen is the worked precedent and one precedent beats a second sum.
+Opening value — **§4.13e owns the retune**, as it owns every route number.
+
+| | scaled by `keeper_remoteness` / `infrastructure_cost`? | tracks the position? |
+|---|---|---|
+| the **pile** (`build.materials`) | **no** — flat, see above | draws as the meter climbs |
+| the **rate** (`upkeep.materials`) | **yes**, through the same `scaled_by` the work reads | owes in proportion to how much stands |
+
+The rate's scaling is §2.7's *"the land is a SCALE term, not an offset"*: a road over a range costs
+more stone to hold **and** more hands, which is the one thing this branch says about ground. The
+pile's flatness is the deliberate exception, for the reason above it.
+
+### A FRACTIONAL RATE IS NOT A ROUNDING PROBLEM, AND MUST NEVER BECOME ONE
+
+`0.1667` a turn is far below one whole stone, and there is **no accumulator beside the stock because
+the stock IS the accumulator**: a material is a **continuous** fixed-point quantity (`Scalar`,
+micro-units), not a count of discrete items, so a draw of `0.1667` subtracts exactly `0.1667` and the
+stock crosses whole units by itself. Rounding the per-turn draw would either lose every charge below
+half a unit — a road held for nothing while the wire still reports a bill — or bill a whole stone
+every turn. **The seam is exercised rather than new**: the pen has drawn `0.05`/turn since it shipped.
+
+### ⛔ THE TWO SHORTFALLS COMPOSE AS A MAXIMUM, AND CANNOT DOUBLE-COUNT
+
+`intensification::keeping_shortfall_fraction` takes the **worst** of the work fraction and each
+material's own — never their sum — and `keeping_is_short` trips **one** `neglect_turns` on **one**
+grace. So a road fully staffed with no stone rots at the stone's rate, one with stone and no hands at
+the hands' rate, and one short of both rots **once**, at the worse of the two. Summing would let a
+full store cover a band's missing hands, which is the papering-over §4.9 item 12 forbids. `advance_roads`
+was work-only until this rung declared a rate, which was correct while nothing ate anything and became
+*"a paved road holds for free"* the moment one did.
+
+**And the shortfall must name the right thing.** §2.7: *"you cannot mend a road with no stone, so a
+shortfall message that names the **pool** is wrong advice."* The row publishes both pairs so a client
+can tell them apart — `upkeepDemand − upkeepSupplied` is **short of keepers**, `upkeepMaterialDemand −
+upkeepMaterialSupplied` is **short of stone**, and only one of those two sentences helps at a time.
+
+### ⛔ HOLDING WHAT YOU HAVE OUTRANKS EXPANDING
+
+**A band's standing paved roads take their stone before a new paving build may touch the store.**
+`bill_and_stock_roads` runs `.before(advance_labor_allocation)`; it strikes both of a road's bills and
+spends the standing material, and only then do the builders draw their pile. While the build pile
+settled *inside* the labour pass and the standing rate settled *after* it, the build simply got there
+first — an ordering nobody chose, in which pushing a road out quietly stripped the stone from every
+road the band was already holding.
+
+**Both bills are stamped in one pass, and that is why the DRAW moved rather than the STAMP.** The
+build arm moves a paving road's meter inside the same turn, so a work bill struck on one side of it
+and a material bill on the other are two readings of two different roads, and
+`demand − supplied == shortfall` goes false in whichever lagged. Moving the stamp *earlier* keeps the
+pair together **and** puts the material draw ahead of the build's — and the pre-accrual position is
+the right one anyway: both food webs bill there, and roads were the odd branch out.
+
+**What stays in `settle_route_keeping` is the WORK payment alone**, because that half needs the one
+thing the early pass cannot have — the `roadwork` head count *the shedding order left*, which does
+not exist until `advance_labor_allocation` has run.
+
+⛔ **THE PLANT AND ANIMAL WEBS ARE NOT REORDERED.** `settle_material_upkeep` still settles their
+standing materials and the build pile in one call, ranked by the player's own `SourcePriority`. What
+changed is that the **route** branch's standing draw happens before that call rather than after it, so
+a road's keeping outranks a *build* — including a pen's — on any material they share. On the shipped
+roster nothing is shared: a pen eats hurdles and a road eats stone.
+
+**A starved build STALLS, it is not refused.** §2.7's rule holds unchanged: the covered fraction
+scales both the work banked and the stone drawn, so a build the standing roads have left short banks
+proportionally less. A build the store cannot cover *at all* publishes `materials` as its
+`buildBlockedReason` — the rung's own gate is `Open` there, so a surface reading the gate alone would
+show an unexplained freeze.
 
 | | scaled by `keeper_remoteness`? | why |
 |---|---|---|
@@ -812,7 +888,8 @@ you seen that tile"*. It **fails closed** on an absent faction map.
 | `buildFraction` | the meter on the rung being **raised**, through `routes::road_build_fraction` → `intensification::rung_work_done` / `build_fraction` |
 | `hasKeeper` / `keeperBandId` | **whose job this tile is.** Read the bool first — `0` is a real `BandId`. `false` across the whole free floor, which is the commonest road in the game |
 | `keeperRemoteness` | what distance did to the price, as a multiple — the only way a client can explain a bill larger than the rung says |
-| `upkeepDemand` / `upkeepSupplied` / `upkeepShortfall` / `upkeepWorkersNeeded` | the standing bill, all four off the **stamped** `road_keeping_basis` |
+| `upkeepDemand` / `upkeepSupplied` / `upkeepShortfall` / `upkeepWorkersNeeded` | the standing bill in **work**, all four off the **stamped** `road_keeping_basis` |
+| `upkeepMaterialDemand` / `upkeepMaterialSupplied` | the standing bill in **goods**, off the stamped material basis, on the same `demand − supplied == shortfall` rule. ⛔ **This is the pair that separates *short of stone* from *short of keepers*** — a surface reading only the work pair tells the player to staff `roadwork` for an empty shelf. The noun is `RouteRungState.buildMaterialId`. They do **not** add: the decay rides the worse fraction, never the sum |
 | `hasNeglectGrace` / `neglectGraceRemaining` | the **countdown**, through `routes::road_neglect_grace_remaining` at the at-risk rung |
 | `grantsSight` | the resolved *"is this road lighting its tile"* |
 | `frictionMultiplier` / `holdsLinkToTiles` | what the rung is buying, off the tile's stamped `payoff()` — the first a MEAN along a journey, the second the journey's MINIMUM |

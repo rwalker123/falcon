@@ -116,6 +116,24 @@ pub struct RouteState {
     /// (append-only).
     #[serde(default = "no_build_turns_estimate")]
     pub build_turns_remaining: i32,
+    /// **WHAT HOLDING THIS ROAD COSTS IN GOODS THIS TURN, AND WHAT THE STORES PAID OF IT** — the
+    /// material twin of [`Self::upkeep_demand`] / [`Self::upkeep_supplied`], on the same rule:
+    /// **`demand − supplied` is the shortfall, verbatim.** `0` on every rung that owes no material.
+    ///
+    /// ⛔ **THIS IS THE PAIR THAT SEPARATES *SHORT OF STONE* FROM *SHORT OF KEEPERS*.**
+    /// `docs/plan_standing_upkeep.md` §2.7: *"you cannot mend a road with no stone, so a shortfall
+    /// message that names the **pool** is wrong advice."* A reader must check both pairs and name
+    /// whichever is short — the work pair points at the `roadwork` role, this one points at the
+    /// stores, and only one of those two sentences helps at a time.
+    ///
+    /// **They do not double-count in the decay**: the rot rides the *worst* of the two fractions,
+    /// never their sum, so a road short of both rots once at the worse rate. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub upkeep_material_demand: f32,
+    /// See [`Self::upkeep_material_demand`].
+    #[serde(default)]
+    pub upkeep_material_supplied: f32,
 }
 
 /// The serde default of [`RouteState::build_turns_remaining`] — the *no estimate* sentinel, so a
