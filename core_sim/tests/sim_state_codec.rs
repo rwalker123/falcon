@@ -27,6 +27,8 @@ use bevy::prelude::Entity;
 use core_sim::sim_state::{capture_sim_state, SimState};
 use core_sim::{build_test_app, run_turn, SimulationConfig};
 
+mod common;
+
 /// Turns to resolve before capturing, so the checkpoint holds a world that has actually run rather
 /// than the bare output of worldgen.
 const TURNS_BEFORE_CAPTURE: usize = 3;
@@ -41,42 +43,14 @@ fn spawn_world() -> bevy::app::App {
     app
 }
 
+fn canonical_tree(bytes: &[u8]) -> ciborium::value::Value {
+    common::canonical_tree_of_bytes(bytes)
+}
+
 fn encode(state: &SimState) -> Vec<u8> {
     let mut bytes = Vec::new();
     ciborium::into_writer(state, &mut bytes).expect("SimState encodes");
     bytes
-}
-
-/// A CBOR tree with every map's entries put in a canonical order, recursively.
-///
-/// Two encodings of one `HashMap` may list its entries in different orders (see the module note),
-/// which is a difference in the *encoding* and not in the state. Sorting by the encoded form of
-/// each key removes it without weakening anything else: a missing entry, an extra one, or a changed
-/// value all still differ.
-fn canonical(value: &ciborium::value::Value) -> ciborium::value::Value {
-    use ciborium::value::Value;
-    match value {
-        Value::Map(entries) => {
-            let mut canonical_entries: Vec<(Value, Value)> = entries
-                .iter()
-                .map(|(key, val)| (canonical(key), canonical(val)))
-                .collect();
-            canonical_entries.sort_by_cached_key(|(key, _)| {
-                let mut bytes = Vec::new();
-                ciborium::into_writer(key, &mut bytes).expect("a map key re-encodes");
-                bytes
-            });
-            Value::Map(canonical_entries)
-        }
-        Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
-        Value::Tag(tag, inner) => Value::Tag(*tag, Box::new(canonical(inner))),
-        other => other.clone(),
-    }
-}
-
-fn canonical_tree(bytes: &[u8]) -> ciborium::value::Value {
-    let value: ciborium::value::Value = ciborium::from_reader(bytes).expect("the encoding parses");
-    canonical(&value)
 }
 
 #[test]
@@ -187,25 +161,12 @@ fn no_entity_handle_crosses_the_codec() {
     let tree = canonical_tree(&bytes);
     for key in ["current_tile", "home_band"] {
         assert!(
-            !cbor_mentions_key(&tree, key),
+            !common::mentions_key(&tree, key),
             "`{key}` names an Entity and must not appear in the encoding at all"
         );
     }
     assert!(
-        cbor_mentions_key(&tree, "home"),
+        common::mentions_key(&tree, "home"),
         "`BandRecord::home` — the POSITION — must still be there"
     );
-}
-
-/// Whether any map in the tree carries `key` as a text key.
-fn cbor_mentions_key(value: &ciborium::value::Value, key: &str) -> bool {
-    use ciborium::value::Value;
-    match value {
-        Value::Map(entries) => entries.iter().any(|(k, v)| {
-            matches!(k, Value::Text(text) if text == key) || cbor_mentions_key(v, key)
-        }),
-        Value::Array(items) => items.iter().any(|item| cbor_mentions_key(item, key)),
-        Value::Tag(_, inner) => cbor_mentions_key(inner, key),
-        _ => false,
-    }
 }

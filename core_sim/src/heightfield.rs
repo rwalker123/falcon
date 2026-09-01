@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::BinaryHeap, sync::Arc};
 
 use bevy::prelude::*;
@@ -11,7 +12,7 @@ use crate::{
 /// available. Mirrors the `unwrap_or` fallback in the worldgen/hydrology paths.
 pub const DEFAULT_SEA_LEVEL: f32 = 0.6;
 
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct ElevationField {
     pub width: u32,
     pub height: u32,

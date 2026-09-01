@@ -132,6 +132,12 @@ reloads the shipped file, dropping the override from the live world until the ne
 `resolve_config` stays **pure** — the registry lookup lives in `load_config_from_env` only, so the
 rule above is still unit-testable without touching any process-global state.
 
+**Both override seams also write the config fingerprint** — `load_config_from_env` records the bytes
+that actually loaded, and `install_config_override` records the merged text it stages. See
+`.claude/rules/core_sim/checkpoints.md` → "The config fingerprint is per file, and it has two seams"
+for what that is for; the fact worth having here is that neither seam may change what loads without
+also saying so.
+
 `config_override.rs` is the seam the `set_config_override` command lands on. Per kind it holds the
 env var, the shipped path, the builtin, and a `validate` fn that runs the kind's **own
 `from_json_str`** — a `match`, not a table lookup, so a new `ConfigOverrideKind` cannot compile

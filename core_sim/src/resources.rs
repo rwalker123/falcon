@@ -150,7 +150,7 @@ pub struct SimulationConfig {
     pub command_events_retention_turns: u64,
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MoistureRaster {
     pub width: u32,
     pub height: u32,
@@ -767,7 +767,7 @@ impl Default for CapabilityFlags {
     }
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default)]
+#[derive(Resource, Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct StartLocation {
     position: Option<UVec2>,
 }
@@ -1081,7 +1081,7 @@ pub struct FactionInventory {
     stockpiles: HashMap<FactionId, HashMap<String, i64>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FoodSiteEntry {
     pub position: UVec2,
     pub module: FoodModule,
@@ -1101,12 +1101,38 @@ pub struct FoodSiteEntry {
 /// may only stand on a site, so *which* site a band can reach is the early game's real decision.
 /// Do not confuse it with `FoodModuleTag`, which sits on ~every land tile and says only which food
 /// web the ground belongs to.
-#[derive(Resource, Debug, Clone, Default)]
+/// **Only `sites` is encoded**, via [`FoodSiteRegistrySaved`]. `positions` is a pure function of it
+/// — an index rebuilt by both writers below — so encoding it would spend bytes on a derived value
+/// AND make the save non-reproducible, because a `HashSet` serializes as an array whose order is a
+/// per-process property. `#[serde(from/into)]` reconstructs the index on decode, which keeps
+/// `is_site` correct without a post-decode fixup anyone could forget to call.
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(from = "FoodSiteRegistrySaved", into = "FoodSiteRegistrySaved")]
 pub struct FoodSiteRegistry {
     sites: Vec<FoodSiteEntry>,
     /// The positions of `sites`, for the per-command `is_site` test. Rebuilt with the vec by the two
     /// writers below, so it cannot drift out of step with the list it indexes.
     positions: HashSet<UVec2>,
+}
+
+/// The encoded form of [`FoodSiteRegistry`]: the curated list, and nothing derived from it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FoodSiteRegistrySaved {
+    sites: Vec<FoodSiteEntry>,
+}
+
+impl From<FoodSiteRegistrySaved> for FoodSiteRegistry {
+    fn from(saved: FoodSiteRegistrySaved) -> Self {
+        Self::new(saved.sites)
+    }
+}
+
+impl From<FoodSiteRegistry> for FoodSiteRegistrySaved {
+    fn from(registry: FoodSiteRegistry) -> Self {
+        Self {
+            sites: registry.sites,
+        }
+    }
 }
 
 /// **What the fresh-water bias pass actually did to the curated marker list** (issue #466).
@@ -1119,7 +1145,7 @@ pub struct FoodSiteRegistry {
 ///
 /// Every field is written on **every** run of the pass, including the zero-weight early return: a
 /// stale count left over from a previous build would defeat the assertion it exists to support.
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FoodSiteWaterBiasReport {
     /// Markers relocated to a higher-scoring hex in their own bucket.
     pub moved: usize,

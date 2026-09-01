@@ -10,7 +10,7 @@ use crate::{
     map_preset::{BiomeTransitionConfig, IslandConfig, MacroLandConfig, OceanConfig, ShelfConfig},
 };
 
-#[derive(Resource, Debug, Clone, Copy)]
+#[derive(Resource, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct WorldGenSeed(pub u64);
 
 #[derive(Debug, Clone)]

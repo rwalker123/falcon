@@ -132,17 +132,29 @@ const DERIVED_RESOURCES: [(&str, &str); 6] = [
     ("SupplyNetworkMembership", "balance_supply_networks"),
 ];
 
-/// Written once at worldgen and never again.
+/// Written once when the world is built and never again.
 ///
-/// **This reason carries an expiry.** These survive a rollback only because a rollback restores
-/// into the same live `World`, which still holds the map worldgen built. That stops being true the
-/// day a checkpoint becomes a **save file** loaded into a fresh process — at which point every
-/// entry here has to be either serialized or regenerated from `WorldGenSeed`. Do not read this
-/// table as "these can never matter".
-const WORLD_STATIC_RESOURCES: [&str; 17] = [
+/// **The expiry this reason used to carry has arrived.** These survive a rollback only because a
+/// rollback restores into the same live `World`, which still holds the map worldgen built — and a
+/// save file is loaded into a fresh process where none of that exists. So every entry here now has
+/// a stated treatment in `core_sim/src/save.rs`: **saved** as ground truth (the rasters, the
+/// province assignment, the curated sites, the seed, the faction list, the profile id), **rebuilt**
+/// from the restored entities (`TileRegistry`, `PowerTopology`), **re-derived** from seed and
+/// preset (`BiomePalette`), or **re-resolved from live config by id** (`ActiveStartProfile`,
+/// `CampaignLabel`, `GreatDiscoveryRegistry` — these are config, and saving them would reinstall
+/// the tuning that was live at capture).
+///
+/// A new entry in this table therefore needs one of those four answers, not just a place to sit.
+const WORLD_STATIC_RESOURCES: [&str; 18] = [
     "ActiveStartProfile",
     "BiomePalette",
     "CampaignLabel",
+    // What tuning this world booted on, per config file. Snapshotted out of the process-global
+    // registry when the app is built and never written again — staging an override moves the
+    // registry, which is what the NEXT `new_game` boots on, and deliberately not this. It rides in
+    // the save HEADER rather than the payload, so a slot list can warn about drifted config without
+    // decoding a world.
+    "ConfigFingerprint",
     "ElevationField",
     "FactionRegistry",
     "FoodSiteRegistry",

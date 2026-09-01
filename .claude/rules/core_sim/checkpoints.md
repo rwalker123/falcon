@@ -1,8 +1,12 @@
 ---
 paths:
   - "core_sim/src/sim_state.rs"
+  - "core_sim/src/save.rs"
+  - "core_sim/src/config_fingerprint.rs"
   - "core_sim/src/snapshot/capture.rs"
   - "core_sim/tests/sim_state_coverage.rs"
+  - "core_sim/tests/save_round_trip.rs"
+  - "core_sim/tests/sim_state_codec.rs"
   - "integration_tests/tests/replay_determinism.rs"
   - "integration_tests/tests/determinism.rs"
 ---
@@ -417,10 +421,6 @@ that motivated the guard. Registered components are walked rather than live ones
 `Expedition` has no instances in a fresh world and an archetype walk would miss exactly the state a
 rollback is most likely to drop.
 
-The world-static bucket's reason carries an expiry: those resources survive a rollback only because
-a restore rebuilds into the same live `World`, which still holds the map worldgen built. That stops
-being true the day a checkpoint becomes a save file loaded into a fresh process.
-
 **"Survives a rollback" is a weaker claim than it sounds, and `PowerTopology` is where it was
 weakest.** A world-static resource is not rebuilt by a restore, so anything in one that names an
 `Entity` is stale immediately afterwards — it survives only in the sense that the bytes are still
@@ -428,3 +428,82 @@ there. `TileRegistry` is the exception that hides this: `restore_sim_state` rebu
 precisely because it is a `Vec<Entity>`, and nothing else in the bucket got the same treatment.
 Everything world-static is now either position-keyed or rebuilt, which is what makes the bucket's
 reason true rather than merely untested.
+
+## A save file loads into a fresh process, and that is what the world-static bucket is FOR
+
+The world-static bucket's reason used to carry an expiry — those resources survive a rollback only
+because a restore rebuilds into the same live `World`, which still holds the map worldgen built.
+`core_sim/src/save.rs` is where that expiry was collected. A save is loaded into a process where **no
+worldgen has run**, so every entry in the bucket has one of four stated treatments, and a new entry
+needs one of those answers rather than just a place to sit:
+
+| Treatment | Resources | Why |
+|---|---|---|
+| **Saved** | `ElevationField`, `MoistureRaster`, `HydrologyState`, `ProvinceMap`, `FoodSiteRegistry`, `FoodSiteWaterBiasReport`, `StartLocation`, `WorldGenSeed`, `FactionRegistry`, `StartProfileLookup` | Ground truth nothing can recompute |
+| **Rebuilt from the restored entities** | `TileRegistry`, `PowerTopology` | Both were `Entity`-bearing, and a handle cannot cross a process |
+| **Re-derived** | `BiomePalette` | A pure function of preset, world seed and tile count — all three of which the save carries |
+| **Re-resolved from live config by id** | `ActiveStartProfile`, `CampaignLabel`, `GreatDiscoveryRegistry` | Config in disguise; the save carries the **profile id**, never the profile |
+
+**Re-running worldgen on load would be the bug**, which is why the rasters are saved rather than
+regenerated from the seed. Worldgen is a function of config as well as seed, so a preset edited
+between the save and the load would silently produce a *different map* under a population that
+remembers the old one. `GenerationRegistry` and `GreatDiscoveryRegistry` need no load-path work at
+all: `build_headless_app` fills both from live config before any world exists.
+
+The blob is **magic bytes, then a header as one CBOR document, then the payload as a second**, in
+that order so a slot list can be rendered without decoding a world — the menu pays a ~1.3 KB header
+per row instead of ~20 MB. `SAVE_FORMAT_VERSION` is checked before the payload is looked at and a
+mismatch is a typed refusal: with no back-compat there is no migration code, so the version exists to
+make a stale save *rejected* rather than *mis-read* into a plausible wrong world.
+
+`build_headless_app` runs worldgen in `Startup`, so a load suppresses it with a `SuppressWorldgen`
+resource read by a run condition on that chain. **Absence means "generate a world"**, so every
+existing caller is unaffected; it is the same shape as `Replaying`, a flag whose only job is to make
+one scheduled thing not happen.
+
+## Byte-reproducibility holds within one world, not across two
+
+Encoding one world twice gives identical bytes. Encoding **two worlds that hold equal content** does
+not, and the difference is worth knowing before anything content-addresses a save.
+
+`HashMap` iteration order is a function of a map's contents *and its table capacity*. Encoding one
+instance twice walks the same table; a map the sim grew entry by entry and a map serde rebuilt from a
+size hint have different capacities, so they list the same entries in different orders. Eight
+checkpoint fields still hold `HashMap`s — `ForageRegistry::patches`, `GrazeRegistry::patches`,
+`PowerGridState::nodes`, the three `CultureManagerCheckpoint` layer maps,
+`DiscoveryProgressLedger::progress` and `GreatDiscoveryReadiness::per_faction`.
+
+So a test that compares two worlds compares **canonical trees**, not bytes: every map sorted by the
+encoded form of its key, recursively (`core_sim/tests/common`). Arrays keep their order, because a
+`Vec`'s order is meaningful state — `SimState::tiles` is sorted by `(y, x)` and `bands` by `BandId`
+precisely so a checkpoint compares, and sorting arrays too would blind the comparison to a real
+reordering. The sets that *were* order-unstable are gone: `DiscoveredSites::seen` and
+`GreatDiscoveryLedger::index` are `BTreeSet`s, both pure membership indices that nothing iterates.
+
+**`PartialEq` is not the instrument for any of this.** `LaborAllocation` has a hand-written impl that
+compares assignments, upkeep mode and build queue and skips all of its telemetry — correct for
+comparing intent, and silently blind to exactly the class of field a checkpoint is most likely to
+drop. serde walks every field regardless of what `PartialEq` thinks.
+
+## The config fingerprint is per file, and it has two seams
+
+`ConfigFingerprint` (`core_sim/src/config_fingerprint.rs`) records what tuning a world booted on, as
+a `BTreeMap` from shipped file name to a `ConfigDigest` that distinguishes `Builtin` from
+`File(u64)`. Per file rather than one global hash, because *"config changed"* is not actionable and
+*"`fauna_config.json` and `recipes.json` changed"* is. `Builtin` is deliberately not a hash of the
+compiled-in text: "no file was there" and "a file was there and hashed to N" are different facts.
+
+Hashing is `FnvHasher` — the repo's deterministic hasher. `DefaultHasher` is randomized per process,
+so a digest built with it would differ between the save and the load for reasons unrelated to tuning.
+
+Two seams write it, and the second is not optional. `load_config_from_env` records the bytes that
+**actually loaded**, from whichever rung of the precedence ladder won. `install_config_override`
+records the merged text it just staged — a tuning-panel edit changes effective tuning without
+touching any shipped file, so a fingerprint taken from `src/data/` alone would report "unchanged" for
+a world whose numbers were edited.
+
+The registry is process-global (the ~37 boot configs resolve through a free function called before
+any `World` exists) and the **resource is a snapshot of it taken when the app is built**. That split
+is what keeps a staged override honest: staging one moves the registry — the tuning the *next*
+`new_game` boots on — and leaves the running world's resource describing what it is actually
+simulating.

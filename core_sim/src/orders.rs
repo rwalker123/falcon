@@ -15,7 +15,7 @@ impl fmt::Display for FactionId {
 }
 
 /// Registry of factions recognised by the simulation server.
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct FactionRegistry {
     pub factions: Vec<FactionId>,
 }

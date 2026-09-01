@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashSet, VecDeque},
@@ -303,7 +304,7 @@ struct CornerStep {
 
 /// One side of one hex carrying a river. Canonical: `hex` is the representation whose `dir` is in
 /// `{E, SE, SW}`, so an edge appears exactly once no matter which of its two hexes traced it.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct RiverEdge {
     pub hex: UVec2,
     /// Odd-r direction, `0..6` (`grid_utils` convention).
@@ -330,7 +331,7 @@ pub struct RiverEdge {
 ///   trunk hex — **mid-chain**. That is new with the drainage network (before it, tributaries could
 ///   only meet a trunk at its head), and it is why `river_inflow` no longer means "chain head": it
 ///   means "a tributary arrives at this vertex".
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct RiverInflow {
     /// The navigable hex the tributary hands its water to — its own chain head, or a mid-chain hex
     /// of the trunk it joins.
@@ -342,7 +343,7 @@ pub struct RiverInflow {
     pub class: RiverClass,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RiverSegment {
     pub id: u32,
     /// Strahler order of the river's most downstream channel corner, computed on the **real channel
@@ -418,7 +419,7 @@ fn is_water_terrain(terrain: TerrainType) -> bool {
     )
 }
 
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HydrologyState {
     pub rivers: Vec<RiverSegment>,
 }

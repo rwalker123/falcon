@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 use bevy::prelude::*;
@@ -6,7 +7,7 @@ use sim_runtime::TerrainTags;
 
 pub type ProvinceId = u32;
 
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct ProvinceMap {
     width: u32,
     height: u32,
