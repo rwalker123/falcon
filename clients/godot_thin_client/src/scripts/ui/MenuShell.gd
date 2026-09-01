@@ -535,6 +535,10 @@ func _nav_stylebox(active: bool, hover: bool, danger: bool) -> StyleBox:
 
 # ---- panes ------------------------------------------------------------------
 func _show_pane(pane_id: String) -> void:
+	# The outgoing pane may hold the keyboard (the Save pane's name field, the setup pane's seed
+	# field). `queue_free` releases focus only when the node actually leaves the tree at the end of
+	# the frame, so the release is made HERE, before the rebuild — see `release_text_focus`.
+	release_text_focus()
 	for child in _pane_body.get_children():
 		child.queue_free()
 	match pane_id:
@@ -1394,6 +1398,9 @@ func _on_save_pressed() -> void:
 	_last_op_note = {}
 	_save_slots.request_save(typed)
 	_refresh_saves_pane()
+	# Submitting ENDS the typing act — by Enter as much as by the button — so the keyboard goes back
+	# to the game rather than staying in a field the player is done with.
+	release_text_focus()
 
 
 ## **THE LOAD IS EMITTED, NOT SENT.** Rebuilding the world is a world-handoff act and belongs to the
@@ -1425,6 +1432,32 @@ func _on_delete_confirmed() -> void:
 func _on_delete_cancelled() -> void:
 	_delete_armed_slot = ""
 	_refresh_saves_pane()
+
+
+## **HAND THE KEYBOARD BACK.** Called on every pane change, after a save is submitted, and by the
+## owner when the shell is dismissed (`Main._hide_pause_menu`).
+##
+## `MapView._process` polls WASD and Q·E with `Input.get_action_strength`, which never touches the
+## event system, so it is suppressed while a `LineEdit`/`TextEdit` holds focus
+## (`MapView._text_entry_has_focus`). That guard's mirror-image failure is focus left STUCK: a field
+## that keeps the keyboard after its surface is gone makes the map permanently unresponsive with
+## nothing on screen to explain why — strictly worse than the map panning while you type. So this
+## file, which owns the only text fields in the menu, owns the release.
+##
+## It releases only a text control **inside this shell**: a focused field elsewhere in the tree is
+## somebody else's to hand back, and grabbing that decision would be the same overreach as guarding
+## on "anything focused".
+func release_text_focus() -> void:
+	var viewport := get_viewport()
+	if viewport == null:
+		return
+	var focused := viewport.gui_get_focus_owner()
+	if focused == null:
+		return
+	if not (focused is LineEdit or focused is TextEdit):
+		return
+	if focused == self or is_ancestor_of(focused):
+		focused.release_focus()
 
 
 # ---- summary ----------------------------------------------------------------

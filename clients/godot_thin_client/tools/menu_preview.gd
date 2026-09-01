@@ -272,6 +272,86 @@ func _run_saves_states() -> void:
 		_fail("config drift: a non-empty drift list rendered nothing")
 	await _save("config_drift")
 
+	await _assert_text_focus_is_handed_back()
+
+
+## **THE KEYBOARD IS BORROWED, NOT TAKEN** — the behavioural half of `MapView`'s polled-input guard,
+## and it takes no PNG because none of it is visible.
+##
+## `MapView._process` samples WASD and Q·E with `Input.get_action_strength`, which never touches the
+## event system, so it pans and zooms the map while the player types unless it is told a text control
+## holds the keyboard. That guard's failure in the other direction is worse than the bug it fixes:
+## focus left STUCK after the pane is gone kills WASD for the rest of the session with nothing on
+## screen to explain it. So both halves are asserted — the field TAKES focus, and every exit HANDS IT
+## BACK.
+##
+## **WHAT THIS HARNESS CANNOT PROVE**: `MapView` is not instantiated here, so `_process` never runs
+## and the suppression itself is untested. What IS tested is the predicate's input — the viewport's
+## focus owner is a `LineEdit` while typing and is not one after each exit — which is the exact
+## expression `MapView._text_entry_has_focus` evaluates.
+func _assert_text_focus_is_handed_back() -> void:
+	if _drift_notice != null:
+		_drift_notice.queue_free()
+		_drift_notice = null
+	await get_tree().process_frame
+	_shell.mode = MenuShell.PAUSE
+	_shell._activate_item(SAVE_PANE_ID)
+	_answer_list(_slot_fixtures())
+	_type(TYPED_NEW_NAME)
+	await get_tree().process_frame
+	if _shell._save_name_edit == null:
+		_fail("focus: the Save pane built no name field")
+		return
+	# Typing is what focuses the field on the shipped path — the pane is rebuilt on every keystroke,
+	# so `_on_save_name_changed` re-grabs onto the NEW node. If that ever stopped working the field
+	# would drop the caret mid-word, and every check below would be asserting nothing.
+	if not _focused_is_text_entry():
+		_fail("focus: typing into the Save pane did not leave the name field holding the keyboard")
+
+	_shell.release_text_focus()
+	if _focused_is_text_entry():
+		_fail("focus: release_text_focus left a text control focused")
+
+	# Leaving the pane hands it back — the path a player takes by clicking any other nav row.
+	_shell._save_name_edit.grab_focus()
+	await get_tree().process_frame
+	if not _focused_is_text_entry():
+		_fail("focus: the name field would not take the keyboard back")
+	_shell._activate_item(OPTIONS_PANE_ID)
+	if _focused_is_text_entry():
+		_fail("focus: switching panes left the Save field holding the keyboard")
+
+	# …and so does submitting, which ends the typing act whether it came from the button or from
+	# Enter in the field.
+	_shell._activate_item(SAVE_PANE_ID)
+	_answer_list(_slot_fixtures())
+	_type(TYPED_NEW_NAME)
+	await get_tree().process_frame
+	if not _focused_is_text_entry():
+		_fail("focus: the Save pane did not re-take the keyboard before the submit check")
+	_shell._on_save_pressed()
+	if _focused_is_text_entry():
+		_fail("focus: submitting a save left the name field holding the keyboard")
+	# Settle the seam so it is not left holding an op nothing will ever answer.
+	_answer_save_op(TYPED_NEW_NAME)
+
+
+## The exact expression `MapView._text_entry_has_focus` evaluates.
+func _focused_is_text_entry() -> bool:
+	var focused := get_viewport().gui_get_focus_owner()
+	return focused is LineEdit or focused is TextEdit
+
+
+func _answer_save_op(slot: String) -> void:
+	_save_seam.deliver([{
+		"request_id": _last_request_id,
+		"ok": true,
+		"kind": "save_op",
+		"slot": slot,
+		"error": "",
+		"config_drift": [],
+	}])
+
 
 ## The canned slot list: the reserved autosave row, two named saves, and one small enough to render
 ## in the OTHER size unit. Newest first, the order the server answers in.

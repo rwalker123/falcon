@@ -4732,19 +4732,20 @@ func _process(delta: float) -> void:
 	if mouse_pan_active and mouse_pan_button != -1 and not Input.is_mouse_button_pressed(mouse_pan_button):
 		mouse_pan_active = false
 		mouse_pan_button = -1
-	var pan_input := Vector2(
-		Input.get_action_strength("map_pan_right") - Input.get_action_strength("map_pan_left"),
-		Input.get_action_strength("map_pan_down") - Input.get_action_strength("map_pan_up")
-	)
-	if pan_input != Vector2.ZERO:
-		if pan_input.length_squared() > 1.0:
-			pan_input = pan_input.normalized()
-		_apply_pan(pan_input * KEYBOARD_PAN_SPEED * ClientSettings.pan_speed_multiplier * delta)
-	var zoom_direction: float = Input.get_action_strength("map_zoom_in") - Input.get_action_strength("map_zoom_out")
-	if not is_zero_approx(zoom_direction):
-		# `_apply_zoom`'s pivot is in LOCAL coords, so the centre is measured in them too.
-		var viewport_center: Vector2 = screen_size_local() * 0.5
-		_apply_zoom(zoom_direction * KEYBOARD_ZOOM_SPEED * ClientSettings.zoom_speed_multiplier * delta, viewport_center)
+	if not _text_entry_has_focus():
+		var pan_input := Vector2(
+			Input.get_action_strength("map_pan_right") - Input.get_action_strength("map_pan_left"),
+			Input.get_action_strength("map_pan_down") - Input.get_action_strength("map_pan_up")
+		)
+		if pan_input != Vector2.ZERO:
+			if pan_input.length_squared() > 1.0:
+				pan_input = pan_input.normalized()
+			_apply_pan(pan_input * KEYBOARD_PAN_SPEED * ClientSettings.pan_speed_multiplier * delta)
+		var zoom_direction: float = Input.get_action_strength("map_zoom_in") - Input.get_action_strength("map_zoom_out")
+		if not is_zero_approx(zoom_direction):
+			# `_apply_zoom`'s pivot is in LOCAL coords, so the centre is measured in them too.
+			var viewport_center: Vector2 = screen_size_local() * 0.5
+			_apply_zoom(zoom_direction * KEYBOARD_ZOOM_SPEED * ClientSettings.zoom_speed_multiplier * delta, viewport_center)
 	# Animate the targeting overlay (pulsing glow / reticle) while a command is
 	# being targeted.
 	if _annotations.is_targeting_active():
@@ -4754,6 +4755,32 @@ func _process(delta: float) -> void:
 	if _has_awaiting_expedition:
 		_expedition_time += delta
 		queue_redraw()
+
+## **IS THE PLAYER TYPING?** — the guard on the ONLY polled-input site in the client.
+##
+## `_process` above reads WASD and Q·E with `Input.get_action_strength`, which samples raw device
+## state and never touches the event system. A focused `LineEdit` consuming the keystroke is
+## therefore irrelevant to it: the map pans and zooms while the player types their save's name, which
+## is what it did until this guard existed. The event-driven paths were never affected — a consumed
+## key genuinely does not reach `_unhandled_input` — so this is the one place the check belongs, and
+## putting it anywhere else would only be guarding something that is already correct.
+##
+## **TEXT ENTRY ONLY, not "anything focused".** A focused Button does not consume letters, and
+## suppressing WASD whenever a button held focus would be a worse bug than the one this fixes — the
+## map would go dead after every click on a HUD control. `TextEdit` covers `CodeEdit`, which
+## subclasses it.
+##
+## **THE MIRROR-IMAGE FAILURE IS FOCUS LEFT STUCK.** A field that keeps focus after its pane closes
+## makes the map permanently unresponsive with nothing on screen to explain why, which is strictly
+## worse than the defect. The release is the FIELD OWNER's to perform, at every exit from the surface
+## that holds it — see `MenuShell._release_text_focus`.
+func _text_entry_has_focus() -> bool:
+	var viewport := get_viewport()
+	if viewport == null:
+		return false
+	var focused := viewport.gui_get_focus_owner()
+	return focused is LineEdit or focused is TextEdit
+
 
 ## Mirror the HUD's pending command-targeting state so the map can draw the reticle / valid-target
 ## glow / hover ETA. Pass {} to clear. THIN PASS-THROUGH to AnnotationRenderer, and the NAME cannot

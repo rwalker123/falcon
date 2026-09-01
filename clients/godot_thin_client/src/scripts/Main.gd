@@ -446,6 +446,12 @@ func _show_pause_menu() -> void:
         pause_layer.visible = true
 
 func _hide_pause_menu() -> void:
+    # **HIDING A `CanvasLayer` DOES NOT RELEASE FOCUS.** `CanvasLayer` is not a `CanvasItem`, so its
+    # `visible` never reaches the Controls under it as a visibility change and a focused field keeps
+    # the keyboard after the menu is gone. That is the stuck-focus half of `MapView`'s polled-input
+    # guard: WASD would stay dead for the rest of the session with nothing on screen to explain it.
+    if pause_menu != null and pause_menu.has_method("release_text_focus"):
+        pause_menu.call("release_text_focus")
     if pause_layer != null:
         pause_layer.visible = false
 

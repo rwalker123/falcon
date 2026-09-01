@@ -1,6 +1,9 @@
 ---
 paths:
   - "clients/godot_thin_client/src/scripts/SaveSlots.gd"
+  # `Main` owns the load handoff, the drift notice and the pause menu's focus release, so the rule
+  # describing them has to load when Main is touched.
+  - "clients/godot_thin_client/src/scripts/Main.gd"
   - "clients/godot_thin_client/src/scripts/ui/ConfigDriftNotice.gd"
   - "clients/godot_thin_client/src/scripts/ui/MenuShell.gd"
   - "clients/godot_thin_client/src/scripts/ui/LandingScreen.gd"
@@ -91,6 +94,20 @@ already are:
 | Load from inside a run | `Load — discards this run`, **armed** |
 | Delete | `Delete` arms a second row: `Delete “<name>” permanently` + `Cancel` |
 
+## The name field borrows the keyboard, and hands it back
+
+The slot-name `LineEdit` is the first free-text input in the game, and it exposed a pre-existing
+defect: `MapView._process` polls WASD and Q·E with `Input.get_action_strength`, which never touches
+the event system, so typing a save's name also drove the map. The guard lives where the polling does
+(`.claude/rules/client/map-renderers.md` → "Typing must not drive the map"); what belongs to this
+file is the other half. **`MenuShell.release_text_focus()` is called on every pane change, after a
+save is submitted, and by `Main._hide_pause_menu`** — because focus left stuck kills WASD for the rest
+of the session with nothing on screen to explain it, which is strictly worse than the bug. Neither
+`queue_free` nor hiding the pause `CanvasLayer` releases it; the release is explicit.
+
+It releases only a text control **inside this shell**. A focused field elsewhere in the tree is
+somebody else's to hand back.
+
 ## A load is the `new_game` handoff, wearing the same clothes
 
 A load rebuilds the world server-side and bumps `WorldEpoch`, so it is subject to the whole world
@@ -147,5 +164,6 @@ is taken a frame later.
 `deliver` — `menu_load_list`, `menu_load_selected`, `menu_load_delete_confirm`, `menu_load_in_run`,
 `menu_save`, `menu_save_overwrite`, `menu_save_reserved_name`, `menu_load_empty`,
 `menu_load_no_server` and `config_drift`. The harness IS the transport, which is what makes the
-failure states renderable at all: none of them is reachable from a healthy stack. Details in
+failure states renderable at all: none of them is reachable from a healthy stack. It also carries
+`_assert_text_focus_is_handed_back`, which takes no PNG. Details in
 `.claude/rules/client/harness-menu-workbench.md`.

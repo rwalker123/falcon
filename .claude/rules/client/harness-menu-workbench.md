@@ -61,6 +61,16 @@ four rows cover both size units and all three time buckets plus the absolute-dat
 expressed as OFFSETS from now (a fixed stamp would drift into another bucket as the branch aged) and
 only the date row carries a fixed stamp, since that branch has no bucket to drift out of.
 
+**One check takes no picture at all.** `_assert_text_focus_is_handed_back` covers the keyboard
+handover behind `MapView`'s polled-input guard (`.claude/rules/client/map-renderers.md` → "Typing
+must not drive the map"): typing must leave the Save pane's name field holding focus, and
+`release_text_focus`, a pane switch and a submit must each hand it back. The POSITIVE legs are what
+keep the negative ones honest — an assertion that focus was released passes trivially if focus was
+never taken. `MapView` is not instantiated here, so the suppression itself is NOT tested; what is
+tested is the predicate's input, the exact expression `_text_entry_has_focus` evaluates. Sabotage-
+verified: stubbing `release_text_focus` to return early fails all three release legs, which also
+proves that neither `queue_free` nor hiding the layer releases focus on its own.
+
 Same `_settle` (`process_frame` → `force_draw` → `process_frame`) + `_save` contract as
 `ui_preview`, and the same rule: `scripts/preview.sh res://tools/menu_preview.tscn`, **NOT
 `--headless`** (the dummy renderer yields a null viewport texture and the frames are skipped with a
