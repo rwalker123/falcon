@@ -65,6 +65,10 @@ pub(crate) const QUERY_KIND_DENIAL_RAID: &str = "denial_raid_forecast";
 /// `combat_config.expedition_danger_multiplier`, so the two replies may never borrow each other's
 /// rows.
 pub(crate) const QUERY_KIND_HUNT_CREW_TAKE: &str = "hunt_crew_take";
+/// The save channel's two answer kinds. **Mechanical translation only** — the save/load UI is its
+/// own slice; these exist because `QueryReply` gained two variants and this match is exhaustive.
+pub(crate) const QUERY_KIND_LIST_SAVES: &str = "list_saves";
+pub(crate) const QUERY_KIND_SAVE_OP: &str = "save_op";
 
 /// **The transport's OWN failure token**, and it is deliberately in the same vocabulary as the
 /// server's `query_error` tokens rather than a free-text string: the seam renders one failure line
@@ -276,6 +280,43 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
             }
             let _ = dict.insert("per_crew", &per_crew);
         }
+        Ok(QueryReply::ListSaves(slots)) => {
+            let _ = dict.insert("ok", true);
+            let _ = dict.insert("kind", QUERY_KIND_LIST_SAVES);
+            let mut rows = VarArray::new();
+            for slot in slots {
+                let mut row = VarDictionary::new();
+                let _ = row.insert("slot", slot.slot.as_str());
+                let _ = row.insert("turn", slot.turn as i64);
+                let _ = row.insert("campaign_title", slot.campaign_title.as_str());
+                let _ = row.insert("map_preset_id", slot.map_preset_id.as_str());
+                let _ = row.insert("width", i64::from(slot.width));
+                let _ = row.insert("height", i64::from(slot.height));
+                let _ = row.insert("world_seed", slot.world_seed as i64);
+                let _ = row.insert("start_profile_id", slot.start_profile_id.as_str());
+                let _ = row.insert("size_bytes", slot.size_bytes as i64);
+                let _ = row.insert("modified_unix_seconds", slot.modified_unix_seconds as i64);
+                rows.push(&row.to_variant());
+            }
+            let _ = dict.insert("slots", &rows);
+        }
+        Ok(QueryReply::SaveOp(reply)) => {
+            let _ = dict.insert("ok", reply.ok);
+            let _ = dict.insert("kind", QUERY_KIND_SAVE_OP);
+            let _ = dict.insert("slot", reply.slot.as_str());
+            let _ = dict.insert("error", reply.error.as_str());
+            // The config files whose tuning moved between writing the save and loading it. Empty is
+            // the good case; each row names ONE file, because "config changed" is not actionable.
+            let mut drift = VarArray::new();
+            for entry in &reply.config_drift {
+                let mut row = VarDictionary::new();
+                let _ = row.insert("file_name", entry.file_name.as_str());
+                let _ = row.insert("saved", config_digest_kind_name(entry.saved));
+                let _ = row.insert("live", config_digest_kind_name(entry.live));
+                drift.push(&row.to_variant());
+            }
+            let _ = dict.insert("config_drift", &drift);
+        }
         Ok(QueryReply::Error(reason)) => {
             let _ = dict.insert("ok", false);
             let _ = dict.insert("error", reason.as_str());
@@ -289,6 +330,17 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
         }
     }
     dict
+}
+
+/// The wire token for a config digest kind. `builtin` and `file` are a real difference — the
+/// shipped file appearing or vanishing changes what the sim runs on just as an edit does.
+fn config_digest_kind_name(kind: sim_runtime::commands::ConfigDigestKind) -> &'static str {
+    use sim_runtime::commands::ConfigDigestKind;
+    match kind {
+        ConfigDigestKind::Absent => "absent",
+        ConfigDigestKind::Builtin => "builtin",
+        ConfigDigestKind::File => "file",
+    }
 }
 
 /// **THE ROW KEYS ARE THE SNAPSHOT TABLE'S, DELIBERATELY.** `SourceForecast` shapes a raid readout

@@ -431,6 +431,10 @@ reason true rather than merely untested.
 
 ## A save file loads into a fresh process, and that is what the world-static bucket is FOR
 
+> The FEATURE built on this format — the wire verbs, the slot files, the load path's obligations,
+> the config-drift warning and the autosave cadence — is
+> `.claude/rules/core_sim/save-game.md`. What follows is the format only.
+
 The world-static bucket's reason used to carry an expiry — those resources survive a rollback only
 because a restore rebuilds into the same live `World`, which still holds the map worldgen built.
 `core_sim/src/save.rs` is where that expiry was collected. A save is loaded into a process where **no

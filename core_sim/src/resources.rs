@@ -148,6 +148,13 @@ pub struct SimulationConfig {
     /// I was away", short enough to bound a full snapshot. Published as
     /// `CampaignSection.commandEventsRetentionTurns` so the client can say how much history exists.
     pub command_events_retention_turns: u64,
+    /// **How often the autosave slot is rewritten, in turns.** `0` switches autosave off.
+    ///
+    /// A lever rather than "every turn" because writing one is not free: measured on a 160x104
+    /// world, `encode_save` is ~118 ms against a ~30 ms turn, so autosaving every turn would make
+    /// one turn cost five. Turns are human-paced and a save is a cadence thing, so the honest shape
+    /// is "how often", decided here rather than assumed in the hook.
+    pub autosave_interval_turns: u64,
 }
 
 #[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
@@ -305,6 +312,8 @@ struct SimulationConfigData {
     fog_enabled: bool,
     #[serde(default = "default_command_events_retention_turns")]
     command_events_retention_turns: u64,
+    #[serde(default = "default_autosave_interval_turns")]
+    autosave_interval_turns: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -493,6 +502,7 @@ impl SimulationConfigData {
             crisis_auto_seed: self.crisis_auto_seed,
             fog_enabled: self.fog_enabled,
             command_events_retention_turns: self.command_events_retention_turns,
+            autosave_interval_turns: self.autosave_interval_turns,
         })
     }
 }
@@ -507,6 +517,13 @@ fn default_fog_enabled() -> bool {
 /// cannot disagree.
 fn default_command_events_retention_turns() -> u64 {
     20
+}
+
+/// Every 10th turn. At 160x104 that is ~118 ms of encode amortised over ten ~30 ms turns — the
+/// autosave costs one turn in ten roughly five times its usual price, which a human-paced game
+/// absorbs, rather than every turn paying it.
+fn default_autosave_interval_turns() -> u64 {
+    10
 }
 
 fn default_map_preset_id() -> String {

@@ -25,13 +25,14 @@
 //! digest built with it would differ between the save and the load for reasons that have nothing to
 //! do with tuning.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::hash::Hasher;
 use std::path::Path;
 use std::sync::{OnceLock, RwLock};
 
 use bevy::prelude::Resource;
 use serde::{Deserialize, Serialize};
+use sim_runtime::commands::{ConfigDigestKind, ConfigDriftEntry};
 
 use crate::hashing::FnvHasher;
 
@@ -143,6 +144,42 @@ pub(crate) fn record_config_text(default_rel_path: &str, text: &str) {
     );
 }
 
+/// **Which config files' tuning moved between two fingerprints**, named so a warning can be acted
+/// on.
+///
+/// Walks the union of both key sets, so a config that appeared or vanished is drift too — an absent
+/// entry is a different fact from a matching one, and the wire's `Absent` kind says which side was
+/// missing. `Builtin` against `File` is likewise a real difference and is reported: the shipped file
+/// appearing or being deleted changes what the sim runs on just as surely as an edit does.
+///
+/// Empty is the good case. The order is the `BTreeMap`'s, so two runs of the same comparison name
+/// the files in the same order.
+pub fn drift_between(saved: &ConfigFingerprint, live: &ConfigFingerprint) -> Vec<ConfigDriftEntry> {
+    let mut names: BTreeSet<&str> = BTreeSet::new();
+    names.extend(saved.entries.keys().map(String::as_str));
+    names.extend(live.entries.keys().map(String::as_str));
+
+    names
+        .into_iter()
+        .filter(|name| saved.digest(name) != live.digest(name))
+        .map(|name| ConfigDriftEntry {
+            file_name: name.to_string(),
+            saved: wire_kind(saved.digest(name)),
+            live: wire_kind(live.digest(name)),
+        })
+        .collect()
+}
+
+/// The wire's coarse view of a digest. The hash itself is deliberately not published: a client can
+/// act on *"this file changed"* and can do nothing with the number it changed to.
+fn wire_kind(digest: Option<ConfigDigest>) -> ConfigDigestKind {
+    match digest {
+        None => ConfigDigestKind::Absent,
+        Some(ConfigDigest::Builtin) => ConfigDigestKind::Builtin,
+        Some(ConfigDigest::File(_)) => ConfigDigestKind::File,
+    }
+}
+
 /// The tuning a world built **now** would boot on.
 pub fn current_config_fingerprint() -> ConfigFingerprint {
     ConfigFingerprint {
@@ -164,6 +201,71 @@ mod tests {
     const A_PATH: &str = "src/data/fingerprint_test_a.json";
     const B_PATH: &str = "src/data/fingerprint_test_b.json";
     const SOME_JSON: &str = "{\"x\":1}";
+
+    fn fingerprint_of(entries: &[(&str, ConfigDigest)]) -> ConfigFingerprint {
+        ConfigFingerprint {
+            entries: entries
+                .iter()
+                .map(|(name, digest)| ((*name).to_string(), *digest))
+                .collect(),
+        }
+    }
+
+    /// **The warning names files, and only the ones that moved.**
+    #[test]
+    fn drift_names_every_file_that_moved_and_no_others() {
+        let saved = fingerprint_of(&[
+            ("unchanged.json", ConfigDigest::File(1)),
+            ("edited.json", ConfigDigest::File(2)),
+            ("was_builtin.json", ConfigDigest::Builtin),
+            ("only_in_save.json", ConfigDigest::File(4)),
+        ]);
+        let live = fingerprint_of(&[
+            ("unchanged.json", ConfigDigest::File(1)),
+            ("edited.json", ConfigDigest::File(3)),
+            ("was_builtin.json", ConfigDigest::File(5)),
+            ("only_live.json", ConfigDigest::Builtin),
+        ]);
+
+        let drift = drift_between(&saved, &live);
+        let names: Vec<&str> = drift.iter().map(|e| e.file_name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "edited.json",
+                "only_in_save.json",
+                "only_live.json",
+                "was_builtin.json"
+            ],
+            "an unchanged file must not be reported, and the order must be stable"
+        );
+
+        let by_name = |name: &str| {
+            drift
+                .iter()
+                .find(|e| e.file_name == name)
+                .expect("named above")
+                .clone()
+        };
+        // A file whose bytes changed.
+        assert_eq!(by_name("edited.json").saved, ConfigDigestKind::File);
+        assert_eq!(by_name("edited.json").live, ConfigDigestKind::File);
+        // **Builtin -> File is a real difference**, not two spellings of one.
+        assert_eq!(by_name("was_builtin.json").saved, ConfigDigestKind::Builtin);
+        assert_eq!(by_name("was_builtin.json").live, ConfigDigestKind::File);
+        // Appearing and vanishing are both drift, and the kind says which side was missing.
+        assert_eq!(by_name("only_in_save.json").live, ConfigDigestKind::Absent);
+        assert_eq!(by_name("only_live.json").saved, ConfigDigestKind::Absent);
+    }
+
+    #[test]
+    fn two_identical_fingerprints_have_no_drift() {
+        let one = fingerprint_of(&[
+            ("a.json", ConfigDigest::File(1)),
+            ("b.json", ConfigDigest::Builtin),
+        ]);
+        assert!(drift_between(&one, &one.clone()).is_empty());
+    }
 
     #[test]
     fn the_key_is_the_shipped_file_name() {

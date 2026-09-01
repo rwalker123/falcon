@@ -63,8 +63,9 @@ use core_sim::{
 };
 use sim_runtime::{
     commands::{
-        query_error, ConfigOverrideKind, EspionageGeneratorUpdate as CommandGeneratorUpdate,
-        QueryPayload, QueryReply, QueryReplyEnvelope, ReloadConfigKind, BENCH_CREW_UNSPECIFIED,
+        query_error, save_error, ConfigOverrideKind,
+        EspionageGeneratorUpdate as CommandGeneratorUpdate, QueryPayload, QueryReply,
+        QueryReplyEnvelope, ReloadConfigKind, SaveOpReply, AUTOSAVE_SLOT, BENCH_CREW_UNSPECIFIED,
         MAX_PROTO_FRAME,
     },
     CancelScope, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
@@ -294,6 +295,9 @@ fn main() {
                     if let Some(log) = command_log.as_mut() {
                         log.push(LogEntry::Turn);
                     }
+                    // After the turn is logged, so a crash between the two leaves an autosave whose
+                    // world is one the log can still reproduce.
+                    maybe_autosave(&app);
                 }
             }
             Command::ResetMap { width, height } => {
@@ -412,6 +416,45 @@ fn main() {
                         "query.reply.dropped=asking connection closed"
                     );
                 }
+                continue;
+            }
+            Command::SaveGame {
+                request_id,
+                slot,
+                reply,
+            } => {
+                let answer = handle_save_game(&app, world_active, &slot);
+                answer_save_op(&reply, request_id, answer);
+                // Saving changed no world, so there is nothing to republish — the same reason a
+                // query `continue`s past the re-capture at the bottom of the loop.
+                continue;
+            }
+            Command::DeleteSave {
+                request_id,
+                slot,
+                reply,
+            } => {
+                let answer = handle_delete_save(&slot);
+                answer_save_op(&reply, request_id, answer);
+                continue;
+            }
+            Command::LoadGame {
+                request_id,
+                slot,
+                reply,
+            } => {
+                let answer = handle_load_game(
+                    &mut app,
+                    &mut world_active,
+                    &mut world_epoch,
+                    &mut command_log,
+                    &slot,
+                    &snapshot_flat_server,
+                );
+                answer_save_op(&reply, request_id, answer);
+                // `handle_load_game` publishes the restored world itself, and it is NOT replayable:
+                // it replaces the world, so there is nothing before it to replay from. It re-bases
+                // the log rather than being logged, exactly as `new_game` and `reset_map` do.
                 continue;
             }
             other => {
@@ -798,6 +841,24 @@ enum Command {
         query: QueryPayload,
         reply: Sender<QueryReplyEnvelope>,
     },
+    /// The three save verbs. Each carries the asking connection's writer, because a client that
+    /// cannot tell whether its save landed has not saved — and a load has a config-drift warning to
+    /// deliver that no snapshot carries.
+    SaveGame {
+        request_id: u64,
+        slot: String,
+        reply: Sender<QueryReplyEnvelope>,
+    },
+    LoadGame {
+        request_id: u64,
+        slot: String,
+        reply: Sender<QueryReplyEnvelope>,
+    },
+    DeleteSave {
+        request_id: u64,
+        slot: String,
+        reply: Sender<QueryReplyEnvelope>,
+    },
 }
 
 #[derive(Resource, Clone)]
@@ -1159,6 +1220,14 @@ fn answer_query(
     world: &mut bevy::prelude::World,
     query: &QueryPayload,
 ) -> QueryReply {
+    // **The slot list is answered from DISK, before the world gate.** Deliberately: listing saves
+    // is exactly what an idle server does — a player opens the load menu before there is a world,
+    // and a `no_active_world` refusal there would make the feature unreachable from the one screen
+    // that needs it.
+    if matches!(query, QueryPayload::ListSaves) {
+        let dir = core_sim::save_store::save_dir();
+        return QueryReply::ListSaves(core_sim::save_store::list_slots(&dir));
+    }
     if !world_active {
         return QueryReply::Error(query_error::NO_ACTIVE_WORLD.to_string());
     }
@@ -1500,6 +1569,60 @@ fn retire_publisher(app: &mut bevy::prelude::App) {
 /// BEFORE Startup, so a caller (e.g. `new_game`) can apply a start profile that worldgen must see.
 /// Returns the new app for the caller to swap in.
 #[allow(clippy::too_many_arguments)]
+/// Carry this server's watched config paths and their file watchers into a freshly built app.
+///
+/// Shared by `rebuild_world_from_config` and the save load, which have the same obligation: a new app
+/// is built by `build_headless_app`, which knows nothing about which files *this process* was told to
+/// watch. Dropping them would leave a live world whose hot reload silently watched nothing.
+fn restore_watch_paths(
+    app: &mut bevy::prelude::App,
+    watch_paths: &WatchPaths,
+    command_sender: &Sender<Command>,
+) {
+    {
+        let mut metadata = app.world.resource_mut::<SimulationConfigMetadata>();
+        metadata.set_path(watch_paths.simulation.clone());
+    }
+    {
+        let mut metadata = app.world.resource_mut::<TurnPipelineConfigMetadata>();
+        metadata.set_path(watch_paths.turn_pipeline.clone());
+    }
+    {
+        let mut metadata = app.world.resource_mut::<SnapshotOverlaysConfigMetadata>();
+        metadata.set_path(watch_paths.snapshot_overlays.clone());
+    }
+    {
+        let mut metadata = app.world.resource_mut::<CrisisArchetypeCatalogMetadata>();
+        metadata.set_path(watch_paths.crisis_archetypes.clone());
+    }
+    {
+        let mut metadata = app.world.resource_mut::<CrisisModifierCatalogMetadata>();
+        metadata.set_path(watch_paths.crisis_modifiers.clone());
+    }
+    {
+        let mut metadata = app.world.resource_mut::<CrisisTelemetryConfigMetadata>();
+        metadata.set_path(watch_paths.crisis_telemetry.clone());
+    }
+    {
+        let mut watcher_registry = app.world.resource_mut::<ConfigWatcherRegistry>();
+        watcher_registry.restart_simulation(watch_paths.simulation.clone(), command_sender.clone());
+        watcher_registry
+            .restart_turn_pipeline(watch_paths.turn_pipeline.clone(), command_sender.clone());
+        watcher_registry.restart_snapshot_overlays(
+            watch_paths.snapshot_overlays.clone(),
+            command_sender.clone(),
+        );
+        watcher_registry.restart_crisis_archetypes(
+            watch_paths.crisis_archetypes.clone(),
+            command_sender.clone(),
+        );
+        watcher_registry
+            .restart_crisis_modifiers(watch_paths.crisis_modifiers.clone(), command_sender.clone());
+        watcher_registry
+            .restart_crisis_telemetry(watch_paths.crisis_telemetry.clone(), command_sender.clone());
+    }
+}
+
 fn rebuild_world_from_config(
     config: SimulationConfig,
     seed_random: bool,
@@ -1524,56 +1647,10 @@ fn rebuild_world_from_config(
     new_app.insert_resource(SimulationMetrics::default());
     new_app.insert_resource(CommandSenderResource(command_sender.clone()));
     new_app.insert_resource(ConfigWatcherRegistry::default());
+    restore_watch_paths(&mut new_app, watch_paths, &command_sender);
     {
         let mut metadata = new_app.world.resource_mut::<SimulationConfigMetadata>();
-        metadata.set_path(watch_paths.simulation.clone());
         metadata.set_seed_random(seed_random);
-    }
-    {
-        let mut metadata = new_app.world.resource_mut::<TurnPipelineConfigMetadata>();
-        metadata.set_path(watch_paths.turn_pipeline.clone());
-    }
-    {
-        let mut metadata = new_app
-            .world
-            .resource_mut::<SnapshotOverlaysConfigMetadata>();
-        metadata.set_path(watch_paths.snapshot_overlays.clone());
-    }
-    {
-        let mut metadata = new_app
-            .world
-            .resource_mut::<CrisisArchetypeCatalogMetadata>();
-        metadata.set_path(watch_paths.crisis_archetypes.clone());
-    }
-    {
-        let mut metadata = new_app
-            .world
-            .resource_mut::<CrisisModifierCatalogMetadata>();
-        metadata.set_path(watch_paths.crisis_modifiers.clone());
-    }
-    {
-        let mut metadata = new_app
-            .world
-            .resource_mut::<CrisisTelemetryConfigMetadata>();
-        metadata.set_path(watch_paths.crisis_telemetry.clone());
-    }
-    {
-        let mut watcher_registry = new_app.world.resource_mut::<ConfigWatcherRegistry>();
-        watcher_registry.restart_simulation(watch_paths.simulation.clone(), command_sender.clone());
-        watcher_registry
-            .restart_turn_pipeline(watch_paths.turn_pipeline.clone(), command_sender.clone());
-        watcher_registry.restart_snapshot_overlays(
-            watch_paths.snapshot_overlays.clone(),
-            command_sender.clone(),
-        );
-        watcher_registry.restart_crisis_archetypes(
-            watch_paths.crisis_archetypes.clone(),
-            command_sender.clone(),
-        );
-        watcher_registry
-            .restart_crisis_modifiers(watch_paths.crisis_modifiers.clone(), command_sender.clone());
-        watcher_registry
-            .restart_crisis_telemetry(watch_paths.crisis_telemetry.clone(), command_sender.clone());
     }
 
     // Advance the world epoch for this fresh world and stamp it onto the app BEFORE the first
@@ -1688,6 +1765,295 @@ fn handle_new_game(
         preset = %preset_id,
         "new_game.completed"
     );
+}
+
+// =================================================================================================
+// SAVE GAME
+// =================================================================================================
+
+/// Answer a save / load / delete on the asking connection's writer.
+///
+/// A send failure means the connection is gone; there is nothing to recover, exactly as for a query.
+fn answer_save_op(reply: &Sender<QueryReplyEnvelope>, request_id: u64, answer: SaveOpReply) {
+    if reply
+        .send(QueryReplyEnvelope {
+            request_id,
+            reply: QueryReply::SaveOp(answer),
+        })
+        .is_err()
+    {
+        warn!(
+            target: "shadow_scale::save",
+            request_id,
+            "save.reply.dropped=asking connection closed"
+        );
+    }
+}
+
+fn save_failure(slot: &str, error: &str) -> SaveOpReply {
+    SaveOpReply {
+        ok: false,
+        slot: slot.to_string(),
+        error: error.to_string(),
+        config_drift: Vec::new(),
+    }
+}
+
+/// Map a storage failure onto the wire's token vocabulary.
+fn slot_store_token(err: &core_sim::save_store::SlotStoreError) -> &'static str {
+    use core_sim::save_store::SlotStoreError;
+    match err {
+        SlotStoreError::Name(_) => save_error::INVALID_SLOT,
+        SlotStoreError::NotFound => save_error::NO_SUCH_SLOT,
+        SlotStoreError::Io(_) => save_error::IO_FAILED,
+        SlotStoreError::Format(_) => save_error::UNREADABLE,
+    }
+}
+
+/// **Write the running world to a slot.**
+///
+/// `autosave` is refused here and only here: the hook that owns it calls [`write_autosave`]
+/// directly. An explicit save allowed to name it would destroy the rolling backup at exactly the
+/// moment a player is trying to make a deliberate one.
+fn handle_save_game(app: &bevy::prelude::App, world_active: bool, slot: &str) -> SaveOpReply {
+    if !world_active {
+        return save_failure(slot, save_error::NO_ACTIVE_WORLD);
+    }
+    if slot == AUTOSAVE_SLOT {
+        warn!(target: "shadow_scale::save", %slot, "save.rejected=reserved_slot");
+        return save_failure(slot, save_error::RESERVED_SLOT);
+    }
+    if let Err(err) = core_sim::save_store::validate_slot_name(slot) {
+        warn!(target: "shadow_scale::save", %slot, error = %err, "save.rejected=invalid_slot");
+        return save_failure(slot, save_error::INVALID_SLOT);
+    }
+
+    let blob = match core_sim::save::encode_save(&app.world) {
+        Ok(blob) => blob,
+        Err(err) => {
+            warn!(target: "shadow_scale::save", %slot, error = %err, "save.failed=encode");
+            return save_failure(slot, save_error::IO_FAILED);
+        }
+    };
+    let dir = core_sim::save_store::save_dir();
+    match core_sim::save_store::write_slot(&dir, slot, &blob) {
+        Ok(path) => {
+            info!(
+                target: "shadow_scale::save",
+                %slot,
+                path = %path.display(),
+                bytes = blob.len(),
+                tick = app.world.resource::<SimulationTick>().0,
+                "save.written"
+            );
+            SaveOpReply {
+                ok: true,
+                slot: slot.to_string(),
+                error: String::new(),
+                config_drift: Vec::new(),
+            }
+        }
+        Err(err) => {
+            warn!(target: "shadow_scale::save", %slot, error = %err, "save.failed=write");
+            save_failure(slot, slot_store_token(&err))
+        }
+    }
+}
+
+fn handle_delete_save(slot: &str) -> SaveOpReply {
+    let dir = core_sim::save_store::save_dir();
+    match core_sim::save_store::delete_slot(&dir, slot) {
+        Ok(()) => {
+            info!(target: "shadow_scale::save", %slot, "save.deleted");
+            SaveOpReply {
+                ok: true,
+                slot: slot.to_string(),
+                error: String::new(),
+                config_drift: Vec::new(),
+            }
+        }
+        Err(err) => {
+            warn!(target: "shadow_scale::save", %slot, error = %err, "save.delete.failed");
+            save_failure(slot, slot_store_token(&err))
+        }
+    }
+}
+
+/// **Replace the running world with a saved one.**
+///
+/// It follows `handle_new_game`'s shape because it has the same obligations — a fresh app, the
+/// snapshot sink attached before the first capture, a bumped `WorldEpoch` so the client's epoch gate
+/// treats it as a new world — and one more that only a load has: **the command log is re-based**.
+/// Everything before a load is unreachable, exactly as for `new_game` and `reset_map`. Without that,
+/// a rollback would replay across the load into a world that never existed.
+///
+/// The world is **not** regenerated. `load_save` builds the app with worldgen suppressed and installs
+/// the saved map, because worldgen is a function of config as well as seed: re-running it after a
+/// preset edit would hand back a different map under a population that remembers the old one.
+#[allow(clippy::too_many_arguments)]
+fn handle_load_game(
+    app: &mut bevy::prelude::App,
+    world_active: &mut bool,
+    world_epoch: &mut u32,
+    command_log: &mut Option<CommandLog>,
+    slot: &str,
+    snapshot_server_flat: &Arc<SnapshotServer>,
+) -> SaveOpReply {
+    let dir = core_sim::save_store::save_dir();
+    let blob = match core_sim::save_store::read_slot(&dir, slot) {
+        Ok(blob) => blob,
+        Err(err) => {
+            warn!(target: "shadow_scale::save", %slot, error = %err, "load.failed=read");
+            return save_failure(slot, slot_store_token(&err));
+        }
+    };
+
+    // Decode BEFORE anything about the running world changes: a save this build cannot read must
+    // leave the player where they were, not half-way into a world that failed to arrive.
+    let (header, payload) = match core_sim::save::decode_save(&blob) {
+        Ok(decoded) => decoded,
+        Err(err) => {
+            warn!(target: "shadow_scale::save", %slot, error = %err, "load.failed=decode");
+            return save_failure(slot, save_error::UNREADABLE);
+        }
+    };
+
+    let command_sender = {
+        let res = app.world.resource::<CommandSenderResource>();
+        res.0.clone()
+    };
+    let watch_paths = collect_watch_paths(app);
+
+    info!(
+        target: "shadow_scale::save",
+        %slot,
+        turn = header.turn,
+        preset = %header.world.map_preset_id,
+        "load.begin"
+    );
+
+    retire_publisher(app);
+    let mut new_app = build_headless_app();
+    // Set BEFORE the first `update()`: `Startup`'s generation chain is gated on the absence of this
+    // resource, so inserting it is what stops worldgen overwriting the map about to be installed.
+    new_app.insert_resource(core_sim::save::SuppressWorldgen);
+
+    let resolved_port_base = ResolvedPortBase(
+        app.world
+            .resource::<SimulationConfig>()
+            .port_base_bind
+            .port(),
+    );
+    new_app.insert_resource(resolved_port_base);
+    new_app.insert_resource(SimulationMetrics::default());
+    new_app.insert_resource(CommandSenderResource(command_sender.clone()));
+    new_app.insert_resource(ConfigWatcherRegistry::default());
+    restore_watch_paths(&mut new_app, &watch_paths, &command_sender);
+
+    *world_epoch += 1;
+    new_app.insert_resource(WorldEpoch(*world_epoch));
+    // Attach the sink BEFORE the first capture, so this world's baseline frame is broadcast like
+    // every frame after it — the same care `rebuild_world_from_config` takes.
+    new_app
+        .world
+        .resource::<SnapshotHistory>()
+        .attach_sink(Arc::clone(snapshot_server_flat) as Arc<dyn FrameSink>);
+
+    core_sim::save::apply_save(&mut new_app.world, &header, &payload);
+    publish_loaded_world(&mut new_app);
+
+    *app = new_app;
+    *world_active = true;
+    // **A load re-bases the origin**: nothing before it is reachable, exactly like `new_game`.
+    let mut log = CommandLog::new(app);
+    log.rebase(app, "load_game");
+    *command_log = Some(log);
+
+    let drift = core_sim::drift_between(
+        &header.config_fingerprint,
+        &core_sim::current_config_fingerprint(),
+    );
+    if drift.is_empty() {
+        info!(target: "shadow_scale::save", %slot, turn = header.turn, "load.completed");
+    } else {
+        warn!(
+            target: "shadow_scale::save",
+            %slot,
+            files = %drift
+                .iter()
+                .map(|entry| entry.file_name.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            "load.completed config_drift -- the world is as saved, but turns from here run on the tuning live now"
+        );
+    }
+
+    SaveOpReply {
+        ok: true,
+        slot: slot.to_string(),
+        error: String::new(),
+        config_drift: drift,
+    }
+}
+
+/// **Publish the restored world without running a turn.**
+///
+/// `rebuild_world_from_config` ends in `run_turn` because a generated world needs `Startup` to run
+/// and then wants its baseline frame. A loaded world needs neither: `Startup` holds only the
+/// worldgen chain, which [`core_sim::save::SuppressWorldgen`] has already switched off, and the world
+/// is already the one that was saved.
+///
+/// Running a turn here was the first shape and it was **wrong in a way the tick alone did not
+/// show**: `run_turn` resolves a real turn, so the population aged, food was eaten and the world
+/// advanced — restoring the tick number afterwards only hid it. A load must land on the world that
+/// was saved, or "save, load, save" produces two different worlds.
+fn publish_loaded_world(app: &mut bevy::prelude::App) {
+    recapture_snapshot_in_place(&mut app.world);
+}
+
+/// **Rewrite the autosave slot, if this turn is one of the cadence's.**
+///
+/// A cadence rather than every turn because a save is not free: measured on a 160x104 world,
+/// `encode_save` is ~118 ms against a ~30 ms turn, so autosaving every turn would make one turn cost
+/// five. `autosave_interval_turns` is the lever (`0` switches it off); the cost then lands on one
+/// turn in N rather than on all of them, which a human-paced game absorbs.
+fn maybe_autosave(app: &bevy::prelude::App) {
+    let interval = app
+        .world
+        .resource::<SimulationConfig>()
+        .autosave_interval_turns;
+    if interval == 0 {
+        return;
+    }
+    let tick = app.world.resource::<SimulationTick>().0;
+    if tick == 0 || !tick.is_multiple_of(interval) {
+        return;
+    }
+    write_autosave(app);
+}
+
+/// The autosave slot's one writer.
+fn write_autosave(app: &bevy::prelude::App) {
+    let blob = match core_sim::save::encode_save(&app.world) {
+        Ok(blob) => blob,
+        Err(err) => {
+            warn!(target: "shadow_scale::save", error = %err, "autosave.failed=encode");
+            return;
+        }
+    };
+    let dir = core_sim::save_store::save_dir();
+    // An autosave that cannot be written warns and the turn carries on. It is a convenience, and
+    // killing a live campaign over a full disk would be a worse outcome than losing the backup.
+    match core_sim::save_store::write_slot(&dir, AUTOSAVE_SLOT, &blob) {
+        Ok(path) => info!(
+            target: "shadow_scale::save",
+            path = %path.display(),
+            bytes = blob.len(),
+            tick = app.world.resource::<SimulationTick>().0,
+            "autosave.written"
+        ),
+        Err(err) => warn!(target: "shadow_scale::save", error = %err, "autosave.failed=write"),
+    }
 }
 
 /// Apply a resolved start profile to the app's campaign resources (config overrides,
@@ -8295,6 +8661,22 @@ fn command_from_payload(
             query,
             reply: reply.clone(),
         }),
+        // The save verbs answer on the same writer for the same reason a query does.
+        ProtoCommandPayload::SaveGame { request_id, slot } => Some(Command::SaveGame {
+            request_id,
+            slot,
+            reply: reply.clone(),
+        }),
+        ProtoCommandPayload::LoadGame { request_id, slot } => Some(Command::LoadGame {
+            request_id,
+            slot,
+            reply: reply.clone(),
+        }),
+        ProtoCommandPayload::DeleteSave { request_id, slot } => Some(Command::DeleteSave {
+            request_id,
+            slot,
+            reply: reply.clone(),
+        }),
     }
 }
 
@@ -8825,6 +9207,13 @@ fn is_replayable(command: &Command) -> bool {
             | Command::SetConfigOverride { .. }
             | Command::ClearConfigOverrides
             | Command::Query { .. }
+            // The save verbs. `SaveGame` and `DeleteSave` touch a file and no world, so replaying
+            // them would re-do disk writes to change nothing about the world being replayed — the
+            // same reason the staged config overrides are excluded. `LoadGame` REPLACES the world,
+            // so there is nothing before it to replay from; it re-bases the origin instead.
+            | Command::SaveGame { .. }
+            | Command::LoadGame { .. }
+            | Command::DeleteSave { .. }
     )
 }
 
@@ -8851,6 +9240,24 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
         // being wrong differs by orders of magnitude: a panic here would take the whole server down
         // over a question, while a warning leaves one query unanswered and names the routing bug in
         // the log.
+        // Unreachable for the same reason as `Query` below: the main loop answers each of these and
+        // `continue`s. Loud rather than fatal, on the same argument.
+        Command::SaveGame {
+            request_id, slot, ..
+        }
+        | Command::LoadGame {
+            request_id, slot, ..
+        }
+        | Command::DeleteSave {
+            request_id, slot, ..
+        } => {
+            warn!(
+                target: "shadow_scale::save",
+                request_id,
+                %slot,
+                "save.dispatch.unreachable=a save verb reached apply_command"
+            );
+        }
         Command::Query { request_id, .. } => {
             warn!(
                 target: "shadow_scale::server",
@@ -9900,6 +10307,407 @@ mod tests {
     fn loopback_snapshot_server() -> Arc<SnapshotServer> {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         Arc::new(start_snapshot_server(listener))
+    }
+
+    // =============================================================================================
+    // SAVE GAME — through the actual handlers, not through the format alone.
+    // =============================================================================================
+
+    /// A save directory of this test's own. The store honours `SIM_SAVE_DIR`, but the env is
+    /// process-global and these cases run on cargo's thread pool, so they pass the directory to the
+    /// handlers' collaborators explicitly and only set the env where a handler reads it itself.
+    fn save_scratch(case: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "shadow_scale_server_save_{}_{case}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    /// Serialises every case that sets `SIM_SAVE_DIR`, which is process-global exactly as the config
+    /// registry is — two cases on cargo's thread pool would otherwise redirect each other's saves.
+    fn lock_save_dir_for_test() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// A small live world, built the way the server builds one.
+    fn a_world_for_saving(
+        world_active: &mut bool,
+        world_epoch: &mut u32,
+        flat: &Arc<SnapshotServer>,
+    ) -> bevy::prelude::App {
+        let mut app = build_test_app();
+        // The real server inserts this before any world exists; `build_test_app` does not.
+        app.insert_resource(CommandSenderResource(unbounded::<Command>().0));
+        handle_new_game(
+            &mut app,
+            world_active,
+            world_epoch,
+            "earthlike".to_string(),
+            24,
+            16,
+            7,
+            "late_forager_tribe".to_string(),
+            flat,
+        );
+        assert!(*world_active, "the fixture world must build");
+        app
+    }
+
+    /// **Save, then load into the running server, through the command handlers.**
+    ///
+    /// The format's own round trip is covered in `tests/save_round_trip.rs`; what this adds is the
+    /// server's obligations — the epoch bump, the re-based log, and that the loaded world publishes.
+    #[test]
+    fn a_save_and_a_load_round_trip_through_the_handlers() {
+        let _guard = lock_save_dir_for_test();
+        let dir = save_scratch("round_trip");
+        std::env::set_var(core_sim::save_store::SAVE_DIR_ENV, &dir);
+
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let mut app = a_world_for_saving(&mut world_active, &mut world_epoch, &flat);
+        for _ in 0..3 {
+            resolve_turn_with_auto_orders(&mut app);
+        }
+        let saved_tick = app.world.resource::<SimulationTick>().0;
+        let saved_state = core_sim::sim_state::capture_sim_state(&app.world);
+
+        let answer = handle_save_game(&app, world_active, "slot one");
+        assert!(answer.ok, "the save must land: {}", answer.error);
+        assert!(dir.join("slot one.shdw").exists(), "the file must be there");
+
+        // Diverge, so a load has something to undo.
+        for _ in 0..4 {
+            resolve_turn_with_auto_orders(&mut app);
+        }
+        assert_ne!(app.world.resource::<SimulationTick>().0, saved_tick);
+
+        let epoch_before = world_epoch;
+        let mut command_log = Some(CommandLog::new(&app));
+        let answer = handle_load_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut command_log,
+            "slot one",
+            &flat,
+        );
+        assert!(answer.ok, "the load must land: {}", answer.error);
+        assert!(world_active, "a load activates the world");
+        assert_eq!(
+            app.world.resource::<SimulationTick>().0,
+            saved_tick,
+            "the loaded world sits at the turn the save was written at"
+        );
+
+        // The whole checkpoint, not just the tick — encoded, because serde walks every field where
+        // `PartialEq` can be made to skip some (see `tests/sim_state_codec.rs`).
+        let encode = |state: &core_sim::sim_state::SimState| {
+            let mut bytes = Vec::new();
+            ciborium::into_writer(state, &mut bytes).expect("encodes");
+            let raw: ciborium::value::Value =
+                ciborium::from_reader(bytes.as_slice()).expect("parses");
+            canonical_cbor(&raw)
+        };
+        assert_eq!(
+            encode(&core_sim::sim_state::capture_sim_state(&app.world)),
+            encode(&saved_state),
+            "the loaded world must be the world that was saved"
+        );
+
+        // **The client's epoch gate must treat this as a new world.**
+        assert_eq!(
+            world_epoch,
+            epoch_before + 1,
+            "a load bumps the world epoch"
+        );
+        assert_eq!(app.world.resource::<WorldEpoch>().0, world_epoch);
+        assert_eq!(
+            app.world
+                .resource::<SnapshotHistory>()
+                .last_snapshot()
+                .expect("the loaded world published a frame")
+                .header
+                .world_epoch,
+            world_epoch,
+            "the published frame carries the loaded world's epoch"
+        );
+
+        std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
+    }
+
+    /// **A load re-bases the command log.** Everything before it is unreachable — without this a
+    /// rollback would replay across the load into a world that never existed.
+    #[test]
+    fn a_load_rebases_the_command_log() {
+        let _guard = lock_save_dir_for_test();
+        let dir = save_scratch("rebase");
+        std::env::set_var(core_sim::save_store::SAVE_DIR_ENV, &dir);
+
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let mut app = a_world_for_saving(&mut world_active, &mut world_epoch, &flat);
+        for _ in 0..3 {
+            resolve_turn_with_auto_orders(&mut app);
+        }
+        assert!(handle_save_game(&app, world_active, "rebase_me").ok);
+
+        // A log with real history in it, reaching back to before the save.
+        let mut log = CommandLog::new(&app);
+        let origin_before = log.origin_tick;
+        for _ in 0..5 {
+            resolve_turn_with_auto_orders(&mut app);
+            log.push(LogEntry::Turn);
+        }
+        assert!(!log.entries.is_empty(), "the log must have history to lose");
+        assert!(
+            log.prefix_len_for(origin_before).is_some(),
+            "the pre-load tick is reachable before the load"
+        );
+
+        let mut command_log = Some(log);
+        assert!(
+            handle_load_game(
+                &mut app,
+                &mut world_active,
+                &mut world_epoch,
+                &mut command_log,
+                "rebase_me",
+                &flat,
+            )
+            .ok
+        );
+
+        let log = command_log.expect("a load leaves a log in place");
+        assert!(
+            log.entries.is_empty(),
+            "a re-based log carries no entries from before the load"
+        );
+        assert_eq!(
+            log.origin_tick,
+            app.world.resource::<SimulationTick>().0,
+            "the new origin is the loaded world"
+        );
+        assert!(
+            log.prefix_len_for(origin_before).is_none() || origin_before == log.origin_tick,
+            "a tick from before the load is no longer reachable"
+        );
+
+        std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
+    }
+
+    /// **The autosave slot is the hook's alone.** An explicit save naming it is refused, because a
+    /// rolling backup a player can overwrite by accident is not a backup.
+    #[test]
+    fn an_explicit_save_may_not_write_the_autosave_slot() {
+        let _guard = lock_save_dir_for_test();
+        let dir = save_scratch("reserved");
+        std::env::set_var(core_sim::save_store::SAVE_DIR_ENV, &dir);
+
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let app = a_world_for_saving(&mut world_active, &mut world_epoch, &flat);
+
+        let answer = handle_save_game(&app, world_active, AUTOSAVE_SLOT);
+        assert!(!answer.ok);
+        assert_eq!(answer.error, save_error::RESERVED_SLOT);
+        assert!(
+            !dir.join(format!("{AUTOSAVE_SLOT}.shdw")).exists(),
+            "a refused save writes nothing"
+        );
+
+        // The hook itself may, and that is the only writer that may.
+        write_autosave(&app);
+        assert!(dir.join(format!("{AUTOSAVE_SLOT}.shdw")).exists());
+
+        std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
+    }
+
+    /// A slot name that could escape the save directory is refused with a token, and writes nothing.
+    #[test]
+    fn a_traversing_slot_name_is_refused_by_the_handler() {
+        let _guard = lock_save_dir_for_test();
+        let dir = save_scratch("traversal");
+        std::env::set_var(core_sim::save_store::SAVE_DIR_ENV, &dir);
+
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let app = a_world_for_saving(&mut world_active, &mut world_epoch, &flat);
+
+        for name in ["../escape", "..", "a/b", "a\\b"] {
+            let answer = handle_save_game(&app, world_active, name);
+            assert!(!answer.ok, "{name:?} must be refused");
+            assert_eq!(answer.error, save_error::INVALID_SLOT, "for {name:?}");
+        }
+        // Nothing was created anywhere near the parent directory.
+        assert!(
+            std::fs::read_dir(&dir).expect("dir").next().is_none(),
+            "a refused save leaves the directory empty"
+        );
+        assert!(!dir.parent().expect("parent").join("escape.shdw").exists());
+
+        std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
+    }
+
+    /// **Listing reads headers, not worlds.** The proof is that a file whose payload is destroyed
+    /// still lists: `read_save_header` stops after the first CBOR document and never inflates the
+    /// gzip behind it.
+    #[test]
+    fn listing_slots_reads_only_the_header() {
+        let _guard = lock_save_dir_for_test();
+        let dir = save_scratch("listing");
+        std::env::set_var(core_sim::save_store::SAVE_DIR_ENV, &dir);
+
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let mut app = a_world_for_saving(&mut world_active, &mut world_epoch, &flat);
+        for _ in 0..2 {
+            resolve_turn_with_auto_orders(&mut app);
+        }
+        assert!(handle_save_game(&app, world_active, "readable").ok);
+
+        let listed = core_sim::save_store::list_slots(&dir);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].slot, "readable");
+        assert_eq!(listed[0].turn, app.world.resource::<SimulationTick>().0);
+        assert_eq!(listed[0].width, 24);
+        assert!(listed[0].size_bytes > 0);
+
+        // Now corrupt the PAYLOAD only, leaving magic + header intact. A listing that decoded
+        // payloads would drop this row; a header-only listing still shows it.
+        let path = dir.join("readable.shdw");
+        let mut bytes = std::fs::read(&path).expect("read back");
+        let header_len = {
+            let mut only_header = Vec::from(core_sim::save::SAVE_MAGIC);
+            ciborium::into_writer(
+                &core_sim::save::read_save_header(&bytes).expect("header"),
+                &mut only_header,
+            )
+            .expect("re-encode");
+            only_header.len()
+        };
+        for byte in bytes.iter_mut().skip(header_len) {
+            *byte ^= 0xFF;
+        }
+        std::fs::write(&path, &bytes).expect("write corrupted");
+
+        let listed = core_sim::save_store::list_slots(&dir);
+        assert_eq!(
+            listed.len(),
+            1,
+            "the header still lists after the payload is destroyed — which is what proves the \
+             listing never touched it"
+        );
+        assert_eq!(listed[0].turn, app.world.resource::<SimulationTick>().0);
+        // And the load, which DOES read the payload, refuses it.
+        let mut command_log = None;
+        let answer = handle_load_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut command_log,
+            "readable",
+            &flat,
+        );
+        assert!(!answer.ok, "a destroyed payload must not load");
+        assert_eq!(answer.error, save_error::UNREADABLE);
+
+        std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
+    }
+
+    /// **The drift warning names the files that moved, and reaches the client on the reply.**
+    #[test]
+    fn a_load_reports_which_config_files_moved() {
+        let _guard = lock_save_dir_for_test();
+        let dir = save_scratch("drift");
+        std::env::set_var(core_sim::save_store::SAVE_DIR_ENV, &dir);
+
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let mut app = a_world_for_saving(&mut world_active, &mut world_epoch, &flat);
+        assert!(handle_save_game(&app, world_active, "before_tuning").ok);
+
+        // A save taken and loaded with nothing touched reports no drift.
+        let mut command_log = None;
+        let answer = handle_load_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut command_log,
+            "before_tuning",
+            &flat,
+        );
+        assert!(answer.ok);
+        assert!(
+            answer.config_drift.is_empty(),
+            "an untouched config must not warn: {:?}",
+            answer.config_drift
+        );
+
+        // Now move ONE config's effective tuning, the way the tuning panel does, and reload the
+        // same save. The warning must name that file and only that file.
+        //
+        // `install_config_override` directly rather than `handle_set_config_override`, which writes
+        // to `DEFAULT_CONFIG_OVERRIDE_DIR` — a path relative to the process's working directory,
+        // which for a test is the package root. This case wants the fingerprint to move, not an
+        // artefact in the source tree.
+        install_config_override(
+            ConfigOverrideKind::Simulation,
+            "{\"crisis_auto_seed\": true}",
+            &dir.join("overrides"),
+        )
+        .expect("a valid patch installs");
+
+        let mut command_log = None;
+        let answer = handle_load_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut command_log,
+            "before_tuning",
+            &flat,
+        );
+        assert!(answer.ok, "a drifted config still loads");
+        let names: Vec<&str> = answer
+            .config_drift
+            .iter()
+            .map(|entry| entry.file_name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["simulation_config.json"],
+            "the warning names the file that moved, and no others"
+        );
+
+        clear_config_overrides();
+        std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
+    }
+
+    /// Every map put in canonical key order, so two worlds holding equal `HashMap`s compare equal —
+    /// the same rule `core_sim/tests/common` states at length.
+    fn canonical_cbor(value: &ciborium::value::Value) -> ciborium::value::Value {
+        use ciborium::value::Value;
+        match value {
+            Value::Map(entries) => {
+                let mut e: Vec<(Value, Value)> = entries
+                    .iter()
+                    .map(|(k, v)| (canonical_cbor(k), canonical_cbor(v)))
+                    .collect();
+                e.sort_by_cached_key(|(k, _)| {
+                    let mut b = Vec::new();
+                    ciborium::into_writer(k, &mut b).expect("a key re-encodes");
+                    b
+                });
+                Value::Map(e)
+            }
+            Value::Array(items) => Value::Array(items.iter().map(canonical_cbor).collect()),
+            Value::Tag(t, inner) => Value::Tag(*t, Box::new(canonical_cbor(inner))),
+            other => other.clone(),
+        }
     }
 
     /// **The plant site gates must survive a world that has no tiles.** `Command::AssignLabor` is

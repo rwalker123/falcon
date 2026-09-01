@@ -66,6 +66,7 @@ mod recipes_config;
 mod resources;
 pub mod routes;
 pub mod save;
+pub mod save_store;
 mod scalar;
 mod sedentarization;
 mod sedentarization_config;
@@ -119,7 +120,9 @@ pub use components::{
     SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, YieldRange,
     DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
 };
-pub use config_fingerprint::{current_config_fingerprint, ConfigDigest, ConfigFingerprint};
+pub use config_fingerprint::{
+    current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
+};
 pub use config_load::ConfigLoadError;
 pub use config_override::{
     clear_config_overrides, install_config_override, spec_for as config_override_spec_for,

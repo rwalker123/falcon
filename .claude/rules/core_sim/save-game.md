@@ -1,0 +1,162 @@
+---
+paths:
+  - "core_sim/src/save.rs"
+  - "core_sim/src/save_store.rs"
+  - "core_sim/src/config_fingerprint.rs"
+  - "core_sim/src/bin/server.rs"
+  - "sim_runtime/proto/command.proto"
+  - "core_sim/tests/save_round_trip.rs"
+---
+
+# Save game: the blob, the slots, and what a load owes the client
+
+The **format** — what a `SimState` plus its world encodes to, and why worldgen is not re-run — is
+`.claude/rules/core_sim/checkpoints.md`. This file is the feature built on it: the wire, the files on
+disk, the load path's obligations, and the autosave cadence.
+
+## The blob is three parts, and only the last is compressed
+
+```text
+[ SAVE_MAGIC : 8 bytes ][ SaveHeader : CBOR ][ gzip( SavePayload : CBOR ) ]
+```
+
+The split exists so a **slot list costs a header, not a world**. Measured on a 160x104 world:
+
+| | cost |
+|---|---|
+| `read_save_header` | **0.005 ms** |
+| `decode_save` | 63 ms |
+| `encode_save` (capture + CBOR + gzip) | 118 ms |
+| a turn, for scale | 30 ms |
+| blob | 20,766,409 → **1,257,874 bytes** (16.5x) |
+
+Compression is level 6, not 9: level 9 gives 1,221,708 bytes — 2.9% smaller for materially more CPU
+on a blob the autosave rewrites on a cadence. The header stays **uncompressed** for the same reason
+it is a separate document: a listing that had to inflate before reading would pay a decompressor per
+row.
+
+> **The `BufWriter` around the gzip encoder is load-bearing, not tidiness.** `ciborium` writes in very
+> small pieces and `GzEncoder` deflates on every `write` it receives, so streaming CBOR straight into
+> the encoder made a 160x104 save take **1083 ms** — against 19 ms to encode the checkpoint and 86 ms
+> to gzip it. Almost all of it was per-call overhead rather than work on the data. Buffering removed
+> 9.1x. Anything else that streams a serializer into a compressor here needs the same treatment.
+
+**A version mismatch is a refusal, never a decode.** There is no back-compat and therefore no
+migration code; `SAVE_FORMAT_VERSION` exists so a stale save is *rejected by a typed error naming
+both versions* rather than mis-read into a plausible wrong world. It is checked before the payload is
+looked at, which is also what lets `read_save_header` gate a listing.
+
+## Four operations, three commands and one query
+
+| Operation | Proto | Why |
+|---|---|---|
+| `save_game` | `CommandEnvelope` field **66** | Writes a file |
+| `load_game` | field **67** | Replaces the world |
+| `delete_save` | field **68** | Removes a file |
+| `list_saves` | `QueryCommand.query` field **5** | Mutates nothing, so it is a query |
+
+Replies ride `QueryReplyEnvelope`: `ListSavesReply` at field **6**, `SaveOpReply` at **7**. The three
+commands carry a `request_id` and answer on that envelope **because it is the socket's one way back**,
+not because they are questions — a client that cannot tell whether its save landed has not saved.
+
+`list_saves` is answered **before the `world_active` gate**, from disk. A player opens the load menu
+when there is no world, and a `no_active_world` refusal there would make the feature unreachable from
+the one screen that needs it.
+
+## Slot names are whitelisted, because a slot name becomes a filename
+
+`validate_slot_name` accepts letters, digits, spaces, `-` and `_`, up to `MAX_SLOT_NAME_LEN`. That is
+a **whitelist, not a blacklist of the traversal spellings anyone thought of**: `..`, `/`, `\`, a
+leading `~`, a drive letter, a NUL and every control character are refused by the one rule, rather
+than by a list that has to stay ahead of three platforms' path grammars. The name arrives over the
+wire from a text field, so the question is not whether *this* client is careful. Refusal happens
+before any `PathBuf` is built.
+
+**`autosave` is reserved.** Only the autosave hook writes it; an explicit save naming it is refused
+with `save_error::RESERVED_SLOT`. A rolling backup a player can overwrite by accident is not a
+backup.
+
+Writes go to a `.partial` file and are renamed, so a crash mid-write leaves the previous save intact
+— which matters most for the slot the autosave rewrites on a cadence.
+
+A file that is not a save, or is one this build cannot read, is **skipped from the listing with a
+warning** rather than failing it: one corrupt file must not make the load menu unopenable, which is
+precisely when a player needs it.
+
+## What a load owes beyond restoring the world
+
+`handle_load_game` follows `handle_new_game`'s shape because it has the same obligations, plus one
+only a load has:
+
+- the snapshot sink is attached **before** the first capture, so the loaded world's baseline frame is
+  broadcast like every frame after it;
+- `WorldEpoch` is bumped, so the client's epoch gate treats it as a new world;
+- `world_active` flips;
+- **the `CommandLog` is re-based.** Everything before a load is unreachable, exactly as for
+  `new_game` and `reset_map` — without it a rollback would replay across the load into a world that
+  never existed.
+
+**A load does not run a turn.** `rebuild_world_from_config` ends in `run_turn` because a generated
+world needs `Startup`; a loaded world needs neither that (the worldgen chain is suppressed) nor a
+turn (it is already the world that was saved), so it publishes with `recapture_snapshot_in_place`.
+Running one was the first shape and it was wrong in a way the tick alone did not show: `run_turn`
+resolves a *real* turn, so the population aged and food was eaten, and restoring the tick number
+afterwards only hid it.
+
+**Decoding happens before anything about the running world changes**, so a save this build cannot
+read leaves the player where they were rather than half-way into a world that failed to arrive.
+
+`build_headless_app` runs worldgen in `Startup`, so the load inserts `SuppressWorldgen` before the
+first update. **Absence means "generate a world"** — every existing caller is unaffected, and it is
+the same shape as `Replaying`: a flag whose only job is to make one scheduled thing not happen.
+
+## The config-drift warning names files
+
+On load, the header's `ConfigFingerprint` is compared against the live one and the differing files
+are returned on `SaveOpReply.config_drift` — reaching the client, not just the server log, because
+the client is what shows it. Per file, because *"config changed"* is not actionable and
+*"`fauna_config.json` and `recipes.json` changed"* is.
+
+`ConfigDigestKind::{Absent, Builtin, File}` keeps **`Builtin` and `File` a real difference**: "no file
+was there, so the compiled-in copy loaded" and "a file was there and hashed to N" are different facts
+about where tuning came from, and collapsing them would report no change when the shipped file
+appeared or vanished. `Absent` holds 0 so a field the wire omits reads as *"this side said nothing
+about that config"*, which is exactly what it names. The hash itself is not published — a client can
+act on *this file changed* and can do nothing with the number it changed to.
+
+The world is restored **exactly as saved**; drift describes the tuning the turns *from here* will run
+under. Empty is the good case.
+
+## Autosave is a cadence, and the cadence is a lever
+
+Writing a save is not free — 118 ms against a 30 ms turn at 160x104 — so autosaving every turn would
+make one turn cost five. `autosave_interval_turns` decides how often instead; `0` switches it off.
+The cost then lands on one turn in N rather than on all of them, which a human-paced game absorbs.
+
+The alternative considered was keeping the encode on the turn thread and moving compress + write off
+it. Rejected: gzip is ~89 of the 118 ms, so it would help, but it buys a thread, a channel, overlapping
+-write semantics and a partial-file question — real concurrency for a cost a one-line cadence already
+removes.
+
+The hook runs **after** the turn is pushed to the command log, so a crash between the two leaves an
+autosave whose world the log can still reproduce. An autosave that cannot be written warns and the
+turn carries on: it is a convenience, and killing a live campaign over a full disk would be worse
+than losing the backup.
+
+## None of the save verbs are replayable
+
+`SaveGame` and `DeleteSave` touch a file and no world, so replaying them would re-do disk writes to
+change nothing about the world being replayed — the same reason the staged config overrides are
+excluded. `LoadGame` **replaces** the world, so there is nothing before it to replay from; it re-bases
+the origin instead of being logged.
+
+## Config files
+
+| File | Key | Purpose |
+|---|---|---|
+| `src/data/simulation_config.json` | `autosave_interval_turns` (**10**) | How often the `autosave` slot is rewritten, in turns. `0` disables it. At 160x104 that is ~118 ms of encode on one turn in ten rather than on every turn |
+
+## Environment
+
+`SIM_SAVE_DIR` overrides where slots live; the default is `./saves`, relative to the server's working
+directory. Listed in `core_sim/CLAUDE.md` → Environment Overrides with the rest of the family.

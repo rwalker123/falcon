@@ -1448,6 +1448,7 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "env_logger",
+ "flate2",
  "glam 0.25.0",
  "insta",
  "log",

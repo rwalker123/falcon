@@ -8,7 +8,7 @@
 //! ## The blob
 //!
 //! ```text
-//! [ SAVE_MAGIC : 8 bytes ][ SaveHeader : one CBOR document ][ SavePayload : one CBOR document ]
+//! [ SAVE_MAGIC : 8 bytes ][ SaveHeader : one CBOR document ][ gzip( SavePayload : one CBOR doc ) ]
 //! ```
 //!
 //! Three parts in that order so a **slot list can be built without decoding the payload**: the menu
@@ -16,6 +16,12 @@
 //! identity. Paying a full world decode per row to render a list is the thing the split exists to
 //! avoid, and `ciborium` reads exactly one document from a reader, so the two documents cost nothing
 //! to separate.
+//!
+//! **Only the payload is compressed**, which is the same split for the same reason: a header the
+//! listing has to inflate before reading is a header the listing pays a decompressor for. Measured
+//! on a 160x104 world, the payload goes 20,766,409 -> 1,257,874 bytes at
+//! [`PAYLOAD_COMPRESSION_LEVEL`] — CBOR writes a field-name string per field per tile, so the
+//! redundancy is enormous and gzip finds essentially all of it.
 //!
 //! ## Version mismatch is a refusal, not an attempt
 //!
@@ -38,9 +44,12 @@
 //! `GenerationRegistry` and `GreatDiscoveryRegistry` need no work at all: `build_headless_app` fills
 //! both from live config before any world exists, so a freshly built app already has them.
 
-use std::io::Cursor;
+use std::io::{BufWriter, Cursor, Read};
 
 use bevy::prelude::*;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -77,6 +86,17 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// There is no migration path by design — see the module note. A save from a different version is
 /// refused with [`SaveError::VersionMismatch`].
 pub const SAVE_FORMAT_VERSION: u32 = 1;
+
+/// gzip level for the payload document.
+///
+/// **6, not 9.** Measured on a 160x104 world: level 6 takes the payload to 1,257,874 bytes and
+/// level 9 to 1,221,708 — 2.9% smaller for materially more CPU, on a blob the autosave hook rewrites
+/// on a cadence. The size that mattered was the 16.5x, and level 6 has all of it.
+pub const PAYLOAD_COMPRESSION_LEVEL: u32 = 6;
+
+/// How much CBOR to accumulate before handing it to the deflater. See
+/// [`append_compressed_payload`] for the 57x this is worth.
+const PAYLOAD_WRITE_BUFFER_BYTES: usize = 64 * 1024;
 
 /// Which world this is, so a loader can say what it is about to open — and so a save cannot be
 /// silently opened against a build whose map would come out different.
@@ -149,6 +169,10 @@ pub enum SaveError {
     Payload(#[source] ciborium::de::Error<std::io::Error>),
     #[error("the save could not be encoded: {0}")]
     Encode(#[source] ciborium::ser::Error<std::io::Error>),
+    #[error("the save payload could not be decompressed: {0}")]
+    Decompress(#[source] std::io::Error),
+    #[error("the save payload could not be compressed: {0}")]
+    Compress(#[source] std::io::Error),
 }
 
 /// Set on a world that is about to be loaded into, so `Startup`'s worldgen chain does not run.
@@ -215,8 +239,27 @@ pub fn encode_save(world: &World) -> Result<Vec<u8>, SaveError> {
 
     let mut bytes = Vec::from(SAVE_MAGIC);
     ciborium::into_writer(&header, &mut bytes).map_err(SaveError::Encode)?;
-    ciborium::into_writer(&payload, &mut bytes).map_err(SaveError::Encode)?;
+    append_compressed_payload(&mut bytes, &payload)?;
     Ok(bytes)
+}
+
+/// Encode the payload and gzip it onto the end of `bytes`.
+///
+/// **The `BufWriter` is not optional.** `ciborium` writes in very small pieces — a byte for most
+/// headers, then the item — and `GzEncoder` deflates on every `write` call it receives. Streaming
+/// CBOR straight into the encoder made a 160x104 save take **1083 ms**, against 19 ms to encode the
+/// checkpoint and 86 ms to gzip it; almost all of that was per-call deflate overhead rather than any
+/// work on the data. Buffering into `PAYLOAD_WRITE_BUFFER_BYTES` chunks removes it.
+fn append_compressed_payload(bytes: &mut Vec<u8>, payload: &SavePayload) -> Result<(), SaveError> {
+    let encoder = GzEncoder::new(Vec::new(), Compression::new(PAYLOAD_COMPRESSION_LEVEL));
+    let mut buffered = BufWriter::with_capacity(PAYLOAD_WRITE_BUFFER_BYTES, encoder);
+    ciborium::into_writer(payload, &mut buffered).map_err(SaveError::Encode)?;
+    let encoder = buffered
+        .into_inner()
+        .map_err(|err| SaveError::Compress(err.into_error()))?;
+    let compressed = encoder.finish().map_err(SaveError::Compress)?;
+    bytes.extend_from_slice(&compressed);
+    Ok(())
 }
 
 /// Check the magic and hand back everything after it.
@@ -251,10 +294,20 @@ fn check_version(header: &SaveHeader) -> Result<(), SaveError> {
 
 /// Decode a whole save. The version is checked before the payload is looked at.
 pub fn decode_save(bytes: &[u8]) -> Result<(SaveHeader, SavePayload), SaveError> {
-    let mut cursor = Cursor::new(strip_magic(bytes)?);
+    let body = strip_magic(bytes)?;
+    let mut cursor = Cursor::new(body);
     let header: SaveHeader = ciborium::from_reader(&mut cursor).map_err(SaveError::Header)?;
     check_version(&header)?;
-    let payload: SavePayload = ciborium::from_reader(&mut cursor).map_err(SaveError::Payload)?;
+
+    // Everything the header did not consume is the gzipped payload document. Taking the cursor's
+    // position is what keeps the two documents' boundary a fact about the encoding rather than a
+    // length field that could disagree with it.
+    let payload_start = cursor.position() as usize;
+    let mut raw = Vec::new();
+    GzDecoder::new(&body[payload_start..])
+        .read_to_end(&mut raw)
+        .map_err(SaveError::Decompress)?;
+    let payload: SavePayload = ciborium::from_reader(raw.as_slice()).map_err(SaveError::Payload)?;
     Ok((header, payload))
 }
 
