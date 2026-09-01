@@ -158,7 +158,7 @@ wrapped `##` section instead. Follow the shape the file already uses.
 | `map-renderers.md` | `MapView`'s renderer decomposition and the 2D minimap | `MapView.gd`, `Minimap*.gd`, `*Renderer.gd` |
 | `fog-of-war.md` | Fog of war is server-owned: preference → command → snapshot → render | `MapView.gd`, `Main.gd`, `MenuShell.gd`, `ClientSettings.gd` |
 | `interface-scale.md` | The Options interface-scale slider: the UI scales, the map counter-scales to hold still | `ui_scaler.gd`, `ClientSettings.gd`, `MenuShell.gd`, `MapView.gd` |
-| `polled-input-focus.md` | The two polled-input sites, the shared "is the player typing?" predicate, and the focus release it depends on | `TextEntryFocus.gd`, `MapView.gd`, `Main.gd`, `MenuShell.gd` |
+| `keyboard-arbiter.md` | Who owns the keyboard: the registry of every gameplay key, the three-owner arbiter, exact matching, and the focus release it depends on | `KeyboardArbiter.gd`, `TextEntryFocus.gd`, `MapView.gd`, `Main.gd`, `MenuShell.gd` |
 | `map-markers.md` | The layered hex-icon stack UX | `BandMarkerRenderer.gd`, `SecondaryMarkerRenderer.gd` |
 | `roads.md` | The roads in the ground: the rung ladder on the map, the tile card's road readout, the `roadwork` pool | `hud_route_vocab.gd`, `AnnotationRenderer.gd`, `dict/routes.rs` |
 | `overlay-channels.md` | Selected-band/herd overlays, annotations, worked-source marks | `BandOverlayRenderer.gd`, `AnnotationRenderer.gd` |
@@ -261,6 +261,12 @@ shown build can never go stale.
 | `R` | Show/hide the **event dock** (the notification bar; **shown by default**, persisted) |
 | Double-click herd | Quick-assign the player band's idle workers to hunt it (Sustain) |
 | `Esc` | Close the compose sheet, else cancel targeting, else open/close the pause menu (`Main.escape_claimant`) |
+
+**EVERY KEY ABOVE IS INERT WHILE SOMETHING ELSE OWNS THE KEYBOARD** — while a `LineEdit`/`TextEdit`
+holds focus, or while the pause menu is open. `Esc` is the exception, since it is how the player gets
+out. One registry declares every gameplay key and one pure arbiter decides who may act
+(`src/scripts/KeyboardArbiter.gd`, gated by `cargo xtask hotkey-guard`); a new hotkey that is not a
+row in it fails that gate. See `.claude/rules/client/keyboard-arbiter.md`.
 
 **Speed scaling:** WASD pan / Q·E zoom, the trackpad pan + pinch gestures, and mouse-wheel zoom are
 all scaled by the Options menu's **Map pan speed** / **Zoom speed** sliders (`ClientSettings`,

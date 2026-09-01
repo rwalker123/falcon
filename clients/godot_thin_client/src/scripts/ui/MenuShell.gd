@@ -1443,7 +1443,7 @@ func _on_delete_cancelled() -> void:
 ##
 ## The client's two POLLED keyboard reads — `MapView`'s pan/zoom and `Main`'s five toggle hotkeys —
 ## sample raw device state and never touch the event system, so both are suppressed while a
-## `LineEdit`/`TextEdit` holds focus (`TextEntryFocus`). That guard's mirror-image failure is focus
+## `LineEdit`/`TextEdit` holds focus (`TextEntryFocus`, read by `KeyboardArbiter`). Its mirror-image failure is focus
 ## left STUCK: a field that keeps the keyboard after its surface is gone makes the map permanently
 ## unresponsive and the panel toggles dead, with nothing on screen to explain why — strictly worse
 ## than the map panning while you type. So this file, which owns the only text fields in the menu,

@@ -1,19 +1,18 @@
 extends RefCounted
 
-## **IS THE PLAYER TYPING?** — the ONE definition, shared by every site that has to know.
+## **IS THE PLAYER TYPING?** — the ONE definition, and one of the two inputs to the arbiter.
 ##
-## Two things in this client read the keyboard by POLLING the `Input` singleton rather than by
-## handling an event: `MapView._process` (pan/zoom, `get_action_strength`) and `Main._process` (the
-## five toggle hotkeys, `is_action_just_pressed`). **Polling samples raw device state and never
-## enters the event system**, so a focused `LineEdit` consuming the keystroke is irrelevant to it —
-## typing a save's name panned the map with W/A/S/D and toggled the event dock with `r`. Every other
-## keyboard path in the client is event-driven and is correctly starved by a focused Control.
+## `KeyboardArbiter.owner_for` asks this to decide whether `OWNER_TEXT_ENTRY` holds the keyboard; see
+## that file for the policy this feeds. **Focus is not a gate on its own**, which is the mistake this
+## file used to encode: polled reads (`MapView._process`, `Main._process`) never enter the event
+## system at all, and a focused `LineEdit` consumes only the keys it USES — everything else still
+## falls through to `_unhandled_input`. So the answer here is an INPUT to the decision, never the
+## decision.
 ##
-## **IT IS ONE FILE BECAUSE TWO COPIES DRIFT.** The predicate started as a private method on
-## `MapView` and `Main`'s hotkeys were fixed a commit later; the moment someone adds a `SpinBox` or a
-## rich-text field to one copy and not the other, the bug returns in half the client and looks like a
-## different bug. `MenuShell`'s focus RELEASE asks the same question about a single node, so it comes
-## through here too — there is no second spelling of "this is a text field" anywhere.
+## **IT IS ITS OWN FILE BECAUSE THE OTHER CALLER IS NOT ARBITRATING.** `MenuShell.release_text_focus`
+## asks `is_text_entry` about a single node when it HANDS THE KEYBOARD BACK — the mirror-image
+## failure, and a different question from "who may act". Two spellings of "this is a text field" is
+## how a later `SpinBox` gets added to one and not the other, so there is exactly one.
 ##
 ## **TEXT ENTRY ONLY, NEVER "ANYTHING FOCUSED".** A focused Button does not consume letters, so
 ## suppressing hotkeys whenever a button held focus would kill WASD and the toggles after every click
@@ -29,8 +28,8 @@ static func is_text_entry(node: Object) -> bool:
 	return node is LineEdit or node is TextEdit
 
 
-## **THE GUARD.** True when this viewport's keyboard focus sits in a text field, i.e. when a polled
-## read would be stealing a keystroke the player meant for that field.
+## True when this viewport's keyboard focus sits in a text field — i.e. when a gameplay key would be
+## stealing a keystroke the player meant for that field.
 ##
 ## A null viewport answers `false`: a node outside the tree cannot be competing with a field for the
 ## keyboard, and refusing to poll there would silently disable the map in a harness.

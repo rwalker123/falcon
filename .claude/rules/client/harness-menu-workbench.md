@@ -62,8 +62,8 @@ expressed as OFFSETS from now (a fixed stamp would drift into another bucket as 
 only the date row carries a fixed stamp, since that branch has no bucket to drift out of.
 
 **One check takes no picture at all.** `_assert_text_focus_is_handed_back` covers the keyboard
-handover behind the client's two polled-input guards
-(`.claude/rules/client/polled-input-focus.md`): typing must leave the
+handover the client's arbiter depends on
+(`.claude/rules/client/keyboard-arbiter.md`): typing must leave the
 Save pane's name field holding focus; `release_text_focus`, a pane switch and a submit must each hand
 it back; and a focused **Button** must NOT read as text entry, since widening the predicate would
 kill WASD and every panel toggle after each click on a HUD control. The POSITIVE legs are what keep

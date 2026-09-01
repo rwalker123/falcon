@@ -16,9 +16,10 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 @onready var workbench_layer: CanvasLayer = $Workbench
 @onready var event_dock: CanvasLayer = $EventDockPanel
 @onready var pause_layer: CanvasLayer = $PauseLayer
-## **THE ONE "is the player typing?" PREDICATE**, shared with `MapView`'s pan/zoom poll and
-## `MenuShell`'s focus release. See the file for why it is not a private method here.
-const TextEntryFocus := preload("res://src/scripts/TextEntryFocus.gd")
+## **WHO OWNS THE KEYBOARD** — the registry of every gameplay key and the arbiter that says which
+## classes may act. This node reads `CLASS_PANEL_TOGGLE` (polled, in `_process`) and `CLASS_ESCAPE`
+## (in `_unhandled_input`), and it PUSHES the modal-menu half of the arbiter's state to `MapView`.
+const KeyboardArbiter := preload("res://src/scripts/KeyboardArbiter.gd")
 
 @onready var pause_menu: MenuShell = $PauseLayer/MenuShell
 
@@ -129,10 +130,6 @@ const LOADING_OVERLAY_LAYER = 150
 ## side of the tie (the surface being toggled is the one that should be legible mid-reflow), and the
 ## two never overlap in steady state anyway: the Band panel offsets past the Workbench's reservation.
 const WORKBENCH_LAYER = 103
-## Toggle action for the designer surface. **Backquote**, which nothing else in the client binds (the
-## hotkey table in `clients/godot_thin_client/CLAUDE.md` is the roster) and which costs the game no
-## letter it may still want.
-const WORKBENCH_TOGGLE_ACTION := "toggle_workbench"
 const WORKBENCH_RESERVER := &"workbench"
 ## Receipt the command log shows for a Workbench-issued command; `%s` is the command's verb. The verb
 ## alone, because the argument is a JSON patch that would swamp the feed.
@@ -410,11 +407,9 @@ func _ready() -> void:
                 hud.connect("faction_knowledge_changed", Callable(map_view, "set_faction_knowledge"))
     if inspector != null and inspector.has_method("set_streaming_active"):
         inspector.call("set_streaming_active", streaming_mode)
-    _ensure_action_binding("toggle_inspector", Key.KEY_I)
-    _ensure_action_binding("toggle_victory", Key.KEY_V)
-    _ensure_action_binding("toggle_event_dock", Key.KEY_R)
-    _ensure_action_binding("toggle_fow", Key.KEY_F)
-    _ensure_action_binding(WORKBENCH_TOGGLE_ACTION, Key.KEY_QUOTELEFT)
+    # The five panel-toggle bindings come from the REGISTRY, not from five literals here — a second
+    # copy of the key roster is how a hotkey ends up governed by a class it is not in.
+    KeyboardArbiter.ensure_action_bindings(KeyboardArbiter.CLASS_PANEL_TOGGLE)
     if inspector != null and inspector.has_signal("reserved_width_changed") and not inspector.is_connected("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed")):
         inspector.connect("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed"))
     if inspector != null and inspector.has_method("reserved_width"):
@@ -428,8 +423,7 @@ func _ready() -> void:
 ## returns to the landing screen, Exit quits. New Game is deliberately absent in pause mode —
 ## Abandon routes back to the landing screen, which owns the New Game flow.
 func _connect_pause_menu() -> void:
-    if pause_layer != null:
-        pause_layer.visible = false
+    _set_pause_menu_open(false)
     if pause_menu == null:
         return
     pause_menu.mode = MenuShell.PAUSE
@@ -446,8 +440,7 @@ func _connect_pause_menu() -> void:
     pause_menu.set_save_slots(save_slots)
 
 func _show_pause_menu() -> void:
-    if pause_layer != null:
-        pause_layer.visible = true
+    _set_pause_menu_open(true)
 
 func _hide_pause_menu() -> void:
     # **HIDING A `CanvasLayer` DOES NOT RELEASE FOCUS.** `CanvasLayer` is not a `CanvasItem`, so its
@@ -456,8 +449,24 @@ func _hide_pause_menu() -> void:
     # guard: WASD would stay dead for the rest of the session with nothing on screen to explain it.
     if pause_menu != null and pause_menu.has_method("release_text_focus"):
         pause_menu.call("release_text_focus")
+    _set_pause_menu_open(false)
+
+## **THE ONE WRITER OF `pause_layer.visible`**, because the overlay is now an ARBITER INPUT and not
+## just a picture: an open modal menu owns the keyboard, so every other consumer has to learn about
+## it the instant it opens. `MapView` cannot see `$PauseLayer` — it is `Main`'s node — so the flag is
+## pushed, the same coordinator mediation every other cross-node fact here uses. Routing all three
+## call sites through one setter is what keeps the push from being forgotten at one of them.
+func _set_pause_menu_open(open: bool) -> void:
     if pause_layer != null:
-        pause_layer.visible = false
+        pause_layer.visible = open
+    if map_view != null and map_view.has_method("set_modal_menu_open"):
+        map_view.call("set_modal_menu_open", open)
+
+## **WHO OWNS THE KEYBOARD THIS FRAME**, for this node's polled hotkey block. `pause_layer.visible`
+## is read live here — the same expression `escape_claimant` is driven with — rather than mirrored,
+## because this is the node the overlay belongs to.
+func _keyboard_owner() -> String:
+    return KeyboardArbiter.owner_for(get_viewport(), pause_layer != null and pause_layer.visible)
 
 ## Abandon ENDS the run, so the parameters it was built from stop being anybody's answer: the landing
 ## screen owns the next world's, and leaving this run's armed would let a later theme apply there
@@ -2887,23 +2896,23 @@ func _process(delta: float) -> void:
     # **THE FIVE TOGGLE HOTKEYS ARE POLLED, so a focused text field does not starve them.**
     # `Input.is_action_just_pressed` samples raw device state and never enters the event system: the
     # `r` in a save's name toggled the event dock behind the menu, and `i`/`v`/`f`/`` ` `` did the
-    # same for their panels. This is the SECOND of the client's two polled keyboard reads — the other
-    # is `MapView`'s pan/zoom — and both ask the one predicate.
+    # same for their panels. `exact_match = true` is the other half — polled matching is NON-exact by
+    # default, so the bare-`r` binding fired for `Ctrl+R` as well.
     #
     # **THE GUARD IS THIS BLOCK AND NOTHING ELSE.** Every line below it must keep running while the
     # player types: the query pump is what carries the answer to the save they are naming, and the
     # snapshot drain, the connection poll and the world-request retry all have nothing to do with the
     # keyboard. A guard around the whole of `_process` would stall the very socket the save needs.
-    if not TextEntryFocus.held_in(get_viewport()):
-        if Input.is_action_just_pressed("toggle_inspector"):
+    if KeyboardArbiter.allows(_keyboard_owner(), KeyboardArbiter.CLASS_PANEL_TOGGLE):
+        if Input.is_action_just_pressed("toggle_inspector", true):
             _toggle_inspector_visibility()
-        if Input.is_action_just_pressed("toggle_victory"):
+        if Input.is_action_just_pressed("toggle_victory", true):
             _toggle_victory_visibility()
-        if Input.is_action_just_pressed("toggle_event_dock"):
+        if Input.is_action_just_pressed("toggle_event_dock", true):
             _toggle_event_dock_visibility()
-        if Input.is_action_just_pressed("toggle_fow"):
+        if Input.is_action_just_pressed("toggle_fow", true):
             _toggle_fow_overlay()
-        if Input.is_action_just_pressed(WORKBENCH_TOGGLE_ACTION):
+        if Input.is_action_just_pressed("toggle_workbench", true):
             _toggle_workbench_visibility()
     if command_client != null:
         command_client.poll()
@@ -3001,20 +3010,6 @@ func _apply_startup_view() -> void:
         band_tile = hud.call("get_player_band_tile")
     if band_tile.x >= 0 and band_tile.y >= 0 and map_view.has_method("focus_on_tile"):
         map_view.call("focus_on_tile", band_tile.x, band_tile.y)
-
-func _ensure_action_binding(action_name: String, keycode: Key) -> void:
-    if not InputMap.has_action(action_name):
-        InputMap.add_action(action_name)
-    var events := InputMap.action_get_events(action_name)
-    for event in events:
-        if event is InputEventKey:
-            var key_event := event as InputEventKey
-            if key_event.physical_keycode == keycode or key_event.keycode == keycode:
-                return
-    var ev := InputEventKey.new()
-    ev.physical_keycode = keycode
-    ev.keycode = keycode
-    InputMap.action_add_event(action_name, ev)
 
 ## Is this frame a delta? Read off `frame_kind`, which the decoder stamps from the envelope's own
 ## payload discriminant — the authoritative answer, not an inference.

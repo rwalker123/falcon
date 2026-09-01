@@ -281,20 +281,19 @@ func _run_saves_states() -> void:
 ## **THE KEYBOARD IS BORROWED, NOT TAKEN** — the behavioural half of `MapView`'s polled-input guard,
 ## and it takes no PNG because none of it is visible.
 ##
-## The client has TWO polled keyboard reads — `MapView._process` (pan/zoom, `get_action_strength`)
-## and `Main._process` (the five toggle hotkeys, `is_action_just_pressed`). Both sample raw device
-## state and never touch the event system, so both steal keystrokes from a focused field unless told
-## not to, and both ask the ONE predicate this file also asks: `TextEntryFocus.held_in`.
+## Every gameplay key in the client is arbitrated by `KeyboardArbiter`, and one of the two facts that
+## arbiter runs on is the ONE predicate this file also asks: `TextEntryFocus.held_in`. (The other is
+## whether a modal menu is open.)
 ##
 ## That guard's failure in the other direction is worse than the bug it fixes: focus left STUCK after
 ## the pane is gone kills WASD *and* every panel toggle for the rest of the session, with nothing on
 ## screen to explain it. So both halves are asserted — the field TAKES focus, and every exit HANDS IT
 ## BACK.
 ##
-## **WHAT THIS HARNESS CANNOT PROVE**: neither `MapView` nor `Main` is instantiated here, so neither
-## `_process` ever runs and the suppression itself — that a guarded hotkey does not fire — is
-## untested. What IS tested is the predicate the two of them branch on, called directly, against a
-## really focused field.
+## **WHAT THIS HARNESS CANNOT PROVE**: neither `MapView` nor `Main` is instantiated here, so the
+## suppression itself — that a guarded hotkey does not fire — is untested. What IS tested is the
+## predicate the arbiter runs on, called directly, against a really focused field. The suppression is
+## `tools/hotkey_guard.gd`'s job.
 func _assert_text_focus_is_handed_back() -> void:
 	if _drift_notice != null:
 		_drift_notice.queue_free()
@@ -356,8 +355,8 @@ func _assert_text_focus_is_handed_back() -> void:
 	probe.queue_free()
 
 
-## **THE SHIPPED PREDICATE, CALLED** — not a restatement of it. `MapView._text_entry_has_focus` and
-## `Main._process`'s hotkey guard are both exactly this call, so a drift in it fails here.
+## **THE SHIPPED PREDICATE, CALLED** — not a restatement of it. `KeyboardArbiter.owner_for` makes
+## exactly this call to decide whether text entry owns the keyboard, so a drift in it fails here.
 func _focused_is_text_entry() -> bool:
 	return TextEntryFocus.held_in(get_viewport())
 

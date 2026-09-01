@@ -392,8 +392,9 @@ Minimap sizing parameters live in `heightfield_config.json` (the file also holds
 
 ## Typing must not drive the game
 
-The client reads the keyboard by POLLING in two places — `MapView._process` (pan/zoom) and
-`Main._process` (the five toggle hotkeys) — and polling never enters the event system, so both steal
-keystrokes from a focused text field unless told not to. The guard, the one shared predicate and the
-focus release it depends on are `.claude/rules/client/polled-input-focus.md`, which loads on all four
-files involved. **`C`/`H`/`T` and the targeting Escape are `_unhandled_input` and need no guard.**
+Both of this node's keyboard readers ask `KeyboardArbiter` first: the POLLED pan/zoom in `_process`
+(which never enters the event system, so a focused field does not starve it) and the RAW `C`/`H`/`T`
+in `_unhandled_input` (which a focused `LineEdit` does not starve either — it consumes the keys it
+USES and lets the rest fall through). The registry, the three-owner policy, exact matching and the
+focus release they depend on are `.claude/rules/client/keyboard-arbiter.md`. **The targeting Escape
+is the one deliberately unarbitrated key here** — `ESCAPE` acts under every owner.
