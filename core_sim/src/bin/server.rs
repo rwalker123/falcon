@@ -1105,6 +1105,21 @@ fn spawn_command_listener(listener: TcpListener) -> (Receiver<Command>, Sender<C
         match listener.accept() {
             Ok((stream, addr)) => {
                 info!("Command client connected: {}", addr);
+                // **Put the accepted socket back into blocking mode, because on BSD/macOS it
+                // inherited the listener's non-blocking flag.** `handle_proto_client` blocks in
+                // `read_exact` waiting for the next frame; on a non-blocking socket that returns
+                // `WouldBlock` the instant the client has nothing queued, which the read loop can
+                // only read as a broken connection — so it warns and drops it. The observed cost
+                // was a `Proto command length read error: Resource temporarily unavailable` on
+                // **every** connection, and the read loop racing the client's own write: a command
+                // written a hair after the accept was silently lost. Linux does not inherit the
+                // flag, so this is also what makes the two platforms behave the same.
+                if let Err(err) = stream.set_nonblocking(false) {
+                    warn!(
+                        "Failed to set blocking mode on command client {}: {}",
+                        addr, err
+                    );
+                }
                 let sender = sender_for_thread.clone();
                 thread::spawn(move || handle_proto_client(stream, sender));
             }

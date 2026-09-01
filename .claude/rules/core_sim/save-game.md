@@ -6,6 +6,7 @@ paths:
   - "core_sim/src/bin/server.rs"
   - "sim_runtime/proto/command.proto"
   - "core_sim/tests/save_round_trip.rs"
+  - "core_sim/tests/save_load_over_the_socket.rs"
   - "core_sim/src/snapshot/capture.rs"
   - "core_sim/src/snapshot/publish.rs"
 ---
@@ -171,6 +172,69 @@ The hook runs **after** the turn is pushed to the command log, so a crash betwee
 autosave whose world the log can still reproduce. An autosave that cannot be written warns and the
 turn carries on: it is a convenience, and killing a live campaign over a full disk would be worse
 than losing the backup.
+
+## The socket test — because every other save/load test asserts on the wrong side of the wire
+
+Both defects above shipped **under a passing suite**, and the common cause is not that the
+assertions were weak. It is that every save/load test drives `apply_command` in process and asserts
+on server state, so nothing exercised the path a client actually uses.
+`core_sim/tests/save_load_over_the_socket.rs` closes that: new game → turns → `save_game` →
+`load_game`, driven over TCP, asserting on the decoded FlatBuffers frames.
+
+**It spawns the built `server` binary as a child process.** Standing the socket layer up in process
+was the alternative and it is the wrong one here: the main loop in `bin/server.rs` — the
+`world_active` gate, the dispatch, the load handler, the post-command recapture — is *where both
+defects lived*, so a test that rebuilt any of it would test the copy. `CARGO_BIN_EXE_server` is
+also what makes cargo build the binary before the test runs, and it is defined **only for the
+package that owns the bin**, which is why the file lives in `core_sim/tests/` and not in
+`integration_tests/` (from there the path would be guessed, and `cargo test -p integration_tests`
+would never build it).
+
+**It talks the client's transport, verb for verb: one TCP connection per command.**
+`transmit_proto_command` in the Godot native bridge connects, writes one length-prefixed frame and
+drops the socket; the save and query verbs do the same and merely hold the connection open to read
+the answer (`bridge/query.rs`). Holding one persistent connection instead would exercise a path no
+client uses, which is the mistake the whole test exists to stop making. The cost of fire-and-forget
+is that two commands in flight could reach the dispatch loop in either order, so **every command is
+sent only after the previous one's effect has been observed** — a frame on the snapshot socket, or a
+`SaveOpReply` on the command socket. That is the synchronisation; there are no sleeps anywhere in
+the test.
+
+**`frameSeq == 1` is what makes the full-frame assertion mean anything.** "The load published a
+delta" and "the test joined after the load's baseline" are indistinguishable from the frame alone,
+and the second is a live possibility (`world-handoff.md` — a frame broadcast while a connection sits
+in the listen backlog reaches nobody). A world's first publication is always `frameSeq == 1`
+(`next_publication` counts up from a fresh `SnapshotHistory` per world), so asserting it *first*
+turns the ambiguity into a distinguishable failure. The `new_game` reveal handles the same race the
+way the client does — one retry, taken only when the first frame proves we joined late.
+
+Ports are never fixed: the base is moved out of the human-facing range through a patched
+`simulation_config.json` under `SIM_CONFIG_PATH` (**not** `SIM_PORT_BASE`, which makes the base
+explicit and therefore fatal on a collision), so `port_alloc` auto-bumps past a busy block, and the
+test reads the block the server actually bound from `SIM_PORTS_FILE` — the client's own discovery
+path. `SIM_SAVE_DIR`, the config and the log all live in one scratch directory that drops with the
+test; the child is killed on drop, panic included. Every wait is a deadline whose message names what
+never arrived and quotes the server's own log. It adds ~6 s to the suite.
+
+**Both defects were re-introduced and confirmed caught**: `recapture_snapshot_in_place` in
+`publish_loaded_world` fails on *"a loaded world's first frame must be a FULL snapshot … it was a
+delta"*, and a `run_turn` there fails on the tick (`left: 5, right: 4`). A test for a defect that has
+already been fixed is worth exactly what its sabotage run proves.
+
+## An accepted command socket must be put back into blocking mode
+
+`spawn_command_listener` sets the **listener** non-blocking so its accept loop can poll. On BSD and
+macOS an accepted socket **inherits that flag**; on Linux it does not. `handle_proto_client` then
+blocks in `read_exact` waiting for the client's next frame — which on a non-blocking socket returns
+`WouldBlock` the instant nothing is queued, and the read loop can only read that as a broken
+connection, so it warns and drops it.
+
+The live symptom on macOS was `Proto command length read error: Resource temporarily unavailable`
+on **every** connection, and a genuine race: a command written a hair after the accept was read as a
+dead socket and **silently lost**, with only a WARN. It never became a visible bug because the
+shipped client opens a connection per command and the reply writer holds its own `try_clone`d half,
+so the answer to the one command still went out. The accept arm now calls `set_nonblocking(false)`,
+which also makes the two platforms behave identically.
 
 ## None of the save verbs are replayable
 
