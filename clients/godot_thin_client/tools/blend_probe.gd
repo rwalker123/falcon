@@ -714,9 +714,28 @@ const ROAD_GRID_W := ISO_GRID_W
 const ROAD_GRID_H := ISO_GRID_H
 const ROAD_FIELD_ID := ISO_ISLAND_ID    # prairie — the tan steppe the opacity ladder was measured on
 
-# State 18 (ROADS): the RUNG SWEEP. Four contiguous runs, one per rung, each at build_fraction 0.0, so
-# every surface is seen at its OWN rung's width and opacity with no wear mixed in. Contiguous because a
-# run of separated tiles is not a road under the connection-mask model — it is four lone centre discs.
+## **THE METER AN IDLE ROAD SENDS.** Not a placeholder: `HudRouteVocab.ROAD_METER_COMPLETE` is the wire's
+## spelling of *nothing is rising*, so it is what every road in the game reads while nobody is raising the
+## next rung. Every frame in this block that is not about a climb stages it.
+const ROAD_IDLE_METER := HudRouteVocab.ROAD_METER_COMPLETE
+
+## The RENDERER probe the idle guard compares against — **a value the WIRE never sends**, and it is here
+## for exactly that reason. `s = rung + 0` is the one ladder position that reads the same under any
+## interpretation of the meter, so it is a fixed point to hold the idle road against: an idle road that
+## draws anything else is drawing a rung it does not hold. It never reaches a saved frame.
+const ROAD_LADDER_RUNG_FLOOR_METER := 0.0
+
+# State 18 (ROADS): the RUNG SWEEP. Four contiguous runs, one per rung, each IDLE, so every surface is
+# seen at its OWN rung's width and opacity with no climb mixed in. Contiguous because a run of separated
+# tiles is not a road under the connection-mask model — it is four lone centre discs.
+#
+# ⛔ **AN IDLE ROAD PUBLISHES A *FULL* METER, AND STAGING `0.0` HERE ASSERTED NOTHING.** `build_fraction`
+# measures the rung AT RISK, which is the HELD rung while nothing is banked (`routes::road_at_risk_rung`),
+# so `ROAD_METER_COMPLETE` is what every road nobody is upgrading sends — the steady state of the whole
+# free floor — and a `0.0` meter is a reading the sim can NEVER produce, because a road that is raising
+# has banked work and therefore a meter strictly above zero. These frames stood at `0.0` and so agreed
+# with the renderer about a value the wire never sends, which is why they showed four correct rungs while
+# every idle road on the real map drew one rung too high.
 const ROAD_SWEEP_COL_START := 2
 const ROAD_SWEEP_COL_END := 12          # exclusive
 const ROAD_SWEEP_ROWS := [1, 3, 5, 7]   # one per rung, two rows apart so no run touches another
@@ -727,9 +746,15 @@ const ROAD_SWEEP_ROWS := [1, 3, 5, 7]   # one per rung, two rows apart so no run
 # ladder these span s = 0.00 … 1.00 and must differ visibly in width AND opacity, run to run.
 # **If these five look alike, the slice has failed, whatever else passes.**
 const ROAD_WEAR_ROWS := [1, 3, 5, 7, 9]
-const ROAD_WEAR_FRACTIONS := [0.0, 0.25, 0.5, 0.75, 1.0]
+# ⛔ **NEITHER ENDPOINT IS LEGAL, so neither is staged.** A road that is RAISING has banked work in the
+# rung above, which is what puts that rung at risk — so its meter is strictly INSIDE (0, 1): `0.0` cannot
+# be reached (banked work means a meter above zero) and `1.0` is not a climb at all but the wire's way of
+# saying nothing is rising, which the packer collapses to the rung's own floor. The sweep therefore runs
+# 5% → 95%: five readings the sim can actually produce, spanning as much of the climb as exists.
+const ROAD_WEAR_FRACTIONS := [0.05, 0.25, 0.5, 0.75, 0.95]
 
-# ⛔ **THE WEAR LADDER'S OWN GUARD, and it is the only assertion in this file's road states.** It walks
+# ⛔ **THE WEAR LADDER'S OWN GUARD** — one of the three this file's road states carry, beside the
+# idle-rung guard in 18/ROADS and the lone-tile guard in 20/JUNCT. It walks
 # ROAD_WEAR_FRACTIONS one step at a time, handing each step over as a frame whose manifest names
 # `routes` and NOTHING else, and requires the rendered map to MOVE at every step. That single loop
 # holds two properties at once, and both of them fail silently otherwise:
@@ -743,6 +768,11 @@ const ROAD_WEAR_FRACTIONS := [0.0, 0.25, 0.5, 0.75, 1.0]
 # moves the full width of the frame and the count is nowhere near the threshold from either side.
 const ROAD_WEAR_STEP_MIN_CHANGED_PX := 2000
 
+## **HOW MANY PIXELS MAY MOVE BETWEEN AN IDLE ROAD AND THE LADDER'S OWN RUNG FLOOR: NONE.** See
+## `_assert_road_idle_draws_its_own_rung` — the two frames are one fixture read two ways, so a tolerance
+## here would be a budget for a difference that has no source.
+const ROAD_IDLE_MAX_CHANGED_PX := 0
+
 # State 20 (JUNCT): the GEOMETRY frame — a straight run, a 120° bend, a 3-way junction, a 4-way
 # crossroads, a dead-end terminus and a LONE tile, in one shot. This is where "a junction reads as two
 # planks meeting" would show, and where the centre disc's three jobs are visible: the lone tile draws at
@@ -753,11 +783,18 @@ const ROAD_WEAR_STEP_MIN_CHANGED_PX := 2000
 const ROAD_JUNCT_STRAIGHT := [Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1), Vector2i(4, 1), Vector2i(5, 1)]
 # (10,1) odd row → SE is (+1,+1); (11,2) even row → SE is (0,+1). Two 60° steps = a 120° interior corner.
 const ROAD_JUNCT_BEND := [Vector2i(8, 1), Vector2i(9, 1), Vector2i(10, 1), Vector2i(11, 2), Vector2i(11, 3), Vector2i(12, 3)]
-# Hub (3,5), odd row: W arm, E arm, SE arm. Three arms is the largest junction whose arm tiles do NOT
-# touch each other, so this one reads as three clean spokes off a filled hub.
+# Hub (3,5), odd row: NW arm, E arm, SW arm — **three MUTUALLY NON-ADJACENT directions**, which is what
+# makes three the largest clean junction: they are alternate steps of the 6-cycle, so no two arm tiles
+# touch and the frame reads as three clean spokes off a filled hub.
+#
+# ⛔ **IT WAS W + E + SE, AND THOSE LAST TWO ARE ADJACENT** — off an odd-row hub the E arm's first tile is
+# (4,5) and the SE arm's is (4,6), which is (4,5)'s own SW neighbour. The mask linked them and the union
+# filled the quadrant between the two spokes: the fused-arm artifact this block attributes to the 4-way
+# ALONE, drawn in the frame captioned "three clean spokes". Pick from an independent set or the caption
+# is describing a different picture.
 const ROAD_JUNCT_THREE_WAY := [
-	Vector2i(1, 5), Vector2i(2, 5), Vector2i(3, 5), Vector2i(4, 5), Vector2i(5, 5),
-	Vector2i(4, 6), Vector2i(4, 7),
+	Vector2i(2, 3), Vector2i(3, 4), Vector2i(3, 5), Vector2i(4, 5), Vector2i(5, 5),
+	Vector2i(3, 6), Vector2i(2, 7),
 ]
 # Hub (9,6), even row: E, W, NW and SE arms. ⛔ **A 4-WAY JUNCTION ALWAYS HAS TWO PAIRS OF ARM TILES
 # THAT TOUCH EACH OTHER**, and that is hex geometry, not a fixture mistake: the six directions form a
@@ -793,10 +830,13 @@ const ROAD_JUNCT_RUNG_INDEX := 2        # dirt road — wide enough that the geo
 # never drew would move.
 const ROAD_LONE_MIN_CHANGED_PX := 120
 
-# State 21 (ATRISK): §7's rule, which is the one thing the slice must preserve EXACTLY. An at-risk road
-# takes the PAVED rung's width and opacity whatever rung it holds (an alarm that faded with the rung
-# would be quietest on the trail nobody notices going) while its SURFACE stays its own rung's, tinted
-# toward DANGER. Three runs prove both halves at once: a kept dirt road (the surface control), the same
+# State 21 (ATRISK): §7's at-risk rule. **The OPACITY half carries over verbatim and the WIDTH half was
+# deliberately raised**: the retired `AnnotationRenderer` drew an at-risk road at `ROAD_AT_RISK_WIDTH`
+# (`:= ROAD_WIDTH_DIRT_ROAD`, a MID-rung width) with the PAVED rung's opacity, and this pass takes the
+# paved rung for BOTH. The alarm should be loudest whatever rung is being lost — an alarm that faded with
+# the rung would be quietest on the trail nobody notices going — and the old mid-rung width was an
+# artifact of the ink draw carrying its own separate width ladder, not a rule worth keeping. Its SURFACE
+# stays its own rung's, tinted toward DANGER. Three runs prove both halves at once: a kept dirt road (the surface control), the same
 # dirt road at risk, and a kept paved road (the geometry control the at-risk run must match in width).
 const ROAD_RISK_ROWS := [2, 5, 8]
 # The bill a road in shortfall carries, driven through the REAL published fields — `upkeep_shortfall` is
@@ -2003,20 +2043,67 @@ func _snapshot_water_patch(visibility := PackedFloat32Array()) -> Dictionary:
 
 
 func _render_road_sweep_state() -> void:
-	## State 18 (ROADS): one contiguous run per rung, all at build_fraction 0.0, so each surface is judged
-	## at its own rung's width and opacity with no wear folded in. Read for: four clearly DIFFERENT roads,
-	## climbing in both width and prominence, and no seam where a run meets the bare ground at its ends.
+	## State 18 (ROADS): one contiguous run per rung, all IDLE (see ROAD_IDLE_METER), so each surface is
+	## judged at its own rung's width and opacity with no climb folded in. Read for: four clearly DIFFERENT
+	## roads, climbing in both width and prominence, no seam where a run meets the bare ground at its ends,
+	## and — since every run here is idle — EXACTLY four rungs rather than a ladder shifted up by one.
 	var rows: Array = []
 	var labels: Array = []
 	for i in ROAD_SWEEP_ROWS.size():
 		var row: int = int(ROAD_SWEEP_ROWS[i])
 		var rung: String = String(HudRouteVocab.RUNG_ORDER[i])
-		rows.append_array(_road_run(row, rung, 0.0, ROAD_UPKEEP_KEPT))
+		rows.append_array(_road_run(row, rung, ROAD_IDLE_METER, ROAD_UPKEEP_KEPT))
 		labels.append({
 			"tile": Vector2i(ROAD_SWEEP_COL_START, row),
-			"text": "%s  (rung %d, wear 0%%)" % [HudRouteVocab.rung_label(rung), i],
+			"text": "%s  (rung %d, idle)" % [HudRouteVocab.rung_label(rung), i],
 		})
 	await _render_road_frame(rows, labels, "road_rungs")
+	await _assert_road_idle_draws_its_own_rung(rows)
+
+
+func _assert_road_idle_draws_its_own_rung(idle_rows: Array) -> void:
+	## ⛔ **AN IDLE ROAD AT RUNG N MUST DRAW AS RUNG N — an idle PATH must not look like a TRAIL.** The
+	## frame just saved is the idle sweep; this re-states the identical fixture at
+	## `ROAD_LADDER_RUNG_FLOOR_METER` (the renderer probe that pins `s = rung + 0` under any reading of the
+	## meter) and requires the two to render IDENTICALLY, pixel for pixel.
+	##
+	## The defect it pins: `build_fraction` measures the rung AT RISK, so an idle road publishes a FULL
+	## meter, and folding that straight into the ladder scalar put every idle road one rung too high — a
+	## path drawn as a trail, a dirt road as paved cobble — with only the top of the ladder surviving, by
+	## the clamp rather than by being right. It shipped unseen because every road fixture in this file
+	## staged the impossible `0.0` instead (see ROAD_WEAR_FRACTIONS).
+	##
+	## Exact equality rather than a threshold: the two frames are ONE fixture read two ways, on uniform
+	## prairie with no water and no river anywhere, and the road pass takes no TIME term — so there is no
+	## source of a legitimate difference, while one rung slipping moves thousands of pixels.
+	var idle: Image = await _capture()
+	if idle == null:
+		return
+	var floored: Array = []
+	for road: Dictionary in idle_rows:
+		var probe: Dictionary = road.duplicate()
+		probe["build_fraction"] = ROAD_LADDER_RUNG_FLOOR_METER
+		floored.append(probe)
+	_map.display_snapshot(_snapshot_roads(floored))
+	_map.queue_redraw()
+	await _settle()
+	var floor_frame: Image = await _capture()
+	if floor_frame == null:
+		return
+	var changed: int = _changed_pixel_count(idle, floor_frame)
+	if changed > ROAD_IDLE_MAX_CHANGED_PX:
+		_fail(("an IDLE road is not drawing at the rung it HOLDS — %d px (max %d) move between a full "
+			+ "meter and the ladder's own rung floor. A full `build_fraction` is the wire's *nothing is "
+			+ "rising* (routes::road_at_risk_rung resolves to the HELD rung when nothing is banked), so "
+			+ "read as progress it draws every idle road ONE RUNG TOO HIGH: an idle path as a trail, an "
+			+ "idle dirt road as paved cobble. Collapse it in TerrainRenderer._pack_road_texel.")
+			% [changed, ROAD_IDLE_MAX_CHANGED_PX])
+	else:
+		print("blend_probe: idle rung sweep draws at its held rungs (%d px vs the rung floor)" % changed)
+	# Put the idle fixture back, so the map is left in the state the saved frame shows.
+	_map.display_snapshot(_snapshot_roads(idle_rows))
+	_map.queue_redraw()
+	await _settle()
 
 
 func _render_road_wear_state() -> void:
@@ -2111,7 +2198,7 @@ func _render_road_junction_state() -> void:
 	]:
 		var tiles: Array = piece[0]
 		for tile: Vector2i in tiles:
-			rows.append(_road_row(tile, rung, 0.0, ROAD_UPKEEP_KEPT))
+			rows.append(_road_row(tile, rung, ROAD_IDLE_METER, ROAD_UPKEEP_KEPT))
 		labels.append({"tile": tiles[0], "text": String(piece[1])})
 	await _render_road_frame(rows, labels, "road_junctions")
 	await _assert_road_lone_tile_draws(rows, rung)
@@ -2161,9 +2248,12 @@ func _render_road_at_risk_state() -> void:
 	## WIDTH and prominence exactly while still wearing the DIRT road's surface under a DANGER tint — the
 	## alarm must not also be a claim about which rung is standing.
 	var rows: Array = []
-	rows.append_array(_road_run(int(ROAD_RISK_ROWS[0]), HudRouteVocab.RUNG_KEY_DIRT_ROAD, 0.0, ROAD_UPKEEP_KEPT))
-	rows.append_array(_road_run(int(ROAD_RISK_ROWS[1]), HudRouteVocab.RUNG_KEY_DIRT_ROAD, 0.0, ROAD_UPKEEP_SHORTFALL))
-	rows.append_array(_road_run(int(ROAD_RISK_ROWS[2]), HudRouteVocab.RUNG_KEY_PAVED_ROAD, 0.0, ROAD_UPKEEP_KEPT))
+	rows.append_array(_road_run(
+		int(ROAD_RISK_ROWS[0]), HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_IDLE_METER, ROAD_UPKEEP_KEPT))
+	rows.append_array(_road_run(
+		int(ROAD_RISK_ROWS[1]), HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_IDLE_METER, ROAD_UPKEEP_SHORTFALL))
+	rows.append_array(_road_run(
+		int(ROAD_RISK_ROWS[2]), HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_IDLE_METER, ROAD_UPKEEP_KEPT))
 	var labels: Array = [
 		{"tile": Vector2i(ROAD_SWEEP_COL_START, int(ROAD_RISK_ROWS[0])), "text": "dirt road, kept"},
 		{"tile": Vector2i(ROAD_SWEEP_COL_START, int(ROAD_RISK_ROWS[1])), "text": "dirt road, AT RISK"},

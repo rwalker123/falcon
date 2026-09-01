@@ -1024,9 +1024,18 @@ snowline is rare enough not to trade the common case for it.
 softness are hex-radius fractions turned into px in `update_shader_quad`. The two ladders reach the
 shader as `uniform vec4`s, one component per rung, **not** as uniform arrays: the pass indexes them
 with a value it computes per fragment, and dynamic indexing of a vector is guaranteed in GLSL ES 3.0
-while dynamic indexing of a uniform array is not. The four opacities are the ladder measured against
-a rendered frame for the retired annotation draw — `.claude/rules/client/roads.md` has the finding,
-which outlived the ink it was made about; do not re-pick them.
+while dynamic indexing of a uniform array is not.
+
+⛔ **THE FOUR OPACITIES ARE THIS PASS'S OWN, RE-DERIVED FOR THE TEXTURE MEDIUM — the retired ink
+ladder must NOT come back.** The shipped values are **0.58 / 0.70 / 0.82 / 0.94**. The annotation
+draw's measured **0.30 / 0.52 / 0.74 / 0.94** was measured for a near-black INK STROKE, where 0.30
+alpha is a visible dark line; in a texture pass the same number means "70% of the ground shows
+through", and the path surface is a low-saturation grey close to prairie's own luminance, so it
+dissolved — the two commonest rungs, the free floor, were the two a player could not see. What
+OUTLIVED the ink is the FINDING that prominence must ride opacity rather than four palette tints, not
+the numbers it was made with. `.claude/rules/client/roads.md` carries both ladders and the
+re-derivation; a revision of this paragraph attributed the shipped values to the ink measurement,
+which would send the next reader to restore the ladder that arc explicitly bans.
 
 **Fog** — the presence bit AND every connection bit are gated on `Discovered` OR `Active`, which is
 looser than other markers on purpose (a road does not wander off, so remembering one is remembering

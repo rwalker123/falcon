@@ -119,16 +119,37 @@ frame, and the reason prominence rides opacity rather than four tints is the par
 >
 > ⛔ **THE WEAR FADE HAD TO SURVIVE THAT COMPRESSION, and it is measured rather than assumed.** The
 > path→trail opacity ramp narrowed from 0.30→0.52 to 0.58→0.70, so the WIDTH ramp (0.080→0.100) now
-> carries more of it. Row-mean luminance over the bare field across `blend_probe`'s five wear steps
-> went **+5.0 / +6.7 / +14.9 / +27.1 / +28.4** → **+7.9 / +11.7 / +23.5 / +36.6 / +39.8** per 255:
-> every step is more visible than before, not less. `blend_probe`'s `19/WEAR` guard is the standing
-> assertion and **its threshold may not be lowered to fit a retune** — a ramp that genuinely
-> collapsed is a reason to widen the WIDTH spread, not to move the bar.
+> carries more of it. Across `blend_probe`'s five wear steps the road's luminance over the bare field
+> reads **+7.5 / +15.7 / +22.5 / +33.6 / +41.3** per 255 — monotone, every step visible.
+> `blend_probe`'s `19/WEAR` guard is the standing assertion and **its threshold may not be lowered to
+> fit a retune** — a ramp that genuinely collapsed is a reason to widen the WIDTH spread, not to move
+> the bar.
+>
+> ⛔ **THE METHOD IS PART OF THE FIGURE, and an earlier revision of this paragraph proved why.** It
+> recorded **+7.9 / +11.7 / +23.5 / +36.6 / +39.8** with no method beside them, and when those numbers
+> were later re-derived **not one of six plausible methods reproduced them** (Rec.709 vs RGB mean ×
+> three horizontal spans × peak vs windowed scanline). A luminance delta without its denominator is
+> not a measurement, so the figures above are stated with theirs: **Rec.709 row-mean over
+> x ∈ [0.30w, 0.72w], peak scanline per run, background = the frame's median scanline.** Re-measure
+> with that method or state the new one; do not edit these to match an arithmetic expectation.
+>
+> The steps are also measured against **producible** meters now — see the `build_fraction` box below.
+> The earlier figures swept `0.0 … 1.0`, and both of those endpoints are values the wire cannot send.
 
-- **A road in SHORTFALL draws in `HudStyle.DANGER`, at the TOP of the opacity ladder** and at a fixed
-  mid-rung width. It is losing a real investment, which is the same news a starving pen's ring
-  carries, so it borrows the client's existing at-risk ink rather than inventing one — and an alarm
-  that faded with the rung would be quietest on the trail nobody notices going.
+- **A road in SHORTFALL draws in `HudStyle.DANGER`, at the TOP of the ladder — both opacity AND
+  width.** It is losing a real investment, which is the same news a starving pen's ring carries, so it
+  borrows the client's existing at-risk ink rather than inventing one — and an alarm that faded with
+  the rung would be quietest on the trail nobody notices going. The road's own SURFACE is unchanged:
+  an at-risk dirt road is not made of stone, so only the geometry and the tint move.
+
+  > **THE WIDTH IS AT THE PAVED RUNG, WHICH IS A DELIBERATE CHANGE FROM THE INK DRAW, NOT AN
+  > OVERSIGHT.** The retired `AnnotationRenderer` alarmed at `ROAD_AT_RISK_WIDTH :=
+  > ROAD_WIDTH_DIRT_ROAD` — a fixed MID-rung width — beside the paved opacity. That split was an
+  > artifact of the ink draw carrying two independent ladders; the shader pass has one scalar, and the
+  > reason stated for the opacity ("an alarm that faded with the rung would be quietest on the trail
+  > nobody notices going") argues exactly as strongly for the width. So the alarm now takes the top of
+  > both. A revision of this file described the mid-rung width as still shipping while the code drew
+  > the paved one, which is the disagreement this box exists to close.
 - **An unknown rung draws at the floor rather than vanishing.** A road is a real thing whatever the
   ladder calls it.
 - **ONE ROAD IS ONE VISIBILITY QUESTION**, and it is `Discovered` rather than `Active`. The
@@ -504,11 +525,33 @@ queued."*
 > road*; the tile card, which suppresses its clause at a full meter, read it as *nothing is rising*
 > and said nothing at all.
 >
-> **`HudRouteVocab.queued_progress(road)` is the one reader ALL THREE surfaces go through**: a meter
-> at or above `ROAD_METER_COMPLETE` on a road whose entry is queued reads `ROAD_METER_UNSTARTED`, so
-> the queue row draws `Queued 0%`, the card draws `Trail · 0% to dirt road` and the rung ladder's
-> BUILDING row draws `0% · ≈150 turns`. A road with work banked is untouched, which is what keeps the
-> readings one sentence rather than a fork.
+> **`HudRouteVocab.queued_progress(road)` is the one reader ALL THREE HUD surfaces go through**: a
+> meter at or above `ROAD_METER_COMPLETE` on a road whose entry is queued reads
+> `ROAD_METER_UNSTARTED`, so the queue row draws `Queued 0%`, the card draws `Trail · 0% to dirt road`
+> and the rung ladder's BUILDING row draws `0% · ≈150 turns`. A road with work banked is untouched,
+> which is what keeps the readings one sentence rather than a fork.
+>
+> #### ⛔ THE MAP IS THE FOURTH SURFACE, AND IT READ THE METER RAW — EVERY IDLE ROAD DREW ONE RUNG TOO HIGH
+>
+> The road pass forms one scalar, `s = rung_index + progress`, and drives width, opacity and the
+> surface crossfade off it. Handed the RAW meter it computes `s = N + 1.0` for every road with nothing
+> banked — **which is the steady state of the whole free floor** — so an idle path painted as a trail,
+> an idle trail as a dirt road, and an idle dirt road as paved cobble. Only paved survived, and only
+> because `min(s, ROAD_RUNG_MAX)` happened to clamp it. The tile card said `Path` on the same road.
+>
+> **`TerrainRenderer._pack_road_texel` collapses the meter before it reaches the texel**, applying
+> `queued_progress`'s own rule — at or above `ROAD_METER_COMPLETE` reads `ROAD_METER_UNSTARTED`. It is
+> done at the PACKING seam, not in the shader, so the neighbour texels the arm's mean-ramp samples are
+> already collapsed and the no-seam rule keeps holding for free.
+>
+> ⛔ **`0.0` IS NOT A PRODUCIBLE METER, AND A FIXTURE THAT STAGES IT ASSERTS NOTHING.** A road that is
+> genuinely raising has `banked > NO_RUNG_WORK_BANKED`, so its meter is strictly inside `(0, 1)`;
+> `1.0` means idle. Both endpoints were staged anyway — `map_preview` pinned a `0.0` "fresh rung"
+> meter and `blend_probe` swept `0.0 … 1.0` — which is why no harness saw any of the above, and why
+> the frame that DID show it (`trail / dirt / paved / paved`) was misread as a fixture fault and
+> "fixed" by staging the impossible value. The idle states now stage `METER_FULL`, the wear sweep runs
+> `0.05 … 0.95`, and `blend_probe`'s `_assert_road_idle_draws_its_own_rung` pins it: an idle road at
+> rung N must render pixel-identical to that rung's own floor.
 >
 > ⛔ **THE LADDER WAS THE THIRD SURFACE AND IT WENT ON READING THE METER RAW FOR A SLICE**, drawing
 > `100%` on a road that had not started. Its row is unconditional — a road on the building branch is
@@ -1602,7 +1645,9 @@ tile in one shot; **21/ATRISK** (`road_at_risk.png`) a kept dirt road, the same 
 kept paved road as the width control. Ground is uniform prairie in all four, so every difference
 between two cells is the road pass's own doing, and the cells carry in-frame captions.
 
-**State 19 also carries the road states' ONE assertion**, and it holds two properties no still frame
+**State 19 carries the first of the road states' THREE assertions** — the others being state 20's
+`_assert_road_lone_tile_draws` and state 18's `_assert_road_idle_draws_its_own_rung` — and it holds
+two properties no still frame
 can show. It walks the wear ladder a step at a time, handing each step over as a frame whose manifest
 names `routes` and nothing else, and requires the map to MOVE at every step — which fails if the
 ladder scalar is not reaching the width/opacity/surface (the reported defect: tiles at different wear

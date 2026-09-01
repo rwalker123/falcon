@@ -511,11 +511,17 @@ const ROAD_TRAIL_HERD_BIOMASS := 600.0
 
 # The bill a road in shortfall carries. Any figure at or above `SourceForecast.UPKEEP_WORK_MIN` puts
 # it in the danger ink; these are the middle rung's own numbers so the frame states a real road.
-# **A ROAD THAT HAS JUST REACHED ITS RUNG AND BANKED NOTHING TOWARD THE NEXT.** Every road frame here
-# stages this, because the map draws from `rung + build_fraction` and only a `0.0` meter shows a rung's
-# OWN look — see `_road` for the frame this got wrong. It is an ordinary reading, not a special case:
-# a road sits at its rung with an empty meter for as long as nobody is raising the next one.
-const ROAD_FRESH_RUNG_METER := 0.0
+# **A ROAD THAT HAS REACHED ITS RUNG AND HAS NOTHING RISING ABOVE IT.** Every road frame here stages
+# this, because it is the state a road sits in for as long as nobody is raising the next rung — the whole
+# free floor, most of the time.
+#
+# ⛔ **THAT STATE PUBLISHES A *FULL* METER, AND THIS CONST USED TO STAGE `0.0`.** `build_fraction`
+# measures the rung AT RISK, which is the HELD rung while nothing is banked (`routes::road_at_risk_rung`),
+# so `ROAD_METER_COMPLETE` is what an idle road actually sends and `0.0` is a reading the sim can never
+# produce — a road that IS raising has banked work and therefore a meter strictly above zero. Staged at
+# the impossible value these frames agreed with the renderer about something the wire never says, which
+# is how every idle road came to draw one rung too high with the map frames still looking right.
+const ROAD_IDLE_RUNG_METER := HudRouteVocab.ROAD_METER_COMPLETE
 const ROAD_DEMAND := 3.4
 const ROAD_SHORTFALL := 1.7
 const ROAD_KEPT := 0.0
@@ -4611,13 +4617,14 @@ func _road(tile: Array, rung: String, shortfall: float, build_fraction: float) -
 		"keeper_band_id": ROAD_KEEPER_BAND,
 		"keeper_remoteness": ROAD_REMOTENESS_AT_HOME,
 		"rung": rung,
-		# ⛔ **THE METER IS A PARAMETER NOW, AND IT USED TO BE A HARD `1.0` THAT MADE EVERY ROAD FRAME
-		# LIE.** `build_fraction` is the meter on the rung being RAISED, which is the rung ABOVE the one
-		# `rung` names, and the map draws from `rung + build_fraction` as ONE position on ONE ladder. So
-		# a fixture pinned at `1.0` renders every rung as the NEXT one: the "one run per rung" frame came
-		# out as trail / dirt / paved / paved, with the top two indistinguishable and the caption wrong.
-		# It was invisible while the draw stamped a hex styled by the rung string alone and ignored the
-		# meter beside it. **A frame that means to show a rung's own look must state `0.0` here.**
+		# ⛔ **THE METER IS A PARAMETER, AND THE FRAME THAT CAME OUT AS trail / dirt / paved / paved WAS
+		# THE RENDERER'S FAULT, NOT THIS FIXTURE'S.** `build_fraction` measures the rung AT RISK, which is
+		# the HELD rung whenever nothing is banked (`routes::road_at_risk_rung`), so a full meter is the
+		# wire saying *nothing is rising* — the ordinary state of a road nobody is upgrading, and what
+		# `ROAD_IDLE_RUNG_METER` stages. The one-run-per-rung frame drew a rung too high because the
+		# packer took that full meter for progress; it is collapsed in `TerrainRenderer._pack_road_texel`
+		# now. **Staging `0.0` to make the frame look right hid the bug** — the sim cannot emit `0.0`, so
+		# the corrected frame agreed with the renderer about a state that does not exist.
 		"build_fraction": build_fraction,
 		"upkeep_demand": ROAD_DEMAND,
 		"upkeep_supplied": ROAD_DEMAND - shortfall,
@@ -4644,7 +4651,7 @@ func _road_row_run(row: int, rung: String, shortfall: float) -> Array:
 	var tiles: Array = []
 	for col in range(ROAD_RUN_COL_START, ROAD_RUN_COL_END):
 		tiles.append([col, row])
-	return _road_run(tiles, rung, shortfall, ROAD_FRESH_RUNG_METER)
+	return _road_run(tiles, rung, shortfall, ROAD_IDLE_RUNG_METER)
 
 ## The road-network backdrop: a run at each of the four rungs, a fifth in shortfall, and a LONE tile —
 ## which under the per-tile model must DRAW rather than be skipped.
@@ -4657,7 +4664,7 @@ func _snapshot_road_network() -> Dictionary:
 	rows.append_array(_road_row_run(ROAD_PAVED_ROW, HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_KEPT))
 	rows.append_array(_road_row_run(ROAD_AT_RISK_ROW, HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_SHORTFALL))
 	rows.append_array(_road_run(
-		ROAD_LONE_TILE, HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_KEPT, ROAD_FRESH_RUNG_METER))
+		ROAD_LONE_TILE, HudRouteVocab.RUNG_KEY_PAVED_ROAD, ROAD_KEPT, ROAD_IDLE_RUNG_METER))
 	snap["routes"] = rows
 	return snap
 
@@ -4675,7 +4682,7 @@ func _snapshot_road_vs_herd_trail() -> Dictionary:
 	for col in range(ROAD_TRAIL_CROSS_COL_START, ROAD_TRAIL_CROSS_COL_END):
 		tiles.append([col, ROAD_TRAIL_CROSS_ROW])
 	snap["routes"] = _road_run(
-		tiles, HudRouteVocab.RUNG_KEY_TRAIL, ROAD_KEPT, ROAD_FRESH_RUNG_METER)
+		tiles, HudRouteVocab.RUNG_KEY_TRAIL, ROAD_KEPT, ROAD_IDLE_RUNG_METER)
 	return snap
 
 ## The routes backdrop: flat terrain, the resident band for scale, and four orders — three multi-hop

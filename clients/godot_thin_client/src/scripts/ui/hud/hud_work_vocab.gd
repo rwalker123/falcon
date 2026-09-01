@@ -1953,7 +1953,8 @@ const BUILD_QUEUE_ROWS_MIN := 1
 
 ## The gaps the queue's own room has to clear before it may claim a row: head→pools, pools→queue,
 ## queue→chips, chips→board, board→pager. Named rather than spelled, since it is the one term of the
-## reservation that is a COUNT rather than a height.
+## reservation that is a COUNT rather than a height. **A band with a roadwork roster clears a SIXTH**,
+## which is conditional and lives in `BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT` below.
 ##
 ## ⛔ **IT WAS 6, AND THE SIXTH WAS THE INSPECTOR'S GAP** (`docs/plan_standing_upkeep.md` §4.9 item
 ## 12d), beside a `BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT` term that is retired with it. **The retired
@@ -1969,6 +1970,15 @@ const BUILD_QUEUE_ROWS_MIN := 1
 ## anywhere in the zone's budget** — one left here would go on charging the queue for a strip that
 ## cannot appear.
 const BUILD_QUEUE_ROOM_GAP_COUNT := 5.0
+
+## ⛔ **THE ROADWORK ROSTER'S OWN GAP — the SIXTH, and it is conditional because the roster is** (arc
+## #532). The roster renders between the pools and the queue, so a band that draws one has one more
+## `ZONE_BLOCK_SEPARATION` in the column than the five above. `BandPanelController._work_board_capacity`
+## already adds it (`if roster_height > 0.0: gaps += 1.0`) and this reservation did not, so the two
+## disagreed by 6px on every band with a roster: for a box height whose remainder lands within those 6px
+## of a `WORK_ROW_HEIGHT` boundary the queue claimed a row the board had already been charged for, and
+## the zone clips, so it came silently off the bottom.
+const BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT := 1.0
 
 
 ## **HOW MANY ENTRY ROWS THIS ZONE CAN AFFORD**, clamped into `[BUILD_QUEUE_ROWS_MIN,
@@ -1989,10 +1999,15 @@ static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, entri
         roster_height: float = 0.0) -> int:
     # The board row this leaves room for is a SOURCE row, so it is the two-line height; the rows this
     # divides for are QUEUE rows, which are one line each.
+    # The roster's HEIGHT and the roster's GAP are one term or neither — see
+    # BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT, and `_work_board_capacity`, which counts its gaps the same way.
+    var gaps := BUILD_QUEUE_ROOM_GAP_COUNT
+    if roster_height > 0.0:
+        gaps += BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT
     var reserved := ZONE_HEAD_HEIGHT + WORK_CHIPS_HEIGHT + pools_block_height(pools_fund_mode) \
         + ZONE_HEAD_HEIGHT + WORK_ROW_TWO_LINE_HEIGHT + WORK_PAGER_HEIGHT \
         + BUILD_QUEUE_ROOM_SETTINGS_HEIGHT + roster_height \
-        + float(ZONE_BLOCK_SEPARATION) * BUILD_QUEUE_ROOM_GAP_COUNT
+        + float(ZONE_BLOCK_SEPARATION) * gaps
     var afforded := int((box_height - reserved) / WORK_ROW_HEIGHT)
     if entries > afforded:
         afforded -= 1

@@ -935,11 +935,15 @@ func _pack_road_texel(
 	## shader's `road_map` uniform for the packing contract and its road pass for what each channel drives.
 	##
 	## ⛔ **THE RUNG AND THE METER ARE TWO DIFFERENT RUNGS, AND THIS IS WHERE THAT IS EASIEST TO GET
-	## BACKWARDS.** `rung` is the rung the road HOLDS; `build_fraction` is the meter on the rung being
-	## RAISED, which is the one above (`native/src/dict/routes.rs` — "the rung string is the bool"). Both go
-	## on the wire verbatim, in their own channels, and the shader adds them into the single ladder scalar
-	## it draws from. Thresholding one to derive the other here would call a fully-worn trail a dirt road on
-	## the turn its first traffic banked.
+	## BACKWARDS.** `rung` is the rung the road HOLDS; `build_fraction` is the meter on the rung AT RISK,
+	## which is the rung being RAISED **only where something is banked in it** and otherwise the held rung
+	## itself (`core_sim` — `routes::road_at_risk_rung`). Both go on the wire verbatim, in their own
+	## channels, and the shader adds them into the single ladder scalar it draws from. Thresholding one to
+	## derive the other here would call a fully-worn trail a dirt road on the turn its first traffic banked.
+	##
+	## ⛔ **WHICH IS WHY A FULL METER IS COLLAPSED TO UNSTARTED BEFORE IT BECOMES A LADDER POSITION** —
+	## see the `road_bytes[base + 2]` write below. `1.0` is the wire's spelling of *nothing is rising*, so
+	## reading it as progress drew EVERY IDLE ROAD ONE RUNG TOO HIGH.
 	var roads: Array = _view.road_tile_lookup.get(Vector2i(x, y), [])
 	if roads.is_empty():
 		return
@@ -986,8 +990,24 @@ func _pack_road_texel(
 	var base: int = idx * ROAD_MAP_CHANNELS
 	road_bytes[base] = links & ROAD_LINK_MASK
 	road_bytes[base + 1] = clampi(rung_index, 0, HudRouteVocab.RUNG_ORDER.size() - 1)
-	road_bytes[base + 2] = clampi(
-		int(round(HudRouteVocab.build_fraction_of(road) * ROAD_BUILD_FRACTION_SCALE)), 0, 255)
+	# ⛔ **A FULL METER IS "NOTHING IS RISING", NOT "ONE RUNG FROM THE NEXT", SO IT COLLAPSES TO
+	# UNSTARTED HERE.** `build_fraction` measures the rung AT RISK, which is the HELD rung whenever
+	# nothing is banked (`routes::road_at_risk_rung`) — so `ROAD_METER_COMPLETE` is what every road
+	# nobody is upgrading publishes, the steady state of the whole free floor, and `ROAD_METER_UNSTARTED`
+	# is a value the sim can never send (a road that IS raising has banked work and therefore a meter
+	# strictly above zero). Taken at face value the ladder scalar read `rung + 1` on every idle road:
+	# an idle path drew as a TRAIL, an idle dirt road as PAVED COBBLE, and only the top of the ladder
+	# survived — by the clamp, not by being right. This is the identical reading
+	# `HudRouteVocab.queued_progress` applies for the tile card, which is why the card already said
+	# `Path` on a road the map was painting as a `Trail`.
+	#
+	# It belongs HERE and not in the shader: this is where the wire is interpreted, beside the other wire
+	# reads, and it means the NEIGHBOUR texels the arm-mean ramp samples are collapsed too, so the seam
+	# logic stays consistent for free.
+	var meter: float = HudRouteVocab.build_fraction_of(road)
+	var progress: float = (HudRouteVocab.ROAD_METER_UNSTARTED
+		if meter >= HudRouteVocab.ROAD_METER_COMPLETE else meter)
+	road_bytes[base + 2] = clampi(int(round(progress * ROAD_BUILD_FRACTION_SCALE)), 0, 255)
 	road_bytes[base + 3] = flags
 
 

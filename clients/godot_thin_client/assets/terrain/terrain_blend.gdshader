@@ -126,10 +126,12 @@ uniform float road_at_risk_tint;   // 0..1: how hard an at-risk road's surface i
 //       set when the neighbour that way is ALSO a road AND is known to the player. A bit toward fog or
 //       off-map stays clear, so a road visibly STOPS at the fog edge instead of leaking what is past it.
 //   G = RUNG INDEX 0..3 (HudRouteVocab.RUNG_ORDER's index) — the rung the road HOLDS.
-//   B = BUILD FRACTION * 255 — the meter on the rung being RAISED, which is the NEXT rung. Never infer
-//       one of these from the other (native/src/dict/routes.rs: "the rung string is the bool").
+//   B = CLIMB TOWARD THE NEXT RUNG * 255, ALREADY COLLAPSED — the wire's `build_fraction` measures the
+//       rung AT RISK, so a full meter means *nothing is rising* and TerrainRenderer._pack_road_texel
+//       maps it to 0 before packing. So B is 0 on every idle road and strictly inside (0, 1) on one
+//       actually being raised. Never infer one channel from the other.
 //   A = FLAGS: bit0 present (this hex is a road at all), bit1 at risk (keeping short in either currency).
-//       **A == 0 IS THE ONLY "no road" ANSWER.** A path at build_fraction 0 is R=G=B=0 and is a real road.
+//       **A == 0 IS THE ONLY "no road" ANSWER.** An idle path is R=G=B=0 and is a real road.
 uniform sampler2D road_map : filter_nearest;
 // Per-base-layer MEAN LUMINANCE, a 1×N single-channel texture fetched by layer index (N = terrain count,
 // so the layer count is never baked into this shader as a fixed array size). Height blending uses each
@@ -414,9 +416,10 @@ const float RIVER_CORNER_ANGLE_STEP = PI / 3.0;    // 60° between adjacent corn
 const float RIVER_CORNER_ANGLE_OFFSET = PI / 6.0;  // 30° — flat-top-up hex, first corner at lower-right
 
 // --- roads (arc #532) ---
-// The top rung's index. `s`, the ladder scalar, is CLAMPED to it: a road at the top of the ladder reads
-// build_fraction == 1.0 (the wire never derives that by subtraction), so without the clamp the paved rung
-// would index a rung 4 that does not exist and the whole top of the ladder would break.
+// The top rung's index. `s`, the ladder scalar, is CLAMPED to it — the belt to the packer's braces: the
+// B channel arrives already collapsed (a full meter is *nothing is rising*, so an idle paved road packs 0),
+// but a rung 4 is not a thing this pass can index, so the clamp stays as the last word rather than as the
+// reason the top of the ladder works.
 const int ROAD_RUNG_MAX = 3;
 const float ROAD_RUNG_MAX_F = 3.0;
 // road_map A-channel flags. Presence is its own bit because a rung-0 / fraction-0 road is all zeroes in
@@ -622,20 +625,23 @@ vec3 river_harmonize(vec3 c) {
 }
 
 // --- the ROAD LADDER AS ONE SCALAR (arc #532) — the heart of the road pass ---
-// ⛔ **`rung` AND `build_fraction` ARE ONE POSITION ON ONE LADDER, AND EVERY VISUAL PROPERTY IS A
-// FUNCTION OF IT.** `rung` is the rung the road HOLDS; `build_fraction` is the meter on the rung being
-// RAISED, which is the NEXT one. So `s = rung + build_fraction` is where the road actually stands, and a
-// road half-way to a trail is drawn half-way between a path and a trail — in width, in opacity and in
-// surface. That is the ladder's OWN interpolation rather than a second mechanism bolted beside it, and it
-// is what fixes the defect this pass exists for: seven path tiles at 24–52% worn drew IDENTICALLY, so a
-// half-worn road looked exactly like one nobody had touched.
+// ⛔ **`rung` AND THE PACKED CLIMB ARE ONE POSITION ON ONE LADDER, AND EVERY VISUAL PROPERTY IS A
+// FUNCTION OF IT.** `rung` is the rung the road HOLDS; B is how far it has climbed toward the NEXT one,
+// which is the wire's `build_fraction` AFTER the packer collapsed a full meter to zero (a full meter is
+// the wire's way of saying nothing is rising — TerrainRenderer._pack_road_texel). So `s = rung + climb` is
+// where the road actually stands, and a road half-way to a trail is drawn half-way between a path and a
+// trail — in width, in opacity and in surface. That is the ladder's OWN interpolation rather than a second
+// mechanism bolted beside it, and it is what fixes the defect this pass exists for: seven path tiles at
+// 24–52% worn drew IDENTICALLY, so a half-worn road looked exactly like one nobody had touched.
 //
 // The two ends must be checked against the ladder, not just against each other:
-//   · path at f = 0 is exactly the path's own look — the ramp is BETWEEN rungs, never up from zero, so a
-//     road never fades to nothing while it still holds a rung;
-//   · path at f = 1 is exactly the trail's look, one turn before it becomes a trail — continuous;
-//   · the paved rung reads build_fraction == 1.0 (the wire never derives it by subtraction), hence the
-//     clamp to ROAD_RUNG_MAX_F. **Without that clamp the top of the ladder breaks**, indexing a rung 4.
+//   · path at climb = 0 is exactly the path's own look — this is the IDLE road, the commonest state on
+//     the map, and the ramp is BETWEEN rungs rather than up from zero, so a road never fades to nothing
+//     while it still holds a rung;
+//   · path approaching climb = 1 approaches the trail's look, one turn before it becomes a trail —
+//     continuous. The endpoint itself is never packed: it is the idle reading, collapsed to 0 above;
+//   · the paved rung has no rung above it to raise, so it packs climb = 0 and lands exactly on
+//     ROAD_RUNG_MAX_F. The clamp guards the arithmetic rather than carrying the top of the ladder.
 float road_ladder_scalar(vec4 road_px) {
 	float rung = float(int(road_px.g * 255.0 + 0.5));
 	return min(rung + road_px.b, ROAD_RUNG_MAX_F);
