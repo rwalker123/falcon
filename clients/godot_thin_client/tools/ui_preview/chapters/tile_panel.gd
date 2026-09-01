@@ -145,6 +145,38 @@ func _land_row_icon_class() -> String:
 	var icon := row.get_meta("row_icon") as Control
 	return "" if icon == null else icon.get_class()
 
+## The CLASS of the land row's TRAILING activity mark (issue #249) — the `glyph_label` slot, which is
+## a `TextureRect` while the hex is a gathering site (the drawn forage mark) and a zero-width empty
+## `Label` when it is not. Same job as `_land_row_icon_class` one slot over, and the same reason no
+## frame can hold it: both renderings are an ordinary row.
+func _land_row_mark_class() -> String:
+	if h._hud.subject_list == null or h._hud.subject_list.get_child_count() == 0:
+		return ""
+	# The LAND is always the roster's first row (docs/plan_tile_panel_layout.md).
+	var row := h._hud.subject_list.get_child(0) as Button
+	if row == null or not row.has_meta("glyph_label"):
+		return ""
+	var mark := row.get_meta("glyph_label") as Control
+	return "" if mark == null else mark.get_class()
+
+## The CLASS of a BAND row's trailing activity mark. Reached by the row's own NAME rather than by a
+## child index — the roster interleaves the land row and a group header ahead of the bands, and an
+## index is the kind of finder that quietly points at the wrong row after a layout change
+## (`test-harnesses.md` → "An assertion asks a CONTROL, not the subtree").
+func _band_row_mark_class(band_name: String = "Band Steady") -> String:
+	if h._hud.subject_list == null:
+		return ""
+	for child in h._hud.subject_list.get_children():
+		var row := child as Button
+		if row == null or not row.has_meta("name_label") or not row.has_meta("glyph_label"):
+			continue
+		var name_label := row.get_meta("name_label") as Label
+		if name_label == null or name_label.text != band_name:
+			continue
+		var mark := row.get_meta("glyph_label") as Control
+		return "" if mark == null else mark.get_class()
+	return ""
+
 ## The land row's leading GLYPH mark and its NAME, as the colours those two labels actually RENDER
 ## in: `get_theme_color` answers the override when one is set and Godot's stock `Label` default when
 ## none is, so this reads what is on screen rather than whether anybody remembered to set something.
@@ -234,7 +266,8 @@ func _no_flash_tile_fixture(habitability: float, biomass: float) -> Dictionary:
 
 ## THE FLASH GUARD's band: a player band foraging the no-flash hex with `workers` on it at `yield_val`
 ## food/turn, so the drawer renders a standing summary (`♻ N foragers · +X /turn`) and the land row a
-## `N 🌾` staffing meta — both of which must UPDATE in place (not rebuild) when the numbers change.
+## staffing meta — the bare COUNT, with the forage mark its own sibling node since #249 — both of
+## which must UPDATE in place (not rebuild) when the numbers change.
 ## Sustain + `overdraws:false` and no `workers_needed` keep the summary's SHAPE stable across restates
 ## (no warn/overstaff labels appear/disappear), so only values move.
 func _no_flash_band_fixture(workers: int, yield_val: float) -> Dictionary:
@@ -471,8 +504,9 @@ func run(harness) -> void:
 
 	# State 3e-staffed — the SAME hex, with the bison actually being hunted BOTH ways at once: a
 	# standing local hunt (4 workers assigned by Band Fen) and a detached hunting party of 6
-	# committed to the same herd. The wildlife row's meta must read the SUM, `10 🏹`, right-aligned
-	# exactly like the land row's `N 🌾` — one herd, two mechanisms, one staffing number. The drawer
+	# committed to the same herd. The wildlife row's meta must read the SUM — `10`, under the row's
+	# drawn hunt mark — right-aligned exactly like the land row's own count. One herd, two
+	# mechanisms, one staffing number. The drawer
 	# leads with `Size: Big game`, the class that used to ride the row.
 	var hunted_bands: Array = WorldFx.occupied_units_fixture()
 	hunted_bands[0]["labor_assignments"] = [
@@ -551,7 +585,8 @@ func run(harness) -> void:
 	# visible, the drawer must CAP (scrolling internally on the selected band's allocation block),
 	# and the whole card must fit the dock without the dock itself scrolling.
 	# The player faction really IS these three bands here, and the first of them forages this very
-	# hex — so the land row must report the hex's STAFFING (`5 🌾`), not restate the module name the
+	# hex — so the land row must report the hex's STAFFING (the count `5`, beside the row's forage
+	# mark), not restate the module name the
 	# drawer and the sheet header already carry (§20). Leaving `_player_bands` empty made the row
 	# fall back to the module label and ellipsise it, which is the defect, not the fixture's intent.
 	h._hud._band_labor._player_bands = _crowded_bands_fixture()
@@ -621,6 +656,10 @@ func run(harness) -> void:
 	h._hud.reapply_selection("tile", icon_flip_tile)
 	await h._settle()
 	var land_icon_before := _land_row_icon_class()
+	# The SAME flip, one slot over (issue #249): the row's TRAILING activity mark is the drawn forage
+	# sprite while the hex is a gathering site and an empty Label when it is not, and it is patched by
+	# the same node-swapping rule. Captured here so both claims ride the one restate below.
+	var land_mark_before := _land_row_mark_class()
 	var icon_flip_row_ids := _child_instance_ids(h._hud.subject_list)
 	# The SAME membership, one key different — so the roster patches rather than rebuilding, which
 	# is the only path on which a stale mark can survive at all.
@@ -635,6 +674,41 @@ func run(harness) -> void:
 		land_icon_before == "TextureRect")
 	h._assert_hud("…and losing the module SWAPS that node for the glyph Label, never just its texture",
 		_land_row_icon_class() == "Label")
+	h._assert_hud("a gathering hex's TRAILING staffing mark is the drawn forage art, not an emoji",
+		land_mark_before == "TextureRect")
+	# **THE TWO SLOTS ANSWER DIFFERENT QUESTIONS, and this one restate proves it.** The LEADING mark
+	# is the SITE (gone with the module, asserted above); the TRAILING one is the STAFFING, and five
+	# people are still gathering here, so it must NOT have moved. A trailing mark that followed the
+	# module would be `row_icon` wearing a second name — the exact folding `_store_row_refs` says the
+	# two slots must never do.
+	h._assert_hud("…and it does NOT follow the module away: the crew is still on this hex",
+		_land_row_mark_class() == "TextureRect")
+	# **AND THE SWAP ITSELF IS CLAIMED ON THE BAND ROW, because that is where a live game crosses the
+	# line.** A band whose crew goes IDLE flips its mark from `TextureRect` to glyph `Label` between
+	# two restates — and writing `.text` to the old TextureRect is a SILENT no-op that would leave a
+	# foraging sprig beside a band with nobody working. Same membership (one entity, one id), so the
+	# roster patches rather than rebuilding, which is the only path the stale mark can survive on.
+	#
+	# ⛔ **`idle` IS THE ANCHOR BECAUSE IT CAN NEVER GAIN ART.** It is `·`, a tinted symbolic glyph,
+	# which #249's rule leaves as text permanently — so this flip stays reachable for good. It was
+	# written against `warrior` first and that assertion FAILED the moment `warrior.png` shipped,
+	# which is the assertion working: an art-pending activity is a moving anchor, and every other
+	# activity in the table is now drawn.
+	h._assert_hud("precondition: a foraging band's activity mark is the drawn forage art",
+		_band_row_mark_class() == "TextureRect")
+	# It keeps the module ERASED, so the only key moving is the band's activity — and so the
+	# module-less land row the ink claims below are made against is still the one on screen.
+	var mark_flip_idle := _no_flash_tile_fixture(0.06, 61.0)
+	var idle_band := _no_flash_band_fixture(5, 1.40)
+	idle_band["activity"] = HudSelectionVocab.BAND_ACTIVITY_IDLE
+	mark_flip_idle["units"] = [idle_band]
+	mark_flip_idle.erase("food_module")
+	h._hud.reapply_selection("tile", mark_flip_idle)
+	await h._settle()
+	h._assert_hud("precondition: the went-idle restate PATCHED the roster rows, not rebuilt them",
+		_child_instance_ids(h._hud.subject_list) == icon_flip_row_ids and not icon_flip_row_ids.is_empty())
+	h._assert_hud("…and a band whose activity has no art SWAPS that node for the glyph Label",
+		_band_row_mark_class() == "Label")
 	# THE UNLIT half of the ink claim `tile_panel_no_forage` makes for the lit one — and the half that
 	# can only be made on the PATCH path. The land row is lit here; selecting the band beside it dims
 	# the row WITHOUT rebuilding it, so a `◈` coloured only where it is BUILT would keep the ink it

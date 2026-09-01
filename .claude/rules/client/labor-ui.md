@@ -2167,10 +2167,18 @@ a constant somebody has to keep in step.
 the value control is the row's only expanding child. Both obvious alternatives were measured and both
 lose: a natural-width key starts each control against its own word (`Kit` 22px, `Quarry` 55) — the
 ragged edge this removes — and an `EXPAND_FILL` key splits the row 50/50, which on a ~245px sheet
-leaves the control ~119px, too narrow for `🧺 Gathering kit` plus its arrow. That was the shipped
+leaves the control ~119px, too narrow for the Gathering-kit face plus its arrow. That was the shipped
 shape, and it is also why the quarry row used to drop its key to `SIZE_FILL` in the three-child branch
 alone: with a declared width the chooser simply takes its width out of the pick's share and the
 special case is gone.
+
+> ⚠ **THE FACE THAT MEASUREMENT WAS TAKEN AGAINST NO LONGER RENDERS.** It was the string
+> `🧺 Gathering kit` — the job glyph welded into the face. Since issue #249 the picker carries its
+> job mark on the `OptionButton`'s own `icon` property (`HudComposeVocab.KIT_PICKER_ICON_MAX_WIDTH`,
+> 16px) and the face is the kit's NAME alone, so the string being fitted is shorter and the icon's
+> width is separate. The declared-key decision stands on its own reasoning — the ragged edge — but
+> anyone revisiting the 50/50 alternative must re-measure the shipped icon-plus-name face rather
+> than the glyph-prefixed one quoted above.
 
 **THE QUARRY ROW IS PRESENTED AS ONE OF THE FAMILY AND IS NOT ONE OF THEIR KIND.** Pressing it ARMS A
 MAP PICK — quarries are chosen spatially (glow rings, the targeting banner, the in-reach refusal

@@ -369,11 +369,38 @@ const COMPOSITION_KEY_SEPARATION := 12
 const COMPOSITION_KEY_FONT_SIZE := 11
 
 ## PEOPLE key glyphs + words (the words live in the tooltips the glyphs replaced).
+##
+## **THESE ARE THE FALLBACK HALF NOW** (issue #249) — all three have bundled art in `PEOPLE_MARKS`
+## below and render it; these three render only when a load fails.
 const PEOPLE_GLYPH_CHILDREN := "👶"
 
 const PEOPLE_GLYPH_WORKING := "🛠"
 
 const PEOPLE_GLYPH_ELDERS := "🧓"
+
+## Age bracket → `HudSprites` MARK ID. **THE THREE ARE ONE SET AND MOVE TOGETHER** — they are the
+## segments of a single bar, read left to right as one sentence, so the only thing that may differ
+## between them is the SILHOUETTE: one figure at three ages, same tone pair, same weight. A drawn
+## child beside an emoji elder would be three subjects instead of one.
+const PEOPLE_MARKS := {
+	PEOPLE_GLYPH_CHILDREN: "children",
+	PEOPLE_GLYPH_WORKING: "working_age",
+	PEOPLE_GLYPH_ELDERS: "elders",
+}
+
+## The PEOPLE mark's box, and it is DELIBERATELY LARGER than the 11px type beside it.
+##
+## ⛔ **THE ELDER AND THE WORKING-AGE FIGURE ARE THE SAME SILHOUETTE PLUS A STOOP AND A STAFF, so
+## the box is what decides whether this set works at all.** Measured on the shipped renders: at 14px
+## and 16px the elder's staff MERGES into its body and the two marks are indistinguishable — the
+## trio collapses to *big-headed blob, column, column*. At 18px the staff separates and the stoop
+## reads, and all three are distinct. So 18 is not a taste call, it is the floor, and shrinking this
+## to match the label's own type size silently destroys one third of the key.
+##
+## It is `HudSelectionVocab.ROSTER_ROW_ICON_BOX`'s value for the same reason that one is 18: a
+## figure needs more room than a glyph. Spelled here rather than aliased — the two surfaces share a
+## number, not a reason, and the roster's box has no stake in the elder's staff.
+const PEOPLE_MARK_BOX := 18.0
 
 const PEOPLE_LABEL_CHILDREN := "children"
 
@@ -1104,6 +1131,30 @@ const WORK_SORTS: Array[StringName] = [WORK_SORT_NAME, WORK_SORT_YIELD]
 const WORK_CHIP_ALL_FORMAT := "All %d"
 
 const WORK_CHIP_KIND_FORMAT := "%s %d · %s"
+
+## The kind chip's face once its mark is bundled ART — the same line with the leading `%s` gone,
+## because a `Button` carries art on its `icon` PROPERTY and a chip that kept the glyph would state
+## its kind twice. Art OR glyph, never both, the rule `BandCityPanel._make_icon_button` already
+## follows for the knowledge launcher.
+const WORK_CHIP_KIND_SPRITE_FORMAT := "%d · %s"
+
+## The two kind chips' bundled marks, resolved through `HudSprites.for_mark` (issue #249). They are
+## the activity's OWN ids — `hunt` is the same mark the roster's band rows wear — so the board and
+## the roster cannot come to draw one activity two ways.
+##
+## **THE OTHER THREE CHIPS ARE ABSENT AND THAT IS COMPLETE COVERAGE.** `All` carries no mark at all,
+## and the `⚠` / `⌃` chips carry TINTED SYMBOLIC glyphs, which #249 leaves as text: their colour is
+## half of what they say (WARN on the attention chip), and this art is authored in two flat pale
+## tones whose fill IS the silhouette, so a tint would flatten it. So the chip row is not left half
+## art and half emoji — every PICTOGRAPHIC mark on it is drawn.
+const WORK_CHIP_FORAGE_MARK := "forage"
+const WORK_CHIP_HUNT_MARK := "hunt"
+
+## What a chip's art may occupy, through the stock `icon_max_width` theme constant. A cap is needed
+## because the source PNGs are 256px and a `Button` reserves its icon's drawn size in its MINIMUM —
+## one art-bearing chip would otherwise set the whole row's height. Sized to `WORK_CHIP_FONT_SIZE`'s
+## own line so the mark reads as the chip's leading glyph did, not as a picture pasted beside a word.
+const WORK_CHIP_ICON_MAX_WIDTH := 13
 
 const WORK_CHIP_ATTENTION_FORMAT := "⚠ %d"
 

@@ -4396,11 +4396,11 @@ func _build_work_chips(models: Array) -> HFlowContainer:
     # summary of the same rows the head totals, so counting `🦌 2` sources and then quoting only the
     # food-paying one's rate is the same arithmetic that visibly failed in the header.
     if not forage.is_empty():
-        chips.add_child(_build_work_chip(HudWorkVocab.WORK_FILTER_FORAGE, HudWorkVocab.WORK_CHIP_KIND_FORMAT % [
-            FoodIcons.DEFAULT, forage.size(), _work_chip_rate_text(forage)], false))
+        chips.add_child(_build_kind_work_chip(HudWorkVocab.WORK_FILTER_FORAGE,
+            HudWorkVocab.WORK_CHIP_FORAGE_MARK, FoodIcons.DEFAULT, forage))
     if not hunt.is_empty():
-        chips.add_child(_build_work_chip(HudWorkVocab.WORK_FILTER_HUNT, HudWorkVocab.WORK_CHIP_KIND_FORMAT % [
-            FoodIcons.HUNT, hunt.size(), _work_chip_rate_text(hunt)], false))
+        chips.add_child(_build_kind_work_chip(HudWorkVocab.WORK_FILTER_HUNT,
+            HudWorkVocab.WORK_CHIP_HUNT_MARK, FoodIcons.HUNT, hunt))
     if not attention.is_empty():
         chips.add_child(_build_work_chip(HudWorkVocab.WORK_FILTER_ATTENTION,
             HudWorkVocab.WORK_CHIP_ATTENTION_FORMAT % attention.size(), true))
@@ -4441,6 +4441,31 @@ func _build_work_chip(filter: StringName, text: String, alert: bool) -> Button:
         chip.add_theme_color_override("font_color", HudStyle.WARN)
     chip.tooltip_text = HudWorkVocab.WORK_CHIP_TOOLTIP
     chip.pressed.connect(func() -> void: _set_work_filter(filter))
+    return chip
+
+## A KIND chip (forage / hunt), whose mark is bundled ART where it loads and its `FoodIcons` emoji
+## where it does not (issue #249) — the same art-or-glyph contract every other sprite family has, and
+## the reason the emoji constants stay rather than being deleted.
+##
+## **THE ART GOES ON `icon`, NOT INTO THE TEXT**, because a `Button` cannot hold a texture in its
+## `text` — the mechanism `BandCityPanel._make_icon_button` uses for the knowledge launcher and, for
+## the same reason, the one that drops the leading `%s` from the face when art is present.
+## `icon_max_width` caps the 256px source so a chip's art cannot set the chip row's minimum height.
+##
+## **UNTINTED, deliberately.** `apply_button` sets no `icon_*_color` and the stock theme's resolves to
+## opaque white, so the mark renders in its authored two-tone fill. Tinting it would flatten the two
+## tones into one and destroy what makes it read at 13px — the same rule the turn orb's row follows.
+func _build_kind_work_chip(filter: StringName, mark_id: String, glyph: String,
+        models: Array) -> Button:
+    var sprite := HudSprites.for_mark(mark_id)
+    var rate_text := _work_chip_rate_text(models)
+    if sprite == null:
+        return _build_work_chip(filter,
+            HudWorkVocab.WORK_CHIP_KIND_FORMAT % [glyph, models.size(), rate_text], false)
+    var chip := _build_work_chip(filter,
+        HudWorkVocab.WORK_CHIP_KIND_SPRITE_FORMAT % [models.size(), rate_text], false)
+    chip.icon = sprite
+    chip.add_theme_constant_override("icon_max_width", HudWorkVocab.WORK_CHIP_ICON_MAX_WIDTH)
     return chip
 
 ## TWO-LINE source row. **Line one is IDENTITY AND CONTROLS** — severity stripe · glyph · name ·
@@ -6596,7 +6621,17 @@ func _build_party_footer(band: Dictionary) -> VBoxContainer:
 func _build_mission_launch_button(mission: String, label: String, hint: String,
         idle: int) -> Button:
     var btn := Button.new()
+    # **THE MARK IS ART WHERE THE MISSION HAS ANY** (issue #249), the glyph-prefixed label where it
+    # does not — which today is `split` alone, whose `⌂` is symbolic and stays. The art rides the
+    # `Button`'s own `icon` property with an `icon_max_width` cap (an uncapped 256px source would set
+    # the whole 3+2 grid's cell size), and the face drops to the bare verb: art OR glyph, never both.
+    # UNTINTED, like every other mark — `apply_button` sets no `icon_*_color`.
+    var mark := HudSprites.for_mark(String(HudComposeVocab.MISSION_MARKS.get(mission, "")))
     btn.text = label
+    if mark != null:
+        btn.text = String(HudComposeVocab.MISSION_LABELS_SPRITE.get(mission, label))
+        btn.icon = mark
+        btn.add_theme_constant_override("icon_max_width", HudComposeVocab.MISSION_ICON_MAX_WIDTH)
     btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     HudStyle.apply_button(btn, "primary")
     btn.tooltip_text = hint

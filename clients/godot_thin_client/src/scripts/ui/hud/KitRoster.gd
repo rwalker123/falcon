@@ -1642,9 +1642,22 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 	# The face carries the JOB GLYPH and no default suffix, which is why it is stated separately from
 	# the list: the glyph says what this crew is walking out to do (one per sheet, so repeating it down
 	# every row would be noise), and `(default)` is a note about an entry rather than about the choice.
-	var picker := HudWidgets.build_option_picker(entries, selected_index,
-		HudComposeVocab.KIT_PICKER_FACE_FORMAT % [glyph, kit_display_name(selected)],
+	# **THE MARK IS ART WHERE THE JOB HAS ANY** (issue #249), the glyph where it does not. It rides
+	# the `OptionButton`'s own `icon` PROPERTY — free on this widget, the dropdown chevron being the
+	# separate `arrow` THEME item — and the face then carries the kit's name alone, art OR glyph and
+	# never both. UNTINTED: `apply_option_button` sets no `icon_*_color` and the stock theme's
+	# resolves to opaque white, so the mark renders in its authored two-tone fill.
+	var job_sprite := HudSprites.for_mark(String(HudComposeVocab.KIT_JOB_MARKS.get(job,
+		HudComposeVocab.KIT_JOB_MARK_FALLBACK)))
+	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [glyph, kit_display_name(selected)]
+	if job_sprite != null:
+		face = HudComposeVocab.KIT_PICKER_FACE_FORMAT_SPRITE % kit_display_name(selected)
+	var picker := HudWidgets.build_option_picker(entries, selected_index, face,
 		HudComposeVocab.KIT_PICKER_TOOLTIP)
+	if job_sprite != null:
+		picker.icon = job_sprite
+		picker.add_theme_constant_override("icon_max_width",
+			HudComposeVocab.KIT_PICKER_ICON_MAX_WIDTH)
 	picker.set_meta(KIT_PICKER_META, true)
 	if compact_chrome:
 		HudWidgets.compact(picker, HudWorkVocab.WORK_STEPPER_FONT_SIZE,

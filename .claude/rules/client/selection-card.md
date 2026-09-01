@@ -41,7 +41,8 @@ paths:
     land is the same KIND of thing they are — a subject on this hex you can put workers on. Its
     label is the BIOME name, its glyph the tile's food-module icon (`FoodIcons.for_site`, the
     same one the map marker draws) or the neutral `◈`, its dot the patch's ecology tier, and its
-    meta the shortest true form: `N 🌾` staffed · else the module label · else `No forage` (gated
+    meta the shortest true form: `N` + the drawn forage mark when staffed · else the module label ·
+    else `No forage` (gated
     on the module KEY, never its `"None"` label). Selecting it emits
     **`roster_occupant_selected("land", -1)`** — an ADDITIVE third kind on the existing `(kind, id)`
     contract (Main forwards it blindly to `MapView.select_occupant`, so Main needed no change). It
@@ -177,8 +178,10 @@ paths:
   - Each occupant row is a `Button` hosting a mouse-transparent
   HBox — a selection accent, a **vitality dot**, name, size, and (bands) an
   activity glyph; a **wildlife** row reads **species + its STAFFING** — the hunters on the herd in
-  the same `<count> <glyph>` form the land row uses (`🦌 Red Deer   1 🏹`, twin of `◈ Savanna   2 🌾`),
-  with the unworked-but-huntable form `0 🏹` and *no* meta at all on a non-huntable herd. The
+  the same `<count> <activity mark>` form the land row uses (`<deer> Red Deer   1 <hunt>`, twin of
+  `◈ Savanna   2 <forage>`; both marks are bundled art since issue #249 — see "The TRAILING mark is
+  the same story one slot over" below),
+  with the unworked-but-huntable form `0 <hunt>` and *no* meta or mark at all on a non-huntable herd. The
   **size class** moved into the herd drawer's first row (`Size: Big game`) because the row's one
   meta slot now belongs to the count — but a **predator reads `Size: Big predator`, not `Big game`**
   (a carnivore is a hunter, not quarry; `DetailFormat` branches the `"%s game"`/`"%s predator"` format
@@ -289,9 +292,58 @@ which IS a missing override): the LIT half on `tile_panel_no_forage`, the UNLIT 
 path. Sabotage-verified, and they fail DISJOINTLY — dropping the build-time colour fails only the lit
 one, dropping the patch-path re-apply only the unlit one.
 
-`row_icon` is deliberately **not** the `glyph_label` meta slot: that is the band row's TRAILING activity
-glyph, a different question in a different place, and folding them would make one meta key mean two
+`row_icon` is deliberately **not** the `glyph_label` meta slot: that is the row's TRAILING activity
+mark, a different question in a different place, and folding them would make one meta key mean two
 things.
+
+### The TRAILING mark is the same story one slot over, and ALL THREE row kinds share it (issue #249)
+
+The activity glyphs (`HudSelectionVocab.ACTIVITY_GLYPHS`) went the same way the leading marks did:
+`forage` / `hunt` / `scout` resolve bundled art through **`ACTIVITY_MARKS`**, a SECOND table beside
+the glyphs rather than a widening of them — `TurnOrb.KIND_ICON_SPRITE`'s shape, and for the same
+reason, that `_activity_glyph` answers in Strings and its callers want a glyph.
+
+**THE LAND ROW AND THE HERD ROW ROUTE THROUGH IT TOO, and that is the point.** Their staffing metas
+used to be `"%d %s"` — the count and the activity emoji welded into one `Label`, which a texture
+cannot live inside. `LAND_META_WORKERS_FORMAT` / `HERD_META_WORKERS_FORMAT` are the COUNT alone now
+and the mark is its own trailing node, so `2 <forage>` on a hex, `1 <hunt>` on a herd and a band's own
+activity are one column of drawn marks down the subject list. Splitting only the band row would have
+left a drawn sprig beside an emoji bow two rows under it, which is the *half a set* failure
+`sprites-widgets.md` → "`HudSprites` keys the ACTIVITY" exists to name.
+
+**THE PATCH PATH OWES THE SAME NODE SWAP, and a row crosses the line by doing its job.**
+`_set_row_activity_mark` is `_set_row_icon`'s twin: the mark is a `TextureRect` while a band forages
+and a glyph `Label` the turn its crew goes IDLE. Writing `.text` to a `TextureRect` is a silent
+no-op, so same kind ⇒ patch the property, different kind ⇒ swap the node at its own index and
+re-stash it.
+
+⛔ **`idle` IS THE ANCHOR, AND IT IS THE ONLY PERMANENT ONE.** It is `·`, a tinted symbolic glyph
+that #249's rule keeps as text forever, so the flip stays reachable for good — every other activity
+in `ACTIVITY_MARKS` is drawn. This was first written against `warrior` as "the activity with no
+art", and `ui_preview`'s assertion built on that anchor FAILED the moment `warrior.png` shipped
+later in the same branch. An art-pending activity is a moving anchor; do not re-anchor on one.
+
+**AN EMPTY ACTIVITY STILL GETS A NODE, at a zero box.** A hex can BECOME a gathering site between
+restates while its row is PATCHED rather than rebuilt — the land row's key is `["land"]` and carries
+no such flag — so a slot created only where a mark was wanted could never be filled in later. The
+zero-width empty `Label` is what the swap has to work with, and it costs the row nothing while it is
+empty.
+
+⛔ **THE HERD ROW IS NOT THE SAME CASE, and the difference is its ROW KEY.** A herd's huntability
+rides that key (`["herd", id, _herd_row_meta(h) != ""]`), so a herd becoming huntable is a
+STRUCTURAL change that REBUILDS the list rather than patching it — `_update_herd_row`'s own doc says
+as much. The always-present node still earns its place there (one builder, one shape for all three
+row kinds), but do not read this paragraph as licence to drop that flag from the herd key: without
+it a newly-huntable herd would patch in the drawn hunt mark and show NO count, `meta_label` being
+stashed only when it existed at build time. **The box travels with
+the text on the patch path** for the mirror reason: an activity that goes away must give its width
+back, or an unstaffed row keeps a mark-sized hole.
+
+**A FOREIGN band states `""`, not idle.** We cannot see what their people are doing, which is a
+different claim from *nothing* — and a PLAYER band whose wire `activity` is blank is normalised to
+idle in `_band_row_activity`, because `_activity_glyph` has always fallen back to the idle `·` and the
+mark builder now reads `""` as *no mark at all*. Without that normalisation a player band would
+silently lose its dot the moment the field came through empty.
 
 **No frame can hold this claim** — both renderings are a perfectly ordinary row, and the stale one is
 stale only against a tile that is not in the same picture. `ui_preview`'s `tile_panel` chapter asserts it

@@ -520,6 +520,11 @@ const COMPOSITION_BAR_SEPARATION := 2
 const COMPOSITION_MIN_RATIO := 1.0
 const COMPOSITION_SWATCH_SIZE := Vector2(8.0, 8.0)
 const COMPOSITION_SWATCH_SEPARATION := 4
+
+## A composition chip's segment key, as `Control` meta — the handle a harness identifies it by,
+## since issue #249 made the key a TEXTURE on the PEOPLE bar and left the label holding the count
+## alone. Mirrors `POLICY_RUNG_META` / `IMPROVEMENT_CONTROL_META`'s job for their controls.
+const COMPOSITION_SEGMENT_META := &"composition_segment"
 ## The gap between a zone column's SECTIONS (blocks); the tighter within-block gap is
 ## `HudWorkVocab.ZONE_BLOCK_SEPARATION`, which has readers on both sides of this boundary.
 const ZONE_SECTION_SEPARATION := 12
@@ -555,14 +560,31 @@ static func build_composition_key(segments: Array, trailing: Control = null) -> 
         var chip := HBoxContainer.new()
         chip.add_theme_constant_override("separation", COMPOSITION_SWATCH_SEPARATION)
         chip.tooltip_text = String(segment.get("tooltip", ""))
+        # The chip's STABLE HANDLE — which segment this is, independent of how its face is drawn.
+        # The harnesses identified a chip by SPLITTING ITS LABEL (`"👶 9"` → key, count), which stops
+        # working the moment the key becomes a texture and the label is the bare count; a meta is the
+        # identity `test-harnesses.md` → "An assertion asks a CONTROL, not the subtree" asks for. The
+        # COUNT is deliberately NOT stashed here — that number must still be read off the rendered
+        # label, or the assertion checks the harness's own arithmetic instead of the bar's.
+        chip.set_meta(COMPOSITION_SEGMENT_META, String(segment.get("key", "")))
         var swatch := ColorRect.new()
         swatch.color = segment.get("color", HudStyle.INK_FAINT)
         swatch.custom_minimum_size = COMPOSITION_SWATCH_SIZE
         swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
         swatch.mouse_filter = Control.MOUSE_FILTER_IGNORE
         chip.add_child(swatch)
+        # **THE MARK IS ART WHERE THE BRACKET HAS ANY** (issue #249), and it is its own child rather
+        # than a prefix inside the count's text — a texture cannot live in a `Label.text`, the same
+        # split the roster row's marks took. `PEOPLE_MARKS` is keyed by the GLYPH the segment already
+        # carries, so no caller had to learn a second vocabulary to opt in.
+        var glyph := String(segment.get("key", ""))
+        var mark := HudSprites.for_mark(String(HudWorkVocab.PEOPLE_MARKS.get(glyph, "")))
+        if mark != null:
+            chip.add_child(build_marker_icon(mark, glyph, HudWorkVocab.PEOPLE_MARK_BOX,
+                HudWorkVocab.COMPOSITION_KEY_FONT_SIZE))
         var text := Label.new()
-        text.text = "%s %d" % [String(segment.get("key", "")), int(segment.get("count", 0))]
+        text.text = ("%d" % int(segment.get("count", 0))) if mark != null \
+            else "%s %d" % [glyph, int(segment.get("count", 0))]
         text.add_theme_font_size_override("font_size", HudWorkVocab.COMPOSITION_KEY_FONT_SIZE)
         text.add_theme_color_override("font_color", HudStyle.INK_DIM)
         text.mouse_filter = Control.MOUSE_FILTER_IGNORE

@@ -1114,6 +1114,44 @@ const COMPOSE_MISSION_TRADE := "trade"
 ## is drawn.
 const COMPOSE_MISSION_LABEL_TRADE := "📦 Trade"
 
+## Mission → `HudSprites` MARK ID, for the launch buttons whose glyph is PICTOGRAPHIC (issue #249).
+## A mission listed here puts its mark on the `Button`'s own `icon` property and takes its label from
+## `MISSION_LABELS_SPRITE` below, the verb without the leading glyph; one absent from it keeps its
+## `COMPOSE_MISSION_LABEL_*` glyph face.
+##
+## **THE IDS ARE THE ACTIVITY'S AGAIN** — `hunt` is the file the roster row, the work board's filter
+## chip and the kit picker all draw, so a hunting party is marked the same way wherever it is spoken
+## about. `scout` likewise retires the ⚑ FLAG for the drawn footprints, which is a vocabulary change
+## and not just an art one: the flag was this grid's own mark for a mission the rest of the client
+## already spelled with a compass, and one job may not have two drawings.
+##
+## ⛔ **`split` IS ABSENT AND IT IS NOT A GAP.** `⌂` is a text-presentation SYMBOLIC glyph, which
+## #249 leaves as text — and a split is not a mission at all (it makes a band rather than sending a
+## party), so the grid reading four drawn marks and one glyph states that difference rather than
+## hiding it.
+const MISSION_MARKS := {
+	COMPOSE_MISSION_SCOUT: "scout",
+	COMPOSE_MISSION_HUNT: "hunt",
+	COMPOSE_MISSION_DENY: "deny",
+	COMPOSE_MISSION_TRADE: "trade",
+}
+
+## The launch faces once their mark is bundled ART — the verb alone, the glyph gone, because a
+## `Button` carries art on its `icon` PROPERTY and a face that kept the glyph would say its mission
+## twice. Art OR glyph, never both — the rule the work chips and the kit picker already follow.
+const MISSION_LABELS_SPRITE := {
+	COMPOSE_MISSION_SCOUT: "Scout",
+	COMPOSE_MISSION_HUNT: "Hunt",
+	COMPOSE_MISSION_DENY: "Deny",
+	COMPOSE_MISSION_TRADE: "Trade",
+}
+
+## What a launch button's art may occupy, through the stock `icon_max_width` theme constant. The
+## sources are 256px and a `Button` reserves its icon's drawn size in its MINIMUM, so uncapped art
+## would set the whole 3+2 grid's cell size. Sized to the face's own text so the mark reads as the
+## glyph it replaced.
+const MISSION_ICON_MAX_WIDTH := 16
+
 ## **HOW MANY LAUNCH BUTTONS FIT ONE ROW OF THE PARTIES FOOTER, and the fifth is what forced the
 ## question.** Four fit a 354px dock column at ~62px each; a fifth takes them to ~48, which
 ## `📦 Trade` does not fit — and the zone `clip_contents`, so what shipped for one render was a
@@ -1368,14 +1406,60 @@ const KIT_PICKER_FACE_FORMAT := "%s %s"
 ## `equipment.json` and a client-side table keyed on them goes stale the moment a kit is added. The
 ## glyph says what the crew is walking out to do, which is the same for every kit on one sheet.
 ## **The two BAND-WIDE roles have faces here too**, since the WORKFORCE zone's role cards mount the
-## same picker: a compass for the scout who is walking out to look, an axe for the warrior who stays
-## by the fire. Keyed by job like the two above, so a roster that adds a wayfinding kit needs no entry.
+## same picker. Keyed by job like the two above, so a roster that adds a wayfinding kit needs no entry.
+##
+## **THIS TABLE IS THE FALLBACK HALF NOW** (issue #249): all four jobs have bundled art in
+## `KIT_JOB_MARKS` below and render it, so these four render only when a load fails. The subjects
+## they name are the EMOJI's — a compass for the scout, an axe for the warrior — and the art
+## deliberately does not follow them: the drawn scout is FOOTPRINTS (a compass is several thousand
+## years early for this roster) and the drawn warrior is a SHIELD (an axe collides with `hunt.png`'s
+## bow in this very control, where the two faces alternate). Read the art's subject off
+## `assets/icons/icon_prompts.txt`, never off the glyph it replaced.
 const KIT_JOB_GLYPHS := {
 	"hunt": "🏹",
 	"forage": "🧺",
 	"scout": "🧭",
 	"warrior": "🪓",
 }
+
+## The picker face's BUNDLED ART, keyed by the same JOB (issue #249). A job listed here puts its
+## mark on the `OptionButton`'s own `icon` property and drops the leading `%s` from the face
+## (`KIT_PICKER_FACE_FORMAT_SPRITE`); one absent from it, or one whose art fails to load, keeps the
+## glyph above.
+##
+## **THE IDS ARE `HudSelectionVocab.ACTIVITY_MARKS`' OWN, AND THAT IS THE POINT.** Both tables are
+## keyed by the same four jobs, so the file the roster row draws for a hunting band is the file this
+## picker draws on the hunt sheet — one activity, one mark, wherever it renders. The four emoji above
+## did NOT have that property: the roster spelled forage 🌾 and this table spells it 🧺, and warrior
+## was a 🛡 there and a 🪓 here, which is one job drawn two ways and exactly the drift `hunt.png` was
+## written to end.
+##
+## Coverage is COMPLETE for the four jobs the roster ships, and `KIT_JOB_MARK_FALLBACK` covers the
+## fifth case — a job the table has never heard of — so this picker has no glyph face left at all.
+const KIT_JOB_MARKS := {
+	"hunt": "hunt",
+	"forage": "forage",
+	"scout": "scout",
+	"warrior": "warrior",
+}
+
+## The MARK for a job with no entry above — the art twin of `KIT_JOB_GLYPH_FALLBACK`, and the only
+## mark in `hud/` whose subject is deliberately GENERIC. It is a carrying basket: it must read as
+## *some gear, unspecified* beside four faces that name a specific job, and it must not be
+## `trade.png`'s gathered sack, which is the one other "thing you carry" in the family. A handle and
+## a hard rim against a knotted neck is what keeps those two apart at row size.
+const KIT_JOB_MARK_FALLBACK := "kit_fallback"
+
+## The picker face once its mark is bundled ART — the kit's name alone, the leading `%s` gone,
+## because a `Button` carries art on its `icon` PROPERTY and a face that kept the glyph would state
+## its job twice. Art OR glyph, never both.
+const KIT_PICKER_FACE_FORMAT_SPRITE := "%s"
+
+## What the mark may occupy on that face, through the stock `icon_max_width` theme constant. The
+## source PNGs are 256px and a `Button` reserves its icon's drawn size in its MINIMUM, so without a
+## cap one art-bearing picker would set the whole compose row's height. Sized to the face's own text,
+## so the mark reads as the glyph it replaced rather than as a picture beside a word.
+const KIT_PICKER_ICON_MAX_WIDTH := 16
 
 ## The fallback face glyph for a job with no glyph of its own — the roster's `jobs` is wire data, so a
 ## job this table has never heard of must still render a legible face rather than an empty one.

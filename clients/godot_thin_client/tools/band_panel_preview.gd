@@ -7398,10 +7398,8 @@ func _assert_one_role_card_gear(role_name: String, job: String, kit_name: String
 	if picker == null:
 		_fail("the %s card has no kit picker" % role_name)
 		return
-	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
-		String(HudComposeVocab.KIT_JOB_GLYPHS[job]), kit_name]
-	_assert_band_panel("…whose face names this role's own kit (\"%s\")" % picker.text,
-		picker.text == face)
+	_assert_kit_picker_face(picker, job, kit_name,
+		"…whose face names this role's own kit (\"%s\")" % picker.text)
 	var hint := _find_meta_control(card, KitRoster.KIT_HINT_META) as Label
 	if hint == null:
 		_fail("the %s card has no gear line" % role_name)
@@ -9711,12 +9709,25 @@ func _composition_counts(node: Node, title: String) -> Dictionary:
 			if child is HFlowContainer:
 				var counts: Dictionary = {}
 				for chip in child.get_children():
+					# **IDENTIFY BY META, READ THE COUNT OFF THE RENDER.** The chip used to be
+					# identified by splitting its label (`"👶 9"`), which issue #249 broke on the
+					# PEOPLE bar: its key is a `TextureRect` now and the label holds the bare count.
+					# The meta is the stable handle; the number is still whatever the label actually
+					# says, so this stays an assertion about the render rather than about a stash.
+					if not chip.has_meta(HudWidgets.COMPOSITION_SEGMENT_META):
+						continue
+					var key := String(chip.get_meta(HudWidgets.COMPOSITION_SEGMENT_META))
 					for label in chip.get_children():
 						if not (label is Label):
 							continue
-						var parts := (label as Label).text.rsplit(" ", true, 1)
-						if parts.size() == 2 and String(parts[1]).is_valid_int():
-							counts[String(parts[0])] = String(parts[1]).to_int()
+						# The trailing token, so a glyph-faced chip (`"Forage 5"`) and an art-faced
+						# one (`"5"`) are read by one rule.
+						var parts := (label as Label).text.split(" ", false)
+						if parts.is_empty():
+							continue
+						var tail := String(parts[parts.size() - 1])
+						if tail.is_valid_int():
+							counts[key] = tail.to_int()
 				return counts
 	for child in node.get_children():
 		var found := _composition_counts(child, title)
@@ -13659,6 +13670,34 @@ func _kit_hunt_forecast(quarry: Dictionary, dispersion: float) -> Dictionary:
 		SourceForecast.SOURCE_KIND_HERD, "",
 		SourceForecast.floor_for_preset(SourceForecast.FLOOR_PRESET_STRIP))
 
+## A kit picker's FACE, judged art-or-glyph (issue #249) — the one place both assertion sites agree
+## on what a face is, so a change to the mechanism moves them together.
+##
+## **THE TWO BRANCHES ARE DIFFERENT CLAIMS, and the art one is the stronger.** With a mark the face
+## is the kit's NAME ALONE and the mark rides the `OptionButton`'s `icon` property, so the assertion
+## checks both halves: a face that still carried the glyph would fail the text, and a face that
+## dropped the glyph while never setting the icon would render the job namelessly and fail the icon.
+## Checking only the text would pass on exactly that second bug.
+##
+## ⛔ **THE MARK IS RESOLVED EXACTLY AS `KitRoster.build_kit_row` RESOLVES IT, fallback and all.**
+## A job absent from `KIT_JOB_MARKS` still draws art — `KIT_JOB_MARK_FALLBACK`'s satchel — so a
+## harness that resolved the id without that default would take the glyph branch and assert a face
+## the picker never renders: a FALSE failure on a job the client simply has not heard of.
+##
+## With `kit_fallback.png` shipped, NO job reaches the glyph face any more; the branch below survives
+## only for a failed LOAD, which `HudSprites`' `warn: true` would already be shouting about.
+func _assert_kit_picker_face(picker: OptionButton, job: String, kit_name: String,
+		label: String) -> void:
+	var sprite := HudSprites.for_mark(String(HudComposeVocab.KIT_JOB_MARKS.get(job,
+		HudComposeVocab.KIT_JOB_MARK_FALLBACK)))
+	if sprite != null:
+		_assert_band_panel(label,
+			picker.text == HudComposeVocab.KIT_PICKER_FACE_FORMAT_SPRITE % kit_name
+				and picker.icon == sprite)
+		return
+	_assert_band_panel(label, picker.text == HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
+		String(HudComposeVocab.KIT_JOB_GLYPHS[job]), kit_name])
+
 func _assert_kit_picker_closed() -> void:
 	var picker := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as OptionButton
 	_assert_band_panel("the denial sheet carries a Kit picker", picker != null)
@@ -13667,10 +13706,8 @@ func _assert_kit_picker_closed() -> void:
 	# **THE FACE CARRIES NO `(default)` SUFFIX AND NO CARET**, which is the whole of what the
 	# `OptionButton` conversion has to get right: `select()` writes the item's own text into `text`,
 	# so a face equal to the LIST entry means the override never ran, and the equality catches it.
-	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
-		String(HudComposeVocab.KIT_JOB_GLYPHS[KitRoster.JOB_HUNT]), "Stalking kit"]
-	_assert_band_panel("…whose face names the selected kit (\"%s\")" % picker.text,
-		picker.text == face)
+	_assert_kit_picker_face(picker, KitRoster.JOB_HUNT, "Stalking kit",
+		"…whose face names the selected kit (\"%s\")" % picker.text)
 	var hint := HudComposeVocab.KIT_HINT_SEPARATOR.join([
 		HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_EQUIPPED,
 			HudComposeVocab.KIT_TIER_DECIMALS),

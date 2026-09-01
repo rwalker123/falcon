@@ -33,16 +33,20 @@
 # survive. The house style below is reconstructed from that art plus the wild-fowl
 # prompt (kept verbatim as the reference exemplar). Add every new prompt here.
 #
-# THE SEVENTH IS `hud/`, AND ITS COVERAGE IS PARTIAL — that is the one thing to know
-# about the list above. A family is a table plus a resolver, and `hud/` now has both:
-# `ui/HudSprites.gd` resolves `for_mark(mark_id)` against a table holding `cairn` ONLY.
-# The directory also carries three shipped, keyed, committed PNGs — forage, hunt, scout —
-# that no table lists and nothing loads, because their wiring is issue #249's and is still
-# blocked on the ladder-set question in that section. A path with no call site would be dead
-# data in the table rather than coverage, so they stay out of it until #249 wires them.
+# THE SEVENTH IS `hud/`, AND IT IS COMPLETE FOR WHAT IT SHIPS. A family is a table plus a
+# resolver, and `hud/` has both: `ui/HudSprites.gd` resolves `for_mark(mark_id)` against a
+# table now holding all THIRTEEN committed PNGs — `cairn` (issue #581) and the twelve wired by
+# issue #249 (`forage`, `hunt`, `scout`, `warrior`, `deny`, `trade`, `workers`, `starving`,
+# `children`, `working_age`, `elders`, `kit_fallback`). Every path in it has a call site, which
+# is the condition that lets it take `IconSprites.texture_for`'s `warn: true` honestly.
 # The HUD / ACTIVITY MARKS block at the BOTTOM of this file holds their prompts and the
-# reasoning behind each subject, which is the expensive part and is settled; whoever picks
-# up #249 should not re-derive it. Read its own preamble before generating one.
+# reasoning behind each subject, which is the expensive part and is settled; do not re-derive
+# it. Read its own preamble before generating one.
+#
+# ⚠ WHAT `hud/` DOES NOT YET SHIP is written up in THE #249 GAP LIST at the very end of this
+# file — the pictographic emoji still rendering as text in the HUD, each with the surface it
+# is on and whether it can move alone. That list is the input to the next art drop, not a
+# backlog of things anyone forgot.
 #
 # ============================================================================
 # PIPELINE
@@ -1258,19 +1262,44 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 # HUD / ACTIVITY MARKS  ->  assets/icons/hud/   (ui/HudSprites.gd)
 # ============================================================================
 #
-# ⚠ ALL FOUR MARKS EXIST; ONLY THE CAIRN IS WIRED. `assets/icons/hud/{cairn,forage,hunt,scout}.png`
-# are keyed, imported and committed. `ui/HudSprites.gd` is this directory's lookup script and its
-# table holds `cairn` alone — wired by issue #581 on the two surfaces that need different
-# mechanisms (a `Button.icon` on the action-bar launcher, a `TextureRect` swapped for a `Label` on
-# the turn orb's row). `forage`, `hunt` and `scout` are listed by NO table and loaded by NOTHING:
-# their wiring is #249's, which is still blocked on the ladder-set question below, and a path with
-# no call site would be dead data in the table rather than coverage.
+# ALL THIRTEEN MARKS EXIST AND ALL THIRTEEN ARE WIRED — every mark this directory SHIPS has a call
+# site, which is the completeness claim `warn: true` rests on. It is NOT the claim that the HUD has
+# run out of pictographic emoji: ⛔ the turn orb's STARVING-PEN row still draws the 🐄 text glyph
+# (`TurnOrb.KIND_ICON[KIND_STARVING_PEN]` = `FoodIcons.POLICY_ICONS[POLICY_CORRAL]`), in the very
+# same row column that `cairn` / `workers` / `starving` draw art into. It is held by the ladder
+# vocabulary question in THE #249 GAP LIST at the end of this file, not by a missing file.
+# `assets/icons/hud/{cairn,forage,hunt,scout,warrior,deny,trade,workers,starving,children,
+# working_age,elders,kit_fallback}.png` are keyed, imported, committed and listed in
+# `ui/HudSprites.gd`, this directory's lookup script. The cairn came first (#581) on the two
+# surfaces that need different mechanisms — a `Button.icon` on the action-bar launcher, a
+# `TextureRect` swapped for a `Label` on the turn orb's row — and #249 wired the other twelve
+# across THREE host mechanisms in all, the third being `HudWidgets.build_marker_icon`:
+#
+#   `Button.icon`      the work board's forage and hunt FILTER CHIPS; the compose sheet's KIT
+#                      PICKER face (an `OptionButton`, whose `icon` is free — its dropdown chevron
+#                      is the separate `arrow` THEME item, not the icon property); and FOUR of the
+#                      parties footer's five MISSION LAUNCH buttons — `⌂ Split` keeps its symbolic
+#                      glyph (`HudComposeVocab.MISSION_MARKS` has four entries), so that grid reads
+#                      four drawn marks and one glyph
+#   `TextureRect`      built by `HudWidgets.build_marker_icon`: the subject list's trailing
+#                      ACTIVITY MARK, on all three row kinds (a band's activity, a hex's foragers,
+#                      a herd's hunters); the turn orb's attention rows; and the PEOPLE composition
+#                      key's three age brackets
+#
+# **ONE FILE SERVES EVERY SURFACE THAT MEANS THE SAME THING**, which is what the id being the
+# ACTIVITY buys: `hunt.png` is the roster's herd row, the work board's hunt chip, the kit picker's
+# hunt face and the mission grid's Hunt button — four surfaces, one drawing, and no way for them to
+# drift. `workers.png` is two turn-orb kinds. `warrior.png` is a roster row and a kit face.
+#
+# **THE MARK ID IS THE ACTIVITY, NOT THE SURFACE** — `hunt` is ONE file behind the chip and the
+# roster row alike, which is what `hunt.png`'s own note below asked for when it collapsed the 🦌
+# and the 🏹 into one subject. A second id per surface is how they would drift back apart.
 #
 # JUDGE ONE OF THESE AT 13px OR NOT AT ALL, and judge it by INK COVERAGE. That single number
 # predicted every outcome in this batch: forage 32% read instantly; hunt survives at 6.8% only
 # because its ink is ONE continuous bar; scout v1 at 7.7-10% did not survive at all. The
 # cheapest test there is: key it, resize to 13x13, and composite it on #111A1E.
-# THE DIRECTORY IS `hud/`, AND ALL FOUR SHARE IT. The cairn briefly had an `ui/` of its own —
+# THE DIRECTORY IS `hud/`, AND ALL THIRTEEN SHARE IT. The cairn briefly had an `ui/` of its own —
 # #581 says only "beside `stages/` and `fauna/`" — and it was folded in here rather than left
 # as a second one-file directory. One home for every mark drawn against the dark HUD panel is
 # also what makes the sub-style below a property of the DIRECTORY rather than a coincidence:
@@ -1326,15 +1355,21 @@ cairn: Flat vector interface mark of a cairn, a small freestanding stack of five
 # THE #249 SET — and the reason only three of the five candidates are written down.
 #
 # #249 migrates the HUD's remaining PICTOGRAPHIC emoji to sprites and leaves the tinted
-# SYMBOLIC glyphs (⚠ ⚑ ⊘ ▦ ◎) as text. Applying that split to what is actually left in the
-# client gives five candidates, and two of them cannot be generated independently:
+# SYMBOLIC glyphs (⚠ ⚑ ⊘ ▦ ◎) as text. Applying that split gave five candidates on the two
+# surfaces this section was written for, and two of them cannot be generated independently:
 #
-#   forage  🌿  `FoodIcons.DEFAULT`, the work chip            -> SHIPPED (coverage 32%)
-#   hunt    🦌  `FoodIcons.HUNT` + the 🏹 activity glyph      -> SHIPPED (coverage 6.8%)
-#   scout   🧭  the roster activity glyph                     -> SHIPPED, see caveat
+#   forage  🌿  `FoodIcons.DEFAULT`, the work chip            -> SHIPPED + WIRED (coverage 32%)
+#   hunt    🦌  `FoodIcons.HUNT` + the 🏹 activity glyph      -> SHIPPED + WIRED (coverage 6.8%)
+#   scout   🧭  the roster activity glyph                     -> SHIPPED + WIRED, see caveat
 #   ---- NOT PROMPTED ----
 #   tended  🌾  the plant ladder's rung-2 mark
 #   penned  🐄  `DetailFormat.CORRAL_GLYPH`, the animal ladder's rung-3 mark
+#
+# ⚠ **FIVE WAS NEVER THE WHOLE COUNT, and the gap list at the end of this file is.** A sweep of
+# every non-comment emoji in `src/` turned up pictographic marks on six MORE surfaces that this
+# section had not looked at — the roster's `warrior`, the mission-launch buttons, the kit picker,
+# the turn orb's attention rows, the PEOPLE key and the locked inspector panels. Nothing here is
+# wrong; it is a list of two surfaces' candidates being read as a list of the client's.
 #
 # THE LAST TWO ARE HALF OF A FOUR-MARK SET AND CANNOT MOVE ALONE. The ladder marks read
 # as one column — plants `🌾 Tended Patch -> ▦ Field`, animals `◎ pastoral -> 🐄 penned` —
@@ -1387,3 +1422,394 @@ hunt: Flat vector interface mark of a simple hunting bow with a single nocked ar
 # anachronism. Treat this as a candidate to look at rather than a settled replacement; if the
 # compass stays, the prompt is wrong rather than the render.
 scout: Flat vector interface mark of two bare human footprints in the dirt, one ahead of the other as if walking away, seen from directly above, each footprint a simple bold rounded sole shape with a single separated toe pad and no individual toes, no compass, no needle, no arrow, no map, no boot tread, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a pale bone-cream and a warm mid tan in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the footprints on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
+
+
+# =============================================================================================
+# THE #249 GAP LIST — every PICTOGRAPHIC emoji still rendering as text in the HUD
+# =============================================================================================
+#
+# Produced by sweeping every NON-COMMENT emoji in `clients/godot_thin_client/src/**.gd` and
+# dropping the tinted symbolic glyphs (▸ ▾ ◀ ▶ ⚠ ⌃ ⚑ ⊘ ▦ ◎ ✕ ● ○ ◈ · ≈ → ∞ ⚒ ⚔ …), which #249
+# leaves as text on purpose: their COLOUR is half of what they say, and this art is authored in
+# two flat pale tones whose fill IS the silhouette, so a tint flattens it into one.
+#
+# It is the input to the next art drop. **Everything below is a MISSING PNG, not a missing call
+# site** — each entry names a surface already wired for art-or-glyph, or one whose mechanism is
+# the same `Button.icon` / `TextureRect` pair `hud/` already uses twice.
+#
+# ⛔ **READ THE `CAN IT MOVE ALONE?` COLUMN BEFORE GENERATING ONE.** Half of these sit in a
+# COLUMN or a ROW of sibling marks, and the one job a mark has is to be told apart from its
+# neighbours. Migrating half a set puts drawn sprites beside text glyphs at different weights and
+# different vertical metrics, which is a NEW inconsistency introduced by the fix — the reason the
+# ladder pair below has stayed unprompted through two art drops. A set moves whole or not at all.
+#
+#   mark            emoji   surface                                          can it move alone?
+#   ------------    -----   ----------------------------------------------   ------------------
+#   warrior     ✅ DONE     the subject list's activity mark, AND the         (kept for the record)
+#                           compose sheet's kit-picker face                   YES — its three
+#                           (`ACTIVITY_GLYPHS` + `KIT_JOB_GLYPHS`)            ALREADY, so it
+#                                                                            CLOSES a set rather
+#                                                                            than opening one.
+#                                                                            **ONE FILE, TWO
+#                                                                            SURFACES** — both
+#                                                                            tables are keyed by
+#                                                                            the same four JOBS,
+#                                                                            so `forage`/`hunt`/
+#                                                                            `scout` already
+#                                                                            serve the picker and
+#                                                                            this is the only
+#                                                                            face it still lacks.
+#                                                                            The two emoji it
+#                                                                            retires (🛡 shield,
+#                                                                            🪓 axe) were one job
+#                                                                            drawn two ways,
+#                                                                            which is the drift
+#                                                                            `hunt.png` was
+#                                                                            written to end.
+#                                                                            HIGHEST VALUE HERE.
+#
+#   deny        ✅ DONE     the parties footer's mission-launch buttons       (done together, as
+#   trade       ✅ DONE     (`HudComposeVocab.COMPOSE_MISSION_LABEL_*`)       this row said they
+#                                                                            and `⌂ Split` are
+#                                                                            text-presentation
+#                                                                            SYMBOLIC glyphs and
+#                                                                            stay, so these two
+#                                                                            plus the already-
+#                                                                            drawn `hunt` are the
+#                                                                            grid's whole
+#                                                                            pictographic set:
+#                                                                            generate BOTH.
+#                                                                            (The ⚑ should
+#                                                                            probably become the
+#                                                                            `scout` FOOTPRINTS
+#                                                                            for the same
+#                                                                            one-job-one-mark
+#                                                                            reason — no new art,
+#                                                                            a vocabulary call.)
+#
+#   kit_fallback ✅ DONE     the kit picker's face for a job the client's      YES, and it is the
+#                           table has never heard of                          LOWEST value here.
+#                           (`KIT_JOB_GLYPH_FALLBACK`)                        Reachable only on
+#                                                                            wire data naming a
+#                                                                            new job, and an
+#                                                                            unknown job is the
+#                                                                            one case where a
+#                                                                            generic glyph is
+#                                                                            honest. Skipping it
+#                                                                            is defensible.
+#
+#   workers     ✅ DONE     the turn orb's `idle_workers` AND                 YES — the orb's row
+#                           `crew_handoff` rows (`TurnOrb.KIND_ICON`)         column has been
+#   starving    ✅ DONE     the turn orb's `starving` row                     MIXED since #581 put
+#                                                                            the drawn cairn in
+#                                                                            it beside eight
+#                                                                            glyphs, so this set
+#                                                                            does NOT have to
+#                                                                            move whole. 🛠 is
+#                                                                            ONE file for two
+#                                                                            kinds — both rows
+#                                                                            are about the HANDS.
+#
+#   losing_pop  ✅ DONE     ⛔ **NEEDED NO ART — IT WAS A SYMBOLIC GLYPH        n/a. This is a code
+#                           WEARING AN EMOJI CODEPOINT.** Its content is a    change, not an art
+#                           falling TREND ARROW, and the client already       one: point
+#                           spells that `▼` in two places                     `KIND_LOSING_POP`
+#                           (`BandDetailLines.MORALE_TREND_FALLING_GLYPH`,    at the existing `▼`
+#                           `HudEventVocab.DOCK_BOTTOM_GLYPH`). Drawing it    and tint it, as the
+#                           would spend a file on the one mark #249's rule    orb's other
+#                           says to leave as text.                            symbolic marks are.
+#
+#   children     ✅ DONE     the PEOPLE composition key, on the band page      NO — three segments
+#   working_age  ✅ DONE     and the faction rollup alike                      of ONE bar, read
+#   elders       ✅ DONE     (`HudWorkVocab.PEOPLE_GLYPH_*`)                   left to right as a
+#                                                                            single sentence.
+#                                                                            Generate as a set of
+#                                                                            three at one weight.
+#
+#   tended          🌾      the plant ladder's rung-2 mark                    NO — see THE #249
+#   penned          🐄      the animal ladder's rung-3 mark                   SET above: ▦ and ◎
+#                           (`DetailFormat.CULTIVATION_GLYPH` / `CORRAL_`)    are their symbolic
+#                                                                            siblings in the same
+#                                                                            column, so the
+#                                                                            ladder is a
+#                                                                            VOCABULARY decision
+#                                                                            before it is an art
+#                                                                            one. Unchanged.
+#                           ⛔ 🐄 IS NOT ONLY A LADDER MARK. It is also
+#                           `TurnOrb.KIND_ICON[KIND_STARVING_PEN]`, so it renders as text in the
+#                           orb's attention-row COLUMN, beside the drawn `cairn` / `workers` /
+#                           `starving`. That surface is already wired for art-or-glyph; what is
+#                           missing is the file, and it stays missing while the ladder's
+#                           vocabulary question above is open — the same mark cannot be drawn on
+#                           the orb and spelled 🐄 one row down the ladder.
+#
+# NOT ON THE LIST, AND EACH FOR A STATED REASON:
+#
+#   🔒 on the five locked inspector panels (`CrisisPanel`, `GreatDiscoveriesPanel`,
+#      `InfluencerPanel`, `KnowledgePanel`, `PowerPanel`) — the whole PANEL is a placeholder
+#      saying a system is not built yet, so drawing its padlock is dressing a stub.
+#
+#   The map's expedition markers (`MapView.EXPEDITION_HUNT_GLYPH` and its 💀 / 📦 twins) — these
+#      draw over the MAP through `draw_string`, at marker size, over whatever terrain is under
+#      them. That is the house style's situation, NOT `hud/`'s: an outlined map marker, front-on
+#      pale-on-near-black art would vanish on it. If they move, they move as a new `expeditions/`
+#      map-marker family with the house style's outline clause, and `BandMarkerRenderer` draws a
+#      texture rather than a glyph — a different mechanism from either one `hud/` uses.
+#
+#   `FoodIcons.HERD_SPECIES` / `SITE_ICONS` / `CROP_ROLE_ICONS` — these are FALLBACKS behind
+#      `fauna/`, `sites/` and `crops/`, which already ship complete coverage. The emoji is the
+#      art-or-glyph contract's other half and is meant to stay.
+
+
+# =============================================================================================
+# THE #249 GAP LIST — THE PROMPTS
+# =============================================================================================
+#
+# Eight prompts closing the gap list above, in the order worth generating them. **They all take
+# the `hud/` sub-style stated at the top of the HUD / ACTIVITY MARKS section** — no outline,
+# front-on, two flat pale tones on a near-black panel, keyed at `--size 256` on the pale-subject
+# ramp (`--lo 85 --hi 240`), judged at 13px by INK COVERAGE and by nothing else.
+#
+# THE TWO LESSONS THIS BATCH IS BUILT ON, both learned the expensive way in the last one:
+#   * **PIECE COUNT costs more than any single piece's size.** `scout` v1 spent its ink on four
+#     separate shapes and came back a smudge at 7.7%; one large footprint cleared it at 18.5%.
+#     Every subject below is specified as ONE mass wherever it can be, and where a second piece
+#     earns its place (the elder's staff) the prompt says why.
+#   * **Nothing thinner than ~1/6 of the icon width survives**, which is why every band, cord and
+#     rim below carries that clause.
+#
+# HUE IS ALREADY CROWDED, so each prompt names a lane and the reason: forage owns green (~110deg),
+# hunt owns amber-ochre (~40deg), scout and cairn own bone-cream. Where a new mark has to reuse
+# bone-cream it is separated by SILHOUETTE instead, and the prompt says which mark it must not be
+# confused with.
+
+
+# ⛔⛔ THE RAMP IS NOT A CONSTANT — A COOL SUBJECT NEEDS `--hi 200`, NOT `--hi 240`.
+# Learned on `warrior` and it will bite the rest of this batch, so it is here rather than in that
+# icon's own note. This section's header says to "expect the pale-subject ramp (`--lo 85 --hi 240`)"
+# and that is right for the four WARM marks it was written from. `warrior` is deliberately COOL —
+# slate blue-grey, the one hue that separates it from its three column siblings — and blue is
+# hue-ADJACENT to the magenta key, which is the variable `icon_key.py`'s alpha ramp actually keys on
+# (the `--lo`/`--hi` note in the fauna pipeline says so in as many words: "what decides the safe
+# `--hi` is the subject's hue proximity to the key, not its LIGHTNESS").
+#
+# **THE SYMPTOM IS INVISIBLE IN THE PNG AND IN THE FRAME.** At `--hi 240` both warrior candidates
+# keyed with their whole body at alpha 180-230 instead of 230-255 — a shield that composites at
+# ~78% over the panel, so it renders slightly washed beside siblings that are fully opaque, and
+# NOTHING says so: the key reports a healthy coverage, the magenta residual is 0, the composite
+# looks fine to the eye, and no assertion reads a pixel of art.
+#
+# **THE TEST IS THE ALPHA HISTOGRAM AGAINST THE SHIPPED FOUR, AND IT IS UNAMBIGUOUS.** Every mark in
+# this directory puts its ink in the 230-255 bucket — forage 31.1%, cairn 30.7%, scout 18.4%,
+# hunt 6.6% — with under 1% in 180-230 (that band is antialiasing and nothing else). A candidate
+# with mass in 180-230 has been half-keyed. Measured on `warrior`:
+#
+#     --hi 240   45.2% at 180-230,  0.2% at 230-255   <- half-keyed
+#     --hi 220    1.9% at 180-230, 43.6% at 230-255
+#     --hi 200    0.1% at 180-230, 45.4% at 230-255   <- shipped
+#     --hi 180 .. 140   unchanged to a tenth of a percent
+#
+# 200 was taken rather than 220 because the numbers go FLAT from 200 down: it sits in the middle of
+# the plateau rather than on its edge, so a re-key of a slightly different render lands in the same
+# place. The clear fraction moves 53.8% -> 53.6% across the whole sweep, i.e. narrowing the ramp
+# costs the subject nothing — there is no trade being made here, only a wrong default.
+#
+# ⛔ **"COOL IS RISKY, WARM IS SAFE" IS THE WRONG RULE — that was written here after `warrior` and
+# the very next batch disproved it in both directions.** MAGENTA IS HIGH-RED *AND* HIGH-BLUE, so
+# BOTH ends of the spectrum sit near the key and only GREEN is genuinely far from it. Measured:
+#
+#     warrior   cool slate blue    half-keyed at 240, clean at 200
+#     trade     warm gold/amber    half-keyed at 240, clean at 200   <- the warm one that broke it
+#     workers   warm pale tan      keyed at 200 (not retested at 240)
+#     deny      bone-white         CLEAN at 240 — the prediction here said it would probably fail
+#     forage    sage green         clean at 240, and it is the ~110deg outlier that explains why
+#
+# So `deny` was predicted to fail and did not, and `trade` was predicted to be safe and did not
+# key. **The prompt's colour words predict nothing.** The cheap and correct move is to key at
+# `--hi 200` FIRST — it costs the subject nothing anywhere it has been measured (the clear fraction
+# moves by ~0.2 points across the whole 240..140 sweep) — and then confirm on the histogram.
+#
+# **THE HISTOGRAM IS THE ONLY TEST.** Ink in 230-255 with under ~1% in 180-230 is a clean key; mass
+# in 180-230 is half-keyed and will ship translucent beside its siblings, with a healthy coverage
+# figure, a magenta residual of 0 and a composite that looks right to the eye.
+
+
+# warrior.png — the roster's activity mark AND the kit picker's warrior face. ONE FILE, TWO
+# SURFACES: `ACTIVITY_GLYPHS` and `KIT_JOB_GLYPHS` are both keyed by JOB, so this retires 🛡 and
+# 🪓 together — they were one job drawn two ways, the drift `hunt.png` exists to end.
+# ⚠ IT MUST NOT BE A WEAPON. `hunt.png` is already a bow, and a warrior drawn as an axe or spear
+# collides with it on the kit picker, where the two faces alternate in the SAME control — the
+# exact "a mark that draws the subject cannot say which one a row means" trap hunt's own note
+# names. The shield says GUARDS, which is what the row means ("Guards the band — matters once
+# threats arrive"), and it is a large single mass, the best shape budget in this batch.
+# Cool slate: the only mark in `hud/` that is not warm, so it separates from its three column
+# siblings by hue as well as by shape — and that hue is what forced the `--hi 200` key above.
+# STATUS: SHIPPED at `assets/icons/hud/warrior.png` and WIRED on BOTH surfaces —
+# `HudSelectionVocab.ACTIVITY_MARKS` (the roster's trailing mark) and `HudComposeVocab.KIT_JOB_MARKS`
+# (the kit picker's face, an `OptionButton.icon`; the dropdown chevron is the separate `arrow` THEME
+# item, so the `icon` property is free there). Keyed `--size 256 --lo 85 --hi 200`; coverage 44.0%,
+# magenta residual 0, bbox 163x225.
+# THE CHOSEN RENDER — of two candidates that were near-identical in silhouette and within 1.5
+# points of coverage, the one with the BRIGHTER BAND won, and the reason is the only thing a shield
+# has to say at 13px. Both are a blue teardrop with a horizontal band; the band is the sole interior
+# feature, so if it closes up the mark is a plain blob. The rejected candidate banded at luma 207
+# against a 180 body — a 27-luma step that greys out at row size, leaving a shape uncomfortably
+# close to `forage.png`'s leafy sprig two rows up the same column. The chosen one bands at 229
+# against 181, a 48-luma step that survives, and its flatter, squarer shoulders read as a SHIELD
+# rather than as a teardrop. Judge any future candidate on the BAND CONTRAST at 13px, not on the
+# outline.
+# ⚠ IT IS THE HEAVIEST MARK IN THE FAMILY at 44% coverage, against forage 31%, scout 18% and hunt
+# 7%. That is what a shield is, and the 18px box caps it, but a future mark should not take this as
+# the family's target — the four before it average 22%.
+warrior: Flat vector interface mark of a simple round-topped wooden shield seen straight on from the front in a symmetrical upright pose, one broad rounded shape tapering to a blunt point at the bottom with a single plain horizontal band across its middle, no sword, no spear, no axe, no bow, no arrow, no weapon of any kind, no hand, no arm, no heraldry, no emblem, no crest, no animal, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a cool pale slate blue-grey and a light silver in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, at most one interior division line, the band no thinner than one sixth of the icon width, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the shield on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
+
+
+# deny.png — the parties footer's `💀 Deny` mission button (a denial raid).
+# STATUS: SHIPPED at `assets/icons/hud/deny.png` and WIRED on the parties footer's mission grid.
+# Keyed `--size 256 --lo 85 --hi 240` — this one really was clean at 240; coverage 37.6%, magenta
+# residual 0, bbox 181x225.
+# THE CHOSEN RENDER — of two, the one with the LARGER, ROUNDER sockets AND a magenta nasal. The
+# rejected twin drew smaller ovals and filled the nasal in MID GREY, and at 13px both washed out:
+# grey-on-cream is a ~95 luma step where a keyed hole against the panel is ~221, so its whole lower
+# face flattened into a blob while this one still reads as two eyes and a nose. Judge a skull on its
+# HOLES, never on its outline — they are the only features it has.
+# ⚠ THE EYE SOCKETS ARE DRAWN IN THE BACKGROUND MAGENTA, NOT IN A DARK TONE, and that is the
+# whole trick: the keyer turns magenta transparent, so they come out as real holes with the
+# near-black panel showing through. Painted dark instead they would key as fill and close up into
+# a blank lump at 13px, which is the failure that would make this icon unreadable.
+# It shares bone-white with `scout` and `cairn` and is separated by silhouette; none of the three
+# ever share a surface.
+deny: Flat vector interface mark of an animal skull seen straight on from the front in a symmetrical upright pose, one broad rounded cranium above a short blunt muzzle, with two large simple oval eye sockets, no horns, no antlers, no teeth, no jawbone detail, no crossbones, no weapon, no hand, no helmet, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a pale bone-white and a cool mid grey in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, the two eye sockets filled with the SAME flat magenta as the background so they read as holes cut clean through the skull, and drawn large and round enough to stay open when the icon is 13 pixels across, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the skull on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
+
+
+# trade.png — the parties footer's `📦 Trade` mission button (a shipment party).
+# STATUS: SHIPPED at `assets/icons/hud/trade.png` and WIRED on the mission grid.
+# Keyed `--size 256 --lo 85 --hi 200` — a WARM gold that half-keyed at 240, and the render that
+# disproved the "cool is risky, warm is safe" rule above. Coverage 34.0%, residual 0, bbox 144x223.
+# THE CHOSEN RENDER — of two, the one with a GOLD body under a CREAM neck, a 23-luma step. The
+# rejected twin was pale sand throughout at luma 217/215/215, i.e. effectively ONE tone, so its
+# gathered neck vanished and it read as a featureless pale blob at 13px. This family's whole premise
+# is that the FILL carries the silhouette, and a monotone fill cannot.
+# ⚠ NO COLLISION WITH `hunt.png` DESPITE SHARING THE AMBER LANE — checked at true size rather than
+# assumed, because the two sit ADJACENT on the mission grid. `hunt` is a thin dark-ochre linear bow
+# and this is a bright solid mass; SHAPE separates them completely where hue would not have.
+# ⚠ IT MUST NOT BE A BOX, and the reason is this file's own standing rule rather than taste: every
+# prompt here forbids "no rounded square, no tile, no card, no badge", and a squared crate drawn
+# dead centre IS that shape — it would read as a boxed icon rather than as a subject. A gathered
+# cloth bundle cannot be mistaken for a frame.
+# ⚠ AND IT MUST NOT BE THE FODDER BALE (`crops/fodder.png`), which is LOW + WIDE and green. This
+# is TALL, gathered at the top, and warm sand — different axis, different hue. They can co-occur
+# on a band page.
+trade: Flat vector interface mark of a bound cloth bundle of trade goods, a plump rounded sack gathered into a knotted neck at the top with two short tie ends flicking outward, clearly wider at the bottom than at the top and taller than it is wide, no box, no crate, no slats, no lid, no barrel, no arrow, no coin, no scale, no hand, no animal, no pole, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a warm pale sand and a light cream in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, at most one interior division line marking the knotted neck and no thinner than one sixth of the icon width, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the bundle on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
+
+
+# workers.png — the turn orb's `idle_workers` AND `crew_handoff` rows. ONE FILE for both kinds:
+# `KIND_ICON` already spells them with the same 🛠 because both rows are about the HANDS — one
+# says nobody is using them, the other says they have moved to another job.
+# STATUS: SHIPPED at `assets/icons/hud/workers.png` and WIRED on BOTH turn-orb kinds.
+# Keyed `--size 256 --lo 85 --hi 200`; coverage 38.1%, magenta residual 0.
+# ⛔ **THIS ONE DRAWS AT 30px, NOT 13** — `TurnOrb.ROW_ICON_SIZE` is 30, so the prompt's "merge the
+# fingers into one broad blade" clause was OVER-CAUTIOUS: it applies the 13px piece-count lesson to
+# a mark that never renders at 13px. Both candidates read fine at 30, and the one CHOSEN has the
+# STEPPIER fingertip profile (visibly separate bumps) where the rejected twin's flatter top reads as
+# a mitten — the cairn's rule again, that at size the interior goes and the OUTLINE is what is left.
+# ⚠ SIZE THE JUDGEMENT TO THE SURFACE. Nothing else in `hud/` renders this large, so a turn-orb mark
+# may carry more detail than a 13px row mark — and a row mark may not carry this one's.
+# ⚠ IT MUST NOT BE A TOOL. The 🛠 it replaces is a hammer-and-wrench, which is anachronistic for a
+# forager tribe, collides with the crafting `⚒`, and is TWO crossed pieces — the shape budget
+# `scout` v1 died of. An open palm is one mass and says *hands* directly, which is what both rows
+# are counting.
+workers: Flat vector interface mark of a single open human hand seen palm-on from the front in a symmetrical upright pose, four fingers held together as one broad rounded blade with a separate thumb angled out to one side, no arm, no wrist, no cuff, no sleeve, no tool, no hammer, no wrench, no weapon, no object held, no fingernails, no palm creases, no individual finger gaps, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a warm pale tan and a light cream in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, at most one interior division line separating the thumb from the fingers, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the hand on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
+
+
+# starving.png — the turn orb's `starving` row.
+# STATUS: SHIPPED at `assets/icons/hud/starving.png` and WIRED on the turn orb's `starving` row.
+# Keyed `--size 256 --lo 85 --hi 200`; coverage 31.1%, magenta residual 0, bbox 225x117.
+# THE CHOSEN RENDER — of two near-identical bowls, the DEEPER one (aspect 1.92 against 2.21). Both
+# key clean and both carry the bright rim; the shallower twin flattens toward a horizontal bar at
+# row size, and a bowl that is not obviously a bowl is not carrying anything. Judged at 30px, not
+# 13 — see `workers.png` for why this family's judging size is per-surface.
+# ⚠ THIS IS THE WEAKEST MARK IN THE FAMILY BY DESIGN, and that is worth stating so nobody "fixes"
+# it. An empty bowl and a full one are ONE silhouette, so the art cannot say *empty* by itself — it
+# says *this row is about eating* and lets the row say the rest. It does not have to carry the
+# meaning alone: the DANGER stripe is immediately left of it and the label immediately right. A
+# candidate that tried to draw emptiness (a thin hollow ring) would lose the mass instead.
+# ⚠ IT MUST NOT BE FOOD. The 🍖 it replaces draws a MEAT CUT, which is the opposite of what the
+# row says — a full larder is exactly the state this alert does not describe — and it collides
+# with the hunted-herd art besides. An EMPTY bowl states the absence, which is the alert.
+# ⚠ AND EMPTINESS CANNOT BE DRAWN AS A THIN OUTLINE. A hollow ring is the obvious way to say
+# "nothing in it" and is the one thing that will not survive 13px. The bowl is a THICK SOLID
+# crescent — the vessel itself is the ink, and what is empty is the space above its rim, which is
+# panel and costs nothing.
+starving: Flat vector interface mark of a single empty eating bowl seen straight on from the front in a symmetrical upright pose, one thick heavy solid crescent forming the bowl's body with a plain flat rim across its top and nothing at all resting in it or above it, no food, no meat, no bone, no grain, no spoon, no steam, no hand, no table, no stand, no pedestal, drawn as a single bold solid shape with NO outline of any kind and no dark border and NOT as a hollow ring or a thin outlined vessel, filled in a cool pale grey and a light bone tone in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, the crescent drawn thick and heavy through its whole width so it holds its mass at small size, at most one interior division line marking the rim, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the bowl on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
+
+
+# ---------------------------------------------------------------------------------------------
+# THE PEOPLE TRIO — children / working_age / elders, and they are JUDGED TOGETHER OR NOT AT ALL.
+#
+# These three are the segments of ONE bar (`HudWorkVocab.PEOPLE_GLYPH_*`, on the band page and
+# the faction rollup alike), read left to right as a single sentence. So they are not three
+# subjects — they are ONE subject at three ages, and the ONLY thing that may differ between them
+# is the SILHOUETTE. Same tone pair, same weight, same height box, same front-on pose.
+#
+# STATUS: ALL THREE SHIPPED and WIRED on the PEOPLE composition key (band page and faction rollup
+# alike, one builder). Keyed `--size 256 --lo 85 --hi 160` — a MID-TONE tan body, the closest thing
+# in this family to the key in luma AND hue, and the third distinct ramp value this directory needs
+# (see the ramp note at the top of this section). All three still half-keyed at 200.
+#
+# ⛔ **THE BOX, NOT THE ART, IS WHAT MADE THIS SET WORK — and the set nearly did not.** The elder and
+# the working-age figure are the SAME silhouette plus a stoop and a staff, and measured on the
+# shipped renders the staff MERGES into the body at 14px and at 16px: the trio collapses to
+# *big-headed blob, column, column*. At 18px the staff separates and the stoop reads. So the key's
+# icon box is 18 (`HudWorkVocab.PEOPLE_MARK_BOX`) and NOT the 11px type size of the label beside it,
+# which is what the glyphs it replaced rendered at. Shrinking it silently destroys one third of the
+# key. This is the one mark set in `hud/` whose wiring carries a constraint the art cannot satisfy
+# on its own.
+#
+# THE CHOSEN RENDERS — the BROADER child and adult of each pair, because mass is what survives
+# downsampling and the narrow adult was a bare sliver below 16px. The child-vs-adult read never was
+# in doubt: head is 51% of the child's ink and 7-9% of the adult's.
+#
+# ⛔ **THE ELDER PICK WAS DECIDED BY A KEYING DEFECT, and it is the one to learn from.** The rejected
+# twin drew a MAGENTA OUTLINE separating the head from the body — which is the same trick `deny.png`
+# uses deliberately for its eye sockets, and here it was a defect: the key turned it into a
+# transparent ring, so the head detached and floated. It read as the BETTER candidate at 13px right
+# up until the join was inspected at full size, because the halo made its head look more prominent.
+# **A magenta line inside a subject is a HOLE. Check every interior magenta region is one you want.**
+#
+# ⚠ GENERATE AND JUDGE THE THREE SIDE BY SIDE AT 13px. The question is never "is this a good
+# figure" but "can I tell which of the three this is with the other two beside it" — a trio that
+# reads as one shape three times is a failed set even if each render is clean on its own.
+# ⚠ NO FACES ON ANY OF THEM. A face is detail that dissolves into noise at this size and would be
+# the one place the three could differ for a reason nobody can see.
+# ---------------------------------------------------------------------------------------------
+
+# children.png — the PEOPLE bar's first segment. SHORT + LARGE-HEADED is the whole read.
+children: Flat vector interface mark of a small child figure standing straight on and seen from the front in a symmetrical upright pose, drawn as one bold solid silhouette with a large rounded head clearly oversized in proportion to a short compact body, the arms held close against the sides and merged into the body mass, noticeably SHORT and squat overall, no face, no eyes, no mouth, no hair detail, no clothing, no hands, no feet, no toy, no ground line, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a pale bone-cream and a warm mid tan in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, at most one interior division line separating the head from the body, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the figure on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
+
+# working_age.png — the middle segment. TALL + STRAIGHT, the trio's baseline.
+working_age: Flat vector interface mark of an adult figure standing straight on and seen from the front in a symmetrical upright pose, drawn as one bold solid silhouette with a small rounded head in proportion to a tall straight upright body, the shoulders square and level, the arms held close against the sides and merged into the body mass, clearly TALLER and narrower than it is wide, no face, no eyes, no mouth, no hair detail, no clothing, no hands, no feet, no tool, no weapon, no staff, no ground line, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a pale bone-cream and a warm mid tan in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, at most one interior division line separating the head from the body, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the figure on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
+
+# elders.png — the third segment. THE STOOP IS THE READ, and the staff is the tiebreak.
+# ⚠ THE STAFF IS THE ONE SECOND PIECE THIS BATCH ALLOWS, and it is allowed because the trio's
+# whole job is to be told apart: a stoop alone is a few pixels of curve at 13px and would leave
+# this figure and `working_age` reading as the same mark. It is drawn THICK and full-height for
+# that reason — a hairline staff is worse than none, since it costs ink and reads as noise.
+elders: Flat vector interface mark of an elder figure standing straight on and seen from the front, drawn as one bold solid silhouette with a small rounded head carried LOW and FORWARD on a back and shoulders curved into a pronounced stoop, the arms held close against the body mass, and one plain straight staff held at one side running the full height of the figure to the ground, the staff drawn thick and no thinner than one sixth of the icon width, no face, no eyes, no mouth, no hair detail, no beard detail, no clothing, no hands, no feet, no ground line, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a pale bone-cream and a warm mid tan in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, at most one interior division line separating the head from the body, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the figure and its staff on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
+
+
+# kit_fallback.png — the kit picker's face for a job the client's table has never heard of.
+# STATUS: SHIPPED at `assets/icons/hud/kit_fallback.png` and WIRED as
+# `HudComposeVocab.KIT_JOB_MARK_FALLBACK`, which leaves the kit picker with no glyph face at all.
+# Keyed `--size 256 --lo 85 --hi 160`; the rejected twin needed 130 for the same subject, which is
+# a reminder that the ramp tracks the RENDER and not the prompt.
+# THE CHOSEN RENDER — the one whose handle ARCH stays open at 13px. The rejected twin drew a thicker
+# handle that closed into a dark blob at row size, taking with it the one feature separating this
+# from `trade.png`'s gathered sack.
+# ⚠ GENERATE THIS LAST, AND SKIPPING IT IS DEFENSIBLE. It is reachable only on wire data naming a
+# job `KIT_JOB_GLYPHS` has no entry for, and "some gear, unspecified" is the one case in this
+# whole list where a generic glyph is an honest answer rather than a placeholder.
+# ⚠ IT MUST NOT BE THE TRADE BUNDLE. Both are "a thing you carry", which is exactly the collision
+# `crops/` warns about — so this one wears its STRAP and is slim and upright, where `trade.png` is
+# a strapless gathered sack. If they cannot be told apart at 13px side by side, this one loses.
+kit_fallback: Flat vector interface mark of a simple shoulder satchel, one slim upright rounded pouch with a plain flat flap across its top and a single broad carrying strap looping up from its sides, taller than it is wide, no buckle, no stitching, no pocket detail, no gathered neck, no knot, no tie ends, no box, no crate, no tool, no weapon, no hand, no figure, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a warm mid tan and a pale cream in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, the flap and the strap drawn as the darker tone and no thinner than one sixth of the icon width, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the satchel on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
