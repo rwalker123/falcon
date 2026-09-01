@@ -56,6 +56,17 @@ use std::time::Duration;
 /// worker is not wedged for a whole play session.
 const QUERY_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// **The same bound for the SAVE channel, sized off what a save actually costs.**
+///
+/// A forecast is arithmetic over a world that is already in memory; a save verb touches the disk and
+/// rebuilds a world. Measured at 160x104: 118 ms to encode a save, 63 ms to decode one, and a load
+/// then stands a whole Bevy app back up — and every one of those queues behind whatever turn the sim
+/// is already resolving. Five seconds is a snug fit for that, and firing early here does not merely
+/// lose an answer: the player is told their save failed while it is in fact being written. So the
+/// save channel gets its own, generous bound, and it is still a bound — a server that died mid-write
+/// must not wedge the worker for the session.
+const SAVE_REPLY_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// The three questions, spelled as the GDScript seam spells them. They are matched on rather than
 /// compared to literals at the call site so a typo cannot become a silently unsent query.
 pub(crate) const QUERY_KIND_HUNT_TRIP: &str = "hunt_trip_forecast";
@@ -65,9 +76,17 @@ pub(crate) const QUERY_KIND_DENIAL_RAID: &str = "denial_raid_forecast";
 /// `combat_config.expedition_danger_multiplier`, so the two replies may never borrow each other's
 /// rows.
 pub(crate) const QUERY_KIND_HUNT_CREW_TAKE: &str = "hunt_crew_take";
-/// The save channel's two answer kinds. **Mechanical translation only** — the save/load UI is its
-/// own slice; these exist because `QueryReply` gained two variants and this match is exhaustive.
+/// **The save channel's four asks and its two answer kinds**, spelled as `SaveSlots.gd` spells them.
+///
+/// `list_saves` is a genuine `QueryPayload`; the other three are `CommandPayload`s that *answer on
+/// this envelope*, because a client that cannot tell whether its save landed has not saved. They
+/// ride this worker rather than `send_line` for the one reason a query does: the answer is written
+/// back on the connection that asked, so the connection has to stay open to read it.
 pub(crate) const QUERY_KIND_LIST_SAVES: &str = "list_saves";
+pub(crate) const QUERY_KIND_SAVE_GAME: &str = "save_game";
+pub(crate) const QUERY_KIND_LOAD_GAME: &str = "load_game";
+pub(crate) const QUERY_KIND_DELETE_SAVE: &str = "delete_save";
+/// The `SaveOpReply` answer kind — what a save, load or delete comes back as.
 pub(crate) const QUERY_KIND_SAVE_OP: &str = "save_op";
 
 /// **The transport's OWN failure token**, and it is deliberately in the same vocabulary as the
@@ -76,11 +95,17 @@ pub(crate) const QUERY_KIND_SAVE_OP: &str = "save_op";
 /// pattern-matching prose. Nothing else in the client may raise it.
 pub(crate) const QUERY_ERROR_TRANSPORT: &str = "transport";
 
+/// One round trip the worker owes an answer for.
+///
+/// It carries a whole [`CommandPayload`] rather than a [`QueryPayload`] because the save verbs are
+/// commands that reply here; `timeout` rides along for the same reason — a forecast and a world
+/// rebuild do not deserve the same patience.
 struct QueryRequest {
     host: String,
     port: u16,
     request_id: u64,
-    query: QueryPayload,
+    payload: CommandPayload,
+    timeout: Duration,
 }
 
 /// One finished round trip, as the main thread will read it.
@@ -107,6 +132,47 @@ pub(crate) fn dispatch(
         .get("kind")
         .map(|value| value.to::<GString>().to_string())
         .unwrap_or_default();
+    // The save verbs are COMMANDS that answer here; they are matched first and return early, so the
+    // forecast arm below stays a pure `QueryPayload` match.
+    match kind.as_str() {
+        QUERY_KIND_SAVE_GAME => {
+            return send(
+                host,
+                port,
+                request_id,
+                CommandPayload::SaveGame {
+                    request_id,
+                    slot: dict_string(ask, "slot"),
+                },
+                SAVE_REPLY_TIMEOUT,
+            )
+        }
+        QUERY_KIND_LOAD_GAME => {
+            return send(
+                host,
+                port,
+                request_id,
+                CommandPayload::LoadGame {
+                    request_id,
+                    slot: dict_string(ask, "slot"),
+                },
+                SAVE_REPLY_TIMEOUT,
+            )
+        }
+        QUERY_KIND_DELETE_SAVE => {
+            return send(
+                host,
+                port,
+                request_id,
+                CommandPayload::DeleteSave {
+                    request_id,
+                    slot: dict_string(ask, "slot"),
+                },
+                SAVE_REPLY_TIMEOUT,
+            )
+        }
+        _ => {}
+    }
     let query = match kind.as_str() {
         QUERY_KIND_HUNT_TRIP => QueryPayload::HuntTripForecast(HuntTripForecastQuery {
             faction_id: dict_u32(ask, "faction_id"),
@@ -134,14 +200,48 @@ pub(crate) fn dispatch(
             floor: dict_f32(ask, "floor"),
             max_workers: dict_u32(ask, "max_workers"),
         }),
+        // Listing reads save HEADERS off disk and is answered before the world gate, but it still
+        // queues behind the sim's current turn, so it takes the save channel's patience rather than
+        // the forecast one's.
+        QUERY_KIND_LIST_SAVES => {
+            return send(
+                host,
+                port,
+                request_id,
+                CommandPayload::Query {
+                    request_id,
+                    query: QueryPayload::ListSaves,
+                },
+                SAVE_REPLY_TIMEOUT,
+            )
+        }
         other => return Err(format!("unknown query kind {other:?}")),
     };
+    send(
+        host,
+        port,
+        request_id,
+        CommandPayload::Query { request_id, query },
+        QUERY_REPLY_TIMEOUT,
+    )
+}
+
+/// Hand one composed round trip to the worker. The single place a `QueryRequest` is built, so every
+/// ask carries a timeout chosen for it rather than a default nobody revisited.
+fn send(
+    host: &str,
+    port: u16,
+    request_id: u64,
+    payload: CommandPayload,
+    timeout: Duration,
+) -> Result<(), String> {
     query_sender()
         .send(QueryRequest {
             host: host.to_string(),
             port,
             request_id,
-            query,
+            payload,
+            timeout,
         })
         .map_err(|err| format!("query dispatch error: {err}"))
 }
@@ -182,10 +282,7 @@ fn query_worker(requests: Receiver<QueryRequest>, answers: Sender<QueryAnswer>) 
 /// to what was asked on it.
 fn round_trip(request: &QueryRequest) -> Result<QueryReply, String> {
     let envelope = CommandEnvelope {
-        payload: CommandPayload::Query {
-            request_id: request.request_id,
-            query: request.query.clone(),
-        },
+        payload: request.payload.clone(),
         correlation_id: None,
     };
     let bytes = envelope
@@ -203,7 +300,7 @@ fn round_trip(request: &QueryRequest) -> Result<QueryReply, String> {
     // The bound applies to WAITING, not to the whole exchange: a read that returns some bytes
     // restarts it, which is what makes a long turn safe and a dead socket bounded.
     stream
-        .set_read_timeout(Some(QUERY_REPLY_TIMEOUT))
+        .set_read_timeout(Some(request.timeout))
         .map_err(|err| format!("timeout error: {err}"))?;
     stream
         .write_all(&(bytes.len() as u32).to_le_bytes())

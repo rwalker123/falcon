@@ -42,6 +42,25 @@ same contamination one step worse. The pending pair also carries the button's tw
 visible when the pick differs, absent when it does not — because a frame that quietly lost the button
 still looks like a deliberate layout. **Nothing here ever presses it**: it relaunches the process.
 
+**It also drives the SAVE CHANNEL, and it is the transport itself.** `_run_saves_states` injects a
+real `SaveSlots` seam whose sender only records the request id, then answers it with canned dicts
+shaped exactly as `bridge/query.rs` composes them — so the seam's real decode, routing and formatting
+run, with no server. That is what makes the failure states renderable at all: **no saves yet**
+(`menu_load_empty`), **no server** (`menu_load_no_server`) and a **refused slot name**
+(`menu_save_reserved_name`) are unreachable from a healthy stack, and they are precisely the states a
+player meets first. The set is `menu_load_list` / `_selected` / `_delete_confirm` / `_in_run`,
+`menu_save` / `_overwrite` / `_reserved_name`, `menu_load_empty` / `_no_server`, and `config_drift`
+— the last of which is not the shell at all but `ConfigDriftNotice`, added to the harness root,
+because this is the only harness that can see it.
+
+Three assertions ride with them: a delivered answer must leave the seam `LIST_READY` and a refusal
+`LIST_FAILED` (a pane that renders its own placeholder either way looks identical in a PNG), and **the
+armed delete button must NAME the slot it would destroy** — that label IS the confirmation, so a
+generic "Confirm" would quietly remove the only thing between a click and a lost save. The fixture's
+four rows cover both size units and all three time buckets plus the absolute-date branch; the ages are
+expressed as OFFSETS from now (a fixed stamp would drift into another bucket as the branch aged) and
+only the date row carries a fixed stamp, since that branch has no bucket to drift out of.
+
 Same `_settle` (`process_frame` → `force_draw` → `process_frame`) + `_save` contract as
 `ui_preview`, and the same rule: `scripts/preview.sh res://tools/menu_preview.tscn`, **NOT
 `--headless`** (the dummy renderer yields a null viewport texture and the frames are skipped with a

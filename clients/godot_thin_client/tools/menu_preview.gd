@@ -22,6 +22,43 @@ const PREVIEW_SIZE := Vector2i(1500, 900)
 const MAP_TONE := Color(0.10, 0.15, 0.16)
 # Nav id of the client-settings pane in MenuShell.ITEMS.
 const OPTIONS_PANE_ID := "options"
+# Nav ids of the two saves panes, driven through the same `_activate_item` the nav rail calls.
+const LOAD_PANE_ID := "load"
+const SAVE_PANE_ID := "save"
+
+# ---- save-channel fixtures ------------------------------------------------------------------------
+# The `SaveSlots` seam is fed through its REAL `deliver` path with dicts shaped exactly as
+# `bridge/query.rs` composes them, so these frames exercise the actual decode/route/format code with
+# no server. `modified_unix_seconds` is expressed as an AGE for the three relative buckets — a fixed
+# stamp there would drift into another bucket as the branch aged — and as a FIXED stamp for the
+# fourth, which is the one that renders the absolute-date branch.
+const AGE_RECENT_SECONDS := 12 * 60
+const AGE_HOURS_SECONDS := 5 * 3600
+const AGE_DAYS_SECONDS := 3 * 86400
+const FIXED_STAMP_UNIX := 1768726920  # 2026-01-18 09:02 UTC, rendered in the machine's local zone
+const FIXTURE_SIZE_AUTOSAVE := 1257874   # the measured 160x104 blob
+const FIXTURE_SIZE_MIDWINTER := 1198336
+const FIXTURE_SIZE_FIRST := 902144
+const FIXTURE_SIZE_TINY := 41984         # small enough to render in KB, the other size branch
+const FIXTURE_TITLE := "Trail Sovereigns"
+const FIXTURE_SLOT_MIDWINTER := "midwinter camp"
+const FIXTURE_SLOT_FIRST := "first winter"
+const FIXTURE_SLOT_SCRATCH := "scratch_2"
+# The name typed into the Save pane's field for the "new slot" frame, and the one that is already on
+# disk for the OVERWRITE frame.
+const TYPED_NEW_NAME := "before the thaw"
+# What a player might reasonably type that the whitelist refuses — the reserved slot, which is the
+# one refusal the pane exists to make unreachable rather than merely reported.
+const TYPED_RESERVED_NAME := "autosave"
+
+# The drift rows, one per (saved -> live) pair the notice words differently, so one frame covers the
+# whole vocabulary.
+const DRIFT_FIXTURE := [
+	{"file_name": "fauna_config.json", "saved": "file", "live": "file"},
+	{"file_name": "simulation_config.json", "saved": "builtin", "live": "file"},
+	{"file_name": "recipes.json", "saved": "file", "live": "builtin"},
+]
+
 # A roster theme that is NOT the one this harness pins as applied, so the Theme row renders its
 # CHANGED state — caption in WARN, "Apply now" button present. Any id but `HudPalette.DEFAULT_THEME`
 # would do; the frames are named for the state, not for this palette.
@@ -37,6 +74,12 @@ var _root: Control
 var _bg: ColorRect
 var _shell: MenuShell
 var _failures := 0
+## The save channel, driven with no server: the harness IS the transport. `_last_request_id` is what
+## the fake sender captured, and it is what the canned replies correlate against — so the seam's real
+## in-flight bookkeeping is exercised rather than bypassed.
+var _save_seam: SaveSlots
+var _last_request_id := 0
+var _drift_notice: ConfigDriftNotice
 
 
 func _ready() -> void:
@@ -137,7 +180,183 @@ func _ready() -> void:
 	_assert_apply_visible("landing")
 	await _save("menu_options_theme_pending_landing")
 
+	await _run_saves_states()
+
 	_finish()
+
+
+## **THE LOAD / SAVE PANES, over a fake transport.** The seam is real, its decode and routing are
+## real, and every frame below is the shipped builder rendering the seam's actual state — the only
+## thing standing in for a server is `_send`, which records the request id and answers nothing until
+## this harness says so. That is what lets the failure states (no server, no saves, a refused name)
+## be rendered at all: none of them is reachable from a healthy stack.
+func _run_saves_states() -> void:
+	_save_seam = SaveSlots.new()
+	_save_seam.set_sender(_send)
+	_shell.set_save_slots(_save_seam)
+
+	# --- LOAD, on the landing screen: the list, from a real `list_saves` answer -------------------
+	_bg.color = HudStyle.GROUND
+	_shell.mode = MenuShell.LANDING
+	_shell._activate_item(LOAD_PANE_ID)
+	_answer_list(_slot_fixtures())
+	await _settle()
+	if _save_seam.list_state != SaveSlots.LIST_READY:
+		_fail("load list: a delivered answer left the seam in %s" % _save_seam.list_state)
+	await _save("menu_load_list")
+
+	# --- …with a row selected, which is what arms the buttons ------------------------------------
+	_select(FIXTURE_SLOT_MIDWINTER)
+	await _settle()
+	await _save("menu_load_selected")
+
+	# --- …and the DELETE two-step armed. The confirm button carries what it will destroy, which is
+	#     this shell's whole confirmation pattern — there is no modal.
+	_shell._on_delete_pressed()
+	await _settle()
+	_assert_confirm_names_the_slot()
+	await _save("menu_load_delete_confirm")
+	_shell._on_delete_cancelled()
+
+	# --- LOAD from inside a run: the same pane, the destructive wording ---------------------------
+	_bg.color = MAP_TONE
+	_shell.mode = MenuShell.PAUSE
+	_shell._activate_item(LOAD_PANE_ID)
+	_answer_list(_slot_fixtures())
+	_select(FIXTURE_SLOT_MIDWINTER)
+	await _settle()
+	await _save("menu_load_in_run")
+
+	# --- SAVE: a NEW slot name typed into the field ----------------------------------------------
+	_shell._activate_item(SAVE_PANE_ID)
+	_answer_list(_slot_fixtures())
+	_type(TYPED_NEW_NAME)
+	await _settle()
+	await _save("menu_save")
+
+	# --- …the same field naming a slot that EXISTS, which is a different act and says so ----------
+	_type(FIXTURE_SLOT_MIDWINTER)
+	await _settle()
+	await _save("menu_save_overwrite")
+
+	# --- …and the reserved name, refused under the field rather than by a round trip --------------
+	_type(TYPED_RESERVED_NAME)
+	await _settle()
+	if SaveSlots.slot_name_error(TYPED_RESERVED_NAME) == "":
+		_fail("slot names: the reserved autosave slot was accepted by the whitelist")
+	await _save("menu_save_reserved_name")
+	_type("")
+
+	# --- NOTHING SAVED YET. `LIST_READY` with no rows, which is an invitation and not a failure ---
+	_shell._activate_item(LOAD_PANE_ID)
+	_answer_list([])
+	await _settle()
+	await _save("menu_load_empty")
+
+	# --- NO SERVER. The landing screen is reachable with none, so this is a first-run state, not an
+	#     edge case: it must name the problem and offer the ask again.
+	_shell._activate_item(LOAD_PANE_ID)
+	_fail_list(SaveSlots.ERROR_TRANSPORT)
+	await _settle()
+	if _save_seam.list_state != SaveSlots.LIST_FAILED:
+		_fail("no-server list: a refusal left the seam in %s" % _save_seam.list_state)
+	await _save("menu_load_no_server")
+
+	# --- THE CONFIG-DRIFT NOTICE. Not part of the shell — `Main` raises it over the loaded world —
+	#     but it is the other half of this feature's UI and this is the harness that can see it.
+	_drift_notice = ConfigDriftNotice.new()
+	_root.add_child(_drift_notice)
+	_drift_notice.show_drift(DRIFT_FIXTURE)
+	await _settle()
+	if not _drift_notice.visible:
+		_fail("config drift: a non-empty drift list rendered nothing")
+	await _save("config_drift")
+
+
+## The canned slot list: the reserved autosave row, two named saves, and one small enough to render
+## in the OTHER size unit. Newest first, the order the server answers in.
+func _slot_fixtures() -> Array:
+	var now := int(Time.get_unix_time_from_system())
+	return [
+		_slot_row(SaveSlots.AUTOSAVE_SLOT, 47, "earthlike", 80, 52,
+			FIXTURE_SIZE_AUTOSAVE, now - AGE_RECENT_SECONDS),
+		_slot_row(FIXTURE_SLOT_MIDWINTER, 31, "earthlike", 80, 52,
+			FIXTURE_SIZE_MIDWINTER, now - AGE_HOURS_SECONDS),
+		_slot_row(FIXTURE_SLOT_FIRST, 12, "polar_contrast", 64, 40,
+			FIXTURE_SIZE_FIRST, now - AGE_DAYS_SECONDS),
+		_slot_row(FIXTURE_SLOT_SCRATCH, 3, "earthlike", 48, 32,
+			FIXTURE_SIZE_TINY, FIXED_STAMP_UNIX),
+	]
+
+
+func _slot_row(slot: String, turn: int, preset: String, width: int, height: int,
+		size_bytes: int, modified: int) -> Dictionary:
+	return {
+		"slot": slot,
+		"turn": turn,
+		"campaign_title": FIXTURE_TITLE,
+		"map_preset_id": preset,
+		"width": width,
+		"height": height,
+		"world_seed": 0,
+		"start_profile_id": "late_forager_tribe",
+		"size_bytes": size_bytes,
+		"modified_unix_seconds": modified,
+	}
+
+
+## The fake transport. Records the id so a reply can correlate, and reports the ask as sent.
+func _send(request_id: int, _ask: Dictionary) -> bool:
+	_last_request_id = request_id
+	return true
+
+
+## Answer the list query that is in flight, through the seam's real `deliver`.
+func _answer_list(rows: Array) -> void:
+	_save_seam.deliver([{
+		"request_id": _last_request_id,
+		"ok": true,
+		"kind": SaveSlots.KIND_LIST,
+		"slots": rows,
+	}])
+
+
+## …and refuse it, with a token from the server's own vocabulary.
+func _fail_list(token: String) -> void:
+	_save_seam.deliver([{
+		"request_id": _last_request_id,
+		"ok": false,
+		"error": token,
+	}])
+
+
+## Click a row, through the same handler the row's `gui_input` reaches.
+func _select(slot: String) -> void:
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	_shell._on_slot_row_input(click, slot, _shell._active_pane == SAVE_PANE_ID)
+
+
+## Type into the Save pane's name field, through the field's own `text_changed` handler.
+func _type(text: String) -> void:
+	_shell._on_save_name_changed(text)
+
+
+## The armed delete button must NAME the slot it will destroy — that label IS the confirmation, so a
+## generic "Confirm" would quietly remove the only thing standing between a click and a lost save.
+func _assert_confirm_names_the_slot() -> void:
+	if not _find_button_containing(_shell, FIXTURE_SLOT_MIDWINTER):
+		_fail("delete confirm: no button names the slot it would delete")
+
+
+func _find_button_containing(node: Node, needle: String) -> bool:
+	if node is Button and (node as Button).text.contains(needle):
+		return true
+	for child in node.get_children():
+		if _find_button_containing(child, needle):
+			return true
+	return false
 
 
 ## The button is BUILT hidden and shown only while the pick differs from what is on screen, so a
