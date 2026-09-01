@@ -1241,15 +1241,21 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 
 
 # ============================================================================
-# UI / ACTIVITY MARKS  ->  assets/icons/ui/   (NO LOOKUP SCRIPT YET)
+# UI / ACTIVITY MARKS  ->  assets/icons/ui/ + assets/icons/hud/   (NO LOOKUP SCRIPT YET)
 # ============================================================================
 #
-# ⚠ THE ART EXISTS; THE WIRING DOES NOT. `assets/icons/ui/cairn.png` is keyed, imported and
-# committed — and NOTHING LOADS IT. There is no `UiSprites.gd` and no call site, because the
-# wiring is issue #581's own work (a `Button.icon` on the action-bar launcher, a `TextureRect`
-# swapped for a `Label` on the turn orb's row) and was deliberately left to it. `forage`,
-# `hunt` and `scout` are prompts only, parked against #249. Do not read this block as a
-# seventh art family: the six listed at the top of this file are the six with a lookup script.
+# ⚠ ALL FOUR MARKS EXIST; NONE OF THE WIRING DOES. `assets/icons/ui/cairn.png` and
+# `assets/icons/hud/{forage,hunt,scout}.png` are keyed, imported and committed — and NOTHING
+# LOADS ANY OF THEM. There is no `UiSprites.gd` and no call site. That is deliberate: the
+# cairn's wiring is issue #581's own work (a `Button.icon` on the action-bar launcher, a
+# `TextureRect` swapped for a `Label` on the turn orb's row) and the other three are #249's,
+# which is still blocked on the ladder-set question below. Do not read this block as a seventh
+# art family: the six listed at the top of this file are the six with a lookup script.
+#
+# JUDGE ONE OF THESE AT 13px OR NOT AT ALL, and judge it by INK COVERAGE. That single number
+# predicted every outcome in this batch: forage 32% read instantly; hunt survives at 6.8% only
+# because its ink is ONE continuous bar; scout v1 at 7.7-10% did not survive at all. The
+# cheapest test there is: key it, resize to 13x13, and composite it on #111A1E.
 # THE DIRECTORY IS A PROVISIONAL CHOICE. #581 says only "beside `stages/` and `fauna/`";
 # `ui/` is where the cairn went so the PNG had a home, not a decision #581 has to keep.
 #
@@ -1303,9 +1309,9 @@ cairn: Flat vector interface mark of a cairn, a small freestanding stack of five
 # SYMBOLIC glyphs (⚠ ⚑ ⊘ ▦ ◎) as text. Applying that split to what is actually left in the
 # client gives five candidates, and two of them cannot be generated independently:
 #
-#   forage  🌿  `FoodIcons.DEFAULT`, the work chip            -> prompted below
-#   hunt    🦌  `FoodIcons.HUNT` + the 🏹 activity glyph      -> prompted below
-#   scout   🧭  the roster activity glyph                     -> prompted below, see caveat
+#   forage  🌿  `FoodIcons.DEFAULT`, the work chip            -> SHIPPED (coverage 32%)
+#   hunt    🦌  `FoodIcons.HUNT` + the 🏹 activity glyph      -> SHIPPED (coverage 6.8%)
+#   scout   🧭  the roster activity glyph                     -> SHIPPED, see caveat
 #   ---- NOT PROMPTED ----
 #   tended  🌾  the plant ladder's rung-2 mark
 #   penned  🐄  `DetailFormat.CORRAL_GLYPH`, the animal ladder's rung-3 mark
@@ -1321,6 +1327,8 @@ cairn: Flat vector interface mark of a cairn, a small freestanding stack of five
 
 
 # forage.png — `FoodIcons.DEFAULT` (🌿), the work chip's foraging mark.
+# STATUS: SHIPPED at `assets/icons/hud/forage.png` (coverage 32%, fill luma 196, 100%
+# green-dominant so no hue collision with the staple's gold).
 # ⚠ IT MUST NOT BE GRAIN. `crops/staple.png` is already a tall narrow gold wheat ear, and the
 # crops section's own rule is that a `flora/` or role mark must never draw another slot's
 # subject or a row says the same thing twice under two names. A foraging chip beside a staple
@@ -1333,6 +1341,10 @@ forage: Flat vector interface mark of a small leafy sprig, a single short stem c
 # hunt.png — ONE mark replacing TWO emoji: `FoodIcons.HUNT` (🦌, the work chip) and the roster
 # activity glyph (🏹). They mean the same thing and differ only in where they render, so the
 # migration is the moment to collapse them.
+# STATUS: SHIPPED at `assets/icons/hud/hunt.png` (coverage 6.8% — the SPARSEST mark here,
+# and it reads only because the arrow is one unbroken bar. The rejected twin drew the
+# bowstring in the same cream as the shaft, and at 13px the two merged into a plus sign
+# with the arrow gone. Spend the cream on ONE thick element.)
 # ⚠ IT MUST NOT BE AN ANIMAL, and the choice of the BOW is what makes that permanent. A deer
 # here collides with `fauna/deer.png` on screens that show both: hunting is the ACT, the herd
 # is the SUBJECT, and a mark that draws the subject cannot say which one a row means. Nothing
@@ -1341,6 +1353,13 @@ hunt: Flat vector interface mark of a simple hunting bow with a single nocked ar
 
 
 # scout.png — the roster activity glyph (🧭).
+# STATUS: SHIPPED on v2 at `assets/icons/hud/scout.png` (coverage 18.5%, fill luma 234).
+# ⚠ V1 WAS TWO FOOTPRINTS AND IT FAILED AT SIZE — the lesson generalizes past this icon, which
+# is why it is here. Two prints split the ink across FOUR separate pieces (two soles, two toe
+# pads) inside a 13x13 grid, and both candidates came back as pale smudges at 7.7% and 10.0%
+# coverage — the lowest in the set. ONE large footprint doubled the mass per shape and cleared
+# it at 18.5%. The rule: at 13px, PIECE COUNT costs more than any single piece's size, so spend
+# the icon's ink on the fewest shapes that still say the thing.
 # ⚠ THE PROMPT CHANGES THE SUBJECT, WHICH IS A VOCABULARY DECISION, NOT AN ART ONE. The glyph
 # in the client today is a COMPASS, which is several thousand years early for a roster that
 # starts at a late forager tribe and whose top route rung is a paved road. Two tracks in the
