@@ -3226,21 +3226,25 @@ const FAUNA_SPRITE_ROSTER := [
 	["game_reindeer_01", "Wild Reindeer"],
 	["game_gazelle_01", "Desert Gazelle"],
 	["game_rabbit_01", "Rabbit Warren"],
+	["game_snow_hare_01", "Snow Hare Warren"],
 	["game_boar_01", "Wild Boar"],
 	["game_mammoth_01", "Thunder Mammoth"],
 	["game_aurochs_01", "Aurochs"],
 	["game_cattle_01", "Cattle"],
 	["game_goat_01", "Wild Goat"],
+	["game_ibex_01", "Alpine Ibex"],
 	["game_horse_01", "Wild Horse"],
 	["game_sheep_01", "Sheep"],
 	["game_fowl_01", "Jungle Fowl"],
+	["game_grouse_01", "Forest Grouse"],
 	["game_wolf_01", "Grey Wolf Pack"],
 	["game_seal_01", "Grey Seals"],
 	["game_catfish_01", "Silt Catfish"],
 	["game_steppe_runner_01", "Steppe Runners"],
 	["game_marsh_grazer_01", "Marsh Grazers"],
 ]
-## THIS LIST CANNOT PROVE COVERAGE, and adding these last two is what made that concrete. It is
+## THIS LIST CANNOT PROVE COVERAGE, and adding Steppe Runners and Marsh Grazers is what made that
+## concrete (the three added after them — `snow_hare`, `ibex`, `grouse` — are the same story). It is
 ## hand-written on the CLIENT side, so it enumerates the client's own vocabulary: Steppe Runners and
 ## Marsh Grazers were absent from `FaunaSprites.SPRITE_PATHS` AND from here, and a frame that only
 ## shows what the table already knows cannot fail on a species the table has never heard of. Both
@@ -3248,23 +3252,36 @@ const FAUNA_SPRITE_ROSTER := [
 ## claim belongs to `cargo xtask fauna-icon-guard`**, which checks this side against the sim's
 ## `fauna_config.json`; what this frame is for is JUDGING art that exists — swapped, clipped or
 ## fringed sprites, and species that read as one another — which no guard can do.
-## Rows of eight — two full ones and a short third. It was one row of eleven until the roster outgrew `GRID_W` (16 columns, and a
-## single spaced row of 16 would run off the map), and `seal` + `catfish` were simply pushed OFF a
-## frame whose whole job is to put every sprite this list names in one picture — so the row count is
-## not cosmetic, it is what let two PNGs go unjudged. MapView is COVER-fit, so the axis that gets cropped is whichever one the grid is
-## longer in relative to the window: on this state's `DEFAULT_CANVAS_SIZE` the 16×12 grid is wider
-## than the window's aspect, so all twelve ROWS are on screen and it is the outer COLUMNS that are
-## cut (roughly cols 2–14 survive). Cols 4–11 therefore sit well inside with margin to spare.
-const FAUNA_ROSTER_COLUMNS := 8
+##
+## ORDER IS PART OF THE FRAME. `snow_hare`, `ibex` and `grouse` each sit IMMEDIATELY AFTER the
+## sprite they used to share (rabbit, goat, fowl), because "do these two read as one animal?"
+## is the only question their art was drawn to answer and it is answered by standing them next
+## to each other. Keep a new species beside its nearest look-alike rather than appending it.
+## Rows of ELEVEN — one full and one of ten for the current 21 entries. It was one row of eleven
+## until the roster outgrew `GRID_W` (16 columns, and a single spaced row of 16 would run off the
+## map), and `seal` + `catfish` were simply pushed OFF a frame whose whole job is to put every
+## sprite this list names in one picture — so the row count is not cosmetic, it is what let two
+## PNGs go unjudged. It then spent a while at EIGHT, which is what put a species under the band
+## camp (see `FAUNA_ROSTER_ORIGIN`); eleven is the widest row that still clears the crop.
+## MapView is COVER-fit, so the axis that gets cropped is whichever one the grid is longer in
+## relative to the window: on this state's `DEFAULT_CANVAS_SIZE` the 16×12 grid is wider than the
+## window's aspect, so all twelve ROWS are on screen and it is the outer COLUMNS that are cut
+## (roughly cols 2–14 survive). Cols 3–13 therefore sit inside with a column of margin each side,
+## and are centred on the 16-wide grid.
+const FAUNA_ROSTER_COLUMNS := 11
 ## Starts on row 4, NOT row 5, and that is the whole reason this constant is not simply centred: the
 ## band camp stands on (BAND_X, BAND_Y) = (8, 6). Starting on 5 put the roster's second row on 6,
 ## where the Jungle Fowl landed on that very hex and rendered STACKED under the camp marker instead
 ## of alone at true marker size. A roster frame that judges sprites cannot let one share a hex with
-## the band. **The roster now spills onto row 6 anyway (entries 17-18), and that is fine only because
-## it wraps at column 4** — cols 4-5, nowhere near the band's col 8. If this list ever grows past 20
-## entries the wrap reaches col 8 on row 6 and the collision returns, so move the origin or widen
-## `FAUNA_ROSTER_COLUMNS` at that point rather than discovering it in a frame.
-const FAUNA_ROSTER_ORIGIN := Vector2i(4, 4)
+## the band. **THAT COLLISION CAME BACK ONCE, EXACTLY AS PREDICTED**: at eight columns the roster's
+## third row WAS row 6, and the 21st entry (index 20, Marsh Grazers) wrapped to col 8 — the camp hex
+## — so it rendered stacked under the band marker again. Nothing failed: this harness asserts no
+## marker POSITIONS, so a clean exit says nothing about where a marker landed, and the frame is the
+## only witness. Eleven columns is the fix: 21 entries fill rows 4 and 5 and row 6 stays EMPTY.
+## Row 6 is reached again at index 22 and its col 8 at INDEX 27, so six more species fit before the
+## collision returns — at that point widen again or drop the origin below the camp's row, and do the
+## arithmetic here rather than discovering it in a frame.
+const FAUNA_ROSTER_ORIGIN := Vector2i(3, 4)
 ## Hexes between roster entries — one apart, so eight fit across GRID_W without markers colliding.
 const FAUNA_ROSTER_SPACING := 1
 
