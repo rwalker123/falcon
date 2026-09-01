@@ -182,9 +182,9 @@
 # `cargo xtask fauna-icon-guard` now cross-checks this against `fauna_config.json`, so
 # the claim is verified rather than asserted. Re-run it after adding a species.
 #
-# ⚠ THE GUARD CANNOT SEE THE OTHER HALF OF #439. Three species were in it; `grouse.png`,
-# `ibex.png` and `snow_hare.png` closed it, and the warning stays because the BLIND SPOT is
-# permanent — the next aliased species re-opens it and the guard will still be green.
+# ⚠ THE OTHER HALF OF #439 — three species were in it long after it closed, and `grouse.png`,
+# `ibex.png` and `snow_hare.png` are what closed it. `fauna-icon-guard` NOW CHECKS THIS: it fails
+# when two roster species resolve to the same PNG, naming both.
 # `fauna-icon-guard` passes green while three roster species draw ANOTHER SPECIES' marker
 # through an alias. That is not a hole in the guard's implementation, it is the question it
 # asks: it walks each `display_name` to a sprite and stats the PNG plus its `.import`
@@ -201,12 +201,12 @@
 # `caribou -> reindeer.png`, `bison`/`buffalo -> aurochs.png` and `oxen -> cattle.png` as the
 # honest aliases (nothing in the roster is named any of those).
 #
-# ⛔ THE CHECK THAT CATCHES THIS IS DISTINCTNESS, AND NOTHING IN THE REPO RUNS IT. The guard
-# resolves each species to a sprite and stats it; it never asks how many species landed on the
-# same file, so `20 species -> 20 sprites` in its output is a count of LOOKUPS, not of files.
-# It printed exactly that line while three pairs were sharing. The distinctness figure above
-# was measured by hand: resolve every `display_name` through the table and count the distinct
-# PNGs. Re-measure it when adding a species; do not read it off the guard.
+# ⛔ THE CHECK THAT CATCHES THIS IS DISTINCTNESS, and it is an assertion now rather than a number
+# to notice. CORRECTION to what this file said first: the guard did NOT print `20 species -> 20
+# sprites` while the pairs were sharing — `reached_files` is a set, so it printed `20 species ->
+# 17 sprites`. The count was right there on every run and nobody compared it to the roster size.
+# That is the failure worth remembering: the signal existed and was unasserted. The guard now
+# states the two as EQUAL and fails when they are not.
 #
 # THE FOUR CERVID-ISH SPECIES ARE THE SET MOST AT RISK OF READING AS ONE ANIMAL, so
 # each prompt below names the ONE feature that separates it from the other three at

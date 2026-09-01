@@ -89,6 +89,10 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let mut table_failures: Vec<String> = Vec::new();
     let mut reached_files: BTreeSet<PathBuf> = BTreeSet::new();
     let mut flagged_files: BTreeSet<PathBuf> = BTreeSet::new();
+    // file -> every species that lands on it. REACHABILITY IS NOT DISTINCTNESS: three species once
+    // drew another species' marker through an alias and every reachability check passed, because
+    // each of them did reach a real file. See `check_distinct` below.
+    let mut species_by_file: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
 
     for (species_id, display_name) in &species {
         let key = species_key_for(display_name, &keywords);
@@ -111,6 +115,10 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         let disk_path = disk_path_for(res_path);
         match art_state(&disk_path) {
             ArtState::Bundled => {
+                species_by_file
+                    .entry(disk_path.clone())
+                    .or_default()
+                    .push(format!("{species_id} (\"{display_name}\")"));
                 reached_files.insert(disk_path);
             }
             ArtState::MissingPng => {
@@ -164,12 +172,38 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         }
     }
 
+    // ⛔ DISTINCTNESS — the OTHER half of issue #439, and the half no reachability check can see.
+    // Every assertion above asks whether a species reaches SOME file. This one asks whether two
+    // species reach the SAME one, which is what the cervid split was actually about and what let
+    // Alpine Ibex draw `goat.png` beside Crag Goats, Forest Grouse draw `fowl.png` beside Wild Fowl,
+    // and Snow Hare Warren draw `rabbit.png` beside the Rabbit Warren long after #439 closed.
+    //
+    // NO ALLOWLIST, and that is a property of what is being counted rather than an omission. The
+    // honest aliases (`bison`, `buffalo`, `oxen`, `caribou`) are honest precisely because NO ROSTER
+    // SPECIES is named any of them — `species_key_for` takes the longest match, so "Wild Reindeer"
+    // resolves via `reindeer` and nothing ever arrives here through `caribou`. A collision counted
+    // over SPECIES therefore cannot be raised by an alias; two species on one file is always a bug.
+    for (file, users) in &species_by_file {
+        if users.len() > 1 {
+            species_failures.push(format!(
+                "{} species share `{}`: {}. Each of them reaches real art, so every reachability \
+                 check passes — but the map cannot tell them apart, which is the whole of what \
+                 issue #439 was about. Give each its own PNG, or confirm the roster really does \
+                 ship only one of them.",
+                users.len(),
+                file.display(),
+                users.join(", ")
+            ));
+        }
+    }
+
     if !species_failures.is_empty() || !table_failures.is_empty() {
         // Printed rather than carried in the error, because `main` renders a returned error with
         // `Debug` — which would escape every newline and hand back one unreadable line. The error is
         // then the one-line verdict, and this is the audit.
         eprintln!(
-            "fauna-icon-guard FAILED — {} of {} species in {FAUNA_CONFIG} do not reach bundled art:",
+            "fauna-icon-guard FAILED — {} finding(s) across the {} species in {FAUNA_CONFIG}. A \
+             species can fail by not REACHING art, or by reaching art another species already has:",
             species_failures.len(),
             species.len()
         );
@@ -177,16 +211,23 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             eprintln!("  - {failure}");
         }
         return Err(format!(
-            "fauna-icon-guard: {} species and {} extra {SPRITE_PATHS_DICT} entr(ies) failed — see above",
+            "fauna-icon-guard: {} roster finding(s) and {} extra {SPRITE_PATHS_DICT} entr(ies) \
+             failed — see above",
             species_failures.len(),
             table_failures.len()
         )
         .into());
     }
 
+    // The two counts are stated as EQUAL rather than merely printed, because the pair is the whole
+    // verdict: N species over fewer than N files means some of them share a marker. That inequality
+    // was visible in this line's output for as long as the collision existed — `20 species -> 17
+    // sprites` — and nobody read it, which is why it is now an assertion above and not a number to
+    // notice here.
     println!(
-        "fauna-icon-guard: {} species -> {} sprites, all present with their `{IMPORT_SIDECAR_SUFFIX}` \
-         sidecars ({} keys in {SPRITE_PATHS_DICT}, {} in {HERD_SPECIES_DICT})",
+        "fauna-icon-guard: {} species -> {} DISTINCT sprites (one each), all present with their \
+         `{IMPORT_SIDECAR_SUFFIX}` sidecars ({} keys in {SPRITE_PATHS_DICT}, {} in \
+         {HERD_SPECIES_DICT})",
         species.len(),
         reached_files.len(),
         sprites.len(),

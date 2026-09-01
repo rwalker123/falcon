@@ -12,14 +12,16 @@ class_name FaunaSprites
 ## rather than a claim: it reads the sim's `fauna_config.json` and fails if any species' display
 ## name does not resolve, through `species_key_for`, to a key here whose PNG exists on disk.
 ##
-## ⛔ THE GUARD CHECKS REACHABILITY, NOT DISTINCTNESS, and the difference is the whole of #439.
-## Every species reaching SOME file is a weaker property than every species reaching its OWN
-## file, and the guard only asserts the first — so three pairs of species shared one marker each
-## while it printed `20 species -> 20 sprites` and exited 0. **That line counts LOOKUPS, not
-## files.** Nothing in the repo runs the distinctness check; it is done by hand (resolve every
-## `display_name` through this table, count distinct PNGs — currently 20 species -> 20 distinct
-## sprites), and it has to be redone whenever a species or an alias is added. Do not read the
-## answer off the guard's output.
+## ⛔ REACHABILITY IS NOT DISTINCTNESS, and the difference is the whole of #439. Every species
+## reaching SOME file is a weaker property than every species reaching its OWN file, and for a
+## long time the guard asserted only the first — so three pairs shared one marker each and it
+## still exited 0. **The guard now asserts BOTH**, and fails naming the species that collide.
+##
+## THE NUMBER WAS NEVER MISSING — IT WAS UNREAD, which is the more useful lesson. `reached_files`
+## is a set, so while the collisions existed the summary line said `20 species -> 17 sprites`
+## against a roster of 20. The signal was printed on every run and nothing compared the two counts.
+## They are now stated as EQUAL rather than side by side (`20 species -> 20 DISTINCT sprites`),
+## because a number a human has to notice is not a check.
 ## The `null` fallback below is still load-bearing — it catches a herd label naming a species the
 ## client does not know (`species_key_for` returns "") and the `HERD_DEFAULT` case, both of which
 ## still render the emoji renderer's glyph. Dropping a new PNG in `assets/icons/fauna/` and adding
