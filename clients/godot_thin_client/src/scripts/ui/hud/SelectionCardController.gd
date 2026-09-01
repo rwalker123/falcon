@@ -383,9 +383,13 @@ func _build_land_row(tile_info: Dictionary) -> Button:
 	if meta != "":
 		meta_label = _roster_meta_label(meta)
 		row.add_child(meta_label)
+	# The staffing MARK, trailing the count exactly as a band row's activity mark trails its size —
+	# one column of drawn marks down the whole subject list (issue #249).
+	var mark := _roster_activity_mark(_land_row_activity(tile_info))
+	row.add_child(mark)
 	button.add_child(row)
 	button.pressed.connect(_on_land_row_selected)
-	_store_row_refs(button, row, name_label, meta_label, null, icon)
+	_store_row_refs(button, row, name_label, meta_label, mark, icon)
 	return button
 
 ## The land row's meta is never empty (`_land_row_meta` returns `No forage` at minimum), so its label
@@ -402,6 +406,7 @@ func _update_land_row(button: Button, tile_info: Dictionary) -> void:
 	_set_row_icon(button, _land_row_sprite(tile_info), glyph, selected)
 	_set_row_name(button, String(tile_info.get("terrain_label", "Unknown")), selected)
 	_set_row_meta(button, _land_row_meta(tile_info))
+	_set_row_activity_mark(button, _land_row_activity(tile_info))
 
 ## The land row's meta, shortest true form: the foragers on this hex · else that the patch is
 ## unworked · else that there is nothing to gather here.
@@ -415,8 +420,31 @@ func _land_row_meta(tile_info: Dictionary) -> String:
 		# place the name truncated (`Savanna Gras…`) while the drawer's `Forage:` row and the
 		# compose sheet's header both printed it whole. The zero form is parallel to the staffed
 		# one, so "nobody is working this" reads at a glance instead of needing a comparison.
-		return HudSelectionVocab.LAND_META_WORKERS_FORMAT % [workers, HudSelectionVocab.ACTIVITY_GLYPHS[SourceForecast.LABOR_KIND_FORAGE]]
+		return HudSelectionVocab.LAND_META_WORKERS_FORMAT % workers
 	return HudSelectionVocab.LAND_META_NO_FORAGE
+
+## Which ACTIVITY a band row's trailing mark states — the band's own, `""` for a FOREIGN band (we
+## cannot see what their people are doing, which is not the same claim as "nothing").
+##
+## **A PLAYER BAND WITH NO ACTIVITY ON THE WIRE READS AS IDLE, and that is the pre-existing
+## behaviour spelled out.** `_activity_glyph` has always fallen back to the idle `·` for an
+## unrecognised key, so a blank string already rendered as idle; the mark builder treats `""` as
+## *no mark at all* now, so the fallback has to happen HERE or a player band would silently lose its
+## dot the moment the field is empty.
+func _band_row_activity(unit: Dictionary, is_player: bool) -> String:
+	if not is_player:
+		return ""
+	var activity := String(unit.get("activity", "")).strip_edges()
+	return activity if activity != "" else HudSelectionVocab.BAND_ACTIVITY_IDLE
+
+## Which ACTIVITY the land row's trailing mark states, `""` for none. It is the same predicate
+## `_land_row_meta` uses for its count, asked as its own question so the count and the mark can never
+## disagree about whether this hex is a source — the pair reads `2 <forage>` or neither half at all.
+func _land_row_activity(tile_info: Dictionary) -> String:
+	var workers := _forage_workers_on_tile(int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
+	if workers > 0 or DetailFormat.tile_is_gathering_site(tile_info):
+		return SourceForecast.LABOR_KIND_FORAGE
+	return ""
 
 ## Foragers this faction has on (x, y), summed across every player band — the row states the hex's
 ## staffing, not one band's share of it.
@@ -464,27 +492,27 @@ func _roster_group_header(title: String, count: int) -> Label:
 
 ## One selectable band row. A Button (row click) hosts a mouse-transparent HBox
 ## laying out: a selection accent, a vitality dot (BandFoodStatus color for a
-## player band, neutral for others), the name, the size, and an activity glyph.
+## player band, neutral for others), the name, the size, and an activity mark.
 func _build_band_row(unit: Dictionary) -> Button:
 	var entity_id := int(unit.get("entity", -1))
 	var is_player := _is_player_unit(unit)
 	var selected := not _selection.unit().is_empty() and int(_selection.unit().get("entity", -1)) == entity_id
 	# Neutral tint for a non-player band's vitality dot (we can't see their larder).
 	var dot_color := HudStyle.INK_FAINT
-	var glyph := ""
+	# **A FOREIGN BAND STATES NO ACTIVITY**, which is a fact about what we can see rather than about
+	# what they are doing — `""` here, the same answer an unworked hex gives, so it takes the mark
+	# slot's zero-width empty and the column stays aligned.
+	var activity := _band_row_activity(unit, is_player)
 	if is_player:
 		dot_color = BandFoodStatus.color_for_turns(float(unit.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS)))
-		glyph = _activity_glyph(String(unit.get("activity", "")))
 	var button := _make_roster_button(selected)
 	var row := _make_roster_row(selected, dot_color)
 	var name_label := _roster_name_label(String(unit.get("id", "Band")), selected)
 	row.add_child(name_label)
 	var meta_label := _roster_meta_label(str(int(unit.get("size", 0))))
 	row.add_child(meta_label)
-	var glyph_label: Label = null
-	if glyph != "":
-		glyph_label = _roster_glyph_label(glyph, String(unit.get("activity", "")) == HudSelectionVocab.BAND_ACTIVITY_IDLE)
-		row.add_child(glyph_label)
+	var glyph_label := _roster_activity_mark(activity)
+	row.add_child(glyph_label)
 	# Surface the data-driven settlement-stage label (e.g. "Nomadic band") on hover; omit when
 	# the band has no resolved stage (pre-stage / missing snapshot).
 	var stage_label := String(unit.get("settlement_stage_label", "")).strip_edges()
@@ -508,12 +536,7 @@ func _update_band_row(button: Button, unit: Dictionary) -> void:
 	_set_row_dot(button, dot_color)
 	_set_row_name(button, String(unit.get("id", "Band")), selected)
 	_set_row_meta(button, str(int(unit.get("size", 0))))
-	if is_player and button.has_meta("glyph_label"):
-		var activity := String(unit.get("activity", ""))
-		var glyph_label := button.get_meta("glyph_label") as Label
-		glyph_label.text = _activity_glyph(activity)
-		glyph_label.add_theme_color_override("font_color",
-			HudStyle.INK_FAINT if activity == HudSelectionVocab.BAND_ACTIVITY_IDLE else HudStyle.INK_DIM)
+	_set_row_activity_mark(button, _band_row_activity(unit, is_player))
 	button.tooltip_text = String(unit.get("settlement_stage_label", "")).strip_edges()
 
 ## One selectable wildlife row: an ecology-tier dot, the species glyph + name, and — as the meta —
@@ -544,10 +567,13 @@ func _build_herd_row(herd: Dictionary) -> Button:
 	if meta != "":
 		meta_label = _roster_meta_label(meta)
 		row.add_child(meta_label)
+	# The hunters' MARK, on the land row's own footing — see `_roster_activity_mark`.
+	var mark := _roster_activity_mark(_herd_row_activity(herd))
+	row.add_child(mark)
 	button.tooltip_text = label
 	button.add_child(row)
 	button.pressed.connect(_on_roster_row_selected.bind("herd", herd_id))
-	_store_row_refs(button, row, name_label, meta_label, null, icon)
+	_store_row_refs(button, row, name_label, meta_label, mark, icon)
 	return button
 
 ## Patch a herd row in place. The meta's presence (huntable-or-staffed) is stable per herd and rides
@@ -562,6 +588,7 @@ func _update_herd_row(button: Button, herd: Dictionary) -> void:
 	_set_row_icon(button, FaunaSprites.for_herd(label), glyph, selected)
 	_set_row_name(button, String(herd.get("species", label)), selected)
 	_set_row_meta(button, _herd_row_meta(herd))
+	_set_row_activity_mark(button, _herd_row_activity(herd))
 	button.tooltip_text = label
 
 ## The herd row's meta — the deliberate twin of `_land_row_meta`'s rule: a workable source states
@@ -573,7 +600,16 @@ func _herd_row_meta(herd: Dictionary) -> String:
 	var herd_id := String(herd.get("id", "")).strip_edges()
 	var workers := _hunt_workers_on_herd(herd_id)
 	if workers > 0 or bool(herd.get("huntable", false)):
-		return HudSelectionVocab.HERD_META_WORKERS_FORMAT % [workers, HudSelectionVocab.ACTIVITY_GLYPHS[SourceForecast.LABOR_KIND_HUNT]]
+		return HudSelectionVocab.HERD_META_WORKERS_FORMAT % workers
+	return ""
+
+## Which ACTIVITY the herd row's trailing mark states, `""` for none — the deliberate twin of
+## `_land_row_activity`, on the same predicate its own meta uses. A NON-huntable herd is not a
+## source, so it states no count AND wears no mark.
+func _herd_row_activity(herd: Dictionary) -> String:
+	var herd_id := String(herd.get("id", "")).strip_edges()
+	if _hunt_workers_on_herd(herd_id) > 0 or bool(herd.get("huntable", false)):
+		return SourceForecast.LABOR_KIND_HUNT
 	return ""
 
 ## Hunters this faction has on `herd_id`, summed across BOTH ways a herd can be worked: standing
@@ -642,8 +678,13 @@ func _make_roster_row(selected: bool, dot_color: Color) -> HBoxContainer:
 ## `icon` is the LEADING subject mark (the land row's site art, the herd row's species art) and is a
 ## `Control` rather than a `Label`, because it is a `TextureRect` whenever the subject has bundled
 ## art. It is deliberately NOT the same slot as `glyph_label`, which is the band row's TRAILING
-## activity glyph — a different question in a different place, and folding them would make one meta
+## activity mark — a different question in a different place, and folding them would make one meta
 ## key mean two things.
+##
+## **`glyph_label` IS A `Control` TOO SINCE ISSUE #249** — it holds bundled art for forage / hunt /
+## scout and a glyph `Label` for the two activities without any, so it crosses the same art⇄glyph
+## line the `icon` slot does and is patched by the same node-swapping rule (`_set_row_activity_mark`).
+## The name is kept because every `get_meta` reader and both harnesses address it by that key.
 func _store_row_refs(button: Button, row: HBoxContainer, name_label: Label, meta_label, glyph_label,
 		icon: Control = null) -> void:
 	button.set_meta("accent", row.get_meta("accent"))
@@ -769,12 +810,82 @@ func _roster_meta_label(text: String) -> Label:
 	label.add_theme_color_override("font_color", HudStyle.INK_DIM)
 	return label
 
-func _roster_glyph_label(glyph: String, dim: bool) -> Label:
-	var label := Label.new()
-	label.text = glyph
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	label.add_theme_color_override("font_color", HudStyle.INK_FAINT if dim else HudStyle.INK_DIM)
-	return label
+## A row's TRAILING ACTIVITY MARK — bundled art where the activity has any (issue #249), its
+## `ACTIVITY_GLYPHS` glyph where it does not, and NOTHING where the row states no activity at all.
+##
+## **ALL THREE ROW KINDS SHARE IT, and that is the point of routing them here.** The band row's mark
+## says what those people are doing; the land row's and the herd row's say what is being done to that
+## source (`2 <forage>`, `1 <hunt>`) — different sentences, but one column down the roster, so a
+## drawn mark on a band row beside an emoji on the hex under it is exactly the split this migration
+## exists to close. It is built through `HudWidgets.build_marker_icon`, the same builder the row's
+## LEADING subject mark uses, so the two marks on one row cannot be drawn at two weights.
+##
+## **THE GLYPH BRANCH KEEPS ITS INK AND THE ART BRANCH TAKES NONE**, which is that builder's own
+## rule: a bare `Label` inherits nothing (this client applies no `Theme`), so the glyph is handed the
+## dim/faint colour it has always had, while the art is drawn untinted — it is authored in two flat
+## pale tones whose fill IS the silhouette, and a tint flattens them into one.
+##
+## **AN EMPTY ACTIVITY STILL GETS A NODE, at a zero box so it costs the row no width.** A land row
+## can BECOME a gathering site and a herd can become huntable between restates, and these rows are
+## patched rather than rebuilt — so a slot created only where a mark was wanted could never be filled
+## in later. The zero-width empty `Label` is what lets `_set_row_activity_mark` swap art into it.
+func _roster_activity_mark(activity: String) -> Control:
+	var key := activity.strip_edges().to_lower()
+	if key == "":
+		return HudWidgets.build_marker_icon(null, "", 0.0,
+			HudSelectionVocab.ACTIVITY_MARK_FONT_SIZE)
+	return HudWidgets.build_marker_icon(
+		HudSprites.for_mark(String(HudSelectionVocab.ACTIVITY_MARKS.get(key, ""))),
+		_activity_glyph(key),
+		HudSelectionVocab.ACTIVITY_MARK_BOX, HudSelectionVocab.ACTIVITY_MARK_FONT_SIZE,
+		_activity_mark_ink(key))
+
+## The glyph fallback's ink: faint while the band is idle, dim otherwise — the pair this mark has
+## always worn, decided in one place so the build and the patch paths cannot disagree.
+func _activity_mark_ink(activity: String) -> Color:
+	return HudStyle.INK_FAINT if activity == HudSelectionVocab.BAND_ACTIVITY_IDLE else HudStyle.INK_DIM
+
+## Patch a row's activity mark in place — and REPLACE the node when the art⇄glyph kind flips.
+##
+## **THIS IS `_set_row_icon`'S TRAP, ONE SLOT OVER, and a row crosses the line by doing its job**:
+## the mark is a `TextureRect` while a band forages and a glyph `Label` the turn its people take up
+## arms, because `warrior` has no art — and it is an empty `Label` on a hex nobody can gather from
+## until the moment somebody can. Writing `.text` to a `TextureRect` is a SILENT no-op, so a patch
+## that only wrote to the existing node would leave a foraging sprig beside a band now standing
+## guard, which is the exact staleness this whole in-place path exists to avoid. Same kind ⇒ patch
+## the properties; different kind ⇒ swap the node at its own index and re-stash it.
+func _set_row_activity_mark(button: Button, activity: String) -> void:
+	if not button.has_meta("glyph_label"):
+		return
+	var current := button.get_meta("glyph_label") as Control
+	if current == null or not is_instance_valid(current):
+		return
+	var key := activity.strip_edges().to_lower()
+	var texture: Texture2D = null
+	if key != "":
+		texture = HudSprites.for_mark(String(HudSelectionVocab.ACTIVITY_MARKS.get(key, "")))
+	if texture != null and current is TextureRect:
+		(current as TextureRect).texture = texture
+		return
+	if texture == null and current is Label:
+		var label := current as Label
+		# The box travels with the text: an activity that has gone away must give its width back,
+		# or an unstaffed land row keeps a mark-sized hole where its mark used to be.
+		label.text = _activity_glyph(key) if key != "" else ""
+		label.custom_minimum_size = Vector2(
+			HudSelectionVocab.ACTIVITY_MARK_BOX if key != "" else 0.0, 0.0)
+		if key != "":
+			label.add_theme_color_override("font_color", _activity_mark_ink(key))
+		return
+	var parent := current.get_parent()
+	if parent == null:
+		return
+	var replacement := _roster_activity_mark(activity)
+	parent.add_child(replacement)
+	parent.move_child(replacement, current.get_index())
+	parent.remove_child(current)
+	current.queue_free()
+	button.set_meta("glyph_label", replacement)
 
 func _activity_glyph(activity: String) -> String:
 	return String(HudSelectionVocab.ACTIVITY_GLYPHS.get(activity.strip_edges().to_lower(), HudSelectionVocab.ACTIVITY_GLYPHS[HudSelectionVocab.BAND_ACTIVITY_IDLE]))

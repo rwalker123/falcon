@@ -359,6 +359,46 @@ answered these questions, so a fifth consumer was a call, not a new resolver.
 
 ---
 
+## `HudSprites` keys the ACTIVITY, not the surface (issue #249)
+
+`hud/` is the one art family whose subjects are not things on the map — they are what people are
+DOING. Its four marks are `cairn` (the knowledge launcher, #581) and `forage` / `hunt` / `scout`, and
+the rule that shapes the table is that **a mark id names the activity and nothing about where it
+draws**. `hunt` is ONE file behind the work board's hunt filter chip and the subject list's herd row
+alike; a `hunt_chip` beside a `hunt_roster` would be two answers to *what does hunting look like*,
+and `hunt.png`'s own prompt exists because the client already had two (`FoodIcons.HUNT`'s 🦌 and the
+roster's 🏹) and they had drifted into different subjects.
+
+**THE ART DOES NOT PICK THE MECHANISM; THE HOST WIDGET DOES** — the section above, one family over,
+and `hud/` proves it by using both of that section's mechanisms for one file. A filter chip is a
+`Button`, so it takes the art on its own `icon` property with an `icon_max_width` cap and DROPS the
+leading `%s` from its text (`WORK_CHIP_KIND_SPRITE_FORMAT` — art OR glyph, never both). A roster row's
+mark is a `Label` in an `HBoxContainer`, so it goes through `HudWidgets.build_marker_icon` and gets a
+`TextureRect`. Same texture, two hosts, two mechanisms, no shared builder between them.
+
+**COVERAGE IS COMPLETE FOR WHAT THE TABLE DECLARES, AND THAT IS WHAT LETS IT WARN.** `for_mark` takes
+`IconSprites.texture_for`'s default `warn: true`, so a failed load is a DEFECT that surfaces — which
+is only honest while every key has a committed PNG behind it. The corollary held for two art drops:
+`forage`/`hunt`/`scout` sat in `assets/icons/hud/` **unlisted** the whole time they had no call site,
+because a path nothing loads is dead data in the table rather than coverage, and listing one would
+have made the warning a lie about art nobody asks for. Wiring them is what let them in.
+
+**WHAT IS STILL EMOJI IS WRITTEN DOWN, WITH ITS BLOCKER** — `assets/icons/icon_prompts.txt` → THE
+#249 GAP LIST, swept from every non-comment emoji in `src/`. Read its `can it move alone?` column
+before generating anything: half those marks sit in a COLUMN of siblings, and **a set moves whole or
+not at all**, because drawn sprites beside text glyphs at different weights and vertical metrics is a
+new inconsistency introduced by the fix. The plant/animal ladder pair (🌾 tended, 🐄 penned) has stayed
+unprompted through two drops for exactly that reason — its siblings ▦ and ◎ are symbolic and stay
+text, so migrating it is a VOCABULARY decision before it is an art one.
+
+**The tinted symbolic glyphs stay text, and the reason is the art's own construction.** ⚠ ⌃ ⚑ ⊘ ▦ ◎ ·
+carry half their meaning in their COLOUR — WARN on an attention chip, `SIGNAL` on a standing rung —
+and this art is authored in two flat pale tones whose FILL is the silhouette, so a `modulate` collapses
+the two tones into one and destroys what makes it read at 13px. That is the same untinted rule the map
+markers have, arriving at the opposite conclusion because the glyph is text and the art is not.
+
+---
+
 ## RETIRED — the trade-goods glyph (`FoodIcons.TRADE_GOODS_GLYPH`, issue #337, retired by arc #527)
 
 `⇄` marked every non-food component of a yield **on the TIGHT surfaces** — board rows, filter chips,

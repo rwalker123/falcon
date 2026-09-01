@@ -33,16 +33,19 @@
 # survive. The house style below is reconstructed from that art plus the wild-fowl
 # prompt (kept verbatim as the reference exemplar). Add every new prompt here.
 #
-# THE SEVENTH IS `hud/`, AND ITS COVERAGE IS PARTIAL — that is the one thing to know
-# about the list above. A family is a table plus a resolver, and `hud/` now has both:
-# `ui/HudSprites.gd` resolves `for_mark(mark_id)` against a table holding `cairn` ONLY.
-# The directory also carries three shipped, keyed, committed PNGs — forage, hunt, scout —
-# that no table lists and nothing loads, because their wiring is issue #249's and is still
-# blocked on the ladder-set question in that section. A path with no call site would be dead
-# data in the table rather than coverage, so they stay out of it until #249 wires them.
+# THE SEVENTH IS `hud/`, AND IT IS COMPLETE FOR WHAT IT SHIPS. A family is a table plus a
+# resolver, and `hud/` has both: `ui/HudSprites.gd` resolves `for_mark(mark_id)` against a
+# table now holding all four committed PNGs — `cairn` (issue #581) and `forage` / `hunt` /
+# `scout` (issue #249). Every path in it has a call site, which is the condition that lets it
+# take `IconSprites.texture_for`'s `warn: true` honestly.
 # The HUD / ACTIVITY MARKS block at the BOTTOM of this file holds their prompts and the
-# reasoning behind each subject, which is the expensive part and is settled; whoever picks
-# up #249 should not re-derive it. Read its own preamble before generating one.
+# reasoning behind each subject, which is the expensive part and is settled; do not re-derive
+# it. Read its own preamble before generating one.
+#
+# ⚠ WHAT `hud/` DOES NOT YET SHIP is written up in THE #249 GAP LIST at the very end of this
+# file — the pictographic emoji still rendering as text in the HUD, each with the surface it
+# is on and whether it can move alone. That list is the input to the next art drop, not a
+# backlog of things anyone forgot.
 #
 # ============================================================================
 # PIPELINE
@@ -1258,13 +1261,19 @@ cave_fungi: Flat vector game icon of a single mushroom seen from the side, one s
 # HUD / ACTIVITY MARKS  ->  assets/icons/hud/   (ui/HudSprites.gd)
 # ============================================================================
 #
-# ⚠ ALL FOUR MARKS EXIST; ONLY THE CAIRN IS WIRED. `assets/icons/hud/{cairn,forage,hunt,scout}.png`
-# are keyed, imported and committed. `ui/HudSprites.gd` is this directory's lookup script and its
-# table holds `cairn` alone — wired by issue #581 on the two surfaces that need different
-# mechanisms (a `Button.icon` on the action-bar launcher, a `TextureRect` swapped for a `Label` on
-# the turn orb's row). `forage`, `hunt` and `scout` are listed by NO table and loaded by NOTHING:
-# their wiring is #249's, which is still blocked on the ladder-set question below, and a path with
-# no call site would be dead data in the table rather than coverage.
+# ALL FOUR MARKS EXIST AND ALL FOUR ARE WIRED. `assets/icons/hud/{cairn,forage,hunt,scout}.png`
+# are keyed, imported, committed and listed in `ui/HudSprites.gd`, this directory's lookup script.
+# The cairn came first (#581) on the two surfaces that need different mechanisms — a `Button.icon`
+# on the action-bar launcher, a `TextureRect` swapped for a `Label` on the turn orb's row — and
+# #249 wired the other three on both of those same two mechanisms:
+#
+#   `Button.icon`      the work board's forage and hunt FILTER CHIPS
+#   `TextureRect`      the subject list's trailing ACTIVITY MARK, on all three row kinds
+#                      (a band's activity, a hex's foragers, a herd's hunters)
+#
+# **THE MARK ID IS THE ACTIVITY, NOT THE SURFACE** — `hunt` is ONE file behind the chip and the
+# roster row alike, which is what `hunt.png`'s own note below asked for when it collapsed the 🦌
+# and the 🏹 into one subject. A second id per surface is how they would drift back apart.
 #
 # JUDGE ONE OF THESE AT 13px OR NOT AT ALL, and judge it by INK COVERAGE. That single number
 # predicted every outcome in this batch: forage 32% read instantly; hunt survives at 6.8% only
@@ -1326,15 +1335,21 @@ cairn: Flat vector interface mark of a cairn, a small freestanding stack of five
 # THE #249 SET — and the reason only three of the five candidates are written down.
 #
 # #249 migrates the HUD's remaining PICTOGRAPHIC emoji to sprites and leaves the tinted
-# SYMBOLIC glyphs (⚠ ⚑ ⊘ ▦ ◎) as text. Applying that split to what is actually left in the
-# client gives five candidates, and two of them cannot be generated independently:
+# SYMBOLIC glyphs (⚠ ⚑ ⊘ ▦ ◎) as text. Applying that split gave five candidates on the two
+# surfaces this section was written for, and two of them cannot be generated independently:
 #
-#   forage  🌿  `FoodIcons.DEFAULT`, the work chip            -> SHIPPED (coverage 32%)
-#   hunt    🦌  `FoodIcons.HUNT` + the 🏹 activity glyph      -> SHIPPED (coverage 6.8%)
-#   scout   🧭  the roster activity glyph                     -> SHIPPED, see caveat
+#   forage  🌿  `FoodIcons.DEFAULT`, the work chip            -> SHIPPED + WIRED (coverage 32%)
+#   hunt    🦌  `FoodIcons.HUNT` + the 🏹 activity glyph      -> SHIPPED + WIRED (coverage 6.8%)
+#   scout   🧭  the roster activity glyph                     -> SHIPPED + WIRED, see caveat
 #   ---- NOT PROMPTED ----
 #   tended  🌾  the plant ladder's rung-2 mark
 #   penned  🐄  `DetailFormat.CORRAL_GLYPH`, the animal ladder's rung-3 mark
+#
+# ⚠ **FIVE WAS NEVER THE WHOLE COUNT, and the gap list at the end of this file is.** A sweep of
+# every non-comment emoji in `src/` turned up pictographic marks on six MORE surfaces that this
+# section had not looked at — the roster's `warrior`, the mission-launch buttons, the kit picker,
+# the turn orb's attention rows, the PEOPLE key and the locked inspector panels. Nothing here is
+# wrong; it is a list of two surfaces' candidates being read as a list of the client's.
 #
 # THE LAST TWO ARE HALF OF A FOUR-MARK SET AND CANNOT MOVE ALONE. The ladder marks read
 # as one column — plants `🌾 Tended Patch -> ▦ Field`, animals `◎ pastoral -> 🐄 penned` —
@@ -1387,3 +1402,103 @@ hunt: Flat vector interface mark of a simple hunting bow with a single nocked ar
 # anachronism. Treat this as a candidate to look at rather than a settled replacement; if the
 # compass stays, the prompt is wrong rather than the render.
 scout: Flat vector interface mark of two bare human footprints in the dirt, one ahead of the other as if walking away, seen from directly above, each footprint a simple bold rounded sole shape with a single separated toe pad and no individual toes, no compass, no needle, no arrow, no map, no boot tread, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a pale bone-cream and a warm mid tan in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the footprints on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
+
+
+# =============================================================================================
+# THE #249 GAP LIST — every PICTOGRAPHIC emoji still rendering as text in the HUD
+# =============================================================================================
+#
+# Produced by sweeping every NON-COMMENT emoji in `clients/godot_thin_client/src/**.gd` and
+# dropping the tinted symbolic glyphs (▸ ▾ ◀ ▶ ⚠ ⌃ ⚑ ⊘ ▦ ◎ ✕ ● ○ ◈ · ≈ → ∞ ⚒ ⚔ …), which #249
+# leaves as text on purpose: their COLOUR is half of what they say, and this art is authored in
+# two flat pale tones whose fill IS the silhouette, so a tint flattens it into one.
+#
+# It is the input to the next art drop. **Everything below is a MISSING PNG, not a missing call
+# site** — each entry names a surface already wired for art-or-glyph, or one whose mechanism is
+# the same `Button.icon` / `TextureRect` pair `hud/` already uses twice.
+#
+# ⛔ **READ THE `CAN IT MOVE ALONE?` COLUMN BEFORE GENERATING ONE.** Half of these sit in a
+# COLUMN or a ROW of sibling marks, and the one job a mark has is to be told apart from its
+# neighbours. Migrating half a set puts drawn sprites beside text glyphs at different weights and
+# different vertical metrics, which is a NEW inconsistency introduced by the fix — the reason the
+# ladder pair below has stayed unprompted through two art drops. A set moves whole or not at all.
+#
+#   mark            emoji   surface                                          can it move alone?
+#   ------------    -----   ----------------------------------------------   ------------------
+#   warrior         🛡      the subject list's activity mark                  YES — its three
+#                           (`HudSelectionVocab.ACTIVITY_GLYPHS`)             siblings are drawn
+#                                                                            ALREADY, so this is
+#                                                                            the one emoji left
+#                                                                            in that column and
+#                                                                            it CLOSES a set
+#                                                                            rather than opening
+#                                                                            one. Highest value
+#                                                                            single icon here.
+#
+#   deny            💀      the parties footer's mission-launch buttons       NO — same GRID as
+#   trade           📦      (`HudComposeVocab.COMPOSE_MISSION_LABEL_*`)       each other. `⚑ Scout`
+#                                                                            and `⌂ Split` are
+#                                                                            symbolic and stay
+#                                                                            text, so these two
+#                                                                            plus the already-
+#                                                                            drawn `hunt` are the
+#                                                                            grid's whole
+#                                                                            pictographic set:
+#                                                                            generate BOTH.
+#
+#   warrior_kit     🪓      the compose sheet's kit-picker face               NO — pairs with the
+#   kit_fallback    🎒      (`HudComposeVocab.KIT_JOB_GLYPHS`)                warrior mark above;
+#                                                                            the other three job
+#                                                                            faces are drawn. The
+#                                                                            🎒 is the fallback
+#                                                                            for a job with no
+#                                                                            entry, so it must
+#                                                                            read as "some gear"
+#                                                                            beside four specific
+#                                                                            ones.
+#
+#   idle_workers    🛠      the turn orb's attention rows                     NO — one popover
+#   starving        🍖      (`TurnOrb.KIND_ICON`; `KIND_ICON_SPRITE` is       list, marks stacked
+#   losing_pop      📉      the table they land in, already built and         one per row. Six
+#   crew_handoff    🛠      already carrying `knowledge_learned`)             kinds share it and
+#                                                                            three carry
+#                                                                            `FoodIcons` policy
+#                                                                            glyphs, so this set
+#                                                                            is entangled with
+#                                                                            the ladder pair
+#                                                                            below. 🛠 serves TWO
+#                                                                            kinds — one file.
+#
+#   children        👶      the PEOPLE composition key, on the band page      NO — three segments
+#   working         🛠      and the faction rollup alike                      of ONE bar, read
+#   elders          🧓      (`HudWorkVocab.PEOPLE_GLYPH_*`)                   left to right as a
+#                                                                            single sentence.
+#                                                                            Generate as a set of
+#                                                                            three at one weight.
+#
+#   tended          🌾      the plant ladder's rung-2 mark                    NO — see THE #249
+#   penned          🐄      the animal ladder's rung-3 mark                   SET above: ▦ and ◎
+#                           (`DetailFormat.CULTIVATION_GLYPH` / `CORRAL_`)    are their symbolic
+#                                                                            siblings in the same
+#                                                                            column, so the
+#                                                                            ladder is a
+#                                                                            VOCABULARY decision
+#                                                                            before it is an art
+#                                                                            one. Unchanged.
+#
+# NOT ON THE LIST, AND EACH FOR A STATED REASON:
+#
+#   🔒 on the five locked inspector panels (`CrisisPanel`, `GreatDiscoveriesPanel`,
+#      `InfluencerPanel`, `KnowledgePanel`, `PowerPanel`) — the whole PANEL is a placeholder
+#      saying a system is not built yet, so drawing its padlock is dressing a stub.
+#
+#   The map's expedition markers (`MapView.EXPEDITION_HUNT_GLYPH` and its 💀 / 📦 twins) — these
+#      draw over the MAP through `draw_string`, at marker size, over whatever terrain is under
+#      them. That is the house style's situation, NOT `hud/`'s: an outlined map marker, front-on
+#      pale-on-near-black art would vanish on it. If they move, they move as a new `expeditions/`
+#      map-marker family with the house style's outline clause, and `BandMarkerRenderer` draws a
+#      texture rather than a glyph — a different mechanism from either one `hud/` uses.
+#
+#   `FoodIcons.HERD_SPECIES` / `SITE_ICONS` / `CROP_ROLE_ICONS` — these are FALLBACKS behind
+#      `fauna/`, `sites/` and `crops/`, which already ship complete coverage. The emoji is the
+#      art-or-glyph contract's other half and is meant to stay.

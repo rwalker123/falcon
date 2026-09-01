@@ -1105,6 +1105,30 @@ const WORK_CHIP_ALL_FORMAT := "All %d"
 
 const WORK_CHIP_KIND_FORMAT := "%s %d · %s"
 
+## The kind chip's face once its mark is bundled ART — the same line with the leading `%s` gone,
+## because a `Button` carries art on its `icon` PROPERTY and a chip that kept the glyph would state
+## its kind twice. Art OR glyph, never both, the rule `BandCityPanel._make_icon_button` already
+## follows for the knowledge launcher.
+const WORK_CHIP_KIND_SPRITE_FORMAT := "%d · %s"
+
+## The two kind chips' bundled marks, resolved through `HudSprites.for_mark` (issue #249). They are
+## the activity's OWN ids — `hunt` is the same mark the roster's band rows wear — so the board and
+## the roster cannot come to draw one activity two ways.
+##
+## **THE OTHER THREE CHIPS ARE ABSENT AND THAT IS COMPLETE COVERAGE.** `All` carries no mark at all,
+## and the `⚠` / `⌃` chips carry TINTED SYMBOLIC glyphs, which #249 leaves as text: their colour is
+## half of what they say (WARN on the attention chip), and this art is authored in two flat pale
+## tones whose fill IS the silhouette, so a tint would flatten it. So the chip row is not left half
+## art and half emoji — every PICTOGRAPHIC mark on it is drawn.
+const WORK_CHIP_FORAGE_MARK := "forage"
+const WORK_CHIP_HUNT_MARK := "hunt"
+
+## What a chip's art may occupy, through the stock `icon_max_width` theme constant. A cap is needed
+## because the source PNGs are 256px and a `Button` reserves its icon's drawn size in its MINIMUM —
+## one art-bearing chip would otherwise set the whole row's height. Sized to `WORK_CHIP_FONT_SIZE`'s
+## own line so the mark reads as the chip's leading glyph did, not as a picture pasted beside a word.
+const WORK_CHIP_ICON_MAX_WIDTH := 13
+
 const WORK_CHIP_ATTENTION_FORMAT := "⚠ %d"
 
 ## The ready chip. `⌃` is the same chevron the map badge and the overflow chip use, so the three

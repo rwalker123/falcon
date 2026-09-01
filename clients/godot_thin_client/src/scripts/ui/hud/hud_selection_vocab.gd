@@ -38,13 +38,20 @@ const ROSTER_ROW_ICON_FONT_SIZE := 16
 const LAND_ROW_GLYPH := "◈"
 
 # Land-row meta, shortest true form: workers on it · else the module it offers · else nothing.
-const LAND_META_WORKERS_FORMAT := "%d %s"
+#
+# **THE MARK LEFT THIS STRING IN ISSUE #249** — it was `"%d %s"`, the count and the forage glyph in
+# one Label, and a texture cannot live inside a `Label.text`. The mark is its own trailing node now
+# (`SelectionCardController._roster_activity_mark`, the slot the band row's activity mark already
+# used), so the meta is the COUNT alone and the row still reads `2 <forage>`. Same split, same
+# reason, as the LEADING subject mark's in issue #439.
+const LAND_META_WORKERS_FORMAT := "%d"
 
 const LAND_META_NO_FORAGE := "No forage"
 
-# Herd-row meta: the same `<count> <activity glyph>` form the land row uses, so a hunted herd
-# (`1 🏹`) and a foraged hex (`2 🌾`) state their staffing identically down the subject list.
-const HERD_META_WORKERS_FORMAT := "%d %s"
+# Herd-row meta: the same `<count> <activity mark>` form the land row uses, so a hunted herd and a
+# foraged hex state their staffing identically down the subject list — and, since issue #249, in the
+# same COLUMN of drawn marks. The count alone, for the reason `LAND_META_WORKERS_FORMAT` records.
+const HERD_META_WORKERS_FORMAT := "%d"
 
 # Chip strip font: one notch under the row labels — a chip is a standing condition, not a heading.
 const CHIP_FONT_SIZE := 11
@@ -75,6 +82,11 @@ const MOVE_BAND_BUTTON_TOOLTIP := "Relocate the band, then click a destination t
 
 # Per-activity glyph for a player band's roster row. `activity` is the kind with the
 # most workers (Early-Game Labor): idle | forage | hunt | scout | warrior.
+#
+# **THIS IS THE FALLBACK HALF NOW** (issue #249). Three of the five have bundled art in
+# `ACTIVITY_MARKS` below and draw it; this table is what they fall back to when a load fails, and
+# what the other two still render from. Nothing was deleted, which is the same contract every other
+# art family in the client has with its emoji.
 const ACTIVITY_GLYPHS := {
     "idle": "·",
     "forage": "🌾",
@@ -82,6 +94,34 @@ const ACTIVITY_GLYPHS := {
     "scout": "🧭",
     "warrior": "🛡",
 }
+
+# Activity → `HudSprites` MARK ID, for the three activities the client ships art for. An activity
+# listed here draws a `TextureRect` in place of its `ACTIVITY_GLYPHS` `Label`; one absent from it
+# keeps the glyph, and so does a listed one whose art fails to load.
+#
+# **A SECOND TABLE RATHER THAN A WIDENING OF THE FIRST**, exactly as `TurnOrb.KIND_ICON_SPRITE` is:
+# `_activity_glyph` answers in Strings and its callers want a glyph, so folding a texture lookup
+# into it would change that contract for three activities' sake.
+#
+# **THE IDS ARE THE ACTIVITY'S, NOT THIS SURFACE'S** — `hunt` is the same file the work board's hunt
+# filter chip wears. One activity, one mark, wherever in the HUD it is drawn.
+#
+# ⛔ **`idle` AND `warrior` ARE ABSENT FOR DIFFERENT REASONS, AND ONLY ONE OF THEM IS A GAP.**
+# `idle` is `·`, a tinted symbolic glyph, which #249 leaves as text on purpose — it says *nothing is
+# being done*, and nothing is not a picture. `warrior` (🛡) is PICTOGRAPHIC and simply has no art in
+# `assets/icons/hud/` yet; it is the one emoji left in this column, and `assets/icons/icon_prompts.txt`
+# carries it as art still to generate.
+const ACTIVITY_MARKS := {
+    "forage": "forage",
+    "hunt": "hunt",
+    "scout": "scout",
+}
+
+# The activity mark's box and glyph size, the pair `HudWidgets.build_marker_icon` needs. Sized to the
+# roster's own row mark (`ROSTER_ROW_ICON_BOX`) so the leading subject mark and the trailing activity
+# mark read as one family at one weight rather than as two unrelated pictures on one row.
+const ACTIVITY_MARK_BOX := ROSTER_ROW_ICON_BOX
+const ACTIVITY_MARK_FONT_SIZE := ROSTER_ROW_ICON_FONT_SIZE
 
 # ---- THE BUILD READOUT — a rung's price in WORK, and the turns that price buys -------------------
 # `docs/plan_unit_costed_work.md` §11. An improvement declares a fixed size in WORK UNITS, a crew
