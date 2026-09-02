@@ -565,15 +565,22 @@ fn snapshot_dict(
         let _ = overlays.insert("climate_temperate_max_temp", temperate_max);
     }
     // The temperature-mortality model, published on the same all-or-nothing rule as the climate
-    // cut points above and read the same way — a reader that finds one key finds all four. These
+    // cut points above and read the same way — a reader that finds one key finds all six. These
     // are NOT the band cut points: they are the thresholds population deaths are struck from.
-    if let Some([ambient_temp, temp_tolerance, mortality_scale, max_mortality]) =
-        temperature_survivability
+    //
+    // TWO INDEPENDENT TAILS, each with its own onset, slope and ceiling. There is no `ambient` and
+    // no tolerance any more: cold and heat are not symmetric phenomena, and no single deviation
+    // from a midpoint could carry three differing parameters per side.
+    if let Some(
+        [cold_onset_temp, cold_mortality_scale, cold_max_mortality, heat_onset_temp, heat_mortality_scale, heat_max_mortality],
+    ) = temperature_survivability
     {
-        let _ = overlays.insert("survivability_ambient_temp", ambient_temp);
-        let _ = overlays.insert("survivability_temp_tolerance", temp_tolerance);
-        let _ = overlays.insert("survivability_mortality_scale", mortality_scale);
-        let _ = overlays.insert("survivability_max_mortality", max_mortality);
+        let _ = overlays.insert("survivability_cold_onset_temp", cold_onset_temp);
+        let _ = overlays.insert("survivability_cold_mortality_scale", cold_mortality_scale);
+        let _ = overlays.insert("survivability_cold_max_mortality", cold_max_mortality);
+        let _ = overlays.insert("survivability_heat_onset_temp", heat_onset_temp);
+        let _ = overlays.insert("survivability_heat_mortality_scale", heat_mortality_scale);
+        let _ = overlays.insert("survivability_heat_max_mortality", heat_max_mortality);
     }
     let _ = overlays.insert("moisture", &moisture_array.clone());
     let _ = overlays.insert("moisture_raw", &moisture_raw_array.clone());
@@ -960,10 +967,12 @@ pub(crate) fn snapshot_to_dict(
         .and_then(|s| s.temperatureSurvivability())
         .map(|model| {
             [
-                model.ambientTemp(),
-                model.tempTolerance(),
-                model.mortalityScale(),
-                model.maxMortality(),
+                model.coldOnsetTemp(),
+                model.coldMortalityScale(),
+                model.coldMaxMortality(),
+                model.heatOnsetTemp(),
+                model.heatMortalityScale(),
+                model.heatMaxMortality(),
             ]
         });
 

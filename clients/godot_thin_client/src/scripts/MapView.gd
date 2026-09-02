@@ -1829,13 +1829,18 @@ func _ingest_overlay_channels(overlays: Variant) -> void:
 	# thresholds from the band cut points above, published beside them on the same cadence. Same
 	# presence-based test, and it is DELTA SEMANTICS, not a version fallback: the model is a per-run
 	# constant, so a delta that omits it is saying "unchanged" and must leave the last published one
-	# standing. The native emits all four keys together or none, so testing one is enough.
-	if overlay_dict.has("survivability_ambient_temp"):
+	# standing. The native emits all six keys together or none, so testing one is enough.
+	#
+	# SIX, because the model is TWO INDEPENDENT TAILS — each with its own onset, slope and ceiling
+	# — rather than a tolerance around an ambient. `TileSurvivability`'s class docs carry why.
+	if overlay_dict.has("survivability_cold_onset_temp"):
 		TileSurvivability.set_model(
-			float(overlay_dict["survivability_ambient_temp"]),
-			float(overlay_dict["survivability_temp_tolerance"]),
-			float(overlay_dict["survivability_mortality_scale"]),
-			float(overlay_dict["survivability_max_mortality"]),
+			float(overlay_dict["survivability_cold_onset_temp"]),
+			float(overlay_dict["survivability_cold_mortality_scale"]),
+			float(overlay_dict["survivability_cold_max_mortality"]),
+			float(overlay_dict["survivability_heat_onset_temp"]),
+			float(overlay_dict["survivability_heat_mortality_scale"]),
+			float(overlay_dict["survivability_heat_max_mortality"]),
 		)
 	if overlay_dict.has("channels"):
 		var channel_variant: Variant = overlay_dict["channels"]

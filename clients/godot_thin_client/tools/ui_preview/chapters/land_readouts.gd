@@ -544,10 +544,10 @@ func _flora_row_has_role_icon(row: String, icon_px: int) -> bool:
 ## is the band the sim's cut points classify that temperature into.
 ##
 ## Since #614 these frames carry the second reading of that same number too: `climate_polar` (-6 °C)
-## and `climate_boreal` (2 °C) sit outside the sim's 6.0-30.0 °C survival range and raise the
+## and `climate_boreal` (2 °C) sit outside the sim's 6.0-40.0 °C survival range and raise the
 ## chip's ⚠ and its DANGER tint, while `climate_temperate` (12 °C) and `climate_tropical` (27 °C) do not.
 ## That contrast IS the issue's argument, rendered: `Boreal · 2.0 °C` is a perfectly ordinary-looking
-## band name on ground that kills 4.6 % of a band per turn, and the four frames now show where the two
+## band name on ground that kills 0.6 % of a band per turn, and the four frames now show where the two
 ## unrelated sets of thresholds fall relative to each other.
 func _climate_tile_fixture(temperature: float, terrain_label: String) -> Dictionary:
 	var tile := BaseFx.food_tile_fixture()

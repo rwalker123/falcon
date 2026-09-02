@@ -3326,23 +3326,36 @@ func _snapshot_forage() -> Dictionary:
 # channel lazily when `set_overlay_channel` accepts the key, which is the path under test.
 #
 # The mortality model rides in the snapshot's `overlays` exactly as the sim publishes it
-# (`MapSection.temperatureSurvivability` → the native's four `survivability_*` scalars), so these
+# (`MapSection.temperatureSurvivability` → the native's six `survivability_*` scalars), so these
 # states drive the REAL `_ingest_overlay_channels` adoption rather than seeding `TileSurvivability`
 # behind the renderer's back.
-const TEMPERATURE_AMBIENT_C := 18.0
-const TEMPERATURE_TOLERANCE_C := 12.0
-const TEMPERATURE_MORTALITY_SCALE := 0.02
-const TEMPERATURE_MAX_MORTALITY := 0.1
-## The retuned tolerance the legend's Lethal row is re-asked against — see
-## `_assert_temperature_legend_follows_model`. Deliberately a value nothing else in this harness uses.
-const TEMPERATURE_RETUNED_TOLERANCE_C := 5.0
+#
+# TWO INDEPENDENT TAILS, transcribed from `demographics_config.json`: unrelated onsets, different
+# slopes, different ceilings. There is no ambient and no tolerance — see `TileSurvivability`.
+const TEMPERATURE_COLD_ONSET_C := 6.0
+const TEMPERATURE_COLD_MORTALITY_SCALE := 0.00159
+const TEMPERATURE_COLD_MAX_MORTALITY := 0.1
+const TEMPERATURE_HEAT_ONSET_C := 40.0
+const TEMPERATURE_HEAT_MORTALITY_SCALE := 0.00176
+const TEMPERATURE_HEAT_MAX_MORTALITY := 0.03
+## The retuned HEAT ONSET the legend's Lethal row is re-asked against — see
+## `_assert_temperature_legend_follows_model`. Deliberately a value nothing else in this harness uses,
+## and deliberately the heat side: it moves ONE end of the printed range, so a legend that answered
+## from a stale copy of the model would still be showing the cold onset it always did.
+const TEMPERATURE_RETUNED_HEAT_ONSET_C := 30.0
 
-## A latitude gradient, cold north to hot south. The ends sit OUTSIDE the 6.0 – 30.0 °C the tuning
+## A latitude gradient, cold north to hot south. The ends sit OUTSIDE the 6.0 – 40.0 °C the tuning
 ## above survives and the middle well inside it, so one frame carries both tails and a wide living
 ## band between them — which is what makes the contour a LINE across the map rather than an edge at
 ## the border of the grid.
+##
+## ⛔ **THE SOUTH END IS HOTTER THAN THE GENERATOR CAN PRODUCE** (worldgen tops out near 31 °C) and
+## that is deliberate: the heat onset is 40 °C, calibrated to the ±57 °C range issue #622 opens up
+## rather than to today's map. A "corrected" southern temperature inside the reachable range would
+## put the whole field below the heat onset and **silently delete the only heat-tail coverage in this
+## harness** — the hatch, the contour and the legend would all still look right on the cold half.
 const TEMPERATURE_NORTH_C := -2.0
-const TEMPERATURE_SOUTH_C := 36.0
+const TEMPERATURE_SOUTH_C := 50.0
 ## THE COLD POCKET: an island of killing ground in the middle of the survivable band, so the contour
 ## closes a RING the eye can read as a boundary instead of a horizontal stripe. Placed and sized in
 ## fractions of the grid so the same field works at both grid sizes this harness renders it at.
@@ -3355,10 +3368,10 @@ const TEMPERATURE_POCKET_RADIUS_HEXES := 3.0
 ## The map's real extremes, which the legend must print. Written out rather than recomputed from the
 ## field: an assertion that re-derived them would pass against a legend that had stopped reading raw °C.
 const TEMPERATURE_COLDEST_TEXT := "-6.0 °C"
-const TEMPERATURE_WARMEST_TEXT := "36.0 °C"
+const TEMPERATURE_WARMEST_TEXT := "50.0 °C"
 ## …and the Lethal row, at the shipped tuning and at the retuned one.
-const TEMPERATURE_LETHAL_TEXT := "outside 6.0 – 30.0 °C"
-const TEMPERATURE_RETUNED_LETHAL_TEXT := "outside 13.0 – 23.0 °C"
+const TEMPERATURE_LETHAL_TEXT := "outside 6.0 – 40.0 °C"
+const TEMPERATURE_RETUNED_LETHAL_TEXT := "outside 6.0 – 30.0 °C"
 ## The far-zoom grid, sized so the COVER fit lands below `MapView.TEMPERATURE_HATCH_MIN_RADIUS` and
 ## the hatch really is gated off (the state asserts the premise, so a grid that stopped being big
 ## enough fails loudly instead of quietly proving nothing — the `LOD_MIN_RADIUS` idiom above).
@@ -3404,10 +3417,12 @@ func _snapshot_temperature(width: int, height: int) -> Dictionary:
 		"grid": {"width": width, "height": height, "wrap_horizontal": false},
 		"overlays": {
 			"terrain": ids,
-			"survivability_ambient_temp": TEMPERATURE_AMBIENT_C,
-			"survivability_temp_tolerance": TEMPERATURE_TOLERANCE_C,
-			"survivability_mortality_scale": TEMPERATURE_MORTALITY_SCALE,
-			"survivability_max_mortality": TEMPERATURE_MAX_MORTALITY,
+			"survivability_cold_onset_temp": TEMPERATURE_COLD_ONSET_C,
+			"survivability_cold_mortality_scale": TEMPERATURE_COLD_MORTALITY_SCALE,
+			"survivability_cold_max_mortality": TEMPERATURE_COLD_MAX_MORTALITY,
+			"survivability_heat_onset_temp": TEMPERATURE_HEAT_ONSET_C,
+			"survivability_heat_mortality_scale": TEMPERATURE_HEAT_MORTALITY_SCALE,
+			"survivability_heat_max_mortality": TEMPERATURE_HEAT_MAX_MORTALITY,
 			"channels": {},
 			"channel_order": PackedStringArray([]),
 		},
@@ -3484,12 +3499,15 @@ func _frame_marks_warning_near_hex(image: Image, tile: Vector2i, radii: float) -
 func _assert_temperature_legend_follows_model() -> void:
 	_assert_map("the legend's Lethal row names the sim's survivable range",
 		_temperature_legend_row_value("Lethal") == TEMPERATURE_LETHAL_TEXT)
-	TileSurvivability.set_model(TEMPERATURE_AMBIENT_C, TEMPERATURE_RETUNED_TOLERANCE_C,
-		TEMPERATURE_MORTALITY_SCALE, TEMPERATURE_MAX_MORTALITY)
+	TileSurvivability.set_model(
+		TEMPERATURE_COLD_ONSET_C, TEMPERATURE_COLD_MORTALITY_SCALE, TEMPERATURE_COLD_MAX_MORTALITY,
+		TEMPERATURE_RETUNED_HEAT_ONSET_C, TEMPERATURE_HEAT_MORTALITY_SCALE,
+		TEMPERATURE_HEAT_MAX_MORTALITY)
 	_assert_map("…and follows it when the sim retunes, rather than restating a transcribed range",
 		_temperature_legend_row_value("Lethal") == TEMPERATURE_RETUNED_LETHAL_TEXT)
-	TileSurvivability.set_model(TEMPERATURE_AMBIENT_C, TEMPERATURE_TOLERANCE_C,
-		TEMPERATURE_MORTALITY_SCALE, TEMPERATURE_MAX_MORTALITY)
+	TileSurvivability.set_model(
+		TEMPERATURE_COLD_ONSET_C, TEMPERATURE_COLD_MORTALITY_SCALE, TEMPERATURE_COLD_MAX_MORTALITY,
+		TEMPERATURE_HEAT_ONSET_C, TEMPERATURE_HEAT_MORTALITY_SCALE, TEMPERATURE_HEAT_MAX_MORTALITY)
 
 ## The `value_text` of the legend row with this label, or "" when the legend carries no such row.
 func _temperature_legend_row_value(label: String) -> String:
@@ -3538,7 +3556,7 @@ func _temperature_extreme_tiles(width: int, height: int) -> Array[Vector2i]:
 # still look right.
 const LETHAL_MARK_BAND_ENTITY := 9401
 const SAFE_MARK_BAND_ENTITY := 9402
-## On the temperate band of the gradient — comfortably inside 6.0 – 30.0 °C.
+## On the temperate band of the gradient — comfortably inside 6.0 – 40.0 °C.
 const SAFE_MARK_BAND_TILE := Vector2i(12, 6)
 ## How far around a band's token the pixel probe looks, in hex radii. Tight: the ⚠ hangs one token
 ## radius up-left of the centre, and a wide box would let the OTHER band's mark answer for it.

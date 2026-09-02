@@ -569,10 +569,15 @@ const DECLINE_COLD_TILE := Vector2i(14, 5)
 const DECLINE_HEAT_TILE := Vector2i(15, 5)
 const DECLINE_MILD_TILE := Vector2i(16, 5)
 
-## Read against the prologue's shipped tuning (survivable 6.0 – 30.0 °C). Deliberately well past the
-## line in both directions: this state is about which BRANCH answers, not about the rate's printing.
+## Read against the prologue's shipped tuning — the survivable band is `[6.0, 40.0]` °C, two
+## independent onsets rather than a spread around an ambient. Deliberately well past the onset on
+## each side: this state is about which REASON answers, not about the rate's printing.
+##
+## The heat reading is above what worldgen can produce today (it tops out near 31 °C); the heat onset
+## is calibrated to the range issue #622 opens up, so a "corrected" reachable value would fall inside
+## the survivable band and this state would silently stop covering the heat tail.
 const DECLINE_LETHAL_COLD_TEMPERATURE := -4.0
-const DECLINE_LETHAL_HEAT_TEMPERATURE := 34.0
+const DECLINE_LETHAL_HEAT_TEMPERATURE := 45.0
 const DECLINE_SURVIVABLE_TEMPERATURE := 18.0
 
 ## Morale at its ceiling — the value a freezing band really carries, and the reason the morale

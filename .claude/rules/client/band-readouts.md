@@ -84,7 +84,7 @@ which is a property of the tier and not of the merge.
 |--------|---------|
 | `ui/hud/BandDetailLines.gd` | `RefCounted` producer (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **STATEFUL band/party detail-line producers** — the rows a BAND or a PARTY shows in whichever detail surface hosts it: `unit_summary_lines(unit, terrain_label, ctx, compact, with_position)` (Food · Fodder — on EVERY player band, live or dormant — · **Upkeep**, the standing MATERIAL bill, on a band that holds something which eats a good and NOWHERE else · Morale · Growth · Position, registering the Food/Morale/Growth disclosures through `DisclosureController` as it emits them; the **Trade** row and its disclosure were retired with the account by arc #527) and `expedition_summary_lines(unit, ctx)` (Mission · Target + its live `(x, y)` · **Orders** · Phase · Carried/Provisions · Next delivery · the trip-bound clause · Position — the **Orders** row being the floor alone since issue #491 retired the fill target it was merged with, still ONE row via `DetailFormat.expedition_orders_line` because this producer's output lands in a `clip_contents` strip capped at ~300px; see `band-city-panel.md` → "The parties strip's SEVEN lines"), plus the private row builders `_band_food_line` / **`_band_material_upkeep_line`** (the good in the WORST state and its runway, registering a fifth `Upkeep` disclosure whose popover states every good — see "THE STANDING MATERIAL BILL" at the foot of this file; **`_band_kit_line` and its `Gear` row are RETIRED** with `BAND_KIT_ROW_*` and the 22px `Zone_band` measurement their entry budget respected) / `_band_morale_line` / `_morale_breakdown_lines` and the DORMANT twin `_band_fodder_dormant_line` (the shared gate itself moved to `DetailFormat.band_has_fodder_economy` when the faction rollup started asking it). **The two trailing flags are DIFFERENT QUESTIONS and must not be folded together**: `compact` is the band zone's HEIGHT TIER (it merges Fodder onto the Food line and Growth onto Morale), while `with_position` is the host saying whether it states the band's coordinates somewhere ELSE — the Band/City dock does, in its panel header, in every tier. **There is no `_band_output_line`**: productivity reads on the WORK zone's head now (see the Civilization Wellbeing bullet below). **It is the stateful HALF of a three-way split**: the PURE producers became `DetailFormat` statics (`herd_summary_lines`, the expedition tooltip trio). (`_format_stockpile_label` was the third piece of that split, via `HudFormat.stockpile_label`; both it and the accessible-stockpile rows it served are retired — see the accessible-stockpile note further down this file.) Hud holds it as `_banddetail`, constructed in `_ready` AFTER `_disclosures` and BEFORE `_bandpanel`; **both detail hosts share the one instance** — the Occupants-card drawer (`Hud._render_occupant_drawer`) and `BandPanelController`'s vitals label + parties inspector strip, which is what retired three of that controller's nine Callable injections. **THE INJECTION SURFACE IS ONE CALLABLE** — `_herd_label_for_id`, which cannot fold onto `HudBandLaborState` because it reads THREE collaborators (`_selectioncard.find_roster_herd` AND `_selection.herd()` AND `_band_labor.find_world_herd`); `_is_player_unit` is a trivial private COPY (the `SelectionCardController` / `BandPanelController` precedent). **IT NEVER SEES THE SELECTION MODEL**: the old producers read `_selection` at exactly two sites, both `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload, so that ONE display string is now a `terrain_label` PARAMETER and both hosts resolve it through the new `SelectionCardController.selected_terrain_label()`. It also owns `_food_flow_present`, which is a **private handshake between `_band_food_line` (writer) and `unit_summary_lines` (its only reader)** — the formatter has never seen it, so it is deliberately not on the `DetailFormat.Context`. Consts follow the `DetailFormat` rule (a const lives here iff every reader moved here): the Fodder/FULL-badge/morale-arrow/contribution-label vocabulary came (the stockpile-row vocabulary went with those rows). The disclosure `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` protocol vocabulary lives in `hud_disclosure_vocab.gd` and `MORALE_CAUSE_*` in `DetailFormat.gd` — read back as `HudDisclosureVocab.X` / `DetailFormat.X`, NOT as `HudLayer.X`; `Hud.gd` defines none of them |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale and output warn/critical thresholds; morale carries the `color_for_morale`/`hex_for_morale` pair because it really has both a `Label` host and a BBCode host, while **output carries `color_for_output` ALONE** — its one surface is the WORK zone head, which is `Label`s), shared by MapView's band dot and Hud's food/morale lines + alerts |
-| `ui/TileSurvivability.gd` | Single source of truth for the sim's TEMPERATURE-MORTALITY model — the range outside which `systems::population` kills a fraction of every age bracket per turn, food or no food. `set_model(ambient, tolerance, mortality_scale, max_mortality)` adopts the constants the sim publishes per-run (`MapSection.temperatureSurvivability` → the native's `overlays.survivability_{ambient_temp,temp_tolerance,mortality_scale,max_mortality}`, all four or none), pushed from `MapView._ingest_overlay_channels` on the same presence test the climate cut points use. `has_model()` gates every readout — no published model, no survivability claim. `survivable_min()`/`survivable_max()` are `ambient ∓ tolerance`; `death_rate(temp)` mirrors the cold block of `core_sim/src/systems/population.rs` EXACTLY (symmetric `abs()`, zero floor, `min` against the cap), with `is_lethal` / `is_cold` reading off it. Consumed by `SelectionCardController._tile_chip_descriptors` (the CLIMATE chip's ⚠, tint and hover — the warning has no chip of its own since the four-pill strip was merged down) and by `MapView._draw_temperature_lethality` / `_build_temperature_legend` (the map overlay's hatch, contour and Lethal row) — one authority, so the card and the map cannot disagree about which ground kills. **It answers about the MODEL, never about how a rate is printed:** the `<0.1%` floor that keeps an unprintably small rate off a rounded zero lives in `HudSelectionVocab`, not here |
+| `ui/TileSurvivability.gd` | Single source of truth for the sim's TEMPERATURE-MORTALITY model — the range outside which `systems::population` kills, food or no food. **TWO INDEPENDENT TAILS**, each with its own onset, slope and ceiling: `set_model(cold_onset, cold_scale, cold_max, heat_onset, heat_scale, heat_max)` adopts the constants the sim publishes per-run (`MapSection.temperatureSurvivability` → the native's `overlays.survivability_{cold,heat}_{onset_temp,mortality_scale,max_mortality}`, all six or none), pushed from `MapView._ingest_overlay_channels` on the same presence test the climate cut points use. `has_model()` gates every readout — no published model, no survivability claim. `survivable_min()`/`survivable_max()` are the two ONSETS themselves, so the survivable band is the interval `[cold_onset, heat_onset]` and **not** a deviation from an ambient; `death_rate(temp)` mirrors `active_temperature_tail` + `temperature_fraction` in `core_sim/src/systems/population.rs` (below the cold onset priced by the cold tail, above the heat onset by the heat tail, zero between, each capped by its own ceiling), with `is_lethal` / `is_cold` reading off it. **It is the TILE's base rate**: the sim's per-bracket vulnerabilities are applied after the cap and are deliberately not published, a tile not knowing who stands on it. Consumed by `SelectionCardController._tile_chip_descriptors` (the CLIMATE chip's ⚠, tint and hover — the warning has no chip of its own since the four-pill strip was merged down) and by `MapView._draw_temperature_lethality` / `_build_temperature_legend` (the map overlay's hatch, contour and Lethal row) — one authority, so the card and the map cannot disagree about which ground kills. **It answers about the MODEL, never about how a rate is printed:** the `<0.1%` floor that keeps an unprintably small rate off a rounded zero lives in `HudSelectionVocab`, not here |
 - **RETIRED — the demographics readout, and the wire section with no client reader.** The player
   faction's age structure (`PopulationDemographicsState`, snapshot `demographics[]`) rendered as the
   top-bar line `Pop 100  👶34 🛠51 🧓15`, and issue #450 deleted it along with the whole top-right
@@ -695,20 +695,42 @@ which is a property of the tier and not of the merge.
 
 ### The climate BAND and the SURVIVABLE range are different numbers (issue #614)
 
-`systems::population` kills `min((|temp - ambient| - tolerance) x mortality_scale, max_mortality)`
-of **every age bracket, every turn, independently of food**. At the shipped tuning (ambient 18.0,
-tolerance 12.0) that is death below 6.0 °C and above 30.0 °C — while `climate.boreal_max_temp` is
-3.0, so a 3.7 °C tile is labelled **Temperate**, rates **Fair** habitability, shows **100 % morale**,
-and takes 4.6 % of the band a turn. A band died over 58 turns on exactly that hex, with a full
-larder, and no surface in the client said anything at all.
+`systems::population` kills on a per-turn fraction that is **independent of food** and applied to
+every age bracket. The survivable range is an INTERVAL the sim states outright — at the shipped
+tuning `[6.0, 40.0] °C` — while `climate.boreal_max_temp` is 3.0, so a 3.7 °C tile is labelled
+**Temperate**, rates **Fair** habitability, shows **100 % morale**, and kills every turn. A band died
+over 58 turns on exactly that hex, with a full larder, and no surface in the client said anything at
+all.
+
+> #### ⛔ TWO INDEPENDENT TAILS — the symmetric model is retired and must not come back
+>
+> It was `min((|temp − ambient| − tolerance) × scale, cap)`: one midpoint, one deviation, one slope,
+> one ceiling. **Cold and heat are not symmetric phenomena** — extreme heat is survivable with shade
+> and water in a way −57 °C is not — so each side now carries its own onset, slope AND ceiling:
+>
+> | tail | onset | slope | ceiling |
+> |---|---|---|---|
+> | cold | 6.0 °C | 0.00159 /° | 10 % |
+> | heat | 40.0 °C | 0.00176 /° | 3 % |
+>
+> A symmetric form cannot express that, and the way it failed is worth keeping: pinning the heat
+> onset to mirror 6 °C about an 18 °C ambient put heat death at **30 °C — a warm summer day**.
+> `ambient_temperature` is not an input to mortality at all any more, and **re-deriving one from the
+> two onsets would be rebuilding the model that was removed**.
+>
+> **The heat tail is unreachable on today's maps and that is deliberate, not dead code.** Worldgen
+> tops out near 31 °C; both tails are calibrated to the ±57 °C range issue #622 opens up. Every
+> heat-side fixture in the harnesses is therefore hotter than the generator can currently produce,
+> and each says so at its definition — "correcting" one to a reachable value drops it below the onset
+> and **silently deletes that harness's only heat coverage**, with nothing turning red.
 
 **The two sets of thresholds are kept apart on purpose.** They come from different configs
-(`simulation_config.json` + `demographics_config.json` vs the climate ladder), they do not line up,
-and neither can be derived from the other — so the sim publishes the mortality model as its own
-per-run table (`MapSection.temperatureSurvivability`, appended beside `climateBands` and carried on
-the same cadence) and `ui/TileSurvivability.gd` is its only reader. Nothing in `TileClimate` consults
-it and nothing in it consults `TileClimate`; a client that tried to tie the two together would be
-inventing the threshold the whole Climate Authority arc exists to stop it inventing.
+(`demographics_config.json`'s `cold`/`heat` blocks vs the climate ladder), they do not line up, and
+neither can be derived from the other — so the sim publishes the mortality model as its own per-run
+table (`MapSection.temperatureSurvivability`, appended beside `climateBands` and carried on the same
+cadence) and `ui/TileSurvivability.gd` is its only reader. Nothing in `TileClimate` consults it and
+nothing in it consults `TileClimate`; a client that tried to tie the two together would be inventing
+the threshold the whole Climate Authority arc exists to stop it inventing.
 
 What the card says, and it is **ONE chip** (`SelectionCardController._tile_chip_descriptors`):
 
@@ -717,7 +739,7 @@ What the card says, and it is **ONE chip** (`SelectionCardController._tile_chip_
   card at all, so a warning had nothing to be checked against.
 - **…and on killing ground it IS the warning**: `⚠ Temperate · 3.7 °C` in `HudStyle.DANGER`, with the
   hover naming what the ground does to the people and the rate it does it at —
-  `4.6% increased mortality per turn due to severe cold`. Survivable ground keeps the same chip in
+  `0.4% increased mortality per turn due to severe cold`. Survivable ground keeps the same chip in
   neutral `INK_DIM` with no hover.
 
 ### ⛔ THE WARNING WAS ITS OWN PILL FOR ONE ITERATION, AND FOUR PILLS IS TOO MANY
@@ -764,8 +786,8 @@ tile 0.02 ° inside the tail it rendered, verbatim:
 > `−0.0 % of every age bracket per turn, regardless of food. 6.0 °C is 0.0 °C past the 6.0 °C survival line.`
 
 **Both faults were presentation; the model was right throughout.** `is_lethal` and `death_rate` were
-answering correctly for a tile whose real rate is 0.04 %, and neither they nor the map overlay
-changed. What was wrong was printing numbers at a precision where they stop meaning anything, inside
+answering correctly for a tile whose real rate was 0.04 % under the tuning of the day (0.003 % under
+the two-tail model that replaced it), and neither they nor the map overlay changed. What was wrong was printing numbers at a precision where they stop meaning anything, inside
 a sentence that spent all its words not saying the thing:
 
 - a positive rate **rounded to `0.0 %`** and picked up a leading minus on top, so a killing hex read
@@ -784,8 +806,9 @@ ordinary lethal tile precisely because only a negative can hold a deletion:
 - **"regardless of food".** True, and not what the hover is for.
 
 **"per turn" is in the copy deliberately.** Without it the figure reads as a one-off, and a player who
-takes 4.6 % as a total rather than a per-turn compounding rate has been under-warned in exactly the
-way this issue exists to fix.
+takes a rate as a total rather than a per-turn compounding one has been under-warned in exactly the
+way this issue exists to fix. It matters MORE under the two-tail tuning, which prices ordinary cold
+ground in fractions of a percent: 0.4 % sounds like nothing until it is 0.4 % every turn.
 
 The rate is formatted by `HudSelectionVocab.survivability_percent_text`, the one place the wire's
 FRACTION becomes a percentage, and it obeys two rules: **no leading minus** ("increased mortality"

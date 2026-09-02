@@ -113,10 +113,12 @@ fn create_temperature_survivability<'a>(
     fb::TemperatureSurvivability::create(
         builder,
         &fb::TemperatureSurvivabilityArgs {
-            ambientTemp: model.ambient_temp,
-            tempTolerance: model.temp_tolerance,
-            mortalityScale: model.mortality_scale,
-            maxMortality: model.max_mortality,
+            coldOnsetTemp: model.cold_onset_temp,
+            coldMortalityScale: model.cold_mortality_scale,
+            coldMaxMortality: model.cold_max_mortality,
+            heatOnsetTemp: model.heat_onset_temp,
+            heatMortalityScale: model.heat_mortality_scale,
+            heatMaxMortality: model.heat_max_mortality,
         },
     )
 }

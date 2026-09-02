@@ -657,7 +657,8 @@ disagree. The pass is silent until the sim has published its model, exactly as t
 qualifies for a sharper reason than they do: Low/Average/High of a normalized fraction would name
 neither a degree nor, far worse, the THRESHOLD. The rows are the map's real **Coldest / Average /
 Warmest** in °C, plus a **Lethal** row whose value text is read off `TileSurvivability`
-(`outside 6.0 – 30.0 °C` at the shipped tuning) and is absent entirely until the model is published.
+(`outside 6.0 – 40.0 °C` at the shipped tuning — the two tails' ONSETS, an interval rather than a
+spread around an ambient) and is absent entirely until the model is published.
 A legend that transcribed those degrees would be a second opinion able to drift from the map it is
 describing; `map_preview` asks the question by RETUNING the model and re-reading the row.
 

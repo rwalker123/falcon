@@ -1,6 +1,8 @@
 use super::*;
 use crate::components::FertilityFactors;
-use crate::demographics_config::{DemographicsBirths, DemographicsTrend};
+use crate::demographics_config::{
+    DemographicsBirths, DemographicsTemperatureTail, DemographicsTrend,
+};
 
 #[derive(Event, Debug, Clone)]
 pub struct MigrationKnowledgeEvent {
@@ -49,18 +51,64 @@ fn starvation_fraction(
     )
 }
 
-/// Combined per-turn death fraction for one age bracket: a starvation term plus a uniform cold
-/// term, capped at 1.0. Cold is a separate, non-food mortality.
-fn death_fraction(
-    deficit_fraction: Scalar,
-    starvation_rate: Scalar,
-    vulnerability: f32,
-    cold_fraction: Scalar,
+/// Which temperature tail a tile falls in, and how many degrees past that tail's onset it sits.
+/// `None` inside the survivable band, which is the common case and costs nothing.
+///
+/// The two onsets are wholly independent rather than a symmetric tolerance around an ambient: with a
+/// tolerance the heat onset was forced to mirror the cold one about 18 °, which put heat death at a
+/// warm summer day. On today's maps the heat arm is unreachable (worldgen tops out near 31 °,
+/// `heat.onset_temp` is 40 °) — dormant by design, not dead code: both tails are calibrated to the
+/// range issue #622 opens up (±57 °), not to the one the generator produces today.
+fn active_temperature_tail(
+    temperature: Scalar,
+    demo: &DemographicsConfig,
+) -> Option<(&DemographicsTemperatureTail, Scalar)> {
+    let cold_onset = scalar_from_f32(demo.cold.onset_temp);
+    let heat_onset = scalar_from_f32(demo.heat.onset_temp);
+    if temperature < cold_onset {
+        Some((&demo.cold, cold_onset - temperature))
+    } else if temperature > heat_onset {
+        Some((&demo.heat, temperature - heat_onset))
+    } else {
+        None
+    }
+}
+
+/// The temperature half of a bracket's per-turn death fraction: the degrees past the active tail's
+/// onset, priced per degree by that tail and weighted by the bracket's own vulnerability. A separate,
+/// non-food mortality — it kills on a full larder.
+///
+/// ⛔ **The cap bounds the TILE's base rate and is applied BEFORE the bracket multiplier** — see
+/// [`DemographicsTemperatureTail::max_mortality`]. Clamping after the multiplier makes the brackets
+/// converge on one number in the coldest part of the range, which is exactly where the age ordering
+/// is supposed to bite. Capping the base rate keeps elders above children above workers at every
+/// temperature, with no special-casing anywhere.
+fn temperature_fraction(
+    tail: Option<(&DemographicsTemperatureTail, Scalar)>,
+    vulnerability: fn(&DemographicsTemperatureTail) -> f32,
 ) -> Scalar {
-    min(
-        starvation_fraction(deficit_fraction, starvation_rate, vulnerability) + cold_fraction,
-        scalar_one(),
-    )
+    let Some((tail, excess)) = tail else {
+        return scalar_zero();
+    };
+    let base = min(
+        excess * scalar_from_f32(tail.mortality_scale),
+        scalar_from_f32(tail.max_mortality),
+    );
+    base * scalar_from_f32(vulnerability(tail))
+}
+
+/// Combined per-turn death fraction for one age bracket: the **larger** of its starvation and cold
+/// terms, never their sum. You can only die once — adding them counted the same person twice — and
+/// the maximum is also what makes [`dominant_death_cause`]'s attribution honest, since the losing
+/// term now contributes exactly nothing to the deaths it is not credited with.
+///
+/// **No `min(.., 1.0)` guard, deliberately**: `starvation_fraction` is bounded by
+/// `deficit_fraction`, itself a share of demand and so ≤ 1, and [`temperature_fraction`] by its
+/// tail's `max_mortality × <bracket>_vulnerability`, asserted ≤ 1 in `demographics_config`. The
+/// maximum of two numbers ≤ 1 is ≤ 1, so a clamp here would be a branch that can never fire. It
+/// could under the old sum.
+fn death_fraction(starvation: Scalar, cold: Scalar) -> Scalar {
+    max(starvation, cold)
 }
 
 /// Which term did most of this bracket's killing. The terms are compared as **per-capita
@@ -244,7 +292,7 @@ fn band_food_flow(labor: Option<&LaborAllocation>) -> Option<FoodFlow> {
 fn advance_demographics(
     state: DemographicState,
     flow: Option<FoodFlow>,
-    temp_diff: Scalar,
+    temperature: Scalar,
     max_cap: Scalar,
     demo: &DemographicsConfig,
 ) -> DemographicOutcome {
@@ -268,55 +316,36 @@ fn advance_demographics(
     };
 
     // 2. Deaths: starvation (scales with the food deficit, dependents more vulnerable, but never
-    // more than the deficit itself) plus cold (temperature deviation beyond tolerance).
+    // more than the deficit itself) against temperature (degrees past whichever tail's onset the
+    // tile sits outside). Both terms are per-bracket — temperature weights the brackets on its own
+    // ordering, elders worst — and a bracket dies of the larger of the two, never their sum.
     let scarcity = &demo.scarcity;
     let starvation_rate = scalar_from_f32(scarcity.starvation_mortality);
-    let cold = &demo.cold;
-    let cold_excess = temp_diff - scalar_from_f32(cold.temp_tolerance);
-    let cold_fraction = if cold_excess > scalar_zero() {
-        min(
-            cold_excess * scalar_from_f32(cold.mortality_scale),
-            scalar_from_f32(cold.max_mortality),
-        )
-    } else {
-        scalar_zero()
-    };
-    let child_starvation = starvation_fraction(
-        deficit_fraction,
-        starvation_rate,
-        scarcity.child_vulnerability,
-    );
-    let working_starvation = starvation_fraction(
-        deficit_fraction,
-        starvation_rate,
-        scarcity.working_vulnerability,
-    );
-    let elder_starvation = starvation_fraction(
-        deficit_fraction,
-        starvation_rate,
-        scarcity.elder_vulnerability,
-    );
-    let child_deaths = children0
-        * death_fraction(
-            deficit_fraction,
-            starvation_rate,
-            scarcity.child_vulnerability,
-            cold_fraction,
-        );
-    let working_deaths = working0
-        * death_fraction(
-            deficit_fraction,
-            starvation_rate,
-            scarcity.working_vulnerability,
-            cold_fraction,
-        );
-    let elder_deaths = elders0
-        * death_fraction(
-            deficit_fraction,
-            starvation_rate,
-            scarcity.elder_vulnerability,
-            cold_fraction,
-        );
+    // Resolved once for the whole cohort — the tile is one temperature — then read per bracket
+    // through that bracket's own vulnerability, which is where the two tails' weights come in.
+    let tail = active_temperature_tail(temperature, demo);
+    // The two independent death terms for one bracket, as per-capita fractions of it. Returned as a
+    // pair because both are needed twice over: to size the deaths, and to name their cause.
+    let death_terms =
+        |starvation_vulnerability: f32,
+         cold_vulnerability: fn(&DemographicsTemperatureTail) -> f32| {
+            (
+                starvation_fraction(deficit_fraction, starvation_rate, starvation_vulnerability),
+                temperature_fraction(tail, cold_vulnerability),
+            )
+        };
+    let (child_starvation, child_cold) = death_terms(scarcity.child_vulnerability, |tail| {
+        tail.child_vulnerability
+    });
+    let (working_starvation, working_cold) = death_terms(scarcity.working_vulnerability, |tail| {
+        tail.working_vulnerability
+    });
+    let (elder_starvation, elder_cold) = death_terms(scarcity.elder_vulnerability, |tail| {
+        tail.elder_vulnerability
+    });
+    let child_deaths = children0 * death_fraction(child_starvation, child_cold);
+    let working_deaths = working0 * death_fraction(working_starvation, working_cold);
+    let elder_deaths = elders0 * death_fraction(elder_starvation, elder_cold);
 
     // 3. Births → children, from the working (reproductive) bracket. Fertility is a product of three
     // named factors — `hunger` (did we eat), `reserve` (is there a cushion), `trend` (is the cushion
@@ -382,15 +411,15 @@ fn advance_demographics(
             // Old age is one of the ways an elder dies, so it rides in the same flow rather than a
             // parallel one the accumulator would have to learn about.
             elder_deaths: elder_deaths + elder_mortality,
-            child_death_cause: dominant_death_cause(child_starvation, cold_fraction, scalar_zero()),
+            child_death_cause: dominant_death_cause(child_starvation, child_cold, scalar_zero()),
             working_death_cause: dominant_death_cause(
                 working_starvation,
-                cold_fraction,
+                working_cold,
                 scalar_zero(),
             ),
             elder_death_cause: dominant_death_cause(
                 elder_starvation,
-                cold_fraction,
+                elder_cold,
                 elder_mortality_rate,
             ),
         },
@@ -792,7 +821,7 @@ pub fn simulate_population(
             continue;
         };
         let terrain_profile = terrain_definition(tile.terrain);
-        let temp_diff = (tile.temperature - config.ambient_temperature).abs();
+        let temperature = tile.temperature;
         // Place-based (negative) morale terms, from the one shared source (also the snapshot's
         // `habitability`), so sim and snapshot never drift.
         let pressure =
@@ -835,7 +864,7 @@ pub fn simulate_population(
                 food_store: food_before,
             },
             band_food_flow(labor),
-            temp_diff,
+            temperature,
             max_cap_scalar,
             &demo,
         );
@@ -1020,12 +1049,54 @@ mod tile_morale_pressure_tests {
 
 #[cfg(test)]
 mod demographics_tests {
-    use super::{advance_demographics, death_fraction, DemographicState, FoodFlow};
+    use super::{
+        active_temperature_tail, advance_demographics, death_fraction, starvation_fraction,
+        temperature_fraction, DemographicState, FoodFlow,
+    };
+    use crate::components::DeathCause;
     use crate::demographics_config::DemographicsConfig;
     use crate::scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero};
 
-    const MILD_TEMP: f32 = 0.0;
+    /// A tile temperature (°) comfortably inside the survivable band, so no case below pays a
+    /// temperature term it did not ask for.
+    const MILD_TEMP: f32 = 18.0;
     const NO_CAP: u32 = 1_000_000_000;
+
+    /// The extremes the two tails are **calibrated to** — each reaches `max_mortality` at its own.
+    /// Deliberately beyond what the generator makes today (issue #622 widens the range to match):
+    /// calibrating to today's narrower span would have to be redone the moment it widens, and would
+    /// make every tile past today's floor kill at one identical rate once such tiles exist.
+    const CALIBRATION_COLD_EXTREME_C: f32 = -57.0;
+    const CALIBRATION_HEAT_EXTREME_C: f32 = 57.0;
+
+    /// What `climate_temperature` can actually produce **today**: `latitude_base` runs
+    /// `climate.polar_temp` (−5.0) to `equator_temp` (30.0), `elevation_lapse` removes up to
+    /// `elevation_lapse_span` (12.0), and the element jitter spans −1.5 (Ferrite) to +1.0 (Lumina),
+    /// both scaled by `element_jitter_scale` 0.25.
+    const TODAYS_COLDEST_TILE_C: f32 = -18.5;
+    const TODAYS_WARMEST_TILE_C: f32 = 31.0;
+
+    /// The tile from the playtest that forced the re-tune: a band of 23 was losing 2.7 people a turn
+    /// on it when the ramp saturated five degrees past the onset.
+    const PLAYTEST_TILE_C: f32 = -1.9;
+
+    /// The shipped temperature model's per-turn kill fraction for one bracket on a tile at
+    /// `temperature`, read through the same seam the sim uses.
+    fn temperature_death_at(temperature: f32, vulnerability: fn(&TailCfg) -> f32) -> f32 {
+        let cfg = DemographicsConfig::default();
+        temperature_fraction(
+            active_temperature_tail(scalar_from_f32(temperature), &cfg),
+            vulnerability,
+        )
+        .to_f32()
+    }
+
+    type TailCfg = crate::demographics_config::DemographicsTemperatureTail;
+
+    /// The working-age bracket's rate — the model's 1.0× reference, so it *is* the base rate.
+    fn base_rate_at(temperature: f32) -> f32 {
+        temperature_death_at(temperature, |tail| tail.working_vulnerability)
+    }
 
     fn state(children: f32, working: f32, elders: f32, food: f32) -> DemographicState {
         DemographicState {
@@ -1168,7 +1239,7 @@ mod demographics_tests {
     #[test]
     fn cold_kills_even_when_fed() {
         let warm = run(shipped_cohort(1_000.0), MILD_TEMP);
-        let cold = run(shipped_cohort(1_000.0), 40.0);
+        let cold = run(shipped_cohort(1_000.0), TODAYS_COLDEST_TILE_C);
         assert!(
             total(&cold) < total(&warm),
             "cold should reduce population vs temperate: {} vs {}",
@@ -1211,33 +1282,311 @@ mod demographics_tests {
         );
     }
 
-    /// Starvation deaths scale with the deficit × vulnerability but never exceed the deficit;
-    /// cold adds on top, and the whole thing caps at 1.0.
+    /// Starvation deaths scale with the deficit × vulnerability but never exceed the deficit that
+    /// caused them — a 10 % food shortfall impacts at most 10 % of a bracket.
     #[test]
-    fn death_fraction_is_bounded_by_deficit_and_one() {
-        // Full deficit, rate 0.2, vuln 1.5 → 0.30 (< deficit 1.0), no cold.
-        let f = death_fraction(scalar_one(), scalar_from_f32(0.2), 1.5, scalar_zero());
+    fn starvation_never_exceeds_the_deficit_that_caused_it() {
+        // Full deficit, rate 0.2, vuln 1.5 → 0.30, comfortably under the deficit of 1.0.
+        let f = starvation_fraction(scalar_one(), scalar_from_f32(0.2), 1.5);
         assert!((f.to_f32() - 0.30).abs() < 1e-4);
         // A 10% deficit with a steep rate×vuln (0.8×1.5=1.2) is still capped at the 10% deficit.
-        let bounded = death_fraction(
-            scalar_from_f32(0.1),
-            scalar_from_f32(0.8),
-            1.5,
-            scalar_zero(),
-        );
+        let bounded = starvation_fraction(scalar_from_f32(0.1), scalar_from_f32(0.8), 1.5);
         assert!(
             (bounded.to_f32() - 0.1).abs() < 1e-4,
             "a 10% deficit must impact at most 10%: {}",
             bounded.to_f32()
         );
-        // Full deficit + max cold overflow → capped at 1.0.
-        let capped = death_fraction(
-            scalar_one(),
-            scalar_from_f32(0.8),
-            1.5,
-            scalar_from_f32(0.5),
+    }
+
+    /// ⛔ **HUNGER AND COLD COMBINE WITH `max`, NOT `+`.** A person can only die once, and the sum
+    /// counted the starving-and-freezing ones twice over. Both arms are chosen so the two forms
+    /// **disagree** — 0.30 against 0.05 sums to 0.35 but maxes to 0.30 — because a case where they
+    /// happen to agree would pass under either model and prove nothing.
+    #[test]
+    fn hunger_and_cold_take_the_larger_term_never_their_sum() {
+        let hunger_wins = death_fraction(scalar_from_f32(0.30), scalar_from_f32(0.05)).to_f32();
+        assert!(
+            (hunger_wins - 0.30).abs() < 1e-4,
+            "starvation dominating should kill 0.30, not the 0.35 sum: {hunger_wins}"
         );
-        assert!((capped.to_f32() - 1.0).abs() < 1e-4);
+        let cold_wins = death_fraction(scalar_from_f32(0.02), scalar_from_f32(0.08)).to_f32();
+        assert!(
+            (cold_wins - 0.08).abs() < 1e-4,
+            "cold dominating should kill 0.08, not the 0.10 sum: {cold_wins}"
+        );
+    }
+
+    /// **The retired `min(.., 1.0)` clamp cannot fire under `max`** — each term is individually a
+    /// fraction ≤ 1 (starvation by its deficit, cold by `max_mortality`), so their maximum is too.
+    /// This is the worst case the shipped tuning can build: a total food deficit against cold at its
+    /// own ceiling.
+    #[test]
+    fn the_worst_case_death_fraction_stays_a_fraction() {
+        let cfg = DemographicsConfig::default();
+        let starvation = starvation_fraction(
+            scalar_one(),
+            scalar_from_f32(cfg.scarcity.starvation_mortality),
+            cfg.scarcity.child_vulnerability,
+        );
+        let cold = scalar_from_f32(cfg.cold.max_mortality);
+        let worst = death_fraction(starvation, cold).to_f32();
+        assert!(
+            worst <= 1.0,
+            "the combined fraction must stay a fraction without a clamp: {worst}"
+        );
+    }
+
+    /// ⛔ **THE COLD RAMP IS GRADED, NOT BINARY.** At the old tuning the ceiling arrived five
+    /// degrees past the 6.0 ° onset, so essentially every cold tile killed at the maximum and a band
+    /// of 23 on the −1.9 ° playtest tile lost 2.7 people a turn. The rate now climbs one thin slice
+    /// per degree all the way to the calibration extreme, so distinct cold ground kills distinctly
+    /// across every temperature a band can stand on.
+    #[test]
+    fn the_cold_ramp_grades_across_every_temperature_a_band_can_stand_on() {
+        let cfg = DemographicsConfig::default();
+        assert_eq!(
+            base_rate_at(cfg.cold.onset_temp),
+            0.0,
+            "the onset temperature itself is free"
+        );
+        // Tile → the base rate the shipped calibration prices it at.
+        for (temperature, expected) in [
+            (3.0, 0.00477),
+            (PLAYTEST_TILE_C, 0.012561),
+            (-10.0, 0.02544),
+            (TODAYS_COLDEST_TILE_C, 0.038955),
+            (-40.0, 0.07314),
+        ] {
+            let rate = base_rate_at(temperature);
+            assert!(
+                (rate - expected).abs() < 1e-5,
+                "a {temperature} ° tile should cost a worker {expected}/turn, got {rate}"
+            );
+        }
+        // Strictly increasing, degree by degree, over the whole span the calibration covers — the
+        // property the old binary ramp failed, and one no single sample can express.
+        let mut temperature = cfg.cold.onset_temp;
+        while temperature > CALIBRATION_COLD_EXTREME_C {
+            let warmer = base_rate_at(temperature);
+            let colder = base_rate_at(temperature - 1.0);
+            assert!(
+                colder > warmer,
+                "the ramp flattened between {temperature} ° and {} °: {warmer} vs {colder}",
+                temperature - 1.0
+            );
+            temperature -= 1.0;
+        }
+    }
+
+    /// ⛔ **THE CALIBRATION IS DELIBERATELY AHEAD OF THE MAP.** Each tail reaches `max_mortality` at
+    /// its own target extreme (±57 °), which the generator does not yet produce — issue #622 widens
+    /// the range to match. Anchoring instead to today's −18.5 ° floor would have to be redone the
+    /// moment the range moved, and would flatten every colder tile onto one identical rate the day
+    /// such tiles existed. So the ceiling is **out of reach at both ends today**, and that is the
+    /// intended state rather than a miss.
+    #[test]
+    fn both_tails_reach_the_ceiling_at_their_calibration_extreme_and_not_on_todays_map() {
+        let cfg = DemographicsConfig::default();
+        for (extreme, tail, name) in [
+            (CALIBRATION_COLD_EXTREME_C, &cfg.cold, "cold"),
+            (CALIBRATION_HEAT_EXTREME_C, &cfg.heat, "heat"),
+        ] {
+            let rate = base_rate_at(extreme);
+            assert!(
+                (rate - tail.max_mortality).abs() < 1e-3,
+                "the {name} tail should reach its {} ceiling at {extreme} °, got {rate}",
+                tail.max_mortality
+            );
+        }
+        // Judged against the tail each tile actually falls in — the caps differ, so a single
+        // comparison would be the wrong question for one of them.
+        for (tile, tail, name) in [
+            (TODAYS_COLDEST_TILE_C, &cfg.cold, "coldest"),
+            (TODAYS_WARMEST_TILE_C, &cfg.heat, "warmest"),
+        ] {
+            let rate = base_rate_at(tile);
+            assert!(
+                rate < tail.max_mortality,
+                "today's {name} generable tile ({tile} °) must sit under its tail's ceiling,                  got {rate}"
+            );
+        }
+    }
+
+    /// ⛔ **THE TWO TAILS DIFFER IN ALL THREE PARAMETERS — THRESHOLD, SLOPE AND CEILING.** That is
+    /// the whole reason the config split into two blocks: a symmetric tolerance around an ambient can
+    /// express none of it, and it forced heat death to start at 30 °, a warm summer day.
+    ///
+    /// The ceilings are the load-bearing asymmetry: extreme heat is survivable with shade and water,
+    /// where −57 ° demands shelter, fire and clothing, so the deadliest heat costs a band about a
+    /// third of what the deadliest cold does. A future "restore symmetry" tidy-up fails here.
+    #[test]
+    fn the_heat_tail_has_its_own_onset_slope_and_ceiling() {
+        let cfg = DemographicsConfig::default();
+        assert!(
+            cfg.heat.onset_temp > TODAYS_WARMEST_TILE_C,
+            "the heat onset is deliberately ahead of the map (issue #622): {} vs {}",
+            cfg.heat.onset_temp,
+            TODAYS_WARMEST_TILE_C
+        );
+        assert_eq!(
+            base_rate_at(TODAYS_WARMEST_TILE_C),
+            0.0,
+            "the hottest generable tile must be free — the tail is dormant by design"
+        );
+        assert!(
+            cfg.heat.mortality_scale != cfg.cold.mortality_scale
+                && cfg.heat.onset_temp != cfg.cold.onset_temp,
+            "the tails must not share a slope or an onset"
+        );
+        assert!(
+            cfg.heat.max_mortality < cfg.cold.max_mortality,
+            "the deadliest heat must cost less than the deadliest cold: {} vs {}",
+            cfg.heat.max_mortality,
+            cfg.cold.max_mortality
+        );
+        // Hypothetical ground no map reaches today, priced by the heat tail rather than the cold one.
+        for (temperature, expected) in [(45.0, 0.0088), (50.0, 0.0176), (55.0, 0.0264)] {
+            let rate = base_rate_at(temperature);
+            assert!(
+                (rate - expected).abs() < 1e-5,
+                "a {temperature} ° tile should cost a worker {expected}/turn, got {rate}"
+            );
+        }
+    }
+
+    /// ⛔ **THE COLD TAKES THE OLD FIRST.** One temperature, three fractions, in the model's order:
+    /// elders worst, then children, workers least. Deliberately *not* `scarcity`'s ordering, which
+    /// weights children and elders alike — starvation and cold do not hurt the same people equally,
+    /// which is why cold carries its own vulnerability block.
+    #[test]
+    fn the_same_cold_takes_elders_hardest_and_workers_least() {
+        let elders = temperature_death_at(TODAYS_COLDEST_TILE_C, |t| t.elder_vulnerability);
+        let children = temperature_death_at(TODAYS_COLDEST_TILE_C, |t| t.child_vulnerability);
+        let workers = temperature_death_at(TODAYS_COLDEST_TILE_C, |t| t.working_vulnerability);
+        assert!(
+            elders > children && children > workers,
+            "cold must order the brackets elder > child > worker: {elders} / {children} / {workers}"
+        );
+    }
+
+    /// ⛔ **`max_mortality` CAPS THE TILE'S BASE RATE, NOT THE BRACKET.** The multiplier is applied
+    /// after the clamp, so each bracket's real ceiling is `max_mortality × vulnerability` — 10 % for
+    /// workers, 12.5 % for children, 15 % for elders.
+    ///
+    /// The other ordering was tried and rejected, and this case is what would catch a silent revert
+    /// to it. Clamping after the multiplier saturates elders at −36 ° and children at −44.5 °, so
+    /// from −44.5 ° down every bracket lands on exactly the same number and the age ordering vanishes
+    /// in the coldest ground on the map — the one place it is supposed to bite hardest.
+    #[test]
+    fn the_ceiling_caps_the_tiles_base_rate_and_the_brackets_stay_ordered_past_it() {
+        let cold = &DemographicsConfig::default().cold;
+        // The tile at which the BASE rate first reaches the cap; everything colder is on the flat.
+        let base_saturation = cold.onset_temp - cold.max_mortality / cold.mortality_scale;
+        let far_past = base_saturation - 20.0;
+
+        assert!(
+            (base_rate_at(far_past) - cold.max_mortality).abs() < 1e-4,
+            "the base rate must sit on the cap well past saturation: {}",
+            base_rate_at(far_past)
+        );
+        for (vulnerability, name) in [
+            (cold.working_vulnerability, "working"),
+            (cold.child_vulnerability, "child"),
+            (cold.elder_vulnerability, "elder"),
+        ] {
+            let expected = cold.max_mortality * vulnerability;
+            let rate = match name {
+                "working" => temperature_death_at(far_past, |t| t.working_vulnerability),
+                "child" => temperature_death_at(far_past, |t| t.child_vulnerability),
+                _ => temperature_death_at(far_past, |t| t.elder_vulnerability),
+            };
+            assert!(
+                (rate - expected).abs() < 1e-4,
+                "the {name} bracket's own ceiling is cap × vulnerability = {expected}, got {rate}"
+            );
+        }
+        // The point of capping the base rate: the ordering survives the flat.
+        let elders = temperature_death_at(far_past, |t| t.elder_vulnerability);
+        let children = temperature_death_at(far_past, |t| t.child_vulnerability);
+        let workers = temperature_death_at(far_past, |t| t.working_vulnerability);
+        assert!(
+            elders > children && children > workers,
+            "past the ceiling the brackets must STILL be ordered — a clamp after the multiplier \
+             would have flattened them: {elders} / {children} / {workers}"
+        );
+    }
+
+    /// **The vulnerabilities reach the shipped turn**, not just the helper: one fed cohort on cold
+    /// ground loses a larger *share* of its children than of its workers. The elders' flow carries
+    /// the flat old-age term as well, so it is netted out before the comparison rather than left to
+    /// flatter the result.
+    #[test]
+    fn a_cold_turn_costs_the_brackets_unequally() {
+        let cfg = DemographicsConfig::default();
+        let start = shipped_cohort(1_000.0);
+        let flows = advance_demographics(
+            start,
+            None,
+            scalar_from_f32(TODAYS_COLDEST_TILE_C),
+            scalar_from_u32(NO_CAP),
+            &cfg,
+        )
+        .flows;
+
+        let child_share = flows.child_deaths.to_f32() / start.children.to_f32();
+        let working_share = flows.working_deaths.to_f32() / start.working.to_f32();
+        let elder_share =
+            flows.elder_deaths.to_f32() / start.elders.to_f32() - cfg.elder_mortality_rate;
+        assert!(
+            elder_share > child_share && child_share > working_share,
+            "a cold turn should cost elder > child > worker shares: \
+             {elder_share} / {child_share} / {working_share}"
+        );
+    }
+
+    /// ⛔ **THE CAUSE IS RESOLVED PER BRACKET, because the two terms now weight the brackets
+    /// differently.** One band, one turn, one tile, one larder — and the workers die of cold while
+    /// the children die of hunger. That is only reachable because children are 1.5× as vulnerable to
+    /// starvation but only 1.25× to cold, so a single band-wide verdict would have to be wrong for
+    /// somebody.
+    #[test]
+    fn hunger_and_cold_can_name_different_causes_in_the_same_band() {
+        let cfg = DemographicsConfig::default();
+        // A deficit chosen to sit between the two brackets' crossover points: on today's coldest
+        // tile the worker term is 3.90 % and the child term 4.87 %, so against `starvation_mortality`
+        // 0.2 the workers tip to cold below a 19.5 % deficit while the children tip to hunger above a
+        // 16.2 % one. Anywhere in that window one band reports two different causes.
+        const DEFICIT_FRACTION: f32 = 0.18;
+        let opening = shipped_cohort(0.0);
+        let demand = super::food_demand(
+            opening.children,
+            opening.working,
+            opening.elders,
+            &cfg.consumption,
+        );
+        let start = DemographicState {
+            food_store: demand * scalar_from_f32(1.0 - DEFICIT_FRACTION),
+            ..opening
+        };
+        let flows = advance_demographics(
+            start,
+            None,
+            scalar_from_f32(TODAYS_COLDEST_TILE_C),
+            scalar_from_u32(NO_CAP),
+            &cfg,
+        )
+        .flows;
+
+        assert_eq!(
+            flows.working_death_cause,
+            DeathCause::Cold,
+            "the workers' cold term beats their starvation term at this deficit"
+        );
+        assert_eq!(
+            flows.child_death_cause,
+            DeathCause::Hunger,
+            "the children are hungrier than they are cold at the same deficit"
+        );
     }
 
     // ---- Fertility factors: stock, flow, and the gate (#286) ----

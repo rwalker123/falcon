@@ -383,23 +383,34 @@ pub struct ClimateBandsState {
 
 /// The cold/heat mortality model's constants, published so the client can state the survivable
 /// temperature range the sim *enforces* instead of re-deriving one from the climate bands (issue
-/// #614). The per-turn death fraction applied to every age bracket, independent of food, is
-/// `min((|temp - ambient_temp| - temp_tolerance) * mortality_scale, max_mortality)` — the cold
-/// block of `core_sim::systems::population`. The tolerance is symmetric, so the model has a lethal
-/// cold tail below `ambient_temp - temp_tolerance` and an equally lethal heat tail above
-/// `ambient_temp + temp_tolerance`. A per-run constant, carried exactly like [`ClimateBandsState`];
-/// these are a *different* set of thresholds from the climate-band cut points and must not be
-/// confused with them.
+/// #614). The per-turn death fraction, independent of food, is
+/// `min(excess * <tail>_mortality_scale, <tail>_max_mortality)`, where `excess` is how far the tile
+/// sits below `cold_onset_temp` or above `heat_onset_temp` — the cold/heat blocks of
+/// `core_sim::systems::population`.
+///
+/// The two tails are **independent**, not an ambient plus a symmetric tolerance (which mirrored the
+/// onsets and put heat death at a warm summer day), and each carries its own rate parameters because
+/// past its onset each has a different runway before the ground runs out. A per-run constant,
+/// carried exactly like [`ClimateBandsState`]; these are a *different* set of thresholds from the
+/// climate-band cut points and must not be confused with them.
+///
+/// This is the **base** rate. The sim weights it per age bracket and those weights are deliberately
+/// not published: what a client can state is what the *tile* imposes, since a band's actual losses
+/// depend on its age mix, a property of the band and not of the ground.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 pub struct TemperatureSurvivabilityState {
     #[serde(default)]
-    pub ambient_temp: f32,
+    pub cold_onset_temp: f32,
     #[serde(default)]
-    pub temp_tolerance: f32,
+    pub cold_mortality_scale: f32,
     #[serde(default)]
-    pub mortality_scale: f32,
+    pub cold_max_mortality: f32,
     #[serde(default)]
-    pub max_mortality: f32,
+    pub heat_onset_temp: f32,
+    #[serde(default)]
+    pub heat_mortality_scale: f32,
+    #[serde(default)]
+    pub heat_max_mortality: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]

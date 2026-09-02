@@ -110,9 +110,6 @@ const WATCHDOG_PROGRESS_METHOD := "note_progress"
 const EXIT_OK := 0
 const EXIT_FAILED := 1
 
-## The shipped temperature-mortality tuning the prologue seeds `TileSurvivability` with
-## (`simulation_config.json` `ambient_temperature`; `demographics_config.json` `cold`). Transcribed
-## rather than invented, so the frames state the range the sim really kills outside of: 6.0-30.0 °C.
 ## The shipped climate-band cut points the prologue seeds `TileClimate` with (`climate_config.json`
 ## → polar <= 0 / boreal <= 3 / temperate <= 18 °C). Named rather than typed inline because a chapter
 ## that clears the bands to exercise the no-cut-points path has to put these exact values back — they
@@ -121,10 +118,18 @@ const CLIMATE_POLAR_MAX_TEMP := 0.0
 const CLIMATE_BOREAL_MAX_TEMP := 3.0
 const CLIMATE_TEMPERATE_MAX_TEMP := 18.0
 
-const SURVIVABILITY_AMBIENT_TEMP := 18.0
-const SURVIVABILITY_TEMP_TOLERANCE := 12.0
-const SURVIVABILITY_MORTALITY_SCALE := 0.02
-const SURVIVABILITY_MAX_MORTALITY := 0.1
+## The shipped temperature-mortality tuning the prologue seeds `TileSurvivability` with — the
+## `demographics_config.json` `cold` and `heat` blocks, transcribed, so the frames state the range
+## the sim really kills outside of: **6.0 – 40.0 °C**.
+##
+## TWO INDEPENDENT TAILS: the onsets are unrelated, the slopes differ, and the ceilings differ
+## (10 % cold against 3 % heat). There is no ambient and no tolerance — see `TileSurvivability`.
+const SURVIVABILITY_COLD_ONSET_TEMP := 6.0
+const SURVIVABILITY_COLD_MORTALITY_SCALE := 0.00159
+const SURVIVABILITY_COLD_MAX_MORTALITY := 0.1
+const SURVIVABILITY_HEAT_ONSET_TEMP := 40.0
+const SURVIVABILITY_HEAT_MORTALITY_SCALE := 0.00176
+const SURVIVABILITY_HEAT_MAX_MORTALITY := 0.03
 
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
@@ -461,10 +466,11 @@ func _ready() -> void:
 	# and the harness must not be the one place the HUD still lies. Every frame in the walk therefore
 	# renders against a live model, and the handful of fixtures that sit outside the survivable range
 	# (the Polar/Boreal climate frames, the glacier, the harsh-cavern band tile) now say so.
-	# The shipped tuning, transcribed: `simulation_config.json` `ambient_temperature` and the
-	# `demographics_config.json` `cold` block.
-	TileSurvivability.set_model(SURVIVABILITY_AMBIENT_TEMP, SURVIVABILITY_TEMP_TOLERANCE,
-		SURVIVABILITY_MORTALITY_SCALE, SURVIVABILITY_MAX_MORTALITY)
+	# The shipped tuning, transcribed: the `demographics_config.json` `cold` and `heat` blocks.
+	TileSurvivability.set_model(
+		SURVIVABILITY_COLD_ONSET_TEMP, SURVIVABILITY_COLD_MORTALITY_SCALE,
+		SURVIVABILITY_COLD_MAX_MORTALITY, SURVIVABILITY_HEAT_ONSET_TEMP,
+		SURVIVABILITY_HEAT_MORTALITY_SCALE, SURVIVABILITY_HEAT_MAX_MORTALITY)
 
 	# Top-bar Sedentarization meter (faction 0, soft band) — visible across all frames.
 	_hud.update_sedentarization([{"faction": 0, "score": 62.0, "stage": "soft"}])

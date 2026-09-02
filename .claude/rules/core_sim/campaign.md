@@ -21,7 +21,7 @@ paths:
 | File | Purpose |
 |------|---------|
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
-| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
+| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
 ## Campaign Loop & System Activation
@@ -55,7 +55,9 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
 1. **Consume** — draw `per_capita_draw × weighted_mouths` (dependents eat less) from the band's
    own larder; shortfall is the food **deficit**.
 2. **Deaths** — starvation scales with the deficit (dependents more vulnerable via `scarcity`
-   weights); cold kills across brackets past `cold.temp_tolerance`.
+   weights); temperature kills past `cold.onset_temp` or `heat.onset_temp`, weighted by that tail's
+   own vulnerabilities. A bracket dies of the **larger** of the two terms, never their sum — see
+   below.
 3. **Births → children** — `birth_rate × working × hunger × reserve × trend` (see "Fertility is
    stock **and** flow" below). Births are **morale-independent** (Civilization Wellbeing — see
    below): contentment doesn't change procreation, and morale **never** causes faction population
@@ -68,24 +70,89 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
 
 #### The cold/heat death model is PUBLISHED, because the climate bands are not it
 
-The cold term of step 2 is symmetric about `simulation_config.json`'s `ambient_temperature` and
-food-independent — it kills the same fraction of *every* bracket, on a full larder:
+The temperature term of step 2 is food-independent — it kills on a full larder — and runs off **two
+independent tails**, the cold one below `cold.onset_temp` and the heat one above `heat.onset_temp`:
 
 ```
-min((|tile.temperature − ambient_temperature| − cold.temp_tolerance) × cold.mortality_scale,
-    cold.max_mortality)
+min(excess × <tail>.mortality_scale, <tail>.max_mortality) × <tail>.<bracket>_vulnerability
 ```
 
-At the shipped tuning (ambient 18.0, tolerance 12.0) the survivable range is **6.0 °–30.0 °**, with a
-lethal cold tail below it and an equally lethal heat tail above it. That range is **not** the climate
-ladder: `climate.boreal_max_temp` is 3.0, so a 4 ° tile reads as *Temperate* on the tile card while
-losing 4.5 % of every bracket per turn. The two threshold sets answer different questions and there
-is no arithmetic from one to the other.
+where `excess` is how far the tile sits past that tail's onset. At the shipped tuning the habitable
+band is **6.0 °–40.0 °**. That is **not** the climate ladder: `climate.boreal_max_temp` is 3.0, so a
+4 ° tile reads as *Temperate* on the tile card while still bleeding people every turn. The two
+threshold sets answer different questions and there is no arithmetic from one to the other.
 
-So the four constants ride the snapshot in their own table — `MapSection.temperatureSurvivability`
-(`TemperatureSurvivability`: `ambientTemp` / `tempTolerance` / `mortalityScale` / `maxMortality`),
-appended after `climateBands` — read at capture straight off the live `SimulationConfig` and
-`DemographicsConfigHandle`, never restated. A per-run constant, diffed whole beside `climate_bands`
+##### Two tails, not one tolerance — they differ in threshold, slope AND ceiling
+
+The model used to be `|tile.temperature − ambient_temperature| > cold.temp_tolerance`, a single
+symmetric deviation. That forced the two onsets to mirror each other about the 18 ° ambient, which
+put heat death at 30 ° — a warm summer day, not a lethal condition.
+
+| Tail | Onset | Calibration extreme | `mortality_scale` | `max_mortality` |
+|---|---|---|---|---|
+| `cold` | 6.0 ° | −57 ° | 0.00159 (`0.10 ÷ 63`) | 0.10 |
+| `heat` | 40.0 ° | +57 ° | 0.00176 (`0.03 ÷ 17`) | 0.03 |
+
+**Extreme heat is markedly less lethal than extreme cold**, because heat is survivable with shade and
+water where −57 ° demands shelter, fire and clothing. The deadliest heat therefore costs a band about
+a third of what the deadliest cold does — ~1.2 against ~3.0 people per turn on a band of 23. All
+three parameters differ, which is why the per-tail split was necessary rather than cosmetic: a
+symmetric deviation from an ambient can express none of it. "Restoring symmetry" here would be
+undoing the model.
+
+##### The rates are calibrated to the range the map SHOULD reach, not the one it has
+
+Each tail rises from zero at its onset to its ceiling at its own target extreme, ±57 °. Today's
+generator spans **−18.5 ° to +31.0 °** (`polar_temp` −5.0 to `equator_temp` 30.0, less up to
+`elevation_lapse_span` 12.0, plus element jitter of −1.5 to +1.0). So today the coldest reachable
+tile costs a worker 3.9 %/turn, neither ceiling is reachable, and **the heat tail is entirely
+dormant** — nothing comes within nine degrees of its onset.
+
+That is intended. Calibrating to today's narrower span would have to be redone the moment the range
+widened, and would flatten every tile below −18.5 ° onto one identical rate the day such tiles
+existed. **Issue #622 widens the generator's range, and these four rate numbers are what it must be
+checked against.**
+
+The cold curve as shipped: 0 % at 6 °, 1.25 % at −1.9 °, 2.5 % at −10 °, 3.9 % at −18.5 °, 7.3 % at
+−40 °, 10 % at −57 °. The playtest that forced the re-tune had a band of 23 losing 2.7 people a turn
+on that −1.9 ° tile, because the retired `mortality_scale` of 0.02 reached the ceiling five degrees
+past the onset and so made the model binary rather than graded.
+
+##### Hunger and cold combine with `max`, not `+`
+
+A bracket's death fraction is `max(starvation, temperature)`. You can only die once, and the additive
+form double-counted the band that was starving *and* freezing. It also makes the `DeathCause`
+attribution honest: the losing term contributes exactly nothing to the deaths it is not credited
+with. Ties still go to `Hunger` — a band suffering both is a food problem the player can act on.
+
+The old `min(…, 1.0)` clamp on the combined fraction is **gone, because it can no longer fire**:
+starvation is bounded by the deficit and the temperature term by `max_mortality × vulnerability`,
+both ≤ 1 (asserted in `demographics_config`), so the maximum of the two is ≤ 1. Only the sum could
+exceed it.
+
+##### The cold takes the old first, with no special-casing
+
+Each tail carries its own `child_vulnerability` / `working_vulnerability` / `elder_vulnerability`,
+mirroring `scarcity`'s shape but **deliberately not its ordering**: temperature is 1.5 for elders,
+1.25 for children, 1.0 for working-age, where starvation weights children and elders alike at 1.5.
+The two do not hurt the same people equally, which is the whole reason for a second set.
+
+> ⛔ **`max_mortality` caps the TILE's base rate, and the multiplier is applied AFTER it.** A
+> bracket's real ceiling is `max_mortality × vulnerability` — 10 % / 12.5 % / 15 % on the cold tail.
+>
+> Clamping after the multiplier reads like the safer ordering, and it was tried and rejected: it
+> saturates elders at −36 ° and children at −44.5 °, so from −44.5 ° down every bracket lands on
+> exactly the same number and the age ordering vanishes in the coldest ground on the map — the one
+> place it is supposed to bite hardest. Capping the base rate keeps elders above children above
+> workers at every temperature.
+
+The published model is the **base** rate only — the vulnerabilities stay in the sim. What a client
+can honestly state is what the *tile* imposes, which is what the climate chip claims; a band's actual
+losses depend on its age mix, a property of the band and not of the ground. So the six constants ride
+the snapshot in their own table — `MapSection.temperatureSurvivability`
+(`TemperatureSurvivability`: `coldOnsetTemp` / `coldMortalityScale` / `coldMaxMortality` /
+`heatOnsetTemp` / `heatMortalityScale` / `heatMaxMortality`), appended after `climateBands` — read at
+capture straight off the live `DemographicsConfigHandle`, never restated. A per-run constant, diffed whole beside `climate_bands`
 in `diff_rasters`, so a delta re-sends it only when the tuning moves. The client states the range the
 sim enforces instead of inferring one from the band cut points, which is the mistake the separate
 table exists to make impossible.

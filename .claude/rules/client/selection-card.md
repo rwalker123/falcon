@@ -30,7 +30,7 @@ paths:
     LETHAL-TEMPERATURE WARNING** (issue #614): it carries the BAND AND THE TEMPERATURE and reads
     `Temperate · 3.7 °C` in neutral INK_DIM on survivable ground, `⚠ Temperate · 3.7 °C` in
     `HudStyle.DANGER` when `TileSurvivability` says the sim is killing there, with
-    `4.6% increased mortality per turn due to severe cold` on its hover — one clause, naming what
+    `0.4% increased mortality per turn due to severe cold` on its hover — one clause, naming what
     happens to the people. **It was two chips for one iteration and four pills is too many**; the band
     name and the death rate are two readings of the SAME number and that number was already on this
     face, so the ⚠ and the tint moved onto it and the `survivability` slot is gone (`band-readouts.md`

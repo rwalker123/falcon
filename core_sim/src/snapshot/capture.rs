@@ -2885,10 +2885,12 @@ pub fn capture_snapshot(
     // rather than inferring one from the climate bands above — which are a different, unrelated set
     // of thresholds. Mirrors the cold block of `systems::population`.
     let temperature_survivability_state = TemperatureSurvivabilityState {
-        ambient_temp: config.ambient_temperature.to_f32(),
-        temp_tolerance: demographics_config.cold.temp_tolerance,
-        mortality_scale: demographics_config.cold.mortality_scale,
-        max_mortality: demographics_config.cold.max_mortality,
+        cold_onset_temp: demographics_config.cold.onset_temp,
+        cold_mortality_scale: demographics_config.cold.mortality_scale,
+        cold_max_mortality: demographics_config.cold.max_mortality,
+        heat_onset_temp: demographics_config.heat.onset_temp,
+        heat_mortality_scale: demographics_config.heat.mortality_scale,
+        heat_max_mortality: demographics_config.heat.max_mortality,
     };
     let campaign_profiles_state: Vec<_> = snapshot_profiles(&start_profiles)
         .into_iter()

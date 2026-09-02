@@ -68,11 +68,12 @@ pub(crate) struct DeltaAggregator {
     // it publishes no climate keys and the client keeps the last full snapshot's per-map value
     // (the bands are a per-map constant) rather than being handed a fabricated one.
     climate_bands: Option<[f32; 3]>,
-    // The temperature-mortality model's constants `[ambientTemp, tempTolerance, mortalityScale,
-    // maxMortality]`. `None` / carried exactly like `climate_bands` above, and for the same reason:
+    // The temperature-mortality model's two tails, in wire order (`[coldOnsetTemp,
+    // coldMortalityScale, coldMaxMortality, heatOnsetTemp, heatMortalityScale, heatMaxMortality]`).
+    // `None` / carried exactly like `climate_bands` above, and for the same reason:
     // a per-run constant a delta may omit, which must then leave the last published model standing
     // rather than publishing a fabricated one.
-    temperature_survivability: Option<[f32; 4]>,
+    temperature_survivability: Option<[f32; 6]>,
     moisture_width: u32,
     moisture_height: u32,
     moisture_samples: Vec<f32>,
@@ -336,10 +337,12 @@ impl DeltaAggregator {
         model: fb::TemperatureSurvivability<'_>,
     ) {
         self.temperature_survivability = Some([
-            model.ambientTemp(),
-            model.tempTolerance(),
-            model.mortalityScale(),
-            model.maxMortality(),
+            model.coldOnsetTemp(),
+            model.coldMortalityScale(),
+            model.coldMaxMortality(),
+            model.heatOnsetTemp(),
+            model.heatMortalityScale(),
+            model.heatMaxMortality(),
         ]);
     }
 

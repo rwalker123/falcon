@@ -104,14 +104,17 @@ const CHIP_CLIMATE_LETHAL_PREFIX := "⚠ "
 #   * "regardless of food". True, and not what the hover is for.
 #
 # "per turn" is deliberate and is NOT in the phrasing this was asked for: without it the figure reads
-# as a one-off, and a player who takes 4.6 % as a total rather than a per-turn compounding rate has
-# been under-warned in exactly the way this issue exists to fix.
+# as a one-off, and a player who takes a rate as a total rather than a per-turn compounding one has
+# been under-warned in exactly the way this issue exists to fix. It matters more, not less, now that
+# the tuning prices ordinary cold ground in fractions of a percent: 0.4 % sounds like nothing until
+# it is 0.4 % EVERY TURN.
 const CHIP_SURVIVABILITY_TOOLTIP_COLD := "%s increased mortality per turn due to severe cold"
 
 const CHIP_SURVIVABILITY_TOOLTIP_HEAT := "%s increased mortality per turn due to severe heat"
 
-# The mortality model is a FRACTION on the wire (0.046 = 4.6 % of a bracket);
-# `survivability_percent_text` is the one place that conversion happens.
+# The mortality model is a FRACTION on the wire (0.0037 = 0.4 % of the tile's people, before the
+# sim's per-bracket weights — see `TileSurvivability`); `survivability_percent_text` is the one place
+# that conversion happens.
 const CHIP_SURVIVABILITY_PERCENT_SCALE := 100.0
 
 # The rate's display precision, in decimal places. A CONSTANT rather than a literal inside a format
