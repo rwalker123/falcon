@@ -1344,20 +1344,22 @@ Each row is omitted when its NET magnitude falls below the account's existing fl
 (`SourceForecast.FOOD_FLOW_MIN` / `FODDER_FLOW_MIN`), so a camp that exchanged nothing renders
 nothing — never `⇄ Local exchange +0.00`.
 
-### The fallback, and what is on the wire
+### What is on the wire, and why there is no fallback
 
-**THE FOOD LEDGER KEEPS ITS GENERIC PAIR BEHIND A PRESENCE CHECK** (`band_has_link_transfers`), which
-is rare in this client and deliberate: a frame carrying none of the four food keys is what **every
-band on today's wire** looks like, and it must still render `⇄ From other bands` / `⇄ To other bands`
-as it does now. **The fodder popover has no such fork** — it has never had a generic transfer pair to
-preserve, so its four rows simply appear when their figures do.
+⛔ **NEITHER LEDGER HAS A PRESENCE CHECK OR A FALLBACK FORK.** The food ledger briefly kept its
+generic `⇄ From other bands` / `⇄ To other bands` pair behind `band_has_link_transfers`, for frames
+carrying none of the four food keys. No such frame exists: `dict/population.rs::population_to_dict`
+is the only path that builds a cohort dict and it inserts all eight **unconditionally**, so the
+generic arm was unreachable on any real snapshot and the one thing keeping it alive was a fixture
+staging a state no server can send. It is gone, along with its two label constants — a fork nothing
+can take is dead code, and tolerating an absent field is the back-compat this repo has no shipped
+client or save to need.
 
 All eight keys are on the wire and decoded — `transfer_local_received_turn`,
 `transfer_local_sent_turn`, `transfer_route_received_turn`, `transfer_route_sent_turn` and the
-`fodder_` prefixed four, inserted onto the band dict by `dict/population.rs` beside the generic pair.
-So the food ledger's presence check is satisfied on every frame now and the four-term path is the one
-that runs; the fallback stays because the check costs nothing and a frame is still allowed to arrive
-without them. They are **per-turn** figures, on the basis every other row of both breakdowns is on — a
+`fodder_` prefixed four. Both ledgers simply render the rows whose figures they were given, and a
+camp that exchanged nothing renders no transfer row at all — every term present and zero, which is
+what the decoder actually produces. They are **per-turn** figures, on the basis every other row of both breakdowns is on — a
 row read off an accumulator vanishes the instant a dispatched command re-captures the frame, which is
 the defect issue #517 fixed on the generic pair and which must not be reintroduced one ledger over.
 There are deliberately no accumulating twins of the eight: the larder identity stays closed by

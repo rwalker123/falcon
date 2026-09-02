@@ -522,8 +522,9 @@ transferSent` ledger identity.
 > than the turn's. The other four terms are per-turn values on `PopulationCohort` and re-read
 > unchanged there; this pair had been cleared by then, so a refreshed frame published `0.0` for both
 > and overwrote the correct turn-end frame — one command after a turn blanked the ⇄ rows on the band
-> panel. The per-turn twins `PopulationCohort::last_turn_transfer_received` / `last_turn_transfer_sent`
-> (wire: `transferReceivedTurn` / `transferSentTurn`) are copied off the accumulator by
+> panel. The per-turn twins live on `PopulationCohort::last_turn_food_transfers`
+> (wire: `transferReceivedTurn` / `transferSentTurn`, and the four
+> `transfer{Local,Route}{Received,Sent}Turn` arms beside them) and are copied off the accumulator by
 > `systems::publish_turn_transfers`, in the Snapshot stage between `advance_tick` and
 > `capture_snapshot` — the turn path only — so a recapture republishes them intact. **On a turn frame
 > the two pairs are equal by construction**, being one counter read a moment apart; they diverge only
@@ -541,7 +542,9 @@ transferSent` ledger identity.
 > wire `fodderTransfer{Local,Route}{Received,Sent}Turn`). Hay pools exactly as grain does — the
 > balancer walks a band's whole store — and until #548 nothing counted it, so a receiving band's
 > `fodderStore` rose with only *grown* and *eaten* to explain it. What the account buys is the rows
-> that name the neighbour and the **runway**, which nets the **`local`** arm in and deliberately not
+> that name the **link kind** the hay crossed — `⇄ Local exchange` / `⇄ Trade route`, one netted row
+> each and **never a counterparty**, since bands have no names (#615) — and the **runway**, which
+> nets the **`local`** arm in and deliberately not
 > the `route` one (`yield-forecast.md` → "Local crossings are a rate and count; route crossings are
 > events and do not"); it is not a second reconciliation identity.
 > **Its `route` arm reads `0` on every frame today**, because a shipment's manifest refuses any cargo

@@ -1,7 +1,8 @@
 extends RefCounted
 
-## WHICH LINK THE GOODS CROSSED — the local supply network made legible (issue #548). **A UX
-## PROTOTYPE, rendered for review.**
+## WHICH LINK THE GOODS CROSSED — the local supply network made legible (issue #548). **The SHIPPED
+## readout**: the sim publishes the four terms per account and the ledgers render them, so these
+## frames photograph what a live band shows.
 ##
 ## One chapter of the `ui_preview` state walk, run in the order `ui_preview.gd`'s `CHAPTERS` lists it.
 ## **The order is load-bearing** — states render into one long-lived `HudLayer`, so a chapter moved is
@@ -29,7 +30,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 21
+const EXPECTED_CHECKPOINTS := 20
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -197,25 +198,11 @@ func run(harness) -> void:
 	_click_breakdown(HudDisclosureVocab.BREAKDOWN_KIND_FODDER, LINKED_ENTITY)
 	await h._settle()
 
-	# **THE FALLBACK, PNG-LESS — the state EVERY band on today's wire is in.** None of the four food
-	# keys is published yet, so the ledger must still render the generic pair it renders now. Asserted
-	# rather than left to the wire half to discover: the fork that preserves it is one line, and is
-	# exactly the kind of line a later simplification deletes.
-	var legacy := _linked_band()
-	for key in [DetailFormat.TRANSFER_LOCAL_RECEIVED_TURN_KEY,
-			DetailFormat.TRANSFER_LOCAL_SENT_TURN_KEY,
-			DetailFormat.TRANSFER_ROUTE_RECEIVED_TURN_KEY,
-			DetailFormat.TRANSFER_ROUTE_SENT_TURN_KEY]:
-		legacy.erase(key)
-	legacy["transfer_received_turn"] = FOOD_LOCAL_IN
-	legacy["transfer_sent_turn"] = FOOD_ROUTE_OUT
-	var legacy_rows: Array[String] = h._hud._disclosures.food_breakdown_lines(legacy)
-	h._assert_hud("a frame with no link kinds still renders today's two generic rows",
-		_any(legacy_rows, DetailFormat.FOOD_LABEL_TRANSFER_RECEIVED)
-			and _any(legacy_rows, DetailFormat.FOOD_LABEL_TRANSFER_SENT))
-	h._assert_hud("…and states no link kind it was not told",
-		not _any(legacy_rows, DetailFormat.TRANSFER_LABEL_LOCAL)
-			and not _any(legacy_rows, DetailFormat.TRANSFER_LABEL_ROUTE))
+	# **THE GENERIC-PAIR FALLBACK IS GONE, AND SO IS THE STATE THAT STOOD FOR IT.** A block here used
+	# to erase the four link keys and assert that `From other bands` / `To other bands` came back —
+	# but `population_to_dict` inserts all four on every cohort it decodes, so that fixture staged a
+	# frame no server can send and the arm it exercised is retired. State 1 above makes the claim that
+	# is left: four keys present and zero renders no transfer row at all.
 
 	# Hand the reference band back, so a chapter appended after this one starts where the rest do.
 	h._hud.update_band_alerts([BandFx.band_fixture()])
@@ -225,9 +212,10 @@ func run(harness) -> void:
 
 # ---- FIXTURES ------------------------------------------------------------------------------------
 
-## A camp where nothing crossed either link — no transfer keys on either account. Everything else is
-## the reference band with a hay larder, so the only reason this state renders no transfer row is that
-## there was no transfer.
+## A camp where nothing crossed either link — all eight transfer terms present and ZERO, which is what
+## a quiet band on the wire carries (`population_to_dict` inserts every one of them unconditionally).
+## Everything else is the reference band with a hay larder, so the only reason this state renders no
+## transfer row is that there was no transfer.
 func _quiet_band() -> Dictionary:
 	return _hay_keeper(QUIET_ENTITY, "Band 1")
 
@@ -265,6 +253,18 @@ func _hay_keeper(entity: int, id: String) -> Dictionary:
 	band["turns_of_fodder"] = HAY_TURNS
 	band["fodder_income"] = HAY_GROWN
 	band["fodder_need"] = HAY_PENS
+	# **ALL EIGHT LINK TERMS, AT ZERO — the live shape, not an omission.** The decoder inserts every
+	# one of these on every cohort, so a fixture that simply left them out would stage a dict no server
+	# can send; the states below overwrite the ones their turn actually moved.
+	for key in [DetailFormat.TRANSFER_LOCAL_RECEIVED_TURN_KEY,
+			DetailFormat.TRANSFER_LOCAL_SENT_TURN_KEY,
+			DetailFormat.TRANSFER_ROUTE_RECEIVED_TURN_KEY,
+			DetailFormat.TRANSFER_ROUTE_SENT_TURN_KEY,
+			DetailFormat.FODDER_TRANSFER_LOCAL_RECEIVED_TURN_KEY,
+			DetailFormat.FODDER_TRANSFER_LOCAL_SENT_TURN_KEY,
+			DetailFormat.FODDER_TRANSFER_ROUTE_RECEIVED_TURN_KEY,
+			DetailFormat.FODDER_TRANSFER_ROUTE_SENT_TURN_KEY]:
+		band[key] = 0.0
 	return band
 
 

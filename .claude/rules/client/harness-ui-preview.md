@@ -2260,17 +2260,21 @@ good in DANGER ink. Those renderers were correct all along — only the cross-re
 missing, which is why the fix moved no frame: a clean run is **1614 `PASS`, exit 0**, five more than
 before with the same frame set.
 
-## `chapters/supply_network.gd` — which link the goods crossed, as a UX PROTOTYPE (issue #548)
+## `chapters/supply_network.gd` — which link the goods crossed (issue #548)
 
 **Appended LAST in `CHAPTERS`**, after `knowledge_panel`, so no existing frame moves. Four frames and
-seventeen assertions (`EXPECTED_CHECKPOINTS` **21** — frames count too; RE-MEASURED off the run). It
+sixteen assertions (`EXPECTED_CHECKPOINTS` **20** — frames count too; COUNTED off the source, `16 +
+4`, because the guard only fails on `reached < expected` and a const set above the truth is the one
+error it cannot catch). It
 ends by handing the reference band back, so a chapter appended after it starts where every other one
 does. The behaviour is `band-readouts.md`'s; what belongs here is the shape of the fixtures and of the
 drive.
 
-**IT IS A PROTOTYPE AND ITS PAYLOAD IS NOT ON THE WIRE** — see `band-readouts.md` → "The fallback, and
-what is on the wire". The states exist to be LOOKED AT before the sim half is written; the assertions
-are what stop them being four plausible pictures.
+**THE PAYLOAD IS ON THE WIRE** — all eight keys are published and decoded (`band-readouts.md` → "The
+fallback, and what is on the wire"), so these frames photograph the shipped readout rather than a
+proposal. The chapter began as a UX prototype rendered for review before the sim half existed, which
+is why its fixtures stage the dict keys directly rather than driving a snapshot; the assertions are
+what stop the states being four plausible pictures.
 
 | frame | what only IT can say |
 |---|---|
@@ -2293,15 +2297,20 @@ for row text, so the claim is made over the line SHAPE instead.
 amounts and one different direction. A ledger reading the other account's figures then fails here
 instead of looking plausible on every frame.
 
-**AND THE LEGACY PATH IS ASSERTED, PNG-LESS.** The fallback that keeps today's wire rendering today's
-two generic rows is ONE line in `_link_transfer_lines`, and is exactly the kind of line a later
-simplification deletes — so the chapter strips the four food keys off its own fixture and claims both
-halves: the generic pair renders, and no link kind it was not told appears.
+⛔ **THERE IS NO LEGACY PATH LEFT TO ASSERT.** The chapter briefly stripped the four food keys off its
+own fixture to claim the generic `From other bands` / `To other bands` pair still rendered. That
+fallback is gone: `population_to_dict` inserts all eight keys **unconditionally**, so no server can
+send a cohort without them and the state was a photograph of something unreachable. The negative case
+is `supply_quiet` instead — every link term present and zero, which is the shape the decoder actually
+produces.
 
-**No existing frame changed and no frame count moved but this chapter's own.** The generic pair is
-preserved verbatim, so `chapters/trade.gd`'s four assertions on
-`DetailFormat.FOOD_LABEL_TRANSFER_RECEIVED` / `_SENT` still hold unaltered.
+**ONE frame outside this chapter moved: `trade_food_transfers`.** `chapters/trade.gd`'s four
+assertions used to read `DetailFormat.FOOD_LABEL_TRANSFER_RECEIVED` / `_SENT`, and those constants no
+longer exist — the fixture now stages the link-kind keys and the frame reads `⇄ Local exchange` /
+`⇄ Trade route`. It had been green only because its fixture set the generic pair alone, which is the
+trap: **a frame whose fixture is the last producer of a state can go on passing after the state
+becomes unreachable**, and it then guards nothing while looking like coverage.
 
-**A clean run is 396 frames / 1763 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+**A clean run is 396 frames / 1761 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
 last figure recorded above was `370 / 1594`; the gap is drift accumulated un-recorded, exactly as it
 has been every previous time. Measure; do not sum.

@@ -709,8 +709,9 @@ pub enum TransferLink {
 ///
 /// **Four magnitudes rather than one signed net**, matching the style of the pair it replaced: a band
 /// that both sends and receives in one turn is *doing something*, and a signed net renders that as
-/// nothing happening. [`Self::net`] exists for the one consumer that genuinely wants the trajectory
-/// (a runway), not as the ledger's own reading.
+/// nothing happening. [`Self::local_net`] exists for the one consumer that genuinely wants a
+/// trajectory (a runway), and even that nets only the `local` arm — there is no both-arms net here,
+/// because the two arms do not project alike.
 ///
 /// **The totals are DERIVED, never stored** ([`Self::received`] / [`Self::sent`]). The published
 /// `transferReceived` / `transferSent` pair is exactly `local + route`, and a stored total beside its
