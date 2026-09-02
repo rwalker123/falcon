@@ -822,3 +822,38 @@ timing ASSERTION on a shared machine fails for reasons that have nothing to do w
 test, and a harness that cries wolf stops being read; what is asserted instead is the thing a number
 cannot drift on, that the probe really walked a full-size world. It is the last thing the state does,
 because it leaves `_map` on that world.
+
+### `map_band_lethal_mark*` — the ⚠ a band wears on killing ground (issue #614)
+
+Three frames on the temperature field with **two bands on it**, one in the cold pocket and one on the
+temperate middle. The pair is the test: a mark asserted on the lethal band alone passes on a renderer
+that draws it for every band, which is the one way this could be wrong and still look right.
+`map_band_lethal_mark` is the close read (⚠ up-left, food dot up-right, banner below, no collision);
+`map_band_lethal_mark_gate` is the mark at the SMALLEST size it is ever drawn at; and
+`map_band_lethal_mark_farzoom` is one notch below the gate, where it is gone.
+
+> #### ⛔ TWO PROBES THAT PASSED WITH THE FEATURE DELETED, AND WHAT REPLACED THEM
+>
+> **The absence was asserted where nothing was visible either way.** The far-zoom state first sat at
+> radius 12.7, well past `BAND_LETHAL_MARK_MIN_RADIUS`, and the "the mark is gone" claim **passed with
+> the LOD gate deleted** — the glyph is drawn there and blends into the terrain completely. An absence
+> is only worth asserting where a PRESENCE would have shown, so the two LOD grids now fit just either
+> side of the gate (measured ~29.0 and ~26.7) and each states its measured radius in a premise
+> assertion. They had to be re-measured rather than computed: the harness canvas carries a ~1.9×
+> content scale the arithmetic missed, and they moved AGAIN when the mark took a gate of its own.
+>
+> **A colour-distance probe cannot see an antialiased glyph.** `draw_string` blends, so a small ⚠
+> never reaches its own ink — measured, the closest pixel to `HudStyle.DANGER` inside the marked
+> token's box was 0.192 away and bare khaki terrain was 0.235, i.e. no threshold separates them and
+> the loose tolerance that finally "passed" was matching terrain. `_frame_marks_warning_near_hex` asks
+> for REDNESS instead (`r − max(g, b)`, ~100/255 on the glyph against ~18/255 on the terrain), and
+> `_frame_paints_near_hex` went back to the EXACT match that is right for the flat-filled hatch and
+> contour lines it was written for.
+>
+> The "legible at the smallest zoom it is drawn at" assertion is what then caught the real defect: at
+> the banner's gate with a 9 px floor the mark was unreadable, which is why the mark now has its own
+> higher gate and no size floor at all (`map-markers.md`).
+
+Sabotage-verified in two runs: dropping the LOD gate and the `is_lethal` test together (2 fail — the
+survivable band's absence and the far-zoom absence, the latter only biting once the grid moved beside
+the gate); and skipping the draw entirely (2 fail — the close mark and the smallest-size mark).

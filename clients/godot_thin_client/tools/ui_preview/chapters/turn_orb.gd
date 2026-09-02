@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 49
+const EXPECTED_CHECKPOINTS := 56
 
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
@@ -550,6 +550,101 @@ func _assert_handoff_ingest_windows_on_one_turn() -> void:
 	h._hud._band_labor.set_turn(prior_turn)
 	h._hud._attention.ingest_command_events([], prior_turn)
 
+# ---- THE DECLINE REASON ON FREEZING GROUND (issue #614) ----------------------------------------
+#
+# `_decline_reason` could say four things — starving, people leaving, a morale cause, low morale —
+# and a band freezing to death hits NONE of them: temperature mortality is food-independent and
+# leaves morale clamped at 100 %. The `losing population` row therefore rendered with an EMPTY detail
+# line, which is exactly the reported *"I knew people were dying, but I didn't know why."*
+
+## Five bands, each isolating one branch of the priority order. Every one of them SHRINKS between the
+## baseline and the live fixture, so the row exists in all five cases and only its reason differs.
+const DECLINE_COLD_ENTITY := 801       # the reported case: freezing, benign on every other axis
+const DECLINE_HEAT_ENTITY := 802       # the symmetric tail
+const DECLINE_MILD_ENTITY := 803       # survivable ground — the negative, still says nothing
+const DECLINE_BOTH_ENTITY := 804       # freezing AND emigrating — lethal must win
+const DECLINE_STARVING_ENTITY := 805   # freezing AND starving — an empty larder must still win
+
+const DECLINE_COLD_TILE := Vector2i(14, 5)
+const DECLINE_HEAT_TILE := Vector2i(15, 5)
+const DECLINE_MILD_TILE := Vector2i(16, 5)
+
+## Read against the prologue's shipped tuning (survivable 6.0 – 30.0 °C). Deliberately well past the
+## line in both directions: this state is about which BRANCH answers, not about the rate's printing.
+const DECLINE_LETHAL_COLD_TEMPERATURE := -4.0
+const DECLINE_LETHAL_HEAT_TEMPERATURE := 34.0
+const DECLINE_SURVIVABLE_TEMPERATURE := 18.0
+
+## Morale at its ceiling — the value a freezing band really carries, and the reason the morale
+## branches cannot answer for it.
+const DECLINE_FULL_MORALE := 1.0
+## Below `BandFoodStatus.critical_turns()`, so the starving branch genuinely fires.
+const DECLINE_STARVING_TURNS := 2.0
+const DECLINE_BASELINE_SIZE := 60
+const DECLINE_LIVE_SIZE := 54
+const DECLINE_EMIGRATED := 6
+
+## The prior snapshot, so every band below has a size to have shrunk FROM — the producer reads
+## `prev_band_sizes`, and without this pass there is no `losing population` row to inspect at all.
+func _decline_baseline_fixture() -> Array:
+	var bands: Array = []
+	for band in _decline_live_fixture():
+		var prior: Dictionary = band.duplicate()
+		prior["size"] = DECLINE_BASELINE_SIZE
+		bands.append(prior)
+	return bands
+
+## The live snapshot. **The first three are benign on every axis but temperature** — full larder, no
+## emigrants, morale 1.0, no morale cause — which is what makes the cold one the reported screen and
+## the mild one an honest negative. The last two carry a SECOND cause each, so a lethal branch
+## inserted at the wrong priority still answers a non-empty string and would look fixed.
+func _decline_live_fixture() -> Array:
+	return [
+		_decline_band(DECLINE_COLD_ENTITY, DECLINE_COLD_TILE),
+		_decline_band(DECLINE_HEAT_ENTITY, DECLINE_HEAT_TILE),
+		_decline_band(DECLINE_MILD_ENTITY, DECLINE_MILD_TILE),
+		_decline_band(DECLINE_BOTH_ENTITY, DECLINE_COLD_TILE, DECLINE_EMIGRATED),
+		_decline_band(DECLINE_STARVING_ENTITY, DECLINE_COLD_TILE, 0, DECLINE_STARVING_TURNS),
+	]
+
+func _decline_band(entity: int, tile: Vector2i, emigrated: int = 0,
+		turns: float = BandFoodStatus.UNLIMITED_TURNS) -> Dictionary:
+	return {
+		"faction": 0, "entity": entity, "size": DECLINE_LIVE_SIZE,
+		"turns_of_food": turns, "morale": DECLINE_FULL_MORALE,
+		"morale_cause": DetailFormat.MORALE_CAUSE_NONE,
+		"last_emigrated": emigrated, "activity": "forage",
+		"current_x": tile.x, "current_y": tile.y,
+	}
+
+## The `losing population` row this band produced, or `{}` — read off the registry the ORB was HANDED
+## (`TurnOrb._entries`), not by re-running the producer.
+##
+## ⛔ **RE-RUNNING IT HERE WOULD ANSWER NOTHING, AND SILENTLY.** Producer 2 compares the live size
+## against `_band_labor.prev_band_sizes()`, which `update_band_alerts` OVERWRITES with the live sizes
+## immediately after building the attention array — so a second call sees every band at its own
+## current size, finds no decline anywhere, and hands back an empty list that looks like "no such
+## row". The build is a one-shot on the pre-ingest sizes; the registry is where its output lives.
+func _decline_row_for(entity: int) -> Dictionary:
+	for item_variant in h._hud.turn_orb._entries:
+		var item: Dictionary = item_variant
+		if String(item.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_LOSING_POPULATION \
+				and int(item.get("owner", -1)) == entity:
+			return item
+	return {}
+
+func _decline_detail_for(entity: int) -> String:
+	return String(_decline_row_for(entity).get("detail", "<no losing-population row>"))
+
+## The live band entry itself, so the preconditions can be asserted off the same fixture the row was
+## built from rather than restated as literals here.
+func _decline_band_for(entity: int) -> Dictionary:
+	for band_variant in _decline_live_fixture():
+		var band: Dictionary = band_variant
+		if int(band.get("entity", -1)) == entity:
+			return band
+	return {}
+
 func run(harness) -> void:
 	h = harness
 	# **THE FACTION IS TAUGHT NOTHING FOR THE BAND STATES, AND THAT IS A CONTROL, NOT A TIDY-UP.**
@@ -1077,3 +1172,48 @@ func _assert_knowledge_producers(inherited_tracks: Dictionary) -> void:
 	await _teach(handed_on_turn, inherited_tracks)
 	_assert_knowledge_half_silent("the chapter hands on with the knowledge producer silent again")
 	h._hud.turn_orb.set_attention([])
+
+	# State 7z — **"I KNEW PEOPLE WERE DYING, BUT I DIDN'T KNOW WHY."** (issue #614) The reported
+	# playtest case, reproduced exactly: a band on ground the sim is freezing, with a FULL LARDER, NO
+	# emigrants and morale at 100 %. Temperature mortality reaches none of `_decline_reason`'s tests —
+	# it is food-independent and leaves morale clamped — so the `losing population` row rendered with
+	# an EMPTY detail line, which IS the bug: *people are dying* with the why blank.
+	#
+	# The detail is the claim, so it is asserted rather than left to the frame; a blank line and a
+	# filled one are a few pixels apart in a popover, and the blank one is what shipped.
+	h._hud.turn_orb.set_attention([])
+	h._hud._band_labor.set_tile_temperatures({
+		Vector2i(DECLINE_COLD_TILE.x, DECLINE_COLD_TILE.y): DECLINE_LETHAL_COLD_TEMPERATURE,
+		Vector2i(DECLINE_HEAT_TILE.x, DECLINE_HEAT_TILE.y): DECLINE_LETHAL_HEAT_TEMPERATURE,
+		Vector2i(DECLINE_MILD_TILE.x, DECLINE_MILD_TILE.y): DECLINE_SURVIVABLE_TEMPERATURE,
+	})
+	h._hud.update_band_alerts(_decline_baseline_fixture())
+	h._hud.update_band_alerts(_decline_live_fixture())
+	h._hud.turn_orb.open_popover()
+	await h._settle()
+	await h._save("turn_orb_decline_lethal_cold")
+	h._assert_hud("a band shrinking on FREEZING ground says so, where the row used to say nothing",
+		_decline_detail_for(DECLINE_COLD_ENTITY) == HudAttentionVocab.DECLINE_REASON_LETHAL_COLD)
+	h._assert_hud("…the heat tail names ITS tail, not the cold one",
+		_decline_detail_for(DECLINE_HEAT_ENTITY) == HudAttentionVocab.DECLINE_REASON_LETHAL_HEAT)
+	# **THE THREE PRECONDITIONS THAT MAKE THE CLAIM MEAN ANYTHING.** Without them the row could be
+	# reading "starving" or "people leaving" and passing for the wrong reason entirely — the fixture
+	# is deliberately benign on every other axis, which is what made the original blank possible.
+	h._assert_hud("precondition: the freezing band is NOT starving, NOT emigrating and at full morale",
+		_decline_band_for(DECLINE_COLD_ENTITY).get("turns_of_food") == BandFoodStatus.UNLIMITED_TURNS \
+			and int(_decline_band_for(DECLINE_COLD_ENTITY).get("last_emigrated", 0)) == 0 \
+			and float(_decline_band_for(DECLINE_COLD_ENTITY).get("morale", 0.0)) == DECLINE_FULL_MORALE)
+	# …and the other half of the gate: SURVIVABLE ground with the same benign band still says nothing,
+	# so the new branch cannot be firing on every shrinking band.
+	h._assert_hud("…while the same band on survivable ground still reports no reason at all",
+		_decline_detail_for(DECLINE_MILD_ENTITY) == "")
+	# **LETHAL OUTRANKS EMIGRATION, AND ONLY AN EMPTY LARDER OUTRANKS LETHAL.** The freezing band here
+	# also has emigrants and a morale cause, so a branch inserted in the wrong place still answers a
+	# non-empty string and would look fixed.
+	h._assert_hud("lethal ground outranks people-leaving on a band doing both",
+		_decline_detail_for(DECLINE_BOTH_ENTITY) == HudAttentionVocab.DECLINE_REASON_LETHAL_COLD)
+	h._assert_hud("…and starving still outranks lethal ground",
+		_decline_detail_for(DECLINE_STARVING_ENTITY) == HudAttentionVocab.DECLINE_REASON_STARVING)
+	h._hud.turn_orb.toggle_popover()   # the orb's only close seam; leaves the walk as it found it
+	h._hud.turn_orb.set_attention([])
+	h._hud._band_labor.set_tile_temperatures({})

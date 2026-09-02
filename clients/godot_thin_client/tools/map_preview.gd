@@ -1511,6 +1511,69 @@ func _ready() -> void:
 			MAP_VIEW.TEMPERATURE_CONTOUR_COLOR))
 	_map.set_overlay_channel("")   # back to plain terrain for the states after this one
 
+	# States "band lethal mark" (issue #614) — the ⚠ a band wears while it STANDS on killing ground.
+	# Two bands on the temperature field, one in the cold pocket and one on the temperate middle, so
+	# the mark's presence and its absence are in the SAME frame: a renderer that drew it for every
+	# band would satisfy any single-band assertion.
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(false)
+	_map._map_cache_enabled = false
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	await _set_canvas(DEFAULT_CANVAS_SIZE)
+	await _settle()
+	_map.display_snapshot(_snapshot_band_lethal(GRID_W, GRID_H))
+	_map._fit_map_to_view()
+	await _settle()
+	_assert_map("premise: the close frame really is above the marker detail gate (radius %.1f >= %.1f)"
+			% [_map.last_hex_radius, MAP_VIEW.BAND_LETHAL_MARK_MIN_RADIUS],
+		_map.last_hex_radius >= MAP_VIEW.BAND_LETHAL_MARK_MIN_RADIUS)
+	await _save("map_band_lethal_mark")
+	var mark_close_frame: Image = await _capture()
+	_assert_map("a band on killing ground wears the ⚠ on its own token",
+		_frame_marks_warning_near_hex(mark_close_frame,
+			_temperature_pocket_tile(GRID_W, GRID_H), MARK_PROBE_RADII))
+	_assert_map("…and the band on survivable ground does NOT",
+		not _frame_marks_warning_near_hex(mark_close_frame,
+			_safe_mark_tile(GRID_W, GRID_H), MARK_PROBE_RADII))
+
+	# map_band_lethal_mark_gate — **THE SMALLEST SIZE THE MARK IS EVER DRAWN AT.** A grid fitting just
+	# ABOVE `ICON_MIN_DETAIL_RADIUS`, so this is the mark at its worst legible case: anything smaller is
+	# gated off entirely. Sized by rendering it — the first cut pinned a 9 px floor that vanished into
+	# the terrain here, which would have made the gate the only thing keeping an unreadable glyph off
+	# the map rather than a deliberate LOD decision.
+	_map.display_snapshot(_snapshot_band_lethal(MARK_GATE_ABOVE_GRID_W, MARK_GATE_ABOVE_GRID_H))
+	_map._fit_map_to_view()
+	await _settle()
+	_assert_map("premise: the gate frame fits JUST above the detail gate (radius %.1f >= %.1f)"
+			% [_map.last_hex_radius, MAP_VIEW.BAND_LETHAL_MARK_MIN_RADIUS],
+		_map.last_hex_radius >= MAP_VIEW.BAND_LETHAL_MARK_MIN_RADIUS)
+	await _save("map_band_lethal_mark_gate")
+	var mark_gate_frame: Image = await _capture()
+	_assert_map("the mark is still legible at the smallest zoom it is drawn at",
+		_frame_marks_warning_near_hex(mark_gate_frame,
+			_temperature_pocket_tile(MARK_GATE_ABOVE_GRID_W, MARK_GATE_ABOVE_GRID_H),
+			MARK_PROBE_RADII))
+
+	# map_band_lethal_mark_farzoom — the LOD half, one notch BELOW the gate rather than far past it.
+	# **An absence is only worth asserting where a presence would have shown**: at a genuinely distant
+	# zoom the glyph is invisible whether or not it is drawn, and this assertion passed with the gate
+	# deleted until the grid moved up to here.
+	_map.display_snapshot(_snapshot_band_lethal(MARK_GATE_BELOW_GRID_W, MARK_GATE_BELOW_GRID_H))
+	_map._fit_map_to_view()
+	await _settle()
+	_assert_map("premise: the far frame fits JUST below that gate (radius %.1f < %.1f)"
+			% [_map.last_hex_radius, MAP_VIEW.BAND_LETHAL_MARK_MIN_RADIUS],
+		_map.last_hex_radius < MAP_VIEW.BAND_LETHAL_MARK_MIN_RADIUS)
+	await _save("map_band_lethal_mark_farzoom")
+	var mark_far_frame: Image = await _capture()
+	_assert_map("one notch further out the mark is gone, with the banner and the count pill",
+		not _frame_marks_warning_near_hex(mark_far_frame,
+			_temperature_pocket_tile(MARK_GATE_BELOW_GRID_W, MARK_GATE_BELOW_GRID_H),
+			MARK_PROBE_RADII))
+
 
 	# State "rivers" — Minor/Major rivers on hex EDGES (terrain_blend.gdshader's river pass, fed by the
 	# per-tile 12-bit river_edges mask) plus a NavigableRiver hex chain (terrain 37) that turns corners,
@@ -3360,12 +3423,17 @@ func _snapshot_temperature(width: int, height: int) -> Dictionary:
 ## exactly where a lethal hex is being drawn, so "not painted" cannot pass by looking somewhere the
 ## mark was never going to be. The captured framebuffer can be larger than the logical viewport
 ## (HiDPI), so viewport coordinates are rescaled into image pixels first — the `_save_crop_px` rule.
-func _frame_paints_near_hex(image: Image, tile: Vector2i, color: Color) -> bool:
+##
+## `radii` widens or tightens the box; the colour test is EXACT, which is right for the flat-filled
+## hatch and contour lines it was written for. **A `draw_string` GLYPH needs a different question
+## entirely** — see `_frame_marks_warning_near_hex`.
+func _frame_paints_near_hex(image: Image, tile: Vector2i, color: Color,
+		radii: float = TEMPERATURE_PROBE_RADII) -> bool:
 	if image == null:
 		return false
 	var center: Vector2 = _map._hex_center(tile.x, tile.y, _map.last_hex_radius, _map.last_origin)
 	var px_scale := float(image.get_width()) / maxf(get_viewport().get_visible_rect().size.x, 1.0)
-	var half: float = TEMPERATURE_PROBE_RADII * float(_map.last_hex_radius) * px_scale
+	var half: float = radii * float(_map.last_hex_radius) * px_scale
 	var x0 := clampi(int(center.x * px_scale - half), 0, image.get_width() - 1)
 	var y0 := clampi(int(center.y * px_scale - half), 0, image.get_height() - 1)
 	var x1 := clampi(int(center.x * px_scale + half), 0, image.get_width())
@@ -3373,6 +3441,39 @@ func _frame_paints_near_hex(image: Image, tile: Vector2i, color: Color) -> bool:
 	for py in range(y0, y1):
 		for px in range(x0, x1):
 			if image.get_pixel(px, py).is_equal_approx(color):
+				return true
+	return false
+
+## Does a WARNING GLYPH appear near this hex — is there ink around that token that is emphatically
+## RED, rather than terrain or a marker?
+##
+## ⛔ **A COLOUR-DISTANCE PROBE CANNOT ANSWER THIS, AND THE FIRST ONE HERE DID NOT.** `draw_string`
+## antialiases, so a small ⚠ never reaches its own ink; measured on the gate frame, the closest pixel
+## to `HudStyle.DANGER` inside the marked token's box was **0.192** away and a patch of bare khaki
+## terrain was **0.235** — no threshold separates those two, and the loose tolerance that finally
+## "passed" was matching the terrain. Worse, the version before it asserted the ABSENCE at a zoom
+## where the glyph is invisible either way, so **it passed with the LOD gate deleted**.
+##
+## The discriminating property is not distance to an ink, it is REDNESS: the glyph's pixels have a red
+## channel well clear of their own green and blue, and this map's terrain does not. Measured on the
+## same frames — glyph ~100/255, khaki terrain ~18/255 — so the margin below sits clear of both by a
+## wide band rather than being tuned to squeak past one of them.
+const WARNING_INK_RED_MARGIN := 0.24
+
+func _frame_marks_warning_near_hex(image: Image, tile: Vector2i, radii: float) -> bool:
+	if image == null:
+		return false
+	var center: Vector2 = _map._hex_center(tile.x, tile.y, _map.last_hex_radius, _map.last_origin)
+	var px_scale := float(image.get_width()) / maxf(get_viewport().get_visible_rect().size.x, 1.0)
+	var half: float = radii * float(_map.last_hex_radius) * px_scale
+	var x0 := clampi(int(center.x * px_scale - half), 0, image.get_width() - 1)
+	var y0 := clampi(int(center.y * px_scale - half), 0, image.get_height() - 1)
+	var x1 := clampi(int(center.x * px_scale + half), 0, image.get_width())
+	var y1 := clampi(int(center.y * px_scale + half), 0, image.get_height())
+	for py in range(y0, y1):
+		for px in range(x0, x1):
+			var pixel := image.get_pixel(px, py)
+			if pixel.r - maxf(pixel.g, pixel.b) >= WARNING_INK_RED_MARGIN:
 				return true
 	return false
 
@@ -3425,6 +3526,67 @@ func _legend_rows_are_all_solid(except_label: String = "") -> bool:
 ## the legend's own Coldest / Warmest swatches.
 func _temperature_extreme_tiles(width: int, height: int) -> Array[Vector2i]:
 	return [_temperature_pocket_tile(width, height), Vector2i(width - 1, height - 1)]
+
+# ---- THE LETHAL-GROUND MARK ON A BAND TOKEN (issue #614) ---------------------------------------
+#
+# A band standing where the sim is killing people wears a ⚠ on its own marker. It is a STATE — true
+# while it stands there, gone when it moves — so the frame is simply "band on killing ground".
+#
+# The fixture is the temperature field above with BANDS dropped onto it: one inside the cold pocket
+# and one on the temperate middle. **The pair is the test.** A mark asserted on the lethal band alone
+# passes on a renderer that draws it for every band, which is the one way this could be wrong and
+# still look right.
+const LETHAL_MARK_BAND_ENTITY := 9401
+const SAFE_MARK_BAND_ENTITY := 9402
+## On the temperate band of the gradient — comfortably inside 6.0 – 30.0 °C.
+const SAFE_MARK_BAND_TILE := Vector2i(12, 6)
+## How far around a band's token the pixel probe looks, in hex radii. Tight: the ⚠ hangs one token
+## radius up-left of the centre, and a wide box would let the OTHER band's mark answer for it.
+const MARK_PROBE_RADII := 1.6
+
+## ⛔ **THE TWO LOD GRIDS STRADDLE `BAND_LETHAL_MARK_MIN_RADIUS` BY A HAIR, AND THAT IS THE POINT.**
+## The first attempt asserted the absence at radius 12.7 and **passed with the gate deleted** — at that
+## size the glyph is drawn, blends entirely into the terrain, and no probe can see it either way. An
+## absence claim is only worth making where a PRESENCE would have been visible, so the "gone" grid
+## fits just BELOW the gate and the "smallest drawn" grid just above it. Sized by measuring the cover
+## fit, not by guessing — and MEASURED rather than computed, the canvas carrying a content scale the
+## arithmetic missed. They moved once already when the mark took a gate of its own (28.0, up from the
+## banner's 16.0), which is exactly the coupling these premise assertions exist to catch.
+const MARK_GATE_ABOVE_GRID_W := 38
+const MARK_GATE_ABOVE_GRID_H := 35
+const MARK_GATE_BELOW_GRID_W := 41
+const MARK_GATE_BELOW_GRID_H := 38
+
+## The temperature field with two bands on it: one in the cold pocket, one on temperate ground.
+func _snapshot_band_lethal(width: int, height: int) -> Dictionary:
+	var snapshot := _snapshot_temperature(width, height)
+	var pocket := _temperature_pocket_tile(width, height)
+	snapshot["populations"] = [
+		_marker_band(LETHAL_MARK_BAND_ENTITY, pocket),
+		_marker_band(SAFE_MARK_BAND_ENTITY, _safe_mark_tile(width, height)),
+	]
+	return snapshot
+
+## The survivable band's tile, kept inside whatever grid it is asked for so the far-zoom fixture puts
+## it somewhere real rather than off the edge. Its ROW is what decides the temperature, so the row is
+## scaled and the column just has to be clear of the pocket.
+func _safe_mark_tile(width: int, height: int) -> Vector2i:
+	return Vector2i(mini(SAFE_MARK_BAND_TILE.x * width / GRID_W, width - 1),
+		SAFE_MARK_BAND_TILE.y * height / GRID_H)
+
+func _marker_band(entity: int, tile: Vector2i) -> Dictionary:
+	return _with_stage({
+		"entity": entity,
+		"faction": 0,
+		"current_x": tile.x,
+		"current_y": tile.y,
+		"size": 30,
+		"id": "Band %d" % entity,
+		"work_range": 2,
+		"hunt_reach": 5,
+		"scout_reveal_radius": 0,
+		"labor_assignments": [],
+	}, STAGE_NOMADIC)
 
 ## The DANGER snapshot (Predators Phase 0). Danger is DERIVED per-ENTITY, so the native decoder projects
 ## TWO channels onto tiles from herd positions: hunt_danger = attack × ferocity, threat = attack ×

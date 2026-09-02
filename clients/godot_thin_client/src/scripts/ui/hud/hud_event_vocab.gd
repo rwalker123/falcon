@@ -132,10 +132,24 @@ const IGNORED_KINDS := {
 
 # ---- kind → rung -----------------------------------------------------------
 ## Straight from §02 of the proposal. Two entries are worth reading twice:
-##   • `died` is NOTABLE, not Alert. Bands lose elders to cold as a matter of course, and a rung
-##     that interrupts for every one of them trains the player to stop reading the bar — the precise
-##     failure the three-rung ladder exists to prevent. A death that MATTERS (a band starving out)
-##     announces itself through the starvation and morale channels that already exist.
+##   • **`died` SPLITS ON THE BRACKET, and the entry here is the ELDER half plus the fallback.**
+##     `DETAIL_STATUS_STYLE` below claims `bracket=working` and `bracket=child` for `RUNG_ALERT`;
+##     `bracket=elder` is deliberately absent and lands here, on Notable.
+##
+##     **The elder half is unchanged and its reasoning still holds:** bands lose elders to cold as a
+##     matter of course, and a rung that interrupts for every one of them trains the player to stop
+##     reading the bar — the precise failure the three-rung ladder exists to prevent. It stays Notable
+##     until an elder means something mechanically.
+##
+##     ⛔ **THE OTHER HALF WAS WRONG, AND ITS ESCAPE HATCH IS WHAT FAILED.** This entry used to justify
+##     Notable for the WHOLE kind on the elder argument alone — which was never an argument about
+##     workers or children at all — and then leant on *"a death that MATTERS (a band starving out)
+##     announces itself through the starvation and morale channels that already exist"*. Issue #614 is
+##     the case that disproves it: temperature mortality is FOOD-INDEPENDENT and leaves morale clamped
+##     at 100 %, so a band freezing to death announces itself through NEITHER channel — the player
+##     watched the count fall with nothing on the bar but a Notable line they had every reason to
+##     skim. Nor is there an elder-style argument to be made for the other two brackets: a worker
+##     dying is labour lost whatever killed them, and a child is the band's next worker.
 ##   • **The demographic kinds split on HEAD-COUNT, and that one line settles all five of them.**
 ##     `born` / `died` / `migrated` change how many people the band HAS, so they are Notable.
 ##     `came_of_age` and `aged` move one person between brackets and leave the total untouched, so
@@ -182,6 +196,9 @@ const RUNG_BY_KIND := {
 	# only the inner seam is a thing to stop for.
 	"kit_life": RUNG_NOTABLE,
 	# Notable — the world changed in a way worth knowing.
+	# **THE ELDER HALF OF `died`, and the fallback for a line carrying no `bracket=` token.**
+	# `DETAIL_STATUS_STYLE` claims `bracket=working` / `bracket=child` for Alert; see the split's
+	# reasoning above the table. Same shape as `kit_life`, whose rung is its `severity=` token.
 	"died": RUNG_NOTABLE,
 	"migrated": RUNG_NOTABLE,
 	"site_discovered": RUNG_NOTABLE,
@@ -394,6 +411,18 @@ static func apply_palette() -> void:
 			"rung": RUNG_ALERT},
 
 		"status=outrunning": {"glyph": STATUS_SHED_GLYPH, "color": HudStyle.WARN,
+			"rung": RUNG_ALERT},
+
+		# **A DEATH'S RUNG IS ITS BRACKET** (issue #614). `bracket=elder` is deliberately NOT here:
+		# it falls through to `died`'s own `RUNG_NOTABLE`, which is the half of the old rule that
+		# survived. These two are the half that did not — see the split above `RUNG_BY_KIND`.
+		#
+		# **DANGER, not the WARN every other row in this table wears.** The amber ones are an
+		# investment lost or a crew cut, which the player can still reverse; a person is dead. This is
+		# the ladder's own `RUNG_ALERT` ink, and the glyph tracks the rung exactly as it does above.
+		"bracket=working": {"glyph": STATUS_SHED_GLYPH, "color": HudStyle.DANGER,
+			"rung": RUNG_ALERT},
+		"bracket=child": {"glyph": STATUS_SHED_GLYPH, "color": HudStyle.DANGER,
 			"rung": RUNG_ALERT},
 	}
 	TURN_STAMP_COLOR = HudStyle.INK_DIM

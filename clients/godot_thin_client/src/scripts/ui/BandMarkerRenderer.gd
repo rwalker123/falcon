@@ -88,6 +88,8 @@ func _draw_band_stack(group: Array, radius: float, origin: Vector2) -> void:
 	# Decorations on the active band only (expeditions show provisions in their drawer, not a dot).
 	if _view._is_player_unit(active) and not active_is_expedition:
 		_draw_band_status(active, center, token_radius)
+		# …and the ⚠ for ground that is killing them, in the one free corner of the token.
+		_draw_band_lethal_mark(active, center, token_radius, radius)
 	_draw_band_task_arrow(active, center, radius, origin)
 	# Count badge for hidden bands beyond the visible cap (suppressed at far zoom). Folded onto
 	# the right end of the banner (nameplate-with-count look); falls back to the old bottom-right
@@ -256,6 +258,37 @@ func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: flo
 		var ring_radius: float = marker_radius * (_view.EXPEDITION_AWAITING_RING_FACTOR + _view.EXPEDITION_AWAITING_PULSE_AMPLITUDE * pulse)
 		var ring_color := Color(HudStyle.WARN.r, HudStyle.WARN.g, HudStyle.WARN.b, 0.45 + 0.4 * pulse)
 		_view.draw_arc(center, ring_radius, 0, TAU, 28, ring_color, _view.EXPEDITION_AWAITING_RING_WIDTH)
+
+## The LETHAL-GROUND mark: a ⚠ up-left of a player band's token while it stands where the sim is
+## killing people (issue #614).
+##
+## **A STATE, NOT AN EVENT.** It is true for as long as the band is on that hex and gone the turn it
+## moves off — so there is no edge to gate, and none of the *"has it camped or is it passing
+## through?"* judgement an event would have needed. Nothing accumulates and nothing has to be
+## dismissed.
+##
+## **`TileSurvivability.is_lethal` IS THE TEST**, the same authority the tile chip's ⚠ and the
+## temperature overlay's hatch read, off the temperature `MapView` already decoded. A hex the world
+## has no reading for draws nothing — unknown is not deadly.
+##
+## LOD-gated on `BAND_LETHAL_MARK_MIN_RADIUS` — its OWN threshold, higher than the banner's, because
+## a ⚠ has to resolve as a triangle to mean anything and a dot or a nameplate does not. See that
+## constant for the measurement. The temperature OVERLAY still hatches that ground at any zoom, which
+## is the map-scale answer to the same question.
+func _draw_band_lethal_mark(unit: Dictionary, center: Vector2, token_radius: float,
+		radius: float) -> void:
+	if radius < _view.BAND_LETHAL_MARK_MIN_RADIUS or not TileSurvivability.has_model():
+		return
+	var temperature: Variant = _view.tile_temperature.get(
+		Vector2i(int(unit.get("current_x", -1)), int(unit.get("current_y", -1))), null)
+	if temperature == null or not TileSurvivability.is_lethal(float(temperature)):
+		return
+	var size := int(round(token_radius * _view.BAND_LETHAL_MARK_SIZE_FACTOR))
+	# Out along the up-left diagonal, far enough that the glyph's BOX clears the token — see
+	# `BAND_LETHAL_MARK_CLEARANCE_FACTOR`.
+	var mark_center := center + Vector2(-1.0, -1.0).normalized() \
+		* (token_radius + float(size) * _view.BAND_LETHAL_MARK_CLEARANCE_FACTOR)
+	_view._draw_marker_glyph(mark_center, _view.BAND_LETHAL_MARK_GLYPH, size, HudStyle.DANGER)
 
 ## One decoration on a player band marker: a food-runway dot (green/amber/red by
 ## the shared BandFoodStatus thresholds) up-and-right of the marker.

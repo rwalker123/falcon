@@ -385,6 +385,31 @@ func ingest_snapshot_bands(prev_sizes: Dictionary, band: Dictionary, bands: Arra
 
 ## Ingest the snapshot food modules (x/y/module/kind + terrain_id) into the per-tile lookup. A
 ## non-Array input is ignored (the lookup keeps its last value), matching the old ingest.
+## Per-tile temperature (°C) keyed by `Vector2i`, so the orb can ask whether a band is STANDING ON
+## ground the sim is killing on (issue #614).
+##
+## **IT IS `MapView.tile_temperature` FORWARDED, NOT A SECOND DECODE.** `Main` hands over the dict the
+## map already ingested from the `tiles` section, exactly as it forwards `map_view.food_sites` rather
+## than the raw `food_modules` array — no new wire field, no new schema, and no second place that
+## could disagree with the map about what a hex reads. The lethality VERDICT is not cached with it:
+## `TileSurvivability` owns that, and one authority answering the card, the map and the orb is the
+## whole point.
+var _tile_temperature: Dictionary = {}
+
+## Ingest the forwarded per-tile temperatures. A non-Dictionary input is ignored (the last value
+## stands), matching every other catalogue setter here: a delta carries a section only when it
+## CHANGED, so absence means unchanged and never "the world has no temperatures".
+func set_tile_temperatures(temperatures_variant: Variant) -> void:
+	if not (temperatures_variant is Dictionary):
+		return
+	_tile_temperature = temperatures_variant
+	changed.emit(&"tile_temperatures")
+
+## The temperature (°C) at a tile, or `null` when the world has no reading there — a caller must
+## distinguish "no reading" from a cold one, so this deliberately does not default to a number.
+func temperature_at(x: int, y: int) -> Variant:
+	return _tile_temperature.get(Vector2i(x, y), null)
+
 func set_food_modules(modules_variant: Variant) -> void:
 	if not (modules_variant is Array):
 		return

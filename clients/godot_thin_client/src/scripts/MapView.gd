@@ -595,6 +595,36 @@ const PLAYER_FACTION_ID := 0
 const BAND_FOOD_DOT_RADIUS_FACTOR := 0.28   # of the band marker radius
 const BAND_FOOD_DOT_OFFSET_FACTOR := 0.9    # dot center offset up-right from marker center
 
+# --- LETHAL-GROUND mark on a band token (issue #614) ------------------------------------------
+# A band standing where the sim is killing people wears a ⚠ on its own marker. **It is a STATE, not
+# an event**: true while the band is on that ground and gone the moment it moves off, so there is
+# nothing to edge-gate and no camped-versus-passing-through threshold to get wrong.
+#
+# ⛔ **UP-LEFT, AND THE QUADRANT IS THE WHOLE PLACEMENT DECISION.** Three marks already hang off this
+# token and each owns a direction: the food-runway dot is up-RIGHT
+# (`BAND_FOOD_DOT_OFFSET_FACTOR`), the faction nameplate banner sits BELOW it
+# (`_draw_band_banner`), and the over-cap count pill takes the banner's right end or falls back
+# bottom-right (`BAND_COUNT_BADGE_OFFSET`). Up-left is the one free corner, so a fourth mark lands
+# beside them rather than on top of one. (The travel arrow points wherever the destination is and
+# cannot reserve a quadrant; it is a thin line from the token centre and reads through a glyph.)
+const BAND_LETHAL_MARK_GLYPH := "⚠"
+# Glyph size in TOKEN radii, so it tracks zoom like every other decoration on the token.
+const BAND_LETHAL_MARK_SIZE_FACTOR := 1.5
+# How far the glyph's CENTRE is pushed out along the up-left diagonal, past the token's edge: the
+# token's own radius plus this fraction of the glyph. **The offset has to know the glyph's SIZE, not
+# just the token's** — a fixed multiple of the token radius put a mark drawn at a legible size
+# straight on top of the tent, which is the collision this slot was chosen to avoid.
+const BAND_LETHAL_MARK_CLEARANCE_FACTOR := 0.5
+# ⛔ **ITS OWN DETAIL GATE, ABOVE `ICON_MIN_DETAIL_RADIUS`, AND A MEASUREMENT PUT IT THERE.** The
+# first cut shared the banner's gate (16.0) and pinned a 9 px floor under the glyph; rendered at that
+# radius the ⚠ is not a warning triangle, it is a smudge the harness's probe could not tell from
+# terrain — so the mark existed at zooms where it said nothing. A glyph scales to `radius × 0.51`
+# here, and 14 px is where the triangle and its bar resolve, which puts the gate at ~28. Below it the
+# mark drops out entirely and the TEMPERATURE OVERLAY's hatch is the map-scale answer to the same
+# question. There is no size FLOOR any more: a floor would draw an illegible mark rather than none,
+# and would have to fight the offset above to avoid landing on the token.
+const BAND_LETHAL_MARK_MIN_RADIUS := 28.0
+
 # --- Scouting-expedition marker (docs/plan_exploration_and_sites.md §2) ---
 # A detached party reads as a hollow, flag-marked disc — deliberately distinct from a resident
 # band's SOLID faction dot, so an expedition says "party out on a venture, not a settlement-band"

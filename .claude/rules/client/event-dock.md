@@ -1050,3 +1050,41 @@ ones most easily mistaken for client chatter, since the remedy for both is somet
 **Frame:** `event_dock_material` (`chapters/event_dock.gd`) carries all three rows at once — the whole
 claim is that the two kit seams read APART, and a split asserted one row at a time passes on a client
 that files every `kit_life` line at one rung.
+
+## ⛔ A DEATH'S RUNG IS ITS BRACKET, and half of the old invariant was reversed to get there
+
+`died` was pinned at `RUNG_NOTABLE` for every bracket. The justification beside it was written
+**entirely about elders** — *"bands lose elders to cold as a matter of course, and a rung that
+interrupts for every one of them trains the player to stop reading the bar"* — and never made a case
+for workers or children, because there is none: a worker dying is labour lost whatever killed them,
+and a child is the band's next worker. It then leant on an escape hatch: *"a death that MATTERS (a
+band starving out) announces itself through the starvation and morale channels that already exist."*
+
+**Issue #614 is the case that disproves the escape hatch.** Temperature mortality is FOOD-INDEPENDENT
+and leaves morale clamped at 100 %, so a band freezing its workers away announces itself through
+neither channel — the count fell and the bar carried one Notable line the player had every reason to
+skim.
+
+So the kind SPLITS ON THE `bracket=` TOKEN, riding the mechanism `kit_life`'s `severity=` split
+already established (`DETAIL_STATUS_STYLE`, matched on a whole space-delimited fragment):
+
+| `bracket=` | rung | why |
+|---|---|---|
+| `elder` | **Notable** — unlisted, falls through to the kind | unchanged, and deliberately so until an elder means something mechanically |
+| `working` | **Alert** | labour lost, whatever killed them |
+| `child` | **Alert** | the band's next worker |
+
+**The tokens are the sim's own** (`systems::population`'s `DeathBracket` — `child` / `working` /
+`elder`, written by the single `bracket=` site in the workspace). Invent a fourth spelling and the
+split silently stops matching.
+
+**These two rows wear `HudStyle.DANGER`, not the `WARN` every other row in that table carries.** The
+amber ones are an investment lost or a crew cut, which the player can still reverse; a person is
+dead. The glyph tracks the rung exactly as the table's own rule requires — `⚠` on the promoted pair,
+and the elder row keeps the ladder's Notable `✦`, which is what makes the split visible rather than
+merely filtered.
+
+**The elder row is the CONTROL in `ui_preview`, not decoration.** Without it, promoting the whole kind
+passes every other claim in that state and throws away the reason the kind was Notable in the first
+place — and the run proves it: promoting `died` outright also broke a pre-existing pinned-alert
+assertion elsewhere in the suite.

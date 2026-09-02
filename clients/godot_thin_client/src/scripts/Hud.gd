@@ -1121,6 +1121,12 @@ func update_connections(connections_variant: Variant) -> void:
 ## Ingests MapView's terrain-stamped food sites (x/y/module/kind + terrain_id) into the per-tile map
 ## the Forage row reads, so its glyph matches the map marker (riverine split included). The per-tile
 ## lookup lives on `_band_labor` (`food_module_by_tile()`).
+## The per-tile temperatures `MapView` already ingested, forwarded by `Main` (issue #614). The orb
+## needs them to say WHY a band is shrinking on ground that is freezing it — food-independent deaths
+## reach none of the other decline reasons. See `HudBandLaborState._tile_temperature`.
+func update_tile_temperatures(temperatures_variant: Variant) -> void:
+    _band_labor.set_tile_temperatures(temperatures_variant)
+
 func update_food_modules(modules_variant: Variant) -> void:
     _band_labor.set_food_modules(modules_variant)
 

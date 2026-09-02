@@ -2273,3 +2273,40 @@ this arc's cross-ref put those keys in.
 good in DANGER ink. Those renderers were correct all along — only the cross-ref feeding them was
 missing, which is why the fix moved no frame: a clean run is **1614 `PASS`, exit 0**, five more than
 before with the same frame set.
+
+## The DECLINE REASON and the DEATH RUNG (issue #614)
+
+Two states close the client half of the cold-lethality arc, in the chapters that own their arcs.
+
+**`turn_orb_decline_lethal_cold`** reproduces the reported playtest screen: five bands that all shrink
+between the baseline and live snapshot, differing only in WHY. Band 1 is the case itself — freezing,
+with a full larder, no emigrants and morale 1.0, so it satisfies none of `_decline_reason`'s original
+four tests and the row shipped with an **empty detail line**. The frame carries the contrast in one
+popover: `lethal cold` / `lethal heat` / *(blank, on survivable ground)* / `lethal cold` (outranking
+emigration) / `starving` (outranking lethal).
+
+**Three of the six assertions exist to stop the claim passing for the wrong reason.** A precondition
+asserts the freezing band really is benign on every other axis — otherwise the row could be reading
+`starving` and satisfying the test. The survivable band asserts the branch is not simply firing on
+every shrinking band. And the two priority claims (freezing AND emigrating; freezing AND starving)
+catch a branch inserted at the wrong height, which still answers a non-empty string and would look
+fixed.
+
+> ⛔ **THE ROWS ARE READ OFF `TurnOrb._entries`, NOT BY RE-RUNNING THE PRODUCER.** Producer 2 compares
+> the live size against `_band_labor.prev_band_sizes()`, which `update_band_alerts` OVERWRITES with
+> the live sizes immediately after building the attention array. A second `build_band_attention` call
+> therefore sees every band at its own current size, finds no decline anywhere, and hands back an
+> empty list that reads exactly like "no such row" — the first cut of this state failed all five
+> assertions for that reason and none of them were about the feature.
+
+**`event_dock_death_brackets`** puts all three brackets in one frame at the default detail floor: same
+kind, same turn, same cause, only `bracket=` differing. Five assertions — the two promoted rungs, the
+ELDER CONTROL (without which promoting the whole kind passes everything else), the drawn glyph split
+(a promotion that filtered correctly and drew identically is the `trimmed`/`lapsed` defect again), and
+the no-token fallback.
+
+Sabotage-verified in two runs: removing the lethal branch from `_decline_reason` and the two
+`bracket=` rows together (6 fail — including the empty-detail case, which is the whole bug); then
+hoisting the lethal branch above starving with its `is_lethal` gate dropped, plus promoting `died`
+outright (6 fail, two of them the control assertions — **and one PRE-EXISTING pinned-alert assertion
+elsewhere in the suite**, which is the rung table's own guards catching a kind promoted wholesale).

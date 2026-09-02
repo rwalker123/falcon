@@ -269,3 +269,15 @@ const DECLINE_REASON_LOW_MORALE := "low morale"
 # Morale-driven loss is now emigration/relocation (people don't die of low morale —
 # see docs/plan_civ_wellbeing.md), so a shrink with emigrants last turn reads this.
 const DECLINE_REASON_PEOPLE_LEAVING := "people leaving"
+
+# **THE GROUND ITSELF IS KILLING THEM** (issue #614). Temperature mortality is FOOD-INDEPENDENT and
+# leaves morale clamped at 100 %, so a freezing band reached none of the reasons above and the row
+# rendered with an EMPTY detail line — the player watched the count fall and, in their words, *"knew
+# people were dying but didn't know why"*.
+#
+# **The words are the tile chip's** (`⚠ Lethal cold` / `⚠ Lethal heat`), minus the mark: one
+# vocabulary across the card and the bar, so a player who reads the orb row and then opens the hex
+# meets the same phrase rather than two names for one fact.
+const DECLINE_REASON_LETHAL_COLD := "lethal cold"
+
+const DECLINE_REASON_LETHAL_HEAT := "lethal heat"
