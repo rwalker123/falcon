@@ -1359,6 +1359,11 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_forage")
 	await _save_overlay_legend("map_forage_legend")
+	# The hatched swatch is opt-in PER ROW (`OverlayLegend.SWATCH_KIND_*`), and solid is the default
+	# every row written before it existed still takes. Asked of a channel that predates it, on the run
+	# where it is live, so a default that quietly stopped being solid could not pass unnoticed.
+	_assert_map("a channel that predates the hatched swatch keeps flat colours on every row",
+		_legend_rows_are_all_solid())
 
 	# States "hunt_danger" / "threat" (Predators Phase 0) — the two derived-danger overlays, projected
 	# client-side from herd positions. Three herds on the earthlike shape: a fierce MAMMOTH (attack ×
@@ -1443,6 +1448,28 @@ func _ready() -> void:
 		_temperature_legend_row_value("Coldest") == TEMPERATURE_COLDEST_TEXT \
 			and _temperature_legend_row_value("Warmest") == TEMPERATURE_WARMEST_TEXT)
 	_assert_temperature_legend_follows_model()
+
+	# **THE LETHAL SWATCH LOOKS LIKE THE MARK IT NAMES.** It shipped as a solid crimson block while the
+	# map drew that ground hatched, so the legend claimed a fill the map paints nowhere. A PNG can show
+	# the swatch but cannot say the lines are struck from the map pass's OWN constants — a transcribed
+	# copy renders identically today and drifts the first time either is retuned — so the parity is
+	# asserted against `MapView`'s constants directly, exactly as the ramp rows are against `_tile_color`.
+	var lethal_row := _legend_row("Lethal")
+	_assert_map("the Lethal row asks for a HATCHED swatch, not a solid block",
+		StringName(lethal_row.get("swatch_kind", OverlayLegend.SWATCH_KIND_SOLID))
+			== OverlayLegend.SWATCH_KIND_HATCHED)
+	_assert_map("…hatched in the very colour the map's own hatch pass draws with",
+		(lethal_row.get("hatch_color", Color()) as Color).is_equal_approx(
+			MAP_VIEW.TEMPERATURE_HATCH_COLOR))
+	_assert_map("…at the very angle it draws it at",
+		(lethal_row.get("hatch_direction", Vector2.ZERO) as Vector2).is_equal_approx(
+			MAP_VIEW.TEMPERATURE_HATCH_DIRECTION))
+	_assert_map("…boxed by the contour colour, so the swatch names BOTH marks the map makes",
+		(lethal_row.get("edge_color", Color()) as Color).is_equal_approx(
+			MAP_VIEW.TEMPERATURE_CONTOUR_COLOR))
+	# The opt-in must not have leaked: every OTHER row here is still a flat colour.
+	_assert_map("…and every other row on this legend keeps the default solid swatch",
+		_legend_rows_are_all_solid("Lethal"))
 
 	# map_temperature_pocket — the cold pocket close up, which is where the contour is legible as a
 	# CLOSED boundary rather than a stripe: killing ground ringed by living ground, hatched inside.
@@ -3372,10 +3399,26 @@ func _temperature_legend_row_value(label: String) -> String:
 
 ## The swatch `Color` of the legend row with this label.
 func _temperature_legend_row_color(label: String) -> Color:
+	return _legend_row(label).get("color", Color())
+
+## The whole legend row with this label, or `{}` when the legend carries no such row.
+func _legend_row(label: String) -> Dictionary:
 	for row in _map._legend_for_current_view().get("rows", []):
 		if String(row.get("label", "")) == label:
-			return row.get("color", Color())
-	return Color()
+			return row
+	return {}
+
+## Do NONE of this legend's rows ask for a swatch shape other than the default? The hatched swatch is
+## opt-in per ROW, so this is what says the opt-in did not leak: every row written before it existed —
+## here and on every other channel — must still be a flat colour.
+func _legend_rows_are_all_solid(except_label: String = "") -> bool:
+	for row in _map._legend_for_current_view().get("rows", []):
+		if String(row.get("label", "")) == except_label:
+			continue
+		if StringName(row.get("swatch_kind", OverlayLegend.SWATCH_KIND_SOLID)) \
+				!= OverlayLegend.SWATCH_KIND_SOLID:
+			return false
+	return true
 
 ## The (col, row) of the fixture's coldest and warmest tiles — the pocket's centre, and any tile on
 ## the last row. The ramp-parity assertions ask the MAP what it paints these two and compare against

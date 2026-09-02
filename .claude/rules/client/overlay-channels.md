@@ -665,9 +665,37 @@ Swatches come from the same `_temperature_ramp_color` the map paints through —
 `_pasture_ramp_color` rule, because a swatch is a claim about the map — and the harness asserts it by
 comparing each swatch against what `_tile_color` hands back for that extreme's own tile.
 
-**A legend swatch is a flat `Color`, so the Lethal row wears the hatch colour solid.** That is the
-settled answer and not a shortfall: the swatch names the ink the lethal marks are drawn in, and the
-channel description says what shape they take. Do not try to put a pattern in a swatch.
+### ⛔ THE LETHAL SWATCH IS HATCHED, BECAUSE THE MAP'S MARK IS
+
+It shipped as a **solid crimson block** on the reasoning that a legend swatch is a flat `Color` and
+the channel description could carry the shape. On screen that reads as *this ground is painted solid
+red* — a fill the map paints nowhere. Individually defensible, misleading in composite: the same
+defect class as a `Temperate` chip on ground that kills, inside the fix for it.
+
+`OverlayLegend` grew a row-declared **swatch KIND** for it (`SWATCH_KIND_SOLID` / `SWATCH_KIND_HATCHED`),
+which is how that file is extended — **no channel is named there, and none may be**, exactly as
+`legend_kind` names none. `SWATCH_KIND_SOLID` is the default, so every row written before it exists
+keeps its flat colour untouched, and a TEXTURE row still wins over both (a textured biome row has no
+business also being hatched). The harness asserts the default did not leak, on this legend and on a
+channel that predates the kind.
+
+**The hatch has ONE definition.** The row carries `hatch_color` / `hatch_direction` / `edge_color`,
+handed over by `_build_temperature_legend` from `MapView.TEMPERATURE_HATCH_COLOR`,
+`TEMPERATURE_HATCH_DIRECTION` and `TEMPERATURE_CONTOUR_COLOR` — the very constants
+`_draw_lethal_hatch` and `_draw_lethal_contour` draw with, never transcriptions. That is the
+`_pasture_ramp_color` rule applied to a drawn mark instead of a ramp, and `map_preview` asserts the
+identity rather than trusting it: a transcribed copy renders identically today and drifts the first
+time either side is retuned. `OverlayLegend` owns only the swatch's OWN geometry (line spacing,
+weights, `clip_contents` to trim the lines to the box at any angle) — a hex at play zoom is several
+times that box, so the map's spacing would put one line in it.
+
+**The swatch is `HATCHED_SWATCH_SIZE` (20 px), not `SWATCH_SIZE` (11) — measured, not assumed.**
+Rendered at both: at 11 px the 2 px edge takes 4 px of the box and the 1.5 px lines land in ~7 px of
+interior as a dither/checkerboard that reads *dirtier* than the solid it replaced. At 20 px they
+resolve as unmistakably diagonal with the contour legible around them. It carries the EDGE as well as
+the hatch, so the swatch names both marks the map makes. The cost is a slightly ragged swatch column
+where this row sits beside flat ones; an illegible swatch is the worse readout. This is the
+`OverlayChannels` "render it before trusting it" rule paying out a second time.
 
 **The picker gives this channel the NEUTRAL glyph, correctly.** It is in
 `MapView.SPECIAL_PAINT_OVERLAY_KEYS` (it paints through a ramp of its own) and has no

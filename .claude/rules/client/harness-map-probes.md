@@ -115,7 +115,7 @@ opens the picker's popover on it; `map_temperature_farzoom` is the LOD half, on 
 that the COVER fit lands under the hatch's detail gate — the hatch is gone and the contour alone is
 still drawing the survival lines.
 
-**Ten assertions ride them, because the frames cannot carry any of it.** Two on the roster (the
+**Sixteen assertions ride them, because the frames cannot carry any of it.** Two on the roster (the
 channel is offered on a world with tile temperatures and NOT on one without — the negative asked
 first, since a positive alone passes against a row that is simply always present); three that the
 legend's swatches are what `_tile_color` paints the map's own coldest and warmest tiles and that its
@@ -125,7 +125,12 @@ cannot answer; and three PIXEL probes in a box around the pocket — hatch and c
 in, hatch gone and contour still present far out, with the fit radius asserted against the gate as an
 explicit premise first. The pixel probes are boxed rather than whole-frame because a targeted box
 makes the ABSENCE claim sharper (the hatch is asked for exactly where a lethal hex is being drawn) as
-well as thousands of times cheaper in GDScript.
+well as thousands of times cheaper in GDScript. The last six are the LETHAL SWATCH's: that the row
+asks for a hatched swatch rather than a solid block, that its colour, angle and edge are the very
+`MapView` constants the map's own passes draw with (a PNG shows the swatch but cannot say the lines
+were struck from the same constants — a transcribed copy renders identically and drifts later), and
+that the opt-in did not leak, every other row here and on a channel that predates the kind keeping
+the default solid.
 
 Sabotage-verified in four runs, each restored: removing the two draw calls fails the three pixel
 claims; forcing the hatch past its gate, hardcoding the legend's degrees and making
@@ -133,7 +138,9 @@ claims; forcing the hatch past its gate, hardcoding the legend's degrees and mak
 PRE-EXISTING roster assertions besides, which is the registry's own guards policing the new row);
 painting the swatches from the forage ramp and formatting the rows as fractions fails the three
 legend-parity claims; and making `has_temperature_data` answer false fails the positive-roster claim
-and cascades through the rest, the channel then being unpaintable.
+and cascades through the rest, the channel then being unpaintable. The swatch's six took two more:
+reverting the row to a solid kind with hand-written colour, angle and edge (4 fail), and leaking the
+hatched kind onto a temperature ramp row AND a forage row (2 fail, one per leak guard).
 
 Also the four **ANNOTATION states**, added by the
 `AnnotationRenderer` extraction because that family had **no fixture at all** and so no refactor of

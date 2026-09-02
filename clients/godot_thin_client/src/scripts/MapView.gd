@@ -4211,9 +4211,11 @@ func _format_pasture_capacity(capacity: float) -> String:
 ## that transcribed them would be a second opinion able to drift from the map it is describing. Until
 ## the model is published there is no row rather than an invented range.
 ##
-## A legend swatch is a flat `Color`, so the Lethal row wears the hatch COLOUR solid. That is the
-## honest compromise and not a shortfall: the swatch names the ink the lethal marks are drawn in, and
-## the channel description says what shape they take.
+## **THE LETHAL ROW'S SWATCH IS HATCHED, NOT A SOLID BLOCK.** It shipped solid on the reasoning that a
+## swatch is a flat `Color` and the description could carry the shape; on screen that read as *this
+## ground is painted solid red*, which the map paints nowhere. `OverlayLegend` grew a row-declared
+## swatch KIND for it (no channel is named there, and solid stays every other row's default), and this
+## row hands over the map pass's own colour and angle rather than restating them.
 func _build_temperature_legend() -> Dictionary:
 	var raw: PackedFloat32Array = _overlay_raw_array(TEMPERATURE_OVERLAY_KEY)
 	var coldest: float = INF
@@ -4255,8 +4257,18 @@ func _build_temperature_legend() -> Dictionary:
 			"value_text": _format_temperature(warmest),
 		})
 	if TileSurvivability.has_model():
+		# **THE SWATCH IS HATCHED, BECAUSE THE MAP'S MARK IS.** It wore a solid crimson block first,
+		# which made the legend name a fill the map never paints — a row that is individually
+		# defensible and misleading in composite, i.e. the same defect class as a `Temperate` chip on
+		# ground that kills. The colour and the ANGLE handed over here are the very constants
+		# `_draw_lethal_hatch` and `_draw_lethal_contour` draw with, never transcriptions, so the
+		# swatch cannot drift into a second red or a second angle (the `_pasture_ramp_color` rule).
 		rows.append({
 			"color": TEMPERATURE_HATCH_COLOR,
+			"swatch_kind": OverlayLegend.SWATCH_KIND_HATCHED,
+			"hatch_color": TEMPERATURE_HATCH_COLOR,
+			"hatch_direction": TEMPERATURE_HATCH_DIRECTION,
+			"edge_color": TEMPERATURE_CONTOUR_COLOR,
 			"label": "Lethal",
 			"value_text": TEMPERATURE_LETHAL_RANGE_FORMAT % [
 				TileSurvivability.survivable_min(), TileSurvivability.survivable_max()],
