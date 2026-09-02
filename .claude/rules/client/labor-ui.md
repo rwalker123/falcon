@@ -4930,7 +4930,7 @@ spelled and never a raw count.
     force-hovers the Hunt link, so the affordance shows in a static frame).
     `actual_yield`/`sustainable_yield`/`workers_needed` are decoded per assignment in
     `native/src/lib.rs` (inside
-    `labor_assignments`); the band-level food flow (net rate + Gathered/Hunted/Eaten breakdown) lives
+    `labor_assignments`); the band-level food flow (net rate + Gathered/Hunted/Consumed breakdown) lives
     on the **Food summary line**, not here — see "Band food status". Then a **Band roles**
     section with the always-shown **Scout** + **Warrior** rows (even at 0), each with a one-line hint so
     the `−/+` steppers read as "this is how you staff this standing role" (Scout's hint reads "Extends

@@ -612,3 +612,18 @@ panel's Food breakdown renders. They are equal on a turn's own frame and differ 
 dispatched command refreshed — which is precisely the frame a panel reading the accumulating pair
 renders nothing on, so a decoder that emitted one of them would look correct in a golden and lose the
 rows in play.
+
+**AND ISSUE #548 SPLIT THE PER-TURN PAIR BY WHAT CARRIED THE GOODS, EIGHT MORE COHORT KEYS**:
+`transfer_local_{received,sent}_turn` / `transfer_route_{received,sent}_turn` and the `fodder_`
+prefixed four, all plain `float`s cast `as f64` beside the pair they refine. `local` is the automatic
+proximity pooling of a supply network (plus a fission dowry); `route` is an expedition PARTY carrying
+it, whatever its errand, which is why a hunt's homecoming is `route` and not a third kind. **The two
+are exhaustive** — local + route equals the generic pair in each direction by construction — so a
+readout may render both rows and trust that nothing is missing between them.
+
+**FOUR PAIRS SHIP AS FOUR PAIRS; THE DECODER NETS NOTHING.** `DisclosureController` nets each kind
+into one signed row, which keeps the gross figures available to any surface that later wants them.
+The fodder four are separate keys rather than a shared set because hay and grain cross the same links
+on the same turn in different amounts. All eight are appended scalars, so the fixture's saturation
+reaches them and a golden re-record is the only step — each takes a distinct value there, which is
+what makes a swapped accessor show as a moved line rather than merely a different one.

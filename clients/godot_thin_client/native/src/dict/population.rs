@@ -263,6 +263,66 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         cohort.transferReceivedTurn() as f64,
     );
     let _ = dict.insert("transfer_sent_turn", cohort.transferSentTurn() as f64);
+    //   THE SAME TWO FACTS SPLIT BY WHAT CARRIED THE GOODS (issue #548), for BOTH larders. The pair
+    //                  above says THAT food crossed and never what moved it, and the two mechanisms
+    //                  are the part a player can act on: `local` is the automatic proximity pooling
+    //                  of a supply network (plus a fission dowry) — bands standing together, nothing
+    //                  travelled — while `route` is an expedition PARTY carrying it. The party is the
+    //                  vehicle whatever its errand, so a hunt's homecoming is `route` and not a third
+    //                  kind. **THE TWO ARE EXHAUSTIVE**: local + route == the pair above in each
+    //                  direction, by construction, so a readout may render both rows and trust that
+    //                  nothing is missing between them.
+    //
+    //                  **ALL EIGHT ARE PER-TURN and there are deliberately no accumulating twins.**
+    //                  The sim copies them onto the cohort just before the turn's capture and never
+    //                  clears them, so the after-every-command recapture republishes them intact —
+    //                  the #517 defect, not to be reintroduced under a finer name. The larder
+    //                  identity stays closed by `transfer_received` / `transfer_sent`, unchanged.
+    //
+    //                  **NETTED NOWHERE HERE.** Four received/sent pairs ship as four pairs; the
+    //                  readout (`DisclosureController._link_transfer_lines` /
+    //                  `fodder_breakdown_lines`) decides to net each kind into one signed row.
+    let _ = dict.insert(
+        "transfer_local_received_turn",
+        cohort.transferLocalReceivedTurn() as f64,
+    );
+    let _ = dict.insert(
+        "transfer_local_sent_turn",
+        cohort.transferLocalSentTurn() as f64,
+    );
+    let _ = dict.insert(
+        "transfer_route_received_turn",
+        cohort.transferRouteReceivedTurn() as f64,
+    );
+    let _ = dict.insert(
+        "transfer_route_sent_turn",
+        cohort.transferRouteSentTurn() as f64,
+    );
+    //                  The hay four, in FODDER units against `fodder_store`. Separate keys rather
+    //                  than a shared set: hay and grain cross the same links on the same turn in
+    //                  different amounts, so an account reading the other's figure would be
+    //                  plausible on every frame. **ONLY THE LOCAL PAIR IS A RATE** — two camps within
+    //                  reach pool every turn, which is why `turns_of_fodder` (and
+    //                  `DetailFormat.band_net_fodder`, which must stay on that same basis) counts the
+    //                  local net in; a shipment lands once, and annualising it is the mistake arc
+    //                  #527 refused. The route arm reads 0 today because a shipment's manifest takes
+    //                  only food and materials — a fact about shipments, not about hay.
+    let _ = dict.insert(
+        "fodder_transfer_local_received_turn",
+        cohort.fodderTransferLocalReceivedTurn() as f64,
+    );
+    let _ = dict.insert(
+        "fodder_transfer_local_sent_turn",
+        cohort.fodderTransferLocalSentTurn() as f64,
+    );
+    let _ = dict.insert(
+        "fodder_transfer_route_received_turn",
+        cohort.fodderTransferRouteReceivedTurn() as f64,
+    );
+    let _ = dict.insert(
+        "fodder_transfer_route_sent_turn",
+        cohort.fodderTransferRouteSentTurn() as f64,
+    );
     // **HOW THIS BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH** — `"spread"` or `"priority"`
     // (`docs/plan_standing_upkeep.md` §2.5), the token `upkeep_mode` takes, decoded so a panel can
     // show the mode the band is on rather than guessing at the default.

@@ -1306,7 +1306,7 @@ pre-existing `band_panel_*` frame moved in that readout and in nothing else.
 | `knowledge` | SETTLING (the stage's WORD, keyed, with its meter) · the craft tracks · DISCOVERIES (kinds, headed by the instance count) — **the last of the three only where the box can hold it** |
 | `parties` | one row per party — its mission summary and the band it LEFT |
 
-**EACH ACCOUNT IS A STOCK AND A RATE, NEVER AN INLINE LEDGER.** The Food block grew `Income` / `Eaten`
+**EACH ACCOUNT IS A STOCK AND A RATE, NEVER AN INLINE LEDGER.** The Food block grew `Income` / `Consumed`
 / `Pen feed` rows for a while and they are gone (the last of the three twice over — the pen's food bill
 is itself retired): a band states `Food: 74 (93 turns) · -0.81 /turn` on
 ONE line and puts that breakdown behind a disclosure popover, so the rollup had invented a four-row

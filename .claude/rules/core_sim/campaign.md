@@ -469,7 +469,7 @@ transferSent` ledger identity.
 
 > **The last two terms are the food that CROSSED BETWEEN BANDS** —
 > `PopulationCohortState.transferReceived` / `transferSent`
-> (`LaborAllocation::last_transfer_received` / `last_transfer_sent`, arc #527). Every other term is
+> (the summed `received()` / `sent()` of `LaborAllocation::last_food_transfers`, arc #527). Every other term is
 > about *this* band: what its own workers produced, what its own people ate, what its own raid cost
 > it. Food that **moves between larders** therefore fits nowhere in it, and three
 > things move food between larders: `balance_supply_networks`, every turn since turn one; a **trade
@@ -496,6 +496,18 @@ transferSent` ledger identity.
 > signed net**, matching `raidForfeit`: a band that both sends and receives in
 > one turn is doing something, and a signed net would render that as nothing happening.
 >
+> **BUT THE PLAYER ASKS ONE QUESTION FINER THAN THAT — *what moved it*** (issue #548). The split is
+> `TransferLink`, two arms and no third: **`local`** is bands standing together with nothing
+> travelling (`balance_supply_networks`, and a fission's dowry), **`route`** is an expedition party
+> carrying it (a shipment's launch draw and its delivery, a hunt's drop-off, a fold-back on the way
+> home). The link names the **vehicle, not the errand**, which is why a hunting party's homecoming is
+> `route`. Published per turn as `transfer{Local,Route}{Received,Sent}Turn`, and **exhaustive by
+> construction**: every writer books through one `TransferLedger` that has no unclassified arm, so
+> `local + route` is exactly the pair above in each direction — pinned by
+> `transfer_food_ledger::both_accounts_state_which_link_moved_the_goods`, on a turn where one band
+> both pools and takes delivery. There are deliberately no accumulating twins of the eight: the
+> identity is closed by the summed pair, and the split is a readout.
+>
 > **The window is the SNAPSHOT window, not the turn.** Unlike the other four terms this pair has
 > writers *outside* `run_turn` — a `send_trade_expedition` (or `send_expedition`) command debits the
 > larder when it is applied, between two published frames. So every writer **adds** and exactly one
@@ -520,9 +532,21 @@ transferSent` ledger identity.
 > `transfer_food_ledger::a_recapture_still_publishes_the_turns_transfers`, which drives the recapture
 > path itself — a second `capture_snapshot` does not reproduce it.
 >
-> **Food only.** Materials cross between bands too — the network pools them per rating, a shipment
-> carries them — and there is deliberately **no materials identity**: a material's account is the
-> batch store itself, and a scalar total of hide and bone is the retired trade axis under a new name.
+> **Food only — for the IDENTITY.** Materials cross between bands too — the network pools them per
+> rating, a shipment carries them — and there is deliberately **no materials identity**: a material's
+> account is the batch store itself, and a scalar total of hide and bone is the retired trade axis
+> under a new name.
+>
+> **FODDER KEEPS THE SAME FOUR ARMS AND CLOSES NOTHING** (`LaborAllocation::last_fodder_transfers`,
+> wire `fodderTransfer{Local,Route}{Received,Sent}Turn`). Hay pools exactly as grain does — the
+> balancer walks a band's whole store — and until #548 nothing counted it, so a receiving band's
+> `fodderStore` rose with only *grown* and *eaten* to explain it. What the account buys is the rows
+> that name the neighbour and the **runway**, which nets the **`local`** arm in and deliberately not
+> the `route` one (`yield-forecast.md` → "Local crossings are a rate and count; route crossings are
+> events and do not"); it is not a second reconciliation identity.
+> **Its `route` arm reads `0` on every frame today**, because a shipment's manifest refuses any cargo
+> item that is not food or a material (`ResolvedShipment`) — a fact about shipments rather than about
+> hay, and the reason both accounts still carry one shape.
 >
 > Pinned by `integration_tests/tests/transfer_food_ledger.rs` against real turns and the real
 > exported snapshot, over every producer. **A producer that fires between two captures needs a case

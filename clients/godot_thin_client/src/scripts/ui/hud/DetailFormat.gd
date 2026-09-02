@@ -131,7 +131,7 @@ const FOOD_LABEL_HUNTED := "Hunted"
 # what those two leave uncovered starves the herd (`pen_fed_fraction` < 1) instead of draining the
 # people's larder — so a pen has nothing to report on THIS ledger at all. The bare word is therefore
 # unambiguous again; the "(people)" qualifier only ever existed to contrast with the animals' row.
-const FOOD_LABEL_EATEN := "Eaten"
+const FOOD_LABEL_CONSUMED := "Consumed"
 
 # The RAID debit (Predators Phase 3): food this band lost to predator raids this turn — the ledger's
 # only debit beyond consumption. The sim answers it as `PopulationCohortState.raidForfeit` (the
@@ -153,16 +153,44 @@ const FOOD_LABEL_RAID_FORFEIT := "%s Lost to raids" % RAID_GLYPH
 # nothing having happened. The received row is an INCOME row (▲ green) and the sent row a DEBIT
 # (▼ amber), which the shared `food_breakdown_row` decides from the sign it is handed.
 #
-# **A PLAIN ARROW PAIR, NOT A HANDSHAKE OR A CART**, for two reasons. What these rows report is
-# neighbours pooling as often as it is a shipment arriving, so a trade glyph would promise a deal the
-# supply network never made. And the emoji that says "deal" (🤝) is not in this client's fallback
+# **A PLAIN ARROW PAIR, NOT A HANDSHAKE OR A CART**, for two reasons. What these rows report is a
+# neighboring camp being handed some of this one's stores as often as it is a shipment arriving, so a
+# trade glyph would promise a deal the supply network never made. And the emoji that says "deal" (🤝) is not in this client's fallback
 # font: it renders as an INVISIBLE gap — no tofu box, just a wider indent — which is the silent
 # failure mode `Typography.gd` is retired for. ⇄ is in the Arrows block the ▸/◀/▲▼ carets already
-# come from, so it draws everywhere they do. **One glyph for both rows**, unlike Eaten and Lost to
+# come from, so it draws everywhere they do. **One glyph for both rows**, unlike Consumed and Lost to
 # raids: these two are ONE fact in two directions, and the row's own words say which way.
 const TRANSFER_GLYPH := "⇄"
 const FOOD_LABEL_TRANSFER_RECEIVED := "%s From other bands" % TRANSFER_GLYPH
 const FOOD_LABEL_TRANSFER_SENT := "%s To other bands" % TRANSFER_GLYPH
+
+# ---- THE LINK THE GOODS MOVED OVER (issue #548) --------------------------------------------------
+# The pair above says a transfer happened and nothing about HOW, which is the one thing a player can
+# act on: one of these two links they built, and the other happens whether they look or not. So the
+# row names the KIND OF LINK, and there are exactly two of them today:
+#
+#   * **Local exchange** — `balance_supply_networks`, the automatic balancing between camps standing
+#     within reach of one another. Nobody orders it and nobody built it.
+#   * **Trade route** — a shipment: a party arriving with cargo, or the draw a party takes when it
+#     launches. This one the player did.
+#
+# ⛔ **IT NAMES THE LINK AND NEVER THE COUNTERPARTY.** Naming the camp at the other end was built and
+# rejected: bands genuinely have no names in this game (issue #615), so every such row was either a
+# placeholder or a `Band 4`, and the variable-length name list dragged a whole pixel-fitting apparatus
+# behind it to keep the row from wrapping. A link kind is two fixed phrases and cannot wrap.
+#
+# ⛔ **AND NOTHING SAYS "POOLED".** One anonymous pot is how `balance_commodity` is implemented, not
+# what happens in the world: each camp holds its own stores and hands some of them to a short
+# neighbor.
+#
+# **DIRECTION IS THE SIGN'S JOB, exactly as it is on every other row of these breakdowns** — ▲ green
+# for what came in, ▼ amber for what went out, decided by `food_breakdown_row` from the number it is
+# handed. That is why one phrase serves both directions and there is no `From` / `To` pair here.
+#
+# **ONE CONSTANT EACH, READ BY BOTH LEDGERS.** The fodder popover uses these very strings rather than
+# a copy: two accounts wording one event two ways is a drift that has already had to be undone once.
+const TRANSFER_LABEL_LOCAL := "%s Local exchange" % TRANSFER_GLYPH
+const TRANSFER_LABEL_ROUTE := "%s Trade route" % TRANSFER_GLYPH
 
 # ---- THE FODDER LEDGER'S TWO FLOWS, the labels of the `Fodder:` row's own breakdown. The larder has
 # exactly two: what the band's fodder Fields GREW this turn (`fodder_income`) and what its pens ATE
@@ -170,8 +198,8 @@ const FOOD_LABEL_TRANSFER_SENT := "%s To other bands" % TRANSFER_GLYPH
 # the harvest and the animals — because the row above states neither and the popover has to answer
 # *why is this draining*.
 #
-# **`Pens`, not `Fed to pens` or `Eaten`**: the food ledger's `Eaten` is the PEOPLE's, and a fodder
-# larder that also said "Eaten" would read as the same account twice. One noun per debit.
+# **`Pens`, not `Fed to pens` or `Consumed`**: the food ledger's `Consumed` is the PEOPLE's, and a fodder
+# larder that also said "Consumed" would read as the same account twice. One noun per debit.
 const FODDER_LABEL_GROWN := "Grown"
 const FODDER_LABEL_PENS := "Pens"
 
@@ -2506,7 +2534,7 @@ static func band_net_food(band: Dictionary) -> float:
 ## The STEADY total food income = Gathered + Hunted (Σ per-source realized average across the band's
 ## forage + hunt assignments). Summed from the SAME per-source realized values as the breakdown rows, so
 ## it equals Gathered + Hunted exactly — the honest long-run average of the lumpy per-turn take, so it
-## does NOT swing. It feeds the headline net (`band_net_food` = income − Eaten − Lost to raids) and the
+## does NOT swing. It feeds the headline net (`band_net_food` = income − Consumed − Lost to raids) and the
 ## `food_is_concerning` gate. **Deliberately summed from the rows rather than read off a band-level
 ## wire field** — a separately-computed total could drift from the Gathered/Hunted rows it sits above,
 ## and this way the headline equals them by construction. (A cohort-level `foodIncomeAverage` existed
@@ -2547,7 +2575,7 @@ static func band_transfer_sent(band: Dictionary) -> float:
 ##
 ## **PER-TURN STATE ON THE COHORT, so a recapture re-reads it unchanged** — which is the whole
 ## difference from the accumulating twin above, and the reason every row of this breakdown is now on
-## the same basis as `Gathered` / `Eaten` / raid forfeit beside it. On the turn's own
+## the same basis as `Gathered` / `Consumed` / raid forfeit beside it. On the turn's own
 ## frame the two agree exactly.
 static func band_transfer_received_turn(band: Dictionary) -> float:
     return float(band.get("transfer_received_turn", 0.0))
@@ -2556,6 +2584,76 @@ static func band_transfer_received_turn(band: Dictionary) -> float:
 ## magnitudes here as well, for the same reason the pair above are two.
 static func band_transfer_sent_turn(band: Dictionary) -> float:
     return float(band.get("transfer_sent_turn", 0.0))
+
+## ---- THE LINK EACH TRANSFER CROSSED (issue #548) ------------------------------------------------
+##
+## The turn's movement, split by the KIND OF LINK it crossed rather than by who was at the other end.
+## **Four terms per account on the wire — each link kind, each direction, as its own magnitude — and
+## ONE ROW PER KIND on the glass.** `DisclosureController._link_transfer_lines` nets each pair
+## (received less sent) and emits a single signed row, so a camp that took three in and sent two out
+## down its routes reads `+1.00`.
+##
+## **THE PAIRS STAY ON THE WIRE, and that is the point of splitting the two decisions.** The sim
+## publishes what it counted; the readout decides what to show. Netting in the client costs nothing
+## and keeps both figures available to any surface that later wants the gross pair.
+##
+## ⛔ **NETTING HERE IS THE OPPOSITE OF THE RULE THE GENERIC PAIR STATES**, which is two rows on
+## purpose and stays two rows. For these terms one row per kind is the decided behaviour. **The
+## consequence is that a turn whose arrivals and departures cancel exactly shows no row for that
+## kind**: the net falls under the account's floor and is omitted, like every other flow here.
+##
+## **THE LOCAL PAIR NEVER CANCELS ANYWAY.** `balance_commodity` puts a node in `sends` or in `wants`
+## for a given commodity, never both, so at most one of that pair is non-zero on a turn. Nothing here
+## special-cases it: a shape that holds because of an invariant one module away breaks silently when
+## that invariant moves, and the cost of not exploiting it is a subtraction against zero.
+const TRANSFER_LOCAL_RECEIVED_TURN_KEY := "transfer_local_received_turn"
+const TRANSFER_LOCAL_SENT_TURN_KEY := "transfer_local_sent_turn"
+const TRANSFER_ROUTE_RECEIVED_TURN_KEY := "transfer_route_received_turn"
+const TRANSFER_ROUTE_SENT_TURN_KEY := "transfer_route_sent_turn"
+
+## …and the FODDER larder's own four. Separate keys rather than one shared set: hay and grain cross
+## the same links on the same turn in different amounts, and a ledger reading the other account's
+## figure would be plausible on every frame.
+const FODDER_TRANSFER_LOCAL_RECEIVED_TURN_KEY := "fodder_transfer_local_received_turn"
+const FODDER_TRANSFER_LOCAL_SENT_TURN_KEY := "fodder_transfer_local_sent_turn"
+const FODDER_TRANSFER_ROUTE_RECEIVED_TURN_KEY := "fodder_transfer_route_received_turn"
+const FODDER_TRANSFER_ROUTE_SENT_TURN_KEY := "fodder_transfer_route_sent_turn"
+
+## **A PRESENCE CHECK, WHICH IS RARE IN THIS CLIENT AND DELIBERATE HERE.** The link-kind rows and the
+## generic pair are two renderings of one turn: a frame carrying none of the four food keys is what
+## every band on today's wire looks like, and it must still render the pair it renders now. This is
+## the FOOD ledger's fork alone — the fodder popover has no generic pair to fall back to, so its four
+## rows simply appear when their figures do.
+static func band_has_link_transfers(band: Dictionary) -> bool:
+    return band.has(TRANSFER_LOCAL_RECEIVED_TURN_KEY) or band.has(TRANSFER_LOCAL_SENT_TURN_KEY) \
+        or band.has(TRANSFER_ROUTE_RECEIVED_TURN_KEY) or band.has(TRANSFER_ROUTE_SENT_TURN_KEY)
+
+## The eight figures, on the per-turn basis every other row of both breakdowns is on. A row read off
+## an accumulator vanishes the instant a dispatched command re-captures the frame — the defect issue
+## #517 fixed on the generic pair, not to be reintroduced one ledger over.
+static func band_transfer_local_received_turn(band: Dictionary) -> float:
+    return float(band.get(TRANSFER_LOCAL_RECEIVED_TURN_KEY, 0.0))
+
+static func band_transfer_local_sent_turn(band: Dictionary) -> float:
+    return float(band.get(TRANSFER_LOCAL_SENT_TURN_KEY, 0.0))
+
+static func band_transfer_route_received_turn(band: Dictionary) -> float:
+    return float(band.get(TRANSFER_ROUTE_RECEIVED_TURN_KEY, 0.0))
+
+static func band_transfer_route_sent_turn(band: Dictionary) -> float:
+    return float(band.get(TRANSFER_ROUTE_SENT_TURN_KEY, 0.0))
+
+static func band_fodder_transfer_local_received_turn(band: Dictionary) -> float:
+    return float(band.get(FODDER_TRANSFER_LOCAL_RECEIVED_TURN_KEY, 0.0))
+
+static func band_fodder_transfer_local_sent_turn(band: Dictionary) -> float:
+    return float(band.get(FODDER_TRANSFER_LOCAL_SENT_TURN_KEY, 0.0))
+
+static func band_fodder_transfer_route_received_turn(band: Dictionary) -> float:
+    return float(band.get(FODDER_TRANSFER_ROUTE_RECEIVED_TURN_KEY, 0.0))
+
+static func band_fodder_transfer_route_sent_turn(band: Dictionary) -> float:
+    return float(band.get(FODDER_TRANSFER_ROUTE_SENT_TURN_KEY, 0.0))
 
 ## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
 ## the number the Food summary row prints (rounded there). Here beside the rest of the band food
@@ -2683,11 +2781,31 @@ static func fodder_is_concerning(band: Dictionary) -> bool:
     return band_net_fodder(band) < 0.0 \
         or (BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.warn_turns())
 
-## What the band's fodder larder is doing per turn: grown less eaten. The ONE subtraction of that
-## pair in the client, so the caret's verdict and the popover's two rows cannot describe different
-## turns.
+## What the band's fodder larder is doing per turn: grown, less eaten, plus the hay LOCAL crossings
+## bring in on net. The ONE subtraction of those terms in the client, so the caret's verdict and the
+## popover's rows cannot describe different turns.
+##
+## ⛔ **LOCAL ONLY, NEVER ROUTE — this rate is on `turns_of_fodder`'s basis and must stay there.** The
+## sim's runway reads `fodder_store ÷ (need − income − net local crossings)`, so a rate omitting the
+## local net puts the two on different bases: a band whose hay is rising because a neighbour feeds it
+## shows a lengthening runway beside a negative rate, on the same row. `fodder_is_concerning` tints
+## the `Fodder:` caret from this and `FactionRollup` PRINTS it as a signed per-turn figure, so the
+## disagreement is on screen twice.
+##
+## The rule the sim states and this matches exactly: **local crossings are a rate and count; route
+## crossings are events and do not.** Two camps within reach pool every turn for as long as they stay
+## there, so projecting that forward is what a forecast is for; a shipment lands once, and annualising
+## one delivery into a standing per-turn rate is the mistake arc #527 refused. There is deliberately
+## no sim-side method netting both arms, and none here.
+##
+## **THE FOOD ACCOUNT IS NOT ON THIS BASIS AND IS NOT BEING BROUGHT ONTO IT.** `band_net_food`
+## excludes transfers by arc #527's decision; the two larders answering the same question differently
+## is that decision's consequence, not a drift to be tidied away.
 static func band_net_fodder(band: Dictionary) -> float:
-    return float(band.get("fodder_income", 0.0)) - float(band.get("fodder_need", 0.0))
+    return float(band.get("fodder_income", 0.0)) \
+        - float(band.get("fodder_need", 0.0)) \
+        + band_fodder_transfer_local_received_turn(band) \
+        - band_fodder_transfer_local_sent_turn(band)
 
 ## The band's standing FODDER stock — the fodder twin of `band_provisions`, and here for the same
 ## reason: the band's own `Fodder:` row, its gate and the faction page's rollup all state this stock,
