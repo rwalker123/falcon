@@ -99,6 +99,75 @@ const FORAGE_OVERLAY_KEY := "forage"
 static var FORAGE_POOR_COLOR := Color(0.88, 0.80, 0.44, 1.0)     # poorest human-food land — pale wheat
 static var FORAGE_RICH_COLOR := Color(0.18, 0.72, 0.38, 1.0)     # richest human-food land — lush leaf green
 static var FORAGE_BARREN_COLOR := Color(0.20, 0.21, 0.24, 1.0)   # NO human food (deep ocean, glacier, lava)
+# --- TEMPERATURE overlay (issue #614) ----------------------------------------------------------
+# The one field that quietly decides whether a camp site is survivable, and the last of the tile's
+# own properties with no map view. It is CLIENT-DERIVED, like `terrain_tags` and
+# `ready_for_improvement`: `tile_temperature` already holds per-tile °C for every decoded tile, so
+# there is no wire raster, no schema change and nothing for the server to publish.
+#
+# **THE COLOUR CARRIES THE TEMPERATURE AND NOTHING ELSE.** A smooth ramp cannot say where the deadly
+# line falls — a player reading one would be interpreting a gradient to find a threshold, and would
+# put it in the wrong place. So lethality is a SEPARATE pass (`_draw_temperature_lethality`, hatch +
+# contour) laid over this fill, and the two readings never compete for the same channel.
+# The key, label and description are the REGISTRY's — `OverlayChannels` is the one place a channel is
+# declared, so the picker's row and the channel this renderer stamps into its own table are the same
+# three strings and cannot drift. The dependency runs this way only; nothing in the registry reads
+# `MapView` by name.
+const TEMPERATURE_OVERLAY_KEY := OverlayChannels.TEMPERATURE_KEY
+const TEMPERATURE_OVERLAY_LABEL := OverlayChannels.TEMPERATURE_LABEL
+const TEMPERATURE_OVERLAY_DESCRIPTION := OverlayChannels.TEMPERATURE_DESCRIPTION
+
+# **NORMALIZED MIN-MAX ACROSS THE MAP, not against the max the way pasture and forage are.** Their
+# zero is a categorical fact ("this ground carries no pasture"), so a max-relative scale reads
+# correctly; temperature has no such zero, and scaling -14 °C against 31 °C would compress the whole
+# habitable middle into a sliver. Min-max is what makes THIS map's actual range legible. The RAW °C
+# array rides alongside so the legend can print real degrees.
+#
+# The ramp is five stops, cold -> warm. `_temperature_ramp_color` walks them and is shared by the map
+# paint and the legend swatches, so the two cannot drift (the `_pasture_ramp_color` rule).
+const TEMPERATURE_STOP_COLDEST := 0.00
+const TEMPERATURE_STOP_COOL := 0.28
+const TEMPERATURE_STOP_TEMPERATE := 0.55
+const TEMPERATURE_STOP_WARM := 0.80
+const TEMPERATURE_STOP_HOTTEST := 1.00
+const TEMPERATURE_COLDEST_COLOR := Color(0.149020, 0.270588, 0.415686, 1.0)  # #26456a deep cold blue
+const TEMPERATURE_COOL_COLOR := Color(0.301961, 0.498039, 0.588235, 1.0)     # #4d7f96 cool slate
+const TEMPERATURE_TEMPERATE_COLOR := Color(0.788235, 0.815686, 0.729412, 1.0) # #c9d0ba pale sage
+const TEMPERATURE_WARM_COLOR := Color(0.847059, 0.639216, 0.333333, 1.0)     # #d8a355 warm ochre
+const TEMPERATURE_HOTTEST_COLOR := Color(0.760784, 0.435294, 0.215686, 1.0)  # #c26f37 hot
+
+# The LETHAL pass. `_tile_color` hands back one Color per hex and can express neither of these marks,
+# so they are drawn rather than tinted. Lethality is `TileSurvivability.is_lethal` — the SAME
+# authority the tile card's `⚠ Lethal cold` chip reads, never a threshold re-derived here.
+const TEMPERATURE_HATCH_COLOR := Color(1.0, 0.380392, 0.321569, 1.0)    # #ff6152 hatch on killing ground
+const TEMPERATURE_CONTOUR_COLOR := Color(1.0, 0.560784, 0.513725, 1.0)  # #ff8f83 the survival line itself
+const TEMPERATURE_HATCH_WIDTH := 1.5
+# Heavier than GRID_LINE_WIDTH on purpose: the contour is the mark that has to survive zooming out,
+# where the hatch is gone and the grid is the only other line on screen.
+const TEMPERATURE_CONTOUR_WIDTH := 3.5
+# Three parallel chords across each lethal hex, clipped to its INSCRIBED CIRCLE rather than to the
+# hexagon: the chord half-length is one square root, it can never leave the hex, and at hex scale the
+# two clips are indistinguishable. The chords sit at -1/0/+1 x this fraction of the inradius.
+const TEMPERATURE_HATCH_CHORD_COUNT := 3
+const TEMPERATURE_HATCH_CHORD_SPACING := 0.5
+# 45°, as a unit vector — written out rather than trig'd per hex, this running inside `_draw`.
+const TEMPERATURE_HATCH_DIRECTION := Vector2(0.7071067811865476, 0.7071067811865476)
+# **THE ZOOM GATE.** Below this hex radius three chords inside a hex collapse into a smear that reads
+# as a solid tint, which is precisely the "colour carries lethality" confusion this treatment exists
+# to avoid — so the hatch drops out and the contour alone carries the reading at map scale. Sibling
+# of `ICON_MIN_DETAIL_RADIUS`, and set a little lower: a chord is cheaper to read than a glyph.
+const TEMPERATURE_HATCH_MIN_RADIUS := 12.0
+# Each hex edge `i` runs from corner `i` to corner `i+1` (`_hex_points`, corners at 30° + 60°i), so
+# its outward normal points at 60° + 60°i. These are the AXIAL steps to the neighbour across each
+# edge, in that same order — the contour draws edge `i` when neighbour `i` is not lethal.
+# One decimal, matching the tile card's climate chip: the map legend and the hex readout state the
+# same number to the same precision, or a player comparing them sees a disagreement that is not there.
+const TEMPERATURE_DEGREES_FORMAT := "%.1f °C"
+const TEMPERATURE_LETHAL_RANGE_FORMAT := "outside %.1f – %.1f °C"
+const TEMPERATURE_EDGE_NEIGHBORS: Array[Vector2i] = [
+	Vector2i(0, 1), Vector2i(-1, 1), Vector2i(-1, 0),
+	Vector2i(0, -1), Vector2i(1, -1), Vector2i(1, 0),
+]
 
 ## Every channel `_tile_color` paints through a path of ITS OWN rather than the generic
 ## `GRID_COLOR.lerp(OVERLAY_COLORS[key], value)`. Two of them still have an `OVERLAY_COLORS` row that
@@ -110,6 +179,7 @@ const SPECIAL_PAINT_OVERLAY_KEYS: Array[String] = [
 	TERRAIN_TAGS_OVERLAY_KEY,
 	PASTURE_OVERLAY_KEY,
 	FORAGE_OVERLAY_KEY,
+	TEMPERATURE_OVERLAY_KEY,
 ]
 # --- DANGER overlays (Predators Phase 0) -------------------------------------------------------
 # TWO derived-danger channels, both per-ENTITY properties the native decoder projects onto tiles
@@ -155,6 +225,7 @@ static var READY_FOR_IMPROVEMENT_OVERLAY_COLOR: Color = Color()  # DERIVED: HudS
 ## registry and `_realize_deferred_overlay` names nothing: a second expensive channel is one row.
 const DEFERRED_OVERLAY_BUILDERS := {
 	ReadyForImprovement.CHANNEL_KEY: "_build_ready_for_improvement_channel",
+	TEMPERATURE_OVERLAY_KEY: "_build_temperature_channel",
 }
 # Tile "Height" is a relative 0..100 indicator (not meters) so a player can reason
 # about line of sight: a higher tile can occlude the tile behind it. Elevation is
@@ -1724,6 +1795,18 @@ func _ingest_overlay_channels(overlays: Variant) -> void:
 			float(overlay_dict["climate_boreal_max_temp"]),
 			float(overlay_dict["climate_temperate_max_temp"]),
 		)
+	# The temperature-MORTALITY model (MapSection.temperatureSurvivability) — a DIFFERENT set of
+	# thresholds from the band cut points above, published beside them on the same cadence. Same
+	# presence-based test, and it is DELTA SEMANTICS, not a version fallback: the model is a per-run
+	# constant, so a delta that omits it is saying "unchanged" and must leave the last published one
+	# standing. The native emits all four keys together or none, so testing one is enough.
+	if overlay_dict.has("survivability_ambient_temp"):
+		TileSurvivability.set_model(
+			float(overlay_dict["survivability_ambient_temp"]),
+			float(overlay_dict["survivability_temp_tolerance"]),
+			float(overlay_dict["survivability_mortality_scale"]),
+			float(overlay_dict["survivability_max_mortality"]),
+		)
 	if overlay_dict.has("channels"):
 		var channel_variant: Variant = overlay_dict["channels"]
 		if channel_variant is Dictionary:
@@ -1841,6 +1924,12 @@ func _draw() -> void:
 			_draw_terrain_direct(radius, origin, viewport_size)
 
 	# === OVERLAYS (always drawn fresh) ===
+	# THE TEMPERATURE CHANNEL'S LETHAL PASS comes first, because it belongs to the tile FILL — over
+	# the base terrain, under every annotation and marker. It is here in the live `_draw` rather than
+	# in `_draw_terrain_direct` deliberately: the direct path is one of THREE ways the base terrain
+	# reaches the screen (the blend shader and the cached SubViewport are the others), and a pass
+	# written there would simply be absent on the other two.
+	_draw_temperature_lethality(radius, origin, col_start, col_end, row_start, row_end)
 	# These need to respond to hover, selection, and other dynamic state
 	_annotations.draw_terrain_highlight(radius, origin, viewport_size)
 	# (No river draw here: Minor/Major rivers are painted by terrain_blend.gdshader's river pass, off the
@@ -2389,6 +2478,91 @@ func _outline_hex_at(center: Vector2, radius: float, color: Color, width: float)
 ## posmods the pick — while the terrain loop draws each column at whatever LOGICAL copy the
 ## viewport is over, so on a wrapping map an unwrapped outline is stamped a whole map-width away
 ## and the click reads as "the selection didn't take" on every tile the seam pushed into a copy.
+## THE LETHAL-GROUND PASS of the temperature channel (issue #614) — hatch and contour, drawn over the
+## temperature fill and under every marker.
+##
+## **IT IS A DRAW PASS AND NOT A `_tile_color` BRANCH BECAUSE IT CANNOT BE ONE.** `_tile_color` hands
+## back one Color per hex; neither a hatch nor an edge contour is expressible as a hex tint, and
+## folding either into the fill would put lethality back into the COLOUR — the exact reading this
+## treatment splits apart, because a player asked to find a deadly threshold inside a smooth gradient
+## will put it in the wrong place.
+##
+## Two marks, doing different jobs:
+##   * the HATCH says *this hex kills*, per hex, and needs room to be read as lines rather than tint —
+##     so it is gated on `TEMPERATURE_HATCH_MIN_RADIUS` and simply drops out at map scale;
+##   * the CONTOUR says *the survival line runs HERE*, along every edge where a lethal hex meets a
+##     survivable one, and is what still carries the reading once the hatch is gone.
+##
+## Lethality comes from `TileSurvivability`, the same authority the tile card's `⚠ Lethal cold` chip
+## reads — so the map and the card can never disagree — and the pass is silent until the sim has
+## published its model, exactly as the chip is.
+##
+## The visible col/row span is the caller's (`_draw` computed it for the terrain), so this walks the
+## hexes on screen and not the grid; wrapped columns come through as logical columns outside
+## `[0, grid_width)` and are resolved to their data column the way `_draw_terrain_direct` does.
+func _draw_temperature_lethality(radius: float, origin: Vector2,
+		col_start: int, col_end: int, row_start: int, row_end: int) -> void:
+	if active_overlay_key != TEMPERATURE_OVERLAY_KEY or not TileSurvivability.has_model():
+		return
+	var draw_hatch: bool = radius >= TEMPERATURE_HATCH_MIN_RADIUS
+	for y in range(row_start, row_end):
+		for logical_x in range(col_start, col_end):
+			if not _wrap_horizontal and (logical_x < 0 or logical_x >= grid_width):
+				continue
+			var data_x: int = posmod(logical_x, grid_width) if _wrap_horizontal else logical_x
+			if not _is_lethal_tile(data_x, y):
+				continue
+			var center: Vector2 = _hex_center(logical_x, y, radius, origin)
+			if draw_hatch:
+				_draw_lethal_hatch(center, radius)
+			_draw_lethal_contour(logical_x, y, center, radius)
+
+## Does this tile's temperature fall outside the sim's survivable range? Absent readings are NOT
+## lethal — a tile the world said nothing about is unknown, not deadly.
+func _is_lethal_tile(x: int, y: int) -> bool:
+	var key := Vector2i(x, y)
+	if not tile_temperature.has(key):
+		return false
+	return TileSurvivability.is_lethal(float(tile_temperature[key]))
+
+## Parallel diagonal chords across one lethal hex, clipped to its INSCRIBED CIRCLE. Clipping to the
+## circle rather than to the hexagon is one square root per chord instead of a polygon intersection,
+## can never spill outside the hex (the incircle is contained in it), and at hex scale the difference
+## is invisible.
+func _draw_lethal_hatch(center: Vector2, radius: float) -> void:
+	var inradius: float = radius * SIN_60
+	var normal := Vector2(-TEMPERATURE_HATCH_DIRECTION.y, TEMPERATURE_HATCH_DIRECTION.x)
+	var middle: int = (TEMPERATURE_HATCH_CHORD_COUNT - 1) / 2
+	for i in TEMPERATURE_HATCH_CHORD_COUNT:
+		var offset: float = float(i - middle) * TEMPERATURE_HATCH_CHORD_SPACING * inradius
+		var half_chord: float = sqrt(maxf(inradius * inradius - offset * offset, 0.0))
+		var anchor: Vector2 = center + normal * offset
+		draw_line(anchor - TEMPERATURE_HATCH_DIRECTION * half_chord,
+			anchor + TEMPERATURE_HATCH_DIRECTION * half_chord,
+			TEMPERATURE_HATCH_COLOR, TEMPERATURE_HATCH_WIDTH)
+
+## The survival LINE across one lethal hex: its own edge, wherever the neighbour across that edge is
+## not lethal. Drawn per hex rather than traced as a path, so it needs no ordering and no join logic —
+## every interior edge is simply skipped, and what is left is the boundary of the lethal region.
+func _draw_lethal_contour(logical_x: int, y: int, center: Vector2, radius: float) -> void:
+	var corners := _hex_points(center, radius, true)
+	var axial := _offset_to_axial(logical_x, y)
+	for edge in TEMPERATURE_EDGE_NEIGHBORS.size():
+		var step: Vector2i = TEMPERATURE_EDGE_NEIGHBORS[edge]
+		var neighbor: Vector2i = _axial_to_offset(axial.x + step.x, axial.y + step.y)
+		var neighbor_y: int = neighbor.y
+		# Off the top or bottom of the world: there is no survivable ground there to bound the
+		# region, but the region does end, so the edge IS the line.
+		var neighbor_lethal := false
+		if neighbor_y >= 0 and neighbor_y < grid_height:
+			var neighbor_x: int = posmod(neighbor.x, grid_width) if _wrap_horizontal else neighbor.x
+			if neighbor_x >= 0 and neighbor_x < grid_width:
+				neighbor_lethal = _is_lethal_tile(neighbor_x, neighbor_y)
+		if neighbor_lethal:
+			continue
+		draw_line(corners[edge], corners[edge + 1],
+			TEMPERATURE_CONTOUR_COLOR, TEMPERATURE_CONTOUR_WIDTH)
+
 func _draw_tile_selection_highlight(radius: float, origin: Vector2) -> void:
 	if selected_tile.x >= 0 and selected_tile.y >= 0:
 		_outline_hex_wrapped(selected_tile.x, selected_tile.y, radius, origin, SELECTED_HEX_OUTLINE_COLOR, SELECTED_HEX_OUTLINE_WIDTH)
@@ -3604,6 +3778,10 @@ func _tile_color(x: int, y: int) -> Color:
 		return _pasture_color(x, y, overlay_value)
 	if active_overlay_key == FORAGE_OVERLAY_KEY:
 		return _forage_color(x, y, overlay_value)
+	if active_overlay_key == TEMPERATURE_OVERLAY_KEY:
+		# The FILL carries temperature alone. Whether this hex kills is drawn on top of it, by
+		# `_draw_temperature_lethality` — see the constants block.
+		return _temperature_ramp_color(overlay_value)
 	return GRID_COLOR.lerp(overlay_color, overlay_value)
 
 ## Pasture overlay color for one tile. `normalized` is the tile's graze capacity as a fraction of the
@@ -3645,6 +3823,24 @@ func _forage_color(_x: int, _y: int, normalized: float) -> Color:
 ## legend swatches, so they cannot drift apart.
 func _forage_ramp_color(normalized_capacity: float) -> Color:
 	return FORAGE_POOR_COLOR.lerp(FORAGE_RICH_COLOR, clampf(normalized_capacity, 0.0, 1.0))
+
+## The temperature ramp: five stops walked cold -> warm, `normalized` being the tile's reading placed
+## MIN-MAX within this map's own range (see the constants block for why min-max and not max-relative).
+## Shared by the map paint and the legend swatches, so a swatch can never name a colour the map does
+## not paint — the same contract `_pasture_ramp_color` holds.
+func _temperature_ramp_color(normalized: float) -> Color:
+	var value := clampf(normalized, TEMPERATURE_STOP_COLDEST, TEMPERATURE_STOP_HOTTEST)
+	if value <= TEMPERATURE_STOP_COOL:
+		return TEMPERATURE_COLDEST_COLOR.lerp(TEMPERATURE_COOL_COLOR,
+			inverse_lerp(TEMPERATURE_STOP_COLDEST, TEMPERATURE_STOP_COOL, value))
+	if value <= TEMPERATURE_STOP_TEMPERATE:
+		return TEMPERATURE_COOL_COLOR.lerp(TEMPERATURE_TEMPERATE_COLOR,
+			inverse_lerp(TEMPERATURE_STOP_COOL, TEMPERATURE_STOP_TEMPERATE, value))
+	if value <= TEMPERATURE_STOP_WARM:
+		return TEMPERATURE_TEMPERATE_COLOR.lerp(TEMPERATURE_WARM_COLOR,
+			inverse_lerp(TEMPERATURE_STOP_TEMPERATE, TEMPERATURE_STOP_WARM, value))
+	return TEMPERATURE_WARM_COLOR.lerp(TEMPERATURE_HOTTEST_COLOR,
+		inverse_lerp(TEMPERATURE_STOP_WARM, TEMPERATURE_STOP_HOTTEST, value))
 
 func _terrain_color_for_id(terrain_id: int) -> Color:
 	var colors := _get_terrain_colors()
@@ -3831,6 +4027,14 @@ func current_overlay_legend() -> Dictionary:
 func has_terrain_tag_data() -> bool:
 	return not terrain_tags_overlay.is_empty() or not terrain_tag_labels.is_empty()
 
+## Does this world carry per-tile temperature at all? The channel is synthesized from
+## `tile_temperature` and has no wire raster, so it is offered only where the tiles carried a reading.
+## Gated on the TILES and never on `overlay_channels`: the channel is built lazily
+## (`DEFERRED_OVERLAY_BUILDERS`), so for most of a frame's life no raster exists, and a predicate that
+## asked for one could only ever offer the row after something had already built it.
+func has_temperature_data() -> bool:
+	return not tile_temperature.is_empty()
+
 ## The tint a channel paints the map in — what the minimap's legend button wears as its face when the
 ## channel has no icon of its own. A channel with no row takes `OVERLAY_FALLBACK_COLOR`, which is a
 ## RAMP TARGET for an unknown wire channel and NOT a description of anything: a caller wearing this
@@ -3875,6 +4079,8 @@ func _legend_for_current_view() -> Dictionary:
 		return _build_pasture_legend()
 	if active_overlay_key == FORAGE_OVERLAY_KEY:
 		return _build_forage_legend()
+	if active_overlay_key == TEMPERATURE_OVERLAY_KEY:
+		return _build_temperature_legend()
 	if active_overlay_key == "culture" and not highlighted_culture_layer_set.is_empty():
 		var selection := _culture_selection_data()
 		if bool(selection.get("valid", false)):
@@ -3994,6 +4200,89 @@ func _pasture_color_for_capacity(capacity: float, max_capacity: float) -> Color:
 
 func _format_pasture_capacity(capacity: float) -> String:
 	return "%.0f graze" % capacity
+
+## Legend for the TEMPERATURE channel (issue #614). It cannot use `_build_scalar_overlay_legend` for
+## the same reason pasture and forage cannot: that one reports Low/Average/High of a NORMALIZED
+## fraction, which here would name neither a degree nor — far worse — the THRESHOLD. The rows are the
+## map's real Coldest/Average/Warmest in °C, plus one row for the survivable range the sim enforces.
+##
+## **THE LETHAL ROW'S RANGE IS READ OFF `TileSurvivability`, NEVER WRITTEN HERE.** It is the sim's
+## published model, the same numbers the tile card's `⚠ Lethal cold` chip is struck from; a legend
+## that transcribed them would be a second opinion able to drift from the map it is describing. Until
+## the model is published there is no row rather than an invented range.
+##
+## A legend swatch is a flat `Color`, so the Lethal row wears the hatch COLOUR solid. That is the
+## honest compromise and not a shortfall: the swatch names the ink the lethal marks are drawn in, and
+## the channel description says what shape they take.
+func _build_temperature_legend() -> Dictionary:
+	var raw: PackedFloat32Array = _overlay_raw_array(TEMPERATURE_OVERLAY_KEY)
+	var coldest: float = INF
+	var warmest: float = -INF
+	var total: float = 0.0
+	var counted: int = 0
+	for value in raw:
+		var reading := float(value)
+		if not is_finite(reading):
+			continue
+		coldest = minf(coldest, reading)
+		warmest = maxf(warmest, reading)
+		total += reading
+		counted += 1
+
+	var rows: Array = []
+	if counted == 0:
+		rows.append({
+			"color": TEMPERATURE_COLDEST_COLOR,
+			"label": "No readings",
+			"value_text": "Awaiting tile telemetry",
+		})
+	else:
+		var average: float = total / float(counted)
+		var span: float = warmest - coldest
+		rows.append({
+			"color": _temperature_ramp_color(TEMPERATURE_STOP_COLDEST),
+			"label": "Coldest",
+			"value_text": _format_temperature(coldest),
+		})
+		rows.append({
+			"color": _temperature_color_for_reading(average, coldest, span),
+			"label": "Average",
+			"value_text": _format_temperature(average),
+		})
+		rows.append({
+			"color": _temperature_ramp_color(TEMPERATURE_STOP_HOTTEST),
+			"label": "Warmest",
+			"value_text": _format_temperature(warmest),
+		})
+	if TileSurvivability.has_model():
+		rows.append({
+			"color": TEMPERATURE_HATCH_COLOR,
+			"label": "Lethal",
+			"value_text": TEMPERATURE_LETHAL_RANGE_FORMAT % [
+				TileSurvivability.survivable_min(), TileSurvivability.survivable_max()],
+		})
+	return {
+		"key": TEMPERATURE_OVERLAY_KEY,
+		"title": String(overlay_channel_labels.get(TEMPERATURE_OVERLAY_KEY, TEMPERATURE_OVERLAY_LABEL)),
+		"description": TEMPERATURE_OVERLAY_DESCRIPTION,
+		"rows": rows,
+		"stats": {
+			"min": (0.0 if counted == 0 else coldest),
+			"max": (0.0 if counted == 0 else warmest),
+			"avg": (0.0 if counted == 0 else total / float(counted)),
+		},
+	}
+
+## The legend swatch for a real reading: places it MIN-MAX within the map's range exactly as
+## `_build_temperature_channel` does for the map, then paints it through the SAME ramp — so a swatch
+## can never name a colour the map paints nowhere.
+func _temperature_color_for_reading(reading: float, coldest: float, span: float) -> Color:
+	if span <= 0.0:
+		return _temperature_ramp_color(TEMPERATURE_STOP_COLDEST)
+	return _temperature_ramp_color((reading - coldest) / span)
+
+func _format_temperature(reading: float) -> String:
+	return TEMPERATURE_DEGREES_FORMAT % reading
 
 ## Legend for the FORAGE channel — the human-food twin of `_build_pasture_legend`. It cannot use
 ## `_build_scalar_overlay_legend` for the same reason pasture can't: the map-wide minimum is 0 (every
@@ -4429,6 +4718,45 @@ func _build_ready_for_improvement_channel() -> void:
 		_ready_for_improvement[ReadyForImprovement.MODEL_RAW],
 		ReadyForImprovement.CHANNEL_LABEL,
 		ReadyForImprovement.CHANNEL_DESCRIPTION)
+
+## Synthesize the TEMPERATURE channel from `tile_temperature` (issue #614). No wire raster and no
+## schema change: the per-tile °C is already decoded onto every tile, so this is a reshape of what the
+## client holds — the `terrain_tags` property, not the `ready_for_improvement` one (nothing here
+## depends on what the faction knows).
+##
+## **THE NORMALIZATION IS MIN-MAX OVER THIS MAP'S OWN RANGE**, and the RAW array keeps °C so the
+## legend prints degrees rather than a fraction. A tile the world has no reading for takes the map
+## minimum: it paints as the coldest tone rather than as a hole in the ramp, which is the honest
+## rendering of "nothing to say" on a channel whose scale has no zero.
+func _build_temperature_channel() -> void:
+	if not has_temperature_data() or grid_width <= 0 or grid_height <= 0:
+		return
+	var coldest: float = INF
+	var warmest: float = -INF
+	for value in tile_temperature.values():
+		var reading := float(value)
+		if not is_finite(reading):
+			continue
+		coldest = minf(coldest, reading)
+		warmest = maxf(warmest, reading)
+	if not is_finite(coldest) or not is_finite(warmest):
+		return
+	var span: float = warmest - coldest
+	var total: int = grid_width * grid_height
+	var raw := PackedFloat32Array()
+	raw.resize(total)
+	var normalized := PackedFloat32Array()
+	normalized.resize(total)
+	for y in grid_height:
+		for x in grid_width:
+			var idx: int = y * grid_width + x
+			var reading: float = float(tile_temperature.get(Vector2i(x, y), coldest))
+			raw[idx] = reading
+			# A map with ONE temperature everywhere has no range to place a tile within; every hex is
+			# then the ramp's cold end rather than an arbitrary point inside it.
+			normalized[idx] = ((reading - coldest) / span if span > 0.0 else 0.0)
+	_add_overlay_channel(TEMPERATURE_OVERLAY_KEY, normalized, raw,
+		TEMPERATURE_OVERLAY_LABEL, TEMPERATURE_OVERLAY_DESCRIPTION)
 
 ## Forget every deferred channel's last build. Called at the END of an ingest, because the sources a
 ## deferred channel is derived from have just been replaced.

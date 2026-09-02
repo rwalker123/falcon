@@ -31,10 +31,10 @@ use sim_runtime::{
     RouteState, ScalarRasterState, SedentarizationState as SchemaSedentarizationState,
     SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, SourcePriorityState, StanceAxisState, StanceState,
-    StartMarkerState, TerrainOverlayState, TerrainSample, TileState, VictoryModeSnapshotState,
-    VictoryResultState, VictorySnapshotState, VoiceLineState, VoiceMediumState, WorldDelta,
-    WorldSnapshot, GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE, GRAZE_PHASE_STRESSED,
-    GRAZE_PHASE_THRIVING,
+    StartMarkerState, TemperatureSurvivabilityState, TerrainOverlayState, TerrainSample, TileState,
+    VictoryModeSnapshotState, VictoryResultState, VictorySnapshotState, VoiceLineState,
+    VoiceMediumState, WorldDelta, WorldSnapshot, GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE,
+    GRAZE_PHASE_STRESSED, GRAZE_PHASE_THRIVING,
 };
 
 use crate::{
@@ -1142,6 +1142,7 @@ mod tests {
             moisture_raster: FloatRasterState::default(),
             elevation_overlay: ElevationOverlayState::default(),
             climate_bands: ClimateBandsState::default(),
+            temperature_survivability: TemperatureSurvivabilityState::default(),
             start_marker: None,
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
@@ -1215,6 +1216,7 @@ mod tests {
             moisture_raster: FloatRasterState::default(),
             elevation_overlay: ElevationOverlayState::default(),
             climate_bands: ClimateBandsState::default(),
+            temperature_survivability: TemperatureSurvivabilityState::default(),
             start_marker: None,
             terrain: TerrainOverlayState::default(),
             sentiment_raster: ScalarRasterState::default(),
@@ -1284,6 +1286,7 @@ mod tests {
             moisture_raster: FloatRasterState::default(),
             elevation_overlay: ElevationOverlayState::default(),
             climate_bands: ClimateBandsState::default(),
+            temperature_survivability: TemperatureSurvivabilityState::default(),
             start_marker: None,
             terrain: TerrainOverlayState::default(),
             sentiment_raster: ScalarRasterState::default(),

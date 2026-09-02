@@ -27,7 +27,11 @@ paths:
   - **`%TileChips`** — a pinned `HFlowContainer` of the tile's STANDING CONDITION, so the facts
     you reason with while composing never scroll away: Sight (`_sight_value_color`, SIGNAL when
     live) · Habitability (`TileHabitability.rating_for`/`color_for`) · Climate (neutral INK_DIM —
-    informational, never the warning palette) · Tags (skipped when empty/`none`) · Site. **Each
+    informational, never the warning palette; it carries the BAND AND THE TEMPERATURE,
+    `Temperate · 3.7 °C`) · **Survivability** (issue #614 — `⚠ Lethal cold` / `⚠ Lethal heat` in
+    `HudStyle.DANGER`, present only when `TileSurvivability` says the sim is killing on this ground,
+    with the rate and the arithmetic on its hover; the one chip that wears the warning palette, which
+    is why the Climate chip beside it does not) · Tags (skipped when empty/`none`) · Site. **Each
     chip is skipped when its field is absent**, exactly as the equivalent row is, so a rehydrated
     tile never shows an invented rating; on an Unexplored hex ONLY the Sight chip renders. Chrome
     comes from `HudStyle.chip_stylebox(border)` — the palette owns it, never an open-coded box.

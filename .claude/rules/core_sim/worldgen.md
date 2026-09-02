@@ -866,6 +866,9 @@ an un-jittered temperature).
   band it is told rather than keeping an independent opinion. **Client half (a separate task): consume
   `climateBands`, drop the local `tile_climate_config.json` `cool_min`, and render `Climate:` off the
   published bands.**
+  The band cut points are **not** survivability thresholds — the temperature at which population
+  actually dies is a separate model with its own published table, `MapSection.temperatureSurvivability`
+  (see "The cold/heat death model is PUBLISHED" in `.claude/rules/core_sim/campaign.md`).
 - **Secondary fixes that rode along** (§7): `PeatHeath` is now `POLAR`-tagged (it is the cold wetland
   — the only WETLAND+POLAR biome, and the classifier/solver/palette already treated it as such; only
   its tag disagreed); `RiverDelta` now takes its own definition's tags wholesale in `hydrology.rs`

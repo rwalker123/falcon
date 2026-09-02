@@ -221,6 +221,22 @@ table ClimateBands {
   temperateMaxTemp:float;
 }
 
+// The temperature-mortality model's own constants (issue #614). Published for the same
+// reason ClimateBands is: the client must state the survivable range the SIM enforces
+// rather than deciding one, and the climate BAND cut points are a different, unrelated
+// set of thresholds that must not be mistaken for these. The per-turn death fraction,
+// applied to every age bracket and independent of food, is
+//   min((|temp - ambientTemp| - tempTolerance) * mortalityScale, maxMortality)
+// mirroring systems::population (see the cold block). Tolerance is symmetric: the model
+// has a lethal COLD tail below `ambientTemp - tempTolerance` and an equally lethal HEAT
+// tail above `ambientTemp + tempTolerance`.
+table TemperatureSurvivability {
+  ambientTemp:float;
+  tempTolerance:float;
+  mortalityScale:float;
+  maxMortality:float;
+}
+
 table InfluentialIndividualState {
   id:uint;
   name:string;
@@ -4659,6 +4675,10 @@ table MapSection {
   // Per-map climate-band cut points (docs/plan_climate_authority.md §8.3). A single
   // per-map constant, published once beside the other worldgen overlays. Appended field.
   climateBands:ClimateBands;
+  // The cold/heat mortality model's constants (issue #614) — a per-run constant published
+  // beside `climateBands` and on the same cadence, but a DIFFERENT set of thresholds: these
+  // are the ones population deaths are actually struck from. Appended field.
+  temperatureSurvivability:TemperatureSurvivability;
 }
 
 table EconomySection {

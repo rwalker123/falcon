@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 74
+const EXPECTED_CHECKPOINTS := 87
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -483,6 +483,66 @@ func _occupied_herd_fixture() -> Dictionary:
 	var herd := HerdFx.occupied_herd_only()
 	herd["tile_info"] = TileFx.occupied_tile_fixture()
 	return herd
+
+# ---- THE TEMPERATURE-MORTALITY CHIP (issue #614) ----------------------------------------------
+#
+# The sim kills a fraction of EVERY age bracket, every turn, food or no food, on any tile further
+# than `SURVIVABILITY_TEMP_TOLERANCE` from `SURVIVABILITY_AMBIENT_TEMP` — and NOTHING on the card
+# said so. The climate band is a different, wider set of thresholds, so 3.7 °C reads `Temperate`,
+# rates `Fair` and shows full morale while taking 4.6 % of the band per turn.
+#
+# The model is a per-run constant the live client adopts from the snapshot's overlays
+# (`MapSection.temperatureSurvivability`) through MapView, exactly as it adopts the climate cut
+# points. This harness has no MapView, so `ui_preview.gd`'s prologue seeds it with the shipped
+# tuning — globally, before the first frame of the walk, so no frame anywhere renders lethal ground
+# without saying so. These states are where the chip itself is put on trial.
+
+## THE DEFECT'S OWN TEMPERATURE. Inside the `Temperate` band (boreal tops out at 3.0 °C) and 2.3 °C
+## below the 6.0 °C survival line the tuning above draws — the exact reading a band died 58 turns at
+## with a full larder and nothing on screen saying why.
+const LETHAL_COLD_TEMPERATURE := 3.7
+## The HEAT tail, which exists for the same reason and was equally unsaid: the tolerance is symmetric.
+const LETHAL_HEAT_TEMPERATURE := 33.5
+## Far enough out that the model's CAP is what the rate rests on — colder ground kills no faster, and
+## the hover has to say that instead of implying the distance still explains the number.
+const CAPPED_COLD_TEMPERATURE := -20.0
+## Comfortably inside the range, where the chip must NOT appear at all.
+const SURVIVABLE_TEMPERATURE := 19.0
+
+## What each state's chips must READ, written out rather than recomputed here: an assertion that
+## re-derived the rate from the constants above would pass against a client that had stopped
+## deriving it. `4.6 %` is `(|3.7 - 18| - 12) x 0.02`, and `2.3 °C` its distance past `18 - 12`.
+const LETHAL_COLD_TOOLTIP := "−4.6 % of every age bracket per turn, regardless of food. " \
+	+ "3.7 °C is 2.3 °C past the 6.0 °C survival line."
+const LETHAL_HEAT_TOOLTIP := "−7.0 % of every age bracket per turn, regardless of food. " \
+	+ "33.5 °C is 3.5 °C past the 30.0 °C survival line."
+const CAPPED_COLD_TOOLTIP := "−10.0 % of every age bracket per turn, regardless of food. " \
+	+ "-20.0 °C is 26.0 °C past the 6.0 °C survival line, at the configured maximum rate."
+## …and the Climate chip beside it, which since #614 carries the NUMBER the band name hides.
+const LETHAL_COLD_CLIMATE_CHIP := "Temperate · 3.7 °C"
+const SURVIVABLE_CLIMATE_CHIP := "Tropical · 19.0 °C"
+
+## The chip SET a lethal hex renders, in order — the survivability pill sits directly after the
+## climate chip it re-reads. A PNG cannot carry this claim and cannot carry its absence at all,
+## which is why the survivable state is asserted on the same list.
+const LETHAL_CHIP_SLOTS := ["sight", "habitability", "climate", "survivability", "tags"]
+const SURVIVABLE_CHIP_SLOTS := ["sight", "habitability", "climate", "tags"]
+
+## The `TileFx.three_role_tile_fixture` at a given temperature and nothing else changed — so the ONLY
+## thing moving between the survivability frames is the reading the model is asked about.
+func _survivability_tile_fixture(temperature: float) -> Dictionary:
+	var tile := TileFx.three_role_tile_fixture()
+	tile["temperature"] = temperature
+	return tile
+
+## The hover text of the chip at `index` in the pinned chip strip (the tooltip lives on the chip's
+## PanelContainer, which is also what carries the mouse filter that lets it be shown at all).
+func _chip_tooltip(strip: Node, index: int) -> String:
+	if strip == null or index < 0 or index >= strip.get_child_count():
+		return ""
+	var chip := strip.get_child(index) as Control
+	return chip.tooltip_text if chip != null else ""
+
 
 func run(harness) -> void:
 	h = harness
@@ -1216,3 +1276,55 @@ func run(harness) -> void:
 	# Leave the overlay as it was found — a snapshot with a NEWER turn is what confirms a pending edit.
 	h._hud._band_labor.reconcile_pending(h._hud._band_labor.current_turn() + 1)
 	h._hud._band_labor._player_band = BandFx.band_fixture()
+
+	# ---- LETHAL GROUND (issue #614) ------------------------------------------------------------
+	# The model is live from the prologue (see the block above the fixtures); these are the states
+	# that judge the chip it drives.
+	h._hud.clear_selection()
+
+	# tile_panel_lethal_cold — THE DEFECT'S FRAME. `Temperate · 3.7 °C` and `Fair` habitability, with
+	# the DANGER pill directly beside them saying the ground is killing 4.6 % of every bracket a turn.
+	h._show_tile(_survivability_tile_fixture(LETHAL_COLD_TEMPERATURE))
+	await h._settle()
+	await h._save("tile_panel_lethal_cold")
+	h._assert_hud("a lethally COLD hex adds the survivability pill DIRECTLY AFTER the climate chip",
+		h._hud._selectioncard._tile_chip_slots == LETHAL_CHIP_SLOTS)
+	h._assert_hud("…the pill names the tail it is in (cold, not heat)",
+		_chip_text(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("survivability"))
+			== HudSelectionVocab.CHIP_SURVIVABILITY_COLD)
+	h._assert_hud("…its hover states the per-turn loss, the reading, the distance and the line",
+		_chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("survivability"))
+			== LETHAL_COLD_TOOLTIP)
+	# The half that makes the pill legible: the band name alone never said 3.7, so the number the
+	# survival line is measured against has to be on the card too.
+	h._assert_hud("…and the climate chip beside it now carries the TEMPERATURE, not just the band",
+		_chip_text(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == LETHAL_COLD_CLIMATE_CHIP)
+
+	# tile_panel_lethal_heat — the symmetric tail. Same tile, same model, the other side of ambient.
+	h._show_tile(_survivability_tile_fixture(LETHAL_HEAT_TEMPERATURE))
+	await h._settle()
+	await h._save("tile_panel_lethal_heat")
+	h._assert_hud("a lethally HOT hex raises the same pill, named for ITS tail",
+		h._hud._selectioncard._tile_chip_slots == LETHAL_CHIP_SLOTS \
+			and _chip_text(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("survivability"))
+				== HudSelectionVocab.CHIP_SURVIVABILITY_HEAT)
+	h._assert_hud("…measured against the HOT end of the range (30.0 °C), not the cold one",
+		_chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("survivability"))
+			== LETHAL_HEAT_TOOLTIP)
+
+	# No frame: a capped hex renders a pill identical to the cold one, so only the hover can testify.
+	h._show_tile(_survivability_tile_fixture(CAPPED_COLD_TEMPERATURE))
+	await h._settle()
+	h._assert_hud("ground past the model's CAP says the rate is the maximum, not that it keeps climbing",
+		_chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("survivability"))
+			== CAPPED_COLD_TOOLTIP)
+
+	# tile_panel_survivable — THE ABSENCE, which no PNG can prove: the same hex inside the range
+	# raises NO pill, and the climate chip still carries its number.
+	h._show_tile(_survivability_tile_fixture(SURVIVABLE_TEMPERATURE))
+	await h._settle()
+	await h._save("tile_panel_survivable")
+	h._assert_hud("a hex INSIDE the survivable range raises no pill at all",
+		h._hud._selectioncard._tile_chip_slots == SURVIVABLE_CHIP_SLOTS)
+	h._assert_hud("…and the climate chip is still there carrying its temperature (the strip rendered)",
+		_chip_text(h._hud.tile_chips, SURVIVABLE_CHIP_SLOTS.find("climate")) == SURVIVABLE_CLIMATE_CHIP)

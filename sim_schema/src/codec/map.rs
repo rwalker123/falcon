@@ -2,8 +2,8 @@
 
 use crate::codec::{create_float_raster, FbBuilder};
 use crate::state::map::{
-    ClimateBandsState, ElevationOverlayState, MountainKind, TerrainOverlayState, TerrainType,
-    TileState,
+    ClimateBandsState, ElevationOverlayState, MountainKind, TemperatureSurvivabilityState,
+    TerrainOverlayState, TerrainType, TileState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -18,6 +18,8 @@ pub(crate) fn serialize_map_section<'a>(
     let elevation_overlay = create_elevation_overlay(builder, &snapshot.elevation_overlay);
     let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
     let climate_bands = create_climate_bands(builder, &snapshot.climate_bands);
+    let temperature_survivability =
+        create_temperature_survivability(builder, &snapshot.temperature_survivability);
     fb::MapSection::create(
         builder,
         &fb::MapSectionArgs {
@@ -27,6 +29,7 @@ pub(crate) fn serialize_map_section<'a>(
             moistureRaster: Some(moisture_raster),
             removedTiles: None,
             climateBands: Some(climate_bands),
+            temperatureSurvivability: Some(temperature_survivability),
         },
     )
 }
@@ -53,6 +56,10 @@ pub(crate) fn serialize_map_section_delta<'a>(
         .climate_bands
         .as_ref()
         .map(|bands| create_climate_bands(builder, bands));
+    let temperature_survivability = delta
+        .temperature_survivability
+        .as_ref()
+        .map(|model| create_temperature_survivability(builder, model));
     fb::MapSection::create(
         builder,
         &fb::MapSectionArgs {
@@ -62,6 +69,7 @@ pub(crate) fn serialize_map_section_delta<'a>(
             moistureRaster: moisture_raster,
             removedTiles: Some(removed_tiles),
             climateBands: climate_bands,
+            temperatureSurvivability: temperature_survivability,
         },
     )
 }
@@ -94,6 +102,21 @@ fn create_climate_bands<'a>(
             polarMaxTemp: bands.polar_max_temp,
             borealMaxTemp: bands.boreal_max_temp,
             temperateMaxTemp: bands.temperate_max_temp,
+        },
+    )
+}
+
+fn create_temperature_survivability<'a>(
+    builder: &mut FbBuilder<'a>,
+    model: &TemperatureSurvivabilityState,
+) -> WIPOffset<fb::TemperatureSurvivability<'a>> {
+    fb::TemperatureSurvivability::create(
+        builder,
+        &fb::TemperatureSurvivabilityArgs {
+            ambientTemp: model.ambient_temp,
+            tempTolerance: model.temp_tolerance,
+            mortalityScale: model.mortality_scale,
+            maxMortality: model.max_mortality,
         },
     )
 }

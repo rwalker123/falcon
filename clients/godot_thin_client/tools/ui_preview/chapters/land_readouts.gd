@@ -542,6 +542,13 @@ func _flora_row_has_role_icon(row: String, icon_px: int) -> bool:
 ## A tile whose Climate row is under test: same card as `BaseFx.food_tile_fixture`, only the
 ## `temperature` (and a label) vary, so the ONLY thing moving between the four climate_* frames
 ## is the band the sim's cut points classify that temperature into.
+##
+## Since #614 these frames carry the second reading of that same number too: `climate_polar` (-6 °C)
+## and `climate_boreal` (2 °C) sit outside the sim's 6.0-30.0 °C survival range and raise the
+## `⚠ Lethal cold` chip, while `climate_temperate` (12 °C) and `climate_tropical` (27 °C) do not.
+## That contrast IS the issue's argument, rendered: `Boreal · 2.0 °C` is a perfectly ordinary-looking
+## band name on ground that kills 4.6 % of a band per turn, and the four frames now show where the two
+## unrelated sets of thresholds fall relative to each other.
 func _climate_tile_fixture(temperature: float, terrain_label: String) -> Dictionary:
 	var tile := BaseFx.food_tile_fixture()
 	tile["temperature"] = temperature
@@ -627,6 +634,11 @@ func _overgrazed_tile_fixture() -> Dictionary:
 ## Ground that carries NO pasture at all (a glacier — the biome's graze capacity is a stated 0, so the
 ## sim holds no patch there and the tile carries no graze fields). The card must print NOTHING about
 ## pasture here — never "0 / 0", which would read as a starved pasture rather than an absent one.
+##
+## Its -14 °C raises the `⚠ Lethal cold` chip (#614) and is KEPT rather than softened to a survivable
+## reading: it is not filler here, it is what makes this tile a glacier at all (the `Polar` tag and the
+## stated-zero graze capacity both follow from it). A Glacier reading 19 °C would be a worse lie than
+## the one #614 removes. The pasture claim this frame exists for is untouched by the extra chip.
 func _no_pasture_tile_fixture() -> Dictionary:
 	return {
 		"x": 66, "y": 3,

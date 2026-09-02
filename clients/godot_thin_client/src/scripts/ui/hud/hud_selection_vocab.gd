@@ -60,6 +60,40 @@ const CHIP_FONT_SIZE := 11
 # absent condition earns no chip, exactly as it earns no row.
 const CHIP_TAGS_NONE := "none"
 
+# The Climate chip's face: the band the sim's cut points name, and THE NUMBER THAT NAME IS HIDING.
+# The band alone was the whole readout until issue #614, and a band is a wide bucket — `Temperate`
+# spans everything from a lethal 3.7 °C to a comfortable 18 °C, so the label alone cannot be
+# reasoned with. One decimal, because that is the resolution a survival line is stated at below.
+const CHIP_CLIMATE_FORMAT := "%s · %.1f °C"
+
+# The SURVIVABILITY chip — the sim's temperature-mortality model, and the only chip on the strip
+# that wears DANGER. It exists because the informational chips beside it can all read benign on
+# ground that is killing the band every turn: at the shipped tuning a 3.7 °C hex is `Temperate`,
+# rates `Fair`, shows full morale, and takes ~4.5 % of every age bracket per turn (issue #614).
+# Present only when the tile is genuinely lethal — a survivable hex earns no chip, exactly as an
+# absent condition earns no row.
+const CHIP_SURVIVABILITY_COLD := "⚠ Lethal cold"
+
+const CHIP_SURVIVABILITY_HEAT := "⚠ Lethal heat"
+
+# The hover: the RATE first (it is what the player loses), then the arithmetic behind it — this
+# temperature, its distance past the survival line, and the line itself, so the number on the
+# Climate chip beside it can be checked against the threshold without leaving the card. "regardless
+# of food" is the clause that matters: this is not starvation and a full larder does not touch it.
+const CHIP_SURVIVABILITY_TOOLTIP_FORMAT := \
+	"−%.1f %% of every age bracket per turn, regardless of food. " \
+	+ "%.1f °C is %.1f °C past the %.1f °C survival line."
+
+# …and the same sentence when the model's CAP is what the rate is resting on, where "%.1f °C past
+# the line" no longer explains the rate: colder ground would not kill any faster.
+const CHIP_SURVIVABILITY_TOOLTIP_CAPPED_FORMAT := \
+	"−%.1f %% of every age bracket per turn, regardless of food. " \
+	+ "%.1f °C is %.1f °C past the %.1f °C survival line, at the configured maximum rate."
+
+# The mortality model is a FRACTION on the wire (0.045 = 4.5 % of a bracket); the tooltip states it
+# as a percentage, which is the one place that conversion happens.
+const CHIP_SURVIVABILITY_PERCENT_SCALE := 100.0
+
 # The drawer's floor. Below this a compose block is unreadable, so the card is allowed to push the
 # dock into its own scroll rather than crushing the controls the player came here to use.
 const SUBJECT_DRAWER_MIN_HEIGHT := 180.0

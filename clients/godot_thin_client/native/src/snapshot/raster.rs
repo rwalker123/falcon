@@ -72,6 +72,14 @@ pub(crate) struct OverlaySlices<'a> {
     /// entirely rather than published as a fabricated threshold, so the client can render the
     /// Climate line blank instead of inventing a cut point that could disagree with the sim.
     pub(crate) climate_bands: Option<[f32; 3]>,
+    /// The temperature-mortality model's constants
+    /// `[ambientTemp, tempTolerance, mortalityScale, maxMortality]` (`MapSection.temperatureSurvivability`),
+    /// published so the client can state the range the SIM kills outside of rather than inferring one
+    /// from the climate bands — a DIFFERENT set of thresholds that happens to sit beside these on the
+    /// wire (issue #614). `None` when the snapshot carries no `TemperatureSurvivability` table, in
+    /// which case the four keys are omitted together and the client renders no survivability readout
+    /// at all, exactly as `climate_bands` leaves the Climate line blank.
+    pub(crate) temperature_survivability: Option<[f32; 4]>,
     pub(crate) moisture: &'a [f32],
     pub(crate) visibility: &'a [f32],
     /// The server-owned fog-of-war switch (`VisionSection.fogEnabled`), surfaced as the top-level

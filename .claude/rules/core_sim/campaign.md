@@ -66,6 +66,30 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
    total is clamped to `population_cap`. The **dependency ratio** `(children+elders)/working` is
    the core tension.
 
+#### The cold/heat death model is PUBLISHED, because the climate bands are not it
+
+The cold term of step 2 is symmetric about `simulation_config.json`'s `ambient_temperature` and
+food-independent — it kills the same fraction of *every* bracket, on a full larder:
+
+```
+min((|tile.temperature − ambient_temperature| − cold.temp_tolerance) × cold.mortality_scale,
+    cold.max_mortality)
+```
+
+At the shipped tuning (ambient 18.0, tolerance 12.0) the survivable range is **6.0 °–30.0 °**, with a
+lethal cold tail below it and an equally lethal heat tail above it. That range is **not** the climate
+ladder: `climate.boreal_max_temp` is 3.0, so a 4 ° tile reads as *Temperate* on the tile card while
+losing 4.5 % of every bracket per turn. The two threshold sets answer different questions and there
+is no arithmetic from one to the other.
+
+So the four constants ride the snapshot in their own table — `MapSection.temperatureSurvivability`
+(`TemperatureSurvivability`: `ambientTemp` / `tempTolerance` / `mortalityScale` / `maxMortality`),
+appended after `climateBands` — read at capture straight off the live `SimulationConfig` and
+`DemographicsConfigHandle`, never restated. A per-run constant, diffed whole beside `climate_bands`
+in `diff_rasters`, so a delta re-sends it only when the tuning moves. The client states the range the
+sim enforces instead of inferring one from the band cut points, which is the mistake the separate
+table exists to make impossible.
+
 > #### `elder_mortality_rate` sets the elder SHARE; `initial_distribution` is where the rates settle
 >
 > Two facts about the bracket flows that decide how this block is tuned, and both are structural

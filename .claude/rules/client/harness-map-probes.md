@@ -101,7 +101,41 @@ see), and **saves the legend as its own frame** (`map_pasture_legend`, the picke
 painted from the human-food table under the `forage` channel, so it compares tile-for-tile with
 `map_pasture` and the two food webs' divergence reads directly (forest/river rich on forage / poor
 on pasture; the shelf column glows on forage where it is barren on pasture) without a server:
-`scripts/preview.sh res://tools/map_preview.tscn`. Also the four **ANNOTATION states**, added by the
+`scripts/preview.sh res://tools/map_preview.tscn`.
+
+Also the four **TEMPERATURE states** (issue #614), which are where the two-reading treatment is
+judged. The fixture is a latitude gradient with a **cold pocket** dropped into the survivable middle,
+so one frame carries a lethal cold tail, a lethal heat tail, and a closed lethal RING — a contour
+that is a boundary rather than a stripe. It publishes per-tile °C on the tiles and NOTHING else: no
+`channels` entry, so what is painted has to be the channel `MapView` synthesized, and the mortality
+model rides in the snapshot's `overlays` as the four `survivability_*` scalars, driving the real
+`_ingest_overlay_channels` adoption rather than seeding `TileSurvivability` behind the renderer.
+`map_temperature` is the whole field; `map_temperature_pocket` crops to the ring; `map_temperature_legend`
+opens the picker's popover on it; `map_temperature_farzoom` is the LOD half, on a grid large enough
+that the COVER fit lands under the hatch's detail gate — the hatch is gone and the contour alone is
+still drawing the survival lines.
+
+**Ten assertions ride them, because the frames cannot carry any of it.** Two on the roster (the
+channel is offered on a world with tile temperatures and NOT on one without — the negative asked
+first, since a positive alone passes against a row that is simply always present); three that the
+legend's swatches are what `_tile_color` paints the map's own coldest and warmest tiles and that its
+rows state real degrees (the map-and-legend-share-one-ramp rule); two that its Lethal row follows the
+sim's model, asked by RETUNING `TileSurvivability` and re-reading the row, which a transcribed range
+cannot answer; and three PIXEL probes in a box around the pocket — hatch and contour present close
+in, hatch gone and contour still present far out, with the fit radius asserted against the gate as an
+explicit premise first. The pixel probes are boxed rather than whole-frame because a targeted box
+makes the ABSENCE claim sharper (the hatch is asked for exactly where a lethal hex is being drawn) as
+well as thousands of times cheaper in GDScript.
+
+Sabotage-verified in four runs, each restored: removing the two draw calls fails the three pixel
+claims; forcing the hatch past its gate, hardcoding the legend's degrees and making
+`has_temperature_data` answer true fails the LOD, retune and negative-roster claims (and three
+PRE-EXISTING roster assertions besides, which is the registry's own guards policing the new row);
+painting the swatches from the forage ramp and formatting the rows as fractions fails the three
+legend-parity claims; and making `has_temperature_data` answer false fails the positive-roster claim
+and cascades through the rest, the channel then being unpaintable.
+
+Also the four **ANNOTATION states**, added by the
 `AnnotationRenderer` extraction because that family had **no fixture at all** and so no refactor of
 it could be pixel-checked. **Three remain; there were four.**
 
@@ -396,8 +430,8 @@ RUNG is DERIVED, never typed").
 
 **THE LEGEND IS ITS OWN FRAME NOW, AND `ui_preview` LOST THREE STATES TO THIS ONE.**
 `map_overlay_legend` is the legend popover open on the channel menu's own selection, and
-`map_pasture_legend` / `map_forage_legend` ride the `pasture` / `forage` states as
-`_save_overlay_legend`. Those last two were a `print` of the legend dict here and a hand-TRANSCRIBED
+`map_pasture_legend` / `map_forage_legend` / `map_temperature_legend` ride the `pasture` / `forage` /
+`temperature` states as `_save_overlay_legend`. Those last two were a `print` of the legend dict here and a hand-TRANSCRIBED
 fixture in `ui_preview`'s `pasture_legend` / `forage_legend`, kept in step by hope; this harness owns
 a real MapView, so it can open the picker on the real builder's rows. `_save_overlay_legend` CLOSES
 the popover again — the picker rides a long-lived MapView, so one left open renders in every later

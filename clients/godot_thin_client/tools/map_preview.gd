@@ -1387,6 +1387,104 @@ func _ready() -> void:
 	await _save("map_threat")
 	print("map_preview: threat legend = ", _map._legend_for_current_view())
 
+	# States "temperature" (issue #614) — THE TEMPERATURE CHANNEL, and the lethal pass laid over it.
+	# There was an overlay for elevation, moisture, culture, pasture, forage, tags, hunt danger, threat
+	# and crisis, and none for the one field that decides whether a camp site is survivable.
+	#
+	# The treatment is deliberately TWO readings that do not compete: the FILL carries degrees on a
+	# five-stop cold→warm ramp, and lethality is drawn separately — a hatch on every killing hex, a
+	# heavy contour along every edge where killing ground meets living ground. A single gradient would
+	# have made the player interpolate to find the deadly line, and they would have found it in the
+	# wrong place.
+	#
+	# Nothing new is on the wire: the channel is synthesized from `MapView.tile_temperature`, which the
+	# decoder already fills for every tile, and the model behind the hatch arrives in the snapshot's
+	# overlays through the REAL `_ingest_overlay_channels` adoption.
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(false)
+	_map._map_cache_enabled = false
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	await _set_canvas(PASTURE_WINDOW_SIZE)
+	await _settle()
+
+	# **THE CHANNEL IS OFFERED ONLY WHERE THERE ARE READINGS**, asked of the roster the picker actually
+	# builds. The pasture snapshot carries no `temperature` on its tiles, so it is the honest negative
+	# — and it is asked FIRST, because a positive alone would pass against a row that is simply always
+	# present, which is the failure this predicate exists to prevent.
+	_map.display_snapshot(_snapshot_pasture())
+	_assert_map("a world with no tile temperatures does not offer the Temperature channel",
+		not _roster_has_key(OverlayChannels.TEMPERATURE_KEY))
+	_map.display_snapshot(_snapshot_temperature(PASTURE_GRID_W, PASTURE_GRID_H))
+	_assert_map("a world that carries tile temperatures does offer it",
+		_roster_has_key(OverlayChannels.TEMPERATURE_KEY))
+
+	_map.set_overlay_channel(OverlayChannels.TEMPERATURE_KEY)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_temperature")
+	await _save_overlay_legend("map_temperature_legend")
+
+	# **THE MAP AND THE LEGEND PAINT THROUGH ONE RAMP** — the `_pasture_ramp_color` rule, which exists
+	# because a legend swatch is a claim about the map. Asked by comparing the legend's own Coldest and
+	# Warmest swatches against what `_tile_color` hands back for the fixture's coldest and warmest
+	# tiles: a second ramp anywhere makes the two disagree, and re-deriving the colour here would only
+	# have tested this harness's arithmetic.
+	var temperature_extremes := _temperature_extreme_tiles(PASTURE_GRID_W, PASTURE_GRID_H)
+	_assert_map("the legend's Coldest swatch is the colour the map paints the coldest tile",
+		_temperature_legend_row_color("Coldest").is_equal_approx(
+			_map._tile_color(temperature_extremes[0].x, temperature_extremes[0].y)))
+	_assert_map("…and its Warmest swatch is what the map paints the warmest tile",
+		_temperature_legend_row_color("Warmest").is_equal_approx(
+			_map._tile_color(temperature_extremes[1].x, temperature_extremes[1].y)))
+	_assert_map("…and both rows state real degrees, not a normalized fraction",
+		_temperature_legend_row_value("Coldest") == TEMPERATURE_COLDEST_TEXT \
+			and _temperature_legend_row_value("Warmest") == TEMPERATURE_WARMEST_TEXT)
+	_assert_temperature_legend_follows_model()
+
+	# map_temperature_pocket — the cold pocket close up, which is where the contour is legible as a
+	# CLOSED boundary rather than a stripe: killing ground ringed by living ground, hatched inside.
+	var temperature_pocket := _temperature_pocket_tile(PASTURE_GRID_W, PASTURE_GRID_H)
+	var temperature_pocket_center: Vector2 = _map._hex_center(
+		temperature_pocket.x, temperature_pocket.y, _map.last_hex_radius, _map.last_origin)
+	await _save_crop_px("map_temperature_pocket", temperature_pocket_center,
+		TEMPERATURE_PROBE_RADII * _map.last_hex_radius)
+	var temperature_close_frame: Image = await _capture()
+	_assert_map("close in, killing ground is HATCHED",
+		_frame_paints_near_hex(temperature_close_frame, temperature_pocket,
+			MAP_VIEW.TEMPERATURE_HATCH_COLOR))
+	_assert_map("…and the survival line is drawn around it",
+		_frame_paints_near_hex(temperature_close_frame, temperature_pocket,
+			MAP_VIEW.TEMPERATURE_CONTOUR_COLOR))
+
+	# map_temperature_farzoom — THE LOD HALF. At map scale three chords inside a hex collapse into a
+	# smear that reads as a solid tint, i.e. colour carrying lethality again, so the hatch drops out
+	# and the CONTOUR alone has to carry the reading. A bigger grid rather than a zoom-out, because the
+	# fit IS the minimum zoom.
+	_map.display_snapshot(_snapshot_temperature(TEMPERATURE_FAR_GRID_W, TEMPERATURE_FAR_GRID_H))
+	_map.set_overlay_channel(OverlayChannels.TEMPERATURE_KEY)
+	_map._fit_map_to_view()
+	await _settle()
+	# The PREMISE, stated rather than assumed: a grid that stopped fitting below the gate would leave
+	# the two claims below proving nothing at all (the `LOD_MIN_RADIUS` idiom this harness already uses).
+	_assert_map("premise: the far-zoom grid really does fit below the hatch's detail gate (radius %.1f < %.1f)"
+			% [_map.last_hex_radius, MAP_VIEW.TEMPERATURE_HATCH_MIN_RADIUS],
+		_map.last_hex_radius < MAP_VIEW.TEMPERATURE_HATCH_MIN_RADIUS)
+	await _save("map_temperature_farzoom")
+	var temperature_far_pocket := _temperature_pocket_tile(
+		TEMPERATURE_FAR_GRID_W, TEMPERATURE_FAR_GRID_H)
+	var temperature_far_frame: Image = await _capture()
+	_assert_map("far out, the hatch is gone",
+		not _frame_paints_near_hex(temperature_far_frame, temperature_far_pocket,
+			MAP_VIEW.TEMPERATURE_HATCH_COLOR))
+	_assert_map("…and the contour is still carrying the reading",
+		_frame_paints_near_hex(temperature_far_frame, temperature_far_pocket,
+			MAP_VIEW.TEMPERATURE_CONTOUR_COLOR))
+	_map.set_overlay_channel("")   # back to plain terrain for the states after this one
+
+
 	# State "rivers" — Minor/Major rivers on hex EDGES (terrain_blend.gdshader's river pass, fed by the
 	# per-tile 12-bit river_edges mask) plus a NavigableRiver hex chain (terrain 37) that turns corners,
 	# is fed by the Major edge river, and drains to the sea through a delta lobe — with a real InlandSea
@@ -2265,6 +2363,15 @@ func _lit_ready_tiles() -> Array[Vector2i]:
 			out.append(Vector2i(idx % _map.grid_width, idx / _map.grid_width))
 	return out
 
+## Does the channel roster the picker is built from offer this key? Asked of `OverlayChannels.roster`
+## rather than of a live picker, because that is the exact call `OverlayPicker._rebuild_roster` makes
+## and it can be asked without opening the popover.
+func _roster_has_key(key: String) -> bool:
+	for row in OverlayChannels.roster(_map):
+		if String(row.get("key", "")) == key:
+			return true
+	return false
+
 func _roster_keys(picker: OverlayPicker) -> PackedStringArray:
 	var keys := PackedStringArray()
 	for descriptor in picker.roster():
@@ -3121,6 +3228,160 @@ func _snapshot_forage() -> Dictionary:
 		"populations": [],
 		"herds": [],
 	}
+
+# ---- THE TEMPERATURE OVERLAY (issue #614) ------------------------------------------------------
+#
+# The channel is CLIENT-DERIVED from `MapView.tile_temperature`, so this fixture publishes per-tile
+# °C on the tiles and NOTHING else — no `channels` entry, no raster. `MapView` synthesizes the
+# channel lazily when `set_overlay_channel` accepts the key, which is the path under test.
+#
+# The mortality model rides in the snapshot's `overlays` exactly as the sim publishes it
+# (`MapSection.temperatureSurvivability` → the native's four `survivability_*` scalars), so these
+# states drive the REAL `_ingest_overlay_channels` adoption rather than seeding `TileSurvivability`
+# behind the renderer's back.
+const TEMPERATURE_AMBIENT_C := 18.0
+const TEMPERATURE_TOLERANCE_C := 12.0
+const TEMPERATURE_MORTALITY_SCALE := 0.02
+const TEMPERATURE_MAX_MORTALITY := 0.1
+## The retuned tolerance the legend's Lethal row is re-asked against — see
+## `_assert_temperature_legend_follows_model`. Deliberately a value nothing else in this harness uses.
+const TEMPERATURE_RETUNED_TOLERANCE_C := 5.0
+
+## A latitude gradient, cold north to hot south. The ends sit OUTSIDE the 6.0 – 30.0 °C the tuning
+## above survives and the middle well inside it, so one frame carries both tails and a wide living
+## band between them — which is what makes the contour a LINE across the map rather than an edge at
+## the border of the grid.
+const TEMPERATURE_NORTH_C := -2.0
+const TEMPERATURE_SOUTH_C := 36.0
+## THE COLD POCKET: an island of killing ground in the middle of the survivable band, so the contour
+## closes a RING the eye can read as a boundary instead of a horizontal stripe. Placed and sized in
+## fractions of the grid so the same field works at both grid sizes this harness renders it at.
+const TEMPERATURE_POCKET_C := -6.0
+const TEMPERATURE_POCKET_CENTER_FRACTION := Vector2(0.32, 0.50)
+## The pocket's radius is a HEX COUNT and not a fraction of the grid, so the ring is the same object
+## at both grid sizes — the near and far frames then differ in ZOOM alone, which is the only variable
+## the LOD claim is about, and one probe box fits the ring on either.
+const TEMPERATURE_POCKET_RADIUS_HEXES := 3.0
+## The map's real extremes, which the legend must print. Written out rather than recomputed from the
+## field: an assertion that re-derived them would pass against a legend that had stopped reading raw °C.
+const TEMPERATURE_COLDEST_TEXT := "-6.0 °C"
+const TEMPERATURE_WARMEST_TEXT := "36.0 °C"
+## …and the Lethal row, at the shipped tuning and at the retuned one.
+const TEMPERATURE_LETHAL_TEXT := "outside 6.0 – 30.0 °C"
+const TEMPERATURE_RETUNED_LETHAL_TEXT := "outside 13.0 – 23.0 °C"
+## The far-zoom grid, sized so the COVER fit lands below `MapView.TEMPERATURE_HATCH_MIN_RADIUS` and
+## the hatch really is gated off (the state asserts the premise, so a grid that stopped being big
+## enough fails loudly instead of quietly proving nothing — the `LOD_MIN_RADIUS` idiom above).
+const TEMPERATURE_FAR_GRID_W := 110
+const TEMPERATURE_FAR_GRID_H := 80
+## How far around the pocket's centre the pixel probes look, in hex radii. Wide enough to contain the
+## whole ring at either grid size, so one box serves the hatch and the contour questions alike.
+const TEMPERATURE_PROBE_RADII := 7.0
+
+## Per-tile °C for the fixture field: the latitude gradient, overridden inside the cold pocket.
+func _temperature_at(col: int, row: int, width: int, height: int) -> float:
+	var center := Vector2(TEMPERATURE_POCKET_CENTER_FRACTION.x * float(width - 1),
+		TEMPERATURE_POCKET_CENTER_FRACTION.y * float(height - 1))
+	if Vector2(float(col), float(row)).distance_to(center) <= TEMPERATURE_POCKET_RADIUS_HEXES:
+		return TEMPERATURE_POCKET_C
+	return lerpf(TEMPERATURE_NORTH_C, TEMPERATURE_SOUTH_C,
+		float(row) / float(maxi(height - 1, 1)))
+
+## The offset (col, row) of the cold pocket's centre hex — the anchor every pixel probe is taken
+## around, and by construction a LETHAL hex.
+func _temperature_pocket_tile(width: int, height: int) -> Vector2i:
+	return Vector2i(int(round(TEMPERATURE_POCKET_CENTER_FRACTION.x * float(width - 1))),
+		int(round(TEMPERATURE_POCKET_CENTER_FRACTION.y * float(height - 1))))
+
+## The temperature snapshot: flat ground, per-tile °C, and the sim's published mortality model in the
+## overlays. No `channels` entry on purpose — the channel this harness paints has to be the one
+## `MapView` synthesized, or these states would be judging the fixture.
+func _snapshot_temperature(width: int, height: int) -> Dictionary:
+	var ids: Array = []
+	ids.resize(width * height)
+	var tiles: Array = []
+	for row in height:
+		for col in width:
+			ids[row * width + col] = TERRAIN_ID
+			tiles.append({
+				"entity": row * width + col,
+				"x": col,
+				"y": row,
+				"terrain": TERRAIN_ID,
+				"temperature": _temperature_at(col, row, width, height),
+			})
+	return {
+		"grid": {"width": width, "height": height, "wrap_horizontal": false},
+		"overlays": {
+			"terrain": ids,
+			"survivability_ambient_temp": TEMPERATURE_AMBIENT_C,
+			"survivability_temp_tolerance": TEMPERATURE_TOLERANCE_C,
+			"survivability_mortality_scale": TEMPERATURE_MORTALITY_SCALE,
+			"survivability_max_mortality": TEMPERATURE_MAX_MORTALITY,
+			"channels": {},
+			"channel_order": PackedStringArray([]),
+		},
+		"tiles": tiles,
+		"populations": [],
+		"herds": [],
+	}
+
+## Does `color` appear anywhere in a box of `TEMPERATURE_PROBE_RADII` hex radii around one hex?
+##
+## A box rather than the whole frame because the whole frame is millions of `get_pixel` calls in
+## GDScript, and because a targeted box makes the ABSENCE claims sharper: the hatch is asked for
+## exactly where a lethal hex is being drawn, so "not painted" cannot pass by looking somewhere the
+## mark was never going to be. The captured framebuffer can be larger than the logical viewport
+## (HiDPI), so viewport coordinates are rescaled into image pixels first — the `_save_crop_px` rule.
+func _frame_paints_near_hex(image: Image, tile: Vector2i, color: Color) -> bool:
+	if image == null:
+		return false
+	var center: Vector2 = _map._hex_center(tile.x, tile.y, _map.last_hex_radius, _map.last_origin)
+	var px_scale := float(image.get_width()) / maxf(get_viewport().get_visible_rect().size.x, 1.0)
+	var half: float = TEMPERATURE_PROBE_RADII * float(_map.last_hex_radius) * px_scale
+	var x0 := clampi(int(center.x * px_scale - half), 0, image.get_width() - 1)
+	var y0 := clampi(int(center.y * px_scale - half), 0, image.get_height() - 1)
+	var x1 := clampi(int(center.x * px_scale + half), 0, image.get_width())
+	var y1 := clampi(int(center.y * px_scale + half), 0, image.get_height())
+	for py in range(y0, y1):
+		for px in range(x0, x1):
+			if image.get_pixel(px, py).is_equal_approx(color):
+				return true
+	return false
+
+## **THE LETHAL ROW IS THE SIM'S RANGE, NOT A TRANSCRIBED ONE.** Asked by RETUNING the model and
+## re-reading the legend: a row built from hardcoded degrees answers the same string both times, and
+## a row that reads `TileSurvivability` moves with it. The shipped tuning is restored afterwards, the
+## states below being rendered against it.
+func _assert_temperature_legend_follows_model() -> void:
+	_assert_map("the legend's Lethal row names the sim's survivable range",
+		_temperature_legend_row_value("Lethal") == TEMPERATURE_LETHAL_TEXT)
+	TileSurvivability.set_model(TEMPERATURE_AMBIENT_C, TEMPERATURE_RETUNED_TOLERANCE_C,
+		TEMPERATURE_MORTALITY_SCALE, TEMPERATURE_MAX_MORTALITY)
+	_assert_map("…and follows it when the sim retunes, rather than restating a transcribed range",
+		_temperature_legend_row_value("Lethal") == TEMPERATURE_RETUNED_LETHAL_TEXT)
+	TileSurvivability.set_model(TEMPERATURE_AMBIENT_C, TEMPERATURE_TOLERANCE_C,
+		TEMPERATURE_MORTALITY_SCALE, TEMPERATURE_MAX_MORTALITY)
+
+## The `value_text` of the legend row with this label, or "" when the legend carries no such row.
+func _temperature_legend_row_value(label: String) -> String:
+	for row in _map._legend_for_current_view().get("rows", []):
+		if String(row.get("label", "")) == label:
+			return String(row.get("value_text", ""))
+	return ""
+
+## The swatch `Color` of the legend row with this label.
+func _temperature_legend_row_color(label: String) -> Color:
+	for row in _map._legend_for_current_view().get("rows", []):
+		if String(row.get("label", "")) == label:
+			return row.get("color", Color())
+	return Color()
+
+## The (col, row) of the fixture's coldest and warmest tiles — the pocket's centre, and any tile on
+## the last row. The ramp-parity assertions ask the MAP what it paints these two and compare against
+## the legend's own Coldest / Warmest swatches.
+func _temperature_extreme_tiles(width: int, height: int) -> Array[Vector2i]:
+	return [_temperature_pocket_tile(width, height), Vector2i(width - 1, height - 1)]
 
 ## The DANGER snapshot (Predators Phase 0). Danger is DERIVED per-ENTITY, so the native decoder projects
 ## TWO channels onto tiles from herd positions: hunt_danger = attack × ferocity, threat = attack ×

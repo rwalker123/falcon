@@ -451,6 +451,7 @@ pub mod knowledge {
                 fog_enabled: true,
                 elevation_overlay: crate::ElevationOverlayState::default(),
                 climate_bands: crate::ClimateBandsState::default(),
+                temperature_survivability: crate::TemperatureSurvivabilityState::default(),
                 start_marker: None,
                 axis_bias: AxisBiasState::default(),
                 sentiment: SentimentTelemetryState::default(),

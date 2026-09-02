@@ -183,9 +183,27 @@ func _tile_chip_descriptors(tile_info: Dictionary) -> Array:
 			"tint": TileHabitability.color_for(habitability), "tooltip": ""})
 	# Climate is INFORMATIONAL, so it wears neutral ink and never the warning palette; the cut
 	# points are the SIM's, so until they are published there is no chip rather than a guess.
+	# It carries the TEMPERATURE beside the band since #614: a band is a bucket wide enough to hold
+	# both comfortable and lethal ground, and the number was on no surface of the card at all.
 	if tile_info.has("temperature") and TileClimate.has_bands():
-		out.append({"key": "climate", "text": TileClimate.band_for(float(tile_info["temperature"])),
+		var climate_temperature := float(tile_info["temperature"])
+		out.append({"key": "climate", "text": HudSelectionVocab.CHIP_CLIMATE_FORMAT % [
+				TileClimate.band_for(climate_temperature), climate_temperature],
 			"tint": HudStyle.INK_DIM, "tooltip": ""})
+	# …and DIRECTLY AFTER IT the one chip that is a warning: ground the sim kills on. It sits beside
+	# the climate chip because it is the same number read against a different, unrelated set of
+	# thresholds (see `TileSurvivability`), and it is gated exactly as the climate chip is with
+	# respect to fog — temperature is a static property of ground already explored, and the
+	# VISIBILITY_UNEXPLORED early-return above keeps it off never-visited hexes.
+	if tile_info.has("temperature") and TileSurvivability.has_model():
+		var lethal_temperature := float(tile_info["temperature"])
+		if TileSurvivability.is_lethal(lethal_temperature):
+			out.append({"key": "survivability",
+				"text": HudSelectionVocab.CHIP_SURVIVABILITY_COLD \
+					if TileSurvivability.is_cold(lethal_temperature) \
+					else HudSelectionVocab.CHIP_SURVIVABILITY_HEAT,
+				"tint": HudStyle.DANGER,
+				"tooltip": _survivability_tooltip(lethal_temperature)})
 	var tags_text := String(tile_info.get("tags_text", "")).strip_edges()
 	if tags_text != "" and tags_text.to_lower() != HudSelectionVocab.CHIP_TAGS_NONE:
 		out.append({"key": "tags", "text": tags_text, "tint": HudStyle.INK_DIM, "tooltip": ""})
@@ -193,6 +211,24 @@ func _tile_chip_descriptors(tile_info: Dictionary) -> Array:
 	if site_name != "":
 		out.append({"key": "site", "text": site_name, "tint": HudStyle.INK_DIM, "tooltip": ""})
 	return out
+
+## The survivability chip's hover: the per-turn loss, then the arithmetic it comes out of — the
+## tile's temperature, how far past the survival line it sits, and the line itself. The line is
+## whichever end of the sim's range this tile fell out of, so the same sentence serves both tails.
+## When the model's cap is what the rate rests on, the sentence says so instead of implying that
+## colder ground would kill faster.
+func _survivability_tooltip(temperature: float) -> String:
+	var survival_line := TileSurvivability.survivable_min() \
+		if TileSurvivability.is_cold(temperature) else TileSurvivability.survivable_max()
+	var template := HudSelectionVocab.CHIP_SURVIVABILITY_TOOLTIP_CAPPED_FORMAT \
+		if TileSurvivability.is_at_max_rate(temperature) \
+		else HudSelectionVocab.CHIP_SURVIVABILITY_TOOLTIP_FORMAT
+	return template % [
+		TileSurvivability.death_rate(temperature) * HudSelectionVocab.CHIP_SURVIVABILITY_PERCENT_SCALE,
+		temperature,
+		absf(temperature - survival_line),
+		survival_line,
+	]
 
 ## Patch an existing chip in place to a new descriptor — the same node the slot held last render, so
 ## a restate updates the FACE without a teardown. Mirrors `_make_chip`'s tooltip/mouse-filter rule.

@@ -110,6 +110,7 @@ fn snapshot_dict(
     let elevation_base = copy_into(overlays.elevation);
     let elevation_sea_level = overlays.elevation_sea_level;
     let climate_bands = overlays.climate_bands;
+    let temperature_survivability = overlays.temperature_survivability;
     let moisture_base = copy_into(overlays.moisture);
     let pasture_base = copy_into(overlays.pasture_capacity);
     let forage_base = copy_into(overlays.forage_capacity);
@@ -563,6 +564,17 @@ fn snapshot_dict(
         let _ = overlays.insert("climate_boreal_max_temp", boreal_max);
         let _ = overlays.insert("climate_temperate_max_temp", temperate_max);
     }
+    // The temperature-mortality model, published on the same all-or-nothing rule as the climate
+    // cut points above and read the same way — a reader that finds one key finds all four. These
+    // are NOT the band cut points: they are the thresholds population deaths are struck from.
+    if let Some([ambient_temp, temp_tolerance, mortality_scale, max_mortality]) =
+        temperature_survivability
+    {
+        let _ = overlays.insert("survivability_ambient_temp", ambient_temp);
+        let _ = overlays.insert("survivability_temp_tolerance", temp_tolerance);
+        let _ = overlays.insert("survivability_mortality_scale", mortality_scale);
+        let _ = overlays.insert("survivability_max_mortality", max_mortality);
+    }
     let _ = overlays.insert("moisture", &moisture_array.clone());
     let _ = overlays.insert("moisture_raw", &moisture_raw_array.clone());
     let _ = overlays.insert("moisture_contrast", &moisture_contrast_array.clone());
@@ -943,6 +955,18 @@ pub(crate) fn snapshot_to_dict(
         ]
     });
 
+    let temperature_survivability = snapshot
+        .map()
+        .and_then(|s| s.temperatureSurvivability())
+        .map(|model| {
+            [
+                model.ambientTemp(),
+                model.tempTolerance(),
+                model.mortalityScale(),
+                model.maxMortality(),
+            ]
+        });
+
     if let Some(overlay) = snapshot.map().and_then(|s| s.elevationOverlay()) {
         let width = overlay.width();
         let height = overlay.height();
@@ -1281,6 +1305,7 @@ pub(crate) fn snapshot_to_dict(
             elevation: &elevation_resized,
             elevation_sea_level,
             climate_bands,
+            temperature_survivability,
             moisture: &moisture_resized,
             fog_enabled: snapshot
                 .vision()
@@ -1562,6 +1587,7 @@ pub(crate) fn snapshot_to_dict(
         elevation: elevation_resized,
         elevation_sea_level,
         climate_bands,
+        temperature_survivability,
         moisture: moisture_resized,
         visibility: visibility_resized,
         fog_enabled: snapshot

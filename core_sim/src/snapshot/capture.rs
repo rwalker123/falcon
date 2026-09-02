@@ -233,6 +233,7 @@ pub(crate) struct PublishState {
     moisture_raster: Whole<FloatRasterState>,
     elevation_overlay: Whole<ElevationOverlayState>,
     climate_bands: Whole<ClimateBandsState>,
+    temperature_survivability: Whole<TemperatureSurvivabilityState>,
     corruption: Whole<CorruptionLedger>,
     victory: Whole<VictorySnapshotState>,
     capability_flags: Whole<u32>,
@@ -422,6 +423,7 @@ struct RasterParts {
     moisture: Option<FloatRasterState>,
     elevation: Option<ElevationOverlayState>,
     climate_bands: Option<ClimateBandsState>,
+    temperature_survivability: Option<TemperatureSurvivabilityState>,
     sentiment: Option<ScalarRasterState>,
     corruption: Option<ScalarRasterState>,
     culture: Option<ScalarRasterState>,
@@ -435,6 +437,7 @@ struct RasterBaselines<'a> {
     moisture: &'a mut Whole<FloatRasterState>,
     elevation: &'a mut Whole<ElevationOverlayState>,
     climate_bands: &'a mut Whole<ClimateBandsState>,
+    temperature_survivability: &'a mut Whole<TemperatureSurvivabilityState>,
     sentiment: &'a mut Whole<ScalarRasterState>,
     corruption: &'a mut Whole<ScalarRasterState>,
     culture: &'a mut Whole<ScalarRasterState>,
@@ -453,6 +456,12 @@ fn diff_rasters(
         elevation: diff_whole(baseline.elevation, &snapshot.elevation_overlay, write),
         // A per-map constant: it changes only on (re)generation, so the delta re-sends it just then.
         climate_bands: diff_whole(baseline.climate_bands, &snapshot.climate_bands, write),
+        // A per-run constant on the same footing: it changes only when the tuning does.
+        temperature_survivability: diff_whole(
+            baseline.temperature_survivability,
+            &snapshot.temperature_survivability,
+            write,
+        ),
         sentiment: diff_whole(baseline.sentiment, &snapshot.sentiment_raster, write),
         corruption: diff_whole(baseline.corruption, &snapshot.corruption_raster, write),
         culture: diff_whole(baseline.culture, &snapshot.culture_raster, write),
@@ -826,6 +835,7 @@ impl PublishState {
             moisture_raster: Whole::default(),
             elevation_overlay: Whole::default(),
             climate_bands: Whole::default(),
+            temperature_survivability: Whole::default(),
             corruption: Whole::default(),
             victory: Whole::default(),
             capability_flags: Whole::default(),
@@ -943,6 +953,7 @@ impl PublishState {
             moisture_raster,
             elevation_overlay,
             climate_bands,
+            temperature_survivability,
             sentiment_raster,
             corruption_raster,
             culture_raster,
@@ -1035,6 +1046,7 @@ impl PublishState {
                             moisture: moisture_raster,
                             elevation: elevation_overlay,
                             climate_bands,
+                            temperature_survivability,
                             sentiment: sentiment_raster,
                             corruption: corruption_raster,
                             culture: culture_raster,
@@ -1149,6 +1161,7 @@ impl PublishState {
             moisture_raster: raster_parts.moisture,
             elevation_overlay: raster_parts.elevation,
             climate_bands: raster_parts.climate_bands,
+            temperature_survivability: raster_parts.temperature_survivability,
             sentiment_raster: raster_parts.sentiment,
             corruption_raster: raster_parts.corruption,
             culture_raster: raster_parts.culture,
@@ -1589,6 +1602,7 @@ impl PublishState {
             moisture_raster: None,
             elevation_overlay: None,
             climate_bands: None,
+            temperature_survivability: None,
             start_marker: None,
             axis_bias: Some(bias.clone()),
             sentiment: None,
@@ -1727,6 +1741,7 @@ impl PublishState {
             moisture_raster: None,
             elevation_overlay: None,
             climate_bands: None,
+            temperature_survivability: None,
             start_marker: None,
             axis_bias: None,
             sentiment: None,
@@ -1849,6 +1864,7 @@ impl PublishState {
             moisture_raster: None,
             elevation_overlay: None,
             climate_bands: None,
+            temperature_survivability: None,
             start_marker: None,
             axis_bias: None,
             sentiment: None,
@@ -2864,6 +2880,16 @@ pub fn capture_snapshot(
         boreal_max_temp: config.climate.boreal_max_temp,
         temperate_max_temp: config.climate.temperate_max_temp,
     };
+    // The cold/heat mortality model the population system actually kills from (issue #614), read
+    // straight off the live configs so the client states the survivable range the SIM enforces
+    // rather than inferring one from the climate bands above — which are a different, unrelated set
+    // of thresholds. Mirrors the cold block of `systems::population`.
+    let temperature_survivability_state = TemperatureSurvivabilityState {
+        ambient_temp: config.ambient_temperature.to_f32(),
+        temp_tolerance: demographics_config.cold.temp_tolerance,
+        mortality_scale: demographics_config.cold.mortality_scale,
+        max_mortality: demographics_config.cold.max_mortality,
+    };
     let campaign_profiles_state: Vec<_> = snapshot_profiles(&start_profiles)
         .into_iter()
         .map(|entry| entry.to_schema())
@@ -3128,6 +3154,7 @@ pub fn capture_snapshot(
         moisture_raster: moisture_overlay_state.clone(),
         elevation_overlay: elevation_overlay_state.clone(),
         climate_bands: climate_bands_state,
+        temperature_survivability: temperature_survivability_state,
         start_marker: start_marker_state.clone(),
         victory: victory_snapshot_state.clone(),
         herds: herd_states.clone(),

@@ -381,6 +381,27 @@ pub struct ClimateBandsState {
     pub temperate_max_temp: f32,
 }
 
+/// The cold/heat mortality model's constants, published so the client can state the survivable
+/// temperature range the sim *enforces* instead of re-deriving one from the climate bands (issue
+/// #614). The per-turn death fraction applied to every age bracket, independent of food, is
+/// `min((|temp - ambient_temp| - temp_tolerance) * mortality_scale, max_mortality)` — the cold
+/// block of `core_sim::systems::population`. The tolerance is symmetric, so the model has a lethal
+/// cold tail below `ambient_temp - temp_tolerance` and an equally lethal heat tail above
+/// `ambient_temp + temp_tolerance`. A per-run constant, carried exactly like [`ClimateBandsState`];
+/// these are a *different* set of thresholds from the climate-band cut points and must not be
+/// confused with them.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+pub struct TemperatureSurvivabilityState {
+    #[serde(default)]
+    pub ambient_temp: f32,
+    #[serde(default)]
+    pub temp_tolerance: f32,
+    #[serde(default)]
+    pub mortality_scale: f32,
+    #[serde(default)]
+    pub max_mortality: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 pub struct StartMarkerState {
     pub x: u32,

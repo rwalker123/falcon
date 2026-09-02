@@ -110,6 +110,14 @@ const WATCHDOG_PROGRESS_METHOD := "note_progress"
 const EXIT_OK := 0
 const EXIT_FAILED := 1
 
+## The shipped temperature-mortality tuning the prologue seeds `TileSurvivability` with
+## (`simulation_config.json` `ambient_temperature`; `demographics_config.json` `cold`). Transcribed
+## rather than invented, so the frames state the range the sim really kills outside of: 6.0-30.0 °C.
+const SURVIVABILITY_AMBIENT_TEMP := 18.0
+const SURVIVABILITY_TEMP_TOLERANCE := 12.0
+const SURVIVABILITY_MORTALITY_SCALE := 0.02
+const SURVIVABILITY_MAX_MORTALITY := 0.1
+
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
@@ -436,6 +444,18 @@ func _ready() -> void:
 	# / temperate ≤18 °C) exactly as a first snapshot would — otherwise every tile card would
 	# skip the Climate row (has_bands() == false, the honest pre-publish blank).
 	TileClimate.set_cut_points(0.0, 3.0, 18.0)
+
+	# …and its TWIN, on the same seam and for the same reason: the sim's temperature-MORTALITY model
+	# (MapSection.temperatureSurvivability), which MapView adopts from the same overlay ingest. It is
+	# seeded HERE, globally, rather than by the one chapter that renders lethal ground — a frame at
+	# -14 °C that shows no danger pill is the exact misleading composite issue #614 exists to remove,
+	# and the harness must not be the one place the HUD still lies. Every frame in the walk therefore
+	# renders against a live model, and the handful of fixtures that sit outside the survivable range
+	# (the Polar/Boreal climate frames, the glacier, the harsh-cavern band tile) now say so.
+	# The shipped tuning, transcribed: `simulation_config.json` `ambient_temperature` and the
+	# `demographics_config.json` `cold` block.
+	TileSurvivability.set_model(SURVIVABILITY_AMBIENT_TEMP, SURVIVABILITY_TEMP_TOLERANCE,
+		SURVIVABILITY_MORTALITY_SCALE, SURVIVABILITY_MAX_MORTALITY)
 
 	# Top-bar Sedentarization meter (faction 0, soft band) — visible across all frames.
 	_hud.update_sedentarization([{"faction": 0, "score": 62.0, "stage": "soft"}])

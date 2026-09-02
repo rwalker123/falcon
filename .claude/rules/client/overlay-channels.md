@@ -612,6 +612,68 @@ picture cannot separate, and the nearest answer moving with the selection off th
 
 ---
 
+## The TEMPERATURE channel — colour carries degrees, the LETHAL band does not (issue #614)
+
+There were overlays for elevation, moisture, culture, pasture, forage, terrain tags, hunt danger,
+threat and crisis, and none for the one tile property that decides whether a camp site is survivable.
+
+**Nothing new is on the wire.** `MapView.tile_temperature` already holds per-tile °C for every
+decoded tile, so the channel is CLIENT-DERIVED like `terrain_tags` and `ready_for_improvement` — one
+`OverlayChannels.CHANNELS` row, one `DEFERRED_OVERLAY_BUILDERS` entry
+(`MapView._build_temperature_channel`), no schema change and no server work. The row is gated on
+`MapView.has_temperature_data()`, which asks the TILES and never the raster, for the reason
+`ready_for_improvement`'s row already records: the channel is built lazily, so a predicate that asked
+for a raster could only offer the row after something had already built the thing the row exists to
+let the player ask for.
+
+The registry owns the channel's three player-facing strings (`OverlayChannels.TEMPERATURE_KEY` /
+`_LABEL` / `_DESCRIPTION`) and `MapView` reads them back, so the picker's list and the channel the
+renderer stamps into its own table cannot become two names for one thing.
+
+### The treatment: an honest gradient, with lethality on a SECOND channel
+
+**The default scalar path is exactly what must not happen here.** `GRID_COLOR.lerp(overlay_color,
+value)` with Low/Average/High rows would make the player interpolate a smooth gradient to find where
+the deadly line falls — and they would find it in the wrong place, because there is nothing in a
+gradient to find. So the two readings are carried by different things and never compete:
+
+- **Colour carries the temperature.** A five-stop ramp, cold → warm
+  (`MapView._temperature_ramp_color`), NORMALIZED MIN-MAX across the map rather than against the max
+  the way pasture and forage are. Their zero is a categorical fact — "this ground carries no pasture"
+  — so a max-relative scale reads correctly there; temperature has no such zero, and min-max is what
+  makes THIS map's actual range legible. The RAW °C array rides alongside so the legend prints real
+  degrees rather than a fraction.
+- **Lethality is drawn, not tinted** — `MapView._draw_temperature_lethality`, a hatch on every
+  killing hex and a heavy contour along every edge where killing ground meets living ground. Its
+  placement and its zoom gate are `map-renderers.md`'s, the pass living in `MapView`.
+
+Lethality is `TileSurvivability.is_lethal` — the SAME authority the tile card's `⚠ Lethal cold` chip
+reads (`band-readouts.md`), never a threshold re-derived here, so the map and the card cannot
+disagree. The pass is silent until the sim has published its model, exactly as the chip is.
+
+### The legend is its own, and its Lethal row is the SIM's range
+
+`_build_temperature_legend`, not `_build_scalar_overlay_legend` — the pasture/forage precedent, and it
+qualifies for a sharper reason than they do: Low/Average/High of a normalized fraction would name
+neither a degree nor, far worse, the THRESHOLD. The rows are the map's real **Coldest / Average /
+Warmest** in °C, plus a **Lethal** row whose value text is read off `TileSurvivability`
+(`outside 6.0 – 30.0 °C` at the shipped tuning) and is absent entirely until the model is published.
+A legend that transcribed those degrees would be a second opinion able to drift from the map it is
+describing; `map_preview` asks the question by RETUNING the model and re-reading the row.
+
+Swatches come from the same `_temperature_ramp_color` the map paints through — the
+`_pasture_ramp_color` rule, because a swatch is a claim about the map — and the harness asserts it by
+comparing each swatch against what `_tile_color` hands back for that extreme's own tile.
+
+**A legend swatch is a flat `Color`, so the Lethal row wears the hatch colour solid.** That is the
+settled answer and not a shortfall: the swatch names the ink the lethal marks are drawn in, and the
+channel description says what shape they take. Do not try to put a pattern in a swatch.
+
+**The picker gives this channel the NEUTRAL glyph, correctly.** It is in
+`MapView.SPECIAL_PAINT_OVERLAY_KEYS` (it paints through a ramp of its own) and has no
+`OVERLAY_COLORS` row, having no single hue — so `_selection_has_map_color` answers false and the
+legend button wears `◐` rather than a swatch that could only name one stop of five.
+
 ## The on-tile yield label carries ONE component (issues #337 / #449 / #527)
 
 A source can pay more than one account, but the label sits on a hex a few pixels wide beside a floor
