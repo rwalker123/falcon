@@ -30,7 +30,8 @@ paths:
     informational, never the warning palette; it carries the BAND AND THE TEMPERATURE,
     `Temperate · 3.7 °C`) · **Survivability** (issue #614 — `⚠ Lethal cold` / `⚠ Lethal heat` in
     `HudStyle.DANGER`, present only when `TileSurvivability` says the sim is killing on this ground,
-    with the rate and the arithmetic on its hover; the one chip that wears the warning palette, which
+    with `4.6% increased mortality per turn due to severe cold` on its hover — one clause, naming what
+    happens to the people; the one chip that wears the warning palette, which
     is why the Climate chip beside it does not) · Tags (skipped when empty/`none`) · Site. **Each
     chip is skipped when its field is absent**, exactly as the equivalent row is, so a rehydrated
     tile never shows an invented rating; on an Unexplored hex ONLY the Sight chip renders. Chrome

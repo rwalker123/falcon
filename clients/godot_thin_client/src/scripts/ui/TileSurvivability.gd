@@ -78,8 +78,3 @@ static func death_rate(temperature: float) -> float:
 	if excess <= 0.0:
 		return 0.0
 	return minf(excess * _mortality_scale, _max_mortality)
-
-## True when the configured CAP is what the rate rests on rather than the deviation — the tile is
-## far enough outside the range that getting colder (or hotter) no longer kills faster.
-static func is_at_max_rate(temperature: float) -> bool:
-	return _model_published and death_rate(temperature) >= _max_mortality

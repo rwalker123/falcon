@@ -212,23 +212,19 @@ func _tile_chip_descriptors(tile_info: Dictionary) -> Array:
 		out.append({"key": "site", "text": site_name, "tint": HudStyle.INK_DIM, "tooltip": ""})
 	return out
 
-## The survivability chip's hover: the per-turn loss, then the arithmetic it comes out of — the
-## tile's temperature, how far past the survival line it sits, and the line itself. The line is
-## whichever end of the sim's range this tile fell out of, so the same sentence serves both tails.
-## When the model's cap is what the rate rests on, the sentence says so instead of implying that
-## colder ground would kill faster.
+## The survivability chip's hover: ONE clause naming what the ground does to the people, and the rate
+## it does it at. The tail it names comes from the same `is_cold` the FACE is chosen by, so pill and
+## hover cannot disagree about which end of the range this tile fell out of.
+##
+## It carries NO degrees. They are on the Climate chip immediately beside it, and restating them here
+## to derive a distance is what made the old hover say everything except that people die — see
+## `HudSelectionVocab.CHIP_SURVIVABILITY_TOOLTIP_COLD` for what was removed and why.
 func _survivability_tooltip(temperature: float) -> String:
-	var survival_line := TileSurvivability.survivable_min() \
-		if TileSurvivability.is_cold(temperature) else TileSurvivability.survivable_max()
-	var template := HudSelectionVocab.CHIP_SURVIVABILITY_TOOLTIP_CAPPED_FORMAT \
-		if TileSurvivability.is_at_max_rate(temperature) \
-		else HudSelectionVocab.CHIP_SURVIVABILITY_TOOLTIP_FORMAT
-	return template % [
-		TileSurvivability.death_rate(temperature) * HudSelectionVocab.CHIP_SURVIVABILITY_PERCENT_SCALE,
-		temperature,
-		absf(temperature - survival_line),
-		survival_line,
-	]
+	var template := HudSelectionVocab.CHIP_SURVIVABILITY_TOOLTIP_COLD \
+		if TileSurvivability.is_cold(temperature) \
+		else HudSelectionVocab.CHIP_SURVIVABILITY_TOOLTIP_HEAT
+	return template % HudSelectionVocab.survivability_percent_text(
+		TileSurvivability.death_rate(temperature))
 
 ## Patch an existing chip in place to a new descriptor — the same node the slot held last render, so
 ## a restate updates the FACE without a teardown. Mirrors `_make_chip`'s tooltip/mouse-filter rule.

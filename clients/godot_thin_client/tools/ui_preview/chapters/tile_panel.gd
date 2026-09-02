@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 87
+const EXPECTED_CHECKPOINTS := 92
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -503,23 +503,41 @@ func _occupied_herd_fixture() -> Dictionary:
 const LETHAL_COLD_TEMPERATURE := 3.7
 ## The HEAT tail, which exists for the same reason and was equally unsaid: the tolerance is symmetric.
 const LETHAL_HEAT_TEMPERATURE := 33.5
-## Far enough out that the model's CAP is what the rate rests on — colder ground kills no faster, and
-## the hover has to say that instead of implying the distance still explains the number.
+## Far enough out that the model's CAP is what the rate rests on. The hover no longer SAYS so (that
+## clause was cut), but the cap must still be what the number comes out of — 26 ° past the line at
+## 0.02/° would be 52 % without it.
 const CAPPED_COLD_TEMPERATURE := -20.0
+## **THE TILE THAT SHIPPED BROKEN.** Barely inside the cold tail: 0.02 ° past the line, so the rate is
+## a real 0.04 % and the model is right — but rounded to one decimal it printed `−0.0 %`, and the old
+## hover's second sentence collapsed into `6.0 °C is 0.0 °C past the 6.0 °C survival line`. Every
+## other state here sits comfortably past the line, which is exactly why none of them caught it.
+## The Climate chip beside it rounds to `6.0 °C`, reproducing the reported screen precisely.
+const NEAR_LINE_COLD_TEMPERATURE := 5.98
 ## Comfortably inside the range, where the chip must NOT appear at all.
 const SURVIVABLE_TEMPERATURE := 19.0
 
 ## What each state's chips must READ, written out rather than recomputed here: an assertion that
 ## re-derived the rate from the constants above would pass against a client that had stopped
-## deriving it. `4.6 %` is `(|3.7 - 18| - 12) x 0.02`, and `2.3 °C` its distance past `18 - 12`.
-const LETHAL_COLD_TOOLTIP := "−4.6 % of every age bracket per turn, regardless of food. " \
-	+ "3.7 °C is 2.3 °C past the 6.0 °C survival line."
-const LETHAL_HEAT_TOOLTIP := "−7.0 % of every age bracket per turn, regardless of food. " \
-	+ "33.5 °C is 3.5 °C past the 30.0 °C survival line."
-const CAPPED_COLD_TOOLTIP := "−10.0 % of every age bracket per turn, regardless of food. " \
-	+ "-20.0 °C is 26.0 °C past the 6.0 °C survival line, at the configured maximum rate."
+## deriving it. `4.6 %` is `(|3.7 - 18| - 12) x 0.02`; the capped one is the model's own 0.1 ceiling.
+const LETHAL_COLD_TOOLTIP := "4.6% increased mortality per turn due to severe cold"
+const LETHAL_HEAT_TOOLTIP := "7.0% increased mortality per turn due to severe heat"
+const CAPPED_COLD_TOOLTIP := "10.0% increased mortality per turn due to severe cold"
+## …and the near-boundary tile, whose rate is real but below what one decimal can show. It states the
+## BOUND rather than a rounded zero.
+const NEAR_LINE_COLD_TOOLTIP := "<0.1% increased mortality per turn due to severe cold"
+
+## The two spellings the near-boundary hover must never contain again — a rounded-away rate, and the
+## minus sign that made it read as `−0.0 %`, i.e. as nothing happening at all.
+const TOOLTIP_ROUNDED_ZERO := "0.0%"
+const TOOLTIP_MINUS_SIGN := "−"
+## …and the two clauses cut from the hover for saying everything except that people die. Asserted
+## ABSENT on an ordinary lethal tile so neither can creep back in a later edit.
+const TOOLTIP_RETIRED_LINE_CLAUSE := "survival line"
+const TOOLTIP_RETIRED_FOOD_CLAUSE := "regardless of food"
+
 ## …and the Climate chip beside it, which since #614 carries the NUMBER the band name hides.
 const LETHAL_COLD_CLIMATE_CHIP := "Temperate · 3.7 °C"
+const NEAR_LINE_COLD_CLIMATE_CHIP := "Temperate · 6.0 °C"
 const SURVIVABLE_CLIMATE_CHIP := "Tropical · 19.0 °C"
 
 ## The chip SET a lethal hex renders, in order — the survivability pill sits directly after the
@@ -1292,11 +1310,19 @@ func run(harness) -> void:
 	h._assert_hud("…the pill names the tail it is in (cold, not heat)",
 		_chip_text(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("survivability"))
 			== HudSelectionVocab.CHIP_SURVIVABILITY_COLD)
-	h._assert_hud("…its hover states the per-turn loss, the reading, the distance and the line",
+	h._assert_hud("…its hover names what happens to the people, and the rate it happens at",
 		_chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("survivability"))
 			== LETHAL_COLD_TOOLTIP)
-	# The half that makes the pill legible: the band name alone never said 3.7, so the number the
-	# survival line is measured against has to be on the card too.
+	# **THE TWO CUT CLAUSES, ASSERTED ABSENT.** The old hover restated the degrees the Climate chip
+	# already carries in order to derive a distance from the line, and added "regardless of food" on
+	# top — and between them they buried the one thing the hover exists to say. Neither may creep back
+	# in a later edit, and only a negative can say so.
+	var lethal_cold_hover := _chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("survivability"))
+	h._assert_hud("…and it no longer restates the degrees to derive a distance past the line",
+		not lethal_cold_hover.contains(TOOLTIP_RETIRED_LINE_CLAUSE) \
+			and not lethal_cold_hover.contains(TOOLTIP_RETIRED_FOOD_CLAUSE))
+	# The half that makes the pill legible: the band name alone never said 3.7, so the reading the
+	# player judges the warning against has to be on the card too.
 	h._assert_hud("…and the climate chip beside it now carries the TEMPERATURE, not just the band",
 		_chip_text(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == LETHAL_COLD_CLIMATE_CHIP)
 
@@ -1308,14 +1334,33 @@ func run(harness) -> void:
 		h._hud._selectioncard._tile_chip_slots == LETHAL_CHIP_SLOTS \
 			and _chip_text(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("survivability"))
 				== HudSelectionVocab.CHIP_SURVIVABILITY_HEAT)
-	h._assert_hud("…measured against the HOT end of the range (30.0 °C), not the cold one",
+	h._assert_hud("…and its hover blames the HEAT, not the cold",
 		_chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("survivability"))
 			== LETHAL_HEAT_TOOLTIP)
 
+	# tile_panel_lethal_near_line — **THE STATE THAT WOULD HAVE CAUGHT THE SHIPPED BUG.** A hex 0.02 °
+	# inside the cold tail: the rate is a real 0.04 %, and printed at one decimal with a leading minus
+	# it read `−0.0 %` — nothing happening, on ground the sim kills on. Every other state here sits
+	# comfortably past the line, which is exactly why none of them caught it. The frame is saved
+	# because the pill and the `Temperate · 6.0 °C` chip beside it are the reported screen.
+	h._show_tile(_survivability_tile_fixture(NEAR_LINE_COLD_TEMPERATURE))
+	await h._settle()
+	await h._save("tile_panel_lethal_near_line")
+	var near_line_hover := _chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("survivability"))
+	h._assert_hud("a rate too small to print states the BOUND, not a rounded zero",
+		near_line_hover == NEAR_LINE_COLD_TOOLTIP)
+	h._assert_hud("…so the hover carries neither a `0.0%` nor a minus sign",
+		not near_line_hover.contains(TOOLTIP_ROUNDED_ZERO) \
+			and not near_line_hover.contains(TOOLTIP_MINUS_SIGN))
+	h._assert_hud("…and the climate chip beside it reads the reported `Temperate · 6.0 °C`",
+		_chip_text(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == NEAR_LINE_COLD_CLIMATE_CHIP)
+
 	# No frame: a capped hex renders a pill identical to the cold one, so only the hover can testify.
+	# The hover no longer NAMES the cap — that clause was cut — but the number still has to come out
+	# of it: 26 ° past the line at 0.02/° is 52 %, and 10.0 % is the model's ceiling holding.
 	h._show_tile(_survivability_tile_fixture(CAPPED_COLD_TEMPERATURE))
 	await h._settle()
-	h._assert_hud("ground past the model's CAP says the rate is the maximum, not that it keeps climbing",
+	h._assert_hud("ground far past the line reports the model's CAPPED rate, not the raw deviation",
 		_chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("survivability"))
 			== CAPPED_COLD_TOOLTIP)
 
