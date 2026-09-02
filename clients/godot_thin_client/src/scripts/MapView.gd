@@ -138,7 +138,7 @@ const TEMPERATURE_HOTTEST_COLOR := Color(0.760784, 0.435294, 0.215686, 1.0)  # #
 
 # The LETHAL pass. `_tile_color` hands back one Color per hex and can express neither of these marks,
 # so they are drawn rather than tinted. Lethality is `TileSurvivability.is_lethal` — the SAME
-# authority the tile card's `⚠ Lethal cold` chip reads, never a threshold re-derived here.
+# authority the tile card's ⚠ climate chip reads, never a threshold re-derived here.
 const TEMPERATURE_HATCH_COLOR := Color(1.0, 0.380392, 0.321569, 1.0)    # #ff6152 hatch on killing ground
 const TEMPERATURE_CONTOUR_COLOR := Color(1.0, 0.560784, 0.513725, 1.0)  # #ff8f83 the survival line itself
 const TEMPERATURE_HATCH_WIDTH := 1.5
@@ -2493,7 +2493,7 @@ func _outline_hex_at(center: Vector2, radius: float, color: Color, width: float)
 ##   * the CONTOUR says *the survival line runs HERE*, along every edge where a lethal hex meets a
 ##     survivable one, and is what still carries the reading once the hatch is gone.
 ##
-## Lethality comes from `TileSurvivability`, the same authority the tile card's `⚠ Lethal cold` chip
+## Lethality comes from `TileSurvivability`, the same authority the tile card's ⚠ climate chip
 ## reads — so the map and the card can never disagree — and the pass is silent until the sim has
 ## published its model, exactly as the chip is.
 ##
@@ -4207,7 +4207,7 @@ func _format_pasture_capacity(capacity: float) -> String:
 ## map's real Coldest/Average/Warmest in °C, plus one row for the survivable range the sim enforces.
 ##
 ## **THE LETHAL ROW'S RANGE IS READ OFF `TileSurvivability`, NEVER WRITTEN HERE.** It is the sim's
-## published model, the same numbers the tile card's `⚠ Lethal cold` chip is struck from; a legend
+## published model, the same numbers the tile card's ⚠ climate chip is struck from; a legend
 ## that transcribed them would be a second opinion able to drift from the map it is describing. Until
 ## the model is published there is no row rather than an invented range.
 ##

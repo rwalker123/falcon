@@ -19,11 +19,29 @@ class_name TileClimate
 ##   temp <= temperate_max_temp → Temperate
 ##   else                       → Tropical
 ##
-## Climate is INFORMATIONAL, not a warning: it deliberately does NOT reuse the
-## HEALTHY/WARN/DANGER semantic palette the Habitability row owns. The Tile card renders
-## the band with the neutral default ink tint. The four band names mirror the sim's own
-## `ClimateBand` vocabulary (polar/boreal/temperate/tropical) so the client label can never
-## drift from the band the sim decided; they also read naturally beside a biome name.
+## ⛔ **"CLIMATE IS INFORMATIONAL, NEVER A WARNING" WAS THIS FILE'S RULE, AND IT IS DELIBERATELY
+## REVERSED.** It read: *climate does NOT reuse the HEALTHY/WARN/DANGER palette the Habitability row
+## owns; the Tile card renders the band with the neutral default ink.* That rule existed to stop a
+## band NAME masquerading as a safety readout — `Boreal` is not a danger rating and colouring it like
+## one would have taught the player to read a warning where none was meant.
+##
+## Since issue #614 the Tile card's climate chip **is** the safety readout: the lethal-temperature
+## warning merged into it rather than sitting beside it as a fourth pill
+## (`SelectionCardController._tile_chip_descriptors`), because the band name and the death rate are
+## two readings of the SAME number and that number is already on the chip's face. So the chip wears
+## `HudStyle.DANGER` and a `⚠` **exactly when `TileSurvivability.is_lethal` says the sim is killing
+## people there**, and neutral `INK_DIM` otherwise. It is not pretending to be a safety readout any
+## more; it is one.
+##
+## What survives of the old rule, and is the part worth keeping: **the BAND alone never earns a
+## tint.** Nothing in this file decides the warning — `band_for` still answers a name and nothing
+## else, the DANGER comes from `TileSurvivability`, and the two sets of thresholds stay separate
+## (`TileSurvivability`'s class docs carry why). A future edit that tinted a band by its own name
+## would be re-introducing the thing the original rule forbade.
+##
+## The four band names mirror the sim's own `ClimateBand` vocabulary (polar/boreal/temperate/tropical)
+## so the client label can never drift from the band the sim decided; they also read naturally beside
+## a biome name.
 
 const BAND_POLAR := "Polar"
 const BAND_BOREAL := "Boreal"
@@ -50,8 +68,13 @@ static func set_cut_points(polar_max: float, boreal_max: float, temperate_max: f
 	_temperate_max = temperate_max
 	_bands_published = true
 
-## True once the sim has published cut points, so a caller can skip the Climate row
-## entirely rather than render a dash before any snapshot has landed.
+## True once the sim has published cut points, so a caller can skip the Climate readout entirely
+## rather than render a dash before any snapshot has landed.
+##
+## **IT IS NO LONGER THE WHOLE CONDITION FOR THE CHIP.** Since the lethal warning merged into the
+## climate chip, a card that hid the chip whenever the cut points were absent would hide the only
+## warning with it — so `_tile_chip_descriptors` renders degrees alone on lethal ground the bands
+## cannot name. This still answers only about the BANDS.
 static func has_bands() -> bool:
 	return _bands_published
 

@@ -66,15 +66,26 @@ const CHIP_TAGS_NONE := "none"
 # reasoned with. One decimal, because that is the resolution a survival line is stated at below.
 const CHIP_CLIMATE_FORMAT := "%s · %.1f °C"
 
-# The SURVIVABILITY chip — the sim's temperature-mortality model, and the only chip on the strip
-# that wears DANGER. It exists because the informational chips beside it can all read benign on
-# ground that is killing the band every turn: at the shipped tuning a 3.7 °C hex is `Temperate`,
-# rates `Fair`, shows full morale, and takes 4.6 % of every age bracket per turn (issue #614).
-# Present only when the tile is genuinely lethal — a survivable hex earns no chip, exactly as an
-# absent condition earns no row.
-const CHIP_SURVIVABILITY_COLD := "⚠ Lethal cold"
+# …and the same face with no band name, for the one case that must never lose its warning: the sim
+# has published its MORTALITY model but not its band CUT POINTS. The chip normally needs the cut
+# points to have anything to say, but since the lethal warning merged into it, "no cut points" would
+# take the only warning off the card with it. The degrees alone still carry the reading.
+const CHIP_CLIMATE_DEGREES_ONLY_FORMAT := "%.1f °C"
 
-const CHIP_SURVIVABILITY_HEAT := "⚠ Lethal heat"
+# The WARNING PREFIX, and the tint that comes with it (`HudStyle.DANGER`, applied by the descriptor).
+#
+# There were TWO pills for one temperature — `Temperate · 5.0 °C` beside `⚠ Lethal cold` — and four
+# pills on a tile card is more than a player reads. They are two readings of the SAME number and the
+# number is already on the climate face, so the warning is a PREFIX and a tint on that face rather
+# than a second pill.
+#
+# **It merged with CLIMATE and NOT with HABITABILITY, and the difference is arithmetic.** Habitability
+# is `terrain attrition + terrain hardness + (|T - 18| - 9) x 0.004` and turns Hostile at 0.09; on
+# terrain with no attrition penalty, temperature alone does not reach Hostile until -13.5 °C, while
+# people start dying at 6.0 °C. That is a 19.5-degree band of lethal-but-Fair ground — exactly where
+# the original defect lived — so a warning folded into habitability would be silent across the whole
+# window it exists to cover.
+const CHIP_CLIMATE_LETHAL_PREFIX := "⚠ "
 
 # The hover: ONE clause, and it names what happens to the people.
 #
@@ -86,8 +97,8 @@ const CHIP_SURVIVABILITY_HEAT := "⚠ Lethal heat"
 # were printed at a precision where they had stopped meaning anything.
 #
 # What is gone, and must not creep back:
-#   * the SECOND SENTENCE. The degrees are on the Climate chip immediately beside this pill; saying
-#     them again, twice, to derive a distance nobody asked for is what buried the verb.
+#   * the SECOND SENTENCE. The degrees are on the chip face this hover now hangs off; saying them
+#     again, twice, to derive a distance nobody asked for is what buried the verb.
 #   * the CAPPED variant ("…, at the configured maximum rate"). A player reading a mortality figure
 #     does not need to be told which term of the model is binding.
 #   * "regardless of food". True, and not what the hover is for.

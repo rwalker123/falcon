@@ -113,6 +113,14 @@ const EXIT_FAILED := 1
 ## The shipped temperature-mortality tuning the prologue seeds `TileSurvivability` with
 ## (`simulation_config.json` `ambient_temperature`; `demographics_config.json` `cold`). Transcribed
 ## rather than invented, so the frames state the range the sim really kills outside of: 6.0-30.0 °C.
+## The shipped climate-band cut points the prologue seeds `TileClimate` with (`climate_config.json`
+## → polar <= 0 / boreal <= 3 / temperate <= 18 °C). Named rather than typed inline because a chapter
+## that clears the bands to exercise the no-cut-points path has to put these exact values back — they
+## are a per-run constant every later frame's climate chip is rendered from.
+const CLIMATE_POLAR_MAX_TEMP := 0.0
+const CLIMATE_BOREAL_MAX_TEMP := 3.0
+const CLIMATE_TEMPERATE_MAX_TEMP := 18.0
+
 const SURVIVABILITY_AMBIENT_TEMP := 18.0
 const SURVIVABILITY_TEMP_TOLERANCE := 12.0
 const SURVIVABILITY_MORTALITY_SCALE := 0.02
@@ -443,7 +451,8 @@ func _ready() -> void:
 	# harness has no MapView, so seed TileClimate with the shipped values (polar ≤0 / boreal ≤3
 	# / temperate ≤18 °C) exactly as a first snapshot would — otherwise every tile card would
 	# skip the Climate row (has_bands() == false, the honest pre-publish blank).
-	TileClimate.set_cut_points(0.0, 3.0, 18.0)
+	TileClimate.set_cut_points(CLIMATE_POLAR_MAX_TEMP, CLIMATE_BOREAL_MAX_TEMP,
+		CLIMATE_TEMPERATE_MAX_TEMP)
 
 	# …and its TWIN, on the same seam and for the same reason: the sim's temperature-MORTALITY model
 	# (MapSection.temperatureSurvivability), which MapView adopts from the same overlay ingest. It is

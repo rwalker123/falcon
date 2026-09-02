@@ -181,29 +181,31 @@ func _tile_chip_descriptors(tile_info: Dictionary) -> Array:
 		var habitability := float(tile_info["habitability"])
 		out.append({"key": "habitability", "text": TileHabitability.rating_for(habitability),
 			"tint": TileHabitability.color_for(habitability), "tooltip": ""})
-	# Climate is INFORMATIONAL, so it wears neutral ink and never the warning palette; the cut
-	# points are the SIM's, so until they are published there is no chip rather than a guess.
-	# It carries the TEMPERATURE beside the band since #614: a band is a bucket wide enough to hold
-	# both comfortable and lethal ground, and the number was on no surface of the card at all.
-	if tile_info.has("temperature") and TileClimate.has_bands():
+	# **THE CLIMATE CHIP IS ALSO THE LETHAL WARNING** (issue #614). One temperature, one pill: the band
+	# name and the death rate are two readings of the SAME number, and that number is already on this
+	# face, so the warning is a prefix + `DANGER` here rather than a second chip beside it. See
+	# `HudSelectionVocab.CHIP_CLIMATE_LETHAL_PREFIX` for why it merged with climate and NOT with
+	# habitability, which stays benign across a 19.5-degree window of killing ground.
+	#
+	# **Gated on EITHER authority having spoken, not on both.** The band cut points alone used to be
+	# the whole condition — no cut points, no chip, which was a cosmetic gap while the warning lived in
+	# a pill of its own. Now it would take the only warning off the card, so a published mortality
+	# model on lethal ground renders the chip with degrees alone
+	# (`CHIP_CLIMATE_DEGREES_ONLY_FORMAT`). Fog is handled for free by the `VISIBILITY_UNEXPLORED`
+	# early-return above: temperature is a static property of ground the player has already stood on.
+	if tile_info.has("temperature"):
 		var climate_temperature := float(tile_info["temperature"])
-		out.append({"key": "climate", "text": HudSelectionVocab.CHIP_CLIMATE_FORMAT % [
-				TileClimate.band_for(climate_temperature), climate_temperature],
-			"tint": HudStyle.INK_DIM, "tooltip": ""})
-	# …and DIRECTLY AFTER IT the one chip that is a warning: ground the sim kills on. It sits beside
-	# the climate chip because it is the same number read against a different, unrelated set of
-	# thresholds (see `TileSurvivability`), and it is gated exactly as the climate chip is with
-	# respect to fog — temperature is a static property of ground already explored, and the
-	# VISIBILITY_UNEXPLORED early-return above keeps it off never-visited hexes.
-	if tile_info.has("temperature") and TileSurvivability.has_model():
-		var lethal_temperature := float(tile_info["temperature"])
-		if TileSurvivability.is_lethal(lethal_temperature):
-			out.append({"key": "survivability",
-				"text": HudSelectionVocab.CHIP_SURVIVABILITY_COLD \
-					if TileSurvivability.is_cold(lethal_temperature) \
-					else HudSelectionVocab.CHIP_SURVIVABILITY_HEAT,
-				"tint": HudStyle.DANGER,
-				"tooltip": _survivability_tooltip(lethal_temperature)})
+		var climate_lethal := TileSurvivability.is_lethal(climate_temperature)
+		if TileClimate.has_bands() or climate_lethal:
+			var climate_face := HudSelectionVocab.CHIP_CLIMATE_FORMAT % [
+					TileClimate.band_for(climate_temperature), climate_temperature] \
+				if TileClimate.has_bands() \
+				else HudSelectionVocab.CHIP_CLIMATE_DEGREES_ONLY_FORMAT % climate_temperature
+			out.append({"key": "climate",
+				"text": (HudSelectionVocab.CHIP_CLIMATE_LETHAL_PREFIX + climate_face) \
+					if climate_lethal else climate_face,
+				"tint": HudStyle.DANGER if climate_lethal else HudStyle.INK_DIM,
+				"tooltip": _survivability_tooltip(climate_temperature) if climate_lethal else ""})
 	var tags_text := String(tile_info.get("tags_text", "")).strip_edges()
 	if tags_text != "" and tags_text.to_lower() != HudSelectionVocab.CHIP_TAGS_NONE:
 		out.append({"key": "tags", "text": tags_text, "tint": HudStyle.INK_DIM, "tooltip": ""})
@@ -212,12 +214,12 @@ func _tile_chip_descriptors(tile_info: Dictionary) -> Array:
 		out.append({"key": "site", "text": site_name, "tint": HudStyle.INK_DIM, "tooltip": ""})
 	return out
 
-## The survivability chip's hover: ONE clause naming what the ground does to the people, and the rate
-## it does it at. The tail it names comes from the same `is_cold` the FACE is chosen by, so pill and
+## The LETHAL climate chip's hover: ONE clause naming what the ground does to the people, and the rate
+## it does it at. The tail it names comes from the same `is_cold` the ⚠ FACE is chosen by, so face and
 ## hover cannot disagree about which end of the range this tile fell out of.
 ##
-## It carries NO degrees. They are on the Climate chip immediately beside it, and restating them here
-## to derive a distance is what made the old hover say everything except that people die — see
+## It carries NO degrees. They are on the very face this hangs off, and restating them to derive a
+## distance is what made the old hover say everything except that people die — see
 ## `HudSelectionVocab.CHIP_SURVIVABILITY_TOOLTIP_COLD` for what was removed and why.
 func _survivability_tooltip(temperature: float) -> String:
 	var template := HudSelectionVocab.CHIP_SURVIVABILITY_TOOLTIP_COLD \
