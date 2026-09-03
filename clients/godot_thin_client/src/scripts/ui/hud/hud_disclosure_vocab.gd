@@ -5,7 +5,7 @@ class_name HudDisclosureVocab
 
 # Band food flow lives on the Food summary line: `Food 15 (19 turns) · −0.77 /turn` (net =
 # food_income − food_consumption, sign-tinted), with a click-to-expand category breakdown
-# (Gathered/Hunted/Eaten) underneath — mirroring the morale breakdown. `SourceForecast.FOOD_FLOW_MIN` gates both
+# (Gathered/Hunted/Consumed) underneath — mirroring the morale breakdown. `SourceForecast.FOOD_FLOW_MIN` gates both
 # the net readout and each breakdown category (below it → absent, not shown as a zero).
 # Click-to-open disclosure shared by the Food + Morale summary rows: a ▸/▾ caret on the row label and
 # a clickable `[url]` meta = `<prefix><kind>:<entity>` dispatched by `DisclosureController`.

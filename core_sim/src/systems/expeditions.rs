@@ -42,7 +42,7 @@ type ExpeditionHomeBands = (
     Option<&'static ResidentBand>,
     // The band's food ledger. A party handing its pack (or a shipment) over crosses two larders
     // through neither income nor consumption, so the crossing is recorded on
-    // `LaborAllocation::last_transfer_received`. `Option`, matching how the sibling ledger terms
+    // `LaborAllocation::last_food_transfers`. `Option`, matching how the sibling ledger terms
     // are read at capture.
     Option<&'static mut LaborAllocation>,
 );
@@ -652,11 +652,14 @@ pub fn advance_expeditions(
                                 // are what make it a shipment of goods rather than of a number, so
                                 // two ratings of one material arrive as two batches.
                                 expedition.cargo.drain_materials_into(&mut host.stores);
-                                // The receiving half of the food ledger's transfer pair. The
+                                // The receiving half of the food ledger's transfer terms, on the
+                                // [`TransferLink::Route`] arm — a party carried this here. The
                                 // *sending* half was booked at launch, against the band the party
-                                // was drawn off.
+                                // was drawn off, on the same arm.
                                 if let Some(mut allocation) = allocation {
-                                    allocation.last_transfer_received += moved.to_f32();
+                                    allocation
+                                        .last_food_transfers
+                                        .credit(TransferLink::Route, moved.to_f32());
                                 }
                                 moved
                             },
@@ -736,9 +739,12 @@ pub fn advance_expeditions(
                             fold_party_into_band(&mut cohort, &mut expedition.cargo, &mut home);
                         banked_materials = fold.materials;
                         // The pack and the cargo landing in the band's larder is food crossing from
-                        // a party into a band, which is neither income nor consumption.
+                        // a party into a band, which is neither income nor consumption. A party
+                        // carried it, so the arm is [`TransferLink::Route`] whatever its mission was.
                         if let Some(mut allocation) = allocation {
-                            allocation.last_transfer_received += fold.food.to_f32();
+                            allocation
+                                .last_food_transfers
+                                .credit(TransferLink::Route, fold.food.to_f32());
                         }
                     }
                     event_log.push(expedition_returned_event(
@@ -1180,9 +1186,12 @@ pub fn advance_expeditions(
                         banked_materials = materials_carried(&cohort.stores);
                         cohort.stores.drain_materials_into(&mut home.stores);
                         // A drop-off is food crossing from a party into a band's larder — the same
-                        // ledger term a shipment's arrival takes.
+                        // ledger term, and the same [`TransferLink::Route`] arm, a shipment's arrival
+                        // takes. The link names the VEHICLE, not the errand: a hunt walked this home.
                         if let Some(mut allocation) = allocation {
-                            allocation.last_transfer_received += delivered.to_f32();
+                            allocation
+                                .last_food_transfers
+                                .credit(TransferLink::Route, delivered.to_f32());
                         }
                     }
                     event_log.push(CommandEventEntry::new(
@@ -1314,7 +1323,7 @@ pub fn fold_party_into_band(
 /// **What a homecoming handed over**, so a caller can both narrate it and book it.
 ///
 /// The material total is the feed line's *"is the pack really empty"* reading; the food is the
-/// **food ledger's** transfer term ([`LaborAllocation::last_transfer_received`]) — a party's pack
+/// **food ledger's** transfer term ([`LaborAllocation::last_food_transfers`]) — a party's pack
 /// landing in a band's larder passes through neither income nor consumption, exactly like a
 /// supply-network move. Returning both from one routine is what stops the prose and the ledger
 /// disagreeing about one arrival.

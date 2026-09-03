@@ -105,9 +105,13 @@ of nobody is not a band, so `min_founding_workers ≥ 1` is validated.
 ### The dowry is a transfer, and it is booked as one
 
 The share of the larder that walks out with the new band is **food that crossed between two larders**,
-so it is booked into the food ledger's transfer pair: `last_transfer_sent` on the parent,
-`last_transfer_received` on the child, the same pair `balance_supply_networks` and a trade shipment
-write (`.claude/rules/core_sim/campaign.md` → the transfer callout, which owns the identity).
+so it is booked into the food ledger's transfer terms: a debit on the parent's
+`last_food_transfers`, a credit on the child's, the same ledger `balance_supply_networks` and a trade
+shipment write (`.claude/rules/core_sim/campaign.md` → the transfer callout, which owns the identity).
+
+**The dowry takes the `TransferLink::Local` arm.** A splinter is camped where its parent is and
+nothing carried the food anywhere — the same *standing together* crossing pooling is, and not the
+`route` arm a party's pack takes.
 
 **A split is a command, so it lands *between* two captures** — inside the interval a client's
 `larder_delta` measures. Without the booking the parent publishes a frame whose Food line is short by

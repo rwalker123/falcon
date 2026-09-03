@@ -94,8 +94,9 @@ const BAND_FODDER_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_FODDER + ": %s  (%
 # The stock alone cannot carry the need/growing pair — this host merges rows precisely because it has
 # no height — but the gate that puts the clause on screen now admits a band with a hay BILL and an
 # empty store, and `0.0 hay` stated in neutral ink beside a bill it cannot pay would read as *fine*.
-# So the clause takes `HudStyle.WARN_HEX` on exactly the condition the full row's need clause does,
-# and the tall tiers carry the two numbers that explain it.
+# So the clause takes `HudStyle.WARN_HEX` when `_band_fodder_falls_short` says the larder is draining
+# — the same crossing-inclusive net the `Fodder:` caret is tinted from, so this tier and the tall ones
+# cannot disagree about one larder — and the tall tiers carry the numbers that explain it.
 const BAND_FOOD_FODDER_CLAUSE_FORMAT := " · [color=#%s]%s fodder[/color]"
 
 # ---- THE BAND'S STANDING MATERIAL BILL, beneath the two larders (`docs/plan_standing_upkeep.md`
@@ -713,22 +714,31 @@ func _shipment_cargo_clause(unit_data: Dictionary) -> String:
 ## layer and cannot reach a producer's private — and a second copy of the test is how two surfaces
 ## come to disagree about when a larder exists. Every reader here calls it by that name.
 
-## Is this band's fodder bill bigger than its fodder harvest — the slow trap, stated as a comparison.
+## Is this band's fodder larder DRAINING — the slow trap, stated as a comparison.
 ## **Its ONE reader is the `compact` tier's merged clause**, which is the only host with no room to
 ## state the pair it is a verdict about: that tier trades the whole Fodder row for a stock clause on
-## the Food line, so the tint is all it can say about a bill the band's Fields are not covering.
+## the Food line, so the tint is all it can say about a larder the band's Fields are not keeping up.
 ##
 ## **THE FULL ROW NO LONGER ASKS.** Its `need` clause and that clause's amber are retired with the
 ## rates themselves — the runway says the larder is draining, under the same thresholds the Food row
 ## uses — so this is not a second opinion about the standalone row's severity any more.
 ##
-## **STRICTLY GREATER, past the flow floor**, so a band whose Fields exactly meet its pens does not
-## flicker amber on float noise, and a band owing nothing at all is never warned.
+## ⛔ **THE VERDICT IS `DetailFormat.band_net_fodder` NEGATED, NEVER `need − income` RECOMPUTED HERE.**
+## That subtraction omits the LOCAL crossings the net counts, and a camp a neighbour tops up every
+## turn — need 6.0, harvest 5.0, 2.0 arriving over the local exchange — has a RISING larder. Its
+## `Fodder:` caret is calm on the net, and this clause used to take the amber anyway: one panel saying
+## two things about one larder, which is the disagreement `band_net_fodder` exists to end. The amber
+## marks a bill the band cannot pay, and a band a neighbour feeds can pay it. **Local crossings only,
+## never route** — that is `band_net_fodder`'s own rule, and riding it is how this stays on it.
+##
+## **STRICTLY WORSE THAN THE FLOW FLOOR**, so a band whose hay exactly balances does not flicker amber
+## on float noise, and a band owing nothing at all is never warned — the `fodder_need` gate above,
+## which is about whether there is a bill rather than about how the larder is moving.
 func _band_fodder_falls_short(unit_data: Dictionary) -> bool:
     var need := float(unit_data.get("fodder_need", 0.0))
     if need < SourceForecast.FODDER_FLOW_MIN:
         return false
-    return need - float(unit_data.get("fodder_income", 0.0)) >= SourceForecast.FODDER_FLOW_MIN
+    return -DetailFormat.band_net_fodder(unit_data) >= SourceForecast.FODDER_FLOW_MIN
 
 ## The band's fodder larder as the Food row's twin: the STOCK and the RUNWAY, and nothing else. The
 ## two flows that move it are the disclosure `unit_summary_lines` registers on this row — see

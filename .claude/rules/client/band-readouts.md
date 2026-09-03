@@ -217,9 +217,9 @@ which is a property of the tier and not of the merge.
   animal-feed row, since a resurrected row is invisible in a PNG.
   The turns-to-empty stays only in the `(N turns)` figure; it is not
   repeated. The `Food` label is a **click-to-open disclosure** (a `▸/▾` caret) opening a
-  **category breakdown** in a **POPOVER** — indented `▲ +X  Gathered` / `▲ +Y  Hunted` / `▼ −Z  Eaten`
+  **category breakdown** in a **POPOVER** — indented `▲ +X  Gathered` / `▲ +Y  Hunted` / `▼ −Z  Consumed`
   / `▼ −V  ⚔ Lost to raids` rows (Gathered/Hunted = Σ per-source `actual_yield`
-  by kind, Eaten = `food_consumption` — the label lost its `(people)` qualifier with the animals' row
+  by kind, Consumed = `food_consumption` — the label lost its `(people)` qualifier with the animals' row
   it contrasted against;
   **Lost to raids = `raid_forfeit`, shown only the turn a raid landed** (`DisclosureController.food_breakdown_lines` /
   `DetailFormat.FOOD_LABEL_RAID_FORFEIT`, the crossed-swords glyph matching the `predator_raid` command-feed
@@ -1258,7 +1258,7 @@ not that number and cannot be made into one.
   / `transferSentTurn` (`DetailFormat.band_transfer_received_turn` / `_sent_turn`) are per-turn state
   on the cohort, re-read unchanged by a recapture and equal to the accumulating pair on the turn's own
   frame, and they are what the two `⇄` rows are made of. **Every other row in this breakdown —
-  Gathered, Eaten, pen upkeep, raid forfeit — is a per-turn value that survives a recapture**, so the
+  Gathered, Consumed, pen upkeep, raid forfeit — is a per-turn value that survives a recapture**, so the
   ledger now reads on one basis throughout, and the accumulating pair stays on the wire for the
   identity it closes and for nothing this panel draws.
 - **Rendering whichever of the two is non-zero is not the fix.** It would put the launch draw back in
@@ -1277,7 +1277,7 @@ not that number and cannot be made into one.
 bands` as an income row, `⇄ To other bands` as a debit — each omitted at zero exactly like Lost to raids
 and Lost to raids, so a band nobody trades with renders the ledger it always did.
 
-**ONE glyph for both rows, and it is an ARROW rather than a handshake.** Eaten and Lost to raids
+**ONE glyph for both rows, and it is an ARROW rather than a handshake.** Consumed and Lost to raids
 each carry their own mark because they are different debits; these two are one fact in two
 directions, and the row's own words say which way. The emoji that says "deal" (🤝) is **not in this
 client's fallback font and renders as an invisible gap** — no tofu box, nothing to notice — which is
@@ -1417,3 +1417,112 @@ what replaced the faction row's `⚠ N bands` → *which band* drill-down.
 **THE COMPACT (SHORT) TIER TRADED ONE ROW FOR THE OTHER.** That tier merges Growth onto Morale to pay
 for a row it cannot drop; the row it had gained was `Gear`, and the `Upkeep:` bill took its height. Net
 zero rows in every tier, and the tier keeps a fact rather than trading one away.
+
+## WHICH LINK THE GOODS CROSSED — the two transfer rows (issue #548)
+
+`balance_supply_networks` moves goods between the player's own camps every turn, and a shipment moves
+more of them; before this arc the Food popover said only `⇄ From other bands` and the Fodder popover
+said nothing at all. **The row names the KIND OF LINK the goods crossed**, and there are exactly two:
+
+| label | what it is |
+|---|---|
+| `⇄ Local exchange` | `balance_supply_networks` — the automatic balancing between camps within reach of one another. Nobody orders it and nobody built it |
+| `⇄ Trade route` | a shipment: a party arriving with cargo, or the draw one takes when it launches. **This one the player did** |
+
+That distinction is the whole readout, and it is what a player can act on — one of the two is a thing
+they built, and the other happens whether they look or not.
+
+⛔ **IT NAMES THE LINK AND NEVER THE COUNTERPARTY, and the counterparty version was BUILT AND
+REJECTED.** Bands have no names in this game (issue #615), so every named row was either a
+placeholder or a `Band 4` — and because a name list is variable-length it dragged a whole
+pixel-fitting apparatus behind it (a measured column, a per-row lead, a two-pass fit, `+N more`
+overflow, a `neighbors` fallback) purely to stop rows wrapping. **Two fixed phrases cannot wrap**, and
+all of that machinery came out with them.
+
+⛔ **AND NOTHING SAYS "POOLED".** One anonymous pot is how `balance_commodity` is implemented, not
+what happens in the world: each camp holds its own stores and hands some of them to a short neighbor.
+⛔ **And it is "neighbor"** — the copy is US-spelled.
+
+⛔ **NO PROSE, ANYWHERE.** No mechanism sentence, no radius, no range warning, no footer. A first cut
+carried all four and the verdict was *"how many useless words can you put in a panel"*. The rows are
+the readout; `tools/ui_preview/chapters/supply_network.gd` asserts that every produced line is an
+indented breakdown row, so a sentence cannot creep back in unnoticed.
+
+### The shape of the terms
+
+**DIRECTION IS THE SIGN'S JOB, exactly as on every other row of these breakdowns** — ▲ green in, ▼
+amber out, decided by `food_breakdown_row` from the number it is handed. That is why one phrase serves
+both directions and there is no `From` / `To` pair.
+
+**ONE NETTED ROW PER KIND: received less sent, signed.** At most two rows per account. A camp that
+took 3.00 in and sent 2.00 out down its routes reads one `⇄ Trade route +1.00`.
+
+⛔ **NETTING IS THE DECIDED BEHAVIOUR FOR THESE FOUR TERMS, AND IT IS THE OPPOSITE OF THE RULE THE
+GENERIC PAIR STATES.** That pair is two rows on purpose — *a band that both sends and receives in one
+window is doing something, and a net would render that as nothing having happened* — and **it is
+unchanged and still two rows**. Only the link-kind terms net. **The consequence is that a turn whose
+arrivals and departures cancel exactly shows no row for that kind**: the net falls under the account's
+floor and is omitted, like every other flow in this ledger.
+
+**THE NETTING HAPPENS IN THE CLIENT, and the wire keeps four received/sent pairs per account.** The
+sim publishes what it counted; the readout decides what to show. Splitting the two decisions costs
+nothing and leaves both figures available to any surface that later wants the gross pair.
+
+**THE LOCAL PAIR NEVER CANCELS ANYWAY.** `balance_commodity` puts a node in `sends` or in `wants` for
+a given commodity, never both, so at most one of that pair is non-zero on a turn. Nothing
+special-cases it: a shape that holds because of an invariant one module away breaks silently when that
+invariant moves, and the cost of not exploiting it is a subtraction against zero.
+
+**ONE CONSTANT PER LABEL, READ BY BOTH LEDGERS.** `DetailFormat.TRANSFER_LABEL_LOCAL` /
+`TRANSFER_LABEL_ROUTE` — the fodder popover uses those very strings rather than a copy. Two accounts
+wording one event two ways is a drift that has already had to be undone once. The rows differ in
+exactly one thing, the number's resolution, which `fodder_breakdown_row` owns.
+
+Each row is omitted when its NET magnitude falls below the account's existing floor
+(`SourceForecast.FOOD_FLOW_MIN` / `FODDER_FLOW_MIN`), so a camp that exchanged nothing renders
+nothing — never `⇄ Local exchange +0.00`.
+
+### What is on the wire, and why there is no fallback
+
+⛔ **NEITHER LEDGER HAS A PRESENCE CHECK OR A FALLBACK FORK.** The food ledger briefly kept its
+generic `⇄ From other bands` / `⇄ To other bands` pair behind `band_has_link_transfers`, for frames
+carrying none of the four food keys. No such frame exists: `dict/population.rs::population_to_dict`
+is the only path that builds a cohort dict and it inserts all eight **unconditionally**, so the
+generic arm was unreachable on any real snapshot and the one thing keeping it alive was a fixture
+staging a state no server can send. It is gone, along with its two label constants — a fork nothing
+can take is dead code, and tolerating an absent field is the back-compat this repo has no shipped
+client or save to need.
+
+All eight keys are on the wire and decoded — `transfer_local_received_turn`,
+`transfer_local_sent_turn`, `transfer_route_received_turn`, `transfer_route_sent_turn` and the
+`fodder_` prefixed four. Both ledgers simply render the rows whose figures they were given, and a
+camp that exchanged nothing renders no transfer row at all — every term present and zero, which is
+what the decoder actually produces. They are **per-turn** figures, on the basis every other row of both breakdowns is on — a
+row read off an accumulator vanishes the instant a dispatched command re-captures the frame, which is
+the defect issue #517 fixed on the generic pair and which must not be reintroduced one ledger over.
+There are deliberately no accumulating twins of the eight: the larder identity stays closed by
+`transfer_received` / `transfer_sent`.
+
+### `band_net_fodder` IS ON THE RUNWAY'S BASIS, AND THE LOCAL ARM IS WHAT PUTS IT THERE
+
+`DetailFormat.band_net_fodder` is `fodder_income − fodder_need + (fodder_transfer_local_received_turn
+− fodder_transfer_local_sent_turn)`. The sim's `turnsOfFodder` reads
+`fodder_store ÷ (drain − income − net local crossings)`, so the rate and the runway compute the same
+way; without the local arm a band whose hay is rising because a neighbour feeds it showed a
+*lengthening* runway beside a *negative* rate, on one row. This is not an internal figure — it tints
+the `Fodder:` caret through `fodder_is_concerning`, and `FactionRollup` prints it as a signed
+per-turn number — so the disagreement was on screen twice.
+
+⛔ **LOCAL ONLY, NEVER ROUTE.** The rule the sim states and this matches exactly: **local crossings
+are a rate and count; route crossings are events and do not.** Two camps within reach pool every turn
+for as long as they stay there, so projecting that forward is what a forecast is for; a shipment lands
+once, and annualising one delivery into a standing per-turn rate is the mistake arc #527 refused.
+There is deliberately no method on either side that nets both arms.
+
+⛔ **THE FOOD ACCOUNT IS NOT ON THIS BASIS.** `band_net_food` excludes transfers entirely, by arc
+#527's decision recorded above — the two larders answering the same question differently is that
+decision's consequence, not a drift to be reconciled.
+
+**The fodder keys are separate from the food ones on purpose**: hay and grain cross the same links on
+the same turn in different amounts, and a ledger reading the other account's figure would look
+plausible on every frame.

@@ -1322,6 +1322,65 @@ pub struct PopulationCohortState {
     pub roadwork_supplied: f32,
     #[serde(default)]
     pub roadwork_shortfall: f32,
+    /// **FOOD THAT CROSSED IN FROM A BAND STANDING ALONGSIDE, THIS TURN** — supply-network pooling
+    /// (`core_sim::supply::balance_supply_networks`) and the dowry a fission hands its splinter.
+    /// Nothing travelled: the goods were simply on the other side of the camp.
+    ///
+    /// One of **eight** figures that split [`Self::transfer_received_turn`] /
+    /// [`Self::transfer_sent_turn`] by *what carried the goods*, across the food and fodder accounts
+    /// (issue #548). `local` and `route` are **exhaustive** — `local + route == the total`, in each
+    /// direction, because every sim writer books through one ledger with no third arm — so a client
+    /// may render the two and trust nothing is missing.
+    ///
+    /// **Per-turn state, not an accumulator**, exactly like the pair it refines: a row read off an
+    /// accumulator blanks on the first frame a dispatched command refreshes (issue #517). Appended
+    /// last (append-only), as one contiguous block.
+    #[serde(default)]
+    pub transfer_local_received_turn: f32,
+    /// **Food this band gave up to a band standing alongside, this turn** — the sent half of
+    /// [`Self::transfer_local_received_turn`].
+    #[serde(default)]
+    pub transfer_local_sent_turn: f32,
+    /// **FOOD AN EXPEDITION PARTY CARRIED IN, THIS TURN** — a shipment delivered on arrival, a
+    /// hunting party's drop-off, the pack a party folded back on its way home.
+    ///
+    /// **The party is the vehicle, whatever its errand**, which is why a hunt's homecoming is a
+    /// `route` crossing and not a third kind. See [`Self::transfer_local_received_turn`] for the
+    /// split's rules.
+    #[serde(default)]
+    pub transfer_route_received_turn: f32,
+    /// **Food an expedition party carried away, this turn** — a shipment's cargo and the party's own
+    /// provisions, both drawn at launch. The sent half of [`Self::transfer_route_received_turn`].
+    #[serde(default)]
+    pub transfer_route_sent_turn: f32,
+    /// **HAY THAT CROSSED IN FROM A BAND STANDING ALONGSIDE, THIS TURN**, in fodder units — the
+    /// fodder twin of [`Self::transfer_local_received_turn`], on the same split and the same
+    /// per-turn basis.
+    ///
+    /// **Hay has always pooled**: the balancer walks a band's whole store and fodder is an ordinary
+    /// key in it. Until these four nothing counted it, so [`Self::fodder_store`] rose on a receiving
+    /// band with only *grown* and *eaten* to explain it. [`Self::turns_of_fodder`] nets **this pair**
+    /// in — a local crossing is a standing rate two camps keep up every turn — and deliberately not
+    /// the route pair below, which is a one-off event.
+    #[serde(default)]
+    pub fodder_transfer_local_received_turn: f32,
+    /// **Hay this band gave up to a band standing alongside, this turn** — the sent half of
+    /// [`Self::fodder_transfer_local_received_turn`].
+    #[serde(default)]
+    pub fodder_transfer_local_sent_turn: f32,
+    /// **HAY AN EXPEDITION PARTY CARRIED IN, THIS TURN** — the fodder twin of
+    /// [`Self::transfer_route_received_turn`].
+    ///
+    /// ⛔ **It reads `0`, and that is a fact about shipments rather than about hay.** A shipment's
+    /// manifest refuses any cargo item that is not food or a material
+    /// (`core_sim`'s `ResolvedShipment`), so no party carries fodder for this to book. The field
+    /// ships so both accounts have one shape and a future currency for hay needs no schema change.
+    #[serde(default)]
+    pub fodder_transfer_route_received_turn: f32,
+    /// **Hay an expedition party carried away, this turn** — the sent half of
+    /// [`Self::fodder_transfer_route_received_turn`], and `0` for the same reason.
+    #[serde(default)]
+    pub fodder_transfer_route_sent_turn: f32,
 }
 
 /// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],

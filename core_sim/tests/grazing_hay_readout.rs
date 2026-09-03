@@ -67,7 +67,7 @@ use core_sim::{
     scalar_one, scalar_zero, FactionId, ForageRegistry, GenerationId, Herd, HerdRegistry,
     LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MoraleCause,
     PopulationCohort, ResidentBand, SimulationConfig, SizeClass, SnapshotHistory, SourcePriority,
-    StartingUnit, TakeSelection, TileRegistry, FODDER, FODDERING_DISCOVERY_ID,
+    StartingUnit, TakeSelection, TileRegistry, TransferLink, FODDER, FODDERING_DISCOVERY_ID,
     NOT_FOOD_LIMITED_TURNS,
 };
 
@@ -213,8 +213,8 @@ fn spawn_band(app: &mut App, tile: UVec2, assignments: Vec<LaborAssignment>) -> 
                 stores: LocalStore::new(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
-                last_turn_transfer_received: 0.0,
-                last_turn_transfer_sent: 0.0,
+                last_turn_food_transfers: Default::default(),
+                last_turn_fodder_transfers: Default::default(),
                 last_morale_delta: scalar_zero(),
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
@@ -1248,4 +1248,216 @@ fn richest_tile_growing(app: &mut App, species: &str) -> UVec2 {
         })
         .tile;
     coord
+}
+
+// --------------------------------------------------------------------------------------------
+// 7. The runway counts the hay that CROSSES between bands (issue #548)
+// --------------------------------------------------------------------------------------------
+
+/// Hay a neighbour hands over each turn, **less** than the pen's own draw — so the store still
+/// empties and the runway is a real number that simply got longer.
+const A_NEIGHBOURS_SHARE: f32 = 3.0;
+/// And a share **larger** than the draw, which is the case the whole fix is about: the store is
+/// rising, so there is no turn on which it empties.
+const A_GENEROUS_NEIGHBOURS_SHARE: f32 = 20.0;
+
+/// **Hay arriving from a band standing alongside**, exactly as `balance_supply_networks` delivers
+/// it: the store rises AND the crossing is booked on the fodder ledger's `local` arm. Booking one
+/// without the other is precisely the state that made the runway wrong.
+fn receive_hay(app: &mut App, band: Entity, amount: f32) {
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band exists")
+        .stores
+        .add(FODDER, scalar_from_f32(amount));
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the fixture band has an allocation")
+        .last_fodder_transfers
+        .credit(TransferLink::Local, amount);
+    publish_the_turns_transfers(app);
+}
+
+/// The mirror: hay pooled AWAY to a shorter neighbour.
+fn send_hay(app: &mut App, band: Entity, amount: f32) {
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band exists")
+        .stores
+        .take(FODDER, scalar_from_f32(amount));
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the fixture band has an allocation")
+        .last_fodder_transfers
+        .debit(TransferLink::Local, amount);
+    publish_the_turns_transfers(app);
+}
+
+/// The turn-path copy that puts the accumulated crossings onto the cohort as per-turn state. Run
+/// explicitly because these fixtures resolve a labor pass rather than a whole turn — and because the
+/// runway deliberately reads the per-turn copy, which is what lets it survive a recapture.
+fn publish_the_turns_transfers(app: &mut App) {
+    app.world.run_system_once(core_sim::publish_turn_transfers);
+}
+
+/// A band short of hay: a drylot pen, no Field, a stocked store. The shape
+/// [`a_band_short_of_hay_publishes_a_finite_runway`] pins, reused so the three arms below differ in
+/// exactly one thing — what crossed to or from a neighbour.
+fn a_band_draining_its_hay(app: &mut App) -> Entity {
+    let tile = pen_tile(app);
+    learn_foddering(app);
+    seat_pens(app, tile, &[(SMALL_PEN, SMALL_BIOMASS)]);
+    pose_intake(app, SMALL_PEN, BARREN);
+    let band = spawn_band(app, tile, vec![keeper_row(SMALL_PEN)]);
+    stock_hay(app, band, A_HAY_RESERVE);
+    band
+}
+
+/// ⛔ **A POOLED STORE IS NOT A DRAINING STORE, AND THE RUNWAY HAS TO SAY WHICH.**
+///
+/// Hay pools between linked camps every turn — `balance_supply_networks` walks a band's whole store
+/// and `FODDER` is an ordinary key in it — but the published runway was `store ÷ (pens' draw −
+/// Fields' harvest)` and knew nothing about the crossing. So a band on the receiving end watched its
+/// hay RISE under a runway counting down, and the band feeding it got a runway that was too
+/// generous by exactly what it gave away.
+///
+/// Three worlds, identical but for what crossed: one on its own, one topped up by a neighbour, one
+/// pooling hay away. The middle arm is pinned to the closed form `store ÷ (need − income − local
+/// net)` so it cannot pass on a term that merely moved in the right direction.
+///
+/// **It is the `local` arm that counts, and only that arm** — pooling is a rate two camps keep up
+/// every turn. Its `route` twin is an event and is not a term at all; see
+/// [`a_route_crossing_is_an_event_and_never_moves_the_runway`].
+#[test]
+fn the_fodder_runway_counts_the_hay_that_crossed() {
+    let mut alone = a_world();
+    let alone_band = a_band_draining_its_hay(&mut alone);
+    resolve_and_publish(&mut alone);
+    let (alone_need, alone_income, alone_runway, _) = published_band_ledger(&alone, alone_band);
+
+    let mut topped_up = a_world();
+    let topped_band = a_band_draining_its_hay(&mut topped_up);
+    receive_hay(&mut topped_up, topped_band, A_NEIGHBOURS_SHARE);
+    resolve_and_publish(&mut topped_up);
+    let (topped_need, topped_income, topped_runway, topped_store) =
+        published_band_ledger(&topped_up, topped_band);
+
+    let mut pooled_away = a_world();
+    let pooled_band = a_band_draining_its_hay(&mut pooled_away);
+    send_hay(&mut pooled_away, pooled_band, A_NEIGHBOURS_SHARE);
+    resolve_and_publish(&mut pooled_away);
+    let (_, _, pooled_runway, _) = published_band_ledger(&pooled_away, pooled_band);
+
+    assert!(
+        alone_need > 0.0 && alone_income.abs() < EPSILON && alone_runway < NOT_FOOD_LIMITED_TURNS,
+        "liveness: the band on its own is genuinely draining (need {alone_need}, income \
+         {alone_income}, runway {alone_runway})"
+    );
+    assert!(
+        (topped_need - alone_need).abs() < EPSILON,
+        "the pens are identical, so the NEED must not move — {topped_need} vs {alone_need}"
+    );
+    assert!(
+        topped_runway > alone_runway,
+        "hay arriving every turn makes the store last LONGER: {topped_runway} vs {alone_runway}"
+    );
+    assert!(
+        pooled_runway < alone_runway,
+        "and hay pooled away makes it run out SOONER: {pooled_runway} vs {alone_runway}"
+    );
+
+    let expected = topped_store / (topped_need - topped_income - A_NEIGHBOURS_SHARE);
+    assert!(
+        (topped_runway - expected).abs() < EPSILON,
+        "the runway is the store over the net of every term, the crossing included: published \
+         {topped_runway} vs {expected}"
+    );
+}
+
+/// ⛔ **A STORE THAT IS RISING PUBLISHES NO COUNTDOWN.** The limit case of the arm above, and the
+/// reading a player could see was wrong without doing any arithmetic: a neighbour hands over more
+/// hay than the pens draw, the store climbs turn on turn, and the row still said *N turns left*.
+///
+/// It resolves to the larder's own no-drain sentinel — the same ∞ a band with no pens publishes, and
+/// deliberately not a second phrasing for *"a neighbour is covering me"*.
+#[test]
+fn a_hay_store_a_neighbour_is_filling_publishes_the_no_drain_sentinel() {
+    let mut app = a_world();
+    let band = a_band_draining_its_hay(&mut app);
+    receive_hay(&mut app, band, A_GENEROUS_NEIGHBOURS_SHARE);
+    resolve_and_publish(&mut app);
+
+    let (need, income, runway, store) = published_band_ledger(&app, band);
+    assert!(
+        need > 0.0 && need < A_GENEROUS_NEIGHBOURS_SHARE,
+        "the fixture's pens really do owe hay, and less than what arrives (need {need})"
+    );
+    assert!(
+        income.abs() < EPSILON,
+        "and the band grows none of its own, so the crossing is the only credit ({income})"
+    );
+    assert_eq!(
+        runway, NOT_FOOD_LIMITED_TURNS,
+        "nothing is emptying a store of {store} that gains {A_GENEROUS_NEIGHBOURS_SHARE} a turn \
+         against a draw of {need}, so the runway is the larder's own ∞ sentinel"
+    );
+}
+
+/// **A shipment's worth of hay, staged onto the `route` arm.** No path in the sim can produce one
+/// today — `ResolvedShipment` refuses any cargo item that is not food or a material — so the arm is
+/// written directly, which is the only way to assert the basis *before* the day it starts to matter.
+/// The store rises with it, exactly as a real delivery would leave it.
+fn take_delivery_of_hay(app: &mut App, band: Entity, amount: f32) {
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band exists")
+        .stores
+        .add(FODDER, scalar_from_f32(amount));
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the fixture band has an allocation")
+        .last_fodder_transfers
+        .credit(TransferLink::Route, amount);
+    publish_the_turns_transfers(app);
+}
+
+/// ⛔ **A ROUTE CROSSING IS AN EVENT, SO IT IS NOT A TERM OF THE RUNWAY** — the other half of the
+/// rule its `local` twin above states. A neighbour standing alongside pools **every turn** for as
+/// long as both camps stay there, which is a rate a forecast should project; a shipment lands
+/// **once**, and reading one delivery as a standing per-turn credit is the mistake arc #527 refused
+/// on the food side.
+///
+/// **This asserts a basis that no shipped path can exercise yet**, because a shipment's manifest
+/// refuses fodder — which is exactly why it is written now: the day hay gains a shipping currency,
+/// a runway wired to `received() − sent()` would silently start annualising deliveries, and nobody
+/// would be looking. The staged figure is large enough that a runway counting it would reach the
+/// no-drain sentinel, so a regression cannot hide inside the epsilon.
+///
+/// The store still **rises** by the delivery, as a real arrival would leave it, and the runway
+/// therefore gets longer — but only by the buffer, never by a projected rate. Pinned as the closed
+/// form against the band's own published store.
+#[test]
+fn a_route_crossing_is_an_event_and_never_moves_the_runway() {
+    let mut app = a_world();
+    let band = a_band_draining_its_hay(&mut app);
+    take_delivery_of_hay(&mut app, band, A_GENEROUS_NEIGHBOURS_SHARE);
+    resolve_and_publish(&mut app);
+    let (need, income, runway, store) = published_band_ledger(&app, band);
+
+    assert!(
+        need > 0.0 && income.abs() < EPSILON,
+        "liveness: the band owes hay and grows none of its own (need {need}, income {income})"
+    );
+    assert!(
+        runway < NOT_FOOD_LIMITED_TURNS,
+        "a delivery is a one-off, so the store is still draining and the runway is a real number, \
+         not the ∞ sentinel a projected {A_GENEROUS_NEIGHBOURS_SHARE}/turn would have produced \
+         (published {runway})"
+    );
+    assert!(
+        (runway - store / (need - income)).abs() < EPSILON,
+        "the route arm is not a term: the runway is the (larger) store over the unchanged net \
+         drain — published {runway} vs {}",
+        store / (need - income)
+    );
 }

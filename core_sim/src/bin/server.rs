@@ -37,7 +37,7 @@ use core_sim::{
     FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget,
     LadderConfigHandle, LocalStore, MaterialsConfigHandle, RecipesConfigHandle, ResidentBand,
     RungKey, SiteRefusal, SourcePriority, SpeciesRefusal, StartProfile, StartProfileOverrides,
-    TakeSelection, UpkeepFundMode, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR,
+    TakeSelection, TransferLink, UpkeepFundMode, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR,
     NO_FORAGE_SEASON,
 };
 use core_sim::{
@@ -3832,9 +3832,12 @@ fn handle_send_expedition(
         drawn
     };
     // The scout's launch larder is food leaving the band with the party — the same food-ledger
-    // transfer term a shipment's cargo takes, and it comes back on the fold-back.
+    // transfer term, on the same [`TransferLink::Route`] arm, a shipment's cargo takes, and it comes
+    // back on the fold-back.
     if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(band.entity) {
-        allocation.last_transfer_sent += drawn.to_f32();
+        allocation
+            .last_food_transfers
+            .debit(TransferLink::Route, drawn.to_f32());
     }
 
     // Retask the cloned cohort into a detached party co-located with the band.
@@ -5178,12 +5181,19 @@ fn handle_send_trade_expedition(
         let provisions = band_cohort.stores.take(FOOD, requested_provisions);
         (provisions, loaded)
     };
-    // **The sending half of the food ledger's transfer pair** — the cargo the shipment carries AND
-    // the larder the party walks on, because both are food that left this band's store through
-    // neither consumption nor a pen. The receiving half is booked when the shipment lands, and the
-    // rest comes home on the fold-back if it never does.
+    // **The sending half of the food ledger's transfer terms, on the [`TransferLink::Route`] arm** —
+    // the cargo the shipment carries AND the larder the party walks on, because both are food that
+    // left this band's store through neither consumption nor a pen, and a party is carrying both.
+    // The receiving half is booked when the shipment lands, and the rest comes home on the
+    // fold-back if it never does.
+    //
+    // **FOOD and materials, never hay**: `ResolvedShipment` refuses any cargo item that is not food
+    // or a material, so no party can be carrying fodder for this to book.
     if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(outfit.band.entity) {
-        allocation.last_transfer_sent += shipment_store.get(FOOD).to_f32() + provisions.to_f32();
+        allocation.last_food_transfers.debit(
+            TransferLink::Route,
+            shipment_store.get(FOOD).to_f32() + provisions.to_f32(),
+        );
     }
 
     let band_label = outfit.band.label.clone();
@@ -5468,9 +5478,12 @@ fn cancel_party_standing_in_camp(
         fold_party_into_band(&mut party, &mut cargo, &mut home)
     };
     // The pack and any undelivered cargo landing back in the band's larder is a transfer, exactly as
-    // the `Returning` arm's fold-back is — a cancel differs only in *when* it fires.
+    // the `Returning` arm's fold-back is — a cancel differs only in *when* it fires, not in what
+    // carried the food, so it takes the same [`TransferLink::Route`] arm.
     if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(expedition.home_band) {
-        allocation.last_transfer_received += fold.food.to_f32();
+        allocation
+            .last_food_transfers
+            .credit(TransferLink::Route, fold.food.to_f32());
     }
     Some(CancelledInCamp {
         position,
@@ -10268,8 +10281,8 @@ mod tests {
                     stores: LocalStore::new(),
                     morale: core_sim::scalar_one(),
                     last_food_consumption: 0.0,
-                    last_turn_transfer_received: 0.0,
-                    last_turn_transfer_sent: 0.0,
+                    last_turn_food_transfers: Default::default(),
+                    last_turn_fodder_transfers: Default::default(),
                     last_morale_delta: core_sim::scalar_zero(),
                     last_morale_cause: Default::default(),
                     last_morale_contributions: Default::default(),

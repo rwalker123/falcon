@@ -1324,8 +1324,8 @@ mod tests {
             stores: LocalStore::new(),
             morale: crate::scalar::scalar_one(),
             last_food_consumption: 0.0,
-            last_turn_transfer_received: 0.0,
-            last_turn_transfer_sent: 0.0,
+            last_turn_food_transfers: Default::default(),
+            last_turn_fodder_transfers: Default::default(),
             last_morale_delta: crate::scalar::scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: Default::default(),
@@ -1484,8 +1484,8 @@ mod tests {
             last_material_need: Default::default(),
             last_material_income: Default::default(),
             material_shortfall_warned: Vec::new(),
-            last_transfer_received: 0.0,
-            last_transfer_sent: 0.0,
+            last_food_transfers: Default::default(),
+            last_fodder_transfers: Default::default(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
         };
         let (mut cohort, allocation) = food_test_cohort(
@@ -1593,8 +1593,8 @@ mod tests {
             last_material_need: Default::default(),
             last_material_income: Default::default(),
             material_shortfall_warned: Vec::new(),
-            last_transfer_received: 0.0,
-            last_transfer_sent: 0.0,
+            last_food_transfers: Default::default(),
+            last_fodder_transfers: Default::default(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
         };
         let (cohort, allocation) = food_test_cohort(
@@ -1654,8 +1654,8 @@ mod tests {
             last_material_need: Default::default(),
             last_material_income: Default::default(),
             material_shortfall_warned: Vec::new(),
-            last_transfer_received: 0.0,
-            last_transfer_sent: 0.0,
+            last_food_transfers: Default::default(),
+            last_fodder_transfers: Default::default(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
         };
         let (cohort, allocation) = food_test_cohort(

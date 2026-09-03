@@ -1344,6 +1344,62 @@ table PopulationCohortState {
   roadworkDemand:float = 0;
   roadworkSupplied:float = 0;
   roadworkShortfall:float = 0;
+
+  // --- WHAT MOVED THE GOODS: THE TWO LINK KINDS, BOTH ACCOUNTS (appended last, issue #548) -------
+  //
+  // *** THIS WHOLE BLOCK IS ONE CONTIGUOUS APPEND AND MUST STAY THAT WAY. *** Merging two branches
+  // that each appended .fbs fields is NOT order-free - field ids are positional here - so these
+  // eight sit together at the END of the table and never beside transferReceived / transferSent,
+  // whose block they refine.
+  //
+  // transferReceived / transferSent above say THAT food crossed between larders; they never said
+  // WHAT CARRIED IT, and the two mechanisms answer different questions for the player:
+  //
+  //   local  = the automatic proximity pooling of a supply network (core_sim
+  //            `balance_supply_networks`), plus the dowry a band fission hands its splinter. Bands
+  //            standing together; nothing travelled.
+  //   route  = an expedition PARTY carried it - a shipment's draw at launch and its delivery on
+  //            arrival, a hunting party's drop-off, the pack a party folds back on the way home. The
+  //            party is the vehicle whatever its errand, which is why a hunt's homecoming is `route`
+  //            and not a third kind.
+  //
+  // *** THE TWO ARE EXHAUSTIVE. *** local + route == transferReceived / transferSent above, in each
+  // direction, by construction: every sim writer books through one `TransferLedger` that has no
+  // third arm (pinned by core_sim `tests/supply_network.rs` and
+  // integration_tests/tests/transfer_food_ledger.rs). A client may render the two rows and trust
+  // that nothing is missing from them.
+  //
+  // *** PER-TURN, LIKE THE `...Turn` PAIR THEY SIT WITH, AND FOR THE SAME REASON. *** These are
+  // copied onto the cohort immediately before the turn's capture and are NOT cleared, so the sim's
+  // after-every-command recapture republishes them intact. An accumulator-backed row reads 0 on any
+  // frame a dispatched command refreshed - the defect issue #517 fixed on the generic pair, not to
+  // be reintroduced under a finer name. There are deliberately NO accumulating twins of these eight:
+  // the ledger identity is closed by transferReceived / transferSent, which are unchanged.
+  transferLocalReceivedTurn:float = 0;
+  transferLocalSentTurn:float = 0;
+  transferRouteReceivedTurn:float = 0;
+  transferRouteSentTurn:float = 0;
+  // The SAME FOUR FACTS FOR HAY, in fodder units - the fodder larder (`fodderStore`) has always
+  // pooled between linked camps, because `balance_supply_networks` walks a band's whole store and
+  // fodder is an ordinary key in it, and until this block nothing counted it: the account showed
+  // `fodderIncome` (grown) and `fodderNeed` (eaten) only, so a receiving band's hay rose for no
+  // stated reason. `turnsOfFodder` beside them now counts the net of the LOCAL pair in, which is why
+  // the runway and the store finally agree about which way the hay is going.
+  //
+  // *** THE LOCAL PAIR IS A RATE AND COUNTS TOWARD THE RUNWAY; THE ROUTE PAIR IS AN EVENT AND DOES
+  // NOT. *** Two camps within reach pool every turn for as long as they stay there, so projecting
+  // that forward is what a forecast is for; a shipment arrives once, and annualising one delivery
+  // into a standing per-turn rate is the mistake arc #527 refused on the food side.
+  //
+  // *** THE ROUTE ARM READS 0 TODAY, AND THAT IS A FACT ABOUT SHIPMENTS RATHER THAN ABOUT HAY. ***
+  // A shipment's manifest refuses any cargo item that is not food or a material (core_sim
+  // `ResolvedShipment`), so no party can be carrying fodder to book. The arm ships anyway because
+  // both accounts have one shape and this wire is append-only: giving fodder a currency in a
+  // shipment fills it in with no schema change.
+  fodderTransferLocalReceivedTurn:float = 0;
+  fodderTransferLocalSentTurn:float = 0;
+  fodderTransferRouteReceivedTurn:float = 0;
+  fodderTransferRouteSentTurn:float = 0;
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of

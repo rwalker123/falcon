@@ -27,7 +27,7 @@ use crate::{
         LaborTarget, LocalStore, MoraleCause, MoraleContributions, MountainMetadata,
         PendingMigration, PopulationCohort, PowerNode, ResidentBand, ShedCrew, ShedFacts,
         SourcePriority, SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile,
-        YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, STRIP_IT_BARE,
+        TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, STRIP_IT_BARE,
     },
     creatures_config::CreaturesConfigHandle,
     culture::{
@@ -132,43 +132,49 @@ fn step_toward(from: UVec2, to: UVec2, max_step: u32, width: u32, wrap_horizonta
 /// **Copy the turn's band-to-band transfer counters onto the cohort, for the frame about to be
 /// captured.**
 ///
-/// [`LaborAllocation::last_transfer_received`] / `last_transfer_sent` accumulate across the whole
+/// [`LaborAllocation::last_food_transfers`] / `last_fodder_transfers` accumulate across the whole
 /// snapshot window and are cleared by [`reset_transfer_ledger`] once the capture has read them.
-/// [`PopulationCohort::last_turn_transfer_received`] / `last_turn_transfer_sent` are the per-turn
+/// [`PopulationCohort::last_turn_food_transfers`] / `last_turn_fodder_transfers` are the per-turn
 /// twins, and this is the one system that writes them — which is why it runs **only on the turn
 /// path**, between `advance_tick` and `capture_snapshot`.
 ///
 /// **That placement is the whole fix.** `snapshot::recapture_snapshot_in_place` re-runs the capture
 /// against live components after every dispatched command, by which time the accumulator has been
-/// zeroed; a refreshed frame therefore published `0.0` for both terms and overwrote the correct
+/// zeroed; a refreshed frame therefore published `0.0` for every term and overwrote the correct
 /// turn-end frame. Everything else in the food ledger is a per-turn value on the cohort and re-reads
-/// unchanged on a recapture — this pair joins them, and a recapture never reaches this system.
+/// unchanged on a recapture — these join them, and a recapture never reaches this system.
 ///
 /// **The whole accumulator is copied, not this turn's share of it.** At this moment it holds
 /// *(command-time draws since the last turn capture) + (this turn's transfers)*, which is exactly the
-/// interval a client's `larder_delta` measures, so the per-turn pair and the accumulator cannot
+/// interval a client's `larder_delta` measures, so the per-turn ledger and the accumulator cannot
 /// disagree on a turn frame.
+///
+/// **BOTH ACCOUNTS RIDE ONE PASS.** Hay crosses between larders exactly as grain does, and the two
+/// accounts are copied together so a reader never has to ask which of them a frame is current for.
 ///
 /// Like [`reset_transfer_ledger`], and unlike their stage-mate `capture_snapshot`, it is **not**
 /// gated on `not_replaying`: a replayed turn publishes nothing, and leaving the copy stale would let
 /// the next frame that *is* published report the wrong turn's transfers.
 pub fn publish_turn_transfers(mut bands: Query<(&mut PopulationCohort, Option<&LaborAllocation>)>) {
     for (mut cohort, allocation) in bands.iter_mut() {
-        // `Option`, matching how the capture reads all six ledger terms — a band with no allocation
+        // `Option`, matching how the capture reads every ledger term — a band with no allocation
         // reports zero rather than being skipped.
-        cohort.last_turn_transfer_received =
-            allocation.map(|a| a.last_transfer_received).unwrap_or(0.0);
-        cohort.last_turn_transfer_sent = allocation.map(|a| a.last_transfer_sent).unwrap_or(0.0);
+        cohort.last_turn_food_transfers = allocation
+            .map(|a| a.last_food_transfers)
+            .unwrap_or_default();
+        cohort.last_turn_fodder_transfers = allocation
+            .map(|a| a.last_fodder_transfers)
+            .unwrap_or_default();
     }
 }
 
-/// **Clear the band-to-band food transfer counters, once the capture has published them.**
+/// **Clear the band-to-band transfer counters, once the capture has published them.**
 ///
-/// [`LaborAllocation::last_transfer_received`] / `last_transfer_sent` are the ledger's terms for food
-/// that crossed between larders, and they are the one pair of per-turn counters with writers
-/// **outside** `run_turn`: a `send_trade_expedition` or `send_expedition` command debits the sending
-/// band when it is applied, which is between one snapshot and the next. So every writer *adds*, and
-/// exactly one system clears — here, in the Snapshot stage after `capture_snapshot`.
+/// [`LaborAllocation::last_food_transfers`] / `last_fodder_transfers` are the ledgers' terms for
+/// goods that crossed between larders, and they are the one telemetry with writers **outside**
+/// `run_turn`: a `send_trade_expedition` or `send_expedition` command debits the sending band when it
+/// is applied, which is between one snapshot and the next. So every writer *adds*, and exactly one
+/// system clears — here, in the Snapshot stage after `capture_snapshot`.
 ///
 /// **The reset point is what defines the window**, and it has to be the *snapshot* window rather than
 /// the turn: a client's `larder_delta` is the difference between two published frames, so a term
@@ -180,10 +186,10 @@ pub fn publish_turn_transfers(mut bands: Query<(&mut PopulationCohort, Option<&L
 /// transfers into the next frame that *is* published.
 pub fn reset_transfer_ledger(mut allocations: Query<&mut LaborAllocation>) {
     for mut allocation in allocations.iter_mut() {
-        // Written through the fields rather than `Default` — the rest of the allocation is intent,
-        // not telemetry, and must survive.
-        allocation.last_transfer_received = 0.0;
-        allocation.last_transfer_sent = 0.0;
+        // Written through the two ledgers rather than `Default` — the rest of the allocation is
+        // intent, not telemetry, and must survive.
+        allocation.last_food_transfers.clear();
+        allocation.last_fodder_transfers.clear();
     }
 }
 
