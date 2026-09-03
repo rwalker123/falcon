@@ -378,8 +378,8 @@ which is a property of the tier and not of the merge.
     herd — so the hover is the forage panel's own words:
     `BAND_FODDER_LOCKED_TOOLTIP_FORMAT` is spelled from `HudFloraVocab.FODDERING_NOT_LEARNED_CLAUSE`,
     the clause factored OUT of `GATE_REASON_WILD_FODDER_FORMAT` so both surfaces state one lock once
-    (the patch-only remedy — *or commit this patch to its crop* — stays on the gate reason, a band
-    row having no patch). With Foddering learned and no pen kept, nothing is wrong, so
+    (the patch-only remedy — *or commit this patch to a fodder crop* — stays on the gate reason, a
+    band row having no patch). With Foddering learned and no pen kept, nothing is wrong, so
     `BAND_FODDER_DORMANT_TOOLTIP` says calmly what the row WILL hold.
   - **THE LIVE FODDERING PERCENT IS REACHABLE, through a TYPED collaborator.** Knowledge is
     faction-scoped and no band dict carries it, so `BandDetailLines` holds `FactionReadouts` for this

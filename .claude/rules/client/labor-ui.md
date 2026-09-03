@@ -6385,23 +6385,46 @@ herd** (the corral rung's `earns_knowledge`), so a pre-pastoral band structurall
 forager band on a wild hay meadow read `1.07 → 0.85 FODDER` on the compose sheet and banked nothing,
 with no feedback anywhere.
 
-**`RungGates.wild_fodder_reason(committed_species, knowledge)` is the one answer**, and it broadens
+**`RungGates.wild_fodder_reason(committed_species, basket, knowledge)` is the one answer**, and it broadens
 that file's remit from *"may this source climb its next rung"* to *"…and will the work it is doing
 actually pay out"* — the same shape of answer (what is missing, its live progress, the remedy) asked
 of the same threaded-in knowledge, which is why it belongs beside the rung gates rather than in a
 second gate layer.
 
-- **It takes the committed-species STRING, not the patch dict**, because every caller has already read
-  that key and the `patch_`-prefixed-vs-bare trap that file documents is not worth re-entering.
+- **It takes the committed-species STRING and the BASKET, not the patch dict**, because every caller
+  has already read the commitment key and the `patch_`-prefixed-vs-bare trap that file documents is
+  not worth re-entering. The basket arrives as `SourceForecast.flora_basket_entries`' normalized rows
+  — the ONE decomposition of the composition list — resolved inside
+  `DrawerComposeController._wild_fodder_lock` so both surfaces read one basket.
 - **The test reads the PUBLISHED commitment (`patch_committed_species`), never the COMPOSED
   improvement.** A Cultivate the player has ticked but not committed is not a bid the sim has
   accepted, and quoting it would unlock a credit that is still being refused.
+- ⛔ **THE COMMITMENT ARM ASKS *WHICH CROP*, and it MIRRORS THE SIM'S `committed_to_a_fodder_crop`.**
+  `RungGates._committed_to_a_fodder_crop` resolves the committed species' row in the basket and
+  answers true when `cultivate_fodder_payoff > 0` **or** `sow_fodder_payoff > 0` — BOTH rungs, because
+  the sim's test is `yield.fodder_per_biomass > 0.0` on the species and is rung-independent, so a
+  single-rung reading would drift the moment a crop pays hay at a rung the patch is not standing on.
+  It **fails closed**: a committed species with no row in this basket is not fodder-bearing and the
+  locked reason is shown, the same direction the sim takes on an unresolvable id.
+  - **NOT `role == "fodder"`**, however much better it reads. `role` is a display tag derived from
+    whichever component of the yield vector dominates and the sim explicitly never branches on it; it
+    coincides with the real rule only while `hay_grass` is the one fodder-bearing species, and a
+    second one paying mostly calories would be tagged `staple` and silently refused.
+  - **THE OLD ARM WAS "COMMITTED TO ANYTHING", ON BOTH SIDES, AND IT PAID HAY TO PEOPLE WHO HAD NOT
+    BID FOR IT.** A player with no pens, no Foddering and one cultivated `wild_emmer` patch on ground
+    that is 31% `hay_grass` banked hay every turn and pooled it between bands — hay nothing in that
+    game could consume. The sim tightened its arm first and this one kept the old rule, so for a
+    window the client rendered the credit UNLOCKED while the sim refused it: a readout promising a
+    payment that never arrives. **The two predicates are coupled and this one has drifted once**, so
+    a change to `systems/labor.rs`' arm is a change here in the same pass.
 - **It is a 0..1 learning meter, not a bool** — only `HudConst.KNOWLEDGE_COMPLETE` opens the credit,
   exactly like every other track, which is why the locked frame is fixtured part-learned rather than
   at zero.
 - **TWO remedies, and this is the only gate reason on either web with two.** Both are real and reached
-  from different ends of the game: learn the craft by keeping a pen, or commit this patch to its crop —
-  and the improvement control that does the second is directly below the line on the same sheet.
+  from different ends of the game: learn the craft by keeping a pen, or commit this patch to A FODDER
+  CROP — and the improvement control that does the second is directly below the line on the same
+  sheet, its crop picker being where the hay row is chosen. The remedy says "a fodder crop" rather
+  than "its crop" because committing to the grain beside the hay is not a bid for hay.
   `HudFloraVocab.GATE_REASON_WILD_FODDER_FORMAT` takes the percent plus the two rung glyphs, the idiom
   `GATE_REASON_HERD_DOMESTICATED_FORMAT` already uses.
 
@@ -6479,19 +6502,33 @@ at all** — not a dash, not a zero, no clause.
   gate is exactly how the presets came to quote a ceiling the row below them was already refusing.
 - **Scoped to the FORAGE presets and to the WILD take.** The hunt picker has no fodder account to drop.
   Neither the CROP PICKER's rows nor the improvement control's PAYOFF faces (`Hay Grass 30% · 1.80 hay`,
-  the `→ … fodder` terms) are touched: they quote what COMMITTING to the crop would pay, and a committed
-  patch's hay is credited unconditionally — committing IS the bid — so gating them would state a refusal
-  that does not exist.
+  the `→ … fodder` terms) are touched: they quote what committing TO THAT ROW'S CROP would pay, which
+  for a fodder-bearing crop is a bid the sim honours whatever the faction knows — so gating them would
+  state a refusal that does not exist. The picker's rows are per SPECIES and each already carries its
+  own `cultivate_fodder_payoff` / `sow_fodder_payoff`, which is exactly what the gate reads: a grain
+  row honestly quotes no hay and needs no lock over it.
 
-**Frames — a THREE-STATE set on one patch, judged as a set**, because a lone negative here is satisfied
+**Frames — a FIVE-STATE set on ONE patch, judged as a set**, because a lone negative here is satisfied
 by silencing the account everywhere: `forage_fodder_locked` (wild meadow, Foddering part-learned → the
 `—`, the reason by meta, the food row still a live number) · `forage_fodder_known` (the SAME patch,
 Foddering complete → a live fodder number, no lock line, and the five-track strip) ·
-`forage_fodder_committed` (the same patch COMMITTED with Foddering at 0 → a live number and no lock
-line — the half that pins `species.is_some()`, without which the whole thing passes as "gated on
-knowledge alone"). Sabotage-verified in both directions: pinning the lock ON fails the known and
-committed states (and `floor_chart_drawn_down`'s two-account `now → after` claim), pinning it OFF fails
-exactly the locked state's three assertions — no state passes under both.
+`forage_fodder_committed` (the same patch COMMITTED TO ITS HAY with Foddering at 0 → a live number and
+no lock line — the half that pins the commitment arm, without which the whole thing passes as "gated on
+knowledge alone") · `forage_fodder_grain_committed` (the same patch committed to the `wild_emmer` that
+is 70% of the same basket, Foddering at 0 → the `—` and the lock line back) ·
+`forage_fodder_grain_known` (that grain commitment with Foddering complete → a live number again).
+Sabotage-verified in both directions: pinning the lock ON fails the known, committed and grain-known
+states (and `floor_chart_drawn_down`'s two-account `now → after` claim), pinning it OFF fails exactly
+the locked and grain-committed states' assertions — no state passes under both.
+
+**THE LAST TWO ARE THE CONTROLLED TWIN, and the middle claim is a DIFFERENCE rather than an absolute.**
+`forage_fodder_committed` and `forage_fodder_grain_committed` are the same ground, the same basket, the
+same rates and the same coordinates with only the committed SPECIES moved, so the pair testifies about
+the species test rather than about the patch — and a gate that had regressed to refusing every
+commitment would satisfy the grain frame's own negative on its own. The chapter therefore asserts the
+two readings DIFFER, beside each one's absolute claim. `forage_fodder_grain_known` is the OR: tightening
+the commitment arm must not narrow the knowledge one, so a band that has learned to make hay banks it
+whatever its patch is committed to.
 
 **The PRESET TOOLTIPS ride the same three frames, asserted as a PAIR** (reached by
 `HudWidgets.POLICY_RUNG_META` through the chapter's `_policy_rung_tooltip`, never by face text, since a

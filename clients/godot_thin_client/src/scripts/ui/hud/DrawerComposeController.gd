@@ -1472,9 +1472,16 @@ func _take_display_name(species: String, basket: Array[Dictionary]) -> String:
 ##
 ## **The PUBLISHED commitment, never the composed improvement**: a Cultivate the player has ticked and
 ## not yet committed is not a bid the sim has accepted.
+##
+## **AND THE BASKET GOES WITH IT**, because the commitment arm asks WHICH crop: the sim credits a
+## commitment only to a species that actually bears hay, and the per-species payoffs that answer that
+## live on the tile's composition rows. Resolved here rather than at the two call sites so both
+## surfaces read one basket — the reason this function exists at all.
 func _wild_fodder_lock(tile_info: Dictionary) -> String:
     return RungGates.wild_fodder_reason(
-        String(tile_info.get("patch_committed_species", "")).strip_edges(), _player_knowledge())
+        String(tile_info.get("patch_committed_species", "")).strip_edges(),
+        SourceForecast.flora_basket_entries(tile_info.get("patch_composition", [])),
+        _player_knowledge())
 
 ## One yield model → the one-line BBCode preview, for both webs. Green + `· renewable` inside the
 ## source's own regrowth, WARN-amber with the shared ⚠ and the web's own overdraw clause outside it;
