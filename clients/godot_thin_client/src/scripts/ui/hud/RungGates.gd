@@ -382,6 +382,40 @@ static func wild_fodder_reason(committed_species: String, basket: Array[Dictiona
         FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL),
         FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CULTIVATE)]
 
+## **WOULD THE HAY IN A RUNG'S PAYOFF QUOTE BE REFUSED?** — `true` when the `ONCE TENDED …` deal row
+## must not state a fodder figure. The `wild_fodder_reason` gate NARROWED by one case, and expressed
+## as that narrowing rather than restated, so the row and the deal line one control apart cannot
+## disagree about one patch.
+##
+## **FOUR CASES, and the counter-intuitive one is the third:**
+##
+## | the patch is… | Foddering | the deal row |
+## |---|---|---|
+## | committed to a FODDER-bearing species | either | **quotes the hay** — committing to hay is the bid |
+## | committed to a NON-fodder species | unknown | **refused** — the commitment is not a bid for hay |
+## | committed to a NON-fodder species | known | **quotes the hay** — the gate's other arm |
+## | **not committed at all** | unknown | **quotes the hay** — see below |
+##
+## ⛔ **AN UNCOMMITTED PATCH IS NOT GATED, and calling `wild_fodder_reason` here directly is the bug
+## that produces.** That gate fails closed on `""` — correctly, because it answers *"will the hay this
+## crew gathers TODAY be banked"*, and today this crew has bid for nothing. This question is a
+## different one: *"what would this ground pay ONCE TENDED"*, which on an uncommitted patch is an OPEN
+## question the player has not answered yet. The wire's figure there is a real *"this ground could"*,
+## and suppressing it would hide a legitimate number — the hidden gate this arc exists to refuse,
+## arriving from the other direction. Hence the early return, which is the whole of the narrowing.
+##
+## **THE WIRE FIELD IT GUARDS IS CORRECT AND MUST NOT CHANGE.** `forage::tended_fodder` /
+## `field_fodder` compute what the LAND would grow at that rung from the tile's basket — species-blind
+## by construction and right to be, answering *"what does this ground produce"* rather than *"what
+## will you be paid"*. Applying the credit gate is the CLIENT's half of that split, and it is the same
+## discipline `SourceYield::fodder` keeps on the sim side: state the credited value, never a
+## re-derivation, or the readout publishes a number nobody was ever paid.
+static func fodder_payoff_is_refused(committed_species: String, basket: Array[Dictionary],
+        knowledge: Dictionary) -> bool:
+    if committed_species.strip_edges() == "":
+        return false
+    return wild_fodder_reason(committed_species, basket, knowledge) != ""
+
 ## **IS THIS PATCH COMMITTED TO A CROP THAT ACTUALLY BEARS HAY?** — the client's mirror of the sim's
 ## `committed_to_a_fodder_crop`, and the whole of the commitment arm above.
 ##

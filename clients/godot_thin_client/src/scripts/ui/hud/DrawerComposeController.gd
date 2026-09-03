@@ -3402,10 +3402,25 @@ func _crop_payoff_terms(tile_info: Dictionary, entries: Array[Dictionary], speci
             fodder = _flora_entry_fodder_payoff(entry, rung)
             materials = _flora_entry_material_payoff(entry, rung)
             break
+    # **THE HAY IN THIS LINE IS GATED, ON THE SAME PREDICATE THE ROW ABOVE IT IS.** `payoff_fodder` is
+    # a LAND fact — what this ground would grow at that rung, species-blind by construction — and the
+    # deal row states it as something the player will RECEIVE. On a patch committed to a crop that
+    # bears no hay, with Foddering unlearned, the sim credits none of it: quoting it here would put a
+    # figure the sim refuses directly under a `— FODDER` cell that refuses it, one line apart.
+    #
+    # **`fodder_payoff_is_refused`, NOT `_wild_fodder_lock`** — the two differ on exactly the
+    # UNCOMMITTED patch, where the row gate fails closed and this line must not: nothing has been bid
+    # for yet, so the land's number is an honest "this ground could". `RungGates` expresses that
+    # narrowing over the one gate rather than restating the rule, so the two cannot drift apart.
+    var fodder_refused := RungGates.fodder_payoff_is_refused(
+        String(tile_info.get("patch_committed_species", "")).strip_edges(), entries,
+        _player_knowledge())
     # **THE FOOD ZERO SURVIVES BESIDE A MATERIAL CLAUSE, AND THAT IS THE READING.** A sown Field of
     # cotton pays exactly `0.00 food`, and stating it next to `0.29 fibre` is the whole land-use
     # bargain in one row — which is what the retired trade scalar was standing in for.
-    var terms := SourceForecast.picker_products(payoff * output, fodder * output)
+    var terms := SourceForecast.picker_products(payoff * output, fodder * output,
+        SourceForecast.YIELD_ACCOUNT_FOOD, [],
+        HudComposeVocab.YIELD_LOCKED_GLYPH if fodder_refused else "")
     for row_variant in materials:
         var row: Dictionary = row_variant
         var amount := float(row[SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY]) * output
