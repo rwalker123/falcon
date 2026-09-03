@@ -373,10 +373,14 @@ Sow.
   `forage.cultivation.tended_conversion_gain` (**2.0**) on the **favored species' term only** — a
   tended stand of a *known* plant converts better, the volunteers beside it do not — so weeding and
   conversion **compound** and favoring a marginal plant barely moves the number. It multiplies food,
-  fodder and the material rates alike, with no `role` branch. At rung 3 the managed payoff keeps its one dial and
-  is scaled by the **derived** `patch_species_quality` (= the projected basket's rate ÷ the wild
-  baseline, which for a Field's 100%-crop basket is exactly the crop's rate) — never a second
-  per-species field that could drift from the rate it restates.
+  fodder and the material rates alike, with no `role` branch. At rung 3 there is **no separate managed
+  payoff left to scale**: the whole managed harvest was retired (§4.10, commit `3fb073a9`), and a
+  Field is priced through `rung_payoff` off `basket_rate` exactly as every other rung is — the crop's
+  own conversion rate, reached by multiplication. The **derived** `patch_species_quality`
+  (= the projected basket's rate ÷ the wild baseline) that used to scale it outlived its last caller
+  and is now **deleted**, with `WILD_SPECIES_QUALITY`. Its reason for being derived rather than a
+  per-species config field — a second lever drifts from the rate it restates — is why nothing
+  replaced it.
 - **EACH RUNG'S PAYOFF PROJECTS TO ITS OWN RUNG — never to the rung the patch happens to stand on.**
   `forage::composition_for_rung(patch, tile_composition, forage, rung)` is the one seam, and
   `favored_conversion_gain` is keyed on the *same* `rung`, so the basket and the gain that multiplies
@@ -385,7 +389,7 @@ Sow.
   `intensification::interpolate_composition(&patch.standing(), |rung| composition_for_rung(.., rung))`.
   `composition_for_rung` itself is unchanged, because a per-rung *quote* wants exactly the rung it
   asked about. **The bug this shape exists to prevent, caught in
-  the #433 slice itself:** `patch_species_quality` keyed off the patch's own meter, so
+  the #433 slice itself:** `patch_species_quality` (since deleted — see above) keyed off the patch's own meter, so
   `snapshot_forage_patches` — which publishes `fieldYield` for *every* patch, tended ones included —
   quoted a Sow on a tended patch against the **weeded** basket *with rung 2's conversion gain in it*,
   overstating by 10.2% on the reference tile and by the full gain (2×) wherever weeding saturates.
@@ -534,10 +538,18 @@ same scarce sowable tile" is the land-use tension, and *cash* is now literally *
   basket is 100% its crop, so it credits exactly that crop's reading. (The seam named here was
   `forage::field_harvest_biomass`, retired with the rest; it is `patch_material_yields` off the
   ordinary take now.)
-- **`provisions 0.0` is SAFE.** `patch_species_quality` divides by the **wild**
-  `provisions_per_biomass`, never the species rate, so a 0-provisions cash crop yields exactly 0 food
-  with no divide-by-zero — and `YieldVector::pays_something()` passes **because the species names
-  material rows**. That last clause is the assertion that turned "did we silently break a species"
+- **`provisions 0.0` is SAFE, because the plant food path only ever MULTIPLIES by a species rate —
+  it never divides by one.** `basket_rate` is a sum of `share × rate × gain` products, so a
+  pure-cotton basket produces the food rate `0.0` exactly, and `rung_payoff` → `forage_provisions`
+  carries it through as `biomass × rate × multiplier`. The wild rate is not in that expression at
+  all: `basket_rate`'s wild fallback fires only on a basket naming nothing the roster knows, which a
+  rostered cash crop never is. The one place a reciprocal *would* be needed is sidestepped by
+  shipping `perWorkerBiomass` on the wire, so nobody computes
+  `per_worker_yield ÷ provisions_per_biomass` — `0 / 0` on a Field of cotton. And
+  `YieldVector::pays_something()` passes **because the species names material rows**.
+  (**This clause used to say `patch_species_quality` divides by the wild rate.** That was true when
+  written and stale from `3fb073a9`; the function is now deleted. A safety claim that names a
+  mechanism outlives the mechanism silently — which is the whole argument for the doc-link gate.) That last clause is the assertion that turned "did we silently break a species"
   into a load failure when the trade axis went: all five cash crops read `0` provisions and `0`
   fodder, so a `pays_something` testing only the two scalars would have rejected every one of them at
   boot.

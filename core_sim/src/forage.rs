@@ -2111,8 +2111,11 @@ pub fn patch_provisions_per_biomass_taking(
 
 /// The conversion rate this patch's crop would reach **on `rung`** —
 /// [`patch_provisions_per_biomass`] asked about a rung the patch may not stand on yet (or may
-/// already have passed). Used by the two managed-rung payoff quotes, each naming *its own* rung:
-/// [`tended_provisions`] asks `PlantTended`, and [`patch_species_quality`] asks `PlantField`.
+/// already have passed). Its two callers each name a rung: [`tended_provisions`] asks
+/// `PlantTended` for the wire's `tendedYield`, and [`rung_payoff`] asks whichever rung *its* caller
+/// named — which is how `PlantField` gets asked, for the wire's `fieldYield`
+/// (`snapshot::subsistence`). No helper of its own stands between them and this one; the retired
+/// `patch_species_quality` was the last that did (see the managed-harvest gravestone below).
 fn rung_provisions_per_biomass(
     patch: &ForagePatch,
     tile_composition: &[FloraShare],
@@ -2131,41 +2134,6 @@ fn rung_provisions_per_biomass(
         forage.provisions_per_biomass,
     )
 }
-
-/// **The FIELD basket's conversion rate RELATIVE to the wild baseline** — dimensionless, `1.0` =
-/// exactly baseline: what one unit of a Field's biomass converts at
-/// (`rung_provisions_per_biomass` on `PlantField`, which carries
-/// `cultivation.field_conversion_gain`) divided by the wild rate every other quote is expressed
-/// against.
-///
-/// **It reads `PlantField` whatever rung the patch stands on**, which is the whole point: a Field's
-/// basket is its crop plus only whatever working the ground could not clear
-/// ([`stands_outside_worked_ground`]), and it takes no rung-2 conversion gain — so on ordinary
-/// inland ground this is exactly `crop rate ÷ wild rate`, the number a Field would really pay, even
-/// when the patch it is asked about is currently tended. Beside a fishery it is the sown basket's
-/// own average, which is likewise what that Field would pay. `fieldYield` is published for every
-/// patch, so anything else is a quote that disagrees with the payout (see
-/// [`composition_for_rung`]).
-///
-/// **Derived, never a second config field.** A `field_provisions_multiplier` per species would be a
-/// redundant lever that could drift from the conversion rate it is supposed to express.
-pub fn patch_species_quality(
-    patch: &ForagePatch,
-    tile_composition: &[FloraShare],
-    flora: &FloraConfig,
-    forage: &ForageLaborConfig,
-) -> f32 {
-    if forage.provisions_per_biomass <= 0.0 {
-        return WILD_SPECIES_QUALITY; // `validate()` pins the wild rate positive; never divide by 0.
-    }
-    rung_provisions_per_biomass(patch, tile_composition, flora, forage, RungKey::PlantField)
-        / forage.provisions_per_biomass
-}
-
-/// **The species-quality of a basket that converts exactly at the wild baseline** — the dimensionless
-/// `1.0` [`patch_species_quality`] falls back to. Named because "1.0" at a call site says nothing
-/// about which baseline it is one *of*.
-const WILD_SPECIES_QUALITY: f32 = 1.0;
 
 /// **The wire quote `0` uses for "this plant cannot climb this rung".** Distinct from a real ratio of
 /// `0`, which cannot occur: a species that appears in a tile's basket has `share > 0`, and
@@ -3913,8 +3881,9 @@ pub fn patch_destination_capacity(
 
 // **RETIRED: the whole rung-3 MANAGED HARVEST** — `field_provisions`, `field_fodder`,
 // `field_harvest_production`, `field_harvest_biomass`, `field_fodder_per_biomass`,
-// `patch_species_quality`, `managed_per_worker_yield`, `managed_per_worker_fodder`, and the
-// `cultivation.field_provisions_per_biomass` dial they all read.
+// `patch_species_quality`, `WILD_SPECIES_QUALITY`, `managed_per_worker_yield`,
+// `managed_per_worker_fodder`, and the `cultivation.field_provisions_per_biomass` dial they all
+// read.
 //
 // **A FIELD CHANGED HOW YOU HARVEST, WHEN ITS JOB IS TO CHANGE HOW MUCH THE TILE GROWS.** It paid a
 // flat `biomass × rate` on a standing crop that was never drawn down — no escapement floor, no
@@ -3934,11 +3903,21 @@ pub fn patch_destination_capacity(
 // the ⚠ firing on it — and what rung 3 buys is [`rung_capacity_gain`] and [`rung_regrowth_gain`].
 // **The animal web has had that shape all along**; plants were the odd web out.
 //
-// `patch_species_quality` outlived them: it existed to normalize the retired *rate dial* against the
-// wild baseline, and with that dial gone it now normalizes the Field basket's own conversion
-// (`rung_rate` at `PlantField`) against the same baseline. Nothing inside the sim reads it — the
-// crop's conversion already rides `rung_rate` in every account — so all that is left of it is the
-// `lib.rs` re-export.
+// **`patch_species_quality` outlived them by one arc, and is now deleted too.** It existed to
+// normalize the retired *rate dial* against the wild baseline — `field_provisions` was literally
+// `biomass × field_provisions_per_biomass × patch_species_quality × output_multiplier` — so with
+// that dial gone it had no term left to scale. It was kept on as a dimensionless `PlantField ÷
+// wild` ratio and acquired no reader in that form: the wire's `fieldYield` it claimed to feed
+// comes off [`rung_payoff`] at `PlantField` (`snapshot::subsistence`), which prices the Field's
+// basket through [`rung_rate`] in the crop's own **absolute** units and never normalizes at all.
+// A published-looking helper that nothing publishes is the shape a wrong quote grows back out of,
+// so it went rather than waiting for a caller.
+//
+// **What went with it: the only division by a conversion rate on the plant food path.** Every
+// account is now `Σ shareᵢ × rateᵢ × gain` ([`basket_rate`]) multiplied into a take
+// ([`forage_provisions`]), so a species rate is a factor and never a denominator — which is what
+// makes a cash crop's `provisions_per_biomass: 0.0` an exact zero rather than a `0/0` (see the
+// `_comment` on cotton in `flora_config.json`).
 
 // **RETIRED: `field_trade_per_biomass` / `field_trade_goods` / `managed_per_worker_trade`**
 // (arc #527). A sown cash Field's product is its **materials** — cotton fibre, tobacco leaf — banked
