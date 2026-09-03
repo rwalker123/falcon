@@ -29,6 +29,22 @@
 //! `forage.rs`, `systems/labor.rs`, `snapshot/capture.rs` and `bin/server.rs`. A gate that cannot
 //! see a private doc comment is a gate over the minority of the prose it exists to protect.
 //!
+//! ## WHAT THIS GATE DOES NOT SEE — test prose
+//!
+//! **`cargo doc` compiles without `cfg(test)`, so no doc comment on a test fn or a test-only helper
+//! is linted, and `tests/` targets are never built at all.** Measured when this guard landed: **484
+//! doc links sit outside it** — 179 in `#[cfg(test)]` regions of `src/`, 305 across 59 files under
+//! `tests/`. Five were already dead the day the gate went green, and it passed anyway.
+//!
+//! This is stated rather than closed, because the section above makes exactly the argument that
+//! would close it — rationale lives wherever this repo writes prose, and it writes a great deal of
+//! it on tests. **A gate whose own doc argues for reaching private items while silently missing test
+//! prose reads as covering both.** It does not, and the honest fix for one PR is to say so.
+//!
+//! Closing it is not one flag. `--cfg test` in `RUSTDOCFLAGS` would reach the `src/` half; the
+//! `tests/` half is a target kind `cargo doc` does not build, so it needs a different mechanism
+//! entirely. That is its own piece of work, not a widened argument list here.
+//!
 //! ## The two failure modes are different
 //!
 //! A link naming a **renamed or moved** item is a stale pointer, and the fix is the real path. A

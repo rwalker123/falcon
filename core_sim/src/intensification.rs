@@ -3190,8 +3190,8 @@ pub struct LadderKnowledgeEntry<'a> {
     pub order: u32,
     /// Whether some rung's `unlock_knowledge` names it — a *step* rather than a *capability*.
     pub is_step: bool,
-    /// The [`DiscoveryProgressLedger`](crate::resources::DiscoveryProgressLedger) row it is stored
-    /// under, resolved once here so no caller re-runs the name lookup.
+    /// The [`DiscoveryProgressLedger`] row it is stored under, resolved once here so no caller
+    /// re-runs the name lookup.
     pub discovery_id: u32,
 }
 
@@ -4995,9 +4995,9 @@ mod tests {
     const THE_RETIRED_BUILD_RATE_MULTIPLIER: f32 = 1.5;
 
     /// **The turns estimate is `ceil(remaining / this turn's work)`, and a STALL has no estimate.**
-    /// `None` is the wire's [`NO_BUILD_TURNS_ESTIMATE`], and a stall is the only thing that earns it:
-    /// a build nobody is advancing cannot be quoted a finish date, and a huge number would read as a
-    /// promise.
+    /// `None` is the wire's [`sim_schema::NO_BUILD_TURNS_ESTIMATE`], and a stall is the only thing
+    /// that earns it: a build nobody is advancing cannot be quoted a finish date, and a huge number
+    /// would read as a promise.
     ///
     /// **A cost already at or below the meter is `1`, NOT `None`** — the work is banked, so the job
     /// finishes the first turn anybody works it, and conflating that with *"no answer"* is what made

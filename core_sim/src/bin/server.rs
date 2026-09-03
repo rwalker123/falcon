@@ -10110,7 +10110,7 @@ fn apply_orders(submissions: &[(FactionId, FactionOrders)]) {
 /// which carries everything a turn reads — and the client's frame is then **derived from that
 /// restored world** by recapturing it, not fetched from a parallel archive. There is one history of
 /// worlds, so there is nothing for a second one to disagree with;
-/// `a_rollback_produces_the_world_that_tick_had` asserts the result end to end.
+/// `a_rollback_across_a_command_reproduces_the_world_that_tick_had` asserts the result end to end.
 fn handle_rollback(
     app: &mut bevy::prelude::App,
     tick: u64,
@@ -11918,10 +11918,10 @@ mod tests {
     /// reads unambiguously as mid-build without pretending to the ladder's shipped price, which
     /// these command-gate tests are not about.
     ///
-    /// **The PLANT web needs no `PART_PREPARED_JOB` beside it any more** — its rung boundaries come
-    /// from live config, so a plant fixture states only where the source stands and whether that is
-    /// mid-rung is the *ladder's* answer. [`PART_PREPARED_JOB`] survives for the **animal** web,
-    /// whose two meters still carry their own stamped costs.
+    /// **NEITHER WEB NEEDS A `PART_PREPARED_JOB` BESIDE IT ANY MORE** — both webs' rung boundaries
+    /// come from live config, so a fixture states only where the source stands and whether that is
+    /// mid-rung is the *ladder's* answer. The animal web's separately stamped job cost went with the
+    /// second meter it retired when it took the plant web's one-position ladder.
     const PART_PREPARED_WORK: f32 = FABRICATED_BUILD_COST / 2.0;
     /// **The re-crew case.** A build this faction has underway on a patch that has dropped out of
     /// Thriving still accepts a `Cultivate` assignment — which is what lets the player *ease workers

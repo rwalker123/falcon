@@ -3223,7 +3223,7 @@ pub fn capture_snapshot(
 /// measured before the checkpoint arc put a number beside it. Its only historical reader was
 /// rollback, fetching the stored view at the target tick to re-baseline the client; rollback now
 /// recaptures that frame from the world it just restored, which carries the same information
-/// (`a_rollback_produces_the_world_that_tick_had`) and cannot disagree with it.
+/// (`a_rollback_across_a_command_reproduces_the_world_that_tick_had`) and cannot disagree with it.
 ///
 /// What remains needs only the latest entry: `latest_entry` for resync and `export_map`, and the
 /// delta baseline, which tracks the previous publication rather than the ring.

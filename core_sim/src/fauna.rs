@@ -1420,9 +1420,14 @@ fn pastoral_ecology_for(herd: &Herd, fauna: &FaunaConfig) -> EcologyConfig {
 
 /// The **pen** ecology a herd would live under *if penned* — its per-species managed rate
 /// (`min(husbandry_regrowth_cap, wild_r × pen_gain)`) folded into the pen rung's phase bands.
-/// Shared by [`herd_ecology`] (a live penned herd) **and** [`hunt_forecast`] (the forecast's "what
-/// would this pay once penned?" projection for a herd that is not penned yet), so the two never
-/// disagree.
+///
+/// **Its only caller is [`hunt_forecast`]** — the *"what would this pay once penned?"* projection for
+/// a herd that is not penned yet. A **live** penned herd never reaches it: [`herd_ecology`] assembles
+/// the same ecology in its own right, interpolating [`rung_regrowth_rate`] over the herd's standing
+/// and taking its bands from [`rung_ecology_bands`]. So this is a **second, independent expression of
+/// one formula**, and what keeps the projection and the living herd agreeing is that both bottom out
+/// in [`managed_regrowth_rate`] and the same `husbandry.pen.ecology` block — a retune that changes how
+/// either side is *assembled*, rather than what those two seams say, parts them.
 fn pen_ecology_for(herd: &Herd, fauna: &FaunaConfig) -> EcologyConfig {
     EcologyConfig {
         regrowth_rate: managed_regrowth_rate(herd.regrowth_rate, fauna.husbandry.pen_gain, fauna),
@@ -8635,10 +8640,11 @@ pub(crate) fn net_biomass_delta(biomass: f32, cap: f32, ecology: &EcologyConfig)
 /// Yield point), where `r·B·(1−B/K)` peaks.
 ///
 /// **Public since slice 8, because it is now the sim's OPERATING POINT and not merely an interior
-/// detail of the regrowth curve.** Sustain's escapement point **is** `K · MSY_BIOMASS_FRACTION`
-/// ([`escapement_ceiling`] at that floor) — so a harvested herd *lives* here (a crew holding the
-/// food-peak floor settles it at `K/2`), and any test that wants to measure a rung at the point a
-/// running herd actually stands has to seat against this number. Exporting it is what stops those
+/// detail of the regrowth curve.** The food-peak floor's escapement point **is**
+/// `K · MSY_BIOMASS_FRACTION` — the `floor · carrying_capacity` term [`escapement_ceiling`]
+/// *subtracts*, not the take ceiling it returns — so a harvested herd *lives* here (a crew holding
+/// that floor settles it at `K/2`), and any test that wants to measure a rung at the point a running
+/// herd actually stands has to seat against this number. Exporting it is what stops those
 /// fixtures from spelling `0.5` by hand and silently drifting if the curve's peak ever moves.
 pub const MSY_BIOMASS_FRACTION: f32 = 0.5;
 
@@ -10235,10 +10241,13 @@ mod tests {
     // and there is no second reading of "the crew" for it to disagree with. What survives of the
     // claim is `engagement_scales_with_the_hunting_crew` above — the linearity the count inverts.
 
-    /// **A source with NO ENGAGEMENT STAGE reports no engagement crew** — a pen and the plant web
-    /// both forecast `f32::INFINITY` ([`SourceYieldForecast::managed`],
-    /// [`FaunaConfig::engage_rate_for`]), so the `max()` collapses to the haul term and neither
-    /// regresses. This is the no-regress half of the pair below.
+    /// **A source with NO ENGAGEMENT STAGE reports no engagement crew** — the plant web forecasts
+    /// `f32::INFINITY` (`forage::forage_forecast`), as does an animal source whose species the
+    /// roster cannot resolve ([`FaunaConfig::engage_rate_for`]), so the `max()` collapses to the
+    /// haul term and neither regresses. This is the no-regress half of the pair below.
+    ///
+    /// **A pen is not one of them** — it carries the keepers' handling rate ([`herd_engage_rate`]),
+    /// so it is bounded like every other animal rung; see [`SourceYieldForecast::engage_rate`].
     ///
     /// **Byte-identical whatever the retreat says**, which is what makes
     /// [`NO_RETREAT_STAGE_STAY`]'s neutral safe on the `fight: None` branch: an infinite reach times
