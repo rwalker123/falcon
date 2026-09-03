@@ -1648,16 +1648,9 @@ func _pad_stylebox(sb: StyleBox, pad_x: int, pad_y: int) -> void:
 	sb.content_margin_bottom = pad_y
 
 
+## **THE TEXT-FIELD CHROME MOVED TO `HudStyle` when the shipment sheet grew the client's second
+## family of them** (issue #620). Byte-for-byte the treatment this shell drew inline — a `GROUND_2`
+## well, a `LINE` rim going `SIGNAL` on focus, the BUTTON family's padding — so the menu's fields are
+## unchanged and the two surfaces cannot drift into two looks for one control.
 func _style_line_edit(le: LineEdit) -> void:
-	var normal := StyleBoxFlat.new()
-	normal.bg_color = HudStyle.GROUND_2
-	normal.set_corner_radius_all(CTRL_RADIUS - 2)
-	normal.set_border_width_all(1)
-	normal.border_color = HudStyle.LINE
-	_pad_stylebox(normal, 11, 9)
-	var focus := normal.duplicate()
-	focus.border_color = HudStyle.SIGNAL
-	le.add_theme_stylebox_override("normal", normal)
-	le.add_theme_stylebox_override("focus", focus)
-	le.add_theme_color_override("font_color", HudStyle.INK)
-	le.add_theme_color_override("caret_color", HudStyle.SIGNAL)
+	HudStyle.apply_line_edit(le)

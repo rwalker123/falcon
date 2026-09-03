@@ -1248,6 +1248,47 @@ const COMPOSE_CARGO_TOOLTIP_FORMAT := "%s — %s"
 ## is unreachable.
 const COMPOSE_CARGO_STEP := 1.0
 
+## **THE ROW IS A TYPED FIELD BETWEEN THE TWO STEPPERS** (issue #620). A 6-worker party's full hay
+## load is 72 whole-unit presses at the step above, which is not a control — so the amount is a
+## `LineEdit` the player can type into, with the steppers kept beside it for the nudge they are good
+## at and a `Max` button for the one answer nobody wants to spell.
+##
+## ⛔ **A `LineEdit`, NEVER A `SpinBox` and never a custom key-eating control.**
+## `TextEntryFocus.is_text_entry` — the ONE definition of "the player is typing", read by
+## `KeyboardArbiter` — answers `node is LineEdit or node is TextEdit`. A control the arbiter does not
+## recognise leaves every polled gameplay key live while the player types into it: WASD pans the map
+## and the single-letter panel toggles fire, on the keystrokes meant for the number.
+const COMPOSE_CARGO_FIELD_WIDTH := 58.0
+
+## How wide the typed amount may be. A cargo amount is a quantity of a pile, so it needs digits, one
+## point and a sign's worth of slack — never a paragraph.
+const COMPOSE_CARGO_FIELD_MAX_LENGTH := 12
+
+## **HOW MANY DECIMALS A COMPOSED AMOUNT KEEPS, and it is a FLOOR onto that grid rather than a
+## round.** It matches `HudCraftingVocab.BATCH_AMOUNT_FORMAT`'s one decimal on purpose: what the field
+## shows and what the manifest ships are then the same number, instead of a row reading `6.0` while
+## `6.04998` goes on the wire. **Flooring can never carry a manifest over a cap and rounding can** —
+## a tenth left behind is invisible, a tenth over is a server refusal the player did not cause.
+const COMPOSE_CARGO_AMOUNT_DECIMALS := 1
+
+## The FOOD row's weight in `DetailFormat.shipment_mass` — food counts as itself. Named because the
+## row-headroom arithmetic needs a weight per row and the other two are wire levers; a bare `1.0`
+## there would read as a fudge rather than as the mass expression's own first term.
+const COMPOSE_CARGO_FOOD_CARRY_WEIGHT := 1.0
+
+## The `Max` button's face and its three readings. **A disabled button that explains itself beats an
+## enabled one that does nothing**, so the two dead states carry WHICH of the two caps stopped them:
+## the row is already at the largest amount that fits, or there is no room (or nothing held) at all.
+const COMPOSE_CARGO_MAX_FACE := "Max"
+const COMPOSE_CARGO_MAX_HINT := "Load the most of this that will still fit."
+const COMPOSE_CARGO_MAX_AT_CAP_HINT := "Already carrying the most of this that will fit."
+const COMPOSE_CARGO_MAX_NO_ROOM_HINT := "No room for this — take something off, or send more hands."
+## How wide the `Max` face sits. Wider than a stepper's button because it carries a WORD.
+const COMPOSE_CARGO_MAX_BUTTON_WIDTH := 42.0
+
+## The typed field's hover text — the three keys that act on it, because none of them is visible.
+const COMPOSE_CARGO_FIELD_HINT := "Type an amount and press Enter. Esc puts the last one back."
+
 ## The live mass meter — `▰▰▰▱▱ 30 / 40`. **Every number in it comes off the wire**
 ## (`expedition_trade_per_worker_carry` × the party for the cap;
 ## `expedition_trade_fodder_carry_weight` on the hay and `expedition_trade_material_carry_weight` on

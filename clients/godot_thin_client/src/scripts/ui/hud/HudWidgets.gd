@@ -946,6 +946,24 @@ const HUNT_CREW_SPLIT_META := "hunt_crew_split"
 ## way to reach those two emit sites, whose payload-building lives in an inline `pressed` lambda.
 const SEND_HUNT_CONFIRM_META := "send_hunt_confirm"
 
+## --- THE CARGO ROW'S HANDLES (issue #620) --------------------------------------------------------
+## A shipment cargo row, as `HBoxContainer` meta, carrying the row's own KEY
+## (`BandPanelController.TRADE_FOOD_ROW_KEY` / `TRADE_FODDER_ROW_KEY` / a batch key). **The row used to
+## be found by walking children positionally** — the name label first, the `+` last — and that walk
+## broke silently the moment a fourth control (`Max`) joined the row: it found the new button and
+## pressed it believing it was the `+`. A key is the one handle that survives a control being added.
+const CARGO_ROW_KEY_META := "cargo_row_key"
+
+## …and WHICH control of that row a node is, as `Control` meta — one of the four values below. Keyed
+## this way rather than as four booleans for `IMPROVEMENT_STATE_META`'s reason: a harness asserting
+## about "the row's controls" wants the SET of them, and a positional walk over an `HBoxContainer` is
+## exactly what this replaced.
+const CARGO_CONTROL_META := "cargo_control"
+const CARGO_CONTROL_MINUS := "minus"
+const CARGO_CONTROL_FIELD := "field"
+const CARGO_CONTROL_PLUS := "plus"
+const CARGO_CONTROL_MAX := "max"
+
 ## The "send a shipment" CONFIRM button, as `Button` meta (arc #527) — its own handle rather than the
 ## hunt one's, because the shipment form reaches it from FIVE branches (no ties, no destination
 ## chosen, no stores, an unsendable manifest, and the live send) and a harness's claim about which

@@ -42,6 +42,12 @@ extends RefCounted
 ## `Hud*Vocab`) and the shared `DetailFormat` layer, read as `Module.X` — so a phrase is still typed in
 ## exactly one place.
 
+## The keyboard arbiter's EXACT-MATCH helpers, reached the way `MapView` and `MenuShell` reach them:
+## it carries no `class_name` on purpose (`ClientBuild` / `ServerPortsFile` / `TextEntryFocus`
+## pattern), so a caller `preload`s it as a collaborator rather than leaning on the global class
+## cache. The one thing this controller asks it is `is_escape_key`, for the cargo field's revert.
+const KeyboardArbiter := preload("res://src/scripts/KeyboardArbiter.gd")
+
 # --- The controller's OWN signals (HudLayer connects + relays each; see the class header) ---
 # Standing work was cleared for a whole scope — relayed to HudLayer.cancel_order_requested.
 signal cancel_order_requested(band: Dictionary, scope: String)
@@ -470,6 +476,19 @@ var _trade_fodder: float = 0.0
 ## reached by every teardown path (the ✕, a send, a mission button, a panel-band change), because a
 ## manifest left standing would offer the next band goods it does not hold.
 var _trade_materials: Dictionary = {}
+## --- THE TYPED CARGO FIELD'S FOCUS, CARRIED ACROSS A REBUILD (issue #620) -----------------------
+## Which cargo row's `LineEdit` holds the keyboard (`""` = none), and the text and caret it held when
+## it was last touched. **The sheet is rebuilt wholesale on every snapshot**, so without these a turn
+## landing mid-word frees the field under the player's hands: the keystrokes so far are gone and the
+## keyboard is silently back on the map. Restored by `_build_cargo_row` onto the row with the same
+## key, which is the only handle that survives the rebuild.
+var _trade_cargo_focus_key: String = ""
+var _trade_cargo_focus_text: String = ""
+var _trade_cargo_focus_caret: int = 0
+## Guard against a commit re-entering itself. Committing rerenders, the rerender frees the field, and
+## a freed focused `Control` emits `focus_exited` — which is the other commit path. Without this the
+## second pass runs against a half-torn-down row.
+var _trade_cargo_committing: bool = false
 ## The live PARTIES zone column, the parties twin of `_work_zone_host` — held so the deferred
 ## measurement below can read what the zone's content demands off the REAL laid-out tree rather than
 ## off a detached one. `HudWidgets.wrap_zone` anchors this column full-rect into the panel's zone host,
@@ -7597,7 +7616,9 @@ func _fill_trade_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int
             HudComposeVocab.COMPOSE_CARGO_NO_STORES))
         return
     for row_variant in rows:
-        sheet.add_child(_build_cargo_row(row_variant as Dictionary))
+        # The WHOLE row list rides along, because a row's `Max` is bounded by what the OTHER rows
+        # already weigh - `_trade_row_max` cannot be answered from one row alone.
+        sheet.add_child(_build_cargo_row(row_variant as Dictionary, band, rows))
     var mass := _trade_manifest_mass(band, rows)
     var cap := _trade_carry_cap(band)
     sheet.add_child(_build_mass_meter(mass, cap))
@@ -7820,12 +7841,28 @@ func _trade_material_label(batch: Dictionary) -> String:
     return HudComposeVocab.COMPOSE_CARGO_MATERIAL_FORMAT % [material_id,
         HudComposeVocab.COMPOSE_CARGO_READING_SEPARATOR.join(terms)]
 
-## One manifest row: what it is, how much of it is loaded, and how much the band still holds. The
-## `+` steps by a whole unit and CLAMPS TO THE PILE, so a 0.6 pile is reachable in one press rather
-## than being unshippable for want of a fractional control.
-func _build_cargo_row(row: Dictionary) -> HBoxContainer:
+## One manifest row - `Hay  [-] [ 6.0 ] [+] [Max]` (issue #620): what it is, how much of it is
+## loaded, and how much the band still holds.
+##
+## **FOUR CONTROLS, THREE OF THEM ADDITIVE.** The steppers move a whole unit and CLAMP TO THE PILE, so
+## a 0.6 pile is still reachable in one press; they are good at the nudge and hopeless at the load. A
+## 6-worker party's full hay load is 72 of those presses, which is what the typed FIELD and the `Max`
+## button are for.
+##
+## **THE STEPPERS AND THE TYPED FIELD ARE BOUNDED DIFFERENTLY, ON PURPOSE.** A press clamps to the
+## PILE and may carry the manifest over the pack - the meter then says so and the send disables with
+## its reason, which is the over-cap lesson this sheet teaches. A typed amount and `Max` clamp to
+## `_trade_row_max`, BOTH caps at once, because neither is a nudge: they are the player naming an
+## amount, and the amount they name should be one the shipment can actually carry. The press path is
+## also the one that leaves the band's EXACT holding on the row (`137.456789`), which is what
+## `Main.cargo_wire_amount` exists to floor - a stepper snapped to a tenth would retire that path.
+##
+## Every one of the four lands through `_set_cargo_amount`. A second write path is how a mass meter
+## comes to disagree with the payload it is metering.
+func _build_cargo_row(row: Dictionary, band: Dictionary, rows: Array) -> HBoxContainer:
     var line := HBoxContainer.new()
     line.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    line.set_meta(HudWidgets.CARGO_ROW_KEY_META, String(row.get("key", "")))
     var name_label := Label.new()
     name_label.text = String(row.get("label", ""))
     name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -7851,30 +7888,242 @@ func _build_cargo_row(row: Dictionary) -> HBoxContainer:
     var amount := float(row.get("amount", 0.0))
     var key := String(row.get("key", ""))
     var is_material := bool(row.get("is_material", false))
+    var row_max := _trade_row_max(band, rows, row)
     var minus := Button.new()
     minus.text = HudWorkVocab.STEPPER_MINUS_FACE
     minus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
     minus.disabled = amount <= 0.0
+    minus.set_meta(HudWidgets.CARGO_CONTROL_META, HudWidgets.CARGO_CONTROL_MINUS)
     HudStyle.apply_button(minus, "ghost")
     minus.pressed.connect(func() -> void:
         _set_cargo_amount(key, is_material, amount - HudComposeVocab.COMPOSE_CARGO_STEP, held))
     line.add_child(minus)
-    var value := Label.new()
-    value.text = HudCraftingVocab.BATCH_AMOUNT_FORMAT % amount
-    value.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_VALUE_WIDTH, 0)
-    value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    value.add_theme_color_override("font_color",
-        HudStyle.INK if amount > 0.0 else HudStyle.INK_FAINT)
-    line.add_child(value)
+    line.add_child(_build_cargo_field(row, held, amount, row_max))
     var plus := Button.new()
     plus.text = HudWorkVocab.STEPPER_PLUS_FACE
     plus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
     plus.disabled = amount >= held
+    plus.set_meta(HudWidgets.CARGO_CONTROL_META, HudWidgets.CARGO_CONTROL_PLUS)
     HudStyle.apply_button(plus, "ghost")
     plus.pressed.connect(func() -> void:
         _set_cargo_amount(key, is_material, amount + HudComposeVocab.COMPOSE_CARGO_STEP, held))
     line.add_child(plus)
+    line.add_child(_build_cargo_max_button(row, held, amount, row_max))
     return line
+
+## **THE TYPED AMOUNT - a `LineEdit`, and the control type is a correctness rule rather than a
+## preference.** `TextEntryFocus.is_text_entry` is the ONE definition of "the player is typing"
+## (`node is LineEdit or node is TextEdit`) and `KeyboardArbiter` reads it to decide whether the
+## client's POLLED keyboard reads - `MapView`'s pan/zoom and `Main`'s single-letter panel toggles -
+## may act at all. A `SpinBox` wraps its field in a `Control` the predicate does not match, and a
+## custom key-eating widget matches nothing: either one leaves WASD panning the map and the toggles
+## firing on the keystrokes meant for this number.
+##
+## **IT COMMITS ON ENTER AND ON LEAVING, AND EVERY REFUSAL PUTS THE LAST VALUE BACK** - see
+## `_commit_cargo_field` for what each malformed reading does and why. `Esc` is consumed here rather
+## than left to fall through: the client's ESC opens the pause menu, and a player abandoning a
+## half-typed number is not asking for that.
+func _build_cargo_field(row: Dictionary, held: float, amount: float, row_max: float) -> LineEdit:
+    var key := String(row.get("key", ""))
+    var is_material := bool(row.get("is_material", false))
+    var field := LineEdit.new()
+    field.text = HudCraftingVocab.BATCH_AMOUNT_FORMAT % amount
+    field.max_length = HudComposeVocab.COMPOSE_CARGO_FIELD_MAX_LENGTH
+    field.custom_minimum_size = Vector2(HudComposeVocab.COMPOSE_CARGO_FIELD_WIDTH, 0)
+    field.alignment = HORIZONTAL_ALIGNMENT_CENTER
+    field.tooltip_text = HudComposeVocab.COMPOSE_CARGO_FIELD_HINT
+    field.set_meta(HudWidgets.CARGO_CONTROL_META, HudWidgets.CARGO_CONTROL_FIELD)
+    HudStyle.apply_line_edit(field)
+    field.add_theme_color_override("font_color",
+        HudStyle.INK if amount > 0.0 else HudStyle.INK_FAINT)
+    field.text_submitted.connect(func(_text: String) -> void:
+        _commit_cargo_field(field, key, is_material, held, row_max, amount))
+    # **LEAVING THE FIELD COMMITS IT.** A player who types a number and clicks elsewhere has named an
+    # amount; making them press Enter as well would be a control that quietly discards what it shows.
+    field.focus_exited.connect(func() -> void:
+        _commit_cargo_field(field, key, is_material, held, row_max, amount)
+        # A field freed by a rebuild emits this too, and that is NOT the player leaving - the focus
+        # key is kept so the rebuilt row takes the keyboard back. Only a field still standing has
+        # genuinely been left.
+        if is_instance_valid(field) and not field.is_queued_for_deletion() \
+                and _trade_cargo_focus_key == key:
+            _forget_cargo_field_focus())
+    field.focus_entered.connect(func() -> void:
+        _trade_cargo_focus_key = key
+        _trade_cargo_focus_text = field.text
+        _trade_cargo_focus_caret = field.caret_column)
+    field.text_changed.connect(func(text: String) -> void:
+        if _trade_cargo_focus_key == key:
+            _trade_cargo_focus_text = text
+            _trade_cargo_focus_caret = field.caret_column)
+    field.gui_input.connect(func(event: InputEvent) -> void:
+        _on_cargo_field_input(event, field, amount))
+    _restore_cargo_field_focus(field, key)
+    return field
+
+## **`Esc` PUTS THE LAST COMMITTED VALUE BACK AND HANDS THE KEYBOARD OVER**, and the event is eaten so
+## it does not also reach `Main`'s pause overlay. Nothing else is intercepted: a `LineEdit` consumes
+## the keys it uses and lets every other one fall through, which is what keeps the rest of the client
+## reachable from a focused field.
+func _on_cargo_field_input(event: InputEvent, field: LineEdit, amount: float) -> void:
+    # **THROUGH THE ARBITER'S OWN MATCHER, never a raw `keycode` compare.** Escape is the one key in
+    # the registry matched loosely — a stray held modifier must not strand the player in a field —
+    # and `is_escape_key` is where that rule lives; `cargo xtask hotkey-guard` refuses a bare compare.
+    if not KeyboardArbiter.is_escape_key(event):
+        return
+    field.text = HudCraftingVocab.BATCH_AMOUNT_FORMAT % amount
+    _forget_cargo_field_focus()
+    field.release_focus()
+    field.accept_event()
+
+## Re-take the keyboard on the row that had it, restoring the half-typed text and the caret. Deferred
+## to `tree_entered` because a `Control` cannot hold focus before it is in the tree, and the row is
+## built detached and mounted afterwards (into the footer, or into the floated card).
+func _restore_cargo_field_focus(field: LineEdit, key: String) -> void:
+    if _trade_cargo_focus_key != key:
+        return
+    var text := _trade_cargo_focus_text
+    var caret := _trade_cargo_focus_caret
+    field.tree_entered.connect(func() -> void:
+        if not is_instance_valid(field) or field.is_queued_for_deletion():
+            return
+        field.text = text
+        field.grab_focus()
+        field.caret_column = clampi(caret, 0, field.text.length()), CONNECT_ONE_SHOT)
+
+## Nobody is typing into a cargo row - the state a fresh sheet, an abandoned edit and a cleared
+## manifest all leave behind.
+func _forget_cargo_field_focus() -> void:
+    _trade_cargo_focus_key = ""
+    _trade_cargo_focus_text = ""
+    _trade_cargo_focus_caret = 0
+
+## **READ THE TYPED TEXT, AND EVERY REFUSAL PUTS THE LAST COMMITTED VALUE BACK RATHER THAN ZEROING.**
+## A player who selects all, deletes and then clicks away has not asked to unload the wagon; a
+## composed manifest destroyed by a stray keystroke is a worse failure than a row that ignored one.
+## **Zeroing a row stays an explicit act** - type `0`.
+##
+## - empty or unparseable -> the last committed value;
+## - `NaN` / `inf` -> the same, since neither names a quantity of anything;
+## - negative -> `0`, which is what "take it all off" means;
+## - above `_trade_row_max` -> the row max, **and the field's text snaps to it on the spot**, so the
+##   player sees the clamp instead of wondering why the meter disagrees with what they typed.
+##
+## Everything that survives is FLOORED to `COMPOSE_CARGO_AMOUNT_DECIMALS` - never rounded, because a
+## round can carry a manifest over a cap the meter just cleared and a floor cannot.
+##
+## **IT GUARDS AGAINST RE-ENTERING ITSELF.** Committing rerenders, the rerender frees this field, and
+## a freed focused `Control` emits `focus_exited` - which is the other way in here.
+func _commit_cargo_field(field: LineEdit, key: String, is_material: bool, held: float,
+        row_max: float, committed: float) -> void:
+    if _trade_cargo_committing:
+        return
+    if not is_instance_valid(field) or field.is_queued_for_deletion():
+        return
+    _trade_cargo_committing = true
+    var typed := field.text.strip_edges()
+    # **THE FALLBACK IS WHAT THE ROW WAS SHOWING**, not the field the manifest remembers. The two
+    # differ when the band's pile has shrunk under a larger remembered choice (the row renders
+    # `min(remembered, held)`), and reverting to the remembered figure would put a number on screen
+    # that the very next clamp takes back off.
+    var settled := committed
+    if typed.is_valid_float():
+        var parsed := typed.to_float()
+        if is_finite(parsed):
+            settled = clampf(_cargo_floor(parsed), 0.0, _cargo_floor(row_max))
+    field.text = HudCraftingVocab.BATCH_AMOUNT_FORMAT % settled
+    _set_cargo_amount(key, is_material, settled, held)
+    _trade_cargo_committing = false
+
+## `Max` - the largest amount this row can still take, floored. **Disabled with its REASON when it
+## would do nothing**: the row already carries that much, or there is no pack space (or no pile) to
+## take. A disabled button that says which beats an enabled one that answers a press with nothing.
+func _build_cargo_max_button(row: Dictionary, held: float, amount: float,
+        row_max: float) -> Button:
+    var key := String(row.get("key", ""))
+    var is_material := bool(row.get("is_material", false))
+    var target := _cargo_floor(row_max)
+    var button := Button.new()
+    button.text = HudComposeVocab.COMPOSE_CARGO_MAX_FACE
+    button.custom_minimum_size = Vector2(HudComposeVocab.COMPOSE_CARGO_MAX_BUTTON_WIDTH, 0)
+    button.set_meta(HudWidgets.CARGO_CONTROL_META, HudWidgets.CARGO_CONTROL_MAX)
+    if target <= 0.0:
+        button.disabled = true
+        button.tooltip_text = HudComposeVocab.COMPOSE_CARGO_MAX_NO_ROOM_HINT
+    elif amount >= target:
+        button.disabled = true
+        button.tooltip_text = HudComposeVocab.COMPOSE_CARGO_MAX_AT_CAP_HINT
+    else:
+        button.tooltip_text = HudComposeVocab.COMPOSE_CARGO_MAX_HINT
+    HudStyle.apply_button(button, "ghost")
+    button.pressed.connect(func() -> void:
+        _set_cargo_amount(key, is_material, target, held))
+    return button
+
+## **THE MOST THIS ROW MAY TAKE - BOTH CAPS AT ONCE:**
+##
+## ```text
+## row_max = min(what the band HOLDS,
+##               (carry cap - the mass of every OTHER row) / this row's carry weight)
+## ```
+##
+## **OTHER rows, never all of them.** A row's own current amount counted against its own headroom
+## makes `Max` unable to reach the cap at all: press it and the row grows by nothing, because the
+## space it is already occupying reads as spoken for.
+##
+## The other-rows term goes through `_trade_manifest_mass`, the one expression the meter and the
+## server both price with, so the headroom this offers and the cap the send is refused at cannot come
+## from two different formulas.
+##
+## **A BAND PUBLISHING NO PACK LEVER HAS NO SECOND CAP.** `_trade_carry_cap` answers 0 there and the
+## meter renders an unknown ceiling rather than a cap of zero; the headroom term is dropped to match,
+## or `Max` would refuse every row on a band the meter is refusing nothing on. A row whose carry
+## weight is 0 has infinite headroom for the same reason - it cannot fill a pack, and
+## `expeditionTradeFodderCarryWeight` may legitimately be 0 ("hay is weightless").
+func _trade_row_max(band: Dictionary, rows: Array, row: Dictionary) -> float:
+    var held := float(row.get("held", 0.0))
+    var cap := _trade_carry_cap(band)
+    if cap <= 0.0:
+        return held
+    var weight := _trade_row_carry_weight(band, row)
+    if weight <= 0.0:
+        return held
+    var headroom := (cap - _trade_other_rows_mass(band, rows, String(row.get("key", "")))) / weight
+    return maxf(minf(held, headroom), 0.0)
+
+## What the manifest weighs WITHOUT one row - the same `_trade_manifest_mass` over the other rows, so
+## there is still exactly one mass expression in this client.
+func _trade_other_rows_mass(band: Dictionary, rows: Array, key: String) -> float:
+    var others: Array = []
+    for row_variant in rows:
+        if String((row_variant as Dictionary).get("key", "")) != key:
+            others.append(row_variant)
+    return _trade_manifest_mass(band, others)
+
+## What one unit of this row costs in pack space - the per-account term of
+## `DetailFormat.shipment_mass`, told apart BY ROW KEY for `_set_cargo_amount`'s reason: `is_material`
+## answers *batch or larder*, and there are two larders.
+func _trade_row_carry_weight(band: Dictionary, row: Dictionary) -> float:
+    if bool(row.get("is_material", false)):
+        return float(band.get("expedition_trade_material_carry_weight", 0.0))
+    if String(row.get("key", "")) == TRADE_FODDER_ROW_KEY:
+        return float(band.get("expedition_trade_fodder_carry_weight", 0.0))
+    return HudComposeVocab.COMPOSE_CARGO_FOOD_CARRY_WEIGHT
+
+## What the manifest currently carries of one row, read back out of the same three fields
+## `_set_cargo_amount` writes - the value a refused edit reverts to.
+func _cargo_amount_for_key(key: String, is_material: bool) -> float:
+    if is_material:
+        return float(_trade_materials.get(key, 0.0))
+    if key == TRADE_FODDER_ROW_KEY:
+        return _trade_fodder
+    return _trade_food
+
+## An amount as this sheet may name it: floored onto the tenth its readouts render
+## (`COMPOSE_CARGO_AMOUNT_DECIMALS`). **Floor, never round** - see the constant.
+func _cargo_floor(amount: float) -> float:
+    var scale: float = pow(10.0, HudComposeVocab.COMPOSE_CARGO_AMOUNT_DECIMALS)
+    return floorf(amount * scale) / scale
 
 ## Load `amount` of one row, clamped to what the band holds. Each COMMODITY row is one larder and so
 ## one number, remembered under its own field; every material row is remembered under its own batch
@@ -7886,6 +8135,12 @@ func _build_cargo_row(row: Dictionary) -> HBoxContainer:
 ## press into the food figure.
 func _set_cargo_amount(key: String, is_material: bool, amount: float, held: float) -> void:
     var loaded := clampf(amount, 0.0, held)
+    # **A WRITE THAT CHANGES NOTHING REBUILDS NOTHING** (issue #620). The typed field commits when it
+    # LOSES focus, and a click on this row's own `+` is a focus loss: rebuilding the sheet there frees
+    # the button between its press and its release, so the press the player made never fires at all.
+    # Re-rendering an unchanged manifest was never worth anything anyway.
+    if is_equal_approx(loaded, _cargo_amount_for_key(key, is_material)):
+        return
     if is_material:
         _trade_materials[key] = loaded
     elif key == TRADE_FODDER_ROW_KEY:
@@ -7972,6 +8227,9 @@ func _clear_trade_manifest() -> void:
     _trade_food = 0.0
     _trade_fodder = 0.0
     _trade_materials = {}
+    # The typed field's focus belongs to the composing act too: a key remembered past the manifest it
+    # named would have the NEXT composition open with a field grabbing the keyboard unasked.
+    _forget_cargo_field_focus()
 
 ## Drop the composed quarry AND the fill target it was counted in. **They are one act** — a target is
 ## a count of a SPECIFIC herd's animals, so a target outliving its quarry would be handed to the next
