@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 186
+const EXPECTED_CHECKPOINTS := 194
 
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const WorldFx := preload("res://tools/ui_preview/fixtures_world.gd")
@@ -369,6 +369,73 @@ func _event_dock_material_fixture() -> Array:
 			"label": KIT_LIFE_DANGER_LABEL, "detail": KIT_LIFE_DANGER_DETAIL, "seq": 962},
 		{"tick": 90, "kind": "material_shortfall", "faction": 0,
 			"label": MATERIAL_SHORT_LABEL, "detail": MATERIAL_SHORT_DETAIL, "seq": 963},
+	]
+
+# ---- A DEATH'S RUNG IS ITS BRACKET (issue #614) -------------------------------------------------
+#
+# `died` was Notable for every bracket, justified entirely on elders ("bands lose elders to cold as a
+# matter of course") with an escape hatch that a death which MATTERS announces itself through the
+# starvation and morale channels. Temperature mortality announces itself through neither — it is
+# food-independent and leaves morale clamped — so a band freezing its workers away filed a Notable
+# line the player had every reason to skim.
+#
+# The labels and details are the sim's own (`systems::population::push_demographic_events`), spelled
+# out here rather than composed through the code under test. The `bracket=` tokens are the sim's three
+# (`child` / `working` / `elder`) — invent a fourth and the split silently stops matching.
+const DIED_KIND := "died"
+
+## An ELDER — still Notable, deliberately, and the half of the old rule that survived. It is the
+## CONTROL as much as a case: a split asserted only on the promoted brackets passes on a client that
+## promoted the whole kind.
+const DIED_ELDER_LABEL := "An elder died of cold in Band 4"
+
+const DIED_ELDER_DETAIL := "band=4 count=1 bracket=elder cause=cold"
+
+## A WORKER — labour lost, whatever killed them. Alert.
+const DIED_WORKING_LABEL := "2 workers died of cold in Band 4"
+
+const DIED_WORKING_DETAIL := "band=4 count=2 bracket=working cause=cold"
+
+## A CHILD — the band's next worker. Alert, on the same reasoning.
+const DIED_CHILD_LABEL := "A child died of cold in Band 4"
+
+const DIED_CHILD_DETAIL := "band=4 count=1 bracket=child cause=cold"
+
+## A death on HOT ground — the temperature term's other tail, reported as `cause=heat` since the sim
+## grew `DeathCause::Heat`. Same kind, same bracket rung as the worker row above; only the cause
+## differs, which is what makes the pair a controlled test of the CAUSE vocabulary.
+##
+## ⛔ **A WORKER, NOT AN ELDER, AND THAT IS FORCED.** Elders always report `cause=age` on a lethal
+## tile: the flat old-age term (20 %/turn) outweighs even the elder-weighted temperature ceiling
+## (15 %), so `cause=heat` and `cause=cold` can only ever appear on child and worker rows. That is
+## pre-existing and correct — an elder fixture here would fail for a reason that has nothing to do
+## with this vocabulary.
+const DIED_HEAT_LABEL := "3 workers died of heat in Band 4"
+
+const DIED_HEAT_DETAIL := "band=4 count=3 bracket=working cause=heat"
+
+## The word the row's DETAIL must carry, and the spelling it must NOT. Without a `heat` entry in
+## `DETAIL_VALUE_LABELS` the generic fallback capitalises the token, so the row reads `Heat` in the
+## middle of a sentence — legible, and not English. The pair is the test: asserting only the presence
+## of "heat" would be satisfied by "Heat" on a case-insensitive engine, and asserting only the absence
+## of "Heat" would be satisfied by a row that dropped the cause entirely.
+const DIED_HEAT_CAUSE_PHRASE := "heat"
+const DIED_HEAT_CAUSE_MISCASED := "Heat"
+
+## All three brackets in ONE frame, because the whole claim is that they read APART: a split asserted
+## one row at a time passes on a client that files every `died` line at one rung. The HEAT row rides
+## along for the cause vocabulary — it is a worker like the second row, so the two differ in nothing
+## but their `cause=`.
+func _event_dock_death_fixture() -> Array:
+	return [
+		{"tick": 91, "kind": DIED_KIND, "faction": 0,
+			"label": DIED_ELDER_LABEL, "detail": DIED_ELDER_DETAIL, "seq": 971},
+		{"tick": 91, "kind": DIED_KIND, "faction": 0,
+			"label": DIED_WORKING_LABEL, "detail": DIED_WORKING_DETAIL, "seq": 972},
+		{"tick": 91, "kind": DIED_KIND, "faction": 0,
+			"label": DIED_CHILD_LABEL, "detail": DIED_CHILD_DETAIL, "seq": 973},
+		{"tick": 91, "kind": DIED_KIND, "faction": 0,
+			"label": DIED_HEAT_LABEL, "detail": DIED_HEAT_DETAIL, "seq": 974},
 	]
 
 ## Every band a drawn `Work tab` link would ask for, without pressing anything — the presence claim,
@@ -2147,6 +2214,61 @@ func run(harness) -> void:
 	# that mounted the link on every new kind would have made it mean nothing.
 	h._assert_hud("…while a worn kit offers no Work-tab jump, its remedy being the bench",
 		not _preview_dock_link_bands(event_dock).has(KIT_LIFE_BAND))
+
+	# State event_dock_death_brackets — **A DEATH'S RUNG IS ITS BRACKET** (issue #614). All three
+	# brackets in one frame, at the DEFAULT detail floor, so the promotion is visible as a difference
+	# rather than asserted one row at a time: the elder line and the two promoted ones are the same
+	# kind, the same turn and the same cause, and only `bracket=` separates them.
+	event_dock.set_dock(SIDE_BOTTOM)
+	event_dock.set_recent_count(EVENT_DOCK_MAX_ROWS)
+	event_dock.set_detail_level(HudEventVocab.DEFAULT_DETAIL_LEVEL)
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_death_fixture())
+	event_dock.set_expanded(true)
+	await h._settle()
+	await h._save("event_dock_death_brackets")
+	# **THE ELDER HALF IS THE CONTROL.** Without it a promotion of the whole kind passes every other
+	# claim here, and the reason the kind was Notable in the first place would have been thrown away
+	# silently.
+	h._assert_hud("an ELDER death stays Notable — bands lose elders as a matter of course (got %s)"
+			% _preview_event_rung(event_dock, DIED_ELDER_LABEL),
+		_preview_event_rung(event_dock, DIED_ELDER_LABEL) == HudEventVocab.RUNG_NOTABLE)
+	h._assert_hud("…a WORKER death is an Alert — labour lost, whatever killed them (got %s)"
+			% _preview_event_rung(event_dock, DIED_WORKING_LABEL),
+		_preview_event_rung(event_dock, DIED_WORKING_LABEL) == HudEventVocab.RUNG_ALERT)
+	h._assert_hud("…and a CHILD death is too, the band's next worker (got %s)"
+			% _preview_event_rung(event_dock, DIED_CHILD_LABEL),
+		_preview_event_rung(event_dock, DIED_CHILD_LABEL) == HudEventVocab.RUNG_ALERT)
+	# **AND THE PROMOTION IS DRAWN**, this table's own rule: the glyph tracks the rung, so a split that
+	# filtered correctly and drew identically would be the `trimmed`/`lapsed` defect all over again.
+	h._assert_hud("…so the promoted rows wear the hazard and the elder row does not (\"%s\" vs \"%s\")"
+			% [_preview_dock_row_glyph(event_dock, DIED_WORKING_LABEL),
+				_preview_dock_row_glyph(event_dock, DIED_ELDER_LABEL)],
+		_preview_dock_row_glyph(event_dock, DIED_WORKING_LABEL) == HudEventVocab.STATUS_SHED_GLYPH \
+			and _preview_dock_row_glyph(event_dock, DIED_ELDER_LABEL)
+				!= HudEventVocab.STATUS_SHED_GLYPH)
+	# **THE KIND'S OWN RUNG IS THE ELDER'S AND THE FALLBACK BOTH** — a `died` line carrying no
+	# `bracket=` at all still has to land somewhere, and Notable is where. PNG-less: the row would be
+	# the same row.
+	h._assert_hud("a died line with no bracket token falls back to its KIND's Notable rung",
+		String(HudEventVocab.RUNG_BY_KIND[DIED_KIND]) == HudEventVocab.RUNG_NOTABLE)
+	# **THE OTHER TAIL'S CAUSE.** The temperature term grew a second tail, so a death on hot ground
+	# reports `cause=heat` and the row has to say so in the same voice the cold one does — reporting it
+	# as `cold` would print "died of cold" over a desert, and rendering the token through the generic
+	# fallback prints `Heat` in the middle of a sentence.
+	#
+	# Asked of `detail_phrase` itself, which is the static renderer the row is built from: the vocabulary
+	# entry is the whole mechanism, and a check on the raw detail string would pass on a client that had
+	# no entry at all.
+	var died_heat_phrase := EventDockPanel.detail_phrase(DIED_HEAT_DETAIL)
+	h._assert_hud("a death on hot ground says `heat`, lower-case mid-sentence (\"%s\")" % died_heat_phrase,
+		died_heat_phrase.contains(DIED_HEAT_CAUSE_PHRASE) \
+			and not died_heat_phrase.contains(DIED_HEAT_CAUSE_MISCASED))
+	# …and it is a WORKER row, so it takes the promoted rung like its cold twin — the cause changed,
+	# the bracket rule did not.
+	h._assert_hud("…and a heat death is filed by its BRACKET, exactly as a cold one is (got %s)"
+			% _preview_event_rung(event_dock, DIED_HEAT_LABEL),
+		_preview_event_rung(event_dock, DIED_HEAT_LABEL) == HudEventVocab.RUNG_ALERT)
 
 	# ---- A LONG DETAIL IS TRIMMED, NOT ALLOWED TO WIDEN THE CARD ------------------------------
 	# The defect this closes is NOT that the strip is computed too wide: `Main._update_event_dock_insets`

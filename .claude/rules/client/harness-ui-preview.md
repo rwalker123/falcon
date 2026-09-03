@@ -69,7 +69,21 @@ must put the HUD into move-band targeting for **that** band (302), not the facti
 fail with a second one added) (`tile_panel_feed_shown` — `R` on, both growing left-dock cards
 fitting — is RETIRED with the command feed; there is one growing card in that column now, and
 `predator_feed` went with it, its alert styling having moved into `HudEventVocab` and onto the
-`event_dock_*` frames below). Part 2 (the compose sheet) adds **`tile_panel_compose_forage`** /
+`event_dock_*` frames below). **The temperature-mortality states** close the chapter (issue #614, `EXPECTED_CHECKPOINTS` 74 -> 104). **The model is seeded in the PROLOGUE**, beside `TileClimate.set_cut_points`, so it is live for every frame in the walk: a fixture sitting outside the survivable range must not be the one place the HUD still hides that, which is the whole of #614. Three existing frame families gained the warning and were judged on their merits rather than suppressed — `low_morale` (-2 °C, a band being punished BY the cold, where the ⚠ is the missing half of the drawer's `harsh climate` line), `climate_polar` (-6 °C, still lethal at 1.05 %/turn; **`climate_boreal` at 2 °C LOST its pill when the cold onset moved to 0 °C, and that is the point rather than a regression** — the survival line now lands exactly on the Polar/Boreal climate line, so do not re-cool that fixture to bring the pill back), and the no-pasture glacier (-14 °C, kept because the temperature is what MAKES it a glacier; softening it to a survivable reading would have been a worse lie than the one being fixed). The chapter renders **`tile_panel_lethal_cold`** (`Fair` beside `⚠ Polar · -10.0 °C` in DANGER — it was the defect's own 3.7 °C hex until the onset moved, and **a lethal TEMPERATE tile is no longer a state the game can reach**, so the state demonstrates lethal POLAR ground now), **`tile_panel_lethal_heat`** (the OTHER tail — at 50 °C, hotter than worldgen can produce, because the heat onset is 40 °C and calibrated to the range issue #622 opens up), **`tile_panel_lethal_near_line`**, **`tile_panel_survivable`** (the ABSENCE) and **`tile_panel_lethal_bandless`**. Twenty-four assertions, made on the chip SLOT LIST and the chips' faces, INK and hover rather than on the pixels, because no PNG can prove a missing warning is missing for the right reason (a tooltip does not render into a static capture at all); a frame-less sixth state at −80 °C proves the model's cap is what the rate comes out of (the cold cap only begins to bind at −57.14 °C and clips by hundredths of a percent there, so a fixture at the edge of the future range could not tell a capped rate from an uncapped one). **`tile_panel_lethal_near_line`'s temperature is DERIVED from the published onset** rather than typed: at a literal `5.98` it was stranded 6 ° inside the survivable band by the retune, which would have turned it silently into a second survivable-tile frame. **A seventh, frame-less block asserts the THREE-WAY BRANCH itself** — a hair either side of each onset, a reading between them, and the two tails priced at equal distances to prove their slopes differ — because a chip exercises ONE arm per frame and a single-tail bug would leave every frame above looking correct.
+
+> #### ⛔ THE ASSERTIONS THAT SURVIVED THE MERGE INTO ONE CHIP
+>
+> The warning was its own `survivability` pill for one iteration and is now a ⚠ prefix + `DANGER` on the CLIMATE chip (four pills on the strip is more than a player reads). Three claims changed shape and are the ones worth keeping:
+>
+> - **The SLOT LIST is identical on both sides of the survival line.** `["sight", "habitability", "climate", "tags"]` lethal and survivable alike — a `survivability` key reappearing here IS the fourth pill coming back, and the frames differ too little to say so.
+> - **The tint flip is asserted BOTH WAYS on the patch path.** Because the slot list no longer moves, a tile crossing the line under `reapply_selection` takes the in-place branch, so the node that was red and hoverable is the very node that must come back neutral and inert. The node identities are pinned in the same assertions, or a rebuild could hide a stale tint and still pass.
+> - **`tile_panel_lethal_bandless`** — the one path the merge could have re-introduced the original defect down. With the mortality model published and the band cut points absent the chip must still render, `⚠ 3.7 °C`, degrees alone; hiding it (the old `has_bands()`-only gate) was cosmetic when the warning lived elsewhere and takes the ONLY warning off the card now. Its companion holds the other half: survivable ground with no cut points still renders NO chip, so the fallback cannot degenerate into "always show something". The state restores the prologue's cut points afterwards — they are a per-run constant every later frame's climate chip is drawn from.
+>
+> `tile_panel_lethal_near_line` keeps its own claim through the move: the `<0.1%` bound and the absence of a `0.0%` or a minus sign are now asserted on the CLIMATE chip's hover.
+
+All twenty-four sabotage-verified, each restored. The original ten, in three runs: deleting the pill's descriptor (6 fail), reverting the Climate chip to the band alone plus dropping the lethality gate (3 fail), and breaking the mirror itself — the `abs()` and the `min` cap out of `death_rate` (3 fail, the heat tail and the cap). The four copy assertions, in three more: removing the below-floor branch so a tiny rate rounds to `0.0%` (2 fail); putting the cut clauses back into the cold template (4 fail, the exact-wording and the absence claims together); and coarsening `CHIP_CLIMATE_FORMAT` to whole degrees (3 fail, every climate-chip claim). The merge's own, in four: restoring the `has_bands()`-only gate (3 fail, the bandless state); treating every tile as lethal (5 fail, every survivable-side claim); dropping the ⚠ prefix and the `DANGER` tint (7 fail); and re-adding a separate `survivability` descriptor (5 fail — the slot-list claims AND both patch-in-place claims, which is what says the flip assertions really are watching the rebuild boundary).
+
+Part 2 (the compose sheet) adds **`tile_panel_compose_forage`** /
 **`tile_panel_compose_herd`** (the expedition branch + raid forecast) /
 **`tile_panel_compose_gated`** (a locked rung greyed AND its gate reasons rendered beside it, inside
 the sheet) — all three must show the map UNDIMMED behind the sheet — and **`tile_panel_standing`**
@@ -2260,6 +2274,43 @@ good in DANGER ink. Those renderers were correct all along — only the cross-re
 missing, which is why the fix moved no frame: a clean run is **1614 `PASS`, exit 0**, five more than
 before with the same frame set.
 
+## The DECLINE REASON and the DEATH RUNG (issue #614)
+
+Two states close the client half of the cold-lethality arc, in the chapters that own their arcs.
+
+**`turn_orb_decline_lethal_cold`** reproduces the reported playtest screen: five bands that all shrink
+between the baseline and live snapshot, differing only in WHY. Band 1 is the case itself — freezing,
+with a full larder, no emigrants and morale 1.0, so it satisfies none of `_decline_reason`'s original
+four tests and the row shipped with an **empty detail line**. The frame carries the contrast in one
+popover: `lethal cold` / `lethal heat` / *(blank, on survivable ground)* / `lethal cold` (outranking
+emigration) / `starving` (outranking lethal).
+
+**Three of the six assertions exist to stop the claim passing for the wrong reason.** A precondition
+asserts the freezing band really is benign on every other axis — otherwise the row could be reading
+`starving` and satisfying the test. The survivable band asserts the branch is not simply firing on
+every shrinking band. And the two priority claims (freezing AND emigrating; freezing AND starving)
+catch a branch inserted at the wrong height, which still answers a non-empty string and would look
+fixed.
+
+> ⛔ **THE ROWS ARE READ OFF `TurnOrb._entries`, NOT BY RE-RUNNING THE PRODUCER.** Producer 2 compares
+> the live size against `_band_labor.prev_band_sizes()`, which `update_band_alerts` OVERWRITES with
+> the live sizes immediately after building the attention array. A second `build_band_attention` call
+> therefore sees every band at its own current size, finds no decline anywhere, and hands back an
+> empty list that reads exactly like "no such row" — the first cut of this state failed all five
+> assertions for that reason and none of them were about the feature.
+
+**`event_dock_death_brackets`** puts all three brackets in one frame at the default detail floor: same
+kind, same turn, same cause, only `bracket=` differing. Five assertions — the two promoted rungs, the
+ELDER CONTROL (without which promoting the whole kind passes everything else), the drawn glyph split
+(a promotion that filtered correctly and drew identically is the `trimmed`/`lapsed` defect again), and
+the no-token fallback.
+
+Sabotage-verified in two runs: removing the lethal branch from `_decline_reason` and the two
+`bracket=` rows together (6 fail — including the empty-detail case, which is the whole bug); then
+hoisting the lethal branch above starving with its `is_lethal` gate dropped, plus promoting `died`
+outright (6 fail, two of them the control assertions — **and one PRE-EXISTING pinned-alert assertion
+elsewhere in the suite**, which is the rung table's own guards catching a kind promoted wholesale).
+
 ## `chapters/supply_network.gd` — which link the goods crossed (issue #548)
 
 **Appended LAST in `CHAPTERS`**, after `knowledge_panel`, so no existing frame moves. Four frames and
@@ -2311,6 +2362,12 @@ longer exist — the fixture now stages the link-kind keys and the frame reads `
 trap: **a frame whose fixture is the last producer of a state can go on passing after the state
 becomes unreachable**, and it then guards nothing while looking like coverage.
 
-**A clean run is 396 frames / 1761 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+**A clean run is 403 frames / 1803 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
 last figure recorded above was `370 / 1594`; the gap is drift accumulated un-recorded, exactly as it
 has been every previous time. Measure; do not sum.
+
+> **AND A MERGE IS ONE OF THE WAYS IT DRIFTS.** This section landed on `main` reading `396 / 1761`
+> and the cold-lethality arc above landed reading `1787`; neither was wrong when written, and both
+> were stale the moment the two branches met, because each figure counts the OTHER branch's frames
+> as absent. The merged figure was re-measured, not added — `396 + 7` and `1761 + 42` happen to land
+> near it, and that arithmetic is exactly the habit this paragraph exists to break.

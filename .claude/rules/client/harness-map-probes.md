@@ -101,7 +101,48 @@ see), and **saves the legend as its own frame** (`map_pasture_legend`, the picke
 painted from the human-food table under the `forage` channel, so it compares tile-for-tile with
 `map_pasture` and the two food webs' divergence reads directly (forest/river rich on forage / poor
 on pasture; the shelf column glows on forage where it is barren on pasture) without a server:
-`scripts/preview.sh res://tools/map_preview.tscn`. Also the four **ANNOTATION states**, added by the
+`scripts/preview.sh res://tools/map_preview.tscn`.
+
+Also the four **TEMPERATURE states** (issue #614), which are where the two-reading treatment is
+judged. The fixture is a latitude gradient with a **cold pocket** dropped into the survivable middle,
+so one frame carries a lethal cold tail, a lethal heat tail, and a closed lethal RING — a contour
+that is a boundary rather than a stripe. It publishes per-tile °C on the tiles and NOTHING else: no
+`channels` entry, so what is painted has to be the channel `MapView` synthesized, and the mortality
+model rides in the snapshot's `overlays` as the four `survivability_*` scalars, driving the real
+`_ingest_overlay_channels` adoption rather than seeding `TileSurvivability` behind the renderer.
+`map_temperature` is the whole field; `map_temperature_pocket` crops to the ring; `map_temperature_legend`
+opens the picker's popover on it; `map_temperature_farzoom` is the LOD half, on a grid large enough
+that the COVER fit lands under the hatch's detail gate — the hatch is gone and the contour alone is
+still drawing the survival lines.
+
+**Sixteen assertions ride them, because the frames cannot carry any of it.** Two on the roster (the
+channel is offered on a world with tile temperatures and NOT on one without — the negative asked
+first, since a positive alone passes against a row that is simply always present); three that the
+legend's swatches are what `_tile_color` paints the map's own coldest and warmest tiles and that its
+rows state real degrees (the map-and-legend-share-one-ramp rule); two that its Lethal row follows the
+sim's model, asked by RETUNING `TileSurvivability` and re-reading the row, which a transcribed range
+cannot answer; and three PIXEL probes in a box around the pocket — hatch and contour present close
+in, hatch gone and contour still present far out, with the fit radius asserted against the gate as an
+explicit premise first. The pixel probes are boxed rather than whole-frame because a targeted box
+makes the ABSENCE claim sharper (the hatch is asked for exactly where a lethal hex is being drawn) as
+well as thousands of times cheaper in GDScript. The last six are the LETHAL SWATCH's: that the row
+asks for a hatched swatch rather than a solid block, that its colour, angle and edge are the very
+`MapView` constants the map's own passes draw with (a PNG shows the swatch but cannot say the lines
+were struck from the same constants — a transcribed copy renders identically and drifts later), and
+that the opt-in did not leak, every other row here and on a channel that predates the kind keeping
+the default solid.
+
+Sabotage-verified in four runs, each restored: removing the two draw calls fails the three pixel
+claims; forcing the hatch past its gate, hardcoding the legend's degrees and making
+`has_temperature_data` answer true fails the LOD, retune and negative-roster claims (and three
+PRE-EXISTING roster assertions besides, which is the registry's own guards policing the new row);
+painting the swatches from the forage ramp and formatting the rows as fractions fails the three
+legend-parity claims; and making `has_temperature_data` answer false fails the positive-roster claim
+and cascades through the rest, the channel then being unpaintable. The swatch's six took two more:
+reverting the row to a solid kind with hand-written colour, angle and edge (4 fail), and leaking the
+hatched kind onto a temperature ramp row AND a forage row (2 fail, one per leak guard).
+
+Also the four **ANNOTATION states**, added by the
 `AnnotationRenderer` extraction because that family had **no fixture at all** and so no refactor of
 it could be pixel-checked. **Three remain; there were four.**
 
@@ -396,8 +437,8 @@ RUNG is DERIVED, never typed").
 
 **THE LEGEND IS ITS OWN FRAME NOW, AND `ui_preview` LOST THREE STATES TO THIS ONE.**
 `map_overlay_legend` is the legend popover open on the channel menu's own selection, and
-`map_pasture_legend` / `map_forage_legend` ride the `pasture` / `forage` states as
-`_save_overlay_legend`. Those last two were a `print` of the legend dict here and a hand-TRANSCRIBED
+`map_pasture_legend` / `map_forage_legend` / `map_temperature_legend` ride the `pasture` / `forage` /
+`temperature` states as `_save_overlay_legend`. Those last two were a `print` of the legend dict here and a hand-TRANSCRIBED
 fixture in `ui_preview`'s `pasture_legend` / `forage_legend`, kept in step by hope; this harness owns
 a real MapView, so it can open the picker on the real builder's rows. `_save_overlay_legend` CLOSES
 the popover again — the picker rides a long-lived MapView, so one left open renders in every later
@@ -781,3 +822,38 @@ timing ASSERTION on a shared machine fails for reasons that have nothing to do w
 test, and a harness that cries wolf stops being read; what is asserted instead is the thing a number
 cannot drift on, that the probe really walked a full-size world. It is the last thing the state does,
 because it leaves `_map` on that world.
+
+### `map_band_lethal_mark*` — the ⚠ a band wears on killing ground (issue #614)
+
+Three frames on the temperature field with **two bands on it**, one in the cold pocket and one on the
+temperate middle. The pair is the test: a mark asserted on the lethal band alone passes on a renderer
+that draws it for every band, which is the one way this could be wrong and still look right.
+`map_band_lethal_mark` is the close read (⚠ up-left, food dot up-right, banner below, no collision);
+`map_band_lethal_mark_gate` is the mark at the SMALLEST size it is ever drawn at; and
+`map_band_lethal_mark_farzoom` is one notch below the gate, where it is gone.
+
+> #### ⛔ TWO PROBES THAT PASSED WITH THE FEATURE DELETED, AND WHAT REPLACED THEM
+>
+> **The absence was asserted where nothing was visible either way.** The far-zoom state first sat at
+> radius 12.7, well past `BAND_LETHAL_MARK_MIN_RADIUS`, and the "the mark is gone" claim **passed with
+> the LOD gate deleted** — the glyph is drawn there and blends into the terrain completely. An absence
+> is only worth asserting where a PRESENCE would have shown, so the two LOD grids now fit just either
+> side of the gate (measured ~29.0 and ~26.7) and each states its measured radius in a premise
+> assertion. They had to be re-measured rather than computed: the harness canvas carries a ~1.9×
+> content scale the arithmetic missed, and they moved AGAIN when the mark took a gate of its own.
+>
+> **A colour-distance probe cannot see an antialiased glyph.** `draw_string` blends, so a small ⚠
+> never reaches its own ink — measured, the closest pixel to `HudStyle.DANGER` inside the marked
+> token's box was 0.192 away and bare khaki terrain was 0.235, i.e. no threshold separates them and
+> the loose tolerance that finally "passed" was matching terrain. `_frame_marks_warning_near_hex` asks
+> for REDNESS instead (`r − max(g, b)`, ~100/255 on the glyph against ~18/255 on the terrain), and
+> `_frame_paints_near_hex` went back to the EXACT match that is right for the flat-filled hatch and
+> contour lines it was written for.
+>
+> The "legible at the smallest zoom it is drawn at" assertion is what then caught the real defect: at
+> the banner's gate with a 9 px floor the mark was unreadable, which is why the mark now has its own
+> higher gate and no size floor at all (`map-markers.md`).
+
+Sabotage-verified in two runs: dropping the LOD gate and the `is_lethal` test together (2 fail — the
+survivable band's absence and the far-zoom absence, the latter only biting once the grid moved beside
+the gate); and skipping the draw entirely (2 fail — the close mark and the smallest-size mark).

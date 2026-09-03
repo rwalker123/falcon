@@ -221,6 +221,35 @@ table ClimateBands {
   temperateMaxTemp:float;
 }
 
+// The temperature-mortality model's own constants (issue #614). Published for the same
+// reason ClimateBands is: the client must state the survivable range the SIM enforces
+// rather than deciding one, and the climate BAND cut points are a different, unrelated
+// set of thresholds that must not be mistaken for these. The per-turn death fraction,
+// independent of food, is
+//   min(excess * <tail>MortalityScale, <tail>MaxMortality)
+// where `excess` is how far the tile sits BELOW coldOnsetTemp or ABOVE heatOnsetTemp,
+// mirroring systems::population (see the cold/heat blocks).
+//
+// The two tails are INDEPENDENT — not an ambient plus a symmetric tolerance, which
+// mirrored the onsets and so put heat death at 30 C, a warm summer day — and each
+// carries its own rate parameters, because past its onset each has a different runway
+// before the ground runs out. The heat tail is deliberately ahead of the map (worldgen
+// tops out near 31 C) and is dormant until the temperature range widens.
+//
+// This is the BASE rate. systems::population weights it per age bracket
+// ({cold,heat}.{child,working,elder}_vulnerability) and those weights are deliberately
+// NOT on the wire: what a client can honestly state is what the TILE imposes, since a
+// band's actual losses depend on its age mix, which is a property of the band, not the
+// ground.
+table TemperatureSurvivability {
+  coldOnsetTemp:float;
+  coldMortalityScale:float;
+  coldMaxMortality:float;
+  heatOnsetTemp:float;
+  heatMortalityScale:float;
+  heatMaxMortality:float;
+}
+
 table InfluentialIndividualState {
   id:uint;
   name:string;
@@ -4715,6 +4744,10 @@ table MapSection {
   // Per-map climate-band cut points (docs/plan_climate_authority.md §8.3). A single
   // per-map constant, published once beside the other worldgen overlays. Appended field.
   climateBands:ClimateBands;
+  // The cold/heat mortality model's constants (issue #614) — a per-run constant published
+  // beside `climateBands` and on the same cadence, but a DIFFERENT set of thresholds: these
+  // are the ones population deaths are actually struck from. Appended field.
+  temperatureSurvivability:TemperatureSurvivability;
 }
 
 table EconomySection {

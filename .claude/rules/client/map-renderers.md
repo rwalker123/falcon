@@ -266,6 +266,47 @@ omission fails at the wiring rather than in a panel. **Why the copy exists at al
 frame can see it break, are one home over in `.claude/rules/client/labor-ui.md`** → "THE PATCH'S
 FORECAST FIELDS REACH THE SHEET THROUGH `tile_info`"; do not restate them here.
 
+## THE TEMPERATURE CHANNEL'S LETHAL PASS IS A DRAW PASS, NOT A `_tile_color` BRANCH (issue #614)
+
+`_tile_color` hands back **one `Color` per hex**. Neither of the marks that say *this ground kills* is
+expressible as a hex tint — a hatch is a set of lines inside the hex, a contour is one of its EDGES —
+so `_draw_temperature_lethality` is a draw pass. Folding either into the fill would also put
+lethality back into the COLOUR, which is the reading the channel's whole treatment exists to keep
+apart from temperature (`overlay-channels.md` has the why).
+
+**It lives in the live `_draw`, above the terrain block and ahead of every annotation.** That is
+load-bearing: the base terrain reaches the screen by THREE paths — the blend shader's quad, the
+cached `SubViewport`, and `_draw_terrain_direct` — so a pass written inside the direct path would
+simply be absent on the other two. Drawn where it is, it sits over the fill and under the markers
+whichever path painted the ground.
+
+Both marks are geometry rules worth keeping:
+
+- **The hatch is clipped to the hex's INSCRIBED CIRCLE, not to the hexagon.** Three parallel 45°
+  chords, each a single square root; the incircle is contained in the hex so a chord can never spill
+  into a neighbour, and at hex scale the two clips are indistinguishable. A polygon intersection here
+  would buy nothing and cost per-hex work inside `_draw`.
+- **The contour is drawn PER HEX, not traced as a path.** Each lethal hex draws its own edge `i`
+  wherever the neighbour across it is not lethal, so interior edges are simply skipped and what
+  remains is the boundary of the lethal region — no ordering, no joins, no path assembly. Edge `i`
+  runs from corner `i` to corner `i+1` (`_hex_points`, corners at 30° + 60°·i), so its outward normal
+  is at 60° + 60°·i; `TEMPERATURE_EDGE_NEIGHBORS` is the AXIAL step across each edge in that same
+  order, and getting that table out of step is the one way this pass draws a plausible-looking wrong
+  answer. An edge at the top or bottom of the world has no neighbour and IS drawn — the region ends
+  there.
+
+**The zoom gate is the hatch's alone.** Below `TEMPERATURE_HATCH_MIN_RADIUS` three chords inside a
+hex collapse into a smear that reads as a solid tint — colour carrying lethality again — so the hatch
+drops out and the CONTOUR carries the reading at map scale. Sibling of `ICON_MIN_DETAIL_RADIUS` and
+set a little lower, a chord being cheaper to read than a glyph. `map_preview`'s far-zoom state asserts
+its own premise (that the grid really does fit below the gate) before asserting the suppression, so a
+fixture that stopped being big enough fails loudly instead of quietly proving nothing.
+
+The pass walks the caller's visible col/row span — the one `_draw` already computed for the terrain —
+so it costs the hexes on screen and not the grid, and wrapped columns arrive as logical columns
+outside `[0, grid_width)` and are resolved to their data column exactly as `_draw_terrain_direct`
+resolves them.
+
 ## `set_overlay_channel`'s FIRST line builds a DEFERRED channel — it is not a channel branch
 
 `DEFERRED_OVERLAY_BUILDERS` is a `{key: builder method}` table and `_realize_deferred_overlay` is the

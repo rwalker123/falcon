@@ -767,6 +767,14 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         # (riverine_delta splits fish↔reeds by terrain — see FoodIcons). display_snapshot ran above.
         var food_sites: Variant = map_view.food_sites if map_view != null else snapshot["food_modules"]
         _hud_invoke("update_food_modules", [food_sites])
+    # The per-tile TEMPERATURES the map just ingested (issue #614). Forwarded from `MapView` rather
+    # than re-read off `snapshot["tiles"]`, the `food_sites` precedent one line above: the map already
+    # holds them keyed by `Vector2i`, and a second decode is a second thing that could disagree with
+    # the hex the player is looking at. **No new wire field** — this is the `tiles` section the map
+    # has always decoded. The orb needs it to say why a band on freezing ground is shrinking, which
+    # reaches none of the food or morale decline reasons.
+    if map_view != null and snapshot.has("tiles") and SnapshotSections.changed(snapshot, "tiles"):
+        _hud_invoke("update_tile_temperatures", [map_view.tile_temperature])
     if snapshot.has("herds") and SnapshotSections.changed(snapshot, "herds"):
         # The HUD needs the live herd positions (herds migrate) to jump the map to a hunted herd
         # from the band panel's Current-actions rows, and to name it. Same array MapView renders.

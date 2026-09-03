@@ -107,6 +107,7 @@ const SECTION_OVERLAY_CORRUPTION: &str = "overlays.corruption";
 const SECTION_OVERLAY_MILITARY: &str = "overlays.military";
 const SECTION_OVERLAY_CRISIS: &str = "overlays.crisis";
 const SECTION_CLIMATE_BANDS: &str = "climate_bands";
+const SECTION_TEMPERATURE_SURVIVABILITY: &str = "temperature_survivability";
 
 #[derive(Default, GodotClass)]
 #[class(init, base=RefCounted)]
@@ -488,6 +489,10 @@ fn decode_delta_against(
     if let Some(bands) = delta.map().and_then(|s| s.climateBands()) {
         agg.apply_climate_bands(bands);
         changed_channels.push(SECTION_CLIMATE_BANDS);
+    }
+    if let Some(model) = delta.map().and_then(|s| s.temperatureSurvivability()) {
+        agg.apply_temperature_survivability(model);
+        changed_channels.push(SECTION_TEMPERATURE_SURVIVABILITY);
     }
     if let Some(raster) = delta.map().and_then(|s| s.moistureRaster()) {
         agg.apply_moisture_raster(raster);

@@ -99,3 +99,50 @@ One mission, one glyph, on all three surfaces it appears on — the map marker, 
 that.** The green pip means *"carrying a haul HOME"*; a denial party's haul is a rounding error it
 should not advertise, and a trade party's goods are going the OTHER way. Both therefore take the
 glyph and none of the decorations.
+
+## The LETHAL-GROUND mark — a ⚠ on a band standing where the sim is killing people (issue #614)
+
+**It is a STATE, not an event**, and that is what makes it cheap to get right: true while the band is
+on that hex, gone the turn it moves off. No edge to gate, and none of the *"has it camped or is it
+passing through?"* judgement an event would have needed — the question that killed an earlier
+event-shaped proposal for the same problem.
+
+`TileSurvivability.is_lethal` is the test, off the temperature `MapView` already decoded — one
+authority behind the tile chip's ⚠, the temperature overlay's hatch and this mark. A hex with no
+reading draws nothing: unknown is not deadly.
+
+**UP-LEFT, AND THE QUADRANT IS THE WHOLE PLACEMENT DECISION.** Three marks already hang off a band
+token and each owns a direction — the food-runway dot up-RIGHT (`BAND_FOOD_DOT_OFFSET_FACTOR`), the
+faction nameplate banner BELOW (`_draw_band_banner`), the over-cap count pill on the banner's right
+end or bottom-right (`BAND_COUNT_BADGE_OFFSET`). Up-left is the one free corner. (The travel arrow
+points wherever the destination is and can reserve nothing; it is a thin line and reads through a
+glyph.)
+
+### Two things the FIRST cut got wrong, and both needed a render to find
+
+- **The offset must know the GLYPH's size, not just the token's.** It started as a fixed multiple of
+  the token radius, which is fine at a huge zoom and puts the ⚠ straight on top of the tent the
+  moment the glyph is drawn at a legible size. It is now pushed out along the diagonal by
+  `token_radius + size × BAND_LETHAL_MARK_CLEARANCE_FACTOR`, so the glyph's BOX clears the token at
+  every zoom.
+- **The mark has its OWN detail gate, above `ICON_MIN_DETAIL_RADIUS`.** It first shared the banner's
+  gate (16.0) with a 9 px floor under the glyph — and at that radius the ⚠ is not a warning triangle,
+  it is a smudge indistinguishable from terrain. A dot or a nameplate survives being tiny; a
+  pictogram does not. `BAND_LETHAL_MARK_MIN_RADIUS` (28.0) is where the glyph, which scales to
+  `radius × 0.51`, reaches the ~14 px at which the triangle and its bar resolve. **There is no size
+  FLOOR any more:** a floor draws an illegible mark rather than none, and has to fight the offset to
+  stay off the token. Below the gate the TEMPERATURE OVERLAY's hatch is the map-scale answer to the
+  same question.
+
+> #### ⛔ THE HARNESS PROBE THAT PASSED WITH THE FEATURE DELETED
+>
+> The first `map_preview` assertion for this asserted the mark's ABSENCE at a far zoom **and passed
+> with the LOD gate removed** — at that size the glyph is drawn and invisible either way. An absence
+> is only worth asserting where a PRESENCE would have been visible, so the two LOD states now fit
+> just either side of the gate (~29 and ~26.7) and the premise assertions state the measured radius.
+>
+> The colour probe was wrong too. `draw_string` antialiases, so a small ⚠ never reaches its own ink:
+> measured, the closest pixel to `HudStyle.DANGER` inside the marked token's box was **0.192** away
+> while bare khaki terrain was **0.235** — no threshold separates those. The discriminating property
+> is REDNESS (`r − max(g, b)`), which measures ~100/255 on the glyph and ~18/255 on the terrain, so
+> `_frame_marks_warning_near_hex` asks that instead and its margin sits clear of both.

@@ -26,8 +26,17 @@ paths:
   now **one left-dock `PanelCard`** (`TilePanel`, priority 10, title = the coordinates):
   - **`%TileChips`** — a pinned `HFlowContainer` of the tile's STANDING CONDITION, so the facts
     you reason with while composing never scroll away: Sight (`_sight_value_color`, SIGNAL when
-    live) · Habitability (`TileHabitability.rating_for`/`color_for`) · Climate (neutral INK_DIM —
-    informational, never the warning palette) · Tags (skipped when empty/`none`) · Site. **Each
+    live) · Habitability (`TileHabitability.rating_for`/`color_for`) · **Climate, which is also the
+    LETHAL-TEMPERATURE WARNING** (issue #614): it carries the BAND AND THE TEMPERATURE and reads
+    `Boreal · 2.0 °C` in neutral INK_DIM on survivable ground, `⚠ Polar · -10.0 °C` in
+    `HudStyle.DANGER` when `TileSurvivability` says the sim is killing there, with
+    `1.8% increased mortality per turn due to severe cold` on its hover — one clause, naming what
+    happens to the people. **It was two chips for one iteration and four pills is too many**; the band
+    name and the death rate are two readings of the SAME number and that number was already on this
+    face, so the ⚠ and the tint moved onto it and the `survivability` slot is gone (`band-readouts.md`
+    has why it merged with climate and NOT with habitability, and why the missing-cut-points fallback
+    became a safety case). The SLOT is `climate` in both states, so a tile crossing the survival line
+    takes the in-place patch path rather than a rebuild · Tags (skipped when empty/`none`) · Site. **Each
     chip is skipped when its field is absent**, exactly as the equivalent row is, so a rehydrated
     tile never shows an invented rating; on an Unexplored hex ONLY the Sight chip renders. Chrome
     comes from `HudStyle.chip_stylebox(border)` — the palette owns it, never an open-coded box.

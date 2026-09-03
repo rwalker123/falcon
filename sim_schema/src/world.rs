@@ -25,7 +25,7 @@ use crate::state::knowledge::{
 };
 use crate::state::map::{
     ClimateBandsState, ElevationOverlayState, FloatRasterState, ScalarRasterState,
-    StartMarkerState, TerrainOverlayState, TerrainSample, TileState,
+    StartMarkerState, TemperatureSurvivabilityState, TerrainOverlayState, TerrainSample, TileState,
 };
 use crate::state::population::{
     GenerationState, PopulationCohortState, PopulationDemographicsState,
@@ -242,6 +242,10 @@ pub struct WorldSnapshot {
     /// Climate-band cut points (`docs/plan_climate_authority.md` §8.3), a per-map constant.
     #[serde(default)]
     pub climate_bands: ClimateBandsState,
+    /// The cold/heat mortality model's constants (issue #614), a per-run constant published on the
+    /// same cadence as [`Self::climate_bands`] — and a *different* set of thresholds from it.
+    #[serde(default)]
+    pub temperature_survivability: TemperatureSurvivabilityState,
     pub start_marker: Option<StartMarkerState>,
     pub terrain: TerrainOverlayState,
     pub sentiment_raster: ScalarRasterState,
@@ -371,6 +375,10 @@ pub struct WorldDelta {
     /// (re)generated. `None` means unchanged.
     #[serde(default)]
     pub climate_bands: Option<ClimateBandsState>,
+    /// The cold/heat mortality model's constants; a per-run constant, so a delta re-sends it only
+    /// when the tuning changes. `None` means unchanged.
+    #[serde(default)]
+    pub temperature_survivability: Option<TemperatureSurvivabilityState>,
     pub start_marker: Option<StartMarkerState>,
     pub axis_bias: Option<AxisBiasState>,
     pub sentiment: Option<SentimentTelemetryState>,

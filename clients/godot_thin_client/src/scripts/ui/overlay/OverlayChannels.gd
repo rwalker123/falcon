@@ -48,6 +48,16 @@ const NO_OVERLAY_KEY := ""
 
 const TERRAIN_TAGS_KEY := "terrain_tags"
 
+## The TEMPERATURE channel's player-facing surface, in ONE place. `MapView` reads all three back
+## (`TEMPERATURE_OVERLAY_KEY` and friends) rather than restating them, so the picker's list and the
+## channel the renderer stamps onto its own table cannot drift into two names for one thing — the
+## `ReadyForImprovement.CHANNEL_*` arrangement, with the constants living in the registry because this
+## channel needs no class of its own. The dependency runs `MapView` -> here and never back.
+const TEMPERATURE_KEY := "temperature"
+const TEMPERATURE_LABEL := "Temperature"
+const TEMPERATURE_DESCRIPTION := \
+	"Colors tiles by temperature. Hatched ground kills — the contour is the survival line."
+
 const CHANNELS: Array[Dictionary] = [
 	{
 		"key": NO_OVERLAY_KEY,
@@ -99,6 +109,26 @@ const CHANNELS: Array[Dictionary] = [
 		# source is not turn-boundary work for a channel nobody has picked), so for most of a frame's
 		# life the key is absent from `overlay_channel_order` and the wire pass cannot place it. This
 		# row is what puts it in the list at all, and last is where a client-side channel belongs.
+		"placement": PLACEMENT_LAST,
+	},
+	{
+		# **TEMPERATURE** (issue #614) — the one tile property that decides whether a camp site is
+		# survivable and the last with no map view. Client-derived like `terrain_tags`: `MapView`
+		# already holds per-tile °C, so there is no wire raster and no schema change behind this row.
+		#
+		# It declares a RAMP because temperature genuinely is a continuous field — but the map's
+		# LETHAL reading is deliberately not on that ramp. Colour carries degrees; whether the ground
+		# kills is a separate draw pass (hatch + contour) and a legend row of its own, because a
+		# player asked to locate a deadly threshold inside a smooth gradient will locate it wrongly.
+		"key": TEMPERATURE_KEY,
+		"label": TEMPERATURE_LABEL,
+		"description": TEMPERATURE_DESCRIPTION,
+		"legend_kind": KIND_RAMP,
+		# Gated on the TILES carrying readings, never on the raster: the channel is built lazily
+		# (`MapView.DEFERRED_OVERLAY_BUILDERS`), so a predicate asking for a raster could only offer
+		# the row after something had already built the thing the row exists to ask for — the same
+		# trap `ready_for_improvement` records above.
+		"available": &"has_temperature_data",
 		"placement": PLACEMENT_LAST,
 	},
 ]

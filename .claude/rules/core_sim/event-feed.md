@@ -126,8 +126,11 @@ pinned directly (`components::tests::the_remainder_survives_the_crossing`).
 - **One event names a COUNT**, never one event per person: three elders lost to one cold snap is one
   line.
 - **The death cause is recorded on the turn it happens** (`DeathCause`, the dominant per-capita
-  fraction among starvation, cold and old age, ties to `Hunger`), and read at the crossing. Nothing
-  afterwards can answer it — post-turn brackets carry no record of which term emptied them.
+  fraction among starvation, temperature and old age, ties to `Hunger`), and read at the crossing.
+  Nothing afterwards can answer it — post-turn brackets carry no record of which term emptied them.
+  The temperature term has **two** causes — `cold` below `cold.onset_temp`, `heat` above
+  `heat.onset_temp` — carried out of `active_temperature_tail` with the tail rather than re-derived,
+  so the same fraction is never printed as the wrong death.
 - **Migration needs no accumulator.** `last_emigrated` / `last_immigrated` are whole people already,
   so `push_migration_events` fires from `advance_population_migration` — where those counts are
   resolved — rather than from `simulate_population`, which would report the *previous* turn's moves

@@ -340,7 +340,12 @@ func _low_morale_band_fixture() -> Dictionary:
 		"visibility_state": "active",
 		# Cavern habitability (~0.0825) lands in the Harsh band → amber Tile-card row.
 		"habitability": 0.0825,
-		# High-latitude cold ~-2° → "Polar" climate band (neutral Tile-card row).
+		# High-latitude cold ~-2° → "Polar" climate band (neutral Tile-card chip) — and, since #614,
+		# the ⚠ and the DANGER tint ON that same chip: -2 °C is 2 ° past the 0 °C cold onset, 0.35 %/turn. That is NOT
+		# incidental to this frame. The band is here BECAUSE the ground is punishing it (morale 22%,
+		# `morale_climate` -0.8% "harsh climate"), so the temperature is load-bearing and the pill is
+		# the missing half of the same story — the drawer says climate is dragging morale down, and
+		# the chip strip now says the same climate is also killing people outright.
 		"temperature": -2.0,
 		"food_module": "",
 		"food_module_label": "None",
