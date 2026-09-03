@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 80
+const EXPECTED_CHECKPOINTS := 99
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -154,6 +154,16 @@ const TYPED_OVER_HELD := 9.0
 ## plenty in it, so only the pack can be what clamps that one. **The two cases are deliberately
 ## opposite** — a single wrong clamp cannot satisfy both.
 const TYPED_OVER_CAP := 100.0
+
+## What is typed into a row and then STEPPED from without an Enter in between — the reported defect
+## (issue #620 follow-up). Deliberately far from every amount the row has held, so `typed + step`,
+## `drawn + step` and `typed` are three different readings.
+const TYPED_THEN_STEPPED := 20.0
+
+## How far below a row's ceiling the clamp state starts, as a fraction of one step: **less than a
+## whole one**, so the press that follows OVERSHOOTS and the clamp is what decides where it lands. At
+## a whole step the press would land exactly on the ceiling and the state would assert nothing.
+const STEP_PARTIAL_FRACTION := 0.5
 
 ## Zero, typed. The ONE way a row is emptied, since every malformed reading reverts instead.
 const TYPED_ZERO := 0.0
@@ -556,10 +566,10 @@ func _run_typed_cargo_states() -> void:
 		_cargo_field_text(BONE_ROW) == _typed(SHIPPER_BONE_HELD))
 	h._assert_hud("…and not to the pack headroom, which is the larger of the two caps here",
 		_cargo_field_text(BONE_ROW) != _typed(_floor_tenth(bone_headroom)))
-	# **AND THE ROW'S `Max` GOES DEAD ON THE PILE, not merely on the pack.** This is the reading that
-	# fails on a client whose `row_max` is the headroom alone: the write path clamps to the pile
-	# anyway, so the ROW still lands on 3.1 and every assertion above passes — while `Max` stays
-	# enabled forever, offering an amount the band does not have and answering the press with nothing.
+	# **AND THE ROW'S `Max` GOES DEAD ON THE PILE, not merely on the pack.** The typed clamp above
+	# floors its ceiling, and 9 is over the pile either way, so a client whose `row_max` is the
+	# headroom alone still lands this row on something plausible — while `Max` stays enabled forever,
+	# offering an amount the band does not have and answering the press with nothing.
 	h._assert_hud("…and Max on a row holding all the band has is disabled, saying that is why",
 		_cargo_max_is_disabled_with(BONE_ROW, HudComposeVocab.COMPOSE_CARGO_MAX_AT_CAP_HINT))
 	var held_clamped_mass := _fixture_mass(TYPED_FOOD, LOADED_FODDER,
@@ -625,6 +635,78 @@ func _run_typed_cargo_states() -> void:
 	h._assert_hud("…while Max on a row with no pack space left says THAT instead",
 		_cargo_max_is_disabled_with(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL,
 			HudComposeVocab.COMPOSE_CARGO_MAX_NO_ROOM_HINT))
+
+	# **STATE — A TYPED VALUE THEN A STEPPER PRESS, WITHOUT ENTER IN BETWEEN** (the reported defect).
+	# The press is a REAL pointer gesture, because what broke is the ORDER the engine runs things in
+	# and no faked `pressed` can see it: a click moves keyboard focus, focus loss commits the field,
+	# the commit rebuilds the sheet, and the rebuild frees the very button the click is still inside.
+	#
+	# **Both faults it stacked are asserted at once.** A stepper that captured its row's amount at
+	# BUILD time steps from what the row was drawn with; a stepper whose press is eaten by that
+	# rebuild does not step at all. The one right answer is `typed + step`, and it is reachable only by
+	# flushing the field first and resolving the amount live.
+	_type_cargo(FAIR_HIDE_ROW, _typed(TYPED_ZERO))
+	await h._settle()
+	var drawn_with := _cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL).to_float()
+	_write_cargo_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL, _typed(TYPED_THEN_STEPPED))
+	await _click_cargo_control(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
+		HudWidgets.CARGO_CONTROL_PLUS)
+	await h._settle()
+	await h._save("trade_cargo_typed_then_stepped")
+	h._assert_hud("a `+` after a typed value steps from what was TYPED, not from what was drawn",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+			== _typed(TYPED_THEN_STEPPED + HudComposeVocab.COMPOSE_CARGO_STEP))
+	h._assert_hud("…and it is a STEP, not a press eaten by the rebuild the commit triggers",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) != _typed(TYPED_THEN_STEPPED))
+	h._assert_hud("…and never from the amount the row was drawn with (%s)" % _typed(drawn_with),
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+			!= _typed(drawn_with + HudComposeVocab.COMPOSE_CARGO_STEP))
+	# **THE KEYBOARD STAYS IN THE FIELD ACROSS THE PRESS**, which is what makes the flush deterministic
+	# rather than a race: the row's buttons take no focus, so the field is never committed out from
+	# under the click, and the rebuilt row takes the caret back.
+	h._assert_hud("…and the keyboard is still in the field the player was typing into",
+		TextEntryFocus.held_in(h.get_viewport()))
+
+	# …and the same for `−`, which is the other half of the same capture.
+	_write_cargo_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL, _typed(TYPED_THEN_STEPPED))
+	await _click_cargo_control(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
+		HudWidgets.CARGO_CONTROL_MINUS)
+	await h._settle()
+	h._assert_hud("a `−` after a typed value steps down from what was TYPED",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+			== _typed(TYPED_THEN_STEPPED - HudComposeVocab.COMPOSE_CARGO_STEP))
+
+	# **STATE — `+` IS BOUNDED BY THE PACK, NOT ONLY BY THE PILE.** The food row is taken to HALF A
+	# STEP below its ceiling, so the next press overshoots — and must land ON the ceiling rather than
+	# past it. The band still holds 84 throughout, so under the old rule (`amount >= held`) `+` stays
+	# live here and a press carries the manifest over the cap the meter above just cleared.
+	var pack_room := _fixture_row_max(SHIPPER_PROVISIONS,
+		HudComposeVocab.COMPOSE_CARGO_FOOD_CARRY_WEIGHT,
+		_fixture_mass(0.0, TYPED_ZERO, LOADED_HIDE + SHIPPER_BONE_HELD))
+	var overshoot := HudComposeVocab.COMPOSE_CARGO_STEP * STEP_PARTIAL_FRACTION
+	_type_cargo(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL, _typed(pack_room - overshoot))
+	await h._settle()
+	await _click_cargo_control(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
+		HudWidgets.CARGO_CONTROL_PLUS)
+	await h._settle()
+	await h._save("trade_cargo_step_clamped")
+	h._assert_hud("a `+` that would overrun the ceiling clamps to it",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) == _typed(pack_room))
+	h._assert_hud("…rather than stepping past it, which is what a clamp to the PILE alone allows",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) != _typed(
+			pack_room - overshoot + HudComposeVocab.COMPOSE_CARGO_STEP))
+	h._assert_hud("…leaving the pack full rather than overfull",
+		_meter_text().contains(HudComposeVocab.COMPOSE_CARGO_MASS_FORMAT % [
+			HudFormat.meter_bar(HudConst.PROGRESS_PERCENT_SCALE,
+				HudComposeVocab.COMPOSE_CARGO_MASS_CELLS),
+			HudCraftingVocab.BATCH_AMOUNT_FORMAT % _trade_cargo_cap(),
+			HudCraftingVocab.BATCH_AMOUNT_FORMAT % _trade_cargo_cap()]))
+	h._assert_hud("…and `+` is now dead because the PACK is full, though the band holds far more",
+		_cargo_control_is_disabled(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
+			HudWidgets.CARGO_CONTROL_PLUS))
+	h._assert_hud("…while `−` stays live, the row being nowhere near empty",
+		not _cargo_control_is_disabled(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
+			HudWidgets.CARGO_CONTROL_MINUS))
 ## The pack this chapter's party carries — `party × per_worker_carry`, the sim's own product.
 func _trade_cargo_cap() -> float:
 	return float(TRADE_PARTY_WORKERS) * TRADE_PER_WORKER_CARRY
@@ -672,6 +754,47 @@ func _type_cargo(needle: String, text: String) -> void:
 		return
 	field.text = text
 	field.text_submitted.emit(text)
+
+## Put text in one cargo row's field and **leave it uncommitted** — no Enter, no focus change. The
+## keyboard is taken first, because that is the state the reported defect happens in: a player mid-
+## edit reaching for the stepper beside the field.
+func _write_cargo_text(needle: String, text: String) -> void:
+	var field := _cargo_field(needle)
+	h._assert_hud("the cargo row for %s offers a field to type into" % needle, field != null)
+	if field == null:
+		return
+	field.grab_focus()
+	field.text = text
+	# `LineEdit.text =` does not emit `text_changed` (only user edits do), so the harness raises the
+	# same signal a keystroke would — otherwise the half-typed text is invisible to everything that
+	# tracks it, and the state under test would be one no player can reach.
+	field.text_changed.emit(text)
+
+## Click one of a cargo row's controls with a REAL pointer gesture, press and release a frame apart.
+## **Not `pressed.emit()`**: the defect this drives is about what the ENGINE does between the press
+## and the release — the focus move, the commit it fires and the rebuild that frees the button — and
+## a synthesised signal skips every one of those steps.
+func _click_cargo_control(needle: String, control: String) -> void:
+	var button := _cargo_control(_parties_zone(), needle, control)
+	h._assert_hud("the cargo row for %s offers a live %s" % [needle, control],
+		button is Button and not (button as Button).disabled)
+	if not (button is Button) or (button as Button).disabled:
+		return
+	var viewport: Viewport = h.get_viewport()
+	var point := InputProbe.canvas_to_window(viewport, h.get_window(),
+		button.get_global_rect().get_center())
+	InputProbe.hover(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.press_left(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.release_left(viewport, point)
+	await h.get_tree().process_frame
+
+## Is one of a row's controls greyed out? Answers `true` for a control that is not there at all, so a
+## row that stopped rendering one cannot pass as "correctly disabled".
+func _cargo_control_is_disabled(needle: String, control: String) -> bool:
+	var button := _cargo_control(_parties_zone(), needle, control)
+	return not (button is Button) or (button as Button).disabled
 
 ## Press one cargo row's `Max`.
 func _press_cargo_max(needle: String) -> void:

@@ -1234,8 +1234,9 @@ const COMPOSE_CARGO_READING_FORMAT := "%s: %s"
 
 const COMPOSE_CARGO_READING_SEPARATOR := " · "
 
-## What the band still holds behind a row — the ceiling every row's `+` clamps to, stated so the
-## player can see the pile shrink as the manifest grows.
+## What the band still holds behind a row — **one of the two ceilings a row is bounded by**, stated so
+## the player can see how much of the pile the manifest has taken. The other is the pack, and which of
+## them binds is whichever is smaller (`BandPanelController._trade_row_max`).
 const COMPOSE_CARGO_HELD_FORMAT := "of %s"
 
 ## The row's hover text: the WHOLE face — rating included — beside what the band still holds. The
@@ -1244,8 +1245,9 @@ const COMPOSE_CARGO_HELD_FORMAT := "of %s"
 const COMPOSE_CARGO_TOOLTIP_FORMAT := "%s — %s"
 
 ## **HOW MUCH ONE PRESS MOVES.** Whole units, because that is how a shipment is talked about; the
-## clamp to the pile means a `+` on a 0.6 pile still loads 0.6 rather than refusing, so no fraction
-## is unreachable.
+## clamp to the ROW's ceiling means a `+` on a 0.6 pile still loads 0.6 rather than refusing, and one
+## on a 7.35-unit pack remainder lands on 7.3 rather than overshooting — so no fraction is
+## unreachable and no press composes a load the meter beside it then refuses.
 const COMPOSE_CARGO_STEP := 1.0
 
 ## **THE ROW IS A TYPED FIELD BETWEEN THE TWO STEPPERS** (issue #620). A 6-worker party's full hay

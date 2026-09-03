@@ -5781,8 +5781,8 @@ reads the same wherever it is quoted.
   hover text repeats the whole face beside what the band still holds, so nothing is unreachable.
   **AN AXIS IS NEVER DROPPED FROM THE DATA to make it fit**: the axes are the whole reason a hide and
   a pelt are different rows, so the underlying label always carries every one of them.
-- **The `+` steps a whole unit and CLAMPS TO THE PILE**, so a 0.6 pile is reachable in one press
-  rather than being unshippable for want of a fractional control.
+- **The `+` steps a whole unit and CLAMPS TO THE ROW'S CEILING**, so a 0.6 pile is reachable in one
+  press rather than being unshippable for want of a fractional control.
 - **…and the amount that press leaves is EXACT, so the emitted one is FLOORED, never rounded**
   (`Main.cargo_wire_amount`). The clamp puts the band's precise holding on the row — `137.456789` food
   — and `resolve_shipment` refuses on `held < amount`, so a tenth of a unit of legibility on the
@@ -5807,7 +5807,7 @@ reads the same wherever it is quoted.
 The steppers alone were the whole control, and at `COMPOSE_CARGO_STEP` (1.0) **a 6-worker party's
 full hay load is 72 presses** and a food load 36. They are good at the nudge and hopeless at the
 load, so the row gained a typed `LineEdit` between them and a `Max` button after them. Nothing was
-taken away: `−`/`+` still step a whole unit and still clamp to the pile.
+taken away: `−`/`+` still step a whole unit, and all four controls share one ceiling.
 
 ⛔ **A `LineEdit`, NEVER A `SpinBox`, AND NEVER A CUSTOM KEY-EATING CONTROL.** `TextEntryFocus`
 holds the client's ONE definition of *"the player is typing"* — `node is LineEdit or node is
@@ -5834,13 +5834,19 @@ space it already occupies reads as spoken for. The other-rows term goes through
 expression. A band publishing no pack lever (cap 0, the meter's "unknown ceiling") or a row whose
 carry weight is 0 has no second cap, so the held one stands alone.
 
-**THE STEPPERS AND THE TYPED FIELD ARE BOUNDED DIFFERENTLY, AND THAT IS DELIBERATE.** A `+` clamps
-to the PILE and may carry the manifest over the pack — the meter then says so and the send disables
-with its reason, which is the over-cap lesson this sheet teaches. A typed amount and `Max` clamp to
-`row_max`, because neither is a nudge: they are the player NAMING an amount, and the amount they
-name should be one the shipment can carry. The press path is also the only one that leaves the
-band's EXACT holding on the row (`137.456789`) — the amount `Main.cargo_wire_amount` exists to
-floor — so snapping the steppers to a tenth would retire that path outright.
+**ALL THREE WRITING CONTROLS CLAMP TO `row_max`, and `+` GREYS OUT ON IT.** `amount >= row_max`,
+never `amount >= held`: a band holding 84 food against a full pack has nothing more this shipment can
+take, and a live `+` there offers a press that the meter directly below it refuses. Reaching an
+over-cap manifest is still possible and still taught — **by shrinking the PARTY under a load already
+composed**, which is where the cap actually moves in play — rather than by a control walking past its
+own ceiling.
+
+**Only the PACK term of `row_max` is floored onto the tenth; the PILE term stays exact.** The
+asymmetry carries two things at once. An unfloored pack term lands the manifest on the cap to within
+a float ulp, which the meter's own `mass > cap` test can read as OVER — the send disabling on a load
+the client itself just composed. And an exact pile term is what leaves the band's precise holding on
+the row when a `+` runs the pile out (`137.456789`), the amount `Main.cargo_wire_amount` exists to
+floor; flooring it here would retire that path and make the command-guard fixture below vacuous.
 
 **EVERY VALUE, TYPED OR FROM `Max`, IS FLOORED TO `COMPOSE_CARGO_AMOUNT_DECIMALS` (one) — never
 rounded.** Two reasons, and the second is the load-bearing one:
@@ -5873,9 +5879,40 @@ headroom alone, since `_set_cargo_amount`'s own clamp still lands that row on th
 meter, the manifest lines and the Send button's enabled state move together. A second spelling of
 "the row changed" is how a meter comes to disagree with the payload it is metering.
 
-**A WRITE THAT CHANGES NOTHING REBUILDS NOTHING**, and that is not an optimisation. The field
-commits when it LOSES focus, and a click on the row's own `+` IS a focus loss — so rebuilding the
-sheet there frees the button between its press and its release and the press never fires at all.
+#### A STEPPER FLUSHES THE FIELD, RESOLVES LIVE, AND TAKES NO FOCUS
+
+Reported as *"when I manually enter a value, then use the +/− keys, it ignores what I just entered."*
+Three separate faults stacked on that one press, and each is load-bearing on its own:
+
+1. **The buttons took focus.** A focusable `Button` grabs the keyboard on MOUSE-DOWN, which fires the
+   field's `focus_exited`, which commits, which rebuilds the sheet — freeing the very button the
+   click is still inside, so the mouse-up never becomes a `pressed`. The typed amount landed and the
+   STEP silently did not. The three row buttons are `FOCUS_NONE`, so the field keeps the keyboard
+   across the whole gesture and the press always arrives.
+2. **The callbacks captured their row's state at BUILD time.** `_step_cargo_amount` /
+   `_max_cargo_amount` capture the row KEY and nothing else: the amount and the ceiling are both
+   re-read at press time, because both move while the sheet stands — the amount when the player
+   types, the ceiling whenever any OTHER row does, since `row_max` is measured over their mass.
+3. **Nothing committed the pending text.** With the buttons unfocusable, a press is the only thing
+   left that can, so `_step_cargo_amount` flushes first — through `_commit_cargo_field`, never a
+   second parse. The flush is **row-agnostic**: a pending amount in the Food field changes the
+   headroom the Hay row's `Max` is about to compute, so only the one focused field can be pending and
+   it is flushed whichever row it belongs to.
+
+⛔ **`BandCityPanel._free_zones` DETACHES WITH `remove_child`, WHICH FIRES `focus_exited`
+SYNCHRONOUSLY INSIDE THE REBUILD — and the engine cannot tell you that is what happened.** Measured
+during teardown, the dying field answers `is_inside_tree() == true` and
+`is_queued_for_deletion() == false`, exactly as a live one does; guards on either are inert. So the
+controller says so itself, with `_trade_cargo_zones_rebuilding` set around the one `set_zones` call.
+Without it, two failures ride together: the dying field re-commits its OWN stale text over the value
+the press just wrote, and the commit's `rerender()` re-enters `set_zones` mid-`remove_child`, which
+Godot refuses outright (*"Parent node is busy adding/removing children"*), leaving the zone tree
+half-built. The same marker covers a SNAPSHOT rebuild, where the focus key must survive or a turn
+landing mid-word takes the keyboard off the player.
+
+**A WRITE THAT CHANGES NOTHING REBUILDS NOTHING** — `_set_cargo_amount` compares before it stores.
+Re-rendering an unchanged manifest was never worth anything, and it is one fewer teardown for the
+above to be right about.
 
 **THE FIELD'S FOCUS SURVIVES THE REBUILD.** The sheet is rebuilt wholesale on every snapshot, so
 without carrying the focused row's key, its text and its caret (`_trade_cargo_focus_*`, restored on
@@ -5894,9 +5931,15 @@ it believing it was the `+` the moment the fourth control landed.
 malformed readings reverting), `trade_cargo_typed_held` (clamped by the PILE, the pack still roomy),
 `trade_cargo_typed_cap` (clamped by the PACK on a `7.35` ceiling, so flooring and rounding differ),
 `trade_cargo_max` (`Max` filling the row to `11.2`, the pack exactly full, and the two dead `Max`
-states side by side). The clamps are sabotage-verified one at a time — dropping the held cap, the
-pack cap, the other-rows exclusion, the floor, the revert and the field's focusability each fail a
-DISTINCT assertion.
+states side by side), `trade_cargo_typed_then_stepped` (a value typed, then `+` with a REAL pointer
+gesture and no Enter in between — `20.0` becomes `21.0`, and the field keeps the caret) and
+`trade_cargo_step_clamped` (a press that would overrun lands ON the ceiling, the pack exactly full,
+every `+` in the sheet greyed while every `−` stays live).
+
+**Every rule above is sabotage-verified one at a time**, each failing a DISTINCT assertion: dropping
+the held cap, the pack cap, the other-rows exclusion, the floor, the revert, the field's
+focusability, the flush, the live resolution, the stepper clamp, the teardown marker, and the
+buttons' `FOCUS_NONE`.
 
 #### HAY IS THE THIRD ACCOUNT, AND WHICH ACCOUNT A ROW IS, IS ITS `id`
 
