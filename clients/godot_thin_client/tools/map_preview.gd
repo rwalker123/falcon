@@ -3332,8 +3332,8 @@ func _snapshot_forage() -> Dictionary:
 #
 # TWO INDEPENDENT TAILS, transcribed from `demographics_config.json`: unrelated onsets, different
 # slopes, different ceilings. There is no ambient and no tolerance — see `TileSurvivability`.
-const TEMPERATURE_COLD_ONSET_C := 6.0
-const TEMPERATURE_COLD_MORTALITY_SCALE := 0.00159
+const TEMPERATURE_COLD_ONSET_C := 0.0
+const TEMPERATURE_COLD_MORTALITY_SCALE := 0.00175
 const TEMPERATURE_COLD_MAX_MORTALITY := 0.1
 const TEMPERATURE_HEAT_ONSET_C := 40.0
 const TEMPERATURE_HEAT_MORTALITY_SCALE := 0.00176
@@ -3344,7 +3344,7 @@ const TEMPERATURE_HEAT_MAX_MORTALITY := 0.03
 ## from a stale copy of the model would still be showing the cold onset it always did.
 const TEMPERATURE_RETUNED_HEAT_ONSET_C := 30.0
 
-## A latitude gradient, cold north to hot south. The ends sit OUTSIDE the 6.0 – 40.0 °C the tuning
+## A latitude gradient, cold north to hot south. The ends sit OUTSIDE the 0.0 – 40.0 °C the tuning
 ## above survives and the middle well inside it, so one frame carries both tails and a wide living
 ## band between them — which is what makes the contour a LINE across the map rather than an edge at
 ## the border of the grid.
@@ -3354,12 +3354,17 @@ const TEMPERATURE_RETUNED_HEAT_ONSET_C := 30.0
 ## rather than to today's map. A "corrected" southern temperature inside the reachable range would
 ## put the whole field below the heat onset and **silently delete the only heat-tail coverage in this
 ## harness** — the hatch, the contour and the legend would all still look right on the cold half.
-const TEMPERATURE_NORTH_C := -2.0
+##
+## ⛔ **THE NORTH END MOVED WITH THE COLD ONSET.** It was -2 °C against a 6 °C onset, which put nine
+## rows of the small grid in the cold tail; the onset is 0 °C now, and -2 °C would have left exactly
+## ONE lethal row — a contour with almost nothing behind it, still passing every assertion because
+## they all probe the POCKET. Widened so the cold band stays a band.
+const TEMPERATURE_NORTH_C := -12.0
 const TEMPERATURE_SOUTH_C := 50.0
 ## THE COLD POCKET: an island of killing ground in the middle of the survivable band, so the contour
 ## closes a RING the eye can read as a boundary instead of a horizontal stripe. Placed and sized in
 ## fractions of the grid so the same field works at both grid sizes this harness renders it at.
-const TEMPERATURE_POCKET_C := -6.0
+const TEMPERATURE_POCKET_C := -20.0
 const TEMPERATURE_POCKET_CENTER_FRACTION := Vector2(0.32, 0.50)
 ## The pocket's radius is a HEX COUNT and not a fraction of the grid, so the ring is the same object
 ## at both grid sizes — the near and far frames then differ in ZOOM alone, which is the only variable
@@ -3367,11 +3372,11 @@ const TEMPERATURE_POCKET_CENTER_FRACTION := Vector2(0.32, 0.50)
 const TEMPERATURE_POCKET_RADIUS_HEXES := 3.0
 ## The map's real extremes, which the legend must print. Written out rather than recomputed from the
 ## field: an assertion that re-derived them would pass against a legend that had stopped reading raw °C.
-const TEMPERATURE_COLDEST_TEXT := "-6.0 °C"
+const TEMPERATURE_COLDEST_TEXT := "-20.0 °C"
 const TEMPERATURE_WARMEST_TEXT := "50.0 °C"
 ## …and the Lethal row, at the shipped tuning and at the retuned one.
-const TEMPERATURE_LETHAL_TEXT := "outside 6.0 – 40.0 °C"
-const TEMPERATURE_RETUNED_LETHAL_TEXT := "outside 6.0 – 30.0 °C"
+const TEMPERATURE_LETHAL_TEXT := "outside 0.0 – 40.0 °C"
+const TEMPERATURE_RETUNED_LETHAL_TEXT := "outside 0.0 – 30.0 °C"
 ## The far-zoom grid, sized so the COVER fit lands below `MapView.TEMPERATURE_HATCH_MIN_RADIUS` and
 ## the hatch really is gated off (the state asserts the premise, so a grid that stopped being big
 ## enough fails loudly instead of quietly proving nothing — the `LOD_MIN_RADIUS` idiom above).
@@ -3556,7 +3561,7 @@ func _temperature_extreme_tiles(width: int, height: int) -> Array[Vector2i]:
 # still look right.
 const LETHAL_MARK_BAND_ENTITY := 9401
 const SAFE_MARK_BAND_ENTITY := 9402
-## On the temperate band of the gradient — comfortably inside 6.0 – 40.0 °C.
+## On the temperate band of the gradient — comfortably inside 0.0 – 40.0 °C.
 const SAFE_MARK_BAND_TILE := Vector2i(12, 6)
 ## How far around a band's token the pixel probe looks, in hex radii. Tight: the ⚠ hangs one token
 ## radius up-left of the centre, and a wide box would let the OTHER band's mark answer for it.

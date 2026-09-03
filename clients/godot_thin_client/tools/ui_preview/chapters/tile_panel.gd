@@ -488,12 +488,12 @@ func _occupied_herd_fixture() -> Dictionary:
 #
 # The sim kills a fraction of EVERY age bracket, every turn, food or no food, on any tile outside the
 # survivable band `[SURVIVABILITY_COLD_ONSET_TEMP, SURVIVABILITY_HEAT_ONSET_TEMP]` — and NOTHING on
-# the card said so. The climate band is a different, wider set of thresholds, so 3.7 °C reads
-# `Temperate`, rates `Fair` and shows full morale while killing every turn.
+# the card said so. The climate band is a different set of thresholds decided by a different config,
+# so the two readings of one temperature can disagree about how alarming it is.
 #
-# **TWO INDEPENDENT TAILS.** The onsets are unrelated (6 °C and 40 °C), the slopes differ and the
-# ceilings differ, so a fixture cannot be mirrored from one side to the other — every temperature
-# below is priced by its OWN tail.
+# **TWO INDEPENDENT TAILS.** The onsets are unrelated (0 °C and 40 °C), the slopes differ and the
+# ceilings differ (10 % against 3 %), so a fixture cannot be mirrored from one side to the other —
+# every temperature below is priced by its OWN tail.
 #
 # The model is a per-run constant the live client adopts from the snapshot's overlays
 # (`MapSection.temperatureSurvivability`) through MapView, exactly as it adopts the climate cut
@@ -501,43 +501,61 @@ func _occupied_herd_fixture() -> Dictionary:
 # tuning — globally, before the first frame of the walk, so no frame anywhere renders lethal ground
 # without saying so. These states are where the chip itself is put on trial.
 
-## THE DEFECT'S OWN TEMPERATURE. Inside the `Temperate` band (boreal tops out at 3.0 °C) and 2.3 °C
-## below the 6.0 °C cold onset — the exact reading a band died 58 turns at with a full larder and
-## nothing on screen saying why.
-const LETHAL_COLD_TEMPERATURE := 3.7
+## **LETHAL POLAR GROUND.** The cold onset is 0 °C, which is also the Polar/Boreal climate boundary,
+## so this is a Polar tile 10 ° into the tail — 1.75 % of the people on it, every turn, on a full
+## larder.
+##
+## ⛔ **IT WAS 3.7 °C, AND THAT STATE CAN NO LONGER EXIST.** The fixture was built to demonstrate a
+## LETHAL TEMPERATE TILE — `Temperate · 3.7 °C` rating `Fair` at full morale while killing — which is
+## the exact composite issue #614 was reported for. The onset then moved 6 °C -> 0 °C ("6 °C is not
+## cold"), and with it the whole overlap: Boreal and Temperate ground is entirely survivable now and
+## only Polar ground kills. So the state demonstrates lethal POLAR ground instead. The chip's job is
+## unchanged — a climate band and a death rate are still two readings of one number — but the band it
+## lands on is no longer a surprising one, and nothing here should be re-aimed at 3.7 °C to "get the
+## old frame back".
+const LETHAL_COLD_TEMPERATURE := -10.0
 ## The HEAT tail, which exists for the same reason and was equally unsaid.
 ##
 ## ⛔ **HOTTER THAN THE GENERATOR CAN PRODUCE, AND THAT IS DELIBERATE.** Worldgen tops out near
 ## 31 °C; the heat onset is 40 °C, calibrated to the ±57 °C range issue #622 opens up rather than to
 ## today's map. **Do not "correct" this to a reachable temperature** — it would fall below the onset,
 ## the chip would go quiet, and this harness would lose its only heat-tail coverage without a single
-## assertion turning red. (It was 33.5 °C under the old symmetric model, where the heat onset was
+## assertion turning red. (It was 33.5 °C under the retired symmetric model, where the heat onset was
 ## forced to mirror the cold one about an 18 °C ambient and landed on a warm summer day.)
 const LETHAL_HEAT_TEMPERATURE := 50.0
 ## Far enough out that the model's CAP is what the rate rests on. The hover no longer SAYS so (that
-## clause was cut), but the cap must still be what the number comes out of: 86 ° past the onset at
-## 0.00159/° is 13.7 %, and 10.0 % is the cold ceiling holding.
+## clause was cut), but the cap must still be what the number comes out of: 80 ° past the onset at
+## 0.00175/° is 14.0 %, and 10.0 % is the cold ceiling holding.
 ##
 ## ⛔ **PAST EVEN #622's RANGE (-57 °C), AND IT HAS TO BE.** The cold cap only begins to bind at
-## -56.9 °C, where it clips the rate by 0.017 % — invisible at one decimal, so a fixture at the edge
-## of the future range could not tell a capped rate from an uncapped one. This value is chosen so the
-## two answers differ by 3.7 points.
+## -57.14 °C, where it clips the rate by hundredths of a percent — invisible at one decimal, so a
+## fixture at the edge of the future range could not tell a capped rate from an uncapped one. This
+## value is chosen so the two answers differ by 4 points.
 const CAPPED_COLD_TEMPERATURE := -80.0
-## **THE TILE THAT SHIPPED BROKEN.** Barely inside the cold tail: 0.02 ° past the onset, so the rate
-## is a real 0.003 % and the model is right — but rounded to one decimal it printed `−0.0 %`, and the old
-## hover's second sentence collapsed into `6.0 °C is 0.0 °C past the 6.0 °C survival line`. Every
-## other state here sits comfortably past the line, which is exactly why none of them caught it.
-## Its climate face rounds to `6.0 °C`, reproducing the reported screen precisely.
-const NEAR_LINE_COLD_TEMPERATURE := 5.98
+## **THE TILE THAT SHIPPED BROKEN**, re-aimed at the onset that replaced the one it was written for.
+## A hair inside the cold tail: 0.5 ° past the onset, so the rate is a real 0.09 % and the model is
+## right — but rounded to one decimal it printed `-0.0 %`, and the old hover's second sentence
+## collapsed into `X °C is 0.0 °C past the X °C survival line`. Every other state here sits
+## comfortably past the onset, which is exactly why none of them caught it.
+##
+## **DERIVED FROM THE PUBLISHED ONSET, NOT TYPED AS A DEGREE VALUE.** It was `5.98` against a 6 °C
+## onset and would have been stranded 6 ° inside the SURVIVABLE band by the retune, silently turning
+## the state into a second survivable-tile frame. The offset is what this state is about; where the
+## onset sits is the sim's business.
+const NEAR_LINE_EPSILON := 0.5
 ## Comfortably inside the range, where the chip keeps its neutral ink and carries no warning at all.
 const SURVIVABLE_TEMPERATURE := 19.0
 
 ## What each state's chips must READ, written out rather than recomputed here: an assertion that
 ## re-derived the rate from the constants above would pass against a client that had stopped
-## deriving it. `0.4 %` is `(6 - 3.7) x 0.00159`; `1.8 %` is `(50 - 40) x 0.00176` — **the two tails
-## priced by their own slopes**, which is why the numbers do not mirror each other; and the capped one
-## is the cold tail's own 0.1 ceiling.
-const LETHAL_COLD_TOOLTIP := "0.4% increased mortality per turn due to severe cold"
+## deriving it. `1.8 %` cold is `(0 - -10) x 0.00175`; `1.8 %` heat is `(50 - 40) x 0.00176`, and the
+## capped one is the cold tail's own 0.1 ceiling.
+##
+## **THE TWO 1.8 %s ARE A COINCIDENCE OF THIS TUNING, NOT A SYMMETRY** — the slopes are near-equal
+## and these two fixtures happen to sit ten degrees past their own onsets. The assertions still tell
+## the tails apart on the trailing word, and swapping the two parameter TRIPLES reddens both (the
+## cold arm would then read the heat ceiling). Do not "simplify" them to one constant.
+const LETHAL_COLD_TOOLTIP := "1.8% increased mortality per turn due to severe cold"
 const LETHAL_HEAT_TOOLTIP := "1.8% increased mortality per turn due to severe heat"
 const CAPPED_COLD_TOOLTIP := "10.0% increased mortality per turn due to severe cold"
 ## …and the near-boundary tile, whose rate is real but below what one decimal can show. It states the
@@ -557,9 +575,9 @@ const TOOLTIP_RETIRED_FOOD_CLAUSE := "regardless of food"
 ## ground, the ⚠ and the DANGER tint too. **One pill, not two:** the band name and the death rate are
 ## two readings of the same temperature, so the warning is a prefix on this face rather than a chip
 ## beside it (there were four pills on the strip; a player does not read four).
-const LETHAL_COLD_CLIMATE_CHIP := "⚠ Temperate · 3.7 °C"
+const LETHAL_COLD_CLIMATE_CHIP := "⚠ Polar · -10.0 °C"
 const LETHAL_HEAT_CLIMATE_CHIP := "⚠ Tropical · 50.0 °C"
-const NEAR_LINE_COLD_CLIMATE_CHIP := "⚠ Temperate · 6.0 °C"
+const NEAR_LINE_COLD_CLIMATE_CHIP := "⚠ Polar · -0.5 °C"
 const CAPPED_COLD_CLIMATE_CHIP := "⚠ Polar · -80.0 °C"
 ## …and the same hex inside the range: no ⚠, no tint, no extra pill — just the reading.
 const SURVIVABLE_CLIMATE_CHIP := "Tropical · 19.0 °C"
@@ -567,7 +585,7 @@ const SURVIVABLE_CLIMATE_CHIP := "Tropical · 19.0 °C"
 ## sim's band CUT POINTS to render at all; now that it carries the only lethal warning, "no cut
 ## points" would take that warning off the card entirely. On lethal ground with the mortality model
 ## published and the bands absent it must still render — degrees alone, still warned.
-const BANDLESS_LETHAL_CLIMATE_CHIP := "⚠ 3.7 °C"
+const BANDLESS_LETHAL_CLIMATE_CHIP := "⚠ -10.0 °C"
 
 ## **THE BRANCH POINTS**, for the PNG-less guard on the three-way split. A hair either side of each
 ## onset, plus a reading between them: the middle of an arm proves the arm, and only the boundary
@@ -588,6 +606,11 @@ const BRANCH_ONSET_DISTANCE := 10.0
 ## fact that the survivable strip is missing nothing.
 const LETHAL_CHIP_SLOTS := ["sight", "habitability", "climate", "tags"]
 const SURVIVABLE_CHIP_SLOTS := ["sight", "habitability", "climate", "tags"]
+
+## A hair inside the cold tail, taken RELATIVE to the published onset — see `NEAR_LINE_EPSILON` for
+## why this is not a typed degree value.
+func _near_line_cold_temperature() -> float:
+	return TileSurvivability.survivable_min() - NEAR_LINE_EPSILON
 
 ## The `TileFx.three_role_tile_fixture` at a given temperature and nothing else changed — so the ONLY
 ## thing moving between the survivability frames is the reading the model is asked about.
@@ -1393,11 +1416,11 @@ func run(harness) -> void:
 		_chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == LETHAL_HEAT_TOOLTIP)
 
 	# tile_panel_lethal_near_line — **THE STATE THAT WOULD HAVE CAUGHT THE SHIPPED BUG.** A hex 0.02 °
-	# inside the cold tail: the rate is a real 0.003 %, and printed at one decimal with a leading minus
+	# inside the cold tail: the rate is a real 0.09 %, and printed at one decimal with a leading minus
 	# it read `−0.0 %` — nothing happening, on ground the sim kills on. Every other state here sits
 	# comfortably past the line, which is exactly why none of them caught it. The `<0.1%` bound has to
 	# survive the move onto the climate chip, which is what this now also holds.
-	h._show_tile(_survivability_tile_fixture(NEAR_LINE_COLD_TEMPERATURE))
+	h._show_tile(_survivability_tile_fixture(_near_line_cold_temperature()))
 	await h._settle()
 	await h._save("tile_panel_lethal_near_line")
 	var near_line_hover := _chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate"))
@@ -1411,7 +1434,7 @@ func run(harness) -> void:
 
 	# No frame: a capped hex renders a chip shaped exactly like the cold one, so only the hover can
 	# testify. The hover no longer NAMES the cap — that clause was cut — but the number still has to
-	# come out of it: 86 ° past the onset at 0.00159/° is 13.7 %, and 10.0 % is the cold ceiling holding.
+	# come out of it: 80 ° past the onset at 0.00175/° is 14.0 %, and 10.0 % is the cold ceiling holding.
 	h._show_tile(_survivability_tile_fixture(CAPPED_COLD_TEMPERATURE))
 	await h._settle()
 	h._assert_hud("ground far past the line reports the model's CAPPED rate, not the raw deviation",

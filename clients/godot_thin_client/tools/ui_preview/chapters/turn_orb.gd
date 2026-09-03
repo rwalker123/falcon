@@ -569,7 +569,7 @@ const DECLINE_COLD_TILE := Vector2i(14, 5)
 const DECLINE_HEAT_TILE := Vector2i(15, 5)
 const DECLINE_MILD_TILE := Vector2i(16, 5)
 
-## Read against the prologue's shipped tuning — the survivable band is `[6.0, 40.0]` °C, two
+## Read against the prologue's shipped tuning — the survivable band is `[0.0, 40.0]` °C, two
 ## independent onsets rather than a spread around an ambient. Deliberately well past the onset on
 ## each side: this state is about which REASON answers, not about the rate's printing.
 ##

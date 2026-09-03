@@ -19,10 +19,16 @@ class_name TileSurvivability
 ## deviation, one slope, one ceiling, and heat therefore forced to mirror cold about that midpoint.
 ## **Cold and heat are not symmetric phenomena.** Extreme heat is survivable with shade and water in
 ## a way -57 °C is not, so the two sides differ in ALL THREE parameters — onset, slope and ceiling
-## (shipped: cold from 6 °C at 0.00159/° capped at 10 %; heat from 40 °C at 0.00176/° capped at
-## 3 %). A symmetric form cannot express that: pinning the heat onset to mirror 6 °C about an 18 °C
-## ambient put heat death at a warm summer day. So there is no `ambient` here and no tolerance, and
-## re-deriving one from the two onsets would be re-introducing exactly the model that was removed.
+## (shipped: cold from 0 °C at 0.00175/° capped at 10 %; heat from 40 °C at 0.00176/° capped at
+## 3 %). A symmetric form cannot express that: pinning the heat onset to mirror the cold one about an
+## 18 °C ambient put heat death at a warm summer day. So there is no `ambient` here and no tolerance,
+## and re-deriving one from the two onsets would be re-introducing exactly the model that was removed.
+##
+## **THE COLD ONSET IS 0 °C, WHICH IS ALSO `TileClimate`'s POLAR BOUNDARY** (`polar_max_temp` 0.0) —
+## a coincidence of tuning, NOT a coupling, and the two must not be wired together. It means Boreal
+## and Temperate ground is now entirely survivable and only Polar ground kills; the earlier 6 °C
+## onset made a `Temperate` tile lethal, which was the composite issue #614 was reported for and is
+## no longer a state the game can reach. Nothing here reads a climate band to decide it.
 ##
 ## `death_rate` mirrors `active_temperature_tail` + `temperature_fraction` in
 ## `core_sim/src/systems/population.rs`:

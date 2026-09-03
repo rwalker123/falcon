@@ -567,6 +567,12 @@ const DETAIL_VALUE_LABELS := {
 	"in": "arrived",
 	"hunger": "hunger",
 	"cold": "cold",
+	# **THE TEMPERATURE TERM HAS TWO TAILS**, so a death on hot ground reports `cause=heat` and the
+	# row has to say so — reporting it as `cold` would print "died of cold" over a desert. Lower-case
+	# beside `cold` and for the same reason: the phrase CONTINUES the label ("3 workers died of heat
+	# in Band 1" · "heat"), it does not head a column. Without this entry the generic fallback
+	# capitalises it to `Heat` in the middle of a sentence.
+	"heat": "heat",
 	# `age` is the death every fed band in fair weather actually experiences. Its label is TWO words
 	# where the token is one — the wire spells it `age` because a token is a contract, the row says
 	# "old age" because the row is prose. Without this entry the generic fallback would render it as

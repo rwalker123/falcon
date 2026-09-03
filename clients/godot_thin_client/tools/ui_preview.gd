@@ -120,12 +120,17 @@ const CLIMATE_TEMPERATE_MAX_TEMP := 18.0
 
 ## The shipped temperature-mortality tuning the prologue seeds `TileSurvivability` with — the
 ## `demographics_config.json` `cold` and `heat` blocks, transcribed, so the frames state the range
-## the sim really kills outside of: **6.0 – 40.0 °C**.
+## the sim really kills outside of: **0.0 – 40.0 °C**.
 ##
 ## TWO INDEPENDENT TAILS: the onsets are unrelated, the slopes differ, and the ceilings differ
 ## (10 % cold against 3 % heat). There is no ambient and no tolerance — see `TileSurvivability`.
-const SURVIVABILITY_COLD_ONSET_TEMP := 6.0
-const SURVIVABILITY_COLD_MORTALITY_SCALE := 0.00159
+##
+## **THE COLD ONSET IS 0 °C**, which is also `CLIMATE_POLAR_MAX_TEMP` above — tuning coincidence, not
+## a coupling. It moved from 6 °C because 6 °C is not cold; the slope moved with it so the tail still
+## reaches its 10 % ceiling at -57 °C. Every cold fixture in the walk was re-aimed against it, and
+## only POLAR ground is lethal now.
+const SURVIVABILITY_COLD_ONSET_TEMP := 0.0
+const SURVIVABILITY_COLD_MORTALITY_SCALE := 0.00175
 const SURVIVABILITY_COLD_MAX_MORTALITY := 0.1
 const SURVIVABILITY_HEAT_ONSET_TEMP := 40.0
 const SURVIVABILITY_HEAT_MORTALITY_SCALE := 0.00176

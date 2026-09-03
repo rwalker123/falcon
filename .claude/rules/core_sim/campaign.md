@@ -78,9 +78,22 @@ min(excess × <tail>.mortality_scale, <tail>.max_mortality) × <tail>.<bracket>_
 ```
 
 where `excess` is how far the tile sits past that tail's onset. At the shipped tuning the habitable
-band is **6.0 °–40.0 °**. That is **not** the climate ladder: `climate.boreal_max_temp` is 3.0, so a
-4 ° tile reads as *Temperate* on the tile card while still bleeding people every turn. The two
-threshold sets answer different questions and there is no arithmetic from one to the other.
+band is **0.0 °–40.0 °**.
+
+##### Lethal cold begins exactly at the Polar boundary — by coincidence of two levers, not by code
+
+`cold.onset_temp` is 0.0 and so is `climate.polar_max_temp`, so Boreal (0–3 °) and Temperate
+(3–18 °) ground is survivable end to end and **only Polar ground kills**. The tile card's climate
+label and its survivability verdict therefore agree by construction, which is exactly the mismatch
+issue #614 was opened about: at the retired 6 ° onset the bottom three degrees of the *Temperate*
+band were lethal, so a tile reading "Temperate, 3.7 °" bled people every turn.
+
+⛔ **Nothing in code enforces the alignment.** The two values live in different config files
+(`demographics_config.json` and the preset's `climate` block) and are set independently; move either
+and the label and the verdict drift apart again, silently. The threshold sets still answer different
+questions — the climate ladder names ground, the tails price it — and there is no arithmetic from one
+to the other. The agreement is a tuning choice to be re-checked whenever either moves, not an
+invariant to lean on.
 
 ##### Two tails, not one tolerance — they differ in threshold, slope AND ceiling
 
@@ -90,7 +103,7 @@ put heat death at 30 ° — a warm summer day, not a lethal condition.
 
 | Tail | Onset | Calibration extreme | `mortality_scale` | `max_mortality` |
 |---|---|---|---|---|
-| `cold` | 6.0 ° | −57 ° | 0.00159 (`0.10 ÷ 63`) | 0.10 |
+| `cold` | 0.0 ° | −57 ° | 0.00175 (`0.10 ÷ 57`) | 0.10 |
 | `heat` | 40.0 ° | +57 ° | 0.00176 (`0.03 ÷ 17`) | 0.03 |
 
 **Extreme heat is markedly less lethal than extreme cold**, because heat is survivable with shade and
@@ -105,7 +118,7 @@ undoing the model.
 Each tail rises from zero at its onset to its ceiling at its own target extreme, ±57 °. Today's
 generator spans **−18.5 ° to +31.0 °** (`polar_temp` −5.0 to `equator_temp` 30.0, less up to
 `elevation_lapse_span` 12.0, plus element jitter of −1.5 to +1.0). So today the coldest reachable
-tile costs a worker 3.9 %/turn, neither ceiling is reachable, and **the heat tail is entirely
+tile costs a worker 3.2 %/turn, neither ceiling is reachable, and **the heat tail is entirely
 dormant** — nothing comes within nine degrees of its onset.
 
 That is intended. Calibrating to today's narrower span would have to be redone the moment the range
@@ -113,10 +126,11 @@ widened, and would flatten every tile below −18.5 ° onto one identical rate t
 existed. **Issue #622 widens the generator's range, and these four rate numbers are what it must be
 checked against.**
 
-The cold curve as shipped: 0 % at 6 °, 1.25 % at −1.9 °, 2.5 % at −10 °, 3.9 % at −18.5 °, 7.3 % at
-−40 °, 10 % at −57 °. The playtest that forced the re-tune had a band of 23 losing 2.7 people a turn
-on that −1.9 ° tile, because the retired `mortality_scale` of 0.02 reached the ceiling five degrees
-past the onset and so made the model binary rather than graded.
+The cold curve as shipped: 0 % at 0 °, 0.33 % at −1.9 °, 1.75 % at −10 °, 3.2 % at −18.5 °, 7.0 % at
+−40 °, 10 % at −57 ° (the ceiling binds from −57.1 ° down). The playtest that forced the graded ramp
+had a band of 23 losing 2.7 people a turn on that −1.9 ° tile, because the retired `mortality_scale`
+of 0.02 reached the ceiling five degrees past the onset and so made the model binary rather than
+graded.
 
 ##### Hunger and cold combine with `max`, not `+`
 
@@ -124,6 +138,23 @@ A bracket's death fraction is `max(starvation, temperature)`. You can only die o
 form double-counted the band that was starving *and* freezing. It also makes the `DeathCause`
 attribution honest: the losing term contributes exactly nothing to the deaths it is not credited
 with. Ties still go to `Hunger` — a band suffering both is a food problem the player can act on.
+
+##### The temperature term has TWO causes, and the tail carries its own
+
+`DeathCause::Cold` and `DeathCause::Heat` are separate values (tokens `cold` / `heat`, label phrases
+"died of cold" / "died of heat"). One arithmetic term produces both, so a bare fraction cannot say
+which happened — before `Heat` existed, a band baking past the 40 ° onset reported `cause=cold`.
+
+⛔ **Which side of the band a tile is on is decided in exactly ONE place.**
+`active_temperature_tail` returns an `ActiveTemperatureTail { tail, excess, cause }`, and that
+`cause` is threaded into `dominant_death_cause` rather than re-derived from the temperature by
+whoever needs it — two comparisons against the onsets are two chances to get the sign backwards.
+`dominant_death_cause` takes it as an `Option`, `None` being exactly the survivable band where the
+temperature term is zero and no cause exists to name.
+
+The cause rides the event's **detail string** (`cause=`), not a schema field, so a new variant is
+**not** a `.fbs` change — but it *is* a wire contract, and a client with an unknown token falls back
+to rendering the raw word.
 
 The old `min(…, 1.0)` clamp on the combined fraction is **gone, because it can no longer fire**:
 starvation is bounded by the deficit and the temperature term by `max_mortality × vulnerability`,
@@ -141,7 +172,7 @@ The two do not hurt the same people equally, which is the whole reason for a sec
 > bracket's real ceiling is `max_mortality × vulnerability` — 10 % / 12.5 % / 15 % on the cold tail.
 >
 > Clamping after the multiplier reads like the safer ordering, and it was tried and rejected: it
-> saturates elders at −36 ° and children at −44.5 °, so from −44.5 ° down every bracket lands on
+> saturates elders at −38.1 ° and children at −45.7 °, so from −45.7 ° down every bracket lands on
 > exactly the same number and the age ordering vanishes in the coldest ground on the map — the one
 > place it is supposed to bite hardest. Capping the base rate keeps elders above children above
 > workers at every temperature.

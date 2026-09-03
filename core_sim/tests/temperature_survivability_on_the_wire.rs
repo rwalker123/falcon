@@ -40,13 +40,13 @@ use core_sim::{
 /// come through this test and be seen.
 ///
 /// Each tail rises from zero at its onset to its **own** cap at the extreme it is calibrated to —
-/// −57 ° for cold (63 ° of runway, `0.10 ÷ 63`) and +57 ° for heat (17 °, `0.03 ÷ 17`). The two
+/// −57 ° for cold (57 ° of runway, `0.10 ÷ 57`) and +57 ° for heat (17 °, `0.03 ÷ 17`). The two
 /// differ in threshold, slope *and* ceiling, because extreme heat is survivable with shade and water
 /// where −57 ° is not; that asymmetry is why the wire carries six numbers rather than a symmetric
 /// four. Both extremes are ahead of what the generator makes today (−18.5 ° to +31.0 °); issue #622
 /// widens the range to match.
-const SHIPPED_COLD_ONSET_TEMP: f32 = 6.0;
-const SHIPPED_COLD_MORTALITY_SCALE: f32 = 0.00159;
+const SHIPPED_COLD_ONSET_TEMP: f32 = 0.0;
+const SHIPPED_COLD_MORTALITY_SCALE: f32 = 0.00175;
 const SHIPPED_COLD_MAX_MORTALITY: f32 = 0.1;
 const SHIPPED_HEAT_ONSET_TEMP: f32 = 40.0;
 const SHIPPED_HEAT_MORTALITY_SCALE: f32 = 0.00176;

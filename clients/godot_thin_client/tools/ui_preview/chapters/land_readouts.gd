@@ -543,12 +543,17 @@ func _flora_row_has_role_icon(row: String, icon_px: int) -> bool:
 ## `temperature` (and a label) vary, so the ONLY thing moving between the four climate_* frames
 ## is the band the sim's cut points classify that temperature into.
 ##
-## Since #614 these frames carry the second reading of that same number too: `climate_polar` (-6 °C)
-## and `climate_boreal` (2 °C) sit outside the sim's 6.0-40.0 °C survival range and raise the
-## chip's ⚠ and its DANGER tint, while `climate_temperate` (12 °C) and `climate_tropical` (27 °C) do not.
-## That contrast IS the issue's argument, rendered: `Boreal · 2.0 °C` is a perfectly ordinary-looking
-## band name on ground that kills 0.6 % of a band per turn, and the four frames now show where the two
-## unrelated sets of thresholds fall relative to each other.
+## Since #614 these frames carry the second reading of that same number too: the sim's survivable band
+## is 0.0-40.0 °C, so ONLY `climate_polar` (-6 °C) raises the chip's ⚠ and its DANGER tint — at
+## 1.05 % of the people on it per turn — while `climate_boreal` (2 °C), `climate_temperate` (12 °C)
+## and `climate_tropical` (27 °C) are all survivable.
+##
+## ⛔ **`climate_boreal` LOST ITS PILL, AND THAT IS THE POINT RATHER THAN A REGRESSION.** It had one
+## while the cold onset was 6 °C, which is what made `Boreal · 2.0 °C` an ordinary-looking band name
+## on killing ground. The onset then moved to 0 °C — the Polar boundary — so the two thresholds now
+## agree about Boreal, and the four frames show a survival line that lands exactly on a climate line
+## instead of cutting across one. **Do not re-cool this fixture to bring the pill back:** its job is
+## to render the BOREAL band, and the frames are a set precisely because only their temperature moves.
 func _climate_tile_fixture(temperature: float, terrain_label: String) -> Dictionary:
 	var tile := BaseFx.food_tile_fixture()
 	tile["temperature"] = temperature
@@ -635,7 +640,7 @@ func _overgrazed_tile_fixture() -> Dictionary:
 ## sim holds no patch there and the tile carries no graze fields). The card must print NOTHING about
 ## pasture here — never "0 / 0", which would read as a starved pasture rather than an absent one.
 ##
-## Its -14 °C puts the ⚠ on the climate chip (#614) and is KEPT rather than softened to a survivable
+## Its -14 °C puts the ⚠ on the climate chip (#614, 2.45 %/turn) and is KEPT rather than softened to a survivable
 ## reading: it is not filler here, it is what makes this tile a glacier at all (the `Polar` tag and the
 ## stated-zero graze capacity both follow from it). A Glacier reading 19 °C would be a worse lie than
 ## the one #614 removes. The pasture claim this frame exists for is untouched by the extra chip.

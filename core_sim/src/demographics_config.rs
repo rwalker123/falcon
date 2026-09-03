@@ -152,12 +152,17 @@ pub struct DemographicsScarcity {
 ///
 /// **The rates are calibrated to the temperatures the map should REACH, not the ones it currently
 /// produces.** Each tail rises from zero at its onset to `max_mortality` at its own target extreme —
-/// −57 ° for cold (63 ° of runway past the 6 ° onset, `0.10 ÷ 63 ≈ 0.00159`) and +57 ° for heat
+/// −57 ° for cold (57 ° of runway past the 0 ° onset, `0.10 ÷ 57 ≈ 0.00175`) and +57 ° for heat
 /// (17 ° past the 40 ° onset, `0.03 ÷ 17 ≈ 0.00176`). Different runways *and* different ceilings, so
 /// no shared scale could have served both.
 ///
+/// **The cold onset is 0 °, which is also `climate.polar_max_temp`** — so Boreal and Temperate
+/// ground is survivable end to end and only Polar ground kills. That agreement is a *consequence* of
+/// two independently-set config values, not something code enforces: move either and the tile card's
+/// climate label and its survivability verdict drift apart again (issue #614).
+///
 /// Today's generator spans −18.5 ° to +31.0 °, so the coldest reachable tile costs a worker
-/// 3.9 %/turn, the ceiling is out of reach at both ends, and the heat tail is **entirely dormant** —
+/// 3.2 %/turn, the ceiling is out of reach at both ends, and the heat tail is **entirely dormant** —
 /// nothing comes within nine degrees of its onset. That is intended. Calibrating to today's narrow
 /// range would have to be redone the moment the range widens, and would make every tile below
 /// −18.5 ° kill at an identical rate once such tiles exist. Issue #622 widens the range; these four
@@ -181,7 +186,7 @@ pub struct DemographicsTemperatureTail {
     ///
     /// Clamping *after* the multiplier was tried and rejected. It reads like the safer ordering — a
     /// true per-bracket ceiling nobody can exceed — but it makes the brackets converge: elders would
-    /// saturate at −36 ° and children at −44.5 °, so from −44.5 ° down every bracket sits on exactly
+    /// saturate at −38.1 ° and children at −45.7 °, so from −45.7 ° down every bracket sits on exactly
     /// the same number and the age ordering vanishes in the range where cold is *most* severe, which
     /// is the one place it matters most. Capping the base rate keeps "the cold takes the old first"
     /// true all the way down.

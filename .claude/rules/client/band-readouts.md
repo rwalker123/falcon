@@ -697,10 +697,10 @@ which is a property of the tier and not of the merge.
 
 `systems::population` kills on a per-turn fraction that is **independent of food** and applied to
 every age bracket. The survivable range is an INTERVAL the sim states outright — at the shipped
-tuning `[6.0, 40.0] °C` — while `climate.boreal_max_temp` is 3.0, so a 3.7 °C tile is labelled
-**Temperate**, rates **Fair** habitability, shows **100 % morale**, and kills every turn. A band died
-over 58 turns on exactly that hex, with a full larder, and no surface in the client said anything at
-all.
+tuning `[0.0, 40.0] °C`. It was reported as a **lethal Temperate tile**: with the cold onset then at
+6 °C and `climate.boreal_max_temp` at 3.0, a 3.7 °C hex was labelled **Temperate**, rated **Fair**
+habitability, showed **100 % morale**, and killed every turn. A band died over 58 turns on exactly
+that hex, with a full larder, and no surface in the client said anything at all.
 
 > #### ⛔ TWO INDEPENDENT TAILS — the symmetric model is retired and must not come back
 >
@@ -710,13 +710,20 @@ all.
 >
 > | tail | onset | slope | ceiling |
 > |---|---|---|---|
-> | cold | 6.0 °C | 0.00159 /° | 10 % |
+> | cold | 0.0 °C | 0.00175 /° | 10 % |
 > | heat | 40.0 °C | 0.00176 /° | 3 % |
 >
 > A symmetric form cannot express that, and the way it failed is worth keeping: pinning the heat
-> onset to mirror 6 °C about an 18 °C ambient put heat death at **30 °C — a warm summer day**.
+> onset to mirror the cold one about an 18 °C ambient put heat death at **30 °C — a warm summer day**.
 > `ambient_temperature` is not an input to mortality at all any more, and **re-deriving one from the
 > two onsets would be rebuilding the model that was removed**.
+>
+> **THE COLD ONSET LATER MOVED 6 °C → 0 °C** ("6 °C is not cold"), with the slope 0.00159 → 0.00175
+> so the tail still reaches its ceiling at −57 °C. That closed the overlap the issue was reported for:
+> 0 °C is also `TileClimate`'s `polar_max_temp`, so **Boreal and Temperate ground is entirely
+> survivable and only Polar ground kills**. The two thresholds agreeing is a coincidence of tuning and
+> **not** a coupling — nothing in the client reads a climate band to decide lethality, and a lethal
+> Temperate tile is simply no longer a state the game can reach.
 >
 > **The heat tail is unreachable on today's maps and that is deliberate, not dead code.** Worldgen
 > tops out near 31 °C; both tails are calibrated to the ±57 °C range issue #622 opens up. Every
@@ -734,12 +741,12 @@ the threshold the whole Climate Authority arc exists to stop it inventing.
 
 What the card says, and it is **ONE chip** (`SelectionCardController._tile_chip_descriptors`):
 
-- the **Climate chip carries the number** — `Temperate · 3.7 °C`. A band is a bucket wide enough to
+- the **Climate chip carries the number** — `Polar · -10.0 °C`. A band is a bucket wide enough to
   hold both comfortable and lethal ground, and until #614 the temperature was on no surface of the
   card at all, so a warning had nothing to be checked against.
-- **…and on killing ground it IS the warning**: `⚠ Temperate · 3.7 °C` in `HudStyle.DANGER`, with the
+- **…and on killing ground it IS the warning**: `⚠ Polar · -10.0 °C` in `HudStyle.DANGER`, with the
   hover naming what the ground does to the people and the rate it does it at —
-  `0.4% increased mortality per turn due to severe cold`. Survivable ground keeps the same chip in
+  `1.8% increased mortality per turn due to severe cold`. Survivable ground keeps the same chip in
   neutral `INK_DIM` with no hover.
 
 ### ⛔ THE WARNING WAS ITS OWN PILL FOR ONE ITERATION, AND FOUR PILLS IS TOO MANY
@@ -754,9 +761,10 @@ the climate face, so the ⚠ and the tint moved onto it and the second chip is g
 **It merged with CLIMATE and NOT with HABITABILITY, and that is arithmetic rather than taste.**
 Habitability is `terrain attrition + terrain hardness + (|T − 18| − 9) × 0.004`, Hostile at ≥ 0.09;
 on terrain carrying no attrition penalty, temperature alone does not reach Hostile until −13.5 °C,
-while people start dying at 6.0 °C. **A warning folded into habitability would be silent across a
-19.5-degree band of lethal-but-Fair ground — precisely where the original defect lived.** Climate has
-no such gap: it is the same number the mortality model is struck from.
+while people start dying at 0.0 °C. **A warning folded into habitability would be silent across a
+13.5-degree band of lethal-but-Fair ground** — and it was a 19.5-degree one when the onset was 6 °C,
+which is precisely where the original defect lived. Climate has no such gap: it is the same number the
+mortality model is struck from.
 
 **THE CHIP SLOT IS `climate` IN BOTH STATES, which moves work onto the patch path.** The strip
 rebuilds only when the SET of slots changes (`_tile_chip_slots`), so a tile crossing the survival

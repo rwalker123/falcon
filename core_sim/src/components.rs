@@ -807,8 +807,9 @@ pub enum MoraleCause {
 /// Which mortality term did most of the killing in one age bracket on one turn.
 ///
 /// The demographic model kills through a starvation term (scaled by the food deficit and the
-/// bracket's vulnerability), a uniform cold term, and — for elders only — the flat
-/// `elder_mortality_rate` of simply growing old. Once a death is *reported*, the turn that
+/// bracket's vulnerability), a uniform temperature term — which has **two independent tails**, so
+/// the same fraction means [`DeathCause::Cold`] below the cold onset and [`DeathCause::Heat`] above
+/// the heat one — and, for elders only, the flat `elder_mortality_rate` of simply growing old. Once a death is *reported*, the turn that
 /// produced it is gone — post-turn brackets and a refilled larder cannot say what emptied them —
 /// so the cause is recorded when the deaths accrue and carried on
 /// [`DemographicFlowAccumulator`] until the whole-person event fires.
@@ -817,8 +818,13 @@ pub enum DeathCause {
     /// The food deficit dominated (or the terms tied — a starving band is the louder reading).
     #[default]
     Hunger,
-    /// The cold term dominated.
+    /// The temperature term dominated on a tile **below** `cold.onset_temp`.
     Cold,
+    /// The temperature term dominated on a tile **above** `heat.onset_temp`. Freezing and baking
+    /// are one arithmetic term with two tails, and reporting the hot one as `Cold` would print
+    /// "died of cold" over a desert. Which tail is active is decided in exactly one place —
+    /// `active_temperature_tail` in `systems::population` — and carried here.
+    Heat,
     /// Old age dominated — the `elder_mortality_rate` term, which only the elder bracket carries.
     /// A band with a full larder in fair weather still buries its elders, and reporting that as
     /// `Hunger` would tell the player a falsehood about their food every few turns.
@@ -832,6 +838,7 @@ impl DeathCause {
         match self {
             DeathCause::Hunger => "hunger",
             DeathCause::Cold => "cold",
+            DeathCause::Heat => "heat",
             DeathCause::Age => "age",
         }
     }
@@ -842,6 +849,7 @@ impl DeathCause {
         match self {
             DeathCause::Hunger => "hunger",
             DeathCause::Cold => "cold",
+            DeathCause::Heat => "heat",
             DeathCause::Age => "old age",
         }
     }

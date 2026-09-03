@@ -28,9 +28,9 @@ paths:
     you reason with while composing never scroll away: Sight (`_sight_value_color`, SIGNAL when
     live) · Habitability (`TileHabitability.rating_for`/`color_for`) · **Climate, which is also the
     LETHAL-TEMPERATURE WARNING** (issue #614): it carries the BAND AND THE TEMPERATURE and reads
-    `Temperate · 3.7 °C` in neutral INK_DIM on survivable ground, `⚠ Temperate · 3.7 °C` in
+    `Boreal · 2.0 °C` in neutral INK_DIM on survivable ground, `⚠ Polar · -10.0 °C` in
     `HudStyle.DANGER` when `TileSurvivability` says the sim is killing there, with
-    `0.4% increased mortality per turn due to severe cold` on its hover — one clause, naming what
+    `1.8% increased mortality per turn due to severe cold` on its hover — one clause, naming what
     happens to the people. **It was two chips for one iteration and four pills is too many**; the band
     name and the death rate are two readings of the SAME number and that number was already on this
     face, so the ⚠ and the tint moved onto it and the `survivability` slot is gone (`band-readouts.md`

@@ -1088,3 +1088,25 @@ merely filtered.
 passes every other claim in that state and throws away the reason the kind was Notable in the first
 place — and the run proves it: promoting `died` outright also broke a pre-existing pinned-alert
 assertion elsewhere in the suite.
+
+### `cause=heat` — the temperature term's other tail needs its own word
+
+The sim grew `DeathCause::Heat` when the temperature term became two tails, so a death on hot ground
+reports `cause=heat` and labels "3 workers died of heat in Band 1". **It rides the `died` event's
+detail string, so there is no schema change** — but the client's `DETAIL_VALUE_LABELS` had `cold` and
+not `heat`, and an unlisted value falls through to `_english`, which capitalises. The row would have
+read `Heat` in the middle of a sentence: legible, and not English.
+
+So `"heat": "heat"` sits lower-case beside `"cold"`, for the reason the whole lower-case cluster
+there exists — **the phrase CONTINUES the label, it does not head a column.** `ui_preview` asserts the
+rendered phrase both ways (contains `heat`, does NOT contain `Heat`), because a check for presence
+alone is satisfied by the capitalised fallback.
+
+> #### ⛔ A `cause=heat` OR `cause=cold` ROW IS NEVER AN ELDER, AND A FIXTURE MUST NOT MAKE ONE
+>
+> Elders always report `cause=age` on a lethal tile: the flat old-age term (20 %/turn) outweighs even
+> the elder-weighted temperature ceiling (15 %), so the temperature causes can only ever appear on
+> **child and worker** rows. That is pre-existing and correct — it is what stops a band burying its
+> elders from reading as a weather report — and it is **not** to be special-cased. It only matters
+> here because an elder fixture written to exercise this vocabulary would fail for a reason that has
+> nothing to do with it.

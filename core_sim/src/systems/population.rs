@@ -51,6 +51,18 @@ fn starvation_fraction(
     )
 }
 
+/// The temperature tail a tile falls outside into: its config block, how far past that tail's onset
+/// the tile sits, and the [`DeathCause`] a death from it is reported as.
+struct ActiveTemperatureTail<'a> {
+    tail: &'a DemographicsTemperatureTail,
+    /// Degrees past this tail's onset — always positive, whichever side it is.
+    excess: Scalar,
+    /// ⛔ **The one place the side of the survivable band is decided.** Both tails produce a bare
+    /// fraction and nothing downstream can tell them apart, so the cause travels *with* the tail
+    /// rather than being re-derived from the temperature by whoever needs it.
+    cause: DeathCause,
+}
+
 /// Which temperature tail a tile falls in, and how many degrees past that tail's onset it sits.
 /// `None` inside the survivable band, which is the common case and costs nothing.
 ///
@@ -62,13 +74,21 @@ fn starvation_fraction(
 fn active_temperature_tail(
     temperature: Scalar,
     demo: &DemographicsConfig,
-) -> Option<(&DemographicsTemperatureTail, Scalar)> {
+) -> Option<ActiveTemperatureTail<'_>> {
     let cold_onset = scalar_from_f32(demo.cold.onset_temp);
     let heat_onset = scalar_from_f32(demo.heat.onset_temp);
     if temperature < cold_onset {
-        Some((&demo.cold, cold_onset - temperature))
+        Some(ActiveTemperatureTail {
+            tail: &demo.cold,
+            excess: cold_onset - temperature,
+            cause: DeathCause::Cold,
+        })
     } else if temperature > heat_onset {
-        Some((&demo.heat, temperature - heat_onset))
+        Some(ActiveTemperatureTail {
+            tail: &demo.heat,
+            excess: temperature - heat_onset,
+            cause: DeathCause::Heat,
+        })
     } else {
         None
     }
@@ -84,17 +104,17 @@ fn active_temperature_tail(
 /// is supposed to bite. Capping the base rate keeps elders above children above workers at every
 /// temperature, with no special-casing anywhere.
 fn temperature_fraction(
-    tail: Option<(&DemographicsTemperatureTail, Scalar)>,
+    active: Option<&ActiveTemperatureTail<'_>>,
     vulnerability: fn(&DemographicsTemperatureTail) -> f32,
 ) -> Scalar {
-    let Some((tail, excess)) = tail else {
+    let Some(active) = active else {
         return scalar_zero();
     };
     let base = min(
-        excess * scalar_from_f32(tail.mortality_scale),
-        scalar_from_f32(tail.max_mortality),
+        active.excess * scalar_from_f32(active.tail.mortality_scale),
+        scalar_from_f32(active.tail.max_mortality),
     );
-    base * scalar_from_f32(vulnerability(tail))
+    base * scalar_from_f32(vulnerability(active.tail))
 }
 
 /// Combined per-turn death fraction for one age bracket: the **larger** of its starvation and cold
@@ -116,18 +136,30 @@ fn death_fraction(starvation: Scalar, cold: Scalar) -> Scalar {
 /// bracket that term removes this turn. Ties go to [`DeathCause::Hunger`] — a band starving *and*
 /// freezing is a food problem the player can act on.
 ///
+/// `temperature_cause` is the active tail's own cause — [`DeathCause::Cold`] below the cold onset,
+/// [`DeathCause::Heat`] above the heat one — and is `None` exactly when `temperature` is zero,
+/// inside the survivable band. It is threaded in rather than re-derived so that which side of the
+/// band a tile sits on is decided once, in [`active_temperature_tail`].
+///
 /// `age` is the flat `elder_mortality_rate`, and is `0` for every bracket but the elders: children
 /// and workers have no old-age term at all. It is passed rather than looked up so this stays the
 /// one place a cause is decided.
 ///
 /// Resolved on the turn the deaths happen, because nothing afterwards can answer it: the post-turn
 /// brackets carry no record of which term emptied them.
-fn dominant_death_cause(starvation: Scalar, cold: Scalar, age: Scalar) -> DeathCause {
+fn dominant_death_cause(
+    starvation: Scalar,
+    temperature: Scalar,
+    temperature_cause: Option<DeathCause>,
+    age: Scalar,
+) -> DeathCause {
     let mut cause = DeathCause::Hunger;
     let mut worst = starvation;
-    if cold > worst {
-        cause = DeathCause::Cold;
-        worst = cold;
+    if let Some(temperature_cause) = temperature_cause {
+        if temperature > worst {
+            cause = temperature_cause;
+            worst = temperature;
+        }
     }
     if age > worst {
         cause = DeathCause::Age;
@@ -324,6 +356,9 @@ fn advance_demographics(
     // Resolved once for the whole cohort — the tile is one temperature — then read per bracket
     // through that bracket's own vulnerability, which is where the two tails' weights come in.
     let tail = active_temperature_tail(temperature, demo);
+    // Which of `Cold` / `Heat` a temperature death on this tile is, resolved once with the tail
+    // itself. `None` inside the survivable band, where the temperature term is zero anyway.
+    let temperature_cause = tail.as_ref().map(|active| active.cause);
     // The two independent death terms for one bracket, as per-capita fractions of it. Returned as a
     // pair because both are needed twice over: to size the deaths, and to name their cause.
     let death_terms =
@@ -331,7 +366,7 @@ fn advance_demographics(
          cold_vulnerability: fn(&DemographicsTemperatureTail) -> f32| {
             (
                 starvation_fraction(deficit_fraction, starvation_rate, starvation_vulnerability),
-                temperature_fraction(tail, cold_vulnerability),
+                temperature_fraction(tail.as_ref(), cold_vulnerability),
             )
         };
     let (child_starvation, child_cold) = death_terms(scarcity.child_vulnerability, |tail| {
@@ -411,15 +446,22 @@ fn advance_demographics(
             // Old age is one of the ways an elder dies, so it rides in the same flow rather than a
             // parallel one the accumulator would have to learn about.
             elder_deaths: elder_deaths + elder_mortality,
-            child_death_cause: dominant_death_cause(child_starvation, child_cold, scalar_zero()),
+            child_death_cause: dominant_death_cause(
+                child_starvation,
+                child_cold,
+                temperature_cause,
+                scalar_zero(),
+            ),
             working_death_cause: dominant_death_cause(
                 working_starvation,
                 working_cold,
+                temperature_cause,
                 scalar_zero(),
             ),
             elder_death_cause: dominant_death_cause(
                 elder_starvation,
                 elder_cold,
+                temperature_cause,
                 elder_mortality_rate,
             ),
         },
@@ -1050,8 +1092,8 @@ mod tile_morale_pressure_tests {
 #[cfg(test)]
 mod demographics_tests {
     use super::{
-        active_temperature_tail, advance_demographics, death_fraction, starvation_fraction,
-        temperature_fraction, DemographicState, FoodFlow,
+        active_temperature_tail, advance_demographics, death_fraction, dominant_death_cause,
+        starvation_fraction, temperature_fraction, DemographicState, FoodFlow,
     };
     use crate::components::DeathCause;
     use crate::demographics_config::DemographicsConfig;
@@ -1076,16 +1118,30 @@ mod demographics_tests {
     const TODAYS_COLDEST_TILE_C: f32 = -18.5;
     const TODAYS_WARMEST_TILE_C: f32 = 31.0;
 
-    /// The tile from the playtest that forced the re-tune: a band of 23 was losing 2.7 people a turn
-    /// on it when the ramp saturated five degrees past the onset.
+    /// The tile from the original bug report (#614), which read *Temperate* on the tile card while
+    /// killing. Under the 0 ° onset it is **survivable**, which is the fix.
+    const BUG_REPORT_TILE_C: f32 = 3.73;
+
+    /// The tile from the playtest that forced the graded ramp: a band of 23 was losing 2.7 people a
+    /// turn on it when the ramp saturated five degrees past the onset.
     const PLAYTEST_TILE_C: f32 = -1.9;
+
+    /// How far past an onset the cold/heat attribution case places its two tiles. The **same**
+    /// distance on both sides, read off each tail's own onset, so the only difference between the
+    /// two cases is which side of the survivable band the tile is on. Far enough that the tail kills
+    /// a measurable share, well short of either ceiling.
+    const TAIL_EXCESS_DEGREES: f32 = 12.0;
+
+    /// A larder far past one turn's demand for a [`COHORT`]-sized band (~13.6 food), so the food
+    /// deficit is zero and the temperature term is the only thing killing.
+    const FED_LARDER_FOOD: f32 = 1_000.0;
 
     /// The shipped temperature model's per-turn kill fraction for one bracket on a tile at
     /// `temperature`, read through the same seam the sim uses.
     fn temperature_death_at(temperature: f32, vulnerability: fn(&TailCfg) -> f32) -> f32 {
         let cfg = DemographicsConfig::default();
         temperature_fraction(
-            active_temperature_tail(scalar_from_f32(temperature), &cfg),
+            active_temperature_tail(scalar_from_f32(temperature), &cfg).as_ref(),
             vulnerability,
         )
         .to_f32()
@@ -1337,10 +1393,10 @@ mod demographics_tests {
     }
 
     /// ⛔ **THE COLD RAMP IS GRADED, NOT BINARY.** At the old tuning the ceiling arrived five
-    /// degrees past the 6.0 ° onset, so essentially every cold tile killed at the maximum and a band
-    /// of 23 on the −1.9 ° playtest tile lost 2.7 people a turn. The rate now climbs one thin slice
-    /// per degree all the way to the calibration extreme, so distinct cold ground kills distinctly
-    /// across every temperature a band can stand on.
+    /// degrees past the then-6.0 ° onset, so essentially every cold tile killed at the maximum and a
+    /// band of 23 on the −1.9 ° playtest tile lost 2.7 people a turn. The rate now climbs one thin
+    /// slice per degree all the way to the calibration extreme, so distinct cold ground kills
+    /// distinctly across every temperature a band can stand on.
     #[test]
     fn the_cold_ramp_grades_across_every_temperature_a_band_can_stand_on() {
         let cfg = DemographicsConfig::default();
@@ -1351,11 +1407,11 @@ mod demographics_tests {
         );
         // Tile → the base rate the shipped calibration prices it at.
         for (temperature, expected) in [
-            (3.0, 0.00477),
-            (PLAYTEST_TILE_C, 0.012561),
-            (-10.0, 0.02544),
-            (TODAYS_COLDEST_TILE_C, 0.038955),
-            (-40.0, 0.07314),
+            (PLAYTEST_TILE_C, 0.003325),
+            (-10.0, 0.0175),
+            (TODAYS_COLDEST_TILE_C, 0.032375),
+            (-40.0, 0.07),
+            (CALIBRATION_COLD_EXTREME_C, 0.09975),
         ] {
             let rate = base_rate_at(temperature);
             assert!(
@@ -1474,8 +1530,8 @@ mod demographics_tests {
     /// workers, 12.5 % for children, 15 % for elders.
     ///
     /// The other ordering was tried and rejected, and this case is what would catch a silent revert
-    /// to it. Clamping after the multiplier saturates elders at −36 ° and children at −44.5 °, so
-    /// from −44.5 ° down every bracket lands on exactly the same number and the age ordering vanishes
+    /// to it. Clamping after the multiplier saturates elders at −38.1 ° and children at −45.7 °, so
+    /// from −45.7 ° down every bracket lands on exactly the same number and the age ordering vanishes
     /// in the coldest ground on the map — the one place it is supposed to bite hardest.
     #[test]
     fn the_ceiling_caps_the_tiles_base_rate_and_the_brackets_stay_ordered_past_it() {
@@ -1553,10 +1609,10 @@ mod demographics_tests {
     fn hunger_and_cold_can_name_different_causes_in_the_same_band() {
         let cfg = DemographicsConfig::default();
         // A deficit chosen to sit between the two brackets' crossover points: on today's coldest
-        // tile the worker term is 3.90 % and the child term 4.87 %, so against `starvation_mortality`
-        // 0.2 the workers tip to cold below a 19.5 % deficit while the children tip to hunger above a
-        // 16.2 % one. Anywhere in that window one band reports two different causes.
-        const DEFICIT_FRACTION: f32 = 0.18;
+        // tile the worker term is 3.24 % and the child term 4.05 %, so against `starvation_mortality`
+        // 0.2 the workers tip to cold below a 16.2 % deficit while the children tip to hunger above a
+        // 13.5 % one. Anywhere in that window one band reports two different causes.
+        const DEFICIT_FRACTION: f32 = 0.15;
         let opening = shipped_cohort(0.0);
         let demand = super::food_demand(
             opening.children,
@@ -1586,6 +1642,134 @@ mod demographics_tests {
             flows.child_death_cause,
             DeathCause::Hunger,
             "the children are hungrier than they are cold at the same deficit"
+        );
+    }
+
+    /// ⛔ **THE TWO TAILS ARE TWO DIFFERENT DEATHS.** Freezing and baking share one arithmetic term,
+    /// so a fraction alone cannot say which happened — before `DeathCause::Heat` existed, a band
+    /// dying on 45 ° ground reported `cause=cold` and the feed read "died of heat" as "died of cold".
+    ///
+    /// The two cases differ in **nothing but which side of the survivable band the tile sits on**:
+    /// same cohort, same full larder, the same [`TAIL_EXCESS_DEGREES`] past each onset. Any
+    /// re-derivation of the side that gets the comparison backwards fails here and nowhere else.
+    #[test]
+    fn the_same_distance_past_each_onset_names_cold_one_way_and_heat_the_other() {
+        let cfg = DemographicsConfig::default();
+        let start = shipped_cohort(FED_LARDER_FOOD);
+        let flows_at = |temperature: f32| {
+            advance_demographics(
+                start,
+                None,
+                scalar_from_f32(temperature),
+                scalar_from_u32(NO_CAP),
+                &cfg,
+            )
+            .flows
+        };
+
+        let freezing = flows_at(cfg.cold.onset_temp - TAIL_EXCESS_DEGREES);
+        let baking = flows_at(cfg.heat.onset_temp + TAIL_EXCESS_DEGREES);
+        for (flows, expected, ground) in [
+            (&freezing, DeathCause::Cold, "below the cold onset"),
+            (&baking, DeathCause::Heat, "above the heat onset"),
+        ] {
+            assert_eq!(
+                flows.working_death_cause,
+                expected,
+                "a fed worker dying {ground} died of {}",
+                expected.as_str()
+            );
+            assert_eq!(
+                flows.child_death_cause,
+                expected,
+                "a fed child dying {ground} died of {}",
+                expected.as_str()
+            );
+            // The elders' flat `elder_mortality_rate` outweighs either tail at this distance, and
+            // says so — the tail identity must not have displaced the old-age term.
+            assert_eq!(
+                flows.elder_death_cause,
+                DeathCause::Age,
+                "old age still outweighs the temperature term {ground}"
+            );
+        }
+        // Both tails actually killed somebody — a pair of zero-death turns would agree on any cause.
+        assert!(
+            freezing.working_deaths > scalar_zero() && baking.working_deaths > scalar_zero(),
+            "neither case is a live test if nobody died: {} / {}",
+            freezing.working_deaths.to_f32(),
+            baking.working_deaths.to_f32()
+        );
+    }
+
+    /// **Ties go to `Hunger`, on both tails.** A band starving *and* freezing is a food problem the
+    /// player can act on, and the tail's identity is the row's business only when the tail strictly
+    /// wins. Old age is the same: it takes the row only when it beats both.
+    #[test]
+    fn a_tie_between_hunger_and_either_tail_still_reports_hunger() {
+        let both = scalar_from_f32(0.05);
+        let hair = scalar_from_f32(0.01);
+        for cause in [DeathCause::Cold, DeathCause::Heat] {
+            assert_eq!(
+                dominant_death_cause(both, both, Some(cause), scalar_zero()),
+                DeathCause::Hunger,
+                "a tie against the {} tail belongs to hunger",
+                cause.as_str()
+            );
+            assert_eq!(
+                dominant_death_cause(both, both, Some(cause), both),
+                DeathCause::Hunger,
+                "a three-way tie including old age still belongs to hunger"
+            );
+            // …but a tail that strictly wins is named as itself, not as its sibling.
+            assert_eq!(
+                dominant_death_cause(both, both + hair, Some(cause), scalar_zero()),
+                cause,
+                "the winning tail names the death"
+            );
+        }
+    }
+
+    /// ⛔ **THE SURVIVABLE BAND IS SURVIVABLE END TO END.** Between the two onsets the temperature
+    /// term is exactly zero — not small, zero — so a fed band on temperate ground buries nobody but
+    /// its elders. Issue #614 was opened because the 6 ° cold onset cut three degrees off the bottom
+    /// of the *Temperate* climate band, so a tile the card labelled temperate was killing; the
+    /// [`BUG_REPORT_TILE_C`] tile from that report is no longer lethal, and that is the fix.
+    #[test]
+    fn nothing_between_the_two_onsets_costs_a_single_temperature_death() {
+        let cfg = DemographicsConfig::default();
+        for temperature in [
+            cfg.cold.onset_temp,
+            BUG_REPORT_TILE_C,
+            MILD_TEMP,
+            TODAYS_WARMEST_TILE_C,
+            cfg.heat.onset_temp,
+        ] {
+            assert_eq!(
+                base_rate_at(temperature),
+                0.0,
+                "a {temperature} ° tile is inside the survivable band and must be free"
+            );
+        }
+        // And it reaches the shipped turn: a fed cohort on the bug report's tile loses nobody from
+        // the two brackets without an old-age term.
+        let flows = advance_demographics(
+            shipped_cohort(FED_LARDER_FOOD),
+            None,
+            scalar_from_f32(BUG_REPORT_TILE_C),
+            scalar_from_u32(NO_CAP),
+            &cfg,
+        )
+        .flows;
+        assert_eq!(
+            flows.child_deaths,
+            scalar_zero(),
+            "no child dies of a temperate turn on a full larder"
+        );
+        assert_eq!(
+            flows.working_deaths,
+            scalar_zero(),
+            "no worker dies of a temperate turn on a full larder"
         );
     }
 

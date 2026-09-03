@@ -37,8 +37,8 @@
     "elder_vulnerability": 1.5
   },
   "cold": {
-    "onset_temp": 6.0,
-    "mortality_scale": 0.00159,
+    "onset_temp": 0.0,
+    "mortality_scale": 0.00175,
     "max_mortality": 0.1,
     "child_vulnerability": 1.25,
     "working_vulnerability": 1.0,
