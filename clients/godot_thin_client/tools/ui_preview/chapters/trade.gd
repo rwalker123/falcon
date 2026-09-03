@@ -126,8 +126,13 @@ const PARTY_CARGO_BONE := 1.2
 ## The band's Food line under a transfer (arc #527). `balance_supply_networks` has moved food between
 ## neighbouring larders every turn since turn one, so these two terms are not a trade feature: a band
 ## co-networked with a neighbour has both, and before them the Food line was short by the whole move.
-const TRANSFER_RECEIVED := 1.4
-const TRANSFER_SENT := 0.5
+##
+## **EACH CROSSES A DIFFERENT KIND OF LINK, because the row names the link and not the direction**
+## (issue #548): the arrival came over the automatic `Local exchange`, the departure went down a
+## `Trade route` with a party — which is this chapter's own subject. Two kinds rather than two
+## directions of one kind is what keeps them TWO rows, since a kind is netted into one.
+const TRANSFER_LOCAL_IN := 1.4
+const TRANSFER_ROUTE_OUT := 0.5
 
 func run(harness) -> void:
 	h = harness
@@ -264,14 +269,18 @@ func run(harness) -> void:
 	h._hud._bandpanel._close_party_compose()
 	panel.set_active_tab(BandCityPanel.ZONE_BAND)
 	var transferring := _shipper_band()
-	# **A TURN'S OWN FRAME, so both pairs carry the same two magnitudes** — which is what the sim
-	# publishes there, the per-turn copy being taken off the accumulator immediately before the turn's
-	# capture. The rows read the per-turn pair; the accumulating one rides along because it is what
-	# closes the larder identity, and a fixture that omitted it would not be the live shape.
-	transferring["transfer_received"] = TRANSFER_RECEIVED
-	transferring["transfer_sent"] = TRANSFER_SENT
-	transferring["transfer_received_turn"] = TRANSFER_RECEIVED
-	transferring["transfer_sent_turn"] = TRANSFER_SENT
+	# **A TURN'S OWN FRAME, so every one of these figures carries the same two magnitudes** — which is
+	# what the sim publishes there, the per-turn copies being taken off the accumulators immediately
+	# before the turn's capture. **The ROWS read the two LINK-KIND terms**; the summed per-turn pair
+	# rides along because `DetailFormat.band_has_food_flow` gates the whole readout on it, and the
+	# accumulating pair because it is what closes the larder identity — a fixture omitting either
+	# would not be the live shape `population_to_dict` decodes.
+	transferring["transfer_received"] = TRANSFER_LOCAL_IN
+	transferring["transfer_sent"] = TRANSFER_ROUTE_OUT
+	transferring["transfer_received_turn"] = TRANSFER_LOCAL_IN
+	transferring["transfer_sent_turn"] = TRANSFER_ROUTE_OUT
+	transferring[DetailFormat.TRANSFER_LOCAL_RECEIVED_TURN_KEY] = TRANSFER_LOCAL_IN
+	transferring[DetailFormat.TRANSFER_ROUTE_SENT_TURN_KEY] = TRANSFER_ROUTE_OUT
 	h._hud.update_band_alerts([transferring, _neighbour_band()])
 	h._hud.show_unit_selection(transferring)
 	await h._settle()
@@ -283,19 +292,24 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("trade_food_transfers")
 	var breakdown := _collect_text(h)
-	h._assert_hud("the Food breakdown itemizes what arrived from other bands",
-		breakdown.contains(DetailFormat.FOOD_LABEL_TRANSFER_RECEIVED))
-	h._assert_hud("…and what left for them, as its own row",
-		breakdown.contains(DetailFormat.FOOD_LABEL_TRANSFER_SENT))
+	var local_in_row := DetailFormat.food_breakdown_row(TRANSFER_LOCAL_IN,
+		DetailFormat.TRANSFER_LABEL_LOCAL)
+	var route_out_row := DetailFormat.food_breakdown_row(-TRANSFER_ROUTE_OUT,
+		DetailFormat.TRANSFER_LABEL_ROUTE)
+	h._assert_hud("the Food breakdown itemizes what arrived over the local exchange (%s)"
+		% local_in_row.strip_edges(), breakdown.contains(local_in_row))
+	h._assert_hud("…and what left down a trade route, as its own row (%s)"
+		% route_out_row.strip_edges(), breakdown.contains(route_out_row))
 	_click_food_breakdown()
 	await h._settle()
 
 	# **THE COMMAND-REFRESHED FRAME (issue #517), PNG-LESS — the same band, the same two rows, on the
 	# frame a dispatched command re-captured.** The sim clears `transferReceived` / `transferSent`
 	# straight after the turn's capture reads them and rebuilds a refreshed frame from live
-	# components, so on this frame the ACCUMULATING pair is 0 and the per-turn pair is untouched. A
-	# breakdown reading the accumulator loses both rows the instant the player does anything, which is
-	# what a live game showed on a real 0.56 transfer.
+	# components, so on this frame the ACCUMULATING pair is 0 and every per-turn figure — the summed
+	# pair and the four link-kind terms alike — is untouched. A breakdown reading the accumulator
+	# loses both rows the instant the player does anything, which is what a live game showed on a real
+	# 0.56 transfer.
 	#
 	# **A FRAME CANNOT SAY THIS** — the two states differ only in which field the rows were read from,
 	# and the state that is wrong renders no rows at all rather than wrong ones. It is also asserted
@@ -311,10 +325,10 @@ func run(harness) -> void:
 	_click_food_breakdown()
 	await h._settle()
 	var refreshed_breakdown := _collect_text(h)
-	h._assert_hud("a command-refreshed frame still itemizes what arrived from other bands",
-		refreshed_breakdown.contains(DetailFormat.FOOD_LABEL_TRANSFER_RECEIVED))
-	h._assert_hud("…and what left for them, the accumulating pair having been cleared",
-		refreshed_breakdown.contains(DetailFormat.FOOD_LABEL_TRANSFER_SENT))
+	h._assert_hud("a command-refreshed frame still itemizes the local exchange",
+		refreshed_breakdown.contains(local_in_row))
+	h._assert_hud("…and the trade route, the accumulating pair having been cleared",
+		refreshed_breakdown.contains(route_out_row))
 	_click_food_breakdown()
 	await h._settle()
 

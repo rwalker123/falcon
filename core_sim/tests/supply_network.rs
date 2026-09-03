@@ -18,11 +18,12 @@ use bevy::MinimalPlugins;
 use core_sim::{
     balance_supply_networks, scalar_from_f32, scalar_zero, spawn_initial_world, BandId, BandKey,
     ConnectionKey, ConnectionLedger, ConnectionsConfig, CultureManager, DiscoveryProgressLedger,
-    FactionId, FactionInventory, GenerationId, GenerationRegistry, LocalStore, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar, SimulationConfig,
-    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, SupplyNetworkConfigHandle,
-    SupplyNetworkMembership, Tile, TileRegistry, FOOD, FULL_TIE, NO_TIE,
+    FactionId, FactionInventory, GenerationId, GenerationRegistry, LaborAllocation, LocalStore,
+    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    SupplyNetworkConfigHandle, SupplyNetworkMembership, Tile, TileRegistry, TransferLedger, FODDER,
+    FOOD, FULL_TIE, NO_TIE,
 };
 
 /// A distinct faction for the test bands so they never network with the spawned starting bands —
@@ -121,8 +122,8 @@ fn spawn_band_of(app: &mut App, x: u32, y: u32, food: i64, faction: FactionId) -
                 stores,
                 morale: scalar_zero(),
                 last_food_consumption: 0.0,
-                last_turn_transfer_received: 0.0,
-                last_turn_transfer_sent: 0.0,
+                last_turn_food_transfers: Default::default(),
+                last_turn_fodder_transfers: Default::default(),
                 last_morale_delta: scalar_zero(),
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
@@ -791,4 +792,130 @@ fn a_connected_network_moves_exactly_what_the_proximity_network_moved() {
         membership.network_of(poor),
         "a chain of ties makes one network, not two pairs"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// WHAT MOVED IT: the ledger this pass writes, on both accounts
+// ---------------------------------------------------------------------------------------------
+
+/// Hay a band opens with, so one camp is plainly the source and the other plainly the sink.
+const FED_HAY: f32 = 600.0;
+/// The food the same pair opens with, in the same shape.
+const FED_FOOD: i64 = 900;
+const EMPTY: i64 = 0;
+/// `f32` sums of `Scalar`-quantised moves; a few ULPs of slack, no more.
+const LEDGER_EPSILON: f32 = 1e-3;
+
+/// Give a band the labor allocation the transfer ledgers ride on. A band without one is not skipped
+/// by the balancer — it simply has nowhere to book the crossing — so every fixture that asserts on
+/// the ledger has to attach it.
+fn attach_allocation(app: &mut App, band: Entity) {
+    app.world
+        .entity_mut(band)
+        .insert(LaborAllocation::default());
+}
+
+/// Stock a band's `FODDER` store, the account this pass has always pooled and never counted.
+fn stock_hay(app: &mut App, band: Entity, hay: f32) {
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band exists")
+        .stores
+        .set(FODDER, scalar_from_f32(hay));
+}
+
+fn hay_of(app: &App, band: Entity) -> f32 {
+    app.world
+        .get::<PopulationCohort>(band)
+        .map(|c| c.stores.get(FODDER).to_f32())
+        .unwrap_or(0.0)
+}
+
+/// The band's two transfer ledgers, `(food, fodder)`.
+fn ledgers_of(app: &App, band: Entity) -> (TransferLedger, TransferLedger) {
+    let allocation = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the fixture attached an allocation");
+    (
+        allocation.last_food_transfers,
+        allocation.last_fodder_transfers,
+    )
+}
+
+/// ⛔ **POOLING IS THE `local` ARM, AND IT COUNTS HAY WHERE IT COUNTS GRAIN.**
+///
+/// The balancer walks a band's whole store, so `FODDER` has always pooled exactly as `FOOD` does —
+/// and until issue #548 only the food half was booked, which is why a receiving band's hay rose with
+/// nothing in the fodder account to say where it had come from.
+///
+/// One pass, two accounts, and the arms asserted **both ways**: the `local` arm carries the whole
+/// move on each side, and the `route` arm is untouched, because nobody carried anything anywhere.
+/// The magnitudes are pinned against the stores' own change rather than against a constant, so a
+/// booking that counted the wrong side or double-counted fails on the comparison and not on a
+/// baseline.
+#[test]
+fn pooling_books_both_accounts_on_the_local_arm() {
+    let mut app = spawn_world();
+    let (w, h) = {
+        let reg = app.world.resource::<TileRegistry>();
+        (reg.width, reg.height)
+    };
+    let (cx, cy) = (w / 4, h / 2);
+    let fed = spawn_band(&mut app, cx, cy, FED_FOOD);
+    let empty = spawn_band(&mut app, cx + 2, cy, EMPTY);
+    stock_hay(&mut app, fed, FED_HAY);
+    attach_allocation(&mut app, fed);
+    attach_allocation(&mut app, empty);
+    seed_mutual_tie(&mut app, fed, empty);
+
+    let (food_before, hay_before) = (food_of(&app, fed), hay_of(&app, fed));
+
+    app.world.run_system_once(balance_supply_networks);
+
+    let food_moved = food_before - food_of(&app, fed);
+    let hay_moved = hay_before - hay_of(&app, fed);
+    assert!(
+        food_moved > LEDGER_EPSILON && hay_moved > LEDGER_EPSILON,
+        "liveness: the pass must have moved BOTH accounts (food {food_moved}, hay {hay_moved})"
+    );
+
+    let (sender_food, sender_hay) = ledgers_of(&app, fed);
+    let (receiver_food, receiver_hay) = ledgers_of(&app, empty);
+    let (food_held, hay_held) = (food_of(&app, empty), hay_of(&app, empty));
+
+    assert!(
+        (sender_food.local_sent - food_moved).abs() < LEDGER_EPSILON
+            && (receiver_food.local_received - food_held).abs() < LEDGER_EPSILON,
+        "the food that left is the food that arrived, on the local arm: sent {} vs moved \
+         {food_moved}, received {} vs held {food_held}",
+        sender_food.local_sent,
+        receiver_food.local_received,
+    );
+    assert!(
+        (sender_hay.local_sent - hay_moved).abs() < LEDGER_EPSILON
+            && (receiver_hay.local_received - hay_held).abs() < LEDGER_EPSILON,
+        "and the hay account says the same thing: sent {} vs moved {hay_moved}, received {} vs \
+         held {hay_held}",
+        sender_hay.local_sent,
+        receiver_hay.local_received,
+    );
+
+    for (label, ledger) in [
+        ("sender food", sender_food),
+        ("sender hay", sender_hay),
+        ("receiver food", receiver_food),
+        ("receiver hay", receiver_hay),
+    ] {
+        assert_eq!(
+            (ledger.route_received, ledger.route_sent),
+            (0.0, 0.0),
+            "nothing was carried, so {label}'s route arm must be untouched"
+        );
+        assert!(
+            (ledger.received() - ledger.local_received).abs() < LEDGER_EPSILON
+                && (ledger.sent() - ledger.local_sent).abs() < LEDGER_EPSILON,
+            "and the summed pair is exactly local + route for {label}"
+        );
+    }
 }

@@ -949,6 +949,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // still owes.
     let roadwork_demand = allocation.map(|a| a.last_roadwork_demand).unwrap_or(0.0);
     let roadwork_supplied = allocation.map(|a| a.last_roadwork_supplied).unwrap_or(0.0);
+    // **WHAT CROSSED BETWEEN THIS BAND AND ANOTHER THIS TURN, BOTH ACCOUNTS**, split by
+    // `TransferLink` — the per-turn ledgers `systems::publish_turn_transfers` copied onto the cohort
+    // immediately before this capture. Read here once, because three readings hang off them: the
+    // eight published figures, the summed pair a client falls back to, and the fodder runway below.
+    let food_transfers = cohort.last_turn_food_transfers;
+    let fodder_transfers = cohort.last_turn_fodder_transfers;
     let fodder_need = allocation.map(|a| a.last_fodder_need).unwrap_or(0.0);
     let fodder_income = allocation.map(|a| a.last_fodder_inflow).unwrap_or(0.0);
     // **The fodder runway, through the LARDER'S OWN function and the larder's own sentinel** — one
@@ -971,10 +977,30 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // well-fed larder publishes: no pens, an income that meets the draw, and a keeper who cannot feed
     // hay out at all are all *not limited* rather than a number of turns — the existing no-drain
     // sentinel, and deliberately not a second one to mean "cannot draw".
+    //
+    // ⛔ **THE LOCAL NET IS A TERM OF THE RATE, AND WITHOUT IT THE RUNWAY CONTRADICTED THE STORE IT
+    // COUNTS DOWN.** Hay pools between linked camps every turn (`balance_supply_networks` walks the
+    // whole store), so a band on the receiving end watched `fodderStore` RISE under a runway that
+    // said it was draining, and the sending band the reverse. Netting the crossings into the income
+    // term is what makes the forecast agree with the trajectory a player can see, in both directions
+    // — a band that sends hay away every turn empties sooner, and says so.
+    //
+    // ⛔ **LOCAL CROSSINGS COUNT; ROUTE CROSSINGS DO NOT** — [`TransferLedger::local_net`], never
+    // `received() − sent()`. **A local crossing is a RATE**: two camps within reach pool every turn
+    // for as long as they stay there, which is precisely what a forecast projects. **A route
+    // crossing is an EVENT**: a shipment arrives once, and reading one delivery as a standing
+    // per-turn rate is the mistake arc #527 refused on the food side. The distinction costs nothing
+    // today — the fodder route arms are `0` while a shipment's manifest refuses hay — and is written
+    // now so the day fodder ships for real it does not quietly start annualising deliveries.
+    //
+    // **Read off the PER-TURN ledger on the cohort**, not the allocation's accumulator: the
+    // accumulator is cleared once the turn's capture has read it, so a recapture would recompute
+    // this runway with the term missing and the number would jump on any frame a command refreshed
+    // (issue #517's defect, one field over).
     let turns_of_fodder = larder_runway_turns(
         cohort.stores.get(FODDER).to_f32(),
         allocation.map(|a| a.last_fodder_drain).unwrap_or(0.0),
-        fodder_income,
+        fodder_income + fodder_transfers.local_net(),
         &[],
     );
     // Expedition discriminators + persistence fields (empty/false for a normal band).
@@ -1285,15 +1311,19 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // them, and `0.0` for a band that has none. **These answer "what has
         // crossed since the last published frame"**, the window the ledger identity closes over, and
         // they are cleared right after this capture (`systems::reset_transfer_ledger`).
-        transfer_received: allocation.map(|a| a.last_transfer_received).unwrap_or(0.0),
-        transfer_sent: allocation.map(|a| a.last_transfer_sent).unwrap_or(0.0),
+        transfer_received: allocation
+            .map(|a| a.last_food_transfers.received())
+            .unwrap_or(0.0),
+        transfer_sent: allocation
+            .map(|a| a.last_food_transfers.sent())
+            .unwrap_or(0.0),
         // **And these answer "what crossed on this turn"** — the same two facts as per-turn state on
         // the cohort, copied there by `systems::publish_turn_transfers` just before the turn's
         // capture. A recapture rebuilds this frame from live components *after* the pair above has
         // been cleared, so it is these that survive one and these a client renders. On a turn frame
         // the two pairs read the same number.
-        transfer_received_turn: cohort.last_turn_transfer_received,
-        transfer_sent_turn: cohort.last_turn_transfer_sent,
+        transfer_received_turn: food_transfers.received(),
+        transfer_sent_turn: food_transfers.sent(),
         // **How this band splits a maintenance pool it cannot stretch** — the player's own choice
         // (`docs/plan_standing_upkeep.md` §2.5), published as the token the command takes so the two
         // are one language. A band with no allocation states the default rather than an empty
@@ -1336,6 +1366,20 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         fodder_need,
         fodder_income,
         turns_of_fodder,
+        // **WHAT MOVED THE GOODS — the same crossing, told by link kind**, for both accounts and on
+        // the per-turn basis the pair above is on. `local + route` is exactly `transfer_received` /
+        // `transfer_sent`, in each direction, because every writer books through one ledger with no
+        // third arm; a client renders these and needs no residual row.
+        transfer_local_received_turn: food_transfers.local_received,
+        transfer_local_sent_turn: food_transfers.local_sent,
+        transfer_route_received_turn: food_transfers.route_received,
+        transfer_route_sent_turn: food_transfers.route_sent,
+        // The hay account's four. The `route` arm is `0` on every frame today: a shipment's manifest
+        // refuses any cargo item that is not food or a material, so no party carries fodder.
+        fodder_transfer_local_received_turn: fodder_transfers.local_received,
+        fodder_transfer_local_sent_turn: fodder_transfers.local_sent,
+        fodder_transfer_route_received_turn: fodder_transfers.route_received,
+        fodder_transfer_route_sent_turn: fodder_transfers.route_sent,
         // **THE STANDING MATERIAL BILL** — the two rates and the stock, on the hay ledger's own
         // rule: the sim sums it and the client renders. See `LaborAllocation::last_material_need`
         // for why a client cannot sum the need itself.
@@ -1619,8 +1663,8 @@ mod tests {
             stores,
             morale: scalar_one(),
             last_food_consumption: 0.0,
-            last_turn_transfer_received: 0.0,
-            last_turn_transfer_sent: 0.0,
+            last_turn_food_transfers: Default::default(),
+            last_turn_fodder_transfers: Default::default(),
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),

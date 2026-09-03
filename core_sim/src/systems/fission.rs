@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use crate::components::{
     available_workers, BandEquipment, BandId, DemographicFlowAccumulator, LaborAllocation,
     LocalStore, MoraleCause, MoraleContributions, PopulationCohort, ResidentBand, StartingUnit,
-    Tile,
+    Tile, TransferLedger, TransferLink,
 };
 use crate::culture::CultureManager;
 use crate::expedition_config::SettleConfig;
@@ -272,8 +272,8 @@ pub fn split_band_from_parent(
     // The dowry is booked on the *allocation's* accumulator below, which is what the next turn
     // capture copies here; carrying the parent's published pair over would have the new band open by
     // reporting a transfer it was not party to.
-    child.last_turn_transfer_received = 0.0;
-    child.last_turn_transfer_sent = 0.0;
+    child.last_turn_food_transfers = TransferLedger::default();
+    child.last_turn_fodder_transfers = TransferLedger::default();
     child.last_morale_delta = scalar_zero();
     child.last_morale_cause = MoraleCause::default();
     child.last_morale_contributions = MoraleContributions::default();
@@ -303,15 +303,21 @@ pub fn split_band_from_parent(
     // command applied *between* two captures, so the parent publishes a frame whose larder fell by
     // the share it handed over — food that passed through neither `food_income` nor
     // `food_consumption`. Without this the published identity
-    // (`LaborAllocation::last_transfer_received`) is simply false on the turn a band splits, short
+    // (`LaborAllocation::last_food_transfers`) is simply false on the turn a band splits, short
     // by exactly the provisions.
     //
-    // **FOOD only**, and the same pair of terms `balance_supply_networks` and a trade shipment use:
+    // **FOOD only**, and the same ledger `balance_supply_networks` and a trade shipment write:
     // the identity is the food one, and materials deliberately have no identity of their own.
+    //
+    // **The link is [`TransferLink::Local`]**: a splinter is camped where its parent is and nothing
+    // carried the dowry anywhere — the same *standing together* crossing supply-network pooling is,
+    // and not the [`TransferLink::Route`] a party's pack takes.
     if provisions > scalar_zero() {
         if let Some(mut allocation) = world.get_mut::<LaborAllocation>(parent) {
             // Added, never assigned — a band can split, ship and balance inside one snapshot window.
-            allocation.last_transfer_sent += provisions.to_f32();
+            allocation
+                .last_food_transfers
+                .debit(TransferLink::Local, provisions.to_f32());
         }
     }
 
@@ -329,6 +335,11 @@ pub fn split_band_from_parent(
         .cloned()
         .unwrap_or_else(|| StartingUnit::new("band".to_string(), Vec::new()));
 
+    // The receiving half of the dowry, on the same [`TransferLink::Local`] arm the parent's debit
+    // took — the two ends of one crossing, so a reader summing the faction's arms sees them cancel.
+    let mut dowry_received = TransferLedger::default();
+    dowry_received.credit(TransferLink::Local, provisions.to_f32());
+
     let band = world.resource_mut::<BandIdAllocator>().allocate();
     let child_entity = world
         .spawn((
@@ -340,10 +351,10 @@ pub fn split_band_from_parent(
             DemographicFlowAccumulator::default(),
             // Labor assignments are the parent's intent about the parent's sources; the new band
             // starts idle and the player staffs it. The **receiving** half of the food ledger's
-            // transfer pair opens on it, though: the dowry is food that crossed between larders, and
+            // transfer terms opens on it, though: the dowry is food that crossed between larders, and
             // the new band's first published frame is the one that has to account for it.
             LaborAllocation {
-                last_transfer_received: provisions.to_f32(),
+                last_food_transfers: dowry_received,
                 ..LaborAllocation::default()
             },
             equipment,

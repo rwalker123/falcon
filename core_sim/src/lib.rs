@@ -117,8 +117,9 @@ pub use components::{
     Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
     MaterialBatch, MaterialDraw, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
     ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
-    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, YieldRange,
-    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
+    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferLedger,
+    TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY,
+    NO_RAID_FLOOR, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -390,10 +391,11 @@ pub use systems::{
     advance_predator_raids, advance_tick, bench_material_rate, bench_tiers, bill_and_stock_roads,
     denial_forecast, expedition_returned_event, expedition_take_provisions, fold_party_into_band,
     hunt_per_worker_provisions, hunt_report_event, hunt_take, hunt_trip_forecast,
-    output_multiplier, party_owes_a_report, settle_bands_roadwork, simulate_power,
-    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
-    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
-    PowerSimParams, SplitBand, SplitRefusal, SplitRefusals, TradeDiffusionEvent,
+    output_multiplier, party_owes_a_report, publish_turn_transfers, settle_bands_roadwork,
+    simulate_power, source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers,
+    DenialForecast, DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast,
+    MigrationKnowledgeEvent, PowerSimParams, SplitBand, SplitRefusal, SplitRefusals,
+    TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,

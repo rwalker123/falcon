@@ -2259,3 +2259,58 @@ this arc's cross-ref put those keys in.
 good in DANGER ink. Those renderers were correct all along — only the cross-ref feeding them was
 missing, which is why the fix moved no frame: a clean run is **1614 `PASS`, exit 0**, five more than
 before with the same frame set.
+
+## `chapters/supply_network.gd` — which link the goods crossed (issue #548)
+
+**Appended LAST in `CHAPTERS`**, after `knowledge_panel`, so no existing frame moves. Four frames and
+sixteen assertions (`EXPECTED_CHECKPOINTS` **20** — frames count too; COUNTED off the source, `16 +
+4`, because the guard only fails on `reached < expected` and a const set above the truth is the one
+error it cannot catch). It
+ends by handing the reference band back, so a chapter appended after it starts where every other one
+does. The behaviour is `band-readouts.md`'s; what belongs here is the shape of the fixtures and of the
+drive.
+
+**THE PAYLOAD IS ON THE WIRE** — all eight keys are published and decoded (`band-readouts.md` → "The
+fallback, and what is on the wire"), so these frames photograph the shipped readout rather than a
+proposal. The chapter began as a UX prototype rendered for review before the sim half existed, which
+is why its fixtures stage the dict keys directly rather than driving a snapshot; the assertions are
+what stop the states being four plausible pictures.
+
+| frame | what only IT can say |
+|---|---|
+| `supply_quiet` | **the negative case** — a camp where nothing crossed either link carries its ordinary flows and NOT ONE transfer row, on EITHER account. Claimed on the `⇄` glyph rather than the two labels, so a row naming some third link kind cannot slip past |
+| `supply_food_links` | both kinds as their own rows among `Gathered` / `Hunted` / `Consumed`, and the breakdown is rows ONLY — no sentence, no footer, no radius |
+| `supply_food_route_both_ways` | both directions on one link netted into **ONE** `⇄ Trade route +1.00` row, with BOTH gross figures asserted absent — plus, PNG-less, the consequence of netting: a kind whose arrivals and departures cancel exactly renders no row |
+| `supply_fodder_links` | the Fodder popover keeps `Grown` / `Pens` and gains the identical pair at its own one-decimal resolution — held beside `supply_food_links`, which is the consistency proof |
+
+**THE CONSISTENCY CLAIM IS MECHANICAL, not two frames side by side.** `_transfer_phrases` strips both
+ledgers' rows to the `⇄` phrase, dedupes and sorts, and compares the ARRAYS: if one account ever
+re-words the link the other states, that fails. A pair of pictures cannot say it, and two accounts
+wording one event two ways is a defect this readout has already been rejected for once.
+
+⛔ **AND `_prose_lines` IS THE GUARD AGAINST THE OTHER REJECTION.** Every breakdown row carries the
+shared indent, so any produced line that does NOT is a sentence, a footer or a paragraph. Two earlier
+cuts explained themselves in prose and were rejected for it; prose is invisible to a `contains` test
+for row text, so the claim is made over the line SHAPE instead.
+
+**THE FIXTURE MOVES HAY DIFFERENTLY FROM GRAIN, DELIBERATELY** — same turn, same two links, different
+amounts and one different direction. A ledger reading the other account's figures then fails here
+instead of looking plausible on every frame.
+
+⛔ **THERE IS NO LEGACY PATH LEFT TO ASSERT.** The chapter briefly stripped the four food keys off its
+own fixture to claim the generic `From other bands` / `To other bands` pair still rendered. That
+fallback is gone: `population_to_dict` inserts all eight keys **unconditionally**, so no server can
+send a cohort without them and the state was a photograph of something unreachable. The negative case
+is `supply_quiet` instead — every link term present and zero, which is the shape the decoder actually
+produces.
+
+**ONE frame outside this chapter moved: `trade_food_transfers`.** `chapters/trade.gd`'s four
+assertions used to read `DetailFormat.FOOD_LABEL_TRANSFER_RECEIVED` / `_SENT`, and those constants no
+longer exist — the fixture now stages the link-kind keys and the frame reads `⇄ Local exchange` /
+`⇄ Trade route`. It had been green only because its fixture set the generic pair alone, which is the
+trap: **a frame whose fixture is the last producer of a state can go on passing after the state
+becomes unreachable**, and it then guards nothing while looking like coverage.
+
+**A clean run is 396 frames / 1761 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+last figure recorded above was `370 / 1594`; the gap is drift accumulated un-recorded, exactly as it
+has been every previous time. Measure; do not sum.
