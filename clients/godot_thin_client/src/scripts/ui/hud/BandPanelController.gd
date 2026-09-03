@@ -432,6 +432,10 @@ const FACTION_ZONE_LAYOUT: Array[Dictionary] = [
 ## row's identity has to be distinguishable from every material batch key, and the batch keys are
 ## built out of a material id plus its ratings.
 const TRADE_FOOD_ROW_KEY := "cargo:food"
+## The HAY row's key, the food row's twin (issue #590). A SECOND commodity handle rather than a
+## second use of the food one: the two accounts never convert, so the sheet remembers a loaded
+## quantity of each and `_set_cargo_amount` tells them apart by exactly this key.
+const TRADE_FODDER_ROW_KEY := "cargo:fodder"
 ## What joins a batch key's parts. `|` because neither a material id nor a rating band name contains
 ## one, so two different piles can never key to one string.
 const TRADE_BATCH_KEY_SEPARATOR := "|"
@@ -452,6 +456,11 @@ var _split_workers: int = 1
 var _trade_destination_band: int = HudConst.NO_BAND_ID
 ## How much FOOD the manifest carries. One number, because the larder is one commodity.
 var _trade_food: float = 0.0
+## How much HAY the manifest carries (issue #590) — the food twin, and a SEPARATE number for the
+## reason the two are separate accounts: fodder feeds a herd and food feeds people, they never
+## convert, and a single figure covering both would be the retired trade-goods scalar under a new
+## name. Cleared with the rest of the manifest by `_clear_trade_manifest`.
+var _trade_fodder: float = 0.0
 ## How much of each MATERIAL BATCH the manifest carries: `batch key -> amount`, where the key
 ## identifies a pile of one material AT ONE RATING (`_trade_batch_key`). Keyed per BATCH rather than
 ## per material because that is what the band actually holds — the sim's store is a `BTreeMap` of
@@ -7544,8 +7553,8 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
 ## **THE MASS METER IS A COURTESY, NOT THE AUTHORITY.** `send_trade_expedition` refuses an over-cap
 ## manifest and its refusal names both numbers; this meter exists so the player never meets it. Both
 ## terms come off the wire (`expedition_trade_per_worker_carry`,
-## `expedition_trade_material_carry_weight`) — a lever typed here would be one config edit from a
-## meter that disagrees with the refusal it exists to prevent.
+## `expedition_trade_fodder_carry_weight`, `expedition_trade_material_carry_weight`) — a lever typed
+## here would be one config edit from a meter that disagrees with the refusal it exists to prevent.
 func _fill_trade_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int) -> void:
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
     var ties := _band_labor.connections_for_band(band_id)
@@ -7724,8 +7733,18 @@ func _connection_subject_label(tie: Dictionary) -> String:
     return HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_LABEL_FORMAT % [
         int(tie.get("last_seen_x", -1)), int(tie.get("last_seen_y", -1))]
 
-## **THE MANIFEST'S ROWS, ONE PER THING THE BAND ACTUALLY HOLDS** — the food larder as one row (one
-## commodity), then one row per MATERIAL BATCH, which is one pile of one material AT ONE RATING.
+## **THE MANIFEST'S ROWS, ONE PER THING THE BAND ACTUALLY HOLDS** — the food larder as one row and the
+## fodder larder as another (two commodities, two rows), then one row per MATERIAL BATCH, which is one
+## pile of one material AT ONE RATING.
+##
+## **FOOD AND HAY ARE TWO ROWS AND NEVER ONE** (issue #590). They are separate larders that never
+## convert — a herd must not be able to eat its keepers' bread — so they are composed separately, sent
+## as separate command tokens and landed in separate stores. The only thing they share is PACK SPACE,
+## which `_trade_manifest_mass` prices; nothing here totals them.
+##
+## Each row is present only when the band HOLDS the thing, on that account's own flow floor
+## (`FOOD_FLOW_MIN` / `FODDER_FLOW_MIN` — hay is quoted on a ~25x coarser scale than food, so the two
+## floors are genuinely different questions). An absent store is an absent row, never a row at zero.
 ##
 ## **A BATCH IS NEVER MERGED WITH ANOTHER OF THE SAME MATERIAL.** A mammoth hide and a hare pelt are
 ## both `hide`; a row that summed them would offer the player a quantity of something that does not
@@ -7741,6 +7760,16 @@ func _trade_cargo_rows(band: Dictionary) -> Array:
             "label": HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
             "held": held_food,
             "amount": minf(_trade_food, held_food),
+        })
+    var held_fodder := DetailFormat.band_fodder_store(band)
+    if held_fodder >= SourceForecast.FODDER_FLOW_MIN:
+        rows.append({
+            "key": TRADE_FODDER_ROW_KEY,
+            "is_material": false,
+            "id": HudConst.CARGO_ITEM_FODDER,
+            "label": HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL,
+            "held": held_fodder,
+            "amount": minf(_trade_fodder, held_fodder),
         })
     for batch_variant in band.get(HudCraftingVocab.BAND_MATERIAL_BATCHES_KEY, []):
         if not (batch_variant is Dictionary):
@@ -7847,12 +7876,20 @@ func _build_cargo_row(row: Dictionary) -> HBoxContainer:
     line.add_child(plus)
     return line
 
-## Load `amount` of one row, clamped to what the band holds. The food row is one commodity and so one
-## number; every material row is remembered under its own batch key.
+## Load `amount` of one row, clamped to what the band holds. Each COMMODITY row is one larder and so
+## one number, remembered under its own field; every material row is remembered under its own batch
+## key.
+##
+## **THE COMMODITY ROWS ARE TOLD APART BY THEIR ROW KEY, NOT BY `is_material`.** That flag answers
+## "batch or larder", which stopped being the whole question when hay joined food as a second larder
+## (issue #590) — an `else` branch that assumed the one commodity was food would silently pour a hay
+## press into the food figure.
 func _set_cargo_amount(key: String, is_material: bool, amount: float, held: float) -> void:
     var loaded := clampf(amount, 0.0, held)
     if is_material:
         _trade_materials[key] = loaded
+    elif key == TRADE_FODDER_ROW_KEY:
+        _trade_fodder = loaded
     else:
         _trade_food = loaded
     rerender()
@@ -7860,19 +7897,28 @@ func _set_cargo_amount(key: String, is_material: bool, amount: float, held: floa
 ## What the composed manifest weighs, through the ONE shared expression
 ## (`DetailFormat.shipment_mass`) — the in-flight `Carrying:` row prices the same pack with it, so the
 ## meter a player sends against and the row they watch afterwards cannot disagree. This half only
-## splits the sheet's mixed row list into the two accounts that expression takes.
+## splits the sheet's mixed row list into the three accounts that expression takes.
+##
+## **THE SPLIT IS BY ROW KEY, and the hay term is not optional** (issue #590): a manifest with a bale
+## in it priced without `expedition_trade_fodder_carry_weight` reads LIGHTER than the sim will weigh
+## it, so the meter clears a load the server then refuses — the exact failure the material lever
+## ships to prevent, one account over.
 func _trade_manifest_mass(band: Dictionary, rows: Array) -> float:
     var food := 0.0
+    var fodder := 0.0
     var material_total := 0.0
     for row_variant in rows:
         var row: Dictionary = row_variant as Dictionary
         var amount := float(row.get("amount", 0.0))
         if bool(row.get("is_material", false)):
             material_total += amount
+        elif String(row.get("key", "")) == TRADE_FODDER_ROW_KEY:
+            fodder += amount
         else:
             food += amount
-    return DetailFormat.shipment_mass(food, material_total,
-        float(band.get("expedition_trade_material_carry_weight", 0.0)))
+    return DetailFormat.shipment_mass(food,
+        fodder, float(band.get("expedition_trade_fodder_carry_weight", 0.0)),
+        material_total, float(band.get("expedition_trade_material_carry_weight", 0.0)))
 
 ## `party_workers × expedition_trade_per_worker_carry` — the SHIPMENT pack, never the hunt one. A band
 ## publishing no lever answers 0, which the meter renders as an unknown ceiling rather than as a cap
@@ -7899,6 +7945,11 @@ func _build_mass_meter(mass: float, cap: float) -> Label:
 ## The manifest as the command's own repeated tail: one `{id, is_material, amount}` line per LOADED
 ## row, in the order the sheet lists them. Rows at zero are dropped — a line naming no quantity is not
 ## a line the player asked for.
+##
+## **`id` IS WHAT NAMES THE ACCOUNT**, and it carries the whole distinction for the commodity rows:
+## `HudConst.STORE_ITEM_PROVISIONS` becomes the command's `food` token and `HudConst.CARGO_ITEM_FODDER`
+## its `fodder` one (`Main.format_send_trade_expedition`). `is_material` only says whether the id is a
+## material id, which since issue #590 no longer settles which store a line draws from.
 func _trade_manifest_lines(rows: Array) -> Array:
     var lines: Array = []
     for row_variant in rows:
@@ -7919,6 +7970,7 @@ func _trade_manifest_lines(rows: Array) -> Array:
 func _clear_trade_manifest() -> void:
     _trade_destination_band = HudConst.NO_BAND_ID
     _trade_food = 0.0
+    _trade_fodder = 0.0
     _trade_materials = {}
 
 ## Drop the composed quarry AND the fill target it was counted in. **They are one act** — a target is

@@ -184,7 +184,7 @@ pub use espionage::{
 };
 pub use expedition_config::{
     load_expedition_config_from_env, ExpeditionConfig, ExpeditionConfigHandle,
-    ExpeditionConfigMetadata, SettleConfig, BUILTIN_EXPEDITION_CONFIG,
+    ExpeditionConfigMetadata, SettleConfig, TradeExpeditionConfig, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,

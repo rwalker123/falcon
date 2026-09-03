@@ -743,6 +743,19 @@ pub mod query_error {
 /// shipment is refused rather than quietly loaded with the wrong good.
 pub const FOOD_CARGO_KEY: &str = "provisions";
 
+/// **The FODDER commodity key a shipment's hay line names** — a restatement of `core_sim`'s
+/// `components::FODDER`, here for exactly the reason [`FOOD_CARGO_KEY`] is: `sim_runtime`
+/// deliberately does not depend on the sim.
+///
+/// **Hay is a THIRD ACCOUNT, not a flavour of food.** The two stores never convert — a herd must
+/// never be able to eat its keepers' bread — so a shipment carries them as separate lines, drawn
+/// from separate keys of the same band store and credited to separate keys of the destination's.
+///
+/// **The duplication is safe for the same reason.** The server matches the cargo line's `id`
+/// against its own keys rather than assuming this one, so a drift refuses the shipment instead of
+/// quietly loading the wrong good.
+pub const FODDER_CARGO_KEY: &str = "fodder";
+
 /// **One line of a shipment** — a quantity of one thing, out of the sending band's own store
 /// (`docs/plan_contact_and_logistics.md` §Q5).
 ///

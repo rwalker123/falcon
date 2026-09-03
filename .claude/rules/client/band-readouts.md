@@ -1187,14 +1187,28 @@ the parties strip's seven-line worst case, which is a HUNT party's.
   fallback. A destination neither tier can name renders **no row**, rather than the raw `BandId`.
 - **`Carrying` weighs the WHOLE PACK against `expeditionCarryCap`, whose lever is the MISSION's.** A
   raid's cap is the provisions ceiling it fills before delivering; a shipment's is what its people can
-  carry out, and what the sim checks it against is `food + expeditionTradeMaterialCarryWeight × Σ
-  materials`. So the numerator is that mass — `DetailFormat.shipment_cargo_mass` — and the materials
+  carry out, and what the sim checks it against is `food + expeditionTradeFodderCarryWeight × fodder
+  + expeditionTradeMaterialCarryWeight × Σ materials`. So the numerator is that mass —
+  `DetailFormat.shipment_cargo_mass` — and the hay and materials
   trailing the row are its SPELLING, not a second cargo beside it. Reading `expeditionCargoFood` alone
   over that cap rendered a party carrying 2 food and 10 hide against a cap of 12 as `2.0 / 12.0`: a
   full pack shown as one-sixth full.
+- **HAY IS A TERM, AND FOOD IS NOT, because the mass is denominated in food** (issue #590). Food
+  counts as itself at weight 1, so the leading figure already reads as food-and-then-some; every
+  account carried at a weight of its OWN says so, which is the hay and the materials. The hay term
+  reads `6.0 hay` — the player's word, where the wire says `expeditionCargoFodder` and the command
+  says `fodder` — in `SourceForecast.format_fodder`'s one decimal rather than the materials', hay
+  running on a far coarser scale than food. **Below `FODDER_FLOW_MIN` there is NO TERM, never
+  `0.0 hay`**, the rule every material row already keeps.
+- ⛔ **HAY IS NEVER ADDED TO THE FOOD IT RIDES BESIDE.** The two are different larders at the
+  destination and never convert, so a `Carrying:` that summed them would promise a food delivery the
+  destination's larder is never going to see. The frame asserts that sum ABSENT for the materials'
+  reason: a row quoting the total still renders a perfectly plausible number.
 - **ONE mass expression, shared with the compose sheet's meter** (`DetailFormat.shipment_mass`, called
   by `BandPanelController._trade_manifest_mass` and by this row). The pre-launch price and the
   in-flight report are the same pack asked about twice, and two copies of the formula are two answers.
+  It takes all three accounts and both carry-weight levers as PARAMETERS, so a caller that omits a
+  term is a compile error rather than a quiet under-price.
 - **`_shipment_cargo_clause` is NOT `_party_pack_clause`.** The pack clause reads `material_batches`,
   the party's OWN kit — what a scout skinned on the road, and what a trade escort carries for
   itself — while the shipment is the cargo store beside it. Rendering one for the other would let an

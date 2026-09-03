@@ -18,7 +18,7 @@ pub use commands::{
 pub use commands::{
     CancelScope, CommandDecodeError, CommandEncodeError, CommandEnvelope, CommandPayload,
     ConfigOverrideKind, OrdersDirective, ReloadConfigKind, SecurityPolicyKind, TradeCargoItem,
-    FOOD_CARGO_KEY, MAX_PROTO_FRAME,
+    FODDER_CARGO_KEY, FOOD_CARGO_KEY, MAX_PROTO_FRAME,
 };
 
 pub mod command_text;

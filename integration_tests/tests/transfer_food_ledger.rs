@@ -33,6 +33,10 @@
 //! Asserted against **real turns through the real systems and the real exported snapshot**, the
 //! shape `pen_food_ledger.rs` and `raid_food_ledger.rs` already use — never against a
 //! re-derivation of the sim's own arithmetic.
+//!
+//! ⛔ **THIS FILE IS FOOD-ONLY.** A shipment can carry hay (issue #590), and a bale is deliberately
+//! **not** a term of the identity above: it never enters the food larder the identity closes over.
+//! The hay account has its own ledger and its own file, `transfer_fodder_ledger.rs`.
 
 use bevy::prelude::Entity;
 use core_sim::{
@@ -732,8 +736,10 @@ fn a_pooling_and_shipping_turn(app: &mut bevy::prelude::App) -> (Entity, Entity)
 ///
 /// The hay account is asserted in the same breath: `balance_supply_networks` walks a band's whole
 /// store, so fodder crosses on the `local` arm exactly as food does. Its `route` arm is `0` because
-/// a shipment's manifest refuses fodder — a fact about shipments, asserted here so the day that
-/// changes this test is what notices.
+/// **this fixture's shipment carries no hay**, not because a shipment cannot — a manifest takes a
+/// `fodder` line (issue #590), and the hay route arm's own end-to-end claim lives in
+/// `transfer_fodder_ledger.rs`. Pinning the zero here is what keeps a food shipment's booking from
+/// leaking into the wrong account.
 #[test]
 fn both_accounts_state_which_link_moved_the_goods() {
     let mut app = world();
@@ -770,7 +776,8 @@ fn both_accounts_state_which_link_moved_the_goods() {
     assert_eq!(
         (hungry_hay.route_received, hungry_hay.route_sent),
         (0.0, 0.0),
-        "a shipment cannot carry fodder today, so the hay ROUTE arm is zero on both sides"
+        "this fixture's shipment carries food alone, so the hay ROUTE arm is zero on both sides — a \
+         food delivery must not leak into the hay account"
     );
 
     // --- and the arms are the whole of the pair they refine, on every row ------------------------

@@ -879,14 +879,18 @@ fn create_populations<'a>(
                     transferLocalSentTurn: cohort.transfer_local_sent_turn,
                     transferRouteReceivedTurn: cohort.transfer_route_received_turn,
                     transferRouteSentTurn: cohort.transfer_route_sent_turn,
-                    // The same four for HAY. The `route` arm is `0` on every frame today — a
-                    // shipment's manifest refuses fodder — and is written all the same, because a
-                    // field the sim leaves out and a field the sim says is zero must not be the same
-                    // frame.
+                    // The same four for HAY, all four live: a shipment carries a `fodder` line, so
+                    // the `route` arm books a real crossing. Always written, because a field the sim
+                    // leaves out and a field the sim says is zero must not be the same frame.
                     fodderTransferLocalReceivedTurn: cohort.fodder_transfer_local_received_turn,
                     fodderTransferLocalSentTurn: cohort.fodder_transfer_local_sent_turn,
                     fodderTransferRouteReceivedTurn: cohort.fodder_transfer_route_received_turn,
                     fodderTransferRouteSentTurn: cohort.fodder_transfer_route_sent_turn,
+                    // The shipment's THIRD account and the lever that prices it — appended last,
+                    // always written. `0` is a real reading on both: "this shipment carries no hay"
+                    // and "hay is weightless".
+                    expeditionCargoFodder: cohort.expedition_cargo_fodder,
+                    expeditionTradeFodderCarryWeight: cohort.expedition_trade_fodder_carry_weight,
                 },
             )
         })

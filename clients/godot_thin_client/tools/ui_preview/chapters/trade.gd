@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 38
+const EXPECTED_CHECKPOINTS := 45
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -55,6 +55,12 @@ const TRADE_PARTY_ENTITY := 7181
 ## a fixture that reused it would render a cap `send_trade_expedition` refuses.
 const TRADE_PER_WORKER_CARRY := 10.0
 const TRADE_MATERIAL_CARRY_WEIGHT := 2.0
+
+## **THE THIRD MASS LEVER** (issue #590) - what one unit of HAY costs in pack space. Deliberately not
+## 1.0 and not the material weight either: a bale priced at either would make the three-term mass
+## expression indistinguishable from a two-term one that lumped hay in with food, so a client that
+## dropped the fodder term would still pass every number below.
+const TRADE_FODDER_CARRY_WEIGHT := 0.5
 
 ## The party the picker is driven to, and therefore the cap the meter is drawn against (4 × 10 = 40).
 const TRADE_PARTY_WORKERS := 4
@@ -108,10 +114,19 @@ const BAND_MOVE_TILES_PER_TURN := 2.0
 ## two of them `hide` at different ratings, which is the whole reason a manifest row shows its rating.
 const SHIPPER_PROVISIONS := 84.0
 
+## …and its HAY, a larder apart. Deliberately a different figure from the provisions above, on the
+## coarser scale hay is quoted in, so a sheet that read one store for the other shows it.
+const SHIPPER_FODDER := 41.0
+
 ## What the player loads: food, plus one pile of hide. `12 + 2 × 4 = 20` of a 40 cap, so the meter is
 ## half full and the send is live — the state a picker exists to reach.
 const LOADED_FOOD := 12.0
 const LOADED_HIDE := 4.0
+
+## …and then the HAY, loaded onto the same manifest (issue #590). `0.5 × 6 = 3` more mass, taking the
+## meter to 23 of the same 40 cap: still sendable, so the state shows a three-account manifest a
+## player can actually dispatch rather than one the cap refuses for an unrelated reason.
+const LOADED_FODDER := 6.0
 
 ## What the in-flight party is carrying, and the pack it fills. The cap is the SHIPMENT lever's
 ## product (4 × 10), which is what the sim publishes on a trade party's `expeditionCarryCap`.
@@ -122,6 +137,12 @@ const PARTY_CARGO_CAP := 40.0
 ## summed. A readout that added them would be the retired trade axis under a new name.
 const PARTY_CARGO_HIDE := 4.0
 const PARTY_CARGO_BONE := 1.2
+
+## The HAY the same party is walking (issue #590) — `expedition_cargo_fodder`, the third account. It
+## must show as its OWN term on the `Carrying:` row: a shipment of grain and a shipment of feed are
+## different shipments, and a party that folded the two into one figure would be quoting a food
+## delivery the destination's larder never receives.
+const PARTY_CARGO_FODDER := 6.0
 
 ## The band's Food line under a transfer (arc #527). `balance_supply_networks` has moved food between
 ## neighbouring larders every turn since turn one, so these two terms are not a trade feature: a band
@@ -250,8 +271,36 @@ func run(harness) -> void:
 	h._assert_hud("a manifest under the cap can be sent",
 		live_send is Button and not (live_send as Button).disabled)
 
+	# **STATE — A BALE ON THE SAME MANIFEST** (issue #590). Hay is the THIRD cargo account: its own
+	# row beside the food one, drawn off the band's fodder larder rather than its provisions, and
+	# priced into the same pack at a carry weight of its own. The row is loaded through its own `+`
+	# for the reason the others are — the clamp and the per-press rerender are what a player uses.
+	_load(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL, LOADED_FODDER)
+	await h._settle()
+	await h._save("trade_cargo_hay")
+	# **THE METER TAKES THE HAY TERM**, which is the whole reason the lever is on the wire: the sim
+	# weighs `food + fodder_weight × hay + material_weight × Σ materials` and refuses what will not
+	# fit, so a meter short of a term clears a load the server then rejects.
+	var hay_mass := LOADED_FOOD + TRADE_FODDER_CARRY_WEIGHT * LOADED_FODDER \
+		+ TRADE_MATERIAL_CARRY_WEIGHT * LOADED_HIDE
+	var hay_meter := Q.find_meta_node(_parties_zone(), BandPanelController.TRADE_MASS_METER_META)
+	h._assert_hud("the mass meter prices the hay into the pack",
+		hay_meter is Label
+			and (hay_meter as Label).text.contains(
+				HudCraftingVocab.BATCH_AMOUNT_FORMAT % hay_mass))
+	# …and the UNDER-PRICED reading is asserted ABSENT, because it is the plausible one: a manifest
+	# whose hay term was dropped still shows a mass, a cap and a live send, and every assertion above
+	# would pass on it. The number that must not appear is the one the two-term expression gives.
+	h._assert_hud("…and never weighs a bale as free",
+		hay_meter is Label
+			and not (hay_meter as Label).text.contains(
+				HudCraftingVocab.BATCH_AMOUNT_FORMAT % expected_mass))
+	var hay_send := Q.find_meta_node(_parties_zone(), HudWidgets.SEND_TRADE_CONFIRM_META)
+	h._assert_hud("a three-account manifest under the cap can still be sent",
+		hay_send is Button and not (hay_send as Button).disabled)
+
 	# **STATE — THE SAME MANIFEST OVER THE CAP.** The party shrinks to one worker, so the cap falls to
-	# 10 against a mass of 20 and the send refuses BEFORE the server has to. The refusal is the
+	# 10 against a mass of 23 and the send refuses BEFORE the server has to. The refusal is the
 	# client's courtesy; the server's own remains the authority.
 	_set_party(OVER_CAP_PARTY_WORKERS)
 	await h._settle()
@@ -365,12 +414,24 @@ func run(harness) -> void:
 	h._assert_hud("…and are never summed into one figure",
 		not cargo_row.contains(
 			HudCraftingVocab.BATCH_AMOUNT_FORMAT % (PARTY_CARGO_HIDE + PARTY_CARGO_BONE)))
+	# **THE HAY IS A TERM OF ITS OWN**, in fodder's own one-decimal rendering, and it is named `hay`
+	# where the wire says `fodder` — the player's word on the face, the sim's on the wire.
+	h._assert_hud("the shipment says it is carrying hay",
+		cargo_row.contains("%s %s" % [SourceForecast.format_fodder(PARTY_CARGO_FODDER),
+			BandDetailLines.TRADE_CARGO_FODDER_TERM]))
+	# …and NEVER added to the food it rides beside. Asserted as an absence for the materials' reason:
+	# a row quoting `18.0` would look like a perfectly ordinary shipment, and it would be promising
+	# the destination a food delivery its larder is never going to see.
+	h._assert_hud("…and never adds its hay to its bread",
+		not cargo_row.contains(HudCraftingVocab.BATCH_AMOUNT_FORMAT % (
+			PARTY_CARGO_FOOD + PARTY_CARGO_FODDER)))
 	# **THE FIGURE AGAINST THE CAP IS THE WHOLE PACK'S MASS**, the same expression the compose sheet's
 	# meter priced this manifest with (`DetailFormat.shipment_mass`). Composed here from the fixture's
 	# own terms, so the row and the meter arrive at one number from opposite ends — a `Carrying:` that
 	# put the food alone over the cap rendered a full pack as one-sixth full and every other assertion
 	# on this row still passed.
 	var expected_party_mass := PARTY_CARGO_FOOD \
+		+ TRADE_FODDER_CARRY_WEIGHT * PARTY_CARGO_FODDER \
 		+ TRADE_MATERIAL_CARRY_WEIGHT * (PARTY_CARGO_HIDE + PARTY_CARGO_BONE)
 	h._assert_hud("the shipment is weighed as a whole pack, against the pack's own cap",
 		cargo_row.contains("%s / %s" % [
@@ -653,11 +714,15 @@ func _shipper_band() -> Dictionary:
 	band = BandFx.with_band_id(band)
 	band["pos"] = [SHIPPER_TILE.x, SHIPPER_TILE.y]
 	band["stores"] = {"provisions": SHIPPER_PROVISIONS}
+	# **THE HAY LARDER IS NOT A `stores` KEY** — the wire publishes it as the cohort's own
+	# `fodder_store`, a second larder that never converts into the first.
+	band["fodder_store"] = SHIPPER_FODDER
 	band["idle_workers"] = 9
 	band["labor_assignments"] = []
 	band["band_move_tiles_per_turn"] = BAND_MOVE_TILES_PER_TURN
 	band["expedition_trade_per_worker_carry"] = TRADE_PER_WORKER_CARRY
 	band["expedition_trade_material_carry_weight"] = TRADE_MATERIAL_CARRY_WEIGHT
+	band["expedition_trade_fodder_carry_weight"] = TRADE_FODDER_CARRY_WEIGHT
 	band["material_batches"] = _shipper_batches()
 	return band
 
@@ -732,15 +797,18 @@ func _trade_party() -> Dictionary:
 		# beside it — and a fixture carrying a name would have tested nothing that ships.
 		"expedition_destination_name": "",
 		"expedition_cargo_food": PARTY_CARGO_FOOD,
+		"expedition_cargo_fodder": PARTY_CARGO_FODDER,
 		"expedition_cargo_materials": [
 			{"material_id": "hide", "amount": PARTY_CARGO_HIDE},
 			{"material_id": "bone", "amount": PARTY_CARGO_BONE},
 		],
 		"expedition_carry_cap": PARTY_CARGO_CAP,
-		# **THE CARRY-WEIGHT LEVER RIDES EVERY COHORT**, party included (the native decoder echoes it
-		# onto each one), and the `Carrying:` row needs it: what the cap is checked against is
-		# `food + weight × Σ materials`, so a fixture without it would price this pack at its food.
+		# **BOTH CARRY-WEIGHT LEVERS RIDE EVERY COHORT**, party included (the native decoder echoes
+		# them onto each one), and the `Carrying:` row needs both: what the cap is checked against is
+		# `food + fodder_weight × hay + material_weight × Σ materials`, so a fixture missing either
+		# would price this pack under what the sim weighs it at.
 		"expedition_trade_material_carry_weight": TRADE_MATERIAL_CARRY_WEIGHT,
+		"expedition_trade_fodder_carry_weight": TRADE_FODDER_CARRY_WEIGHT,
 		"tile_info": {
 			"x": 67, "y": 20,
 			"terrain_label": "Prairie Steppe",

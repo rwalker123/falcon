@@ -1124,10 +1124,20 @@ actually holds"*, and a client that gets it wrong emits a line that parses, name
 carries the right kit — every other assertion in the file green.
 
 - **The piles are FRACTIONAL and authored in the sim's own TICKS** (`TRADE_FOOD_HELD_TICKS`
-  21_050_001, `TRADE_HIDE_HELD_TICKS` 4_567_891), so the entry's `cargo_held_ticks` and the Rust
+  21_050_001, `TRADE_FODDER_HELD_TICKS` 84_050_001, `TRADE_HIDE_HELD_TICKS` 4_567_891), so the
+  entry's `cargo_held_ticks` and the Rust
   half's comparison are exact — a decimal here would re-round the very thing being compared. The food
   pile is adversarial TWICE: a tenth rounds it up to `21.1`, and flooring it onto the fixed-point grid
   alone still emits `21.050001`, which the parser's `f32` round-trip lands one tick ABOVE the pile.
+- **THE HAY PILE IS DRIVEN BECAUSE THE TWO COMMODITIES LOOK ALIKE** (issue #590). Food and hay are
+  both `is_material` false, so the only thing keeping a hay press out of the `food` token is the
+  manifest row's own `id` — and the Rust half looks each emitted token's pile up BY NAME
+  (`sim_runtime::commands::FODDER_CARGO_KEY`), so a `fodder` amount checked against the food pile
+  fails here rather than in play. The pile also sits on hay's own coarser scale (~84 units against
+  food's ~21), which is what makes `CARGO_LOAD_MAX_PRESSES` a live bound: the whole-unit step makes a
+  press count the pile's own size, so it went 64 → 128. **That constant is a TOOLING ceiling and
+  never a statement about the step** — raising it must not be confused with changing
+  `COMPOSE_CARGO_STEP`, which is a game-design lever.
 - **The cargo is loaded through the rows' own `+`, to the end of each pile.** `_set_cargo_amount`
   clamps a press to what the band holds, so the last press leaves the exact held amount on the row —
   the path the sheet documents. A drive that wrote the manifest itself would test its own arithmetic.

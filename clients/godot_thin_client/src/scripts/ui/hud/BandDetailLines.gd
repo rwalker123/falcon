@@ -220,16 +220,24 @@ const PARTY_PACK_ENTRY_FORMAT := "%s %s"
 # The destination is the sim's `expeditionDestinationName`, resolved at LAUNCH and carried, rendered
 # verbatim. Its key twin `expeditionDestinationBand` is what the command addresses and NEVER appears.
 const TRADE_DESTINATION_ROW := "Bound for"
-# `Carrying: 23.2 / 24.0 · 4.0 hide · 1.2 bone` — the shipment beside the pack it fills, and the
-# materials as ONE TERM PER MATERIAL, never summed (`_shipment_cargo_clause`). The cap is
-# `expedition_carry_cap`, which resolves per MISSION, so this quotes the shipment pack rather than a
-# hunt's provisions ceiling.
+# `Carrying: 26.2 / 30.0 · 6.0 hay · 4.0 hide · 1.2 bone` — the shipment beside the pack it fills,
+# the HAY as its own term and the materials as ONE TERM PER MATERIAL, never summed
+# (`_shipment_cargo_clause`). The cap is `expedition_carry_cap`, which resolves per MISSION, so this
+# quotes the shipment pack rather than a hunt's provisions ceiling.
 #
 # **THE NUMBER BEFORE THE SLASH IS THE WHOLE PACK'S MASS** (`DetailFormat.shipment_cargo_mass` —
-# 18 food + 4 hide + 1.2 bone at a carry weight of 1.0 is the 23.2 above), never the food term alone:
-# the cap is what the sim weighs `food + weight × Σ materials` against, and the materials trailing it
-# are the SPELLING of that mass, not a second cargo beside it.
+# 18 food + 6 hay at a fodder carry weight of 0.5 + 4 hide + 1.2 bone at a material carry weight of
+# 1.0 is the 26.2 above), never the food term alone: the cap is what the sim weighs the three-account
+# expression against, and the terms trailing it are the SPELLING of that mass, not a second cargo
+# beside it.
+#
+# **FOOD IS THE ONLY ACCOUNT WITH NO TERM, because it is the one the mass is denominated in** — food
+# counts as itself at weight 1, so the leading figure already reads as food-and-then-some. Every
+# account carried at a weight of its own says so, which since issue #590 includes the hay.
 const TRADE_CARGO_ROW := "Carrying"
+# What the hay term is CALLED in that clause. "hay" is the player's word for it; the wire's key is
+# `expedition_cargo_fodder` and the command's token is `fodder`, and neither reaches this label.
+const TRADE_CARGO_FODDER_TERM := "hay"
 const TRADE_CARGO_CAP_FORMAT := "%s: %s / %s%s"
 const TRADE_CARGO_NO_CAP_FORMAT := "%s: %s%s"
 
@@ -682,10 +690,16 @@ func _shipment_summary_lines(unit_data: Dictionary, context: DetailFormat.Contex
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
     return lines
 
-## **THE SHIPMENT'S MATERIALS, ONE TERM PER MATERIAL AND NEVER SUMMED** — ` · 4.0 hide · 1.2 bone`,
-## `""` when the shipment is food alone. `expedition_cargo_materials` is the wire's per-material
-## total across the batches the party holds (its `MaterialPayoff` rows), so this reads it as it
-## arrives; adding hide to bone would be the retired trade axis rebuilt under a new name.
+## **THE SHIPMENT'S HAY AND MATERIALS, ONE TERM EACH AND NEVER SUMMED** — ` · 6.0 hay · 4.0 hide ·
+## 1.2 bone`, `""` when the shipment is food alone. `expedition_cargo_fodder` is the party's hay
+## account and `expedition_cargo_materials` the wire's per-material total across the batches it holds
+## (its `MaterialPayoff` rows), so this reads both as they arrive; adding hide to bone — or hay to
+## either — would be the retired trade axis rebuilt under a new name.
+##
+## **THE HAY TERM LEADS**, matching the compose sheet's row order (food, hay, then the material
+## piles), so a shipment reads the same before it leaves as it does on the road. It is omitted
+## entirely below `FODDER_FLOW_MIN`: **empty means NO TERM, never `0.0 hay`**, the rule every
+## material row already keeps.
 ##
 ## **IT IS NOT `_party_pack_clause`.** That one reads `material_batches`, the party's OWN pack — what
 ## a scout skinned on the road, and what a trade party's escort is carrying for itself — and a
@@ -693,6 +707,13 @@ func _shipment_summary_lines(unit_data: Dictionary, context: DetailFormat.Contex
 ## kit read as goods bound for another people.
 func _shipment_cargo_clause(unit_data: Dictionary) -> String:
     var terms: Array[String] = []
+    var fodder := DetailFormat.shipment_cargo_fodder(unit_data)
+    if fodder >= SourceForecast.FODDER_FLOW_MIN:
+        # Fodder's own one-decimal rendering, never the materials' — hay runs on a ~25x coarser scale
+        # than food, and `format_fodder` is the single renderer every hay figure in this HUD goes
+        # through so a shipment's bales read as the same quantity the larder rows quote.
+        terms.append(PARTY_PACK_ENTRY_FORMAT % [
+            SourceForecast.format_fodder(fodder), TRADE_CARGO_FODDER_TERM])
     for row_variant in unit_data.get("expedition_cargo_materials", []):
         if not (row_variant is Dictionary):
             continue

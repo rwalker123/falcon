@@ -314,6 +314,15 @@ pub(crate) struct ExpeditionLevers {
     /// time against a cap meter that cannot move, and finds out on submit. The refusal stays the
     /// authority; the meter is what stops the player ever meeting it.
     pub(crate) trade_material_carry_weight: f32,
+    /// `expedition_config.trade.fodder_carry_weight` — what one unit of **hay** costs in pack space
+    /// relative to one unit of food, the third term of the mass expression
+    /// `food + this × fodder + trade_material_carry_weight × Σ material amounts`.
+    ///
+    /// Ships for the same reason as [`Self::trade_material_carry_weight`] beside it: the launch
+    /// refusal is the authority, and a picker that cannot run the sim's expression is a guessing
+    /// game the player only loses on submit. Leaving this out under-prices every manifest with a
+    /// bale in it.
+    pub(crate) trade_fodder_carry_weight: f32,
     pub(crate) hunt_per_worker_provisions: f32,
     pub(crate) hunt_viability_warn_turns: u32,
     /// `expedition_config.hunt.forecast_horizon_turns` — how far *every* raid projection in the
@@ -1085,10 +1094,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     //
     // **The material rows are per material id, never one total** — the arc's contract: a sum of hide
     // and bone is the retired trade axis under a new name. An empty vector is "no row", not zero.
+    //
+    // **THREE accounts, published apart**: food, hay and the material rows. Bread and hay are two
+    // keys on one store that never convert, so they are never one number here either.
     let (
         expedition_destination_band,
         expedition_destination_name,
         expedition_cargo_food,
+        expedition_cargo_fodder,
         expedition_cargo_materials,
     ) = match expedition {
         Some(exp) if exp.mission.destination_band().is_some() => (
@@ -1102,6 +1115,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             // fight it. Empty means "no name" — see `ExpeditionMission::Trade::destination_name`.
             exp.mission.destination_name().to_string(),
             exp.cargo.get(FOOD).to_f32(),
+            // **The hay account, published apart from the food one** — two keys on the shipment's
+            // store that never convert, and a client that summed them would be reinventing the
+            // retired `upkeep_per_biomass`.
+            exp.cargo.get(crate::components::FODDER).to_f32(),
             exp.cargo
                 .materials()
                 .map(|(material, batches)| sim_runtime::MaterialPayoff {
@@ -1115,7 +1132,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 })
                 .collect(),
         ),
-        _ => (0, String::new(), 0.0, Vec::new()),
+        _ => (0, String::new(), 0.0, 0.0, Vec::new()),
     };
     // **The crafting half of the row, resolved together** — the four readouts share this band's
     // store, its ledger and its bench tiers, so resolving them apart would walk the same three
@@ -1219,9 +1236,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // for a party that does not exist yet, so no per-party field can serve that screen. Same
         // idiom as the hunt lever above it.
         expedition_trade_per_worker_carry: expedition_levers.trade_per_worker_carry,
-        // The second half of the mass expression, so the cargo picker runs the sim's own rule
+        // The other two thirds of the mass expression, so the cargo picker runs the sim's own rule
         // rather than watching a meter that cannot move.
         expedition_trade_material_carry_weight: expedition_levers.trade_material_carry_weight,
+        expedition_trade_fodder_carry_weight: expedition_levers.trade_fodder_carry_weight,
         band_move_tiles_per_turn: expedition_levers.band_move_tiles_per_turn as f32,
         // In-flight hunt-party delivery forecast (`0`/false for a scout, a normal band, or a party
         // whose delivery can't be projected).
@@ -1306,6 +1324,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_destination_band,
         expedition_destination_name,
         expedition_cargo_food,
+        expedition_cargo_fodder,
         expedition_cargo_materials,
         // The food ledger's last two terms — read off the allocation like `raid_forfeit` beside
         // them, and `0.0` for a band that has none. **These answer "what has
@@ -1374,8 +1393,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         transfer_local_sent_turn: food_transfers.local_sent,
         transfer_route_received_turn: food_transfers.route_received,
         transfer_route_sent_turn: food_transfers.route_sent,
-        // The hay account's four. The `route` arm is `0` on every frame today: a shipment's manifest
-        // refuses any cargo item that is not food or a material, so no party carries fodder.
+        // The hay account's four, all four live: a shipment takes a `fodder` line, so a party really
+        // does carry bales between camps and the `route` arm books a real crossing.
         fodder_transfer_local_received_turn: fodder_transfers.local_received,
         fodder_transfer_local_sent_turn: fodder_transfers.local_sent,
         fodder_transfer_route_received_turn: fodder_transfers.route_received,
@@ -1640,6 +1659,7 @@ mod tests {
             hunt_per_worker_carry: cfg.hunt.per_worker_carry,
             trade_per_worker_carry: cfg.trade.per_worker_carry,
             trade_material_carry_weight: cfg.trade.material_carry_weight,
+            trade_fodder_carry_weight: cfg.trade.fodder_carry_weight,
             hunt_per_worker_provisions: 0.0,
             hunt_viability_warn_turns: cfg.hunt.viability_warn_turns,
             hunt_forecast_horizon_turns: cfg.hunt.forecast_horizon_turns,

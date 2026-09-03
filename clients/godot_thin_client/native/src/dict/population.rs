@@ -973,15 +973,26 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "expedition_destination_name",
         cohort.expeditionDestinationName().unwrap_or(""),
     );
-    // What the party carries, in the two accounts a band store holds. The materials reuse
+    // What the party carries, in the three accounts a band store holds. The materials reuse
     // `MaterialPayoff`, so this is the `material_yield` / `delivered_material` shape a third time —
     // **NEVER SUMMED** (a total of hide and bone is the retired trade axis under a new name), EMPTY
     // MEANS "no row" rather than zero, and the key is always present. The per-material amount is the
     // total across the batches the party holds; the batches themselves, with their exact readings,
     // ride `material_batches` above.
+    //
+    // `expedition_cargo_fodder` is the HAY beside the bread (issue #590) — read off the wire's
+    // `expeditionCargoFodder`, which is appended at the END of the cohort table rather than beside
+    // its twin, because field order is the append-only contract. Two keys that never convert, so a
+    // herd can never eat its keepers' bread: a client that adds them together has re-minted the
+    // retired trade-goods axis. `0` on every non-shipment cohort, and a real reading rather than an
+    // absent one — a shipment of pure grain says `0` here.
     let _ = dict.insert(
         "expedition_cargo_food",
         f64::from(cohort.expeditionCargoFood()),
+    );
+    let _ = dict.insert(
+        "expedition_cargo_fodder",
+        f64::from(cohort.expeditionCargoFodder()),
     );
     let mut cargo_materials = VarArray::new();
     if let Some(rows) = cohort.expeditionCargoMaterials() {
@@ -993,13 +1004,20 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("expedition_cargo_materials", &cargo_materials);
-    // **THE TWO SHIPMENT-MASS LEVERS, ECHOED ONTO EVERY COHORT** — the same global-lever idiom as
-    // `expedition_per_worker_carry` / `hunt_per_worker_provisions` above, and the pair the OUTFIT UI
+    // **THE THREE SHIPMENT-MASS LEVERS, ECHOED ONTO EVERY COHORT** — the same global-lever idiom as
+    // `expedition_per_worker_carry` / `hunt_per_worker_provisions` above, and the set the OUTFIT UI
     // needs: it prices a manifest for a party that does not exist yet, so no per-party field can
     // serve that screen. The sim's own expression, held verbatim client-side:
     //
-    //   mass = Σ food rows + expedition_trade_material_carry_weight × Σ material row amounts
+    //   mass = Σ food rows
+    //          + expedition_trade_fodder_carry_weight × Σ fodder rows
+    //          + expedition_trade_material_carry_weight × Σ material row amounts
     //   cap  = party_workers × expedition_trade_per_worker_carry
+    //
+    // The hay term joined when shipments learned to carry fodder (issue #590); a client that omits
+    // it UNDER-PRICES every manifest with a bale in it and the player finds out on submit, which is
+    // the exact failure the material lever ships to prevent. Its shipped `0.5` is FINITE AND >= 0
+    // rather than positive — `0` legitimately means "hay is weightless".
     //
     // **THE PACK LEVER IS NOT `expedition_per_worker_carry`.** That one is the HUNT pack — a raid's
     // provisions ceiling — and a client composing a trade cap out of it is one config edit away from
@@ -1012,6 +1030,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert(
         "expedition_trade_material_carry_weight",
         f64::from(cohort.expeditionTradeMaterialCarryWeight()),
+    );
+    let _ = dict.insert(
+        "expedition_trade_fodder_carry_weight",
+        f64::from(cohort.expeditionTradeFodderCarryWeight()),
     );
     // WHICH STOP WILL END THIS PARTY'S RAID — the `core_sim::HuntTripBound` key
     // ("pack_full" | "floor" | "herd_lost" | "horizon"), off the same in-flight

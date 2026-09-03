@@ -1216,6 +1216,15 @@ const COMPOSE_CARGO_SECTION := "Cargo"
 ## PILE, which are never summed into a second scalar (the retired trade axis under a new name).
 const COMPOSE_CARGO_FOOD_LABEL := "Food"
 
+## The FODDER row's face (issue #590). **"Hay" is what the player calls it and `fodder` is what the
+## wire calls it**, the `fauna_id` / `fauna_label` rule: `HudConst.CARGO_ITEM_FODDER` is the id the
+## row carries and the token the command spells, and it never reaches a label.
+##
+## It is a SECOND COMMODITY ROW, not a second food row. Hay and bread are separate accounts that
+## never convert, so the sheet lists them as two rows and the manifest reads as a list — a figure
+## totalling the two would be the retired trade-goods axis under a new name.
+const COMPOSE_CARGO_FODDER_LABEL := "Hay"
+
 ## `4.0 hide · tough: excellent` — **THE RATING IS THE ROW'S POINT.** A mammoth hide and a hare pelt
 ## are both `hide`; a manifest that named only the material would let a player ship the wrong one and
 ## never know. The readings are the band's own, in the material's declared axis order.
@@ -1239,11 +1248,17 @@ const COMPOSE_CARGO_TOOLTIP_FORMAT := "%s — %s"
 ## is unreachable.
 const COMPOSE_CARGO_STEP := 1.0
 
-## The live mass meter — `▰▰▰▱▱ 30 / 40`. **Both numbers come off the wire**
-## (`expedition_trade_per_worker_carry` × the party, and `expedition_trade_material_carry_weight` on
-## the material total), never a literal: the sim refuses an over-cap manifest naming both, and a
-## client quoting a lever of its own would be one config edit from a meter that disagrees with the
-## refusal it exists to prevent.
+## The live mass meter — `▰▰▰▱▱ 30 / 40`. **Every number in it comes off the wire**
+## (`expedition_trade_per_worker_carry` × the party for the cap;
+## `expedition_trade_fodder_carry_weight` on the hay and `expedition_trade_material_carry_weight` on
+## the material total for the mass), never a literal: the sim refuses an over-cap manifest naming
+## both sides, and a client quoting a lever of its own would be one config edit from a meter that
+## disagrees with the refusal it exists to prevent.
+##
+## **THREE TERMS, NOT TWO** (issue #590) — `DetailFormat.shipment_mass` holds the whole expression,
+## and a reader that drops the hay term UNDER-PRICES every manifest with a bale in it: the meter
+## says it fits and the send is refused, which is the exact failure the material lever ships to
+## prevent. Pricing is the only thing the three accounts share; nothing on screen sums them.
 const COMPOSE_CARGO_MASS_FORMAT := "%s  %s / %s"
 
 const COMPOSE_CARGO_MASS_CELLS := 10
@@ -1259,7 +1274,7 @@ const COMPOSE_CARGO_EMPTY_REASON := "Nothing loaded yet — a shipment carries s
 
 ## The band holds nothing a shipment could carry. A different statement from an empty manifest: there
 ## is nothing to load, so the rows are absent rather than sitting at zero.
-const COMPOSE_CARGO_NO_STORES := "This band has no food or materials to send."
+const COMPOSE_CARGO_NO_STORES := "This band has no food, hay or materials to send."
 
 ## **HOW MUCH THE COMPOSE SHEET MAY OVERSHOOT THE PARTIES ZONE BEFORE IT LEAVES IT** (see
 ## `BandComposeFloat` and `BandPanelController._party_compose_floats`). The requirement is summed from

@@ -169,6 +169,11 @@ const WIRE_FLOAT_BACKOFF_STEPS := 2.0
 # on separating accounts everywhere else, and the material terms are NEVER merged into a total.
 const TRADE_CARGO_TERM_SEPARATOR := " · "
 const TRADE_CARGO_FOOD_TERM_FORMAT := "%s food"
+# The HAY clause of that same note (issue #590). A term of its own beside the food one and NEVER
+# merged with it: `12.0 food · 6.0 hay` is a list of two accounts, and one figure covering both would
+# be the retired trade-goods scalar under a new name. The note says "hay" because that is what the
+# player calls it; the command line says `fodder`, which is what the sim calls it.
+const TRADE_CARGO_FODDER_TERM_FORMAT := "%s hay"
 # What the note reads when the manifest is empty. The line is still SENT — whether an empty shipment
 # is legal is the server's question and it answers with a reason — so the note has to say what was
 # asked for rather than pretend a cargo was named.
@@ -1302,6 +1307,10 @@ static func format_send_trade_expedition(payload: Dictionary) -> Dictionary:
     var line := "send_trade_expedition %d %d %d %d" % [
         faction, band_id, party_workers, destination_band_id]
     var food_total := 0.0
+    # **THE SECOND COMMODITY TOTAL, SUMMED AND FLOORED APART FROM THE FIRST** (issue #590). Hay is
+    # its own store at the destination, so `fodder` is its own token; pouring it into `food_total`
+    # would ship a herd's winter feed as somebody's dinner and overspend the food larder besides.
+    var fodder_total := 0.0
     var material_terms: Array[String] = []
     for row_variant in Array(payload.get("cargo", [])):
         if not (row_variant is Dictionary):
@@ -1322,17 +1331,28 @@ static func format_send_trade_expedition(payload: Dictionary) -> Dictionary:
             line += " material %s %s" % [material_id, cargo_wire_text(material_amount)]
             material_terms.append("%s %s" % [
                 TRADE_CARGO_NOTE_AMOUNT_FORMAT % material_amount, material_id])
+        elif String(row.get("id", "")).strip_edges() == HudConst.CARGO_ITEM_FODDER:
+            # The hay rows, summed on their own account for the same reason the food rows are summed
+            # on theirs — and **WHICH COMMODITY A ROW IS, IS ITS `id`**: `is_material` only says the
+            # id is a material id, so a plain `else` here would have poured every hay press into the
+            # food token, silently, against a larder that does not hold it.
+            fodder_total += amount
         else:
             # **THE FOOD LINES ARE SUMMED INTO ONE TOKEN, and only the food lines.** `food` names one
             # commodity, so two rows of it are one quantity; two rows of `hide` are two PILES at two
             # ratings and merging them would rebuild the retired trade scalar out of the vector that
             # replaced it. The sheet composes one food row anyway — this is the guard, not a feature.
             food_total += amount
-    # …and the food TOTAL is floored once, after the sum: the server compares the whole `food` token
-    # against one larder, so flooring the parts would spend the allowance twice.
+    # …and each commodity TOTAL is floored once, after its own sum: the server compares the whole
+    # `food` token against one larder and the whole `fodder` token against another, so flooring the
+    # parts would spend either allowance twice. **Two floors, never one over the pair** — the two
+    # larders are checked separately and a shared floor would be an amount neither store was asked for.
     food_total = cargo_wire_amount(food_total)
     if food_total > 0.0:
         line += " food %s" % cargo_wire_text(food_total)
+    fodder_total = cargo_wire_amount(fodder_total)
+    if fodder_total > 0.0:
+        line += " fodder %s" % cargo_wire_text(fodder_total)
     # …and the kit LAST, as a named pair, the `format_send_hunt_expedition` convention: the parser
     # lifts it out of the tail, but a human reading the log sees the positional grammar unbroken.
     line += _kit_token(payload)
@@ -1343,6 +1363,7 @@ static func format_send_trade_expedition(payload: Dictionary) -> Dictionary:
         destination_label = str(destination_band_id)
     var manifest := TRADE_CARGO_TERM_SEPARATOR.join(
         ([TRADE_CARGO_FOOD_TERM_FORMAT % (TRADE_CARGO_NOTE_AMOUNT_FORMAT % food_total)] if food_total > 0.0 else [])
+        + ([TRADE_CARGO_FODDER_TERM_FORMAT % (TRADE_CARGO_NOTE_AMOUNT_FORMAT % fodder_total)] if fodder_total > 0.0 else [])
         + material_terms)
     if manifest == "":
         manifest = TRADE_CARGO_EMPTY_TERM

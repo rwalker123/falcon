@@ -145,6 +145,12 @@ const TRADE_FOOD_HELD_TICKS := 21_050_001
 ## The material pile, fractional for the first of those two reasons. A batch is one pile of one
 ## material AT ONE RATING, so this one carries its reading like a real store row.
 const TRADE_HIDE_HELD_TICKS := 4_567_891
+## **THE HAY PILE, and the reason it is the biggest number here** (issue #590). Hay is quoted on a
+## far coarser scale than food - a band's fodder larder runs in the tens where its provisions run in
+## the twenties - so this is what a real store looks like, and what makes the press ceiling below a
+## real question rather than a formality. Fractional for the same adversarial reason as the food
+## pile: `%.1f` rounds `84.050001` UP to `84.1`, which the server refuses outright.
+const TRADE_FODDER_HELD_TICKS := 84_050_001
 const TRADE_HIDE_MATERIAL := "hide"
 const TRADE_HIDE_AXIS := "tough"
 const TRADE_HIDE_AXIS_VALUE := 0.9
@@ -154,11 +160,22 @@ const TRADE_HIDE_AXIS_BAND := "excellent"
 ## and a cargo this harness cannot send emits no line to parse.
 const TRADE_PER_WORKER_CARRY := 120.0
 const TRADE_MATERIAL_CARRY_WEIGHT := 1.0
+## Hay's own pack-space price, the shipped `expedition_config.trade.fodder_carry_weight`. Stated so
+## the meter this drive has to get past prices the hay row the way the server will, and so the pack
+## above holds all three piles at once.
+const TRADE_FODDER_CARRY_WEIGHT := 0.5
 
-## The most `+` presses one cargo row may take before the drive gives up. A whole-unit step over a
-## ~21-unit pile needs 22, so this is generous rather than tight; it exists so a row whose `+` stops
-## disabling fails HERE instead of spinning the harness forever.
-const CARGO_LOAD_MAX_PRESSES := 64
+## The most `+` presses one cargo row may take before the drive gives up. **A TOOLING CEILING, NOT A
+## GAME RULE** - it exists so a row whose `+` stops disabling fails HERE instead of spinning the
+## harness forever, and it must sit above the largest pile the fixtures author.
+##
+## The whole-unit step (`COMPOSE_CARGO_STEP`) makes the press count the pile's own size: the ~21-unit
+## food pile needs 22 and the ~84-unit HAY pile needs 85, which is what took this past the 64 it sat
+## at before hay could be shipped. For scale, a full hay load at the shipped levers is 72 presses -
+## a 6-worker party carries `6 x 6.0` of mass and hay costs `0.5` a unit - so the stepper's
+## granularity is a real question, and it is a GAME DESIGN question rather than one this constant
+## answers. Raising a harness bound must never be mistaken for changing the step.
+const CARGO_LOAD_MAX_PRESSES := 128
 
 ## Frames to let the HUD/panel rebuild between drives. Nothing renders, so this is layout settling
 ## only — the controls have to exist before a button can be pressed.
@@ -486,6 +503,11 @@ func _drive_send_trade_expedition() -> void:
 	_hud._bandpanel.rerender()
 	await _settle()
 	await _load_whole_pile(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+	# **THE HAY ROW IS DRIVEN BESIDE THE FOOD ONE, and that is the point of driving it at all**
+	# (issue #590): both are commodities with `is_material` false, so the only thing keeping a hay
+	# press out of the `food` token is the row's own id. The emitted line is checked against the
+	# fodder pile by name, so a formatter that merged them fails here.
+	await _load_whole_pile(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL)
 	await _load_whole_pile(TRADE_HIDE_MATERIAL)
 	_press_meta_button(_panel, HudWidgets.SEND_TRADE_CONFIRM_META, "band panel trade compose")
 	await _settle()
@@ -603,6 +625,12 @@ func _connect_recorders() -> void:
 	_hud.send_trade_expedition_requested.connect(func(p: Dictionary) -> void:
 		_record("send_trade_expedition", p, MAIN_SCRIPT.format_send_trade_expedition(p), {
 			HudConst.STORE_ITEM_PROVISIONS: TRADE_FOOD_HELD_TICKS,
+			# The hay pile under the key the SERVER PARSER rebuilds for a `fodder` token
+			# (`sim_runtime::commands::FODDER_CARGO_KEY`), which is what makes the Rust half's
+			# comparison an exact one. A commodity line naming a key the drive never stated is
+			# itself a guard failure, so a `fodder` token emitted against the food pile - the
+			# defect the third account invites - cannot pass here.
+			HudConst.CARGO_ITEM_FODDER: TRADE_FODDER_HELD_TICKS,
 			TRADE_HIDE_MATERIAL: TRADE_HIDE_HELD_TICKS,
 		}))
 
@@ -905,12 +933,16 @@ func _band_fixture() -> Dictionary:
 		# **THE LARDER IS A FRACTIONAL PILE, and that is the shipment drive's whole subject** — see
 		# `TRADE_FOOD_HELD_TICKS`. Nothing else in this file reads the store.
 		"stores": {HudConst.STORE_ITEM_PROVISIONS: _units(TRADE_FOOD_HELD_TICKS)},
+		# **THE HAY LARDER IS NOT IN `stores`** - the wire publishes it as the cohort's own
+		# `fodder_store`, a larder apart from the food one, and the two never convert.
+		"fodder_store": _units(TRADE_FODDER_HELD_TICKS),
 		# One pile of one material AT ONE RATING, the shape the sim's own store keeps.
 		HudCraftingVocab.BAND_MATERIAL_BATCHES_KEY: [_hide_batch_fixture()],
 		# The two shipment pack levers, so the manifest the drive composes is one the meter passes and
 		# the send button therefore exists to be pressed.
 		"expedition_trade_per_worker_carry": TRADE_PER_WORKER_CARRY,
 		"expedition_trade_material_carry_weight": TRADE_MATERIAL_CARRY_WEIGHT,
+		"expedition_trade_fodder_carry_weight": TRADE_FODDER_CARRY_WEIGHT,
 		"output_multiplier": 1.0,
 		"work_range": BAND_WORK_RANGE,
 		"hunt_reach": BAND_HUNT_REACH,

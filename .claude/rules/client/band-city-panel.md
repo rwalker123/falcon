@@ -5766,7 +5766,8 @@ POSITION, `HudFormat.band_display_name`); one the roster cannot resolve is named
 
 ### THE MANIFEST IS ONE ROW PER PILE, AND A MATERIAL ROW SHOWS ITS RATING
 
-The larder is one commodity and so one `Food` row; the materials are one row per BATCH, which is one
+Each larder is one commodity and so one row — `Food` off the band's provisions and `Hay` off its
+`fodder_store`; the materials are one row per BATCH, which is one
 pile of one material AT ONE RATING — the shape the sim's own store keeps (`BTreeMap` of
 `(material, rating band)`). **A mammoth hide and a hare pelt are both `hide`**, and a row that merged
 them would offer a quantity of something the band does not hold. The row's face is
@@ -5796,24 +5797,59 @@ reads the same wherever it is quoted.
 - **The state is remembered per BATCH KEY** (`material id | rating bands`), so a snapshot that moves a
   pile's size cannot silently move the player's choice onto a different pile.
 - **The command emits one `material <id> <amount>` line per ROW**, in the order the sheet lists them.
-  The parser keeps each line separately, so two piles of hide leave as two lines. **Only the FOOD
-  lines are summed**, and only because `food` names one commodity.
+  The parser keeps each line separately, so two piles of hide leave as two lines. **Only the
+  COMMODITY lines are summed, each on its own account** — `food` and `fodder` each name one
+  commodity, and the two totals are floored SEPARATELY (`Main.cargo_wire_amount`) because the server
+  checks each token against a different store.
+
+#### HAY IS THE THIRD ACCOUNT, AND WHICH ACCOUNT A ROW IS, IS ITS `id`
+
+Issue #590. A shipment carries food, hay and materials, and **hay and bread never convert** — they
+land in two different larders at the destination, so a herd can never eat its keepers' bread. The
+sheet therefore lists them as two rows, the command spells them as two tokens (`food <amt>` /
+`fodder <amt>`), and **nothing on screen totals them**: a figure covering both accounts is the
+retired trade-goods axis under a new name. The one place the three accounts meet is the mass meter
+below, and they meet there as PACK SPACE rather than as a quantity of anything.
+
+⛔ **`is_material` DOES NOT SAY WHICH STORE A ROW DRAWS FROM, and it has not since hay joined.** It
+answers *batch or larder*, and there are now two larders — so every commodity fork keys off the row
+instead: the SHEET tells them apart by `TRADE_FOOD_ROW_KEY` / `TRADE_FODDER_ROW_KEY`
+(`_set_cargo_amount`, `_trade_manifest_mass`) and the COMMAND FORMATTER by the manifest line's `id`
+(`HudConst.STORE_ITEM_PROVISIONS` / `HudConst.CARGO_ITEM_FODDER`, in
+`Main.format_send_trade_expedition`). A plain `else` at any of those four sites pours a hay press
+into the food token, silently, against a larder that does not hold it. The row set is HAND-LISTED
+rather than derived from the wire, so adding a fourth account means sweeping all four again.
+
+`cargo xtask command-guard` is what holds this: its fixture band carries an ~84-unit hay pile beside
+its ~21-unit food one, the drive loads both through their own `+` buttons, and the Rust half compares
+each emitted token against the pile it names BY NAME — so a `fodder` amount checked against the food
+pile fails there rather than in play. That pile is also why `CARGO_LOAD_MAX_PRESSES` is 128: the
+whole-unit step makes a press count the pile's own size, and the constant is a TOOLING bound on the
+drive, never a statement about the step.
 
 ### THE MASS METER IS A COURTESY; THE SERVER'S REFUSAL REMAINS THE AUTHORITY
 
 ```text
-mass = Σ food rows + expeditionTradeMaterialCarryWeight × Σ material row amounts
+mass = Σ food rows
+     + expeditionTradeFodderCarryWeight   × Σ fodder rows
+     + expeditionTradeMaterialCarryWeight × Σ material row amounts
 cap  = party_workers × expeditionTradePerWorkerCarry
 ```
 
-Both terms are per-cohort echoes of the sim's own config, so a tuning change moves the meter and the
-refusal together. **Neither is a literal here** — `expeditionPerWorkerCarry` is the HUNT pack and a
+Every term is a per-cohort echo of the sim's own config, so a tuning change moves the meter and the
+refusal together. **None is a literal here** — `expeditionPerWorkerCarry` is the HUNT pack and a
 client composing a trade cap out of it would be one config edit from quoting a cap
 `send_trade_expedition` refuses.
 
+**THREE TERMS, AND THE HAY ONE FAILS IN THE DANGEROUS DIRECTION.** A meter missing the fodder term
+UNDER-prices every manifest with a bale in it: it reads lighter than the sim will weigh it, so the
+send button goes live on a load the server then refuses — the exact failure the material lever
+shipped to prevent, one account over. `expeditionTradeFodderCarryWeight` is FINITE AND >= 0 rather
+than positive; `0` legitimately means "hay is weightless".
+
 **The mass expression itself lives in ONE place, `DetailFormat.shipment_mass`**, because the in-flight
 `Carrying:` row prices the same pack (`band-readouts.md` → "A trade party states WHO IT IS FOR"). This
-sheet's `_trade_manifest_mass` only splits its mixed row list into the two accounts that expression
+sheet's `_trade_manifest_mass` only splits its mixed row list into the three accounts that expression
 takes. Two copies of a formula are two answers about one pack, and the row's copy had already drifted:
 it divided the cargo's FOOD by the mass cap. The meter exists so the player never meets that refusal; an over-cap
 or empty manifest disables the send with its reason, which is the "visible and disabled with its
@@ -5841,7 +5877,9 @@ LIST above it gives up (it is the `EXPAND_FILL` child).
 
 **Frames:** `trade_footer` (all five buttons, and the frame that proves the glyph DRAWS — a mark
 missing from this client's fallback font renders as an invisible gap that no assertion catches),
-`trade_picker_empty`, `trade_picker_destination`, `trade_cargo_loaded`, `trade_cargo_over_cap`.
+`trade_picker_empty`, `trade_picker_destination`, `trade_cargo_loaded`, `trade_cargo_hay` (the hay
+row loaded beside the food and hide ones, the meter carrying its 0.5-weighted mass), and
+`trade_cargo_over_cap`.
 
 
 ## The work row states its RUNG in two registers, and the ring is declared from the mark

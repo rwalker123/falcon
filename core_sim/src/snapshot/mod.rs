@@ -1370,6 +1370,7 @@ mod tests {
             hunt_per_worker_carry: 0.0,
             trade_per_worker_carry: 0.0,
             trade_material_carry_weight: 0.0,
+            trade_fodder_carry_weight: 0.0,
             hunt_per_worker_provisions: 0.0,
             hunt_viability_warn_turns: 0,
             hunt_forecast_horizon_turns: 0,

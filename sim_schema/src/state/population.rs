@@ -1122,6 +1122,9 @@ pub struct PopulationCohortState {
     pub expedition_destination_name: String,
     /// **The FOOD the shipment holds.** It is a *separate* store from the party's own pack (which
     /// rides `stores`), because a hungry party must not be able to eat the shipment it is hauling.
+    ///
+    /// One of **three** cargo accounts, with [`Self::expedition_cargo_fodder`] and
+    /// [`Self::expedition_cargo_materials`]. Food and hay never convert.
     #[serde(default)]
     pub expedition_cargo_food: f32,
     /// **The shipment's materials, one row per material id.** Reuses [`MaterialPayoff`] rather than
@@ -1179,7 +1182,9 @@ pub struct PopulationCohortState {
     /// Together they give a client the sim's own expression:
     ///
     /// ```text
-    /// mass = expedition_cargo_food + this × Σ material amounts
+    /// mass = expedition_cargo_food
+    ///        + expedition_trade_fodder_carry_weight × expedition_cargo_fodder
+    ///        + this × Σ material amounts
     /// cap  = party_workers × expedition_trade_per_worker_carry
     /// ```
     ///
@@ -1369,18 +1374,43 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub fodder_transfer_local_sent_turn: f32,
     /// **HAY AN EXPEDITION PARTY CARRIED IN, THIS TURN** — the fodder twin of
-    /// [`Self::transfer_route_received_turn`].
+    /// [`Self::transfer_route_received_turn`], and **live**: `send_trade_expedition` takes a
+    /// `fodder <amount>` line beside its food and material ones, so a party really does walk bales
+    /// from one camp to another. Credited when a shipment lands, and credited on the *sending*
+    /// band's own row if an undelivered one comes home.
     ///
-    /// ⛔ **It reads `0`, and that is a fact about shipments rather than about hay.** A shipment's
-    /// manifest refuses any cargo item that is not food or a material
-    /// (`core_sim`'s `ResolvedShipment`), so no party carries fodder for this to book. The field
-    /// ships so both accounts have one shape and a future currency for hay needs no schema change.
+    /// **It closes no identity**, deliberately: the ledger identity is the food one, over the food
+    /// larder, which a bale never enters. A shipment's hay is booked here and **nowhere** in
+    /// [`Self::transfer_sent`] / [`Self::transfer_received`].
     #[serde(default)]
     pub fodder_transfer_route_received_turn: f32,
     /// **Hay an expedition party carried away, this turn** — the sent half of
-    /// [`Self::fodder_transfer_route_received_turn`], and `0` for the same reason.
+    /// [`Self::fodder_transfer_route_received_turn`], debited at the moment a shipment launches.
     #[serde(default)]
     pub fodder_transfer_route_sent_turn: f32,
+    /// **THE HAY AN IN-FLIGHT PARTY IS CARRYING** — the fodder twin of
+    /// [`Self::expedition_cargo_food`], and the third of a shipment's three cargo accounts.
+    ///
+    /// Read off the party's *cargo*, never its pack: a pack is a walking larder for people, and hay
+    /// is not people food. `0` for every other mission and for a resident band — a real reading
+    /// ("this shipment carries no hay"), never an absent one.
+    #[serde(default)]
+    pub expedition_cargo_fodder: f32,
+    /// **What one unit of HAY costs in shipment pack space, relative to one unit of food** —
+    /// `expedition_config.trade.fodder_carry_weight`, the third term of a shipment's mass and the
+    /// same every-cohort lever echo as [`Self::expedition_trade_material_carry_weight`].
+    ///
+    /// **It ships for the identical reason**: without it a cargo picker cannot evaluate the cap rule
+    /// the sim refuses on, and a client that leaves the hay term out under-prices every manifest
+    /// with a bale in it.
+    ///
+    /// The shipped value is priced in *turns of keep* against food's person-turns; see the lever's
+    /// own comment in `core_sim/src/data/expedition_config.json`. It is a playtest dial, so a client
+    /// reads it rather than hardcoding it.
+    ///
+    /// **Finite and `>= 0`, not positive** — `0` is a legitimate setting ("hay is weightless").
+    #[serde(default)]
+    pub expedition_trade_fodder_carry_weight: f32,
 }
 
 /// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],
