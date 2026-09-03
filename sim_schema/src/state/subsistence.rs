@@ -194,19 +194,20 @@ pub struct HerdTelemetryState {
     /// **Corral** policy. The animal twin of `ForagePatchState::cultivation_progress`.
     #[serde(default)]
     pub corral_progress: f32,
-    /// Pre-commit yield forecast at the herd's current biomass (food/turn, `output_multiplier = 1`).
-    /// The per-worker **rate**; the per-policy ceilings that clamp it live in
-    /// [`Self::hunt_policy_ceilings`].
+    /// Pre-commit yield forecast at the herd's current biomass (food/turn, `output_multiplier =
+    /// 1`). The per-worker **rate**; the escapement ceiling that clamps it is composed at the
+    /// crew's floor from [`Self::provisions_per_biomass`] and [`Self::carrying_capacity`], the
+    /// per-policy ceiling rows having retired with the four harvest stances.
     #[serde(default)]
     pub per_worker_yield: f32,
     // **RETIRED: `per_worker_trade`** (arc #527). The wire slot `perWorkerTrade` is `(deprecated)`
     // in place. A band preview that needs a *crew* number on an inedible species reads
     // [`Self::per_worker_biomass`], which is positive there and always was.
     /// Food/turn the herd will pay **once penned** (the corral's managed harvest at its current
-    /// biomass). With the `corral` row of [`Self::hunt_policy_ceilings`] (what the herd pays *while*
-    /// the pen is being built), lets the client show "preparing X → then Y" pre-commit.
-    /// **Gross and net both**: a pen's feed is grass and hay, so nothing is subtracted from this in
-    /// food.
+    /// biomass). A crew building the pen takes **nothing** while it works
+    /// (`docs/plan_standing_upkeep.md` §2.2), so this alone lets the client show "preparing → then
+    /// Y" pre-commit. **Gross and net both**: a pen's feed is grass and hay, so nothing is
+    /// subtracted from this in food.
     #[serde(default)]
     pub corral_yield: f32,
     // **RETIRED: `corral_trade`** (arc #527). The wire slot `corralTrade` is `(deprecated)` in place.
@@ -305,11 +306,12 @@ pub struct HerdTelemetryState {
     #[serde(default = "fully_herded")]
     pub herded_fraction: f32,
     /// **The Tame rung's payoff** — food/turn a Sustain hunt pays once this herd is tamed (the
-    /// pastoral MSY at the herd's current biomass), the pastoral twin of [`Self::corral_yield`]. Its
-    /// `ceilingTame` sibling (in [`Self::hunt_policy_ceilings`]) is Tame's *during-building* dip; this
-    /// is what the herd pays *after* taming, so the client renders Tame as `→ +Y` (like
-    /// Cultivate/Sow/Corral) instead of only the dip. `0` on a herd that never offers Tame (already
-    /// penned, or a `wild`-ceiling species). Appended last (append-only).
+    /// pastoral MSY at the herd's current biomass), the pastoral twin of [`Self::corral_yield`].
+    /// Its during-building dip is gone — a crew taming spends its turn on the meter and takes
+    /// nothing (the retired `tame_build_fraction`) — and this is what the herd pays *after* taming,
+    /// so the client renders Tame as `→ +Y` (like Cultivate/Sow/Corral) instead of only the dip.
+    /// `0` on a herd that never offers Tame (already penned, or a `wild`-ceiling species). Appended
+    /// last (append-only).
     #[serde(default)]
     pub pastoral_yield: f32,
     // **RETIRED: `pastoral_trade`** (arc #527). The wire slot `pastoralTrade` is `(deprecated)` in
@@ -1073,20 +1075,22 @@ pub struct ForagePatchState {
     /// **Pre-commit yield forecast** at the patch's current biomass (per turn, captured at
     /// `output_multiplier = 1.0` — the client scales by the band's `outputMultiplier`). Lets the
     /// client state the take and cap its worker stepper *while the player is composing an
-    /// assignment*, before anything is committed:
-    /// `expected(workers, policy) = min(workers × per_worker, ceiling)` and
-    /// `max_useful_workers(policy) = ceil(ceiling / per_worker)`, **per account**, both terms read
-    /// off [`ForagePolicyCeiling`] — the per-policy ROW that is now the patch's only wire
-    /// representation of a ceiling, the six flat `ceiling_*` scalars it replaced having been removed
-    /// (#426). This field survives as the FOOD per-worker term only, because a patch-level scalar
-    /// cannot state a policy-dependent rate and the non-food accounts genuinely have one.
-    /// Provisions/turn one forager contributes (this tile's seasonal weight folded in, as the take
-    /// does); `0.0` in a dead season — do not divide by it, and **do not read it as "the wire said
-    /// nothing"**: whether a patch was DESCRIBED is the row's presence, not this number's size.
+    /// assignment*, before anything is committed: `expected(workers, floor) = min(workers ×
+    /// per_worker, ceiling)` and `max_useful_workers(floor) = ceil(ceiling / per_worker)`, **per
+    /// account**, where the ceiling is composed at any floor from terms already on the wire —
+    /// `(biomass − floor × carrying_capacity) × provisions_per_biomass`, see
+    /// [`Self::provisions_per_biomass`]. The six flat `ceiling_*` scalars went first (#426) and the
+    /// per-policy ceiling rows that replaced them retired with the four harvest stances. This field
+    /// survives as the FOOD per-worker term only, because a patch-level scalar cannot state a
+    /// floor-dependent rate and the non-food accounts genuinely have one. Provisions/turn one
+    /// forager contributes (this tile's seasonal weight folded in, as the take does); `0.0` in a
+    /// dead season — do not divide by it, and **do not read it as "the wire said nothing"**:
+    /// whether a patch was DESCRIBED is the row's presence, not this number's size.
     #[serde(default)]
     pub per_worker_yield: f32,
     /// Food/turn the patch will pay **once cultivated** (the tended harvest on its current standing
-    /// crop). With `forage_policy_ceilings`' `cultivate` row, the client's "preparing X → then Y".
+    /// crop). A crew cultivating takes nothing while it works, so this alone is the client's
+    /// "preparing → then Y".
     #[serde(default)]
     pub tended_yield: f32,
     /// The per-patch **`plant:field` build meter**, `0..1` — the plant rung-3 twin of a herd's
@@ -1099,10 +1103,10 @@ pub struct ForagePatchState {
     #[serde(default)]
     pub is_field: bool,
     /// Food/turn the patch will pay **once sown** (the Field harvest on its current standing crop —
-    /// 2× `tended_yield` on the shipped dials). With the `sow` row, Sow's "preparing X → then Y" pair.
+    /// 2× `tended_yield` on the shipped dials) — Sow's half of the same "preparing → then Y" pair.
     #[serde(default)]
     pub field_yield: f32,
-    /// **Why this ground will not take seed** ([`SiteRefusal::as_str`]: `"too_poor"` / `"too_dry"` /
+    /// **Why this ground will not take seed** (`SiteRefusal::as_str`: `"too_poor"` / `"too_dry"` /
     /// `"too_poor_and_too_dry"`), or **`""`** when it will. Resolved through the same
     /// `RungSiteRequirement::refusal` seam the `sow` command and the labor arm gate on, so the wire
     /// cannot disagree with the gate. Shipped as an *answer* because the client can re-derive

@@ -11,7 +11,8 @@
 //!    bounding tool's equipped value if the band has one, else the **material's** own
 //!    `hand_working.rate`. **That is `0` for a material with no `hand_working`, which is how metal
 //!    will refuse itself with no branch** — exactly as `max(0, attack − defense)` refuses a hunt.
-//! 4. **On `progress >= work`**: emit the outputs, charge **one** [`WearQuantum::ItemCrafted`] on the
+//! 4. **On `progress >= work`**: emit the outputs, charge **one**
+//!    [`crate::equipment_config::WearQuantum::ItemCrafted`] on the
 //!    bounding tool and **one** lesson of the recipe's craft. Same quantum, same count, one place —
 //!    so the thing that consumes the tool and the thing that teaches the craft cannot drift.
 //! 5. **Reset and re-draw.** The next pass's grade is fixed from the stock the band has *now*.

@@ -279,7 +279,8 @@ pub struct LaborConfigs<'w> {
 ///    job's default"* rule every other selection follows
 ///    (`docs/plan_standing_upkeep.md` §4.7a ②).
 /// 2. **Otherwise the roster answers**, per branch, through
-///    [`EquipmentConfig::build_kit_for_branch`] — the shape `fauna::kit_supplying` already uses for a
+///    [`crate::equipment_config::EquipmentConfig::build_kit_for_branch`] — the shape
+///    `fauna::kit_supplying` already uses for a
 ///    penned herd's default kit. ⛔ **No `BuildJob → kit id` match exists in Rust**, so a third build
 ///    tool is a roster edit.
 /// 3. **`default_kits.builders` is the fall-back**, not the answer: a roster with no kit serving a
@@ -6252,7 +6253,7 @@ pub fn advance_labor_allocation(
 ///
 /// | entry | test | seam |
 /// |---|---|---|
-/// | `Rung(Cultivate)` / `Rung(Sow)` | the meter it names is full | [`forage::patch_rung_already_built`] |
+/// | `Rung(Cultivate)` / `Rung(Sow)` | the meter it names is full | [`crate::forage::patch_rung_already_built`] |
 /// | `Rung(Tame)` / `Rung(Corral)` | the meter it names is full | [`fauna::herd_rung_already_built`] |
 /// | `ExtendPen` | the ring is **not in flight** | `Herd::pen_extending` |
 ///

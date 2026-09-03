@@ -317,10 +317,11 @@ pub struct SpeciesDef {
     /// says *the animal is five times the work*, which is what anyone would have meant. Same pacing,
     /// truer sentence — and it composes with a cost spread, where a rate could not.
     ///
-    /// **It scales the rung's DECAY as well as its cost**, because [`RungDef::build_decay`] reads
-    /// `decay_fraction_per_turn` off the *scaled* cost — so the rung's build:decay ratio is invariant
-    /// per species for free: **slow to tame, slow to forget**. Moot today (`animal:pastoral` declares
-    /// no decay at all) but it is the rule that keeps a future decaying rung correct.
+    /// **It scaled the rung's DECAY as well as its cost** while a rung had one: the retired
+    /// `RungDef::build_decay` read `decay_fraction_per_turn` off the *scaled* cost, so the rung's
+    /// build:decay ratio was invariant per species for free — **slow to tame, slow to forget**.
+    /// Moot today (`animal:pastoral` declares no decay at all) but it is the rule that keeps a
+    /// future decaying rung correct.
     ///
     /// Defaults to `1.0` (the rung's own price) when omitted, so an untagged or future species keeps
     /// today's behaviour. **Playtest dial.** Validated finite & `> 0` (at `0` the species would tame
@@ -329,9 +330,10 @@ pub struct SpeciesDef {
     pub taming_cost_multiplier: f32,
     /// **How many ANIMALS one herder can mind** — the standing maintenance a managed (pastoral or
     /// penned) herd demands every turn: `herders_needed = ceil((biomass / body_mass) /
-    /// animals_per_herder)` ([`crate::fauna::herders_needed`]). *Just because you aren't killing an
-    /// animal doesn't mean you aren't tending them, making sure they don't run off, repairing fences.*
-    /// Before this a pen of 2 and a pen of 200 needed the same single keeper; only the **feed** scaled.
+    /// animals_per_herder)` ([`crate::fauna::herd_herders_needed`]). *Just because you aren't
+    /// killing an animal doesn't mean you aren't tending them, making sure they don't run off,
+    /// repairing fences.* Before this a pen of 2 and a pen of 200 needed the same single keeper;
+    /// only the **feed** scaled.
     ///
     /// # Herding is HEADS, not tonnes — the denominator is load-bearing
     ///
@@ -361,16 +363,17 @@ pub struct SpeciesDef {
     #[serde(default)]
     pub husbandry_ceiling: HusbandryCeiling,
     /// **The K (carrying-capacity) multiplier at the mobile-tamed (pastoral) rung** — domestication
-    /// makes the *land* hold more animals, non-linearly by species. Distinct from the global r-gains
-    /// (`husbandry.pastoral_gain` / `pen_gain`), which scale a herd's *breeding rate*: this scales its
-    /// *ceiling*. Without it a species on marginal range (a goat at `K≈24`) stays tiny even tamed while
-    /// a fast wild breeder out-yields it, because taming touched only `r`. Folded into the herd's `K` at
-    /// the one seam that writes it (`fauna::ecological_carrying_capacity`, via [`fauna::herd_density_gain`]),
-    /// so a wild herd's `×1.0` leaves its `K` byte-identical. Resolved **live** by display name
-    /// ([`FaunaConfig::pastoral_density_for`]), never cached on the `Herd` — the `taming_cost_multiplier_for` path, so a
-    /// retune reaches herds already on the map. Defaults to [`DEFAULT_HUSBANDRY_DENSITY`] (1.0, neutral).
-    /// **Playtest dial.** Validated finite & `>= 1.0` (a gain below 1 would make domestication *reduce*
-    /// capacity).
+    /// makes the *land* hold more animals, non-linearly by species. Distinct from the global
+    /// r-gains (`husbandry.pastoral_gain` / `pen_gain`), which scale a herd's *breeding rate*: this
+    /// scales its *ceiling*. Without it a species on marginal range (a goat at `K≈24`) stays tiny
+    /// even tamed while a fast wild breeder out-yields it, because taming touched only `r`. Folded
+    /// into the herd's `K` at the one seam that writes it (`fauna::ecological_carrying_capacity`,
+    /// via [`crate::fauna::herd_density_gain`]), so a wild herd's `×1.0` leaves its `K`
+    /// byte-identical. Resolved **live** by display name ([`FaunaConfig::pastoral_density_for`]),
+    /// never cached on the `Herd` — the `taming_cost_multiplier_for` path, so a retune reaches
+    /// herds already on the map. Defaults to [`DEFAULT_HUSBANDRY_DENSITY`] (1.0, neutral).
+    /// **Playtest dial.** Validated finite & `>= 1.0` (a gain below 1 would make domestication
+    /// *reduce* capacity).
     #[serde(default = "default_husbandry_density")]
     pub pastoral_density: f32,
     /// **The K (carrying-capacity) multiplier at the penned rung** — the top of the density ladder, big
@@ -438,16 +441,17 @@ pub struct SpeciesDef {
     pub ferocity: f32,
     /// **A carnivore's target population as a fraction of its prey base** (Predators Phase 1a,
     /// `docs/plan_predators.md`) — *"wolves are 10% of their prey groups"*. The dedicated
-    /// [`fauna::spawn_predators`] pass derives its per-species pack count from this instead of a fixed
-    /// cap: `target = round(eligible_prey_herds × prey_ratio)`, where the prey herds are every
-    /// herbivore herd this predator's `attack` clears (the map-wide count, no sensing-disk filter). A
-    /// predator population is *defined by* its prey base, so the count is **derived, not an absolute** —
-    /// and it lives on the predator's own row because each predator has its own prey set and its own
-    /// ratio (a future big cat might be `0.05`).
+    /// `fauna::spawn_predators` pass derives its per-species pack count from this instead of a
+    /// fixed cap: `target = round(eligible_prey_herds × prey_ratio)`, where the prey herds are
+    /// every herbivore herd this predator's `attack` clears (the map-wide count, no sensing-disk
+    /// filter). A predator population is *defined by* its prey base, so the count is **derived, not
+    /// an absolute** — and it lives on the predator's own row because each predator has its own
+    /// prey set and its own ratio (a future big cat might be `0.05`).
     ///
-    /// `#[serde(default)]` = `0.0` for every herbivore (inert — only [`fauna::spawn_predators`] reads
-    /// it, and only for carnivores). **A carnivore requires it finite `> 0`** ([`FaunaConfig::validate`]):
-    /// a `0` (or negative/non-finite) ratio would seat no packs at all, an incoherent predator.
+    /// `#[serde(default)]` = `0.0` for every herbivore (inert — only `fauna::spawn_predators` reads
+    /// it, and only for carnivores). **A carnivore requires it finite `> 0`**
+    /// ([`FaunaConfig::validate`]): a `0` (or negative/non-finite) ratio would seat no packs at
+    /// all, an incoherent predator.
     #[serde(default)]
     pub prey_ratio: f32,
     /// **What a hunt of this species PAYS, per unit of biomass taken** (`docs/plan_hunt_yield_model.md`
@@ -2241,9 +2245,9 @@ impl FaunaConfig {
         out
     }
 
-    /// `(key, def)` pairs for every non-migratory **carnivore** species (all biomes), in a stable key
-    /// order — the roster [`fauna::spawn_predators`] sizes its per-species prey-derived pack targets
-    /// over.
+    /// `(key, def)` pairs for every non-migratory **carnivore** species (all biomes), in a stable
+    /// key order — the roster `fauna::spawn_predators` sizes its per-species prey-derived pack
+    /// targets over.
     pub fn carnivore_species(&self) -> Vec<(&String, &SpeciesDef)> {
         let mut out: Vec<_> = self
             .species

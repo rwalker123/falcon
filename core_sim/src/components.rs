@@ -1289,7 +1289,7 @@ pub enum ExpeditionMission {
         /// whole of what the party's orders say about pressure (`docs/plan_harvest_floor.md` §1).
         /// The raid takes the stock standing above it as fast as it can carry it, then comes home;
         /// the floor therefore governs both the take and the trip's shape
-        /// ([`crate::systems::raid_is_recurring`]).
+        /// ([`crate::components::raid_is_recurring`]).
         ///
         /// **Floor `0` takes everything** — nothing is left standing, the herd falls under
         /// `extinction_floor`, and the party banks the whole-stock windfall on the way (an end
@@ -1902,13 +1902,13 @@ pub enum LaborTarget {
     Husbandry,
     /// **KEEP THE ROADS THIS BAND STANDS ON** — the roadwork standing role, the route branch's
     /// third keeping pool (`docs/plan_standing_upkeep.md` §4.13). One pool against the summed
-    /// [`crate::routes::route_upkeep_demand`] of every road under the band's own tile.
+    /// [`crate::routes::road_upkeep_demand`] of every road under the band's own tile.
     ///
     /// # ⛔ IT KEEPS GROUND THE BAND DOES NOT OWN
     ///
     /// A road is a **shared public good** with no owner ([`crate::routes`] — rule 3), so unlike the
     /// two food webs' pools there is no *source row* naming what this one funds. What it funds is
-    /// resolved from where the band is standing ([`crate::routes::RoadRegistry::routes_on_tile`] —
+    /// resolved from where the band is standing ([`crate::routes::RoadRegistry::road`] —
     /// rule 2, and there is no radius): step one tile off your own road and you stop paying for it,
     /// which is the legible half of *a road is a reason to stay*.
     ///
@@ -2202,18 +2202,6 @@ impl LaborAssignment {
     }
 }
 
-/// **HANDS ONE `normalize` TOOK OFF A ROW** — what [`LaborAllocation::normalize`] hands its caller
-/// so the caller can say so (`docs/plan_standing_upkeep.md` §2.2).
-///
-/// The band could not field what it was holding, so the shedding pass took `lost` workers off
-/// `target` and left `remaining` there. **[`Self::remaining`] is the whole of the difference between
-/// a trim and a lapse**: above zero the source is still worked by a smaller crew, at
-/// [`NO_CREW_ON_THIS_ACTIVITY`] the row is gone and its queue entry goes with it on the next prune.
-///
-/// It carries the target by value rather than the whole [`LaborAssignment`] because a trimmed row is
-/// **still in the allocation** — handing back a copy of a live row would put a second, instantly
-/// stale reading of its crew in the caller's hands, and the caller's one job is to name the crew
-/// this pass left.
 /// **WHAT A SHED TOOK HANDS OFF** — a labor row, or the band's crafting bench.
 ///
 /// **The bench is deliberately NOT a [`LaborTarget`]** (*"make IS the assignment"*): giving it one
@@ -2248,6 +2236,18 @@ impl ShedSubject {
     }
 }
 
+/// **HANDS ONE `normalize` TOOK OFF A ROW** — what [`LaborAllocation::normalize`] hands its caller
+/// so the caller can say so (`docs/plan_standing_upkeep.md` §2.2).
+///
+/// The band could not field what it was holding, so the shedding pass took `lost` workers off
+/// `subject` and left `remaining` there. **[`Self::remaining`] is the whole of the difference
+/// between a trim and a lapse**: above zero the source is still worked by a smaller crew, at
+/// [`NO_CREW_ON_THIS_ACTIVITY`] the row is gone and its queue entry goes with it on the next prune.
+///
+/// It carries the subject by value rather than the whole [`LaborAssignment`] because a trimmed row
+/// is **still in the allocation** — handing back a copy of a live row would put a second, instantly
+/// stale reading of its crew in the caller's hands, and the caller's one job is to name the crew
+/// this pass left.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShedCrew {
     /// The source, role or bench the hands came off.
@@ -2627,31 +2627,32 @@ pub enum ShedStep {
 /// `realized` = **the steady headline yield**, a **FORWARD PROJECTION**: the average food/turn this
 /// source will deliver over the next `labor_config.yield_average_horizon_turns` turns, computed by
 /// simulating the herd/patch forward from its CURRENT state under the assignment's policy + worker
-/// count ([`fauna::project_realized_hunt`] / [`forage::project_realized_forage`]). A **pure function of
-/// state** — no history, no persistence — so the assign-time seed and the resolved row compute the
-/// identical number (exact forecast == actual, true no-jump). It is simulated **rate-based, without the
-/// kill-credit bank**: the bank only quantises *when* whole animals arrive, never the N-turn total, so
-/// projecting the smooth policy rate gives the smooth average directly. That is the whole point — the
-/// lumpy bank-quantised take is what `actual` already reports, and averaging the instantaneous
-/// `sustainable_yield(current biomass)` instead would *sawtooth* with the biomass (drops one body per
-/// kill, regrows between). So on a mammoth's six wait turns `actual` is `0` and on the seventh it
-/// spikes, while `realized` reads flat ≈ `MSY`. A self-terminating policy (Eradicate/Deplete) breaks the
-/// projection early and divides by the turns actually simulated, so it reads the rate it delivers
-/// *while the source lasts* rather than a horizon-diluted average. On a **continuous** source (forage
-/// patch / Field) the projection reuses `forage_take` directly. `actual` and the ledger identity are
-/// unchanged — this is a parallel steady value, added beside them, never replacing them.
+/// count ([`crate::fauna::project_realized_hunt`] / [`crate::forage::project_realized_forage`]). A
+/// **pure function of state** — no history, no persistence — so the assign-time seed and the
+/// resolved row compute the identical number (exact forecast == actual, true no-jump). It is
+/// simulated **rate-based, without the kill-credit bank**: the bank only quantises *when* whole
+/// animals arrive, never the N-turn total, so projecting the smooth policy rate gives the smooth
+/// average directly. That is the whole point — the lumpy bank-quantised take is what `actual`
+/// already reports, and averaging the instantaneous `sustainable_yield(current biomass)` instead
+/// would *sawtooth* with the biomass (drops one body per kill, regrows between). So on a mammoth's
+/// six wait turns `actual` is `0` and on the seventh it spikes, while `realized` reads flat ≈
+/// `MSY`. A self-terminating policy (Eradicate/Deplete) breaks the projection early and divides by
+/// the turns actually simulated, so it reads the rate it delivers *while the source lasts* rather
+/// than a horizon-diluted average. On a **continuous** source (forage patch / Field) the projection
+/// reuses `forage_take` directly. `actual` and the ledger identity are unchanged — this is a
+/// parallel steady value, added beside them, never replacing them.
 ///
 /// `arrivals` = **when the food actually lands** — the other half of the same question `realized`
 /// answers, from the same forward simulation run **WITH** the kill-credit bank
-/// ([`fauna::project_arrivals_hunt`] / [`forage::project_arrivals_forage`]). Index `i` is the food
-/// delivered `i + 1` turns from now, over `labor_config.arrivals_horizon_turns` turns; `0.0` where
-/// nothing lands. `realized` deliberately *omits* the bank because the bank decides **when** a whole
-/// animal arrives and not **how much** arrives over the window; this is the value that keeps the
-/// timing. So a big-game Sustain hunt reads a lumpy schedule (six zeros, then a mammoth) whose total
-/// is ≈ `realized × horizon`, while a forage patch — or fast game whose MSY clears a body every turn —
-/// is positive in every slot, which is a **continuous** source correctly rendered as a solid run.
-/// Projected from the source's **post-take** state, so slot 0 is genuinely the *next* delivery and not
-/// the one this turn already paid.
+/// ([`crate::fauna::project_arrivals_hunt`] / [`crate::forage::project_arrivals_forage`]). Index
+/// `i` is the food delivered `i + 1` turns from now, over `labor_config.arrivals_horizon_turns`
+/// turns; `0.0` where nothing lands. `realized` deliberately *omits* the bank because the bank
+/// decides **when** a whole animal arrives and not **how much** arrives over the window; this is
+/// the value that keeps the timing. So a big-game Sustain hunt reads a lumpy schedule (six zeros,
+/// then a mammoth) whose total is ≈ `realized × horizon`, while a forage patch — or fast game whose
+/// MSY clears a body every turn — is positive in every slot, which is a **continuous** source
+/// correctly rendered as a solid run. Projected from the source's **post-take** state, so slot 0 is
+/// genuinely the *next* delivery and not the one this turn already paid.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SourceYield {
     pub actual: f32,
@@ -2692,7 +2693,7 @@ pub struct SourceYield {
     /// `larder_delta == food_income − food_consumption − raid_forfeit`.
     ///
     /// **There is deliberately NO `realized_fodder` twin.** The plant web's forward projection is
-    /// food-only ([`crate::forage::plant_food_only`]) and fodder is paid by the plant web **alone**,
+    /// food-only (`forage::plant_food_only`) and fodder is paid by the plant web **alone**,
     /// so a projected-fodder field would be a constant zero on the only web that can pay it — dead
     /// weight the client would have to fall back off anyway. The client reads the actual.
     ///
@@ -3439,7 +3440,7 @@ impl BandBench {
     /// ⛔ **THIS FORFEITS THE DRAWN PILE**, which is why the shed must never call it: `*self =
     /// default()` drops [`Self::drawn`] on the floor rather than returning it to the store, so a
     /// band that lost people would silently lose the materials it had already cut. The shed uses
-    /// [`Self::stall_crew`] instead.
+    /// [`Self::shed_one_worker`] instead.
     pub fn clear_job(&mut self) {
         *self = Self::default();
     }
@@ -4875,9 +4876,9 @@ impl LaborAllocation {
     ///
     /// # ⛔ THE RANK ORDERS CANDIDATES; IT NEVER CREATES OR REMOVES ONE
     ///
-    /// `admits` is untouched by it, and so is every step of [`Self::row_that_gives`] that selects by
-    /// **role** rather than by productivity (the scout, the warrior, the keepers, the builders). A
-    /// `High` mark on an unimproved source therefore does **not** save it from step 6 while an
+    /// `admits` is untouched by it, and so is every step of [`Self::pick_that_gives`] that selects
+    /// by **role** rather than by productivity (the scout, the warrior, the keepers, the builders).
+    /// A `High` mark on an unimproved source therefore does **not** save it from step 6 while an
     /// improved `Normal` row waits at step 9 — the rank is a level *within* a step, which is what
     /// makes it a tie-break on top of the shipped eleven-step walk rather than a second walk beside
     /// it. And the terminal step still takes the band's last hand off its last row, whatever it is

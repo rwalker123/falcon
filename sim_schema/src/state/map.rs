@@ -533,7 +533,7 @@ impl TileState {
     ///    including open ocean — which by itself put all 4160 tiles of an 80x52 map into every
     ///    delta. A field nobody receives must never be able to mark a tile dirty.
     /// 2. **Floating-point and fixed-point fields compare at hundredths**, per
-    ///    [`WIRE_COMPARE_SCALE`].
+    ///    [`crate::state::WIRE_COMPARE_SCALE`].
     ///
     /// `PartialEq` is deliberately left exact: determinism tests and rollback compare whole
     /// snapshots and must keep seeing every bit.

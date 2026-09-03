@@ -1386,8 +1386,9 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
 /// `tile_capacities` maps tile coord → that tile's own forage `K` (`forage::tile_forage_capacity`),
 /// filled by the caller (which has the tiles) for the same reason the two maps above are: it is the
 /// **size of the land**, and every plant upkeep figure on the row is quoted per tender-load of it
-/// (`forage::patch_tender_loads`). A coord absent from the map presents [`NO_TENDER_LOAD`] worth of
-/// ground, the same absent-means-nothing convention — never a substituted capacity.
+/// (`forage::patch_tender_loads`). A coord absent from the map presents
+/// [`crate::forage::NO_TENDER_LOAD`] worth of ground, the same absent-means-nothing convention —
+/// never a substituted capacity.
 #[allow(clippy::too_many_arguments)] // the registry, three configs, three lookup maps and a rate
 pub(crate) fn snapshot_forage_patches(
     registry: &ForageRegistry,

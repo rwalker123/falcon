@@ -158,8 +158,10 @@ pub fn advance_band_movement(
 /// - **Provisions** drain by `party × provision_upkeep_per_worker` (scouts only — hunt lives off its
 ///   kills); non-fatal at zero in v1.
 /// - **Both halves of a kill's [`HuntYield`] come home** (#337) — the provisions into the party's
-///   larder, the trade goods onto `Expedition::carried_trade` and into the **home band's** store at
-///   the next drop-off/fold-back. See [`settle_carried_trade`].
+///   larder, the **material batches** into that same `LocalStore` and thence into the **home band's**
+///   store at the next drop-off/fold-back, batch by batch through
+///   [`crate::LocalStore::drain_materials_into`]. The retired `Expedition::carried_trade` /
+///   `settle_carried_trade` pair banked the same haul as a scalar (arc #527).
 /// - **Phase transitions**: `Outbound` + arrived (no `BandTravel`) → `AwaitingOrders` + a one-shot
 ///   arrival feed line; `Returning` → chase the home band's live tile and, once within comm range
 ///   (or the moment that band cannot be resolved at all), fold back through
@@ -1233,8 +1235,8 @@ const EXPEDITION_OUTPUT_MULTIPLIER: f32 = 1.0;
 /// **It is never an INTENSITY fact.** A floor-`0` raid used to pass it too, on the premise that
 /// driving a herd extinct makes the meat incidental — which recorded the party as hauling home
 /// *everything it killed*, so its hunt report published `wasted_biomass = 0` for a raid that left a
-/// range full of carcasses and its [`Expedition::carried_trade`] accrued pelts off the whole kill.
-/// **When a party stops engaging and how much it can haul are separate questions**
+/// range full of carcasses and its retired `Expedition::carried_trade` accrued pelts off the whole
+/// kill. **When a party stops engaging and how much it can haul are separate questions**
 /// ([`fauna::EngagementStop`], `docs/plan_denial_raid.md` §1): denial answers the first and leaves
 /// carry alone, and carry is never unbounded for a real party at any floor.
 const NO_CARRY_BOUND: f32 = f32::INFINITY;
@@ -1652,7 +1654,8 @@ pub fn expedition_take_provisions(
 /// which additionally accrues husbandry from the same take), the hunting expedition, and the scout's
 /// opportunistic replenish (`advance_expeditions`, `output_multiplier = 1.0`). **All three credit
 /// both components of the species' [`HuntYield`]** (#337) — they differ only in *when* the trade half
-/// is banked: the band rounds it per turn, a detached party carries it home (`settle_carried_trade`).
+/// is banked: the band rounds it per turn, a detached party carries the batches home in its own
+/// [`LocalStore`] ([`LocalStore::drain_materials_into`]).
 ///
 /// **Returns the [`AnimalTake`] in *biomass*, not provisions** (slice 8): a take is now three numbers
 /// — what was killed, what was carried, what rotted — and only the caller knows what to do with each

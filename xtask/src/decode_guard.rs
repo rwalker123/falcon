@@ -166,8 +166,8 @@ pub(crate) fn ensure_project_imported(client_dir: &Path) -> Result<(), Box<dyn E
 
 /// The substrings that betray a caught Rust panic in the run's output.
 ///
-/// `"[panic "` is gdext's own hook (`ERROR: [panic src/…rs:711]  called \`Option::unwrap()\` on a
-/// \`None\` value`) — the form actually observed here, and note it does NOT contain the word
+/// `"[panic "` is gdext's own hook (``ERROR: [panic src/…rs:711]  called `Option::unwrap()` on a
+/// `None` value``) — the form actually observed here, and note it does NOT contain the word
 /// "panicked". `"panicked"` covers the std hook's `thread '…' panicked at …`, which is what shows
 /// if the panic escapes a `#[func]` boundary or comes from a non-gdext thread. Neither string
 /// appears in the guard's own prints or in Godot's normal headless chatter.

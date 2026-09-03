@@ -32,8 +32,9 @@ use crate::config_load::{load_config_from_env, ConfigLoadError};
 
 pub const BUILTIN_BEAT_DEFINITIONS: &str = include_str!("../data/beat_definitions.json");
 
-/// How loud a beat is, and which budget it spends. A `Fork` posts a [`PendingFork`](super::
-/// PendingFork) instead of a feed line, and is marked fired when **answered**, not when posted.
+/// How loud a beat is, and which budget it spends. A `Fork` posts a
+/// [`PendingFork`](super::PendingFork) instead of a feed line, and is marked fired when
+/// **answered**, not when posted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BeatTier {
     Ambient,
