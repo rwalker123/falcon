@@ -424,12 +424,12 @@ const NO_PAYLOAD_YET: f32 = -1.0;
 /// Answer a denial-raid forecast: the exact party the query names, plus the party the sheet opens on.
 ///
 /// **Two evaluations, because they answer two questions.** `at_composed` is the single-point
-/// projection at the party the player has dialled; `party_needed` is a property of the *herd* against
-/// this kit — the smallest quoted party whose own row succeeds — and it can only be read off the
-/// quoted axis, which is what [`denial_estimate_entries`] builds. Recomputing it from the closed form
-/// instead would reintroduce exactly the bug that seam exists to prevent: the closed form is linear in
-/// the party and therefore blind to the whole-animal quantiser, to the fight, and to the engagement
-/// floor.
+/// projection at the party the player has dialled; `party_needed` is a property of the *herd*
+/// against this kit — the smallest quoted party whose own row succeeds — and it can only be read
+/// off the quoted axis, which is what [`seeded_denial_party_for`] walks. Recomputing it from the
+/// closed form instead would reintroduce exactly the bug that seam exists to prevent: the closed
+/// form is linear in the party and therefore blind to the whole-animal quantiser, to the fight, and
+/// to the engagement floor.
 fn answer_denial_raid_forecast(world: &mut World, ask: &DenialRaidForecastQuery) -> QueryReply {
     let resolved = match resolve_ask(
         world,

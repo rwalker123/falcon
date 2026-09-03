@@ -67,9 +67,10 @@ use super::FORECAST_OUTPUT_MULTIPLIER;
 /// patch row shares it rather than deep-copying two `String`s per named plant every turn.
 ///
 /// `composition` is the same basket in its **raw** `FloraShare` form — the input every rate seam in
-/// `forage.rs` takes, and the thing a *committed* patch reweights ([`forage::patch_composition`]).
-/// Held here rather than re-derived per patch because the realization is a seeded draw over the whole
-/// affinity roster, which is exactly the work this memo exists to do once.
+/// `forage.rs` takes, and the thing a *committed* patch reweights
+/// ([`crate::forage::patch_composition`]). Held here rather than re-derived per patch because the
+/// realization is a seeded draw over the whole affinity roster, which is exactly the work this memo
+/// exists to do once.
 struct CachedQuotes {
     terrain: TerrainType,
     resource_terrain: TerrainType,

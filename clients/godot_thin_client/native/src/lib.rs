@@ -1,7 +1,7 @@
 //! Godot native extension for the Shadow Scale thin client.
 //!
 //! The GDScript-facing surface lives in [`bridge`]; the snapshot decode path is split
-//! into [`snapshot`] (assemblers, rasters, deltas) and [`dict`] (per-section
+//! into [`snapshot`] (assemblers, rasters, deltas) and [`mod@dict`] (per-section
 //! converters, one module per `snapshot.fbs` section).
 
 use godot::prelude::*;

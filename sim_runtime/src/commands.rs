@@ -876,7 +876,7 @@ pub struct DenialRaidForecastReply {
 ///
 /// # What is already folded in, so no consumer re-applies it
 ///
-/// - the **engagement** bound ([`fauna::animals_engaged`]) — including its `max(…, 1)` floor, which
+/// - the **engagement** bound (`fauna::animals_engaged`) — including its `max(…, 1)` floor, which
 ///   is why a crew of one is never zero for want of reach;
 /// - the **escapement room** at the queried floor, clamped where the sim clamps it (before the
 ///   retreat, `fauna::animals_affordable`) rather than as an outer `min`;

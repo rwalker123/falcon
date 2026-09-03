@@ -279,7 +279,8 @@ pub struct LaborConfigs<'w> {
 ///    job's default"* rule every other selection follows
 ///    (`docs/plan_standing_upkeep.md` §4.7a ②).
 /// 2. **Otherwise the roster answers**, per branch, through
-///    [`EquipmentConfig::build_kit_for_branch`] — the shape `fauna::kit_supplying` already uses for a
+///    [`crate::equipment_config::EquipmentConfig::build_kit_for_branch`] — the shape
+///    `fauna::kit_supplying` already uses for a
 ///    penned herd's default kit. ⛔ **No `BuildJob → kit id` match exists in Rust**, so a third build
 ///    tool is a roster edit.
 /// 3. **`default_kits.builders` is the fall-back**, not the answer: a roster with no kit serving a
@@ -5699,11 +5700,11 @@ pub fn advance_labor_allocation(
                     // an animal nobody killed is still alive out there, so it was never produced and
                     // cannot have been wasted (`fauna::forecast_production_and_take`).
                     //
-                    // **A MANAGED herd reports its whole CREW** ([`source_crew_needed`]) — the
-                    // herders who mind it are the ones who take from it, and the crew must be big
-                    // enough for both jobs. A **wild** herd is untouched by the herder term:
-                    // `herders_needed` is `0` (it isn't yours to maintain), so the `max` collapses to
-                    // the haul-side count.
+                    // **A MANAGED herd used to report its whole CREW** — the retired
+                    // `intensification::source_crew_needed` blended `max(herders, haulers)`, on the
+                    // premise that the herders who mind a pen are the ones who take from it. It is
+                    // gone; see the `herders_needed no longer folds in` note below, which is the
+                    // rule this row obeys now.
                     //
                     // The take side is [`fauna::hunt_take_workers`] — the crew that can both **reach**
                     // and **carry** the peak animal drop off
@@ -6252,7 +6253,7 @@ pub fn advance_labor_allocation(
 ///
 /// | entry | test | seam |
 /// |---|---|---|
-/// | `Rung(Cultivate)` / `Rung(Sow)` | the meter it names is full | [`forage::patch_rung_already_built`] |
+/// | `Rung(Cultivate)` / `Rung(Sow)` | the meter it names is full | [`crate::forage::patch_rung_already_built`] |
 /// | `Rung(Tame)` / `Rung(Corral)` | the meter it names is full | [`fauna::herd_rung_already_built`] |
 /// | `ExtendPen` | the ring is **not in flight** | `Herd::pen_extending` |
 ///
@@ -8512,8 +8513,9 @@ mod labor_yield_tests {
         )
     }
 
-    /// **THE BUILD CREW A PLANT FIXTURE STAFFS** — [`WORKERS`] hands plus `plant:tended`'s own keeper
-    /// count, the padding [`builders_above_the_rate`] explains.
+    /// **THE BUILD CREW A PLANT FIXTURE STAFFS** — [`WORKERS`] hands and nothing else. It carried
+    /// `plant:tended`'s own keeper count on top while the rate was a tax on building; §4.6a deleted
+    /// that, and [`the_harness_build_crew`] is where the padding's removal is explained.
     fn plant_builders(world: &World, key: RungKey) -> u32 {
         let ladder = world.resource::<LadderConfigHandle>().get();
         the_harness_build_crew(ladder.rung(key), harness_patch_load(world))
@@ -9366,10 +9368,13 @@ mod labor_yield_tests {
     /// The name's original claim (`workers_needed == 1` for both, "maintenance labor, not scaling
     /// gather") is dead twice over: slice 7 retired `TENDED_SOURCE_WORKERS_NEEDED = 1` for the payout,
     /// and slice 8 gave the pen a **standing, herd-sized herder demand**. What the pen reports now is
-    /// [`source_crew_needed`] — **one crew sized by whichever of its two jobs binds**: enough hands to
-    /// *mind* the heads (`ceil(animals / animals_per_herder)`) **and** to *haul* the meat
-    /// (`ceil(take / per_worker_throughput)`). Herding is per head, hauling is per biomass, so neither
-    /// term dominates across the roster — this fixture's pen happens to be **haul**-bound.
+    /// the **take activity's own** crew ([`fauna::hunt_take_workers`]) — the hands that can reach and
+    /// *haul* the drop (`ceil(take / per_worker_throughput)`). The blended `max(standing, take)` head
+    /// count is retired (`intensification`'s gravestone, `docs/plan_standing_upkeep.md` §2.2), so the
+    /// hands that *mind* the heads (`ceil(animals / animals_per_herder)`) answer on their own wire
+    /// field instead. Herding is per head, hauling is per biomass, so neither term dominates across
+    /// the roster — this fixture's pen happens to be **haul**-bound, which is what makes the
+    /// `max(herders, haulers)` asserted below equal to the haul count alone.
     #[test]
     fn tended_patch_and_corral_report_their_staffing_need() {
         let (mut world, tile) = world_with_source(CAP);

@@ -502,7 +502,7 @@ pub fn balance_supply_networks(
                         // **THE COMMONEST TRAFFIC IN THE GAME, recorded where it is known.** Two
                         // camps pooling a larder are people walking between them, turn after turn —
                         // #532's *"it must not be the one case that produces no trail because nobody
-                        // typed a command"*. The road is worn by `routes::advance_routes` later in
+                        // typed a command"*. The road is worn by `routes::advance_roads` later in
                         // this stage rather than here, so this turn's pooling cannot read a road
                         // this turn's pooling created.
                         route_traffic.walked(nodes[i].pos, nodes[j].pos, &ladder);

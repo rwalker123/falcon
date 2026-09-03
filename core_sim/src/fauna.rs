@@ -642,12 +642,11 @@ pub struct Herd {
     /// dip and drops only on a genuine multi-band fall.
     ///
     /// It is **the source every consumer reads** ([`herd_herders_needed`] → the `herded_fraction`
-    /// decay, [`crate::intensification::source_crew_needed`], the `herdersNeeded` snapshot field).
-    /// **Authoritative sim state**
-    /// (like `corral_progress`), so a rollback restores the remembered requirement rather than
-    /// re-flickering for a turn. `0` also means "not yet stabilized" — a
-    /// freshly-tamed or newly-spawned managed herd, for which [`herd_herders_needed`]
-    /// falls back to the raw ceil until the next `advance_husbandry` seeds this.
+    /// decay, and the `herdersNeeded` snapshot field). **Authoritative sim state** (like
+    /// `corral_progress`), so a rollback restores the remembered requirement rather than
+    /// re-flickering for a turn. `0` also means "not yet stabilized" — a freshly-tamed or
+    /// newly-spawned managed herd, for which [`herd_herders_needed`] falls back to the raw ceil
+    /// until the next `advance_husbandry` seeds this.
     pub herders_needed: u32,
     /// **Edge-gate for the under-herded feed line** (neglect-escape slice 2,
     /// `docs/plan_fauna_neglect_escape.md` §4 item 1): `true` while the herd is *already known* to be
@@ -1068,9 +1067,10 @@ impl Herd {
     }
 
     /// **A fixture's already-tamed herd.** Runs the *real* accrual against
-    /// [`FABRICATED_BUILD_COST`], so the husbandry ceiling and the owner-lock still apply — you
-    /// cannot fabricate a domesticated `wild` herd. It replaces the `accrue_domestication(f,
-    /// RUNG_COMPLETE)` spelling, which stopped meaning anything the moment a job had a size.
+    /// [`crate::intensification::FABRICATED_BUILD_COST`], so the husbandry ceiling and the
+    /// owner-lock still apply — you cannot fabricate a domesticated `wild` herd. It replaces the
+    /// `accrue_domestication(f, RUNG_COMPLETE)` spelling, which stopped meaning anything the moment
+    /// a job had a size.
     pub fn tame_outright(&mut self, faction: FactionId, ladder: &LadderConfig) -> bool {
         // Enough work to clear the pastoral rung's whole span at this species' own price, whatever
         // that price is — the position is capped at the rung's top, so overshooting is free and a
@@ -1202,13 +1202,13 @@ impl Herd {
         true
     }
 
-    /// Accrue one turn of pen-**extension** progress (2d-β), the twin of [`accrue_corral`] on an
-    /// already-penned herd: while `pen_extending`, add `amount` (**work units**) to
-    /// `pen_extend_progress` and **stamp `cost` into [`Self::pen_extend_cost`]**, so the meter always
-    /// ships with the denominator it completes against; at `cost` the ring completes — `pen_radius +=
-    /// 1` (saturating at `radius_max`), both meter and cost reset and the extending state clears.
-    /// Returns `true` on the completion turn so the caller can announce it.
-    /// Called **after** the turn's (dipped) take, mirroring `accrue_corral`.
+    /// Accrue one turn of pen-**extension** progress (2d-β), the twin of [`Herd::accrue_corral`] on
+    /// an already-penned herd: while `pen_extending`, add `amount` (**work units**) to
+    /// `pen_extend_progress` and **stamp `cost` into [`Self::pen_extend_cost`]**, so the meter
+    /// always ships with the denominator it completes against; at `cost` the ring completes —
+    /// `pen_radius += 1` (saturating at `radius_max`), both meter and cost reset and the extending
+    /// state clears. Returns `true` on the completion turn so the caller can announce it. Called
+    /// **after** the turn's (dipped) take, mirroring `accrue_corral`.
     pub(crate) fn accrue_pen_extension(&mut self, amount: f32, cost: f32, radius_max: u32) -> bool {
         if !self.pen_extending {
             return false;
@@ -1419,9 +1419,15 @@ fn pastoral_ecology_for(herd: &Herd, fauna: &FaunaConfig) -> EcologyConfig {
 }
 
 /// The **pen** ecology a herd would live under *if penned* — its per-species managed rate
-/// (`min(husbandry_regrowth_cap, wild_r × pen_gain)`) folded into the pen rung's phase bands. Shared by
-/// [`herd_ecology`] (a live penned herd) **and** [`pen_yield_biomass`] (the forecast's "what would this
-/// pay once penned?" projection for a herd that is not penned yet), so the two never disagree.
+/// (`min(husbandry_regrowth_cap, wild_r × pen_gain)`) folded into the pen rung's phase bands.
+///
+/// **Its only caller is [`hunt_forecast`]** — the *"what would this pay once penned?"* projection for
+/// a herd that is not penned yet. A **live** penned herd never reaches it: [`herd_ecology`] assembles
+/// the same ecology in its own right, interpolating [`rung_regrowth_rate`] over the herd's standing
+/// and taking its bands from [`rung_ecology_bands`]. So this is a **second, independent expression of
+/// one formula**, and what keeps the projection and the living herd agreeing is that both bottom out
+/// in [`managed_regrowth_rate`] and the same `husbandry.pen.ecology` block — a retune that changes how
+/// either side is *assembled*, rather than what those two seams say, parts them.
 fn pen_ecology_for(herd: &Herd, fauna: &FaunaConfig) -> EcologyConfig {
     EcologyConfig {
         regrowth_rate: managed_regrowth_rate(herd.regrowth_rate, fauna.husbandry.pen_gain, fauna),
@@ -1574,9 +1580,10 @@ pub fn herd_keeper_load(herd: &Herd, fauna: &FaunaConfig) -> f32 {
     )
 }
 
-/// [`herders_needed`] for a herd, resolving its species' `animals_per_herder` live off the config (the
-/// `taming_cost_multiplier_for` path — a retune reaches herds already on the map). `0` for a herd that is not on
-/// a managed rung: a **wild** herd has no keepers, by design (see [`herders_needed`]).
+/// [`Herd::herders_needed`] for a herd, resolving its species' `animals_per_herder` live off the
+/// config (the `taming_cost_multiplier_for` path — a retune reaches herds already on the map). `0`
+/// for a herd that is not on a managed rung: a **wild** herd has no keepers, by design (see
+/// [`Herd::herders_needed`]).
 ///
 /// # "Managed" is `is_corralled() || owner.is_some()` — a herd you have STARTED to tame, not only a
 /// finished one
@@ -3483,8 +3490,8 @@ fn nearest_target_distance(from: UVec2, targets: &[UVec2], width: u32, wrap: boo
 }
 
 /// Every faction's **camps** — the tiles its resident bands stand on this turn, which is what a
-/// `drift_to_owner` herd steers by. Keyed by faction for an O(1) lookup per herd; each faction's Vec
-/// order is irrelevant by construction ([`camp_distance`] mins over it).
+/// `drift_to_owner` herd steers by. Keyed by faction for an O(1) lookup per herd; each faction's
+/// Vec order is irrelevant by construction ([`nearest_target_distance`] mins over it).
 fn owner_camp_tiles(
     bands: &Query<&PopulationCohort, With<ResidentBand>>,
     tiles: &Query<&Tile>,
@@ -4960,18 +4967,17 @@ fn starve_underfed_pen(
 /// `max_useful_workers` invariant).
 ///
 /// The consumer composes:
-/// - `expected(workers, policy) = min(workers × per_worker_yield, ceiling(policy))`
-/// - `max_useful_workers(policy) = ceil(ceiling(policy) / per_worker_yield)`
+/// - `expected(workers, floor) = min(workers × per_worker_yield, ceiling_at(floor))`
+/// - `max_useful_workers(floor) = ceil(ceiling_at(floor) / per_worker_yield)`
 ///
-/// Each `ceiling_*` is the stance's **pre-clamp** offer and [`SourceYieldForecast::stock_cap`] is
-/// the standing stock it cannot exceed; [`SourceYieldForecast::ceiling_for`] applies the clamp, so
-/// what a reader gets IS the take the sim pays. **The clamp is a lookup, not a stored row, because
-/// the DIP has to land inside it** — see [`SourceYieldForecast::ceiling_under`].
-/// **Forecast == actual is an invariant**: the forecast and
-/// the take path (`hunt_take` / `forage::forage_take`) share the same ceiling + conversion helpers
-/// ([`hunt_escapement_ceiling`] × the species' `HuntYield`,
-/// `forage::forage_escapement_ceiling`/`forage_provisions`) — never duplicate the formulas, or the UI
-/// will lie.
+/// [`SourceYieldForecast::ceiling_at`] answers **every** floor from the terms stored here and
+/// applies the standing-stock clamp itself, so what a reader gets IS the take the sim pays. The
+/// per-stance `ceiling_*` rows and the `stock_cap` beside them retired with the four harvest
+/// stances; [`SourceYieldForecast::managed_production`] carries the discriminator they shared.
+/// **Forecast == actual is an invariant**: the forecast and the take path (`hunt_take` /
+/// `forage::forage_take`) share the same ceiling + conversion helpers ([`hunt_escapement_ceiling`]
+/// × the species' `HuntYield`, `forage::forage_escapement_ceiling`/`forage_provisions`) — never
+/// duplicate the formulas, or the UI will lie.
 // **Clone, not `Copy`** — it carries a [`HuntingParty`], which carries the party's crews. A
 // partly-equipped party is a list, so nothing holding one can be a bit-copy any more.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -5376,12 +5382,12 @@ pub fn forecast_take_range(
 /// borrowing this one across a unit boundary its doc does not cover.
 const REALIZED_PROJECTION_TAKE_EPSILON: f32 = 1e-4;
 
-/// **The steady `realized` yield for a hunt source — a FORWARD PROJECTION.** The average food/turn the
-/// herd delivers over the next `horizon` turns, computed by simulating it forward from its CURRENT
-/// state under `policy` + `workers`, mirroring the real turn order (Logistics regrow → Population take)
-/// exactly as [`crate::systems::expeditions::hunt_trip_forecast`] does. It is a **pure function of the
-/// passed herd state** — no history, no persistence — so the assign-time seed and the resolved row
-/// compute the identical number (exact forecast == actual, the true no-jump).
+/// **The steady `realized` yield for a hunt source — a FORWARD PROJECTION.** The average food/turn
+/// the herd delivers over the next `horizon` turns, computed by simulating it forward from its
+/// CURRENT state under `policy` + `workers`, mirroring the real turn order (Logistics regrow →
+/// Population take) exactly as [`crate::systems::hunt_trip_forecast`] does. It is a **pure function
+/// of the passed herd state** — no history, no persistence — so the assign-time seed and the
+/// resolved row compute the identical number (exact forecast == actual, the true no-jump).
 ///
 /// **Simulated UNQUANTISED**: whole-animal rounding decides *when* the food arrives, never the N-turn
 /// total, so simulating the smooth escapement take ([`hunt_escapement_ceiling`]) gives the smooth
@@ -6032,12 +6038,12 @@ pub fn hunt_source_yield_preview(
 /// # It is a STOCK, not a rate — which is why the kill-credit bank left this path
 ///
 /// The four stances used to be four ascending **multiples of MSY** banked into
-/// [`Herd::hunt_credit`] until the bank cleared one `body_mass`. A ceiling that is already a *stock*
-/// must not be banked: adding it to an accumulator would offer the herd's whole surplus **plus
-/// everything it had already handed over**, compounding a quantity that was never a flow. So
-/// [`systems::hunt_take`] neither reads nor advances `hunt_credit`, and the accumulator the bank
-/// provided is the herd's **own standing biomass**: a mammoth held at floor `0.5` regrows ~120/turn
-/// against an 800 body mass, so `B − 0.5·K` crosses one body after ~7 turns and
+/// [`Herd::hunt_credit`] until the bank cleared one `body_mass`. A ceiling that is already a
+/// *stock* must not be banked: adding it to an accumulator would offer the herd's whole surplus
+/// **plus everything it had already handed over**, compounding a quantity that was never a flow. So
+/// [`crate::systems::hunt_take`] neither reads nor advances `hunt_credit`, and the accumulator the
+/// bank provided is the herd's **own standing biomass**: a mammoth held at floor `0.5` regrows
+/// ~120/turn against an 800 body mass, so `B − 0.5·K` crosses one body after ~7 turns and
 /// [`quantise_animal_take`] pays exactly the wait-then-one pulse the bank used to produce. Same
 /// cadence, one fewer piece of state.
 ///
@@ -6459,8 +6465,9 @@ impl QuarryFight {
 }
 
 /// **The party's side of a hunt fight, resolved once per band/party** — the per-hunter profile with
-/// the hunting kit composed in ([`crate::equipment_config::EquipmentConfig::hunter_profile`]) and the
-/// resolver tuning it fights at.
+/// the hunting kit composed in
+/// ([`crate::equipment_config::EquipmentConfig::hunter_profile_against`]) and the resolver tuning
+/// it fights at.
 ///
 /// **Every take and forecast path takes this same struct**, which is the point: `hunt_take`, the
 /// expedition raid, the arrivals schedule, the steady projection and the pre-commit preview all
@@ -6490,11 +6497,11 @@ pub struct HuntingParty {
     ///
     /// # It is PARTY-WIDE, and it is the MAX across the crews
     ///
-    /// The same clause [`crate::equipment_config::KitChoice::multiplier`] resolves an item's
+    /// The same clause [`crate::equipment_config::KitChoice::best_declared`] resolves an item's
     /// multipliers with, one level up: if part of your party is running up and throwing spears, the
-    /// herd is scared — the trap line the other half set does not un-scare it. So a party that could
-    /// only arm half its people with the stand-off device is *loud*, and buying the quiet approach
-    /// means buying enough of it.
+    /// herd is scared — the trap line the other half set does not un-scare it. So a party that
+    /// could only arm half its people with the stand-off device is *loud*, and buying the quiet
+    /// approach means buying enough of it.
     pub dispersion: f32,
 }
 
@@ -6711,7 +6718,7 @@ impl HuntingParty {
     /// not reach it.** That makes it a fixture helper — the party a test means when it says "an
     /// ordinary band" — and **not** something a production path may call: every one of those has a
     /// live handle and a band whose kit may be worn out, and must resolve
-    /// [`crate::equipment_config::EquipmentConfig::hunter_profile`] against it.
+    /// [`crate::equipment_config::EquipmentConfig::hunter_profile_against`] against it.
     pub fn builtin_equipped() -> Self {
         let combat = crate::combat_config::CombatConfig::builtin();
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
@@ -7044,11 +7051,11 @@ impl HuntFight {
 /// # The hunt itself injures people (§4.6)
 ///
 /// On top of whatever the quarry does, the hunt carries a **baseline injury risk** —
-/// [`HuntingParty::injury_damage_per_animal`] × the animals engaged, run through the resolver's own
-/// severity arithmetic ([`crate::combat::casualties_from_damage`]) and **added to** the fight's
-/// casualties rather than reported beside them. Hunters fall, are trampled in a drive, cut themselves
-/// butchering; a harmless animal is not a risk-free day out. It scales with the **engagement**, not
-/// with the quarry, so it is one lever rather than a per-species field.
+/// [`HuntCrew::injury_damage_per_animal`] × the animals engaged, run through the resolver's own
+/// severity arithmetic ([`crate::combat::units_brought_down`]) and **added to** the fight's
+/// casualties rather than reported beside them. Hunters fall, are trampled in a drive, cut
+/// themselves butchering; a harmless animal is not a risk-free day out. It scales with the
+/// **engagement**, not with the quarry, so it is one lever rather than a per-species field.
 ///
 /// A non-finite `stayed` (a pen — a penned animal is not stalked, not fought, not wary and not
 /// dangerous) is returned unchanged with no fight and no injuries at all.
@@ -7348,7 +7355,8 @@ pub const FORECAST_FIGHT_SEED: u64 = 0;
 /// disagree about what a kill is.
 ///
 /// **Whole animals everywhere — you cannot slaughter half a cow either.** The pen quantises for the
-/// exact reason the hunt does; see [`managed_yield_biomass`] for why it nonetheless *reads* steady.
+/// exact reason the hunt does; see [`SourceYieldForecast::managed_yield`] for why it nonetheless
+/// *reads* steady.
 ///
 /// **A herd is not a fluid.** You kill *whole animals*, and a big animal is a lot of food at once:
 /// ```text
@@ -7719,14 +7727,15 @@ pub fn hunt_take_bound(
 ///
 /// # Why not the this-turn take
 ///
-/// A slow breeder whose one-turn regrowth is lighter than one body (a Wild Aurochs, `r ≈ 0.09`, body
-/// 80) drops **0** animals on a wait turn while the room above its floor rebuilds — so inverting
-/// `carried` collapses `workers_needed` to `0` (and, for a managed herd, to the bare herder count via
-/// [`crate::intensification::source_crew_needed`]).
-/// That contradicts the *same row's* `wasted_yield`, which correctly reports the waste an understaffed
-/// crew leaves standing: the panel then says `workersNeeded: 1` beside a 50%-`wastedYield` at 1 worker
-/// — *drop workers* and *add workers* on one row. Sizing the crew off the **ceiling** instead makes
-/// the two agree, and makes the band panel's overstaff note equal the compose panel's stepper cap.
+/// A slow breeder whose one-turn regrowth is lighter than one body (a Wild Aurochs, `r ≈ 0.09`,
+/// body 80) drops **0** animals on a wait turn while the room above its floor rebuilds — so
+/// inverting `carried` collapses `workers_needed` to `0` (and, for a managed herd, to the bare
+/// herder count via the bare herder count the retired `intensification::source_crew_needed` blended
+/// in). That contradicts the *same row's* `wasted_yield`, which correctly reports the waste an
+/// understaffed crew leaves standing: the panel then says `workersNeeded: 1` beside a
+/// 50%-`wastedYield` at 1 worker — *drop workers* and *add workers* on one row. Sizing the crew off
+/// the **ceiling** instead makes the two agree, and makes the band panel's overstaff note equal the
+/// compose panel's stepper cap.
 ///
 /// # The peak drop
 ///
@@ -7864,9 +7873,10 @@ pub fn hunt_engage_workers(ceiling: f32, body: f32, engage_rate: f32, stay: f32)
 /// `advance_labor_allocation`), so the two cannot answer differently.
 ///
 /// **Two jobs, one crew, two units** — bring the animals down, then carry them home. It is the
-/// take-side half of [`crate::intensification::source_crew_needed`]'s `max(standing, take)`, which
-/// adds the third: the herders who mind a managed herd whether or not it is killed from this turn.
-/// `max()`, never `+`: one crew covering its busiest job.
+/// take-side half only. The herders who mind a managed herd whether or not it is killed from this
+/// turn are their own activity with their own count ([`herd_upkeep_workers_needed`]) — the retired
+/// `intensification::source_crew_needed` used to blend the two as `max(standing, take)`. Within
+/// this crew it is still `max()`, never `+`: one crew covering its busiest job.
 ///
 /// `stay` is the party's own retreat term ([`HuntingParty::stay_fraction`]) — see
 /// [`hunt_engage_workers`] for why a crew is sized on what stands rather than on what is reached.
@@ -8630,11 +8640,12 @@ pub(crate) fn net_biomass_delta(biomass: f32, cap: f32, ecology: &EcologyConfig)
 /// Yield point), where `r·B·(1−B/K)` peaks.
 ///
 /// **Public since slice 8, because it is now the sim's OPERATING POINT and not merely an interior
-/// detail of the regrowth curve.** Sustain's escapement point **is** `K · MSY_BIOMASS_FRACTION`
-/// ([`sustain_ceiling`]) — so a harvested herd *lives* here (Sustain settles it at `K/2`), and any
-/// test that wants to measure a rung at the point a running herd actually stands has to seat against
-/// this number. Exporting it is what stops those fixtures from spelling `0.5` by hand and silently
-/// drifting if the curve's peak ever moves.
+/// detail of the regrowth curve.** The food-peak floor's escapement point **is**
+/// `K · MSY_BIOMASS_FRACTION` — the `floor · carrying_capacity` term [`escapement_ceiling`]
+/// *subtracts*, not the take ceiling it returns — so a harvested herd *lives* here (a crew holding
+/// that floor settles it at `K/2`), and any test that wants to measure a rung at the point a running
+/// herd actually stands has to seat against this number. Exporting it is what stops those
+/// fixtures from spelling `0.5` by hand and silently drifting if the curve's peak ever moves.
 pub const MSY_BIOMASS_FRACTION: f32 = 0.5;
 
 /// **CONSTANT ESCAPEMENT** — the biomass standing above a floor, and therefore the whole take
@@ -8643,11 +8654,12 @@ pub const MSY_BIOMASS_FRACTION: f32 = 0.5;
 /// (later, a labor assignment) contributes to it.
 ///
 /// **`r`-INDEPENDENT, which is the property that makes it the right shape** — and is why this
-/// function takes no [`EcologyConfig`]. Unlike MSY (`r·K/4`, [`peak_regrowth`]) the answer does not
-/// depend on how fast the stock breeds, so a take can no longer be a *rate* that outruns the
+/// function takes no [`EcologyConfig`]. Unlike MSY (`r·K/4`, [`sustainable_yield`]) the answer does
+/// not depend on how fast the stock breeds, so a take can no longer be a *rate* that outruns the
 /// standing stock, and *"where do I stop"* stops being a question about the growth curve. The sim
-/// already harvests a penned herd exactly this way ([`pen_yield_biomass`], floor
-/// [`MSY_BIOMASS_FRACTION`]); this is that rule generalised to a floor the caller names.
+/// already harvests a penned herd exactly this way — the retired `pen_yield_biomass` was this very
+/// ceiling with the floor nailed to [`MSY_BIOMASS_FRACTION`]; this is that rule generalised to a
+/// floor the caller names.
 ///
 /// The answer is `≤ biomass` for any `floor_fraction ≥ 0`, so a caller's standing-stock clamp can
 /// never bind — keep such clamps as belt-and-braces, not as load-bearing terms.
@@ -10229,10 +10241,13 @@ mod tests {
     // and there is no second reading of "the crew" for it to disagree with. What survives of the
     // claim is `engagement_scales_with_the_hunting_crew` above — the linearity the count inverts.
 
-    /// **A source with NO ENGAGEMENT STAGE reports no engagement crew** — a pen and the plant web
-    /// both forecast `f32::INFINITY` ([`SourceYieldForecast::managed`],
-    /// [`FaunaConfig::engage_rate_for`]), so the `max()` collapses to the haul term and neither
-    /// regresses. This is the no-regress half of the pair below.
+    /// **A source with NO ENGAGEMENT STAGE reports no engagement crew** — the plant web forecasts
+    /// `f32::INFINITY` (`forage::forage_forecast`), as does an animal source whose species the
+    /// roster cannot resolve ([`FaunaConfig::engage_rate_for`]), so the `max()` collapses to the
+    /// haul term and neither regresses. This is the no-regress half of the pair below.
+    ///
+    /// **A pen is not one of them** — it carries the keepers' handling rate ([`herd_engage_rate`]),
+    /// so it is bounded like every other animal rung; see [`SourceYieldForecast::engage_rate`].
     ///
     /// **Byte-identical whatever the retreat says**, which is what makes
     /// [`NO_RETREAT_STAGE_STAY`]'s neutral safe on the `fight: None` branch: an infinite reach times

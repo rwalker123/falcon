@@ -2526,7 +2526,7 @@ fn seed_source_yield(
 /// rejection reason (`Err`) or `Ok`.
 ///
 /// **Since issue #442 the stance axis has two rules, and neither is about a policy.**
-/// - **Hunt:** `fauna::hunt_policies_for` prunes a [`fauna::HuntYield::yields_nothing`] quarry —
+/// - **Hunt:** `fauna::hunt_policies_for` prunes a [`core_sim::HuntYield::yields_nothing`] quarry —
 ///   worth neither meat nor pelt — down to `Eradicate` alone, because every other rung would be a
 ///   rate at which to collect nothing.
 /// - **Forage:** the **crop the player named**, if they named one. `assign_labor` is the only
@@ -7660,10 +7660,10 @@ fn bands_working_source(
 ///
 /// # A VERB DECLARES; IT DOES NOT STAFF
 ///
-/// It appends a [`BuildQueueEntry`] and nothing else (`docs/plan_standing_upkeep.md` §2.5). The
-/// hands are the band's `builders` role, which the player staffs separately and which funds only the
-/// **head** of the queue — so this command names no crew, refuses nothing on affordability, and
-/// cannot disband the gathering it was meant to improve.
+/// It appends a [`core_sim::BuildQueueEntry`] and nothing else (`docs/plan_standing_upkeep.md`
+/// §2.5). The hands are the band's `builders` role, which the player staffs separately and which
+/// funds only the **head** of the queue — so this command names no crew, refuses nothing on
+/// affordability, and cannot disband the gathering it was meant to improve.
 ///
 /// # RE-ISSUING KEEPS THE ENTRY'S PLACE IN THE LINE
 ///
@@ -10106,11 +10106,11 @@ fn apply_orders(submissions: &[(FactionId, FactionOrders)]) {
 
 /// Roll the world back to `tick`.
 ///
-/// The world is rebuilt from [`CheckpointHistory`]'s `SimState` — the save state, which carries
-/// everything a turn reads — and the client's frame is then **derived from that restored world** by
-/// recapturing it, not fetched from a parallel archive. There is one history of worlds, so there is
-/// nothing for a second one to disagree with; `a_rollback_produces_the_world_that_tick_had` asserts
-/// the result end to end.
+/// The world is rebuilt from [`CommandLog`]'s origin `SimState` replayed forward — the save state,
+/// which carries everything a turn reads — and the client's frame is then **derived from that
+/// restored world** by recapturing it, not fetched from a parallel archive. There is one history of
+/// worlds, so there is nothing for a second one to disagree with;
+/// `a_rollback_across_a_command_reproduces_the_world_that_tick_had` asserts the result end to end.
 fn handle_rollback(
     app: &mut bevy::prelude::App,
     tick: u64,
@@ -11918,10 +11918,10 @@ mod tests {
     /// reads unambiguously as mid-build without pretending to the ladder's shipped price, which
     /// these command-gate tests are not about.
     ///
-    /// **The PLANT web needs no `PART_PREPARED_JOB` beside it any more** — its rung boundaries come
-    /// from live config, so a plant fixture states only where the source stands and whether that is
-    /// mid-rung is the *ladder's* answer. [`PART_PREPARED_JOB`] survives for the **animal** web,
-    /// whose two meters still carry their own stamped costs.
+    /// **NEITHER WEB NEEDS A `PART_PREPARED_JOB` BESIDE IT ANY MORE** — both webs' rung boundaries
+    /// come from live config, so a fixture states only where the source stands and whether that is
+    /// mid-rung is the *ladder's* answer. The animal web's separately stamped job cost went with the
+    /// second meter it retired when it took the plant web's one-position ladder.
     const PART_PREPARED_WORK: f32 = FABRICATED_BUILD_COST / 2.0;
     /// **The re-crew case.** A build this faction has underway on a patch that has dropped out of
     /// Thriving still accepts a `Cultivate` assignment — which is what lets the player *ease workers

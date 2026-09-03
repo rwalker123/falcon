@@ -11,6 +11,14 @@ repos:
         entry: scripts/pre-commit-rust.sh clippy
         language: system
         pass_filenames: false
+      # `rustdoc::broken_intra_doc_links` is warn-by-default and nothing on the critical path built
+      # docs at all, so 112 doc comments accumulated pointers to items the reader cannot reach
+      # (issue #623). A reviewer caught one of them by eye. ~14s warm, next to clippy's minutes.
+      - id: doc-guard
+        name: rustdoc link guard
+        entry: scripts/pre-commit-rust.sh doc
+        language: system
+        pass_filenames: false
       # A hub's banner and routing blurb are GENERATED from scripts/hub_*.md, so an edit made in
       # the hub is reverted by the next re-run. That was a CI-only check, which means it reported
       # after the push and reached a human; it has caught the same mistake twice. Here it fails the

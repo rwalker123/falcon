@@ -24,10 +24,10 @@ pub struct CohortStoreState {
     pub quantity: i64,
 }
 
-/// One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a). `kind` is the
-/// role (`"forage" | "hunt" | "scout" | "warrior"`); `target_x`/`target_y` locate a Forage tile or
-/// a Hunt herd's position readout; `fauna_id`/`policy` carry the Hunt target + take policy. Doubles
-/// as the client's allocation readout and the rollback-persisted staffing.
+/// One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a). `kind` is the role
+/// (`"forage" | "hunt" | "scout" | "warrior"`); `target_x`/`target_y` locate a Forage tile or a
+/// Hunt herd's position readout; `fauna_id` names the Hunt target and `floor` the depth its take
+/// stops at. Doubles as the client's allocation readout and the rollback-persisted staffing.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct LaborAssignmentState {
     pub kind: String,
@@ -39,15 +39,15 @@ pub struct LaborAssignmentState {
     #[serde(default)]
     pub fauna_id: String,
     /// **WHERE THIS CREW STOPS, as a fraction of the source's `K`** — the whole of what the player
-    /// decides about pressure (`docs/plan_harvest_floor.md` §1), and the authority [`Self::policy`]
-    /// is merely a label for. `0.5` holds a source on its most productive biomass; `0` takes
-    /// everything. `0.0` on a band-wide role (Scout/Warrior), which carries no source to stop short
-    /// of. Appended (append-only).
+    /// decides about pressure (`docs/plan_harvest_floor.md` §1), and the sole dial for it since the
+    /// four harvest stances were deleted. `0.5` holds a source on its most productive biomass; `0`
+    /// takes everything. `0.0` on a band-wide role (Scout/Warrior), which carries no source to stop
+    /// short of. Appended (append-only).
     #[serde(default)]
     pub floor: f32,
     /// **Which named plant a Forage assignment asks a `Cultivate`/`Sow` to commit its patch to**
     /// (Flora Roster S1) — a `flora_config.json` species key, or `""` for *"pick the tile's
-    /// dominant legal plant for me"*. Persisted intent, exactly like [`Self::policy`]: it rides the
+    /// dominant legal plant for me"*. Persisted intent, exactly like [`Self::floor`]: it rides the
     /// rollback record so a rewind restores the selection the player made, not a re-picked one.
     /// Empty on every non-Forage row. Appended (append-only).
     #[serde(default)]
@@ -109,8 +109,8 @@ pub struct LaborAssignmentState {
     /// the map badge, the compose sheet's verdict. Do not re-derive it and do not gate it: one
     /// question, one answer.
     ///
-    /// A row with no yield (Scout/Warrior, or an unresolved [`SourceYield::ZERO`]) is `false`. Derived
-    /// per-turn at capture. Appended (append-only).
+    /// A row with no yield (Scout/Warrior, or an unresolved `SourceYield::ZERO`) is `false`.
+    /// Derived per-turn at capture. Appended (append-only).
     #[serde(default)]
     pub overdraws: bool,
     /// **The steady per-turn income this source realizes** — the honest long-run average of the lumpy
@@ -123,15 +123,15 @@ pub struct LaborAssignmentState {
     #[serde(default)]
     pub realized_yield: f32,
     /// **WHEN the food actually lands** — the discrete twin of [`Self::realized_yield`], from the
-    /// *same* forward simulation run **with** the kill-credit bank. `arrival_schedule[i]` is the food
-    /// delivered `i + 1` turns from now; the length is `labor_config.arrivals_horizon_turns` (20), and
-    /// `0.0` marks a turn on which nothing lands. A big-game Sustain hunt reads lumpy — zeros between
-    /// hauls, totalling ≈ `realized_yield × horizon`, because the bank moves the *timing* and not the
-    /// total — while a forage patch or fast game is positive in every slot, a continuous source the
-    /// client draws as a solid run. **Empty** on a row that was never projected (Scout/Warrior, or an
-    /// unresolved [`SourceYield::ZERO`]): read that as *no data*, never as famine. Derived per-turn at
-    /// capture from the source's **post-take** state, so slot 0 is the *next* delivery. Appended
-    /// (append-only).
+    /// *same* forward simulation run **with** the kill-credit bank. `arrival_schedule[i]` is the
+    /// food delivered `i + 1` turns from now; the length is `labor_config.arrivals_horizon_turns`
+    /// (20), and `0.0` marks a turn on which nothing lands. A big-game Sustain hunt reads lumpy —
+    /// zeros between hauls, totalling ≈ `realized_yield × horizon`, because the bank moves the
+    /// *timing* and not the total — while a forage patch or fast game is positive in every slot, a
+    /// continuous source the client draws as a solid run. **Empty** on a row that was never
+    /// projected (Scout/Warrior, or an unresolved `SourceYield::ZERO`): read that as *no data*,
+    /// never as famine. Derived per-turn at capture from the source's **post-take** state, so slot
+    /// 0 is the *next* delivery. Appended (append-only).
     #[serde(default)]
     pub arrival_schedule: Vec<f32>,
     // **RETIRED: `trade_yield` / `realized_trade_yield`** (arc #527), with the trade-goods axis they
@@ -180,13 +180,13 @@ pub struct LaborAssignmentState {
     /// (issue #442, `docs/plan_investment_rung_toggle.md`): `""` | `"cultivate"` | `"sow"` |
     /// `"tame"` | `"corral"`.
     ///
-    /// [`Self::policy`] is now always one of the four harvest **stances** and is **never rewritten by
-    /// the sim**. The four build verbs used to be values of `policy`, so committing to an improvement
-    /// vacated the player's stated stance and completion had to hand one back; with the axes split,
-    /// completion clears **this** field and leaves `policy` alone.
+    /// The harvest axis is [`Self::floor`], and it is **never rewritten by the sim**. The four
+    /// build verbs used to be values of the retired `policy` stance dial, so committing to an
+    /// improvement vacated the player's stated stance and completion had to hand one back; with the
+    /// axes split, completion clears **this** field and leaves the floor alone.
     ///
-    /// Persisted intent, like [`Self::policy`] and [`Self::species`]: it rides the rollback record, so
-    /// a rewind restores a half-finished build's verb rather than dropping it.
+    /// Persisted intent, like [`Self::floor`] and [`Self::species`]: it rides the rollback record,
+    /// so a rewind restores a half-finished build's verb rather than dropping it.
     #[serde(default)]
     pub improvement: String,
     /// **The `equipment.json` roster id this crew is working under** — what the player named on
@@ -394,9 +394,9 @@ pub struct KitItemConditionState {
 ///
 /// # This is the RESOLVED answer. A client must not re-derive it.
 ///
-/// The numbers here are the sim's, resolved through the same `equipment.*` seams the take path reads
-/// — so the tier a picker shows is the tier a party sent with that kit actually fights and hauls at.
-/// **Do not step a tier down from [`SubsistenceSnapshot::kits`] by looking at
+/// The numbers here are the sim's, resolved through the same `equipment.*` seams the take path
+/// reads — so the tier a picker shows is the tier a party sent with that kit actually fights and
+/// hauls at. **Do not step a tier down from [`crate::world::WorldSnapshot::kits`] by looking at
 /// [`PopulationCohortState::kit_item_conditions`]**: that is the derivation this field exists to
 /// stop, and it cannot be done correctly from the wire.
 ///
@@ -413,7 +413,8 @@ pub struct KitItemConditionState {
 /// zero" — a consumer must fall back to the world roster's fresh-kit numbers, not to `0`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BandKitTiersState {
-    /// The `equipment.json` roster id these tiers are for — pairs with `SubsistenceSnapshot::kits`.
+    /// The `equipment.json` roster id these tiers are for — pairs with
+    /// [`crate::world::WorldSnapshot::kits`].
     pub kit_id: String,
     /// This band's hunter `attack` under this kit. **Unbounded**; the mass window is beside it.
     pub attack: f32,
@@ -545,8 +546,8 @@ fn kit_multiplier_neutral() -> f32 {
 /// the crew's output.
 pub const RETIRED_BUILD_RATE: f32 = 1.0;
 
-/// Hand-written for the reason [`KitOptionState`]'s is: two of these fields are multipliers whose
-/// neutral is `1`, and a derived `Default` would answer `0`.
+/// Hand-written for the reason [`crate::state::subsistence::KitOptionState`]'s is: two of these
+/// fields are multipliers whose neutral is `1`, and a derived `Default` would answer `0`.
 impl Default for BandKitTiersState {
     fn default() -> Self {
         Self {
@@ -895,11 +896,11 @@ pub struct PopulationCohortState {
     /// **Where a hunt expedition's raid stops**, as a fraction of the herd's carrying capacity —
     /// the raid's whole statement of pressure (`docs/plan_harvest_floor.md`). It governs the take
     /// *and* the trip's shape: a floor below the food peak leaves more standing than one pack holds,
-    /// so the party runs repeated trips (`systems::raid_is_recurring`).
+    /// so the party runs repeated trips (`components::raid_is_recurring`).
     ///
-    /// **`1.0` on a Scout party and on a resident band** — they harvest no herd, and an absent floor
-    /// must not read as *"take everything"*, which is the one value that would be dangerous if a
-    /// reader acted on it. Replaces the retired [`Self::expedition_hunt_policy`]. Appended
+    /// **`1.0` on a Scout party and on a resident band** — they harvest no herd, and an absent
+    /// floor must not read as *"take everything"*, which is the one value that would be dangerous
+    /// if a reader acted on it. Replaces the retired `expedition_hunt_policy`. Appended
     /// (append-only).
     #[serde(default)]
     pub expedition_floor: f32,

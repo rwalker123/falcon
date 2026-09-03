@@ -149,7 +149,9 @@ the odd web out.
   above buy.
 
 **Retired with the model**: `field_provisions`, `field_fodder`, `field_harvest_production`,
-`field_harvest_biomass`, `field_fodder_per_biomass`, `patch_species_quality`,
+`field_harvest_biomass`, `field_fodder_per_biomass`, `patch_species_quality` (and
+`WILD_SPECIES_QUALITY`, the `1.0` it fell back to — both **deleted** once it was found to have
+outlived its last caller with no reader left),
 `managed_per_worker_yield`, `managed_per_worker_fodder`, `MANAGED_HARVEST_SEASON`,
 `settled_biomass_fraction`, the plant side of `SourceYieldForecast::managed`, and the
 `cultivation.field_provisions_per_biomass` dial they all read. **The animal web's `managed` is

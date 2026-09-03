@@ -63,6 +63,11 @@ jobs:
       run: cargo fmt --all -- --check
     - name: cargo clippy
       run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+    # Dead `[`Thing::method`]` doc links ship silently: rustdoc::broken_intra_doc_links is
+    # warn-by-default and nothing else here builds docs. The scope lives in the xtask, not in
+    # this line — see xtask/src/doc_guard.rs.
+    - name: rustdoc link guard
+      run: cargo run --package xtask -- doc-guard
     - name: Build
       run: cargo build --workspace --all-targets --locked --verbose --jobs 2
     - name: Run tests
@@ -115,6 +120,11 @@ jobs:
       run: cargo fmt --all -- --check
     - name: cargo clippy
       run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+    # Dead `[`Thing::method`]` doc links ship silently: rustdoc::broken_intra_doc_links is
+    # warn-by-default and nothing else here builds docs. The scope lives in the xtask, not in
+    # this line — see xtask/src/doc_guard.rs.
+    - name: rustdoc link guard
+      run: cargo run --package xtask -- doc-guard
     - name: Build
       run: cargo build --workspace --all-targets --locked --verbose
     - name: Run tests

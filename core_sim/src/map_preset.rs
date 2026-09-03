@@ -675,12 +675,12 @@ pub struct MacroLandConfig {
     ///
     /// **Both shipped presets set this to `0.0`, and the machinery below it is deliberately kept.**
     /// At `2.0` it does buy drainage — one extra seed in six grows a navigable river — but it also
-    /// **bridges continents together**: on `polar_contrast` it fused five multi-plate landmasses into
-    /// two (85% of all land in a single body), which starved the plate-boundary network that fold
-    /// belts form on and cut that preset's fold count by **85%**. That is the same land-bridging
-    /// failure [`heightfield::CONTINENT_TILT_WINDOW_EXPONENT`] exists to prevent; the window mitigates
-    /// it but does not eliminate it on every preset. See `core_sim/CLAUDE.md` → `macro_land`, and
-    /// `mapgen::tests::polar_contrast_fold_investigation` for the measurement.
+    /// **bridges continents together**: on `polar_contrast` it fused five multi-plate landmasses
+    /// into two (85% of all land in a single body), which starved the plate-boundary network that
+    /// fold belts form on and cut that preset's fold count by **85%**. That is the same
+    /// land-bridging failure `heightfield::CONTINENT_TILT_WINDOW_EXPONENT` exists to prevent; the
+    /// window mitigates it but does not eliminate it on every preset. See `core_sim/CLAUDE.md` →
+    /// `macro_land`, and `mapgen::tests::polar_contrast_fold_investigation` for the measurement.
     #[serde(default = "default_continental_tilt_strength")]
     pub continental_tilt_strength: f32,
     /// **Ridged-spine amplitude** — a ridged-noise term added on top of the envelope and gated to the

@@ -123,9 +123,9 @@ pub struct StoredSnapshot {
 
 impl StoredSnapshot {
     /// **A ring entry stores no encoded bytes at all on a steady-state turn.** The flat socket is
-    /// the only socket ([`crate::network::broadcast_latest`]), and what it broadcasts per turn — the
-    /// flat delta — is built by `publish` for immediate sending rather than retained: 256 ring
-    /// entries holding a delta nobody re-reads cost ~24% of an 80×52 turn for nothing. The
+    /// the only socket ([`crate::network::SnapshotServer::broadcast`]), and what it broadcasts per
+    /// turn — the flat delta — is built by `publish` for immediate sending rather than retained:
+    /// 256 ring entries holding a delta nobody re-reads cost ~24% of an 80×52 turn for nothing. The
     /// on-demand feed paths (`update_axis_bias` / `update_influencers` / `update_corruption`) build
     /// theirs the same way, locally, and return it.
     ///
@@ -3223,13 +3223,13 @@ pub fn capture_snapshot(
 /// measured before the checkpoint arc put a number beside it. Its only historical reader was
 /// rollback, fetching the stored view at the target tick to re-baseline the client; rollback now
 /// recaptures that frame from the world it just restored, which carries the same information
-/// (`a_rollback_produces_the_world_that_tick_had`) and cannot disagree with it.
+/// (`a_rollback_across_a_command_reproduces_the_world_that_tick_had`) and cannot disagree with it.
 ///
 /// What remains needs only the latest entry: `latest_entry` for resync and `export_map`, and the
 /// delta baseline, which tracks the previous publication rather than the ring.
-/// `SimulationConfig::checkpoint_history_turns` now governs
-/// [`crate::sim_state::CheckpointHistory`] alone — one depth knob, one history of worlds. It is set
-/// once at construction (`build_headless_app`) rather than re-asserted every turn.
+/// `SimulationConfig::checkpoint_history_turns` now governs the rollback history of
+/// [`crate::sim_state::SimState`]s alone — one depth knob, one history of worlds. It is set once at
+/// construction (`build_headless_app`) rather than re-asserted every turn.
 pub(crate) const PUBLICATION_RING_DEPTH: usize = 1;
 
 /// Selects how [`capture_snapshot`] writes its result: the normal turn path records a fresh ring

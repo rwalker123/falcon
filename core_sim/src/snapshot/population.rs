@@ -1533,7 +1533,8 @@ const ROUND_HALF_DIVISOR: i128 = 2;
 /// - **No dependent mass means no dependents.** With `children == elders == 0` and `working == 16.6`
 ///   the cached `size` is 17 while the workers floor to 16, and the leftover person is a rounding
 ///   artefact of the accumulator, not a person: putting them in `elders` invented an elder the sim
-///   has no record of. The triple therefore reports `working` alone, and [`Self::head_count`] makes
+///   has no record of. The triple therefore reports `working` alone, and
+///   [`WholeAgeBrackets::head_count`] makes
 ///   the published size agree.
 pub(crate) fn whole_age_brackets(
     head_count: u32,
