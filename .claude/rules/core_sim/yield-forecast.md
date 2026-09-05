@@ -973,7 +973,10 @@ count, then a live-queued entry the pass reached and could not date — plus the
 
 ## Reading both webs off one table
 
-`core_sim/tests/food_economy_table.rs` is a **printing** harness, not an assertion one:
+`core_sim/tests/food_economy_table.rs` is a **printing** harness whose assertions are liveness guards
+rather than pins — it carries real `assert!`s (roster coverage, a binding stage on every fauna row at
+every crew size) that fail CI, but none of them pins a number, because a table that silently printed
+nothing or all zeros at exit 0 is the failure mode it exists to make impossible:
 
 ```text
 cargo test -p core_sim --test food_economy_table -- --nocapture
@@ -985,7 +988,21 @@ every rung its `husbandry_ceiling` allows, **through these two seams and no othe
 one comparison. The food column every row reports is the preview's `realized`, the forward-projected
 average over `labor_config.yield_average_horizon_turns`, divided by the crew.
 
-### ⛔ IT PRICES A KITTED BAND, AND ITS FIRST DRAFT DID NOT
+### ⛔ IT PRICES WHAT A SPAWN ACTUALLY OWNS — WHICH, SINCE PR #618, IS NOTHING
+
+> **THE KITTED COLUMN IS CURRENTLY IDENTICAL TO THE BARE ONE, AND THAT IS NOT A BUG IN THE HARNESS.**
+> `Shipped::load()` builds `EquipmentConfig::builtin()`, whose `start_stock_fraction` ships **`0.0`**
+> (`equipment.md` → "A SPAWNING BAND OWNS NO EQUIPMENT"), so `start_stocked_for` stocks nothing,
+> `coverage` is zero, and every row's headline column equals its pre-gear control. The sentence below
+> — *"the gap against the kitted column is exactly what the basket or the sled bought"* — therefore
+> describes a gap that is **identically zero on every row at the shipped config**. It stays because it
+> states what the columns MEAN and comes back the moment gear does (#629 gives the player an opening
+> loadout); read it as the dial-on shape, not as a claim about today's output.
+>
+> The harness knows: the guard asserting that some row out-earns its bare control was **deleted** with
+> the default stock, because it was reading a config value through a behavioural assertion. What
+> replaced it guards the gear **path** — every fauna row resolves a kit id — which stays true at a
+> zero fraction.
 
 The headline columns resolve gear through **the same seam `bin/server.rs`'s assign-time seed uses** —
 the job's `default_kit` on the plant side, `fauna::herd_default_hunt_kit` (the *quarry's* own default,

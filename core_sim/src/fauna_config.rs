@@ -1383,7 +1383,15 @@ pub struct HusbandryConfig {
     ///
     /// Validated finite and `> 0` when present: a `0` would mean no animal fits anywhere, which is
     /// the off-switch spelled as a catastrophe rather than as the `None` it already has.
-    #[serde(default)]
+    ///
+    /// # ⛔ NO FIELD-LEVEL `#[serde(default)]` — THE CONTAINER'S ONE GOVERNS
+    ///
+    /// This field carried its own `#[serde(default)]`, which resolves to the **field type's**
+    /// default (`None`) and therefore shadowed [`DEFAULT_HEX_SPACE_BUDGET`] entirely: an override
+    /// file that tuned one husbandry dial and omitted this key silently shipped **no space cap at
+    /// all**, with no validation error and no log line. The struct's container-level attribute
+    /// already routes every missing key through [`HusbandryConfig::default`], which is where this
+    /// dial's shipped value lives — so the field-level one could only ever disagree with it.
     pub hex_space_budget: Option<f32>,
     /// **IS A PEN A LARDER ON THE HOOF?** — when `true`, the party's **carry** no longer bounds a take
     /// at `animal:pen`, and a pen produces no carry waste.
@@ -1421,7 +1429,12 @@ pub struct HusbandryConfig {
     /// carry bound reads — the quantiser's pack seat, `project_realized_hunt`'s `min`, and
     /// `hunt_take_bound`'s `carryable`) and `SourceYieldForecast::larder`, which carries the same fact
     /// into the preview.
-    #[serde(default)]
+    ///
+    /// # ⛔ NO FIELD-LEVEL `#[serde(default)]` — THE CONTAINER'S ONE GOVERNS
+    ///
+    /// See [`HusbandryConfig::hex_space_budget`]: a field-level attribute resolves to `false` here
+    /// and could never produce [`DEFAULT_PEN_IS_A_LARDER`], so an override omitting this key shipped
+    /// the **pre-larder** pen silently.
     pub pen_is_a_larder: bool,
     /// The stable-band ceiling on any managed `r`: `pastoral`/`pen` growth is capped here so a fast
     /// breeder (rabbit wild 0.35 × pen_gain 3.0 = 1.05) is held to a logistic rate that does not
@@ -3792,5 +3805,31 @@ mod tests {
         );
         assert_eq!(graze.capacity_for(TerrainType::Glacier), NO_GRAZE_CAPACITY);
         assert!(graze.reseed_floor_fraction < graze.ecology.collapse_fraction);
+    }
+
+    /// **AN OVERRIDE THAT OMITS A HUSBANDRY KEY GETS THE SHIPPED VALUE, NOT THE FIELD TYPE'S.**
+    ///
+    /// [`HusbandryConfig`] carries a **container-level** `#[serde(default)]`, so a missing key falls
+    /// through to [`HusbandryConfig::default`] and the constant that lives there. Two fields —
+    /// `hex_space_budget` and `pen_is_a_larder` — also carried their **own** `#[serde(default)]`,
+    /// which resolves to the *field type's* default (`None`, `false`) and shadows the container's
+    /// entirely. A `FAUNA_CONFIG_PATH` override that tuned one dial and omitted those two therefore
+    /// shipped the **pre-larder pen and no space cap at all**, silently: no validation error, no log
+    /// line, and the two dials that the pen's whole economy turns on quietly off.
+    ///
+    /// The fixture omits *every* key, which is the strongest form of the claim and also the shape an
+    /// override file takes in practice (state the one dial you are moving).
+    #[test]
+    fn a_husbandry_override_that_omits_a_key_gets_the_shipped_default() {
+        let husbandry: HusbandryConfig =
+            serde_json::from_str("{}").expect("an empty object is a valid HusbandryConfig");
+        assert_eq!(
+            husbandry.hex_space_budget, DEFAULT_HEX_SPACE_BUDGET,
+            "an omitted hex_space_budget must be the shipped budget, never None (= no space cap)"
+        );
+        assert_eq!(
+            husbandry.pen_is_a_larder, DEFAULT_PEN_IS_A_LARDER,
+            "an omitted pen_is_a_larder must be the shipped `true`, never the pre-larder pen"
+        );
     }
 }

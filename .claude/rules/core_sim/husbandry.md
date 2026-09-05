@@ -53,7 +53,13 @@ RUNG'S METER IS A **PUBLICATION** OF THE STANDING" owns the mechanism and the me
   fence interpolates between wild and *pastoral* and reaches the pen's rate only when the fence closes.
   No call site tests for the pen. Half a fence is no fence; that is the deliberate difference from the
   Field, where half a sown field genuinely has half a crop in the ground.
-- **⛔ A PEN'S CREW CURVE IS THE STALKING CURVE PLUS ONE `.min()`, AND THAT `.min()` IS THE HAUL.**
+- **⛔ A PEN'S CREW CURVE IS THE STALKING CURVE, AND SINCE THE LARDER THERE IS NO `.min()` LEFT ON
+  IT.** `pen_is_a_larder` ships **on**, so `fauna::herd_collection` answers an unbounded collection at
+  a pen and `hunt_crew_take_curve`'s `keepers_haul_it_home` — `is_corralled() && !herd_collection(..)
+  .is_infinite()` — is **false at every penned row**. The haul `.min()` described below is therefore
+  dormant, not deleted: it is kept for the state where the dial is off, and the branch reads
+  `herd_collection` rather than `is_corralled()` alone precisely because *whether carry binds* is that
+  seam's answer and not a property of the fence. **The paragraph below describes the dial-off shape.**
   `fauna::hunt_crew_take_curve` is **one function** since §4.9 item 12b: every row is
   `resolve_hunt_engagement(..).fight.expected_brought_down` — the room, the reach, the retreat and
   the fight, at the rung the herd stands on — and a **corralled** row then takes `.min(keepers'
@@ -77,8 +83,9 @@ RUNG'S METER IS A **PUBLICATION** OF THE STANDING" owns the mechanism and the me
   > aurochs' `120 × 14 ÷ 150 = 11.2` biomass a turn — under the **bare** tier's `12`, let alone the
   > equipped `40`. It is kept because it is the honest model and a retune can walk into it, and it is
   > exercised by an authored fixture
-  > (`hunt_useful_crew_on_the_wire::a_pens_curve_is_bounded_by_what_its_keepers_can_carry_home`),
-  > exactly as `pen_engage_gain`'s handling arm is.
+  > (`hunt_useful_crew_on_the_wire::a_pens_curve_is_not_bounded_by_what_its_keepers_can_carry_home`,
+  > which asserts the **larder-on** shape and keeps a range arm so the carry model stays pinned
+  > somewhere), exactly as `pen_engage_gain`'s handling arm is.
   > **THE BRANCH IS AT THE ONE PRODUCER, so both transports inherit it** — the snapshot's
   > `huntUsefulWorkers` and the compose sheet's query rows. It was briefly the *client* deciding when
   > to disbelieve the sim (gating the field on an engagement-stage test of its own), which is the
@@ -311,10 +318,16 @@ domestication *reduce* capacity). **Playtest dials.**
   > `SourceYieldForecast::fight` therefore stays `Some` at a pen, because that tuple is what the
   > *retreat* reads (`pen_wariness`); nulling it would delete the retreat with the fight.
   >
-  > **A HALTER SOFTENS THE FIGHT, IT DOES NOT DELETE IT.** `pastoral_resistance` (`0.5`) scales both
-  > halves of the resolver's gate on a tamed quarry — `defense` (whether a strike lands at all) and
+  > **A HALTER SOFTENS THE FIGHT, IT DOES NOT DELETE IT.** `pastoral_resistance` scales both halves
+  > of the resolver's gate on a tamed quarry — `defense` (whether a strike lands at all) and
   > `durability` (how many landed strikes a body absorbs) — so rung 2 is a real fight against a
   > softer animal while rung 3 is no fight at all.
+  >
+  > ⛔ **The shipped GLOBAL is `1.0`, the identity — a halter softens nothing by default.** Only
+  > `rabbit`, `fowl` and `snow_hare` carry the `0.5` override, because they are the fight-bound half
+  > of the roster and reach is inert on them. At `0.5` globally the dial compounded with
+  > `pastoral_engage_gain` and put herding *above* tending, which is why it ships neutral and per
+  > species. See the retune section below for the measured points.
   >
   > **A PENNED ANIMAL CAN NO LONGER HURT ITS KEEPERS.** The three pennable species that carried an
   > `attack` — Wild Aurochs `4.0`, Wild Boar `1.5`, Crag Goats `0.6`, Wild Sheep `0.4` — and the
@@ -381,10 +394,17 @@ domestication *reduce* capacity). **Playtest dials.**
   managed herd **rebuilds** (yielding less, or nothing, while it does) and then pays `r·K/4` forever —
   stable from *both* sides, same yield at capacity and at the operating point.
 - **A pen CAN overdraw**, and that is the point: `actual != sustainable` is reachable at rung 3 and
-  the ⚠ fires on it. Its `workers_needed` is derived like every other rung's (slice 7) — the keeper
-  still carries the meat home, so the take is `min(what the floor offers, hunters ×
-  hunt.per_worker_biomass_capacity, what the crew can handle)` and the surplus beyond that is reported
-  as `wasted`. The retired `TENDED_SOURCE_WORKERS_NEEDED = 1` claimed one keeper could collect a pen
+  the ⚠ fires on it. Its `workers_needed` is derived like every other rung's (slice 7), with the take
+  `min(what the floor offers, what the crew can handle, what the party can carry home)` and the
+  surplus beyond that reported as `wasted`.
+  > ⛔ **THE CARRY TERM DROPS OUT AT A LARDER PEN, AND `workers_needed` MUST DROP IT TOO.** With
+  > `pen_is_a_larder` on, the keeper does *not* carry the meat home — the animals stand alive until
+  > they are wanted — so a haul-worker count at a penned row prices a haul that never happens. That
+  > was a live defect found in PR #618's own review: `hunt_haul_workers` published ~51 haulers beside
+  > a `huntUsefulWorkers` plateauing at 5 keepers, two surfaces answering one question oppositely.
+  > **The crew a pen wants is its handling crew.** Whether carry binds is `herd_collection`'s answer
+  > and never `is_corralled()`'s — composing a second carry bound beside that seam is the recurring
+  > shape of this bug, and it has now been fixed twice. The retired `TENDED_SOURCE_WORKERS_NEEDED = 1` claimed one keeper could collect a pen
   of any size. **The `policy` axis no longer collapses either** — that was the managed harvest's own
   claim, and it went with it.
 - **What the fence still switches, and it is not payout**: where the animals live (`corralled_at`),

@@ -5266,10 +5266,20 @@ pub fn advance_labor_allocation(
                             // neither stage, and `forecast_source_yield` — the assign-time seed for
                             // this very row — has always used `hunt_take_workers`, so the two
                             // disagreed the moment the pen started retreating.
+                            //
+                            // **AND THE HAUL TERM READS [`fauna::herd_carry_rate`], NOT THE BARE
+                            // SLED.** `husbandry.pen_is_a_larder` retires the carry bound at a pen
+                            // — what a keeper does not butcher is next turn's stock, still breeding
+                            // — so inverting the sled here counted haulers for a haul that never
+                            // happens: 51 of them on the shipped penned aurochs, published beside a
+                            // five-keeper `huntUsefulWorkers`. The seam answers
+                            // `fauna::NO_CARRY_BOUND` wherever carry does not bind, which drops the
+                            // haul term out of the `max` and leaves the handling crew — the crew a
+                            // pen actually wants — to answer alone.
                             workers_needed: fauna::hunt_take_workers(
                                 production,
                                 herd.body_mass,
-                                herd_carry_per_worker,
+                                fauna::herd_carry_rate(herd, &fauna, herd_carry_per_worker),
                                 fauna::herd_engage_rate(herd, &fauna),
                                 party_for(herd.body_mass)
                                     .stay_fraction(fauna::herd_wariness(herd, &fauna)),
@@ -5784,10 +5794,16 @@ pub fn advance_labor_allocation(
                     // **`herders_needed` no longer folds in.** Keeping a herd and hauling from it are
                     // different jobs in different units; the herder count keeps its own wire field
                     // and this row answers for the take alone.
+                    //
+                    // **The carry rate comes off [`fauna::herd_carry_rate`]**, the one seam that
+                    // knows whether carry binds at all. It is the band's own tier on the range —
+                    // this arm's herd is never penned, the pen returns above — but composing the
+                    // rate by hand at *one* of the two `hunt_take_workers` sites is exactly how the
+                    // pen's site went on inverting a sled the take had stopped reading.
                     let workers_needed = fauna::hunt_take_workers(
                         standing_above_floor,
                         herd.body_mass,
-                        herd_carry_per_worker,
+                        fauna::herd_carry_rate(herd, &fauna, herd_carry_per_worker),
                         fauna.engage_rate_for(&herd.species),
                         party_for(herd.body_mass).stay_fraction(fauna::herd_wariness(herd, &fauna)),
                     );
@@ -8527,6 +8543,20 @@ mod labor_yield_tests {
     /// effectively continuous again and quietly stopped these forecast==actual sweeps from covering
     /// the quantiser at all.
     const TEST_GAME_BODY_MASS: f32 = 5.0;
+    /// **The ROSTER species [`tended_patch_and_corral_report_their_staffing_need`] re-seeds its pen
+    /// on.** Pennable (`husbandry_ceiling: "pen"`) and carrying a finite `engage_rate`, which is the
+    /// whole point: this module's own off-roster `"Test Game"` reads as *no engagement stage at all*,
+    /// a branch no shipped row can take. The boar's `body_mass 12` against the equipped haul tier is
+    /// also what makes the haul count and the handling crew land far apart.
+    const PEN_SPECIES: &str = "Wild Boar";
+    /// **The pen's stock and its ceiling** — seated ON its ceiling, so the herd's regrowth
+    /// contributes nothing and the room is exactly the floor's share. Deliberately far above this
+    /// module's [`CAP`]: at `CAP = 100` a boar pen's room is four bodies and both crew counts round
+    /// to the same single digit, so the fixture could not tell one from the other.
+    const PEN_STOCK: f32 = 4000.0;
+    /// The floor that pen is kept at — the food peak, where the escapement room is largest and the
+    /// two crew counts have the most to disagree about.
+    const PEN_FLOOR: f32 = 0.5;
     /// The faction every `spawn_band` band belongs to in this harness.
     const BAND_FACTION: FactionId = FactionId(0);
     /// Whole workers on each assignment: large enough that forage yields clearly and the hunt's
@@ -9416,13 +9446,27 @@ mod labor_yield_tests {
     /// The name's original claim (`workers_needed == 1` for both, "maintenance labor, not scaling
     /// gather") is dead twice over: slice 7 retired `TENDED_SOURCE_WORKERS_NEEDED = 1` for the payout,
     /// and slice 8 gave the pen a **standing, herd-sized herder demand**. What the pen reports now is
-    /// the **take activity's own** crew ([`fauna::hunt_take_workers`]) — the hands that can reach and
-    /// *haul* the drop (`ceil(take / per_worker_throughput)`). The blended `max(standing, take)` head
-    /// count is retired (`intensification`'s gravestone, `docs/plan_standing_upkeep.md` §2.2), so the
-    /// hands that *mind* the heads (`ceil(animals / animals_per_herder)`) answer on their own wire
-    /// field instead. Herding is per head, hauling is per biomass, so neither term dominates across
-    /// the roster — this fixture's pen happens to be **haul**-bound, which is what makes the
-    /// `max(herders, haulers)` asserted below equal to the haul count alone.
+    /// the **take activity's own** crew ([`fauna::hunt_take_workers`]). The blended `max(standing,
+    /// take)` head count is retired (`intensification`'s gravestone,
+    /// `docs/plan_standing_upkeep.md` §2.2), so the hands that *mind* the heads
+    /// (`ceil(animals / animals_per_herder)`) answer on their own wire field instead.
+    ///
+    /// **And the pen's half of that crew is its HANDLING crew, never haulers**: `pen_is_a_larder`
+    /// retires the carry bound at `animal:pen`, so the haul term is asked at `fauna::NO_CARRY_BOUND`
+    /// and drops out of the `max`, leaving the keepers' own reach to answer.
+    ///
+    /// # ⛔ THE PEN IS RE-SEEDED ON A **ROSTER** SPECIES, AND THAT IS LOAD-BEARING
+    ///
+    /// This harness's own `"Test Game"` is off-roster, so `FaunaConfig::engage_rate_for` answers
+    /// [`f32::INFINITY`] — *no engagement stage*, the plant web's reading. With the carry bound
+    /// retired too, **neither** crew term binds and the row honestly publishes
+    /// [`NO_CREW_ON_THIS_ACTIVITY`] — a state **no shipped species can reach**, since every roster
+    /// row carries a finite `engage_rate`. Pinning it would be pinning a branch play never takes,
+    /// which cannot tell correct behaviour from a regression. So the pen alone is re-seeded on
+    /// [`PEN_SPECIES`], and the assertion pins the handling crew a real row produces.
+    ///
+    /// The retired **haul** count is still computed, as the *negative*: it is exactly what this row
+    /// published while it inverted a sled the take had stopped reading.
     #[test]
     fn tended_patch_and_corral_report_their_staffing_need() {
         let (mut world, tile) = world_with_source(CAP);
@@ -9433,16 +9477,37 @@ mod labor_yield_tests {
             .forage
             .capacity_for(SOURCE_BIOME);
         cultivate_source_patch(&mut world, patch_cap);
-        // Pen the herd in place (Rung 1c) so a Hunt assignment tends rather than hunts it.
+        // **Re-seed the pen on a ROSTER species** (see the header) and pen it in place (Rung 1c) so
+        // a Hunt assignment tends rather than hunts it. Everything about the herd comes off the
+        // roster row — body, ecology, fodder — because a herd wearing a roster NAME over this
+        // harness's own stats would resolve its reach from one animal and its drop from another.
         {
-            let mut registry = world.resource_mut::<HerdRegistry>();
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let def = fauna
+                .species_by_display(PEN_SPECIES)
+                .expect("the fixture names a shipped species")
+                .clone();
+            let mut herd = crate::fauna::Herd::new(
+                HERD_ID.to_string(),
+                PEN_SPECIES.to_string(),
+                SizeClass::Small,
+                vec![UVec2::new(0, 0)],
+                PEN_STOCK,
+                PEN_STOCK,
+                def.fodder_per_biomass,
+                def.regrowth_rate.unwrap_or(fauna.ecology.regrowth_rate),
+                def.body_mass,
+            );
+            herd.refresh_ecology_phase(&fauna);
+            drop(fauna);
             assert!(
-                registry.herds[0].corral_at(
+                herd.corral_at(
                     UVec2::new(0, 0),
                     &crate::intensification::LadderConfig::builtin()
                 ),
-                "the fixture species must be pennable"
+                "PEN_SPECIES must be pennable, or there is no pen to staff"
             );
+            world.resource_mut::<HerdRegistry>().herds[0] = herd;
         }
 
         let forager = spawn_band(
@@ -9467,7 +9532,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: 0.5,
+                    floor: PEN_FLOOR,
                 },
                 workers: WORKERS,
                 // The keeper carries the hunt job's own kit, which is what a pen is collected on
@@ -9482,6 +9547,27 @@ mod labor_yield_tests {
                 upkeep_kit: None,
             }],
         );
+
+        // **The room the take is about to be bounded by, read PRE-take** — the same
+        // `fauna::herd_take_room` the tend arm sizes its crew off. Read after the take it would be
+        // the drawn-down remainder, which is a different number and a different crew.
+        let (pen_room, pen_body, pen_reach, pen_stay) = {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let herd = &world.resource::<HerdRegistry>().herds[0];
+            (
+                crate::fauna::herd_take_room(herd, PEN_FLOOR, &fauna),
+                herd.body_mass,
+                // The keepers' handling rate — the species' own reach through
+                // `husbandry.pen_engage_gain`.
+                crate::fauna::herd_engage_rate(herd, &fauna),
+                // …and the retreat a fence calms the herd to, at the party this harness fields.
+                // The bands here carry no `BandEquipment`, which every rate in this module reads as
+                // the fully-kitted reference (`equipped_haul_rate`), so the shipped equipped party
+                // is the one the system resolves.
+                crate::fauna::HuntingParty::builtin_equipped()
+                    .stay_fraction(crate::fauna::herd_wariness(herd, &fauna)),
+            )
+        };
 
         world.run_system_once(advance_labor_allocation);
 
@@ -9522,28 +9608,34 @@ mod labor_yield_tests {
             tended.workers_needed, expected_foragers,
             "a tended patch reports the crew its boosted take needs: {tended:?}"
         );
-        // **The pen's staffing need is its whole CREW** (slice 8): `max(herders, haulers)`. Asserted
-        // against the shared helpers rather than magic numbers, so it tracks a roster retune.
-        let (herders, haulers) = {
-            let world_fauna = world.resource::<FaunaConfigHandle>().get();
-            let world_ladder = world.resource::<LadderConfigHandle>().get();
-            let registry = world.resource::<HerdRegistry>();
-            let herders =
-                crate::fauna::herd_herders_needed(&registry.herds[0], &world_fauna, &world_ladder);
-            let per_worker = crate::fauna::herd_hunt_yield(&registry.herds[0], &world_fauna)
-                .apply(equipped_haul_rate(), 1.0)
-                .provisions;
-            (herders, (corral.actual / per_worker).ceil() as u32)
-        };
+        // **THE PEN'S CREW IS ITS HANDLING CREW, AND NO HAUL COUNT SURVIVES IN IT.**
+        //
+        // The **peak drop** both counts are sized against: the whole bodies the room already covers,
+        // plus the one its partial body becomes on the turn regrowth tips it over. Restated here
+        // rather than reached for, so this is a second implementation of `hunt_take_workers`' own
+        // divisor rather than a function compared with itself.
+        let peak_drop = (pen_room / pen_body).floor() + 1.0;
+        // **The keepers' crew** — the hands that walk the peak drop out and butcher it, at what one
+        // keeper handles and holds in a turn (`reach × stay`). Every term of it is read off the
+        // roster and the husbandry dials, so it tracks a retune instead of pinning today's number.
+        let handling_crew = (peak_drop / (pen_reach * pen_stay)).ceil() as u32;
+        // …and **the retired reading**, computed as the negative: the haulers the row counted while
+        // it inverted a sled the take had stopped reading.
+        let retired_haul_crew =
+            crate::fauna::hunt_haul_workers(pen_room, pen_body, equipped_haul_rate());
         assert!(
-            herders >= 1,
-            "the fixture pen must demand at least one keeper, or this asserts nothing"
+            handling_crew >= 1,
+            "PRECONDITION: a roster pen must want real hands, or this asserts nothing"
+        );
+        assert!(
+            retired_haul_crew > handling_crew,
+            "PRECONDITION: this pen must be big enough that the haul count ({retired_haul_crew}) \
+             and the handling crew ({handling_crew}) cannot be confused"
         );
         assert_eq!(
-            corral.workers_needed,
-            herders.max(haulers),
-            "the pen reports ONE crew sized by whichever job binds — minding {herders} head vs hauling \
-             the take ({haulers}): {corral:?}"
+            corral.workers_needed, handling_crew,
+            "a larder pen's take crew is its HANDLING crew ({handling_crew}); the haul count \
+             ({retired_haul_crew}) is the retired reading: {corral:?}"
         );
     }
 

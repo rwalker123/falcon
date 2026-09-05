@@ -2624,7 +2624,9 @@ fn herd_footprint_at(herd: &Herd, def: Option<&SpeciesDef>, penned: bool) -> (UV
 }
 
 /// **HOW MUCH BIOMASS PHYSICALLY FITS ON A FOOTPRINT**, and [`NO_SPACE_CAP_AT_ALL`] when the dial is
-/// unset (the shipped state).
+/// unset — which is **not** the shipped state: `hex_space_budget` ships **on**, at
+/// [`crate::fauna_config::HusbandryConfig::hex_space_budget`]'s `2530.3`, so this term is live and
+/// the `min` below binds wherever the ground is tighter than the feed.
 ///
 /// The **space** half of `K = min(feed_K, space_K)`
 /// ([`crate::fauna_config::HusbandryConfig::hex_space_budget`]). Neither the fodder flow nor the
@@ -2666,8 +2668,13 @@ pub fn herd_space_capacity(footprint_tiles: usize, body_mass: f32, fauna: &Fauna
 /// is stated where it is used.
 const ANIMAL_FOOTPRINT_EXPONENT: f32 = 2.0 / 3.0;
 
-/// **SPACE DOES NOT BIND** — what [`herd_space_capacity`] answers while the dial is unset, so the
-/// `min` against the feed term is an identity and `K` is exactly the number it has always been.
+/// **SPACE DOES NOT BIND** — what [`herd_space_capacity`] answers while the dial is unset, which
+/// makes the `min` against the feed term an identity and leaves `K` at the feed number alone.
+///
+/// ⛔ **That is the dial's OFF state, not its shipped one.** `hex_space_budget` ships `Some(2530.3)`
+/// ([`crate::fauna_config::HusbandryConfig::hex_space_budget`] and `fauna_config.json`), so
+/// `K = min(feed_K, space_K)` is live on **both** diet branches and this constant is reached only
+/// by an override that clears the dial (or by a `body_mass` the roster does not describe).
 pub const NO_SPACE_CAP_AT_ALL: f32 = f32::INFINITY;
 
 pub(crate) fn graze_sustainable_flow(biomass: f32, cap: f32, graze_eco: &EcologyConfig) -> f32 {
@@ -6005,7 +6012,18 @@ pub(crate) fn forecast_source_yield(
             Some(axis) if forecast.quantises() => hunt_take_workers(
                 forecast.ceiling_at(floor).component(axis),
                 forecast.body_mass_yield.component(axis),
-                forecast.per_worker_yield.component(axis),
+                // **THE CARRY RATE THE TAKE WAS ACTUALLY BOUND BY** — [`NO_CARRY_BOUND`] where
+                // carry does not bind ([`SourceYieldForecast::larder`], the same flag
+                // [`forecast_production_and_take_at`] hands the quantiser two screens up), so the
+                // haul term drops out of the `max` and the keepers' handling crew answers alone.
+                // Inverting the sled here published *51 haulers* beside a five-keeper
+                // `huntUsefulWorkers` on the shipped penned aurochs: two surfaces, one question,
+                // opposite answers, for a haul that never happens.
+                if forecast.larder {
+                    NO_CARRY_BOUND
+                } else {
+                    forecast.per_worker_yield.component(axis)
+                },
                 // **The engagement term is the third unit** — `hunt_engage_workers` reads it exactly
                 // as `animals_engaged` does, so the crew inverts the bound the take was actually
                 // paid. On a pen that bound is the keepers' handling rate, so the term counts
@@ -7893,10 +7911,20 @@ pub fn hunt_take_bound(
 /// are scale-invariant, so the provisions-space call in [`forecast_source_yield`] and the biomass-space
 /// calls in the labor arm agree). Naturally `>= 1` for any finite-positive `body`/`per_worker` (since
 /// `peak_animals >= 1`); a degenerate `body`/`per_worker` (≤ 0 — unreachable, `FaunaConfig::validate`
-/// pins `body_mass` positive and the per-worker levers are positive config) yields `0`.
+/// pins `body_mass` positive and the per-worker levers are positive config) yields
+/// [`NO_CREW_ON_THIS_ACTIVITY`].
+///
+/// # ⛔ [`NO_CARRY_BOUND`] IS A REAL ARGUMENT HERE, AND IT ANSWERS "NO HAULERS"
+///
+/// The non-finite guard is not only a degenerate-input shield: a caller that resolved `per_worker`
+/// through [`herd_carry_rate`] hands an **infinity** at any rung where carry does not bind
+/// (`husbandry.pen_is_a_larder` at `animal:pen`), and the honest crew for a haul that never happens
+/// is none — which is exactly what dividing by an infinite carry rate says. That is what keeps the
+/// haul term out of [`hunt_take_workers`]'s `max` at a larder pen, leaving the keepers' handling
+/// crew to answer alone.
 pub fn hunt_haul_workers(ceiling: f32, body: f32, per_worker: f32) -> u32 {
     if !body.is_finite() || body <= 0.0 || !per_worker.is_finite() || per_worker <= 0.0 {
-        return 0;
+        return NO_CREW_ON_THIS_ACTIVITY;
     }
     let peak_biomass = peak_animal_drop(ceiling, body) * body;
     (peak_biomass / per_worker).ceil() as u32
@@ -8207,6 +8235,26 @@ pub fn herd_collection(
     workers as f32 * per_worker_biomass_capacity
 }
 
+/// **WHAT ONE WORKER CARRIES AT THE RUNG THIS HERD STANDS ON** — [`herd_collection`] asked at
+/// [`ONE_WORKER`], so it is `per_worker_biomass_capacity` on every drawn-down source and
+/// [`NO_CARRY_BOUND`] at a pen once `husbandry.pen_is_a_larder` is on.
+///
+/// # ⛔ IT IS THE CREW-SIZING SEAM, AND A BARE `is_corralled()` HERE IS THE BUG IT EXISTS TO CLOSE
+///
+/// A *rate* rather than a *collection* is what a crew inversion needs — [`hunt_take_workers`] and
+/// [`hunt_haul_workers`] divide a peak drop by what one hauler moves — and resolving that rate by
+/// hand was how the crew count and the take fell out of step twice: [`hunt_crew_take_curve`]
+/// composed its own carry bound from `is_corralled()` and published a plateau on a ceiling the take
+/// does not apply, and `workers_needed` went on inverting the sled at a pen where the sled bounds
+/// nothing (51 haulers beside a 5-keeper plateau on the shipped penned aurochs).
+///
+/// **The test is whether carry actually binds, which only [`herd_collection`] answers** — the flag,
+/// the rung and the `workers == 0` guard all live there, so this is that one term expressed as a
+/// rate rather than a second reading of the same facts.
+pub fn herd_carry_rate(herd: &Herd, fauna: &FaunaConfig, per_worker_biomass_capacity: f32) -> f32 {
+    herd_collection(herd, fauna, ONE_WORKER, per_worker_biomass_capacity)
+}
+
 /// **CARRY DOES NOT BIND THIS SOURCE** — the same statement `engage_rate: f32::INFINITY` makes about
 /// the plant web's engagement stage, one column over. Named rather than a bare infinity because *"no
 /// bound"* and *"an enormous bound"* are different claims and only one of them is true here.
@@ -8285,6 +8333,15 @@ pub fn resolve_hunt_kill(
 /// **Still whole animals** — you slaughter a body, not a fraction of one — so `brought_down` is
 /// floored exactly as the fight's own kill arm floors it, and `expected_brought_down` carries the
 /// unfloored rate beside it for the crew curve, which wants a rate rather than next turn's bodies.
+///
+/// # ⛔ THE FLOOR IS [`whole_units`], NOT A BARE `.floor()`
+///
+/// A bare floor was this file's one whole-animal rounding without [`ANIMAL_COUNT_EPSILON`] on it.
+/// Everywhere else — [`whole_animals`], [`animals_affordable`], and the fight arm through
+/// `combat::strike_blow`'s own epsilon — a count a last mantissa bit under an integer still counts
+/// as that integer, because `stayed` is a product of separately-rounded rates and `2.9999998` is
+/// how three animals arrive. **At a pen this floor is the ENTIRE take**: no fight re-rounds it, so
+/// the slop that the range arm absorbs would come out as a whole body the keepers never got.
 fn slaughter(stayed: f32, wounds: DamageLedger) -> HuntFight {
     let offered = if stayed.is_finite() {
         stayed.max(0.0)
@@ -8293,7 +8350,7 @@ fn slaughter(stayed: f32, wounds: DamageLedger) -> HuntFight {
     };
     HuntFight {
         brought_down: if offered.is_finite() {
-            offered.floor()
+            whole_units(offered)
         } else {
             offered
         },

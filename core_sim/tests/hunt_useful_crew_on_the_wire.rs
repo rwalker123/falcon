@@ -1785,3 +1785,189 @@ fn published_projections(app: &App) -> (f32, Vec<f32>) {
             .unwrap_or_default(),
     )
 }
+
+// =============================================================================================
+// THE PEN'S CREW COUNT: `workersNeeded` and `huntUsefulWorkers` answer ONE question
+// =============================================================================================
+
+/// **A PEN BIG ENOUGH THAT A HAUL COUNT AND A HANDLING COUNT CANNOT BE CONFUSED.** The rest of this
+/// file works [`STANDING_STOCK`], whose room is two aurochs — small enough that the sled and the
+/// keepers' hands answer the same single-digit number and a crew sized off the wrong one would look
+/// right. At `3968` against [`FLOOR`] the room is `1984` biomass, a peak drop of **17** bodies: 52
+/// haulers at the sled's tier against **6** keepers, so the two readings are three surfaces apart.
+const A_PEN_WORTH_HAULING: f32 = 3968.0;
+
+/// **HOW FAR APART TWO ANSWERS TO ONE QUESTION MAY LAND: one worker.**
+///
+/// `workers_needed` sizes on [`core_sim::hunt_take_workers`]'s **peak drop** — `floor(room/body) + 1`,
+/// the whole bodies the room covers *plus* the partial one that becomes whole the turn regrowth tips
+/// it over — while the curve's plateau sizes on `animals_affordable`, which is that same `floor`
+/// without the extra body. So the crew that clears the drop is at most one hand past the crew the
+/// curve stops rising at, and that hand is the only difference the two are allowed.
+const THE_PEAK_DROPS_EXTRA_BODY: u32 = 1;
+
+/// **`workersNeeded` FOR THE FIXTURE'S PENNED ROW, off the assign-time seed** — the producer behind
+/// the row a client reads before a turn resolves ([`core_sim::hunt_source_yield_preview`], which
+/// composes `forecast_source_yield`).
+fn seeded_workers_needed(app: &App, wear: &BandEquipment, carry_per_worker: f32) -> u32 {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let herd = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(HERD_ID)
+        .expect("the fixture herd is in the registry")
+        .clone();
+    core_sim::hunt_source_yield_preview(
+        &herd,
+        &fauna,
+        carry_per_worker,
+        &party_of(app, CREW_ON_THE_ROW, wear),
+        SEED_OUTPUT_MULTIPLIER,
+        CREW_ON_THE_ROW,
+        FLOOR,
+        SEED_HORIZON_TURNS,
+        SEED_HORIZON_TURNS,
+        SEED_RANGE_SIGMAS,
+    )
+    .workers_needed
+}
+
+/// No knowledge/tech scaling on the seed — the identity, so the crew count is the herd's and the
+/// party's alone.
+const SEED_OUTPUT_MULTIPLIER: f32 = 1.0;
+/// How far the seed projects its `realized`/`arrivals` lines. Inert here — this test reads
+/// `workers_needed` and nothing else — but the seed composes a whole row, so it has to be stated.
+const SEED_HORIZON_TURNS: u32 = 8;
+/// The seed's quote band width, likewise inert for a crew count.
+const SEED_RANGE_SIGMAS: f32 = 1.0;
+
+/// **THE TWO CARRY TIERS THE BAND CAN BE STANDING ON**, stated rather than read off the equipment
+/// config, because the claim under test is that **neither of them reaches a penned row's crew
+/// count**. They are the bare tier and the sledded one; the gap between them is what made the
+/// pre-fix numbers 170 and 52.
+const BARE_HANDS_CARRY: f32 = 12.0;
+const SLEDDED_CARRY: f32 = 40.0;
+
+/// **`workersNeeded`, read back out of the ENCODED buffer** — the sibling of
+/// [`published_useful_workers`], off the same row, because the whole point is that a client sees the
+/// two numbers side by side.
+fn published_workers_needed(app: &App) -> u32 {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+        .find(|assignment| assignment.kind().unwrap_or_default() == "hunt")
+        .expect("the fixture band's hunt row is on the wire")
+        .workersNeeded()
+}
+
+/// **THE CREW A PEN WANTS IS ITS HANDLING CREW, NOT HAULERS — on BOTH producers of
+/// `workersNeeded`.**
+///
+/// # The defect this pins
+///
+/// `husbandry.pen_is_a_larder` ([`PINNED_PEN_IS_A_LARDER`]) retires the **carry** bound at
+/// `animal:pen`: what a keeper does not butcher this turn is not wasted meat, it is next turn's
+/// stock, still breeding. `fauna::herd_collection` is the one seam that says so — and both
+/// `workers_needed` sites went on **inverting** the sled anyway, counting haulers for a haul that
+/// never happens. On this fixture that published **170** (bare) / **52** (sledded) beside a
+/// `huntUsefulWorkers` of **5**: two surfaces, one question, opposite answers, and the answer moved
+/// with a kit the take does not read.
+///
+/// It is the same defect class [`core_sim::hunt_crew_take_curve`] was already repaired for one
+/// function over, which is why the fix is the same one: resolve the carry rate through
+/// [`core_sim::herd_carry_rate`] (`herd_collection` at one worker), which answers
+/// `fauna::NO_CARRY_BOUND` wherever carry does not bind, so the haul term drops out of
+/// `hunt_take_workers`' `max` and the keepers' handling crew answers alone.
+///
+/// # Three claims, and each catches a different broken sim
+///
+/// 1. **the seed agrees with the curve's plateau** to within [`THE_PEAK_DROPS_EXTRA_BODY`];
+/// 2. **the resolved row on the wire is the same number** — the two producers (`forecast_source_yield`
+///    and the Hunt arm of `advance_labor_allocation`) cannot answer differently;
+/// 3. **neither of them reads the sled** — bare hands and a stocked ledger publish one number, which
+///    is the sharpest form of "carry does not bind here" and the assertion the pre-fix sim fails
+///    hardest.
+#[test]
+fn a_penned_rows_workers_needed_is_its_handling_crew_and_never_a_haul_count() {
+    use bevy::ecs::system::RunSystemOnce;
+
+    let mut answers = Vec::new();
+    for (carry, wear) in [(BARE_HANDS_CARRY, bare()), (SLEDDED_CARRY, stocked())] {
+        let mut app = world_keeping_a_pen_at(
+            AUROCHS,
+            wear.clone(),
+            A_PEN_WORTH_HAULING,
+            A_PEN_WORTH_HAULING,
+            FLOOR,
+        );
+        // PRECONDITION: the fixture has to be big enough for a haul count and a handling count to be
+        // distinguishable at all, or this test passes on a pen too small to state anything.
+        let haulers = core_sim::hunt_haul_workers(
+            core_sim::herd_take_room(
+                app.world
+                    .resource::<HerdRegistry>()
+                    .find(HERD_ID)
+                    .expect("the fixture herd is in the registry"),
+                FLOOR,
+                &app.world.resource::<FaunaConfigHandle>().get(),
+            ),
+            AUROCHS_STATS.body_mass,
+            carry,
+        );
+
+        let seeded = seeded_workers_needed(&app, &wear, carry);
+        let plateau = plateau_of(&crew_take_curve(&mut app));
+        assert!(
+            haulers > plateau + THE_PEAK_DROPS_EXTRA_BODY,
+            "PRECONDITION: this pen must be big enough that a haul count ({haulers}) and the \
+             curve's plateau ({plateau}) cannot be confused, or the fixture states nothing"
+        );
+
+        // 1. The seed answers the same question the curve's plateau does.
+        assert!(
+            seeded.abs_diff(plateau) <= THE_PEAK_DROPS_EXTRA_BODY,
+            "a penned row's seeded workersNeeded ({seeded}) and its useful-crew plateau \
+             ({plateau}) answer ONE question and must agree to within the peak drop's extra body; \
+             a haul count here would be {haulers}"
+        );
+
+        // 2. …and so does the RESOLVED row, on the wire, after the turn takes.
+        app.world
+            .run_system_once(core_sim::advance_labor_allocation);
+        recapture_snapshot_in_place(&mut app.world);
+        let published = published_workers_needed(&app);
+        assert_eq!(
+            published, seeded,
+            "the seeded row and the resolved row are two producers of ONE number: seed {seeded}, \
+             wire {published}"
+        );
+
+        answers.push((carry, seeded, plateau));
+    }
+
+    // 3. Nothing in a pen's crew count reads the sled.
+    let [(bare_carry, bare_needed, _), (sled_carry, sled_needed, _)] = answers[..] else {
+        unreachable!("the loop pushed exactly two readings")
+    };
+    assert_eq!(
+        bare_needed, sled_needed,
+        "carry does not bind a larder pen, so its crew count must not move with the band's sled: \
+         {bare_needed} at {bare_carry}/worker vs {sled_needed} at {sled_carry}/worker"
+    );
+}

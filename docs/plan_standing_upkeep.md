@@ -2688,6 +2688,7 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > changes what a Sow COSTS as a function of the crop's share of the tile, which is a lever directly
     > on the Field's effectiveness. Tuning the Field's numbers before it would price a shape about to
     > move.
+    >
     > **§4.11 LANDS FIRST, for this item's own reason.** A flat per-rung demand and a size-scaled one
     > are different shapes, not different numbers, so tuning the plant demands before the scale
     > primitive exists would tune something about to move — the same argument that put this slice
