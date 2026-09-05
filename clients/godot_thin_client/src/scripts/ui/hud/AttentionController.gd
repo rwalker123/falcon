@@ -302,7 +302,7 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
                 "owner": entity,
                 "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
                 "label": "%s losing population" % band_name,
-                "detail": _decline_reason(turns, morale, morale_cause, last_emigrated),
+                "detail": _decline_reason(turns, morale, morale_cause, last_emigrated, x, y),
                 "x": x, "y": y,
             })
         # Producer 3 — idle labor: working-age workers unassigned (amber/warn). Supersedes
@@ -686,17 +686,36 @@ func _awaiting_expedition_at(x: int, y: int) -> Dictionary:
             return exp
     return {}
 
-## Why a band is shrinking: a food crisis (larder below critical) reads "starving" first;
-## then, since morale no longer kills (discontent relocates people — see
-## docs/plan_civ_wellbeing.md), a shrink with emigrants last turn reads "people leaving".
-## Otherwise the dominant morale cause names it in plain language ("harsh terrain" /
-## "harsh climate" / "unrest"). When no cause is attributed (morale steady/rising — e.g.
-## a rehydrated save, or shrinkage from cold deaths / an aging cohort at healthy morale)
-## only say "low morale" if morale is actually low, else leave it plain rather than
-## asserting a false reason.
-func _decline_reason(turns: float, morale: float, morale_cause: int, last_emigrated: int) -> String:
+## Why a band is shrinking: a food crisis (larder below critical) reads "starving" first; then
+## LETHAL GROUND, then — since morale no longer kills (discontent relocates people — see
+## docs/plan_civ_wellbeing.md) — a shrink with emigrants last turn reads "people leaving". Otherwise
+## the dominant morale cause names it in plain language ("harsh terrain" / "harsh climate" /
+## "unrest"). When no cause is attributed (morale steady/rising — e.g. a rehydrated save, or an aging
+## cohort at healthy morale) only say "low morale" if morale is actually low, else leave it plain
+## rather than asserting a false reason.
+##
+## ⛔ **THE LETHAL-GROUND BRANCH IS THE ONE THIS FUNCTION WAS MISSING** (issue #614), and its absence
+## was the whole of the reported bug: temperature mortality is food-independent and leaves morale
+## clamped at 100 %, so a band freezing to death satisfied NO test here and fell through to `""` — the
+## row rendered with an empty detail line, i.e. *people are dying* with the "why" blank.
+##
+## It sits **directly under starving and above people-leaving** because that is the order of the
+## stories: only an empty larder outranks ground removing up to 10 % of every bracket per turn, and
+## emigration and low morale are quieter than freezing to death.
+##
+## **`TileSurvivability.is_lethal` IS THE TEST, never a threshold re-derived here** — the same
+## authority the tile chip's ⚠ and the map overlay's hatch read, so the three surfaces cannot disagree
+## about which ground kills. A tile the world has no reading for is NOT lethal: `temperature_at`
+## answers `null` there, and a missing reading is unknown rather than deadly.
+func _decline_reason(turns: float, morale: float, morale_cause: int, last_emigrated: int,
+        x: int, y: int) -> String:
     if BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.critical_turns():
         return HudAttentionVocab.DECLINE_REASON_STARVING
+    var temperature: Variant = _band_labor.temperature_at(x, y)
+    if temperature != null and TileSurvivability.is_lethal(float(temperature)):
+        return HudAttentionVocab.DECLINE_REASON_LETHAL_COLD \
+            if TileSurvivability.is_cold(float(temperature)) \
+            else HudAttentionVocab.DECLINE_REASON_LETHAL_HEAT
     if last_emigrated > 0:
         return HudAttentionVocab.DECLINE_REASON_PEOPLE_LEAVING
     var cause_label := DetailFormat.morale_cause_label(morale_cause)

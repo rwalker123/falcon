@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 179
+const EXPECTED_CHECKPOINTS := 192
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -624,6 +624,12 @@ func _hay_standing_row(overdraws: bool) -> Dictionary:
 const HAY_MEADOW_X := 65
 const HAY_MEADOW_Y := 9
 
+## **WHAT THIS GROUND WOULD GROW AT RUNG 2, species-blind** — `patch_tended_fodder`, the LAND fact the
+## `ONCE TENDED` deal row quotes. Named because the assertions below compare against it: the row is
+## gated by the fodder credit and the claims turn on the exact figure appearing or being replaced by
+## the locked glyph, so a fixture literal and a needle typed apart would drift.
+const HAY_MEADOW_TENDED_FODDER := 0.72
+
 func _hay_meadow_tile_fixture() -> Dictionary:
 	var tile := ForageFx.fodder_basket_tile_fixture()
 	tile["x"] = HAY_MEADOW_X
@@ -646,7 +652,7 @@ func _hay_meadow_tile_fixture() -> Dictionary:
 	# The species-BLIND patch payoffs. A crop the player picks substitutes its own (Hay Grass pays 0.72
 	# fodder at rung 2, 1.80 at rung 3), so these are what a COMMITTED patch quotes.
 	tile["patch_tended_yield"] = 0.30
-	tile["patch_tended_fodder"] = 0.72
+	tile["patch_tended_fodder"] = HAY_MEADOW_TENDED_FODDER
 	tile["patch_field_yield"] = 0.60
 	tile["patch_field_fodder"] = 1.80
 	# **THE FODDER ACCOUNT IS THE PATCH'S OWN RATE, stated directly.** `BaseFx.seed_forage_rows` derives
@@ -826,10 +832,11 @@ func _dead_season_tile_fixture() -> Dictionary:
 	tile = BaseFx.seed_forage_rows(tile)
 	return tile
 
-## THE SAME MEADOW, COMMITTED TO ITS HAY — the half that pins `patch.species.is_some()`. The sim pays a
-## committed patch's fodder whatever the faction knows (committing IS the bid), so without this state
-## the whole set would pass as "gated on knowledge alone". Same ground, same rates, same coordinates:
-## only the commitment moves, which is what makes it a controlled comparison with the locked frame.
+## THE SAME MEADOW, COMMITTED TO ITS HAY — the half that pins the COMMITMENT arm. The sim pays the
+## fodder of a patch committed to a fodder-bearing crop whatever the faction knows (committing to hay
+## IS the bid), so without this state the whole set would pass as "gated on knowledge alone". Same
+## ground, same rates, same coordinates: only the commitment moves, which is what makes it a
+## controlled comparison with the locked frame.
 ##
 ## `hay_grass` is a member of this basket, and the display name rides with it because a committed
 ## species with no display name is a shape the wire never ships (the crop picker's locked readout
@@ -839,6 +846,42 @@ func _committed_hay_meadow_tile_fixture() -> Dictionary:
 	tile["patch_committed_species"] = "hay_grass"
 	tile["patch_committed_display_name"] = "Hay Grass"
 	return tile
+
+## **THE SAME MEADOW, COMMITTED TO ITS GRAIN — THE REPORTED CASE, and the one the commitment arm used
+## to get wrong.** `wild_emmer` is 70% of this basket and pays `0.0` fodder at BOTH rungs; `hay_grass`
+## is the other 30% and pays 0.72 / 1.80. A player with no pens and no Foddering, whose one cultivated
+## patch is the grain, banked hay off the volunteers standing beside it — hay nothing in that game
+## could eat — because the bid was read as a commitment to ANYTHING.
+##
+## **IT IS THE CONTROLLED TWIN OF `_committed_hay_meadow_tile_fixture`**: same ground, same rates, same
+## coordinates, same basket, and the committed SPECIES is the only thing that moves. That is what makes
+## the pair say something about the species test rather than about the patch.
+func _committed_grain_meadow_tile_fixture() -> Dictionary:
+	var tile := _hay_meadow_tile_fixture()
+	tile["patch_committed_species"] = GRAIN_CROP_SPECIES
+	tile["patch_committed_display_name"] = GRAIN_CROP_NAME
+	return tile
+
+## **THE `ONCE TENDED` LINE'S HAY TERM, IN ITS TWO STATES** — composed from the code under test's own
+## format and glyph rather than typed, so a reworded product line or a changed locked glyph moves the
+## needle with the face instead of failing as a mystery.
+##
+## The PAID one carries the fixture's authored `patch_tended_fodder`; the REFUSED one carries the same
+## em-dash the yields row's gated cell uses, which is what makes "these two lines agree" a checkable
+## claim rather than a wish.
+func _paid_hay_term() -> String:
+	return SourceForecast.PICKER_FODDER_PRODUCT_FORMAT % SourceForecast.format_magnitude(
+		HAY_MEADOW_TENDED_FODDER)
+
+func _refused_hay_term() -> String:
+	return SourceForecast.PICKER_FODDER_PRODUCT_FORMAT % HudComposeVocab.YIELD_LOCKED_GLYPH
+
+## The grain in that basket, spelled once. It is the fixture's own key rather than a literal at the
+## use site because the assertion below turns on this species having `cultivate_fodder_payoff` and
+## `sow_fodder_payoff` BOTH at zero in `ForageFx.fodder_basket_tile_fixture` — the two the client's
+## test reads.
+const GRAIN_CROP_SPECIES := "wild_emmer"
+const GRAIN_CROP_NAME := "Wild Emmer"
 
 ## ---- THE FODDER-ONLY WORKED SOURCE (issue #449) ------------------------------------------------
 ## What the sim pays this crew per turn. It is the ONLY account the assignment carries, which is the
@@ -1788,6 +1831,27 @@ func run(harness) -> void:
 		not locked_tooltip.contains(SourceForecast.YIELD_ACCOUNT_FODDER))
 	h._assert_hud("…while the ceilings this crew CAN bank survive, so the tooltip is not merely blanked",
 		locked_tooltip.contains(HAY_PEAK_TOOLTIP_FODDER_LOCKED))
+	# ⛔ **THE `ONCE TENDED` LINE IS *NOT* GATED ON AN UNCOMMITTED PATCH, AND THAT IS THE CASE A
+	# "SIMPLIFICATION" BREAKS.** This patch is committed to NOTHING, so the two lines of this readout
+	# answer two different questions and are MEANT to differ: the row above says *"this crew banks no
+	# hay today"* (true — it has bid for nothing), while this line says *"here is what this ground
+	# would pay ONCE TENDED"*, which is an OPEN question and is precisely the remedy the aside is
+	# telling the player to take. Gating it with the row's own predicate suppresses a legitimate
+	# figure — the hidden gate this arc refuses, arriving from the other side — and
+	# `RungGates.fodder_payoff_is_refused` is the one narrowing that keeps it visible.
+	#
+	# **ASKED OF THE SPECIES-BLIND FALLBACK, because that is the only branch the gate can reach.**
+	# The rendered line on this frame runs the per-SPECIES branch (the sheet resolves a default crop,
+	# `Wild Emmer`, whose own fodder payoff is honestly `0`), which this gate does not touch and which
+	# would look identical under a broken gate — so a claim about the rendered face could not fail.
+	# The fallback is what a committed patch renders, and putting an EMPTY species through it with the
+	# knowledge unlearned is exactly the uncommitted shape: a naive gate answers `— fodder` here.
+	h._assert_hud("an UNCOMMITTED patch still quotes what tending it would pay, lock or no lock",
+		h._hud._drawercompose._crop_payoff_terms(wild_hay,
+			SourceForecast.flora_basket_entries(wild_hay.get("patch_composition", [])), "",
+			h._hud._band_labor.player_band(), SourceForecast.IMPROVEMENT_CULTIVATE)
+			.contains(_paid_hay_term()))
+
 	# **THE LOCK LINE IS IN THE LIVE SET, and only a DRIVEN CHANGE can say so.** Its text does not move
 	# with the floor — it states what the FACTION is missing — but its PRESENCE does: raise the floor
 	# above the stock and the fodder take goes to nothing, the muted row leaves with it, and a sentence
@@ -1859,6 +1923,88 @@ func run(harness) -> void:
 	h._assert_hud("…and a committed patch's presets quote its hay ceiling, knowledge or no knowledge",
 		_policy_rung_tooltip(h._hud._drawercompose._compose_sheet,
 			SourceForecast.FLOOR_PRESET_PEAK).contains(HAY_PEAK_TOOLTIP))
+	# …and the `ONCE TENDED` line with it. A bid for hay is honoured, so the deal row states the figure
+	# exactly as it always did — the half of the pair below that must NOT move.
+	h._assert_hud("…and the ONCE TENDED line quotes the hay a bid for hay will be paid",
+		Readout.improvement_deal_value(h._hud._drawercompose._compose_sheet).contains(
+			_paid_hay_term()))
+	# State forage_fodder_grain_committed — THE REPORTED CASE. The SAME meadow committed to its GRAIN,
+	# knowledge still unlearned. `wild_emmer` pays 0.0 fodder at both rungs, so committing to it is not
+	# a bid for hay and the credit stays shut: the sim's arm is
+	# `committed_to_a_fodder_crop(patch.species, &flora) || knows(faction, FODDERING)`, and this client
+	# mirrors it species-for-species. It is the CONTROLLED TWIN of the frame directly above — same
+	# ground, same basket, same rates, only the committed species moves — so the pair testifies about
+	# the species test and not about the patch.
+	var committed_grain := _committed_grain_meadow_tile_fixture()
+	h._show_tile(committed_grain)
+	h._compose_forage(committed_grain)
+	await h._settle()
+	await h._save("forage_fodder_grain_committed")
+	var grain_fodder := Readout.yields_account_number(
+		h._hud._drawercompose._compose_sheet, SourceForecast.YIELD_ACCOUNT_FODDER)
+	h._assert_hud("a patch committed to a GRAIN banks no hay — the commitment is not a bid for it",
+		grain_fodder == HudComposeVocab.YIELD_LOCKED_GLYPH)
+	h._assert_hud("…and the lock line is back, so the sheet says why rather than going quiet",
+		Readout.locked_account_line(h._hud._drawercompose._compose_sheet)
+			== HudFloraVocab.GATE_REASON_WILD_FODDER_FORMAT % [
+				HudFormat.progress_percent(0.0),
+				FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL),
+				FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CULTIVATE)])
+	# **THE TWO COMMITMENTS DIFFER, and asserted as a DIFFERENCE rather than two absolutes.** A gate
+	# that had gone back to refusing every commitment would pass the grain claim above on its own; only
+	# putting it beside the hay reading says the test is about the SPECIES.
+	h._assert_hud("…and it differs from the HAY commitment on the same ground, which is the species test",
+		grain_fodder != committed_fodder)
+	# **THE PRESETS FOLLOW THE SAME GATE, one control above the row.** A tooltip quoting a hay ceiling
+	# over a row marked `—` is the self-contradicting sheet #485 removed, arriving again through the
+	# commitment arm.
+	h._assert_hud("…and no preset quotes a hay ceiling the sim would refuse this commitment",
+		not _policy_rung_tooltip(h._hud._drawercompose._compose_sheet,
+			SourceForecast.FLOOR_PRESET_PEAK).contains(SourceForecast.YIELD_ACCOUNT_FODDER))
+	# **AND THE `ONCE TENDED` LINE DIRECTLY BELOW THE ROW, which is the same lie one line down.**
+	# `patch_tended_fodder` is a LAND fact — what this ground grows at rung 2, species-blind and
+	# correct — rendered by this row as something the player will RECEIVE. On a grain commitment with
+	# no Foddering the sim credits none of it, so a figure here sits one line under a `— FODDER` cell
+	# refusing it. Asserted as a PAIR: the refused figure gone, AND the account still NAMED, because
+	# silencing the account is the hidden gate rather than a fix for it.
+	var grain_deal := Readout.improvement_deal_value(h._hud._drawercompose._compose_sheet)
+	h._assert_hud("the ONCE TENDED line quotes no hay a grain commitment will not be paid (got \"%s\")"
+		% grain_deal, not grain_deal.contains(_paid_hay_term()))
+	h._assert_hud("…and says so with the row's own locked glyph, keeping the account NAMED",
+		grain_deal.contains(_refused_hay_term()))
+	# The FOOD half of the same line is untouched — the lock is one account wide here exactly as it is
+	# on the row above, and a deal line that went blank would satisfy the negative above on its own.
+	h._assert_hud("…while the food this commitment DOES pay still reads as a number",
+		grain_deal.contains(SourceForecast.YIELD_ACCOUNT_FOOD)
+			and grain_deal != _refused_hay_term())
+
+	# State forage_fodder_grain_known — THE SAME GRAIN COMMITMENT with Foddering complete. The two arms
+	# are an OR: tightening the commitment one must not have narrowed the knowledge one, and a band that
+	# has learned to make hay banks it off any ground whatever its patch is committed to.
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0, "foddering": 1.0}}])
+	h._compose_forage(committed_grain)
+	await h._settle()
+	await h._save("forage_fodder_grain_known")
+	var grain_known_fodder := Readout.yields_account_number(
+		h._hud._drawercompose._compose_sheet, SourceForecast.YIELD_ACCOUNT_FODDER)
+	h._assert_hud("Foddering opens the credit on a grain commitment too — the arms are an OR",
+		grain_known_fodder != HudComposeVocab.YIELD_LOCKED_GLYPH
+			and grain_known_fodder != Readout.YIELDS_ACCOUNT_ABSENT
+			and float(grain_known_fodder) > 0.0)
+	h._assert_hud("…so no lock line survives the knowledge arm",
+		Readout.locked_account_line(h._hud._drawercompose._compose_sheet) == "")
+	# The deal line rides the same arm — one predicate, two registers, so the knowledge that reopens
+	# the row reopens this line in the same pass.
+	h._assert_hud("…and the ONCE TENDED line quotes its hay again",
+		Readout.improvement_deal_value(h._hud._drawercompose._compose_sheet).contains(
+			_paid_hay_term()))
+	# Put the knowledge back where the committed-hay frame left it, so the drawdown comparison below
+	# is asked with the fodder credit shut, exactly as it was written.
+	h._hud.update_intensification([{"faction": 0, "knowledges": {"cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0}}])
+	h._show_tile(committed_hay)
+	h._compose_forage(committed_hay)
+	await h._settle()
+
 	# The DRAWDOWN is a fact about the biomass the crew moves, not about which accounts it banks, so
 	# the fodder ceiling comparison is unchanged by the lock — on a hay-only patch it is the only
 	# drawdown signal there is. Asked of the two fixtures at one floor and one crew.

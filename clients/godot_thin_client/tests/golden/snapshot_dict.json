@@ -1773,6 +1773,12 @@
     "sentiment": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.533708, 1.0, 0.544944, 0.516854, 0.646067, 0.483146, 0.702247, 0.0, 0.353933, 0.235955, 0.11236, 0.230337]},
     "sentiment_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.067416, 1.0, 0.089888, 0.033708, 0.292135, 0.033708, 0.404494, 1.0, 0.292135, 0.52809, 0.775281, 0.539326]},
     "sentiment_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000112, 0.000195, 0.000114, 0.000109, 0.000132, 0.000103, 0.000142, 0.000017, 0.00008, 0.000059, 0.000037, 0.000058]},
+    "survivability_cold_max_mortality": 104.160004,
+    "survivability_cold_mortality_scale": 46.07,
+    "survivability_cold_onset_temp": 60.349998,
+    "survivability_heat_max_mortality": 11.37,
+    "survivability_heat_mortality_scale": 109.360001,
+    "survivability_heat_onset_temp": 57.130001,
     "terrain": {"__packed": "PackedInt32Array", "len": 12, "items": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]},
     "terrain_palette": {
       "0": "Deep Ocean",
@@ -2273,6 +2279,7 @@
           "tier_id": "populations[0].equipment_batches[3].tier_id"
         }
       ],
+      "expedition_cargo_fodder": 1.52,
       "expedition_cargo_food": 6.41,
       "expedition_cargo_materials": [
         {
@@ -2297,6 +2304,7 @@
       "expedition_recurring": true,
       "expedition_target_herd": "populations[0].expedition_target_herd",
       "expedition_target_species": "populations[0].expedition_target_species",
+      "expedition_trade_fodder_carry_weight": 50.959999,
       "expedition_trade_material_carry_weight": 39.889999,
       "expedition_trade_per_worker_carry": 78.449997,
       "expedition_trip_bound": "populations[0].expedition_trip_bound",
@@ -2308,6 +2316,10 @@
       "fodder_income": 108.830002,
       "fodder_need": 18.58,
       "fodder_store": 14.69,
+      "fodder_transfer_local_received_turn": 82.349998,
+      "fodder_transfer_local_sent_turn": 105.739998,
+      "fodder_transfer_route_received_turn": 33.290001,
+      "fodder_transfer_route_sent_turn": 43.43,
       "food_consumption": 106.57,
       "food_income": 88.889999,
       "forage_carry_per_worker_biomass": 80.459999,
@@ -2749,8 +2761,12 @@
         "populations[0].stores[1].item": 0.000072
       },
       "supply_network_id": 60,
+      "transfer_local_received_turn": 80.400002,
+      "transfer_local_sent_turn": 3.77,
       "transfer_received": 60.07,
       "transfer_received_turn": 92.800003,
+      "transfer_route_received_turn": 73.080002,
+      "transfer_route_sent_turn": 94.099998,
       "transfer_sent": 27.65,
       "transfer_sent_turn": 44.07,
       "travel_target_x": 79,
@@ -2998,6 +3014,7 @@
           "tier_id": "populations[1].equipment_batches[3].tier_id"
         }
       ],
+      "expedition_cargo_fodder": 73.050003,
       "expedition_cargo_food": 53.810001,
       "expedition_cargo_materials": [
         {
@@ -3022,6 +3039,7 @@
       "expedition_recurring": true,
       "expedition_target_herd": "populations[1].expedition_target_herd",
       "expedition_target_species": "populations[1].expedition_target_species",
+      "expedition_trade_fodder_carry_weight": 12.16,
       "expedition_trade_material_carry_weight": 81.660004,
       "expedition_trade_per_worker_carry": 57.099998,
       "expedition_trip_bound": "populations[1].expedition_trip_bound",
@@ -3033,6 +3051,10 @@
       "fodder_income": 65.330002,
       "fodder_need": 40.869999,
       "fodder_store": 97.489998,
+      "fodder_transfer_local_received_turn": 1.35,
+      "fodder_transfer_local_sent_turn": 9.21,
+      "fodder_transfer_route_received_turn": 55.400002,
+      "fodder_transfer_route_sent_turn": 82.57,
       "food_consumption": 0.92,
       "food_income": 52.610001,
       "forage_carry_per_worker_biomass": 90.010002,
@@ -3474,8 +3496,12 @@
         "populations[1].stores[1].item": 0.000153
       },
       "supply_network_id": 199,
+      "transfer_local_received_turn": 101.760002,
+      "transfer_local_sent_turn": 101.169998,
       "transfer_received": 44.830002,
       "transfer_received_turn": 99.559998,
+      "transfer_route_received_turn": 38.849998,
+      "transfer_route_sent_turn": 108.650002,
       "transfer_sent": 83.919998,
       "transfer_sent_turn": 70.910004,
       "travel_target_x": 128,

@@ -33,6 +33,10 @@
 //! Asserted against **real turns through the real systems and the real exported snapshot**, the
 //! shape `pen_food_ledger.rs` and `raid_food_ledger.rs` already use — never against a
 //! re-derivation of the sim's own arithmetic.
+//!
+//! ⛔ **THIS FILE IS FOOD-ONLY.** A shipment can carry hay (issue #590), and a bale is deliberately
+//! **not** a term of the identity above: it never enters the food larder the identity closes over.
+//! The hay account has its own ledger and its own file, `transfer_fodder_ledger.rs`.
 
 use bevy::prelude::Entity;
 use core_sim::{
@@ -597,6 +601,259 @@ fn a_recapture_still_publishes_the_turns_transfers() {
         "the receiver's row survives the refresh too: {received_turn} vs {got_received}"
     );
     assert!(sent_turn.abs() < EPSILON);
+}
+
+// ---------------------------------------------------------------------------------------------
+// WHAT MOVED IT: the two link kinds, both accounts (issue #548)
+// ---------------------------------------------------------------------------------------------
+
+/// The hay the fed band opens with, so the fodder account has a move of its own to state. Nothing
+/// eats it — the fixture keeps no pens — so every unit that leaves this band crossed to the other.
+const FED_HAY: f32 = 240.0;
+
+/// Every per-link figure one band published, for one account, off the **encoded envelope**.
+#[derive(Debug, Clone, Copy)]
+struct LinkSplit {
+    local_received: f32,
+    local_sent: f32,
+    route_received: f32,
+    route_sent: f32,
+    /// The **per-turn** summed pair the split refines — `transferReceivedTurn` / `transferSentTurn`
+    /// for the food account, which is the basis these four arms are on. `None` for fodder, which has
+    /// no summed pair at all: the reconciliation identity is the food one.
+    total_received: Option<f32>,
+    total_sent: Option<f32>,
+}
+
+impl LinkSplit {
+    /// ⛔ **THE CLAIM THE WHOLE SPLIT RESTS ON**: the two kinds are exhaustive, so they add back up
+    /// to the pair they refine. A third mechanism booked outside `TransferLedger` shows up here as a
+    /// shortfall and nowhere else.
+    fn assert_is_the_whole_of_the_pair(&self, label: &str) {
+        let (Some(total_received), Some(total_sent)) = (self.total_received, self.total_sent)
+        else {
+            return;
+        };
+        assert!(
+            (self.local_received + self.route_received - total_received).abs() < EPSILON,
+            "{label}: local + route must be the whole of what arrived — {} + {} vs {total_received}",
+            self.local_received,
+            self.route_received
+        );
+        assert!(
+            (self.local_sent + self.route_sent - total_sent).abs() < EPSILON,
+            "{label}: local + route must be the whole of what left — {} + {} vs {total_sent}",
+            self.local_sent,
+            self.route_sent
+        );
+    }
+}
+
+/// `(food, fodder)` — both accounts' per-link figures for one band, read off the encoded envelope
+/// through the accessor chain a client uses. A field that never reached the codec still passes an
+/// in-process assertion, which is why nothing here reads the capture struct.
+fn published_link_splits(app: &bevy::prelude::App, band: BandId) -> (LinkSplit, LinkSplit) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section is published")
+        .iter()
+        .find(|cohort| cohort.bandId() == band.0)
+        .expect("the band's row is published");
+    (
+        LinkSplit {
+            local_received: row.transferLocalReceivedTurn(),
+            local_sent: row.transferLocalSentTurn(),
+            route_received: row.transferRouteReceivedTurn(),
+            route_sent: row.transferRouteSentTurn(),
+            total_received: Some(row.transferReceivedTurn()),
+            total_sent: Some(row.transferSentTurn()),
+        },
+        LinkSplit {
+            local_received: row.fodderTransferLocalReceivedTurn(),
+            local_sent: row.fodderTransferLocalSentTurn(),
+            route_received: row.fodderTransferRouteReceivedTurn(),
+            route_sent: row.fodderTransferRouteSentTurn(),
+            total_received: None,
+            total_sent: None,
+        },
+    )
+}
+
+/// Stock a band's `FODDER` store — the account that has always pooled and, until this arc, was never
+/// counted.
+fn set_hay(app: &mut bevy::prelude::App, band: Entity, hay: f32) {
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band exists")
+        .stores
+        .set(core_sim::FODDER, scalar_from_f32(hay));
+}
+
+/// **A fixture where one band both POOLS and RECEIVES A SHIPMENT on the same turn**, which is the
+/// only arrangement that can tell the two link kinds apart: the receiving band's row has to carry a
+/// non-zero figure on *each* arm, or an implementation that booked everything to one of them would
+/// still satisfy the identity.
+///
+/// The hay rides along on the same pass — the balancer walks a band's whole store — so one turn
+/// exercises all sixteen figures.
+fn a_pooling_and_shipping_turn(app: &mut bevy::prelude::App) -> (Entity, Entity) {
+    let (fed, hungry) = two_networked_bands(app);
+    set_hay(app, fed, FED_HAY);
+    let hungry_id = band_id(app, hungry);
+    let hungry_pos = {
+        let tile = app
+            .world
+            .get::<PopulationCohort>(hungry)
+            .expect("the band")
+            .current_tile;
+        app.world.get::<Tile>(tile).expect("a real tile").position
+    };
+    spawn_shipment(app, fed, hungry_id, hungry_pos, CARGO_FOOD);
+    run_turn(app);
+    (fed, hungry)
+}
+
+/// ⛔ **THE ROWS SAY WHICH MECHANISM MOVED THE GOODS, AND THE TWO KINDS ARE THE WHOLE OF IT.**
+///
+/// One turn in which the same band is pooled with a neighbour *and* handed a shipment. The receiving
+/// band's food row therefore carries **both** arms, and the shipment's arm is pinned at the cargo it
+/// was loaded with — so a booking that folded a delivery into `local` (or pooling into `route`)
+/// fails on a magnitude and not merely on a sum.
+///
+/// The hay account is asserted in the same breath: `balance_supply_networks` walks a band's whole
+/// store, so fodder crosses on the `local` arm exactly as food does. Its `route` arm is `0` because
+/// **this fixture's shipment carries no hay**, not because a shipment cannot — a manifest takes a
+/// `fodder` line (issue #590), and the hay route arm's own end-to-end claim lives in
+/// `transfer_fodder_ledger.rs`. Pinning the zero here is what keeps a food shipment's booking from
+/// leaking into the wrong account.
+#[test]
+fn both_accounts_state_which_link_moved_the_goods() {
+    let mut app = world();
+    let (fed, hungry) = a_pooling_and_shipping_turn(&mut app);
+    let (fed_id, hungry_id) = (band_id(&app, fed), band_id(&app, hungry));
+
+    let (fed_food, fed_hay) = published_link_splits(&app, fed_id);
+    let (hungry_food, hungry_hay) = published_link_splits(&app, hungry_id);
+
+    // --- the sender: pooling only, on both accounts ---------------------------------------------
+    assert!(
+        fed_food.local_sent > EPSILON && fed_hay.local_sent > EPSILON,
+        "liveness: the fed band must have pooled BOTH accounts away (food {}, hay {})",
+        fed_food.local_sent,
+        fed_hay.local_sent
+    );
+
+    // --- the receiver: both arms at once --------------------------------------------------------
+    assert!(
+        hungry_food.local_received > EPSILON,
+        "the pooled share arrives on the LOCAL arm, got {}",
+        hungry_food.local_received
+    );
+    assert!(
+        (hungry_food.route_received - CARGO_FOOD).abs() < EPSILON,
+        "and the shipment arrives on the ROUTE arm, in full: {} vs {CARGO_FOOD}",
+        hungry_food.route_received
+    );
+    assert!(
+        hungry_hay.local_received > EPSILON,
+        "hay pools where grain pools, so the receiver's fodder LOCAL arm is live, got {}",
+        hungry_hay.local_received
+    );
+    assert_eq!(
+        (hungry_hay.route_received, hungry_hay.route_sent),
+        (0.0, 0.0),
+        "this fixture's shipment carries food alone, so the hay ROUTE arm is zero on both sides — a \
+         food delivery must not leak into the hay account"
+    );
+
+    // --- and the arms are the whole of the pair they refine, on every row ------------------------
+    fed_food.assert_is_the_whole_of_the_pair("the sender's food row");
+    hungry_food.assert_is_the_whole_of_the_pair("the receiver's food row");
+}
+
+/// ⛔ **ALL SIXTEEN FIGURES ARE PER-TURN STATE, NOT ACCUMULATORS.**
+///
+/// `recapture_snapshot_in_place` re-runs the capture against live components after every dispatched
+/// command, by which time `reset_transfer_ledger` has cleared the accumulating pair. A row read off
+/// an accumulator therefore blanks on the first frame a command refreshes — the defect issue #517
+/// fixed on the generic pair, and the reason every one of these is copied onto the cohort before the
+/// turn's capture instead.
+///
+/// The accumulating pair reading zero in the same frame is what makes this a statement about the
+/// **reset** rather than about a number that happens not to have changed.
+#[test]
+fn a_recapture_still_publishes_every_link_kind() {
+    let mut app = world();
+    let (fed, hungry) = a_pooling_and_shipping_turn(&mut app);
+    let (fed_id, hungry_id) = (band_id(&app, fed), band_id(&app, hungry));
+
+    let before = [
+        published_link_splits(&app, fed_id),
+        published_link_splits(&app, hungry_id),
+    ];
+
+    recapture_snapshot_in_place(&mut app.world);
+
+    let after = [
+        published_link_splits(&app, fed_id),
+        published_link_splits(&app, hungry_id),
+    ];
+    for ((food_before, hay_before), (food_after, hay_after)) in before.iter().zip(after.iter()) {
+        for (label, was, now) in [
+            ("food", food_before, food_after),
+            ("fodder", hay_before, hay_after),
+        ] {
+            assert_eq!(
+                (
+                    now.local_received,
+                    now.local_sent,
+                    now.route_received,
+                    now.route_sent
+                ),
+                (
+                    was.local_received,
+                    was.local_sent,
+                    was.route_received,
+                    was.route_sent
+                ),
+                "the {label} account's four arms must survive a command's refresh"
+            );
+        }
+        assert_eq!(
+            (food_after.total_received, food_after.total_sent),
+            (food_before.total_received, food_before.total_sent),
+            "and so does the per-turn pair they add up to"
+        );
+    }
+    // Meanwhile the ACCUMULATING pair is cleared once the turn's capture has read it — which is the
+    // whole reason the sixteen figures above are per-turn state and not read off it.
+    for band in [fed_id, hungry_id] {
+        let (received, sent, _, _) = published_transfers(&app, band);
+        assert_eq!(
+            (received, sent),
+            (0.0, 0.0),
+            "the accumulating pair reads zero on a refreshed frame, as it always has"
+        );
+    }
+    assert!(
+        before[1].0.local_received > EPSILON && before[1].0.route_received > EPSILON,
+        "liveness: the receiver's two arms were non-zero before the refresh ({:?})",
+        before[1].0
+    );
 }
 
 /// How far to walk a band so no supply network forms with it. Well past the shipped

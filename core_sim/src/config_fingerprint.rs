@@ -423,6 +423,13 @@ mod tests {
 
     #[test]
     fn recorded_text_lands_under_the_file_name() {
+        // The digest registry is process-global and `clear_config_fingerprint` wipes all of it, so
+        // a concurrent test clearing between the records below and the read would leave these
+        // lookups `None`. The guard is held for the whole body, not just the writes, because the
+        // race is between a record and a later read.
+        let _guard = crate::config_load::lock_config_registry_for_test();
+        clear_config_fingerprint();
+
         record_config_text(A_PATH, SOME_JSON);
         record_config_text(B_PATH, SOME_JSON);
         let fingerprint = current_config_fingerprint();
@@ -435,5 +442,7 @@ mod tests {
             fingerprint.digest("fingerprint_test_b.json"),
             fingerprint.digest("fingerprint_test_a.json")
         );
+
+        clear_config_fingerprint();
     }
 }

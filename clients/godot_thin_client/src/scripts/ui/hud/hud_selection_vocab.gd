@@ -60,6 +60,87 @@ const CHIP_FONT_SIZE := 11
 # absent condition earns no chip, exactly as it earns no row.
 const CHIP_TAGS_NONE := "none"
 
+# The Climate chip's face: the band the sim's cut points name, and THE NUMBER THAT NAME IS HIDING.
+# The band alone was the whole readout until issue #614, and a band is a wide bucket — `Temperate`
+# spans everything from a lethal 3.7 °C to a comfortable 18 °C, so the label alone cannot be
+# reasoned with. One decimal, because that is the resolution a survival line is stated at below.
+const CHIP_CLIMATE_FORMAT := "%s · %.1f °C"
+
+# …and the same face with no band name, for the one case that must never lose its warning: the sim
+# has published its MORTALITY model but not its band CUT POINTS. The chip normally needs the cut
+# points to have anything to say, but since the lethal warning merged into it, "no cut points" would
+# take the only warning off the card with it. The degrees alone still carry the reading.
+const CHIP_CLIMATE_DEGREES_ONLY_FORMAT := "%.1f °C"
+
+# The WARNING PREFIX, and the tint that comes with it (`HudStyle.DANGER`, applied by the descriptor).
+#
+# There were TWO pills for one temperature — `Temperate · 5.0 °C` beside `⚠ Lethal cold` — and four
+# pills on a tile card is more than a player reads. They are two readings of the SAME number and the
+# number is already on the climate face, so the warning is a PREFIX and a tint on that face rather
+# than a second pill.
+#
+# **It merged with CLIMATE and NOT with HABITABILITY, and the difference is arithmetic.** Habitability
+# is `terrain attrition + terrain hardness + (|T - 18| - 9) x 0.004` and turns Hostile at 0.09; on
+# terrain with no attrition penalty, temperature alone does not reach Hostile until -13.5 °C, while
+# people start dying at 6.0 °C. That is a 19.5-degree band of lethal-but-Fair ground — exactly where
+# the original defect lived — so a warning folded into habitability would be silent across the whole
+# window it exists to cover.
+const CHIP_CLIMATE_LETHAL_PREFIX := "⚠ "
+
+# The hover: ONE clause, and it names what happens to the people.
+#
+# ⛔ **THE FIRST VERSION SAID EVERYTHING EXCEPT THAT THEY DIE.** It led with the rate, then explained
+# the arithmetic — `−4.6 % of every age bracket per turn, regardless of food. 3.7 °C is 2.3 °C past
+# the 6.0 °C survival line.` — and on a tile just inside the tail it rendered
+# `−0.0 % … 6.0 °C is 0.0 °C past the 6.0 °C survival line`, a sentence that states nothing three
+# times over. Both faults were presentation: the model was right, the copy was long, and the numbers
+# were printed at a precision where they had stopped meaning anything.
+#
+# What is gone, and must not creep back:
+#   * the SECOND SENTENCE. The degrees are on the chip face this hover now hangs off; saying them
+#     again, twice, to derive a distance nobody asked for is what buried the verb.
+#   * the CAPPED variant ("…, at the configured maximum rate"). A player reading a mortality figure
+#     does not need to be told which term of the model is binding.
+#   * "regardless of food". True, and not what the hover is for.
+#
+# "per turn" is deliberate and is NOT in the phrasing this was asked for: without it the figure reads
+# as a one-off, and a player who takes a rate as a total rather than a per-turn compounding one has
+# been under-warned in exactly the way this issue exists to fix. It matters more, not less, now that
+# the tuning prices ordinary cold ground in fractions of a percent: 0.4 % sounds like nothing until
+# it is 0.4 % EVERY TURN.
+const CHIP_SURVIVABILITY_TOOLTIP_COLD := "%s increased mortality per turn due to severe cold"
+
+const CHIP_SURVIVABILITY_TOOLTIP_HEAT := "%s increased mortality per turn due to severe heat"
+
+# The mortality model is a FRACTION on the wire (0.0037 = 0.4 % of the tile's people, before the
+# sim's per-bracket weights — see `TileSurvivability`); `survivability_percent_text` is the one place
+# that conversion happens.
+const CHIP_SURVIVABILITY_PERCENT_SCALE := 100.0
+
+# The rate's display precision, in decimal places. A CONSTANT rather than a literal inside a format
+# string because the floor below is DERIVED from it — change this one number and the format, the
+# floor value and the `<0.1%` face all move together.
+const CHIP_SURVIVABILITY_PERCENT_DECIMALS := 1
+
+# Printed ahead of the smallest showable figure when a real, positive rate falls below it.
+# **A ROUNDED `0.0%` IS A LIE ABOUT A TILE THAT KILLS**, and it was the visible half of the defect —
+# so the bound is stated instead. This needs no new threshold on the model: it is purely how a number
+# too small to print is printed.
+const CHIP_SURVIVABILITY_PERCENT_BELOW_FLOOR_PREFIX := "<"
+
+## The rate as the hover states it: sign-free, one decimal, and never zero.
+##
+## **NO LEADING MINUS.** "increased mortality" carries the direction on its own, and the minus is what
+## turned an unprintably small rate into `−0.0 %` — a figure that reads as *nothing is happening* on
+## ground the sim is killing people on.
+static func survivability_percent_text(fraction: float) -> String:
+	var value_format: String = "%%.%df%%%%" % CHIP_SURVIVABILITY_PERCENT_DECIMALS
+	var percent: float = fraction * CHIP_SURVIVABILITY_PERCENT_SCALE
+	var smallest_shown: float = pow(10.0, -CHIP_SURVIVABILITY_PERCENT_DECIMALS)
+	if percent < smallest_shown:
+		return CHIP_SURVIVABILITY_PERCENT_BELOW_FLOOR_PREFIX + (value_format % smallest_shown)
+	return value_format % percent
+
 # The drawer's floor. Below this a compose block is unreadable, so the card is allowed to push the
 # dock into its own scroll rather than crushing the controls the player came here to use.
 const SUBJECT_DRAWER_MIN_HEIGHT := 180.0

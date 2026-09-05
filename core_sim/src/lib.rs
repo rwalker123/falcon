@@ -117,8 +117,9 @@ pub use components::{
     Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
     MaterialBatch, MaterialDraw, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
     ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
-    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, YieldRange,
-    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
+    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferLedger,
+    TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY,
+    NO_RAID_FLOOR, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -182,8 +183,9 @@ pub use espionage::{
     QueueMissionParams, SecurityPolicy,
 };
 pub use expedition_config::{
-    load_expedition_config_from_env, ExpeditionConfig, ExpeditionConfigHandle,
-    ExpeditionConfigMetadata, SettleConfig, BUILTIN_EXPEDITION_CONFIG,
+    load_expedition_config_from_env, shipment_carry_cap, trade_per_worker_carry, ExpeditionConfig,
+    ExpeditionConfigHandle, ExpeditionConfigMetadata, SettleConfig, TradeExpeditionConfig,
+    BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,
@@ -232,15 +234,15 @@ pub use forage::{
     patch_composition, patch_destination_capacity, patch_ecology, patch_field_cost_multiplier,
     patch_keeping_basis, patch_land_capacity, patch_material_yields, patch_material_yields_taking,
     patch_meter_rot, patch_provisions_per_biomass, patch_provisions_per_biomass_taking,
-    patch_rung_already_built, patch_rung_span, patch_rung_work_done, patch_species_quality,
-    patch_tender_loads, patch_unwinding_key, patch_upkeep_demand, patch_upkeep_shortfall,
-    patch_upkeep_workers_needed, plant_rung_span, project_arrivals_forage, project_realized_forage,
-    resolve_committed_species, resolve_take_selection, rung_material_yields, rung_payoff,
-    rung_site_refusal, selected_biomass_share, spawn_initial_forage, species_is_legal_here,
-    species_stands_in, tended_take_fodder, tile_flora_composition, tile_forage_capacity,
-    tile_is_fresh_watered, wild_payoff, ForagePatch, ForageRegistry, SpeciesRate, SpeciesRefusal,
-    CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, NO_TENDER_LOAD,
-    ONE_TENDER_LOAD, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
+    patch_rung_already_built, patch_rung_span, patch_rung_work_done, patch_tender_loads,
+    patch_unwinding_key, patch_upkeep_demand, patch_upkeep_shortfall, patch_upkeep_workers_needed,
+    plant_rung_span, project_arrivals_forage, project_realized_forage, resolve_committed_species,
+    resolve_take_selection, rung_material_yields, rung_payoff, rung_site_refusal,
+    selected_biomass_share, spawn_initial_forage, species_is_legal_here, species_stands_in,
+    tended_take_fodder, tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered,
+    wild_payoff, ForagePatch, ForageRegistry, SpeciesRate, SpeciesRefusal, CANNOT_CLIMB_RATIO,
+    CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, NO_TENDER_LOAD, ONE_TENDER_LOAD,
+    SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
@@ -391,10 +393,11 @@ pub use systems::{
     advance_predator_raids, advance_tick, bench_material_rate, bench_tiers, bill_and_stock_roads,
     denial_forecast, expedition_returned_event, expedition_take_provisions, fold_party_into_band,
     hunt_per_worker_provisions, hunt_report_event, hunt_take, hunt_trip_forecast,
-    output_multiplier, party_owes_a_report, settle_bands_roadwork, simulate_power,
-    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
-    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
-    PowerSimParams, SplitBand, SplitRefusal, SplitRefusals, TradeDiffusionEvent,
+    output_multiplier, party_owes_a_report, publish_turn_transfers, settle_bands_roadwork,
+    simulate_power, source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers,
+    DenialForecast, DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast,
+    MigrationKnowledgeEvent, PowerSimParams, SplitBand, SplitRefusal, SplitRefusals,
+    TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,

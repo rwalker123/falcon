@@ -24,10 +24,10 @@ pub struct CohortStoreState {
     pub quantity: i64,
 }
 
-/// One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a). `kind` is the
-/// role (`"forage" | "hunt" | "scout" | "warrior"`); `target_x`/`target_y` locate a Forage tile or
-/// a Hunt herd's position readout; `fauna_id`/`policy` carry the Hunt target + take policy. Doubles
-/// as the client's allocation readout and the rollback-persisted staffing.
+/// One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a). `kind` is the role
+/// (`"forage" | "hunt" | "scout" | "warrior"`); `target_x`/`target_y` locate a Forage tile or a
+/// Hunt herd's position readout; `fauna_id` names the Hunt target and `floor` the depth its take
+/// stops at. Doubles as the client's allocation readout and the rollback-persisted staffing.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct LaborAssignmentState {
     pub kind: String,
@@ -39,15 +39,15 @@ pub struct LaborAssignmentState {
     #[serde(default)]
     pub fauna_id: String,
     /// **WHERE THIS CREW STOPS, as a fraction of the source's `K`** — the whole of what the player
-    /// decides about pressure (`docs/plan_harvest_floor.md` §1), and the authority [`Self::policy`]
-    /// is merely a label for. `0.5` holds a source on its most productive biomass; `0` takes
-    /// everything. `0.0` on a band-wide role (Scout/Warrior), which carries no source to stop short
-    /// of. Appended (append-only).
+    /// decides about pressure (`docs/plan_harvest_floor.md` §1), and the sole dial for it since the
+    /// four harvest stances were deleted. `0.5` holds a source on its most productive biomass; `0`
+    /// takes everything. `0.0` on a band-wide role (Scout/Warrior), which carries no source to stop
+    /// short of. Appended (append-only).
     #[serde(default)]
     pub floor: f32,
     /// **Which named plant a Forage assignment asks a `Cultivate`/`Sow` to commit its patch to**
     /// (Flora Roster S1) — a `flora_config.json` species key, or `""` for *"pick the tile's
-    /// dominant legal plant for me"*. Persisted intent, exactly like [`Self::policy`]: it rides the
+    /// dominant legal plant for me"*. Persisted intent, exactly like [`Self::floor`]: it rides the
     /// rollback record so a rewind restores the selection the player made, not a re-picked one.
     /// Empty on every non-Forage row. Appended (append-only).
     #[serde(default)]
@@ -109,8 +109,8 @@ pub struct LaborAssignmentState {
     /// the map badge, the compose sheet's verdict. Do not re-derive it and do not gate it: one
     /// question, one answer.
     ///
-    /// A row with no yield (Scout/Warrior, or an unresolved [`SourceYield::ZERO`]) is `false`. Derived
-    /// per-turn at capture. Appended (append-only).
+    /// A row with no yield (Scout/Warrior, or an unresolved `SourceYield::ZERO`) is `false`.
+    /// Derived per-turn at capture. Appended (append-only).
     #[serde(default)]
     pub overdraws: bool,
     /// **The steady per-turn income this source realizes** — the honest long-run average of the lumpy
@@ -123,15 +123,15 @@ pub struct LaborAssignmentState {
     #[serde(default)]
     pub realized_yield: f32,
     /// **WHEN the food actually lands** — the discrete twin of [`Self::realized_yield`], from the
-    /// *same* forward simulation run **with** the kill-credit bank. `arrival_schedule[i]` is the food
-    /// delivered `i + 1` turns from now; the length is `labor_config.arrivals_horizon_turns` (20), and
-    /// `0.0` marks a turn on which nothing lands. A big-game Sustain hunt reads lumpy — zeros between
-    /// hauls, totalling ≈ `realized_yield × horizon`, because the bank moves the *timing* and not the
-    /// total — while a forage patch or fast game is positive in every slot, a continuous source the
-    /// client draws as a solid run. **Empty** on a row that was never projected (Scout/Warrior, or an
-    /// unresolved [`SourceYield::ZERO`]): read that as *no data*, never as famine. Derived per-turn at
-    /// capture from the source's **post-take** state, so slot 0 is the *next* delivery. Appended
-    /// (append-only).
+    /// *same* forward simulation run **with** the kill-credit bank. `arrival_schedule[i]` is the
+    /// food delivered `i + 1` turns from now; the length is `labor_config.arrivals_horizon_turns`
+    /// (20), and `0.0` marks a turn on which nothing lands. A big-game Sustain hunt reads lumpy —
+    /// zeros between hauls, totalling ≈ `realized_yield × horizon`, because the bank moves the
+    /// *timing* and not the total — while a forage patch or fast game is positive in every slot, a
+    /// continuous source the client draws as a solid run. **Empty** on a row that was never
+    /// projected (Scout/Warrior, or an unresolved `SourceYield::ZERO`): read that as *no data*,
+    /// never as famine. Derived per-turn at capture from the source's **post-take** state, so slot
+    /// 0 is the *next* delivery. Appended (append-only).
     #[serde(default)]
     pub arrival_schedule: Vec<f32>,
     // **RETIRED: `trade_yield` / `realized_trade_yield`** (arc #527), with the trade-goods axis they
@@ -180,13 +180,13 @@ pub struct LaborAssignmentState {
     /// (issue #442, `docs/plan_investment_rung_toggle.md`): `""` | `"cultivate"` | `"sow"` |
     /// `"tame"` | `"corral"`.
     ///
-    /// [`Self::policy`] is now always one of the four harvest **stances** and is **never rewritten by
-    /// the sim**. The four build verbs used to be values of `policy`, so committing to an improvement
-    /// vacated the player's stated stance and completion had to hand one back; with the axes split,
-    /// completion clears **this** field and leaves `policy` alone.
+    /// The harvest axis is [`Self::floor`], and it is **never rewritten by the sim**. The four
+    /// build verbs used to be values of the retired `policy` stance dial, so committing to an
+    /// improvement vacated the player's stated stance and completion had to hand one back; with the
+    /// axes split, completion clears **this** field and leaves the floor alone.
     ///
-    /// Persisted intent, like [`Self::policy`] and [`Self::species`]: it rides the rollback record, so
-    /// a rewind restores a half-finished build's verb rather than dropping it.
+    /// Persisted intent, like [`Self::floor`] and [`Self::species`]: it rides the rollback record,
+    /// so a rewind restores a half-finished build's verb rather than dropping it.
     #[serde(default)]
     pub improvement: String,
     /// **The `equipment.json` roster id this crew is working under** — what the player named on
@@ -394,9 +394,9 @@ pub struct KitItemConditionState {
 ///
 /// # This is the RESOLVED answer. A client must not re-derive it.
 ///
-/// The numbers here are the sim's, resolved through the same `equipment.*` seams the take path reads
-/// — so the tier a picker shows is the tier a party sent with that kit actually fights and hauls at.
-/// **Do not step a tier down from [`SubsistenceSnapshot::kits`] by looking at
+/// The numbers here are the sim's, resolved through the same `equipment.*` seams the take path
+/// reads — so the tier a picker shows is the tier a party sent with that kit actually fights and
+/// hauls at. **Do not step a tier down from [`crate::world::WorldSnapshot::kits`] by looking at
 /// [`PopulationCohortState::kit_item_conditions`]**: that is the derivation this field exists to
 /// stop, and it cannot be done correctly from the wire.
 ///
@@ -413,7 +413,8 @@ pub struct KitItemConditionState {
 /// zero" — a consumer must fall back to the world roster's fresh-kit numbers, not to `0`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BandKitTiersState {
-    /// The `equipment.json` roster id these tiers are for — pairs with `SubsistenceSnapshot::kits`.
+    /// The `equipment.json` roster id these tiers are for — pairs with
+    /// [`crate::world::WorldSnapshot::kits`].
     pub kit_id: String,
     /// This band's hunter `attack` under this kit. **Unbounded**; the mass window is beside it.
     pub attack: f32,
@@ -545,8 +546,8 @@ fn kit_multiplier_neutral() -> f32 {
 /// the crew's output.
 pub const RETIRED_BUILD_RATE: f32 = 1.0;
 
-/// Hand-written for the reason [`KitOptionState`]'s is: two of these fields are multipliers whose
-/// neutral is `1`, and a derived `Default` would answer `0`.
+/// Hand-written for the reason [`crate::state::subsistence::KitOptionState`]'s is: two of these
+/// fields are multipliers whose neutral is `1`, and a derived `Default` would answer `0`.
 impl Default for BandKitTiersState {
     fn default() -> Self {
         Self {
@@ -895,11 +896,11 @@ pub struct PopulationCohortState {
     /// **Where a hunt expedition's raid stops**, as a fraction of the herd's carrying capacity —
     /// the raid's whole statement of pressure (`docs/plan_harvest_floor.md`). It governs the take
     /// *and* the trip's shape: a floor below the food peak leaves more standing than one pack holds,
-    /// so the party runs repeated trips (`systems::raid_is_recurring`).
+    /// so the party runs repeated trips (`components::raid_is_recurring`).
     ///
-    /// **`1.0` on a Scout party and on a resident band** — they harvest no herd, and an absent floor
-    /// must not read as *"take everything"*, which is the one value that would be dangerous if a
-    /// reader acted on it. Replaces the retired [`Self::expedition_hunt_policy`]. Appended
+    /// **`1.0` on a Scout party and on a resident band** — they harvest no herd, and an absent
+    /// floor must not read as *"take everything"*, which is the one value that would be dangerous
+    /// if a reader acted on it. Replaces the retired `expedition_hunt_policy`. Appended
     /// (append-only).
     #[serde(default)]
     pub expedition_floor: f32,
@@ -1122,6 +1123,9 @@ pub struct PopulationCohortState {
     pub expedition_destination_name: String,
     /// **The FOOD the shipment holds.** It is a *separate* store from the party's own pack (which
     /// rides `stores`), because a hungry party must not be able to eat the shipment it is hauling.
+    ///
+    /// One of **three** cargo accounts, with [`Self::expedition_cargo_fodder`] and
+    /// [`Self::expedition_cargo_materials`]. Food and hay never convert.
     #[serde(default)]
     pub expedition_cargo_food: f32,
     /// **The shipment's materials, one row per material id.** Reuses [`MaterialPayoff`] rather than
@@ -1155,31 +1159,41 @@ pub struct PopulationCohortState {
     /// `send_trade_expedition` command debits the larder between two published frames.
     #[serde(default)]
     pub transfer_sent: f32,
-    /// **One person's SHIPMENT pack** — `expedition_config.trade.per_worker_carry`, a global lever
-    /// echoed onto every cohort (the `expedition_per_worker_carry` / `hunt_per_worker_provisions`
-    /// idiom).
+    /// **What one worker on a shipment sent from this band carries, RESOLVED BY THE SIM** — the
+    /// sim's own answer after everything carry depends on has been applied
+    /// (`core_sim::trade_per_worker_carry`), not a config lever quoted onto the wire. Echoed onto
+    /// every cohort in the `expedition_per_worker_carry` / `hunt_per_worker_provisions` idiom.
+    ///
+    /// **The client multiplies it by the party and does nothing else**: `cap = party_workers ×
+    /// this`. So when carry grows a carrier-side model — a cart kit's `trade_carry` stat, a tech
+    /// factor, a road grade — this number changes and no client edit is needed.
     ///
     /// **This is the one the outfit UI needs**, because the player prices a manifest for a party
-    /// that does not exist yet: the cap is `party_workers × this`, and `party_workers` is what the
-    /// stepper is choosing. A party already on the map publishes its own pack as
-    /// [`Self::expedition_carry_cap`].
+    /// that does not exist yet, and `party_workers` is what the stepper is choosing. A party already
+    /// on the map publishes its own pack as [`Self::expedition_carry_cap`] — the same resolved
+    /// carry, already multiplied out.
     ///
-    /// **It is not [`Self::expedition_per_worker_carry`]**, which is the *hunt* pack. Two packs, two
-    /// levers; a client composing a trade cap from the raid's is one config edit away from quoting a
-    /// cap the launch command will refuse.
+    /// **It is not [`Self::expedition_per_worker_carry`]**, which is the *hunt* pack and a raw
+    /// lever. Two packs arrived at two ways; a client composing a trade cap from the raid's is one
+    /// config edit away from quoting a cap the launch command will refuse.
     ///
-    /// **Always positive** — the lever is validated `> 0` at load, and a `0` would let a client
-    /// render a zero cap and refuse every manifest.
+    /// **Always positive** — an invariant of the resolved value, not merely of the lever under it.
+    /// The lever is validated `> 0` at load and every future term has to preserve that, because a
+    /// `0` would let a client render a zero cap and refuse every manifest.
     #[serde(default)]
     pub expedition_trade_per_worker_carry: f32,
     /// **What one unit of a material costs in shipment pack space, relative to one unit of food** —
-    /// `expedition_config.trade.material_carry_weight`, the other half of a shipment's mass and the
-    /// same every-cohort lever echo as [`Self::expedition_trade_per_worker_carry`].
+    /// `expedition_config.trade.material_carry_weight`, the other half of a shipment's mass, echoed
+    /// onto every cohort exactly like [`Self::expedition_trade_per_worker_carry`] — though this one
+    /// really is a lever echo, because a material's bulk is a property of the **goods** rather than
+    /// of the carrier, so nothing resolves it.
     ///
     /// Together they give a client the sim's own expression:
     ///
     /// ```text
-    /// mass = expedition_cargo_food + this × Σ material amounts
+    /// mass = expedition_cargo_food
+    ///        + expedition_trade_fodder_carry_weight × expedition_cargo_fodder
+    ///        + this × Σ material amounts
     /// cap  = party_workers × expedition_trade_per_worker_carry
     /// ```
     ///
@@ -1322,6 +1336,90 @@ pub struct PopulationCohortState {
     pub roadwork_supplied: f32,
     #[serde(default)]
     pub roadwork_shortfall: f32,
+    /// **FOOD THAT CROSSED IN FROM A BAND STANDING ALONGSIDE, THIS TURN** — supply-network pooling
+    /// (`core_sim::supply::balance_supply_networks`) and the dowry a fission hands its splinter.
+    /// Nothing travelled: the goods were simply on the other side of the camp.
+    ///
+    /// One of **eight** figures that split [`Self::transfer_received_turn`] /
+    /// [`Self::transfer_sent_turn`] by *what carried the goods*, across the food and fodder accounts
+    /// (issue #548). `local` and `route` are **exhaustive** — `local + route == the total`, in each
+    /// direction, because every sim writer books through one ledger with no third arm — so a client
+    /// may render the two and trust nothing is missing.
+    ///
+    /// **Per-turn state, not an accumulator**, exactly like the pair it refines: a row read off an
+    /// accumulator blanks on the first frame a dispatched command refreshes (issue #517). Appended
+    /// last (append-only), as one contiguous block.
+    #[serde(default)]
+    pub transfer_local_received_turn: f32,
+    /// **Food this band gave up to a band standing alongside, this turn** — the sent half of
+    /// [`Self::transfer_local_received_turn`].
+    #[serde(default)]
+    pub transfer_local_sent_turn: f32,
+    /// **FOOD AN EXPEDITION PARTY CARRIED IN, THIS TURN** — a shipment delivered on arrival, a
+    /// hunting party's drop-off, the pack a party folded back on its way home.
+    ///
+    /// **The party is the vehicle, whatever its errand**, which is why a hunt's homecoming is a
+    /// `route` crossing and not a third kind. See [`Self::transfer_local_received_turn`] for the
+    /// split's rules.
+    #[serde(default)]
+    pub transfer_route_received_turn: f32,
+    /// **Food an expedition party carried away, this turn** — a shipment's cargo and the party's own
+    /// provisions, both drawn at launch. The sent half of [`Self::transfer_route_received_turn`].
+    #[serde(default)]
+    pub transfer_route_sent_turn: f32,
+    /// **HAY THAT CROSSED IN FROM A BAND STANDING ALONGSIDE, THIS TURN**, in fodder units — the
+    /// fodder twin of [`Self::transfer_local_received_turn`], on the same split and the same
+    /// per-turn basis.
+    ///
+    /// **Hay has always pooled**: the balancer walks a band's whole store and fodder is an ordinary
+    /// key in it. Until these four nothing counted it, so [`Self::fodder_store`] rose on a receiving
+    /// band with only *grown* and *eaten* to explain it. [`Self::turns_of_fodder`] nets **this pair**
+    /// in — a local crossing is a standing rate two camps keep up every turn — and deliberately not
+    /// the route pair below, which is a one-off event.
+    #[serde(default)]
+    pub fodder_transfer_local_received_turn: f32,
+    /// **Hay this band gave up to a band standing alongside, this turn** — the sent half of
+    /// [`Self::fodder_transfer_local_received_turn`].
+    #[serde(default)]
+    pub fodder_transfer_local_sent_turn: f32,
+    /// **HAY AN EXPEDITION PARTY CARRIED IN, THIS TURN** — the fodder twin of
+    /// [`Self::transfer_route_received_turn`], and **live**: `send_trade_expedition` takes a
+    /// `fodder <amount>` line beside its food and material ones, so a party really does walk bales
+    /// from one camp to another. Credited when a shipment lands, and credited on the *sending*
+    /// band's own row if an undelivered one comes home.
+    ///
+    /// **It closes no identity**, deliberately: the ledger identity is the food one, over the food
+    /// larder, which a bale never enters. A shipment's hay is booked here and **nowhere** in
+    /// [`Self::transfer_sent`] / [`Self::transfer_received`].
+    #[serde(default)]
+    pub fodder_transfer_route_received_turn: f32,
+    /// **Hay an expedition party carried away, this turn** — the sent half of
+    /// [`Self::fodder_transfer_route_received_turn`], debited at the moment a shipment launches.
+    #[serde(default)]
+    pub fodder_transfer_route_sent_turn: f32,
+    /// **THE HAY AN IN-FLIGHT PARTY IS CARRYING** — the fodder twin of
+    /// [`Self::expedition_cargo_food`], and the third of a shipment's three cargo accounts.
+    ///
+    /// Read off the party's *cargo*, never its pack: a pack is a walking larder for people, and hay
+    /// is not people food. `0` for every other mission and for a resident band — a real reading
+    /// ("this shipment carries no hay"), never an absent one.
+    #[serde(default)]
+    pub expedition_cargo_fodder: f32,
+    /// **What one unit of HAY costs in shipment pack space, relative to one unit of food** —
+    /// `expedition_config.trade.fodder_carry_weight`, the third term of a shipment's mass and the
+    /// same every-cohort lever echo as [`Self::expedition_trade_material_carry_weight`].
+    ///
+    /// **It ships for the identical reason**: without it a cargo picker cannot evaluate the cap rule
+    /// the sim refuses on, and a client that leaves the hay term out under-prices every manifest
+    /// with a bale in it.
+    ///
+    /// The shipped value is priced in *turns of keep* against food's person-turns; see the lever's
+    /// own comment in `core_sim/src/data/expedition_config.json`. It is a playtest dial, so a client
+    /// reads it rather than hardcoding it.
+    ///
+    /// **Finite and `>= 0`, not positive** — `0` is a legitimate setting ("hay is weightless").
+    #[serde(default)]
+    pub expedition_trade_fodder_carry_weight: f32,
 }
 
 /// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],

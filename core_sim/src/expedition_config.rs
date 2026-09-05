@@ -123,14 +123,59 @@ pub struct TradeExpeditionConfig {
     /// can bear, because in this slice the party *is* the route.
     pub per_worker_carry: f32,
     /// **What one unit of a material costs in pack space, relative to one unit of food.** Cargo mass
-    /// is `food + this × Σ material amounts`, so at `1.0` a unit of hide and a unit of provisions
-    /// occupy the same pack.
+    /// is `food + fodder_carry_weight × fodder + this × Σ material amounts`, so at `1.0` a unit of
+    /// hide and a unit of provisions occupy the same pack.
     ///
     /// It is a v1 **simplification made tunable rather than hardcoded**: a material's real bulk is a
     /// property of the material, and when `materials.json` grows a density axis this lever is the
     /// seam that reads it. `0.0` is legal and means *"materials are weightless"* — a coherent
     /// playtest setting, which is why it is bounded below at zero rather than above it.
     pub material_carry_weight: f32,
+    /// **What one unit of HAY costs in pack space, relative to one unit of food.** The third term of
+    /// a shipment's mass, which is `food + this × fodder + material_carry_weight × Σ material
+    /// amounts`.
+    ///
+    /// **The shipped `0.5` is a bale priced against a meal, in TURNS OF KEEP.** Food is the
+    /// numéraire at `1.0`, and one worker's load of it is `per_worker_carry / demographics
+    /// consumption.per_capita_draw` = `6.0 / 0.16` = **37.5 person-turns**. One animal's feed per
+    /// turn is `fodder_per_biomass × body_mass` (`fauna_config`), which for the mid-sized pennable
+    /// animals hay is historically for — `crag_goat` (0.05 × 6 = 0.30) and `wild_sheep`
+    /// (0.05 × 5.6 = 0.28) — averages ~0.29. So `6.0 / (37.5 × 0.29)` = 0.55, and `0.5` is the clean
+    /// dial beside it: a one-worker load is **40 goat-turns / 43 sheep-turns**, the same order as
+    /// food's 37.5 person-turns by construction.
+    ///
+    /// **The spread across the roster is honest and intended** — the same bale is 1,026 turns of
+    /// keep for a fowl and 2 turns for an aurochs, because that is what those animals eat. It is a
+    /// **playtest dial**.
+    ///
+    /// `0.0` is legal and means *"hay is weightless"*, exactly as it does on
+    /// [`Self::material_carry_weight`], and is bounded below at zero for the same reason.
+    pub fodder_carry_weight: f32,
+}
+
+/// **The resolved carry of ONE worker on a shipment** — what the sim says a person hauls, not a
+/// lever read. Today a party carries what its people can carry, so it resolves to
+/// [`TradeExpeditionConfig::per_worker_carry`] alone.
+///
+/// **It exists so that carry has one home.** A carrier-side model — a cart kit's `trade_carry`
+/// stat, a tech factor, a road grade — attaches *here*, and every consumer picks it up without an
+/// edit: the launch refusal (`resolve_shipment`), the per-mission `expedition_carry_cap` a live
+/// party publishes, and the `expedition_trade_per_worker_carry` echo the cargo picker multiplies by
+/// the party it is composing. The wire promises the client this resolved number, so a client that
+/// runs `party_workers × it` gets the sim's own answer whatever the model grows into.
+///
+/// **It must stay positive.** The lever is validated `> 0` at load, and a `0` reaching the wire lets
+/// a client render a zero cap and refuse every manifest a player could build — so any term a future
+/// model multiplies or adds here has to preserve that.
+pub fn trade_per_worker_carry(trade: &TradeExpeditionConfig) -> f32 {
+    trade.per_worker_carry
+}
+
+/// **How much pack space a shipment party HAS** — [`trade_per_worker_carry`] × the party, and the
+/// twin of `shipment_mass` (which lives with the launch command in `bin/server.rs`): a shipment
+/// launches exactly when the mass is no greater than the cap.
+pub fn shipment_carry_cap(party_workers: u32, trade: &TradeExpeditionConfig) -> f32 {
+    party_workers as f32 * trade_per_worker_carry(trade)
 }
 
 /// Scout opportunistic-replenish levers: the scout's own use of the shared `hunt_take` primitive.
@@ -274,6 +319,9 @@ impl ExpeditionConfig {
             "trade.material_carry_weight",
             self.trade.material_carry_weight,
         )?;
+        // Same rule for hay, and for the same reason: `0` is "hay is weightless", but a *negative*
+        // weight would let a party buy pack space by loading bales.
+        require_non_negative_finite("trade.fodder_carry_weight", self.trade.fodder_carry_weight)?;
 
         // Scouts top up below `party × upkeep × low_turns`; `0` never triggers, and a `0` reach
         // demands the herd's exact tile.
@@ -586,6 +634,18 @@ mod tests {
             ("settle.min_founding_workers", |c| {
                 c.settle.min_founding_workers = 0
             }),
+            // A NEGATIVE cargo weight lets a party buy pack space by loading goods, so a big enough
+            // shipment weighs nothing. `0` is a real setting on both ("weightless"), which is why
+            // only the negative and non-finite cases appear here.
+            ("trade.material_carry_weight", |c| {
+                c.trade.material_carry_weight = -1.0
+            }),
+            ("trade.fodder_carry_weight", |c| {
+                c.trade.fodder_carry_weight = -1.0
+            }),
+            ("trade.fodder_carry_weight", |c| {
+                c.trade.fodder_carry_weight = f32::NAN
+            }),
         ];
 
         for (field, break_it) in cases {
@@ -607,6 +667,10 @@ mod tests {
         // Free launches, no upkeep (v1 ships deterministic success).
         config.provision_draw_per_worker_per_tile = 0.0;
         config.provision_upkeep_per_worker = 0.0;
+        // "Materials are weightless" / "hay is weightless" — coherent playtest settings on both
+        // cargo weights, which is why they are bounded below at zero rather than above it.
+        config.trade.material_carry_weight = 0.0;
+        config.trade.fodder_carry_weight = 0.0;
         assert!(config.validate().is_ok());
     }
 

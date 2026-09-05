@@ -164,10 +164,10 @@ func _is_concerning(kind: String, band: Dictionary) -> bool:
             return DetailFormat.morale_is_concerning(band)
 
 ## The category breakdown sub-lines under Food, one indented row per present category, mirroring the
-## morale breakdown: `    ▲ +0.48  Gathered` / `    ▲ +0.46  Hunted` / `    ▼ −0.68  Eaten` (income ▲
+## morale breakdown: `    ▲ +0.48  Gathered` / `    ▲ +0.46  Hunted` / `    ▼ −0.68  Consumed` (income ▲
 ## green, debits ▼ amber via the shared indented-sub-line tint). Only categories above the floor.
 ##
-## **THE PEN HAS NO ROW HERE**, and the `🐄 Pen feed (animals)` line that used to sit beside `Eaten` is
+## **THE PEN HAS NO ROW HERE**, and the `🐄 Pen feed (animals)` line that used to sit beside `Consumed` is
 ## retired with `penFeedUpkeep`: human food is not animal feed, so a pen never draws on this larder at
 ## all. The two-debit reading it existed for — *is my larder draining because of my people or my
 ## herd?* — has only one answer left on this ledger, and the herd's side of it is the drawer's marked
@@ -182,36 +182,67 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
         lines.append(DetailFormat.food_breakdown_row(hunted, DetailFormat.FOOD_LABEL_HUNTED))
     var eaten := float(band.get("food_consumption", 0.0))
     if eaten >= SourceForecast.FOOD_FLOW_MIN:
-        lines.append(DetailFormat.food_breakdown_row(-eaten, DetailFormat.FOOD_LABEL_EATEN))
+        lines.append(DetailFormat.food_breakdown_row(-eaten, DetailFormat.FOOD_LABEL_CONSUMED))
     # The raid debit (Predators Phase 3): food a predator took off the larder this turn. A THIRD kind
-    # of row beside Eaten — same larder, a different story (guard the camp vs feed the people) — so it
+    # of row beside Consumed — same larder, a different story (guard the camp vs feed the people) — so it
     # gets its own line, and only when a raid actually landed (0 → omitted).
     var raid_forfeit := DetailFormat.band_raid_forfeit(band)
     if raid_forfeit >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(-raid_forfeit, DetailFormat.FOOD_LABEL_RAID_FORFEIT))
-    # **THE TWO TRANSFER ROWS** (arc #527) — food that crossed between bands, which passes through
-    # NEITHER of the income rows above (what THIS band's workers produced) nor either debit (what its
-    # own people ate, what a raid took). A FOURTH and FIFTH kind of row, and they are not a trade feature:
-    # `balance_supply_networks` pools between neighbours every turn, so before these rows a player
-    # watching two co-networked bands saw both larders move for no stated reason.
+    # **THE TRANSFER ROWS** (arc #527) — food that crossed between bands, which passes through NEITHER
+    # of the income rows above (what THIS band's workers produced) nor either debit (what its own
+    # people ate, what a raid took). A FOURTH kind of row, and not a trade feature:
+    # `balance_supply_networks` moves goods between neighboring camps every turn, so before these rows
+    # a player watching two linked bands saw both larders move for no stated reason.
     #
-    # Rendered as income and debit respectively — `food_breakdown_row` takes the sign — and each is
-    # omitted at zero, exactly like Lost to raids.
+    # Each is rendered as income or debit from its sign — `food_breakdown_row` takes it — and omitted
+    # at zero, exactly like Lost to raids.
     #
-    # **THEY READ THE PER-TURN PAIR, NEVER THE ACCUMULATING ONE** (issue #517). `transferReceived` /
+    # **THEY READ THE PER-TURN FIGURES, NEVER AN ACCUMULATING ONE** (issue #517). `transferReceived` /
     # `transferSent` accumulate over the PUBLICATION window and are cleared the moment the turn's
     # capture reads them, and the sim re-captures after every dispatched command — so on any frame a
-    # command refreshed they read 0 and both rows vanished, which is what a player saw the instant
+    # command refreshed they read 0 and every row vanished, which is what a player saw the instant
     # they did anything after a transfer landed. Every other row here is a per-turn value that
-    # survives a recapture; `transferReceivedTurn` / `transferSentTurn` put these two on that same
-    # basis. Rendering whichever of the two is non-zero is NOT the fix — it would make a row's
-    # meaning depend on when it was looked at.
-    var received := DetailFormat.band_transfer_received_turn(band)
-    if received >= SourceForecast.FOOD_FLOW_MIN:
-        lines.append(DetailFormat.food_breakdown_row(received, DetailFormat.FOOD_LABEL_TRANSFER_RECEIVED))
-    var sent := DetailFormat.band_transfer_sent_turn(band)
-    if sent >= SourceForecast.FOOD_FLOW_MIN:
-        lines.append(DetailFormat.food_breakdown_row(-sent, DetailFormat.FOOD_LABEL_TRANSFER_SENT))
+    # survives a recapture, and the four link-kind terms are on that same basis. Rendering whichever
+    # figure is non-zero is NOT the fix — it would make a row's meaning depend on when it was
+    # looked at.
+    #
+    # **AND THE ROW NAMES WHICH LINK THE GOODS CROSSED** (issue #548). `From other bands` /
+    # `To other bands` said a transfer happened and nothing about HOW, which is the one part a player
+    # can act on: a `Trade route` is a thing they built and sent a party down, a `Local exchange`
+    # happens whether they look or not. That generic pair is retired — the wire carries the four
+    # link-kind terms on every band — so there is one rendering of a crossing, not two.
+    lines.append_array(_link_transfer_lines(band))
+    return lines
+
+## The transfer rows named by the LINK the goods crossed — `⇄ Local exchange` and `⇄ Trade route`.
+##
+## **THERE IS NO GENERIC-PAIR ARM AND NO PRESENCE CHECK.** `population_to_dict` inserts all four food
+## link keys on every cohort it decodes, so the `From other bands` / `To other bands` fallback this
+## function once carried could not run against any snapshot a server can send; it is retired with the
+## labels it printed. A band that crossed nothing simply has four zeros and renders no row.
+##
+## **EACH KIND IS ONE NETTED ROW: received less sent, signed.** At most two rows per account, and
+## `food_breakdown_row` picks ▲ or ▼ from the number exactly as it does for every other row here — so
+## one phrase serves both directions and a camp that took three in and sent two out reads `+1.00`.
+##
+## ⛔ **THIS IS THE DECIDED BEHAVIOUR FOR THESE ROWS, AND IT IS THE OPPOSITE OF THE RETIRED GENERIC
+## PAIR'S RULE.** That pair was two rows on purpose, one per direction; these four terms net.
+## **The consequence is that a turn whose arrivals and departures cancel exactly shows no row for that
+## kind** — the net falls under the floor and is omitted, like every other flow in this ledger.
+##
+## The netting happens HERE, in the client. The wire keeps four received/sent pairs per account, so
+## the sim publishes what it counted and this readout decides what to show.
+func _link_transfer_lines(band: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    var local_net := DetailFormat.band_transfer_local_received_turn(band) \
+        - DetailFormat.band_transfer_local_sent_turn(band)
+    if absf(local_net) >= SourceForecast.FOOD_FLOW_MIN:
+        lines.append(DetailFormat.food_breakdown_row(local_net, DetailFormat.TRANSFER_LABEL_LOCAL))
+    var route_net := DetailFormat.band_transfer_route_received_turn(band) \
+        - DetailFormat.band_transfer_route_sent_turn(band)
+    if absf(route_net) >= SourceForecast.FOOD_FLOW_MIN:
+        lines.append(DetailFormat.food_breakdown_row(route_net, DetailFormat.TRANSFER_LABEL_ROUTE))
     return lines
 
 ## The FODDER larder's two flows, the rows under the `Fodder:` summary: what the band's fodder Fields
@@ -242,6 +273,32 @@ func fodder_breakdown_lines(band: Dictionary) -> Array[String]:
     var eaten := float(band.get("fodder_need", 0.0))
     if eaten >= SourceForecast.FODDER_FLOW_MIN:
         lines.append(DetailFormat.fodder_breakdown_row(-eaten, DetailFormat.FODDER_LABEL_PENS))
+    # **THE SAME TWO LINK KINDS THE FOOD LEDGER STATES, IN THE SAME WORDS** (issue #548). Hay crosses
+    # both links exactly as grain does — `balance_supply_networks` walks a STORE and fodder is an
+    # ordinary key in it, and a party's packs hold hay as readily as food — so `Grown` and `Pens` were
+    # never the whole of this larder: a player watching two linked camps saw both hay stocks move for
+    # no stated reason.
+    #
+    # ⛔ **ONE VOCABULARY, BOTH ACCOUNTS.** These are `DetailFormat`'s own label constants, not a
+    # fodder copy of them: two accounts wording one event two ways is a drift that has had to be
+    # undone once already. The rows differ from the food ledger's in exactly one thing — the number's
+    # resolution, which `fodder_breakdown_row` owns.
+    #
+    # **ONE NETTED ROW PER KIND**, the food ledger's shape one account over: received less sent,
+    # signed, omitted when the net falls under this account's floor — so a turn whose hay arrivals and
+    # departures cancel exactly shows no row for that kind.
+    #
+    # **AND THERE IS NO FALLBACK FORK HERE, ANY MORE THAN IN THE FOOD LEDGER**: this popover never had
+    # a generic transfer pair to preserve, and the food ledger's has been retired, so both accounts'
+    # rows simply appear when their figures do.
+    var local_net := DetailFormat.band_fodder_transfer_local_received_turn(band) \
+        - DetailFormat.band_fodder_transfer_local_sent_turn(band)
+    if absf(local_net) >= SourceForecast.FODDER_FLOW_MIN:
+        lines.append(DetailFormat.fodder_breakdown_row(local_net, DetailFormat.TRANSFER_LABEL_LOCAL))
+    var route_net := DetailFormat.band_fodder_transfer_route_received_turn(band) \
+        - DetailFormat.band_fodder_transfer_route_sent_turn(band)
+    if absf(route_net) >= SourceForecast.FODDER_FLOW_MIN:
+        lines.append(DetailFormat.fodder_breakdown_row(route_net, DetailFormat.TRANSFER_LABEL_ROUTE))
     return lines
 
 ## **THE STANDING MATERIAL BILL, ONE BLOCK PER GOOD** (`docs/plan_standing_upkeep.md` §2.7) — the rows

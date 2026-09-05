@@ -23,6 +23,14 @@ const LAND_SUBJECT_ID := -1
 # Provisions is the food item under a band's larder `stores`.
 const STORE_ITEM_PROVISIONS := "provisions"
 
+# **THE HAY A MANIFEST NAMES ITSELF BY** (issue #590) — the id a fodder cargo row carries, and the
+# `fodder` token `send_trade_expedition` spells that row with. Deliberately NOT a `stores` key the
+# way `STORE_ITEM_PROVISIONS` is: hay rides the cohort's own `fodder_store` field, a larder apart
+# from the food one, and the two accounts NEVER CONVERT — a herd must never be able to eat its
+# keepers' bread. It lives beside provisions because a manifest row's `id` is the only thing that
+# tells the command formatter which of the two commodities a non-material row is.
+const CARGO_ITEM_FODDER := "fodder"
+
 # **A TIE AT THIS STRENGTH IS PARKED, AND AT ZERO NOTHING FLOWS** (arc #527) — the client's reading of
 # the sim's own `connections::NO_TIE` gate. A parked edge is a published row meaning "we know such a
 # people exist and have no current dealings", NOT an absent one, so a reader that dropped it would

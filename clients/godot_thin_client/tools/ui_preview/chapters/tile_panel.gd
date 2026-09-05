@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 74
+const EXPECTED_CHECKPOINTS := 109
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -483,6 +483,163 @@ func _occupied_herd_fixture() -> Dictionary:
 	var herd := HerdFx.occupied_herd_only()
 	herd["tile_info"] = TileFx.occupied_tile_fixture()
 	return herd
+
+# ---- THE TEMPERATURE-MORTALITY CHIP (issue #614) ----------------------------------------------
+#
+# The sim kills a fraction of EVERY age bracket, every turn, food or no food, on any tile outside the
+# survivable band `[SURVIVABILITY_COLD_ONSET_TEMP, SURVIVABILITY_HEAT_ONSET_TEMP]` — and NOTHING on
+# the card said so. The climate band is a different set of thresholds decided by a different config,
+# so the two readings of one temperature can disagree about how alarming it is.
+#
+# **TWO INDEPENDENT TAILS.** The onsets are unrelated (0 °C and 40 °C), the slopes differ and the
+# ceilings differ (10 % against 3 %), so a fixture cannot be mirrored from one side to the other —
+# every temperature below is priced by its OWN tail.
+#
+# The model is a per-run constant the live client adopts from the snapshot's overlays
+# (`MapSection.temperatureSurvivability`) through MapView, exactly as it adopts the climate cut
+# points. This harness has no MapView, so `ui_preview.gd`'s prologue seeds it with the shipped
+# tuning — globally, before the first frame of the walk, so no frame anywhere renders lethal ground
+# without saying so. These states are where the chip itself is put on trial.
+
+## **LETHAL POLAR GROUND.** The cold onset is 0 °C, which is also the Polar/Boreal climate boundary,
+## so this is a Polar tile 10 ° into the tail — 1.75 % of the people on it, every turn, on a full
+## larder.
+##
+## ⛔ **IT WAS 3.7 °C, AND THAT STATE CAN NO LONGER EXIST.** The fixture was built to demonstrate a
+## LETHAL TEMPERATE TILE — `Temperate · 3.7 °C` rating `Fair` at full morale while killing — which is
+## the exact composite issue #614 was reported for. The onset then moved 6 °C -> 0 °C ("6 °C is not
+## cold"), and with it the whole overlap: Boreal and Temperate ground is entirely survivable now and
+## only Polar ground kills. So the state demonstrates lethal POLAR ground instead. The chip's job is
+## unchanged — a climate band and a death rate are still two readings of one number — but the band it
+## lands on is no longer a surprising one, and nothing here should be re-aimed at 3.7 °C to "get the
+## old frame back".
+const LETHAL_COLD_TEMPERATURE := -10.0
+## The HEAT tail, which exists for the same reason and was equally unsaid.
+##
+## ⛔ **HOTTER THAN THE GENERATOR CAN PRODUCE, AND THAT IS DELIBERATE.** Worldgen tops out near
+## 31 °C; the heat onset is 40 °C, calibrated to the ±57 °C range issue #622 opens up rather than to
+## today's map. **Do not "correct" this to a reachable temperature** — it would fall below the onset,
+## the chip would go quiet, and this harness would lose its only heat-tail coverage without a single
+## assertion turning red. (It was 33.5 °C under the retired symmetric model, where the heat onset was
+## forced to mirror the cold one about an 18 °C ambient and landed on a warm summer day.)
+const LETHAL_HEAT_TEMPERATURE := 50.0
+## Far enough out that the model's CAP is what the rate rests on. The hover no longer SAYS so (that
+## clause was cut), but the cap must still be what the number comes out of: 80 ° past the onset at
+## 0.00175/° is 14.0 %, and 10.0 % is the cold ceiling holding.
+##
+## ⛔ **PAST EVEN #622's RANGE (-57 °C), AND IT HAS TO BE.** The cold cap only begins to bind at
+## -57.14 °C, where it clips the rate by hundredths of a percent — invisible at one decimal, so a
+## fixture at the edge of the future range could not tell a capped rate from an uncapped one. This
+## value is chosen so the two answers differ by 4 points.
+const CAPPED_COLD_TEMPERATURE := -80.0
+## **THE TILE THAT SHIPPED BROKEN**, re-aimed at the onset that replaced the one it was written for.
+## A hair inside the cold tail: 0.5 ° past the onset, so the rate is a real 0.09 % and the model is
+## right — but rounded to one decimal it printed `-0.0 %`, and the old hover's second sentence
+## collapsed into `X °C is 0.0 °C past the X °C survival line`. Every other state here sits
+## comfortably past the onset, which is exactly why none of them caught it.
+##
+## **DERIVED FROM THE PUBLISHED ONSET, NOT TYPED AS A DEGREE VALUE.** It was `5.98` against a 6 °C
+## onset and would have been stranded 6 ° inside the SURVIVABLE band by the retune, silently turning
+## the state into a second survivable-tile frame. The offset is what this state is about; where the
+## onset sits is the sim's business.
+const NEAR_LINE_EPSILON := 0.5
+## Comfortably inside the range, where the chip keeps its neutral ink and carries no warning at all.
+const SURVIVABLE_TEMPERATURE := 19.0
+
+## What each state's chips must READ, written out rather than recomputed here: an assertion that
+## re-derived the rate from the constants above would pass against a client that had stopped
+## deriving it. `1.8 %` cold is `(0 - -10) x 0.00175`; `1.8 %` heat is `(50 - 40) x 0.00176`, and the
+## capped one is the cold tail's own 0.1 ceiling.
+##
+## **THE TWO 1.8 %s ARE A COINCIDENCE OF THIS TUNING, NOT A SYMMETRY** — the slopes are near-equal
+## and these two fixtures happen to sit ten degrees past their own onsets. The assertions still tell
+## the tails apart on the trailing word, and swapping the two parameter TRIPLES reddens both (the
+## cold arm would then read the heat ceiling). Do not "simplify" them to one constant.
+const LETHAL_COLD_TOOLTIP := "1.8% increased mortality per turn due to severe cold"
+const LETHAL_HEAT_TOOLTIP := "1.8% increased mortality per turn due to severe heat"
+const CAPPED_COLD_TOOLTIP := "10.0% increased mortality per turn due to severe cold"
+## …and the near-boundary tile, whose rate is real but below what one decimal can show. It states the
+## BOUND rather than a rounded zero.
+const NEAR_LINE_COLD_TOOLTIP := "<0.1% increased mortality per turn due to severe cold"
+
+## The two spellings the near-boundary hover must never contain again — a rounded-away rate, and the
+## minus sign that made it read as `−0.0 %`, i.e. as nothing happening at all.
+const TOOLTIP_ROUNDED_ZERO := "0.0%"
+const TOOLTIP_MINUS_SIGN := "−"
+## …and the two clauses cut from the hover for saying everything except that people die. Asserted
+## ABSENT on an ordinary lethal tile so neither can creep back in a later edit.
+const TOOLTIP_RETIRED_LINE_CLAUSE := "survival line"
+const TOOLTIP_RETIRED_FOOD_CLAUSE := "regardless of food"
+
+## …and the Climate chip, which since #614 carries the NUMBER the band name hides — and, on killing
+## ground, the ⚠ and the DANGER tint too. **One pill, not two:** the band name and the death rate are
+## two readings of the same temperature, so the warning is a prefix on this face rather than a chip
+## beside it (there were four pills on the strip; a player does not read four).
+const LETHAL_COLD_CLIMATE_CHIP := "⚠ Polar · -10.0 °C"
+const LETHAL_HEAT_CLIMATE_CHIP := "⚠ Tropical · 50.0 °C"
+const NEAR_LINE_COLD_CLIMATE_CHIP := "⚠ Polar · -0.5 °C"
+const CAPPED_COLD_CLIMATE_CHIP := "⚠ Polar · -80.0 °C"
+## …and the same hex inside the range: no ⚠, no tint, no extra pill — just the reading.
+const SURVIVABLE_CLIMATE_CHIP := "Tropical · 19.0 °C"
+## **THE ONE PATH WHERE THE MERGE COULD REINTRODUCE THE ORIGINAL DEFECT.** The chip used to need the
+## sim's band CUT POINTS to render at all; now that it carries the only lethal warning, "no cut
+## points" would take that warning off the card entirely. On lethal ground with the mortality model
+## published and the bands absent it must still render — degrees alone, still warned.
+const BANDLESS_LETHAL_CLIMATE_CHIP := "⚠ -10.0 °C"
+
+## **THE BRANCH POINTS**, for the PNG-less guard on the three-way split. A hair either side of each
+## onset, plus a reading between them: the middle of an arm proves the arm, and only the boundary
+## proves the BRANCH.
+##
+## The two boundary probes are taken RELATIVE to the published onsets rather than typed as degrees —
+## this claim is about which branch fires, not about where the onsets are, so a retune of the config
+## must move the probes with it instead of quietly sliding them into the wrong arm.
+## `BRANCH_ONSET_DISTANCE` is the equal offset the two tails are priced at to show their slopes
+## differ; any distance does, so it is a round one.
+const BRANCH_EPSILON := 0.1
+const BRANCH_BETWEEN_ONSETS := 20.0
+const BRANCH_ONSET_DISTANCE := 10.0
+
+## The chip SET, and it is the SAME LIST in both states: the lethal warning is a tint and a prefix on
+## the climate chip, not a slot of its own. That identity is the merge's whole claim — a `survivability`
+## key appearing here again means the fourth pill came back — and a PNG can carry neither it nor the
+## fact that the survivable strip is missing nothing.
+const LETHAL_CHIP_SLOTS := ["sight", "habitability", "climate", "tags"]
+const SURVIVABLE_CHIP_SLOTS := ["sight", "habitability", "climate", "tags"]
+
+## A hair inside the cold tail, taken RELATIVE to the published onset — see `NEAR_LINE_EPSILON` for
+## why this is not a typed degree value.
+func _near_line_cold_temperature() -> float:
+	return TileSurvivability.survivable_min() - NEAR_LINE_EPSILON
+
+## The `TileFx.three_role_tile_fixture` at a given temperature and nothing else changed — so the ONLY
+## thing moving between the survivability frames is the reading the model is asked about.
+func _survivability_tile_fixture(temperature: float) -> Dictionary:
+	var tile := TileFx.three_role_tile_fixture()
+	tile["temperature"] = temperature
+	return tile
+
+## The INK of the chip at `index` — the `font_color` override its label is actually wearing, not the
+## descriptor's request. Asked of the node because the merge's whole risk is a chip whose tint was
+## PATCHED in place rather than rebuilt: a descriptor that said DANGER and a label still painted
+## INK_DIM is exactly the failure, and only the node can tell them apart.
+func _chip_ink(strip: Node, index: int) -> Color:
+	if strip == null or index < 0 or index >= strip.get_child_count():
+		return Color()
+	var chip := strip.get_child(index)
+	if chip.get_child_count() == 0:
+		return Color()
+	var label := chip.get_child(0) as Label
+	return label.get_theme_color("font_color") if label != null else Color()
+
+## The hover text of the chip at `index` in the pinned chip strip (the tooltip lives on the chip's
+## PanelContainer, which is also what carries the mouse filter that lets it be shown at all).
+func _chip_tooltip(strip: Node, index: int) -> String:
+	if strip == null or index < 0 or index >= strip.get_child_count():
+		return ""
+	var chip := strip.get_child(index) as Control
+	return chip.tooltip_text if chip != null else ""
+
 
 func run(harness) -> void:
 	h = harness
@@ -1216,3 +1373,163 @@ func run(harness) -> void:
 	# Leave the overlay as it was found — a snapshot with a NEWER turn is what confirms a pending edit.
 	h._hud._band_labor.reconcile_pending(h._hud._band_labor.current_turn() + 1)
 	h._hud._band_labor._player_band = BandFx.band_fixture()
+
+	# ---- LETHAL GROUND (issue #614) ------------------------------------------------------------
+	# The model is live from the prologue (see the block above the fixtures); these are the states
+	# that judge the chip it drives.
+	h._hud.clear_selection()
+
+	# tile_panel_lethal_cold — THE DEFECT'S FRAME, on ONE pill now: `Fair` beside
+	# `⚠ Temperate · 3.7 °C` in DANGER, the band and the warning being two readings of one number.
+	h._show_tile(_survivability_tile_fixture(LETHAL_COLD_TEMPERATURE))
+	await h._settle()
+	await h._save("tile_panel_lethal_cold")
+	# **THE MERGE'S OWN CLAIM: THREE PILLS, NOT FOUR.** The strip diffs the SET of slots, so a
+	# `survivability` key reappearing here is the fourth pill coming back, and no PNG can say the list
+	# is what it is rather than merely looking similar.
+	h._assert_hud("a lethally COLD hex warns on the CLIMATE chip — no fourth pill beside it",
+		h._hud._selectioncard._tile_chip_slots == LETHAL_CHIP_SLOTS)
+	h._assert_hud("…the face carries the ⚠ ahead of the band and the reading it is struck from",
+		_chip_text(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == LETHAL_COLD_CLIMATE_CHIP)
+	h._assert_hud("…and it wears DANGER, the palette this chip once refused on principle",
+		_chip_ink(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == HudStyle.DANGER)
+	h._assert_hud("…its hover names what happens to the people, and the rate it happens at",
+		_chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == LETHAL_COLD_TOOLTIP)
+	# **THE TWO CUT CLAUSES, ASSERTED ABSENT.** The old hover restated the degrees the face already
+	# carries in order to derive a distance from the line, and added "regardless of food" on top — and
+	# between them they buried the one thing the hover exists to say. Neither may creep back in a later
+	# edit, and only a negative can say so.
+	var lethal_cold_hover := _chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate"))
+	h._assert_hud("…and it no longer restates the degrees to derive a distance past the line",
+		not lethal_cold_hover.contains(TOOLTIP_RETIRED_LINE_CLAUSE) \
+			and not lethal_cold_hover.contains(TOOLTIP_RETIRED_FOOD_CLAUSE))
+
+	# tile_panel_lethal_heat — the symmetric tail. Same tile, same model, the other side of ambient.
+	h._show_tile(_survivability_tile_fixture(LETHAL_HEAT_TEMPERATURE))
+	await h._settle()
+	await h._save("tile_panel_lethal_heat")
+	h._assert_hud("a lethally HOT hex warns on the same one chip, its own band on the face",
+		h._hud._selectioncard._tile_chip_slots == LETHAL_CHIP_SLOTS \
+			and _chip_text(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate"))
+				== LETHAL_HEAT_CLIMATE_CHIP)
+	h._assert_hud("…and its hover blames the HEAT, not the cold",
+		_chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == LETHAL_HEAT_TOOLTIP)
+
+	# tile_panel_lethal_near_line — **THE STATE THAT WOULD HAVE CAUGHT THE SHIPPED BUG.** A hex 0.02 °
+	# inside the cold tail: the rate is a real 0.09 %, and printed at one decimal with a leading minus
+	# it read `−0.0 %` — nothing happening, on ground the sim kills on. Every other state here sits
+	# comfortably past the line, which is exactly why none of them caught it. The `<0.1%` bound has to
+	# survive the move onto the climate chip, which is what this now also holds.
+	h._show_tile(_survivability_tile_fixture(_near_line_cold_temperature()))
+	await h._settle()
+	await h._save("tile_panel_lethal_near_line")
+	var near_line_hover := _chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate"))
+	h._assert_hud("a rate too small to print states the BOUND, not a rounded zero",
+		near_line_hover == NEAR_LINE_COLD_TOOLTIP)
+	h._assert_hud("…so the hover carries neither a `0.0%` nor a minus sign",
+		not near_line_hover.contains(TOOLTIP_ROUNDED_ZERO) \
+			and not near_line_hover.contains(TOOLTIP_MINUS_SIGN))
+	h._assert_hud("…on a face reading the reported `⚠ Temperate · 6.0 °C`",
+		_chip_text(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == NEAR_LINE_COLD_CLIMATE_CHIP)
+
+	# No frame: a capped hex renders a chip shaped exactly like the cold one, so only the hover can
+	# testify. The hover no longer NAMES the cap — that clause was cut — but the number still has to
+	# come out of it: 80 ° past the onset at 0.00175/° is 14.0 %, and 10.0 % is the cold ceiling holding.
+	h._show_tile(_survivability_tile_fixture(CAPPED_COLD_TEMPERATURE))
+	await h._settle()
+	h._assert_hud("ground far past the line reports the model's CAPPED rate, not the raw deviation",
+		_chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == CAPPED_COLD_TOOLTIP)
+	h._assert_hud("…on a face that still names the band the sim's cut points put it in",
+		_chip_text(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == CAPPED_COLD_CLIMATE_CHIP)
+
+	# tile_panel_survivable — THE ABSENCE, which no PNG can prove: the same hex inside the range keeps
+	# the SAME chip set (the warning was never a slot) with the ⚠, the DANGER and the hover all gone.
+	h._show_tile(_survivability_tile_fixture(SURVIVABLE_TEMPERATURE))
+	await h._settle()
+	await h._save("tile_panel_survivable")
+	h._assert_hud("a hex INSIDE the survivable range raises no pill at all",
+		h._hud._selectioncard._tile_chip_slots == SURVIVABLE_CHIP_SLOTS)
+	h._assert_hud("…and the climate chip is still there carrying its temperature (the strip rendered)",
+		_chip_text(h._hud.tile_chips, SURVIVABLE_CHIP_SLOTS.find("climate")) == SURVIVABLE_CLIMATE_CHIP)
+	h._assert_hud("…in the NEUTRAL ink it wears whenever the ground is survivable",
+		_chip_ink(h._hud.tile_chips, SURVIVABLE_CHIP_SLOTS.find("climate")) == HudStyle.INK_DIM)
+	h._assert_hud("…and with no mortality hover on it, there being no mortality",
+		_chip_tooltip(h._hud.tile_chips, SURVIVABLE_CHIP_SLOTS.find("climate")) == "")
+
+	# **THE PATCH-IN-PLACE PATH, BOTH DIRECTIONS.** The chip SET is identical either side of the
+	# survival line now, so a tile crossing it under a live snapshot takes the in-place update branch —
+	# the strip only rebuilds when the slot LIST moves, and it no longer does. That makes a stale
+	# stylebox or a stale tooltip a real hazard rather than a theoretical one: the node that was red
+	# and hoverable a moment ago is the very node that must now be neutral and inert. Driven through
+	# the REAL per-snapshot `reapply_selection` path, and the node identity is asserted so the check
+	# cannot pass by way of a rebuild that hid the bug.
+	var flip_chip_ids = _child_instance_ids(h._hud.tile_chips)
+	h._hud.reapply_selection("tile", _survivability_tile_fixture(LETHAL_COLD_TEMPERATURE))
+	await h._settle()
+	h._assert_hud("survivable → lethal PATCHES the chip nodes (the slot list did not move)",
+		_child_instance_ids(h._hud.tile_chips) == flip_chip_ids and not flip_chip_ids.is_empty())
+	h._assert_hud("…and the patched chip took the ⚠, the DANGER ink and the hover",
+		_chip_text(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == LETHAL_COLD_CLIMATE_CHIP \
+			and _chip_ink(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == HudStyle.DANGER \
+			and _chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate"))
+				== LETHAL_COLD_TOOLTIP)
+	h._hud.reapply_selection("tile", _survivability_tile_fixture(SURVIVABLE_TEMPERATURE))
+	await h._settle()
+	h._assert_hud("lethal → survivable patches the SAME nodes back",
+		_child_instance_ids(h._hud.tile_chips) == flip_chip_ids)
+	h._assert_hud("…and the red and the hover BOTH come off, never a stale warning on safe ground",
+		_chip_text(h._hud.tile_chips, SURVIVABLE_CHIP_SLOTS.find("climate")) == SURVIVABLE_CLIMATE_CHIP \
+			and _chip_ink(h._hud.tile_chips, SURVIVABLE_CHIP_SLOTS.find("climate")) == HudStyle.INK_DIM \
+			and _chip_tooltip(h._hud.tile_chips, SURVIVABLE_CHIP_SLOTS.find("climate")) == "")
+
+	# **THE THREE-WAY BRANCH ITSELF, PNG-LESS.** The model stopped being one symmetric formula and
+	# became two independent tails with their own onsets, and a chip can only ever exercise ONE branch
+	# per frame — so a single-tail bug (a heat arm wired to the cold onset, a cold arm that never
+	# fires, a survivable band that is not an interval) would leave every frame above looking correct.
+	# Asked of `TileSurvivability` directly, at four temperatures chosen to pin the branch POINTS
+	# rather than the middle of each arm: a hair either side of each onset.
+	h._assert_hud("a hair BELOW the cold onset is lethal, and lethal COLD",
+		TileSurvivability.is_lethal((TileSurvivability.survivable_min() - BRANCH_EPSILON)) \
+			and TileSurvivability.is_cold((TileSurvivability.survivable_min() - BRANCH_EPSILON)))
+	h._assert_hud("…the cold onset ITSELF is free — the survivable band includes its ends",
+		not TileSurvivability.is_lethal(TileSurvivability.survivable_min()) \
+			and not TileSurvivability.is_lethal(TileSurvivability.survivable_max()))
+	h._assert_hud("…a tile BETWEEN the two onsets is not lethal at all",
+		not TileSurvivability.is_lethal(BRANCH_BETWEEN_ONSETS))
+	h._assert_hud("…a hair ABOVE the heat onset is lethal, and NOT cold",
+		TileSurvivability.is_lethal((TileSurvivability.survivable_max() + BRANCH_EPSILON)) \
+			and not TileSurvivability.is_cold((TileSurvivability.survivable_max() + BRANCH_EPSILON)))
+	# **AND THE TWO TAILS ARE PRICED BY DIFFERENT SLOPES**, which is the half that catches a branch
+	# taken correctly and then charged from the wrong tail's parameters. Equal distances past the two
+	# onsets must NOT produce equal rates — under the retired symmetric model they always did.
+	h._assert_hud("…and equal distances past the two onsets cost DIFFERENT rates (the slopes differ)",
+		not is_equal_approx(
+			TileSurvivability.death_rate(TileSurvivability.survivable_min() - BRANCH_ONSET_DISTANCE),
+			TileSurvivability.death_rate(TileSurvivability.survivable_max() + BRANCH_ONSET_DISTANCE)))
+
+	# tile_panel_lethal_bandless — **THE PATH THE MERGE COULD HAVE REINTRODUCED THE ORIGINAL DEFECT
+	# DOWN.** The climate chip used to render only where the sim had published its band CUT POINTS;
+	# that was a cosmetic gap while the warning was a pill of its own, and it becomes a SILENT one the
+	# moment the warning lives on this chip. A sim that publishes the mortality model without the cut
+	# points must therefore still get a warned chip — degrees alone, no band name. Nothing else about
+	# the tile changes, so the frame is the cold state with its band label removed.
+	TileClimate._bands_published = false
+	h._show_tile(_survivability_tile_fixture(LETHAL_COLD_TEMPERATURE))
+	await h._settle()
+	await h._save("tile_panel_lethal_bandless")
+	h._assert_hud("with NO published cut points, lethal ground still gets its chip",
+		h._hud._selectioncard._tile_chip_slots == LETHAL_CHIP_SLOTS)
+	h._assert_hud("…reading the degrees alone, warned, with no band name to give",
+		_chip_text(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == BANDLESS_LETHAL_CLIMATE_CHIP)
+	h._assert_hud("…and carrying the same mortality hover it would have with the bands",
+		_chip_tooltip(h._hud.tile_chips, LETHAL_CHIP_SLOTS.find("climate")) == LETHAL_COLD_TOOLTIP)
+	# …while SURVIVABLE ground with no cut points still has nothing to say, so the chip stays away —
+	# the half that keeps the fallback from becoming "always render something".
+	h._show_tile(_survivability_tile_fixture(SURVIVABLE_TEMPERATURE))
+	await h._settle()
+	h._assert_hud("…but survivable ground with no cut points still renders NO climate chip",
+		not h._hud._selectioncard._tile_chip_slots.has("climate"))
+	# Restore the prologue's cut points: they are a per-run constant every later frame in the walk
+	# renders its climate chip from.
+	TileClimate.set_cut_points(h.CLIMATE_POLAR_MAX_TEMP, h.CLIMATE_BOREAL_MAX_TEMP,
+		h.CLIMATE_TEMPERATE_MAX_TEMP)

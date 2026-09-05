@@ -1,5 +1,5 @@
 //! GDScript-facing `GodotClass` types. Everything the engine can call lives here;
-//! the decode work itself lives in [`crate::snapshot`] and [`crate::dict`].
+//! the decode work itself lives in [`crate::snapshot`] and [`mod@crate::dict`].
 
 pub(crate) mod command;
 pub(crate) mod decoder;

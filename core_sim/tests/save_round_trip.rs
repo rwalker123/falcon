@@ -500,6 +500,44 @@ fn a_save_from_another_format_version_is_refused() {
     ));
 }
 
+/// A save from the **previous** format version is refused by the version gate, never by a decoder
+/// choking on a payload whose shape this build no longer knows.
+///
+/// This is the case that actually ships — every row of `SAVE_FORMAT_VERSION`'s table is one — and
+/// the failure it guards against is silent: forget the bump and yesterday's blob reaches `ciborium`,
+/// which reports it as unreadable, a sentence that describes corruption rather than an old format.
+/// The payload appended here is not even a gzip document, so a refusal that still names both
+/// versions proves nothing past the header was consulted.
+#[test]
+fn a_save_from_the_previous_format_version_is_refused_before_its_payload() {
+    let mut app = spawn_world();
+    run_turn(&mut app);
+    let blob = encode_save(&app.world).expect("encodes");
+
+    let (mut header, _) = decode_save(&blob).expect("decodes");
+    let previous_version = SAVE_FORMAT_VERSION - 1;
+    header.format_version = previous_version;
+    let mut stale = Vec::from(SAVE_MAGIC);
+    ciborium::into_writer(&header, &mut stale).expect("header encodes");
+    stale.extend_from_slice(b"a payload shaped for the version before this one");
+
+    match read_save_header(&stale) {
+        Err(SaveError::VersionMismatch { expected, found }) => {
+            assert_eq!(expected, SAVE_FORMAT_VERSION);
+            assert_eq!(found, previous_version);
+        }
+        other => panic!("expected a typed version mismatch, got {other:?}"),
+    }
+    assert!(
+        matches!(decode_save(&stale), Err(SaveError::VersionMismatch { .. })),
+        "an old save must be refused by version, not by a payload error"
+    );
+    assert!(matches!(
+        load_save(&stale),
+        Err(SaveError::VersionMismatch { .. })
+    ));
+}
+
 /// Something that is not a save says so, rather than failing somewhere inside a CBOR document.
 #[test]
 fn a_blob_that_is_not_a_save_is_named_as_such() {

@@ -279,7 +279,8 @@ pub struct LaborConfigs<'w> {
 ///    job's default"* rule every other selection follows
 ///    (`docs/plan_standing_upkeep.md` §4.7a ②).
 /// 2. **Otherwise the roster answers**, per branch, through
-///    [`EquipmentConfig::build_kit_for_branch`] — the shape `fauna::kit_supplying` already uses for a
+///    [`crate::equipment_config::EquipmentConfig::build_kit_for_branch`] — the shape
+///    `fauna::kit_supplying` already uses for a
 ///    penned herd's default kit. ⛔ **No `BuildJob → kit id` match exists in Rust**, so a third build
 ///    tool is a roster edit.
 /// 3. **`default_kits.builders` is the fall-back**, not the answer: a roster with no kit serving a
@@ -765,6 +766,32 @@ fn plant_field_gate(
         // "the land must take seed", beside the site half above.
         (has_crop, BuildGate::NoCrop),
     ])
+}
+
+/// **DID THE PLAYER BID FOR HAY?** — the ungated arm of the wild-fodder credit (#433, issue #590's
+/// follow-up), and the one question that arm is entitled to ask.
+///
+/// A patch committed to a fodder-bearing plant is a patch whose owner chose to grow animal feed, so
+/// the harvest banks hay whether or not the faction has learned Foddering. A patch committed to
+/// anything else — a grain, a fruit, a fibre crop — is a bid for **that**, and the hay the tile's
+/// basket happens to contain is not something anyone asked for. Testing the rate on the **committed
+/// species** rather than on the tile is the whole distinction: a `wild_emmer` field on ground that
+/// is 31% `hay_grass` still converts at the basket average, so an `is_some()` test paid a faction
+/// with no pens and no Foddering a hay income nothing it owned could ever eat.
+///
+/// **Fails closed on both `None` arms.** An uncommitted patch is the wild basket and was never a bid
+/// at all; a committed id that does not resolve in the flora table is a config the sim cannot read,
+/// and an unreadable commitment must refuse the credit rather than open the gate.
+///
+/// It answers only *whether* the fodder component is banked. **How much** is untouched: a committed
+/// patch still converts at the share-weighted average of its own basket.
+fn committed_to_a_fodder_crop(
+    species: Option<&str>,
+    flora: &crate::flora_config::FloraConfig,
+) -> bool {
+    species
+        .and_then(|key| flora.species.get(key))
+        .is_some_and(|def| def.yield_.bears_fodder())
 }
 
 /// **THE `animal:pastoral` GATE** — the `Tame` arm's `eligible`. Ownership is deliberately absent:
@@ -4089,25 +4116,43 @@ pub fn advance_labor_allocation(
                     // since `docs/plan_standing_upkeep.md` §4.10; **every** plant rung is drawn down
                     // and worker-capped through this one path.)
                     //
-                    // **The WILD credit is gated on Foddering** (#433) — the same 2007 capability the
-                    // pen's own hay draw reads. Since every rate is now the basket's average, a wild
-                    // tile that happens to realize `hay_grass` pays hay on any harvest; banking it for
-                    // a faction that has not learned to hay a herd would hand out animal feed nobody
-                    // bid for. A **committed** patch is ungated — and the predicate below is the
-                    // COMMITMENT (`patch.species`), not the rung, so the gate lifts on the first turn
-                    // of a Cultivate/Sow build, while the patch still stands at rung 1 and still
-                    // converts at the wild basket's rate: committing to `hay_grass` *is* the bid, and
-                    // the bid is placed when the crew starts, not when the meter fills. (Reading this
-                    // as "rungs 2 and 3 are ungated" is narrower than the code and mis-states which
-                    // turn the credit begins.) The gate lives here, at the credit site, so the rate
-                    // seam in `forage.rs` stays free of knowledge lookups.
-                    let fodder_permitted = patch.species.is_some()
-                        || knows(
-                            &discovery,
-                            faction,
-                            FODDERING_DISCOVERY_ID,
-                            knowledge_threshold,
-                        );
+                    // **The credit is gated on Foddering** (#433) — the same 2007 capability the
+                    // pen's own hay draw reads. Since every rate is now the basket's average, a tile
+                    // that happens to realize `hay_grass` pays hay on any harvest; banking it for a
+                    // faction that has not learned to hay a herd would hand out animal feed nobody
+                    // bid for.
+                    //
+                    // ⛔ **THE OTHER ARM IS A COMMITMENT TO A FODDER-BEARING SPECIES, NOT A
+                    // COMMITMENT TO ANYTHING.** A crop the player chose to grow *for hay* is a bid
+                    // for hay, and needs no capability to be honoured — but committing to
+                    // `wild_emmer` is a bid for **grain**, and a grain field standing on ground that
+                    // is 31% `hay_grass` still converts at the basket average, so an
+                    // `is_some()` test paid animal feed to a faction with no pens, no Foddering and
+                    // nothing that could ever eat it. That is verbatim the failure the gate exists to
+                    // prevent, so the predicate asks what was actually bid for.
+                    //
+                    // **It is the COMMITMENT, not the rung**, so the gate lifts on the first turn of
+                    // a Cultivate/Sow build on a fodder crop, while the patch still stands at rung 1
+                    // and still converts at the wild basket's rate: the bid is placed when the crew
+                    // starts, not when the meter fills. (Reading this as "rungs 2 and 3 are ungated"
+                    // is narrower than the code and mis-states which turn the credit begins.)
+                    //
+                    // **It FAILS CLOSED**: a `patch.species` that does not resolve in the flora table
+                    // is not fodder-bearing, so an unknown id refuses the credit rather than opening
+                    // the gate. And the gate lives here, at the credit site, so the rate seam in
+                    // `forage.rs` stays free of knowledge lookups.
+                    //
+                    // **What it does NOT touch is the conversion.** A committed patch still converts
+                    // at the share-weighted average of its own basket (#433); this decides only
+                    // whether the fodder component is banked at all, never how much of it there is.
+                    let fodder_permitted =
+                        committed_to_a_fodder_crop(patch.species.as_deref(), &flora)
+                            || knows(
+                                &discovery,
+                                faction,
+                                FODDERING_DISCOVERY_ID,
+                                knowledge_threshold,
+                            );
                     let fodder = if fodder_permitted {
                         scalar_from_f32(tended_take_fodder(
                             take,
@@ -4537,9 +4582,11 @@ pub fn advance_labor_allocation(
                         // **The credited value, not a recomputation** (issue #449) — the very
                         // `fodder` scalar added to the `FODDER` store above, **including the
                         // `fodder_permitted` gate**: a faction that has not learned Foddering was
-                        // credited nothing on an uncommitted patch, so the row must read `0.0` too.
-                        // Re-deriving `tended_take_fodder` here would publish a number nobody was
-                        // ever paid, which is precisely what this readout exists not to do.
+                        // credited nothing unless the patch is committed to a fodder-bearing species,
+                        // so the row must read `0.0` on a grain field for exactly the turns nobody
+                        // was paid. Re-deriving `tended_take_fodder` here would publish a number
+                        // nobody was ever paid, which is precisely what this readout exists not to
+                        // do.
                         fodder: fodder.to_f32(),
                         // **The credited materials, not a recomputation** — exactly what
                         // `credit_material_yield` deposited (the discipline `fodder` above carries).
@@ -5699,11 +5746,11 @@ pub fn advance_labor_allocation(
                     // an animal nobody killed is still alive out there, so it was never produced and
                     // cannot have been wasted (`fauna::forecast_production_and_take`).
                     //
-                    // **A MANAGED herd reports its whole CREW** ([`source_crew_needed`]) — the
-                    // herders who mind it are the ones who take from it, and the crew must be big
-                    // enough for both jobs. A **wild** herd is untouched by the herder term:
-                    // `herders_needed` is `0` (it isn't yours to maintain), so the `max` collapses to
-                    // the haul-side count.
+                    // **A MANAGED herd used to report its whole CREW** — the retired
+                    // `intensification::source_crew_needed` blended `max(herders, haulers)`, on the
+                    // premise that the herders who mind a pen are the ones who take from it. It is
+                    // gone; see the `herders_needed no longer folds in` note below, which is the
+                    // rule this row obeys now.
                     //
                     // The take side is [`fauna::hunt_take_workers`] — the crew that can both **reach**
                     // and **carry** the peak animal drop off
@@ -6252,7 +6299,7 @@ pub fn advance_labor_allocation(
 ///
 /// | entry | test | seam |
 /// |---|---|---|
-/// | `Rung(Cultivate)` / `Rung(Sow)` | the meter it names is full | [`forage::patch_rung_already_built`] |
+/// | `Rung(Cultivate)` / `Rung(Sow)` | the meter it names is full | [`crate::forage::patch_rung_already_built`] |
 /// | `Rung(Tame)` / `Rung(Corral)` | the meter it names is full | [`fauna::herd_rung_already_built`] |
 /// | `ExtendPen` | the ring is **not in flight** | `Herd::pen_extending` |
 ///
@@ -8512,8 +8559,9 @@ mod labor_yield_tests {
         )
     }
 
-    /// **THE BUILD CREW A PLANT FIXTURE STAFFS** — [`WORKERS`] hands plus `plant:tended`'s own keeper
-    /// count, the padding [`builders_above_the_rate`] explains.
+    /// **THE BUILD CREW A PLANT FIXTURE STAFFS** — [`WORKERS`] hands and nothing else. It carried
+    /// `plant:tended`'s own keeper count on top while the rate was a tax on building; §4.6a deleted
+    /// that, and [`the_harness_build_crew`] is where the padding's removal is explained.
     fn plant_builders(world: &World, key: RungKey) -> u32 {
         let ladder = world.resource::<LadderConfigHandle>().get();
         the_harness_build_crew(ladder.rung(key), harness_patch_load(world))
@@ -8902,8 +8950,8 @@ mod labor_yield_tests {
                     stores: LocalStore::new(),
                     morale: scalar_one(),
                     last_food_consumption: 0.0,
-                    last_turn_transfer_received: 0.0,
-                    last_turn_transfer_sent: 0.0,
+                    last_turn_food_transfers: Default::default(),
+                    last_turn_fodder_transfers: Default::default(),
                     last_morale_delta: scalar_zero(),
                     last_morale_cause: MoraleCause::None,
                     last_morale_contributions: Default::default(),
@@ -9368,10 +9416,13 @@ mod labor_yield_tests {
     /// The name's original claim (`workers_needed == 1` for both, "maintenance labor, not scaling
     /// gather") is dead twice over: slice 7 retired `TENDED_SOURCE_WORKERS_NEEDED = 1` for the payout,
     /// and slice 8 gave the pen a **standing, herd-sized herder demand**. What the pen reports now is
-    /// [`source_crew_needed`] — **one crew sized by whichever of its two jobs binds**: enough hands to
-    /// *mind* the heads (`ceil(animals / animals_per_herder)`) **and** to *haul* the meat
-    /// (`ceil(take / per_worker_throughput)`). Herding is per head, hauling is per biomass, so neither
-    /// term dominates across the roster — this fixture's pen happens to be **haul**-bound.
+    /// the **take activity's own** crew ([`fauna::hunt_take_workers`]) — the hands that can reach and
+    /// *haul* the drop (`ceil(take / per_worker_throughput)`). The blended `max(standing, take)` head
+    /// count is retired (`intensification`'s gravestone, `docs/plan_standing_upkeep.md` §2.2), so the
+    /// hands that *mind* the heads (`ceil(animals / animals_per_herder)`) answer on their own wire
+    /// field instead. Herding is per head, hauling is per biomass, so neither term dominates across
+    /// the roster — this fixture's pen happens to be **haul**-bound, which is what makes the
+    /// `max(herders, haulers)` asserted below equal to the haul count alone.
     #[test]
     fn tended_patch_and_corral_report_their_staffing_need() {
         let (mut world, tile) = world_with_source(CAP);

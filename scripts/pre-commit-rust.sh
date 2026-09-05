@@ -47,6 +47,15 @@ run_clippy() {
   cargo clippy --workspace --all-targets --all-features -- -D warnings
 }
 
+# rustdoc walks the module tree the same way rustfmt does, so it needs the generated bindings for
+# the same reason. The scope arguments live in `cargo xtask doc-guard`, not here — a second copy of
+# them is exactly the drift the guard's doc comment argues against.
+run_doc() {
+  ensure_bindings
+  echo "Running cargo xtask doc-guard"
+  cargo run --quiet --package xtask -- doc-guard
+}
+
 case "$ACTION" in
   flatbuffers)
     run_flatbuffers
@@ -60,15 +69,19 @@ case "$ACTION" in
   clippy)
     run_clippy
     ;;
+  doc)
+    run_doc
+    ;;
   all)
     run_flatbuffers
     run_godot_extension
     run_fmt
     run_clippy
+    run_doc
     ;;
   *)
     echo "Unknown action: $ACTION" >&2
-    echo "Usage: $0 [flatbuffers|godot|fmt|clippy|all]" >&2
+    echo "Usage: $0 [flatbuffers|godot|fmt|clippy|doc|all]" >&2
     exit 1
     ;;
 esac

@@ -40,7 +40,8 @@ use bevy::prelude::*;
 
 use crate::{
     components::{
-        BandId, LaborAllocation, MaterialBatch, PopulationCohort, ResidentBand, Tile, FOOD,
+        BandId, LaborAllocation, MaterialBatch, PopulationCohort, ResidentBand, Tile, TransferLink,
+        FODDER, FOOD,
     },
     connections::{ConnectionKey, ConnectionLedger, NO_TIE},
     grid_utils::hex_distance_wrapped,
@@ -364,8 +365,9 @@ pub fn balance_supply_networks(
     // fold-back on arrival, not a passive supply-network leak — so it is excluded here.
     // **The food ledger's transfer terms ride here**, because this system is one of their writers:
     // a balancing move crosses two larders through neither income nor consumption
-    // ([`LaborAllocation::last_transfer_received`]). `Option`, matching how the two sibling ledger
-    // terms are read at capture — a band without an allocation reports zero for all four.
+    // ([`LaborAllocation::last_food_transfers`]), and hay does the same into the fodder account
+    // beside it. `Option`, matching how the sibling ledger terms are read at capture — a band without
+    // an allocation reports zero for every one of them.
     mut cohorts: SupplyBands,
     mut membership: ResMut<SupplyNetworkMembership>,
 ) {
@@ -500,7 +502,7 @@ pub fn balance_supply_networks(
                         // **THE COMMONEST TRAFFIC IN THE GAME, recorded where it is known.** Two
                         // camps pooling a larder are people walking between them, turn after turn —
                         // #532's *"it must not be the one case that produces no trail because nobody
-                        // typed a command"*. The road is worn by `routes::advance_routes` later in
+                        // typed a command"*. The road is worn by `routes::advance_roads` later in
                         // this stage rather than here, so this turn's pooling cannot read a road
                         // this turn's pooling created.
                         route_traffic.walked(nodes[i].pos, nodes[j].pos, &ladder);
@@ -634,19 +636,33 @@ pub fn balance_supply_networks(
     for (entity, commodity, delta) in applied {
         if let Ok((_, mut cohort, _, allocation)) = cohorts.get_mut(entity) {
             cohort.stores.add(&commodity, delta);
-            // **Only the FOOD key enters the ledger.** The identity the two terms close is the food
-            // one; fodder and materials have their own accounts and deliberately no identity of
-            // their own (a material's account is the batch store itself).
-            if commodity == FOOD {
-                if let Some(mut allocation) = allocation {
-                    // **Added, never assigned** — a band can balance against several neighbours in
-                    // one pass, and the counter also carries what a command drew earlier in the same
-                    // snapshot window.
-                    if delta > scalar_zero() {
-                        allocation.last_transfer_received += delta.to_f32();
-                    } else {
-                        allocation.last_transfer_sent += (-delta).to_f32();
-                    }
+            // **TWO KEYS ARE COUNTED, AND THEY EACH HAVE THEIR OWN ACCOUNT.** `FOOD` closes the
+            // larder identity; `FODDER` closes nothing but is what the hay rows and the fodder
+            // runway read (`snapshot::population`), and a pooled store that nothing counted is
+            // exactly why a receiving band's runway used to say it was draining while its hay rose.
+            // Materials still have no account here: theirs is the batch store itself, and a scalar
+            // total of hide and bone is the retired trade axis under a new name.
+            let ledger = if commodity == FOOD {
+                allocation
+                    .map(|allocation| allocation.map_unchanged(|a| &mut a.last_food_transfers))
+            } else if commodity == FODDER {
+                allocation
+                    .map(|allocation| allocation.map_unchanged(|a| &mut a.last_fodder_transfers))
+            } else {
+                None
+            };
+            if let Some(mut ledger) = ledger {
+                // **Added, never assigned** — a band can balance against several neighbours in one
+                // pass, and the ledger also carries what a command drew earlier in the same snapshot
+                // window.
+                //
+                // **The link is [`TransferLink::Local`]** — pooling is what bands standing near
+                // each other do without anybody carrying anything. This pass is the bulk of that
+                // arm; a fission's dowry is the other writer on it, for the same reason.
+                if delta > scalar_zero() {
+                    ledger.credit(TransferLink::Local, delta.to_f32());
+                } else {
+                    ledger.debit(TransferLink::Local, (-delta).to_f32());
                 }
             }
         }

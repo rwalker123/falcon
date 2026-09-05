@@ -22,7 +22,8 @@ const EXPEDITION_MISSION_DENY := "deny"
 
 ## **THE FOURTH MISSION** (arc #527, issue #517) — a shipment is a party that WALKS IT. It names no
 ## herd and takes no floor; what it names is another BAND, and what it carries is a manifest drawn
-## off its home band's stores (`expedition_cargo_food` + `expedition_cargo_materials`).
+## off its home band's stores (`expedition_cargo_food` + `expedition_cargo_fodder` +
+## `expedition_cargo_materials` — three accounts that never convert, and are never summed on screen).
 ##
 ## **THE DESTINATION HAS A KEY AND A DISPLAY TWIN, and only one of them may be rendered** — the
 ## `EXPEDITION_MISSION_HUNT` rule exactly: `expedition_destination_band` is the `BandId`

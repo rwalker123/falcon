@@ -35,7 +35,7 @@ const PEN_KEEPER_BAND_ENTITY := 906
 ## catch a regression is +2.99, and that is precisely why this is stated as an answer.
 const PEN_KEEPER_EXPECTED_NET := 4.73
 
-## Gathered · Hunted · Eaten. A FOURTH row on this band would be the animal-feed row coming back.
+## Gathered · Hunted · Consumed. A FOURTH row on this band would be the animal-feed row coming back.
 const PEN_KEEPER_BREAKDOWN_ROWS := 3
 
 ## Float slack for the ledger identity — the terms are wire floats summed once, so this is a
@@ -340,7 +340,12 @@ func _low_morale_band_fixture() -> Dictionary:
 		"visibility_state": "active",
 		# Cavern habitability (~0.0825) lands in the Harsh band → amber Tile-card row.
 		"habitability": 0.0825,
-		# High-latitude cold ~-2° → "Polar" climate band (neutral Tile-card row).
+		# High-latitude cold ~-2° → "Polar" climate band (neutral Tile-card chip) — and, since #614,
+		# the ⚠ and the DANGER tint ON that same chip: -2 °C is 2 ° past the 0 °C cold onset, 0.35 %/turn. That is NOT
+		# incidental to this frame. The band is here BECAUSE the ground is punishing it (morale 22%,
+		# `morale_climate` -0.8% "harsh climate"), so the temperature is load-bearing and the pill is
+		# the missing half of the same story — the drawer says climate is dragging morale down, and
+		# the chip strip now says the same climate is also killing people outright.
 		"temperature": -2.0,
 		"food_module": "",
 		"food_module_label": "None",
@@ -444,7 +449,7 @@ func run(harness) -> void:
 
 	# State 1-food-a — GOOD food, breakdown OPEN. The breakdown renders in a POPOVER, never inline
 	# (growing the row in place is what clipped the Band panel's fixed-height band zone), so the frame
-	# shows the indented `Gathered · Hunted · Eaten` rows in a small card under the row. Driven through
+	# shows the indented `Gathered · Hunted · Consumed` rows in a small card under the row. Driven through
 	# the REAL path — `meta_clicked` on the live drawer label, the exact signal a click emits.
 	h._hud.show_unit_selection(BandFx.band_fixture())
 	await h._settle()

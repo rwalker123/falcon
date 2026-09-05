@@ -373,10 +373,14 @@ Sow.
   `forage.cultivation.tended_conversion_gain` (**2.0**) on the **favored species' term only** — a
   tended stand of a *known* plant converts better, the volunteers beside it do not — so weeding and
   conversion **compound** and favoring a marginal plant barely moves the number. It multiplies food,
-  fodder and the material rates alike, with no `role` branch. At rung 3 the managed payoff keeps its one dial and
-  is scaled by the **derived** `patch_species_quality` (= the projected basket's rate ÷ the wild
-  baseline, which for a Field's 100%-crop basket is exactly the crop's rate) — never a second
-  per-species field that could drift from the rate it restates.
+  fodder and the material rates alike, with no `role` branch. At rung 3 there is **no separate managed
+  payoff left to scale**: the whole managed harvest was retired (§4.10, commit `3fb073a9`), and a
+  Field is priced through `rung_payoff` off `basket_rate` exactly as every other rung is — the crop's
+  own conversion rate, reached by multiplication. The **derived** `patch_species_quality`
+  (= the projected basket's rate ÷ the wild baseline) that used to scale it outlived its last caller
+  and is now **deleted**, with `WILD_SPECIES_QUALITY`. Its reason for being derived rather than a
+  per-species config field — a second lever drifts from the rate it restates — is why nothing
+  replaced it.
 - **EACH RUNG'S PAYOFF PROJECTS TO ITS OWN RUNG — never to the rung the patch happens to stand on.**
   `forage::composition_for_rung(patch, tile_composition, forage, rung)` is the one seam, and
   `favored_conversion_gain` is keyed on the *same* `rung`, so the basket and the gain that multiplies
@@ -385,7 +389,7 @@ Sow.
   `intensification::interpolate_composition(&patch.standing(), |rung| composition_for_rung(.., rung))`.
   `composition_for_rung` itself is unchanged, because a per-rung *quote* wants exactly the rung it
   asked about. **The bug this shape exists to prevent, caught in
-  the #433 slice itself:** `patch_species_quality` keyed off the patch's own meter, so
+  the #433 slice itself:** `patch_species_quality` (since deleted — see above) keyed off the patch's own meter, so
   `snapshot_forage_patches` — which publishes `fieldYield` for *every* patch, tended ones included —
   quoted a Sow on a tended patch against the **weeded** basket *with rung 2's conversion gain in it*,
   overstating by 10.2% on the reference tile and by the full gain (2×) wherever weeding saturates.
@@ -534,10 +538,18 @@ same scarce sowable tile" is the land-use tension, and *cash* is now literally *
   basket is 100% its crop, so it credits exactly that crop's reading. (The seam named here was
   `forage::field_harvest_biomass`, retired with the rest; it is `patch_material_yields` off the
   ordinary take now.)
-- **`provisions 0.0` is SAFE.** `patch_species_quality` divides by the **wild**
-  `provisions_per_biomass`, never the species rate, so a 0-provisions cash crop yields exactly 0 food
-  with no divide-by-zero — and `YieldVector::pays_something()` passes **because the species names
-  material rows**. That last clause is the assertion that turned "did we silently break a species"
+- **`provisions 0.0` is SAFE, because the plant food path only ever MULTIPLIES by a species rate —
+  it never divides by one.** `basket_rate` is a sum of `share × rate × gain` products, so a
+  pure-cotton basket produces the food rate `0.0` exactly, and `rung_payoff` → `forage_provisions`
+  carries it through as `biomass × rate × multiplier`. The wild rate is not in that expression at
+  all: `basket_rate`'s wild fallback fires only on a basket naming nothing the roster knows, which a
+  rostered cash crop never is. The one place a reciprocal *would* be needed is sidestepped by
+  shipping `perWorkerBiomass` on the wire, so nobody computes
+  `per_worker_yield ÷ provisions_per_biomass` — `0 / 0` on a Field of cotton. And
+  `YieldVector::pays_something()` passes **because the species names material rows**.
+  (**This clause used to say `patch_species_quality` divides by the wild rate.** That was true when
+  written and stale from `3fb073a9`; the function is now deleted. A safety claim that names a
+  mechanism outlives the mechanism silently — which is the whole argument for the doc-link gate.) That last clause is the assertion that turned "did we silently break a species"
   into a load failure when the trade axis went: all five cash crops read `0` provisions and `0`
   fodder, so a `pays_something` testing only the two scalars would have rejected every one of them at
   boot.
@@ -905,18 +917,38 @@ now feeds every account at rung 2:
   species' would invent a plant that is not growing there. So a mixed tile pays one material credit
   per species, each keeping its own exact reading, and credits landing in the same band merge in the
   store.
-- **Wild fodder is gated at the CONSUMER, not in the rate seam** (#433). The invariant reaches fodder
-  too — a wild tile realizing `hay_grass` pays hay on any harvest — but crediting it to a band with
-  nowhere to put it hands out animal feed nobody bid for. So an **uncommitted** patch's `FODDER`
-  credit is gated on the faction knowing **Foddering** (2007, the same gate the pen's draw reads), and
-  the gate lives at the **credit site in `systems/labor.rs`** so `forage.rs` stays free of knowledge
-  lookups and the vector stays commodity-generic. **A COMMITTED patch is ungated, and the predicate is
-  the COMMITMENT rather than the rung** — `patch.species.is_some() || knows(…, FODDERING)` — so the gate
-  lifts on the first turn of a `Cultivate`/`Sow` build, while the patch still stands at rung 1 and still
-  converts at the wild basket's rate. That is the rationale working, not an off-by-one: committing a
-  patch to `hay_grass` *is* the bid, and the bid is placed when the crew starts, not when the meter
-  fills. Reading this as "rungs 2 and 3 are ungated" is narrower than the code and mis-states which
-  turn the credit begins.
+- **Fodder is gated at the CONSUMER, not in the rate seam** (#433). The invariant reaches fodder too —
+  a tile realizing `hay_grass` pays hay on any harvest — but crediting it to a band with nowhere to put
+  it hands out animal feed nobody bid for. So a patch's `FODDER` credit is gated on the faction knowing
+  **Foddering** (2007, the same gate the pen's draw reads), and the gate lives at the **credit site in
+  `systems/labor.rs`** so `forage.rs` stays free of knowledge lookups and the vector stays
+  commodity-generic.
+- **The other arm is a commitment to a FODDER-BEARING SPECIES** —
+  `committed_to_a_fodder_crop(patch.species, &flora) || knows(…, FODDERING)`, where the first term
+  resolves the committed key through `FloraConfig::species` and asks that species' own
+  `yield.fodder_per_biomass > 0.0` (`YieldVector::bears_fodder`). A crop the player chose *for hay* is
+  a bid for hay and needs no capability; a crop chosen for anything else is a bid for that, whatever
+  the ground underneath it happens to carry.
+  - **A commitment to ANYTHING was the bug.** The predicate was `patch.species.is_some()`, which
+    accepted a bid for grain as a bid for hay: a `wild_emmer` patch on ground that is ~31% `hay_grass`
+    still converts at the basket's share-weighted average (#433), so it credited a real fodder income
+    to a faction with **no pens, no Foddering, and nothing that could ever eat it** — `fodder_need` 0.0
+    on every band while the hay piled up and pooled across the supply network. That is verbatim the
+    failure the gate exists to prevent, so the predicate now asks what was actually bid for.
+  - **It FAILS CLOSED.** A committed id that does not resolve in the flora table is not
+    fodder-bearing; an unreadable commitment refuses the credit rather than opening the gate.
+  - **It is the COMMITMENT rather than the rung**, so the gate lifts on the first turn of a
+    `Cultivate`/`Sow` build *on a fodder crop*, while the patch still stands at rung 1 and still
+    converts at the wild basket's rate. That is the rationale working, not an off-by-one: the bid is
+    placed when the crew starts, not when the meter fills. Reading this as "rungs 2 and 3 are ungated"
+    is narrower than the code and mis-states which turn the credit begins.
+  - **It decides WHETHER, never HOW MUCH.** A committed patch still converts at the share-weighted
+    average of its own basket (#433); crediting only the committed species' own vector is a different
+    model and is not this rule. Swept over all six cases (wild / `hay_grass` / `wild_emmer` × with and
+    without Foddering) by
+    `forage_basket_reweight::fodder_is_gated_on_foddering_unless_the_patch_is_committed_to_a_fodder_crop`,
+    and the published row is pinned against the credit over the same six by
+    `the_published_fodder_is_the_fodder_the_band_was_actually_credited`.
   - **Both halves of the fodder answer are on the wire** (#485). The rate seam publishes what the
     **land** pays — `ForagePatchState.fodderPerBiomass`, commodity-generic and knowledge-blind, as the
     gate's placement at the consumer requires — and the **capability** rides the faction's knowledge
@@ -929,11 +961,17 @@ now feeds every account at rung 2:
     the pen's hay draw, the pen's `K` fodder term, and this wild credit. **What that costs the capture
     is stated where the capture is edited** — `.claude/rules/core_sim/yield-forecast.md`, which owns
     `core_sim/src/snapshot/**`, not this file.
-  - **The CLIENT reads the same predicate, and it is the commitment there too.**
-    `RungGates.wild_fodder_reason` tests the patch's PUBLISHED `committed_species`, never the composed
-    improvement — so the lock lifts on exactly the turn the sim's does, and a rung the player has
-    ticked but not yet committed still reads as refused. Keying the client on the RUNG would have shown
-    a refusal through the whole build while the sim was already paying.
+  - **The CLIENT reads the PUBLISHED commitment, never the composed improvement.**
+    `RungGates.wild_fodder_reason` tests the patch's published `committed_species` — so the lock lifts
+    on exactly the turn the sim's does, and a rung the player has ticked but not yet committed still
+    reads as refused. Keying the client on the RUNG would have shown a refusal through the whole build
+    while the sim was already paying. **It mirrors `committed_to_a_fodder_crop` species-for-species**,
+    resolving the committed id in the patch's own composition and asking whether that row's
+    `cultivateFodderPayoff` or `sowFodderPayoff` is positive — the wire's two-rung spelling of this
+    rule's one `fodder_per_biomass > 0.0` — and failing closed on an id it cannot resolve. The two
+    predicates are coupled: this one moved to the species test first and the client kept the old
+    "committed to anything" reading for a window, which rendered the credit unlocked on a grain
+    commitment the sim was refusing.
 - **Pinned by `core_sim/tests/forage_tended_vector.rs`**: the #427 grapevine-under-Sustain regression
   (`a_tended_cash_crop_under_sustain_credits_materials_and_costs_food`), hay crediting `FODDER`, and
   `Deplete > Sustain` on the same tended cash crop **in the ratio of the biomass taken**. The nine

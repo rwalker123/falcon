@@ -1216,6 +1216,15 @@ const COMPOSE_CARGO_SECTION := "Cargo"
 ## PILE, which are never summed into a second scalar (the retired trade axis under a new name).
 const COMPOSE_CARGO_FOOD_LABEL := "Food"
 
+## The FODDER row's face (issue #590). **"Hay" is what the player calls it and `fodder` is what the
+## wire calls it**, the `fauna_id` / `fauna_label` rule: `HudConst.CARGO_ITEM_FODDER` is the id the
+## row carries and the token the command spells, and it never reaches a label.
+##
+## It is a SECOND COMMODITY ROW, not a second food row. Hay and bread are separate accounts that
+## never convert, so the sheet lists them as two rows and the manifest reads as a list — a figure
+## totalling the two would be the retired trade-goods axis under a new name.
+const COMPOSE_CARGO_FODDER_LABEL := "Hay"
+
 ## `4.0 hide · tough: excellent` — **THE RATING IS THE ROW'S POINT.** A mammoth hide and a hare pelt
 ## are both `hide`; a manifest that named only the material would let a player ship the wrong one and
 ## never know. The readings are the band's own, in the material's declared axis order.
@@ -1225,8 +1234,9 @@ const COMPOSE_CARGO_READING_FORMAT := "%s: %s"
 
 const COMPOSE_CARGO_READING_SEPARATOR := " · "
 
-## What the band still holds behind a row — the ceiling every row's `+` clamps to, stated so the
-## player can see the pile shrink as the manifest grows.
+## What the band still holds behind a row — **one of the two ceilings a row is bounded by**, stated so
+## the player can see how much of the pile the manifest has taken. The other is the pack, and which of
+## them binds is whichever is smaller (`BandPanelController._trade_row_max`).
 const COMPOSE_CARGO_HELD_FORMAT := "of %s"
 
 ## The row's hover text: the WHOLE face — rating included — beside what the band still holds. The
@@ -1235,15 +1245,66 @@ const COMPOSE_CARGO_HELD_FORMAT := "of %s"
 const COMPOSE_CARGO_TOOLTIP_FORMAT := "%s — %s"
 
 ## **HOW MUCH ONE PRESS MOVES.** Whole units, because that is how a shipment is talked about; the
-## clamp to the pile means a `+` on a 0.6 pile still loads 0.6 rather than refusing, so no fraction
-## is unreachable.
+## clamp to the ROW's ceiling means a `+` on a 0.6 pile still loads 0.6 rather than refusing, and one
+## on a 7.35-unit pack remainder lands on 7.3 rather than overshooting — so no fraction is
+## unreachable and no press composes a load the meter beside it then refuses.
 const COMPOSE_CARGO_STEP := 1.0
 
-## The live mass meter — `▰▰▰▱▱ 30 / 40`. **Both numbers come off the wire**
-## (`expedition_trade_per_worker_carry` × the party, and `expedition_trade_material_carry_weight` on
-## the material total), never a literal: the sim refuses an over-cap manifest naming both, and a
-## client quoting a lever of its own would be one config edit from a meter that disagrees with the
-## refusal it exists to prevent.
+## **THE ROW IS A TYPED FIELD BETWEEN THE TWO STEPPERS** (issue #620). A 6-worker party's full hay
+## load is 72 whole-unit presses at the step above, which is not a control — so the amount is a
+## `LineEdit` the player can type into, with the steppers kept beside it for the nudge they are good
+## at and a `Max` button for the one answer nobody wants to spell.
+##
+## ⛔ **A `LineEdit`, NEVER A `SpinBox` and never a custom key-eating control.**
+## `TextEntryFocus.is_text_entry` — the ONE definition of "the player is typing", read by
+## `KeyboardArbiter` — answers `node is LineEdit or node is TextEdit`. A control the arbiter does not
+## recognise leaves every polled gameplay key live while the player types into it: WASD pans the map
+## and the single-letter panel toggles fire, on the keystrokes meant for the number.
+const COMPOSE_CARGO_FIELD_WIDTH := 58.0
+
+## How wide the typed amount may be. A cargo amount is a quantity of a pile, so it needs digits, one
+## point and a sign's worth of slack — never a paragraph.
+const COMPOSE_CARGO_FIELD_MAX_LENGTH := 12
+
+## **HOW MANY DECIMALS A COMPOSED AMOUNT KEEPS, and it is a FLOOR onto that grid rather than a
+## round.** It matches `HudCraftingVocab.BATCH_AMOUNT_FORMAT`'s one decimal on purpose: what the field
+## shows and what the manifest ships are then the same number, instead of a row reading `6.0` while
+## `6.04998` goes on the wire. **Flooring can never carry a manifest over a cap and rounding can** —
+## a tenth left behind is invisible, a tenth over is a server refusal the player did not cause.
+const COMPOSE_CARGO_AMOUNT_DECIMALS := 1
+
+## The FOOD row's weight in `DetailFormat.shipment_mass` — food counts as itself. Named because the
+## row-headroom arithmetic needs a weight per row and the other two are wire levers; a bare `1.0`
+## there would read as a fudge rather than as the mass expression's own first term.
+const COMPOSE_CARGO_FOOD_CARRY_WEIGHT := 1.0
+
+## The `Max` button's face and its three readings. **A disabled button that explains itself beats an
+## enabled one that does nothing**, so the two dead states carry WHICH of the two caps stopped them:
+## the row is already at the largest amount that fits, or there is no room (or nothing held) at all.
+const COMPOSE_CARGO_MAX_FACE := "Max"
+const COMPOSE_CARGO_MAX_HINT := "Load the most of this that will still fit."
+const COMPOSE_CARGO_MAX_AT_CAP_HINT := "Already carrying the most of this that will fit."
+const COMPOSE_CARGO_MAX_NO_ROOM_HINT := "No room for this — take something off, or send more hands."
+## How wide the `Max` face sits. Wider than a stepper's button because it carries a WORD.
+const COMPOSE_CARGO_MAX_BUTTON_WIDTH := 42.0
+
+## The typed field's hover text — the three keys that act on it, because none of them is visible.
+const COMPOSE_CARGO_FIELD_HINT := "Type an amount and press Enter. Esc puts the last one back."
+
+## The live mass meter — `▰▰▰▱▱ 30 / 40`. **Every number in it comes off the wire**
+## (`expedition_trade_per_worker_carry` × the party for the cap;
+## `expedition_trade_fodder_carry_weight` on the hay and `expedition_trade_material_carry_weight` on
+## the material total for the mass), never a literal: the sim refuses an over-cap manifest naming
+## both sides, and a client quoting a lever of its own would be one config edit from a meter that
+## disagrees with the refusal it exists to prevent. The carry term arrives ALREADY RESOLVED (issue
+## #626) — the sim has applied whatever carry depends on, and multiplying it by the party is the whole
+## of this client's share; the two weights are verbatim levers, being properties of the goods rather
+## than of who carries them.
+##
+## **THREE TERMS, NOT TWO** (issue #590) — `DetailFormat.shipment_mass` holds the whole expression,
+## and a reader that drops the hay term UNDER-PRICES every manifest with a bale in it: the meter
+## says it fits and the send is refused, which is the exact failure the material lever ships to
+## prevent. Pricing is the only thing the three accounts share; nothing on screen sums them.
 const COMPOSE_CARGO_MASS_FORMAT := "%s  %s / %s"
 
 const COMPOSE_CARGO_MASS_CELLS := 10
@@ -1259,7 +1320,7 @@ const COMPOSE_CARGO_EMPTY_REASON := "Nothing loaded yet — a shipment carries s
 
 ## The band holds nothing a shipment could carry. A different statement from an empty manifest: there
 ## is nothing to load, so the rows are absent rather than sitting at zero.
-const COMPOSE_CARGO_NO_STORES := "This band has no food or materials to send."
+const COMPOSE_CARGO_NO_STORES := "This band has no food, hay or materials to send."
 
 ## **HOW MUCH THE COMPOSE SHEET MAY OVERSHOOT THE PARTIES ZONE BEFORE IT LEAVES IT** (see
 ## `BandComposeFloat` and `BandPanelController._party_compose_floats`). The requirement is summed from

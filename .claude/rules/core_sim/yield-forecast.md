@@ -776,7 +776,7 @@ of `foodIncome` / `foodConsumption` / `turnsOfFood`, all in fodder units per tur
 |---|---|---|
 | `fodderNeed` | Σ over the pens this band keeps of each pen's own gap — **the gap**, not the gross demand (`graze.md` → "The hay bill is published as the GAP"); ungated by Foddering | `advance_labor_allocation`, accumulated by the corral arm onto `LaborAllocation::last_fodder_need` |
 | `fodderIncome` | the hay this band's fodder Fields **harvested this turn** — `band_fodder_inflow`, which previously reached only the pens' `K_pen` term and never the wire | the same pass, onto `last_fodder_inflow` |
-| `turnsOfFodder` | the runway: `fodderStore ÷ (drain − income)`, where the **drain** is the need *behind* the Foddering gate | the capture, through `larder_runway_turns`, off `last_fodder_drain` |
+| `turnsOfFodder` | the runway: `fodderStore ÷ (drain − income − net LOCAL crossings)`, where the **drain** is the need *behind* the Foddering gate and the crossings are the hay that pooled to or from a neighbour standing alongside — a route crossing is an event and is not a term | the capture, through `larder_runway_turns`, off `last_fodder_drain` and `PopulationCohort::last_turn_fodder_transfers.local_net()` |
 
 **⛔ THE RUNWAY COUNTS DOWN THE DRAIN, AND THE DRAIN IS NOT THE NEED.** `settle_pen_hay` zeroes every
 pen's bid without Foddering, so an un-foddered band's store does not move however short its pens are
@@ -786,6 +786,32 @@ against the ungated need, such a band published a runway of a few turns for a st
 emptied. So the corral arm sums a second accumulator, `last_fodder_drain`, from the same gap
 *after* the gate, and a band that cannot draw reads the existing **no-drain sentinel** — not a second
 sentinel and not a second phrasing. The **need** is untouched and is what carries the alarm.
+
+**⛔ HAY THAT CROSSED BETWEEN BANDS IS A TERM OF THE RATE.** `balance_supply_networks` walks a
+band's whole store and `FODDER` is an ordinary key in it, so linked camps have always equalized their
+hay — and the runway was `store ÷ (drain − income)`, which knows nothing about that. A band on the
+receiving end watched `fodderStore` **rise** under a row counting down to empty, and the band feeding
+it read a runway too long by exactly what it gave away. The capture nets
+`PopulationCohort::last_turn_fodder_transfers` (issue #548) into the income term, so the forecast
+agrees with the trajectory in both directions, and a store a neighbour is over-filling reaches the
+no-drain sentinel rather than a countdown. **Read off the per-turn copy on the cohort, never off
+`LaborAllocation::last_fodder_transfers`**: the accumulator is cleared once the turn's capture has
+read it, so a recapture would recompute the runway with the term missing and the number would jump on
+every command-refreshed frame.
+
+**⛔ LOCAL CROSSINGS ARE A RATE AND COUNT; ROUTE CROSSINGS ARE EVENTS AND DO NOT.** The term is
+`TransferLedger::local_net`, never `received() − sent()`. Two camps within reach pool **every turn**
+for as long as they stay there, so projecting that forward is exactly what a runway is for; a
+shipment arrives **once**, and reading one delivery as a standing per-turn rate is the mistake arc
+#527 refused on the food side. The two arms therefore enter the forecast differently even though they
+sit side by side in the same ledger. It changes no number today — a shipment's manifest refuses hay,
+so the fodder route arms are `0` on every frame — which is exactly why the basis is fixed now rather
+than the day fodder gains a shipping currency.
+
+Pinned by `grazing_hay_readout::the_fodder_runway_counts_the_hay_that_crossed`,
+`::a_hay_store_a_neighbour_is_filling_publishes_the_no_drain_sentinel`, and
+`::a_route_crossing_is_an_event_and_never_moves_the_runway`, which stages a route figure the shipment
+path cannot yet produce and asserts the runway does not budge.
 
 **⛔ THE SIM SUMS IT, AND A CLIENT MUST NOT.** The standing rule the retired `pen_feed_upkeep` was
 minted under — the client renders, it does not sum — and on this ledger it is load-bearing rather

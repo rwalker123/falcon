@@ -175,6 +175,22 @@ impl YieldVector {
     fn is_finite(&self) -> bool {
         self.provisions_per_biomass.is_finite() && self.fodder_per_biomass.is_finite()
     }
+
+    /// **Is this plant one you would grow for HAY?** — i.e. does a harvest of it pay into the fodder
+    /// account at all.
+    ///
+    /// It exists so the *"committing to this species is a bid for animal feed"* rule has one
+    /// spelling. The wild-fodder gate in `systems::labor` reads it to decide whether a committed
+    /// patch may bank hay for a faction that has not learned Foddering: a commitment to `hay_grass`
+    /// is a bid for hay, a commitment to `wild_emmer` is a bid for grain, and only the first one
+    /// lifts the gate. Testing the rate on the *species* rather than on the tile is the whole point
+    /// — a grain field standing on ground that happens to realize `hay_grass` is still a grain field.
+    ///
+    /// Same `> 0.0` reading of "pays this account" [`Self::pays_something`] uses, kept here so the
+    /// two cannot drift.
+    pub fn bears_fodder(&self) -> bool {
+        self.fodder_per_biomass > 0.0
+    }
 }
 
 /// One species row in the flora table.

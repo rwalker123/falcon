@@ -18,7 +18,7 @@ pub use commands::{
 pub use commands::{
     CancelScope, CommandDecodeError, CommandEncodeError, CommandEnvelope, CommandPayload,
     ConfigOverrideKind, OrdersDirective, ReloadConfigKind, SecurityPolicyKind, TradeCargoItem,
-    FOOD_CARGO_KEY, MAX_PROTO_FRAME,
+    FODDER_CARGO_KEY, FOOD_CARGO_KEY, MAX_PROTO_FRAME,
 };
 
 pub mod command_text;
@@ -451,6 +451,7 @@ pub mod knowledge {
                 fog_enabled: true,
                 elevation_overlay: crate::ElevationOverlayState::default(),
                 climate_bands: crate::ClimateBandsState::default(),
+                temperature_survivability: crate::TemperatureSurvivabilityState::default(),
                 start_marker: None,
                 axis_bias: AxisBiasState::default(),
                 sentiment: SentimentTelemetryState::default(),

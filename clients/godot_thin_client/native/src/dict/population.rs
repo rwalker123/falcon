@@ -263,6 +263,66 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         cohort.transferReceivedTurn() as f64,
     );
     let _ = dict.insert("transfer_sent_turn", cohort.transferSentTurn() as f64);
+    //   THE SAME TWO FACTS SPLIT BY WHAT CARRIED THE GOODS (issue #548), for BOTH larders. The pair
+    //                  above says THAT food crossed and never what moved it, and the two mechanisms
+    //                  are the part a player can act on: `local` is the automatic proximity pooling
+    //                  of a supply network (plus a fission dowry) — bands standing together, nothing
+    //                  travelled — while `route` is an expedition PARTY carrying it. The party is the
+    //                  vehicle whatever its errand, so a hunt's homecoming is `route` and not a third
+    //                  kind. **THE TWO ARE EXHAUSTIVE**: local + route == the pair above in each
+    //                  direction, by construction, so a readout may render both rows and trust that
+    //                  nothing is missing between them.
+    //
+    //                  **ALL EIGHT ARE PER-TURN and there are deliberately no accumulating twins.**
+    //                  The sim copies them onto the cohort just before the turn's capture and never
+    //                  clears them, so the after-every-command recapture republishes them intact —
+    //                  the #517 defect, not to be reintroduced under a finer name. The larder
+    //                  identity stays closed by `transfer_received` / `transfer_sent`, unchanged.
+    //
+    //                  **NETTED NOWHERE HERE.** Four received/sent pairs ship as four pairs; the
+    //                  readout (`DisclosureController._link_transfer_lines` /
+    //                  `fodder_breakdown_lines`) decides to net each kind into one signed row.
+    let _ = dict.insert(
+        "transfer_local_received_turn",
+        cohort.transferLocalReceivedTurn() as f64,
+    );
+    let _ = dict.insert(
+        "transfer_local_sent_turn",
+        cohort.transferLocalSentTurn() as f64,
+    );
+    let _ = dict.insert(
+        "transfer_route_received_turn",
+        cohort.transferRouteReceivedTurn() as f64,
+    );
+    let _ = dict.insert(
+        "transfer_route_sent_turn",
+        cohort.transferRouteSentTurn() as f64,
+    );
+    //                  The hay four, in FODDER units against `fodder_store`. Separate keys rather
+    //                  than a shared set: hay and grain cross the same links on the same turn in
+    //                  different amounts, so an account reading the other's figure would be
+    //                  plausible on every frame. **ONLY THE LOCAL PAIR IS A RATE** — two camps within
+    //                  reach pool every turn, which is why `turns_of_fodder` (and
+    //                  `DetailFormat.band_net_fodder`, which must stay on that same basis) counts the
+    //                  local net in; a shipment lands once, and annualising it is the mistake arc
+    //                  #527 refused. The route arm reads 0 today because a shipment's manifest takes
+    //                  only food and materials — a fact about shipments, not about hay.
+    let _ = dict.insert(
+        "fodder_transfer_local_received_turn",
+        cohort.fodderTransferLocalReceivedTurn() as f64,
+    );
+    let _ = dict.insert(
+        "fodder_transfer_local_sent_turn",
+        cohort.fodderTransferLocalSentTurn() as f64,
+    );
+    let _ = dict.insert(
+        "fodder_transfer_route_received_turn",
+        cohort.fodderTransferRouteReceivedTurn() as f64,
+    );
+    let _ = dict.insert(
+        "fodder_transfer_route_sent_turn",
+        cohort.fodderTransferRouteSentTurn() as f64,
+    );
     // **HOW THIS BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH** — `"spread"` or `"priority"`
     // (`docs/plan_standing_upkeep.md` §2.5), the token `upkeep_mode` takes, decoded so a panel can
     // show the mode the band is on rather than guessing at the default.
@@ -913,15 +973,26 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "expedition_destination_name",
         cohort.expeditionDestinationName().unwrap_or(""),
     );
-    // What the party carries, in the two accounts a band store holds. The materials reuse
+    // What the party carries, in the three accounts a band store holds. The materials reuse
     // `MaterialPayoff`, so this is the `material_yield` / `delivered_material` shape a third time —
     // **NEVER SUMMED** (a total of hide and bone is the retired trade axis under a new name), EMPTY
     // MEANS "no row" rather than zero, and the key is always present. The per-material amount is the
     // total across the batches the party holds; the batches themselves, with their exact readings,
     // ride `material_batches` above.
+    //
+    // `expedition_cargo_fodder` is the HAY beside the bread (issue #590) — read off the wire's
+    // `expeditionCargoFodder`, which is appended at the END of the cohort table rather than beside
+    // its twin, because field order is the append-only contract. Two keys that never convert, so a
+    // herd can never eat its keepers' bread: a client that adds them together has re-minted the
+    // retired trade-goods axis. `0` on every non-shipment cohort, and a real reading rather than an
+    // absent one — a shipment of pure grain says `0` here.
     let _ = dict.insert(
         "expedition_cargo_food",
         f64::from(cohort.expeditionCargoFood()),
+    );
+    let _ = dict.insert(
+        "expedition_cargo_fodder",
+        f64::from(cohort.expeditionCargoFodder()),
     );
     let mut cargo_materials = VarArray::new();
     if let Some(rows) = cohort.expeditionCargoMaterials() {
@@ -933,18 +1004,31 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("expedition_cargo_materials", &cargo_materials);
-    // **THE TWO SHIPMENT-MASS LEVERS, ECHOED ONTO EVERY COHORT** — the same global-lever idiom as
-    // `expedition_per_worker_carry` / `hunt_per_worker_provisions` above, and the pair the OUTFIT UI
+    // **THE THREE SHIPMENT-MASS TERMS, PUBLISHED ONTO EVERY COHORT** — the same every-cohort idiom as
+    // `expedition_per_worker_carry` / `hunt_per_worker_provisions` above, and the set the OUTFIT UI
     // needs: it prices a manifest for a party that does not exist yet, so no per-party field can
     // serve that screen. The sim's own expression, held verbatim client-side:
     //
-    //   mass = Σ food rows + expedition_trade_material_carry_weight × Σ material row amounts
+    //   mass = Σ food rows
+    //          + expedition_trade_fodder_carry_weight × Σ fodder rows
+    //          + expedition_trade_material_carry_weight × Σ material row amounts
     //   cap  = party_workers × expedition_trade_per_worker_carry
+    //
+    // The hay term joined when shipments learned to carry fodder (issue #590); a client that omits
+    // it UNDER-PRICES every manifest with a bale in it and the player finds out on submit, which is
+    // the exact failure the material lever ships to prevent. Its shipped `0.5` is FINITE AND >= 0
+    // rather than positive — `0` legitimately means "hay is weightless".
     //
     // **THE PACK LEVER IS NOT `expedition_per_worker_carry`.** That one is the HUNT pack — a raid's
     // provisions ceiling — and a client composing a trade cap out of it is one config edit away from
     // quoting a cap `send_trade_expedition` refuses. Once a shipment is on the map its own pack is
     // `expedition_carry_cap` above, which resolves per MISSION.
+    //
+    // **AND THE TRADE ONE IS NOT A LEVER AT ALL** (issue #626): `expedition_trade_per_worker_carry`
+    // is the sim's RESOLVED answer to *"what does one worker on this shipment carry"*, so the client's
+    // whole share of the rule is multiplying it by the party — a cart, a wagon or a road grade moves
+    // the published number and no decode or readout here changes. The two cargo weights beside it
+    // stay verbatim lever echoes, being properties of the GOODS rather than of the carrier.
     let _ = dict.insert(
         "expedition_trade_per_worker_carry",
         f64::from(cohort.expeditionTradePerWorkerCarry()),
@@ -952,6 +1036,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert(
         "expedition_trade_material_carry_weight",
         f64::from(cohort.expeditionTradeMaterialCarryWeight()),
+    );
+    let _ = dict.insert(
+        "expedition_trade_fodder_carry_weight",
+        f64::from(cohort.expeditionTradeFodderCarryWeight()),
     );
     // WHICH STOP WILL END THIS PARTY'S RAID — the `core_sim::HuntTripBound` key
     // ("pack_full" | "floor" | "herd_lost" | "horizon"), off the same in-flight

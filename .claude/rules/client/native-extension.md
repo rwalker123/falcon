@@ -570,7 +570,7 @@ term in the same estimate. **The estimate's GEAR terms are not source fields at 
   that omission on this arc — the decoder emitted all seven and the panel would have read none. (The
   kit row travels whole, like a herd dict, so the gear pair is one wiring.)
 
-## The `connections` section, and the eight cohort fields the shipment arc appended
+## The `connections` section, and the cohort fields the shipment arc appended
 
 Arc #527. `dict/connections.rs` → `connections_to_array` is the client's FIRST reader of the contact
 ties (#538 shipped the section with none), and it is a **whole-section replace** — decoded on BOTH
@@ -585,13 +585,15 @@ broke. **`strength == 0` is a PARKED tie, not an absent one**, so the row is pub
 renders it disabled; **`last_seen_{x,y}` is CLOCK 1** — where the subject was, not where they are —
 and a consumer that renders it as a live position claims a sighting the tie never granted.
 
-`dict/population.rs` gained ten cohort keys in the same arc, in four groups:
+`dict/population.rs` gained ten cohort keys in that arc, in four groups, and two more when hay
+became a shipment cargo (issue #590):
 
 | keys | shape |
 |---|---|
 | `expedition_destination_band` / `expedition_destination_name` | the KEY and its DISPLAY TWIN, the `expedition_target_herd` / `expedition_target_species` rule — the name is resolved at launch and carried, because a party outlives its destination's presence in the viewer's world |
 | `expedition_cargo_food` / `expedition_cargo_materials` | the shipment, the materials reusing `MaterialPayoff` — **never summed**, empty means "no row", the key always present |
-| `transfer_received` / `transfer_sent` · `expedition_trade_per_worker_carry` / `expedition_trade_material_carry_weight` | the food-ledger pair, and the two GLOBAL levers echoed onto every cohort so the outfit UI can price a manifest for a party that does not exist yet |
+| `expedition_cargo_fodder` / `expedition_trade_fodder_carry_weight` | the THIRD cargo account and its own pack-space lever (issue #590), appended at the END of the cohort table rather than beside their twins because field order is the append-only contract. Hay and food are two keys that NEVER convert — a decoder or readout that adds them has re-minted the retired trade-goods axis. The lever is FINITE AND >= 0, not positive: `0` legitimately means "hay is weightless" |
+| `transfer_received` / `transfer_sent` · `expedition_trade_per_worker_carry` / `expedition_trade_material_carry_weight` | the food-ledger pair, and the two per-cohort numbers the outfit UI prices a manifest with for a party that does not exist yet. **They are not the same KIND of number** (issue #626): the material weight is a config lever echoed verbatim, because what a unit of hide costs in pack space is a property of the GOODS; the carry is the sim's already-RESOLVED answer to *"what does one worker on this shipment carry"*, so a carrier-side model — a cart kit's stat, a tech factor, a road grade — moves the published number and the client's `cap = party_workers × this` needs no edit |
 | `transfer_received_turn` / `transfer_sent_turn` | the same two facts taken PER TURN, and the pair a readout renders — the accumulating pair above is cleared once the turn's capture reads it, so it is `0` on every command-refreshed frame |
 
 **`expedition_carry_cap` resolves per MISSION, and that is the trap worth naming**: a raid's pack is
@@ -602,7 +604,7 @@ shipment — a client doing so is one config edit from quoting a cap the launch 
 **`expedition_cargo_materials` is a VECTOR field, so it takes the `material_yield` treatment** rather
 than an appended scalar's: saturation reaches it and the golden re-record is the only step, but a
 consumer that coerces it through `float()` fails loudly and at a distance (see the vector-field note
-above). All eleven keys are in the golden — re-record with `cargo xtask decode-guard --write-golden`
+above). All thirteen keys are in the golden — re-record with `cargo xtask decode-guard --write-golden`
 after any intended change here.
 
 **BOTH TRANSFER PAIRS ARE DECODED, AND NEITHER SUBSTITUTES FOR THE OTHER** (issue #517). The
@@ -612,3 +614,18 @@ panel's Food breakdown renders. They are equal on a turn's own frame and differ 
 dispatched command refreshed — which is precisely the frame a panel reading the accumulating pair
 renders nothing on, so a decoder that emitted one of them would look correct in a golden and lose the
 rows in play.
+
+**AND ISSUE #548 SPLIT THE PER-TURN PAIR BY WHAT CARRIED THE GOODS, EIGHT MORE COHORT KEYS**:
+`transfer_local_{received,sent}_turn` / `transfer_route_{received,sent}_turn` and the `fodder_`
+prefixed four, all plain `float`s cast `as f64` beside the pair they refine. `local` is the automatic
+proximity pooling of a supply network (plus a fission dowry); `route` is an expedition PARTY carrying
+it, whatever its errand, which is why a hunt's homecoming is `route` and not a third kind. **The two
+are exhaustive** — local + route equals the generic pair in each direction by construction — so a
+readout may render both rows and trust that nothing is missing between them.
+
+**FOUR PAIRS SHIP AS FOUR PAIRS; THE DECODER NETS NOTHING.** `DisclosureController` nets each kind
+into one signed row, which keeps the gross figures available to any surface that later wants them.
+The fodder four are separate keys rather than a shared set because hay and grain cross the same links
+on the same turn in different amounts. All eight are appended scalars, so the fixture's saturation
+reaches them and a golden re-record is the only step — each takes a distinct value there, which is
+what makes a swapped accessor show as a moved line rather than merely a different one.

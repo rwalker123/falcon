@@ -53,6 +53,7 @@ pub(crate) struct RasterCache {
     pub(crate) elevation: Vec<f32>,
     pub(crate) elevation_sea_level: f32,
     pub(crate) climate_bands: Option<[f32; 3]>,
+    pub(crate) temperature_survivability: Option<[f32; 6]>,
     pub(crate) moisture: Vec<f32>,
     pub(crate) visibility: Vec<f32>,
     pub(crate) fog_enabled: bool,

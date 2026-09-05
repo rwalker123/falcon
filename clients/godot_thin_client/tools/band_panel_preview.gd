@@ -1035,7 +1035,7 @@ func _ready() -> void:
 	# still whole). Driven through the REAL path: `meta_clicked` on the live vitals label, i.e. the
 	# exact signal a click emits and the exact handler it runs — a debug back door could pass here
 	# while the live path was broken.
-	# (a) Food breakdown (Gathered/Hunted/Eaten).
+	# (a) Food breakdown (Gathered/Hunted/Consumed).
 	_push_bands([_band_fixture()])
 	_panel.set_active_tab(&"band")   # the narrow shell shows ONE zone; these frames judge the band one
 	for state in [{"edge": SIDE_LEFT, "name": "band_panel_food_expanded_left"},

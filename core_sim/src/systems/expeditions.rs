@@ -42,7 +42,7 @@ type ExpeditionHomeBands = (
     Option<&'static ResidentBand>,
     // The band's food ledger. A party handing its pack (or a shipment) over crosses two larders
     // through neither income nor consumption, so the crossing is recorded on
-    // `LaborAllocation::last_transfer_received`. `Option`, matching how the sibling ledger terms
+    // `LaborAllocation::last_food_transfers`. `Option`, matching how the sibling ledger terms
     // are read at capture.
     Option<&'static mut LaborAllocation>,
 );
@@ -158,8 +158,10 @@ pub fn advance_band_movement(
 /// - **Provisions** drain by `party × provision_upkeep_per_worker` (scouts only — hunt lives off its
 ///   kills); non-fatal at zero in v1.
 /// - **Both halves of a kill's [`HuntYield`] come home** (#337) — the provisions into the party's
-///   larder, the trade goods onto `Expedition::carried_trade` and into the **home band's** store at
-///   the next drop-off/fold-back. See [`settle_carried_trade`].
+///   larder, the **material batches** into that same `LocalStore` and thence into the **home band's**
+///   store at the next drop-off/fold-back, batch by batch through
+///   [`crate::LocalStore::drain_materials_into`]. The retired `Expedition::carried_trade` /
+///   `settle_carried_trade` pair banked the same haul as a scalar (arc #527).
 /// - **Phase transitions**: `Outbound` + arrived (no `BandTravel`) → `AwaitingOrders` + a one-shot
 ///   arrival feed line; `Returning` → chase the home band's live tile and, once within comm range
 ///   (or the moment that band cannot be resolved at all), fold back through
@@ -641,6 +643,7 @@ pub fn advance_expeditions(
                         // *launch* — deciding to send goods to a people you have no dealings with —
                         // and that decision was made turns ago.
                         let carried_food = expedition.cargo.get(FOOD);
+                        let carried_fodder = expedition.cargo.get(FODDER);
                         let carried_materials = materials_carried(&expedition.cargo);
                         let landed = bands.get_mut(host_entity).ok().map(
                             |(_, mut host, _, _, allocation)| {
@@ -648,32 +651,54 @@ pub fn advance_expeditions(
                                 if moved > scalar_zero() {
                                     host.stores.add(FOOD, moved);
                                 }
+                                // **The hay lands in the host's OWN hay account** — `FODDER` is a
+                                // second key on the same store, so the hand-over is the food
+                                // hand-over verbatim and the two never convert on the way in.
+                                let moved_fodder = expedition.cargo.take(FODDER, carried_fodder);
+                                if moved_fodder > scalar_zero() {
+                                    host.stores.add(FODDER, moved_fodder);
+                                }
                                 // **Batch by batch into the HOST's store** — the shipment's ratings
                                 // are what make it a shipment of goods rather than of a number, so
                                 // two ratings of one material arrive as two batches.
                                 expedition.cargo.drain_materials_into(&mut host.stores);
-                                // The receiving half of the food ledger's transfer pair. The
+                                // The receiving half of the food ledger's transfer terms, on the
+                                // [`TransferLink::Route`] arm — a party carried this here. The
                                 // *sending* half was booked at launch, against the band the party
-                                // was drawn off.
+                                // was drawn off, on the same arm.
+                                //
+                                // **The hay books on its own ledger, never this one**: the food
+                                // identity closes over the FOOD larder, which a bale never enters.
                                 if let Some(mut allocation) = allocation {
-                                    allocation.last_transfer_received += moved.to_f32();
+                                    allocation
+                                        .last_food_transfers
+                                        .credit(TransferLink::Route, moved.to_f32());
+                                    allocation
+                                        .last_fodder_transfers
+                                        .credit(TransferLink::Route, moved_fodder.to_f32());
                                 }
-                                moved
+                                (moved, moved_fodder)
                             },
                         );
-                        if let Some(moved) = landed {
+                        if let Some((moved, moved_fodder)) = landed {
                             event_log.push(CommandEventEntry::new(
                                 current_turn,
                                 CommandEventKind::TradeDelivered,
                                 faction,
                                 format!(
                                     "Trade party delivered {} to {}",
-                                    describe_haul(moved.to_i64_whole(), carried_materials),
+                                    describe_haul(
+                                        moved.to_i64_whole(),
+                                        moved_fodder.to_i64_whole(),
+                                        carried_materials
+                                    ),
                                     mission.destination_display()
                                 ),
                                 Some(format!(
-                                    "status=delivered destination={} materials={:.*} expedition={}",
+                                    "status=delivered destination={} fodder={} materials={:.*} \
+                                     expedition={}",
                                     destination.0,
+                                    moved_fodder.to_i64_whole(),
                                     HAUL_MATERIAL_DECIMALS,
                                     carried_materials,
                                     entity.to_bits()
@@ -736,9 +761,17 @@ pub fn advance_expeditions(
                             fold_party_into_band(&mut cohort, &mut expedition.cargo, &mut home);
                         banked_materials = fold.materials;
                         // The pack and the cargo landing in the band's larder is food crossing from
-                        // a party into a band, which is neither income nor consumption.
+                        // a party into a band, which is neither income nor consumption. A party
+                        // carried it, so the arm is [`TransferLink::Route`] whatever its mission was.
                         if let Some(mut allocation) = allocation {
-                            allocation.last_transfer_received += fold.food.to_f32();
+                            allocation
+                                .last_food_transfers
+                                .credit(TransferLink::Route, fold.food.to_f32());
+                            // The hay on its own ledger, so an undelivered shipment does not leave
+                            // the launch's route debit standing with nothing against it.
+                            allocation
+                                .last_fodder_transfers
+                                .credit(TransferLink::Route, fold.fodder.to_f32());
                         }
                     }
                     event_log.push(expedition_returned_event(
@@ -1083,7 +1116,11 @@ pub fn advance_expeditions(
                                         "Denial raid drove the {} past recovery — returning home \
                                          with {}",
                                         target,
-                                        describe_haul(carried.to_i64_whole(), pelts)
+                                        describe_haul(
+                                            carried.to_i64_whole(),
+                                            HUNT_HAUL_FODDER,
+                                            pelts
+                                        )
                                     ),
                                     "past_recovery",
                                 )
@@ -1091,7 +1128,11 @@ pub fn advance_expeditions(
                                 (
                                     format!(
                                         "Hunting expedition harvested {} — returning home",
-                                        describe_haul(carried.to_i64_whole(), pelts)
+                                        describe_haul(
+                                            carried.to_i64_whole(),
+                                            HUNT_HAUL_FODDER,
+                                            pelts
+                                        )
                                     ),
                                     "harvest_complete",
                                 )
@@ -1180,9 +1221,12 @@ pub fn advance_expeditions(
                         banked_materials = materials_carried(&cohort.stores);
                         cohort.stores.drain_materials_into(&mut home.stores);
                         // A drop-off is food crossing from a party into a band's larder — the same
-                        // ledger term a shipment's arrival takes.
+                        // ledger term, and the same [`TransferLink::Route`] arm, a shipment's arrival
+                        // takes. The link names the VEHICLE, not the errand: a hunt walked this home.
                         if let Some(mut allocation) = allocation {
-                            allocation.last_transfer_received += delivered.to_f32();
+                            allocation
+                                .last_food_transfers
+                                .credit(TransferLink::Route, delivered.to_f32());
                         }
                     }
                     event_log.push(CommandEventEntry::new(
@@ -1191,7 +1235,11 @@ pub fn advance_expeditions(
                         faction,
                         format!(
                             "Hunting expedition dropped off {}",
-                            describe_haul(delivered.to_i64_whole(), banked_materials)
+                            describe_haul(
+                                delivered.to_i64_whole(),
+                                HUNT_HAUL_FODDER,
+                                banked_materials
+                            )
                         ),
                         Some(format!(
                             "status=delivered materials={:.*} expedition={}",
@@ -1224,8 +1272,8 @@ const EXPEDITION_OUTPUT_MULTIPLIER: f32 = 1.0;
 /// **It is never an INTENSITY fact.** A floor-`0` raid used to pass it too, on the premise that
 /// driving a herd extinct makes the meat incidental — which recorded the party as hauling home
 /// *everything it killed*, so its hunt report published `wasted_biomass = 0` for a raid that left a
-/// range full of carcasses and its [`Expedition::carried_trade`] accrued pelts off the whole kill.
-/// **When a party stops engaging and how much it can haul are separate questions**
+/// range full of carcasses and its retired `Expedition::carried_trade` accrued pelts off the whole
+/// kill. **When a party stops engaging and how much it can haul are separate questions**
 /// ([`fauna::EngagementStop`], `docs/plan_denial_raid.md` §1): denial answers the first and leaves
 /// carry alone, and carry is never unbounded for a real party at any floor.
 const NO_CARRY_BOUND: f32 = f32::INFINITY;
@@ -1285,6 +1333,10 @@ fn materials_carried(store: &crate::LocalStore) -> f32 {
 /// is a *separate* store from the pack on the way out (a hungry party must not eat its own
 /// shipment); on the way in, both land in the same band store, which is where the distinction stops
 /// mattering.
+///
+/// ⛔ **THE GUARANTEE COVERS ALL THREE ACCOUNTS — food, FODDER and materials.** A shipment's manifest
+/// takes hay lines, so a homecoming that settled only the first and the third would silently destroy
+/// the bales: every account the load path can fill, this path has to empty.
 pub fn fold_party_into_band(
     party: &mut PopulationCohort,
     cargo: &mut crate::LocalStore,
@@ -1301,12 +1353,19 @@ pub fn fold_party_into_band(
     if undelivered > scalar_zero() {
         home.stores.add(FOOD, undelivered);
     }
+    // And the hay, on the same take-don't-read rule. The party's own pack is deliberately NOT read
+    // for fodder: a pack is a walking larder for people, and only the shipment can hold hay.
+    let undelivered_fodder = cargo.take(FODDER, cargo.get(FODDER));
+    if undelivered_fodder > scalar_zero() {
+        home.stores.add(FODDER, undelivered_fodder);
+    }
     let materials = materials_carried(&party.stores) + materials_carried(cargo);
     party.stores.drain_materials_into(&mut home.stores);
     cargo.drain_materials_into(&mut home.stores);
     home.sync_size();
     FoldBack {
         food: leftover + undelivered,
+        fodder: undelivered_fodder,
         materials,
     }
 }
@@ -1314,12 +1373,16 @@ pub fn fold_party_into_band(
 /// **What a homecoming handed over**, so a caller can both narrate it and book it.
 ///
 /// The material total is the feed line's *"is the pack really empty"* reading; the food is the
-/// **food ledger's** transfer term ([`LaborAllocation::last_transfer_received`]) — a party's pack
+/// **food ledger's** transfer term ([`LaborAllocation::last_food_transfers`]) — a party's pack
 /// landing in a band's larder passes through neither income nor consumption, exactly like a
 /// supply-network move. Returning both from one routine is what stops the prose and the ledger
 /// disagreeing about one arrival.
 pub struct FoldBack {
     pub food: Scalar,
+    /// **The undelivered HAY that came home** — the fodder ledger's route term, on its own field
+    /// rather than summed into [`Self::food`], because the two accounts never convert and the food
+    /// identity closes over the food larder alone.
+    pub fodder: Scalar,
     pub materials: f32,
 }
 
@@ -1369,23 +1432,57 @@ pub fn party_owes_a_report(expedition: &Expedition) -> bool {
     !expedition.pending_reveal.is_empty()
 }
 
-/// A haul as feed-line prose — *"12 provisions"*, *"4.00 materials"*, or *"12 provisions and 4.00
-/// materials"*. **A zero component is omitted, never printed** (the render-only-when-non-zero rule
-/// the whole yield-vector arc runs on): a wolf raid does not report "0 provisions", and a species
-/// nothing is made out of does not report "0 materials". Both zero is not this function's case — the
-/// caller reports an empty pack with its cause instead.
+/// A haul as feed-line prose — *"12 provisions"*, *"4.00 materials"*, *"12 provisions and 4.00
+/// materials"*, or, for a shipment, *"12 provisions, 5 fodder and 4.00 materials"*. **A zero
+/// component is omitted, never printed** (the render-only-when-non-zero rule the whole yield-vector
+/// arc runs on): a wolf raid does not report "0 provisions", and a species nothing is made out of
+/// does not report "0 materials". All three zero is not this function's case — the caller reports an
+/// empty pack with its cause instead.
+///
+/// **Three accounts, three terms, never a total.** A sum of bread, hay and hide would be the retired
+/// trade axis wearing the retired `upkeep_per_biomass` as a hat.
+///
+/// **Hay prints as a WHOLE COUNT, like the provisions beside it and unlike the materials** — the two
+/// commodity accounts are the same kind of thing, drawn from one store and rounded the same way, and
+/// a sentence that gave one of them decimals and not the other would read as a claim about hay that
+/// is not true. The rounding is [`Scalar::to_i64_whole`]'s, so a sub-unit delivery reads `0` exactly
+/// as a sub-unit food delivery always has.
 ///
 /// Materials print to [`HAUL_MATERIAL_DECIMALS`] rather than as a whole count: the batch store is
 /// fixed-point, so a raid can honestly come home with a *fraction* of a hide, and a whole-count
 /// readout would print "0 materials" over a pack that really did bank pelts.
-fn describe_haul(provisions: i64, materials: f32) -> String {
-    let stuff = format!("{materials:.*} materials", HAUL_MATERIAL_DECIMALS);
-    match (provisions > 0, materials > 0.0) {
-        (true, true) => format!("{provisions} provisions and {stuff}"),
-        (false, true) => stuff,
-        _ => format!("{provisions} provisions"),
+fn describe_haul(provisions: i64, fodder: i64, materials: f32) -> String {
+    // The parts a haul actually has, in a fixed order, so two hauls of the same shape read the same
+    // way. A zero account contributes nothing rather than a "0" — the render-only-when-non-zero rule
+    // the whole yield-vector arc runs on.
+    let mut parts: Vec<String> = Vec::new();
+    if provisions > 0 {
+        parts.push(format!("{provisions} provisions"));
+    }
+    if fodder > 0 {
+        parts.push(format!("{fodder} fodder"));
+    }
+    if materials > 0.0 {
+        parts.push(format!("{materials:.*} materials", HAUL_MATERIAL_DECIMALS));
+    }
+    match parts.len() {
+        // Nothing at all is not this function's case; the caller reports an empty pack with its
+        // cause. Reaching here anyway must say something, and "0 provisions" is what it has always
+        // said.
+        0 => format!("{provisions} provisions"),
+        1 => parts.remove(0),
+        _ => {
+            let last = parts.remove(parts.len() - 1);
+            format!("{} and {last}", parts.join(", "))
+        }
     }
 }
+
+/// **A hunting or denial party's pack holds no hay, ever.** Fodder reaches a party's hands only as
+/// trade cargo, which rides `Expedition::cargo` rather than the pack, so the raid feed lines quote
+/// this rather than reading an account that cannot be non-zero. It is a *fact about the mission*,
+/// not a placeholder: a raid that came home with hay would be a bug, not a prose case.
+const HUNT_HAUL_FODDER: i64 = 0;
 
 /// Decimal places a feed line prints a fractional material haul to — enough to show a sub-unit pack
 /// (a wolf raid's ~0.4 hides) without turning the line into a float dump.
@@ -1643,7 +1740,8 @@ pub fn expedition_take_provisions(
 /// which additionally accrues husbandry from the same take), the hunting expedition, and the scout's
 /// opportunistic replenish (`advance_expeditions`, `output_multiplier = 1.0`). **All three credit
 /// both components of the species' [`HuntYield`]** (#337) — they differ only in *when* the trade half
-/// is banked: the band rounds it per turn, a detached party carries it home (`settle_carried_trade`).
+/// is banked: the band rounds it per turn, a detached party carries the batches home in its own
+/// [`LocalStore`] ([`LocalStore::drain_materials_into`]).
 ///
 /// **Returns the [`AnimalTake`] in *biomass*, not provisions** (slice 8): a take is now three numbers
 /// — what was killed, what was carried, what rotted — and only the caller knows what to do with each

@@ -763,14 +763,22 @@ fn a_wild_gathers_published_material_rate_is_what_the_band_banks() {
     );
 }
 
-/// **A WILD patch's fodder credit is gated on Foddering; a COMMITTED one is not.**
+/// **THE FODDER CREDIT IS GATED ON FODDERING UNLESS THE PATCH IS COMMITTED TO A FODDER-BEARING
+/// SPECIES.**
 ///
-/// The invariant reaches fodder too — a wild tile realizing `hay_grass` pays hay on any harvest — but
-/// crediting it to a faction with nowhere to put it hands out animal feed nobody bid for. So the wild
-/// credit reads the same 2007 capability the pen's own draw does, at the **credit site**, while
-/// committing a patch to `hay_grass` *is* the bid and needs no capability at all.
+/// The invariant reaches fodder too — a tile realizing `hay_grass` pays hay on any harvest — but
+/// crediting it to a faction with nowhere to put it hands out animal feed nobody bid for. So the
+/// credit reads the same 2007 capability the pen's own draw does, at the **credit site**, and the
+/// only thing that lifts it without the capability is a commitment that *is* a bid for hay.
+///
+/// ⛔ **A COMMITMENT TO A GRAIN IS NOT A BID FOR HAY**, and this is the case the gate was silently
+/// failing. A `wild_emmer` patch converts at its basket's share-weighted average like any other, so
+/// on hay-bearing ground it pays a real fodder rate; while the gate read `patch.species.is_some()`
+/// that rate was banked for a faction with no pens, no Foddering and nothing that could ever eat it.
+/// The three crops below are swept against both capability states so the rule reads off the table:
+/// **hay_grass ungated, wild_emmer and the wild basket gated.**
 #[test]
-fn wild_fodder_is_gated_on_foddering_and_a_committed_hay_patch_is_not() {
+fn fodder_is_gated_on_foddering_unless_the_patch_is_committed_to_a_fodder_crop() {
     let fodder_credited = |crop: Option<&str>, knows_foddering: bool| -> f32 {
         let mut app = spawn_standard_world();
         let (tile_entity, coord) = a_patch_tile_growing(&mut app, Some("hay_grass"));
@@ -813,6 +821,30 @@ fn wild_fodder_is_gated_on_foddering_and_a_committed_hay_patch_is_not() {
         "and the capability changes nothing on a committed patch: \
          {committed_with} vs {committed_without}"
     );
+
+    // --- the grain, on the same hay-bearing ground ------------------------------------------------
+    let grain_with = fodder_credited(Some("wild_emmer"), true);
+    let grain_without = fodder_credited(Some("wild_emmer"), false);
+    assert!(
+        grain_with > 0.0,
+        "the fixture's liveness half: this grain patch stands on hay-bearing ground and DOES convert \
+         a real fodder rate, so the zero below is the gate refusing it and not an empty basket: \
+         {grain_with}"
+    );
+    assert_eq!(
+        grain_without, 0.0,
+        "committing to a GRAIN is a bid for grain — a faction that has not learned to hay a herd \
+         must not be paid animal feed by its wheat field, however much hay the ground carries"
+    );
+
+    // ⛔ **THE CLAIM IS ABOUT THE SPECIES, NOT THE TILE.** All six cases stand on the same
+    // hay-bearing ground, so the only thing separating the two committed crops without the
+    // capability is *what was committed to* — and they land on opposite sides of the gate.
+    assert!(
+        committed_without > 0.0 && grain_without == 0.0,
+        "one tile, two commitments, opposite verdicts: hay {committed_without} vs grain \
+         {grain_without}"
+    );
 }
 
 /// **THE ROW REPORTS THE CREDIT, GATE AND ALL** (issue #449) — `SourceYield::fodder` is the number
@@ -821,8 +853,11 @@ fn wild_fodder_is_gated_on_foddering_and_a_committed_hay_patch_is_not() {
 /// This is the invariant the readout exists to keep, and the **gate** is what makes it a real test
 /// rather than a restatement: a row that recomputed `tended_take_fodder` would publish a positive
 /// hay rate to a faction that has not learned Foddering and was therefore paid **nothing** — a
-/// compact readout stating income the band never received. Swept over the same four cases the gate
-/// itself is pinned on, so the equality has to hold on both sides of it.
+/// compact readout stating income the band never received. Swept over the same six cases the gate
+/// itself is pinned on — wild, hay and grain, each with and without the capability — so the equality
+/// has to hold on both sides of it. **The grain case is the one that matters most**: it is the
+/// arrangement where the gate refuses a rate the tile really does convert, so a row that recomputed
+/// `tended_take_fodder` would publish a positive hay income to a band that was paid nothing.
 #[test]
 fn the_published_fodder_is_the_fodder_the_band_was_actually_credited() {
     let credited_and_published = |crop: Option<&str>, knows_foddering: bool| -> (f32, f32) {
@@ -847,7 +882,7 @@ fn the_published_fodder_is_the_fodder_the_band_was_actually_credited() {
     };
 
     let mut saw_a_live_credit = false;
-    for crop in [None, Some("hay_grass")] {
+    for crop in [None, Some("hay_grass"), Some("wild_emmer")] {
         for knows_foddering in [false, true] {
             let (credited, published) = credited_and_published(crop, knows_foddering);
             saw_a_live_credit |= credited > 0.0;
@@ -1510,8 +1545,8 @@ fn spawn_forager(
                 stores: LocalStore::new(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
-                last_turn_transfer_received: 0.0,
-                last_turn_transfer_sent: 0.0,
+                last_turn_food_transfers: Default::default(),
+                last_turn_fodder_transfers: Default::default(),
                 last_morale_delta: scalar_zero(),
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),

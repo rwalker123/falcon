@@ -16,7 +16,7 @@
 //!
 //! | item | declares |
 //! |---|---|
-//! | **spears** | `attack` (equipped), plus `dispersion`/`exposure` at their neutral `1.0` — see [`KitChoice::multiplier`] for why declaring the neutral is load-bearing |
+//! | **spears** | `attack` (equipped), plus `dispersion`/`exposure` at their neutral `1.0` — see [`KitChoice::best_declared`] for why declaring the neutral is load-bearing |
 //! | **sled** | `hunt_carry` (unequipped) — a carcass is one lumpy object you *drag* out whole |
 //! | **baskets** | `forage_carry` (unequipped) — berries are loose, divisible, bounded by what you can hold |
 //! | **traps** — the passive device | `attack` bounded by `max_body_mass`, and `dispersion`/`exposure` at `0` — set down and walked away from, so nothing bolts and nobody is hurt |
@@ -891,10 +891,10 @@ impl<'a> LiveItem<'a> {
         self.effect_entry(stat).map(|effect| effect.tier)
     }
 
-    /// **The equipped value this unit declares for a craft stat.** `None` when it says nothing about
-    /// it — *present effects apply, absent ones do not*, the same "only declared values participate"
-    /// clause [`KitChoice::multiplier`] runs on. A speed-only tool therefore leaves the ceiling and
-    /// the efficiency exactly where the bare hand had them.
+    /// **The equipped value this unit declares for a craft stat.** `None` when it says nothing
+    /// about it — *present effects apply, absent ones do not*, the same "only declared values
+    /// participate" clause [`KitChoice::best_declared`] runs on. A speed-only tool therefore leaves
+    /// the ceiling and the efficiency exactly where the bare hand had them.
     pub fn craft_stat(&self, stat: EquipmentStat) -> Option<f32> {
         match self.effect(stat) {
             Some(EffectTier::Equipped(value)) => Some(value),
@@ -1660,7 +1660,7 @@ impl EquipmentConfig {
     }
 
     /// **The same kit holding only the tools that WORKED this build** — what a build's wear is
-    /// charged against ([`crate::systems::labor::charge_build_wear`]).
+    /// charged against (`systems::labor::charge_build_wear`).
     ///
     /// **Wear follows the work actually done**, and a hoe brought to a `Tame` does none: its
     /// `build_work` is filtered out of the offset by [`EquipmentEffect::serves_build`], so charging
@@ -2226,8 +2226,8 @@ impl EquipmentConfig {
             .unwrap_or(baseline)
     }
 
-    /// **How much the quarry's own `wariness` is multiplied by** for a party carrying this kit — see
-    /// [`KitChoice::multiplier`] for why it is the maximum of what the live items declare.
+    /// **How much the quarry's own `wariness` is multiplied by** for a party carrying this kit —
+    /// see [`KitChoice::best_declared`] for why it is the maximum of what the live items declare.
     pub fn dispersion(&self, kit: &KitChoice, wear: &crate::components::BandEquipment) -> f32 {
         kit.best_declared(EquipmentStat::Dispersion, wear, self)
     }
@@ -2290,9 +2290,9 @@ impl EquipmentConfig {
     /// it; refusing to describe the tool would leave the row blank rather than qualified.
     ///
     /// **The branch is read off the EFFECT, never swept for.** It used to fold over
-    /// [`crate::intensification::FOOD_WEB_BRANCHES`], which excludes `route` — so a road tool would
-    /// have been invisible here however loudly it declared itself. `validate` requires a `branch` on
-    /// every `build_work`, so the effect always knows its own answer.
+    /// the since-retired `intensification::FOOD_WEB_BRANCHES`, which excluded `route` — so a road
+    /// tool would have been invisible here however loudly it declared itself. `validate` requires a
+    /// `branch` on every `build_work`, so the effect always knows its own answer.
     ///
     /// `None` for a kit carrying nothing live that helps any build.
     pub fn build_work_declared(
@@ -2342,7 +2342,7 @@ impl EquipmentConfig {
     /// uses the better tool; two do not compound), so the crew this answers for is the one covered
     /// by the items declaring that best value. Each shipped builders kit carries exactly one build
     /// tool, so `min(w, this) × worth` **is** the coverage sum — pinned by
-    /// [`the_saturating_crew_reproduces_the_coverage_sum_at_every_crew_size`]. A kit carrying a
+    /// `the_saturating_crew_reproduces_the_coverage_sum_at_every_crew_size`. A kit carrying a
     /// *second*, weaker build tool **on the same branch** that reached further would take more off
     /// the job than this form credits; that test is what makes the day one ships a decision rather
     /// than a silent drift.

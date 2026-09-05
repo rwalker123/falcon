@@ -40,14 +40,17 @@
 //!   who are clearing instead (`docs/plan_standing_upkeep.md` §2.5). The `cultivate` command only
 //!   **appends the entry** on bands already foraging the tile; it names no crew and claims nothing.
 //! - A completed ("tended") patch pays only the band that **tends it** (a Forage assignment worked it
-//!   this turn — place-local, in `advance_labor_allocation`) a higher-than-wild yield without drawing
-//!   biomass down; `advance_cultivation` takes an **untended** patch **feral** (progress decays back
-//!   below the cultivated threshold, reverting it to a wild gather patch).
+//!   this turn — place-local, in `advance_labor_allocation`) a higher-than-wild yield, **and it is
+//!   drawn down while it pays it** — what the rung buys is a faster curve, not an exemption from the
+//!   gather (`rung_capacity_gain` / `rung_regrowth_gain`); `advance_cultivation` takes an **untended**
+//!   patch **feral** (the ladder position decays back below the tended rung, reverting it to a wild
+//!   gather patch).
 //!
-//! **The Field** (rung 3, slice 5) is the same patch one rung up: `Sow` fills `field_progress`, and a
-//! completed Field pays its workers `biomass × field_provisions_per_biomass` — the tended patch's
-//! shape at twice the rate. It needs no *patch* below it: sowing a qualifying tile that spawned none
-//! *creates* one (`ForagePatch::sown`), at that tile's own biome capacity.
+//! **The Field** (rung 3, slice 5) is the same patch one rung up: `Sow` banks work on the
+//! `plant:field` rung of that same ladder position, and a completed Field is gathered through the
+//! very same drawn-down `forage_take` — the tended patch's shape on a richer curve, never a flat
+//! managed rate. It needs no *patch* below it: sowing a qualifying tile that spawned none *creates*
+//! one (`ForagePatch::sown`), at that tile's own biome capacity.
 //!
 //! **Where it may be sown is SCARCE, and that is the mechanic** — the tile must be a **gathering
 //! site** (the curated `FoodSiteRegistry`) *and* **near fresh water**: rung 3 can move seed but not
@@ -125,10 +128,10 @@ pub const SEED_SELECTION_DISCOVERY_ID: u32 = 2005;
 ///
 /// It became a reachable reading in slice 5: `Sow` places a Field on any ground the `plant:field`
 /// rung's `site_requirement` accepts — module or not — so a patch may now stand on a tile with no
-/// module. Such a patch offers nothing to
-/// **gather** — the only thing to work there is the crop you sowed, whose managed harvest is
-/// biomass-based and seasonless (`field_provisions`). Shared by the Forage labor arm, the assign-time
-/// yield seed and the snapshot forecast, so all three read the same "no season" answer.
+/// module. **A Field reads this weight like every rung beneath it**: §4.10 retired the seasonless
+/// managed harvest (see the `MANAGED_HARVEST_SEASON` gravestone below), so a rung buys a richer
+/// curve, never an exemption from the season. Shared by the Forage labor arm, the assign-time yield
+/// seed and the snapshot forecast, so all three read the same "no season" answer.
 pub const NO_FORAGE_SEASON: f32 = 0.0;
 
 // **RETIRED: `MANAGED_HARVEST_SEASON`** — full weight, always, because a Field's crop stood where
@@ -227,15 +230,14 @@ pub struct ForagePatch {
     /// stalled. **The client cannot compute any of it** (it holds neither the crew's output, nor the
     /// floor multiplier, nor the kit), which is why the sim answers — the `penFeedUpkeep` discipline.
     ///
-    /// Transient per-turn scratch on the same one-turn cycle as [`Self::tended_this_turn`]: written
+    /// Transient per-turn scratch on the same one-turn cycle as [`Self::upkeep_supplied`]: written
     /// in Population, cleared by `advance_cultivation` in the *next* turn's Logistics, so the value
-    /// the Snapshot stage captures is always the turn's own.
-    /// `None` is the wire's [`sim_schema::NO_BUILD_TURNS_ESTIMATE`],
-    /// [`crate::intensification::BuildTurns::Holding`] its [`sim_schema::BUILD_METER_HOLDS`] and
-    /// [`crate::intensification::BuildTurns::Rotting`] its [`sim_schema::BUILD_METER_ROTS`] — three
-    /// negatives, three facts, because *"there is no answer"*, *"the meter is standing still"* and
-    /// *"the meter is going backwards"* are not the same thing to a player who has already
-    /// committed a crew.
+    /// the Snapshot stage captures is always the turn's own. `None` is the wire's
+    /// [`sim_schema::NO_BUILD_TURNS_ESTIMATE`], [`crate::intensification::BuildTurns::Holding`] its
+    /// [`sim_schema::BUILD_METER_HOLDS`] and [`crate::intensification::BuildTurns::Rotting`] its
+    /// [`sim_schema::BUILD_METER_ROTS`] — three negatives, three facts, because *"there is no
+    /// answer"*, *"the meter is standing still"* and *"the meter is going backwards"* are not the
+    /// same thing to a player who has already committed a crew.
     pub build_turns_remaining: Option<crate::intensification::BuildTurns>,
     /// **What the crew's TOOLS ADD to this patch's running build, per turn**, in work units —
     /// [`crate::intensification::gear_work_supply`] over the pool, published as
@@ -689,9 +691,11 @@ impl ForagePatch {
         self.standing.held.is_at_or_above(RungKey::PlantTended)
     }
 
-    /// A fully-sown **Field** (the plant ladder's rung 3): pays the band that works it a *higher*
-    /// managed yield than a tended patch (`field_provisions`) and, like a tended patch, is not
-    /// gather-drawn. The plant mirror of `Herd::is_corralled`.
+    /// A fully-sown **Field** (the plant ladder's rung 3): pays the band that works it more than a
+    /// tended patch does, and — like every rung beneath it — **is gather-drawn while it pays it**.
+    /// What rung 3 buys is a richer curve (`rung_capacity_gain`, `rung_regrowth_gain`) and its own
+    /// conversion (`cultivation.field_conversion_gain`), never an exemption from the draw: §4.10
+    /// retired the flat managed harvest that made it one. The plant mirror of `Herd::is_corralled`.
     pub fn is_field(&self) -> bool {
         self.standing.held == RungKey::PlantField
     }
@@ -707,9 +711,10 @@ impl ForagePatch {
 
     /// Is this patch a **completed improvement** — a Field or a tended patch? The single predicate
     /// for "this source is worked, not gathered": its harvest is biomass-based and never overdraws
-    /// (`sustainable == actual`, no ⚠) and one worker suffices
-    /// ([`crate::fauna::TENDED_SOURCE_WORKERS_NEEDED`]). Both the payout path and the forecast branch
-    /// on it, so the two cannot disagree about which patches are managed.
+    /// (`sustainable == actual`, no ⚠), and its crew is sized off its real throughput like every
+    /// other rung's — the retired `fauna::TENDED_SOURCE_WORKERS_NEEDED = 1` claimed one worker
+    /// could carry home whatever the land offered. Both the payout path and the forecast branch on
+    /// it, so the two cannot disagree about which patches are managed.
     pub fn is_managed(&self) -> bool {
         self.is_cultivated()
     }
@@ -1128,7 +1133,7 @@ impl ForageRegistry {
 }
 
 /// **Is this tile on or beside FRESH water?** — the water half of a rung's
-/// [`RungSiteRequirement`], and the reason rung 3 lands in river valleys.
+/// [`crate::intensification::RungSiteRequirement`], and the reason rung 3 lands in river valleys.
 ///
 /// Three ways to be watered, all read off **existing** hydrology seams (`hydrology.rs` — this
 /// invents no adjacency concept of its own):
@@ -1176,10 +1181,11 @@ pub fn tile_is_fresh_watered(
 }
 
 /// **Does `rung`'s site requirement admit this tile?** — the one place the three readings a
-/// [`RungSiteRequirement`] judges (whether the tile is a gathering site, its own forage capacity, and
-/// whether it is fresh-watered) are gathered, so every gate on the plant branch — the `assign_labor`
-/// Forage arm, `cultivate`, `sow`, and the wire's own refusal — resolves the *same* rule and they
-/// cannot drift into disagreeing about which ground may be worked.
+/// [`crate::intensification::RungSiteRequirement`] judges (whether the tile is a gathering site,
+/// its own forage capacity, and whether it is fresh-watered) are gathered, so every gate on the
+/// plant branch — the `assign_labor` Forage arm, `cultivate`, `sow`, and the wire's own refusal —
+/// resolves the *same* rule and they cannot drift into disagreeing about which ground may be
+/// worked.
 ///
 /// `gathering_site` is the caller's `FoodSiteRegistry::is_site` reading; it is passed IN rather than
 /// looked up here so this stays a pure function of the rung and the ground, like the other two.
@@ -1396,11 +1402,12 @@ pub fn composition_for_rung<'a>(
 ///
 /// # ⛔ IT IS A RATIO AGAINST A REFERENCE, NOT A PENALTY
 ///
-/// [`CultivationConfig::field_reference_crop_share`] is the reference basket's own **weeded** share,
-/// so the shipped `plant:field` price is what a Sow costs on ordinary sowable ground and moving the
-/// anchor retunes the whole curve without touching the rung. A bare penalty would make the ladder's
-/// declared 75 units the *cheapest* case and inflate the entire plant branch; a bare discount would
-/// deflate it. Exactly `capacity_per_tender`'s argument, one account over.
+/// [`crate::labor_config::CultivationConfig::field_reference_crop_share`] is the reference basket's
+/// own **weeded** share, so the shipped `plant:field` price is what a Sow costs on ordinary sowable
+/// ground and moving the anchor retunes the whole curve without touching the rung. A bare penalty
+/// would make the ladder's declared 75 units the *cheapest* case and inflate the entire plant
+/// branch; a bare discount would deflate it. Exactly `capacity_per_tender`'s argument, one account
+/// over.
 ///
 /// **Both clamps are load-bearing.** Without the floor, ground already wholly the crop is *free* to
 /// sow — and you still lay the rows, still put the seed in, and still collect the Field's capacity
@@ -1690,8 +1697,8 @@ fn planted(composition: &[FloraShare], favored: &str, flora: &FloraConfig) -> Ve
 }
 
 /// **The multiplier the FAVORED species' yield vector carries on `rung`** —
-/// `cultivation.tended_conversion_gain` at rung 2, the identity at every other rung (a Field converts
-/// at its own dial, `field_provisions_per_biomass`; a wild stand at nobody's).
+/// `cultivation.tended_conversion_gain` at rung 2, `cultivation.field_conversion_gain` at rung 3, and
+/// the identity everywhere else (a wild stand converts at nobody's gain).
 ///
 /// **It applies to the favored term ONLY, and that is the whole point.** Tending is knowing *your*
 /// crop; a blanket multiplier on the entire basket would make every commitment pay ~`gain` whatever
@@ -1978,9 +1985,10 @@ pub struct SpeciesRate {
     pub materials: Option<Vec<MaterialPayoff>>,
 }
 
-/// One plant's material rows, merged by id and ordered by it — [`material_yield_totals`]'s merge at
-/// the **per-biomass** basis rather than over a take, so the result is a *rate* a sheet can compose
-/// against any biomass it likes. Split out so the seam above states one thing per line.
+/// One plant's material rows, merged by id and ordered by it —
+/// [`crate::materials_config::material_yield_totals`]'s merge at the **per-biomass** basis rather
+/// than over a take, so the result is a *rate* a sheet can compose against any biomass it likes.
+/// Split out so the seam above states one thing per line.
 fn material_rates_of(
     rows: &[crate::materials_config::MaterialYieldDef],
     gain: f32,
@@ -2101,10 +2109,13 @@ pub fn patch_provisions_per_biomass_taking(
     })
 }
 
-/// The conversion rate this patch's crop would reach **on `rung`** — [`patch_provisions_per_biomass`]
-/// asked about a rung the patch may not stand on yet (or may already have passed). Used by the two
-/// managed-rung payoff quotes, each naming *its own* rung: [`tended_provisions`] asks
-/// `PlantTended`, [`field_provisions`] (through [`patch_species_quality`]) asks `PlantField`.
+/// The conversion rate this patch's crop would reach **on `rung`** —
+/// [`patch_provisions_per_biomass`] asked about a rung the patch may not stand on yet (or may
+/// already have passed). Its two callers each name a rung: [`tended_provisions`] asks
+/// `PlantTended` for the wire's `tendedYield`, and [`rung_payoff`] asks whichever rung *its* caller
+/// named — which is how `PlantField` gets asked, for the wire's `fieldYield`
+/// (`snapshot::subsistence`). No helper of its own stands between them and this one; the retired
+/// `patch_species_quality` was the last that did (see the managed-harvest gravestone below).
 fn rung_provisions_per_biomass(
     patch: &ForagePatch,
     tile_composition: &[FloraShare],
@@ -2123,40 +2134,6 @@ fn rung_provisions_per_biomass(
         forage.provisions_per_biomass,
     )
 }
-
-/// **The FIELD basket's conversion rate RELATIVE to the wild baseline** — dimensionless, `1.0` =
-/// exactly baseline. Rung 3's managed rate is a *rate on the standing crop*, so it scales by this
-/// rather than by the absolute rate: `field_payoff = biomass × field_provisions_per_biomass ×
-/// species_quality`.
-///
-/// **It reads `PlantField` whatever rung the patch stands on**, which is the whole point: a Field's
-/// basket is its crop plus only whatever working the ground could not clear
-/// ([`stands_outside_worked_ground`]), and it takes no rung-2 conversion gain — so on ordinary
-/// inland ground this is exactly `crop rate ÷ wild rate`, the number a Field would really pay, even
-/// when the patch it is asked about is currently tended. Beside a fishery it is the sown basket's
-/// own average, which is likewise what that Field would pay. `fieldYield` is published for every
-/// patch, so anything else is a quote that disagrees with the payout (see
-/// [`composition_for_rung`]).
-///
-/// **Derived, never a second config field.** A `field_provisions_multiplier` per species would be a
-/// redundant lever that could drift from the conversion rate it is supposed to express.
-pub fn patch_species_quality(
-    patch: &ForagePatch,
-    tile_composition: &[FloraShare],
-    flora: &FloraConfig,
-    forage: &ForageLaborConfig,
-) -> f32 {
-    if forage.provisions_per_biomass <= 0.0 {
-        return WILD_SPECIES_QUALITY; // `validate()` pins the wild rate positive; never divide by 0.
-    }
-    rung_provisions_per_biomass(patch, tile_composition, flora, forage, RungKey::PlantField)
-        / forage.provisions_per_biomass
-}
-
-/// **The species-quality of a basket that converts exactly at the wild baseline** — the dimensionless
-/// `1.0` [`patch_species_quality`] falls back to. Named because "1.0" at a call site says nothing
-/// about which baseline it is one *of*.
-const WILD_SPECIES_QUALITY: f32 = 1.0;
 
 /// **The wire quote `0` uses for "this plant cannot climb this rung".** Distinct from a real ratio of
 /// `0`, which cannot occur: a species that appears in a tile's basket has `share > 0`, and
@@ -2334,14 +2311,16 @@ pub fn resolve_take_selection<'a>(
 ///   `r`-independent and so cannot compare two rungs at all — `r` is exactly what a rung buys;
 /// - **tended** — [`tended_provisions`], the rung-2 payoff quote (the wire's `tendedYield`), which
 ///   rides `tended_ecology` and therefore **carries `cultivation.tended_regrowth_gain`**;
-/// - **field** — [`field_provisions`], the rung-3 managed rate the labor arm actually pays.
+/// - **field** — the same MSY skim on the rung-3 curve. The retired `field_provisions` paid a flat
+///   managed rate there instead; **no rung changes the DRAW** now, so rung 3 is the same shape as the
+///   two beneath it.
 ///
-/// That third bullet is the whole reason this exists. The two drawn-down rungs are compared as MSY
-/// (`r · K / 4`), where `r` **does not cancel** between wild and tended — tending changes `r`, that is
-/// its payoff — so any comparison built on capacity alone silently drops the regrowth gain and
-/// understates rung 2 by exactly it. Rung 3 is not an MSY at all but a flat rate on the standing
-/// crop, so it is not even the same *shape* of number. One function, three arms, so a quote can never
-/// be assembled out of the wrong shape again.
+/// That third bullet is the whole reason this exists. The rungs are compared as MSY (`r · K / 4`),
+/// where `r` **does not cancel** between wild and tended — tending changes `r`, that is its payoff
+/// — so any comparison built on capacity alone silently drops the regrowth gain and understates
+/// rung 2 by exactly it. Rung 3 used to be a flat rate on the standing crop and not even the same
+/// *shape* of number. One function, one shape at every rung, so a quote can never be assembled out
+/// of the wrong shape again.
 ///
 /// `tile_composition` is the **tile's** realized basket — the rung derives the patch's effective one
 /// from it ([`patch_composition`]), so a quote and the payout it quotes read the same reweight.
@@ -2379,18 +2358,21 @@ pub fn rung_payoff(
 /// [`commit_yield_ratio`] and the reason both sides of that ratio come out of one construction rather
 /// than two.
 ///
-/// **The standing crop is per-rung, and that is load-bearing.** Each rung is quoted where a *running*
-/// patch on it actually stands: the drawn-down rungs at their MSY operating point (Sustain settles a
-/// patch at `K/2`), and a Field at its capacity, because a Field is never drawn down and regrows to
-/// it. For a rung already built, that is the number the shipped `tendedYield`/`fieldYield` read too.
-/// **Whose ground the per-species quote imagines** — nobody's in particular. A committed meter needs
+/// **The standing crop is where a running patch actually stands, and that is load-bearing.** Every
+/// rung is drawn down, so every one of them is quoted at the same MSY operating point a food-peak
+/// skim settles a patch at (`fauna::MSY_BIOMASS_FRACTION`, `K/2`) — a Field included, since §4.10
+/// retired the never-drawn-down managed harvest that had it quoted at its whole standing crop (see
+/// the `settled_biomass_fraction` / `FULL_STANDING_CROP` gravestone below). What rung 3 buys is the
+/// capacity that point is a fraction *of*. For a rung already built, that is the number the shipped
+/// `tendedYield`/`fieldYield` read too.
+///
 /// # ⛔ IT CARRIES NO METER AT ALL, AND THAT IS THE ONE-POSITION LADDER PAYING OUT
 ///
 /// It used to fabricate the completed rung (`complete_field` / `complete_cultivation`) so that the
 /// rate seams' `is_field()` / `is_cultivated()` reads would land on the right one. **Every seam this
-/// construction reaches is rung-**parameterised** now** — `rung_payoff` dispatches on the `rung`
-/// argument, `tended_provisions` / `field_provisions` name their own rung, and
-/// `rung_material_payoff` asks `rung_material_yields` — so the hypothetical's own standing is read
+/// construction reaches is rung-**parameterised** now** — [`rung_payoff`] dispatches on the `rung`
+/// argument (it is the one seam both the shipped `tendedYield` and `fieldYield` come off), and
+/// `rung_material_payoff` asks [`rung_material_yields`] — so the hypothetical's own standing is read
 /// by nothing, and stamping a position on a quote nobody paid for would be inventing one.
 ///
 /// **This is also what keeps the ladder out of the quote path.** The position→standing pair may only
@@ -2486,11 +2468,11 @@ pub fn commit_fodder_payoff(
     rung_fodder_payoff(&patch, composition, forage, flora, output_multiplier, rung)
 }
 
-/// **What a patch pays in FODDER, standing on `rung`** — the fodder arm of [`rung_payoff`], dispatching
-/// to the *same* helpers the sim pays each rung with: [`field_fodder`] at rung 3 (a managed rate on the
-/// standing crop) and [`tended_fodder`] at rung 2 (the MSY skim, because rung 2 is drawn down). Rung 1
-/// pays no *committed* fodder quote — a wild gather's hay is not a commitment's payoff — so it is `0`,
-/// the same "cannot climb this rung" sentinel the ratios use.
+/// **What a patch pays in FODDER, standing on `rung`** — the fodder arm of [`rung_payoff`],
+/// dispatching to the *same* helper the sim pays each rung with — [`rung_msy_take`] on that rung's
+/// own curve, converted at [`rung_fodder_per_biomass`], because **every** rung is drawn down. Rung
+/// 1 pays no *committed* fodder quote — a wild gather's hay is not a commitment's payoff — so it is
+/// `0`, the same "cannot climb this rung" sentinel the ratios use.
 pub fn rung_fodder_payoff(
     patch: &ForagePatch,
     tile_composition: &[FloraShare],
@@ -2522,10 +2504,10 @@ pub fn rung_fodder_payoff(
 /// retired axis under a new name.
 ///
 /// Built through the *same* `hypothetical_patch` construction and the *same* per-rung harvest
-/// expressions the sim pays with — [`field_harvest_production`] at rung 3, [`rung_msy_take`] at
-/// rung 2 — so the published number and the payout cannot drift (the §4.3 "assert the quote against
-/// the payoff function" rule). **Empty** for a plant that pays no material or cannot climb `rung`
-/// here, which a client must render as *no row*, never as a zero.
+/// expression the sim pays with — [`rung_msy_take`] on that rung's own curve, rung 3 included,
+/// since every rung is drawn down — so the published number and the payout cannot drift (the §4.3
+/// "assert the quote against the payoff function" rule). **Empty** for a plant that pays no
+/// material or cannot climb `rung` here, which a client must render as *no row*, never as a zero.
 ///
 /// **Rows are merged per material id, in id order.** A mixed rung-2 basket can name one material
 /// twice (cotton fibre beside hay straw), and those land in *different* batches in the store because
@@ -2550,10 +2532,10 @@ pub fn commit_material_payoff(
 }
 
 /// **What a patch pays in MATERIALS, standing on `rung`** — the material arm of [`rung_payoff`],
-/// dispatching to the *same* harvest each rung is paid on: [`field_harvest_production`] at rung 3 (a
-/// managed rate on the standing crop) and [`rung_msy_take`] at rung 2 (the MSY skim, because rung
-/// 2 is drawn down). Rung 1 pays no *committed* quote — a wild gather's fibre is not a commitment's
-/// payoff — so it is empty, the same "cannot climb this rung" sentinel the ratios use.
+/// dispatching to the *same* harvest each rung is paid on: [`rung_msy_take`] on that rung's own
+/// curve, rung 3 included, since every rung is drawn down. Rung 1 pays no *committed* quote — a
+/// wild gather's fibre is not a commitment's payoff — so it is empty, the same "cannot climb this
+/// rung" sentinel the ratios use.
 fn rung_material_payoff(
     patch: &ForagePatch,
     tile_composition: &[FloraShare],
@@ -2791,11 +2773,12 @@ pub fn advance_forage_regrowth(
 /// demand and remaining grace. Deriving the at-risk rung twice is how the wire comes to count down a
 /// grace on a rung the sim is not touching.
 ///
-/// **It is [`patch_keeping_meter`] asked with no verb in flight** ([`NOTHING_IN_FLIGHT`]), rather
-/// than a second copy of the same two comparisons. Every caller here is outside the labor arm and
-/// genuinely cannot see the band's queue, so the progress-only reading is the honest one — and
-/// stating it as *"the keeping meter, absent a verb"* is what stops the two spellings drifting the
-/// way they did while the eligibility gate carried one of them by hand.
+/// **It asks the two meter comparisons with no verb in flight**
+/// ([`crate::intensification::NOTHING_IN_FLIGHT`]) — the reading the retired `patch_keeping_meter`
+/// gave for that case — rather than a second copy of them. Every caller here is outside the labor
+/// arm and genuinely cannot see the band's queue, so the progress-only reading is the honest one —
+/// and stating it as *"the keeping meter, absent a verb"* is what stops the two spellings drifting
+/// the way they did while the eligibility gate carried one of them by hand.
 pub fn patch_unwinding_rung<'a>(
     patch: &ForagePatch,
     ladder: &'a LadderConfig,
@@ -3017,7 +3000,7 @@ pub fn patch_at_risk_cost(patch: &ForagePatch) -> f32 {
 /// retired fullness test is what made a half-built meter unholdable and a dipped rung the builders'
 /// business again; `patch_is_maintaining`'s gravestone above carries both autopsies.
 ///
-/// `keeping_share` is this source's slice of that pool ([`crate::systems::maintenance_shares`]) — a
+/// `keeping_share` is this source's slice of that pool (`systems::labor::maintenance_shares`) — a
 /// work amount, not a crew, because a pool does not divide into whole people.
 ///
 /// [`NO_UPKEEP_DEMAND`] where there is no work on the ladder and none being started: nothing is
@@ -3668,7 +3651,7 @@ pub fn forage_provisions(
 }
 
 /// **What a patch would pay its gatherers as a TENDED patch**, in provisions — its Sustain (MSY)
-/// ceiling on the *tended* curve ([`tended_ecology`]), clamped to the standing crop.
+/// ceiling on the *tended* curve ([`rung_ecology`] at `PlantTended`), clamped to the standing crop.
 ///
 /// This is the plant ladder's **rung-2 payoff quote**, and slice 7 retargeted what it means. It used
 /// to be `biomass × tended_provisions_per_biomass` — a *managed rate*, paid whatever the policy, never
@@ -3700,16 +3683,18 @@ pub(crate) fn tended_provisions(
     )
 }
 
-/// **THE take a rung-2 quote is priced on** — the Sustain (MSY) skim on the *tended* curve, clamped to
-/// the standing crop. Stated once because rung 2 pays **three** accounts off one take
-/// ([`tended_provisions`], [`tended_fodder`], [`tended_trade_goods`]), and a second copy of this
-/// expression is exactly how the food quote and the trade quote would start describing different
-/// harvests — the `patch_ecology` lesson, applied to the take instead of the curve.
+/// **THE take a rung-2 quote is priced on** — the Sustain (MSY) skim on the *tended* curve, clamped
+/// to the standing crop. Stated once because rung 2 pays **three** accounts off one take
+/// ([`tended_provisions`], [`tended_fodder`], and the material rows [`rung_material_payoff`]
+/// prices), and a second copy of this expression is exactly how the food quote and the trade quote
+/// would start describing different harvests — the `patch_ecology` lesson, applied to the take
+/// instead of the curve.
 ///
 /// It is the **quote's** take, not a policy's: worker-unconstrained and policy-blind, the same
 /// convention `tendedYield` has always been published under. What the sim actually credits rides
 /// `forage_take`'s policy ceiling and worker cap ([`tended_take_fodder`] /
-/// [`tended_take_trade_goods`]), and under `Sustain` the two coincide.
+/// and the material rows [`crate::materials_config::credit_material_yield`] deposits off the same
+/// take), and at the food-peak floor the two coincide.
 fn rung_msy_take(patch: &ForagePatch, forage: &ForageLaborConfig, rung: RungKey) -> f32 {
     // **THE GROUND AS `rung` WOULD HAVE IT** — the patch's own capacity re-based onto the asked-about
     // rung's, and its standing crop with it. `fieldYield` is published for **every** patch including
@@ -3727,10 +3712,11 @@ fn rung_msy_take(patch: &ForagePatch, forage: &ForageLaborConfig, rung: RungKey)
 }
 
 /// **What a patch would pay in FODDER as a TENDED patch** — the rung-2 quote twin of
-/// [`tended_provisions`], routing the yield vector's fodder component instead of its provisions one.
-/// The hay counterpart of [`field_fodder`] one rung down, and the number the crop picker's Cultivate
-/// rung needs: before this, the picker had only `sowFodderPayoff` and therefore quoted a *sown Field's*
-/// hay on the Cultivate row.
+/// [`tended_provisions`], routing the yield vector's fodder component instead of its provisions
+/// one. The hay counterpart, one rung down, of what [`rung_fodder_payoff`] answers at `PlantField`
+/// (the retired `field_fodder`), and the number the crop picker's Cultivate rung needs: before
+/// this, the picker had only `sowFodderPayoff` and therefore quoted a *sown Field's* hay on the
+/// Cultivate row.
 ///
 /// **Priced on [`rung_msy_take`], the same take the food quote uses**, and converted through the
 /// same [`rung_rate`] seam at `PlantTended` — so the three accounts of one rung-2 harvest are one
@@ -3895,8 +3881,9 @@ pub fn patch_destination_capacity(
 
 // **RETIRED: the whole rung-3 MANAGED HARVEST** — `field_provisions`, `field_fodder`,
 // `field_harvest_production`, `field_harvest_biomass`, `field_fodder_per_biomass`,
-// `patch_species_quality`, `managed_per_worker_yield`, `managed_per_worker_fodder`, and the
-// `cultivation.field_provisions_per_biomass` dial they all read.
+// `patch_species_quality`, `WILD_SPECIES_QUALITY`, `managed_per_worker_yield`,
+// `managed_per_worker_fodder`, and the `cultivation.field_provisions_per_biomass` dial they all
+// read.
 //
 // **A FIELD CHANGED HOW YOU HARVEST, WHEN ITS JOB IS TO CHANGE HOW MUCH THE TILE GROWS.** It paid a
 // flat `biomass × rate` on a standing crop that was never drawn down — no escapement floor, no
@@ -3916,9 +3903,21 @@ pub fn patch_destination_capacity(
 // the ⚠ firing on it — and what rung 3 buys is [`rung_capacity_gain`] and [`rung_regrowth_gain`].
 // **The animal web has had that shape all along**; plants were the odd web out.
 //
-// `patch_species_quality` went with them because it existed only to normalize a *rate dial* against
-// the wild baseline; with no rate dial there is nothing to normalize, and the crop's own conversion
-// already rides `rung_rate` in every account.
+// **`patch_species_quality` outlived them by one arc, and is now deleted too.** It existed to
+// normalize the retired *rate dial* against the wild baseline — `field_provisions` was literally
+// `biomass × field_provisions_per_biomass × patch_species_quality × output_multiplier` — so with
+// that dial gone it had no term left to scale. It was kept on as a dimensionless `PlantField ÷
+// wild` ratio and acquired no reader in that form: the wire's `fieldYield` it claimed to feed
+// comes off [`rung_payoff`] at `PlantField` (`snapshot::subsistence`), which prices the Field's
+// basket through [`rung_rate`] in the crop's own **absolute** units and never normalizes at all.
+// A published-looking helper that nothing publishes is the shape a wrong quote grows back out of,
+// so it went rather than waiting for a caller.
+//
+// **What went with it: the only division by a conversion rate on the plant food path.** Every
+// account is now `Σ shareᵢ × rateᵢ × gain` ([`basket_rate`]) multiplied into a take
+// ([`forage_provisions`]), so a species rate is a factor and never a denominator — which is what
+// makes a cash crop's `provisions_per_biomass: 0.0` an exact zero rather than a `0/0` (see the
+// `_comment` on cotton in `flora_config.json`).
 
 // **RETIRED: `field_trade_per_biomass` / `field_trade_goods` / `managed_per_worker_trade`**
 // (arc #527). A sown cash Field's product is its **materials** — cotton fibre, tobacco leaf — banked
@@ -4017,14 +4016,14 @@ fn rung_fodder_per_biomass(
 /// with **no `role` branch** — a harvest of `B` biomass pays `B × yield.*` into all three accounts
 /// (`docs/plan_flora_roster.md` §3), at every rung, not only at rung 3.
 ///
-/// **Driven by the TAKE, not by a managed rate — the deliberate difference from [`field_fodder`].**
-/// A Field is never drawn down, so its harvest collapses the policy axis and is quoted as a rate on
-/// the standing crop. A tended patch *is* drawn down by the ordinary gather, so its non-food accounts
-/// must ride the same take the food account does: `Deplete` on a tended hay patch earns more fodder
-/// than `Sustain` because it takes more, and over-farming it shows up in the ⚠ exactly as it does for
-/// food. **The take is already worker-capped** by `forage_take`'s `workers × per_worker_biomass`
-/// term, so there is deliberately no second collection cap here — the crop the crew carries home is
-/// the take it made.
+/// **Driven by the TAKE, not by a managed rate — the deliberate difference from the retired
+/// `field_fodder`.** A Field used to be exempt from the drawdown, so its harvest collapsed the
+/// policy axis and was quoted as a rate on the standing crop. A tended patch *is* drawn down by the
+/// ordinary gather, so its non-food accounts must ride the same take the food account does:
+/// `Deplete` on a tended hay patch earns more fodder than `Sustain` because it takes more, and
+/// over-farming it shows up in the ⚠ exactly as it does for food. **The take is already
+/// worker-capped** by `forage_take`'s `workers × per_worker_biomass` term, so there is deliberately
+/// no second collection cap here — the crop the crew carries home is the take it made.
 ///
 /// **`take` narrows it with the food account** — the crop the crew carries home decides both, so a
 /// crew that named the grain alone banks no hay off a mixed stand.
@@ -4097,7 +4096,8 @@ fn plant_food_only(provisions: f32) -> YieldAccounts {
 /// **Two shapes, one per rung-kind** (slice 7 — this is where the plant ladder stopped collapsing a
 /// rung early):
 /// - A **Field** (rung 3) is *yours*: it pays a managed rate whatever the policy, so it forecasts
-///   through [`SourceYieldForecast::managed`] — every ceiling is that rate, and `per_worker_yield` is
+///   through [`SourceYieldForecast::managed_production`] — every ceiling is that rate, and
+///   `per_worker_yield` is
 ///   the crew's real throughput, so `max_useful_workers` falls out as the honest
 ///   `ceil(production / per_worker)` rather than a hardcoded 1.
 /// - A **wild or tended** patch (rungs 1–2) is a wild stand either way, so it takes the full
@@ -4182,9 +4182,9 @@ pub(crate) fn forage_forecast(
         managed_production: None,
         // **Cultivate's "then Y"** — what this patch will pay once tended, on the tended curve. On a
         // patch that is *already* tended this is simply its own `ceiling_sustain`, which is the truth:
-        // the rung is built, and the number is what it pays. (Sow's "then Y" is `field_provisions`,
-        // exported beside this one as the wire's `fieldYield` — two rungs, two payoff quotes, never
-        // one field doing both jobs.)
+        // the rung is built, and the number is what it pays. (Sow's "then Y" is the same
+        // `rung_payoff` asked about `plant:field`, exported beside this one as the wire's
+        // `fieldYield` — two rungs, two payoff quotes, never one field doing both jobs.)
         managed_yield: plant_food_only(tended_provisions(
             patch,
             tile_composition,
@@ -4212,7 +4212,7 @@ pub(crate) fn forage_forecast(
 /// this a patch is treated as *spent* — stripped to nothing — so the loop stops and the average
 /// divides only by the turns that actually delivered.
 ///
-/// **Provisions-space, which is why it is not [`crate::fauna::REALIZED_PROJECTION_TAKE_EPSILON`]**:
+/// **Provisions-space, which is why it is not `fauna::REALIZED_PROJECTION_TAKE_EPSILON`**:
 /// the animal twin breaks on a *biomass* take, while this side is already converted (`forage_take`
 /// pays in provisions), so the two thresholds justify their magnitudes on different scales and each
 /// gets its own constant rather than sharing one whose doc only covers biomass.
@@ -5542,7 +5542,7 @@ mod tests {
     /// That rule is `flora.md`'s own (*"assert a published quote against the payoff functions, never
     /// against a re-derivation of their arithmetic"*), and it is why the two endpoints are read back
     /// out of `patch_provisions_per_biomass` at completed rungs instead of being composed from
-    /// `tended_conversion_gain` and `field_provisions_per_biomass` by hand: a retune moves all three
+    /// `tended_conversion_gain` and `field_conversion_gain` by hand: a retune moves all three
     /// readings together and the test goes on describing the model.
     #[test]
     fn a_field_part_way_up_pays_the_tended_patch_in_full_plus_its_share_of_the_step() {

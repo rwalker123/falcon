@@ -31,10 +31,10 @@ use sim_runtime::{
     RouteState, ScalarRasterState, SedentarizationState as SchemaSedentarizationState,
     SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, SourcePriorityState, StanceAxisState, StanceState,
-    StartMarkerState, TerrainOverlayState, TerrainSample, TileState, VictoryModeSnapshotState,
-    VictoryResultState, VictorySnapshotState, VoiceLineState, VoiceMediumState, WorldDelta,
-    WorldSnapshot, GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE, GRAZE_PHASE_STRESSED,
-    GRAZE_PHASE_THRIVING,
+    StartMarkerState, TemperatureSurvivabilityState, TerrainOverlayState, TerrainSample, TileState,
+    VictoryModeSnapshotState, VictoryResultState, VictorySnapshotState, VoiceLineState,
+    VoiceMediumState, WorldDelta, WorldSnapshot, GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE,
+    GRAZE_PHASE_STRESSED, GRAZE_PHASE_THRIVING,
 };
 
 use crate::{
@@ -1142,6 +1142,7 @@ mod tests {
             moisture_raster: FloatRasterState::default(),
             elevation_overlay: ElevationOverlayState::default(),
             climate_bands: ClimateBandsState::default(),
+            temperature_survivability: TemperatureSurvivabilityState::default(),
             start_marker: None,
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
@@ -1215,6 +1216,7 @@ mod tests {
             moisture_raster: FloatRasterState::default(),
             elevation_overlay: ElevationOverlayState::default(),
             climate_bands: ClimateBandsState::default(),
+            temperature_survivability: TemperatureSurvivabilityState::default(),
             start_marker: None,
             terrain: TerrainOverlayState::default(),
             sentiment_raster: ScalarRasterState::default(),
@@ -1284,6 +1286,7 @@ mod tests {
             moisture_raster: FloatRasterState::default(),
             elevation_overlay: ElevationOverlayState::default(),
             climate_bands: ClimateBandsState::default(),
+            temperature_survivability: TemperatureSurvivabilityState::default(),
             start_marker: None,
             terrain: TerrainOverlayState::default(),
             sentiment_raster: ScalarRasterState::default(),
@@ -1321,8 +1324,8 @@ mod tests {
             stores: LocalStore::new(),
             morale: crate::scalar::scalar_one(),
             last_food_consumption: 0.0,
-            last_turn_transfer_received: 0.0,
-            last_turn_transfer_sent: 0.0,
+            last_turn_food_transfers: Default::default(),
+            last_turn_fodder_transfers: Default::default(),
             last_morale_delta: crate::scalar::scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: Default::default(),
@@ -1366,10 +1369,15 @@ mod tests {
                 .scout
                 .vantage_range as f32,
         };
+        let expedition_config = crate::expedition_config::ExpeditionConfig::builtin();
         let levers = ExpeditionLevers {
             hunt_per_worker_carry: 0.0,
-            trade_per_worker_carry: 0.0,
+            // The shipment-carry rules are resolved off the config rather than quoted, so this
+            // fixture borrows the builtin exactly as `kit_levers` above borrows its own. Nothing
+            // here asserts on a shipment; the zeros beside it say the rest is irrelevant.
+            trade: &expedition_config.trade,
             trade_material_carry_weight: 0.0,
+            trade_fodder_carry_weight: 0.0,
             hunt_per_worker_provisions: 0.0,
             hunt_viability_warn_turns: 0,
             hunt_forecast_horizon_turns: 0,
@@ -1481,8 +1489,8 @@ mod tests {
             last_material_need: Default::default(),
             last_material_income: Default::default(),
             material_shortfall_warned: Vec::new(),
-            last_transfer_received: 0.0,
-            last_transfer_sent: 0.0,
+            last_food_transfers: Default::default(),
+            last_fodder_transfers: Default::default(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
         };
         let (mut cohort, allocation) = food_test_cohort(
@@ -1590,8 +1598,8 @@ mod tests {
             last_material_need: Default::default(),
             last_material_income: Default::default(),
             material_shortfall_warned: Vec::new(),
-            last_transfer_received: 0.0,
-            last_transfer_sent: 0.0,
+            last_food_transfers: Default::default(),
+            last_fodder_transfers: Default::default(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
         };
         let (cohort, allocation) = food_test_cohort(
@@ -1651,8 +1659,8 @@ mod tests {
             last_material_need: Default::default(),
             last_material_income: Default::default(),
             material_shortfall_warned: Vec::new(),
-            last_transfer_received: 0.0,
-            last_transfer_sent: 0.0,
+            last_food_transfers: Default::default(),
+            last_fodder_transfers: Default::default(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
         };
         let (cohort, allocation) = food_test_cohort(

@@ -11,6 +11,13 @@
 //! **Wire claims are asserted on the encoded envelope**, through the accessor chain a client uses —
 //! a field that never reached the codec still passes an in-process assertion, and nothing consumes
 //! these fields yet to notice.
+//!
+//! ⛔ **A SHIPMENT CARRIES THREE ACCOUNTS: FOOD, FODDER AND MATERIALS** (issue #590). Food and hay
+//! are two keys on one band store that **never convert** — a herd may not eat its keepers' bread,
+//! which is what the retired `upkeep_per_biomass` used to let it do — so they get *identical
+//! logistics* and are never one number: two lines on the manifest, two accounts in the cargo, two
+//! credits at the destination, two ledgers. Anywhere below that a claim reads "food and materials",
+//! it is a claim about all three.
 
 use bevy::app::App;
 use bevy::math::UVec2;
@@ -20,7 +27,7 @@ use core_sim::{
     build_test_app, run_turn, scalar_from_f32, scalar_zero, split_band_from_parent, BandId,
     BandKey, BandTravel, Expedition, ExpeditionMission, ExpeditionPhase, LaborAllocation,
     LocalStore, PopulationCohort, ResidentBand, Scalar, SettleConfig, SimulationConfig,
-    SnapshotHistory, StartingUnit, Tile, TileRegistry, ViewerFaction, FOOD,
+    SnapshotHistory, StartingUnit, Tile, TileRegistry, ViewerFaction, FODDER, FOOD,
 };
 
 /// A pinned earthlike world, so the terrain under every fixture is the same one every run.
@@ -31,8 +38,11 @@ const PARENT_WORKERS: f32 = 20.0;
 const SPLIT_WORKERS: u32 = 5;
 /// Workers the shipment party carries. Two is enough pack for every manifest below.
 const PARTY_WORKERS: u32 = 2;
-/// The food a shipment carries. Well inside `PARTY_WORKERS × trade.per_worker_carry`.
+/// The food a shipment carries. Well inside `core_sim::shipment_carry_cap(PARTY_WORKERS, ..)`.
 const CARGO_FOOD: f32 = 8.0;
+/// The HAY a shipment carries — the third account, and deliberately a **different number** from
+/// [`CARGO_FOOD`], so an assertion that read the wrong account could not pass by coincidence.
+const CARGO_FODDER: f32 = 5.0;
 /// Turns to drive a co-located delivery. One is enough — the party stands in the destination's camp
 /// already — and a couple more prove it does not deliver twice.
 const DELIVERY_TURNS: u32 = 3;
@@ -224,9 +234,26 @@ fn launch_shipment(
         .id()
 }
 
+fn band_fodder(app: &App, band: Entity) -> f32 {
+    app.world
+        .get::<PopulationCohort>(band)
+        .expect("the band exists")
+        .stores
+        .get(FODDER)
+        .to_f32()
+}
+
 fn food_cargo(amount: f32) -> LocalStore {
     let mut store = LocalStore::new();
     store.add(FOOD, scalar_from_f32(amount));
+    store
+}
+
+/// A shipment of **hay alone** — the account a delivery or a homecoming could silently drop, stated
+/// on its own so nothing else in the band's store can stand in for it.
+fn fodder_cargo(amount: f32) -> LocalStore {
+    let mut store = LocalStore::new();
+    store.add(FODDER, scalar_from_f32(amount));
     store
 }
 
@@ -256,10 +283,13 @@ fn two_rating_cargo() -> LocalStore {
     store
 }
 
-/// **Every cohort's `(bandId, carry cap, trade per-worker carry, material carry weight)` off the
-/// encoded envelope.** The pack fields, read through the accessor chain a client uses — a field that
-/// never reached the codec still passes an in-process assertion.
-fn published_packs(app: &App) -> Vec<(u64, f32, f32, f32)> {
+/// **Every cohort's `(bandId, carry cap, trade per-worker carry, material carry weight, fodder
+/// carry weight)` off the encoded envelope.** The pack fields, read through the accessor chain a
+/// client uses — a field that never reached the codec still passes an in-process assertion.
+///
+/// All three mass levers, because a picker that reads two of them under-prices every manifest with a
+/// bale in it.
+fn published_packs(app: &App) -> Vec<(u64, f32, f32, f32, f32)> {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
     let snapshot = app
@@ -284,14 +314,16 @@ fn published_packs(app: &App) -> Vec<(u64, f32, f32, f32)> {
                 cohort.expeditionCarryCap(),
                 cohort.expeditionTradePerWorkerCarry(),
                 cohort.expeditionTradeMaterialCarryWeight(),
+                cohort.expeditionTradeFodderCarryWeight(),
             )
         })
         .collect()
 }
 
 /// The cohort row for `band_id` off the **encoded envelope**, as a client reads it:
-/// `(destination band, destination name, cargo food, [(material, amount)])`.
-fn published_cargo(app: &App, band_id: BandId) -> (u64, String, f32, Vec<(String, f32)>) {
+/// `(destination band, destination name, cargo food, cargo fodder, [(material, amount)])` — the key,
+/// its display twin, and **all three** cargo accounts.
+fn published_cargo(app: &App, band_id: BandId) -> (u64, String, f32, f32, Vec<(String, f32)>) {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
     let snapshot = app
@@ -330,6 +362,7 @@ fn published_cargo(app: &App, band_id: BandId) -> (u64, String, f32, Vec<(String
         row.expeditionDestinationBand(),
         row.expeditionDestinationName().unwrap_or("").to_string(),
         row.expeditionCargoFood(),
+        row.expeditionCargoFodder(),
         materials,
     )
 }
@@ -341,6 +374,10 @@ fn published_cargo(app: &App, band_id: BandId) -> (u64, String, f32, Vec<(String
 /// **The rider's whole point.** A shipment walked to another people ends up in *that* band's larder,
 /// and the delivery is exact once the one other thing that moves a larder — the people's own meal —
 /// is accounted for.
+///
+/// This is the **food** account; [`a_hay_shipment_lands_in_the_destination_bands_fodder_store`] is
+/// the identical claim for the hay one, and the two are asserted apart because the two stores never
+/// convert.
 ///
 /// **The destination is ANOTHER FACTION** ([`make_foreign`]), which is both the arc's claim under
 /// test and what makes the assertion answerable at all.
@@ -401,6 +438,139 @@ fn a_shipment_lands_in_the_destination_bands_store() {
     assert!(
         after_two < after_one + EPSILON,
         "the shipment lands ONCE: {after_one} -> {after_two}"
+    );
+}
+
+/// ⛔ **DATA-LOSS SITE #1: THE DELIVERY.** A shipment carrying hay hands the hay over, into the
+/// destination band's own **FODDER** store. Before issue #590 the delivery moved food and material
+/// batches only, so a party that had loaded bales would have arrived, emptied and lost them.
+///
+/// **Asserted on the receiving band's FODDER balance across the round trip**, and paired with its
+/// food store: a delivery that credited hay to the larder would be a worse bug than losing it, so
+/// the test states that the food account did **not** move by the shipment.
+#[test]
+fn a_hay_shipment_lands_in_the_destination_bands_fodder_store() {
+    let mut app = spawn_world();
+    let sender = first_band(&mut app);
+    let (destination, destination_id) = split_off(&mut app, sender);
+    make_foreign(&mut app, destination);
+    let destination_pos = band_position(&app, destination);
+
+    let hay_before = band_fodder(&app, destination);
+    let food_before = band_food(&app, destination);
+    launch_shipment(
+        &mut app,
+        sender,
+        destination_id,
+        destination_pos,
+        fodder_cargo(CARGO_FODDER),
+    );
+
+    // One turn: the party stands in their camp already, so the hand-over happens at once.
+    run_turn(&mut app);
+
+    let hay_after = band_fodder(&app, destination);
+    let food_after = band_food(&app, destination);
+    assert!(
+        (hay_after - hay_before - CARGO_FODDER).abs() < EPSILON,
+        "the destination's HAY rises by exactly the shipment: {hay_before} -> {hay_after}, cargo          {CARGO_FODDER}"
+    );
+    assert!(
+        food_after - food_before < CARGO_FODDER - EPSILON,
+        "and its FOOD does NOT — a band that could eat the hay it was sent is the retired          `upkeep_per_biomass` back again: {food_before} -> {food_after}"
+    );
+    let party_cargo = {
+        let mut query = app.world.query::<&Expedition>();
+        query
+            .iter(&app.world)
+            .next()
+            .map(|expedition| expedition.cargo.get(FODDER).to_f32())
+    };
+    assert_eq!(
+        party_cargo,
+        Some(0.0),
+        "a delivered shipment leaves the party's hay account empty — one-way, one delivery"
+    );
+    let after_one = band_fodder(&app, destination);
+    run_turn(&mut app);
+    assert!(
+        (band_fodder(&app, destination) - after_one).abs() < EPSILON,
+        "the hay lands ONCE"
+    );
+}
+
+/// ⛔ **DATA-LOSS SITE #2: THE HOMECOMING.** A party that never delivered — its destination gone, or
+/// the order cancelled — brings the hay **back**, into the band that sent it.
+///
+/// `fold_party_into_band` settled food and material batches only before issue #590, so loaded hay
+/// was **destroyed** on the party's return: the very thing that routine's own comment says a
+/// homecoming must never do. Asserted on the *home* band's FODDER balance across the round trip.
+///
+/// Hay is the right cargo for this claim in a way food is not: nobody eats it, so "the bales came
+/// home" is an exact statement about the sender's store rather than a number racing the band's meal.
+/// It is asserted as an **equality**, unlike its material sibling below — a party hunts its way home
+/// and banks pelts into the same total, but nothing on the road credits a band's hay.
+#[test]
+fn a_recalled_party_brings_its_hay_home_rather_than_destroying_it() {
+    let mut app = spawn_world();
+    let sender = first_band(&mut app);
+    let (destination, destination_id) = split_off(&mut app, sender);
+    let sender_pos = band_position(&app, sender);
+    let far = walk_away(&mut app, destination, sender_pos);
+    // The hay leaves the band the way a launch takes it, so the round trip is a real round trip.
+    {
+        let mut cohort = app
+            .world
+            .get_mut::<PopulationCohort>(sender)
+            .expect("the band");
+        cohort.stores.add(FODDER, scalar_from_f32(CARGO_FODDER));
+    }
+    let held_before = band_fodder(&app, sender);
+    assert!(
+        held_before >= CARGO_FODDER - EPSILON,
+        "liveness: the sender really is holding the hay before it leaves ({held_before})"
+    );
+    {
+        let mut cohort = app
+            .world
+            .get_mut::<PopulationCohort>(sender)
+            .expect("the band");
+        let drawn = cohort.stores.take(FODDER, scalar_from_f32(CARGO_FODDER));
+        assert!(
+            (drawn.to_f32() - CARGO_FODDER).abs() < EPSILON,
+            "the fixture draws the whole manifest, as a launch does"
+        );
+    }
+    let held_at_sea = band_fodder(&app, sender);
+    let party = launch_shipment(
+        &mut app,
+        sender,
+        destination_id,
+        far,
+        fodder_cargo(CARGO_FODDER),
+    );
+
+    // Let it get out of comm range of home, so the turn-for-home below is a real leg.
+    for _ in 0..TURNS_TO_GET_CLEAR {
+        run_turn(&mut app);
+    }
+    // The destination is erased under the party: it turns for home still holding the bales.
+    app.world.despawn(destination);
+    for _ in 0..MAX_TURNS_HOME {
+        if app.world.get::<Expedition>(party).is_none() {
+            break;
+        }
+        run_turn(&mut app);
+    }
+    assert!(
+        app.world.get::<Expedition>(party).is_none(),
+        "the party folds back rather than walking forever"
+    );
+
+    let held_after = band_fodder(&app, sender);
+    assert!(
+        (held_after - held_at_sea - CARGO_FODDER).abs() < EPSILON,
+        "the undelivered HAY comes home whole rather than being destroyed: the store was          {held_at_sea} while the party was out and is {held_after} now, against a {CARGO_FODDER}          shipment"
     );
 }
 
@@ -484,7 +654,7 @@ fn two_ratings_of_one_material_arrive_as_two_batches() {
 
 /// **A rollback must not silently zero a shipment in flight.** In-flight cargo is state nothing can
 /// re-derive: the party is halfway to somebody else's camp holding goods that have already left the
-/// sender's store.
+/// sender's store — in **all three** accounts, food, hay and materials.
 ///
 /// The wipe between capture and restore is the liveness half — without it a cargo that was never
 /// touched would pass on any implementation.
@@ -503,6 +673,7 @@ fn cargo_survives_a_checkpoint_round_trip() {
     {
         let mut expedition = app.world.get_mut::<Expedition>(party).expect("the party");
         expedition.cargo.add(FOOD, scalar_from_f32(CARGO_FOOD));
+        expedition.cargo.add(FODDER, scalar_from_f32(CARGO_FODDER));
     }
 
     let checkpoint = capture_sim_state(&app.world);
@@ -513,12 +684,14 @@ fn cargo_survives_a_checkpoint_round_trip() {
         let mut expedition = app.world.get_mut::<Expedition>(party).expect("the party");
         let carried = expedition.cargo.get(FOOD);
         expedition.cargo.take(FOOD, carried);
+        let hay = expedition.cargo.get(FODDER);
+        expedition.cargo.take(FODDER, hay);
         let mut sink = LocalStore::new();
         expedition.cargo.drain_materials_into(&mut sink);
         assert_eq!(
-            expedition.cargo.get(FOOD),
-            scalar_zero(),
-            "the cargo is empty before the restore"
+            (expedition.cargo.get(FOOD), expedition.cargo.get(FODDER)),
+            (scalar_zero(), scalar_zero()),
+            "every account of the cargo is empty before the restore"
         );
     }
 
@@ -539,6 +712,12 @@ fn cargo_survives_a_checkpoint_round_trip() {
         (expedition.cargo.get(FOOD).to_f32() - CARGO_FOOD).abs() < EPSILON,
         "the carried food comes back: {}",
         expedition.cargo.get(FOOD).to_f32()
+    );
+    assert!(
+        (expedition.cargo.get(FODDER).to_f32() - CARGO_FODDER).abs() < EPSILON,
+        "and so does the carried HAY, on its own account — a rollback that restored one commodity \
+         key and dropped the other would be the same hole, one store over: {}",
+        expedition.cargo.get(FODDER).to_f32()
     );
     let batches: Vec<f32> = expedition
         .cargo
@@ -566,7 +745,9 @@ fn cargo_survives_a_checkpoint_round_trip() {
 ///
 /// The cargo is **material** rather than food, and deliberately: a material is not eaten, so *"the
 /// hide came home"* is an exact statement about the sender's store rather than a number competing
-/// with the band's own meal.
+/// with the band's own meal. The same claim for the **hay** account — the third of the three, and
+/// the one the fold-back used to destroy — is
+/// [`a_recalled_party_brings_its_hay_home_rather_than_destroying_it`] above.
 #[test]
 fn a_destination_that_vanishes_sends_the_party_home_with_its_cargo() {
     let mut app = spawn_world();
@@ -650,8 +831,11 @@ const TURNS_TO_GET_CLEAR: u32 = 6;
 // The wire
 // ---------------------------------------------------------------------------------------------
 
-/// **The shipment is legible on the encoded wire** — the key, its display twin, and both cargo
-/// accounts, read through the accessor chain a client uses.
+/// **The shipment is legible on the encoded wire** — the key, its display twin, and **all three**
+/// cargo accounts, read through the accessor chain a client uses.
+///
+/// Food and hay are published as two fields and never as one: they are two keys on one store that do
+/// not convert, so a client must be able to say which of them a party is carrying.
 ///
 /// The material rows are asserted **per material**, never as a total: a sum of hide and bone is the
 /// retired trade axis under a new name.
@@ -671,12 +855,13 @@ fn a_shipment_publishes_its_destination_and_its_cargo_on_the_wire() {
     let far = walk_away(&mut app, destination, sender_pos);
     let mut cargo = two_rating_cargo();
     cargo.add(FOOD, scalar_from_f32(CARGO_FOOD));
+    cargo.add(FODDER, scalar_from_f32(CARGO_FODDER));
     let party = launch_shipment(&mut app, sender, destination_id, far, cargo);
     let party_band = *app.world.get::<BandId>(party).expect("the party has an id");
 
     run_turn(&mut app);
 
-    let (published_destination, name, food, materials) = published_cargo(&app, party_band);
+    let (published_destination, name, food, fodder, materials) = published_cargo(&app, party_band);
     assert_eq!(
         published_destination, destination_id.0,
         "the KEY the command addresses the destination by is on the wire"
@@ -694,6 +879,15 @@ fn a_shipment_publishes_its_destination_and_its_cargo_on_the_wire() {
         (food - CARGO_FOOD).abs() < EPSILON,
         "the shipment's food account is published: {food}"
     );
+    assert!(
+        (fodder - CARGO_FODDER).abs() < EPSILON,
+        "and its HAY account, on its own field: {fodder}"
+    );
+    assert!(
+        (food - fodder).abs() > EPSILON,
+        "the two carry different amounts in this fixture, so neither assertion above could pass by \
+         reading the other field"
+    );
     assert_eq!(
         materials.len(),
         1,
@@ -708,34 +902,43 @@ fn a_shipment_publishes_its_destination_and_its_cargo_on_the_wire() {
     // The negative control: a resident band is not carrying a shipment, and says so with the
     // absent/zero default rather than by omission.
     let sender_band = *app.world.get::<BandId>(sender).expect("the band has an id");
-    let (none_destination, none_name, none_food, none_materials) =
+    let (none_destination, none_name, none_food, none_fodder, none_materials) =
         published_cargo(&app, sender_band);
     assert_eq!(none_destination, 0);
     assert!(none_name.is_empty());
     assert_eq!(none_food, 0.0);
+    assert_eq!(none_fodder, 0.0);
     assert!(
         none_materials.is_empty(),
         "empty means NO ROW, never a zero-valued one"
     );
 }
 
-/// **Every cohort publishes BOTH levers of the shipment mass rule**, so a cargo picker can run the
-/// sim's own expression instead of guessing at it:
+/// **Every cohort publishes ALL THREE levers of the shipment mass rule**, so a cargo picker can run
+/// the sim's own expression instead of guessing at it:
 ///
 /// ```text
-/// mass = expeditionCargoFood + expeditionTradeMaterialCarryWeight × Σ material amounts
+/// mass = expeditionCargoFood
+///        + expeditionTradeFodderCarryWeight × expeditionCargoFodder
+///        + expeditionTradeMaterialCarryWeight × Σ material amounts
 /// cap  = party_workers × expeditionTradePerWorkerCarry
 /// ```
 ///
-/// This is the pair the outfit UI needs, and it must be a *global* echo: the player prices a
+/// This is the set the outfit UI needs, and it must be a *global* echo: the player prices a
 /// manifest for a party that **does not exist yet**, and `party_workers` is what the stepper is
 /// choosing, so no per-party field can serve that screen. Same idiom as
 /// `expeditionForecastHorizonTurns`.
 ///
-/// **The two carry different bounds, deliberately.** The pack lever is asserted **positive** for the
+/// **They carry different bounds, deliberately.** The pack number is asserted **positive** for the
 /// horizon's reason — a `0` lets a client render a zero cap and refuse every manifest a player could
-/// build. The material weight is asserted only **finite and `>= 0`**, because `0` is a legitimate
-/// setting there ("materials are weightless") and asserting positivity would pin a tuning as a rule.
+/// build. The two cargo weights are asserted only **finite and `>= 0`**, because `0` is a legitimate
+/// setting on both ("materials are weightless", "hay is weightless") and asserting positivity would
+/// pin a tuning as a rule.
+///
+/// **And they are arrived at differently.** The two weights are lever echoes — a material's or a
+/// bale's bulk is a property of the goods — so they are pinned against the config fields. The pack
+/// is the sim's **resolved** per-worker carry (`core_sim::trade_per_worker_carry`), so it is pinned
+/// against the resolver, which is where a carrier-side model would attach.
 #[test]
 fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
     let mut app = spawn_world();
@@ -749,29 +952,31 @@ fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
     let (destination, destination_id) = split_off(&mut app, sender);
     let sender_pos = band_position(&app, sender);
     let far = walk_away(&mut app, destination, sender_pos);
-    launch_shipment(
-        &mut app,
-        sender,
-        destination_id,
-        far,
-        food_cargo(CARGO_FOOD),
-    );
+    // The fixture carries food AND hay, so the composed mass below is a genuinely mixed one rather
+    // than a single account wearing the expression as a hat.
+    let mut cargo = food_cargo(CARGO_FOOD);
+    cargo.add(FODDER, scalar_from_f32(CARGO_FODDER));
+    launch_shipment(&mut app, sender, destination_id, far, cargo);
 
     run_turn(&mut app);
 
-    let (expected_carry, expected_weight) = {
+    let (expected_carry, expected_weight, expected_fodder_weight) = {
         let cfg = app
             .world
             .resource::<core_sim::ExpeditionConfigHandle>()
             .get();
-        (cfg.trade.per_worker_carry, cfg.trade.material_carry_weight)
+        (
+            core_sim::trade_per_worker_carry(&cfg.trade),
+            cfg.trade.material_carry_weight,
+            cfg.trade.fodder_carry_weight,
+        )
     };
     let packs = published_packs(&app);
     assert!(
         !packs.is_empty(),
         "the liveness half — no cohorts published means every assertion below is vacuous"
     );
-    for (band, _, trade_per_worker, material_weight) in &packs {
+    for (band, _, trade_per_worker, material_weight, fodder_weight) in &packs {
         assert!(
             *trade_per_worker > 0.0,
             "band {band} published a shipment pack of {trade_per_worker} — a zero lever lets a \
@@ -779,7 +984,8 @@ fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
         );
         assert!(
             (trade_per_worker - expected_carry).abs() < EPSILON,
-            "band {band} must echo the pack lever verbatim: {trade_per_worker} vs {expected_carry}"
+            "band {band} must publish the RESOLVED carry, not a lever of its own: \
+             {trade_per_worker} vs {expected_carry}"
         );
         // Finite and `>= 0`, NOT positive: weightless materials is a real setting, so asserting
         // positivity here would pin a tuning as if it were a rule.
@@ -792,6 +998,18 @@ fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
             (material_weight - expected_weight).abs() < EPSILON,
             "band {band} must echo the weight lever verbatim: {material_weight} vs \
              {expected_weight}"
+        );
+        // The hay lever carries the material lever's bounds, not the pack lever's, and for the same
+        // reason: "hay is weightless" is a coherent playtest setting.
+        assert!(
+            fodder_weight.is_finite() && *fodder_weight >= 0.0,
+            "band {band} published a fodder carry weight of {fodder_weight} — the mass expression \
+             cannot be run against a negative or non-finite one"
+        );
+        assert!(
+            (fodder_weight - expected_fodder_weight).abs() < EPSILON,
+            "band {band} must echo the hay lever verbatim: {fodder_weight} vs \
+             {expected_fodder_weight}"
         );
     }
 
@@ -806,21 +1024,29 @@ fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
             .expect("the shipment is on the map")
             .0
     };
-    let (_, party_cap, _, weight) = packs
+    let (_, party_cap, _, weight, fodder_weight) = packs
         .iter()
         .find(|(band, ..)| *band == party_band.0)
         .copied()
         .expect("the party's own row is published");
-    let (_, _, cargo_food, cargo_materials) = published_cargo(&app, party_band);
+    let (_, _, cargo_food, cargo_fodder, cargo_materials) = published_cargo(&app, party_band);
     let mass = cargo_food
+        + fodder_weight * cargo_fodder
         + weight
             * cargo_materials
                 .iter()
                 .map(|(_, amount)| amount)
                 .sum::<f32>();
+    let expected_mass = CARGO_FOOD + expected_fodder_weight * CARGO_FODDER;
     assert!(
-        (mass - CARGO_FOOD).abs() < EPSILON,
-        "the fixture's shipment is pure food, so its composed mass is its food: {mass}"
+        (mass - expected_mass).abs() < EPSILON,
+        "the fixture's shipment is food AND hay, so its composed mass weighs the bales at the \
+         published hay lever: {mass} vs {expected_mass}"
+    );
+    assert!(
+        (mass - cargo_food).abs() > EPSILON,
+        "the liveness half of the three-term expression — a client that dropped the hay term would \
+         compose {cargo_food} and be under by the bales"
     );
     assert!(
         mass <= party_cap + EPSILON,
@@ -829,14 +1055,23 @@ fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
     );
 }
 
-/// **A live trade party's own pack is quoted at the TRADE lever, not the hunt one.**
+/// **A live trade party's own pack is the RESOLVED shipment carry, not the hunt lever.**
 ///
-/// The two are different packs — a raid's is the provisions ceiling it fills before delivering, a
-/// shipment's is what its people can carry out — so `expeditionCarryCap` resolves per mission. The
-/// contrast with a resident band's `0` is the negative control, and pinning the trade party's cap
-/// against the *hunt* lever's product is what would catch the field being wired to the wrong one.
+/// The two are different packs arrived at two ways, and `expeditionCarryCap` resolves per mission
+/// between them:
+///
+/// - the shipment side is `core_sim::shipment_carry_cap` — the sim's own expression, the one
+///   `send_trade_expedition` refuses on — so this pins the published cap against **the resolver**
+///   rather than against `trade.per_worker_carry`. Against the raw lever the assertion would pass
+///   for a carry model that grew server-side and skipped the resolver, and would then fail with a
+///   message telling its fixer to restore a rule this arc retired.
+/// - the hunt side genuinely **is** still a raw lever (`hunt.per_worker_carry` × the party). That
+///   asymmetry is deliberate, and it is what keeps the "quoted at the right one" claim falsifiable:
+///   the two numbers have to differ, which the fixture asserts before it leans on them.
+///
+/// The contrast with a resident band's `0` is the negative control.
 #[test]
-fn a_trade_partys_carry_cap_is_quoted_at_the_shipment_lever() {
+fn a_trade_partys_carry_cap_is_quoted_at_the_resolved_shipment_carry() {
     let mut app = spawn_world();
     let sender = first_band(&mut app);
     let faction = app
@@ -860,40 +1095,46 @@ fn a_trade_partys_carry_cap_is_quoted_at_the_shipment_lever() {
 
     run_turn(&mut app);
 
-    let (trade_carry, hunt_carry) = {
+    // The shipment side is the SIM'S RESOLVED CAP; the hunt side is the raw lever it must not be
+    // confused with. Two different derivations on purpose — see this test's doc comment.
+    let (resolved_trade_cap, hunt_carry) = {
         let cfg = app
             .world
             .resource::<core_sim::ExpeditionConfigHandle>()
             .get();
-        (cfg.trade.per_worker_carry, cfg.hunt.per_worker_carry)
+        (
+            core_sim::shipment_carry_cap(PARTY_WORKERS, &cfg.trade),
+            cfg.hunt.per_worker_carry,
+        )
     };
-    // The two levers must genuinely differ, or "quoted at the right one" is unfalsifiable.
+    let hunt_cap = PARTY_WORKERS as f32 * hunt_carry;
+    // The two packs must genuinely differ, or "quoted at the right one" is unfalsifiable.
     assert!(
-        (trade_carry - hunt_carry).abs() > EPSILON,
-        "the fixture rests on the two packs being different numbers: trade {trade_carry}, hunt \
-         {hunt_carry}"
+        (resolved_trade_cap - hunt_cap).abs() > EPSILON,
+        "the fixture rests on the two packs being different numbers: shipment \
+         {resolved_trade_cap}, raid {hunt_cap}"
     );
 
     let packs = published_packs(&app);
-    let (_, party_cap, _, _) = packs
+    let (_, party_cap, ..) = packs
         .iter()
         .find(|(band, ..)| *band == party_band.0)
         .copied()
         .expect("the party's own row is published");
-    let (_, band_cap, _, _) = packs
+    let (_, band_cap, ..) = packs
         .iter()
         .find(|(band, ..)| *band == sender_band.0)
         .copied()
         .expect("the resident band's row is published");
 
     assert!(
-        (party_cap - PARTY_WORKERS as f32 * trade_carry).abs() < EPSILON,
-        "a shipment party's pack is `workers × trade.per_worker_carry`: got {party_cap}, wanted {}",
-        PARTY_WORKERS as f32 * trade_carry
+        (party_cap - resolved_trade_cap).abs() < EPSILON,
+        "a shipment party's pack is the sim's own `shipment_carry_cap`, never a lever product of \
+         its own: got {party_cap}, wanted {resolved_trade_cap}"
     );
     assert!(
-        (party_cap - PARTY_WORKERS as f32 * hunt_carry).abs() > EPSILON,
-        "and emphatically NOT the raid's pack — a client reading the hunt lever would quote a cap \
+        (party_cap - hunt_cap).abs() > EPSILON,
+        "and emphatically NOT the raid's pack — a client reading the hunt LEVER would quote a cap \
          the launch command refuses: got {party_cap}"
     );
     assert_eq!(

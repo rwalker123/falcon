@@ -293,7 +293,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         summary: "Outfit a party to carry a shipment to another band — needs a live connection to \
                   the destination, and fails closed on cargo the band does not hold or cannot carry.",
         usage: "send_trade_expedition <faction_id> <band_id> <party_workers> <destination_band_id> \
-                [food <amount>] [material <material_id> <amount>]... [kit <id>]",
+                [food <amount>] [fodder <amount>] [material <material_id> <amount>]... \
+                [kit <id>]",
     },
     CommandVerbHelp {
         verb: "export_map",
@@ -1473,9 +1474,11 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
         }
         // **The shipment's grammar is a NAMED TAIL, and it is closed to everything else.** The
         // four positional tokens name who is sending what-sized party where; the cargo is a
-        // repeated `food <amount>` / `material <id> <amount>` list, because a shipment has no fixed
-        // arity and a positional list could not say which of two namespaces an id belongs to. Any
-        // token that is not one of those three names is a misunderstanding of the verb and is
+        // repeated `food <amount>` / `fodder <amount>` / `material <id> <amount>` list, because a
+        // shipment has no fixed arity and a positional list could not say which of two namespaces an
+        // id belongs to. The two commodity names are separate lines because the two accounts never
+        // convert - hay is animal feed, and a herd may not eat the bread of the people keeping it.
+        // Any token that is not one of those four names is a misunderstanding of the verb and is
         // refused (`UnexpectedArgument`) rather than dropped — the same fail-closed reading
         // `send_denial_raid` takes, and the one an empty shipment gets at the server.
         "send_trade_expedition" => {
@@ -1506,6 +1509,20 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                             id: crate::commands::FOOD_CARGO_KEY.to_string(),
                             is_material: false,
                             amount: parse_f32(amount, "send_trade_expedition food amount")?,
+                        });
+                    }
+                    "fodder" => {
+                        let amount = parts.next().ok_or(CommandParseError::MissingArgument(
+                            "send_trade_expedition fodder amount",
+                        ))?;
+                        cargo.push(crate::TradeCargoItem {
+                            // The FODDER commodity key, a second key on the same band store as the
+                            // food one and named the same way: `fodder` is the word a player uses,
+                            // and the key is the sim's spelling of it. A SEPARATE line from `food`
+                            // because the two accounts never convert.
+                            id: crate::commands::FODDER_CARGO_KEY.to_string(),
+                            is_material: false,
+                            amount: parse_f32(amount, "send_trade_expedition fodder amount")?,
                         });
                     }
                     "material" => {
@@ -1787,7 +1804,7 @@ fn parse_security_policy(token: &str) -> Result<SecurityPolicyKind, CommandParse
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::{TradeCargoItem, FOOD_CARGO_KEY};
+    use crate::commands::{TradeCargoItem, FODDER_CARGO_KEY, FOOD_CARGO_KEY};
 
     /// **`build_kit` READS BOTH SOURCE FORMS AND AN OPTIONAL `kit` TOKEN**, and an absent token is
     /// *"clear the override"* rather than a parse error.
@@ -1992,8 +2009,14 @@ mod tests {
     /// A shipment has no fixed arity — it is a list of lines — and a positional list could not say
     /// which of two namespaces an id belongs to (`provisions` is a commodity key, `hide` is a
     /// material id, and the two tables are authored independently). So the grammar is `food
-    /// <amount>` / `material <id> <amount>` repeated, plus the `kit <id>` pair every party verb
-    /// takes, and any other token is a misunderstanding of the verb rather than a value to ignore.
+    /// <amount>` / `fodder <amount>` / `material <id> <amount>` repeated, plus the `kit <id>` pair
+    /// every party verb takes, and any other token is a misunderstanding of the verb rather than a
+    /// value to ignore.
+    ///
+    /// **THREE ACCOUNTS, THREE NAMES.** Food and fodder are separate commodity lines rather than one
+    /// `commodity <key> <amount>` pair, because the player names the good and the parser names the
+    /// key: the two stores never convert, so the grammar that loads them must not let a typo turn a
+    /// band's bread into the hay its animals eat.
     #[test]
     fn parse_send_trade_expedition_reads_a_repeated_manifest_and_refuses_anything_else() {
         assert_eq!(
@@ -2011,9 +2034,28 @@ mod tests {
                 kit_id: None,
             }
         );
-        // Several lines, in the order the player named them, with the kit anywhere in the tail.
+        // A hay line reads exactly like a food line, and lands on its OWN commodity key.
+        assert_eq!(
+            parse_command_line("send_trade_expedition 0 7 4 12 fodder 9").unwrap(),
+            CommandPayload::SendTradeExpedition {
+                faction_id: 0,
+                band_id: Some(7),
+                party_workers: 4,
+                destination_band_id: 12,
+                cargo: vec![TradeCargoItem {
+                    id: FODDER_CARGO_KEY.to_string(),
+                    is_material: false,
+                    amount: 9.0,
+                }],
+                kit_id: None,
+            }
+        );
+        // Several lines, in the order the player named them, with the kit anywhere in the tail —
+        // and all THREE accounts in one manifest, interleaved, because nothing about the grammar
+        // groups them.
         let CommandPayload::SendTradeExpedition { cargo, kit_id, .. } = parse_command_line(
-            "send_trade_expedition 0 7 4 12 food 2 material hide 3 kit none material bone 1",
+            "send_trade_expedition 0 7 4 12 food 2 material hide 3 fodder 5 kit none material \
+             bone 1",
         )
         .unwrap() else {
             panic!("the verb parses to its own payload");
@@ -2027,9 +2069,15 @@ mod tests {
             vec![
                 (FOOD_CARGO_KEY, false, 2.0),
                 ("hide", true, 3.0),
+                (FODDER_CARGO_KEY, false, 5.0),
                 ("bone", true, 1.0),
             ],
-            "every line survives, in order, with its namespace intact"
+            "every line survives, in order, with its namespace intact — and food and fodder land on \
+             two DIFFERENT commodity keys, never merged into one"
+        );
+        assert_ne!(
+            FOOD_CARGO_KEY, FODDER_CARGO_KEY,
+            "the assertion above is only a claim about two accounts if the two keys differ"
         );
         // **An EMPTY manifest parses.** Whether a shipment with nothing in it is legal is a question
         // about the band and its packs, which only the server can answer — so it refuses there, with
@@ -2043,10 +2091,17 @@ mod tests {
             parse_command_line("send_trade_expedition 0 7 4 12 food 2 0.42"),
             Err(CommandParseError::UnexpectedArgument(_))
         ));
-        // A named token with nothing after it is a missing argument, not a value to shrug at.
+        // A named token with nothing after it is a missing argument, not a value to shrug at —
+        // for every one of the three names.
         assert!(matches!(
             parse_command_line("send_trade_expedition 0 7 4 12 material hide"),
             Err(CommandParseError::MissingArgument(_))
+        ));
+        assert!(matches!(
+            parse_command_line("send_trade_expedition 0 7 4 12 fodder"),
+            Err(CommandParseError::MissingArgument(
+                "send_trade_expedition fodder amount"
+            ))
         ));
         // And a second `kit` contradicts the first rather than quietly winning.
         assert!(matches!(

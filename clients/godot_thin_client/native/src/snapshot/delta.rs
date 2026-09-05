@@ -68,6 +68,12 @@ pub(crate) struct DeltaAggregator {
     // it publishes no climate keys and the client keeps the last full snapshot's per-map value
     // (the bands are a per-map constant) rather than being handed a fabricated one.
     climate_bands: Option<[f32; 3]>,
+    // The temperature-mortality model's two tails, in wire order (`[coldOnsetTemp,
+    // coldMortalityScale, coldMaxMortality, heatOnsetTemp, heatMortalityScale, heatMaxMortality]`).
+    // `None` / carried exactly like `climate_bands` above, and for the same reason:
+    // a per-run constant a delta may omit, which must then leave the last published model standing
+    // rather than publishing a fabricated one.
+    temperature_survivability: Option<[f32; 6]>,
     moisture_width: u32,
     moisture_height: u32,
     moisture_samples: Vec<f32>,
@@ -114,6 +120,7 @@ impl DeltaAggregator {
             elevation_samples: cache.elevation.clone(),
             elevation_sea_level: cache.elevation_sea_level,
             climate_bands: cache.climate_bands,
+            temperature_survivability: cache.temperature_survivability,
             moisture_width: cache.width,
             moisture_height: cache.height,
             moisture_samples: cache.moisture.clone(),
@@ -325,6 +332,20 @@ impl DeltaAggregator {
         ]);
     }
 
+    pub(crate) fn apply_temperature_survivability(
+        &mut self,
+        model: fb::TemperatureSurvivability<'_>,
+    ) {
+        self.temperature_survivability = Some([
+            model.coldOnsetTemp(),
+            model.coldMortalityScale(),
+            model.coldMaxMortality(),
+            model.heatOnsetTemp(),
+            model.heatMortalityScale(),
+            model.heatMaxMortality(),
+        ]);
+    }
+
     pub(crate) fn apply_moisture_raster(&mut self, raster: fb::FloatRaster<'_>) {
         self.moisture_width = raster.width();
         self.moisture_height = raster.height();
@@ -360,6 +381,7 @@ impl DeltaAggregator {
             elevation: self.elevation_samples.clone(),
             elevation_sea_level: self.elevation_sea_level,
             climate_bands: self.climate_bands,
+            temperature_survivability: self.temperature_survivability,
             moisture: self.moisture_samples.clone(),
             visibility: self.visibility_samples.clone(),
             fog_enabled: self.fog_enabled.unwrap_or(FOG_ENABLED_WHEN_ABSENT),
@@ -406,6 +428,7 @@ impl DeltaAggregator {
             elevation_samples,
             elevation_sea_level,
             climate_bands,
+            temperature_survivability,
             moisture_width,
             moisture_height,
             moisture_samples,
@@ -605,6 +628,7 @@ impl DeltaAggregator {
                 elevation: &elevation,
                 elevation_sea_level,
                 climate_bands,
+                temperature_survivability,
                 fog_enabled: fog_enabled.unwrap_or(FOG_ENABLED_WHEN_ABSENT),
                 moisture: &moisture,
                 visibility: &visibility,

@@ -54,6 +54,7 @@ const CHAPTERS := [
 	"res://tools/ui_preview/chapters/trade.gd",
 	"res://tools/ui_preview/chapters/selective_gather.gd",
 	"res://tools/ui_preview/chapters/knowledge_panel.gd",
+	"res://tools/ui_preview/chapters/supply_network.gd",
 ]
 
 ## The one method a chapter owes the harness (see the chapter contract in
@@ -109,6 +110,32 @@ const WATCHDOG_PROGRESS_METHOD := "note_progress"
 ## earned.
 const EXIT_OK := 0
 const EXIT_FAILED := 1
+
+## The shipped climate-band cut points the prologue seeds `TileClimate` with (`climate_config.json`
+## → polar <= 0 / boreal <= 3 / temperate <= 18 °C). Named rather than typed inline because a chapter
+## that clears the bands to exercise the no-cut-points path has to put these exact values back — they
+## are a per-run constant every later frame's climate chip is rendered from.
+const CLIMATE_POLAR_MAX_TEMP := 0.0
+const CLIMATE_BOREAL_MAX_TEMP := 3.0
+const CLIMATE_TEMPERATE_MAX_TEMP := 18.0
+
+## The shipped temperature-mortality tuning the prologue seeds `TileSurvivability` with — the
+## `demographics_config.json` `cold` and `heat` blocks, transcribed, so the frames state the range
+## the sim really kills outside of: **0.0 – 40.0 °C**.
+##
+## TWO INDEPENDENT TAILS: the onsets are unrelated, the slopes differ, and the ceilings differ
+## (10 % cold against 3 % heat). There is no ambient and no tolerance — see `TileSurvivability`.
+##
+## **THE COLD ONSET IS 0 °C**, which is also `CLIMATE_POLAR_MAX_TEMP` above — tuning coincidence, not
+## a coupling. It moved from 6 °C because 6 °C is not cold; the slope moved with it so the tail still
+## reaches its 10 % ceiling at -57 °C. Every cold fixture in the walk was re-aimed against it, and
+## only POLAR ground is lethal now.
+const SURVIVABILITY_COLD_ONSET_TEMP := 0.0
+const SURVIVABILITY_COLD_MORTALITY_SCALE := 0.00175
+const SURVIVABILITY_COLD_MAX_MORTALITY := 0.1
+const SURVIVABILITY_HEAT_ONSET_TEMP := 40.0
+const SURVIVABILITY_HEAT_MORTALITY_SCALE := 0.00176
+const SURVIVABILITY_HEAT_MAX_MORTALITY := 0.03
 
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
@@ -435,7 +462,21 @@ func _ready() -> void:
 	# harness has no MapView, so seed TileClimate with the shipped values (polar ≤0 / boreal ≤3
 	# / temperate ≤18 °C) exactly as a first snapshot would — otherwise every tile card would
 	# skip the Climate row (has_bands() == false, the honest pre-publish blank).
-	TileClimate.set_cut_points(0.0, 3.0, 18.0)
+	TileClimate.set_cut_points(CLIMATE_POLAR_MAX_TEMP, CLIMATE_BOREAL_MAX_TEMP,
+		CLIMATE_TEMPERATE_MAX_TEMP)
+
+	# …and its TWIN, on the same seam and for the same reason: the sim's temperature-MORTALITY model
+	# (MapSection.temperatureSurvivability), which MapView adopts from the same overlay ingest. It is
+	# seeded HERE, globally, rather than by the one chapter that renders lethal ground — a frame at
+	# -14 °C that shows no danger pill is the exact misleading composite issue #614 exists to remove,
+	# and the harness must not be the one place the HUD still lies. Every frame in the walk therefore
+	# renders against a live model, and the handful of fixtures that sit outside the survivable range
+	# (the Polar/Boreal climate frames, the glacier, the harsh-cavern band tile) now say so.
+	# The shipped tuning, transcribed: the `demographics_config.json` `cold` and `heat` blocks.
+	TileSurvivability.set_model(
+		SURVIVABILITY_COLD_ONSET_TEMP, SURVIVABILITY_COLD_MORTALITY_SCALE,
+		SURVIVABILITY_COLD_MAX_MORTALITY, SURVIVABILITY_HEAT_ONSET_TEMP,
+		SURVIVABILITY_HEAT_MORTALITY_SCALE, SURVIVABILITY_HEAT_MAX_MORTALITY)
 
 	# Top-bar Sedentarization meter (faction 0, soft band) — visible across all frames.
 	_hud.update_sedentarization([{"faction": 0, "score": 62.0, "stage": "soft"}])

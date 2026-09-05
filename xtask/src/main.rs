@@ -15,6 +15,7 @@ use std::process::Command;
 mod command_guard;
 mod decode_fixture;
 mod decode_guard;
+mod doc_guard;
 mod fauna_icon_guard;
 mod hotkey_guard;
 
@@ -29,6 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .and_then(|()| decode_fixture::write_delta_fixtures()),
         Some("decode-guard") => decode_guard::run(args.collect()),
         Some("command-guard") => command_guard::run(args.collect()),
+        Some("doc-guard") => doc_guard::run(args.collect()),
         Some("fauna-icon-guard") => fauna_icon_guard::run(args.collect()),
         Some("hotkey-guard") => hotkey_guard::run(args.collect()),
         Some("manifest-schema") => generate_manifest_schema(),
@@ -51,6 +53,7 @@ fn print_usage() {
     eprintln!("       cargo xtask decode-fixture");
     eprintln!("       cargo xtask decode-guard [--write-golden] [--no-build]");
     eprintln!("       cargo xtask command-guard [--no-build]");
+    eprintln!("       cargo xtask doc-guard");
     eprintln!("       cargo xtask fauna-icon-guard");
     eprintln!("       cargo xtask hotkey-guard");
     eprintln!("       cargo xtask manifest-schema");

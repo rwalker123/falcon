@@ -677,6 +677,110 @@ fn entity_placeholder() -> Entity {
     Entity::PLACEHOLDER
 }
 
+/// **WHICH MECHANISM CARRIED THE GOODS BETWEEN TWO LARDERS** — the split every transfer figure in
+/// this crate is taken on (issue #548), and the whole vocabulary a player is offered for *why my
+/// store moved and my own workers did not move it*.
+///
+/// **`Local`** — a crossing between bands that are **standing together**, with nothing travelling:
+/// `supply::balance_supply_networks` pooling per-capita across a supply network, and the dowry
+/// `systems::fission` hands a splinter that is camped where its parent is.
+///
+/// **`Route`** — a crossing an **expedition party carried**: a shipment's draw at launch and its
+/// delivery on arrival, a hunting party's drop-off, and the pack a party folds back on its way home.
+/// The **party is the vehicle**, whatever its mission, which is why a homecoming is a `Route`
+/// crossing rather than a third kind.
+///
+/// ⛔ **THE TWO ARE EXHAUSTIVE, AND THAT IS AN INVARIANT AND NOT AN OBSERVATION.** Every writer books
+/// through [`TransferLedger`], which has no third arm and no unclassified total, so
+/// `local + route == the whole crossing` in each direction by construction — the identity
+/// `integration_tests/tests/transfer_food_ledger.rs` pins against real turns. A future mechanism that
+/// is neither carries no default: it picks the arm it belongs to, or this enum grows and the wire
+/// grows with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferLink {
+    /// Bands standing together — supply-network pooling, a fission dowry.
+    Local,
+    /// An expedition party carried it — a shipment, a drop-off, a fold-back.
+    Route,
+}
+
+/// **GOODS THAT CROSSED BETWEEN THIS BAND'S LARDER AND SOMEBODY ELSE'S, SPLIT BY [`TransferLink`]** —
+/// four magnitudes for one account, and the shape **both** the food and the fodder accounts carry.
+///
+/// **Four magnitudes rather than one signed net**, matching the style of the pair it replaced: a band
+/// that both sends and receives in one turn is *doing something*, and a signed net renders that as
+/// nothing happening. [`Self::local_net`] exists for the one consumer that genuinely wants a
+/// trajectory (a runway), and even that nets only the `local` arm — there is no both-arms net here,
+/// because the two arms do not project alike.
+///
+/// **The totals are DERIVED, never stored** ([`Self::received`] / [`Self::sent`]). The published
+/// `transferReceived` / `transferSent` pair is exactly `local + route`, and a stored total beside its
+/// parts is a third number to drift: every writer goes through [`Self::credit`] / [`Self::debit`],
+/// which is the only way an amount enters this struct at all.
+///
+/// **Added, never assigned.** A band can pool with two neighbours, ship, and split inside one
+/// window, and on `LaborAllocation` the window is the SNAPSHOT window rather than the turn — see
+/// [`LaborAllocation::last_food_transfers`].
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct TransferLedger {
+    /// Received from a band standing alongside — [`TransferLink::Local`].
+    pub local_received: f32,
+    /// Given up to a band standing alongside — [`TransferLink::Local`].
+    pub local_sent: f32,
+    /// Received off a party that carried it — [`TransferLink::Route`].
+    pub route_received: f32,
+    /// Given up to a party that carried it away — [`TransferLink::Route`].
+    pub route_sent: f32,
+}
+
+impl TransferLedger {
+    /// Book an **arrival** on `link`. Adds — see the struct's note on why.
+    pub fn credit(&mut self, link: TransferLink, amount: f32) {
+        match link {
+            TransferLink::Local => self.local_received += amount,
+            TransferLink::Route => self.route_received += amount,
+        }
+    }
+
+    /// Book a **departure** on `link`, as a positive magnitude.
+    pub fn debit(&mut self, link: TransferLink, amount: f32) {
+        match link {
+            TransferLink::Local => self.local_sent += amount,
+            TransferLink::Route => self.route_sent += amount,
+        }
+    }
+
+    /// Everything that crossed **in**, both links — the published `transferReceived`.
+    pub fn received(&self) -> f32 {
+        self.local_received + self.route_received
+    }
+
+    /// Everything that crossed **out**, both links — the published `transferSent`.
+    pub fn sent(&self) -> f32 {
+        self.local_sent + self.route_sent
+    }
+
+    /// The signed contribution the **`local`** arm made to the store, `local_received − local_sent`.
+    ///
+    /// ⛔ **THE LOCAL ARM IS A RATE AND THE ROUTE ARM IS AN EVENT, WHICH IS WHY THIS IS NOT
+    /// `received() − sent()`.** Two bands camped within reach pool *every turn*, for as long as they
+    /// stay there, so projecting a local crossing forward is exactly what a forecast should do. A
+    /// route crossing arrives **once** — annualising a shipment into a standing per-turn rate is the
+    /// mistake arc #527 refused on the food side, and it would be the same mistake here.
+    ///
+    /// **For a forecast, not for a readout.** The rows state four magnitudes; this exists because a
+    /// runway is a trajectory and a store that pools with a neighbour every turn moves by exactly
+    /// this much on top of what the band grew and its animals ate.
+    pub fn local_net(&self) -> f32 {
+        self.local_received - self.local_sent
+    }
+
+    /// Clear every arm — the reset half of the accumulate/reset discipline.
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
 /// Population representation bound to a home tile.
 #[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct PopulationCohort {
@@ -709,29 +813,43 @@ pub struct PopulationCohort {
     /// construction whether the band is fully fed or starving. Recomputed each turn
     /// by `simulate_population`; on the client wire as `PopulationCohortState.food_consumption`.
     pub last_food_consumption: f32,
-    /// **Food this band RECEIVED from another band, as of this turn's frame** — the per-turn twin of
-    /// the accumulator [`LaborAllocation::last_transfer_received`], and the reading a client renders.
+    /// **THE FOOD THAT CROSSED BETWEEN THIS BAND AND ANOTHER, AS OF THIS TURN'S FRAME** — the
+    /// per-turn twin of the accumulator [`LaborAllocation::last_food_transfers`], split by
+    /// [`TransferLink`], and the reading a client renders.
     ///
     /// Copied off that accumulator by `systems::publish_turn_transfers`, in the Snapshot stage
     /// immediately before the turn's `capture_snapshot`. **The copy exists because the accumulator
     /// resets and this does not.** `systems::reset_transfer_ledger` clears the accumulator *after*
     /// the capture has read it, so a **recapture** — `snapshot::recapture_snapshot_in_place`, which
     /// re-runs the capture against live components after every dispatched command — would republish
-    /// the band with the counter already zeroed and blank the row it had just shown. The four
+    /// the band with the counters already zeroed and blank the rows it had just shown. The four
     /// sibling ledger terms (`food_income`, [`Self::last_food_consumption`], `raid_forfeit`) are
-    /// per-turn values re-read unchanged on a recapture, and this pair is what joins them in that.
+    /// per-turn values re-read unchanged on a recapture, and this is what joins them in that.
     ///
     /// **It neither replaces the accumulator nor changes its window.** At the moment it is copied
     /// the accumulator holds *(command-time draws since the last turn capture) + (this turn's
     /// transfers)* — exactly the interval the ledger identity
     /// `larder_delta == income − consumption − raid_forfeit + received − sent` measures —
     /// so the two readings cannot disagree on a turn frame. On the wire as
-    /// `PopulationCohortState.transfer_received_turn`, beside the accumulator's own
-    /// `transfer_received`.
-    pub last_turn_transfer_received: f32,
-    /// **Food this band GAVE UP to another band, as of this turn's frame** — the sent half of
-    /// [`Self::last_turn_transfer_received`], on the same copy and for the same reason.
-    pub last_turn_transfer_sent: f32,
+    /// `PopulationCohortState.transfer_{local,route}_{received,sent}_turn`, beside the accumulator's
+    /// own summed `transfer_received` / `transfer_sent`.
+    pub last_turn_food_transfers: TransferLedger,
+    /// **THE FODDER THAT CROSSED BETWEEN THIS BAND AND ANOTHER, AS OF THIS TURN'S FRAME** — the hay
+    /// twin of [`Self::last_turn_food_transfers`], copied on the same pass and for the same reason.
+    ///
+    /// **Hay pools exactly as grain does**: `supply::balance_supply_networks` walks a band's whole
+    /// store and `FODDER` is an ordinary key in it, so two linked camps have always equalized their
+    /// hay — the account simply had no term that said so, and the runway beside it did not know
+    /// (see `snapshot::population`, which reads [`TransferLedger::local_net`] off this — the `local`
+    /// arm is a standing rate two camps keep up every turn, where a `route` crossing is a one-off
+    /// event and is deliberately not a term of any forecast).
+    ///
+    /// **The [`TransferLink::Route`] arm is live**: `send_trade_expedition` takes a `fodder
+    /// <amount>` line beside its food and material ones, so a party genuinely walks bales between
+    /// camps — debited on the sender at launch, credited on the destination when the shipment lands,
+    /// and credited back home if it never does. The arm was wired before the verb could fill it, on
+    /// the bet that both accounts have one shape and the wire is append-only; the bet paid.
+    pub last_turn_fodder_transfers: TransferLedger,
     /// This turn's signed morale delta (before clamping into `[0, 1]`). Recomputed each turn by
     /// `simulate_population`; on the client wire as `PopulationCohortState.morale_delta`, which the
     /// client renders as a rising/falling trend arrow.
@@ -807,8 +925,9 @@ pub enum MoraleCause {
 /// Which mortality term did most of the killing in one age bracket on one turn.
 ///
 /// The demographic model kills through a starvation term (scaled by the food deficit and the
-/// bracket's vulnerability), a uniform cold term, and — for elders only — the flat
-/// `elder_mortality_rate` of simply growing old. Once a death is *reported*, the turn that
+/// bracket's vulnerability), a uniform temperature term — which has **two independent tails**, so
+/// the same fraction means [`DeathCause::Cold`] below the cold onset and [`DeathCause::Heat`] above
+/// the heat one — and, for elders only, the flat `elder_mortality_rate` of simply growing old. Once a death is *reported*, the turn that
 /// produced it is gone — post-turn brackets and a refilled larder cannot say what emptied them —
 /// so the cause is recorded when the deaths accrue and carried on
 /// [`DemographicFlowAccumulator`] until the whole-person event fires.
@@ -817,8 +936,13 @@ pub enum DeathCause {
     /// The food deficit dominated (or the terms tied — a starving band is the louder reading).
     #[default]
     Hunger,
-    /// The cold term dominated.
+    /// The temperature term dominated on a tile **below** `cold.onset_temp`.
     Cold,
+    /// The temperature term dominated on a tile **above** `heat.onset_temp`. Freezing and baking
+    /// are one arithmetic term with two tails, and reporting the hot one as `Cold` would print
+    /// "died of cold" over a desert. Which tail is active is decided in exactly one place —
+    /// `active_temperature_tail` in `systems::population` — and carried here.
+    Heat,
     /// Old age dominated — the `elder_mortality_rate` term, which only the elder bracket carries.
     /// A band with a full larder in fair weather still buries its elders, and reporting that as
     /// `Hunger` would tell the player a falsehood about their food every few turns.
@@ -832,6 +956,7 @@ impl DeathCause {
         match self {
             DeathCause::Hunger => "hunger",
             DeathCause::Cold => "cold",
+            DeathCause::Heat => "heat",
             DeathCause::Age => "age",
         }
     }
@@ -842,6 +967,7 @@ impl DeathCause {
         match self {
             DeathCause::Hunger => "hunger",
             DeathCause::Cold => "cold",
+            DeathCause::Heat => "heat",
             DeathCause::Age => "old age",
         }
     }
@@ -1165,7 +1291,7 @@ pub enum ExpeditionMission {
         /// whole of what the party's orders say about pressure (`docs/plan_harvest_floor.md` §1).
         /// The raid takes the stock standing above it as fast as it can carry it, then comes home;
         /// the floor therefore governs both the take and the trip's shape
-        /// ([`crate::systems::raid_is_recurring`]).
+        /// ([`crate::components::raid_is_recurring`]).
         ///
         /// **Floor `0` takes everything** — nothing is left standing, the herd falls under
         /// `extinction_floor`, and the party banks the whole-stock windfall on the way (an end
@@ -1778,13 +1904,13 @@ pub enum LaborTarget {
     Husbandry,
     /// **KEEP THE ROADS THIS BAND STANDS ON** — the roadwork standing role, the route branch's
     /// third keeping pool (`docs/plan_standing_upkeep.md` §4.13). One pool against the summed
-    /// [`crate::routes::route_upkeep_demand`] of every road under the band's own tile.
+    /// [`crate::routes::road_upkeep_demand`] of every road under the band's own tile.
     ///
     /// # ⛔ IT KEEPS GROUND THE BAND DOES NOT OWN
     ///
     /// A road is a **shared public good** with no owner ([`crate::routes`] — rule 3), so unlike the
     /// two food webs' pools there is no *source row* naming what this one funds. What it funds is
-    /// resolved from where the band is standing ([`crate::routes::RoadRegistry::routes_on_tile`] —
+    /// resolved from where the band is standing ([`crate::routes::RoadRegistry::road`] —
     /// rule 2, and there is no radius): step one tile off your own road and you stop paying for it,
     /// which is the legible half of *a road is a reason to stay*.
     ///
@@ -2078,18 +2204,6 @@ impl LaborAssignment {
     }
 }
 
-/// **HANDS ONE `normalize` TOOK OFF A ROW** — what [`LaborAllocation::normalize`] hands its caller
-/// so the caller can say so (`docs/plan_standing_upkeep.md` §2.2).
-///
-/// The band could not field what it was holding, so the shedding pass took `lost` workers off
-/// `target` and left `remaining` there. **[`Self::remaining`] is the whole of the difference between
-/// a trim and a lapse**: above zero the source is still worked by a smaller crew, at
-/// [`NO_CREW_ON_THIS_ACTIVITY`] the row is gone and its queue entry goes with it on the next prune.
-///
-/// It carries the target by value rather than the whole [`LaborAssignment`] because a trimmed row is
-/// **still in the allocation** — handing back a copy of a live row would put a second, instantly
-/// stale reading of its crew in the caller's hands, and the caller's one job is to name the crew
-/// this pass left.
 /// **WHAT A SHED TOOK HANDS OFF** — a labor row, or the band's crafting bench.
 ///
 /// **The bench is deliberately NOT a [`LaborTarget`]** (*"make IS the assignment"*): giving it one
@@ -2124,6 +2238,18 @@ impl ShedSubject {
     }
 }
 
+/// **HANDS ONE `normalize` TOOK OFF A ROW** — what [`LaborAllocation::normalize`] hands its caller
+/// so the caller can say so (`docs/plan_standing_upkeep.md` §2.2).
+///
+/// The band could not field what it was holding, so the shedding pass took `lost` workers off
+/// `subject` and left `remaining` there. **[`Self::remaining`] is the whole of the difference
+/// between a trim and a lapse**: above zero the source is still worked by a smaller crew, at
+/// [`NO_CREW_ON_THIS_ACTIVITY`] the row is gone and its queue entry goes with it on the next prune.
+///
+/// It carries the subject by value rather than the whole [`LaborAssignment`] because a trimmed row
+/// is **still in the allocation** — handing back a copy of a live row would put a second, instantly
+/// stale reading of its crew in the caller's hands, and the caller's one job is to name the crew
+/// this pass left.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShedCrew {
     /// The source, role or bench the hands came off.
@@ -2503,31 +2629,32 @@ pub enum ShedStep {
 /// `realized` = **the steady headline yield**, a **FORWARD PROJECTION**: the average food/turn this
 /// source will deliver over the next `labor_config.yield_average_horizon_turns` turns, computed by
 /// simulating the herd/patch forward from its CURRENT state under the assignment's policy + worker
-/// count ([`fauna::project_realized_hunt`] / [`forage::project_realized_forage`]). A **pure function of
-/// state** — no history, no persistence — so the assign-time seed and the resolved row compute the
-/// identical number (exact forecast == actual, true no-jump). It is simulated **rate-based, without the
-/// kill-credit bank**: the bank only quantises *when* whole animals arrive, never the N-turn total, so
-/// projecting the smooth policy rate gives the smooth average directly. That is the whole point — the
-/// lumpy bank-quantised take is what `actual` already reports, and averaging the instantaneous
-/// `sustainable_yield(current biomass)` instead would *sawtooth* with the biomass (drops one body per
-/// kill, regrows between). So on a mammoth's six wait turns `actual` is `0` and on the seventh it
-/// spikes, while `realized` reads flat ≈ `MSY`. A self-terminating policy (Eradicate/Deplete) breaks the
-/// projection early and divides by the turns actually simulated, so it reads the rate it delivers
-/// *while the source lasts* rather than a horizon-diluted average. On a **continuous** source (forage
-/// patch / Field) the projection reuses `forage_take` directly. `actual` and the ledger identity are
-/// unchanged — this is a parallel steady value, added beside them, never replacing them.
+/// count ([`crate::fauna::project_realized_hunt`] / [`crate::forage::project_realized_forage`]). A
+/// **pure function of state** — no history, no persistence — so the assign-time seed and the
+/// resolved row compute the identical number (exact forecast == actual, true no-jump). It is
+/// simulated **rate-based, without the kill-credit bank**: the bank only quantises *when* whole
+/// animals arrive, never the N-turn total, so projecting the smooth policy rate gives the smooth
+/// average directly. That is the whole point — the lumpy bank-quantised take is what `actual`
+/// already reports, and averaging the instantaneous `sustainable_yield(current biomass)` instead
+/// would *sawtooth* with the biomass (drops one body per kill, regrows between). So on a mammoth's
+/// six wait turns `actual` is `0` and on the seventh it spikes, while `realized` reads flat ≈
+/// `MSY`. A self-terminating policy (Eradicate/Deplete) breaks the projection early and divides by
+/// the turns actually simulated, so it reads the rate it delivers *while the source lasts* rather
+/// than a horizon-diluted average. On a **continuous** source (forage patch / Field) the projection
+/// reuses `forage_take` directly. `actual` and the ledger identity are unchanged — this is a
+/// parallel steady value, added beside them, never replacing them.
 ///
 /// `arrivals` = **when the food actually lands** — the other half of the same question `realized`
 /// answers, from the same forward simulation run **WITH** the kill-credit bank
-/// ([`fauna::project_arrivals_hunt`] / [`forage::project_arrivals_forage`]). Index `i` is the food
-/// delivered `i + 1` turns from now, over `labor_config.arrivals_horizon_turns` turns; `0.0` where
-/// nothing lands. `realized` deliberately *omits* the bank because the bank decides **when** a whole
-/// animal arrives and not **how much** arrives over the window; this is the value that keeps the
-/// timing. So a big-game Sustain hunt reads a lumpy schedule (six zeros, then a mammoth) whose total
-/// is ≈ `realized × horizon`, while a forage patch — or fast game whose MSY clears a body every turn —
-/// is positive in every slot, which is a **continuous** source correctly rendered as a solid run.
-/// Projected from the source's **post-take** state, so slot 0 is genuinely the *next* delivery and not
-/// the one this turn already paid.
+/// ([`crate::fauna::project_arrivals_hunt`] / [`crate::forage::project_arrivals_forage`]). Index
+/// `i` is the food delivered `i + 1` turns from now, over `labor_config.arrivals_horizon_turns`
+/// turns; `0.0` where nothing lands. `realized` deliberately *omits* the bank because the bank
+/// decides **when** a whole animal arrives and not **how much** arrives over the window; this is
+/// the value that keeps the timing. So a big-game Sustain hunt reads a lumpy schedule (six zeros,
+/// then a mammoth) whose total is ≈ `realized × horizon`, while a forage patch — or fast game whose
+/// MSY clears a body every turn — is positive in every slot, which is a **continuous** source
+/// correctly rendered as a solid run. Projected from the source's **post-take** state, so slot 0 is
+/// genuinely the *next* delivery and not the one this turn already paid.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SourceYield {
     pub actual: f32,
@@ -2568,7 +2695,7 @@ pub struct SourceYield {
     /// `larder_delta == food_income − food_consumption − raid_forfeit`.
     ///
     /// **There is deliberately NO `realized_fodder` twin.** The plant web's forward projection is
-    /// food-only ([`crate::forage::plant_food_only`]) and fodder is paid by the plant web **alone**,
+    /// food-only (`forage::plant_food_only`) and fodder is paid by the plant web **alone**,
     /// so a projected-fodder field would be a constant zero on the only web that can pay it — dead
     /// weight the client would have to fall back off anyway. The client reads the actual.
     ///
@@ -3315,7 +3442,7 @@ impl BandBench {
     /// ⛔ **THIS FORFEITS THE DRAWN PILE**, which is why the shed must never call it: `*self =
     /// default()` drops [`Self::drawn`] on the floor rather than returning it to the store, so a
     /// band that lost people would silently lose the materials it had already cut. The shed uses
-    /// [`Self::stall_crew`] instead.
+    /// [`Self::shed_one_worker`] instead.
     pub fn clear_job(&mut self) {
         *self = Self::default();
     }
@@ -3447,8 +3574,11 @@ pub struct LaborAllocation {
     /// Same treatment as `last_yields`: reset then re-levied each turn by `advance_predator_raids`,
     /// and **excluded from equality** below.
     pub last_raid_forfeit: f32,
-    /// **Food this band RECEIVED from another band this turn** — supply-network balancing, an
-    /// arriving trade shipment, or an expedition of its own handing its pack back.
+    /// **THE FOOD THAT CROSSED BETWEEN THIS BAND'S LARDER AND ANOTHER'S THIS WINDOW** — supply-network
+    /// balancing, an arriving trade shipment, an expedition of its own handing its pack back, or a
+    /// party drawn off it walking away with cargo and provisions. Split by [`TransferLink`]; the
+    /// published `transfer_received` / `transfer_sent` are its summed [`TransferLedger::received`] /
+    /// [`TransferLedger::sent`].
     ///
     /// # It closes a hole the two terms above left open
     ///
@@ -3464,30 +3594,37 @@ pub struct LaborAllocation {
     ///
     /// pinned against real turns by `integration_tests/tests/transfer_food_ledger.rs`.
     ///
-    /// **ONE pair of terms for every band-to-band movement, not one per producer.** A supply-network
+    /// **ONE LEDGER FOR EVERY BAND-TO-BAND MOVEMENT, NOT ONE PER PRODUCER.** A supply-network
     /// transfer and a trade shipment are the same fact — *food that crossed between bands outside
     /// income and consumption* — and minting a term per mechanism is how a ledger acquires five
-    /// fields that answer one question.
-    ///
-    /// **Two named magnitudes rather than one signed net**, matching the style of the two terms
-    /// above: a band that both sends and receives in one turn is doing something, and a signed net
-    /// would render that as nothing happening.
+    /// fields that answer one question. What the player asked for is coarser than the mechanism list
+    /// and finer than one number: **by what link**, which is the two arms of [`TransferLink`] and
+    /// nothing else.
     ///
     /// # The window is the SNAPSHOT window, not the turn
     ///
-    /// Unlike its two siblings, this pair has writers **outside** `run_turn`: a
-    /// `send_trade_expedition` (or `send_expedition`) command debits the larder when it is applied,
-    /// which is between one capture and the next. So it accumulates — every writer **adds** — and
+    /// Unlike its two siblings, this has writers **outside** `run_turn`: a `send_trade_expedition`
+    /// (or `send_expedition`) command debits the larder when it is applied, which is between one
+    /// capture and the next. So it accumulates — every writer **adds** — and
     /// `systems::reset_transfer_ledger` clears it in the Snapshot stage *after* the capture has read
     /// it. That makes the window exactly the interval a client sees between two published frames,
     /// which is the interval its `larder_delta` measures.
     ///
     /// Excluded from equality below, like the rest of the per-turn telemetry.
-    pub last_transfer_received: f32,
-    /// **Food this band GAVE UP to another band this turn** — supply-network balancing, or a party
-    /// drawn off it walking away with cargo and provisions. See [`Self::last_transfer_received`] for
-    /// the identity both terms close and why there is one pair rather than one per producer.
-    pub last_transfer_sent: f32,
+    pub last_food_transfers: TransferLedger,
+    /// **THE FODDER THAT CROSSED BETWEEN THIS BAND'S LARDER AND ANOTHER'S THIS WINDOW** — the hay twin
+    /// of [`Self::last_food_transfers`], on the same window, the same accumulate/reset discipline and
+    /// the same [`TransferLink`] split.
+    ///
+    /// **It closes no identity**, and deliberately: the reconciliation identity above is the food
+    /// one. What this is for is the two things hay was silent about — the rows that say a neighbour's
+    /// camp is where the hay went, and the fodder runway, which counts a store down and must know
+    /// that the store is being topped up (`snapshot::population`).
+    ///
+    /// Both arms are live: the `local` one is the supply network pooling two camps' hay every turn,
+    /// the `route` one is a shipment carrying bales — see
+    /// [`PopulationCohort::last_turn_fodder_transfers`].
+    pub last_fodder_transfers: TransferLedger,
     /// **THE HAY THIS BAND'S PENS ARE SHORT, PER TURN** — `Σ max(0, demand_grass − footprint_intake)`
     /// over every pen the band kept this turn, in fodder units. Written by
     /// `advance_labor_allocation` once its assignment loop has seen every row, and exported as
@@ -4742,9 +4879,9 @@ impl LaborAllocation {
     ///
     /// # ⛔ THE RANK ORDERS CANDIDATES; IT NEVER CREATES OR REMOVES ONE
     ///
-    /// `admits` is untouched by it, and so is every step of [`Self::row_that_gives`] that selects by
-    /// **role** rather than by productivity (the scout, the warrior, the keepers, the builders). A
-    /// `High` mark on an unimproved source therefore does **not** save it from step 6 while an
+    /// `admits` is untouched by it, and so is every step of [`Self::pick_that_gives`] that selects
+    /// by **role** rather than by productivity (the scout, the warrior, the keepers, the builders).
+    /// A `High` mark on an unimproved source therefore does **not** save it from step 6 while an
     /// improved `Normal` row waits at step 9 — the rank is a level *within* a step, which is what
     /// makes it a tie-break on top of the shipped eleven-step walk rather than a second walk beside
     /// it. And the terminal step still takes the band's last hand off its last row, whatever it is

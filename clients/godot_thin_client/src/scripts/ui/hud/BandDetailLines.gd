@@ -94,8 +94,9 @@ const BAND_FODDER_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_FODDER + ": %s  (%
 # The stock alone cannot carry the need/growing pair — this host merges rows precisely because it has
 # no height — but the gate that puts the clause on screen now admits a band with a hay BILL and an
 # empty store, and `0.0 hay` stated in neutral ink beside a bill it cannot pay would read as *fine*.
-# So the clause takes `HudStyle.WARN_HEX` on exactly the condition the full row's need clause does,
-# and the tall tiers carry the two numbers that explain it.
+# So the clause takes `HudStyle.WARN_HEX` when `_band_fodder_falls_short` says the larder is draining
+# — the same crossing-inclusive net the `Fodder:` caret is tinted from, so this tier and the tall ones
+# cannot disagree about one larder — and the tall tiers carry the numbers that explain it.
 const BAND_FOOD_FODDER_CLAUSE_FORMAT := " · [color=#%s]%s fodder[/color]"
 
 # ---- THE BAND'S STANDING MATERIAL BILL, beneath the two larders (`docs/plan_standing_upkeep.md`
@@ -219,16 +220,24 @@ const PARTY_PACK_ENTRY_FORMAT := "%s %s"
 # The destination is the sim's `expeditionDestinationName`, resolved at LAUNCH and carried, rendered
 # verbatim. Its key twin `expeditionDestinationBand` is what the command addresses and NEVER appears.
 const TRADE_DESTINATION_ROW := "Bound for"
-# `Carrying: 23.2 / 24.0 · 4.0 hide · 1.2 bone` — the shipment beside the pack it fills, and the
-# materials as ONE TERM PER MATERIAL, never summed (`_shipment_cargo_clause`). The cap is
-# `expedition_carry_cap`, which resolves per MISSION, so this quotes the shipment pack rather than a
-# hunt's provisions ceiling.
+# `Carrying: 26.2 / 30.0 · 6.0 hay · 4.0 hide · 1.2 bone` — the shipment beside the pack it fills,
+# the HAY as its own term and the materials as ONE TERM PER MATERIAL, never summed
+# (`_shipment_cargo_clause`). The cap is `expedition_carry_cap`, which resolves per MISSION, so this
+# quotes the shipment pack rather than a hunt's provisions ceiling.
 #
 # **THE NUMBER BEFORE THE SLASH IS THE WHOLE PACK'S MASS** (`DetailFormat.shipment_cargo_mass` —
-# 18 food + 4 hide + 1.2 bone at a carry weight of 1.0 is the 23.2 above), never the food term alone:
-# the cap is what the sim weighs `food + weight × Σ materials` against, and the materials trailing it
-# are the SPELLING of that mass, not a second cargo beside it.
+# 18 food + 6 hay at a fodder carry weight of 0.5 + 4 hide + 1.2 bone at a material carry weight of
+# 1.0 is the 26.2 above), never the food term alone: the cap is what the sim weighs the three-account
+# expression against, and the terms trailing it are the SPELLING of that mass, not a second cargo
+# beside it.
+#
+# **FOOD IS THE ONLY ACCOUNT WITH NO TERM, because it is the one the mass is denominated in** — food
+# counts as itself at weight 1, so the leading figure already reads as food-and-then-some. Every
+# account carried at a weight of its own says so, which since issue #590 includes the hay.
 const TRADE_CARGO_ROW := "Carrying"
+# What the hay term is CALLED in that clause. "hay" is the player's word for it; the wire's key is
+# `expedition_cargo_fodder` and the command's token is `fodder`, and neither reaches this label.
+const TRADE_CARGO_FODDER_TERM := "hay"
 const TRADE_CARGO_CAP_FORMAT := "%s: %s / %s%s"
 const TRADE_CARGO_NO_CAP_FORMAT := "%s: %s%s"
 
@@ -663,9 +672,11 @@ func _shipment_summary_lines(unit_data: Dictionary, context: DetailFormat.Contex
     # of its provisions on the road exactly as a scout does, and the walk is where a haul's cost lives.
     context.food_turns = float(unit_data.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
     # **THE NUMERATOR IS THE PACK'S MASS, NOT ITS FOOD** — `expedition_carry_cap` is what the sim
-    # checks `food + weight × Σ materials` against, so putting the food alone over it renders a full
-    # pack as a near-empty one. `DetailFormat.shipment_cargo_mass` is the compose sheet's own meter
-    # expression, shared so the pre-launch price and the in-flight report answer for one pack.
+    # checks `food + fodder_carry_weight × fodder + material_carry_weight × Σ materials` against
+    # (THREE terms since the hay account, issue #590), so putting the food alone over it renders a
+    # full pack as a near-empty one; dropping the hay term under-prices every manifest with a bale
+    # in it. `DetailFormat.shipment_cargo_mass` is the compose sheet's own meter expression, shared
+    # so the pre-launch price and the in-flight report answer for one pack.
     var cargo_mass := DetailFormat.shipment_cargo_mass(unit_data)
     var cargo := _shipment_cargo_clause(unit_data)
     var cap := float(unit_data.get("expedition_carry_cap", 0.0))
@@ -681,10 +692,16 @@ func _shipment_summary_lines(unit_data: Dictionary, context: DetailFormat.Contex
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
     return lines
 
-## **THE SHIPMENT'S MATERIALS, ONE TERM PER MATERIAL AND NEVER SUMMED** — ` · 4.0 hide · 1.2 bone`,
-## `""` when the shipment is food alone. `expedition_cargo_materials` is the wire's per-material
-## total across the batches the party holds (its `MaterialPayoff` rows), so this reads it as it
-## arrives; adding hide to bone would be the retired trade axis rebuilt under a new name.
+## **THE SHIPMENT'S HAY AND MATERIALS, ONE TERM EACH AND NEVER SUMMED** — ` · 6.0 hay · 4.0 hide ·
+## 1.2 bone`, `""` when the shipment is food alone. `expedition_cargo_fodder` is the party's hay
+## account and `expedition_cargo_materials` the wire's per-material total across the batches it holds
+## (its `MaterialPayoff` rows), so this reads both as they arrive; adding hide to bone — or hay to
+## either — would be the retired trade axis rebuilt under a new name.
+##
+## **THE HAY TERM LEADS**, matching the compose sheet's row order (food, hay, then the material
+## piles), so a shipment reads the same before it leaves as it does on the road. It is omitted
+## entirely below `FODDER_FLOW_MIN`: **empty means NO TERM, never `0.0 hay`**, the rule every
+## material row already keeps.
 ##
 ## **IT IS NOT `_party_pack_clause`.** That one reads `material_batches`, the party's OWN pack — what
 ## a scout skinned on the road, and what a trade party's escort is carrying for itself — and a
@@ -692,6 +709,13 @@ func _shipment_summary_lines(unit_data: Dictionary, context: DetailFormat.Contex
 ## kit read as goods bound for another people.
 func _shipment_cargo_clause(unit_data: Dictionary) -> String:
     var terms: Array[String] = []
+    var fodder := DetailFormat.shipment_cargo_fodder(unit_data)
+    if fodder >= SourceForecast.FODDER_FLOW_MIN:
+        # Fodder's own one-decimal rendering, never the materials' — hay runs on a ~25x coarser scale
+        # than food, and `format_fodder` is the single renderer every hay figure in this HUD goes
+        # through so a shipment's bales read as the same quantity the larder rows quote.
+        terms.append(PARTY_PACK_ENTRY_FORMAT % [
+            SourceForecast.format_fodder(fodder), TRADE_CARGO_FODDER_TERM])
     for row_variant in unit_data.get("expedition_cargo_materials", []):
         if not (row_variant is Dictionary):
             continue
@@ -713,22 +737,31 @@ func _shipment_cargo_clause(unit_data: Dictionary) -> String:
 ## layer and cannot reach a producer's private — and a second copy of the test is how two surfaces
 ## come to disagree about when a larder exists. Every reader here calls it by that name.
 
-## Is this band's fodder bill bigger than its fodder harvest — the slow trap, stated as a comparison.
+## Is this band's fodder larder DRAINING — the slow trap, stated as a comparison.
 ## **Its ONE reader is the `compact` tier's merged clause**, which is the only host with no room to
 ## state the pair it is a verdict about: that tier trades the whole Fodder row for a stock clause on
-## the Food line, so the tint is all it can say about a bill the band's Fields are not covering.
+## the Food line, so the tint is all it can say about a larder the band's Fields are not keeping up.
 ##
 ## **THE FULL ROW NO LONGER ASKS.** Its `need` clause and that clause's amber are retired with the
 ## rates themselves — the runway says the larder is draining, under the same thresholds the Food row
 ## uses — so this is not a second opinion about the standalone row's severity any more.
 ##
-## **STRICTLY GREATER, past the flow floor**, so a band whose Fields exactly meet its pens does not
-## flicker amber on float noise, and a band owing nothing at all is never warned.
+## ⛔ **THE VERDICT IS `DetailFormat.band_net_fodder` NEGATED, NEVER `need − income` RECOMPUTED HERE.**
+## That subtraction omits the LOCAL crossings the net counts, and a camp a neighbour tops up every
+## turn — need 6.0, harvest 5.0, 2.0 arriving over the local exchange — has a RISING larder. Its
+## `Fodder:` caret is calm on the net, and this clause used to take the amber anyway: one panel saying
+## two things about one larder, which is the disagreement `band_net_fodder` exists to end. The amber
+## marks a bill the band cannot pay, and a band a neighbour feeds can pay it. **Local crossings only,
+## never route** — that is `band_net_fodder`'s own rule, and riding it is how this stays on it.
+##
+## **STRICTLY WORSE THAN THE FLOW FLOOR**, so a band whose hay exactly balances does not flicker amber
+## on float noise, and a band owing nothing at all is never warned — the `fodder_need` gate above,
+## which is about whether there is a bill rather than about how the larder is moving.
 func _band_fodder_falls_short(unit_data: Dictionary) -> bool:
     var need := float(unit_data.get("fodder_need", 0.0))
     if need < SourceForecast.FODDER_FLOW_MIN:
         return false
-    return need - float(unit_data.get("fodder_income", 0.0)) >= SourceForecast.FODDER_FLOW_MIN
+    return -DetailFormat.band_net_fodder(unit_data) >= SourceForecast.FODDER_FLOW_MIN
 
 ## The band's fodder larder as the Food row's twin: the STOCK and the RUNWAY, and nothing else. The
 ## two flows that move it are the disclosure `unit_summary_lines` registers on this row — see

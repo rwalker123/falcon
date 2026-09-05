@@ -42,8 +42,10 @@ signal send_denial_raid_requested(payload: Dictionary)
 ## compose sheet. Payload keys: { faction, band_id, party_workers, destination_band_id,
 ## destination_label, cargo }, where `cargo` is an ORDERED array of `{ id, is_material, amount }`
 ## rows — the manifest the player built, in the order they built it, because
-## `send_trade_expedition`'s tail is a REPEATED `food <amount>` / `material <id> <amount>` list and a
-## shipment has no fixed arity. `destination_band_id` is the DATABASE KEY the command addresses;
+## `send_trade_expedition`'s tail is a REPEATED `food <amount>` / `fodder <amount>` /
+## `material <id> <amount>` list and a shipment has no fixed arity. **`id` names the ACCOUNT**: the
+## two commodity ids (`HudConst.STORE_ITEM_PROVISIONS`, `HudConst.CARGO_ITEM_FODDER`) both carry
+## `is_material` false, so that flag alone no longer says which store a row draws from. `destination_band_id` is the DATABASE KEY the command addresses;
 ## `destination_label` is what the command-feed note reads, the `fauna_id` / `fauna_label` rule.
 ## Main formats the `send_trade_expedition …` command.
 signal send_trade_expedition_requested(payload: Dictionary)
@@ -1121,6 +1123,12 @@ func update_connections(connections_variant: Variant) -> void:
 ## Ingests MapView's terrain-stamped food sites (x/y/module/kind + terrain_id) into the per-tile map
 ## the Forage row reads, so its glyph matches the map marker (riverine split included). The per-tile
 ## lookup lives on `_band_labor` (`food_module_by_tile()`).
+## The per-tile temperatures `MapView` already ingested, forwarded by `Main` (issue #614). The orb
+## needs them to say WHY a band is shrinking on ground that is freezing it — food-independent deaths
+## reach none of the other decline reasons. See `HudBandLaborState._tile_temperature`.
+func update_tile_temperatures(temperatures_variant: Variant) -> void:
+    _band_labor.set_tile_temperatures(temperatures_variant)
+
 func update_food_modules(modules_variant: Variant) -> void:
     _band_labor.set_food_modules(modules_variant)
 

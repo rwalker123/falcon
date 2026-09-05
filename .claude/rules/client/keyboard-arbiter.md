@@ -196,7 +196,13 @@ A field that keeps focus after its surface is dismissed leaves the map unrespons
 panel toggle dead, with nothing on screen to explain why — strictly worse than the bug the guard
 exists for. So the surface that owns a text field owns handing the keyboard back:
 `MenuShell.release_text_focus()`, called on every pane change, after a save is submitted, and by
-`Main._hide_pause_menu`. **Hiding a `CanvasLayer` does not do it for you**: `CanvasLayer` is not a
+`Main._hide_pause_menu`.
+
+The menu is no longer the only surface with a text field: the shipment sheet's cargo rows carry one
+per row (issue #620, `band-city-panel.md`). Its release is structural rather than a call — the row is
+rebuilt on every snapshot, and a focused `Control` leaving the tree drops focus on its own — so what
+that surface has to get right is the OPPOSITE problem, carrying the focus back onto the rebuilt row
+instead of losing the player's half-typed number every turn. **Hiding a `CanvasLayer` does not do it for you**: `CanvasLayer` is not a
 `CanvasItem`, so its `visible` never reaches the Controls under it as a visibility change. Neither
 does `queue_free` within the frame it is called — the node holds focus until it actually leaves the
 tree.

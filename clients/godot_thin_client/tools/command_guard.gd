@@ -145,6 +145,12 @@ const TRADE_FOOD_HELD_TICKS := 21_050_001
 ## The material pile, fractional for the first of those two reasons. A batch is one pile of one
 ## material AT ONE RATING, so this one carries its reading like a real store row.
 const TRADE_HIDE_HELD_TICKS := 4_567_891
+## **THE HAY PILE, and the reason it is the biggest number here** (issue #590). Hay is quoted on a
+## far coarser scale than food - a band's fodder larder runs in the tens where its provisions run in
+## the twenties - so this is what a real store looks like, and what makes the press ceiling below a
+## real question rather than a formality. Fractional for the same adversarial reason as the food
+## pile: `%.1f` rounds `84.050001` UP to `84.1`, which the server refuses outright.
+const TRADE_FODDER_HELD_TICKS := 84_050_001
 const TRADE_HIDE_MATERIAL := "hide"
 const TRADE_HIDE_AXIS := "tough"
 const TRADE_HIDE_AXIS_VALUE := 0.9
@@ -154,11 +160,27 @@ const TRADE_HIDE_AXIS_BAND := "excellent"
 ## and a cargo this harness cannot send emits no line to parse.
 const TRADE_PER_WORKER_CARRY := 120.0
 const TRADE_MATERIAL_CARRY_WEIGHT := 1.0
+## Hay's own pack-space price, the shipped `expedition_config.trade.fodder_carry_weight`. Stated so
+## the meter this drive has to get past prices the hay row the way the server will, and so the pack
+## above holds all three piles at once.
+const TRADE_FODDER_CARRY_WEIGHT := 0.5
 
-## The most `+` presses one cargo row may take before the drive gives up. A whole-unit step over a
-## ~21-unit pile needs 22, so this is generous rather than tight; it exists so a row whose `+` stops
-## disabling fails HERE instead of spinning the harness forever.
-const CARGO_LOAD_MAX_PRESSES := 64
+## The most `+` presses one cargo row may take before the drive gives up. **A TOOLING CEILING, NOT A
+## GAME RULE** - it exists so a row whose `+` stops disabling fails HERE instead of spinning the
+## harness forever, and it must sit above the largest pile still driven by pressing.
+##
+## The whole-unit step (`COMPOSE_CARGO_STEP`) makes the press count the pile's own size, and the
+## ~84-unit HAY pile is what had this at 128. **The hay row is now filled by its `Max` button**
+## (issue #620), which is one press and the control a player actually uses on a load that size, so
+## the bound is back to covering the two piles this drive still steps: the ~21-unit food one (22
+## presses) and the ~4.5-unit hide one (5).
+##
+## **THE PRESS PATH IS KEPT ON THOSE TWO ON PURPOSE.** It is the only path that leaves the band's
+## EXACT holding on the row - `Max` floors to a tenth - and the exact holding is the whole subject of
+## the manifest assertions below: `21.050001` is a value `%.1f` rounds UP past the pile and the
+## fixed-point floor alone still reconstructs above it. Driving every row with `Max` would leave this
+## gate comparing whole tenths against whole tenths, which any rounding survives.
+const CARGO_LOAD_MAX_PRESSES := 32
 
 ## Frames to let the HUD/panel rebuild between drives. Nothing renders, so this is layout settling
 ## only — the controls have to exist before a button can be pressed.
@@ -486,6 +508,16 @@ func _drive_send_trade_expedition() -> void:
 	_hud._bandpanel.rerender()
 	await _settle()
 	await _load_whole_pile(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+	# **THE HAY ROW IS DRIVEN BESIDE THE FOOD ONE, and that is the point of driving it at all**
+	# (issue #590): both are commodities with `is_material` false, so the only thing keeping a hay
+	# press out of the `food` token is the row's own id. The emitted line is checked against the
+	# fodder pile by name, so a formatter that merged them fails here.
+	#
+	# **It goes through `Max` rather than 85 presses** (issue #620) - the control a player reaches for
+	# on a pile this size, and the one whose amount has been through `_trade_row_max` and the floor to
+	# a tenth. So this line carries BOTH spellings of a composed amount: two rows floored by the wire
+	# formatter off an exact holding, and one already floored by the sheet.
+	await _load_pile_with_max(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL)
 	await _load_whole_pile(TRADE_HIDE_MATERIAL)
 	_press_meta_button(_panel, HudWidgets.SEND_TRADE_CONFIRM_META, "band panel trade compose")
 	await _settle()
@@ -495,7 +527,7 @@ func _drive_send_trade_expedition() -> void:
 func _load_whole_pile(needle: String) -> void:
 	var presses := 0
 	while presses < CARGO_LOAD_MAX_PRESSES:
-		var plus := _cargo_plus_button(_panel, needle)
+		var plus := _cargo_control(_panel, needle, HudWidgets.CARGO_CONTROL_PLUS)
 		if plus == null:
 			_fail("no cargo row for `%s` on the shipment sheet" % needle)
 			return
@@ -508,20 +540,44 @@ func _load_whole_pile(needle: String) -> void:
 		_fail("the cargo row for `%s` never filled (%d presses) — the pile must be loadable and its `+` must stop"
 			% [needle, presses])
 
-## The `+` of the cargo row whose name label contains `needle`. A cargo row is a name label followed by
-## the shared stepper faces, so the `+` is the row's LAST child — found structurally, since a text match
-## would find every stepper on the sheet.
-func _cargo_plus_button(root: Node, needle: String) -> Button:
-	if root is HBoxContainer:
+## Fill one cargo row through its `Max` button (issue #620) — one press, and the button must DISABLE
+## on the rebuilt row, which is the harness's signal that the amount it set really is the row's
+## ceiling. A `Max` that answered a press with nothing would otherwise leave this drive emitting a
+## manifest line for a row at zero, which `format_send_trade_expedition` drops silently.
+func _load_pile_with_max(needle: String) -> void:
+	var button := _cargo_control(_panel, needle, HudWidgets.CARGO_CONTROL_MAX)
+	if button == null:
+		_fail("no cargo row for `%s` on the shipment sheet, or its row offers no `Max`" % needle)
+		return
+	if button.disabled:
+		_fail("the `Max` on the cargo row for `%s` was disabled before the row was loaded — the band holds this pile and the pack has room for it"
+			% needle)
+		return
+	button.pressed.emit()
+	await _settle()
+	var settled := _cargo_control(_panel, needle, HudWidgets.CARGO_CONTROL_MAX)
+	if settled == null or not settled.disabled:
+		_fail("`Max` on the cargo row for `%s` did not take the row to its ceiling — the button must come back disabled"
+			% needle)
+
+## One control of the cargo row whose name label contains `needle`, found by the two metas the row
+## carries (`HudWidgets.CARGO_ROW_KEY_META` on the row, `CARGO_CONTROL_META` on each control).
+##
+## **IT USED TO WALK CHILDREN POSITIONALLY — the `+` was "the row's last child" — and that is exactly
+## what a fourth control broke** (issue #620): the walk found the new `Max` button and pressed it
+## believing it was the `+`, which loads a whole pile per press and reports nothing. A meta is the
+## only handle that survives a control joining the row.
+func _cargo_control(root: Node, needle: String, control: String) -> Button:
+	if root is HBoxContainer and (root as HBoxContainer).has_meta(HudWidgets.CARGO_ROW_KEY_META):
 		var row := root as HBoxContainer
-		var count := row.get_child_count()
-		if count > 0 and row.get_child(0) is Label \
+		if row.get_child_count() > 0 and row.get_child(0) is Label \
 				and (row.get_child(0) as Label).text.contains(needle):
-			var last := row.get_child(count - 1)
-			if last is Button and (last as Button).text == HudWorkVocab.STEPPER_PLUS_FACE:
-				return last as Button
+			for child in row.get_children():
+				if child is Button and String(child.get_meta(
+						HudWidgets.CARGO_CONTROL_META, "")) == control:
+					return child as Button
 	for child in root.get_children():
-		var found := _cargo_plus_button(child, needle)
+		var found := _cargo_control(child, needle, control)
 		if found != null:
 			return found
 	return null
@@ -603,6 +659,12 @@ func _connect_recorders() -> void:
 	_hud.send_trade_expedition_requested.connect(func(p: Dictionary) -> void:
 		_record("send_trade_expedition", p, MAIN_SCRIPT.format_send_trade_expedition(p), {
 			HudConst.STORE_ITEM_PROVISIONS: TRADE_FOOD_HELD_TICKS,
+			# The hay pile under the key the SERVER PARSER rebuilds for a `fodder` token
+			# (`sim_runtime::commands::FODDER_CARGO_KEY`), which is what makes the Rust half's
+			# comparison an exact one. A commodity line naming a key the drive never stated is
+			# itself a guard failure, so a `fodder` token emitted against the food pile - the
+			# defect the third account invites - cannot pass here.
+			HudConst.CARGO_ITEM_FODDER: TRADE_FODDER_HELD_TICKS,
 			TRADE_HIDE_MATERIAL: TRADE_HIDE_HELD_TICKS,
 		}))
 
@@ -905,12 +967,16 @@ func _band_fixture() -> Dictionary:
 		# **THE LARDER IS A FRACTIONAL PILE, and that is the shipment drive's whole subject** — see
 		# `TRADE_FOOD_HELD_TICKS`. Nothing else in this file reads the store.
 		"stores": {HudConst.STORE_ITEM_PROVISIONS: _units(TRADE_FOOD_HELD_TICKS)},
+		# **THE HAY LARDER IS NOT IN `stores`** - the wire publishes it as the cohort's own
+		# `fodder_store`, a larder apart from the food one, and the two never convert.
+		"fodder_store": _units(TRADE_FODDER_HELD_TICKS),
 		# One pile of one material AT ONE RATING, the shape the sim's own store keeps.
 		HudCraftingVocab.BAND_MATERIAL_BATCHES_KEY: [_hide_batch_fixture()],
 		# The two shipment pack levers, so the manifest the drive composes is one the meter passes and
 		# the send button therefore exists to be pressed.
 		"expedition_trade_per_worker_carry": TRADE_PER_WORKER_CARRY,
 		"expedition_trade_material_carry_weight": TRADE_MATERIAL_CARRY_WEIGHT,
+		"expedition_trade_fodder_carry_weight": TRADE_FODDER_CARRY_WEIGHT,
 		"output_multiplier": 1.0,
 		"work_range": BAND_WORK_RANGE,
 		"hunt_reach": BAND_HUNT_REACH,

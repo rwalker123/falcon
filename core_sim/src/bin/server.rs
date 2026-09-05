@@ -37,29 +37,30 @@ use core_sim::{
     FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget,
     LadderConfigHandle, LocalStore, MaterialsConfigHandle, RecipesConfigHandle, ResidentBand,
     RungKey, SiteRefusal, SourcePriority, SpeciesRefusal, StartProfile, StartProfileOverrides,
-    TakeSelection, UpkeepFundMode, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR,
+    TakeSelection, TransferLink, UpkeepFundMode, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR,
     NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
     fold_party_into_band, hunt_trip_forecast, install_config_override, party_owes_a_report,
     publish_baseline_snapshot, recapture_snapshot_in_place, run_turn, scalar_from_f32,
-    split_band_from_parent, AgentAssignment, BandId, BandIdAllocator, CommandEventEntry,
-    CommandEventKind, CommandEventLog, CounterIntelBudgets, CrisisArchetypeCatalog,
-    CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata, CrisisModifierCatalog,
-    CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata, CrisisTelemetry,
-    CrisisTelemetryConfig, CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata,
-    DiscoveryProgressLedger, EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog,
-    EspionageMissionId, EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate,
-    EspionageRoster, FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies,
-    FaunaConfigHandle, FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement,
-    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
-    QueueMissionParams, Scalar, SecurityPolicy, Settlement, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
-    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
-    SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
-    TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FOOD,
+    shipment_carry_cap, split_band_from_parent, AgentAssignment, BandId, BandIdAllocator,
+    CommandEventEntry, CommandEventKind, CommandEventLog, CounterIntelBudgets,
+    CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
+    CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
+    CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
+    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EquipmentConfigHandle,
+    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
+    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
+    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FoodSiteRegistry, ForageRegistry,
+    FrameSink, HerdRegistry, Improvement, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns,
+    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, Settlement,
+    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
+    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
+    SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter, TradeExpeditionConfig,
+    TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
+    WorldEpoch, FODDER, FOOD,
 };
 use sim_runtime::{
     commands::{
@@ -2526,7 +2527,7 @@ fn seed_source_yield(
 /// rejection reason (`Err`) or `Ok`.
 ///
 /// **Since issue #442 the stance axis has two rules, and neither is about a policy.**
-/// - **Hunt:** `fauna::hunt_policies_for` prunes a [`fauna::HuntYield::yields_nothing`] quarry —
+/// - **Hunt:** `fauna::hunt_policies_for` prunes a [`core_sim::HuntYield::yields_nothing`] quarry —
 ///   worth neither meat nor pelt — down to `Eradicate` alone, because every other rung would be a
 ///   rate at which to collect nothing.
 /// - **Forage:** the **crop the player named**, if they named one. `assign_labor` is the only
@@ -3832,9 +3833,12 @@ fn handle_send_expedition(
         drawn
     };
     // The scout's launch larder is food leaving the band with the party — the same food-ledger
-    // transfer term a shipment's cargo takes, and it comes back on the fold-back.
+    // transfer term, on the same [`TransferLink::Route`] arm, a shipment's cargo takes, and it comes
+    // back on the fold-back.
     if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(band.entity) {
-        allocation.last_transfer_sent += drawn.to_f32();
+        allocation
+            .last_food_transfers
+            .debit(TransferLink::Route, drawn.to_f32());
     }
 
     // Retask the cloned cohort into a detached party co-located with the band.
@@ -4816,24 +4820,45 @@ struct ResolvedShipment {
     destination_pos: UVec2,
     /// The FOOD the shipment will carry, summed over the order's food lines.
     food: Scalar,
+    /// The FODDER the shipment will carry, summed over the order's hay lines. **A third account,
+    /// never a share of [`Self::food`]** — the two keys sit on the same band store and never
+    /// convert, so a herd can no more eat its keepers' bread here than anywhere else.
+    fodder: Scalar,
     /// One `(material id, amount)` per material the order names, summed over its lines and in the
     /// order the player named them.
     materials: Vec<(String, Scalar)>,
 }
 
-/// **How much pack space this shipment takes** — `food + material_carry_weight × Σ material
-/// amounts`, the one expression the cap is checked against.
+/// **How much pack space this shipment takes** — `food + fodder_carry_weight × fodder +
+/// material_carry_weight × Σ material amounts`, the one expression the cap is checked against.
 ///
-/// A material's bulk is a v1 simplification (`expedition_config.trade.material_carry_weight`): every
+/// **Food is the numéraire at weight 1.0**; the other two accounts are priced against it. A
+/// material's bulk is a v1 simplification (`expedition_config.trade.material_carry_weight`): every
 /// material weighs the same per unit relative to food, because `materials.json` authors no density
-/// axis to read instead.
-fn shipment_mass(food: Scalar, materials: &[(String, Scalar)], material_carry_weight: f32) -> f32 {
+/// axis to read instead. Hay's weight (`trade.fodder_carry_weight`) is priced in *turns of keep* —
+/// see that lever for the derivation.
+fn shipment_mass(
+    food: Scalar,
+    fodder: Scalar,
+    materials: &[(String, Scalar)],
+    trade: &TradeExpeditionConfig,
+) -> f32 {
     let material_units: f32 = materials
         .iter()
         .map(|(_, amount)| amount.to_f32())
         .sum::<f32>();
-    food.to_f32() + material_carry_weight * material_units
+    food.to_f32()
+        + trade.fodder_carry_weight * fodder.to_f32()
+        + trade.material_carry_weight * material_units
 }
+
+// **How much pack space this party HAS** is [`core_sim::shipment_carry_cap`], the twin of
+// [`shipment_mass`] above: the two halves of one rule, and a shipment launches exactly when the
+// first is no greater than the second. It lives in the lib rather than here because there is **one**
+// resolver for shipment carry and the snapshot goes through it — the launch refusal below, the
+// per-mission cap a live party publishes, and the per-worker carry the wire echoes to the cargo
+// picker are all that one expression, so a carry model (a cart kit, a tech factor, a road grade)
+// moves it once and the wire follows.
 
 /// Resolve and validate a shipment's destination and its cargo. **Fails closed on every axis** — an
 /// empty order, an unknown commodity or material, a non-positive or non-finite amount, cargo the
@@ -4934,6 +4959,8 @@ fn resolve_shipment(
     }
     let materials_cfg = app.world.resource::<MaterialsConfigHandle>().get();
     let mut food = Scalar::from_i64(0);
+    // Its own accumulator, never a share of the one above: the two commodity keys are two accounts.
+    let mut fodder = Scalar::from_i64(0);
     // A `Vec` rather than a map: the order the player named the lines in is the order they are drawn
     // and published in, and two lines naming one material sum rather than the second winning.
     let mut materials: Vec<(String, Scalar)> = Vec::new();
@@ -4966,26 +4993,33 @@ fn resolve_shipment(
                 None => materials.push((item.id.clone(), amount)),
             }
         } else {
-            // **The commodity key is checked, not assumed.** `sim_runtime::FOOD_CARGO_KEY` is a
-            // restatement of this crate's `FOOD`, and this is what makes the duplication safe: a
-            // drift refuses the shipment rather than loading the wrong good.
-            if item.id != FOOD {
-                emit_command_failure(
-                    app,
-                    CommandEventKind::ExpeditionSent,
-                    faction,
-                    format!("{VERB}: unknown commodity '{}'.", item.id),
-                );
-                return None;
+            // **The commodity key is checked, not assumed.** `sim_runtime::FOOD_CARGO_KEY` and
+            // `FODDER_CARGO_KEY` are restatements of this crate's `FOOD` and `FODDER`, and this
+            // match is what makes the duplication safe on BOTH keys: a drift refuses the shipment
+            // rather than loading the wrong good.
+            //
+            // **The two accounts sum apart.** Bread and hay never convert, so a manifest naming
+            // both leaves with both, and no line can move a unit from one to the other.
+            match item.id.as_str() {
+                FOOD => food += amount,
+                FODDER => fodder += amount,
+                _ => {
+                    emit_command_failure(
+                        app,
+                        CommandEventKind::ExpeditionSent,
+                        faction,
+                        format!("{VERB}: unknown commodity '{}'.", item.id),
+                    );
+                    return None;
+                }
             }
-            food += amount;
         }
     }
 
     // --- it fits in the packs of the people being sent ----------------------------------------
     let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
-    let cap = party_workers as f32 * cfg.trade.per_worker_carry;
-    let mass = shipment_mass(food, &materials, cfg.trade.material_carry_weight);
+    let cap = shipment_carry_cap(party_workers, &cfg.trade);
+    let mass = shipment_mass(food, fodder, &materials, &cfg.trade);
     if mass > cap {
         emit_command_failure(
             app,
@@ -5026,6 +5060,21 @@ fn resolve_shipment(
         );
         return None;
     }
+    // The hay account answers for itself: a band with a full larder and an empty hayloft can no more
+    // ship a bale than one with neither.
+    if store.get(FODDER) < fodder {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!(
+                "{VERB}: the band holds {:.2} {FODDER}, not {:.2}.",
+                store.get(FODDER).to_f32(),
+                fodder.to_f32()
+            ),
+        );
+        return None;
+    }
     for (material, amount) in &materials {
         let held = store.material_total(material);
         if held < *amount {
@@ -5060,6 +5109,7 @@ fn resolve_shipment(
         destination_name: String::new(),
         destination_pos,
         food,
+        fodder,
         materials,
     })
 }
@@ -5067,7 +5117,7 @@ fn resolve_shipment(
 /// Outfit and launch a **trade expedition**: draw `party_workers` off the resolved home band, load
 /// them with cargo out of that band's own store, and send them to deliver it to another band. Text
 /// form: `send_trade_expedition <faction> <band> <party_workers> <destination_band_id>
-/// [food <amount>] [material <material_id> <amount>]... [kit <id>]`.
+/// [food <amount>] [fodder <amount>] [material <material_id> <amount>]... [kit <id>]`.
 ///
 /// **The first rider on the connection primitive** (`docs/plan_contact_and_logistics.md` §Q5, arc
 /// #527). A shipment is a party that walks it: there is no persistent link component in this slice,
@@ -5167,6 +5217,13 @@ fn handle_send_trade_expedition(
         if food > Scalar::from_i64(0) {
             loaded.add(FOOD, food);
         }
+        // **Hay is drawn from the SAME store and kept in a DIFFERENT account** — `FODDER` is an
+        // ordinary second key on the band's `LocalStore`, so the draw is the food draw verbatim, and
+        // the two never meet in the party's cargo either.
+        let fodder = band_cohort.stores.take(FODDER, shipment.fodder);
+        if fodder > Scalar::from_i64(0) {
+            loaded.add(FODDER, fodder);
+        }
         // **Peeled batch by batch, splitting only the last** — a split preserves the batch's rating
         // and its readings, because an amount is a quantity of one identical material. Two ratings
         // of one material therefore leave as two batches and arrive as two batches.
@@ -5178,12 +5235,30 @@ fn handle_send_trade_expedition(
         let provisions = band_cohort.stores.take(FOOD, requested_provisions);
         (provisions, loaded)
     };
-    // **The sending half of the food ledger's transfer pair** — the cargo the shipment carries AND
-    // the larder the party walks on, because both are food that left this band's store through
-    // neither consumption nor a pen. The receiving half is booked when the shipment lands, and the
-    // rest comes home on the fold-back if it never does.
+    // **The sending half of the food ledger's transfer terms, on the [`TransferLink::Route`] arm** —
+    // the cargo the shipment carries AND the larder the party walks on, because both are food that
+    // left this band's store through neither consumption nor a pen, and a party is carrying both.
+    // The receiving half is booked when the shipment lands, and the rest comes home on the
+    // fold-back if it never does.
+    //
+    // ⛔ **THE FOOD LEDGER DOES NOT BOOK THE HAY, AND A PARTY CAN NOW BE CARRYING SOME.** A shipment
+    // takes fodder lines, so the sum below is deliberately narrowed to the two food terms rather
+    // than to "everything in the cargo": the identity this ledger closes is
+    // `larder_delta == foodIncome − foodConsumption − raidForfeit + transferReceived −
+    // transferSent`, over the FOOD larder, and hay never enters that larder. Booking a bale here
+    // would break the identity by exactly the bale.
+    //
+    // The hay has a ledger of its own, right below, on the same arm and the same window.
     if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(outfit.band.entity) {
-        allocation.last_transfer_sent += shipment_store.get(FOOD).to_f32() + provisions.to_f32();
+        allocation.last_food_transfers.debit(
+            TransferLink::Route,
+            shipment_store.get(FOOD).to_f32() + provisions.to_f32(),
+        );
+        // **The sending half of the FODDER ledger's route arm** — the hay aboard, and nothing else.
+        // The walking larder (`provisions`) is food: a party is people, and people do not eat hay.
+        allocation
+            .last_fodder_transfers
+            .debit(TransferLink::Route, shipment_store.get(FODDER).to_f32());
     }
 
     let band_label = outfit.band.label.clone();
@@ -5197,6 +5272,7 @@ fn handle_send_trade_expedition(
     // would rather print its own label.
     let destination_label = mission.destination_display();
     let carried_food = shipment_store.get(FOOD).to_f32();
+    let carried_fodder = shipment_store.get(FODDER).to_f32();
     let carried_materials: Vec<String> = shipment
         .materials
         .iter()
@@ -5229,10 +5305,13 @@ fn handle_send_trade_expedition(
     };
 
     // The manifest reads as a list, never as a total: a sum of food and hide is the retired trade
-    // axis under a new name.
+    // axis under a new name, and a sum of bread and hay is the retired `upkeep_per_biomass`.
     let mut manifest: Vec<String> = Vec::new();
     if carried_food > 0.0 {
         manifest.push(format!("{carried_food:.2} {FOOD}"));
+    }
+    if carried_fodder > 0.0 {
+        manifest.push(format!("{carried_fodder:.2} {FODDER}"));
     }
     manifest.extend(carried_materials);
     let tick = app.world.resource::<SimulationTick>().0;
@@ -5468,9 +5547,17 @@ fn cancel_party_standing_in_camp(
         fold_party_into_band(&mut party, &mut cargo, &mut home)
     };
     // The pack and any undelivered cargo landing back in the band's larder is a transfer, exactly as
-    // the `Returning` arm's fold-back is — a cancel differs only in *when* it fires.
+    // the `Returning` arm's fold-back is — a cancel differs only in *when* it fires, not in what
+    // carried the food, so it takes the same [`TransferLink::Route`] arm.
     if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(expedition.home_band) {
-        allocation.last_transfer_received += fold.food.to_f32();
+        allocation
+            .last_food_transfers
+            .credit(TransferLink::Route, fold.food.to_f32());
+        // And the hay on its own ledger, so a cancelled shipment does not leave the sent-at-launch
+        // debit standing with nothing that ever came back against it.
+        allocation
+            .last_fodder_transfers
+            .credit(TransferLink::Route, fold.fodder.to_f32());
     }
     Some(CancelledInCamp {
         position,
@@ -7647,10 +7734,10 @@ fn bands_working_source(
 ///
 /// # A VERB DECLARES; IT DOES NOT STAFF
 ///
-/// It appends a [`BuildQueueEntry`] and nothing else (`docs/plan_standing_upkeep.md` §2.5). The
-/// hands are the band's `builders` role, which the player staffs separately and which funds only the
-/// **head** of the queue — so this command names no crew, refuses nothing on affordability, and
-/// cannot disband the gathering it was meant to improve.
+/// It appends a [`core_sim::BuildQueueEntry`] and nothing else (`docs/plan_standing_upkeep.md`
+/// §2.5). The hands are the band's `builders` role, which the player staffs separately and which
+/// funds only the **head** of the queue — so this command names no crew, refuses nothing on
+/// affordability, and cannot disband the gathering it was meant to improve.
 ///
 /// # RE-ISSUING KEEPS THE ENTRY'S PLACE IN THE LINE
 ///
@@ -10093,11 +10180,11 @@ fn apply_orders(submissions: &[(FactionId, FactionOrders)]) {
 
 /// Roll the world back to `tick`.
 ///
-/// The world is rebuilt from [`CheckpointHistory`]'s `SimState` — the save state, which carries
-/// everything a turn reads — and the client's frame is then **derived from that restored world** by
-/// recapturing it, not fetched from a parallel archive. There is one history of worlds, so there is
-/// nothing for a second one to disagree with; `a_rollback_produces_the_world_that_tick_had` asserts
-/// the result end to end.
+/// The world is rebuilt from [`CommandLog`]'s origin `SimState` replayed forward — the save state,
+/// which carries everything a turn reads — and the client's frame is then **derived from that
+/// restored world** by recapturing it, not fetched from a parallel archive. There is one history of
+/// worlds, so there is nothing for a second one to disagree with;
+/// `a_rollback_across_a_command_reproduces_the_world_that_tick_had` asserts the result end to end.
 fn handle_rollback(
     app: &mut bevy::prelude::App,
     tick: u64,
@@ -10268,8 +10355,8 @@ mod tests {
                     stores: LocalStore::new(),
                     morale: core_sim::scalar_one(),
                     last_food_consumption: 0.0,
-                    last_turn_transfer_received: 0.0,
-                    last_turn_transfer_sent: 0.0,
+                    last_turn_food_transfers: Default::default(),
+                    last_turn_fodder_transfers: Default::default(),
                     last_morale_delta: core_sim::scalar_zero(),
                     last_morale_cause: Default::default(),
                     last_morale_contributions: Default::default(),
@@ -11905,10 +11992,10 @@ mod tests {
     /// reads unambiguously as mid-build without pretending to the ladder's shipped price, which
     /// these command-gate tests are not about.
     ///
-    /// **The PLANT web needs no `PART_PREPARED_JOB` beside it any more** — its rung boundaries come
-    /// from live config, so a plant fixture states only where the source stands and whether that is
-    /// mid-rung is the *ladder's* answer. [`PART_PREPARED_JOB`] survives for the **animal** web,
-    /// whose two meters still carry their own stamped costs.
+    /// **NEITHER WEB NEEDS A `PART_PREPARED_JOB` BESIDE IT ANY MORE** — both webs' rung boundaries
+    /// come from live config, so a fixture states only where the source stands and whether that is
+    /// mid-rung is the *ladder's* answer. The animal web's separately stamped job cost went with the
+    /// second meter it retired when it took the plant web's one-position ladder.
     const PART_PREPARED_WORK: f32 = FABRICATED_BUILD_COST / 2.0;
     /// **The re-crew case.** A build this faction has underway on a patch that has dropped out of
     /// Thriving still accepts a `Cultivate` assignment — which is what lets the player *ease workers
@@ -17337,20 +17424,31 @@ mod tests {
     /// Working-age people the fixture band is stocked with, so a split leaves two real bands and
     /// there is a comfortable party to draw off either.
     const TRADE_FIXTURE_WORKERS: f32 = 20.0;
-    /// Workers the shipment party is sent with. With the shipped `trade.per_worker_carry` of 6.0
-    /// this is a 12-unit pack — big enough to hold `TRADE_CARGO_FOOD` and small enough that
-    /// `OVER_CAP_FOOD` genuinely does not fit.
+    /// Workers the shipment party is sent with. At the shipped resolved carry of 6.0 per worker
+    /// (`core_sim::trade_per_worker_carry`) this is a 12-unit pack — big enough to hold
+    /// `TRADE_CARGO_FOOD` and small enough that `OVER_CAP_FOOD` genuinely does not fit.
     const TRADE_PARTY: u32 = 2;
     /// Workers the fixture hands the second band. Over `min_founding_workers` on any seed.
     const TRADE_SPLIT_WORKERS: u32 = 5;
     /// Food the fixture band is stocked with — far more than any shipment below asks for, so a
     /// refusal is never a refusal about availability unless it says so.
     const TRADE_FIXTURE_LARDER: f32 = 400.0;
-    /// A shipment that fits: under `TRADE_PARTY × trade.per_worker_carry`.
+    /// A shipment that fits: under `core_sim::shipment_carry_cap(TRADE_PARTY, ..)`.
     const TRADE_CARGO_FOOD: f32 = 10.0;
     /// A shipment that does not: over the same cap, and comfortably inside the larder, so the only
     /// thing that can refuse it is the pack.
     const OVER_CAP_FOOD: f32 = 99.0;
+    /// **The smallest step past the pack a fixture can assert on.** The boundary test needs a
+    /// manifest over the cap by strictly more than the slack this module reads floats at, so that
+    /// `mass > cap` is a real refusal and not a rounding artefact — one [`TRADE_EPSILON`] over is
+    /// exactly that and nothing more, which is what makes "the cap itself fits, a hair over does
+    /// not" a claim about the boundary rather than about a margin.
+    const OVER_CAP_STEP: f32 = TRADE_EPSILON;
+    /// Hay the fixture band is stocked with when a test needs a hayloft. Well over any manifest
+    /// below, so a refusal is never about availability unless the test says so.
+    const TRADE_FIXTURE_HAYLOFT: f32 = 200.0;
+    /// A hay line that fits beside [`TRADE_CARGO_FOOD`] in the same pack.
+    const TRADE_CARGO_FODDER: f32 = 4.0;
 
     /// Two co-located resident bands that have **found each other** — one real turn of the sight
     /// sweep forms the tie the trade verb is gated on, rather than a hand-written ledger entry.
@@ -17401,6 +17499,33 @@ mod tests {
             is_material: false,
             amount,
         }]
+    }
+
+    fn fodder_cargo(amount: f32) -> Vec<TradeCargoItem> {
+        vec![TradeCargoItem {
+            id: sim_runtime::FODDER_CARGO_KEY.to_string(),
+            is_material: false,
+            amount,
+        }]
+    }
+
+    /// Fill the band's hayloft, so a fodder manifest is refused (or not) on the axis under test
+    /// rather than on availability.
+    fn stock_trade_band_hay(app: &mut bevy::prelude::App, band: Entity, amount: f32) {
+        app.world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the band exists")
+            .stores
+            .set(FODDER, scalar_from_f32(amount));
+    }
+
+    fn band_fodder(app: &bevy::prelude::App, band: Entity) -> f32 {
+        app.world
+            .get::<PopulationCohort>(band)
+            .expect("the band exists")
+            .stores
+            .get(FODDER)
+            .to_f32()
     }
 
     fn launched_party(app: &mut bevy::prelude::App) -> Option<Entity> {
@@ -17554,6 +17679,343 @@ mod tests {
         );
     }
 
+    /// **One band's published `expeditionTradePerWorkerCarry`**, read off the **encoded** envelope
+    /// through the accessor chain a client uses — the number a cargo picker multiplies by the party
+    /// it is composing. Read from the wire rather than from config deliberately: that a client
+    /// running the published expression lands on the sim's own cap is the whole claim.
+    fn published_trade_per_worker_carry(app: &mut bevy::prelude::App, band_id: u64) -> f32 {
+        use core_sim::{recapture_snapshot_in_place, SnapshotHistory};
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
+        envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the population section is published")
+            .iter()
+            .find(|cohort| cohort.bandId() == band_id)
+            .expect("the sending band publishes a cohort row")
+            .expeditionTradePerWorkerCarry()
+    }
+
+    /// **THE PUBLISHED CARRY IS THE BOUNDARY THE LAUNCH COMMAND ENFORCES.**
+    ///
+    /// `expeditionTradePerWorkerCarry` promises a client the sim's **resolved** per-worker shipment
+    /// carry, so the cargo picker's entire rule is `cap = party_workers × it`. This pins that promise
+    /// to the command that refuses on it, and it takes the carry **off the wire** rather than out of
+    /// config on purpose: a carry model that grew server-side but skipped
+    /// `core_sim::trade_per_worker_carry` would still satisfy an equality against
+    /// `trade.per_worker_carry` while silently mis-metering every client. The *published* number is
+    /// therefore what both halves below are asserted against.
+    ///
+    /// **Both sides of the boundary, because one alone is unfalsifiable.** A manifest of exactly the
+    /// published cap launches whole — food is the numéraire at weight `1.0`, so its mass *is* the cap
+    /// — and one [`OVER_CAP_STEP`] heavier is refused with the larder untouched. A cap the player
+    /// cannot actually reach is as wrong a meter as one they can overshoot.
+    #[test]
+    fn the_published_per_worker_carry_is_the_cap_the_launch_command_enforces() {
+        let mut app = build_world_app();
+        let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        // The sending band's own people are the viewer, or its cohort row is not on the frame.
+        app.world.insert_resource(core_sim::ViewerFaction(faction));
+
+        let wire_carry = published_trade_per_worker_carry(&mut app, sender_id);
+        assert!(
+            wire_carry > 0.0,
+            "a `0` on the wire lets a client render a zero cap and refuse every manifest a player \
+             could build: got {wire_carry}"
+        );
+        let resolved_cap = {
+            let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
+            shipment_carry_cap(TRADE_PARTY, &cfg.trade)
+        };
+        // The expression the wire hands a client, run exactly as the client runs it.
+        let client_cap = TRADE_PARTY as f32 * wire_carry;
+        assert!(
+            (client_cap - resolved_cap).abs() < TRADE_EPSILON,
+            "the published expression must land on the sim's own resolved cap: {client_cap} vs \
+             {resolved_cap}"
+        );
+
+        // Over the boundary FIRST, so "no party" is a refusal rather than a fixture that has simply
+        // not launched anything yet.
+        let before = band_food(&app, sender);
+        handle_send_trade_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            food_cargo(client_cap + OVER_CAP_STEP),
+            None,
+        );
+        assert!(
+            launched_party(&mut app).is_none(),
+            "a manifest over the PUBLISHED cap of {client_cap} must not leave"
+        );
+        let after = band_food(&app, sender);
+        assert!(
+            (before - after).abs() < TRADE_EPSILON,
+            "a refused shipment leaves the larder exactly as it stood: {before} -> {after}"
+        );
+
+        // And exactly the cap, which must fit: a meter quoting a ceiling the player can never reach
+        // is the same lie in the other direction.
+        handle_send_trade_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            food_cargo(client_cap),
+            None,
+        );
+        let party = launched_party(&mut app)
+            .expect("a manifest of exactly the published cap fits the party's packs");
+        let carried = app
+            .world
+            .get::<Expedition>(party)
+            .expect("the launched party carries its shipment")
+            .cargo
+            .get(FOOD)
+            .to_f32();
+        assert!(
+            (carried - client_cap).abs() < TRADE_EPSILON,
+            "and it leaves with the WHOLE manifest, never a quietly clamped one: {carried} vs \
+             {client_cap}"
+        );
+    }
+
+    /// **A SHIPMENT'S MASS IS `food + 0.5 × fodder + 1.0 × materials`, and the refusal reports it.**
+    ///
+    /// The three accounts are priced apart — food is the numéraire at `1.0`, hay is the shipped
+    /// `trade.fodder_carry_weight`, a material is `trade.material_carry_weight` — so a manifest that
+    /// fits by food alone can still be over the pack once the bales and hides are weighed. Pinned
+    /// against the config's own levers rather than the literals, because they are playtest dials.
+    ///
+    /// **The refusal is the mixed mass**, not the food line: a player told "10 is too heavy" about a
+    /// 10-food shipment inside a 12-unit pack has been told something false.
+    #[test]
+    fn a_mixed_shipments_mass_weighs_all_three_accounts_at_their_own_levers() {
+        let mut app = build_world_app();
+        let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        stock_trade_band_hay(&mut app, sender, TRADE_FIXTURE_HAYLOFT);
+        let (cap, food_weight, fodder_weight, material_weight) = {
+            let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
+            (
+                shipment_carry_cap(TRADE_PARTY, &cfg.trade),
+                1.0_f32,
+                cfg.trade.fodder_carry_weight,
+                cfg.trade.material_carry_weight,
+            )
+        };
+        // The levers have to differ, or "weighed at its own lever" is unfalsifiable.
+        assert!(
+            (fodder_weight - food_weight).abs() > TRADE_EPSILON,
+            "hay must not be priced as food for this test to say anything: {fodder_weight}"
+        );
+
+        // A manifest whose FOOD alone fits the pack, and whose hay pushes it over.
+        let food = cap - TRADE_EPSILON;
+        let fodder = ((cap / fodder_weight) * 0.5).max(1.0);
+        let mass = food + fodder_weight * fodder;
+        assert!(
+            mass > cap,
+            "the fixture must genuinely be over the pack: {mass} vs {cap}"
+        );
+        let mut cargo = food_cargo(food);
+        cargo.extend(fodder_cargo(fodder));
+        let before = (band_food(&app, sender), band_fodder(&app, sender));
+        handle_send_trade_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            cargo,
+            None,
+        );
+        assert!(
+            launched_party(&mut app).is_none(),
+            "a manifest that fits by its food line alone is still refused once the hay is weighed"
+        );
+        assert_eq!(
+            (band_food(&app, sender), band_fodder(&app, sender)),
+            before,
+            "and a refused shipment leaves BOTH accounts exactly as they stood"
+        );
+        let detail = last_expedition_detail(&app);
+        assert!(
+            detail.contains(&format!("{mass:.2}")),
+            "the refusal reports the MIXED mass, not the food line — wanted {mass:.2}, got {detail}"
+        );
+
+        // The same three accounts under the cap launch, and the party leaves holding all of them.
+        let mut cargo = food_cargo(TRADE_CARGO_FOOD);
+        cargo.extend(fodder_cargo(TRADE_CARGO_FODDER));
+        let mass = TRADE_CARGO_FOOD + fodder_weight * TRADE_CARGO_FODDER;
+        assert!(
+            mass <= cap && material_weight.is_finite(),
+            "the fitting fixture must actually fit: {mass} vs {cap}"
+        );
+        handle_send_trade_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            cargo,
+            None,
+        );
+        let party = launched_party(&mut app).expect("a manifest inside the pack launches");
+        let expedition = app.world.get::<Expedition>(party).expect("the party");
+        assert!(
+            (expedition.cargo.get(FOOD).to_f32() - TRADE_CARGO_FOOD).abs() < TRADE_EPSILON
+                && (expedition.cargo.get(FODDER).to_f32() - TRADE_CARGO_FODDER).abs()
+                    < TRADE_EPSILON,
+            "the party carries both accounts, apart: food {}, fodder {}",
+            expedition.cargo.get(FOOD).to_f32(),
+            expedition.cargo.get(FODDER).to_f32()
+        );
+    }
+
+    /// ⛔ **THE LAUNCH DEBITS THE HAY ON THE FODDER LEDGER'S ROUTE ARM, AND NOWHERE ON THE FOOD
+    /// ONE.**
+    ///
+    /// The sending half of the pair `integration_tests/tests/transfer_fodder_ledger.rs` closes; it
+    /// lives here because the launch command lives here, and an integration test cannot link against
+    /// this binary.
+    ///
+    /// Two claims, because an implementation can satisfy either alone: the fodder route arm carries
+    /// the hay, and the **food** arm carries the food cargo plus the walk's larder and *not one bale
+    /// more*. The food ledger's identity is over the food larder, which hay never enters, so a bale
+    /// booked there would break it by exactly the bale.
+    #[test]
+    fn launching_a_hay_shipment_debits_the_fodder_ledger_and_not_the_food_one() {
+        let mut app = build_world_app();
+        let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        stock_trade_band_hay(&mut app, sender, TRADE_FIXTURE_HAYLOFT);
+        // Both accounts on the manifest, so "the right one was debited" is falsifiable.
+        let mut cargo = food_cargo(TRADE_CARGO_FOOD);
+        cargo.extend(fodder_cargo(TRADE_CARGO_FODDER));
+
+        handle_send_trade_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            cargo,
+            None,
+        );
+        let party = launched_party(&mut app).expect("the shipment left");
+        let walking_larder = app
+            .world
+            .get::<PopulationCohort>(party)
+            .expect("the party")
+            .stores
+            .get(FOOD)
+            .to_f32();
+
+        let allocation = app
+            .world
+            .get::<LaborAllocation>(sender)
+            .expect("the sending band has an allocation");
+        let hay_sent = allocation.last_fodder_transfers.sent();
+        let food_sent = allocation.last_food_transfers.sent();
+        assert!(
+            (hay_sent - TRADE_CARGO_FODDER).abs() < TRADE_EPSILON,
+            "the hay aboard is debited on the FODDER ledger: {hay_sent} vs {TRADE_CARGO_FODDER}"
+        );
+        assert!(
+            (food_sent - (TRADE_CARGO_FOOD + walking_larder)).abs() < TRADE_EPSILON,
+            "and the FOOD ledger carries the food cargo plus the walk's larder and NOT the hay: \
+             {food_sent} vs {} (cargo {TRADE_CARGO_FOOD} + larder {walking_larder})",
+            TRADE_CARGO_FOOD + walking_larder
+        );
+        assert!(
+            (food_sent - (TRADE_CARGO_FOOD + walking_larder + TRADE_CARGO_FODDER)).abs()
+                > TRADE_EPSILON,
+            "the liveness half — the two manifests differ by the bale, so an implementation that \
+             summed the whole cargo into the food ledger would land on {} and be caught",
+            TRADE_CARGO_FOOD + walking_larder + TRADE_CARGO_FODDER
+        );
+        assert!(
+            allocation.last_fodder_transfers.received() < TRADE_EPSILON,
+            "a launch only sends: nothing arrived"
+        );
+    }
+
+    /// **A band cannot ship hay it does not have**, and the hay account answers for itself: a full
+    /// larder does not cover an empty hayloft. The refusal names the FODDER key and the two numbers.
+    #[test]
+    fn a_hay_shipment_the_band_cannot_cover_is_refused_on_the_hay_account() {
+        let mut app = build_world_app();
+        let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        // The band is rich in food and holds no hay at all — the state the guard exists for.
+        stock_trade_band_hay(&mut app, sender, 0.0);
+        assert!(
+            band_food(&app, sender) > TRADE_CARGO_FODDER,
+            "the liveness half: the band's FOOD larder would cover this amount, so a refusal here              is genuinely about the hay account"
+        );
+
+        handle_send_trade_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            fodder_cargo(TRADE_CARGO_FODDER),
+            None,
+        );
+
+        assert!(
+            launched_party(&mut app).is_none(),
+            "a band with an empty hayloft must not be able to ship bales"
+        );
+        let detail = last_expedition_detail(&app);
+        assert!(
+            detail.contains(FODDER),
+            "the refusal names the account it is about — got {detail}"
+        );
+
+        // Stock the hayloft and the identical order leaves: the gate is proven in both directions.
+        stock_trade_band_hay(&mut app, sender, TRADE_FIXTURE_HAYLOFT);
+        handle_send_trade_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            fodder_cargo(TRADE_CARGO_FODDER),
+            None,
+        );
+        assert!(
+            launched_party(&mut app).is_some(),
+            "and a band that HAS the hay ships it"
+        );
+        assert!(
+            (band_fodder(&app, sender) - (TRADE_FIXTURE_HAYLOFT - TRADE_CARGO_FODDER)).abs()
+                < TRADE_EPSILON,
+            "the hayloft is debited by exactly the manifest: {}",
+            band_fodder(&app, sender)
+        );
+    }
+
     /// **Empty, unknown and not-held all fail closed**, on the same untouched-larder rule: a
     /// shipment is refused with a reason, never trimmed to what the band happens to have.
     #[test]
@@ -17572,7 +18034,7 @@ mod tests {
                 is_material: true,
                 amount: 1.0,
             }],
-            // A commodity key that is not the larder's.
+            // A commodity key that is neither of the larder's two.
             vec![TradeCargoItem {
                 id: "moonlight".to_string(),
                 is_material: false,

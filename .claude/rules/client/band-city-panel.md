@@ -1306,7 +1306,7 @@ pre-existing `band_panel_*` frame moved in that readout and in nothing else.
 | `knowledge` | SETTLING (the stage's WORD, keyed, with its meter) · the craft tracks · DISCOVERIES (kinds, headed by the instance count) — **the last of the three only where the box can hold it** |
 | `parties` | one row per party — its mission summary and the band it LEFT |
 
-**EACH ACCOUNT IS A STOCK AND A RATE, NEVER AN INLINE LEDGER.** The Food block grew `Income` / `Eaten`
+**EACH ACCOUNT IS A STOCK AND A RATE, NEVER AN INLINE LEDGER.** The Food block grew `Income` / `Consumed`
 / `Pen feed` rows for a while and they are gone (the last of the three twice over — the pen's food bill
 is itself retired): a band states `Food: 74 (93 turns) · -0.81 /turn` on
 ONE line and puts that breakdown behind a disclosure popover, so the rollup had invented a four-row
@@ -5766,7 +5766,8 @@ POSITION, `HudFormat.band_display_name`); one the roster cannot resolve is named
 
 ### THE MANIFEST IS ONE ROW PER PILE, AND A MATERIAL ROW SHOWS ITS RATING
 
-The larder is one commodity and so one `Food` row; the materials are one row per BATCH, which is one
+Each larder is one commodity and so one row — `Food` off the band's provisions and `Hay` off its
+`fodder_store`; the materials are one row per BATCH, which is one
 pile of one material AT ONE RATING — the shape the sim's own store keeps (`BTreeMap` of
 `(material, rating band)`). **A mammoth hide and a hare pelt are both `hide`**, and a row that merged
 them would offer a quantity of something the band does not hold. The row's face is
@@ -5780,8 +5781,8 @@ reads the same wherever it is quoted.
   hover text repeats the whole face beside what the band still holds, so nothing is unreachable.
   **AN AXIS IS NEVER DROPPED FROM THE DATA to make it fit**: the axes are the whole reason a hide and
   a pelt are different rows, so the underlying label always carries every one of them.
-- **The `+` steps a whole unit and CLAMPS TO THE PILE**, so a 0.6 pile is reachable in one press
-  rather than being unshippable for want of a fractional control.
+- **The `+` steps a whole unit and CLAMPS TO THE ROW'S CEILING**, so a 0.6 pile is reachable in one
+  press rather than being unshippable for want of a fractional control.
 - **…and the amount that press leaves is EXACT, so the emitted one is FLOORED, never rounded**
   (`Main.cargo_wire_amount`). The clamp puts the band's precise holding on the row — `137.456789` food
   — and `resolve_shipment` refuses on `held < amount`, so a tenth of a unit of legibility on the
@@ -5796,24 +5797,214 @@ reads the same wherever it is quoted.
 - **The state is remembered per BATCH KEY** (`material id | rating bands`), so a snapshot that moves a
   pile's size cannot silently move the player's choice onto a different pile.
 - **The command emits one `material <id> <amount>` line per ROW**, in the order the sheet lists them.
-  The parser keeps each line separately, so two piles of hide leave as two lines. **Only the FOOD
-  lines are summed**, and only because `food` names one commodity.
+  The parser keeps each line separately, so two piles of hide leave as two lines. **Only the
+  COMMODITY lines are summed, each on its own account** — `food` and `fodder` each name one
+  commodity, and the two totals are floored SEPARATELY (`Main.cargo_wire_amount`) because the server
+  checks each token against a different store.
+
+#### THE ROW IS `Hay  [−] [ 6.0 ] [+] [Max]` — FOUR CONTROLS, THREE OF THEM ADDITIVE (issue #620)
+
+The steppers alone were the whole control, and at `COMPOSE_CARGO_STEP` (1.0) **a 6-worker party's
+full hay load is 72 presses** and a food load 36. They are good at the nudge and hopeless at the
+load, so the row gained a typed `LineEdit` between them and a `Max` button after them. Nothing was
+taken away: `−`/`+` still step a whole unit, and all four controls share one ceiling.
+
+⛔ **A `LineEdit`, NEVER A `SpinBox`, AND NEVER A CUSTOM KEY-EATING CONTROL.** `TextEntryFocus`
+holds the client's ONE definition of *"the player is typing"* — `node is LineEdit or node is
+TextEdit` — and `KeyboardArbiter` reads it to decide whether the POLLED keyboard reads may act at
+all (`keyboard-arbiter.md`). A `SpinBox` wraps its field in a `Control` that predicate does not
+match, and a bespoke widget matches nothing: either one leaves WASD panning the map and the
+single-letter panel toggles firing **on the keystrokes meant for the number**. `Esc` is consumed at
+the field (`KeyboardArbiter.is_escape_key`, never a raw keycode compare — `hotkey-guard` refuses
+one), so abandoning a half-typed amount does not also open the pause menu.
+
+**THE EFFECTIVE MAX FOR A ROW IS BOTH CAPS AT ONCE** (`_trade_row_max`):
+
+```text
+row_max = min(what the band HOLDS,
+              (carry_cap − the mass of every OTHER row) ÷ this row's carry weight)
+carry_cap    = party_workers × expeditionTradePerWorkerCarry
+carry weight = 1.0 food · expeditionTradeFodderCarryWeight hay · expeditionTradeMaterialCarryWeight material
+```
+
+⛔ **OTHER rows, never all of them.** A row's own current amount counted against its own headroom
+makes `Max` unable to reach the cap at all — press it and the row grows by nothing, because the
+space it already occupies reads as spoken for. The other-rows term goes through
+`_trade_manifest_mass`, so the headroom offered and the cap the send is refused at come from one
+expression. A band publishing no carry number (cap 0, the meter's "unknown ceiling") or a row whose
+carry weight is 0 has no second cap, so the held one stands alone.
+
+**ALL THREE WRITING CONTROLS CLAMP TO `row_max`, and `+` GREYS OUT ON IT.** `amount >= row_max`,
+never `amount >= held`: a band holding 84 food against a full pack has nothing more this shipment can
+take, and a live `+` there offers a press that the meter directly below it refuses. Reaching an
+over-cap manifest is still possible and still taught — **by shrinking the PARTY under a load already
+composed**, which is where the cap actually moves in play — rather than by a control walking past its
+own ceiling.
+
+**Only the PACK term of `row_max` is floored onto the tenth; the PILE term stays exact.** The
+asymmetry carries two things at once. An unfloored pack term lands the manifest on the cap to within
+a float ulp, which the meter's own `mass > cap` test can read as OVER — the send disabling on a load
+the client itself just composed. And an exact pile term is what leaves the band's precise holding on
+the row when a `+` runs the pile out (`137.456789`), the amount `Main.cargo_wire_amount` exists to
+floor; flooring it here would retire that path and make the command-guard fixture below vacuous.
+
+**EVERY VALUE, TYPED OR FROM `Max`, IS FLOORED TO `COMPOSE_CARGO_AMOUNT_DECIMALS` (one) — never
+rounded.** Two reasons, and the second is the load-bearing one:
+1. the field and the payload then always agree, instead of a row reading `6.0` while `6.04998` goes
+   on the wire (the readouts render `HudCraftingVocab.BATCH_AMOUNT_FORMAT`, the same one decimal);
+2. **flooring can never push a manifest over a cap and rounding can.** Leaving ≤0.1 units behind is
+   invisible; exceeding the cap is a server refusal the player did not cause.
+
+**ON COMMIT — `text_submitted` (Enter) AND `focus_exited` (leaving) — EVERY REFUSAL PUTS THE LAST
+COMMITTED VALUE BACK. It does not zero.** A player who selects all, deletes and clicks away has not
+asked to unload the wagon, and a composed manifest destroyed by a stray keystroke is far worse than
+a row that ignored one. **Zeroing a row stays an explicit act: type `0`.**
+
+| Reading | What the row does |
+|---|---|
+| empty, or no float in it | reverts to what the row was showing |
+| `NaN` / `inf` | reverts — neither names a quantity |
+| negative | clamps to `0` (which is what "take it all off" means) |
+| above `row_max` | clamps to `row_max`, **and the field's text snaps to it on the spot** so the player sees the clamp rather than wondering why the meter disagrees with what they typed |
+| `Esc` | reverts and releases focus, the event consumed |
+
+**`Max` DISABLES WITH ITS REASON**, the "visible and disabled with its reason" convention this zone
+uses everywhere: `COMPOSE_CARGO_MAX_AT_CAP_HINT` when the row already sits at `row_max`,
+`COMPOSE_CARGO_MAX_NO_ROOM_HINT` when `row_max <= 0` (no headroom, or the band holds nothing). A
+disabled button that says which cap stopped it beats an enabled one that answers a press with
+nothing — and the AT-CAP state is also the only reading that catches a `row_max` built from the
+headroom alone, since `_set_cargo_amount`'s own clamp still lands that row on the pile.
+
+**ONE WRITE PATH.** Typing, `−`/`+` and `Max` all land through `_set_cargo_amount`, so the mass
+meter, the manifest lines and the Send button's enabled state move together. A second spelling of
+"the row changed" is how a meter comes to disagree with the payload it is metering.
+
+#### A STEPPER FLUSHES THE FIELD, RESOLVES LIVE, AND TAKES NO FOCUS
+
+Reported as *"when I manually enter a value, then use the +/− keys, it ignores what I just entered."*
+Three separate faults stacked on that one press, and each is load-bearing on its own:
+
+1. **The buttons took focus.** A focusable `Button` grabs the keyboard on MOUSE-DOWN, which fires the
+   field's `focus_exited`, which commits, which rebuilds the sheet — freeing the very button the
+   click is still inside, so the mouse-up never becomes a `pressed`. The typed amount landed and the
+   STEP silently did not. The three row buttons are `FOCUS_NONE`, so the field keeps the keyboard
+   across the whole gesture and the press always arrives.
+2. **The callbacks captured their row's state at BUILD time.** `_step_cargo_amount` /
+   `_max_cargo_amount` capture the row KEY and nothing else: the amount and the ceiling are both
+   re-read at press time, because both move while the sheet stands — the amount when the player
+   types, the ceiling whenever any OTHER row does, since `row_max` is measured over their mass.
+3. **Nothing committed the pending text.** With the buttons unfocusable, a press is the only thing
+   left that can, so `_step_cargo_amount` flushes first — through `_commit_cargo_field`, never a
+   second parse. The flush is **row-agnostic**: a pending amount in the Food field changes the
+   headroom the Hay row's `Max` is about to compute, so only the one focused field can be pending and
+   it is flushed whichever row it belongs to.
+
+⛔ **`BandCityPanel._free_zones` DETACHES WITH `remove_child`, WHICH FIRES `focus_exited`
+SYNCHRONOUSLY INSIDE THE REBUILD — and the engine cannot tell you that is what happened.** Measured
+during teardown, the dying field answers `is_inside_tree() == true` and
+`is_queued_for_deletion() == false`, exactly as a live one does; guards on either are inert. So the
+controller says so itself, with `_trade_cargo_zones_rebuilding` set around the one `set_zones` call.
+Without it, two failures ride together: the dying field re-commits its OWN stale text over the value
+the press just wrote, and the commit's `rerender()` re-enters `set_zones` mid-`remove_child`, which
+Godot refuses outright (*"Parent node is busy adding/removing children"*), leaving the zone tree
+half-built. The same marker covers a SNAPSHOT rebuild, where the focus key must survive or a turn
+landing mid-word takes the keyboard off the player.
+
+**A WRITE THAT CHANGES NOTHING REBUILDS NOTHING** — `_set_cargo_amount` compares before it stores.
+Re-rendering an unchanged manifest was never worth anything, and it is one fewer teardown for the
+above to be right about.
+
+**THE FIELD'S FOCUS SURVIVES THE REBUILD.** The sheet is rebuilt wholesale on every snapshot, so
+without carrying the focused row's key, its text and its caret (`_trade_cargo_focus_*`, restored on
+`tree_entered` because a `Control` cannot hold focus before it is in the tree), a turn landing
+mid-word frees the field under the player's hands: the keystrokes so far are gone and the keyboard
+is silently back on the map. A field freed by a rebuild emits `focus_exited` too, which is why the
+release only forgets the key when the node is still standing — and why the commit guards against
+re-entering itself (`_trade_cargo_committing`).
+
+**The row's controls are found BY META, never positionally.** `HudWidgets.CARGO_ROW_KEY_META` on the
+`HBoxContainer` and `CARGO_CONTROL_META` (`minus` / `field` / `plus` / `max`) on each control. Both
+harnesses used to walk the row — the `+` was "the last child" — and that walk found `Max` and pressed
+it believing it was the `+` the moment the fourth control landed.
+
+**Frames:** `trade_cargo_typed` (an amount typed and taken), `trade_cargo_typed_invalid` (both
+malformed readings reverting), `trade_cargo_typed_held` (clamped by the PILE, the pack still roomy),
+`trade_cargo_typed_cap` (clamped by the PACK on a `7.35` ceiling, so flooring and rounding differ),
+`trade_cargo_max` (`Max` filling the row to `11.2`, the pack exactly full, and the two dead `Max`
+states side by side), `trade_cargo_typed_then_stepped` (a value typed, then `+` with a REAL pointer
+gesture and no Enter in between — `20.0` becomes `21.0`, and the field keeps the caret) and
+`trade_cargo_step_clamped` (a press that would overrun lands ON the ceiling, the pack exactly full,
+every `+` in the sheet greyed while every `−` stays live).
+
+**Every rule above is sabotage-verified one at a time**, each failing a DISTINCT assertion: dropping
+the held cap, the pack cap, the other-rows exclusion, the floor, the revert, the field's
+focusability, the flush, the live resolution, the stepper clamp, the teardown marker, and the
+buttons' `FOCUS_NONE`.
+
+#### HAY IS THE THIRD ACCOUNT, AND WHICH ACCOUNT A ROW IS, IS ITS `id`
+
+Issue #590. A shipment carries food, hay and materials, and **hay and bread never convert** — they
+land in two different larders at the destination, so a herd can never eat its keepers' bread. The
+sheet therefore lists them as two rows, the command spells them as two tokens (`food <amt>` /
+`fodder <amt>`), and **nothing on screen totals them**: a figure covering both accounts is the
+retired trade-goods axis under a new name. The one place the three accounts meet is the mass meter
+below, and they meet there as PACK SPACE rather than as a quantity of anything.
+
+⛔ **`is_material` DOES NOT SAY WHICH STORE A ROW DRAWS FROM, and it has not since hay joined.** It
+answers *batch or larder*, and there are now two larders — so every commodity fork keys off the row
+instead: the SHEET tells them apart by `TRADE_FOOD_ROW_KEY` / `TRADE_FODDER_ROW_KEY`
+(`_set_cargo_amount`, `_trade_manifest_mass`) and the COMMAND FORMATTER by the manifest line's `id`
+(`HudConst.STORE_ITEM_PROVISIONS` / `HudConst.CARGO_ITEM_FODDER`, in
+`Main.format_send_trade_expedition`). A plain `else` at any of those four sites pours a hay press
+into the food token, silently, against a larder that does not hold it. The row set is HAND-LISTED
+rather than derived from the wire, so adding a fourth account means sweeping all four again.
+
+`cargo xtask command-guard` is what holds this: its fixture band carries an ~84-unit hay pile beside
+its ~21-unit food one, and the Rust half compares each emitted token against the pile it names BY
+NAME — so a `fodder` amount checked against the food pile fails there rather than in play.
+
+**The drive loads the two piles by DIFFERENT controls, and the split is what keeps the gate honest**
+(issue #620). The hay row goes through `Max`, one press, which is what a player reaches for on a pile
+that size and what took `CARGO_LOAD_MAX_PRESSES` back from 128 to 32. The food and hide rows stay on
+the `+` loop, because that is the only path that leaves the band's EXACT holding on the row —
+`21.050001`, a value `%.1f` rounds UP past the pile and the fixed-point floor alone still
+reconstructs above. Driving every row with `Max` would leave this gate comparing whole tenths against
+whole tenths, which any rounding survives. The constant remains a TOOLING bound on the drive, never a
+statement about the step.
 
 ### THE MASS METER IS A COURTESY; THE SERVER'S REFUSAL REMAINS THE AUTHORITY
 
 ```text
-mass = Σ food rows + expeditionTradeMaterialCarryWeight × Σ material row amounts
+mass = Σ food rows
+     + expeditionTradeFodderCarryWeight   × Σ fodder rows
+     + expeditionTradeMaterialCarryWeight × Σ material row amounts
 cap  = party_workers × expeditionTradePerWorkerCarry
 ```
 
-Both terms are per-cohort echoes of the sim's own config, so a tuning change moves the meter and the
-refusal together. **Neither is a literal here** — `expeditionPerWorkerCarry` is the HUNT pack and a
+Every term is a per-cohort number the sim publishes, so a tuning change moves the meter and the
+refusal together. **None is a literal here** — `expeditionPerWorkerCarry` is the HUNT pack and a
 client composing a trade cap out of it would be one config edit from quoting a cap
 `send_trade_expedition` refuses.
 
+**THE TWO KINDS ARE NOT THE SAME, AND THE CARRY ONE IS WHY THIS SHEET MAY HOLD THE EXPRESSION AT
+ALL** (issue #626). The carry weights are config levers echoed verbatim: what a unit of hay or hide
+costs in pack space is a property of the GOODS. `expeditionTradePerWorkerCarry` is not a lever — it
+is the sim's RESOLVED answer to *"what does one worker on this shipment carry"*, with whatever carry
+depends on already applied. So the client's whole share of the rule is the multiplication by the
+party, and a carrier-side model — a cart kit's stat, a tech factor, a road grade — changes the
+published number with nothing on this sheet to edit. A client that owned the carry FORMULA instead
+would render a cap the sim does not enforce the day carry stopped being head-count alone, and
+nothing would fail: the meter would just lie.
+
+**THREE TERMS, AND THE HAY ONE FAILS IN THE DANGEROUS DIRECTION.** A meter missing the fodder term
+UNDER-prices every manifest with a bale in it: it reads lighter than the sim will weigh it, so the
+send button goes live on a load the server then refuses — the exact failure the material lever
+shipped to prevent, one account over. `expeditionTradeFodderCarryWeight` is FINITE AND >= 0 rather
+than positive; `0` legitimately means "hay is weightless".
+
 **The mass expression itself lives in ONE place, `DetailFormat.shipment_mass`**, because the in-flight
 `Carrying:` row prices the same pack (`band-readouts.md` → "A trade party states WHO IT IS FOR"). This
-sheet's `_trade_manifest_mass` only splits its mixed row list into the two accounts that expression
+sheet's `_trade_manifest_mass` only splits its mixed row list into the three accounts that expression
 takes. Two copies of a formula are two answers about one pack, and the row's copy had already drifted:
 it divided the cargo's FOOD by the mass cap. The meter exists so the player never meets that refusal; an over-cap
 or empty manifest disables the send with its reason, which is the "visible and disabled with its
@@ -5841,7 +6032,9 @@ LIST above it gives up (it is the `EXPAND_FILL` child).
 
 **Frames:** `trade_footer` (all five buttons, and the frame that proves the glyph DRAWS — a mark
 missing from this client's fallback font renders as an invisible gap that no assertion catches),
-`trade_picker_empty`, `trade_picker_destination`, `trade_cargo_loaded`, `trade_cargo_over_cap`.
+`trade_picker_empty`, `trade_picker_destination`, `trade_cargo_loaded`, `trade_cargo_hay` (the hay
+row loaded beside the food and hide ones, the meter carrying its 0.5-weighted mass), and
+`trade_cargo_over_cap`.
 
 
 ## The work row states its RUNG in two registers, and the ring is declared from the mark

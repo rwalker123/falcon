@@ -1648,16 +1648,15 @@ func _pad_stylebox(sb: StyleBox, pad_x: int, pad_y: int) -> void:
 	sb.content_margin_bottom = pad_y
 
 
+## **THE TEXT-FIELD CHROME MOVED TO `HudStyle` when the shipment sheet grew the client's second
+## family of them** (issue #620) — a `GROUND_2` well, a `LINE` rim going `SIGNAL` on focus, the BUTTON
+## family's padding — so the two surfaces cannot drift into two looks for one control.
+##
+## **THE SHARED HELPER CARRIES ONE THING THE INLINE TREATMENT LACKED, DELIBERATELY**: a
+## `font_placeholder_color` of `INK_FAINT`. The inline version set the two styleboxes, `font_color`
+## and `caret_color` and left the placeholder at Godot's stock grey, which is the odd one out on a
+## field themed everywhere else — so this shell's one placeholder, `_save_name_edit`'s
+## `SAVE_NAME_PLACEHOLDER`, renders FAINT now. That is the single intended pixel difference on the
+## menu's fields; a preview frame differing anywhere ELSE on them is a defect, not this move.
 func _style_line_edit(le: LineEdit) -> void:
-	var normal := StyleBoxFlat.new()
-	normal.bg_color = HudStyle.GROUND_2
-	normal.set_corner_radius_all(CTRL_RADIUS - 2)
-	normal.set_border_width_all(1)
-	normal.border_color = HudStyle.LINE
-	_pad_stylebox(normal, 11, 9)
-	var focus := normal.duplicate()
-	focus.border_color = HudStyle.SIGNAL
-	le.add_theme_stylebox_override("normal", normal)
-	le.add_theme_stylebox_override("focus", focus)
-	le.add_theme_color_override("font_color", HudStyle.INK)
-	le.add_theme_color_override("caret_color", HudStyle.SIGNAL)
+	HudStyle.apply_line_edit(le)

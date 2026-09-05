@@ -34,7 +34,7 @@
 //! - [`LadderConfig`] (`data/intensification_ladder.json`) holds one [`RungDef`] record per rung —
 //!   the links (verb, unlock/earns knowledge, previous rung, husbandry ceiling) and the build dials.
 //!   Adding a rung that recombines existing primitives is a one-record edit.
-//! - [`RungDef::build_accrual`] / [`RungDef::build_cost`] / [`RungDef::build_decay`] are **the**
+//! - [`RungDef::build_accrual`] / [`RungDef::build_cost`] are **the**
 //!   build seam, and [`RungDef::upkeep_demand`] / [`RungDef::upkeep_decay`] the **standing-cost**
 //!   one beside it. Both tracks call them instead of reaching for their own bespoke
 //!   accrue/cost/decay levers, so the plant and animal ladders can never drift apart numerically.
@@ -182,12 +182,12 @@ pub const NEGLECT_NONE: u16 = 0;
 ///
 /// # IT IS NOT A TIMESCALE — it scales ACCRUAL ONLY
 ///
-/// [`RungDef::build_accrual`] and [`RungDef::build_decay`] deliberately share a `timescale` factor, so
-/// the reflex here is to scale both. **Do not.** Decay happens on turns *nobody works the source* —
-/// there is no assignment in that state, so there is no floor. Multiplying decay by
-/// `learn_multiplier` would be scaling by a number that does not exist where the decay is applied,
-/// and the caller would have to invent one (whose? the last crew's? the default?). The floor scales
-/// what a working crew earns; neglect is not a rate the crew set.
+/// [`RungDef::build_accrual`] and [`RungDef::upkeep_decay`] move the **same** meter in opposite
+/// directions, so the reflex here is to scale both. **Do not.** Decay happens on turns *nobody
+/// works the source* — there is no assignment in that state, so there is no floor. Multiplying
+/// decay by `learn_multiplier` would be scaling by a number that does not exist where the decay is
+/// applied, and the caller would have to invent one (whose? the last crew's? the default?). The
+/// floor scales what a working crew earns; neglect is not a rate the crew set.
 ///
 /// # BOTH ENDS ARE NON-DEGENERATE, and the top end is deliberate
 ///
@@ -314,10 +314,10 @@ pub fn build_fraction(done: f32, cost: f32) -> f32 {
 /// job before the player commits to it.
 ///
 /// `None` = **no estimate**, and it means exactly ONE thing, which the wire renders as
-/// [`NO_BUILD_TURNS_ESTIMATE`]: the crew produced nothing this turn, so the build is **stalled** — a
-/// stall has no finite answer, and quoting a huge one would read as a promise. (The callers add the
-/// other no-answer cases before they ever reach here: no crew on the source, the top of the ladder,
-/// a gate that refuses.)
+/// [`sim_schema::NO_BUILD_TURNS_ESTIMATE`]: the crew produced nothing this turn, so the build is
+/// **stalled** — a stall has no finite answer, and quoting a huge one would read as a promise. (The
+/// callers add the other no-answer cases before they ever reach here: no crew on the source, the
+/// top of the ladder, a gate that refuses.)
 ///
 /// **A cost the meter is already at or past is [`BUILD_FINISHES_IN_ONE_TURN`], not "no answer"** —
 /// the work is already banked, so there is nothing left to wait for. It is an answer, and collapsing
@@ -530,8 +530,9 @@ pub enum BuildGate {
     /// rung the entry never declared, and the remedy is to re-queue the job the ground is actually
     /// half-way through.
     Undeclared,
-    /// **The extension ring is not running** (`Herd::pen_extending`) — [`BuildJob::ExtendPen`]'s
-    /// whole gate, and the one entry kind with no rung meter of its own.
+    /// **The extension ring is not running** (`Herd::pen_extending`) —
+    /// [`crate::components::BuildJob::ExtendPen`]'s whole gate, and the one entry kind with no rung
+    /// meter of its own.
     RingIdle,
     /// **The source produced no quote this turn** — not a conjunct of any rung's `eligible` but a
     /// real and different state, minted by the band's chain pass. The labor loop never reached this
@@ -777,7 +778,7 @@ pub const BUILD_BALANCE_HOLDS: f32 = 0.0;
 ///
 /// Named rather than a bare `1` at the one site that returns it, so the *reason* travels with the
 /// value: this is *"there is nothing left to wait for"*, which is a real answer, and deliberately
-/// **not** [`NO_BUILD_TURNS_ESTIMATE`], which means *"there is no answer"*.
+/// **not** [`sim_schema::NO_BUILD_TURNS_ESTIMATE`], which means *"there is no answer"*.
 pub const BUILD_FINISHES_IN_ONE_TURN: u32 = 1;
 
 /// **The cost multiplier of a source that costs exactly what its rung declares.** Passed by every
@@ -935,7 +936,7 @@ pub const NO_BUILD_BALANCE: f32 = 0.0;
 ///
 /// Stated here rather than at the two webs' call sites so *"shortfall is the decay"* is one
 /// subtraction with one home — the same discipline [`RungDef::build_cost`] and
-/// [`RungDef::build_decay`] already follow.
+/// [`RungDef::upkeep_decay`] already follow.
 pub fn upkeep_shortfall(demand: f32, supplied: f32) -> f32 {
     (demand - supplied).max(NO_UPKEEP_DEMAND)
 }
@@ -1086,12 +1087,12 @@ pub enum RungBranch {
 
 /// **EVERY LADDER, in branch order** — the one list a caller sweeping the branches iterates.
 ///
-/// **It was `BOTH_BRANCHES` and the rename is the point.** That constant's own doc promised *"a third
-/// web could not be added without every sweep seeing it"*, and leaving it at two while adding
+/// **It was `BOTH_BRANCHES` and the rename is the point.** That constant's own doc promised *"a
+/// third web could not be added without every sweep seeing it"*, and leaving it at two while adding
 /// [`RungBranch::Route`] would have quietly broken exactly that promise: every existing sweep would
-/// have gone on iterating two branches and silently skipping roads. Renaming breaks each call site at
-/// compile time, which is what forces the choice between this and [`FOOD_WEB_BRANCHES`] to be made
-/// rather than defaulted.
+/// have gone on iterating two branches and silently skipping roads. Renaming breaks each call site
+/// at compile time, which is what forces the choice between this and the since-retired
+/// `FOOD_WEB_BRANCHES` (gravestone below) to be made rather than defaulted.
 pub const ALL_BRANCHES: [RungBranch; 3] =
     [RungBranch::Plant, RungBranch::Animal, RungBranch::Route];
 
@@ -2081,8 +2082,8 @@ impl UpkeepScale {
 ///
 /// **`upkeep: null` means this rung has no standing cost** — the two **wild** rungs on the shipped
 /// ladder, where there is nothing built to hold. The whole block is optional for the same reason
-/// [`RungBuild::decay_fraction_per_turn`] is: a parked `0` says "no upkeep" while reading like a live
-/// dial, so the config states the absence by being absent.
+/// the retired `RungBuild::decay_fraction_per_turn` was: a parked `0` says "no upkeep" while
+/// reading like a live dial, so the config states the absence by being absent.
 /// **⛔ NOT `Copy`** — [`Self::materials`] is a map, exactly as [`RungBuild::materials`] is; that
 /// record's own note carries the reasoning.
 #[derive(Debug, Clone, Deserialize)]
@@ -2435,11 +2436,11 @@ impl RungDef {
     /// # ⛔ IT IS A SIBLING, NOT A CALL TO `knowledge_accrual` WITH A FAKED FLOOR
     ///
     /// The multiplier is the same currency read the branch's own way. On the food webs
-    /// [`learn_multiplier`] is *how hard you are pressing the source*; on the route branch it is **how
-    /// far the connection runs** — a longer connection is a bigger lesson, in proportion, which is
-    /// what makes local pooling teach roadbuilding slowly and a long haul teach it fast. Passing a
-    /// floor this branch does not have would be inventing a number nobody chose, exactly as
-    /// [`crate::systems::labor::credit_managed_rung_lesson`] states its own reading rather than
+    /// [`learn_multiplier`] is *how hard you are pressing the source*; on the route branch it is
+    /// **how far the connection runs** — a longer connection is a bigger lesson, in proportion,
+    /// which is what makes local pooling teach roadbuilding slowly and a long haul teach it fast.
+    /// Passing a floor this branch does not have would be inventing a number nobody chose, exactly
+    /// as `systems::labor::credit_managed_rung_lesson` states its own reading rather than
     /// pretending to have one.
     ///
     /// # ⛔ IT TAKES NO WORKER COUNT, for the reason `knowledge_accrual` refuses one
@@ -2643,9 +2644,9 @@ impl RungDef {
     /// ```
     ///
     /// **The pile is spent as the meter climbs, never on completion** (§2.7): a road 30% raised has
-    /// swallowed 12 of its 40 stone. [`NO_MATERIAL_DRAW`] for a rung that declares nothing, for a
-    /// material it does not name, and for a degenerate leg — a `leg_width` of zero is a rung with no
-    /// span left to buy, so there is nothing to draw against.
+    /// swallowed 12 of its 40 stone. [`crate::routes::NO_MATERIAL_DRAWN`] for a rung that declares
+    /// nothing, for a material it does not name, and for a degenerate leg — a `leg_width` of zero
+    /// is a rung with no span left to buy, so there is nothing to draw against.
     ///
     /// **`leg_width` is THIS SOURCE'S priced width**, the same number `forage::patch_build_legs`
     /// computes, so a Field leg quoted at a share multiplier draws its pile over that width rather
@@ -3135,8 +3136,8 @@ pub struct RouteTraffic {
     /// could move.
     ///
     /// It is also what keeps the ledger bounded: a road bled to [`RUNG_UNSTARTED`] is pruned by
-    /// [`crate::routes::advance_routes`], and without a loss on the free floor an abandoned trail
-    /// would sit in the ledger for ever answering `routes_on_tile`.
+    /// [`crate::routes::advance_roads`], and without a loss on the free floor an abandoned trail
+    /// would sit in the ledger for ever answering `RoadRegistry::road`.
     ///
     /// Validated finite and `> 0`: at zero a trail nobody has walked in a thousand turns is still a
     /// trail, and the dial that says otherwise reads live.
@@ -3189,8 +3190,8 @@ pub struct LadderKnowledgeEntry<'a> {
     pub order: u32,
     /// Whether some rung's `unlock_knowledge` names it — a *step* rather than a *capability*.
     pub is_step: bool,
-    /// The [`DiscoveryProgressLedger`](crate::knowledge::DiscoveryProgressLedger) row it is stored
-    /// under, resolved once here so no caller re-runs the name lookup.
+    /// The [`DiscoveryProgressLedger`] row it is stored under, resolved once here so no caller
+    /// re-runs the name lookup.
     pub discovery_id: u32,
 }
 
@@ -4994,9 +4995,9 @@ mod tests {
     const THE_RETIRED_BUILD_RATE_MULTIPLIER: f32 = 1.5;
 
     /// **The turns estimate is `ceil(remaining / this turn's work)`, and a STALL has no estimate.**
-    /// `None` is the wire's [`NO_BUILD_TURNS_ESTIMATE`], and a stall is the only thing that earns it:
-    /// a build nobody is advancing cannot be quoted a finish date, and a huge number would read as a
-    /// promise.
+    /// `None` is the wire's [`sim_schema::NO_BUILD_TURNS_ESTIMATE`], and a stall is the only thing
+    /// that earns it: a build nobody is advancing cannot be quoted a finish date, and a huge number
+    /// would read as a promise.
     ///
     /// **A cost already at or below the meter is `1`, NOT `None`** — the work is banked, so the job
     /// finishes the first turn anybody works it, and conflating that with *"no answer"* is what made

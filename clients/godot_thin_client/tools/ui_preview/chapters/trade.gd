@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 38
+const EXPECTED_CHECKPOINTS := 99
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -29,6 +29,12 @@ const InputProbe := preload("res://tools/ui_preview/input_probe.gd")
 
 ## `Main`'s reservation rules, borrowed rather than restated — the `crafting_bench` convention.
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
+
+## **THE CLIENT'S ONE DEFINITION OF "THE PLAYER IS TYPING"**, asked here about the cargo field
+## exactly as `KeyboardArbiter` asks it (issue #620). It is the predicate that decides whether the
+## POLLED gameplay keys may act, so a cargo control it does not recognise means WASD pans the map
+## while a number is being typed into it — the failure this chapter checks for by name.
+const TextEntryFocus := preload("res://src/scripts/TextEntryFocus.gd")
 
 const BAND_PANEL_RESERVER := &"band_panel"
 
@@ -49,12 +55,20 @@ const PARKED_ENTITY := 983
 ## The trade party in flight — an expedition cohort, so it must not collide with a band entity.
 const TRADE_PARTY_ENTITY := 7181
 
-## **THE TWO SHIPMENT-MASS LEVERS, AS THE SIM PUBLISHES THEM.** The cap is `party × per_worker_carry`
+## **THE TWO SHIPMENT-MASS TERMS, AS THE SIM PUBLISHES THEM.** The cap is `party × per_worker_carry`
 ## and a material unit costs `material_carry_weight` of pack space, so a 4-worker party carries 40 and
-## one hide costs 2. Stated here rather than borrowed from the hunt lever, which is a DIFFERENT pack:
-## a fixture that reused it would render a cap `send_trade_expedition` refuses.
+## one hide costs 2. The carry is the sim's RESOLVED per-worker number rather than a config lever
+## (issue #626) — a fixture states it for the same reason the sheet multiplies it and asks nothing else
+## about it. Stated here rather than borrowed from the hunt lever, which is a DIFFERENT pack: a
+## fixture that reused it would render a cap `send_trade_expedition` refuses.
 const TRADE_PER_WORKER_CARRY := 10.0
 const TRADE_MATERIAL_CARRY_WEIGHT := 2.0
+
+## **THE THIRD MASS LEVER** (issue #590) - what one unit of HAY costs in pack space. Deliberately not
+## 1.0 and not the material weight either: a bale priced at either would make the three-term mass
+## expression indistinguishable from a two-term one that lumped hay in with food, so a client that
+## dropped the fodder term would still pass every number below.
+const TRADE_FODDER_CARRY_WEIGHT := 0.5
 
 ## The party the picker is driven to, and therefore the cap the meter is drawn against (4 × 10 = 40).
 const TRADE_PARTY_WORKERS := 4
@@ -108,10 +122,59 @@ const BAND_MOVE_TILES_PER_TURN := 2.0
 ## two of them `hide` at different ratings, which is the whole reason a manifest row shows its rating.
 const SHIPPER_PROVISIONS := 84.0
 
+## …and its HAY, a larder apart. Deliberately a different figure from the provisions above, on the
+## coarser scale hay is quoted in, so a sheet that read one store for the other shows it.
+const SHIPPER_FODDER := 41.0
+
 ## What the player loads: food, plus one pile of hide. `12 + 2 × 4 = 20` of a 40 cap, so the meter is
 ## half full and the send is live — the state a picker exists to reach.
 const LOADED_FOOD := 12.0
 const LOADED_HIDE := 4.0
+
+## …and then the HAY, loaded onto the same manifest (issue #590). `0.5 × 6 = 3` more mass, taking the
+## meter to 23 of the same 40 cap: still sendable, so the state shows a three-account manifest a
+## player can actually dispatch rather than one the cap refuses for an unrelated reason.
+const LOADED_FODDER := 6.0
+
+## --- WHAT THE TYPED FIELD IS DRIVEN WITH (issue #620) --------------------------------------------
+## An amount that fits both caps, so the field's plain reading is checkable before any clamp is.
+## **A TENTH RATHER THAN A WHOLE UNIT, and that is what makes the floor rule testable at all**: it
+## leaves the pack's remaining room for the hide row on `7.35`, where flooring and rounding give
+## different answers. Every figure in this block is a whole tenth from a whole-unit food amount, and
+## a client that rounded would have passed the lot.
+const TYPED_FOOD := 8.1
+
+## Text no float can be read out of. The row must keep what it had — **reverting, never zeroing**: a
+## player who mistypes has not asked to unload the wagon.
+const TYPED_UNPARSEABLE := "eleventy"
+
+## An amount above what the band HOLDS of the bone pile (3.1) and well UNDER the pack headroom there,
+## so only the pile can be what clamps it.
+const TYPED_OVER_HELD := 9.0
+
+## …and one above the PACK's remaining room for the fair-hide pile while that pile (14.2) still has
+## plenty in it, so only the pack can be what clamps that one. **The two cases are deliberately
+## opposite** — a single wrong clamp cannot satisfy both.
+const TYPED_OVER_CAP := 100.0
+
+## What is typed into a row and then STEPPED from without an Enter in between — the reported defect
+## (issue #620 follow-up). Deliberately far from every amount the row has held, so `typed + step`,
+## `drawn + step` and `typed` are three different readings.
+const TYPED_THEN_STEPPED := 20.0
+
+## How far below a row's ceiling the clamp state starts, as a fraction of one step: **less than a
+## whole one**, so the press that follows OVERSHOOTS and the clamp is what decides where it lands. At
+## a whole step the press would land exactly on the ceiling and the state would assert nothing.
+const STEP_PARTIAL_FRACTION := 0.5
+
+## Zero, typed. The ONE way a row is emptied, since every malformed reading reverts instead.
+const TYPED_ZERO := 0.0
+
+## The other two piles this block drives, spelled as the sheet composes their faces — the
+## `EXCELLENT_HIDE_ROW` convention, so a reworded row fails here rather than silently matching
+## nothing.
+const FAIR_HIDE_ROW := "hide · tough: fair · supple: good"
+const BONE_ROW := "bone · dense: excellent · long: fair"
 
 ## What the in-flight party is carrying, and the pack it fills. The cap is the SHIPMENT lever's
 ## product (4 × 10), which is what the sim publishes on a trade party's `expeditionCarryCap`.
@@ -123,11 +186,22 @@ const PARTY_CARGO_CAP := 40.0
 const PARTY_CARGO_HIDE := 4.0
 const PARTY_CARGO_BONE := 1.2
 
+## The HAY the same party is walking (issue #590) — `expedition_cargo_fodder`, the third account. It
+## must show as its OWN term on the `Carrying:` row: a shipment of grain and a shipment of feed are
+## different shipments, and a party that folded the two into one figure would be quoting a food
+## delivery the destination's larder never receives.
+const PARTY_CARGO_FODDER := 6.0
+
 ## The band's Food line under a transfer (arc #527). `balance_supply_networks` has moved food between
 ## neighbouring larders every turn since turn one, so these two terms are not a trade feature: a band
 ## co-networked with a neighbour has both, and before them the Food line was short by the whole move.
-const TRANSFER_RECEIVED := 1.4
-const TRANSFER_SENT := 0.5
+##
+## **EACH CROSSES A DIFFERENT KIND OF LINK, because the row names the link and not the direction**
+## (issue #548): the arrival came over the automatic `Local exchange`, the departure went down a
+## `Trade route` with a party — which is this chapter's own subject. Two kinds rather than two
+## directions of one kind is what keeps them TWO rows, since a kind is netted into one.
+const TRANSFER_LOCAL_IN := 1.4
+const TRANSFER_ROUTE_OUT := 0.5
 
 func run(harness) -> void:
 	h = harness
@@ -230,8 +304,10 @@ func run(harness) -> void:
 	_load(EXCELLENT_HIDE_ROW, LOADED_HIDE)
 	await h._settle()
 	await h._save("trade_cargo_loaded")
-	# The meter reads the sim's own expression: food + weight × materials, against party × the pack
-    # lever. Composed here from the fixture's side so the two arrive at one number from opposite ends.
+	# The meter reads the sim's own expression — food + fodder_carry_weight × fodder
+	# + material_carry_weight × Σ materials — against party × the pack lever, composed here from the
+	# fixture's side so the two arrive at one number from opposite ends. THIS manifest carries no
+	# hay yet, so its middle term is zero; the `trade_cargo_hay` state below is what prices one.
 	var expected_mass := LOADED_FOOD + TRADE_MATERIAL_CARRY_WEIGHT * LOADED_HIDE
 	var expected_cap := float(TRADE_PARTY_WORKERS) * TRADE_PER_WORKER_CARRY
 	var meter := Q.find_meta_node(_parties_zone(), BandPanelController.TRADE_MASS_METER_META)
@@ -245,8 +321,36 @@ func run(harness) -> void:
 	h._assert_hud("a manifest under the cap can be sent",
 		live_send is Button and not (live_send as Button).disabled)
 
+	# **STATE — A BALE ON THE SAME MANIFEST** (issue #590). Hay is the THIRD cargo account: its own
+	# row beside the food one, drawn off the band's fodder larder rather than its provisions, and
+	# priced into the same pack at a carry weight of its own. The row is loaded through its own `+`
+	# for the reason the others are — the clamp and the per-press rerender are what a player uses.
+	_load(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL, LOADED_FODDER)
+	await h._settle()
+	await h._save("trade_cargo_hay")
+	# **THE METER TAKES THE HAY TERM**, which is the whole reason the lever is on the wire: the sim
+	# weighs `food + fodder_weight × hay + material_weight × Σ materials` and refuses what will not
+	# fit, so a meter short of a term clears a load the server then rejects.
+	var hay_mass := LOADED_FOOD + TRADE_FODDER_CARRY_WEIGHT * LOADED_FODDER \
+		+ TRADE_MATERIAL_CARRY_WEIGHT * LOADED_HIDE
+	var hay_meter := Q.find_meta_node(_parties_zone(), BandPanelController.TRADE_MASS_METER_META)
+	h._assert_hud("the mass meter prices the hay into the pack",
+		hay_meter is Label
+			and (hay_meter as Label).text.contains(
+				HudCraftingVocab.BATCH_AMOUNT_FORMAT % hay_mass))
+	# …and the UNDER-PRICED reading is asserted ABSENT, because it is the plausible one: a manifest
+	# whose hay term was dropped still shows a mass, a cap and a live send, and every assertion above
+	# would pass on it. The number that must not appear is the one the two-term expression gives.
+	h._assert_hud("…and never weighs a bale as free",
+		hay_meter is Label
+			and not (hay_meter as Label).text.contains(
+				HudCraftingVocab.BATCH_AMOUNT_FORMAT % expected_mass))
+	var hay_send := Q.find_meta_node(_parties_zone(), HudWidgets.SEND_TRADE_CONFIRM_META)
+	h._assert_hud("a three-account manifest under the cap can still be sent",
+		hay_send is Button and not (hay_send as Button).disabled)
+
 	# **STATE — THE SAME MANIFEST OVER THE CAP.** The party shrinks to one worker, so the cap falls to
-	# 10 against a mass of 20 and the send refuses BEFORE the server has to. The refusal is the
+	# 10 against a mass of 23 and the send refuses BEFORE the server has to. The refusal is the
 	# client's courtesy; the server's own remains the authority.
 	_set_party(OVER_CAP_PARTY_WORKERS)
 	await h._settle()
@@ -257,6 +361,8 @@ func run(harness) -> void:
 	h._assert_hud("…and the sheet says which way to fix it",
 		_sheet_text().contains(HudComposeVocab.COMPOSE_CARGO_OVER_CAP_REASON))
 
+	await _run_typed_cargo_states()
+
 	# **STATE — THE FOOD LINE WITH A TRANSFER IN IT.** Not a trade readout: the supply network moves
 	# food between neighbouring larders every turn, so any co-networked band carries these two terms.
 	# They are itemized in the BREAKDOWN and deliberately absent from the `/turn` headline, which is
@@ -264,14 +370,18 @@ func run(harness) -> void:
 	h._hud._bandpanel._close_party_compose()
 	panel.set_active_tab(BandCityPanel.ZONE_BAND)
 	var transferring := _shipper_band()
-	# **A TURN'S OWN FRAME, so both pairs carry the same two magnitudes** — which is what the sim
-	# publishes there, the per-turn copy being taken off the accumulator immediately before the turn's
-	# capture. The rows read the per-turn pair; the accumulating one rides along because it is what
-	# closes the larder identity, and a fixture that omitted it would not be the live shape.
-	transferring["transfer_received"] = TRANSFER_RECEIVED
-	transferring["transfer_sent"] = TRANSFER_SENT
-	transferring["transfer_received_turn"] = TRANSFER_RECEIVED
-	transferring["transfer_sent_turn"] = TRANSFER_SENT
+	# **A TURN'S OWN FRAME, so every one of these figures carries the same two magnitudes** — which is
+	# what the sim publishes there, the per-turn copies being taken off the accumulators immediately
+	# before the turn's capture. **The ROWS read the two LINK-KIND terms**; the summed per-turn pair
+	# rides along because `DetailFormat.band_has_food_flow` gates the whole readout on it, and the
+	# accumulating pair because it is what closes the larder identity — a fixture omitting either
+	# would not be the live shape `population_to_dict` decodes.
+	transferring["transfer_received"] = TRANSFER_LOCAL_IN
+	transferring["transfer_sent"] = TRANSFER_ROUTE_OUT
+	transferring["transfer_received_turn"] = TRANSFER_LOCAL_IN
+	transferring["transfer_sent_turn"] = TRANSFER_ROUTE_OUT
+	transferring[DetailFormat.TRANSFER_LOCAL_RECEIVED_TURN_KEY] = TRANSFER_LOCAL_IN
+	transferring[DetailFormat.TRANSFER_ROUTE_SENT_TURN_KEY] = TRANSFER_ROUTE_OUT
 	h._hud.update_band_alerts([transferring, _neighbour_band()])
 	h._hud.show_unit_selection(transferring)
 	await h._settle()
@@ -283,19 +393,24 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("trade_food_transfers")
 	var breakdown := _collect_text(h)
-	h._assert_hud("the Food breakdown itemizes what arrived from other bands",
-		breakdown.contains(DetailFormat.FOOD_LABEL_TRANSFER_RECEIVED))
-	h._assert_hud("…and what left for them, as its own row",
-		breakdown.contains(DetailFormat.FOOD_LABEL_TRANSFER_SENT))
+	var local_in_row := DetailFormat.food_breakdown_row(TRANSFER_LOCAL_IN,
+		DetailFormat.TRANSFER_LABEL_LOCAL)
+	var route_out_row := DetailFormat.food_breakdown_row(-TRANSFER_ROUTE_OUT,
+		DetailFormat.TRANSFER_LABEL_ROUTE)
+	h._assert_hud("the Food breakdown itemizes what arrived over the local exchange (%s)"
+		% local_in_row.strip_edges(), breakdown.contains(local_in_row))
+	h._assert_hud("…and what left down a trade route, as its own row (%s)"
+		% route_out_row.strip_edges(), breakdown.contains(route_out_row))
 	_click_food_breakdown()
 	await h._settle()
 
 	# **THE COMMAND-REFRESHED FRAME (issue #517), PNG-LESS — the same band, the same two rows, on the
 	# frame a dispatched command re-captured.** The sim clears `transferReceived` / `transferSent`
 	# straight after the turn's capture reads them and rebuilds a refreshed frame from live
-	# components, so on this frame the ACCUMULATING pair is 0 and the per-turn pair is untouched. A
-	# breakdown reading the accumulator loses both rows the instant the player does anything, which is
-	# what a live game showed on a real 0.56 transfer.
+	# components, so on this frame the ACCUMULATING pair is 0 and every per-turn figure — the summed
+	# pair and the four link-kind terms alike — is untouched. A breakdown reading the accumulator
+	# loses both rows the instant the player does anything, which is what a live game showed on a real
+	# 0.56 transfer.
 	#
 	# **A FRAME CANNOT SAY THIS** — the two states differ only in which field the rows were read from,
 	# and the state that is wrong renders no rows at all rather than wrong ones. It is also asserted
@@ -311,10 +426,10 @@ func run(harness) -> void:
 	_click_food_breakdown()
 	await h._settle()
 	var refreshed_breakdown := _collect_text(h)
-	h._assert_hud("a command-refreshed frame still itemizes what arrived from other bands",
-		refreshed_breakdown.contains(DetailFormat.FOOD_LABEL_TRANSFER_RECEIVED))
-	h._assert_hud("…and what left for them, the accumulating pair having been cleared",
-		refreshed_breakdown.contains(DetailFormat.FOOD_LABEL_TRANSFER_SENT))
+	h._assert_hud("a command-refreshed frame still itemizes the local exchange",
+		refreshed_breakdown.contains(local_in_row))
+	h._assert_hud("…and the trade route, the accumulating pair having been cleared",
+		refreshed_breakdown.contains(route_out_row))
 	_click_food_breakdown()
 	await h._settle()
 
@@ -351,12 +466,24 @@ func run(harness) -> void:
 	h._assert_hud("…and are never summed into one figure",
 		not cargo_row.contains(
 			HudCraftingVocab.BATCH_AMOUNT_FORMAT % (PARTY_CARGO_HIDE + PARTY_CARGO_BONE)))
+	# **THE HAY IS A TERM OF ITS OWN**, in fodder's own one-decimal rendering, and it is named `hay`
+	# where the wire says `fodder` — the player's word on the face, the sim's on the wire.
+	h._assert_hud("the shipment says it is carrying hay",
+		cargo_row.contains("%s %s" % [SourceForecast.format_fodder(PARTY_CARGO_FODDER),
+			BandDetailLines.TRADE_CARGO_FODDER_TERM]))
+	# …and NEVER added to the food it rides beside. Asserted as an absence for the materials' reason:
+	# a row quoting `18.0` would look like a perfectly ordinary shipment, and it would be promising
+	# the destination a food delivery its larder is never going to see.
+	h._assert_hud("…and never adds its hay to its bread",
+		not cargo_row.contains(HudCraftingVocab.BATCH_AMOUNT_FORMAT % (
+			PARTY_CARGO_FOOD + PARTY_CARGO_FODDER)))
 	# **THE FIGURE AGAINST THE CAP IS THE WHOLE PACK'S MASS**, the same expression the compose sheet's
 	# meter priced this manifest with (`DetailFormat.shipment_mass`). Composed here from the fixture's
 	# own terms, so the row and the meter arrive at one number from opposite ends — a `Carrying:` that
 	# put the food alone over the cap rendered a full pack as one-sixth full and every other assertion
 	# on this row still passed.
 	var expected_party_mass := PARTY_CARGO_FOOD \
+		+ TRADE_FODDER_CARRY_WEIGHT * PARTY_CARGO_FODDER \
 		+ TRADE_MATERIAL_CARRY_WEIGHT * (PARTY_CARGO_HIDE + PARTY_CARGO_BONE)
 	h._assert_hud("the shipment is weighed as a whole pack, against the pack's own cap",
 		cargo_row.contains("%s / %s" % [
@@ -370,6 +497,334 @@ func run(harness) -> void:
 	h._hud.update_band_alerts([BandFx.band_fixture()])
 	h._hud.show_unit_selection(BandFx.band_fixture())
 	await h._settle()
+
+## **THE TYPED CARGO FIELD AND ITS `Max`** (issue #620) — six states, and every one of them is about
+## a REFUSAL, because the amount a player types is the one input on this sheet the client cannot take
+## at its word.
+##
+## **THE TWO CLAMPS ARE STAGED ON DIFFERENT ROWS, WITH THE CAPS THE OTHER WAY ROUND.** The bone pile
+## is small (3.1) against plenty of pack headroom, so only what the band HOLDS can clamp it; the hay
+## larder is large (41.0) against a nearly full pack, so only the PACK can clamp that one. A client
+## that implemented one cap and called it `row_max` passes exactly one of the two — which is the
+## point, since a single wrong clamp looks entirely plausible on either row alone.
+##
+## Every expectation below is composed from the fixture's own levers through `_fixture_row_max`, so
+## the sheet and this chapter arrive at each number from opposite ends. The WRONG answers are
+## asserted absent beside the right one wherever a plausible mistake has its own value — the pile
+## when the pack should bind, the headroom when the pile should, and the headroom measured with the
+## row's OWN load still counted against it, which is what makes `Max` unable to reach the cap.
+func _run_typed_cargo_states() -> void:
+	# The over-cap state left one worker on the stepper. The pack is the typed field's other cap, so
+	# it is settled first, exactly as it is before the manifest is priced anywhere else on this sheet.
+	_set_party(TRADE_PARTY_WORKERS)
+	await h._settle()
+
+	# **STATE — AN AMOUNT TYPED AND TAKEN.** The plain reading, before any refusal: 8.1 food fits both
+	# caps, so what the player typed is what the row carries and what the meter prices.
+	_type_cargo(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL, _typed(TYPED_FOOD))
+	await h._settle()
+	await h._save("trade_cargo_typed")
+	var typed_mass := _fixture_mass(TYPED_FOOD, LOADED_FODDER, LOADED_HIDE)
+	h._assert_hud("a typed amount inside both caps is taken as given",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) == _typed(TYPED_FOOD))
+	h._assert_hud("…and the mass meter re-prices the manifest around it",
+		_meter_text().contains(HudCraftingVocab.BATCH_AMOUNT_FORMAT % typed_mass))
+
+	# **STATE — TEXT THAT NAMES NO AMOUNT, TWICE, THROUGH BOTH COMMIT PATHS.** Emptied and left
+	# (`focus_exited`, the player who selects-all, deletes and clicks away) and then submitted as
+	# nonsense (`text_submitted`). Both must put the last committed amount back: **zeroing a row is an
+	# explicit act**, and a composed load destroyed by a stray keystroke is the worse failure by far.
+	var field := _cargo_field(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+	h._assert_hud("the food row offers a typed field to empty", field != null)
+	if field != null:
+		field.grab_focus()
+		# ⛔ **THE KEYBOARD TRAP, ASSERTED BY NAME.** `KeyboardArbiter` suppresses the client's polled
+		# gameplay keys only while `TextEntryFocus` recognises the focused control — so a `SpinBox` or
+		# a bespoke widget here would leave WASD panning the map on the keystrokes meant for this
+		# number, with nothing on screen to say so.
+		h._assert_hud("a focused cargo field IS the client's definition of the player typing",
+			TextEntryFocus.held_in(h.get_viewport()))
+		field.text = ""
+		field.release_focus()
+		await h._settle()
+		h._assert_hud("emptying the field and leaving it puts the last amount back, it does not unload the row",
+			_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) == _typed(TYPED_FOOD))
+		h._assert_hud("…and hands the keyboard back on the way out",
+			not TextEntryFocus.held_in(h.get_viewport()))
+	_type_cargo(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL, TYPED_UNPARSEABLE)
+	await h._settle()
+	await h._save("trade_cargo_typed_invalid")
+	h._assert_hud("text naming no amount is refused the same way",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) == _typed(TYPED_FOOD))
+	h._assert_hud("…and the manifest it was typed into is untouched",
+		_meter_text().contains(HudCraftingVocab.BATCH_AMOUNT_FORMAT % typed_mass))
+
+	# **STATE — CLAMPED BY WHAT THE BAND HOLDS.** 9 of a 3.1 pile, with 10.4 units of pack headroom
+	# still under it: only the PILE can be what stops this.
+	var bone_headroom := _fixture_headroom(TRADE_MATERIAL_CARRY_WEIGHT,
+		_fixture_mass(TYPED_FOOD, LOADED_FODDER, LOADED_HIDE))
+	_type_cargo(BONE_ROW, _typed(TYPED_OVER_HELD))
+	await h._settle()
+	await h._save("trade_cargo_typed_held")
+	h._assert_hud("an amount above what the band HOLDS is clamped to the pile",
+		_cargo_field_text(BONE_ROW) == _typed(SHIPPER_BONE_HELD))
+	h._assert_hud("…and not to the pack headroom, which is the larger of the two caps here",
+		_cargo_field_text(BONE_ROW) != _typed(_floor_tenth(bone_headroom)))
+	# **AND THE ROW'S `Max` GOES DEAD ON THE PILE, not merely on the pack.** The typed clamp above
+	# floors its ceiling, and 9 is over the pile either way, so a client whose `row_max` is the
+	# headroom alone still lands this row on something plausible — while `Max` stays enabled forever,
+	# offering an amount the band does not have and answering the press with nothing.
+	h._assert_hud("…and Max on a row holding all the band has is disabled, saying that is why",
+		_cargo_max_is_disabled_with(BONE_ROW, HudComposeVocab.COMPOSE_CARGO_MAX_AT_CAP_HINT))
+	var held_clamped_mass := _fixture_mass(TYPED_FOOD, LOADED_FODDER,
+		LOADED_HIDE + SHIPPER_BONE_HELD)
+	h._assert_hud("…and the meter prices the clamped row, not the typed one",
+		_meter_text().contains(HudCraftingVocab.BATCH_AMOUNT_FORMAT % held_clamped_mass))
+
+	# **STATE — CLAMPED BY THE PACK, ON A CEILING THE TENTH DOES NOT DIVIDE.** 100 of a 14.2 pile with
+	# only 7.35 units' worth of pack space left: the caps are the other way round from the state above,
+	# so only the PACK can stop this one — **and 7.35 is what makes floor-versus-round visible.** A
+	# client that rounded would load 7.4, which is over the cap by a tenth of a unit of hide: the
+	# server refuses it and the player never touched anything but this field.
+	var hide_headroom := _fixture_headroom(TRADE_MATERIAL_CARRY_WEIGHT, held_clamped_mass)
+	var hide_room := _fixture_row_max(SHIPPER_FAIR_HIDE_HELD, TRADE_MATERIAL_CARRY_WEIGHT,
+		held_clamped_mass)
+	_type_cargo(FAIR_HIDE_ROW, _typed(TYPED_OVER_CAP))
+	await h._settle()
+	await h._save("trade_cargo_typed_cap")
+	h._assert_hud("an amount the PACK cannot carry is clamped to what still fits",
+		_cargo_field_text(FAIR_HIDE_ROW) == _typed(hide_room))
+	h._assert_hud("…and not to the pile, which is the larger of the two caps here",
+		_cargo_field_text(FAIR_HIDE_ROW) != _typed(SHIPPER_FAIR_HIDE_HELD))
+	h._assert_hud("…and the ceiling is FLOORED onto the tenth, never rounded up past the cap",
+		_cargo_field_text(FAIR_HIDE_ROW) != _typed(_round_tenth(hide_headroom)))
+	h._assert_hud("…and Max on the row that just reached its ceiling is disabled, saying so",
+		_cargo_max_is_disabled_with(FAIR_HIDE_ROW, HudComposeVocab.COMPOSE_CARGO_MAX_AT_CAP_HINT))
+	var cap_clamped_mass := _fixture_mass(TYPED_FOOD, LOADED_FODDER,
+		LOADED_HIDE + SHIPPER_BONE_HELD + hide_room)
+	h._assert_hud("…and the meter prices the clamped row against the pack it nearly fills",
+		_meter_text().contains(HudCraftingVocab.BATCH_AMOUNT_FORMAT % cap_clamped_mass))
+
+	# **STATE — `Max` FILLS THE ROW.** The hay is typed back to zero first, which is also the only way
+	# a row is emptied at all, and the freed pack space is then handed to the food row by one press.
+	_type_cargo(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL, _typed(TYPED_ZERO))
+	await h._settle()
+	h._assert_hud("a typed zero DOES unload the row — the one act that empties one",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL) == _typed(TYPED_ZERO))
+	# **THE FOOD ROW'S OWN LOAD IS NOT IN THIS TERM**, because the headroom a row may grow into is
+	# measured over the OTHER rows — the whole point of the state below, and a mistake this harness
+	# made first, which is what makes the absent-value assertion worth having.
+	var others_mass := _fixture_mass(0.0, TYPED_ZERO,
+		LOADED_HIDE + SHIPPER_BONE_HELD + hide_room)
+	var food_room := _fixture_row_max(SHIPPER_PROVISIONS,
+		HudComposeVocab.COMPOSE_CARGO_FOOD_CARRY_WEIGHT, others_mass)
+	_press_cargo_max(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+	await h._settle()
+	await h._save("trade_cargo_max")
+	h._assert_hud("Max loads the most of the row the pack can still take",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) == _typed(food_room))
+	h._assert_hud("…measured over the OTHER rows, never against the row's own load",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+			!= _typed(_floor_tenth(_trade_cargo_cap() - others_mass - TYPED_FOOD)))
+	h._assert_hud("…and never simply to the whole pile",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) != _typed(SHIPPER_PROVISIONS))
+	h._assert_hud("…which takes the manifest back to exactly the pack's cap",
+		_meter_text().contains(HudCraftingVocab.BATCH_AMOUNT_FORMAT % _trade_cargo_cap()))
+	# **THE TWO DEAD `Max` STATES, SIDE BY SIDE ON ONE FRAME, EACH SAYING WHICH CAP KILLED IT.** The
+	# food row sits AT the ceiling it just reached; the emptied hay row has no pack space left at all.
+	# A single disabled-with-one-message button would satisfy neither claim.
+	h._assert_hud("…and the button that did it is now disabled, at the ceiling it just reached",
+		_cargo_max_is_disabled_with(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
+			HudComposeVocab.COMPOSE_CARGO_MAX_AT_CAP_HINT))
+	h._assert_hud("…while Max on a row with no pack space left says THAT instead",
+		_cargo_max_is_disabled_with(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL,
+			HudComposeVocab.COMPOSE_CARGO_MAX_NO_ROOM_HINT))
+
+	# **STATE — A TYPED VALUE THEN A STEPPER PRESS, WITHOUT ENTER IN BETWEEN** (the reported defect).
+	# The press is a REAL pointer gesture, because what broke is the ORDER the engine runs things in
+	# and no faked `pressed` can see it: a click moves keyboard focus, focus loss commits the field,
+	# the commit rebuilds the sheet, and the rebuild frees the very button the click is still inside.
+	#
+	# **Both faults it stacked are asserted at once.** A stepper that captured its row's amount at
+	# BUILD time steps from what the row was drawn with; a stepper whose press is eaten by that
+	# rebuild does not step at all. The one right answer is `typed + step`, and it is reachable only by
+	# flushing the field first and resolving the amount live.
+	_type_cargo(FAIR_HIDE_ROW, _typed(TYPED_ZERO))
+	await h._settle()
+	var drawn_with := _cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL).to_float()
+	_write_cargo_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL, _typed(TYPED_THEN_STEPPED))
+	await _click_cargo_control(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
+		HudWidgets.CARGO_CONTROL_PLUS)
+	await h._settle()
+	await h._save("trade_cargo_typed_then_stepped")
+	h._assert_hud("a `+` after a typed value steps from what was TYPED, not from what was drawn",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+			== _typed(TYPED_THEN_STEPPED + HudComposeVocab.COMPOSE_CARGO_STEP))
+	h._assert_hud("…and it is a STEP, not a press eaten by the rebuild the commit triggers",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) != _typed(TYPED_THEN_STEPPED))
+	h._assert_hud("…and never from the amount the row was drawn with (%s)" % _typed(drawn_with),
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+			!= _typed(drawn_with + HudComposeVocab.COMPOSE_CARGO_STEP))
+	# **THE KEYBOARD STAYS IN THE FIELD ACROSS THE PRESS**, which is what makes the flush deterministic
+	# rather than a race: the row's buttons take no focus, so the field is never committed out from
+	# under the click, and the rebuilt row takes the caret back.
+	h._assert_hud("…and the keyboard is still in the field the player was typing into",
+		TextEntryFocus.held_in(h.get_viewport()))
+
+	# …and the same for `−`, which is the other half of the same capture.
+	_write_cargo_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL, _typed(TYPED_THEN_STEPPED))
+	await _click_cargo_control(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
+		HudWidgets.CARGO_CONTROL_MINUS)
+	await h._settle()
+	h._assert_hud("a `−` after a typed value steps down from what was TYPED",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
+			== _typed(TYPED_THEN_STEPPED - HudComposeVocab.COMPOSE_CARGO_STEP))
+
+	# **STATE — `+` IS BOUNDED BY THE PACK, NOT ONLY BY THE PILE.** The food row is taken to HALF A
+	# STEP below its ceiling, so the next press overshoots — and must land ON the ceiling rather than
+	# past it. The band still holds 84 throughout, so under the old rule (`amount >= held`) `+` stays
+	# live here and a press carries the manifest over the cap the meter above just cleared.
+	var pack_room := _fixture_row_max(SHIPPER_PROVISIONS,
+		HudComposeVocab.COMPOSE_CARGO_FOOD_CARRY_WEIGHT,
+		_fixture_mass(0.0, TYPED_ZERO, LOADED_HIDE + SHIPPER_BONE_HELD))
+	var overshoot := HudComposeVocab.COMPOSE_CARGO_STEP * STEP_PARTIAL_FRACTION
+	_type_cargo(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL, _typed(pack_room - overshoot))
+	await h._settle()
+	await _click_cargo_control(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
+		HudWidgets.CARGO_CONTROL_PLUS)
+	await h._settle()
+	await h._save("trade_cargo_step_clamped")
+	h._assert_hud("a `+` that would overrun the ceiling clamps to it",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) == _typed(pack_room))
+	h._assert_hud("…rather than stepping past it, which is what a clamp to the PILE alone allows",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) != _typed(
+			pack_room - overshoot + HudComposeVocab.COMPOSE_CARGO_STEP))
+	h._assert_hud("…leaving the pack full rather than overfull",
+		_meter_text().contains(HudComposeVocab.COMPOSE_CARGO_MASS_FORMAT % [
+			HudFormat.meter_bar(HudConst.PROGRESS_PERCENT_SCALE,
+				HudComposeVocab.COMPOSE_CARGO_MASS_CELLS),
+			HudCraftingVocab.BATCH_AMOUNT_FORMAT % _trade_cargo_cap(),
+			HudCraftingVocab.BATCH_AMOUNT_FORMAT % _trade_cargo_cap()]))
+	h._assert_hud("…and `+` is now dead because the PACK is full, though the band holds far more",
+		_cargo_control_is_disabled(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
+			HudWidgets.CARGO_CONTROL_PLUS))
+	h._assert_hud("…while `−` stays live, the row being nowhere near empty",
+		not _cargo_control_is_disabled(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
+			HudWidgets.CARGO_CONTROL_MINUS))
+## The pack this chapter's party carries — `party × per_worker_carry`, the sim's own product.
+func _trade_cargo_cap() -> float:
+	return float(TRADE_PARTY_WORKERS) * TRADE_PER_WORKER_CARRY
+
+## The sim's mass expression over this chapter's own levers, composed from the fixture's side so the
+## sheet's meter and this chapter meet at one number from opposite ends. Materials arrive as ONE
+## pack-space total and are never a readout — the `Carrying:` rule, one screen over.
+func _fixture_mass(food: float, fodder: float, materials: float) -> float:
+	return food + fodder * TRADE_FODDER_CARRY_WEIGHT + materials * TRADE_MATERIAL_CARRY_WEIGHT
+
+## How much of one row the PACK alone would still take — the second cap on its own, and therefore
+## the answer a client that implemented only that one gives. **RAW, on neither grid**: each caller
+## puts it on the one its own claim is about, since the whole point of the hide state below is that
+## flooring and rounding this number disagree.
+func _fixture_headroom(weight: float, other_mass: float) -> float:
+	return maxf((_trade_cargo_cap() - other_mass) / weight, 0.0)
+
+## …and the most one row may still take: **BOTH caps**, the pack headroom measured over the mass of
+## the OTHER rows only, floored onto the tenth every composed amount is floored onto.
+func _fixture_row_max(held: float, weight: float, other_mass: float) -> float:
+	return _floor_tenth(maxf(minf(held, (_trade_cargo_cap() - other_mass) / weight), 0.0))
+
+## …and the ROUNDED answer, which is what a plausible wrong client gives and therefore the value
+## asserted ABSENT beside the floored one. It exists only to be a wrong answer.
+func _round_tenth(amount: float) -> float:
+	var scale: float = pow(10.0, HudComposeVocab.COMPOSE_CARGO_AMOUNT_DECIMALS)
+	return roundf(amount * scale) / scale
+
+## FLOOR, never round — the rule the sheet composes every amount by, mirrored here so this chapter
+## cannot pass a client that rounds. The grid is the client's own declared precision.
+func _floor_tenth(amount: float) -> float:
+	var scale: float = pow(10.0, HudComposeVocab.COMPOSE_CARGO_AMOUNT_DECIMALS)
+	return floorf(amount * scale) / scale
+
+## An amount as the field spells it, so an assertion compares the string the player reads.
+func _typed(amount: float) -> String:
+	return HudCraftingVocab.BATCH_AMOUNT_FORMAT % amount
+
+## Type `text` into one cargo row's field and commit it with Enter — `text_submitted`, the signal the
+## engine emits for the key, carrying the field's own text.
+func _type_cargo(needle: String, text: String) -> void:
+	var field := _cargo_field(needle)
+	h._assert_hud("the cargo row for %s offers a typed field" % needle, field != null)
+	if field == null:
+		return
+	field.text = text
+	field.text_submitted.emit(text)
+
+## Put text in one cargo row's field and **leave it uncommitted** — no Enter, no focus change. The
+## keyboard is taken first, because that is the state the reported defect happens in: a player mid-
+## edit reaching for the stepper beside the field.
+func _write_cargo_text(needle: String, text: String) -> void:
+	var field := _cargo_field(needle)
+	h._assert_hud("the cargo row for %s offers a field to type into" % needle, field != null)
+	if field == null:
+		return
+	field.grab_focus()
+	field.text = text
+	# `LineEdit.text =` does not emit `text_changed` (only user edits do), so the harness raises the
+	# same signal a keystroke would — otherwise the half-typed text is invisible to everything that
+	# tracks it, and the state under test would be one no player can reach.
+	field.text_changed.emit(text)
+
+## Click one of a cargo row's controls with a REAL pointer gesture, press and release a frame apart.
+## **Not `pressed.emit()`**: the defect this drives is about what the ENGINE does between the press
+## and the release — the focus move, the commit it fires and the rebuild that frees the button — and
+## a synthesised signal skips every one of those steps.
+func _click_cargo_control(needle: String, control: String) -> void:
+	var button := _cargo_control(_parties_zone(), needle, control)
+	h._assert_hud("the cargo row for %s offers a live %s" % [needle, control],
+		button is Button and not (button as Button).disabled)
+	if not (button is Button) or (button as Button).disabled:
+		return
+	var viewport: Viewport = h.get_viewport()
+	var point := InputProbe.canvas_to_window(viewport, h.get_window(),
+		button.get_global_rect().get_center())
+	InputProbe.hover(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.press_left(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.release_left(viewport, point)
+	await h.get_tree().process_frame
+
+## Is one of a row's controls greyed out? Answers `true` for a control that is not there at all, so a
+## row that stopped rendering one cannot pass as "correctly disabled".
+func _cargo_control_is_disabled(needle: String, control: String) -> bool:
+	var button := _cargo_control(_parties_zone(), needle, control)
+	return not (button is Button) or (button as Button).disabled
+
+## Press one cargo row's `Max`.
+func _press_cargo_max(needle: String) -> void:
+	var button := _cargo_control(_parties_zone(), needle, HudWidgets.CARGO_CONTROL_MAX)
+	h._assert_hud("the cargo row for %s offers a live Max" % needle,
+		button != null and not button.disabled)
+	if button != null and not button.disabled:
+		button.pressed.emit()
+
+## Is one row's `Max` dead for the stated reason? Both halves asserted together: a button disabled
+## with the WRONG reason tells the player which cap stopped them, wrongly.
+func _cargo_max_is_disabled_with(needle: String, reason: String) -> bool:
+	var button := _cargo_control(_parties_zone(), needle, HudWidgets.CARGO_CONTROL_MAX)
+	return button != null and button.disabled and button.tooltip_text == reason
+
+func _cargo_field(needle: String) -> LineEdit:
+	return _cargo_control(_parties_zone(), needle, HudWidgets.CARGO_CONTROL_FIELD) as LineEdit
+
+func _cargo_field_text(needle: String) -> String:
+	var field := _cargo_field(needle)
+	return field.text if field != null else ""
+
+## The live mass meter's face.
+func _meter_text() -> String:
+	var meter := Q.find_meta_node(_parties_zone(), BandPanelController.TRADE_MASS_METER_META)
+	return (meter as Label).text if meter is Label else ""
 
 ## The `≈` every figure derived from a REMEMBERED position wears. Read off the vocabulary's own format
 ## rather than typed, so a reworded sentence that dropped the mark fails here.
@@ -605,27 +1060,30 @@ func _load(needle: String, amount: float) -> void:
 	var pressed := 0
 	var presses := int(round(amount / HudComposeVocab.COMPOSE_CARGO_STEP))
 	while pressed < presses:
-		var plus := _cargo_plus_button(_parties_zone(), needle)
+		var plus := _cargo_control(_parties_zone(), needle, HudWidgets.CARGO_CONTROL_PLUS)
 		if plus == null or plus.disabled:
 			break
 		plus.emit_signal("pressed")
 		pressed += 1
 	h._assert_hud("the cargo row for %s took the whole load" % needle, pressed == presses)
 
-## The `+` of the cargo row whose name label contains `needle`. A cargo row is a name label followed
-## by the shared stepper faces, so the `+` is the row's LAST child — found structurally rather than by
-## a text match, which would find every stepper on the sheet.
-func _cargo_plus_button(root: Node, needle: String) -> Button:
-	if root is HBoxContainer:
+## One control of the cargo row whose name label contains `needle`, found by the two metas the row
+## carries (`HudWidgets.CARGO_ROW_KEY_META` on the row, `CARGO_CONTROL_META` on each control).
+##
+## **IT USED TO WALK THE ROW POSITIONALLY** — the `+` was "the last child" — which the typed field and
+## its `Max` broke the moment they joined the row (issue #620): the walk found `Max` and pressed it
+## believing it was the `+`. A meta is the only handle that survives a control being added.
+func _cargo_control(root: Node, needle: String, control: String) -> Control:
+	if root is HBoxContainer and (root as HBoxContainer).has_meta(HudWidgets.CARGO_ROW_KEY_META):
 		var row := root as HBoxContainer
-		var count := row.get_child_count()
-		if count > 0 and row.get_child(0) is Label \
+		if row.get_child_count() > 0 and row.get_child(0) is Label \
 				and (row.get_child(0) as Label).text.contains(needle):
-			var last := row.get_child(count - 1)
-			if last is Button and (last as Button).text == HudWorkVocab.STEPPER_PLUS_FACE:
-				return last as Button
+			for child in row.get_children():
+				if child is Control and String((child as Control).get_meta(
+						HudWidgets.CARGO_CONTROL_META, "")) == control:
+					return child as Control
 	for child in root.get_children():
-		var found := _cargo_plus_button(child, needle)
+		var found := _cargo_control(child, needle, control)
 		if found != null:
 			return found
 	return null
@@ -639,11 +1097,15 @@ func _shipper_band() -> Dictionary:
 	band = BandFx.with_band_id(band)
 	band["pos"] = [SHIPPER_TILE.x, SHIPPER_TILE.y]
 	band["stores"] = {"provisions": SHIPPER_PROVISIONS}
+	# **THE HAY LARDER IS NOT A `stores` KEY** — the wire publishes it as the cohort's own
+	# `fodder_store`, a second larder that never converts into the first.
+	band["fodder_store"] = SHIPPER_FODDER
 	band["idle_workers"] = 9
 	band["labor_assignments"] = []
 	band["band_move_tiles_per_turn"] = BAND_MOVE_TILES_PER_TURN
 	band["expedition_trade_per_worker_carry"] = TRADE_PER_WORKER_CARRY
 	band["expedition_trade_material_carry_weight"] = TRADE_MATERIAL_CARRY_WEIGHT
+	band["expedition_trade_fodder_carry_weight"] = TRADE_FODDER_CARRY_WEIGHT
 	band["material_batches"] = _shipper_batches()
 	return band
 
@@ -663,10 +1125,19 @@ func _neighbour_band() -> Dictionary:
 ## would offer a quantity of something the band does not hold.
 func _shipper_batches() -> Array:
 	return [
-		_batch("hide", 14.2, [["tough", 0.45, "fair"], ["supple", 0.58, "good"]]),
+		_batch("hide", SHIPPER_FAIR_HIDE_HELD,
+			[["tough", 0.45, "fair"], ["supple", 0.58, "good"]]),
 		_batch("hide", 6.0, [["tough", 0.90, "excellent"], ["supple", 0.15, "poor"]]),
-		_batch("bone", 3.1, [["dense", 0.82, "excellent"], ["long", 0.35, "fair"]]),
+		_batch("bone", SHIPPER_BONE_HELD, [["dense", 0.82, "excellent"], ["long", 0.35, "fair"]]),
 	]
+
+## The BONE pile, named because the typed-clamp state above is measured against it: it is small
+## enough that the PILE is what clamps a large typed amount there, while the pack still has room.
+const SHIPPER_BONE_HELD := 3.1
+
+## …and the FAIR-hide pile, which is the case the other way round: large enough that the PACK is what
+## clamps a large typed amount into it, on a ceiling that is not a whole tenth.
+const SHIPPER_FAIR_HIDE_HELD := 14.2
 
 func _batch(material_id: String, amount: float, readings: Array) -> Dictionary:
 	var rows: Array = []
@@ -718,15 +1189,18 @@ func _trade_party() -> Dictionary:
 		# beside it — and a fixture carrying a name would have tested nothing that ships.
 		"expedition_destination_name": "",
 		"expedition_cargo_food": PARTY_CARGO_FOOD,
+		"expedition_cargo_fodder": PARTY_CARGO_FODDER,
 		"expedition_cargo_materials": [
 			{"material_id": "hide", "amount": PARTY_CARGO_HIDE},
 			{"material_id": "bone", "amount": PARTY_CARGO_BONE},
 		],
 		"expedition_carry_cap": PARTY_CARGO_CAP,
-		# **THE CARRY-WEIGHT LEVER RIDES EVERY COHORT**, party included (the native decoder echoes it
-		# onto each one), and the `Carrying:` row needs it: what the cap is checked against is
-		# `food + weight × Σ materials`, so a fixture without it would price this pack at its food.
+		# **BOTH CARRY-WEIGHT LEVERS RIDE EVERY COHORT**, party included (the native decoder echoes
+		# them onto each one), and the `Carrying:` row needs both: what the cap is checked against is
+		# `food + fodder_weight × hay + material_weight × Σ materials`, so a fixture missing either
+		# would price this pack under what the sim weighs it at.
 		"expedition_trade_material_carry_weight": TRADE_MATERIAL_CARRY_WEIGHT,
+		"expedition_trade_fodder_carry_weight": TRADE_FODDER_CARRY_WEIGHT,
 		"tile_info": {
 			"x": 67, "y": 20,
 			"terrain_label": "Prairie Steppe",

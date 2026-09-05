@@ -296,15 +296,30 @@ fn merged_arrival_schedule(allocation: Option<&LaborAllocation>) -> Vec<f32> {
 /// pre-launch estimate tables stopped — and it capped nothing: the sim never read it, and all four
 /// client sites that mention it say so in capitals ("IS NOT A RULES CAP AND MUST NOT BE APPLIED
 /// HERE"). The tables are gone and the ladder with them, so the echo went too.
-pub(crate) struct ExpeditionLevers {
+pub(crate) struct ExpeditionLevers<'a> {
     pub(crate) hunt_per_worker_carry: f32,
-    /// `expedition_config.trade.per_worker_carry` — one person's **shipment** pack, echoed per-cohort
-    /// so the outfit UI can price a manifest for a party that **does not exist yet**. That is why it
-    /// is a global echo and not a per-party field: the player builds the shipment *before* there is a
-    /// party to read a cap off. Same idiom as [`Self::hunt_per_worker_carry`] beside it, and a
-    /// deliberately **separate** number — a shipment's pack and a raid's are different packs, and a
-    /// client reaching for the hunt lever is one config edit away from quoting a cap the sim refuses.
-    pub(crate) trade_per_worker_carry: f32,
+    /// **The shipment-carry config, carried as a BORROW rather than as a resolved number** — the one
+    /// field here that is not a scalar, and deliberately so.
+    ///
+    /// Shipment carry has **two** rules resolved off it, and the cohort row builder runs both:
+    /// [`crate::expedition_config::trade_per_worker_carry`] fills the per-cohort echo the outfit UI
+    /// multiplies, and [`crate::expedition_config::shipment_carry_cap`] fills a live trade party's
+    /// own `expedition_carry_cap`. Handing down the *config* rather than a pre-multiplied scalar is
+    /// what keeps each of those expressed exactly once: a **party-level** term — a wagon that holds
+    /// what it holds however many people walk beside it — attaches inside `shipment_carry_cap`, and
+    /// a snapshot holding only a per-worker number could not see it. The launch refusal would
+    /// enforce the wagon while the published cap went on quoting `workers × per-worker`, and nothing
+    /// would fail.
+    ///
+    /// **The carry is resolved per band row, not once per capture**, for the same reason: an input
+    /// that comes to vary by band — a cart kit a band owns — is then a change to the resolver's
+    /// arguments and nothing else. The wire contract already absorbs that, because what the field
+    /// promises is the resolved number rather than where it was resolved.
+    ///
+    /// It is deliberately a **separate** carry from [`Self::hunt_per_worker_carry`] beside it, which
+    /// really is still a raw lever: a shipment's pack and a raid's are different packs, and a client
+    /// reaching for the hunt lever is one config edit away from quoting a cap the sim refuses.
+    pub(crate) trade: &'a crate::expedition_config::TradeExpeditionConfig,
     /// `expedition_config.trade.material_carry_weight` — what one unit of a material costs in pack
     /// space relative to one unit of food, so the cargo picker can run the **same** mass expression
     /// the launch command checks: `food + this × Σ material amounts`.
@@ -314,6 +329,15 @@ pub(crate) struct ExpeditionLevers {
     /// time against a cap meter that cannot move, and finds out on submit. The refusal stays the
     /// authority; the meter is what stops the player ever meeting it.
     pub(crate) trade_material_carry_weight: f32,
+    /// `expedition_config.trade.fodder_carry_weight` — what one unit of **hay** costs in pack space
+    /// relative to one unit of food, the third term of the mass expression
+    /// `food + this × fodder + trade_material_carry_weight × Σ material amounts`.
+    ///
+    /// Ships for the same reason as [`Self::trade_material_carry_weight`] beside it: the launch
+    /// refusal is the authority, and a picker that cannot run the sim's expression is a guessing
+    /// game the player only loses on submit. Leaving this out under-prices every manifest with a
+    /// bale in it.
+    pub(crate) trade_fodder_carry_weight: f32,
     pub(crate) hunt_per_worker_provisions: f32,
     pub(crate) hunt_viability_warn_turns: u32,
     /// `expedition_config.hunt.forecast_horizon_turns` — how far *every* raid projection in the
@@ -393,7 +417,7 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// lever the client needs per-band to check whether a visible aggressive predator is in raid range).
     pub(crate) raid_radius: u32,
     pub(crate) scout_vantage_distance: u32,
-    pub(crate) expedition_levers: &'a ExpeditionLevers,
+    pub(crate) expedition_levers: &'a ExpeditionLevers<'a>,
     pub(crate) settlement_stage_config: &'a crate::settlement_stage_config::SettlementStageConfig,
     pub(crate) travel_target: Option<UVec2>,
     pub(crate) hunt_reach: u32,
@@ -949,6 +973,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // still owes.
     let roadwork_demand = allocation.map(|a| a.last_roadwork_demand).unwrap_or(0.0);
     let roadwork_supplied = allocation.map(|a| a.last_roadwork_supplied).unwrap_or(0.0);
+    // **WHAT CROSSED BETWEEN THIS BAND AND ANOTHER THIS TURN, BOTH ACCOUNTS**, split by
+    // `TransferLink` — the per-turn ledgers `systems::publish_turn_transfers` copied onto the cohort
+    // immediately before this capture. Read here once, because three readings hang off them: the
+    // eight published figures, the summed pair a client falls back to, and the fodder runway below.
+    let food_transfers = cohort.last_turn_food_transfers;
+    let fodder_transfers = cohort.last_turn_fodder_transfers;
     let fodder_need = allocation.map(|a| a.last_fodder_need).unwrap_or(0.0);
     let fodder_income = allocation.map(|a| a.last_fodder_inflow).unwrap_or(0.0);
     // **The fodder runway, through the LARDER'S OWN function and the larder's own sentinel** — one
@@ -971,10 +1001,30 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // well-fed larder publishes: no pens, an income that meets the draw, and a keeper who cannot feed
     // hay out at all are all *not limited* rather than a number of turns — the existing no-drain
     // sentinel, and deliberately not a second one to mean "cannot draw".
+    //
+    // ⛔ **THE LOCAL NET IS A TERM OF THE RATE, AND WITHOUT IT THE RUNWAY CONTRADICTED THE STORE IT
+    // COUNTS DOWN.** Hay pools between linked camps every turn (`balance_supply_networks` walks the
+    // whole store), so a band on the receiving end watched `fodderStore` RISE under a runway that
+    // said it was draining, and the sending band the reverse. Netting the crossings into the income
+    // term is what makes the forecast agree with the trajectory a player can see, in both directions
+    // — a band that sends hay away every turn empties sooner, and says so.
+    //
+    // ⛔ **LOCAL CROSSINGS COUNT; ROUTE CROSSINGS DO NOT** — [`TransferLedger::local_net`], never
+    // `received() − sent()`. **A local crossing is a RATE**: two camps within reach pool every turn
+    // for as long as they stay there, which is precisely what a forecast projects. **A route
+    // crossing is an EVENT**: a shipment arrives once, and reading one delivery as a standing
+    // per-turn rate is the mistake arc #527 refused on the food side. The distinction costs nothing
+    // today — the fodder route arms are `0` while a shipment's manifest refuses hay — and is written
+    // now so the day fodder ships for real it does not quietly start annualising deliveries.
+    //
+    // **Read off the PER-TURN ledger on the cohort**, not the allocation's accumulator: the
+    // accumulator is cleared once the turn's capture has read it, so a recapture would recompute
+    // this runway with the term missing and the number would jump on any frame a command refreshed
+    // (issue #517's defect, one field over).
     let turns_of_fodder = larder_runway_turns(
         cohort.stores.get(FODDER).to_f32(),
         allocation.map(|a| a.last_fodder_drain).unwrap_or(0.0),
-        fodder_income,
+        fodder_income + fodder_transfers.local_net(),
         &[],
     );
     // Expedition discriminators + persistence fields (empty/false for a normal band).
@@ -1034,11 +1084,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // **THIS PARTY'S PACK** = `party_workers × the per-worker carry of the pack its MISSION fills`
     // (`0` for a scout and for a normal band). The party's worker count is its working-age head-count.
     //
-    // **Which lever fills it is a fact about the mission, not about expeditions.** A raid's pack is
-    // measured in food it can haul home; a shipment's is measured in what its people can carry out.
-    // They are different numbers on different levers, so the cap resolves per mission rather than
-    // quoting one of them at every party — a client reading the hunt lever for a trade party would be
-    // one config edit away from quoting a cap the launch command refuses.
+    // **What fills it is a fact about the mission, not about expeditions.** A raid's pack is
+    // measured in food it can haul home, and is still a raw lever (`hunt.per_worker_carry` × the
+    // party). A shipment's is `expedition_config::shipment_carry_cap` — **called, not restated**,
+    // because it is the very expression the launch command refuses on, and a term that scales with
+    // the PARTY rather than with a worker (a wagon holds what it holds) would live inside it where a
+    // per-worker echo could never see it. They are different numbers, so the cap resolves per
+    // mission rather than quoting one of them at every party: a client reading the hunt lever for a
+    // trade party would be one config edit away from quoting a cap the launch command refuses.
     //
     // **A denial party has a pack too** — it does not clamp to carry, but it still hauls home
     // whatever it can (`docs/plan_denial_raid.md` §1), so its cap is the hunt's.
@@ -1047,7 +1100,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             working_age as f32 * expedition_levers.hunt_per_worker_carry
         }
         Some(ExpeditionMission::Trade { .. }) => {
-            working_age as f32 * expedition_levers.trade_per_worker_carry
+            crate::expedition_config::shipment_carry_cap(working_age, expedition_levers.trade)
         }
         // A scout hauls nothing it was sent for, and a resident band is not a party.
         Some(ExpeditionMission::Scout) | None => 0.0,
@@ -1059,10 +1112,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     //
     // **The material rows are per material id, never one total** — the arc's contract: a sum of hide
     // and bone is the retired trade axis under a new name. An empty vector is "no row", not zero.
+    //
+    // **THREE accounts, published apart**: food, hay and the material rows. Bread and hay are two
+    // keys on one store that never convert, so they are never one number here either.
     let (
         expedition_destination_band,
         expedition_destination_name,
         expedition_cargo_food,
+        expedition_cargo_fodder,
         expedition_cargo_materials,
     ) = match expedition {
         Some(exp) if exp.mission.destination_band().is_some() => (
@@ -1076,6 +1133,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             // fight it. Empty means "no name" — see `ExpeditionMission::Trade::destination_name`.
             exp.mission.destination_name().to_string(),
             exp.cargo.get(FOOD).to_f32(),
+            // **The hay account, published apart from the food one** — two keys on the shipment's
+            // store that never convert, and a client that summed them would be reinventing the
+            // retired `upkeep_per_biomass`.
+            exp.cargo.get(crate::components::FODDER).to_f32(),
             exp.cargo
                 .materials()
                 .map(|(material, batches)| sim_runtime::MaterialPayoff {
@@ -1089,7 +1150,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 })
                 .collect(),
         ),
-        _ => (0, String::new(), 0.0, Vec::new()),
+        _ => (0, String::new(), 0.0, 0.0, Vec::new()),
     };
     // **The crafting half of the row, resolved together** — the four readouts share this band's
     // store, its ledger and its bench tiers, so resolving them apart would walk the same three
@@ -1189,13 +1250,19 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_viability_warn_turns: expedition_levers.hunt_viability_warn_turns,
         expedition_forecast_horizon_turns: expedition_levers.hunt_forecast_horizon_turns,
         expedition_per_worker_carry: expedition_levers.hunt_per_worker_carry,
-        // **The SHIPMENT pack's lever, echoed onto every cohort** — the outfit UI prices a manifest
-        // for a party that does not exist yet, so no per-party field can serve that screen. Same
-        // idiom as the hunt lever above it.
-        expedition_trade_per_worker_carry: expedition_levers.trade_per_worker_carry,
-        // The second half of the mass expression, so the cargo picker runs the sim's own rule
+        // **The RESOLVED shipment carry, echoed onto every cohort** — the outfit UI prices a
+        // manifest for a party that does not exist yet, so no per-party field can serve that screen.
+        // Same idiom as the hunt lever above it, but this one is the sim's answer rather than a
+        // lever quote: `party_workers × this` is the cap the launch command enforces, and it is the
+        // *same* resolver `expedition_carry_cap` above multiplies out for a party already on the
+        // map.
+        expedition_trade_per_worker_carry: crate::expedition_config::trade_per_worker_carry(
+            expedition_levers.trade,
+        ),
+        // The other two thirds of the mass expression, so the cargo picker runs the sim's own rule
         // rather than watching a meter that cannot move.
         expedition_trade_material_carry_weight: expedition_levers.trade_material_carry_weight,
+        expedition_trade_fodder_carry_weight: expedition_levers.trade_fodder_carry_weight,
         band_move_tiles_per_turn: expedition_levers.band_move_tiles_per_turn as f32,
         // In-flight hunt-party delivery forecast (`0`/false for a scout, a normal band, or a party
         // whose delivery can't be projected).
@@ -1280,20 +1347,25 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_destination_band,
         expedition_destination_name,
         expedition_cargo_food,
+        expedition_cargo_fodder,
         expedition_cargo_materials,
         // The food ledger's last two terms — read off the allocation like `raid_forfeit` beside
         // them, and `0.0` for a band that has none. **These answer "what has
         // crossed since the last published frame"**, the window the ledger identity closes over, and
         // they are cleared right after this capture (`systems::reset_transfer_ledger`).
-        transfer_received: allocation.map(|a| a.last_transfer_received).unwrap_or(0.0),
-        transfer_sent: allocation.map(|a| a.last_transfer_sent).unwrap_or(0.0),
+        transfer_received: allocation
+            .map(|a| a.last_food_transfers.received())
+            .unwrap_or(0.0),
+        transfer_sent: allocation
+            .map(|a| a.last_food_transfers.sent())
+            .unwrap_or(0.0),
         // **And these answer "what crossed on this turn"** — the same two facts as per-turn state on
         // the cohort, copied there by `systems::publish_turn_transfers` just before the turn's
         // capture. A recapture rebuilds this frame from live components *after* the pair above has
         // been cleared, so it is these that survive one and these a client renders. On a turn frame
         // the two pairs read the same number.
-        transfer_received_turn: cohort.last_turn_transfer_received,
-        transfer_sent_turn: cohort.last_turn_transfer_sent,
+        transfer_received_turn: food_transfers.received(),
+        transfer_sent_turn: food_transfers.sent(),
         // **How this band splits a maintenance pool it cannot stretch** — the player's own choice
         // (`docs/plan_standing_upkeep.md` §2.5), published as the token the command takes so the two
         // are one language. A band with no allocation states the default rather than an empty
@@ -1336,6 +1408,20 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         fodder_need,
         fodder_income,
         turns_of_fodder,
+        // **WHAT MOVED THE GOODS — the same crossing, told by link kind**, for both accounts and on
+        // the per-turn basis the pair above is on. `local + route` is exactly `transfer_received` /
+        // `transfer_sent`, in each direction, because every writer books through one ledger with no
+        // third arm; a client renders these and needs no residual row.
+        transfer_local_received_turn: food_transfers.local_received,
+        transfer_local_sent_turn: food_transfers.local_sent,
+        transfer_route_received_turn: food_transfers.route_received,
+        transfer_route_sent_turn: food_transfers.route_sent,
+        // The hay account's four, all four live: a shipment takes a `fodder` line, so a party really
+        // does carry bales between camps and the `route` arm books a real crossing.
+        fodder_transfer_local_received_turn: fodder_transfers.local_received,
+        fodder_transfer_local_sent_turn: fodder_transfers.local_sent,
+        fodder_transfer_route_received_turn: fodder_transfers.route_received,
+        fodder_transfer_route_sent_turn: fodder_transfers.route_sent,
         // **THE STANDING MATERIAL BILL** — the two rates and the stock, on the hay ledger's own
         // rule: the sim sums it and the client renders. See `LaborAllocation::last_material_need`
         // for why a client cannot sum the need itself.
@@ -1489,7 +1575,8 @@ const ROUND_HALF_DIVISOR: i128 = 2;
 /// - **No dependent mass means no dependents.** With `children == elders == 0` and `working == 16.6`
 ///   the cached `size` is 17 while the workers floor to 16, and the leftover person is a rounding
 ///   artefact of the accumulator, not a person: putting them in `elders` invented an elder the sim
-///   has no record of. The triple therefore reports `working` alone, and [`Self::head_count`] makes
+///   has no record of. The triple therefore reports `working` alone, and
+///   [`WholeAgeBrackets::head_count`] makes
 ///   the published size agree.
 pub(crate) fn whole_age_brackets(
     head_count: u32,
@@ -1590,12 +1677,18 @@ mod tests {
         }
     }
 
-    fn levers() -> ExpeditionLevers {
-        let cfg = ExpeditionConfig::builtin();
+    /// The expedition levers, resolved off the builtins. The `ExpeditionConfig` is parked in a
+    /// `OnceLock` so the returned borrow is `'static` — the same reason [`kit_levers`] does it, and
+    /// the fixtures pass `&levers()` as a temporary the same way.
+    fn levers() -> ExpeditionLevers<'static> {
+        static EXPEDITION: std::sync::OnceLock<std::sync::Arc<ExpeditionConfig>> =
+            std::sync::OnceLock::new();
+        let cfg = EXPEDITION.get_or_init(ExpeditionConfig::builtin);
         ExpeditionLevers {
             hunt_per_worker_carry: cfg.hunt.per_worker_carry,
-            trade_per_worker_carry: cfg.trade.per_worker_carry,
+            trade: &cfg.trade,
             trade_material_carry_weight: cfg.trade.material_carry_weight,
+            trade_fodder_carry_weight: cfg.trade.fodder_carry_weight,
             hunt_per_worker_provisions: 0.0,
             hunt_viability_warn_turns: cfg.hunt.viability_warn_turns,
             hunt_forecast_horizon_turns: cfg.hunt.forecast_horizon_turns,
@@ -1619,8 +1712,8 @@ mod tests {
             stores,
             morale: scalar_one(),
             last_food_consumption: 0.0,
-            last_turn_transfer_received: 0.0,
-            last_turn_transfer_sent: 0.0,
+            last_turn_food_transfers: Default::default(),
+            last_turn_fodder_transfers: Default::default(),
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),

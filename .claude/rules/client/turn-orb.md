@@ -470,3 +470,38 @@ other direction: until the knowledge turn-diff was fixed
 after a load *grew* three false `"<Track> learned"` rows for knowledge earned long before the save.
 A count that changes across a load is expected; rows that appear out of nothing were the defect.
 
+## ⛔ "I KNEW PEOPLE WERE DYING, BUT I DIDN'T KNOW WHY" — the decline reason had no cold branch
+
+`_decline_reason` names why a band is shrinking under the `<band> losing population` row, and it could
+say exactly four things: **starving** (larder below critical), **people leaving** (`last_emigrated > 0`),
+a **morale-cause** label, or **low morale**. A band freezing to death satisfies none of them —
+temperature mortality is FOOD-INDEPENDENT and leaves morale clamped at 100 % — so it fell through to
+`return ""` and the row rendered with an **empty detail line**. Reported from play in exactly those
+words (issue #614).
+
+**The reason-list was simply never given cold as an input.** Nothing about the producer, the row or
+the sim was wrong; the branch did not exist. So:
+
+- `DECLINE_REASON_LETHAL_COLD` / `_LETHAL_HEAT` read **`lethal cold` / `lethal heat`** — the tile
+  chip's own words (`⚠ Lethal cold`) minus the mark, so a player who reads the orb row and then opens
+  the hex meets one vocabulary rather than two names for one fact.
+- **Priority: directly under starving, above `people leaving`.** Ground removing up to 10 % of every
+  bracket per turn is outranked only by an empty larder; emigration and low morale are quieter
+  stories than freezing to death. `ui_preview` asserts both neighbours — a band that is freezing AND
+  emigrating must read `lethal cold`, and one that is freezing AND starving must still read
+  `starving`, because a branch inserted at the wrong height still answers a non-empty string and
+  would look fixed.
+- **`TileSurvivability.is_lethal` is the test**, the same authority the tile chip's ⚠ and the
+  temperature overlay's hatch read. A tile with no reading is NOT lethal: `temperature_at` answers
+  `null` there, and unknown is not deadly.
+
+### The temperature seam needed no new wire data
+
+`_decline_reason` needed a temperature for the band's `current_x`/`current_y`, and the client already
+had one: **`MapView.tile_temperature`, decoded from the `tiles` section the map has always read.**
+`Main` forwards that dict to the HUD (`update_tile_temperatures` → `HudBandLaborState`), gated on the
+`tiles` section changing — the same shape as the line above it, which forwards `map_view.food_sites`
+rather than the raw `food_modules` array, and for the same reason: a second decode is a second thing
+that could disagree with the hex the player is looking at. **No new field, no schema change, no sim
+work.** The lethality VERDICT is not cached with it — `TileSurvivability` owns that, so the card, the
+map and the orb cannot disagree about which ground kills.
