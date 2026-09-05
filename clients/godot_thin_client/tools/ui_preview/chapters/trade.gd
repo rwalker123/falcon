@@ -302,8 +302,10 @@ func run(harness) -> void:
 	_load(EXCELLENT_HIDE_ROW, LOADED_HIDE)
 	await h._settle()
 	await h._save("trade_cargo_loaded")
-	# The meter reads the sim's own expression: food + weight × materials, against party × the pack
-    # lever. Composed here from the fixture's side so the two arrive at one number from opposite ends.
+	# The meter reads the sim's own expression — food + fodder_carry_weight × fodder
+	# + material_carry_weight × Σ materials — against party × the pack lever, composed here from the
+	# fixture's side so the two arrive at one number from opposite ends. THIS manifest carries no
+	# hay yet, so its middle term is zero; the `trade_cargo_hay` state below is what prices one.
 	var expected_mass := LOADED_FOOD + TRADE_MATERIAL_CARRY_WEIGHT * LOADED_HIDE
 	var expected_cap := float(TRADE_PARTY_WORKERS) * TRADE_PER_WORKER_CARRY
 	var meter := Q.find_meta_node(_parties_zone(), BandPanelController.TRADE_MASS_METER_META)

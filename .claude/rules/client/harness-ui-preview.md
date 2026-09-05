@@ -1172,7 +1172,12 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 
 ## `chapters/trade.gd` — the cargo picker and a shipment in flight (arc #527, issue #517)
 
-**Appended LAST in `CHAPTERS`**, after `crafting_bench`. Nine frames and thirty-six `PASS` — plus
+**Sits after `crafting_bench` in `CHAPTERS`** — it was appended last when it landed, and
+`selective_gather`, `knowledge_panel` and `supply_network` have followed it since, which is exactly
+the case the release note at the end of this paragraph exists for. **Sixteen frames and eighty-three `PASS`**
+(`EXPECTED_CHECKPOINTS := 99`) — nine for the shipment itself, then seven for the typed cargo row
+(issue #620): `trade_cargo_typed`, `_typed_invalid`, `_typed_held`, `_typed_cap`, `_max`,
+`_typed_then_stepped`, `_step_clamped`. Plus
 one more in `chapters/event_dock.gd`, where the shipment's `destination=` label swap belongs
 beside the band-label trio it extends rather than in a chapter that instantiates no dock. It
 injects a real `BandCityPanel` docked RIGHT on the PARTIES tab, drives the whole compose act through
@@ -1182,8 +1187,10 @@ so a chapter appended after it starts where every other one does.
 **Every control is driven, not set.** The footer's mission button is pressed (by
 `HudWidgets.MISSION_LAUNCH_META`, never by face), the destination is chosen with REAL POINTER INPUT
 (below), the party is raised through its stepper's `+` reading `PARTY_STEPPER_COUNT_META`
-back on each press, and each cargo row is loaded by repeated presses of its OWN `+` — which is what
-exercises the clamp-to-the-pile and the per-press rebuild rather than the members behind them.
+back on each press, and each cargo row is loaded through the row's OWN handles — repeated presses of
+its `+` (`_load`), an amount TYPED into its field and committed with Enter (`_type_cargo`), or its
+`Max` (`_press_cargo_max`), all three since issue #620 — which is what exercises the clamp to the
+row's ceiling and the per-commit rebuild rather than the members behind them.
 
 **THE DESTINATION PICK IS TWO REAL PRESSES, AND IT USED TO BE A FAKED SIGNAL THAT COULD NOT FAIL.**
 `picker.emit_signal("item_selected", 0)` calls the connected lambda by hand, so every step between a

@@ -1649,8 +1649,14 @@ func _pad_stylebox(sb: StyleBox, pad_x: int, pad_y: int) -> void:
 
 
 ## **THE TEXT-FIELD CHROME MOVED TO `HudStyle` when the shipment sheet grew the client's second
-## family of them** (issue #620). Byte-for-byte the treatment this shell drew inline — a `GROUND_2`
-## well, a `LINE` rim going `SIGNAL` on focus, the BUTTON family's padding — so the menu's fields are
-## unchanged and the two surfaces cannot drift into two looks for one control.
+## family of them** (issue #620) — a `GROUND_2` well, a `LINE` rim going `SIGNAL` on focus, the BUTTON
+## family's padding — so the two surfaces cannot drift into two looks for one control.
+##
+## **THE SHARED HELPER CARRIES ONE THING THE INLINE TREATMENT LACKED, DELIBERATELY**: a
+## `font_placeholder_color` of `INK_FAINT`. The inline version set the two styleboxes, `font_color`
+## and `caret_color` and left the placeholder at Godot's stock grey, which is the odd one out on a
+## field themed everywhere else — so this shell's one placeholder, `_save_name_edit`'s
+## `SAVE_NAME_PLACEHOLDER`, renders FAINT now. That is the single intended pixel difference on the
+## menu's fields; a preview frame differing anywhere ELSE on them is a defect, not this move.
 func _style_line_edit(le: LineEdit) -> void:
 	HudStyle.apply_line_edit(le)

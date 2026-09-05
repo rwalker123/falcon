@@ -1134,13 +1134,21 @@ carries the right kit — every other assertion in the file green.
   manifest row's own `id` — and the Rust half looks each emitted token's pile up BY NAME
   (`sim_runtime::commands::FODDER_CARGO_KEY`), so a `fodder` amount checked against the food pile
   fails here rather than in play. The pile also sits on hay's own coarser scale (~84 units against
-  food's ~21), which is what makes `CARGO_LOAD_MAX_PRESSES` a live bound: the whole-unit step makes a
-  press count the pile's own size, so it went 64 → 128. **That constant is a TOOLING ceiling and
-  never a statement about the step** — raising it must not be confused with changing
-  `COMPOSE_CARGO_STEP`, which is a game-design lever.
-- **The cargo is loaded through the rows' own `+`, to the end of each pile.** `_set_cargo_amount`
-  clamps a press to what the band holds, so the last press leaves the exact held amount on the row —
-  the path the sheet documents. A drive that wrote the manifest itself would test its own arithmetic.
+  food's ~21). That pile is what once drove `CARGO_LOAD_MAX_PRESSES` to 128; since the row gained a
+  `Max` button (issue #620) the hay drive is **one press**, and the constant came back down to **32**.
+  **It is a TOOLING ceiling and never a statement about the step** — moving it must not be confused
+  with changing `COMPOSE_CARGO_STEP`, which is a game-design lever.
+- **The rows are loaded two ways, and the split is deliberate.** Hay goes through its `Max` button
+  (`_load_pile_with_max`), which is the control a player reaches for at that scale and which must
+  *disable* itself on the press — a `Max` that answered with nothing would leave the drive emitting a
+  zero it never noticed. **Food and hide stay on the `+` loop**, because `Max` floors to a tenth and
+  the whole subject of the Rust half below is an exact fractional holding (`21.049995`,
+  `4.567889`) surviving the `f32` round trip. Driving every row with `Max` would leave that gate
+  comparing whole tenths against whole tenths — vacuous against the case it exists for.
+- **A press clamps to the row's CEILING, not to the pile.** `_set_cargo_amount` takes a
+  caller-resolved `row_max` (`min(held, remaining pack space ÷ this row's weight)`), so `+` greys out
+  when the *pack* is full even where the band holds more. A drive that wrote the manifest itself
+  would test its own arithmetic; driving the controls tests the sheet's.
 - **The Rust half quantises what the parser recovered the way the SIM does** (`scalar_ticks`, the
   `f32` multiply included — `f64` here would agree with a client the server refuses) and refuses a run
   in which no shipment was composed from a fractional pile, the vacuity twin of the kit and

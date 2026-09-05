@@ -672,9 +672,11 @@ func _shipment_summary_lines(unit_data: Dictionary, context: DetailFormat.Contex
     # of its provisions on the road exactly as a scout does, and the walk is where a haul's cost lives.
     context.food_turns = float(unit_data.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
     # **THE NUMERATOR IS THE PACK'S MASS, NOT ITS FOOD** — `expedition_carry_cap` is what the sim
-    # checks `food + weight × Σ materials` against, so putting the food alone over it renders a full
-    # pack as a near-empty one. `DetailFormat.shipment_cargo_mass` is the compose sheet's own meter
-    # expression, shared so the pre-launch price and the in-flight report answer for one pack.
+    # checks `food + fodder_carry_weight × fodder + material_carry_weight × Σ materials` against
+    # (THREE terms since the hay account, issue #590), so putting the food alone over it renders a
+    # full pack as a near-empty one; dropping the hay term under-prices every manifest with a bale
+    # in it. `DetailFormat.shipment_cargo_mass` is the compose sheet's own meter expression, shared
+    # so the pre-launch price and the in-flight report answer for one pack.
     var cargo_mass := DetailFormat.shipment_cargo_mass(unit_data)
     var cargo := _shipment_cargo_clause(unit_data)
     var cap := float(unit_data.get("expedition_carry_cap", 0.0))
