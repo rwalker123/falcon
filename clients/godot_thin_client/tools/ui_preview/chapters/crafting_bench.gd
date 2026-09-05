@@ -1125,11 +1125,13 @@ func _assert_panel_renders() -> void:
 	# but a table that had also stopped saying whether the band OWNS the thing would satisfy that
 	# negative on its own, and the Owned cell is what has to carry the ownership reading alone.
 	#
-	# **THE TWO CONSEQUENCE WORDINGS ARE THEMSELVES A PAIR**, since a panel printing one of them on
-	# every row satisfies either half alone: a kit the band is without is bare hands, a tool it never
-	# built is not made, and only both together say the cell is keyed off the published `group`.
-	h._assert_hud("crafting — owning none reads Bare hands on a kit AND Not made on a tool",
-		texts.has(HudCraftingVocab.OWNED_KIT_NONE) and texts.has(HudCraftingVocab.OWNED_TOOL_NONE))
+	# **ONE CONSEQUENCE WORDING, FOR EVERY GROUP.** This asserted a PAIR — `Bare hands` on a kit and
+	# `Not made` on a tool — and the kit half was nonsense under a column head reading `Owned`: it told
+	# the player they owned their own hands. The assertion could not catch it, because it only ever
+	# checked that both strings were drawn somewhere. The wording is now single, and the kit/tool
+	# distinction lives in the chip's ink instead, which this text-only sweep cannot see.
+	h._assert_hud("crafting — owning none reads Not made, on a kit and a tool alike",
+		texts.has(HudCraftingVocab.OWNED_NONE))
 	h._assert_hud("crafting — no condition wording reaches the ledger",
 		_missing_from(texts, RETIRED_CONDITION_WORDINGS) == RETIRED_CONDITION_WORDINGS.size())
 	# The ledger is FOUR columns — Item · Owned · Rebuild costs · action — and the action head is blank

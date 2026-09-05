@@ -337,7 +337,7 @@ fn run_dry(ledger: &mut BandEquipment, config: &EquipmentConfig, item: &str) {
 }
 
 fn equipment() -> std::sync::Arc<EquipmentConfig> {
-    EquipmentConfig::builtin()
+    std::sync::Arc::new(EquipmentConfig::for_a_stocked_fixture())
 }
 
 fn dry_sled() -> BandEquipment {
@@ -375,7 +375,7 @@ fn a_fresh_band_is_kitted_and_publishes_all_three_equipped_tiers() {
     assert_eq!(
         app.world.get::<BandEquipment>(band).cloned(),
         Some(BandEquipment::start_stocked_owned(
-            &EquipmentConfig::builtin(),
+            &EquipmentConfig::for_a_stocked_fixture(),
             &RecipesConfig::builtin(),
             &MaterialsConfig::builtin(),
             workers as f32,
@@ -2047,10 +2047,25 @@ const PENNABLE: &str = "Wild Boar";
 /// below the trivial truth about two hunts that took nothing.
 const PEN_AND_RANGE_CREW: u32 = 4;
 
+/// **`husbandry.pen_is_a_larder`, stated by this fixture** — see
+/// [`a_pen_is_not_carry_bound_while_a_range_hunt_still_is`], which is the pair it decides.
+const PINNED_PEN_IS_A_LARDER: bool = true;
+
 /// **[`hunting_world_of`] with the herd FENCED before the turn runs** — the same band, the same
 /// crew, the same body, the same floor; the only difference is the ground.
 fn penned_world_of(crew: u32, kit: BandEquipment) -> (bevy::prelude::App, Entity) {
     let (mut app, band) = hunting_world_of(PENNABLE, WASTE_BODY_MASS, Some(crew), kit);
+    // **THE ONE DIAL THIS PAIR TURNS ON, STATED RATHER THAN INHERITED.** Whether a pen carries a
+    // haul bound at all is `husbandry.pen_is_a_larder`, and a fixture that reads its tuning out of
+    // shipped config is one balance pass away from failing for a reason that is not about it —
+    // `equipment.md` → "A FIXTURE DECLARES THE GEAR IT NEEDS" is the same rule one config over.
+    {
+        let mut fauna = (*app.world.resource::<core_sim::FaunaConfigHandle>().get()).clone();
+        fauna.husbandry.pen_is_a_larder = PINNED_PEN_IS_A_LARDER;
+        app.world
+            .resource_mut::<core_sim::FaunaConfigHandle>()
+            .replace(std::sync::Arc::new(fauna));
+    }
     {
         let ladder = core_sim::LadderConfig::builtin();
         let mut registry = app.world.resource_mut::<HerdRegistry>();
@@ -2068,32 +2083,39 @@ fn penned_world_of(crew: u32, kit: BandEquipment) -> (bevy::prelude::App, Entity
     (app, band)
 }
 
-/// **CARRY IS CARRY — A PEN AND A RANGE ARE COLLECTED AT THE SAME PER-WORKER RATE** (issue #543).
+/// **A PEN IS NOT COLLECTED AT A CARRY RATE AT ALL — IT IS A LARDER ON THE HOOF** (supersedes
+/// issue #543's pen half; `husbandry.pen_is_a_larder`).
 ///
-/// *"No source may participate in deciding carry capacity, at any rung, on either food web. What one
-/// worker can carry is a fact about the people and their gear, asked once, answered from the band's
-/// kit, and completely blind to what it is standing on."* This is that claim measured end to end,
-/// through the turn rather than through the resolver, because a resolver assertion cannot see a
-/// caller that forks before reaching it.
+/// # ⛔ WHAT THIS SUPERSEDES, AND WHAT OF IT SURVIVES UNCHANGED
 ///
-/// ⛔ **A SECOND STAT, `EquipmentStat::PenCarry`, USED TO FORK IT.** It was real once — the
-/// *unequipped* side lived on the `hurdles` item, so a drag-harness crew collected the bare rate at a
-/// pen where handling gear collected the sledded one. The hurdles became a **material**
-/// (`docs/plan_standing_upkeep.md` §4.9 item 12), both sides of the pair landed on the sled, and what
-/// survived was two names for one number.
+/// #543 read: *"No source may participate in deciding carry capacity, at any rung, on either food
+/// web. What one worker can carry is a fact about the people and their gear, asked once, answered
+/// from the band's kit, and completely blind to what it is standing on."* It was written against a
+/// real defect — a second stat, `EquipmentStat::PenCarry`, gave a pen its own rate, so a drag-harness
+/// crew collected the bare number at a pen where handling gear collected the sledded one.
 ///
-/// **Read in the carry-bound regime and nowhere else.** With the sled dry the crew kills a body it
-/// cannot lift ([`PEN_AND_RANGE_CREW`]), so the haul is the term deciding the outcome on *both*
-/// grounds and the equality is about the carry rather than about the fight. A sledded crew is not
-/// carry-bound — its kill binds first, and a pen's kill and a range's differ for reasons that are not
-/// this stat — so the sledded arm is asserted on the *direction* instead.
+/// **That sentence is still true and is still asserted here, verbatim, at the bottom of this test.**
+/// A keeper's *published* carry is the sled's own tier and a sledless keeper's is the baseline: there
+/// is no pen rate, and no readout may name one.
 ///
-/// **Both halves are needed.** The equality alone passes on a sim that collects nothing anywhere, and
-/// the gear-tracking alone passes on a sim that still forks. So: every arm must have brought
-/// something home, the two sledless arms must agree exactly, and the sledded arm must out-collect the
-/// sledless one on the pen *and* on the range.
+/// **What is superseded is the consequence this test used to draw from it** — that a pen and a range
+/// therefore *collect the same amount*. `pen_is_a_larder` removed carry as a **bound** on a pen
+/// entirely, and that was a design decision rather than a regression: a carry bound says *you had to
+/// take it all at once and haul it home*, and behind a fence you never do. What is not butchered this
+/// turn is not wasted meat — it is next turn's stock, still breeding. So a pen has no haul ceiling and
+/// **no carry waste**, and the take is decided by the herd's production and the keepers' handling
+/// instead. Out on the range nothing changed: a party really does have to carry what it kills, and
+/// what it cannot carry it leaves.
+///
+/// The four arms now assert the *asymmetry*, which is a stronger fixture than the equality was —
+/// an equality passes on a sim that collects nothing anywhere, whereas this cannot:
+///
+/// 1. **liveness** — all four arms brought something home;
+/// 2. **the pen is blind to the sled** — sledded and sledless collect the same, and neither wastes;
+/// 3. **the range is not** — sledded out-collects sledless, and the sledless arm leaves meat behind;
+/// 4. **#543's surviving half** — the published per-worker rate is the band's one number on both.
 #[test]
-fn a_penned_herd_and_a_wild_one_are_collected_at_the_one_band_carry_rate() {
+fn a_pen_is_not_carry_bound_while_a_range_hunt_still_is() {
     let (mut penned_sledded, penned_sledded_band) =
         penned_world_of(PEN_AND_RANGE_CREW, outfitted());
     let (mut penned_sledless, penned_sledless_band) =
@@ -2121,7 +2143,7 @@ fn a_penned_herd_and_a_wild_one_are_collected_at_the_one_band_carry_rate() {
     let wild_sledded_row = exported(&wild_sledded, wild_sledded_band);
     let wild_sledless_row = exported(&wild_sledless, wild_sledless_band);
 
-    // LIVENESS, first: four hunts that all took nothing agree perfectly and prove nothing.
+    // 1. LIVENESS, first: four hunts that all took nothing agree perfectly and prove nothing.
     for (label, income) in [
         ("penned, sledded", penned_sledded_row.food_income),
         ("penned, sledless", penned_sledless_row.food_income),
@@ -2134,39 +2156,43 @@ fn a_penned_herd_and_a_wild_one_are_collected_at_the_one_band_carry_rate() {
         );
     }
 
-    // **THE CLAIM.** Carry-bound on both grounds, so what comes home IS `crew × carry` — and the two
-    // grounds must land on the same number, to the meat left behind.
+    // 2. **THE PEN IS BLIND TO THE SLED**, because carry is not a term of its take.
     assert!(
-        (penned_sledless_row.food_income - wild_sledless_row.food_income).abs() < EPSILON,
-        "a pen and a range worked by the SAME band with the SAME crew must be collected at the same \
-         per-worker rate: penned={} wild={}",
-        penned_sledless_row.food_income,
-        wild_sledless_row.food_income
-    );
-    assert!(
-        (exported_waste(&penned_sledless, penned_sledless_band)
-            - exported_waste(&wild_sledless, wild_sledless_band))
-        .abs()
-            < EPSILON,
-        "…and leave the same shortfall behind, which is the same statement read from the other end"
-    );
-
-    // **AND THE RATE TRACKS THE BAND'S GEAR ON BOTH.** A pen blind to the sled would hold still here
-    // while the range moved.
-    assert!(
-        penned_sledded_row.food_income > penned_sledless_row.food_income,
-        "a sledded crew must out-collect a sledless one AT A PEN: {} vs {}",
+        (penned_sledded_row.food_income - penned_sledless_row.food_income).abs() < EPSILON,
+        "a pen is a larder: what the keepers can carry decides nothing, so a sledded crew and a \
+         sledless one must collect the SAME — sledded={} sledless={}",
         penned_sledded_row.food_income,
         penned_sledless_row.food_income
     );
+    for (label, app, band) in [
+        ("sledded", &penned_sledded, penned_sledded_band),
+        ("sledless", &penned_sledless, penned_sledless_band),
+    ] {
+        assert_eq!(
+            exported_waste(app, band),
+            0.0,
+            "…and neither wastes a thing at a pen ({label}): meat a keeper does not carry out is \
+             not spoiled, it is an animal still standing in the pen"
+        );
+    }
+
+    // 3. **THE RANGE STILL IS CARRY-BOUND**, which is what keeps the claim above about the FENCE
+    //    rather than about a carry model that has stopped working anywhere.
     assert!(
         wild_sledded_row.food_income > wild_sledless_row.food_income,
-        "…and on the range, which is the arm that always did: {} vs {}",
+        "out on the range a party hauls what it kills, so a sledded crew must out-collect a \
+         sledless one: {} vs {}",
         wild_sledded_row.food_income,
         wild_sledless_row.food_income
     );
+    assert!(
+        exported_waste(&wild_sledless, wild_sledless_band) > 0.0,
+        "…and the sledless range arm must leave meat behind, or the waste path is inert and the \
+         zeroes above are about nothing"
+    );
 
-    // **AND THE PUBLISHED RATE IS THE ONE RATE**, so no readout can name a second one.
+    // 4. **#543'S SURVIVING HALF, UNCHANGED**: the published rate is the band's one number. No
+    //    source participates in deciding carry capacity — a pen simply does not *apply* it.
     let equipment = equipment();
     assert_eq!(
         penned_sledded_row.hunt_carry_per_worker_biomass,

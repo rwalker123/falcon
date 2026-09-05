@@ -149,7 +149,7 @@ fn spawn_world() -> App {
     app.world.insert_resource(CombatConfigHandle::default());
     app.world.insert_resource(CreaturesConfigHandle::default());
     app.world
-        .insert_resource(core_sim::EquipmentConfigHandle::default());
+        .insert_resource(core_sim::EquipmentConfigHandle::for_a_stocked_fixture());
     app.world
         .insert_resource(core_sim::MaterialsConfigHandle::default());
     app.world

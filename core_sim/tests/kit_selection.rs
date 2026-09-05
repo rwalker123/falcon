@@ -252,7 +252,10 @@ fn spawn_hunting_band(
             // **Outfitted for the crew it staffs.** A spawn stocks a party's worth, and the one-unit
             // reference ledger would arm one of these four and send three out bare-handed — a
             // fixture about a shortfall, not about the kit these tests measure.
-            BandEquipment::start_stocked_for(&EquipmentConfig::builtin(), CREW as f32),
+            BandEquipment::start_stocked_for(
+                &EquipmentConfig::for_a_stocked_fixture(),
+                CREW as f32,
+            ),
             LaborAllocation {
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -292,7 +295,10 @@ fn spawn_party(
             cohort(tile, CREW),
             LaborAllocation::default(),
             // Outfitted, for the reason the resident band above is.
-            BandEquipment::start_stocked_for(&EquipmentConfig::builtin(), CREW as f32),
+            BandEquipment::start_stocked_for(
+                &EquipmentConfig::for_a_stocked_fixture(),
+                CREW as f32,
+            ),
             StartingUnit::new("expedition".to_string(), Vec::new()),
             Expedition {
                 home_band,
@@ -441,7 +447,7 @@ fn a_crew_with_no_kit_takes_less_and_spends_no_durability_on_any_component() {
 
     assert_eq!(
         bare_wear,
-        BandEquipment::start_stocked_for(&EquipmentConfig::builtin(), CREW as f32),
+        BandEquipment::start_stocked_for(&EquipmentConfig::for_a_stocked_fixture(), CREW as f32),
         "a crew using no component spends no durability on ANY of them — this is the pairing that \
          makes a bare-handed comparison free to run (compared against the ledger the fixture band \
          is OUTFITTED with, which is a party's worth)"
@@ -1779,7 +1785,8 @@ fn spawn_gathering_band(app: &mut App, baskets_owned: u32) -> (bevy::prelude::En
         .min_by_key(|p| (p.y, p.x))
         .expect("the campaign map seeds forage patches");
     let tile_entity = tile_at(app, tile_pos);
-    let mut wear = BandEquipment::start_stocked_for(&EquipmentConfig::builtin(), CREW as f32);
+    let mut wear =
+        BandEquipment::start_stocked_for(&EquipmentConfig::for_a_stocked_fixture(), CREW as f32);
     let tier = EquipmentConfig::builtin()
         .item("baskets")
         .expect("the roster ships baskets")

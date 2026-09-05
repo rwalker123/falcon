@@ -8321,7 +8321,7 @@ mod keeping_split_tests {
         /// grouping test's subject, not this one.
         const KEEPERS: u32 = 8;
 
-        let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        let equipment = crate::equipment_config::EquipmentConfig::for_a_stocked_fixture();
         let stocked = BandEquipment::start_stocked_for(&equipment, KEEPERS as f32);
         let need = |kits: [&str; 2]| -> f32 {
             keeping_worker_need(
@@ -8651,7 +8651,9 @@ mod labor_yield_tests {
         world.insert_resource(WellbeingConfigHandle::default());
         world.insert_resource(crate::combat_config::CombatConfigHandle::default());
         world.insert_resource(crate::creatures_config::CreaturesConfigHandle::default());
-        world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
+        world.insert_resource(
+            crate::equipment_config::EquipmentConfigHandle::for_a_stocked_fixture(),
+        );
         world.insert_resource(crate::materials_config::MaterialsConfigHandle::default());
         world.insert_resource(crate::recipes_config::RecipesConfigHandle::default());
         world.insert_resource(FactionInventory::default());

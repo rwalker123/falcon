@@ -1397,22 +1397,79 @@ pub struct EquipmentConfig {
     /// **THE OPENING RESERVE** — how many of each item a spawn stocks, as a multiple of the party's
     /// own head count ([`crate::components::BandEquipment::start_stocked_owned`]).
     ///
-    /// A band needs `workers / workers_per_unit` units to arm everybody, so `1.0` would stock
-    /// *exactly* enough and the **first break would disarm someone**: coverage counts units in
-    /// usable condition, so the turn a spear retires the party goes out one hunter short. The
-    /// half-again is what buys the band the turns between the first break and the bench.
+    /// # ⛔ IT SHIPS `0.0` — A SPAWNING BAND OWNS NO EQUIPMENT AT ALL
+    ///
+    /// Not fewer units: **none**, of every item. `start_stock_units` no longer floors at one, so the
+    /// zero is real (see there for why that floor made this dial unable to express itself).
+    ///
+    /// **The consequence is deliberate and is the point of the change.** A bare-handed party is the
+    /// `person` row's intrinsic `attack 1` against every quarry's `defense`, so **hunting yields
+    /// nothing at any crew size until a spear is crafted**; gathering still pays, at the bare
+    /// `labor_config` carry rate rather than a basket's. Do not soften it, do not add a fallback,
+    /// and do not special-case the opening turns — earning the first kit *is* the early game.
+    ///
+    /// **Starting MATERIALS are untouched** (stone and wood, `start_profiles.json`): they cannot be
+    /// collected yet, so the material stock is not the generous part, and the bench is what turns
+    /// them into the first spear.
+    ///
+    /// **This is the dial to move to give equipment back.** `1.5` was the shipped value and its
+    /// reasoning still holds: a band needs `workers / workers_per_unit` units to arm everybody, so
+    /// `1.0` stocks *exactly* enough and the **first break disarms someone** — coverage counts units
+    /// in usable condition, so the turn a spear retires the party goes out one hunter short. The
+    /// half-again bought the turns between the first break and the bench.
     ///
     /// **Required, like every other key in this file** — no `serde` default, for the reason
-    /// [`Self::quarry_default_kit_margin`] has none: `Default::default()`'s `0.0` would stock the
-    /// floor of one unit per item and send a shipped band out with sixteen bare hands and one spear,
-    /// which is `config-loading.md`'s "looks live but isn't" at its most expensive.
+    /// [`Self::quarry_default_kit_margin`] has none: a silently-defaulted lever is
+    /// `config-loading.md`'s "looks live but isn't", and that is worse here than anywhere, because
+    /// both ends of this dial are now states somebody chose.
     pub start_stock_fraction: f32,
     /// **The life readout's two colour seams.** See [`LifeReadoutConfig`] — presentation tuning for
     /// the published `lifeSeverity`, and the only thing in this file the sim itself never reads.
     pub life_readout: LifeReadoutConfig,
 }
 
+/// The [`EquipmentConfig::start_stock_fraction`] at or below which a spawn stocks **nothing**.
+const NO_START_STOCK: f32 = 0.0;
+/// What [`EquipmentConfig::start_stock_units`] answers under [`NO_START_STOCK`].
+const NOTHING_STOCKED: u32 = 0;
+/// **A positive fraction always arms at least one unit** — see `start_stock_units`' callout. `ceil`
+/// already answers this for every positive product; the floor is here for the degenerate party of
+/// **no workers**, which is the only reading it was ever load-bearing for.
+const A_POSITIVE_FRACTION_ARMS_AT_LEAST: u32 = 1;
+
+/// **The `start_stock_fraction` a FIXTURE means when it says "a working band"** — see
+/// [`EquipmentConfig::for_a_stocked_fixture`].
+///
+/// It is the value `equipment.json` shipped before a spawn was disarmed, quoted here so a fixture's
+/// numbers stop moving when that dial does.
+pub const FIXTURE_START_STOCK_FRACTION: f32 = 1.5;
+
 impl EquipmentConfig {
+    /// **The pre-change stocked band, kept so a FIXTURE does not depend on shipped config.**
+    ///
+    /// # ⛔ THE 113 BROKEN TESTS WERE THE DEFECT, NOT THE DIAL
+    ///
+    /// `start_stock_fraction` shipping `0.0` (see its own docs) broke a hundred-odd fixtures at
+    /// once, and what that measured is that **each of them was silently inheriting the shipped
+    /// opening**: a test that means *"a band with working gear"* said so by saying nothing, so a
+    /// tuning lever nobody thought was a test input could move a hundred expected values. A fixture
+    /// must declare the equipment it needs.
+    ///
+    /// So this is the whole of that declaration: the builtin roster at
+    /// [`FIXTURE_START_STOCK_FRACTION`], which reproduces the old spawn **exactly** —
+    /// `ceil(workers × 1.5 / workers_per_unit)`, and the same one-unit floor for the degenerate
+    /// party, both of which `start_stock_units` still applies at any positive fraction.
+    ///
+    /// **It is not `#[cfg(test)]`, and it cannot be**: the in-crate `#[cfg(test)]` modules and the
+    /// `tests/` integration binaries both need it, and a `#[cfg(test)]` item is invisible to the
+    /// second. One home beats two copies that drift. **Nothing in the sim calls it** — the shipped
+    /// world resolves `start_stock_fraction` from the config it loaded, exactly as before.
+    pub fn for_a_stocked_fixture() -> Self {
+        let mut config = Self::builtin().as_ref().clone();
+        config.start_stock_fraction = FIXTURE_START_STOCK_FRACTION;
+        config
+    }
+
     pub fn builtin() -> Arc<Self> {
         Arc::new(
             Self::from_json_str(BUILTIN_EQUIPMENT_CONFIG)
@@ -1852,20 +1909,38 @@ impl EquipmentConfig {
     }
 
     /// **How many units of `item` a spawn stocks for a party of `workers`** —
-    /// `ceil(workers × start_stock_fraction / workers_per_unit)`, never below one unit.
+    /// `ceil(workers × start_stock_fraction / workers_per_unit)`.
     ///
     /// **A whole unit, because a unit is what a person holds.** The fraction is an *opening
     /// reserve*, not a supply of half-spears: rounding up is what makes the last hunter armed rather
-    /// than nearly armed. The floor of one is for the degenerate party — a fixture with no workers
-    /// still owns the item, which is what keeps *"an absent entry is not owned"* readable.
+    /// than nearly armed.
+    ///
+    /// # ⛔ ZERO MEANS NONE; ANY POSITIVE FRACTION STILL ARMS AT LEAST ONE UNIT
+    ///
+    /// It used to end `.max(1.0) as u32).max(1)` unconditionally, *"for the degenerate party — a
+    /// fixture with no workers still owns the item"*. That floor made [`Self::start_stock_fraction`]
+    /// **unable to express zero**: a `0.0` fraction still handed out one unit of every item some kit
+    /// names, so the dial read *"none"* and behaved *"one of everything"*. A config that lies in that
+    /// direction is worse than no dial, because the reader has no way to see it.
+    ///
+    /// **The floor is now a property of a POSITIVE fraction rather than of the arithmetic**, which
+    /// is what lets the dial mean what it says at both ends without changing what it meant anywhere
+    /// in between. `ceil` already answers `1` for every positive product, so the only reading the
+    /// floor was ever load-bearing for is the **degenerate party** — `workers == 0` — and that is
+    /// exactly the fixture case the original comment named. A `0.0` fraction short-circuits before
+    /// it, and [`crate::components::BandEquipment::stock`] early-returns on a `count` of `0`, so a
+    /// zero simply adds no batch and *"an absent entry is not owned"* stays exactly as readable.
     pub fn start_stock_units(&self, item: &ItemDefinition, workers: f32) -> u32 {
+        if self.start_stock_fraction <= NO_START_STOCK {
+            return NOTHING_STOCKED;
+        }
         let workers = if workers.is_finite() {
             workers.max(0.0)
         } else {
             0.0
         };
         let wanted = (workers * self.start_stock_fraction) / item.workers_per_unit.max(1) as f32;
-        (wanted.ceil().max(1.0) as u32).max(1)
+        (wanted.ceil().max(0.0) as u32).max(A_POSITIVE_FRACTION_ARMS_AT_LEAST)
     }
 
     /// The id this verb's default kit carries.
@@ -2525,14 +2600,15 @@ impl EquipmentConfig {
                 value: self.quarry_default_kit_margin.to_string(),
             });
         }
-        // **The opening reserve is a MULTIPLE of the head count, so it must be strictly positive.**
-        // `0` would stock the one-unit floor whatever the band's size — the pre-coverage behaviour,
-        // which now means one armed hunter and the rest bare — and a negative multiple has no
-        // reading at all.
-        if !self.start_stock_fraction.is_finite() || self.start_stock_fraction <= 0.0 {
+        // **The opening reserve is a MULTIPLE of the head count, and `0` is now a REAL VALUE.** It
+        // is how the roster says *a band spawns owning nothing*, which is the shipped state — see
+        // [`EquipmentConfig::start_stock_fraction`]. It could not say that while `start_stock_units`
+        // carried a floor of one (the dial read "none" and behaved "one of everything"), so the
+        // bound moved with the floor. A **negative** multiple still has no reading at all.
+        if !self.start_stock_fraction.is_finite() || self.start_stock_fraction < 0.0 {
             return Err(EquipmentConfigError::Invalid {
                 field: "start_stock_fraction".to_string(),
-                constraint: "be finite and greater than zero".to_string(),
+                constraint: "be finite and not negative".to_string(),
                 value: self.start_stock_fraction.to_string(),
             });
         }
@@ -3297,6 +3373,16 @@ impl EquipmentConfigHandle {
 
     pub fn replace(&mut self, config: Arc<EquipmentConfig>) {
         self.0 = config;
+    }
+
+    /// **The handle a FIXTURE inserts when its world needs bands that own gear** —
+    /// [`EquipmentConfig::for_a_stocked_fixture`] in the shape a test `App` takes.
+    ///
+    /// `Default` is the *shipped* config, which since `start_stock_fraction` went to `0.0` spawns a
+    /// band owning nothing. A fixture that wants the old opening has to **say so**, and this is how
+    /// it says it in one line.
+    pub fn for_a_stocked_fixture() -> Self {
+        Self(Arc::new(EquipmentConfig::for_a_stocked_fixture()))
     }
 }
 

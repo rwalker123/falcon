@@ -193,21 +193,21 @@ pub use fauna::{
     herd_capacity, herd_default_hunt_kit, herd_density_gain, herd_destination_capacity,
     herd_ecology, herd_engage_rate, herd_herded_fraction, herd_herders_needed, herd_hunt_yield,
     herd_keeper_load, herd_keeper_loads, herd_keeping_basis, herd_meter_rot, herd_past_recovery,
-    herd_quarry_fight, herd_rung_already_built, herd_take_room, herd_upkeep_demand,
-    herd_upkeep_shortfall, herd_upkeep_supply, herd_upkeep_workers_needed, herd_wariness,
-    hunt_crew_take_curve, hunt_engage_workers, hunt_escapement_ceiling, hunt_haul_workers,
-    hunt_source_yield_preview, hunt_take_bound, hunt_take_overdraws, hunt_take_workers,
-    hunt_useful_crew, next_turns_quarry, per_hunter_take_biomass, project_arrivals_hunt,
-    project_realized_hunt, quantise_animal_take, quarry_default_hunt_kit, regrowth_delta_at,
-    repopulate_fauna, resolve_hunt_engagement, resolve_hunt_fight, retreat_seed,
-    spawn_initial_herds, species_requires_denial, stay_fraction, unqueue_build_and_cancel_ring,
-    would_be_herders_needed, AnimalTake, EcologyPhase, EngagementQuantum, EngagementStop,
-    FightCasualties, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry,
-    HuntCrew, HuntCrewCurveInputs, HuntCrewTake, HuntDraw, HuntEngagement, HuntFight,
-    HuntTakeBound, HuntingParty, PartyResolution, PreyDatum, QuarryFight, RoamState,
-    SourceYieldForecast, TakeRange, FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID,
-    MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, NO_USEFUL_CREW, ONE_KEEPER_LOAD,
-    PENNING_DISCOVERY_ID,
+    herd_quarry_fight, herd_rung_already_built, herd_space_capacity, herd_take_room,
+    herd_upkeep_demand, herd_upkeep_shortfall, herd_upkeep_supply, herd_upkeep_workers_needed,
+    herd_wariness, hunt_crew_take_curve, hunt_engage_workers, hunt_escapement_ceiling,
+    hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound, hunt_take_overdraws,
+    hunt_take_workers, hunt_useful_crew, next_turns_quarry, per_hunter_take_biomass,
+    project_arrivals_hunt, project_realized_hunt, quantise_animal_take, quarry_default_hunt_kit,
+    regrow_biomass, regrowth_delta_at, repopulate_fauna, resolve_hunt_engagement,
+    resolve_hunt_fight, retreat_seed, spawn_initial_herds, species_requires_denial, stay_fraction,
+    sustainable_yield, unqueue_build_and_cancel_ring, would_be_herders_needed, AnimalTake,
+    EcologyPhase, EngagementQuantum, EngagementStop, FightCasualties, Herd, HerdDensityMap,
+    HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntCrew, HuntCrewCurveInputs, HuntCrewTake,
+    HuntDraw, HuntEngagement, HuntFight, HuntTakeBound, HuntingParty, PartyResolution, PreyDatum,
+    QuarryFight, RoamState, SourceYieldForecast, TakeRange, FODDERING_DISCOVERY_ID, FULLY_HERDED,
+    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, NO_USEFUL_CREW,
+    ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
@@ -228,9 +228,10 @@ pub use forage::{
     commit_payoff, commit_yield_ratio, composition_for_rung, crop_field_cost_multiplier,
     default_species_for_rung, field_cost_multiplier_at_share, forage_per_worker_biomass,
     forage_provisions, forage_source_yield_preview, forage_take_overdraws, next_turns_stand,
-    patch_build_legs, patch_build_verb, patch_claims_keeping, patch_composition,
-    patch_destination_capacity, patch_field_cost_multiplier, patch_keeping_basis,
-    patch_land_capacity, patch_material_yields, patch_meter_rot, patch_provisions_per_biomass,
+    patch_build_legs, patch_build_verb, patch_carrying_capacity, patch_claims_keeping,
+    patch_composition, patch_destination_capacity, patch_ecology, patch_field_cost_multiplier,
+    patch_keeping_basis, patch_land_capacity, patch_material_yields, patch_material_yields_taking,
+    patch_meter_rot, patch_provisions_per_biomass, patch_provisions_per_biomass_taking,
     patch_rung_already_built, patch_rung_span, patch_rung_work_done, patch_species_quality,
     patch_tender_loads, patch_unwinding_key, patch_upkeep_demand, patch_upkeep_shortfall,
     patch_upkeep_workers_needed, plant_rung_span, project_arrivals_forage, project_realized_forage,
@@ -1210,9 +1211,24 @@ pub const HARNESS_MAP_SEED: u64 = 119304647;
 /// builder (`bin/server.rs` boots the real server with it), so pinning a seed in there would make
 /// every New Game deterministic — changing the game to fix the tooling. The pin belongs here, on the
 /// path only tests take.
+/// # ⛔ IT ALSO STOCKS THE BAND'S GEAR, FOR THE SEED'S OWN REASON
+///
+/// `equipment.json`'s `start_stock_fraction` ships **`0.0`** — a spawning band owns nothing
+/// (`equipment.md` → "A SPAWNING BAND OWNS NO EQUIPMENT AT ALL"). That is the *game's* opening, and
+/// it is not a fixture input: a hundred-odd tests that mean *"a band with working gear"* used to say
+/// so by **saying nothing**, so a tuning lever nobody thought was a test input moved a hundred
+/// expected values at once.
+///
+/// So this builder installs [`EquipmentConfigHandle::for_a_stocked_fixture`] — the pre-change spawn,
+/// `ceil(workers × 1.5 / workers_per_unit)` — exactly as it pins the map seed, and for the same
+/// stated reason: **a test resting on shipped luck is the test that is wrong.** A fixture whose
+/// subject genuinely *is* the shipped opening overrides the resource back, the way a fixture that
+/// wants a particular map states its terrain.
 pub fn build_test_app() -> App {
     let mut app = build_headless_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = HARNESS_MAP_SEED;
+    app.world
+        .insert_resource(crate::equipment_config::EquipmentConfigHandle::for_a_stocked_fixture());
     app
 }
 

@@ -326,12 +326,23 @@ const ON_BENCH_LABEL := "On the bench"
 ## that — never a zero.
 const EMPTY_CELL := "—"
 
-## **WHEN THE BAND OWNS NO UNITS THE CELL STATES THE CONSEQUENCE, NOT THE ARITHMETIC**, keyed off the
-## published `group` and off `count` — never off `remaining == 0`, since a spent batch is REMOVED and
-## worn-out and never-made both read zero condition. A kit you are without is bare hands; a tool you
-## never built is not made. `×0` is the same fact and the worse sentence.
-const OWNED_KIT_NONE := "Bare hands"
-const OWNED_TOOL_NONE := "Not made"
+## **WHEN THE BAND OWNS NO UNITS, ONE WORDING FOR EVERY ROW**, keyed off `count` — never off
+## `remaining == 0`, since a spent batch is REMOVED and worn-out and never-made both read zero
+## condition.
+##
+## ⛔ **IT ANSWERS THE COLUMN IT SITS UNDER, WHICH IS `Owned`.** This split into two consequence
+## wordings — `Bare hands` for a kit, `Not made` for a bench tool — and the kit half was nonsense the
+## moment it was visible: *"Owned: Bare hands"* tells a player they own their own hands. It went
+## unnoticed for as long as it did only because a spawn stocked a party's worth of every kit, so the
+## cell never had to say *none* about a kit at all; removing the default stock put it on eleven rows
+## at once. **A consequence wording still has to be an answer to the question in the column head.**
+## `Not made` is one — it says the band has none and never built any. `×0` is the same fact and the
+## worse sentence, which is why the cell is words rather than a count.
+##
+## The kit/tool distinction survives as **colour, not wording** (`DANGER` against `INK_FAINT` at the
+## call site): a kit the band lacks has people working bare-handed right now, a bench tool it never
+## built does not.
+const OWNED_NONE := "Not made"
 ## **ONE LINE PER GRADE**, counts summed across the batches that share one — two `good` batches at
 ## different wear are one line of `×5`, wear not being this panel's fact. Best grade first.
 const OWNED_COUNT_FORMAT := "×%d"

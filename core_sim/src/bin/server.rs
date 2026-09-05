@@ -10300,7 +10300,7 @@ mod tests {
                 // unit each would arm one of these thirty and leave the rest bare-handed
                 // (`equipment.md` → "the partly-equipped party").
                 BandEquipment::start_stocked_for(
-                    &core_sim::EquipmentConfig::builtin(),
+                    &core_sim::EquipmentConfig::for_a_stocked_fixture(),
                     BAND_WORKING_AGE as f32,
                 ),
             ))

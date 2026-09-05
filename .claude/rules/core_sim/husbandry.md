@@ -271,6 +271,16 @@ domestication *reduce* capacity). **Playtest dials.**
   > The arm exists to be reachable — `fauna_husbandry::a_fractional_pen_handling_rate_collects_whole_animals`
   > authors a fractional rate to reach it, because the shipped one cannot.
 
+  **AND AT THE PASTORAL RUNG TOO** — `husbandry.pastoral_engage_gain` (`2.0`), the same shape one
+  rung down, through the same seam. It exists because **rung 2 was raising nothing that bound**:
+  `pastoral_gain` moves the breeding rate, and no shipped source is limited by its herd running out —
+  measured across the whole roster the take is capped by reach, by the fight or by the escapement
+  floor, never by stock. So a band paid a taming cost for a take that did not move, and the *middle*
+  of the animal ladder was where the climb stopped paying (measured: the pastoral rung sat **1.46×**
+  behind its plant partner while the wild rung sat at **1.03×**). The fiction is habituation, and
+  habituation **is** reach. Validated strictly between `1.0` and `pen_engage_gain`, the same
+  monotonicity `pen_gain > pastoral_gain > 1` already follows.
+
 - **⛔ THE TAKE RUNS ITS THREE STAGES AT EVERY RUNG, AND THE RUNG TUNES THE FIRST TWO ONLY**
   (`docs/plan_standing_upkeep.md` §4.9 item 12b). The corral-tend branch calls
   `systems::hunt_take` — the same function the range arm calls — with the pen's own two terms handed
@@ -279,16 +289,40 @@ domestication *reduce* capacity). **Playtest dials.**
 
   | stage | what the rung buys | seam |
   |---|---|---|
-  | **engage** | `husbandry.pen_engage_gain` × the species' `engage_rate` | `fauna::herd_engage_rate` |
+  | **engage** | `husbandry.pastoral_engage_gain` / `pen_engage_gain` × the species' `engage_rate` | `fauna::herd_engage_rate` |
   | **retreat** | `husbandry.pastoral_wariness` / `pen_wariness` × the species' `combat.wariness` | `fauna::herd_wariness` |
-  | **fight** | **nothing — the species' own `defense` at every rung** | `fauna::herd_quarry_fight` |
+  | **fight** | pastoral: `husbandry.pastoral_resistance` × `defense` **and** `durability`. **Pen: there is no fight** | `fauna::herd_resistance` / `fauna::herd_fight_stage` |
 
-  > **A PEN IS RELIABLE, NOT SAFE.** Containment solves catching; weapons solve killing. **No
-  > weapons, no beef**: a bare hand's `attack 1` clears no pennable species' `defense` except the
-  > three `defense 0` rows (rabbit, fowl, snow hare), so a band that fences an aurochs and brings
-  > nothing to it is quoted nothing and paid nothing. And a contained bull still gores — the tend
-  > branch applies `HuntOutcome::fight`'s casualties and charges the weapon's `Strike` wear, through
-  > the same `settle_hunt_band_side` seam the range arm uses.
+  > **⛔ A PEN HAS NO FIGHT — YOU SLAUGHTER IT.** Everything the keepers reach and that does not
+  > break off goes down: no attack-vs-defense gate, no durability grind, no wound ledger, no
+  > casualties. `fauna::herd_fight_stage` answers `None` at `animal:pen` and `fauna::resolve_hunt_kill`
+  > routes that to `fauna::slaughter`; `SourceYieldForecast::slaughters` carries the same fact into the
+  > preview so forecast and take run one kill arm.
+  >
+  > **WHAT DID NOT GO: THE ENGAGEMENT BOUND AND THE ESCAPEMENT CLAMP.** The pen is still capped by
+  > the keepers' handling rate (`pen_engage_gain` × the species' `engage_rate`) and by the room above
+  > the floor, and its take is still quantised to whole animals. The infinite bound §4.10 ② retired
+  > has **not** come back — what came back is the exemption at the one stage it was always about.
+  > `SourceYieldForecast::fight` therefore stays `Some` at a pen, because that tuple is what the
+  > *retreat* reads (`pen_wariness`); nulling it would delete the retreat with the fight.
+  >
+  > **A HALTER SOFTENS THE FIGHT, IT DOES NOT DELETE IT.** `pastoral_resistance` (`0.5`) scales both
+  > halves of the resolver's gate on a tamed quarry — `defense` (whether a strike lands at all) and
+  > `durability` (how many landed strikes a body absorbs) — so rung 2 is a real fight against a
+  > softer animal while rung 3 is no fight at all.
+  >
+  > **A PENNED ANIMAL CAN NO LONGER HURT ITS KEEPERS.** The three pennable species that carried an
+  > `attack` — Wild Aurochs `4.0`, Wild Boar `1.5`, Crag Goats `0.6`, Wild Sheep `0.4` — and the
+  > baseline `combat_config.hunt_injury_damage_per_animal` that applied to every fight regardless, all
+  > stop reaching a pen crew. *"A contained bull still gores"* was the previous ruling and is retired
+  > with the fight it belonged to.
+  >
+  > **AND BARE HANDS NOW WORK BEHIND A FENCE.** *"No weapons, no beef"* held only because the pen ran
+  > the fight: `attack 1` cleared no pennable `defense` but the three `defense 0` rows. With no fight
+  > to gate them, an unarmed keeper slaughters an aurochs. What a kit still decides at a pen is the
+  > **carry** — `herd_default_hunt_kit` already special-cases a corralled herd onto
+  > `kit_supplying(HuntCarry)` rather than a mass-matched weapon, so the pen was always selected for
+  > hauling; the weapon's `attack` is simply inert there now.
   >
   > **What retired with the exemption**: `fauna::animals_handled` (the pen's own collection stage),
   > `fauna::NO_FIGHT_STAGE`, the `is_corralled()` forks in `hunt_forecast`,
@@ -647,6 +681,425 @@ it shed. The two penalties are orthogonal and a pen can take both in one turn.
 > labour in one number. What changed is that the feed account is denominated in fodder, so it does not
 > appear in the food ledger at all —
 > `larder_delta == foodIncome − foodConsumption − raidForfeit`.
+
+> ### ⛔ EVERY FOOD FIGURE BELOW WAS MEASURED WITH A **STOCKED** BAND, AND A SPAWN NO LONGER IS ONE
+>
+> `equipment.json`'s `start_stock_fraction` ships **`0.0`** — a spawning band owns no equipment at all
+> (`equipment.md` → "A SPAWNING BAND OWNS NO EQUIPMENT"). Every table from here to the end of the
+> space-budget section was read at the previous `1.5`, so each is *"what this source pays a band that
+> has crafted its kit"* rather than *"what a new band collects"*. **They are still the right numbers
+> for the thing they compare** — a source's ceiling and which term binds it are properties of the land
+> and the roster — but three readings invert once the gear is gone and are recorded here rather than
+> restated everywhere:
+>
+> - **The seven pens are BIT-IDENTICAL bare-handed.** A pen has no fight stage and `pen_is_a_larder`
+>   means carry does not bind, so nothing a pen's take reads is a kit tier. Every pen figure below
+>   holds unchanged.
+> - **Every wild-hunt and pastoral row falls to `0.0000`** at every crew size: bare hands are
+>   `attack 1` against a defended quarry, and only the `defense 0` species (hare, catfish, rabbit,
+>   fowl, grouse) pay anything at all. The rung-pair comparisons below are therefore about a band that
+>   has armed itself.
+> - **The plant web's two drawdowns disappear.** The wild food-only `+25%` and tended `+17%` overdraws
+>   named below both come from a *basketed* crew out-taking a narrowed stand; at the bare carry rate
+>   every plant row sits well under its line with headroom. **Nothing in the model is a drawdown at a
+>   bare spawn.**
+>
+> A Field's `12.48` is likewise the **stand's** capability and is unmoved — a bare crew simply cannot
+> carry it, and stays carry-bound past the 13 gatherers the sweep reaches (`13 × 0.256 = 3.33`).
+
+## ⛔ EVERY ANIMAL RUNG IS AT OR UNDER ITS SUSTAINABLE LINE — the numbers are steady rates
+
+Measured across the whole roster at the 3- and 5-worker crews (`food_economy_table.rs` Section E),
+with `pen_is_a_larder` on: **not one animal row is a drawdown.** Every wild, pastoral and penned take
+sits at or below what its herd reproduces that turn. The pen figures are the tightest — a pen is
+*designed* to sit on its production line — and they sit **on** it, not past it:
+
+| species | rung | `r` per turn | `K` biomass | reproduces food/turn | taken at 5 keepers | verdict |
+|---|---|---|---|---|---|---|
+| Wild Aurochs | pen | `0.360` | 3968 | **7.14** | 7.0200 | at the line |
+| Wild Sheep | pen | `0.800` | 1587 | **6.35** | 6.3252 | at the line |
+| Wild Boar | pen | `0.400` | 3171 | **6.34** | 6.3240 | at the line |
+| Crag Goats | pen | `0.880` | 1443 | **6.35** | 6.3120 | at the line |
+| Wild Fowl | pen | `1.000` | 1015 | **5.07** | 5.0458 | at the line |
+| Rabbit Warren | pen | `1.000` | 951 | **4.76** | 2.9916 | 37% under — reaches its line at 8 |
+| Snow Hare Warren | pen | `1.000` | 951 | **4.76** | 4.7220 | at the line |
+
+**The aurochs' slow reproduction does not cost it the top of the ladder**, because `K` and `r` trade
+off: `r_pen 0.36` against a 3968 `K` reproduces 7.14 food/turn, while a fowl's `r_pen 1.0` against a
+1015 `K` reproduces 5.07. **`sustainable ≈ r · K / 4`, and `K` is the bigger lever on this roster** —
+which is why `pen_density` is where the pens were tuned and `pen_engage_gain` only decides the crew.
+
+**The rabbit is the one row deliberately off the line at five keepers**, and it is a reach reading
+rather than a production one: its `pen_engage_gain` is tuned to reach its ceiling at **8** where every
+other pen reaches it at 5, so a five-keeper column catches it part-way up its own curve. At eight it
+takes **4.7230** against the same 4.76 line — at the line, like the rest.
+
+**Both plant-web drawdowns this measurement used to report are gone with the gear**, and the callout
+above says why: they were a *basketed* crew out-taking a narrowed food-only stand. **Nothing on
+either web is a drawdown at the shipped bare spawn.**
+
+## A FIELD DOES RUN OUT — at ten gatherers on the reference tile
+
+`food_economy_table.rs` Section D walks each plant rung up the crew curve. A Field is carry-bound to
+**8 gatherers** and hits its own sustainable line at **10**:
+
+| workers | field food/turn | binds | vs sustainable (12.48 food/turn) |
+|---|---|---|---|
+| 1 | 1.28 | carry | 90% under |
+| 3 | 3.84 | carry | 69% under |
+| 5 | 6.40 | carry | 49% under |
+| 8 | 10.24 | carry | 18% under |
+| **10** | **12.48** | **stand** | **at the line** |
+| 13 | 12.48 | stand | at the line |
+| 20 | 12.48 | stand | at the line |
+
+**It flattens exactly as a herd does** — the 1.28-per-worker figure the earlier tables report is the
+*carry-bound* regime, not a property of Fields. The wild and tended rungs flatten at **3** gatherers,
+because their sustainable line is an order of magnitude lower (0.70 and 1.33 food/turn against the
+Field's 12.48). The Field's headroom is what `field_capacity_gain` and `field_regrowth_gain` (2.53
+each) buy: `K` 195 → 493 and `r` 0.25 → 0.632.
+
+## `husbandry.hex_space_budget` — the space half of `K` (ships ON, `2530.3`)
+
+`ecological_carrying_capacity` is `(graze_flow + fodder_delivery_rate) / fodder_per_biomass ×
+density_gain` — **entirely feed**, with no physical-space term in it at all. Its own note calls a
+barren footprint "carried entirely by delivered hay" an honest feedlot, which means an unlimited
+number of animals fits on one tile provided enough hay is trucked in. Feed and space are different
+questions and only one of them is soft:
+
+```text
+K = min(feed_K, space_K)
+```
+
+`fauna::herd_space_capacity` is the one expression; `null` answers `NO_SPACE_CAP_AT_ALL` and the
+`min` becomes an identity.
+
+### ⛔ ITS ONLY JOB IS TO STOP FODDER, AND IT MUST NOT TOUCH ORDINARY PLAY
+
+`fodder_delivery_rate` enters the feed `K` with **nothing bounding it**, so before this term a barren
+tile carried entirely by trucked-in hay held any number of animals. The cap exists for that and only
+that. **A budget that changes no normally-grazed source is the dial working**, not the dial being
+inert — the number it buys is the **headroom**: how much hay a pen may be fed before space stops it.
+
+Measured at the shipped `2530.3`, over all twenty species at every rung, **nothing clips**:
+
+| rung | tightest headroom (space `K` ÷ feed `K`) |
+|---|---|
+| fowl pen | **1.001×** |
+| rabbit pen | 1.363× |
+| boar pen | 1.448× |
+| snow_hare pen | 1.778× |
+| wild_sheep pen | 2.006× |
+| aurochs pen | 2.743× |
+| every wild and pastoral row | 2.46× (`river_fish`) to 257× (`wolf`) |
+
+So a penned aurochs may be fed to **2.7× the herd its ground grazes** before space refuses more, and a
+penned fowl essentially not at all — its coop is already full.
+
+### Why 104 aurochs per hex and not 100
+
+`104 × 120^(2/3) = 2530.3`. At a 100-aurochs budget **fowl in a pen is the single row anywhere on the
+roster that clips**, and only because the `pen_density` retune took its `K` to 1280 against a 1233
+allowance. `104` lifts that allowance to **1281.8 against 1280.0 — a 1.8 kg, 0.14% margin.** It is the
+tightest number in the config and any further rise in `fowl`'s `pen_density` or `biomass[1]` will push
+it through.
+
+**Do not lower it** toward 40 or 30 aurochs per hex: measured, those bit into normal grazing and
+clipped wild rows (`river_fish`, pastoral `wild_sheep`), which is the cap doing the wrong job.
+
+**Two things deliberately do not reach the space term.** The **fodder flow** — hay offsets feed and
+never makes the field bigger — and the **density gain** (`pen_density` / `pastoral_density`), because
+domestication does not enlarge the tile either. Both stay on the feed side, above the `min`.
+**Universal, not a pen rule**, and applied on both diet branches.
+
+### ⛔ SPACE IS AN **AREA** BUDGET, NOT A MASS ONE
+
+The first cut of this dial was flat kilograms per tile (`space_biomass_per_tile`), which says a hex
+holds the same *mass* of fowl as of aurochs. A fowl is **1/900th** an aurochs by weight and nowhere
+near 1/900th of it by floor space, so that reading is physically wrong — and it is why no flat value
+could bind a pen without also clipping wild small game (at `850`, wild `river_fish` and pastoral
+`wild_sheep` were both clipped, and two grazing fixtures failed).
+
+An animal's footprint scales with the **2/3 power of its mass** — area goes as length², mass as
+length³. So the budget buys `budget / body_mass^(2/3)` **animals** per hex, and the biomass that
+represents is that count × each animal's mass. `herd_space_capacity` computes it in exactly those two
+steps rather than as the algebraically equal `budget × body^(1/3)`, which reads as a bare cube root
+that states nothing about why.
+
+### The anchor: `2433` is one hex holding 100 aurochs
+
+`100 × 120^(2/3) = 2433`. What that gives the seven pennable species, per hex:
+
+| species | body mass | animals/hex | `space_K` (1 tile) | pen `feed_K` | `K` from |
+|---|---|---|---|---|---|
+| aurochs | 120 | **100.0** | 12001 | 6500 | feed |
+| boar | 12 | **464.2** | 5570 | 4000 | feed |
+| crag_goat | 6 | **736.8** | 4421 | 2000 | feed |
+| wild_sheep | 5.6 | **771.5** | 4321 | 3500 | feed |
+| snow_hare | 0.6 | **3420.1** | 2052 | 300 | feed |
+| rabbit | 0.27 | **5824.2** | 1573 | 300 | feed |
+| fowl | 0.13 | **9480.8** | 1233 | 240 | feed |
+
+### Measured at three anchors
+
+| aurochs/hex | `hex_space_budget` | penned species space-bound | top pen, 5 workers | spread, 5 workers | clipped outside a pen |
+|---|---|---|---|---|---|
+| 100 | `2433` | none | Aurochs 11.58 food/turn | 11.58 / 1.19 | none |
+| 40 | `973.15` | aurochs, boar, crag_goat, wild_sheep | Aurochs 8.52 food/turn | 8.52 / 1.19 | wild `river_fish` `K` 900 → 852 |
+| 30 | `729.86` | aurochs, boar, crag_goat, wild_sheep | Aurochs 6.30 food/turn | 6.30 / 1.19 | wild `river_fish` 900 → 639, pastoral `wild_sheep` 1400 → 1296 |
+
+**The area model keeps the aurochs on top at every setting** — `40 → 8.52`, `30 → 6.30`, ordering
+`aurochs > crag_goat > wild_sheep > boar > rabbit ≈ snow_hare > fowl` unchanged. That is the
+difference from the retired flat dial, which inverted the aurochs to **last**: a flat mass budget
+gave every species the same `K`, so output collapsed onto `r_pen` and the slowest breeder lost. Under
+`body_mass^(2/3)` a big animal keeps a proportionally bigger `K`.
+
+**The three small-game pens never move** at any setting — their feed `K` (240–300) is far below their
+space `K` (370–821 even at 30 aurochs/hex), so they are feed-bound throughout.
+
+**No wild or pastoral FOOD figure moves at any of the three settings.** Two `K` values are clipped at
+the tighter anchors and both are `small`-class one-tile footprints; neither row's food changes,
+because both are bound by the fight rather than by production.
+
+### The cap moves no food figure at the shipped budget — by design
+
+`min(feed_K, space_K)` is an identity on every row, so every food figure is byte-identical to the dial
+at `null`, and the suite passes at the same 1934/5 either way. **That is the acceptance criterion, not
+a shortfall**: the headroom table above is what the term buys.
+
+## `pen_density` — retuned, because it was backwards from the fiction
+
+`pen_density` sets a penned herd's `K`, and with `pen_is_a_larder` on the take is `r · K / 4`, so one
+dial sets the whole rung:
+
+```text
+food/turn = r_pen × base_K × pen_density × 0.005
+```
+
+It shipped **cattle at 5.0 and fowl/rabbit at 1.5** — a hex packing more cattle than poultry, when
+small stock packs far tighter than cattle. That is why the big animals clustered near a Field's
+**12.48 food/turn** sustainable line while the small ones sat ten times below.
+
+### The shipped values, set against that same 12.48 line
+
+| species | `pen_density` | `r_pen` | base `K` | pen `K` | reproduces food/turn |
+|---|---|---|---|---|---|
+| aurochs | 5.0 → **3.0523** | 0.36 | 1300 | 3968 | **7.14** |
+| crag_goat | 5.0 → **3.6073** | 0.88 | 400 | 1443 | **6.35** |
+| wild_sheep | 5.0 → **2.2675** | 0.80 | 700 | 1587 | **6.35** |
+| boar | 4.0 → **3.1713** | 0.40 | 1000 | 3171 | **6.34** |
+| fowl | 1.5 → **6.3425** | 1.00 | 160 | 1015 | **5.07** |
+| rabbit | 1.5 → **4.7569** | 1.00 | 200 | 951 | **4.76** |
+| snow_hare | 1.5 → **4.7569** | 1.00 | 200 | 951 | **4.76** |
+
+**The whole column was then scaled by one factor to put the roster's top at 7.0 food/turn** — rank
+order and relative spacing preserved, so the shape above is the tuning and the scale is a level. The
+aurochs measures **7.02**; exactly 7.000 is not reachable, because a take quantised to whole 120 kg
+bodies lands on a lattice.
+
+**`pastoral_density` is untouched**, so the pastoral rung does not move: `pen_density` is read only at
+`RungKey::AnimalPen` (`rung_density_gain`). Verified — every wild and pastoral row is byte-identical
+across the retune.
+
+### What each pen is actually limited by, at five keepers
+
+Nothing is a drawdown; every row takes its sustainable line or less.
+
+| species | reproduces food/turn | takes at 5 keepers | limited by |
+|---|---|---|---|
+| Wild Aurochs | 7.14 | 7.0200 | herd production |
+| Wild Sheep | 6.35 | 6.3252 | herd production |
+| Wild Boar | 6.34 | 6.3240 | herd production |
+| Crag Goats | 6.35 | 6.3120 | herd production |
+| Wild Fowl | 5.07 | 5.0458 | herd production |
+| Rabbit Warren | 4.76 | 2.9916 | the keepers' handling rate — it wants 8 |
+| Snow Hare Warren | 4.76 | 4.7220 | herd production |
+
+**Every row but the rabbit is herd-production-bound at five keepers**, because that is the crew each
+of them is tuned to reach its ceiling at. The rabbit is tuned to reach its ceiling at **8**, so at 5
+its keepers' handling rate is still the binding term — deliberately, and it is the only pen for which
+adding a keeper still buys anything.
+
+### `pen_engage_gain` is overridable too, and it sets HOW MANY KEEPERS a pen wants
+
+The take at `W` keepers is bounded by `reach = W × engage_rate × pen_engage_gain` animals, so this
+dial **does not move a pen's maximum** — that is `r × K / 4`, set by `pen_density`. It moves the
+**crew size at which the maximum is reached**.
+
+**Every penned species except rabbit is tuned to reach its line at exactly 5 keepers:**
+
+| species | `pen_engage_gain` | reaches its max at |
+|---|---|---|
+| aurochs | **4.2** | 5 keepers |
+| wild_sheep | **8.5** | 5 |
+| crag_goat | **7.9** | 5 |
+| snow_hare | **9.4** | 5 |
+| boar | **20.0** (the global, stated) | 5 |
+| fowl | **44.0** | 5 |
+| rabbit | **12.5** | **8** |
+
+> **⛔ EVERY ONE OF THESE MOVED WHEN `pen_density` WAS SCALED DOWN, AND THAT IS STRUCTURAL.**
+> Lowering `K` lowers the room (`r · K / 4`), so the *same* reach clears it a keeper sooner: the
+> previous set (aurochs `6.0`, wild_sheep `10.6`, crag_goat `9.9`, snow_hare `11.8`, boar `25.0`,
+> fowl `55.0`) had been tuned against the pre-scale densities and slipped every pen to **4** keepers,
+> and the rabbit — which carried no row at all — from 8 to 5. **A `pen_density` retune therefore
+> always owes a `pen_engage_gain` retune**, and the ratio is the obvious one: each value above is its
+> predecessor times the density scale, then measured. **The maxima did not move under either set** —
+> this dial moves the crew and never the level, which is exactly why the drift was silent.
+
+**Most of these are BELOW the global 20.0, and that is the fix.** At the global, one keeper worked
+nearly the whole herd — an aurochs pen delivered **7.14 of its 8.19 line at a single keeper** — which
+made a pen worth about **2.5× a Field per head** (3.00 food/worker against 1.25) — figures read at
+the densities of the time, before the roster was scaled to a 7.0 top. Fowl is the
+exception in the other direction: `10 × 20 = 200` birds per keeper is a cattle number wearing a
+chicken's `engage_rate`, so its flock could not be worked out at all without a large override.
+
+**Derived, then measured.** The bracket is *reach ≥ affordable at 5 and < affordable at 4*, i.e.
+`G ∈ [affordable/(5·engage_rate), affordable/(4·engage_rate))`. But the 40-turn drive's effective room
+**exceeds** the static `r · K / 4` — biomass accumulates on the wait turns — so every shipped value
+was measured against the sim rather than read off the static bracket; the static figures put four of
+the six one keeper low.
+
+**The aurochs is the tight one.** Its bracket's lower edge sits *below* its own
+`pastoral_engage_gain` of `4.0`, and the per-species ordering check (`pen > pastoral` — a fence
+handles better than a halter) correctly **rejected** the first value tried. That check is not
+decoration; it caught a config that would have made a fenced aurochs no easier to work than a
+haltered one.
+
+**The ladder ordering is now checked on each species' effective pair** (`pen_engage_gain >
+pastoral_engage_gain`), not on the globals: either arm may be overridden, and comparing an override
+against the global it does not belong beside would let a fence handle worse than a halter on exactly
+the animal carrying a row.
+
+## Deleting the `pen_is_a_larder` flag — the shape of it
+
+Three branch sites, all reached through **one seam**:
+
+| site | what it does |
+|---|---|
+| `fauna::herd_collection` | the only `if … pen_is_a_larder` — returns `NO_CARRY_BOUND` instead of `workers × per_worker` |
+| `SourceYieldForecast::larder` | the field, set from `herd_collection(..).is_infinite()` in `hunt_forecast`, and `false` in `forage_forecast` |
+| `forecast_production_and_take_at` | reads `forecast.larder` to hand the quantiser `NO_CARRY_BOUND` |
+
+`herd_collection` **does collapse cleanly**: dropping the flag leaves
+`if workers == 0 { 0 } else if herd.is_corralled() { NO_CARRY_BOUND } else { workers × per_worker }`,
+which is still the one term the quantiser's pack seat, `project_realized_hunt`'s `min` and
+`hunt_take_bound`'s `carryable` all read. The `larder` field cannot be dropped with it — the forecast
+holds no herd, so it still needs the fact carried — but its producer becomes
+`herd.is_corralled()` and its meaning stops depending on config.
+
+**Cost: the config field, its default constant, its validation-free `#[serde(default)]`, one `&&`,
+one JSON key and its `_comment_`.** No call-site signature changes. The five failing pen tests would
+need rewriting either way.
+
+## `husbandry.pen_is_a_larder` — a pen is NOT carry-bound (ships ON)
+
+**Ships `true`.** The party's **carry** does not bound a take at `animal:pen`, and a pen produces no
+carry waste:
+
+> *"A penned animal is a larder on the hoof. You slaughter what you need this turn and the rest stays
+> alive."*
+
+A carry bound says *you had to take it all at once and haul it home*, and at a pen you never do — the
+animals stand behind a fence built at most `pen_radius_max` tiles away, so what is not butchered this
+turn is next turn's stock, still breeding.
+
+**The pen rung only.** Wild and pastoral keep their carry bound untouched, and everything else at the
+pen is untouched too: the keepers' handling bound (`pen_engage_gain`), the escapement clamp, the
+whole-animal quantum and the slaughter all still apply.
+
+**One infinity, one seam.** `fauna::herd_collection` is the single term every site that can bind on
+carry reads — the quantiser's pack seat, `project_realized_hunt`'s `min`, and `hunt_take_bound`'s
+`carryable` — so the bound and the waste go together instead of in three edits that could drift.
+`carried = killed_biomass.min(collection)` becomes an identity, which is exactly *"the meat does not
+rot, it is still standing in the pen"*. `SourceYieldForecast::larder` carries the same fact into the
+preview. A crew of **nobody** collects nothing, larder or not — `0 × ∞` is `NaN`, which is why the
+seam is a function rather than a multiplication at each site.
+
+**It is a package with `pen_density`.** While a pen was carry-bound it paid the sled's own ceiling
+whatever its `K` said, so the per-species densities did nothing at rung 3 — the retune below and this
+flag land together or neither means anything.
+
+**The flag survives only so the pre-larder behaviour stays reachable for a bisect.** Three places
+branch on it, all through one seam — see "Deleting the flag" below.
+
+### Measured, at the 3-worker reference crew (at the pre-retune densities)
+
+| species | pen, lever off | pen, lever on | what sets the level once carry is gone |
+|---|---|---|---|
+| Wild Aurochs | `0.8000` | **`3.8600`** | herd production — its own escapement MSY |
+| Wild Sheep | `0.8000` | **`3.0987`** | the keepers' handling rate |
+| Crag Goats | `0.8000` | **`2.9170`** | herd production |
+| Wild Boar | `0.8000` | **`1.5200`** | the keepers' handling rate |
+| Rabbit Warren | `0.4963` | `0.4963` | herd production (was never carry-bound) |
+| Snow Hare Warren | `0.4962` | `0.4962` | herd production (was never carry-bound) |
+| Wild Fowl | `0.3977` | `0.3977` | herd production (was never carry-bound) |
+
+**The rung un-flattens.** Four species paid an *identical* `0.8000` with the lever off because they
+were all pinned to the same sled; the spread across the seven goes from `2.01×` to `9.71×`, and every
+figure is then a property of the animal — its `pen_density × biomass` band and `pen_gain × r` on one
+side, its `engage_rate × pen_engage_gain` and `body_mass` on the other. **Carry waste at the pen goes
+to zero** on all seven, as the model says it must.
+
+**The bound enum reports `Engagement` on all seven either way, and cannot tell the two apart.** The
+reach is clamped by the escapement room *before* the retreat (`animals_affordable`), so a
+production-limited pen and a handling-limited pen both end with `brought_down == floor(stayed)`.
+`HuntTakeBound` has no *"the herd could not spare more"* variant short of `Floor`, which fires only
+when nothing whole could be taken at all. Which of the two is really binding is read by comparing the
+measured take against `r_pen · K / 4` and against `floor(reach × stay_fraction) × body_mass`.
+
+## ⛔ A SPECIES MAY OVERRIDE THE PASTORAL RUNG GAINS — absent means "use the global"
+
+`SpeciesDef::pastoral_engage_gain` / `SpeciesDef::pastoral_resistance` are `Option<f32>` shadowing
+`husbandry.pastoral_engage_gain` / `husbandry.pastoral_resistance`, resolved through
+`FaunaConfig::pastoral_engage_gain_for` / `pastoral_resistance_for` — the `taming_cost_multiplier_for`
+path, so a retune reaches herds already on the map. `fauna::herd_engage_rate` and
+`fauna::herd_resistance` are the only readers, so an override cannot be honoured on one path and
+missed on another.
+
+### Why a rung gain needed a per-species arm
+
+Every husbandry gain was **one global number applied to every animal**, while each species carries its
+own `engage_rate`, `durability`, `wariness` and `body_mass` — so there was no way to say *"a rabbit
+gets more out of being herded"* without also changing wild rabbits.
+
+**The pastoral take runs into two ceilings in series, and which one binds is a property of body
+mass.** The heavy-bodied half is **reach**-bound, so only `pastoral_engage_gain` moves it; the
+small-bodied half is **fight**-bound, so only `pastoral_resistance` moves it — by exactly
+`1 / resistance`, because the party's kill throughput sits at almost the height their reach ceiling
+did. Measured, no global pair lifts both halves without inflating the first:
+
+| global reach × | global resistance | best pastoral row | did the small game move? |
+|---|---|---|---|
+| `1.0` | `1.0` | `0.3033` | — (baseline) |
+| `1.01` | `0.5` | `0.3710` | yes, ×2.0 |
+| `4.0` | `1.0` | `0.4067` | **no, ×1.00** |
+| `2.0` | `0.75` | `0.5600` | yes, ×1.33 |
+| `4.0` | `0.5` | `0.8000` | yes — and **pinned to the pen's own carry ceiling** |
+
+(against a tended patch's `0.4426` and a pen's `0.8000`, at the 3-worker reference crew).
+
+### The shipped allocation
+
+Globals stay at `engage 2.0` / `resistance 1.0` (the identity), and six species carry a row:
+
+| species | override | why |
+|---|---|---|
+| `rabbit`, `fowl`, `snow_hare` | resistance `0.5` | fight-bound small game; reach is **inert** on them, and `0.5` doubles them exactly |
+| `marsh_grazer`, `steppe_runner` | resistance `0.75` | fight-bound at `durability 60`, the toughest nomads — **and pastoral is their top rung** (`husbandry_ceiling: pastoral`), so it has to pay |
+| `aurochs` | engage `4.0` **and** resistance `0.75` | the only species that needed **both** arms: `engage_rate 0.17` is the lowest of any tameable so `×2` barely clears one animal, and `durability 150` / `defense 6` is the toughest body on the roster, so unlocking reach alone just handed it to the fight |
+
+**Everything else uses the global**, which is what keeps the roster readable: only exceptions carry a
+row. It is deliberately **explicit per animal** rather than a body-mass formula a reader would have to
+reverse-engineer.
+
+**Per-species values validate exactly as the globals do** — engage gain finite, `> 1.0` and
+`< pen_engage_gain`; resistance finite and in `(0, 1]`. An override that broke the ladder's own
+ordering would read as a tuning and behave as a defect.
+
+**Only the two PASTORAL dials are overridable today.** `pen_engage_gain` and the rest stay global
+because nothing has needed them per-species; adding one is two fields and a resolver on the same
+pattern.
 
 ## The `Tame` verb (Intensification rung 2) — the grammar fix
 
