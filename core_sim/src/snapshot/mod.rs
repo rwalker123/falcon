@@ -1369,9 +1369,13 @@ mod tests {
                 .scout
                 .vantage_range as f32,
         };
+        let expedition_config = crate::expedition_config::ExpeditionConfig::builtin();
         let levers = ExpeditionLevers {
             hunt_per_worker_carry: 0.0,
-            trade_per_worker_carry: 0.0,
+            // The shipment-carry rules are resolved off the config rather than quoted, so this
+            // fixture borrows the builtin exactly as `kit_levers` above borrows its own. Nothing
+            // here asserts on a shipment; the zeros beside it say the rest is irrelevant.
+            trade: &expedition_config.trade,
             trade_material_carry_weight: 0.0,
             trade_fodder_carry_weight: 0.0,
             hunt_per_worker_provisions: 0.0,

@@ -1296,7 +1296,10 @@ const COMPOSE_CARGO_FIELD_HINT := "Type an amount and press Enter. Esc puts the 
 ## `expedition_trade_fodder_carry_weight` on the hay and `expedition_trade_material_carry_weight` on
 ## the material total for the mass), never a literal: the sim refuses an over-cap manifest naming
 ## both sides, and a client quoting a lever of its own would be one config edit from a meter that
-## disagrees with the refusal it exists to prevent.
+## disagrees with the refusal it exists to prevent. The carry term arrives ALREADY RESOLVED (issue
+## #626) — the sim has applied whatever carry depends on, and multiplying it by the party is the whole
+## of this client's share; the two weights are verbatim levers, being properties of the goods rather
+## than of who carries them.
 ##
 ## **THREE TERMS, NOT TWO** (issue #590) — `DetailFormat.shipment_mass` holds the whole expression,
 ## and a reader that drops the hay term UNDER-PRICES every manifest with a bale in it: the meter

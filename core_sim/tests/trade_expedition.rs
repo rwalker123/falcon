@@ -38,7 +38,7 @@ const PARENT_WORKERS: f32 = 20.0;
 const SPLIT_WORKERS: u32 = 5;
 /// Workers the shipment party carries. Two is enough pack for every manifest below.
 const PARTY_WORKERS: u32 = 2;
-/// The food a shipment carries. Well inside `PARTY_WORKERS × trade.per_worker_carry`.
+/// The food a shipment carries. Well inside `core_sim::shipment_carry_cap(PARTY_WORKERS, ..)`.
 const CARGO_FOOD: f32 = 8.0;
 /// The HAY a shipment carries — the third account, and deliberately a **different number** from
 /// [`CARGO_FOOD`], so an assertion that read the wrong account could not pass by coincidence.
@@ -929,11 +929,16 @@ fn a_shipment_publishes_its_destination_and_its_cargo_on_the_wire() {
 /// choosing, so no per-party field can serve that screen. Same idiom as
 /// `expeditionForecastHorizonTurns`.
 ///
-/// **They carry different bounds, deliberately.** The pack lever is asserted **positive** for the
+/// **They carry different bounds, deliberately.** The pack number is asserted **positive** for the
 /// horizon's reason — a `0` lets a client render a zero cap and refuse every manifest a player could
 /// build. The two cargo weights are asserted only **finite and `>= 0`**, because `0` is a legitimate
 /// setting on both ("materials are weightless", "hay is weightless") and asserting positivity would
 /// pin a tuning as a rule.
+///
+/// **And they are arrived at differently.** The two weights are lever echoes — a material's or a
+/// bale's bulk is a property of the goods — so they are pinned against the config fields. The pack
+/// is the sim's **resolved** per-worker carry (`core_sim::trade_per_worker_carry`), so it is pinned
+/// against the resolver, which is where a carrier-side model would attach.
 #[test]
 fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
     let mut app = spawn_world();
@@ -961,7 +966,7 @@ fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
             .resource::<core_sim::ExpeditionConfigHandle>()
             .get();
         (
-            cfg.trade.per_worker_carry,
+            core_sim::trade_per_worker_carry(&cfg.trade),
             cfg.trade.material_carry_weight,
             cfg.trade.fodder_carry_weight,
         )
@@ -979,7 +984,8 @@ fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
         );
         assert!(
             (trade_per_worker - expected_carry).abs() < EPSILON,
-            "band {band} must echo the pack lever verbatim: {trade_per_worker} vs {expected_carry}"
+            "band {band} must publish the RESOLVED carry, not a lever of its own: \
+             {trade_per_worker} vs {expected_carry}"
         );
         // Finite and `>= 0`, NOT positive: weightless materials is a real setting, so asserting
         // positivity here would pin a tuning as if it were a rule.
@@ -1049,14 +1055,23 @@ fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
     );
 }
 
-/// **A live trade party's own pack is quoted at the TRADE lever, not the hunt one.**
+/// **A live trade party's own pack is the RESOLVED shipment carry, not the hunt lever.**
 ///
-/// The two are different packs — a raid's is the provisions ceiling it fills before delivering, a
-/// shipment's is what its people can carry out — so `expeditionCarryCap` resolves per mission. The
-/// contrast with a resident band's `0` is the negative control, and pinning the trade party's cap
-/// against the *hunt* lever's product is what would catch the field being wired to the wrong one.
+/// The two are different packs arrived at two ways, and `expeditionCarryCap` resolves per mission
+/// between them:
+///
+/// - the shipment side is `core_sim::shipment_carry_cap` — the sim's own expression, the one
+///   `send_trade_expedition` refuses on — so this pins the published cap against **the resolver**
+///   rather than against `trade.per_worker_carry`. Against the raw lever the assertion would pass
+///   for a carry model that grew server-side and skipped the resolver, and would then fail with a
+///   message telling its fixer to restore a rule this arc retired.
+/// - the hunt side genuinely **is** still a raw lever (`hunt.per_worker_carry` × the party). That
+///   asymmetry is deliberate, and it is what keeps the "quoted at the right one" claim falsifiable:
+///   the two numbers have to differ, which the fixture asserts before it leans on them.
+///
+/// The contrast with a resident band's `0` is the negative control.
 #[test]
-fn a_trade_partys_carry_cap_is_quoted_at_the_shipment_lever() {
+fn a_trade_partys_carry_cap_is_quoted_at_the_resolved_shipment_carry() {
     let mut app = spawn_world();
     let sender = first_band(&mut app);
     let faction = app
@@ -1080,18 +1095,24 @@ fn a_trade_partys_carry_cap_is_quoted_at_the_shipment_lever() {
 
     run_turn(&mut app);
 
-    let (trade_carry, hunt_carry) = {
+    // The shipment side is the SIM'S RESOLVED CAP; the hunt side is the raw lever it must not be
+    // confused with. Two different derivations on purpose — see this test's doc comment.
+    let (resolved_trade_cap, hunt_carry) = {
         let cfg = app
             .world
             .resource::<core_sim::ExpeditionConfigHandle>()
             .get();
-        (cfg.trade.per_worker_carry, cfg.hunt.per_worker_carry)
+        (
+            core_sim::shipment_carry_cap(PARTY_WORKERS, &cfg.trade),
+            cfg.hunt.per_worker_carry,
+        )
     };
-    // The two levers must genuinely differ, or "quoted at the right one" is unfalsifiable.
+    let hunt_cap = PARTY_WORKERS as f32 * hunt_carry;
+    // The two packs must genuinely differ, or "quoted at the right one" is unfalsifiable.
     assert!(
-        (trade_carry - hunt_carry).abs() > EPSILON,
-        "the fixture rests on the two packs being different numbers: trade {trade_carry}, hunt \
-         {hunt_carry}"
+        (resolved_trade_cap - hunt_cap).abs() > EPSILON,
+        "the fixture rests on the two packs being different numbers: shipment \
+         {resolved_trade_cap}, raid {hunt_cap}"
     );
 
     let packs = published_packs(&app);
@@ -1107,13 +1128,13 @@ fn a_trade_partys_carry_cap_is_quoted_at_the_shipment_lever() {
         .expect("the resident band's row is published");
 
     assert!(
-        (party_cap - PARTY_WORKERS as f32 * trade_carry).abs() < EPSILON,
-        "a shipment party's pack is `workers × trade.per_worker_carry`: got {party_cap}, wanted {}",
-        PARTY_WORKERS as f32 * trade_carry
+        (party_cap - resolved_trade_cap).abs() < EPSILON,
+        "a shipment party's pack is the sim's own `shipment_carry_cap`, never a lever product of \
+         its own: got {party_cap}, wanted {resolved_trade_cap}"
     );
     assert!(
-        (party_cap - PARTY_WORKERS as f32 * hunt_carry).abs() > EPSILON,
-        "and emphatically NOT the raid's pack — a client reading the hunt lever would quote a cap \
+        (party_cap - hunt_cap).abs() > EPSILON,
+        "and emphatically NOT the raid's pack — a client reading the hunt LEVER would quote a cap \
          the launch command refuses: got {party_cap}"
     );
     assert_eq!(

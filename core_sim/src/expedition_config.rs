@@ -153,6 +153,31 @@ pub struct TradeExpeditionConfig {
     pub fodder_carry_weight: f32,
 }
 
+/// **The resolved carry of ONE worker on a shipment** — what the sim says a person hauls, not a
+/// lever read. Today a party carries what its people can carry, so it resolves to
+/// [`TradeExpeditionConfig::per_worker_carry`] alone.
+///
+/// **It exists so that carry has one home.** A carrier-side model — a cart kit's `trade_carry`
+/// stat, a tech factor, a road grade — attaches *here*, and every consumer picks it up without an
+/// edit: the launch refusal (`resolve_shipment`), the per-mission `expedition_carry_cap` a live
+/// party publishes, and the `expedition_trade_per_worker_carry` echo the cargo picker multiplies by
+/// the party it is composing. The wire promises the client this resolved number, so a client that
+/// runs `party_workers × it` gets the sim's own answer whatever the model grows into.
+///
+/// **It must stay positive.** The lever is validated `> 0` at load, and a `0` reaching the wire lets
+/// a client render a zero cap and refuse every manifest a player could build — so any term a future
+/// model multiplies or adds here has to preserve that.
+pub fn trade_per_worker_carry(trade: &TradeExpeditionConfig) -> f32 {
+    trade.per_worker_carry
+}
+
+/// **How much pack space a shipment party HAS** — [`trade_per_worker_carry`] × the party, and the
+/// twin of `shipment_mass` (which lives with the launch command in `bin/server.rs`): a shipment
+/// launches exactly when the mass is no greater than the cap.
+pub fn shipment_carry_cap(party_workers: u32, trade: &TradeExpeditionConfig) -> f32 {
+    party_workers as f32 * trade_per_worker_carry(trade)
+}
+
 /// Scout opportunistic-replenish levers: the scout's own use of the shared `hunt_take` primitive.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReplenishConfig {

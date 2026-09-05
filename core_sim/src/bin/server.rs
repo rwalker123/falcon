@@ -44,22 +44,23 @@ use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
     fold_party_into_band, hunt_trip_forecast, install_config_override, party_owes_a_report,
     publish_baseline_snapshot, recapture_snapshot_in_place, run_turn, scalar_from_f32,
-    split_band_from_parent, AgentAssignment, BandId, BandIdAllocator, CommandEventEntry,
-    CommandEventKind, CommandEventLog, CounterIntelBudgets, CrisisArchetypeCatalog,
-    CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata, CrisisModifierCatalog,
-    CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata, CrisisTelemetry,
-    CrisisTelemetryConfig, CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata,
-    DiscoveryProgressLedger, EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog,
-    EspionageMissionId, EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate,
-    EspionageRoster, FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies,
-    FaunaConfigHandle, FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement,
-    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
-    QueueMissionParams, Scalar, SecurityPolicy, Settlement, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
-    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
-    SubmitOutcome, Tile, TileRegistry, TownCenter, TradeExpeditionConfig, TurnPipelineConfig,
-    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD,
+    shipment_carry_cap, split_band_from_parent, AgentAssignment, BandId, BandIdAllocator,
+    CommandEventEntry, CommandEventKind, CommandEventLog, CounterIntelBudgets,
+    CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
+    CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
+    CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
+    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EquipmentConfigHandle,
+    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
+    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
+    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FoodSiteRegistry, ForageRegistry,
+    FrameSink, HerdRegistry, Improvement, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns,
+    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, Settlement,
+    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
+    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
+    SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter, TradeExpeditionConfig,
+    TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
+    WorldEpoch, FODDER, FOOD,
 };
 use sim_runtime::{
     commands::{
@@ -4851,21 +4852,13 @@ fn shipment_mass(
         + trade.material_carry_weight * material_units
 }
 
-/// **How much pack space this party HAS** — `party_workers × trade.per_worker_carry`, the twin of
-/// [`shipment_mass`]: the two halves of one rule, and a shipment launches exactly when the first is
-/// no greater than the second.
-///
-/// It is a function rather than an inline product because **the carry model is expected to grow** —
-/// carts, then wagons, then rails — and a cap that a vehicle, a kit or a tech factor multiplies is a
-/// change to *this* expression. There is no such model today: a party carries what its people can
-/// carry, and there is no `trade_carry` equipment stat for this to read.
-///
-/// **The client's own quote is a second site, deliberately** (`snapshot::population`'s
-/// `expedition_carry_cap`): it prices a party that does not exist yet, off the echoed lever rather
-/// than off the config, so it cannot call this. Whatever grows this rule has to move both.
-fn shipment_carry_cap(party_workers: u32, trade: &TradeExpeditionConfig) -> f32 {
-    party_workers as f32 * trade.per_worker_carry
-}
+// **How much pack space this party HAS** is [`core_sim::shipment_carry_cap`], the twin of
+// [`shipment_mass`] above: the two halves of one rule, and a shipment launches exactly when the
+// first is no greater than the second. It lives in the lib rather than here because there is **one**
+// resolver for shipment carry and the snapshot goes through it — the launch refusal below, the
+// per-mission cap a live party publishes, and the per-worker carry the wire echoes to the cargo
+// picker are all that one expression, so a carry model (a cart kit, a tech factor, a road grade)
+// moves it once and the wire follows.
 
 /// Resolve and validate a shipment's destination and its cargo. **Fails closed on every axis** — an
 /// empty order, an unknown commodity or material, a non-positive or non-finite amount, cargo the
@@ -17431,20 +17424,26 @@ mod tests {
     /// Working-age people the fixture band is stocked with, so a split leaves two real bands and
     /// there is a comfortable party to draw off either.
     const TRADE_FIXTURE_WORKERS: f32 = 20.0;
-    /// Workers the shipment party is sent with. With the shipped `trade.per_worker_carry` of 6.0
-    /// this is a 12-unit pack — big enough to hold `TRADE_CARGO_FOOD` and small enough that
-    /// `OVER_CAP_FOOD` genuinely does not fit.
+    /// Workers the shipment party is sent with. At the shipped resolved carry of 6.0 per worker
+    /// (`core_sim::trade_per_worker_carry`) this is a 12-unit pack — big enough to hold
+    /// `TRADE_CARGO_FOOD` and small enough that `OVER_CAP_FOOD` genuinely does not fit.
     const TRADE_PARTY: u32 = 2;
     /// Workers the fixture hands the second band. Over `min_founding_workers` on any seed.
     const TRADE_SPLIT_WORKERS: u32 = 5;
     /// Food the fixture band is stocked with — far more than any shipment below asks for, so a
     /// refusal is never a refusal about availability unless it says so.
     const TRADE_FIXTURE_LARDER: f32 = 400.0;
-    /// A shipment that fits: under `TRADE_PARTY × trade.per_worker_carry`.
+    /// A shipment that fits: under `core_sim::shipment_carry_cap(TRADE_PARTY, ..)`.
     const TRADE_CARGO_FOOD: f32 = 10.0;
     /// A shipment that does not: over the same cap, and comfortably inside the larder, so the only
     /// thing that can refuse it is the pack.
     const OVER_CAP_FOOD: f32 = 99.0;
+    /// **The smallest step past the pack a fixture can assert on.** The boundary test needs a
+    /// manifest over the cap by strictly more than the slack this module reads floats at, so that
+    /// `mass > cap` is a real refusal and not a rounding artefact — one [`TRADE_EPSILON`] over is
+    /// exactly that and nothing more, which is what makes "the cap itself fits, a hair over does
+    /// not" a claim about the boundary rather than about a margin.
+    const OVER_CAP_STEP: f32 = TRADE_EPSILON;
     /// Hay the fixture band is stocked with when a test needs a hayloft. Well over any manifest
     /// below, so a refusal is never about availability unless the test says so.
     const TRADE_FIXTURE_HAYLOFT: f32 = 200.0;
@@ -17677,6 +17676,124 @@ mod tests {
         assert!(
             detail.contains("carry"),
             "the refusal says WHY the pack refused it — got {detail}"
+        );
+    }
+
+    /// **One band's published `expeditionTradePerWorkerCarry`**, read off the **encoded** envelope
+    /// through the accessor chain a client uses — the number a cargo picker multiplies by the party
+    /// it is composing. Read from the wire rather than from config deliberately: that a client
+    /// running the published expression lands on the sim's own cap is the whole claim.
+    fn published_trade_per_worker_carry(app: &mut bevy::prelude::App, band_id: u64) -> f32 {
+        use core_sim::{recapture_snapshot_in_place, SnapshotHistory};
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
+        envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the population section is published")
+            .iter()
+            .find(|cohort| cohort.bandId() == band_id)
+            .expect("the sending band publishes a cohort row")
+            .expeditionTradePerWorkerCarry()
+    }
+
+    /// **THE PUBLISHED CARRY IS THE BOUNDARY THE LAUNCH COMMAND ENFORCES.**
+    ///
+    /// `expeditionTradePerWorkerCarry` promises a client the sim's **resolved** per-worker shipment
+    /// carry, so the cargo picker's entire rule is `cap = party_workers × it`. This pins that promise
+    /// to the command that refuses on it, and it takes the carry **off the wire** rather than out of
+    /// config on purpose: a carry model that grew server-side but skipped
+    /// `core_sim::trade_per_worker_carry` would still satisfy an equality against
+    /// `trade.per_worker_carry` while silently mis-metering every client. The *published* number is
+    /// therefore what both halves below are asserted against.
+    ///
+    /// **Both sides of the boundary, because one alone is unfalsifiable.** A manifest of exactly the
+    /// published cap launches whole — food is the numéraire at weight `1.0`, so its mass *is* the cap
+    /// — and one [`OVER_CAP_STEP`] heavier is refused with the larder untouched. A cap the player
+    /// cannot actually reach is as wrong a meter as one they can overshoot.
+    #[test]
+    fn the_published_per_worker_carry_is_the_cap_the_launch_command_enforces() {
+        let mut app = build_world_app();
+        let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        // The sending band's own people are the viewer, or its cohort row is not on the frame.
+        app.world.insert_resource(core_sim::ViewerFaction(faction));
+
+        let wire_carry = published_trade_per_worker_carry(&mut app, sender_id);
+        assert!(
+            wire_carry > 0.0,
+            "a `0` on the wire lets a client render a zero cap and refuse every manifest a player \
+             could build: got {wire_carry}"
+        );
+        let resolved_cap = {
+            let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
+            shipment_carry_cap(TRADE_PARTY, &cfg.trade)
+        };
+        // The expression the wire hands a client, run exactly as the client runs it.
+        let client_cap = TRADE_PARTY as f32 * wire_carry;
+        assert!(
+            (client_cap - resolved_cap).abs() < TRADE_EPSILON,
+            "the published expression must land on the sim's own resolved cap: {client_cap} vs \
+             {resolved_cap}"
+        );
+
+        // Over the boundary FIRST, so "no party" is a refusal rather than a fixture that has simply
+        // not launched anything yet.
+        let before = band_food(&app, sender);
+        handle_send_trade_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            food_cargo(client_cap + OVER_CAP_STEP),
+            None,
+        );
+        assert!(
+            launched_party(&mut app).is_none(),
+            "a manifest over the PUBLISHED cap of {client_cap} must not leave"
+        );
+        let after = band_food(&app, sender);
+        assert!(
+            (before - after).abs() < TRADE_EPSILON,
+            "a refused shipment leaves the larder exactly as it stood: {before} -> {after}"
+        );
+
+        // And exactly the cap, which must fit: a meter quoting a ceiling the player can never reach
+        // is the same lie in the other direction.
+        handle_send_trade_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            food_cargo(client_cap),
+            None,
+        );
+        let party = launched_party(&mut app)
+            .expect("a manifest of exactly the published cap fits the party's packs");
+        let carried = app
+            .world
+            .get::<Expedition>(party)
+            .expect("the launched party carries its shipment")
+            .cargo
+            .get(FOOD)
+            .to_f32();
+        assert!(
+            (carried - client_cap).abs() < TRADE_EPSILON,
+            "and it leaves with the WHOLE manifest, never a quietly clamped one: {carried} vs \
+             {client_cap}"
         );
     }
 

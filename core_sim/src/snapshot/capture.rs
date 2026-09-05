@@ -2424,7 +2424,11 @@ pub fn capture_snapshot(
         std::sync::LazyLock::new(std::collections::BTreeMap::new);
     let expedition_levers = ExpeditionLevers {
         hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
-        trade_per_worker_carry: expedition_cfg.trade.per_worker_carry,
+        // **The config, not a resolved number.** Shipment carry has two rules resolved off it —
+        // the per-worker echo the outfit UI multiplies, and a live party's own cap — and the row
+        // builder runs both, so a term that scales with the party rather than with a worker cannot
+        // slip past one of them.
+        trade: &expedition_cfg.trade,
         trade_material_carry_weight: expedition_cfg.trade.material_carry_weight,
         trade_fodder_carry_weight: expedition_cfg.trade.fodder_carry_weight,
         // **The EQUIPPED reference rate, resolved through the item table's default tier** — an

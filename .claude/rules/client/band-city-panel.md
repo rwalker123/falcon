@@ -5831,7 +5831,7 @@ carry weight = 1.0 food · expeditionTradeFodderCarryWeight hay · expeditionTra
 makes `Max` unable to reach the cap at all — press it and the row grows by nothing, because the
 space it already occupies reads as spoken for. The other-rows term goes through
 `_trade_manifest_mass`, so the headroom offered and the cap the send is refused at come from one
-expression. A band publishing no pack lever (cap 0, the meter's "unknown ceiling") or a row whose
+expression. A band publishing no carry number (cap 0, the meter's "unknown ceiling") or a row whose
 carry weight is 0 has no second cap, so the held one stands alone.
 
 **ALL THREE WRITING CONTROLS CLAMP TO `row_max`, and `+` GREYS OUT ON IT.** `amount >= row_max`,
@@ -5981,10 +5981,20 @@ mass = Σ food rows
 cap  = party_workers × expeditionTradePerWorkerCarry
 ```
 
-Every term is a per-cohort echo of the sim's own config, so a tuning change moves the meter and the
+Every term is a per-cohort number the sim publishes, so a tuning change moves the meter and the
 refusal together. **None is a literal here** — `expeditionPerWorkerCarry` is the HUNT pack and a
 client composing a trade cap out of it would be one config edit from quoting a cap
 `send_trade_expedition` refuses.
+
+**THE TWO KINDS ARE NOT THE SAME, AND THE CARRY ONE IS WHY THIS SHEET MAY HOLD THE EXPRESSION AT
+ALL** (issue #626). The carry weights are config levers echoed verbatim: what a unit of hay or hide
+costs in pack space is a property of the GOODS. `expeditionTradePerWorkerCarry` is not a lever — it
+is the sim's RESOLVED answer to *"what does one worker on this shipment carry"*, with whatever carry
+depends on already applied. So the client's whole share of the rule is the multiplication by the
+party, and a carrier-side model — a cart kit's stat, a tech factor, a road grade — changes the
+published number with nothing on this sheet to edit. A client that owned the carry FORMULA instead
+would render a cap the sim does not enforce the day carry stopped being head-count alone, and
+nothing would fail: the meter would just lie.
 
 **THREE TERMS, AND THE HAY ONE FAILS IN THE DANGEROUS DIRECTION.** A meter missing the fodder term
 UNDER-prices every manifest with a bale in it: it reads lighter than the sim will weigh it, so the
