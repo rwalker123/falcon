@@ -2424,7 +2424,11 @@ pub fn capture_snapshot(
         std::sync::LazyLock::new(std::collections::BTreeMap::new);
     let expedition_levers = ExpeditionLevers {
         hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
-        trade_per_worker_carry: expedition_cfg.trade.per_worker_carry,
+        // **The RESOLVED carry, not the lever.** `trade_per_worker_carry` is the one place a
+        // carrier-side model would attach, and the wire promises the client its answer.
+        trade_per_worker_carry: crate::expedition_config::trade_per_worker_carry(
+            &expedition_cfg.trade,
+        ),
         trade_material_carry_weight: expedition_cfg.trade.material_carry_weight,
         trade_fodder_carry_weight: expedition_cfg.trade.fodder_carry_weight,
         // **The EQUIPPED reference rate, resolved through the item table's default tier** — an

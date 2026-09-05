@@ -1159,26 +1159,34 @@ pub struct PopulationCohortState {
     /// `send_trade_expedition` command debits the larder between two published frames.
     #[serde(default)]
     pub transfer_sent: f32,
-    /// **One person's SHIPMENT pack** — `expedition_config.trade.per_worker_carry`, a global lever
-    /// echoed onto every cohort (the `expedition_per_worker_carry` / `hunt_per_worker_provisions`
-    /// idiom).
+    /// **What one worker on a shipment sent from this band carries, RESOLVED BY THE SIM** — the
+    /// sim's own answer after everything carry depends on has been applied
+    /// (`core_sim::trade_per_worker_carry`), not a config lever quoted onto the wire. Echoed onto
+    /// every cohort in the `expedition_per_worker_carry` / `hunt_per_worker_provisions` idiom.
+    ///
+    /// **The client multiplies it by the party and does nothing else**: `cap = party_workers ×
+    /// this`. So when carry grows a carrier-side model — a cart kit's `trade_carry` stat, a tech
+    /// factor, a road grade — this number changes and no client edit is needed.
     ///
     /// **This is the one the outfit UI needs**, because the player prices a manifest for a party
-    /// that does not exist yet: the cap is `party_workers × this`, and `party_workers` is what the
-    /// stepper is choosing. A party already on the map publishes its own pack as
-    /// [`Self::expedition_carry_cap`].
+    /// that does not exist yet, and `party_workers` is what the stepper is choosing. A party already
+    /// on the map publishes its own pack as [`Self::expedition_carry_cap`] — the same resolved
+    /// carry, already multiplied out.
     ///
-    /// **It is not [`Self::expedition_per_worker_carry`]**, which is the *hunt* pack. Two packs, two
-    /// levers; a client composing a trade cap from the raid's is one config edit away from quoting a
-    /// cap the launch command will refuse.
+    /// **It is not [`Self::expedition_per_worker_carry`]**, which is the *hunt* pack and a raw
+    /// lever. Two packs arrived at two ways; a client composing a trade cap from the raid's is one
+    /// config edit away from quoting a cap the launch command will refuse.
     ///
-    /// **Always positive** — the lever is validated `> 0` at load, and a `0` would let a client
-    /// render a zero cap and refuse every manifest.
+    /// **Always positive** — an invariant of the resolved value, not merely of the lever under it.
+    /// The lever is validated `> 0` at load and every future term has to preserve that, because a
+    /// `0` would let a client render a zero cap and refuse every manifest.
     #[serde(default)]
     pub expedition_trade_per_worker_carry: f32,
     /// **What one unit of a material costs in shipment pack space, relative to one unit of food** —
-    /// `expedition_config.trade.material_carry_weight`, the other half of a shipment's mass and the
-    /// same every-cohort lever echo as [`Self::expedition_trade_per_worker_carry`].
+    /// `expedition_config.trade.material_carry_weight`, the other half of a shipment's mass, echoed
+    /// onto every cohort exactly like [`Self::expedition_trade_per_worker_carry`] — though this one
+    /// really is a lever echo, because a material's bulk is a property of the **goods** rather than
+    /// of the carrier, so nothing resolves it.
     ///
     /// Together they give a client the sim's own expression:
     ///

@@ -183,8 +183,9 @@ pub use espionage::{
     QueueMissionParams, SecurityPolicy,
 };
 pub use expedition_config::{
-    load_expedition_config_from_env, ExpeditionConfig, ExpeditionConfigHandle,
-    ExpeditionConfigMetadata, SettleConfig, TradeExpeditionConfig, BUILTIN_EXPEDITION_CONFIG,
+    load_expedition_config_from_env, shipment_carry_cap, trade_per_worker_carry, ExpeditionConfig,
+    ExpeditionConfigHandle, ExpeditionConfigMetadata, SettleConfig, TradeExpeditionConfig,
+    BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,

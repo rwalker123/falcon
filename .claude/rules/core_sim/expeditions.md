@@ -1227,9 +1227,12 @@ unchanged.
 (below), so a shipment parked there would be quietly eaten by the people hauling it, arriving short
 with nothing to notice.
 
-- **Carry cap** = `party_workers × trade.per_worker_carry`, where a shipment's mass is
+- **Carry cap** = `expedition_config::shipment_carry_cap` — `party_workers ×` the **resolved**
+  per-worker carry (`trade_per_worker_carry`, today `trade.per_worker_carry` and nothing else) —
+  where a shipment's mass is
   `food + trade.fodder_carry_weight × fodder + trade.material_carry_weight × Σ material amounts`.
-  All three are config levers; none is a literal. See "Cargo is food, FODDER and materials" below
+  The two weights are config levers, the carry is resolved rather than read, and none of the three is
+  a literal. See "Cargo is food, FODDER and materials" below
   for where the fodder weight's number comes from.
 - **Materials are peeled batch by batch** — `LocalStore::take_material_batches`, which walks the
   store's own band-key order and splits only the last batch. **A split is not a merge**: an amount is
@@ -1335,12 +1338,12 @@ terms.**
 
 | field | answers | shape |
 |---|---|---|
-| `expeditionTradePerWorkerCarry` | *"how big a shipment can I send?"* — **before** there is a party | `expedition_config.trade.per_worker_carry`, echoed onto **every** cohort |
+| `expeditionTradePerWorkerCarry` | *"how big a shipment can I send?"* — **before** there is a party | `expedition_config::trade_per_worker_carry` — the **resolved** per-worker carry, never the raw lever — published onto **every** cohort |
 | `expeditionTradeFodderCarryWeight` | *"what does a unit of hay cost me in pack space?"* | `expedition_config.trade.fodder_carry_weight`, same every-cohort echo |
 | `expeditionTradeMaterialCarryWeight` | *"what does a unit of hide cost me in pack space?"* | `expedition_config.trade.material_carry_weight`, same every-cohort echo |
 | `expeditionCarryCap` | *"how full is this party?"* — a party already on the map | `party_workers ×` the per-worker carry of the pack **its mission** fills |
 
-The three levers are the sim's own mass expression, and the client holds it verbatim:
+The three published terms are the sim's own mass expression, and the client holds it verbatim:
 
 ```text
 mass = expeditionCargoFood
@@ -1349,9 +1352,9 @@ mass = expeditionCargoFood
 cap  = party_workers × expeditionTradePerWorkerCarry
 ```
 
-They have to be *global* echoes rather than per-party fields: the outfit UI prices a manifest for a
-party that does not exist yet, and `party_workers` is the number the stepper is *choosing*. Same
-idiom as `expeditionPerWorkerCarry` / `huntPerWorkerProvisions` / `expeditionForecastHorizonTurns`.
+They ride **every cohort** rather than only the parties: the outfit UI prices a manifest for a party
+that does not exist yet, and `party_workers` is the number the stepper is *choosing*. Same idiom as
+`expeditionPerWorkerCarry` / `huntPerWorkerProvisions` / `expeditionForecastHorizonTurns`.
 
 > **THE MASS LEVER SHIPS BECAUSE THE SIM MUST NOT REFUSE ON A RULE THE CLIENT CANNOT EVALUATE.**
 >
@@ -1364,16 +1367,56 @@ idiom as `expeditionPerWorkerCarry` / `huntPerWorkerProvisions` / `expeditionFor
 > What decides it is *"build it, send it, render the refusal"* — which makes the cargo picker a
 > guessing game. The player adds hide rows one at a time against a cap meter that cannot move and
 > finds out on submit. **A refusal tells the player what went wrong after they got it wrong; a live
-> meter stops them getting it wrong.** When the lever gains a real model it changes, the client's
-> expression changes with it, and both move in the same PR — the ordinary cost of a client-side
-> readout, not a new hazard.
+> meter stops them getting it wrong.** When a *goods* weight gains a real model — the density axis
+> `materials.json` does not author yet — that lever changes, the client's expression changes with it,
+> and both move in the same PR: the ordinary cost of a client-side readout, not a new hazard.
+>
+> **The carrier side is deliberately NOT left on those terms**, because it is the half expected to
+> grow — see the callout below.
 >
 > **The server-side refusal is unchanged and remains the authority.** The meter is a courtesy that
 > keeps the player from ever meeting it.
 
-**The levers carry different wire bounds, deliberately.** `per_worker_carry` is asserted
+> #### ⛔ THE CARRY IS RESOLVED BY THE SIM; THE CLIENT OWNS ONLY THE MULTIPLICATION
+>
+> `expeditionTradePerWorkerCarry` publishes **what one worker on this shipment carries**, not
+> `trade.per_worker_carry`. Today they are the same number — a party carries what its people can
+> carry — and the field is still deliberately not documented as the second one (issue #626).
+>
+> **What the distinction buys is a bound on what the client's copy of the rule contains.** `cap =
+> party_workers × per_worker_carry` is a *formula*, and a client holding a formula holds an
+> assumption about what carry depends on: today, *"workers, and nothing else"*. Carry is the term
+> expected to grow a carrier-side model — a cart, a wagon, a `trade_carry` equipment stat, a road
+> grade — and the day one lands, a client multiplying a raw lever renders a cap the sim does not
+> enforce, in whichever direction the model moved, **with nothing failing**: the meter just lies.
+> Publishing the resolved number leaves the client owning one multiplication, which no carrier model
+> can invalidate.
+>
+> **The goods weights stay raw lever echoes, deliberately.** What a unit of hay or hide costs in pack
+> space is a property of the *cargo*, not of the carrier, so they acquire no carrier-side model to
+> resolve and gain nothing from the same treatment.
+>
+> **ONE RESOLVER, THREE CONSUMERS.** `expedition_config::trade_per_worker_carry` is the only place
+> the question is answered, and `shipment_carry_cap` is its product with the party. The launch
+> refusal (`resolve_shipment`), the per-mission `expeditionCarryCap` and this every-cohort echo all
+> read it, so a carrier model attaches to one expression and every consumer follows. Resolution
+> happens **once per capture** because nothing it reads varies by band; an input that does — a kit —
+> moves the call into the cohort row builder, which is a sim-internal move the wire contract already
+> absorbs.
+>
+> Pinned by `bin/server.rs`'s `the_published_per_worker_carry_is_the_cap_the_launch_command_enforces`,
+> which reads the carry off the **encoded envelope** and asserts both sides of the boundary — a
+> manifest of exactly `party × published` launches whole, one epsilon over is refused with the larder
+> untouched. It is asserted against the *published* number rather than against the config because a
+> carry model that grew server-side but skipped the resolver would satisfy an equality with
+> `trade.per_worker_carry` and still mis-meter every client. It lives with the launch command rather
+> than in `tests/trade_expedition.rs` because that harness spawns its party by hand and never
+> consults the cap, so neither half of the boundary is observable from it.
+
+**The three carry different wire bounds, deliberately.** The published carry is asserted
 **positive** for the horizon's reason — a `0` lets a client render a zero cap and refuse every
-manifest a player could build. `material_carry_weight` **and `fodder_carry_weight`** are asserted
+manifest a player could build, so the resolver must preserve the lever's validated positivity
+whatever it later multiplies it by. `material_carry_weight` **and `fodder_carry_weight`** are asserted
 only **finite and `>= 0`**, because `0` is a legitimate setting on a *goods* weight (*"materials are
 weightless"*) and asserting positivity would pin a tuning as if it were a rule.
 

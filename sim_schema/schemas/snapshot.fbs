@@ -684,13 +684,13 @@ table PopulationCohortState {
   // (carried = stores/turnsOfFood for a raid, expeditionCargoFood + materials for a shipment) and a
   // FULL state.
   //
-  // *** WHICH LEVER FILLS IT DEPENDS ON THE MISSION, and that is the whole reason this is one
-  // field. *** A hunt or denial party fills `expedition_config.hunt.per_worker_carry` — the
-  // provisions ceiling it reaches before auto-Delivering. A TRADE party fills
-  // `expedition_config.trade.per_worker_carry` — a different pack, on a different lever, measured in
-  // what its people can carry out rather than in food they can haul home. A client that reached for
-  // the hunt lever to price a shipment would be one config edit away from quoting a cap the launch
-  // command refuses.
+  // *** WHAT FILLS IT DEPENDS ON THE MISSION, and that is the whole reason this is one field. ***
+  // A hunt or denial party fills `expedition_config.hunt.per_worker_carry` — the provisions ceiling
+  // it reaches before auto-Delivering. A TRADE party fills the RESOLVED per-worker shipment carry
+  // (`expeditionTradePerWorkerCarry` below) times the party — a different pack, measured in what its
+  // people can carry out rather than in food they can haul home. A client that reached for the hunt
+  // lever to price a shipment would be one config edit away from quoting a cap the launch command
+  // refuses.
   //
   // For the PRE-LAUNCH question — pricing a manifest for a party that does not exist yet — read
   // `expeditionTradePerWorkerCarry` below instead; there is no party to read a cap off.
@@ -1142,26 +1142,34 @@ table PopulationCohortState {
   transferSent:float = 0;
   // --- ONE PERSON'S SHIPMENT PACK (appended last, arc #527 / issue #517) ------------------------
   //
-  // `expedition_config.trade.per_worker_carry` — a global lever echoed onto EVERY cohort, the same
-  // idiom as expeditionPerWorkerCarry / huntPerWorkerProvisions / expeditionForecastHorizonTurns.
+  // *** WHAT ONE WORKER ON A SHIPMENT SENT FROM THIS BAND CARRIES, RESOLVED BY THE SIM. *** Not a
+  // config lever quoted onto the wire: it is the sim's own answer after everything carry depends on
+  // has been applied (`core_sim::trade_per_worker_carry`). The client multiplies it by the party and
+  // does NOTHING else — `cap = party_workers × this` — so when carry grows a carrier-side model (a
+  // cart kit's trade_carry stat, a tech factor, a road grade) this number changes and no client edit
+  // is needed. Echoed onto EVERY cohort, the same idiom as expeditionPerWorkerCarry /
+  // huntPerWorkerProvisions / expeditionForecastHorizonTurns.
   //
   // *** THIS IS THE ONE THE OUTFIT UI NEEDS. *** The player builds a shipment's manifest for a party
-  // that DOES NOT EXIST YET, so no per-party field can serve that screen: the cap is
-  // `party_workers × this`, and `party_workers` is what the stepper is choosing. Once the party is
-  // on the map its own pack is `expeditionCarryCap` above.
+  // that DOES NOT EXIST YET, so no per-party field can serve that screen, and `party_workers` is
+  // what the stepper is choosing. Once the party is on the map its own pack is `expeditionCarryCap`
+  // above — the same resolved carry, already multiplied out.
   //
   // *** IT IS NOT expeditionPerWorkerCarry. *** That one is the HUNT pack — a raid's provisions
-  // ceiling. A shipment's pack is a different number on a different lever, and a client composing a
-  // trade cap out of the hunt lever is one config edit away from quoting a cap
-  // `send_trade_expedition` will refuse.
+  // ceiling, and a raw lever. A shipment's pack is a different number arrived at a different way,
+  // and a client composing a trade cap out of the hunt lever is one config edit away from quoting a
+  // cap `send_trade_expedition` will refuse.
   //
-  // ALWAYS POSITIVE. `trade.per_worker_carry` is validated `> 0` at load, and a `0` here would let a
-  // client render a zero cap and refuse every manifest the player could build — the same failure
-  // expeditionForecastHorizonTurns is asserted positive against.
+  // ALWAYS POSITIVE — an invariant of the RESOLVED value, not merely of the lever under it. The
+  // lever is validated `> 0` at load and every future term has to preserve that, because a `0` here
+  // would let a client render a zero cap and refuse every manifest the player could build — the same
+  // failure expeditionForecastHorizonTurns is asserted positive against.
   expeditionTradePerWorkerCarry:float = 0;
   // The other half of a shipment's MASS: `expedition_config.trade.material_carry_weight`, what one
-  // unit of a material costs in pack space relative to one unit of food. Same every-cohort lever
-  // echo as the field above. Together they give the client the sim's own expression:
+  // unit of a material costs in pack space relative to one unit of food. Echoed onto every cohort
+  // exactly like the field above, though this one IS a lever echo — a material's bulk is a property
+  // of the GOODS, not of the carrier, so nothing resolves it. Together they give the client the
+  // sim's own expression:
   //
   //   mass = expeditionCargoFood
   //          + expeditionTradeFodderCarryWeight × expeditionCargoFodder

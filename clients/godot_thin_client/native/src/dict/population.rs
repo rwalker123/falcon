@@ -1004,7 +1004,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("expedition_cargo_materials", &cargo_materials);
-    // **THE THREE SHIPMENT-MASS LEVERS, ECHOED ONTO EVERY COHORT** — the same global-lever idiom as
+    // **THE THREE SHIPMENT-MASS TERMS, PUBLISHED ONTO EVERY COHORT** — the same every-cohort idiom as
     // `expedition_per_worker_carry` / `hunt_per_worker_provisions` above, and the set the OUTFIT UI
     // needs: it prices a manifest for a party that does not exist yet, so no per-party field can
     // serve that screen. The sim's own expression, held verbatim client-side:
@@ -1023,6 +1023,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // provisions ceiling — and a client composing a trade cap out of it is one config edit away from
     // quoting a cap `send_trade_expedition` refuses. Once a shipment is on the map its own pack is
     // `expedition_carry_cap` above, which resolves per MISSION.
+    //
+    // **AND THE TRADE ONE IS NOT A LEVER AT ALL** (issue #626): `expedition_trade_per_worker_carry`
+    // is the sim's RESOLVED answer to *"what does one worker on this shipment carry"*, so the client's
+    // whole share of the rule is multiplying it by the party — a cart, a wagon or a road grade moves
+    // the published number and no decode or readout here changes. The two cargo weights beside it
+    // stay verbatim lever echoes, being properties of the GOODS rather than of the carrier.
     let _ = dict.insert(
         "expedition_trade_per_worker_carry",
         f64::from(cohort.expeditionTradePerWorkerCarry()),

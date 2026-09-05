@@ -38,7 +38,7 @@ const PARENT_WORKERS: f32 = 20.0;
 const SPLIT_WORKERS: u32 = 5;
 /// Workers the shipment party carries. Two is enough pack for every manifest below.
 const PARTY_WORKERS: u32 = 2;
-/// The food a shipment carries. Well inside `PARTY_WORKERS × trade.per_worker_carry`.
+/// The food a shipment carries. Well inside `core_sim::shipment_carry_cap(PARTY_WORKERS, ..)`.
 const CARGO_FOOD: f32 = 8.0;
 /// The HAY a shipment carries — the third account, and deliberately a **different number** from
 /// [`CARGO_FOOD`], so an assertion that read the wrong account could not pass by coincidence.
@@ -929,11 +929,16 @@ fn a_shipment_publishes_its_destination_and_its_cargo_on_the_wire() {
 /// choosing, so no per-party field can serve that screen. Same idiom as
 /// `expeditionForecastHorizonTurns`.
 ///
-/// **They carry different bounds, deliberately.** The pack lever is asserted **positive** for the
+/// **They carry different bounds, deliberately.** The pack number is asserted **positive** for the
 /// horizon's reason — a `0` lets a client render a zero cap and refuse every manifest a player could
 /// build. The two cargo weights are asserted only **finite and `>= 0`**, because `0` is a legitimate
 /// setting on both ("materials are weightless", "hay is weightless") and asserting positivity would
 /// pin a tuning as a rule.
+///
+/// **And they are arrived at differently.** The two weights are lever echoes — a material's or a
+/// bale's bulk is a property of the goods — so they are pinned against the config fields. The pack
+/// is the sim's **resolved** per-worker carry (`core_sim::trade_per_worker_carry`), so it is pinned
+/// against the resolver, which is where a carrier-side model would attach.
 #[test]
 fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
     let mut app = spawn_world();
@@ -961,7 +966,7 @@ fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
             .resource::<core_sim::ExpeditionConfigHandle>()
             .get();
         (
-            cfg.trade.per_worker_carry,
+            core_sim::trade_per_worker_carry(&cfg.trade),
             cfg.trade.material_carry_weight,
             cfg.trade.fodder_carry_weight,
         )
@@ -979,7 +984,8 @@ fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
         );
         assert!(
             (trade_per_worker - expected_carry).abs() < EPSILON,
-            "band {band} must echo the pack lever verbatim: {trade_per_worker} vs {expected_carry}"
+            "band {band} must publish the RESOLVED carry, not a lever of its own: \
+             {trade_per_worker} vs {expected_carry}"
         );
         // Finite and `>= 0`, NOT positive: weightless materials is a real setting, so asserting
         // positivity here would pin a tuning as if it were a rule.

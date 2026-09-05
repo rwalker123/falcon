@@ -7591,6 +7591,14 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
 ## terms come off the wire (`expedition_trade_per_worker_carry`,
 ## `expedition_trade_fodder_carry_weight`, `expedition_trade_material_carry_weight`) — a lever typed
 ## here would be one config edit from a meter that disagrees with the refusal it exists to prevent.
+##
+## **THE CARRY NUMBER ARRIVES RESOLVED, AND THAT IS WHY THIS SHEET MAY HOLD THE EXPRESSION AT ALL**
+## (issue #626). `expedition_trade_per_worker_carry` is not a config lever: it is the sim's own answer
+## to *"what does one worker on this shipment carry"*, with whatever carry depends on already applied.
+## The only part of the rule this client owns is the multiplication by the party, so when a cart, a
+## wagon or a road grade enters the model the published number moves and nothing here is edited. The
+## two cargo weights beside it ARE verbatim levers, deliberately — what a unit of hay or hide costs in
+## pack space is a property of the goods, not of who is carrying them.
 func _fill_trade_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int) -> void:
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
     var ties := _band_labor.connections_for_band(band_id)
@@ -8307,9 +8315,10 @@ func _trade_manifest_mass(band: Dictionary, rows: Array) -> float:
         fodder, float(band.get("expedition_trade_fodder_carry_weight", 0.0)),
         material_total, float(band.get("expedition_trade_material_carry_weight", 0.0)))
 
-## `party_workers × expedition_trade_per_worker_carry` — the SHIPMENT pack, never the hunt one. A band
-## publishing no lever answers 0, which the meter renders as an unknown ceiling rather than as a cap
-## of zero that would refuse every manifest.
+## `party_workers × expedition_trade_per_worker_carry` — the SHIPMENT pack, never the hunt one. The
+## wire number is the sim's RESOLVED per-worker carry (issue #626), so this product is the whole of the
+## client's share of the rule. A band publishing no carry number answers 0, which the meter renders as
+## an unknown ceiling rather than as a cap of zero that would refuse every manifest.
 func _trade_carry_cap(band: Dictionary) -> float:
     return float(_send_expedition_count) \
         * float(band.get("expedition_trade_per_worker_carry", 0.0))

@@ -55,10 +55,12 @@ const PARKED_ENTITY := 983
 ## The trade party in flight — an expedition cohort, so it must not collide with a band entity.
 const TRADE_PARTY_ENTITY := 7181
 
-## **THE TWO SHIPMENT-MASS LEVERS, AS THE SIM PUBLISHES THEM.** The cap is `party × per_worker_carry`
+## **THE TWO SHIPMENT-MASS TERMS, AS THE SIM PUBLISHES THEM.** The cap is `party × per_worker_carry`
 ## and a material unit costs `material_carry_weight` of pack space, so a 4-worker party carries 40 and
-## one hide costs 2. Stated here rather than borrowed from the hunt lever, which is a DIFFERENT pack:
-## a fixture that reused it would render a cap `send_trade_expedition` refuses.
+## one hide costs 2. The carry is the sim's RESOLVED per-worker number rather than a config lever
+## (issue #626) — a fixture states it for the same reason the sheet multiplies it and asks nothing else
+## about it. Stated here rather than borrowed from the hunt lever, which is a DIFFERENT pack: a
+## fixture that reused it would render a cap `send_trade_expedition` refuses.
 const TRADE_PER_WORKER_CARRY := 10.0
 const TRADE_MATERIAL_CARRY_WEIGHT := 2.0
 
