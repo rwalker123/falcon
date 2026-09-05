@@ -325,33 +325,122 @@ static func _route_craft_refusal(unlock: String, progress: float, labels: Dictio
 ## out". Same kind of answer (what is missing, how far along, and the remedy), same statelessness, so
 ## it belongs beside them rather than in a second gate layer.
 ##
-## The sim credits a wild patch's fodder take only to a faction that has learned **Foddering**, or on a
-## patch already COMMITTED to a crop — committing IS the bid, so the crop's hay is paid unconditionally
-## (`systems/labor.rs`: `patch.species.is_some() || knows(faction, FODDERING)`). Foddering is earned by
-## KEEPING A PENNED HERD, so a pre-pastoral band structurally cannot have it: the meadow publishes a
-## real `fodder_per_biomass` and the band banks none of it.
+## The sim credits a wild patch's fodder take to a faction that has learned **Foddering**, or on a
+## patch COMMITTED TO A FODDER-BEARING CROP — committing to hay IS the bid, so that crop's hay is paid
+## whatever the faction knows (`systems/labor.rs`:
+## `committed_to_a_fodder_crop(patch.species, &flora) || knows(faction, FODDERING)`). Foddering is
+## earned by KEEPING A PENNED HERD, so a pre-pastoral band structurally cannot have it: the meadow
+## publishes a real `fodder_per_biomass` and the band banks none of it.
 ##
-## **It takes the committed-species STRING, not the patch dict, deliberately.** Every caller has
-## already read that key, and the `patch_`-prefixed-vs-bare trap this file documents is not worth
-## re-entering for one lookup. **And it must be the PUBLISHED commitment** (`patch_committed_species`),
-## never the composed improvement: a Cultivate the player has ticked but not committed is not a bid the
-## sim has accepted, and quoting it would unlock a credit that is still being refused.
+## ⛔ **A COMMITMENT TO *ANYTHING* IS NOT THE BID, and reading it as one paid hay to people who had not
+## asked for it.** The bid used to be `patch.species.is_some()` on both sides of the wire — any
+## commitment at all — so a GRAIN field on mixed ground opened the credit: a player with no pens, no
+## Foddering and one cultivated `wild_emmer` patch on ground that is 31% `hay_grass` banked hay every
+## turn and pooled it between bands, hay nothing in that game could consume. The commitment arm now
+## asks about the COMMITTED SPECIES ITSELF, on both sides.
+##
+## ⛔ **THIS PREDICATE MIRRORS THE SIM'S AND MUST MOVE WHEN IT DOES.** It has silently drifted once
+## already: the sim tightened its arm and this one kept the old rule, so a grain commitment rendered
+## the fodder credit UNLOCKED while the sim refused it — the client promising a payment that never
+## arrives, which is the exact failure the "credited value, never a recomputation" discipline exists to
+## prevent one layer down.
+##
+## **FODDER-BEARING IS `cultivate_fodder_payoff > 0` OR `sow_fodder_payoff > 0`, both rungs.** The
+## sim's test is `yield.fodder_per_biomass > 0.0` on the SPECIES and is RUNG-INDEPENDENT; the wire
+## publishes that one fact through two per-rung payoffs, so asking only one of them would drift from
+## the rule the moment a crop pays hay at a rung the patch is not standing on.
+##
+## **IT FAILS CLOSED**, exactly as the sim does on an unresolvable id: a committed species with no row
+## in this basket is treated as NOT fodder-bearing and the locked reason is shown. The direction is
+## deliberate — a readout that under-promises is recoverable by the player, one that promises a credit
+## the sim refuses is the defect above.
+##
+## **It takes the committed-species STRING and the BASKET, not the patch dict, deliberately.** Every
+## caller has already read the commitment key, and the `patch_`-prefixed-vs-bare trap this file
+## documents is not worth re-entering; the basket arrives as `SourceForecast.flora_basket_entries`'
+## normalized rows, which is the ONE decomposition of the composition list and already coerces both
+## payoffs to a `0.0` default — so the fail-closed reading has one home rather than one per caller.
+## **And the commitment must be the PUBLISHED one** (`patch_committed_species`), never the composed
+## improvement: a Cultivate the player has ticked but not committed is not a bid the sim has accepted,
+## and quoting it would unlock a credit that is still being refused.
 ##
 ## Partial progress refuses the credit exactly like every other track — this is a 0..1 learning meter,
 ## and only `>= KNOWLEDGE_COMPLETE` is "known".
-static func wild_fodder_reason(committed_species: String, knowledge: Dictionary) -> String:
-    if committed_species.strip_edges() != "":
+static func wild_fodder_reason(committed_species: String, basket: Array[Dictionary],
+        knowledge: Dictionary) -> String:
+    if _committed_to_a_fodder_crop(committed_species, basket):
         return ""
     var foddering := track(knowledge, HudFloraVocab.KNOWLEDGE_TRACK_FODDERING)
     if foddering >= HudConst.KNOWLEDGE_COMPLETE:
         return ""
     # TWO remedies, both real and both reachable from where the player is standing: learn the craft by
-    # keeping a pen (the corral rung's glyph), or commit this patch (the cultivate rung's glyph, whose
-    # control is directly below this line on the same sheet).
+    # keeping a pen (the corral rung's glyph), or commit this patch TO A FODDER CROP (the cultivate
+    # rung's glyph, whose control is directly below this line on the same sheet — and whose crop picker
+    # is where the hay row is chosen).
     return HudFloraVocab.GATE_REASON_WILD_FODDER_FORMAT % [
         HudFormat.progress_percent(foddering),
         FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL),
         FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CULTIVATE)]
+
+## **WOULD THE HAY IN A RUNG'S PAYOFF QUOTE BE REFUSED?** — `true` when the `ONCE TENDED …` deal row
+## must not state a fodder figure. The `wild_fodder_reason` gate NARROWED by one case, and expressed
+## as that narrowing rather than restated, so the row and the deal line one control apart cannot
+## disagree about one patch.
+##
+## **FOUR CASES, and the counter-intuitive one is the third:**
+##
+## | the patch is… | Foddering | the deal row |
+## |---|---|---|
+## | committed to a FODDER-bearing species | either | **quotes the hay** — committing to hay is the bid |
+## | committed to a NON-fodder species | unknown | **refused** — the commitment is not a bid for hay |
+## | committed to a NON-fodder species | known | **quotes the hay** — the gate's other arm |
+## | **not committed at all** | unknown | **quotes the hay** — see below |
+##
+## ⛔ **AN UNCOMMITTED PATCH IS NOT GATED, and calling `wild_fodder_reason` here directly is the bug
+## that produces.** That gate fails closed on `""` — correctly, because it answers *"will the hay this
+## crew gathers TODAY be banked"*, and today this crew has bid for nothing. This question is a
+## different one: *"what would this ground pay ONCE TENDED"*, which on an uncommitted patch is an OPEN
+## question the player has not answered yet. The wire's figure there is a real *"this ground could"*,
+## and suppressing it would hide a legitimate number — the hidden gate this arc exists to refuse,
+## arriving from the other direction. Hence the early return, which is the whole of the narrowing.
+##
+## **THE WIRE FIELD IT GUARDS IS CORRECT AND MUST NOT CHANGE.** `forage::tended_fodder` /
+## `field_fodder` compute what the LAND would grow at that rung from the tile's basket — species-blind
+## by construction and right to be, answering *"what does this ground produce"* rather than *"what
+## will you be paid"*. Applying the credit gate is the CLIENT's half of that split, and it is the same
+## discipline `SourceYield::fodder` keeps on the sim side: state the credited value, never a
+## re-derivation, or the readout publishes a number nobody was ever paid.
+static func fodder_payoff_is_refused(committed_species: String, basket: Array[Dictionary],
+        knowledge: Dictionary) -> bool:
+    if committed_species.strip_edges() == "":
+        return false
+    return wild_fodder_reason(committed_species, basket, knowledge) != ""
+
+## **IS THIS PATCH COMMITTED TO A CROP THAT ACTUALLY BEARS HAY?** — the client's mirror of the sim's
+## `committed_to_a_fodder_crop`, and the whole of the commitment arm above.
+##
+## `""` (uncommitted) is `false`, and so is a committed species this basket cannot resolve: the id is
+## looked up in the tile's OWN composition, which is where the wire publishes the per-species payoffs,
+## and an id with no row there answers "not fodder-bearing" rather than being trusted.
+##
+## ⛔ **NOT `role == "fodder"`, however much better that reads.** `role` is a DISPLAY TAG derived from
+## whichever component of a species' yield vector dominates, and the sim explicitly never branches on
+## it; it coincides with this rule only while `hay_grass` is the one fodder-bearing species in the
+## roster, and a second one that pays mostly calories would be tagged `staple` and silently refused.
+## The payoffs are the published quantities the sim's own test is about.
+static func _committed_to_a_fodder_crop(committed_species: String,
+        basket: Array[Dictionary]) -> bool:
+    var species := committed_species.strip_edges()
+    if species == "":
+        return false
+    for entry in basket:
+        if String(entry.get("species", "")).strip_edges() != species:
+            continue
+        return float(entry.get("cultivate_fodder_payoff",
+                SourceForecast.FLORA_CROP_RATIO_NONE)) > SourceForecast.FLORA_CROP_RATIO_NONE \
+            or float(entry.get("sow_fodder_payoff",
+                SourceForecast.FLORA_CROP_RATIO_NONE)) > SourceForecast.FLORA_CROP_RATIO_NONE
+    return false
 
 ## The BARE-KEYED twin of `forage_gates`, for the raw wire patch dict (`forage_patch_lookup`) rather
 ## than the `patch_`-prefixed `tile_info` cross-ref.

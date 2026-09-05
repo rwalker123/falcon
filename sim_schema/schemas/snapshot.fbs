@@ -1092,9 +1092,11 @@ table PopulationCohortState {
   // splinter and a shipment to strangers are the same row.
   expeditionDestinationBand:ulong = 0;
   expeditionDestinationName:string;
-  // What the party is carrying, in the two accounts a band store holds. `expeditionCargoFood` is the
-  // FOOD commodity; `expeditionCargoMaterials` is one row per material id, reusing MaterialPayoff
-  // rather than minting a second table.
+  // What the party is carrying, in the three accounts a band store holds. `expeditionCargoFood` is
+  // the FOOD commodity and `expeditionCargoFodder` (appended at the end of this table, where the
+  // wire's append-only rule puts it) is the HAY beside it - two keys that never convert, so a herd
+  // can never eat its keepers' bread. `expeditionCargoMaterials` is one row per material id, reusing
+  // MaterialPayoff rather than minting a second table.
   //
   // Same three contracts as every material readout in this arc: NEVER SUMMED (a total of hide and
   // bone is the retired trade axis under a new name), EMPTY MEANS "NO ROW" rather than zero, and the
@@ -1161,8 +1163,14 @@ table PopulationCohortState {
   // unit of a material costs in pack space relative to one unit of food. Same every-cohort lever
   // echo as the field above. Together they give the client the sim's own expression:
   //
-  //   mass = expeditionCargoFood + expeditionTradeMaterialCarryWeight × Sum(material amounts)
+  //   mass = expeditionCargoFood
+  //          + expeditionTradeFodderCarryWeight × expeditionCargoFodder
+  //          + expeditionTradeMaterialCarryWeight × Sum(material amounts)
   //   cap  = party_workers × expeditionTradePerWorkerCarry
+  //
+  // (The hay term joined the expression when shipments learned to carry fodder; its lever is
+  // appended at the end of this table, and a client that omits it under-prices every manifest with
+  // a bale in it.)
   //
   // *** IT SHIPS BECAUSE THE SIM OTHERWISE REFUSES A MANIFEST ON A RULE THE CLIENT CANNOT
   // EVALUATE. *** Without it the cargo picker is a guessing game: the player adds hide rows one at a
@@ -1391,15 +1399,48 @@ table PopulationCohortState {
   // that forward is what a forecast is for; a shipment arrives once, and annualising one delivery
   // into a standing per-turn rate is the mistake arc #527 refused on the food side.
   //
-  // *** THE ROUTE ARM READS 0 TODAY, AND THAT IS A FACT ABOUT SHIPMENTS RATHER THAN ABOUT HAY. ***
-  // A shipment's manifest refuses any cargo item that is not food or a material (core_sim
-  // `ResolvedShipment`), so no party can be carrying fodder to book. The arm ships anyway because
-  // both accounts have one shape and this wire is append-only: giving fodder a currency in a
-  // shipment fills it in with no schema change.
+  // *** THE ROUTE ARM IS LIVE: A SHIPMENT CARRIES HAY. *** `send_trade_expedition` takes a `fodder
+  // <amount>` line beside its `food` and `material` ones, drawn from this same store, so a party
+  // genuinely walks bales from one camp to another - debited here at launch, credited at the
+  // destination on arrival, and credited back home if the shipment never lands. The arm was
+  // appended before the verb could fill it, on the bet that both accounts have one shape and this
+  // wire is append-only; the bet paid, and giving fodder a currency in a shipment cost no schema
+  // change at all.
+  //
+  // Hay's ledger is SEPARATE FROM FOOD'S and closes no identity of its own - the food identity above
+  // is over the FOOD larder, which a bale never enters. A shipment's hay is booked here and
+  // deliberately nowhere in `transferSent` / `transferReceived`.
   fodderTransferLocalReceivedTurn:float = 0;
   fodderTransferLocalSentTurn:float = 0;
   fodderTransferRouteReceivedTurn:float = 0;
   fodderTransferRouteSentTurn:float = 0;
+  // --- THE SHIPMENT'S THIRD ACCOUNT (appended last, issue #590) ---------------------------------
+  //
+  // The HAY an in-flight party is carrying, the fodder twin of `expeditionCargoFood` above. It
+  // belongs beside that field and is emphatically NOT there: this wire is append-only and field
+  // ORDER IS THE CONTRACT, so a field that reads better in the middle still goes on the end.
+  //
+  // Read off `Expedition::cargo`, a store of the party's own - never the party's pack, which is a
+  // walking larder for people and holds no hay at all. 0 for every other mission and for a resident
+  // band, and a real reading rather than an absent one: a shipment of pure grain says `0` here.
+  expeditionCargoFodder:float = 0;
+  // The THIRD term of a shipment's mass: `expedition_config.trade.fodder_carry_weight`, what one
+  // unit of hay costs in pack space relative to one unit of food. Echoed onto EVERY cohort exactly
+  // like `expeditionTradeMaterialCarryWeight`, and for the identical reason - the player prices a
+  // manifest for a party that does not exist yet, so no per-party field can serve that screen.
+  //
+  // *** IT IS NOT OPTIONAL POLISH. *** Without it a cargo picker cannot evaluate the cap rule the
+  // sim refuses on, which is the whole reason the material lever ships. A client that leaves the hay
+  // term out of the mass expression under-prices every manifest carrying a bale, and the player
+  // finds out on submit.
+  //
+  // The shipped 0.5 is priced in TURNS OF KEEP against food's 37.5 person-turns per worker load -
+  // see the lever's own comment in `core_sim/src/data/expedition_config.json` for the derivation.
+  // It is a playtest dial, and a client must read it rather than hardcode it.
+  //
+  // FINITE AND >= 0, not positive: `0` is a legitimate setting ("hay is weightless"), the same wire
+  // assertion the material lever carries and deliberately not the `> 0` the pack lever does.
+  expeditionTradeFodderCarryWeight:float = 0;
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of

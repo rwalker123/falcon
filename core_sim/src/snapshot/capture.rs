@@ -2426,6 +2426,7 @@ pub fn capture_snapshot(
         hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
         trade_per_worker_carry: expedition_cfg.trade.per_worker_carry,
         trade_material_carry_weight: expedition_cfg.trade.material_carry_weight,
+        trade_fodder_carry_weight: expedition_cfg.trade.fodder_carry_weight,
         // **The EQUIPPED reference rate, resolved through the item table's default tier** — an
         // outfitting lever is quoted for a party that leaves kitted, and `labor_config`'s key is the
         // sledless baseline now.

@@ -194,8 +194,13 @@ domestication *reduce* capacity). **Playtest dials.**
 > **There is no `pen net` column, and there cannot be one.** It used to read `pen gross − upkeep`,
 > both in provisions, because the feed came out of the same larder the yield was paid into — the
 > modelling error this arc removed. A pen pays **provisions** and eats **fodder**: two stores that
-> never trade, so the subtraction has no meaning and the hay column is a cost in its own currency.
-> What a lush footprint buys is that the keeper does not have to farm that hay.
+> never convert into one another, so the subtraction has no meaning and the hay column is a cost in
+> its own currency. What a lush footprint buys is that the keeper does not have to farm that hay.
+>
+> **"Never convert" is not "never moves"** — the two accounts have identical *logistics* and always
+> should have. See "WHY HAY AND BREAD ARE TWO ACCOUNTS" below; an earlier wording of this line said
+> "two stores that never trade", which was read as though hay had no way to reach a band that needed
+> it, and that reading built half a shipment model.
 >
 > Monotone in gross at every row, and `pastoral / wild` is exactly `pastoral_gain` (2.0). The **rabbit
 > pen gross rides the cap** (`r_pen = min(husbandry_regrowth_cap 1.0, 0.35 × pen_gain 4.0) = 1.0`), so
@@ -647,6 +652,40 @@ it shed. The two penalties are orthogonal and a pen can take both in one turn.
 > labour in one number. What changed is that the feed account is denominated in fodder, so it does not
 > appear in the food ledger at all —
 > `larder_delta == foodIncome − foodConsumption − raidForfeit`.
+
+### WHY HAY AND BREAD ARE TWO ACCOUNTS — the justification, which used to be missing
+
+This file asserted the split for a long time without ever arguing it (issue #590 opened on exactly
+that gap: *"is there a real justification for the people/animal currency to be different, other than
+different animals consuming fodder at different rates?"*). Different consumption rates are **not**
+the reason — a per-species rate is a number, and a number does not need its own currency. The reason
+is the one the block above records from the other direction:
+
+**A herd must never be able to eat its keepers' bread.** One account means one pool, and one pool
+means the starvation path short-circuits: a pen whose pasture fails stops shrinking and quietly
+drains the larder instead, which is precisely the `upkeep_per_biomass` bug this arc removed. The
+separation is what makes `starve_shrink_rate` reachable at all. Merge the accounts and you do not
+get a simpler model, you get the old bug back with no lever left to express it — *"the herd is
+starving"* and *"the people are starving"* would be the same sentence.
+
+The corollary matters as much: **hay is not a lesser food, and food is not convertible hay.** There
+is no exchange rate between them anywhere in the sim, and there must not be one. A band with a full
+larder and no hay has a starving pen, and that is a real decision the player has to answer with
+land, a hay field, or a shipment — not a menu conversion.
+
+> #### The two accounts have IDENTICAL LOGISTICS, and always should have
+>
+> Separate currencies say nothing about how either one *moves*. Both accounts pool between connected
+> same-faction bands through `balance_supply_networks` (`core_sim/src/supply.rs`), and since #590
+> both also ride a party-carried shipment: **hay is trade cargo exactly like food is**, on its own
+> pack-space weight because a hay unit is worth less feeding than a food unit. The weight's
+> derivation lives with the cargo model in
+> `.claude/rules/core_sim/expeditions.md` → "Cargo is food, FODDER and materials".
+>
+> That fodder could not be shipped was an **oversight, never a decision** —
+> `docs/plan_contact_and_logistics.md` had said the cargo was "food, fodder and materials" all
+> along, and the shipping slice built two thirds of it. Nothing about the currency split ever
+> implied it.
 
 ## The `Tame` verb (Intensification rung 2) — the grammar fix
 

@@ -570,7 +570,7 @@ term in the same estimate. **The estimate's GEAR terms are not source fields at 
   that omission on this arc — the decoder emitted all seven and the panel would have read none. (The
   kit row travels whole, like a herd dict, so the gear pair is one wiring.)
 
-## The `connections` section, and the eight cohort fields the shipment arc appended
+## The `connections` section, and the cohort fields the shipment arc appended
 
 Arc #527. `dict/connections.rs` → `connections_to_array` is the client's FIRST reader of the contact
 ties (#538 shipped the section with none), and it is a **whole-section replace** — decoded on BOTH
@@ -585,12 +585,14 @@ broke. **`strength == 0` is a PARKED tie, not an absent one**, so the row is pub
 renders it disabled; **`last_seen_{x,y}` is CLOCK 1** — where the subject was, not where they are —
 and a consumer that renders it as a live position claims a sighting the tie never granted.
 
-`dict/population.rs` gained ten cohort keys in the same arc, in four groups:
+`dict/population.rs` gained ten cohort keys in that arc, in four groups, and two more when hay
+became a shipment cargo (issue #590):
 
 | keys | shape |
 |---|---|
 | `expedition_destination_band` / `expedition_destination_name` | the KEY and its DISPLAY TWIN, the `expedition_target_herd` / `expedition_target_species` rule — the name is resolved at launch and carried, because a party outlives its destination's presence in the viewer's world |
 | `expedition_cargo_food` / `expedition_cargo_materials` | the shipment, the materials reusing `MaterialPayoff` — **never summed**, empty means "no row", the key always present |
+| `expedition_cargo_fodder` / `expedition_trade_fodder_carry_weight` | the THIRD cargo account and its own pack-space lever (issue #590), appended at the END of the cohort table rather than beside their twins because field order is the append-only contract. Hay and food are two keys that NEVER convert — a decoder or readout that adds them has re-minted the retired trade-goods axis. The lever is FINITE AND >= 0, not positive: `0` legitimately means "hay is weightless" |
 | `transfer_received` / `transfer_sent` · `expedition_trade_per_worker_carry` / `expedition_trade_material_carry_weight` | the food-ledger pair, and the two GLOBAL levers echoed onto every cohort so the outfit UI can price a manifest for a party that does not exist yet |
 | `transfer_received_turn` / `transfer_sent_turn` | the same two facts taken PER TURN, and the pair a readout renders — the accumulating pair above is cleared once the turn's capture reads it, so it is `0` on every command-refreshed frame |
 
@@ -602,7 +604,7 @@ shipment — a client doing so is one config edit from quoting a cap the launch 
 **`expedition_cargo_materials` is a VECTOR field, so it takes the `material_yield` treatment** rather
 than an appended scalar's: saturation reaches it and the golden re-record is the only step, but a
 consumer that coerces it through `float()` fails loudly and at a distance (see the vector-field note
-above). All eleven keys are in the golden — re-record with `cargo xtask decode-guard --write-golden`
+above). All thirteen keys are in the golden — re-record with `cargo xtask decode-guard --write-golden`
 after any intended change here.
 
 **BOTH TRANSFER PAIRS ARE DECODED, AND NEITHER SUBSTITUTES FOR THE OTHER** (issue #517). The

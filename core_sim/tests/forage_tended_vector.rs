@@ -504,7 +504,8 @@ fn a_tended_cash_crop_under_sustain_credits_materials_and_costs_food() {
     assert_eq!(
         cohort.stores.get(FODDER),
         scalar_zero(),
-        "and the vine's basket grows no fodder crop"
+        "and the vine's basket grows no fodder crop — doubly so, since a commitment to a cash crop \
+         is not a bid for hay either"
     );
 }
 
@@ -517,9 +518,12 @@ fn a_tended_cash_crop_under_sustain_credits_materials_and_costs_food() {
 /// zero — the volunteers are still standing — which is the difference from the retired concentration
 /// model, where a commitment replaced the whole stand.
 ///
-/// **Rungs 2 and 3 are UNGATED on Foddering**: committing a patch to `hay_grass` *is* the bid. Only a
-/// wild patch's hay credit reads the capability (see `forage_basket_reweight.rs`), and this fixture's
-/// faction knows nothing at all — so the credit landing here *is* the ungated ruling.
+/// **A commitment to a FODDER-BEARING species is ungated on Foddering**: committing a patch to
+/// `hay_grass` *is* the bid, and this fixture's faction knows nothing at all — so the credit landing
+/// here *is* the ungated ruling. It is the **species** that lifts the gate and not the commitment as
+/// such: a patch committed to a grain reads the capability like a wild one, because a wheat field is
+/// a bid for wheat whatever else the ground carries (`forage_basket_reweight.rs`'s
+/// `fodder_is_gated_on_foddering_unless_the_patch_is_committed_to_a_fodder_crop`).
 #[test]
 fn a_tended_hay_patch_credits_fodder_from_its_take() {
     let mut app = spawn_world();

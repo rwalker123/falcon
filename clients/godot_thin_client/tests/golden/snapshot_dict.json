@@ -2279,6 +2279,7 @@
           "tier_id": "populations[0].equipment_batches[3].tier_id"
         }
       ],
+      "expedition_cargo_fodder": 1.52,
       "expedition_cargo_food": 6.41,
       "expedition_cargo_materials": [
         {
@@ -2303,6 +2304,7 @@
       "expedition_recurring": true,
       "expedition_target_herd": "populations[0].expedition_target_herd",
       "expedition_target_species": "populations[0].expedition_target_species",
+      "expedition_trade_fodder_carry_weight": 50.959999,
       "expedition_trade_material_carry_weight": 39.889999,
       "expedition_trade_per_worker_carry": 78.449997,
       "expedition_trip_bound": "populations[0].expedition_trip_bound",
@@ -3012,6 +3014,7 @@
           "tier_id": "populations[1].equipment_batches[3].tier_id"
         }
       ],
+      "expedition_cargo_fodder": 73.050003,
       "expedition_cargo_food": 53.810001,
       "expedition_cargo_materials": [
         {
@@ -3036,6 +3039,7 @@
       "expedition_recurring": true,
       "expedition_target_herd": "populations[1].expedition_target_herd",
       "expedition_target_species": "populations[1].expedition_target_species",
+      "expedition_trade_fodder_carry_weight": 12.16,
       "expedition_trade_material_carry_weight": 81.660004,
       "expedition_trade_per_worker_carry": 57.099998,
       "expedition_trip_bound": "populations[1].expedition_trip_bound",

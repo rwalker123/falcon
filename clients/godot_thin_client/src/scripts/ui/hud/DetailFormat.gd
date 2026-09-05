@@ -2718,15 +2718,22 @@ static func sum_realized_yield(band: Dictionary, kind: String) -> float:
 #  a formula are two answers about one pack.
 # =====================================================================================
 
-## **THE SIM'S OWN MASS EXPRESSION, HELD VERBATIM** — food counts as itself, and every unit of every
-## material costs `expedition_trade_material_carry_weight` of pack space. That lever is a per-cohort
-## echo of the sim's config, so a tuning change moves both surfaces and the server's refusal together.
+## **THE SIM'S OWN MASS EXPRESSION, HELD VERBATIM** — food counts as itself, every unit of hay costs
+## `expedition_trade_fodder_carry_weight` of pack space, and every unit of every material costs
+## `expedition_trade_material_carry_weight`. Both levers are per-cohort echoes of the sim's config, so
+## a tuning change moves both surfaces and the server's refusal together.
 ##
-## **THE FOOD TERM ALONE IS NOT THE MASS**, and reading it as one is what this exists to stop: a party
+## **THREE TERMS, ONE PER ACCOUNT** (issue #590). The accounts do not convert — a shipment's hay and
+## its bread are two larders at the destination — so this is the ONLY place they meet, and they meet
+## as PACK SPACE rather than as a quantity of anything. Nothing on screen may sum them.
+##
+## **NO TERM ALONE IS THE MASS**, and reading one as the whole is what this exists to stop: a party
 ## carrying 2 food and 10 hide against a cap of 12 is FULL, and a row dividing the 2 by the 12 renders
-## a full pack as one-sixth full.
-static func shipment_mass(food: float, material_total: float, material_carry_weight: float) -> float:
-    return food + material_total * material_carry_weight
+## a full pack as one-sixth full. Dropping the HAY term is the same defect with the opposite sign — it
+## under-prices the manifest, so this client's own meter says a load fits that the server refuses.
+static func shipment_mass(food: float, fodder: float, fodder_carry_weight: float,
+        material_total: float, material_carry_weight: float) -> float:
+    return food + fodder * fodder_carry_weight + material_total * material_carry_weight
 
 ## Σ of an IN-FLIGHT party's per-material cargo amounts (`expedition_cargo_materials`, the wire's
 ## per-material total across the batches it holds). **A pack-space input, never a readout** — the
@@ -2739,14 +2746,23 @@ static func shipment_cargo_material_total(unit_data: Dictionary) -> float:
             total += float((row_variant as Dictionary).get(HudCraftingVocab.BATCH_AMOUNT_KEY, 0.0))
     return total
 
-## The mass an in-flight party's cargo store weighs — `shipment_mass` over the two wire accounts and
-## the cohort's own carry-weight lever, so the `Carrying:` row's numerator is the number the compose
-## sheet's meter showed for the same manifest.
+## The mass an in-flight party's cargo store weighs — `shipment_mass` over the THREE wire accounts and
+## the cohort's own two carry-weight levers, so the `Carrying:` row's numerator is the number the
+## compose sheet's meter showed for the same manifest.
 static func shipment_cargo_mass(unit_data: Dictionary) -> float:
     return shipment_mass(
         float(unit_data.get("expedition_cargo_food", 0.0)),
+        shipment_cargo_fodder(unit_data),
+        float(unit_data.get("expedition_trade_fodder_carry_weight", 0.0)),
         shipment_cargo_material_total(unit_data),
         float(unit_data.get("expedition_trade_material_carry_weight", 0.0)))
+
+## The HAY an in-flight party is carrying (`expedition_cargo_fodder`, issue #590) — the third cargo
+## account, in FODDER units against the destination's fodder larder. **Never added to
+## `expedition_cargo_food`**: a herd cannot eat its keepers' bread, so the two are quoted as separate
+## terms wherever they are shown and meet only inside `shipment_mass`, as pack space.
+static func shipment_cargo_fodder(unit_data: Dictionary) -> float:
+    return float(unit_data.get("expedition_cargo_fodder", 0.0))
 
 # =====================================================================================
 #  **THE BAND TRADE ARITHMETIC IS RETIRED** (arc #527)

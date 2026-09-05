@@ -1403,10 +1403,11 @@ fn a_hay_store_a_neighbour_is_filling_publishes_the_no_drain_sentinel() {
     );
 }
 
-/// **A shipment's worth of hay, staged onto the `route` arm.** No path in the sim can produce one
-/// today — `ResolvedShipment` refuses any cargo item that is not food or a material — so the arm is
-/// written directly, which is the only way to assert the basis *before* the day it starts to matter.
-/// The store rises with it, exactly as a real delivery would leave it.
+/// **A shipment's worth of hay, staged onto the `route` arm.** A real shipment can produce one — a
+/// manifest takes a `fodder` line — but driving a party across the map is a different test's job
+/// (`core_sim/tests/trade_expedition.rs`), and this file is about what the *runway* does with the
+/// arm. So the arm is written directly and the store rises with it, exactly as a real delivery
+/// leaves them.
 fn take_delivery_of_hay(app: &mut App, band: Entity, amount: f32) {
     app.world
         .get_mut::<PopulationCohort>(band)
@@ -1427,11 +1428,11 @@ fn take_delivery_of_hay(app: &mut App, band: Entity, amount: f32) {
 /// **once**, and reading one delivery as a standing per-turn credit is the mistake arc #527 refused
 /// on the food side.
 ///
-/// **This asserts a basis that no shipped path can exercise yet**, because a shipment's manifest
-/// refuses fodder — which is exactly why it is written now: the day hay gains a shipping currency,
-/// a runway wired to `received() − sent()` would silently start annualising deliveries, and nobody
-/// would be looking. The staged figure is large enough that a runway counting it would reach the
-/// no-drain sentinel, so a regression cannot hide inside the epsilon.
+/// **The basis this guards is now reachable in play**: a shipment's manifest takes a `fodder` line,
+/// so hay really does arrive by party. That is what the assertion was written ahead of — a runway
+/// wired to `received() − sent()` would silently start annualising deliveries, and nobody would be
+/// looking. The staged figure is large enough that a runway counting it would reach the no-drain
+/// sentinel, so a regression cannot hide inside the epsilon.
 ///
 /// The store still **rises** by the delivery, as a real arrival would leave it, and the runway
 /// therefore gets longer — but only by the buffer, never by a projected rate. Pinned as the closed

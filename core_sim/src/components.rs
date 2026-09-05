@@ -844,9 +844,11 @@ pub struct PopulationCohort {
     /// arm is a standing rate two camps keep up every turn, where a `route` crossing is a one-off
     /// event and is deliberately not a term of any forecast).
     ///
-    /// **The [`TransferLink::Route`] arm reads `0` today**: a shipment's manifest refuses any cargo
-    /// item that is not food or a material (`ResolvedShipment`), so no party carries hay. The arm is
-    /// wired because both accounts have one shape and the wire is append-only.
+    /// **The [`TransferLink::Route`] arm is live**: `send_trade_expedition` takes a `fodder
+    /// <amount>` line beside its food and material ones, so a party genuinely walks bales between
+    /// camps — debited on the sender at launch, credited on the destination when the shipment lands,
+    /// and credited back home if it never does. The arm was wired before the verb could fill it, on
+    /// the bet that both accounts have one shape and the wire is append-only; the bet paid.
     pub last_turn_fodder_transfers: TransferLedger,
     /// This turn's signed morale delta (before clamping into `[0, 1]`). Recomputed each turn by
     /// `simulate_population`; on the client wire as `PopulationCohortState.morale_delta`, which the
@@ -3619,8 +3621,9 @@ pub struct LaborAllocation {
     /// camp is where the hay went, and the fodder runway, which counts a store down and must know
     /// that the store is being topped up (`snapshot::population`).
     ///
-    /// The [`TransferLink::Route`] arm reads `0` today — see
-    /// [`PopulationCohort::last_turn_fodder_transfers`], which states why.
+    /// Both arms are live: the `local` one is the supply network pooling two camps' hay every turn,
+    /// the `route` one is a shipment carrying bales — see
+    /// [`PopulationCohort::last_turn_fodder_transfers`].
     pub last_fodder_transfers: TransferLedger,
     /// **THE HAY THIS BAND'S PENS ARE SHORT, PER TURN** — `Σ max(0, demand_grass − footprint_intake)`
     /// over every pen the band kept this turn, in fodder units. Written by

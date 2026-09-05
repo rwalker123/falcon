@@ -14,7 +14,9 @@
   },
   "trade": {
     "per_worker_carry": 6.0,
-    "material_carry_weight": 1.0
+    "material_carry_weight": 1.0,
+    "_comment_fodder_carry_weight": "What one unit of HAY costs in a shipment's pack space, relative to one unit of food - the third term of mass = food + fodder_carry_weight x fodder + material_carry_weight x SUM(material amounts). PRICED IN TURNS OF KEEP, with food as the numeraire at 1.0: one worker's load of food is per_worker_carry / demographics_config consumption.per_capita_draw = 6.0 / 0.16 = 37.5 PERSON-TURNS. One animal's feed per turn is fauna_config's fodder_per_biomass x body_mass, and for the mid-sized pennable animals hay is historically for - crag_goat (0.05 x 6 = 0.30) and wild_sheep (0.05 x 5.6 = 0.28) - that averages ~0.29. So 6.0 / (37.5 x 0.29) = 0.55, and 0.5 is the clean dial beside it: a one-worker load is 40 GOAT-TURNS / 43 SHEEP-TURNS, the same order as food's 37.5 person-turns by construction. THE SPREAD ACROSS THE ROSTER IS HONEST AND INTENDED - the same bale is 1,026 turns of keep for a fowl and 2 turns for an aurochs, because that is what those animals eat. 0.0 is legal and means 'hay is weightless'. PLAYTEST DIAL.",
+    "fodder_carry_weight": 0.5
   },
   "replenish": {
     "low_turns": 3,

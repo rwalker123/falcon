@@ -42,8 +42,10 @@ signal send_denial_raid_requested(payload: Dictionary)
 ## compose sheet. Payload keys: { faction, band_id, party_workers, destination_band_id,
 ## destination_label, cargo }, where `cargo` is an ORDERED array of `{ id, is_material, amount }`
 ## rows — the manifest the player built, in the order they built it, because
-## `send_trade_expedition`'s tail is a REPEATED `food <amount>` / `material <id> <amount>` list and a
-## shipment has no fixed arity. `destination_band_id` is the DATABASE KEY the command addresses;
+## `send_trade_expedition`'s tail is a REPEATED `food <amount>` / `fodder <amount>` /
+## `material <id> <amount>` list and a shipment has no fixed arity. **`id` names the ACCOUNT**: the
+## two commodity ids (`HudConst.STORE_ITEM_PROVISIONS`, `HudConst.CARGO_ITEM_FODDER`) both carry
+## `is_material` false, so that flag alone no longer says which store a row draws from. `destination_band_id` is the DATABASE KEY the command addresses;
 ## `destination_label` is what the command-feed note reads, the `fauna_id` / `fauna_label` rule.
 ## Main formats the `send_trade_expedition …` command.
 signal send_trade_expedition_requested(payload: Dictionary)

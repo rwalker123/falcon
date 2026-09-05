@@ -552,6 +552,39 @@ static func apply_button(button: Button, variant: String = "ghost",
 	button.add_theme_color_override("font_disabled_color",
 		button_font_color(variant, true, selected_when_disabled))
 
+# ---- text fields -----------------------------------------------------------
+## How round a text field's corner is. Tighter than a button's (`BUTTON_CORNER_RADIUS`) because a
+## field is a WELL rather than a face — the same relation the menu's seed field already drew.
+const LINE_EDIT_CORNER_RADIUS := 5
+
+## Dress a `LineEdit`: a sunken `GROUND_2` well inside a `LINE` rim, the rim going `SIGNAL` while the
+## field holds focus, `INK` text and a `SIGNAL` caret. The padding is the BUTTON family's, so a field
+## sitting in a row of buttons has their height.
+##
+## **THE FOCUS RIM IS THE ONLY THING ON SCREEN THAT SAYS THE KEYBOARD HAS MOVED.** A focused
+## `LineEdit` suppresses every polled gameplay key (`TextEntryFocus` → `KeyboardArbiter`), so a field
+## that looked identical focused and unfocused would leave the map silently unresponsive with nothing
+## to explain why. Call it at every `LineEdit.new()` site.
+static func apply_line_edit(field: LineEdit) -> void:
+	if field == null:
+		return
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = GROUND_2
+	normal.set_corner_radius_all(LINE_EDIT_CORNER_RADIUS)
+	normal.set_border_width_all(1)
+	normal.border_color = LINE
+	normal.content_margin_left = BUTTON_PADDING_H
+	normal.content_margin_right = BUTTON_PADDING_H
+	normal.content_margin_top = BUTTON_PADDING_V
+	normal.content_margin_bottom = BUTTON_PADDING_V
+	var focus := normal.duplicate()
+	focus.border_color = SIGNAL
+	field.add_theme_stylebox_override("normal", normal)
+	field.add_theme_stylebox_override("focus", focus)
+	field.add_theme_color_override("font_color", INK)
+	field.add_theme_color_override("font_placeholder_color", INK_FAINT)
+	field.add_theme_color_override("caret_color", SIGNAL)
+
 # ---- native selectors: the OptionButton face AND its popup -----------------
 ## **A DROPDOWN IS TWO SURFACES, AND STYLING ONLY THE FIRST IS THE BUG.** The face is a `Button` and
 ## takes `apply_button` like any other; the LIST is a `PopupMenu` living on its own `Window`, reached

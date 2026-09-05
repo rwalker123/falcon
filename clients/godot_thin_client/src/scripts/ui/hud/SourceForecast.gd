@@ -350,8 +350,21 @@ const PICKER_MATERIAL_PRODUCT_FORMAT := "%s %s"
 ##
 ## `zero_account` decides WHICH account's zero survives when every component is empty, and it is the
 ## §7.7 correctness fix rather than a formatting option — see `zero_account_of`.
+##
+## **`fodder_face` REPLACES THE FODDER TERM'S NUMBER, KEEPING ITS UNIT** — the one hook a caller has
+## into this composition, and it exists for the wild-fodder credit gate: a patch whose hay the sim
+## will refuse must not quote a hay quantity, and must equally not go SILENT about the account (the
+## ground really does grow it, and an account the player cannot see is a hidden gate). So the caller
+## passes the em-dash the yields row already uses and the term renders `— fodder`, which is what makes
+## the two lines of one readout agree. The VALUE is still passed in full: it is what decides the term
+## EXISTS at all, and a locked account with nothing in it is no term rather than a locked zero.
+##
+## **The face is the caller's word, not this layer's** — `HudComposeVocab.YIELD_LOCKED_GLYPH` lives
+## with the readouts, and a shared arithmetic layer reaching for a display vocabulary is the coupling
+## `RungGates`' own header refuses.
 static func picker_products(food: float, fodder: float = 0.0,
-        zero_account: String = YIELD_ACCOUNT_FOOD, materials: Array = []) -> String:
+        zero_account: String = YIELD_ACCOUNT_FOOD, materials: Array = [],
+        fodder_face: String = "") -> String:
     var parts: Array[String] = []
     for row in yield_rows(food, fodder, zero_account, {}, materials):
         var material_id := _row_material_id(row)
@@ -360,6 +373,8 @@ static func picker_products(food: float, fodder: float = 0.0,
                 format_magnitude(row[YIELD_ROW_VALUE]), material_id])
         elif String(row[YIELD_ROW_ACCOUNT]) == YIELD_ACCOUNT_FOOD:
             parts.append(PICKER_FOOD_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
+        elif fodder_face != "":
+            parts.append(PICKER_FODDER_PRODUCT_FORMAT % fodder_face)
         else:
             parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
     return COMPONENT_SEPARATOR.join(parts)

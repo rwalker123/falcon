@@ -1186,7 +1186,12 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 
 ## `chapters/trade.gd` — the cargo picker and a shipment in flight (arc #527, issue #517)
 
-**Appended LAST in `CHAPTERS`**, after `crafting_bench`. Seven frames and thirty `PASS` — plus
+**Sits after `crafting_bench` in `CHAPTERS`** — it was appended last when it landed, and
+`selective_gather`, `knowledge_panel` and `supply_network` have followed it since, which is exactly
+the case the release note at the end of this paragraph exists for. **Sixteen frames and eighty-three `PASS`**
+(`EXPECTED_CHECKPOINTS := 99`) — nine for the shipment itself, then seven for the typed cargo row
+(issue #620): `trade_cargo_typed`, `_typed_invalid`, `_typed_held`, `_typed_cap`, `_max`,
+`_typed_then_stepped`, `_step_clamped`. Plus
 one more in `chapters/event_dock.gd`, where the shipment's `destination=` label swap belongs
 beside the band-label trio it extends rather than in a chapter that instantiates no dock. It
 injects a real `BandCityPanel` docked RIGHT on the PARTIES tab, drives the whole compose act through
@@ -1196,8 +1201,10 @@ so a chapter appended after it starts where every other one does.
 **Every control is driven, not set.** The footer's mission button is pressed (by
 `HudWidgets.MISSION_LAUNCH_META`, never by face), the destination is chosen with REAL POINTER INPUT
 (below), the party is raised through its stepper's `+` reading `PARTY_STEPPER_COUNT_META`
-back on each press, and each cargo row is loaded by repeated presses of its OWN `+` — which is what
-exercises the clamp-to-the-pile and the per-press rebuild rather than the members behind them.
+back on each press, and each cargo row is loaded through the row's OWN handles — repeated presses of
+its `+` (`_load`), an amount TYPED into its field and committed with Enter (`_type_cargo`), or its
+`Max` (`_press_cargo_max`), all three since issue #620 — which is what exercises the clamp to the
+row's ceiling and the per-commit rebuild rather than the members behind them.
 
 **THE DESTINATION PICK IS TWO REAL PRESSES, AND IT USED TO BE A FAKED SIGNAL THAT COULD NOT FAIL.**
 `picker.emit_signal("item_selected", 0)` calls the connected lambda by hand, so every step between a
@@ -1237,7 +1244,9 @@ decomposition those two claims are separated to show.
 | mass and cap composed from the FIXTURE's side | the harness and the sheet arrive at one number from opposite ends |
 | an over-cap manifest disables the send | the client's courtesy, reached by shrinking the party rather than by growing the cargo, so the cap moves and the manifest does not |
 | the shipment's materials are **not** summed | asserted as an ABSENCE — a row that added hide to bone still renders two plausible numbers and every other assertion passes |
-| the in-flight `Carrying:` row weighs the WHOLE PACK against the cap | composed from the fixture's own terms (`12 food + 2.0 × (4.0 + 1.2)` = 22.4 of 40), so the row and the compose sheet's meter arrive at one number from opposite ends. It read `12.0 / 40.0` — the cargo's FOOD over the MASS cap — and every other claim on that row passed |
+| the in-flight `Carrying:` row weighs the WHOLE PACK against the cap | composed from the fixture's own terms (`12 food + 0.5 × 6.0 hay + 2.0 × (4.0 + 1.2)` = 25.4 of 40), so the row and the compose sheet's meter arrive at one number from opposite ends. It read `12.0 / 40.0` — the cargo's FOOD over the MASS cap — and every other claim on that row passed |
+| a bale is PRICED, and the under-priced reading is asserted absent | issue #590. `trade_cargo_hay` loads the hay row beside the food and hide ones and reads the meter twice: the three-term mass must be there, and the two-term one (the manifest with its fodder term dropped) must NOT. A meter short of that term still shows a mass, a cap and a live send, so every other claim on the sheet passes on it — and the send it clears is one the server refuses |
+| the shipment's hay is its own term and is **not** added to its food | the same absence assertion the materials get, for a worse reason: a `Carrying:` row quoting the two accounts' total looks like an ordinary shipment and promises the destination a food delivery its larder never receives |
 | the destination `BandId` never appears on screen | the id is distinctive (`BandFx.FIXTURE_BAND_ID_OFFSET + entity`), so a leak has something to find |
 | the `Bound for` row names the band anyway | the fixture publishes `expeditionDestinationName` as `""` — the LIVE shape, bands having no names — so the row can only read `Band 2` by joining the roster on the id beside it |
 
@@ -1247,9 +1256,13 @@ that is exactly what 🤝 did on the Food breakdown's transfer rows before it wa
 is the only thing that catches it, and it caught the fifth footer button being clipped off the edge
 of a 354px column in the same pass.
 
-**The party fixture carries `expedition_trade_material_carry_weight`**, which the native decoder
-echoes onto every cohort. Without it the `Carrying:` row prices the pack at its food and the mass
-claim above goes green on the defect it exists for.
+**The party fixture carries BOTH carry-weight levers** (`expedition_trade_material_carry_weight`
+and `expedition_trade_fodder_carry_weight`), which the native decoder echoes onto every cohort.
+Without them the `Carrying:` row prices the pack at its food and the mass claim above goes green on
+the defect it exists for. **The fodder weight is deliberately 0.5** — neither 1.0 nor the material
+weight — because at either of those a three-term mass is indistinguishable from a two-term one that
+lumped the hay in with the food, and every number in the chapter would pass on a client that dropped
+the term.
 
 **The Food-ledger half opens the disclosure, and it is now the ONLY thing that can see the two
 terms**: the headline states the steady rate and deliberately says nothing about a transfer
