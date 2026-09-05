@@ -6,6 +6,7 @@ paths:
   - "core_sim/src/data/labor_config.json"
   - "core_sim/tests/labor_allocation.rs"
   - "core_sim/tests/bench_shed.rs"
+  - "core_sim/tests/food_economy_table.rs"
 ---
 
 <!-- Extracted verbatim from lines 42-42;3430-3568 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
@@ -969,6 +970,81 @@ is untouched: `build_legs` is cleared by the same reset, so an entry no pass has
 
 `core_sim/tests/build_queue.rs` drives it on both webs — queued-with-no-turn, then one turn to a real
 count, then a live-queued entry the pass reached and could not date — plus the unqueued-patch control.
+
+## Reading both webs off one table
+
+`core_sim/tests/food_economy_table.rs` is a **printing** harness, not an assertion one:
+
+```text
+cargo test -p core_sim --test food_economy_table -- --nocapture
+```
+
+It prices the plant ladder's three rungs on the pinned reference basket and every roster species at
+every rung its `husbandry_ceiling` allows, **through these two seams and no other yield arithmetic** —
+`forage::forage_source_yield_preview` and `fauna::hunt_source_yield_preview` — and sorts the lot into
+one comparison. The food column every row reports is the preview's `realized`, the forward-projected
+average over `labor_config.yield_average_horizon_turns`, divided by the crew.
+
+### ⛔ IT PRICES A KITTED BAND, AND ITS FIRST DRAFT DID NOT
+
+The headline columns resolve gear through **the same seam `bin/server.rs`'s assign-time seed uses** —
+the job's `default_kit` on the plant side, `fauna::herd_default_hunt_kit` (the *quarry's* own default,
+what the wire publishes as `defaultKitId`) on the animal side, against a
+`BandEquipment::start_stocked_for` ledger, divided by `EquipmentConfig::coverage`, with the party
+composed by `PartyResolution::party_against(Quarry::Mass(..))`.
+
+The first draft priced both webs at `labor_config`'s **pre-gear** `per_worker_biomass_capacity`, which
+describes a band that does not exist in play: every spawn inserts a start-stocked ledger and every job
+resolves a default kit. Because the plant web is **carry-bound at ordinary crew sizes**, that
+understated flora by the whole basket tier (1.6 → 8.0) while barely moving fauna (12.0 → 40.0, on a
+web where reach or the floor usually binds first) — i.e. it got wrong the one axis the whole
+comparison turns on. **The bare figure survives as a single-variable control column**: same kit, same
+party, pre-gear carry only, so the gap against the kitted column is exactly what the basket or the
+sled bought and a row that does not move is a row carry never bound on.
+
+### The apples-to-apples rule
+
+Both webs are seated at the *same operating point*: `biomass = floor · K`, where the shipped
+`DEFAULT_ESCAPEMENT_FLOOR` settles a source. A fixture seated at a full stand quotes a first-turn
+drawdown windfall, which is not a rate — and the validation block below measures that difference
+rather than asserting it.
+
+### Three numbers the two seams cannot give it
+
+- **Materials.** `SourceYield::materials` is deliberately empty from a preview (`forecast_source_yield`
+  quotes no material, because `credit_material_yield` is paid off a take in *biomass* and the preview
+  resolves the take in currency space). The harness rebuilds the column through
+  `materials_config::material_yield_totals` — the one expression every material quote in the sim goes
+  through — off the biomass the food column implies (`food ÷ provisions_per_biomass`). A quarry with
+  no food axis has no such inverse and prints `n/a`, never a `0`.
+- **Which stage capped the take.** `realized` is the *unquantised* projection and never reaches
+  `fauna::hunt_take_bound`, so the binding stage comes off the **live** path: the harness drives
+  `systems::hunt_take` forward over the same horizon on a private clone — Logistics regrowth then the
+  Population take, the shipped order — and tallies `HuntOutcome::bound`. The sim resolves the take and
+  reports its own bound; the harness only counts them. The plant web prints `n/a` there (it has no
+  engagement, retreat or fight) and answers with **carry utilisation** instead, which is
+  `biomass brought home per worker ÷ that worker's carry` and reads `100%` exactly when the basket is
+  what binds.
+- **A herd's `K`.** The live sim strikes it off the graze layer under the herd's footprint, which
+  needs a world. The harness uses the roster's own full-group biomass band times
+  `fauna::herd_density_gain` at the rung, which is `stance_probe`'s own stand-in, and says so in its
+  header. **A row bound by `engagement` or `carry` does not inherit that fixture's error** — those
+  terms are crew × species and contain no `K` — which is what makes the engagement-bound rows the
+  trustworthy half of any comparison against a live reading.
+
+### It is validated against a running game, and is never tuned to fit one
+
+`LIVE_READINGS` holds readings taken off a live game at one and five workers with the default kits.
+They are **observations, not levers**: the block prints each against the harness with a delta and a
+verdict, and a row outside `VALIDATION_TOLERANCE` is printed as a disagreement rather than fixed by
+moving a fixture. Where the flora rows disagree the block **separates the gap into its two terms and
+measures both** — the basket's conversion rate (which a carry-bound live reading inverts to directly)
+and the stand's standing stock (visible in whether the per-worker figure is flat across crew sizes) —
+so a reader can tell a property of the reading from a fault in the harness.
+
+The pinned flora fixture it quotes lives in `core_sim/tests/common/reference_basket.rs`, shared with
+`core_sim/tests/field_reference_basket.rs` so the two harnesses cannot drift onto two realizations of
+"the reference basket".
 
 ## Shedding a crew the band can no longer field
 

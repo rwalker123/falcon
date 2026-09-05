@@ -1933,8 +1933,12 @@ pub fn hunt_take(
     // hunters here are only ever hunters. An expedition passes [`NO_IMPROVEMENT_UNDERWAY`] anyway,
     // because a rung transition is place-bound work a detached party cannot do — and since #442 its
     // mission type cannot even name one.
-    let collection =
-        (workers as f32 * per_worker_biomass_capacity).min(carry_room_biomass.max(0.0));
+    // **Through the one seam** ([`fauna::herd_collection`]) — `workers × per_worker` on the range and
+    // on a halter, and no bound at all at a pen once `husbandry.pen_is_a_larder` is on. The caller's
+    // `carry_room_biomass` still clamps it: a resident band passes `f32::INFINITY`, and a detached
+    // party's pack is a real limit whatever rung the quarry stands on.
+    let collection = fauna::herd_collection(herd, fauna, workers, per_worker_biomass_capacity)
+        .min(carry_room_biomass.max(0.0));
     // **The ledger goes straight back onto the herd**, before anything can early-return past it. The
     // seam above returns it by value rather than mutating, so a forecast can resolve the same fight
     // and drop it; a live take is the caller that keeps it.

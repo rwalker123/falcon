@@ -302,6 +302,56 @@ pub struct SpeciesDef {
     /// when present.
     #[serde(default)]
     pub regrowth_rate: Option<f32>,
+    /// **THIS SPECIES' OWN `pastoral_engage_gain`, or `None` to use the global**
+    /// ([`HusbandryConfig::pastoral_engage_gain`]) — the first of the husbandry rung gains a species
+    /// may override.
+    ///
+    /// # ⛔ WHY A RUNG GAIN NEEDED A PER-SPECIES ARM AT ALL
+    ///
+    /// Every husbandry gain was **one global number applied to every animal**, while each species
+    /// carries its own `engage_rate`, `durability`, `wariness` and `body_mass`. Measured, that made
+    /// one pair of dials unable to serve the roster: the take at rung 2 is bounded by **reach** on the
+    /// heavy-bodied species and by the party's **kill throughput** on the small-bodied ones, so
+    /// `pastoral_engage_gain` moves one half and [`SpeciesDef::pastoral_resistance`] moves the other,
+    /// and no global setting of the two lifts both without inflating the first. There was no way to
+    /// say *"a rabbit gets more out of being herded"* without also changing wild rabbits.
+    ///
+    /// **Absent is the common case.** Only the exceptions carry a row, so the config stays readable
+    /// and a reader can see at a glance which animals are special. It is deliberately **explicit per
+    /// animal** rather than a body-mass formula: a formula has to be reverse-engineered from the
+    /// roster, a row states itself.
+    ///
+    /// Validated exactly as the global is when present — finite, `> 1.0`, and `<
+    /// husbandry.pen_engage_gain`.
+    #[serde(default)]
+    pub pastoral_engage_gain: Option<f32>,
+    /// **THIS SPECIES' OWN `pastoral_resistance`, or `None` to use the global**
+    /// ([`HusbandryConfig::pastoral_resistance`]). See [`SpeciesDef::pastoral_engage_gain`] for why
+    /// the rung gains are overridable at all; this is the arm that reaches the **fight-bound** half of
+    /// the roster, where reach is inert because the take never gets near the engagement bound.
+    ///
+    /// Validated exactly as the global is when present — finite and in `(0, 1]`.
+    #[serde(default)]
+    pub pastoral_resistance: Option<f32>,
+    /// **THIS SPECIES' OWN `pen_engage_gain`, or `None` to use the global**
+    /// ([`HusbandryConfig::pen_engage_gain`]) — the keepers' handling rate at `animal:pen`, and the
+    /// third of the husbandry rung gains a species may override. See
+    /// [`SpeciesDef::pastoral_engage_gain`] for why the rung gains are overridable at all.
+    ///
+    /// # ⛔ ONE KEEPER HANDLES FAR MORE CHICKENS IN A DAY THAN CATTLE
+    ///
+    /// A flat gain across the roster says otherwise, and measured it was the one thing keeping a
+    /// penned flock away from its own line: fowl's pen **reproduces** 6.40 food/turn and its keepers
+    /// could only work 2.35 of it out, because `10 × 20 = 200` birds per keeper per turn is a cattle
+    /// number wearing a chicken's `engage_rate`. Every other penned species reaches or nearly reaches
+    /// its line on the global.
+    ///
+    /// **Absent is the common case** — one species carries a row. Validated exactly as the global is
+    /// when present (finite, `>= 1.0`), plus strictly above this species' own effective
+    /// `pastoral_engage_gain`, so a fence still handles better than a halter for the animal that
+    /// carries the override.
+    #[serde(default)]
+    pub pen_engage_gain: Option<f32>,
     /// **HOW MUCH MORE WORK THIS SPECIES IS TO TAME, as a multiple of the `animal:pastoral` rung's
     /// declared `work_cost`.** The rung owns the *mechanic*; the species prices it — exactly the split
     /// [`SpeciesDef::regrowth_rate`] already uses against `pastoral_gain`/`pen_gain`. A single cost on
@@ -1248,6 +1298,131 @@ pub struct HusbandryConfig {
     /// Validated finite and `>= 1.0`: penning may make an animal easier to handle and may never make
     /// it harder.
     pub pen_engage_gain: f32,
+    /// **THE PASTORAL RUNG'S HANDLING GAIN — what a halter buys at the ENGAGEMENT.** The pastoral
+    /// twin of [`HusbandryConfig::pen_engage_gain`], threaded through the same one seam
+    /// ([`crate::fauna::herd_engage_rate`]) and multiplying the same per-species
+    /// [`SpeciesDef::engage_rate`].
+    ///
+    /// # ⛔ IT EXISTS BECAUSE THE PASTORAL RUNG RAISED NOTHING THAT BOUND
+    ///
+    /// Rung 2 bought `pastoral_gain` (breeding rate) and `pastoral_wariness` (the retreat) and
+    /// nothing else — and **no shipped source is bound by its herd running out**, so a faster-breeding
+    /// herd paid a taming cost for a take that did not move. Measured across the whole roster, the
+    /// pastoral rung came in at 1.46x behind its plant partner (`tended`) while the wild rung sat at
+    /// 1.03x, so the *middle* of the animal ladder was where the climb stopped paying.
+    ///
+    /// **The fiction is habituation, and habituation IS reach**: a herded animal lets you walk among
+    /// it, so a keeper brings far more of them into contact per turn than a stalker does. That is the
+    /// same statement `pen_engage_gain` makes one rung up, which is why it is the same shape and not
+    /// a new mechanism.
+    ///
+    /// Validated finite and **strictly between `1.0` and [`HusbandryConfig::pen_engage_gain`]** — the
+    /// same monotonicity `pen_gain > pastoral_gain > 1` already follows, and for the same reason: a
+    /// halter must beat the range and must not beat a fence.
+    pub pastoral_engage_gain: f32,
+    /// **WHAT A HALTERED ANIMAL'S `defense` AND `durability` ARE MULTIPLIED BY** — the pastoral rung's
+    /// term at the *fight*, and the third thing taming buys.
+    ///
+    /// A managed animal does not defend itself like a wild one: it is handled daily, it does not
+    /// bolt, and it is brought down by people it has no reason to fear. This scales **both** halves of
+    /// what the resolver's gate reads — `defense` (whether a strike lands at all,
+    /// `combat::strike_damage`) and `durability` (how many strikes a body absorbs) — so a haltered
+    /// animal is both easier to hurt and quicker to finish, in one dial rather than two that could
+    /// drift apart.
+    ///
+    /// **PASTORAL ONLY, and structurally so**: `animal:pen` has no fight stage at all any more (a
+    /// penned animal is *slaughtered*, not fought — [`crate::fauna::herd_fight_stage`]), so there is
+    /// nothing at rung 3 for a resistance multiplier to scale. [`crate::fauna::herd_resistance`] is
+    /// the identity on every other rung.
+    ///
+    /// **`wariness` is NOT on this dial** — the retreat has its own per-rung pair
+    /// ([`HusbandryConfig::pastoral_wariness`] / [`HusbandryConfig::pen_wariness`]) and already steps.
+    ///
+    /// Validated finite and in `(0, 1]`. **Strictly positive**: a `0` would make a haltered animal
+    /// undefendable rather than easier, which is the pen's slaughter arriving a rung early.
+    pub pastoral_resistance: f32,
+    /// **HOW MUCH ANIMAL A HEX HAS ROOM FOR, IN ABSTRACT AREA UNITS** — it **ships on, at `2530.3`**
+    /// (104 aurochs per hex). `None` means *no space cap at all*, and the `K` seam is then the pure
+    /// feed calculation it has always been.
+    ///
+    /// # ⛔ THE GAP THIS CLOSES: `K` HAS NEVER HAD A SPACE TERM IN IT
+    ///
+    /// `fauna::ecological_carrying_capacity` is
+    /// `(graze_flow + fodder_delivery_rate) / fodder_per_biomass × density_gain` — **entirely feed**.
+    /// Its own note describes a barren footprint "carried entirely by delivered hay" as an honest
+    /// feedlot, which means an unlimited number of animals fits on one tile provided enough hay is
+    /// trucked in. Feed and space are different questions and only one of them is soft.
+    ///
+    /// ```text
+    /// K = min(feed_K, space_K)
+    /// ```
+    ///
+    /// # ⛔ SPACE IS AN **AREA** BUDGET, NOT A MASS ONE — `body_mass^(2/3)`
+    ///
+    /// The first cut of this dial was flat kilograms per tile, which says a hex holds the same *mass*
+    /// of fowl as of aurochs. A fowl is **1/900th** an aurochs by weight and nowhere near 1/900th of
+    /// it by floor space, so that reading is physically wrong — and it is why no flat value could bind
+    /// a pen without also clipping wild small game.
+    ///
+    /// An animal's **footprint scales with the 2/3 power of its mass** — the standard area-from-volume
+    /// relation, since area goes as length² and mass as length³. So this budget buys
+    /// `budget / body_mass^(2/3)` **animals** per hex, and the biomass that represents is that count
+    /// times each animal's mass ([`crate::fauna::herd_space_capacity`], which computes it in exactly
+    /// those two readable steps rather than as a pre-simplified cube root).
+    ///
+    /// # ⛔ TWO THINGS DELIBERATELY DO NOT REACH THE SPACE TERM
+    ///
+    /// - **The fodder flow.** That is the whole point: hay offsets *feed*, and no amount of it makes
+    ///   the field bigger.
+    /// - **The density gain** ([`SpeciesDef::pen_density`] / [`SpeciesDef::pastoral_density`]).
+    ///   Domestication does not make the tile bigger either. It stays on the feed path alone, which
+    ///   is the conservative reading and is what keeps the two terms meaning different things.
+    ///
+    /// **It is UNIVERSAL, not a pen rule** — space is physical, so a wild herd is measured over its
+    /// roam footprint by the same expression.
+    ///
+    /// Validated finite and `> 0` when present: a `0` would mean no animal fits anywhere, which is
+    /// the off-switch spelled as a catastrophe rather than as the `None` it already has.
+    #[serde(default)]
+    pub hex_space_budget: Option<f32>,
+    /// **IS A PEN A LARDER ON THE HOOF?** — when `true`, the party's **carry** no longer bounds a take
+    /// at `animal:pen`, and a pen produces no carry waste.
+    ///
+    /// > *"You slaughter what you need this turn and the rest stays alive."*
+    ///
+    /// A carry bound says *you had to take it all at once and haul it home*. At a pen you never do:
+    /// the animals are standing behind a fence you built at most
+    /// [`HusbandryConfig::pen_radius_max`] tiles away, so what you do not butcher this turn is not
+    /// wasted meat — it is next turn's stock, still breeding.
+    ///
+    /// # ⛔ THE PEN RUNG ONLY, AND NOTHING ELSE MOVES
+    ///
+    /// The **wild** and **pastoral** rungs keep their carry bound untouched: a hunt out on the range
+    /// really does have to haul what it kills, and a party that drops a mammoth it cannot carry
+    /// really does leave most of it standing. Everything else at the pen is untouched too — the
+    /// keepers' **handling** bound ([`HusbandryConfig::pen_engage_gain`]), the **escapement** clamp,
+    /// and the whole-animal quantum all still apply.
+    ///
+    /// # It is a lever so the question can be MEASURED rather than assumed
+    ///
+    /// Carry-binding is exactly why four penned species (aurochs, boar, crag goat, wild sheep) paid an
+    /// **identical** figure at the pen: they were all pinned to the same sled. Lifting it lets the rung
+    /// be decided by how fast a herd breeds and how many animals its keepers can handle — both
+    /// already modelled and both genuinely per-species.
+    ///
+    /// # ⛔ IT SHIPS `true`, AND IT IS A PACKAGE WITH `pen_density`
+    ///
+    /// While a pen was carry-bound it paid the sled's ceiling whatever its `K` said, so
+    /// [`SpeciesDef::pen_density`] did nothing at rung 3 — the retune of those densities and this
+    /// flag land together or neither means anything.
+    ///
+    /// **The dial survives only so the pre-larder behaviour stays reachable for a bisect.** Three
+    /// places branch on it, all reached through one seam: `fauna::herd_collection` (the term every
+    /// carry bound reads — the quantiser's pack seat, `project_realized_hunt`'s `min`, and
+    /// `hunt_take_bound`'s `carryable`) and `SourceYieldForecast::larder`, which carries the same fact
+    /// into the preview.
+    #[serde(default)]
+    pub pen_is_a_larder: bool,
     /// The stable-band ceiling on any managed `r`: `pastoral`/`pen` growth is capped here so a fast
     /// breeder (rabbit wild 0.35 × pen_gain 3.0 = 1.05) is held to a logistic rate that does not
     /// overshoot/oscillate. `0.75` keeps the discrete logistic monotone.
@@ -1349,6 +1524,10 @@ impl Default for HusbandryConfig {
             pastoral_wariness: DEFAULT_PASTORAL_WARINESS,
             pen_wariness: DEFAULT_PEN_WARINESS,
             pen_engage_gain: DEFAULT_PEN_ENGAGE_GAIN,
+            pastoral_engage_gain: DEFAULT_PASTORAL_ENGAGE_GAIN,
+            pastoral_resistance: DEFAULT_PASTORAL_RESISTANCE,
+            pen_is_a_larder: DEFAULT_PEN_IS_A_LARDER,
+            hex_space_budget: DEFAULT_HEX_SPACE_BUDGET,
             husbandry_regrowth_cap: DEFAULT_HUSBANDRY_REGROWTH_CAP,
             pen_radius_max: DEFAULT_PEN_RADIUS_MAX,
             herders_hysteresis_fraction: DEFAULT_HERDERS_HYSTERESIS_FRACTION,
@@ -1428,6 +1607,81 @@ const DEFAULT_PASTORAL_GAIN: f32 = 1.5;
 /// animal. It is a **number** rather than the `f32::INFINITY` it replaced, so a heavy-bodied species
 /// on a rich pen can still be handling-bound — and the check exists to be reached.
 const DEFAULT_PEN_ENGAGE_GAIN: f32 = 20.0;
+
+/// **HOW MUCH EASIER A HALTERED ANIMAL IS TO HANDLE than the same animal on the range** — the
+/// multiplier on its own `engage_rate` at rung 2 ([`HusbandryConfig::pastoral_engage_gain`]).
+///
+/// Shipped well below [`DEFAULT_PEN_ENGAGE_GAIN`], because that is the ladder: a halter lets you walk
+/// among the herd, a fence puts them in a pen you step into. **The bound still binds at rung 2**,
+/// which is the point — this makes the pastoral rung pay more without making it stop being a reach
+/// constraint.
+///
+/// **The global fallback**: a species may state its own ([`SpeciesDef::pastoral_engage_gain`]), and
+/// on the shipped roster exactly one does — the aurochs, whose `engage_rate 0.17` is the lowest of
+/// any tameable, so `×2` barely clears a single animal. A **playtest lever**.
+const DEFAULT_PASTORAL_ENGAGE_GAIN: f32 = 2.0;
+
+/// **WHAT A HALTERED ANIMAL'S `defense` AND `durability` ARE SCALED BY** — the **global fallback**,
+/// and it ships **neutral** ([`HusbandryConfig::pastoral_resistance`]).
+///
+/// # ⛔ THE ANIMALS THAT NEED A SOFTER FIGHT GET IT PER SPECIES, NOT HERE
+///
+/// Reach and the fight are two ceilings **in series**, and which one binds is a property of the
+/// species' **body mass**:
+///
+/// - **Raising reach alone** leaves every small-bodied species exactly where it was, because the
+///   party's kill throughput sits at almost the height their old reach ceiling did.
+/// - **Softening the fight alone** leaves the heavy grazers pinned on reach.
+/// - **Doing both globally compounds on the heavy grazers**, which are the rows that already set the
+///   headline — so the rung overshoots its plant partner before the small game has moved.
+///
+/// Measured at the 3-worker crew, best pastoral food/worker/turn under a **global** pair — against a
+/// tended patch's `0.4426` and a pen's `0.8000`:
+///
+/// | reach × | resistance | best pastoral | did the small game move? |
+/// |---|---|---|---|
+/// | `1.0` | `1.0` | `0.3033` | — (baseline) |
+/// | `1.01` | `0.5` | `0.3710` | yes, ×2.0 |
+/// | `4.0` | `1.0` | `0.4067` | **no, ×1.00** |
+/// | `2.0` | `0.75` | `0.5600` | yes, ×1.33 |
+/// | `4.0` | `0.5` | `0.8000` | yes — and pinned to the **pen's** carry ceiling |
+///
+/// That is what [`SpeciesDef::pastoral_resistance`] exists for: this global stays at the identity and
+/// the six exceptions carry their own row. A **playtest lever**, validated in `(0, 1]`.
+const DEFAULT_PASTORAL_RESISTANCE: f32 = 1.0;
+
+/// **ONE HEX HOLDS 104 AUROCHS** — the shipped [`HusbandryConfig::hex_space_budget`],
+/// `104 × 120^(2/3)`.
+///
+/// # ⛔ IT IS SUPPOSED TO LEAVE ORDINARY PLAY ALONE
+///
+/// The cap's only job is to stop **fodder** stacking animals without limit: `fodder_delivery_rate`
+/// enters the feed `K` with nothing bounding it, so before this term a barren tile carried entirely
+/// by trucked-in hay held any number of animals. A budget that changes no normally-grazed source is
+/// the dial *working* — what it buys is the **headroom**, i.e. how much hay a pen may be fed before
+/// space stops it.
+///
+/// # Why 104 and not 100
+///
+/// Swept over all twenty species at every rung: **fowl in a pen** is the single row anywhere on the
+/// roster that clips a 100-aurochs budget, and only because the `pen_density` retune took its `K` to
+/// 1280 against a 1233 allowance. `104` lifts that allowance to 1282 so nothing clips at all;
+/// everything else has 2× to 36× headroom.
+///
+/// **Do not lower it** toward 40 or 30 aurochs per hex: measured, those bit into normal grazing and
+/// clipped wild rows (`river_fish`, pastoral `wild_sheep`), which is the cap doing the wrong job.
+const DEFAULT_HEX_SPACE_BUDGET: Option<f32> = Some(2530.3);
+
+/// **A PEN IS A LARDER ON THE HOOF — SHIPPED BEHAVIOUR** ([`HusbandryConfig::pen_is_a_larder`]).
+///
+/// It began as `false` so the reading could be measured before it was assumed. It is `true` now
+/// because the question is settled: a pen is not limited by what a worker can carry home, because the
+/// animals are alive and the ones you do not slaughter keep themselves.
+///
+/// **The dial survives only so the old behaviour stays reachable for a bisect.** It is a boolean
+/// nobody is expected to set `false` again, and the paths that branch on it are listed on
+/// [`HusbandryConfig::pen_is_a_larder`] itself.
+const DEFAULT_PEN_IS_A_LARDER: bool = true;
 
 /// **The pen growth multiplier (Grazing 2d §3).** The ladder's top: a penned herd grows `pen_gain ×`
 /// its wild rate (capped). Resulting pen `r`: rabbit `0.75` (capped, booms) · deer `0.30` · mammoth
@@ -1828,6 +2082,52 @@ impl FaunaConfig {
             // way for the player to stop it. The dial's *upper* end is a tuning question (how much
             // waste the collection cap creates), not an invariant — measured, not rejected.
             require_positive_finite(species_field("animals_per_herder"), def.animals_per_herder)?;
+            // **A PER-SPECIES RUNG GAIN VALIDATES EXACTLY AS THE GLOBAL IT OVERRIDES.** Absent is the
+            // common case and means *"use the global"*; present means *"this animal is an exception"*,
+            // and an exception that broke the ladder's own ordering would be a config that reads as a
+            // tuning and behaves as a defect. The two bounds are the same ones the globals carry:
+            // taming must buy REACH (`> 1.0`) and must not out-handle a fence (`< pen_engage_gain`),
+            // and it may make an animal easier to bring down but never harder (`(0, 1]`).
+            if let Some(gain) = def.pastoral_engage_gain {
+                if !gain.is_finite() || gain <= 1.0 {
+                    return Err(FaunaConfigError::Invalid {
+                        field: species_field("pastoral_engage_gain"),
+                        constraint:
+                            "be finite and strictly above 1.0 — an override states that THIS \
+                                     animal gets more out of being herded, never less"
+                                .to_string(),
+                        value: gain.to_string(),
+                    });
+                }
+            }
+            if let Some(gain) = def.pen_engage_gain {
+                if !gain.is_finite() || gain < 1.0 {
+                    return Err(FaunaConfigError::Invalid {
+                        field: species_field("pen_engage_gain"),
+                        constraint:
+                            "be finite and at least 1.0 — penning may make an animal easier \
+                                     to handle and may never make it harder"
+                                .to_string(),
+                        value: gain.to_string(),
+                    });
+                }
+            }
+            // **THE LADDER'S ORDERING IS CHECKED ON THIS SPECIES' EFFECTIVE PAIR**, not on the
+            // globals: either arm may now be overridden, so comparing an override against the global
+            // it does not belong beside would let a fence handle worse than a halter on exactly the
+            // animal that carries a row. Both fall back to the global, so a species with no override
+            // re-checks the global ordering harmlessly.
+            require_greater_than(
+                species_field("pen_engage_gain"),
+                def.pen_engage_gain
+                    .unwrap_or(self.husbandry.pen_engage_gain),
+                species_field("pastoral_engage_gain (a fence handles better than a halter)"),
+                def.pastoral_engage_gain
+                    .unwrap_or(self.husbandry.pastoral_engage_gain),
+            )?;
+            if let Some(resistance) = def.pastoral_resistance {
+                require_positive_fraction(species_field("pastoral_resistance"), resistance)?;
+            }
             // **The animal quantum** (slice 8). Positive is the whole bound, and it is not
             // cosmetic: `quantise_animal_take` divides by this. At `0` a herd would hold infinitely
             // many animals and `floor(escapement / 0) = inf` would strip the whole stock in one
@@ -1956,6 +2256,41 @@ impl FaunaConfig {
                 value: self.husbandry.pen_engage_gain.to_string(),
             });
         }
+        // **The HALTER's handling gain sits strictly between the range and the fence.** Same shape as
+        // the pen's above and the same incoherence below the identity — plus an ordering, because a
+        // halter that out-handled a fence would invert the rung it is beneath. The `pastoral_gain <
+        // pen_gain` rule one field over, stated at the engagement.
+        if !self.husbandry.pastoral_engage_gain.is_finite()
+            || self.husbandry.pastoral_engage_gain <= 1.0
+        {
+            return Err(FaunaConfigError::Invalid {
+                field: "husbandry.pastoral_engage_gain",
+                constraint:
+                    "be finite and strictly above 1.0 — taming must buy REACH, and a value \
+                             at or below the identity would make the pastoral rung buy nothing at \
+                             the engagement, which is the defect this lever exists to close"
+                        .to_string(),
+                value: self.husbandry.pastoral_engage_gain.to_string(),
+            });
+        }
+        require_greater_than(
+            "husbandry.pen_engage_gain",
+            self.husbandry.pen_engage_gain,
+            "husbandry.pastoral_engage_gain (a fence handles better than a halter)",
+            self.husbandry.pastoral_engage_gain,
+        )?;
+        // **The halter's resistance multiplier is a FRACTION**, `(0, 1]`: taming may make an animal
+        // easier to bring down and may never make it harder, and a `0` would make it undefendable —
+        // which is rung 3's slaughter arriving a rung early rather than a tuning of rung 2.
+        require_positive_fraction(
+            "husbandry.pastoral_resistance",
+            self.husbandry.pastoral_resistance,
+        )?;
+        // **A space cap of `0` would mean no animal fits on any ground** — the off-switch spelled as a
+        // catastrophe, where `None` already says it plainly. Positive-finite when present.
+        if let Some(budget) = self.husbandry.hex_space_budget {
+            require_positive_finite("husbandry.hex_space_budget", budget)?;
+        }
         // `pen_radius_max` at `0` would forbid every `ExtendPen` (2d-β) — the command could never grow a
         // pen past its single tile, silently disabling the mechanic.
         if self.husbandry.pen_radius_max < 1 {
@@ -2073,6 +2408,38 @@ impl FaunaConfig {
             .map_or(DEFAULT_TAMING_COST_MULTIPLIER, |def| {
                 def.taming_cost_multiplier
             })
+    }
+
+    /// **THE PASTORAL RUNG'S ENGAGEMENT GAIN FOR THIS SPECIES** — its own
+    /// ([`SpeciesDef::pastoral_engage_gain`]) where it states one, the global
+    /// ([`HusbandryConfig::pastoral_engage_gain`]) where it does not. Resolved by the display name a
+    /// `Herd` carries, the [`FaunaConfig::taming_cost_multiplier_for`] path, so a retune reaches herds
+    /// already on the map.
+    ///
+    /// **The one seam `fauna::herd_engage_rate` reads**, so the override cannot be honoured on one
+    /// path and missed on another.
+    pub fn pastoral_engage_gain_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .and_then(|def| def.pastoral_engage_gain)
+            .unwrap_or(self.husbandry.pastoral_engage_gain)
+    }
+
+    /// **THE PEN RUNG'S HANDLING GAIN FOR THIS SPECIES** — its own
+    /// ([`SpeciesDef::pen_engage_gain`]) where the roster states one, the global
+    /// ([`HusbandryConfig::pen_engage_gain`]) where it does not. The pen twin of
+    /// [`FaunaConfig::pastoral_engage_gain_for`], read by `fauna::herd_engage_rate` and nowhere else.
+    pub fn pen_engage_gain_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .and_then(|def| def.pen_engage_gain)
+            .unwrap_or(self.husbandry.pen_engage_gain)
+    }
+
+    /// **THE PASTORAL RUNG'S RESISTANCE MULTIPLIER FOR THIS SPECIES** — the twin of
+    /// [`FaunaConfig::pastoral_engage_gain_for`], read by `fauna::herd_resistance`.
+    pub fn pastoral_resistance_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .and_then(|def| def.pastoral_resistance)
+            .unwrap_or(self.husbandry.pastoral_resistance)
     }
 
     /// **The animals one herder of this species minds** ([`SpeciesDef::animals_per_herder`]), resolved
@@ -2842,8 +3209,12 @@ mod tests {
         assert_eq!(def.pastoral_density, DEFAULT_HUSBANDRY_DENSITY);
         assert_eq!(def.pen_density, DEFAULT_HUSBANDRY_DENSITY);
         // The prime grazer domesticate carries the big pen bump; an unresolvable species is neutral.
+        // **The pen figure is a TUNING value** — `pen_density` is what sets a penned herd's `K`, and
+        // the roster's values are set against the Field's own sustainable line, not against any
+        // property of the resolver this test covers. Expect to update it; do not weaken the
+        // assertion to a range.
         assert_eq!(config.pastoral_density_for("Crag Goats"), 2.0);
-        assert_eq!(config.pen_density_for("Crag Goats"), 5.0);
+        assert_eq!(config.pen_density_for("Crag Goats"), 3.6073);
         assert_eq!(
             config.pen_density_for("No Such Beast"),
             DEFAULT_HUSBANDRY_DENSITY

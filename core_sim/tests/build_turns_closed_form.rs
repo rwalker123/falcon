@@ -250,7 +250,7 @@ fn spawn_keepers_of(
         .index(pos.x, pos.y)
         .expect("the herd's tile resolves");
     let rate = rate_in_hands(app, fauna_id);
-    let equipment = EquipmentConfig::builtin();
+    let equipment = EquipmentConfig::for_a_stocked_fixture();
     let kit = equipment
         .kit(HANDLING_KIT)
         .expect("the shipped roster carries the big-game kit");
