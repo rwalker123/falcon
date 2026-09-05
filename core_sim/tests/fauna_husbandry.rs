@@ -92,7 +92,7 @@ fn spawn_world() -> App {
     app.world
         .insert_resource(core_sim::CreaturesConfigHandle::default());
     app.world
-        .insert_resource(core_sim::EquipmentConfigHandle::default());
+        .insert_resource(core_sim::EquipmentConfigHandle::for_a_stocked_fixture());
     app.world
         .insert_resource(core_sim::MaterialsConfigHandle::default());
     app.world
@@ -2536,7 +2536,12 @@ fn a_fractional_pen_handling_rate_collects_whole_animals() {
 fn author_pen_handling_rate(app: &mut App, animals_per_keeper: f32) {
     let mut handle = app.world.resource_mut::<FaunaConfigHandle>();
     let mut config = (*handle.get()).clone();
-    let gain = config.husbandry.pen_engage_gain;
+    // **THE GAIN IS RESOLVED PER SPECIES, and reading the global here made the fixture author the
+    // wrong rate.** `fauna::herd_engage_rate` asks `FaunaConfig::pen_engage_gain_for`, which prefers
+    // this species' own override and falls back to `husbandry.pen_engage_gain` — so a species that
+    // grew a row (the fixture's own did) is divided by a number the sim never multiplies back, and
+    // the liveness assertion above is what caught it. Ask the same seam the sim asks.
+    let gain = config.pen_engage_gain_for(FIXTURE_SPECIES);
     let species = config
         .species
         .values_mut()

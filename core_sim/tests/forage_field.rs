@@ -165,7 +165,7 @@ fn spawn_world_on(grid_size: UVec2, seed: u64) -> App {
     app.world
         .insert_resource(core_sim::CreaturesConfigHandle::default());
     app.world
-        .insert_resource(core_sim::EquipmentConfigHandle::default());
+        .insert_resource(core_sim::EquipmentConfigHandle::for_a_stocked_fixture());
     app.world
         .insert_resource(core_sim::MaterialsConfigHandle::default());
     app.world
@@ -1132,7 +1132,7 @@ fn a_bare_ground_sow_wears_the_builders_kit_on_its_first_leg() {
 /// **The entry, not the `builders` row.** A build's kit is a property of the job since
 /// `docs/plan_standing_upkeep.md` §4.7a ②, and the row carries none at all.
 fn gear_the_builders_alone(app: &mut App, band: bevy::prelude::Entity) {
-    let equipment = core_sim::EquipmentConfig::builtin();
+    let equipment = core_sim::EquipmentConfig::for_a_stocked_fixture();
     let kit = equipment
         .kit(TILLAGE_KIT)
         .expect("the shipped roster carries the tillage kit");

@@ -30,8 +30,8 @@ class_name CraftingPanel
 ##
 ## **OWNERSHIP IS `count`, NEVER `remaining == 0`.** A batch that runs out of units is removed, so a
 ## worn-out item and one the band never made both read `remaining 0` — which is why the Owned cell is
-## keyed off `count` and states the CONSEQUENCE of owning none (`Bare hands` / `Not made`) rather than
-## a step-down. Owning units reads **one line per GRADE**, because a band may hold one item at two and
+## keyed off `count` and states the CONSEQUENCE of owning none (`Not made`, one wording for every
+## group) rather than a step-down. Owning units reads **one line per GRADE**, because a band may hold one item at two and
 ## `×5 · excellent` would be a lie.
 ##
 ## **MAKE STAGES THE JOB; THE PLAYER STAFFS IT.** Pressing Make emits `make_requested` (→
@@ -1088,9 +1088,12 @@ func _role_line(offer: Dictionary, payload: Dictionary) -> String:
 ## - A **stock** recipe reports the band's TOTAL of the material it makes — one number, summed across
 ##   its batches, with no `×` and no rating chips: the per-batch ratings are the material rail's fact
 ##   and this cell would only duplicate them. See `_build_stock_owned_cell`.
-## - Owning **none** states the CONSEQUENCE rather than the arithmetic — `Bare hands` for a kit,
-##   `Not made` for a tool. Keyed off the published `group` and off `count`, NEVER off
-##   `remaining == 0`: a spent batch is removed, so worn-out and never-made both read zero condition.
+## - Owning **none** states the CONSEQUENCE rather than the arithmetic — `Not made`, the SAME wording
+##   for a kit and for a bench tool, because the cell has to answer the column it sits under and that
+##   column is `Owned`. The `group` still picks the chip's INK (a lacked kit is `DANGER`, a never-built
+##   bench tool `INK_FAINT`), so the distinction survives as urgency rather than as a second sentence.
+##   Keyed off `count`, NEVER off `remaining == 0`: a spent batch is removed, so worn-out and
+##   never-made both read zero condition.
 ## - Owning **units** reads one line per GRADE, best first, with the counts of the batches sharing a
 ##   grade summed — two `good` batches at different wear are one line of `×5`, wear not being this
 ##   panel's fact. **TWO GRADES GET A LINE EACH**: `×5 · excellent` would be a lie, and every rule for
@@ -1109,12 +1112,12 @@ func _build_owned_cell(offer: Dictionary, batches: Array, group: String, payload
 	column.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
 	var lines := _owned_lines(batches, payload)
 	if lines.is_empty():
-		if group == HudCraftingVocab.GROUP_TOOL:
-			column.add_child(_chip(HudCraftingVocab.OWNED_TOOL_NONE, HudStyle.INK_FAINT,
-				HudCraftingVocab.OWNED_CHIP_FONT_SIZE))
-		else:
-			column.add_child(_chip(HudCraftingVocab.OWNED_KIT_NONE, HudStyle.DANGER,
-				HudCraftingVocab.OWNED_CHIP_FONT_SIZE))
+		# **ONE WORDING, TWO COLOURS.** The cell sits under `Owned`, so it answers that question for
+		# every group — a bench tool and a kit alike read `Not made`. What still differs is urgency,
+		# and that is the chip's ink: a kit the band lacks has people working bare-handed this turn.
+		var none_ink := HudStyle.INK_FAINT if group == HudCraftingVocab.GROUP_TOOL else HudStyle.DANGER
+		column.add_child(_chip(HudCraftingVocab.OWNED_NONE, none_ink,
+			HudCraftingVocab.OWNED_CHIP_FONT_SIZE))
 	for line_variant in lines:
 		var line: Dictionary = line_variant
 		column.add_child(_owned_line(int(line["count"]), String(line["grade"]), payload))

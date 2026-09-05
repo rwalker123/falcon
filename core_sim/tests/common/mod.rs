@@ -1,4 +1,8 @@
-//! Comparing two encoded checkpoints, without comparing their map ORDER.
+//! **The shared integration-test helpers.** Two unrelated things live here, because `tests/common`
+//! is the one module a test binary can pull in: the checkpoint comparison below, and the pinned
+//! flora fixture in [`reference_basket`].
+//!
+//! # Comparing two encoded checkpoints, without comparing their map ORDER
 //!
 //! Shared by more than one integration-test binary. Each binary compiles this module separately and
 //! uses a different subset of it, so the unused half is dead code in that binary and only in that
@@ -27,6 +31,9 @@
 //! serde walks every field regardless.
 
 #![allow(dead_code)]
+
+/// The pinned flora fixture two harnesses quote their plant figures on — see its own docs.
+pub mod reference_basket;
 
 use ciborium::value::Value;
 

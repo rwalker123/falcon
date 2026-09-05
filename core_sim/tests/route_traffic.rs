@@ -92,7 +92,8 @@ fn spawn_world() -> App {
     app.world.insert_resource(LadderConfigHandle::default());
     // The keeping pass resolves the road keepers' kit off the roster. The shipped
     // `default_kits.roadwork` is the bare `none` kit, so they work bare — intended, not a gap.
-    app.world.insert_resource(EquipmentConfigHandle::default());
+    app.world
+        .insert_resource(EquipmentConfigHandle::for_a_stocked_fixture());
     // The movement pass reads `band_move_tiles_per_turn` off it — a marching party is the second
     // source of route traffic.
     app.world.insert_resource(LaborConfigHandle::default());

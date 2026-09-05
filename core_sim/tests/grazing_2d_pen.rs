@@ -100,7 +100,7 @@ fn base_world() -> App {
     app.world
         .insert_resource(core_sim::CreaturesConfigHandle::default());
     app.world
-        .insert_resource(core_sim::EquipmentConfigHandle::default());
+        .insert_resource(core_sim::EquipmentConfigHandle::for_a_stocked_fixture());
     app.world
         .insert_resource(core_sim::MaterialsConfigHandle::default());
     app.world
@@ -741,6 +741,19 @@ fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
 /// All three rungs read the **same single-tile footprint** at `tile` (a `Small` herd's roam radius is
 /// 0, a `pen_radius = 0` pen is one tile), and `advance_herd_grazing` is **not** run, so the graze is at
 /// capacity for every probe — the base K is identical and the ratio isolates the density gain.
+///
+/// # ⛔ THE DIALS ARE TUNED AGAINST THE FIELD'S SUSTAINABLE LINE — this pins the shipped value
+///
+/// `pen_density` is what sets a penned herd's `K`, and with `husbandry.pen_is_a_larder` the take is
+/// `r × K / 4`, so `food/turn = r_pen × base_K × pen_density × 0.005`. **That one dial decides the
+/// whole rung**, and the roster's values are chosen so the seven pens land in a band beneath the
+/// Field's own sustainable line (`tests/field_reference_basket.rs`) rather than for any property of
+/// the ratio this test measures.
+///
+/// So the goat's `3.6073` **is a tuning number and will move again**. When it does, update the constant
+/// below to the new one — that is the intended maintenance. What must NOT change is the *relationship*:
+/// a penned `K` is `base × pen_density` exactly, and a species with the neutral dials is byte-identical
+/// at every rung. Do not weaken either assertion to a range to stop this firing.
 #[test]
 fn the_husbandry_density_ladder_scales_carrying_capacity_per_species() {
     #[derive(Clone, Copy)]
@@ -806,7 +819,7 @@ fn the_husbandry_density_ladder_scales_carrying_capacity_per_species() {
         graze.patches.retain(|&t, _| t == tile);
     }
 
-    // --- Crag Goats: the prime grazer domesticate, dials 2.0 / 5.0. ---
+    // --- Crag Goats: the prime grazer domesticate, dials 2.0 / 3.6073. ---
     let goat_wild = k_for(&mut app, tile, "Crag Goats", Rung::Wild);
     let goat_pastoral = k_for(&mut app, tile, "Crag Goats", Rung::Pastoral);
     let goat_pen = k_for(&mut app, tile, "Crag Goats", Rung::Pen);
@@ -819,9 +832,12 @@ fn the_husbandry_density_ladder_scales_carrying_capacity_per_species() {
         (goat_pastoral - goat_wild * 2.0).abs() < eps,
         "a tamed goat's K = base × pastoral_density (2.0): base {goat_wild} → {goat_pastoral}"
     );
+    // **The shipped `pen_density`, quoted once.** It is a tuning value set against the Field's
+    // sustainable line, not a property of the density ladder — see this test's header.
+    const GOAT_PEN_DENSITY: f32 = 3.6073;
     assert!(
-        (goat_pen - goat_wild * 5.0).abs() < eps,
-        "a penned goat's K = base × pen_density (5.0): base {goat_wild} → {goat_pen}"
+        (goat_pen - goat_wild * GOAT_PEN_DENSITY).abs() < eps,
+        "a penned goat's K = base × pen_density ({GOAT_PEN_DENSITY}): base {goat_wild} → {goat_pen}"
     );
 
     // --- Red Deer: a `wild`-ceiling species that omits the dials → neutral 1.0 at every rung. ---

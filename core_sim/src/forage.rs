@@ -4146,6 +4146,12 @@ pub(crate) fn forage_forecast(
         // it feeds. Nothing on the plant web is brought down.
         engage_rate: f32::INFINITY,
         fight: None,
+        // A gather has no kill arm at all, so there is nothing for the pen's discriminator to say
+        // here — `false` is *"not a slaughter"*, exactly as `fight: None` above is *"not a fight"*.
+        slaughters: false,
+        // And a stand is not a larder: a gather really is bounded by what the baskets hold, which is
+        // why every plant row in the measurement harness reads 100% carry utilisation.
+        larder: false,
         per_worker_yield: plant_food_only(forage_provisions(
             per_worker_gather_biomass,
             rate,

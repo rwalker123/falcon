@@ -9,20 +9,15 @@
 //! `AlluvialPlain`, `K = 195`, the realization of tile `(0,0)` under seed `0xF10A_5EED_C011_0010` —
 //! `wild_emmer` 0.375 / `wild_tubers` 0.292 / `tobacco` 0.208 / `wild_rice` 0.125.
 
-use bevy::math::UVec2;
 use core_sim::{
     commit_payoff, wild_payoff, FloraConfig, LaborConfig, RungKey, BUILTIN_LABOR_CONFIG,
 };
-use sim_runtime::TerrainType;
 
-/// The pinned realization seed — the one the shipped `sweep_tiles` fixtures use.
-const REFERENCE_SEED: u64 = 0x_F10A_5EED_C011_0010;
-/// The pinned tile.
-const REFERENCE_TILE: UVec2 = UVec2::new(0, 0);
-/// The pinned ground.
-const REFERENCE_TERRAIN: TerrainType = TerrainType::AlluvialPlain;
-/// The pinned crop — the basket's best staple on this ground.
-const REFERENCE_CROP: &str = "wild_emmer";
+mod common;
+/// **The seed, tile, ground and crop are the SHARED pin** — `food_economy_table.rs` quotes its plant
+/// ladder on the same realization, and two copies of it would drift.
+use common::reference_basket as basket;
+
 /// Quotes are captured at neutral productivity, as the shipped per-patch forecasts are.
 const QUOTE_MULTIPLIER: f32 = 1.0;
 
@@ -62,13 +57,13 @@ const UNCHANGED_BAND: f32 = 0.01;
 fn measured(rung: Option<RungKey>) -> f32 {
     let labor = LaborConfig::from_json_str(BUILTIN_LABOR_CONFIG).expect("builtin labor config");
     let flora = FloraConfig::builtin();
-    let capacity = labor.forage.capacity_for(REFERENCE_TERRAIN);
-    let composition = flora.realized_composition(REFERENCE_TERRAIN, REFERENCE_TILE, REFERENCE_SEED);
+    let capacity = basket::capacity(&labor);
+    let composition = basket::composition(&flora);
     match rung {
         Some(rung) => commit_payoff(
-            REFERENCE_TILE,
+            basket::TILE,
             capacity,
-            REFERENCE_CROP,
+            basket::CROP,
             &composition,
             &flora,
             &labor.forage,
@@ -76,7 +71,7 @@ fn measured(rung: Option<RungKey>) -> f32 {
             rung,
         ),
         None => wild_payoff(
-            REFERENCE_TILE,
+            basket::TILE,
             capacity,
             &composition,
             &flora,

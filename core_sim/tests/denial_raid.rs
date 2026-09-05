@@ -309,7 +309,7 @@ fn spawn_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
             // (`equipment.md` → "the partly-equipped party"), and the one-unit reference ledger
             // would arm one of these twenty and send nineteen out bare-handed.
             core_sim::BandEquipment::start_stocked_for(
-                &core_sim::EquipmentConfig::builtin(),
+                &core_sim::EquipmentConfig::for_a_stocked_fixture(),
                 FIXTURE_BAND_WORKERS as f32,
             ),
         ))
@@ -334,7 +334,10 @@ fn spawn_party(
             // zero wear (`docs/plan_denial_raid.md` §1.2). Carried explicitly rather than left to
             // `advance_expeditions`' absent-component default, because these fixtures read the wear
             // back off it.
-            BandEquipment::start_stocked_for(&core_sim::EquipmentConfig::builtin(), workers as f32),
+            BandEquipment::start_stocked_for(
+                &core_sim::EquipmentConfig::for_a_stocked_fixture(),
+                workers as f32,
+            ),
             StartingUnit::new("expedition".to_string(), Vec::new()),
             Expedition {
                 home_band,

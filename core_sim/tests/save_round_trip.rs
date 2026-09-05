@@ -55,6 +55,14 @@ const LARGE_GRID: UVec2 = UVec2::new(160, 104);
 
 fn spawn_world() -> App {
     let mut app = build_test_app();
+    // **THIS SUITE'S SUBJECT IS THE PRODUCTION LOAD PATH, so it states the SHIPPED equipment.**
+    // `build_test_app` installs the stocked fixture config (`equipment.md` → "A SPAWNING BAND OWNS
+    // NO EQUIPMENT AT ALL" is the shipped opening, and a fixture that wants gear must say so). A
+    // reload goes through `build_headless_app`, which loads what `equipment.json` actually ships —
+    // so a stocked live world would differ from its own reload in `equipment_config_json` and
+    // nothing else, which is a statement about the two builders rather than about the save.
+    app.world
+        .insert_resource(core_sim::EquipmentConfigHandle::default());
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();
     config.map_seed = core_sim::HARNESS_MAP_SEED;

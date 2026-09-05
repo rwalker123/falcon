@@ -856,7 +856,7 @@ mod tests {
     /// actually depends on. A resource this forgets shows up as a panic naming the resource.
     fn test_world() -> World {
         let mut world = World::new();
-        world.insert_resource(EquipmentConfigHandle::default());
+        world.insert_resource(EquipmentConfigHandle::for_a_stocked_fixture());
         world.insert_resource(CreaturesConfigHandle::default());
         world.insert_resource(CombatConfigHandle::default());
         world.insert_resource(LaborConfigHandle::default());
