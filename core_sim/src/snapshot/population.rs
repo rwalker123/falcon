@@ -296,21 +296,30 @@ fn merged_arrival_schedule(allocation: Option<&LaborAllocation>) -> Vec<f32> {
 /// pre-launch estimate tables stopped — and it capped nothing: the sim never read it, and all four
 /// client sites that mention it say so in capitals ("IS NOT A RULES CAP AND MUST NOT BE APPLIED
 /// HERE"). The tables are gone and the ladder with them, so the echo went too.
-pub(crate) struct ExpeditionLevers {
+pub(crate) struct ExpeditionLevers<'a> {
     pub(crate) hunt_per_worker_carry: f32,
-    /// **The RESOLVED per-worker shipment carry** ([`crate::expedition_config::trade_per_worker_carry`])
-    /// — what the sim says one person on a shipment hauls, not a lever read. Echoed per-cohort so the
-    /// outfit UI can price a manifest for a party that **does not exist yet**: that is why it is a
-    /// global echo and not a per-party field, since the player builds the shipment *before* there is
-    /// a party to read a cap off. Same idiom as [`Self::hunt_per_worker_carry`] beside it, and a
-    /// deliberately **separate** number — a shipment's pack and a raid's are different packs, and a
-    /// client reaching for the hunt lever is one config edit away from quoting a cap the sim refuses.
+    /// **The shipment-carry config, carried as a BORROW rather than as a resolved number** — the one
+    /// field here that is not a scalar, and deliberately so.
     ///
-    /// **Resolution happens once per capture** because nothing carry depends on varies by band
-    /// today. An input that does vary by band — a cart kit a band owns — moves this call into the
-    /// cohort row builder; that is a sim-internal move the wire contract already absorbs, because
-    /// what the field promises is the resolved number rather than where it was resolved.
-    pub(crate) trade_per_worker_carry: f32,
+    /// Shipment carry has **two** rules resolved off it, and the cohort row builder runs both:
+    /// [`crate::expedition_config::trade_per_worker_carry`] fills the per-cohort echo the outfit UI
+    /// multiplies, and [`crate::expedition_config::shipment_carry_cap`] fills a live trade party's
+    /// own `expedition_carry_cap`. Handing down the *config* rather than a pre-multiplied scalar is
+    /// what keeps each of those expressed exactly once: a **party-level** term — a wagon that holds
+    /// what it holds however many people walk beside it — attaches inside `shipment_carry_cap`, and
+    /// a snapshot holding only a per-worker number could not see it. The launch refusal would
+    /// enforce the wagon while the published cap went on quoting `workers × per-worker`, and nothing
+    /// would fail.
+    ///
+    /// **The carry is resolved per band row, not once per capture**, for the same reason: an input
+    /// that comes to vary by band — a cart kit a band owns — is then a change to the resolver's
+    /// arguments and nothing else. The wire contract already absorbs that, because what the field
+    /// promises is the resolved number rather than where it was resolved.
+    ///
+    /// It is deliberately a **separate** carry from [`Self::hunt_per_worker_carry`] beside it, which
+    /// really is still a raw lever: a shipment's pack and a raid's are different packs, and a client
+    /// reaching for the hunt lever is one config edit away from quoting a cap the sim refuses.
+    pub(crate) trade: &'a crate::expedition_config::TradeExpeditionConfig,
     /// `expedition_config.trade.material_carry_weight` — what one unit of a material costs in pack
     /// space relative to one unit of food, so the cargo picker can run the **same** mass expression
     /// the launch command checks: `food + this × Σ material amounts`.
@@ -408,7 +417,7 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// lever the client needs per-band to check whether a visible aggressive predator is in raid range).
     pub(crate) raid_radius: u32,
     pub(crate) scout_vantage_distance: u32,
-    pub(crate) expedition_levers: &'a ExpeditionLevers,
+    pub(crate) expedition_levers: &'a ExpeditionLevers<'a>,
     pub(crate) settlement_stage_config: &'a crate::settlement_stage_config::SettlementStageConfig,
     pub(crate) travel_target: Option<UVec2>,
     pub(crate) hunt_reach: u32,
@@ -1076,12 +1085,13 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // (`0` for a scout and for a normal band). The party's worker count is its working-age head-count.
     //
     // **What fills it is a fact about the mission, not about expeditions.** A raid's pack is
-    // measured in food it can haul home, off `hunt.per_worker_carry`; a shipment's is the RESOLVED
-    // per-worker carry (`expedition_config::trade_per_worker_carry`) × the party — the product
-    // `expedition_config::shipment_carry_cap` names, and the one the launch command enforces. They
-    // are different numbers, so the cap resolves per mission rather than quoting one of them at
-    // every party: a client reading the hunt lever for a trade party would be one config edit away
-    // from quoting a cap the launch command refuses.
+    // measured in food it can haul home, and is still a raw lever (`hunt.per_worker_carry` × the
+    // party). A shipment's is `expedition_config::shipment_carry_cap` — **called, not restated**,
+    // because it is the very expression the launch command refuses on, and a term that scales with
+    // the PARTY rather than with a worker (a wagon holds what it holds) would live inside it where a
+    // per-worker echo could never see it. They are different numbers, so the cap resolves per
+    // mission rather than quoting one of them at every party: a client reading the hunt lever for a
+    // trade party would be one config edit away from quoting a cap the launch command refuses.
     //
     // **A denial party has a pack too** — it does not clamp to carry, but it still hauls home
     // whatever it can (`docs/plan_denial_raid.md` §1), so its cap is the hunt's.
@@ -1090,7 +1100,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             working_age as f32 * expedition_levers.hunt_per_worker_carry
         }
         Some(ExpeditionMission::Trade { .. }) => {
-            working_age as f32 * expedition_levers.trade_per_worker_carry
+            crate::expedition_config::shipment_carry_cap(working_age, expedition_levers.trade)
         }
         // A scout hauls nothing it was sent for, and a resident band is not a party.
         Some(ExpeditionMission::Scout) | None => 0.0,
@@ -1243,8 +1253,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // **The RESOLVED shipment carry, echoed onto every cohort** — the outfit UI prices a
         // manifest for a party that does not exist yet, so no per-party field can serve that screen.
         // Same idiom as the hunt lever above it, but this one is the sim's answer rather than a
-        // lever quote: `party_workers × this` is the cap the launch command enforces.
-        expedition_trade_per_worker_carry: expedition_levers.trade_per_worker_carry,
+        // lever quote: `party_workers × this` is the cap the launch command enforces, and it is the
+        // *same* resolver `expedition_carry_cap` above multiplies out for a party already on the
+        // map.
+        expedition_trade_per_worker_carry: crate::expedition_config::trade_per_worker_carry(
+            expedition_levers.trade,
+        ),
         // The other two thirds of the mass expression, so the cargo picker runs the sim's own rule
         // rather than watching a meter that cannot move.
         expedition_trade_material_carry_weight: expedition_levers.trade_material_carry_weight,
@@ -1663,11 +1677,16 @@ mod tests {
         }
     }
 
-    fn levers() -> ExpeditionLevers {
-        let cfg = ExpeditionConfig::builtin();
+    /// The expedition levers, resolved off the builtins. The `ExpeditionConfig` is parked in a
+    /// `OnceLock` so the returned borrow is `'static` — the same reason [`kit_levers`] does it, and
+    /// the fixtures pass `&levers()` as a temporary the same way.
+    fn levers() -> ExpeditionLevers<'static> {
+        static EXPEDITION: std::sync::OnceLock<std::sync::Arc<ExpeditionConfig>> =
+            std::sync::OnceLock::new();
+        let cfg = EXPEDITION.get_or_init(ExpeditionConfig::builtin);
         ExpeditionLevers {
             hunt_per_worker_carry: cfg.hunt.per_worker_carry,
-            trade_per_worker_carry: crate::expedition_config::trade_per_worker_carry(&cfg.trade),
+            trade: &cfg.trade,
             trade_material_carry_weight: cfg.trade.material_carry_weight,
             trade_fodder_carry_weight: cfg.trade.fodder_carry_weight,
             hunt_per_worker_provisions: 0.0,

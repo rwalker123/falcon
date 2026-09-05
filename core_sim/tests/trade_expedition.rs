@@ -1055,14 +1055,23 @@ fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
     );
 }
 
-/// **A live trade party's own pack is quoted at the TRADE lever, not the hunt one.**
+/// **A live trade party's own pack is the RESOLVED shipment carry, not the hunt lever.**
 ///
-/// The two are different packs — a raid's is the provisions ceiling it fills before delivering, a
-/// shipment's is what its people can carry out — so `expeditionCarryCap` resolves per mission. The
-/// contrast with a resident band's `0` is the negative control, and pinning the trade party's cap
-/// against the *hunt* lever's product is what would catch the field being wired to the wrong one.
+/// The two are different packs arrived at two ways, and `expeditionCarryCap` resolves per mission
+/// between them:
+///
+/// - the shipment side is `core_sim::shipment_carry_cap` — the sim's own expression, the one
+///   `send_trade_expedition` refuses on — so this pins the published cap against **the resolver**
+///   rather than against `trade.per_worker_carry`. Against the raw lever the assertion would pass
+///   for a carry model that grew server-side and skipped the resolver, and would then fail with a
+///   message telling its fixer to restore a rule this arc retired.
+/// - the hunt side genuinely **is** still a raw lever (`hunt.per_worker_carry` × the party). That
+///   asymmetry is deliberate, and it is what keeps the "quoted at the right one" claim falsifiable:
+///   the two numbers have to differ, which the fixture asserts before it leans on them.
+///
+/// The contrast with a resident band's `0` is the negative control.
 #[test]
-fn a_trade_partys_carry_cap_is_quoted_at_the_shipment_lever() {
+fn a_trade_partys_carry_cap_is_quoted_at_the_resolved_shipment_carry() {
     let mut app = spawn_world();
     let sender = first_band(&mut app);
     let faction = app
@@ -1086,18 +1095,24 @@ fn a_trade_partys_carry_cap_is_quoted_at_the_shipment_lever() {
 
     run_turn(&mut app);
 
-    let (trade_carry, hunt_carry) = {
+    // The shipment side is the SIM'S RESOLVED CAP; the hunt side is the raw lever it must not be
+    // confused with. Two different derivations on purpose — see this test's doc comment.
+    let (resolved_trade_cap, hunt_carry) = {
         let cfg = app
             .world
             .resource::<core_sim::ExpeditionConfigHandle>()
             .get();
-        (cfg.trade.per_worker_carry, cfg.hunt.per_worker_carry)
+        (
+            core_sim::shipment_carry_cap(PARTY_WORKERS, &cfg.trade),
+            cfg.hunt.per_worker_carry,
+        )
     };
-    // The two levers must genuinely differ, or "quoted at the right one" is unfalsifiable.
+    let hunt_cap = PARTY_WORKERS as f32 * hunt_carry;
+    // The two packs must genuinely differ, or "quoted at the right one" is unfalsifiable.
     assert!(
-        (trade_carry - hunt_carry).abs() > EPSILON,
-        "the fixture rests on the two packs being different numbers: trade {trade_carry}, hunt \
-         {hunt_carry}"
+        (resolved_trade_cap - hunt_cap).abs() > EPSILON,
+        "the fixture rests on the two packs being different numbers: shipment \
+         {resolved_trade_cap}, raid {hunt_cap}"
     );
 
     let packs = published_packs(&app);
@@ -1113,13 +1128,13 @@ fn a_trade_partys_carry_cap_is_quoted_at_the_shipment_lever() {
         .expect("the resident band's row is published");
 
     assert!(
-        (party_cap - PARTY_WORKERS as f32 * trade_carry).abs() < EPSILON,
-        "a shipment party's pack is `workers × trade.per_worker_carry`: got {party_cap}, wanted {}",
-        PARTY_WORKERS as f32 * trade_carry
+        (party_cap - resolved_trade_cap).abs() < EPSILON,
+        "a shipment party's pack is the sim's own `shipment_carry_cap`, never a lever product of \
+         its own: got {party_cap}, wanted {resolved_trade_cap}"
     );
     assert!(
-        (party_cap - PARTY_WORKERS as f32 * hunt_carry).abs() > EPSILON,
-        "and emphatically NOT the raid's pack — a client reading the hunt lever would quote a cap \
+        (party_cap - hunt_cap).abs() > EPSILON,
+        "and emphatically NOT the raid's pack — a client reading the hunt LEVER would quote a cap \
          the launch command refuses: got {party_cap}"
     );
     assert_eq!(
