@@ -24,13 +24,21 @@ extends RefCounted
 ## player put away, every turn, is the failure mode the fork panel's `_auto_opened_forks` already
 ## guards against.
 ##
-## ## THE SIM DECIDES WHETHER THE ORDER LANDED
+## ## ⛔ AN APPLY IS A REPLACEMENT, SO A COMMIT IS NOT THE END OF ANYTHING
 ##
-## Commit sends the line and collapses the card OPTIMISTICALLY, because a surface that sat there
-## after a successful order would read as a failure. But `open` is authoritative: if the next frame
-## still says `true`, the sim REFUSED (a closed window, an unknown kit, an overspent budget — it
-## fails whole and changes nothing), so the card comes back carrying `REFUSAL_NOTICE` rather than the
-## player being left believing they are outfitted. `_awaiting_commit` is that one-shot expectation.
+## **Committing does not shut the window** — only the turn advance does. The sim treats an apply as a
+## replacement rather than an addition, so the order may be sent, revised and sent again as often as
+## the player likes, and re-sending the SAME allocation is an ordinary act rather than an error path.
+## Commit therefore sends the line and collapses the card so the player can look at the map; the
+## picks are kept and the reopen pill and the orb's row both stay live.
+##
+## ⛔ **`open` IS THEREFORE NOT A SUCCESS SIGNAL, and this controller used to read it as one.** It
+## held an `_awaiting_commit` flag and treated a still-open window on the next frame as a REFUSAL,
+## which was right while an accepted order closed the window and is now the opposite of right: under
+## replacement semantics every SUCCESSFUL commit leaves the window open, so that branch would post
+## *"that order was refused"* after each one. The flag and its notice are gone. **A genuine refusal is
+## not visible on this card at all** — the server only `warn!`s it to the log stream — and nothing here
+## may go back to inferring one from `open`.
 
 ## Send the composed loadout — `set_starting_loadout <faction> [kit <id> <n>]... [material <id>
 ## <n>]...`. **It fails CLOSED and WHOLE server-side**, so the client sends the entire allocation in
@@ -72,16 +80,9 @@ var _material_picks: Dictionary = {}
 var _defaults_seeded: bool = false
 
 var _auto_opened: bool = false
-## True between sending a commit and the frame that answers it. See the docstring.
-var _awaiting_commit: bool = false
-var _notice: String = ""
 ## The rows last handed to the orb, so an unchanged half is not re-pushed — `set_knowledge_attention`
 ## records what a needless full-registry push costs.
 var _attention_rows: Array = []
-
-## The sim's refusal is a WHOLE-ORDER rejection with no per-field detail on the wire, so the client
-## says what it can honestly say: the order did not land and the window is still open.
-const REFUSAL_NOTICE := "That order was refused — nothing was spent. Adjust it and try again."
 
 ## A recipe with no inputs at all cannot be priced against a pile, so the column reads it as
 ## unreachable rather than as infinitely makeable. Nothing in the shipped book is such a recipe; this
@@ -109,20 +110,12 @@ func set_window(state: Variant) -> void:
 	if not _defaults_seeded:
 		_seed_defaults(window.get(HudLoadoutVocab.MATERIAL_DEFAULTS_KEY, []))
 	if not _open:
-		# The turn advanced (or the order landed): the window is gone and so is the whole surface.
-		_awaiting_commit = false
-		_notice = ""
+		# **THE TURN ADVANCED.** That is the ONLY thing that shuts this window — an accepted order
+		# does not — so the whole surface goes and whatever was left of either budget is forfeit.
 		close()
 		_push_attention()
 		return
-	# **THE ANSWER TO A COMMIT.** Still open after a commit means the sim refused it, and the card
-	# comes back saying so — assuming success here is how a player ends up believing they are
-	# outfitted when nothing was spent.
-	if _awaiting_commit:
-		_awaiting_commit = false
-		_notice = REFUSAL_NOTICE
-		_open_card()
-	elif not was_open and not _auto_opened:
+	if not was_open and not _auto_opened:
 		_auto_opened = true
 		_open_card()
 	# ⛔ **`is_expanded`, NOT `is_open`.** A DISMISSED picker is still "open" — the panel node is
@@ -186,9 +179,7 @@ func close() -> void:
 func reset_world_state() -> void:
 	_open = false
 	_auto_opened = false
-	_awaiting_commit = false
 	_defaults_seeded = false
-	_notice = ""
 	_kit_picks = {}
 	_material_picks = {}
 	_equipment_config = {}
@@ -229,8 +220,6 @@ func render() -> void:
 			StartingLoadoutPanel.BUDGET_SPENT: materials_spent(),
 			StartingLoadoutPanel.BUDGET_TOTAL: _material_budget,
 		},
-		StartingLoadoutPanel.PAYLOAD_COMMIT_LABEL: commit_label(),
-		StartingLoadoutPanel.PAYLOAD_NOTICE: _notice,
 	})
 
 ## COLUMN 1's rows — the kit roster out of the parsed equipment config, in the config's own order,
@@ -368,30 +357,21 @@ func kits_left() -> int:
 func materials_left() -> int:
 	return maxi(_material_budget - materials_spent(), 0)
 
-## The commit control's face. It states the CONSEQUENCE when something is unspent and simply confirms
-## when both budgets are clear — the button never refuses, so the sentence is the whole warning.
-func commit_label() -> String:
-	var parts: Array[String] = []
-	var kits := kits_left()
-	if kits == 1:
-		parts.append(HudLoadoutVocab.COMMIT_FORFEIT_KITS_ONE)
-	elif kits > 1:
-		parts.append(HudLoadoutVocab.COMMIT_FORFEIT_KITS_MANY % kits)
-	var units := materials_left()
-	if units == 1:
-		parts.append(HudLoadoutVocab.COMMIT_FORFEIT_UNITS_ONE)
-	elif units > 1:
-		parts.append(HudLoadoutVocab.COMMIT_FORFEIT_UNITS_MANY % units)
-	if parts.is_empty():
-		return HudLoadoutVocab.COMMIT_CLEAR_LABEL
-	return HudLoadoutVocab.COMMIT_FORFEIT_FORMAT \
-		% HudLoadoutVocab.COMMIT_FORFEIT_SEPARATOR.join(parts)
-
 # ---- the orb's row ----------------------------------------------------------
 
-## Producer — the band is not outfitted yet. **NON-LOCATING** (an opening loadout is a faction fact
-## and no hex holds it) and deliberately **NOT `blocking`**: closing the window is the sim's business,
-## so the orb warns about what is unspent and the `Advance ▸` footer stays live.
+## Producer — the opening loadout window. **ONE ROW FOR THE WHOLE TIME THE WINDOW IS OPEN**, spent or
+## not: the card is dismissible and this row's `Open ▸` is the guaranteed way back to it, so a
+## producer that fell silent once both budgets were clear would strand a player who had finished
+## picking, put the card away, and then wanted to revise before ending the turn.
+##
+## **WHAT MOVES IS THE SEVERITY AND THE WORDING.** Both budgets clear ⇒ `ready`, and the row reads as
+## done; anything unspent ⇒ `warn`, and it reads as a warning naming what is left. `ready` ranks BELOW
+## `info`, so a satisfied loadout never takes the orb's accent off a real warning elsewhere, and it
+## still paints the orb when it is the highest entry present.
+##
+## **NON-LOCATING** (an opening loadout is a faction fact and no hex holds it) and deliberately **NOT
+## `blocking`** in either state: closing the window is the sim's business, so the `Advance ▸` footer
+## stays live and this row only ever warns.
 func attention_rows() -> Array:
 	if not _open:
 		return []
@@ -406,15 +386,17 @@ func attention_rows() -> Array:
 		parts.append(HudLoadoutVocab.ATTENTION_DETAIL_UNITS_ONE)
 	elif units > 1:
 		parts.append(HudLoadoutVocab.ATTENTION_DETAIL_UNITS_MANY % units)
-	var detail := HudLoadoutVocab.ATTENTION_DETAIL_READY if parts.is_empty() \
-		else HudLoadoutVocab.ATTENTION_DETAIL_SEPARATOR.join(parts)
+	var complete := parts.is_empty()
 	return [{
 		"kind": HudAttentionVocab.ATTENTION_KIND_OPENING_LOADOUT,
-		# WARN and not critical: nothing is being lost yet, and the row shares the popover with
-		# starvation rows that genuinely are.
-		"severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
-		"label": HudLoadoutVocab.ATTENTION_LABEL,
-		"detail": detail,
+		# Never `critical` on the unspent arm either: nothing is being lost yet, and the row shares the
+		# popover with starvation rows that genuinely are.
+		"severity": HudAttentionVocab.ATTENTION_SEVERITY_READY if complete \
+			else HudAttentionVocab.ATTENTION_SEVERITY_WARN,
+		"label": HudLoadoutVocab.ATTENTION_LABEL_READY if complete \
+			else HudLoadoutVocab.ATTENTION_LABEL_UNSPENT,
+		"detail": HudLoadoutVocab.ATTENTION_DETAIL_READY if complete \
+			else HudLoadoutVocab.ATTENTION_DETAIL_SEPARATOR.join(parts),
 		"x": HudAttentionVocab.ATTENTION_NON_LOCATING,
 		"y": HudAttentionVocab.ATTENTION_NON_LOCATING,
 	}]
@@ -445,8 +427,6 @@ func _ensure_panel() -> void:
 	_panel.commit_requested.connect(_on_commit_requested)
 
 func _on_dismissed() -> void:
-	# The notice has been read; it does not follow the card back.
-	_notice = ""
 	collapse()
 
 func _on_reopened() -> void:
@@ -459,7 +439,6 @@ func _on_kit_count_changed(kit_id: String, count: int) -> void:
 	var current := int(_kit_picks.get(kit_id, 0))
 	var ceiling := current + kits_left()
 	_kit_picks[kit_id] = clampi(count, 0, ceiling)
-	_notice = ""
 	render()
 	_push_attention()
 
@@ -467,13 +446,17 @@ func _on_material_units_changed(material_id: String, units: int) -> void:
 	var current := int(_material_picks.get(material_id, 0))
 	var ceiling := current + materials_left()
 	_material_picks[material_id] = clampi(units, 0, ceiling)
-	_notice = ""
 	render()
 	_push_attention()
 
-## Send the whole allocation as one line and collapse the card optimistically. A zero row is dropped:
-## the grammar's empty tail is a real order (*spend nothing, close the window*), so naming a kit with
-## a count of zero would only be a longer way of saying the same thing.
+## Send the whole allocation as one line and collapse the card, so the player can look at the map.
+##
+## **THE ORDER MAY BE SENT AGAIN, AND SENDING THE SAME ONE TWICE IS NOT AN ERROR** — an apply is a
+## replacement, so nothing here tracks whether a commit is the first. The picks stay exactly as they
+## are and the reopen pill brings the card back for a revision.
+##
+## A zero row is dropped: the grammar's empty tail is a real order (*spend nothing*), so naming a kit
+## with a count of zero would only be a longer way of saying the same thing.
 func _on_commit_requested() -> void:
 	var kits: Array = []
 	for kit_id in _kit_picks.keys():
@@ -485,8 +468,6 @@ func _on_commit_requested() -> void:
 		var units := int(_material_picks[material_id])
 		if units > 0:
 			materials.append({"id": String(material_id), "units": units})
-	_awaiting_commit = true
-	_notice = ""
 	set_starting_loadout_requested.emit({
 		"faction": HudConst.PLAYER_FACTION_ID,
 		"kits": kits,

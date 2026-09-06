@@ -7,9 +7,12 @@
 //! spread across the profile's pick list.
 //!
 //! **The window is open from world build until the first turn advance**, then it closes and anything
-//! unspent is forfeited. Closing is a rule about the *turn*, not about the command: a
-//! `SetStartingLoadout` arriving afterwards is rejected whole rather than partially honoured, and
-//! nothing re-opens it.
+//! unspent is forfeited. **Closing is a rule about the TURN and about nothing else** — committing a
+//! loadout does not close it, so the whole of turn one is a working surface: the player looks around
+//! the map, tries a pick, and revises it as often as they like. An allocation is therefore a
+//! **replacement**, not a purchase (see [`apply_starting_loadout`]). A `SetStartingLoadout` arriving
+//! after the turn advance is rejected whole rather than partially honoured, and nothing re-opens the
+//! window.
 
 use std::collections::BTreeMap;
 
@@ -36,6 +39,10 @@ use crate::{
 pub const OPENING_MATERIAL_READING: f32 = 0.5;
 
 /// **The opening outfitting window: open from world build until the first turn advance.**
+///
+/// `open` is set by [`stamp_starting_loadout`] and cleared by [`close_opening_window`], and by
+/// nothing else — in particular **not** by [`apply_starting_loadout`], which is what lets the player
+/// revise a pick for the whole of turn one.
 ///
 /// Checkpoint state (`SimState`), because it is a fact about *this* world that nothing rebuilds — a
 /// rollback into turn one must land back in a world whose window is still open, and a save must come
@@ -165,9 +172,28 @@ pub fn stamp_starting_loadout(
     );
 }
 
-/// **Apply a composed opening loadout to the faction's starting band, then shut the window.**
+/// **Apply a composed opening loadout to the faction's starting band.**
 ///
 /// Every check runs before anything is written, so a refusal leaves the world byte-identical.
+///
+/// # ⛔ AN ALLOCATION IS A REPLACEMENT, NOT A PURCHASE
+///
+/// **This does NOT shut the window** — [`close_opening_window`] is the only thing that ever clears
+/// `open`, and it does so on the turn advance. The whole of turn one is a working surface: the player
+/// looks around the map they were just given, tries a pick, and revises it. So a
+/// `SetStartingLoadout` is accepted as many times as it arrives while the window is open.
+///
+/// That makes **idempotence the contract**: after applying allocation `A`, the band's equipment
+/// ledger and its material stock are exactly what `A` describes, however many drafts preceded it.
+/// Both halves are therefore built from **empty** rather than added to — `6 big_game` revised to
+/// `4 big_game` must leave four kits' worth of gear, not ten. An additive apply would silently make
+/// the budget refill every time the player changed their mind.
+///
+/// **The material reset is account-aware and the store is what makes it so.** A band's
+/// `LocalStore` holds the opening food reserve `apply_starting_inventory_effects` seeded beside its
+/// material batches, so the reset is [`crate::components::LocalStore::clear_materials`] — the
+/// commodity account is not this command's to touch, and the distinction lives in the store rather
+/// than in a call site that would have to name `FOOD` and `FODDER` to spare them.
 pub fn apply_starting_loadout(
     world: &mut World,
     faction: FactionId,
@@ -244,13 +270,13 @@ pub fn apply_starting_loadout(
 
     // --- nothing above this line writes; nothing below it can fail -------------------------------
 
-    // **Two kits that share an item ADD.** 3 `big_game` + 3 `trapping` is 3 spears, 3 traps and
-    // **6** sleds: an allocation buys a kit's worth of gear per hand, and two hands carrying a sled
-    // are two sleds however they were bought.
-    let mut ledger = world
-        .get_mut::<BandEquipment>(band)
-        .map(|held| held.clone())
-        .unwrap_or_default();
+    // **Built from EMPTY, because this allocation REPLACES the last one** — see the note on this
+    // function. Cloning the held ledger would make a revised pick add to the draft it revises.
+    //
+    // **Within one allocation, two kits that share an item still ADD.** 3 `big_game` + 3 `trapping`
+    // is 3 spears, 3 traps and **6** sleds: an allocation buys a kit's worth of gear per hand, and
+    // two hands carrying a sled are two sleds however they were bought.
+    let mut ledger = BandEquipment::default();
     for allocation in kits {
         let Some(definition) = equipment.kit_definition(&allocation.kit_id) else {
             continue;
@@ -270,6 +296,9 @@ pub fn apply_starting_loadout(
     world.entity_mut(band).insert(ledger);
 
     if let Some(mut cohort) = world.get_mut::<PopulationCohort>(band) {
+        // **The material account only.** The band's opening food reserve shares this store, and a
+        // wholesale `LocalStore::new()` here would starve it (`LocalStore::clear_materials`).
+        cohort.stores.clear_materials();
         for allocation in materials {
             let Some(def) = materials_table.material(&allocation.material_id) else {
                 continue;
@@ -293,7 +322,7 @@ pub fn apply_starting_loadout(
         }
     }
 
-    world.resource_mut::<StartingLoadout>().open = false;
+    // **The window is deliberately left OPEN.** The turn advance closes it and nothing else does.
     info!(
         target: "shadow_scale::campaign",
         faction = faction.0,

@@ -25,9 +25,12 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 25
+const EXPECTED_CHECKPOINTS := 39
 
 const Q := preload("res://tools/ui_preview/node_query.gd")
+## The four shipped HUD palettes, read as DATA — the ready ink's separation claim is made
+## against every one of them rather than against whichever the harness happens to be pinned to.
+const PaletteScript := preload("res://src/scripts/ui/HudPalette.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -83,6 +86,39 @@ const KIT_NONE := "none"
 const STEPPER_PRESS_LIMIT := 64
 
 const STEPPER_PLUS_FACE := "+"
+const STEPPER_MINUS_FACE := "−"
+
+## The word every retired forfeiture claim was built on — the commit control's old conditional face
+## and the subtitle's old second clause alike. Asserted ABSENT from the whole card: the unspent
+## warning is the turn orb's, and a second copy here is what this needle exists to catch coming back.
+const FORFEIT_NEEDLE := "forfeit"
+## …and the refusal notice that used to be posted on a still-open frame after a commit.
+const REFUSAL_NEEDLE := "refused"
+
+## **THE FLOOR A `ready` INK MUST CLEAR AGAINST ITS OWN PALETTE'S OTHER ACCENTS**, as a straight RGB
+## distance normalised so 1.0 is black-to-white. It exists because "blue means done" is worth nothing
+## if the blue reads as the accent beside it — and because loam's `SIGNAL` is already a blue and
+## console's already a cyan, which is exactly where one hex pasted into four palettes lands on top of
+## something. **Both of those inks were retuned when this assertion first ran** (loam 0.20 → 0.25,
+## console 0.17 → 0.25 against their own `SIGNAL`) rather than the bar being lowered to admit them.
+##
+## MEASURED, and the floor sits under the true worst with room rather than on it: the tightest of the
+## sixteen pairs is ember's blue against its sage `HEALTHY` at **0.239**, then loam and console at
+## 0.252/0.254 against their own `SIGNAL`; the widest is console's 0.568 against `WARN`.
+const READY_MIN_SEPARATION := 0.20
+
+## The palette keys the ready ink is measured against — the three that can share the orb's face with
+## it, plus the `HEALTHY` green a "done" colour is most likely to be confused with.
+const READY_RIVAL_KEYS := ["SIGNAL", "WARN", "DANGER", "HEALTHY"]
+
+## The affordance a non-locating row that opens a panel wears. Asserted rather than assumed, because
+## the failure it catches is a row that WEARS it and does nothing — and this row is the only
+## guaranteed way back to a dismissed card.
+const ORB_OPEN_AFFORDANCE := "Open ▸"
+
+## The face the commit control wears while a budget is unspent, captured so the fully-spent state can
+## be compared against it. The claim is that the two are EQUAL.
+var _unspent_commit_face := ""
 
 func run(harness) -> void:
 	h = harness
@@ -112,7 +148,9 @@ func run(harness) -> void:
 	await h._save("starting_loadout_spent")
 
 	await _dismiss_and_reopen()
-	await _commit_and_be_refused()
+	await _commit_is_revisable()
+	_assert_the_ready_ink_is_separable_in_every_palette()
+	await _orb_states()
 	_assert_window_shuts()
 
 # ---- the opening state ------------------------------------------------------
@@ -213,10 +251,18 @@ func _pick_a_kit() -> void:
 			% [KIT_PRESSES, _controller().kits_spent(), _controller().kits_left(), KIT_BUDGET],
 		_controller().kits_spent() == KIT_PRESSES
 			and _controller().kits_left() == KIT_BUDGET - KIT_PRESSES)
-	# The commit control states the CONSEQUENCE while either budget has something left in it.
-	h._assert_hud("loadout — the commit control names the forfeit (%s)" % _controller().commit_label(),
-		_controller().commit_label().begins_with(
-			HudLoadoutVocab.COMMIT_FORFEIT_FORMAT.split("%s")[0]))
+	# **THE COMMIT CONTROL'S FACE IS UNCONDITIONAL, and this is the half of that claim taken with a
+	# budget still holding something.** Its pair rides the fully-spent state below, and neither is
+	# worth anything alone: a face reading `Set out` here alone passes on a control that renames
+	# itself once the budgets clear, and there alone on one that renames itself while they do not.
+	_unspent_commit_face = _commit_face()
+	h._assert_hud("loadout — the commit control reads `%s` with 14 kits and 2 units unspent"
+			% _unspent_commit_face,
+		_unspent_commit_face == HudLoadoutVocab.COMMIT_CLEAR_LABEL)
+	# …and it makes NO forfeiture claim, which is the orb's to make. Asked of the whole card, because
+	# the sentence that used to say it was the SUBTITLE as well as the button.
+	h._assert_hud("loadout — nothing on the card says anything is forfeited",
+		not Q.has_label_containing(_panel(), FORFEIT_NEEDLE))
 
 ## Spend BOTH budgets to the last unit, then press once more. The extra press is the point: the
 ## controller clamps against the budget, so the `+` is disabled and nothing can be overspent — the
@@ -237,9 +283,10 @@ func _spend_both_budgets() -> void:
 	var plus := _plus_button(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
 	h._assert_hud("loadout — `+` is disabled once the budget is gone",
 		plus != null and plus.disabled)
-	h._assert_hud("loadout — with nothing unspent the commit control simply confirms (%s)"
-			% _controller().commit_label(),
-		_controller().commit_label() == HudLoadoutVocab.COMMIT_CLEAR_LABEL)
+	h._assert_hud("loadout — the commit control's face did not move when the budgets cleared (%s → %s)"
+			% [_unspent_commit_face, _commit_face()],
+		_commit_face() == _unspent_commit_face
+			and _commit_face() == HudLoadoutVocab.COMMIT_CLEAR_LABEL)
 
 # ---- dismiss, reopen, refuse ------------------------------------------------
 
@@ -266,23 +313,43 @@ func _dismiss_and_reopen() -> void:
 	h._assert_hud("loadout — reopening keeps every pick (%d kits)" % _controller().kits_spent(),
 		_controller().is_expanded() and _controller().kits_spent() == spent)
 
-## Commit, then publish a frame that STILL says `open`. That is the sim refusing the order — it fails
-## whole and changes nothing — and the picker must come back saying so rather than leaving the player
-## believing they are outfitted.
-func _commit_and_be_refused() -> void:
+## ⛔ **COMMITTING DOES NOT SHUT THE WINDOW, AND THE FRAME AFTER ONE IS NOT A REFUSAL.** An apply is a
+## REPLACEMENT, so the sim leaves `open` true and the player may revise and re-send as often as they
+## like. This block walks that whole loop: commit, take the still-open frame the sim really sends,
+## reopen, change the allocation, and commit the same control again.
+##
+## The claim it exists for is the one a client reading `open` as a success signal fails: the card must
+## come back CLEAN. An earlier cut posted *"that order was refused"* on exactly this frame, which
+## under replacement semantics fires after every successful order.
+func _commit_is_revisable() -> void:
 	var commit := Q.find_meta_node(_panel(), HudLoadoutVocab.COMMIT_BUTTON_META) as Button
 	h._assert_hud("loadout — the card carries a commit control", commit != null)
 	commit.pressed.emit()
 	await h._settle()
-	h._assert_hud("loadout — committing puts the card away optimistically",
-		not _controller().is_expanded())
+	h._assert_hud("loadout — committing puts the card away so the player can look at the map",
+		not _controller().is_expanded() and _controller().is_open())
+	# The frame the sim really sends after an accepted order: the window is STILL OPEN.
 	h._hud.update_opening_loadout(_window())
 	await h._settle()
-	h._assert_hud("loadout — a window still open after a commit re-opens the card on the refusal",
-		_controller().is_expanded())
-	h._assert_hud("loadout — and the refusal is stated on the card",
-		Q.has_label_containing(_panel(), StartingLoadoutController.REFUSAL_NOTICE))
-	await h._save("starting_loadout_refused")
+	h._assert_hud("loadout — a still-open window after a commit is not treated as a refusal",
+		not _controller().is_expanded())
+	_panel().reopen_pill().pressed.emit()
+	await h._settle()
+	h._assert_hud("loadout — the card comes back CLEAN — no refusal, no forfeiture claim",
+		_controller().is_expanded()
+			and not Q.has_label_containing(_panel(), REFUSAL_NEEDLE)
+			and not Q.has_label_containing(_panel(), FORFEIT_NEEDLE))
+	await h._save("starting_loadout_resent")
+	# **AND THE SAME CONTROL SENDS AGAIN.** A revised allocation, then a re-send — the ordinary act
+	# under replacement semantics, and one a client that latched "already committed" would refuse.
+	_press_minus(HudLoadoutVocab.MATERIAL_ROW_META, PICKABLE[0])
+	await h._settle()
+	var revised := _controller().materials_spent()
+	var resend := Q.find_meta_node(_panel(), HudLoadoutVocab.COMMIT_BUTTON_META) as Button
+	resend.pressed.emit()
+	await h._settle()
+	h._assert_hud("loadout — a revised allocation re-sends and survives the send (%d units)" % revised,
+		_controller().materials_spent() == revised and _controller().is_open())
 
 ## The turn advanced: the sim says the window has shut, and the whole surface goes with it.
 func _assert_window_shuts() -> void:
@@ -293,6 +360,140 @@ func _assert_window_shuts() -> void:
 		not _controller().is_open())
 	h._assert_hud("loadout — …and the orb's row goes with it",
 		_controller().attention_rows().is_empty())
+
+# ---- the orb, in both of its states ------------------------------------------
+
+## **THE TWO ORB STATES, AND THEY ARE JUDGED AS A PAIR.** Yellow with something unspent, blue with
+## everything picked — either claim alone passes on an orb whose accent never moves, so both are made
+## on the same registry with only the allocation between them.
+##
+## ⛔ **ALL THREE OTHER HALVES OF THE REGISTRY ARE CLEARED FIRST, AND HANDED BACK AFTER.** The orb's
+## accent is the colour of the HIGHEST-ranked entry and `ready` ranks below everything, so ANY other
+## row present paints these two frames instead and they become evidence of nothing. Clearing the band
+## half alone was not enough — measured: the orb came back `DANGER` on both arms, off a pending
+## narrative fork this long-lived HUD was still holding from the `telling` chapter.
+##
+## Cleared at the CACHE rather than at the node, the `turn_orb` chapter's own rule:
+## `TurnOrb.set_attention([])` empties only the node and the next `_push_attention` resurrects
+## everything. The fork and knowledge halves are written directly because their public setters do more
+## than set — `update_pending_forks` also AUTO-OPENS the fork panel, which would put a card over these
+## frames — and one `set_band_attention` at the end pushes all three.
+func _orb_states() -> void:
+	var held_bands: Array = h._hud._turnorb._band_attention
+	var held_knowledge: Array = h._hud._turnorb._knowledge_attention
+	var held_forks: Array = h._hud._turnorb._pending_forks
+	h._hud._turnorb._knowledge_attention = []
+	h._hud._turnorb._pending_forks = []
+	h._hud._turnorb.set_band_attention([])
+	# **UNSPENT — the warn arm.** `_commit_is_revisable` left one unit off the pile, so the window is
+	# open with something still to pick.
+	await h._settle()
+	# The precondition without which every accent claim below is about somebody else's row.
+	h._assert_hud("loadout — the loadout row is the orb's ONLY entry for these two frames (%d)"
+			% h._hud.turn_orb._entries.size(),
+		h._hud.turn_orb._entries.size() == 1)
+	_assert_orb_state("unspent", HudAttentionVocab.ATTENTION_SEVERITY_WARN, HudStyle.WARN)
+	await _open_orb_popover()
+	_assert_orb_row_reads("unspent", HudLoadoutVocab.ATTENTION_LABEL_UNSPENT)
+	await h._save("starting_loadout_orb_unspent")
+	_close_orb_popover()
+
+	# **COMPLETE — the ready arm.** One press puts the last unit back, and nothing else changes.
+	_press_plus(HudLoadoutVocab.MATERIAL_ROW_META, PICKABLE[0])
+	await h._settle()
+	h._assert_hud("loadout — the last unit really is spent (%d kits, %d units left)"
+			% [_controller().kits_left(), _controller().materials_left()],
+		_controller().kits_left() == 0 and _controller().materials_left() == 0)
+	_assert_orb_state("complete", HudAttentionVocab.ATTENTION_SEVERITY_READY, HudStyle.READY)
+	await _open_orb_popover()
+	_assert_orb_row_reads("complete", HudLoadoutVocab.ATTENTION_LABEL_READY)
+	await h._save("starting_loadout_orb_ready")
+	_close_orb_popover()
+	h._hud._turnorb._knowledge_attention = held_knowledge
+	h._hud._turnorb._pending_forks = held_forks
+	h._hud._turnorb.set_band_attention(held_bands)
+
+## One arm of the pair: the registry's own row, the ORB'S PAINTED ACCENT, and the rendered row's words
+## and affordance.
+##
+## **The accent is the claim a severity const cannot make.** A row can carry `ready` and paint nothing
+## — that is exactly what a rank of 0 would have done — so `_accent_color` is read off the orb itself.
+func _assert_orb_state(arm: String, severity: String, want: Color) -> void:
+	var rows: Array = _controller().attention_rows()
+	var row: Dictionary = rows[0] if not rows.is_empty() else {}
+	h._assert_hud("loadout/%s — the orb carries exactly ONE loadout row, whether or not anything is left"
+			% arm,
+		rows.size() == 1
+			and String(row.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_OPENING_LOADOUT)
+	h._assert_hud("loadout/%s — it is `%s` and still not blocking (got `%s`)"
+			% [arm, severity, row.get("severity", "")],
+		String(row.get("severity", "")) == severity and not bool(row.get("blocking", false)))
+	h._assert_hud("loadout/%s — the orb's face is painted the row's own ink (%s vs %s)"
+			% [arm, h._hud.turn_orb._accent_color, want],
+		h._hud.turn_orb._accent_color == want)
+
+## …and the RENDERED row, which is what says the way back to a dismissed card is really on screen.
+func _assert_orb_row_reads(arm: String, label: String) -> void:
+	var rendered := Q.turn_orb_popover_rows(h._hud.turn_orb)
+	var found := {}
+	for row_variant in rendered:
+		var row: Dictionary = row_variant
+		if String(row["label"]) == label:
+			found = row
+	h._assert_hud("loadout/%s — the popover row reads `%s` (%d rows drawn)"
+			% [arm, label, rendered.size()],
+		not found.is_empty())
+	h._assert_hud("loadout/%s — …and wears `%s`, the way back to a dismissed card (got `%s`)"
+			% [arm, ORB_OPEN_AFFORDANCE, found.get("jump", "")],
+		String(found.get("jump", "")) == ORB_OPEN_AFFORDANCE)
+
+func _open_orb_popover() -> void:
+	h._hud.turn_orb._open_popover()
+	await h._settle()
+
+func _close_orb_popover() -> void:
+	if h._hud.turn_orb._popover_open:
+		h._hud.turn_orb._close_popover()
+
+## **THE READY INK IS ASSERTED IN ALL FOUR PALETTES, as DATA rather than through the one the harness
+## is pinned to.** The token has to be authored per theme — three of the four put a blue or a cyan on
+## `SIGNAL` already — so the failure worth catching is one hex pasted into four palettes, which lands
+## on top of `SIGNAL` in at least two of them and reads as "nothing in particular" there.
+##
+## Two claims, and the second is what stops the first passing on four identical values that all happen
+## to clear their own theme's accents.
+func _assert_the_ready_ink_is_separable_in_every_palette() -> void:
+	var seen: Array[Color] = []
+	var worst := 1.0
+	var worst_where := ""
+	for theme_id in PaletteScript.THEMES.keys():
+		var hud: Dictionary = (PaletteScript.THEMES[theme_id] as Dictionary)["hud"]
+		if not hud.has("READY"):
+			h._assert_hud("loadout — palette `%s` declares no READY ink" % theme_id, false)
+			continue
+		var ready: Color = hud["READY"]
+		seen.append(ready)
+		for key in READY_RIVAL_KEYS:
+			var apart := _color_distance(ready, hud[key])
+			if apart < worst:
+				worst = apart
+				worst_where = "%s.%s" % [theme_id, key]
+	h._assert_hud("loadout — every palette's READY clears %.2f from its own accents (worst %.2f at %s)"
+			% [READY_MIN_SEPARATION, worst, worst_where],
+		worst >= READY_MIN_SEPARATION)
+	var distinct := {}
+	for color in seen:
+		# Keyed by the inks own hex, String(Color) not being a constructor GDScript offers.
+		distinct[color.to_html(false)] = true
+	h._assert_hud("loadout — the four palettes author their OWN ready ink (%d distinct of %d)"
+			% [distinct.size(), seen.size()],
+		seen.size() == PaletteScript.THEMES.size() and distinct.size() == seen.size())
+
+## Straight RGB distance, normalised so 1.0 is black-to-white. A perceptual metric would be better and
+## is not needed: what is being caught is a token that landed ON another accent, not a subtle one.
+func _color_distance(a: Color, b: Color) -> float:
+	return sqrt((a.r - b.r) * (a.r - b.r) + (a.g - b.g) * (a.g - b.g) + (a.b - b.b) * (a.b - b.b)) \
+		/ sqrt(3.0)
 
 # ---- lookups ----------------------------------------------------------------
 
@@ -343,6 +544,18 @@ func _press_plus(meta: StringName, id: String) -> void:
 	var plus := _plus_button(meta, id)
 	if plus != null and not plus.disabled:
 		plus.pressed.emit()
+
+func _press_minus(meta: StringName, id: String) -> void:
+	var row := _row_node(meta, id)
+	var minus := Q.find_button_by_text(row, STEPPER_MINUS_FACE) if row != null else null
+	if minus != null and not minus.disabled:
+		minus.pressed.emit()
+
+## The commit control's rendered FACE. Read off the button rather than off a producer, because the
+## claim is about what the player is looking at.
+func _commit_face() -> String:
+	var commit := Q.find_meta_node(_panel(), HudLoadoutVocab.COMMIT_BUTTON_META) as Button
+	return commit.text if commit != null else ""
 
 # ---- fixtures ---------------------------------------------------------------
 

@@ -39,7 +39,16 @@ paths:
   runtime, `HudStyle.card_stylebox()`) — one row per entry (severity stripe + kind icon + label +
   detail + right-aligned `Jump →`), highest-severity first, plus an `Advance ▸` footer. The orb
   knows nothing about producers; it renders a list of generic **Attention** dicts:
-  `{kind, severity ("info"|"warn"|"critical" → SIGNAL/WARN/DANGER), label, detail, x, y}` where
+  `{kind, severity ("ready"|"info"|"warn"|"critical" → READY/SIGNAL/WARN/DANGER), label, detail, x, y}`
+  — **`ready` is the BOTTOM rung and it means SATISFIED**, a standing requirement the player has
+  finished meeting (the opening loadout's is the first; `.claude/rules/client/starting-loadout.md`).
+  It loses the orb's accent to every other rung, so a real warning anywhere still owns the face, and
+  it paints the orb only when it is the highest entry present. ⛔ **Its arrival is why every entry in
+  `SEVERITY_RANK` is now >= 1 and the scan seeds at a named `RANK_NONE`**: `_highest_severity_color`
+  replaces only on a STRICTLY greater rank, so a rank-0 severity could never paint the orb whatever
+  colour it mapped to — the ladder was shifted up rather than the new rung taking that 0. The seed
+  change also means an UNKNOWN severity now paints in the fallback ink instead of leaving the orb on a
+  colour no entry asked for. Where
   `x < 0` = non-locating (renders `Open ▸`, a no-op stub for now). Kind→icon (in `TurnOrb.gd`):
   since issue #249 the PICTOGRAPHIC kinds draw bundled art (`starving`, `idle_workers` and
   `crew_handoff` — the last two share ONE file, both rows being about the HANDS; see

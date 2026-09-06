@@ -85,6 +85,9 @@ const THEMES := {
 			"INK_DIM": Color("bdab90"),
 			"INK_FAINT": Color("8d7e68"),
 			"SIGNAL": Color("efe3cd"),
+			# A steel blue against the warm dark — the one COOL accent this theme has, which is what
+			# makes "satisfied" separable from the cream SIGNAL beside it.
+			"READY": Color("6f9fc4"),
 			"SIGNAL_DEEP": Color("a08d6d"),
 			"WARN": Color("e0a63c"),
 			"DANGER": Color("c05a41"),
@@ -117,6 +120,11 @@ const THEMES := {
 			"INK_DIM": Color("b7a893"),
 			"INK_FAINT": Color("8a7c6a"),
 			"SIGNAL": Color("79b0d6"),
+			# ⛔ **LOAM'S OWN `SIGNAL` IS ALREADY A BLUE**, so a blue "satisfied" would read here as
+			# *nothing in particular*. It goes teal instead — separated by HUE rather than by
+			# temperature, which is the only axis left in a palette whose calm accent is the colour
+			# this token wanted.
+			"READY": Color("20b894"),
 			"SIGNAL_DEEP": Color("40708f"),
 			"WARN": Color("d9a441"),
 			"DANGER": Color("c8664e"),
@@ -149,6 +157,9 @@ const THEMES := {
 			"INK_DIM": Color("ada79c"),
 			"INK_FAINT": Color("7e786e"),
 			"SIGNAL": Color("cf7a4d"),
+			# The complement of this theme's terracotta SIGNAL, which is the widest separation any of
+			# the four gets.
+			"READY": Color("5f9bbf"),
 			"SIGNAL_DEEP": Color("8c4b2b"),
 			"WARN": Color("e3c26a"),
 			"DANGER": Color("a8453f"),
@@ -181,6 +192,12 @@ const THEMES := {
 			"INK_DIM": Color(0.616, 0.690, 0.678, 1.0),
 			"INK_FAINT": Color(0.435, 0.514, 0.502, 1.0),
 			"SIGNAL": Color(0.310, 0.878, 0.812, 1.0),
+			# ⛔ **THE ONE HEX IN THE CONSOLE BLOCK, and deliberately so.** Every value above is the
+			# ORIGINAL float literal because round-tripping one through 8-bit hex is a drift the
+			# unchanged theme must not take. This key is NEW — there is no original to preserve — so it
+			# is written the way the other three themes write theirs. Console's SIGNAL is a bright
+			# CYAN, so this is pushed to a frank azure to clear it.
+			"READY": Color("4373e8"),
 			"SIGNAL_DEEP": Color(0.122, 0.612, 0.557, 1.0),
 			"WARN": Color(0.949, 0.694, 0.247, 1.0),
 			"DANGER": Color(0.910, 0.455, 0.416, 1.0),

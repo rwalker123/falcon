@@ -24,8 +24,9 @@ const SPEARS: &str = "spears";
 const TRAPS: &str = "traps";
 const SLED: &str = "sled";
 
-/// Three materials the shipped profile offers, and one it deliberately does not.
+/// Four materials the shipped profile offers, and one it deliberately does not.
 const BONE: &str = "bone";
+const FIBRE: &str = "fibre";
 const HIDE: &str = "hide";
 const WOOD: &str = "wood";
 const HURDLES: &str = "hurdles";
@@ -129,7 +130,7 @@ fn refused(
     assert_eq!(
         *app.world.resource::<StartingLoadout>(),
         before_window,
-        "a refusal leaves the window OPEN — that is how the client knows it did not land"
+        "a refusal moves neither budget - the window is untouched, exactly as a SUCCESS leaves it"
     );
     reason
 }
@@ -287,17 +288,107 @@ fn allocated_materials_land_at_their_units_and_the_opening_reading() {
     );
 }
 
-/// A successful loadout **shuts the window**, so a second one cannot spend the budget twice.
+/// ⛔ **COMMITTING A LOADOUT DOES NOT SHUT THE WINDOW.**
+///
+/// The whole of turn one is a working surface: the player looks around the map they were just given,
+/// tries a pick, and revises it. Only the turn advance closes the window, so a second apply must be
+/// *accepted*, not refused as an already-spent budget.
 #[test]
-fn applying_a_loadout_shuts_the_window() {
+fn applying_a_loadout_leaves_the_window_open_for_a_revision() {
     let (mut app, _) = open_window();
+    let before = *app.world.resource::<StartingLoadout>();
     apply_starting_loadout(&mut app.world, PLAYER, &kits(&[(BIG_GAME, 1)]), &[])
         .expect("one kit is inside the budget");
-    assert!(!app.world.resource::<StartingLoadout>().open);
+    assert!(
+        app.world.resource::<StartingLoadout>().open,
+        "a commit is not a close - the turn advance is the only thing that shuts this"
+    );
+    apply_starting_loadout(&mut app.world, PLAYER, &kits(&[(TRAPPING, 2)]), &[])
+        .expect("a revision inside the budget is accepted, not refused as already spent");
     assert_eq!(
-        apply_starting_loadout(&mut app.world, PLAYER, &kits(&[(BIG_GAME, 1)]), &[]),
-        Err(LoadoutRejection::WindowClosed),
-        "the budget is spent once"
+        *app.world.resource::<StartingLoadout>(),
+        before,
+        "and the window is UNCHANGED - the budgets do not shrink as drafts are committed, because \
+         each apply is measured against the whole budget it replaces rather than adds to"
+    );
+}
+
+/// ⛔ **AN ALLOCATION REPLACES THE LAST ONE — IT DOES NOT ADD TO IT.**
+///
+/// This is the invariant the open window forces: after applying `A`, the band holds exactly what `A`
+/// describes, however many drafts preceded it. `6 big_game` revised to `4 big_game` leaves **four**
+/// kits' worth of gear, not ten — an additive apply would refill the budget every time the player
+/// changed their mind.
+#[test]
+fn a_revised_loadout_replaces_the_one_before_it() {
+    let (mut app, band) = open_window();
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        &kits(&[(BIG_GAME, 6)]),
+        &materials(&[(BONE, 20)]),
+    )
+    .expect("the first draft is inside both budgets");
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        &kits(&[(BIG_GAME, 4)]),
+        &materials(&[(FIBRE, 10)]),
+    )
+    .expect("the revision is inside both budgets");
+
+    let ledger = owned(&app, band);
+    let count = |item: &str| {
+        ledger
+            .iter()
+            .find(|(id, _)| id == item)
+            .map(|(_, units)| *units)
+            .unwrap_or(0)
+    };
+    assert_eq!(count(SPEARS), 4, "four stalking kits, not ten");
+    assert_eq!(count(SLED), 4, "four stalking kits, not ten");
+    assert_eq!(
+        held(&app, band, FIBRE),
+        10.0,
+        "ten fibre, not twenty and not thirty"
+    );
+    assert_eq!(
+        held(&app, band, BONE),
+        0.0,
+        "the bone the FIRST draft bought is gone - the revision did not name it, so the band does \
+         not hold it"
+    );
+}
+
+/// ⛔ **THE RESET IS THE MATERIAL ACCOUNT ONLY** — the band's opening food reserve shares the same
+/// `LocalStore`, and clearing the store wholesale would starve it.
+///
+/// `LocalStore::clear_materials` is what expresses that distinction, inside the store, so the call
+/// site never has to name the commodities it means to spare.
+#[test]
+fn a_revised_loadout_does_not_touch_the_bands_provisions() {
+    let (mut app, band) = open_window();
+    let provisions = |app: &App| {
+        app.world
+            .get::<PopulationCohort>(band)
+            .expect("the fixture band keeps a cohort")
+            .stores
+            .get(core_sim::FOOD)
+            .to_f32()
+    };
+    let before = provisions(&app);
+    assert!(
+        before > 0.0,
+        "**LIVENESS**: the spawn seeds a food reserve, or this asserts 0.0 == 0.0"
+    );
+    apply_starting_loadout(&mut app.world, PLAYER, &[], &materials(&[(BONE, 5)]))
+        .expect("the first draft is inside the budget");
+    apply_starting_loadout(&mut app.world, PLAYER, &[], &materials(&[(FIBRE, 5)]))
+        .expect("the revision is inside the budget");
+    assert_eq!(
+        provisions(&app),
+        before,
+        "the material reset must leave the commodity account exactly as it found it"
     );
 }
 

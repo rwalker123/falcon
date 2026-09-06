@@ -458,7 +458,7 @@ adding unrelated states therefore conflicted as a matter of course, and one merg
 | `tools/ui_preview.gd` | The harness `Node`: `_settle` / `_save` / `_capture` / `_assert_hud`, the canvas + prefs + tween plumbing, the prologue that stands the HUD up, the icon-probe epilogue, `CHAPTERS` + `_instantiate_chapters`, and the one exit `_finish()` |
 | `tools/ui_preview/chapters/*.gd` | One `RefCounted` per arc (`hunt`, `forage_crop`, `herd_graze_pen`, `event_dock`, `button_faces`, `forecast_seam`, …), each `run(harness)` plus the fixtures only it uses. A chapter need not render a frame — `button_faces` and `forecast_seam` are both PNG-less, and that is a normal shape |
 | `tools/ui_preview/fixtures_*.gd` | Pure `static func` fixtures shared by two or more chapters — `base` (the primitives the other three build on), `band`, `herd`, `forage`, `tile`, `world`, and `rung`, which derives every patch and herd row's `current_rung` from the flags the row already carries and is shared with `map_preview` / `band_panel_preview` / `snapshot_alias_guard` (`test-harnesses.md` → "A fixture's STANDING RUNG is DERIVED, never typed") |
-| `tools/ui_preview/node_query.gd`, `readouts.gd`, `compose_vocab.gd`, `input_probe.gd` | Shared `static` helpers: finding a control by identity, reading values back out of rendered text, the compose spine vocabulary, and driving real pointer input through `Viewport.push_input` (the canvas→window conversion, a hover, the two gestures, a wheel notch, a press-and-cancelled-release click, and the `press_left` / `release_left` pair a caller drives apart when the press itself opens a popup) |
+| `tools/ui_preview/node_query.gd`, `readouts.gd`, `compose_vocab.gd`, `input_probe.gd` | Shared `static` helpers: finding a control by identity, reading values back out of rendered text, **the turn-orb popover's rendered rows** (`turn_orb_popover_rows`, which was `turn_orb`'s own `_orb_rows` until `starting_loadout` became a second caller — a helper two chapters need is a shared static, not a copy in each), the compose spine vocabulary, and driving real pointer input through `Viewport.push_input` (the canvas→window conversion, a hover, the two gestures, a wheel notch, a press-and-cancelled-release click, and the `press_left` / `release_left` pair a caller drives apart when the press itself opens a popup) |
 
 **Where a new thing goes.** A state → the chapter that owns its arc. A fixture used by one chapter
 → a method on that chapter. A fixture used by two → a `fixtures_*.gd` `static func`. **`ui_preview.gd`
@@ -1693,8 +1693,8 @@ refusal).
 
 ## `chapters/starting_loadout.gd` — the turn-one outfitting picker (issue #629)
 
-**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Five frames and
-twenty assertions (`EXPECTED_CHECKPOINTS` **25** — frames count too). It ends by publishing a SHUT
+**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Seven frames and
+thirty-two assertions (`EXPECTED_CHECKPOINTS` **39** — frames count too). It ends by publishing a SHUT
 window, so the surface it stands up is gone before anything appended after it could inherit it.
 
 **MOST OF IT IS ASSERTIONS, AND THAT IS THE POINT.** Every claim the third column makes renders as a
@@ -1705,10 +1705,45 @@ meta, never by scraping a subtree's text) and the frames carry the layout.
 | frame | what only IT can say |
 |---|---|
 | `starting_loadout` | the three columns fit side by side at the shipped width; the legend and the recipe rows draw the SAME five inks; the picker OPENED ITSELF, kits at 0 and the pile on the profile's defaults |
-| `starting_loadout_picked` | three real presses of the Stalking kit's `+` move the meter, and the commit control names the forfeit |
-| `starting_loadout_spent` | both budgets spent to the unit — `+` disabled, both bars full with **no remainder sliver**, and the commit control simply confirming |
+| `starting_loadout_picked` | three real presses of the Stalking kit's `+` move the meter — and the commit control reads `Set out` with a budget still unspent, with the word `forfeit` absent from the whole card |
+| `starting_loadout_spent` | both budgets spent to the unit — `+` disabled, both bars full with **no remainder sliver**, and the commit control's face UNMOVED from the frame above |
 | `starting_loadout_dismissed` | the dismissed state leaves a live reopen control on screen rather than nothing at all |
-| `starting_loadout_refused` | a window still `open` after a commit brings the card back carrying the refusal, with every pick intact |
+| `starting_loadout_resent` | ⛔ **a commit shuts nothing.** The still-open frame the sim really sends after an accepted order, reopened: the card comes back CLEAN — no refusal, no forfeiture claim, every pick intact — and the same control then re-sends a revised allocation |
+| `starting_loadout_orb_unspent` | the orb AMBER with one unit still to pick, its popover row reading `Band not outfitted` / `1 unit unspent` and wearing `Open ▸` |
+| `starting_loadout_orb_ready` | the same orb BLUE with everything picked, reading `Band outfitted` / `everything is picked` — **still present, still `Open ▸`**, which is what says a dismissed card is reachable right up to the advance |
+
+**THE TWO ORB FRAMES ARE A PAIR TOO, and the same argument applies**: either alone passes on an orb
+whose accent never moves, so both are taken on one registry with only the allocation between them.
+
+⛔ **ALL THREE OTHER HALVES OF THE REGISTRY ARE CLEARED FOR THEM, AND HANDED BACK AFTER.** The orb's
+accent is the highest-ranked entry's and `ready` ranks below everything, so any other row present
+paints both frames and they become evidence of nothing. **Clearing the band half alone was not
+enough** — measured: the orb came back `DANGER` on BOTH arms, off a pending narrative fork this
+long-lived HUD was still holding from the `telling` chapter — so the knowledge half and
+`_pending_forks` go too, and a precondition asserts the loadout row really is the orb's only entry.
+The fork and knowledge halves are written directly rather than through their setters, because
+`update_pending_forks` also AUTO-OPENS the fork panel, which would have put a card over these frames.
+
+**The accent is read off `TurnOrb._accent_color`, not inferred from the severity const** — a row can
+carry `ready` and paint nothing, which is exactly what a rank of 0 does. And the READY ink's
+separation from every palette's own `SIGNAL`/`WARN`/`DANGER`/`HEALTHY` is asserted **as data over all
+four themes at once**, with a second claim that the four are DISTINCT: without it, one hex pasted
+into four palettes passes as long as it clears each theme's accents, and it does not — it lands on
+loam's blue `SIGNAL`.
+
+Sabotage-verified three ways, each failing a DISJOINT set: `ready` returned to rank 0 fails **one**
+(the complete arm's accent, the orb coming back cream — the "silently inert" failure demonstrated);
+the producer falling silent once both budgets clear fails **five** (the whole complete arm, including
+the rendered row and its `Open ▸`); and one hex pasted into all four palettes fails **two** (the
+separation claim at loam and the distinctness claim, `1 distinct of 4`).
+
+**THE COMMIT CONTROL'S FACE IS A PAIR, and neither half is worth anything alone.** It is read off the
+rendered button (never off a producer) at a partly-spent budget and again at a fully-spent one, and
+the claim is that the two are EQUAL and both `Set out`: a face asserted only where something is
+unspent passes on a control that renames itself once the budgets clear, and only where they are clear
+on one that renames itself while they are not. That conditional face is exactly what was removed —
+it read `Set out — forfeit 17 kits and 2 units`, naming the cost of ending the turn on a button that
+does not end the turn.
 
 **THE COUNT IS READ OFF THE LABEL'S OWN META, never its face.** The face is `×3` or a dash, and
 parsing either back into a number is re-implementing the renderer in order to check it.
@@ -2419,9 +2454,9 @@ longer exist — the fixture now stages the link-kind keys and the frame reads `
 trap: **a frame whose fixture is the last producer of a state can go on passing after the state
 becomes unreachable**, and it then guards nothing while looking like coverage.
 
-**A clean run is 418 frames / 1898 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+**A clean run is 420 frames / 1914 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
 figure recorded when the supply-network chapter landed was `403 / 1803`; the loadout chapter above adds
-five frames and twenty claims and the rest is drift accumulated un-recorded, exactly as it has been
+seven frames and thirty-two claims and the rest is drift accumulated un-recorded, exactly as it has been
 every previous time. Measure; do not sum.
 
 **The previous entry, kept for its history.** The

@@ -236,6 +236,13 @@ const ATTENTION_KIND_OPENING_LOADOUT := "opening_loadout"
 const ATTENTION_KINDS_WITH_A_PANEL: Array[String] = [ATTENTION_KIND_DECISION,
     ATTENTION_KIND_KNOWLEDGE_LEARNED, ATTENTION_KIND_OPENING_LOADOUT]
 
+## **SATISFIED / COMPLETE** — a standing requirement the player has finished meeting, drawn in
+## `HudStyle.READY`. It ranks BELOW `info` (see `TurnOrb.SEVERITY_RANK`), so a row wearing it never
+## takes the orb's accent off a real warning; it colours the orb only when it is the highest entry
+## present. **It is not a flavour of `info`**: that rung means neutral NEWS, which is a statement about
+## something that happened rather than about a thing being done.
+const ATTENTION_SEVERITY_READY := "ready"
+
 const ATTENTION_SEVERITY_INFO := "info"
 
 const ATTENTION_SEVERITY_CRITICAL := "critical"

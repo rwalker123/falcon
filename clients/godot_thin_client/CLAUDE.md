@@ -220,7 +220,7 @@ What scales *all* text at once is the Options pane's **Interface scale**, which 
 scale applied to the window, not a font system — see `.claude/rules/client/interface-scale.md`.
 
 **The palette authority is `HudStyle.gd`**, and it is real: `SIGNAL`,
-`SIGNAL_WASH`, `DANGER`, `WARN`, `HEALTHY`, `INK`, `INK_DIM`, `INK_FAINT`,
+`SIGNAL_WASH`, `DANGER`, `WARN`, `HEALTHY`, `READY`, `INK`, `INK_DIM`, `INK_FAINT`,
 `GROUND`, `PANEL_SOLID`, `LINE_SOFT`, plus `card_stylebox()`, `banner_stylebox()`,
 `empty_stylebox()`, `apply_button(btn, "primary"|"ghost")`. **No hardcoded hexes**
 — the one surviving exception is documented at its call site.

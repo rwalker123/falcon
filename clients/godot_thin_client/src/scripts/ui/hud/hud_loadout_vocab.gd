@@ -70,20 +70,27 @@ const RECIPE_INPUT_AMOUNT_KEY := "amount"
 # ---- the words ----------------------------------------------------------------------------------
 
 const PANEL_TITLE := "Outfit the band"
-## **THE FORFEIT IS SAID BEFORE THE FIRST CLICK, not only on the commit button.** The window shuts
-## when the turn advances whether or not anything was spent, and a player who dismissed the picker to
-## look at the map has to already know that.
-const PANEL_SUBTITLE := "What your people carry when they set out. Nothing is theirs until you commit, and anything unspent is lost when the turn advances."
+## **THE CARD MAKES NO FORFEITURE CLAIM, and this line is where one used to be.** It read
+## *"…and anything unspent is lost when the turn advances"*; the unspent warning lives on the TURN
+## ORB, which is the surface that already counts down to the thing that causes it, and a second copy
+## on the card was both a duplicate and the longest sentence on the screen.
+const PANEL_SUBTITLE := "What your people carry when they set out."
 
 const KITS_HEAD := "Kits"
-## Says what the budget IS rather than restating its number — the meter beside it already has the
-## count, and the model fact (a kit is a pair of hands) is the thing a player cannot derive.
-const KITS_NOTE := "One for every pair of working hands."
+## **THE NOTES SAY WHAT THE COLUMN IS FOR AND NOTHING ELSE.** Each of these three replaced a sentence
+## explaining the model behind the column — what a kit budget is derived from, what a point buys, how
+## the third column's number is computed. They read as an essay beside three lists a player is trying
+## to use. **Do not restore an explanatory clause to any of them**; the meter, the swatch and the `×N`
+## are the explanation.
+const KITS_NOTE := "Select kits your band will start with"
 const RESOURCES_HEAD := "Resources"
-const RESOURCES_NOTE := "One point buys one unit. Everything arrives middling."
-const BUILDS_HEAD := "What this builds"
-## The column is a READOUT, and this is the sentence that stops it being read as a build plan.
-const BUILDS_NOTE := "If you spent the whole pile on one thing."
+const RESOURCES_NOTE := "Select crafting resources the band will start with"
+## It named no subject — *"what THIS builds"*, beside two other columns.
+const BUILDS_HEAD := "What the resources can build"
+## **THE BUILDS COLUMN HAS NO NOTE, deliberately, and `_column` DRAWS NO LABEL for an empty one** —
+## an empty caption node is a blank row of layout, which is the ragged third column this deletion was
+## meant to remove.
+const BUILDS_NOTE := ""
 
 ## The budget meters say the REMAINDER and nothing else. A second clause ("28 of 30 packed") is the
 ## same fact subtracted from itself, and the bar beside it already draws the spent half.
@@ -110,15 +117,17 @@ const RECIPE_COST_SEPARATOR := "   "
 ## column's own order.
 const LEGEND_HEAD := "Materials"
 
+## ⛔ **THE COMMIT CONTROL IS UNCONDITIONAL, AND A FORFEIT VARIANT OF IT WOULD BE A LIE.**
+## **Committing does not shut the window.** The sim treats an apply as a REPLACEMENT rather than an
+## addition, so the order may be sent, revised and sent again as often as the player likes; only the
+## TURN ADVANCE closes the window and forfeits what is left. A label reading *"Set out — forfeit 17
+## kits and 2 units"* therefore described a consequence that pressing it does not have — it named the
+## cost of ending the turn on a button that does not end the turn.
+##
+## The remainder is still worth saying and is said ONCE, on the **turn orb**, which is the surface
+## that already counts down to the advance. Nothing on this card may state it a second time.
 const COMMIT_CLEAR_LABEL := "Set out"
-## **THE CONSEQUENCE, NOT A WARNING.** The button never refuses; it states what walking away costs.
-const COMMIT_FORFEIT_FORMAT := "Set out — forfeit %s"
-const COMMIT_FORFEIT_SEPARATOR := " and "
-const COMMIT_FORFEIT_KITS_ONE := "1 kit"
-const COMMIT_FORFEIT_KITS_MANY := "%d kits"
-const COMMIT_FORFEIT_UNITS_ONE := "1 unit"
-const COMMIT_FORFEIT_UNITS_MANY := "%d units"
-const COMMIT_TOOLTIP := "Send the order. The window shuts and whatever is left of either budget is gone."
+const COMMIT_TOOLTIP := "You can change this until you end the turn."
 
 ## The window is dismissible so the player can pan, zoom and read tiles before committing — the sim
 ## keeps it open until the turn advances, and this control is how it comes back.
@@ -136,7 +145,13 @@ const EMPTY_NOTICE := "Waiting for the world's kit roster."
 # row is NON-LOCATING (an opening loadout is a faction fact and no hex holds it) and it does NOT
 # block `Advance ▸`: closing the window is the SIM's business and the client's job is to warn.
 
-const ATTENTION_LABEL := "Band not outfitted"
+## ⛔ **THE ROW IS PRESENT FOR THE WHOLE WINDOW, spent or not, and its WORDING is what changes.** It
+## is the only guaranteed way back to a dismissed card, so a row that vanished once both budgets were
+## clear would strand a player who had finished picking, put the card away and then wanted to revise.
+## What moves is the label and the severity: a finished loadout reads as DONE and paints the orb
+## `READY`, an unfinished one reads as a warning and paints it `WARN`.
+const ATTENTION_LABEL_UNSPENT := "Band not outfitted"
+const ATTENTION_LABEL_READY := "Band outfitted"
 ## Both remainders in one line, because the two budgets are one decision. A budget already clear is
 ## dropped from it rather than printed as a zero.
 const ATTENTION_DETAIL_SEPARATOR := ", "
@@ -144,8 +159,9 @@ const ATTENTION_DETAIL_KITS_ONE := "1 kit unspent"
 const ATTENTION_DETAIL_KITS_MANY := "%d kits unspent"
 const ATTENTION_DETAIL_UNITS_ONE := "1 unit unspent"
 const ATTENTION_DETAIL_UNITS_MANY := "%d units unspent"
-## Both budgets are clear and the order simply has not been sent yet.
-const ATTENTION_DETAIL_READY := "ready to set out"
+## Both budgets are clear. It reads as a statement of fact rather than as an instruction, because at
+## this point there is nothing the player still has to do.
+const ATTENTION_DETAIL_READY := "everything is picked"
 
 # ---- geometry (measured, not guessed — every number here is read back off a rendered frame) ------
 

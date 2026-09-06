@@ -73,6 +73,29 @@ deposit. `bin/server.rs`'s handler only translates the wire types and logs the r
 > derive it from — nothing in the model says how much bone a band walked in with. One point buys one
 > unit.
 
+> #### ⛔ COMMITTING A LOADOUT DOES NOT CLOSE THE WINDOW — THE TURN ADVANCE DOES, AND NOTHING ELSE
+>
+> The whole of turn one is a **working surface**. The player looks around the map they were just
+> given, tries an allocation, sees what it buys, and revises it — which is the entire reason the pick
+> happens after worldgen rather than before it. A commit that shut the window would turn *"compose
+> your opening"* back into *"guess right first time"*.
+>
+> So `apply_starting_loadout` never clears `open`; only `close_opening_window` does, on the turn
+> advance, and unspent budget is **forfeited** there.
+>
+> **That makes an allocation a REPLACEMENT, not a purchase**, and it is the invariant to hold onto:
+> after applying `A`, the band's equipment ledger and its material stock are exactly what `A`
+> describes, however many drafts preceded it. `6 big_game` revised to `4 big_game` leaves **four**
+> kits' worth of gear, not ten. Both halves are therefore rebuilt from empty — the ledger from
+> `BandEquipment::default()`, the store through `LocalStore::clear_materials` — rather than added to;
+> an additive apply would silently refill the budget every time the player changed their mind.
+>
+> **The material reset is account-aware, and the STORE is what makes it so.** A band's `LocalStore`
+> holds two accounts: the commodity bag its opening food reserve lives in, and the per-rating
+> material batch store. `clear_materials` empties the second only, so a revision cannot starve the
+> band — and the distinction lives in the store rather than in a call site that would otherwise have
+> to name `FOOD` and `FODDER` to spare them, a list that goes stale the day a third commodity lands.
+
 **The window is open from world build until the first turn advance**, then it shuts and anything
 unspent is **forfeited**. Two systems, and the split matters:
 
@@ -80,10 +103,11 @@ unspent is **forfeited**. Two systems, and the split matters:
   the spawned band's own worker count. It runs under the same `worldgen_wanted` gate as the spawn, so
   a **load** never re-stamps: the window comes back from the checkpoint as it was written.
 - `close_opening_window` — `Update`, `.before(TurnStage::Influence)`, so the budget is spent before
-  the first turn resolves or it is not spent at all. It **skips `WORLD_BUILD_TICK` (`0`)**, and that
-  exemption is load-bearing: `rebuild_world_from_config` ends in one `run_turn`, which is what
-  produces the baseline frame the client first draws, so closing there would shut the window before
-  the map it is composed against had ever been seen.
+  the first turn resolves or it is not spent at all. **It is the only writer that ever clears
+  `open`.** It **skips `WORLD_BUILD_TICK` (`0`)**, and that exemption is load-bearing:
+  `rebuild_world_from_config` ends in one `run_turn`, which is what produces the baseline frame the
+  client first draws, so closing there would shut the window before the map it is composed against
+  had ever been seen.
 
 `StartingLoadout` is **checkpoint state** (`SimState`, `SIM_STATE_RESOURCES`): nothing rebuilds it, so
 a rollback into turn one has to land in a world whose window is still open.
@@ -102,17 +126,21 @@ and a repeated `{material_id, units}`.
 > material outside the profile's `pickable_materials`; a repeated kit or material line; and either
 > budget overspent on the **sum**, not per line.
 >
-> **A refusal leaves the window OPEN, and that is the client's signal.** There is no failure event:
-> the next frame's `openingLoadout.open` still reads `true`, and a successful one reads `false`.
+> **`openingLoadout.open` is NOT the client's success signal** — it reads `true` after a refusal and
+> after a success alike, because a commit never closes the window. There is no failure event either.
+> What a client reads is the **band's own published state** on the recapture the command triggers:
+> after a success that is exactly the allocation it sent (the apply is a replacement), and after a
+> refusal it is whatever stood before.
 
-What a successful loadout does, in order: **kits → equipment**, adding `count` units of every item
-the kit `uses` to `BandEquipment`, stamped through `BandEquipment::anchor_grade` — the one home of
-*"what quality is a thing nobody crafted"*, shared with `start_stocked_owned`. **Two kits that share
-an item ADD**: 3 `big_game` + 3 `trapping` is 3 spears, 3 traps and **6** sleds. Then **materials →
-the band's `LocalStore`**, `deposit_material` at the allocated units and **`OPENING_MATERIAL_READING`
+What a successful loadout does, in order: **kits → equipment**, building a fresh ledger holding
+`count` units of every item each allocated kit `uses`, stamped through `BandEquipment::anchor_grade`
+— the one home of *"what quality is a thing nobody crafted"*, shared with `start_stocked_owned`.
+**Within one allocation, two kits that share an item ADD**: 3 `big_game` + 3 `trapping` is 3 spears,
+3 traps and **6** sleds. (Across allocations they do not — the later one replaces the earlier.) Then
+**materials → the band's `LocalStore`**, cleared of materials first and then `deposit_material` at the allocated units and **`OPENING_MATERIAL_READING`
 (0.5) on every axis the material declares** — the middle of the band table, because what the band
 scavenged before setting out is unremarkable and a spread would be a number pretending to mean
-something. Finally the window shuts, so the budget cannot be spent twice.
+something. **The window is deliberately left open** — see the callout above.
 
 **The band outfitted is the lowest `BandId` carrying `StartingUnit` for that faction** — the same
 rule `stamp_starting_loadout` picks the budget's band by, so the budget cannot describe one band and

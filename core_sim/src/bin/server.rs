@@ -5722,9 +5722,13 @@ fn cancel_scope_applied_message(scope: CancelScope, band_label: &str) -> String 
 /// **Apply a composed opening loadout, or refuse the whole thing.**
 ///
 /// The validation, the band selection and the deposit all live in `core_sim::starting_loadout` — the
-/// server's job is to translate the wire types and say what happened. A refusal changes nothing and
-/// leaves the window OPEN, which is what tells the client the loadout did not land: `openingLoadout`
-/// still reads `open: true` on the next frame.
+/// server's job is to translate the wire types and say what happened.
+///
+/// **A success and a refusal both leave the window open**, because committing a loadout never closes
+/// it: the player revises a pick for the whole of turn one. So `openingLoadout.open` is not the
+/// client's confirmation — what a client reads is the **band's own published state** on the recapture
+/// this command triggers, which after a success is exactly the allocation it sent (the apply is a
+/// replacement) and after a refusal is whatever stood before.
 fn handle_set_starting_loadout(
     app: &mut bevy::prelude::App,
     faction: FactionId,

@@ -67,10 +67,6 @@ const PAYLOAD_KIT_BUDGET := "kit_budget"
 const PAYLOAD_MATERIAL_BUDGET := "material_budget"
 const BUDGET_SPENT := "spent"
 const BUDGET_TOTAL := "total"
-## The commit control's label, already resolved by the controller (it owns the remainders).
-const PAYLOAD_COMMIT_LABEL := "commit_label"
-## A sentence to show above the columns, `""` for none — today the sim's refusal notice.
-const PAYLOAD_NOTICE := "notice"
 
 var _card: PanelContainer = null
 var _pill: Button = null
@@ -176,9 +172,9 @@ func render(payload: Dictionary) -> void:
 	HudWidgets.clear_children(_header)
 	HudWidgets.clear_children(_columns)
 	HudWidgets.clear_children(_footer)
-	_build_header(payload)
+	_build_header()
 	_build_columns(payload)
-	_build_footer(payload)
+	_build_footer()
 	# **VISIBLE BEFORE THE FIT, and that is load-bearing**: `Container._sort_children` early-returns
 	# on a hidden subtree, so a card kept hidden until it had been measured would never lay its
 	# content out and would measure the unwrapped lower bound forever.
@@ -273,7 +269,7 @@ func refit() -> void:
 
 # ---- header -----------------------------------------------------------------
 
-func _build_header(payload: Dictionary) -> void:
+func _build_header() -> void:
 	var title_row := HBoxContainer.new()
 	title_row.add_theme_constant_override("separation", HudLoadoutVocab.HEADER_SEPARATION)
 	var title := Label.new()
@@ -298,11 +294,6 @@ func _build_header(payload: Dictionary) -> void:
 
 	_header.add_child(_caption(HudLoadoutVocab.PANEL_SUBTITLE, HudStyle.INK_DIM,
 		HudLoadoutVocab.SUBTITLE_FONT_SIZE, true))
-
-	# The sim's own answer when it refused the order, rendered VERBATIM and only when there is one.
-	var notice := String(payload.get(PAYLOAD_NOTICE, ""))
-	if notice != "":
-		_header.add_child(_caption(notice, HudStyle.DANGER, HudLoadoutVocab.SUBTITLE_FONT_SIZE, true))
 
 # ---- the three columns ------------------------------------------------------
 
@@ -481,13 +472,16 @@ func _recipe_row(row: Dictionary) -> Control:
 
 # ---- footer -----------------------------------------------------------------
 
-func _build_footer(payload: Dictionary) -> void:
+## The commit control. **Its face is a CONSTANT** — see `HudLoadoutVocab.COMMIT_CLEAR_LABEL`: an
+## apply is a replacement the player may revise until the turn advances, so a label conditioned on
+## what is unspent would name a consequence the press does not have.
+func _build_footer() -> void:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_footer.add_child(spacer)
 	var commit := Button.new()
-	commit.text = String(payload.get(PAYLOAD_COMMIT_LABEL, HudLoadoutVocab.COMMIT_CLEAR_LABEL))
+	commit.text = HudLoadoutVocab.COMMIT_CLEAR_LABEL
 	commit.tooltip_text = HudLoadoutVocab.COMMIT_TOOLTIP
 	commit.focus_mode = Control.FOCUS_NONE
 	commit.set_meta(HudLoadoutVocab.COMMIT_BUTTON_META, true)
@@ -573,8 +567,12 @@ func _column(head_text: String, note_text: String) -> VBoxContainer:
 	head.add_theme_font_size_override("font_size", HudLoadoutVocab.COLUMN_HEAD_FONT_SIZE)
 	head.add_theme_color_override("font_color", HudStyle.INK_DIM)
 	col.add_child(head)
-	col.add_child(_caption(note_text, HudStyle.INK_FAINT, HudLoadoutVocab.COLUMN_NOTE_FONT_SIZE,
-		true))
+	# **AN EMPTY NOTE DRAWS NOTHING.** A caption node holding `""` still takes a row of layout, which
+	# is a blank line under one column's head and not under the other two — the ragged column the
+	# builds note's deletion exists to remove.
+	if not note_text.is_empty():
+		col.add_child(_caption(note_text, HudStyle.INK_FAINT,
+			HudLoadoutVocab.COLUMN_NOTE_FONT_SIZE, true))
 	return col
 
 ## The vertical rule between two columns. **It is `HudStyle.LINE`, the same ink as the horizontal
