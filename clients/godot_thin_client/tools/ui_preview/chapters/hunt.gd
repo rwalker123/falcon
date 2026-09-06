@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 353
+const EXPECTED_CHECKPOINTS := 369
 
 ## The countdown verdict's opening, as a needle — the precondition every claim about that sentence
 ## rests on ("this model reached the reaching branch at all").
@@ -151,6 +151,10 @@ const LESSON_NOT_YET_LEARNED := false
 ## **EACH IS ONE HALF OF A PAIR**, the other half being `herd_hunt_expedition`'s block (a clean raid,
 ## no waste, a brisk OK verdict): a lone "the waste note is here" passes on a readout that always
 ## prints one.
+## The real map, instanced data-only for the one block that reads a MARKER's name back — the
+## `crafting_bench` idiom. See `_assert_one_band_naming_rule`.
+const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
+
 func _assert_trip_readout(state_name: String) -> void:
 	var sheet: Control = h._hud._drawercompose._compose_sheet
 	match state_name:
@@ -435,7 +439,7 @@ func _partial_waste_mammoth() -> Dictionary:
 ## its hunt_reach 7, so every herd resolves to the expedition branch.
 func _hunt_preview_far_band() -> Dictionary:
 	return BandFx.with_band_id({
-		"id": "Band 1", "entity": 831, "faction": 0, "size": 80,
+		"name": "Ashfell", "id": "Ashfell", "entity": 831, "faction": 0, "size": 80,
 		"current_x": 86, "current_y": 24, "pos": [86, 24],
 		"working_age": 10, "idle_workers": 6,
 		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
@@ -453,7 +457,7 @@ func _hunt_preview_far_band() -> Dictionary:
 ## this carries the same value the decoder surfaces.
 func _raid_travel_band() -> Dictionary:
 	return BandFx.with_band_id({
-		"id": "Band 1", "entity": 833, "faction": 0, "size": 80,
+		"name": "Ashfell", "id": "Ashfell", "entity": 833, "faction": 0, "size": 80,
 		"current_x": 66, "current_y": 18, "pos": [66, 18],
 		"working_age": 10, "idle_workers": 6,
 		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
@@ -471,7 +475,7 @@ func _raid_travel_band() -> Dictionary:
 ## labor-bound.
 func _delivered_oracle_band() -> Dictionary:
 	return BandFx.with_band_id({
-		"id": "Band 1", "entity": 840, "faction": 0, "size": 120,
+		"name": "Ashfell", "id": "Ashfell", "entity": 840, "faction": 0, "size": 120,
 		"current_x": 66, "current_y": 10, "pos": [66, 10],
 		"working_age": 30, "idle_workers": 26,
 		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
@@ -2692,6 +2696,9 @@ func _unkillable_quarry_states() -> void:
 	# ---- …AND ONE FRAME OF THE ⚠, SO THE TWO HUD SURFACES CAN BE READ TOGETHER --------------------
 	await _overdraw_agreement_state()
 
+	# ---- ONE BAND, ONE NAME, ON THE PICKER AND ON THE MAP ----------------------------------------
+	await _assert_one_band_naming_rule()
+
 	# Reset the roster, the panel band and BOTH compose spines for whatever renders after this chapter.
 	h._hud._band_labor.set_panel_band({})
 	h._hud._band_labor._player_bands = []
@@ -2730,6 +2737,155 @@ func _overdraw_agreement_state() -> void:
 	h._assert_hud("…and so does the sheet beside it, on the same source",
 		Readout.yields_text(h._hud._drawercompose._compose_sheet)
 			.to_upper().contains(HudComposeVocab.LOCAL_HUNT_OVERDRAW_NOTE.to_upper()))
+
+
+# ---- ONE BAND, ONE NAME (issue #615) -------------------------------------------------------------
+# The shipped defect this block exists for: TWO surfaces each fabricated a band's name from a ROW
+# NUMBER, and they counted different rows. `HudFormat` numbered the roster `update_band_alerts` had
+# already stripped expeditions out of; `MapView._rebuild_unit_markers` numbered the RAW cohort array,
+# parties included. One live party was therefore enough to make the map call a band `Band 5` while the
+# Assign Hunters picker called that same band `Band 4`, and the player had no way to tell which was
+# lying.
+#
+# **THE FIXTURE IS THE TEST.** The roster this chapter already had could never fail: with no party in
+# it the two counts agree, so a positional rule passed every assertion. The roster below puts the party
+# FIRST, ahead of both resident bands, which is the shape in which the two rules disagree by one on
+# every band after it — and `_assert_naming_fixture_would_catch_the_counter` states that offset as its
+# own claim, so a later edit that quietly drops the party fails HERE rather than silently restoring the
+# blind spot.
+
+## The party's home band, and the band the claims are made about. Distinct names, spelled out rather
+## than drawn from `BandFx`'s pool, because the assertions quote them.
+const NAMING_HOME_BAND_NAME := "Ashfell"
+const NAMING_LATER_BAND_NAME := "Thornhollow"
+
+## Entities for the three cohorts. Deliberately unlike the chapter's other fixtures so a stale roster
+## cannot satisfy these claims.
+const NAMING_HOME_ENTITY := 861
+const NAMING_LATER_ENTITY := 862
+const NAMING_PARTY_ENTITY := 863
+
+## The party's mission, and the word `HudFormat.band_name` must tag its home band's name with.
+const NAMING_PARTY_MISSION := "scout"
+
+## Where all three stand. One tile, because nothing here is about distance.
+const NAMING_TILE := Vector2i(66, 10)
+
+## Where the later band sits in the RAW wire array vs. in the expedition-FILTERED roster, 1-based. The
+## gap between them is exactly the defect: 3 on the map, 2 in the picker.
+const NAMING_LATER_RAW_INDEX := 3
+const NAMING_LATER_ROSTER_INDEX := 2
+
+## The raw `populations` array the wire would carry: the PARTY FIRST, then the two resident bands. The
+## order is the fixture's whole content — see the block comment above.
+func _naming_wire_roster() -> Array:
+	return [_naming_party(), _naming_band(NAMING_HOME_ENTITY, NAMING_HOME_BAND_NAME),
+		_naming_band(NAMING_LATER_ENTITY, NAMING_LATER_BAND_NAME)]
+
+func _naming_band(entity: int, band_name: String) -> Dictionary:
+	return BandFx.with_band_id({
+		"entity": entity, "faction": 0, "size": 60, "name": band_name,
+		"current_x": NAMING_TILE.x, "current_y": NAMING_TILE.y,
+		"working_age": 12, "idle_workers": 4, "work_range": 2, "hunt_reach": 7,
+		"max_expedition_party_size": 8, "activity": "forage", "labor_assignments": [],
+	})
+
+## **THE PARTY PUBLISHES ITS HOME BAND'S NAME VERBATIM** and carries its own distinct `band_id` — that
+## is the wire contract, not a fixture convenience: a party is those same people walking somewhere, so
+## the client tags it with the mission rather than inventing a second identity for it.
+func _naming_party() -> Dictionary:
+	var party := _naming_band(NAMING_PARTY_ENTITY, NAMING_HOME_BAND_NAME)
+	party["is_expedition"] = true
+	party["expedition_mission"] = NAMING_PARTY_MISSION
+	party["expedition_phase"] = "outbound"
+	party["home_band_entity"] = NAMING_HOME_ENTITY
+	return party
+
+## Every label the `Band:` picker offers, in its own order — read off the built `OptionButton` rather
+## than recomposed, because the face is the thing under test.
+func _band_picker_items(sheet: Control) -> Array:
+	var picker := _band_picker_control(sheet)
+	if picker == null:
+		return []
+	var items: Array = []
+	for i in picker.item_count:
+		items.append(picker.get_item_text(i))
+	return items
+
+## What the MAP calls each cohort, keyed by entity — the real `_rebuild_unit_markers`, run against the
+## same raw array the HUD was handed. The map is instanced data-only (the `crafting_bench` idiom): no
+## canvas is needed to read a marker's stamped name back.
+func _map_marker_names(wire_roster: Array) -> Dictionary:
+	var view: Node2D = MAP_VIEW_SCRIPT.new()
+	view._rebuild_unit_markers({"populations": wire_roster})
+	var names: Dictionary = {}
+	for unit_variant in view.units:
+		var unit: Dictionary = unit_variant
+		names[int(unit.get("entity", -1))] = String(unit.get("id", ""))
+	view.queue_free()
+	return names
+
+## **THE VACUITY GUARD.** The claims below are only worth making on a roster where a positional rule
+## and an id-based one would give different answers; this states that the fixture is such a roster, so
+## the day someone drops the party the guard fails instead of the coverage silently going away.
+func _assert_naming_fixture_would_catch_the_counter(roster: Array) -> void:
+	var wire := _naming_wire_roster()
+	h._assert_hud(("the fixture reproduces the off-by-one: the later band is #%d on the wire and #%d"
+			+ " on the expedition-filtered roster")
+			% [NAMING_LATER_RAW_INDEX, NAMING_LATER_ROSTER_INDEX],
+		wire.size() == NAMING_LATER_RAW_INDEX
+			and int((wire[NAMING_LATER_RAW_INDEX - 1] as Dictionary).get("entity", -1))
+				== NAMING_LATER_ENTITY
+			and roster.size() == NAMING_LATER_ROSTER_INDEX
+			and int((roster[NAMING_LATER_ROSTER_INDEX - 1] as Dictionary).get("entity", -1))
+				== NAMING_LATER_ENTITY)
+
+## The four claims. They fail apart: the picker is what the player reads before committing crew, the
+## map is what they read before clicking, the party's suffix is what keeps a band and its own party
+## distinguishable without a second identity, and the home band's BARE name is what stops the suffix
+## leaking onto the people who stayed.
+func _assert_one_band_naming_rule() -> void:
+	var wire := _naming_wire_roster()
+	h._hud.update_band_alerts(wire)
+	var roster: Array = h._hud._band_labor.player_bands()
+	_assert_naming_fixture_would_catch_the_counter(roster)
+
+	var tile := BaseFx.food_tile_fixture()
+	h._hud._compose.reset_forage_source()
+	h._hud._compose.set_forage_band(ComposeState.NO_BAND_ENTITY)
+	h._show_tile(tile)
+	h._compose_forage(tile)
+	await h._settle()
+	var picker_items := _band_picker_items(h._hud._drawercompose._compose_sheet)
+	h._assert_hud("the Band: picker names both resident bands, and by NAME (got %s)"
+			% str(picker_items),
+		picker_items == [NAMING_HOME_BAND_NAME, NAMING_LATER_BAND_NAME])
+
+	var map_names := _map_marker_names(wire)
+	h._assert_hud(("the map and the picker agree about the band AFTER the party — the off-by-one"
+			+ " (picker %s, map %s)")
+			% [String(picker_items[NAMING_LATER_ROSTER_INDEX - 1]),
+				String(map_names.get(NAMING_LATER_ENTITY, ""))],
+		String(map_names.get(NAMING_LATER_ENTITY, "")) == NAMING_LATER_BAND_NAME
+			and String(picker_items[NAMING_LATER_ROSTER_INDEX - 1]) == NAMING_LATER_BAND_NAME)
+
+	var want_party := HudExpeditionVocab.PARTY_NAME_FORMAT % [NAMING_HOME_BAND_NAME,
+		HudExpeditionVocab.PARTY_SHORT_LABELS[NAMING_PARTY_MISSION]]
+	h._assert_hud("a party's marker is its home band's name plus its mission (%s, got %s)"
+			% [want_party, String(map_names.get(NAMING_PARTY_ENTITY, ""))],
+		String(map_names.get(NAMING_PARTY_ENTITY, "")) == want_party)
+	h._assert_hud("…and the home band's own marker is the BARE name (%s, got %s)"
+			% [NAMING_HOME_BAND_NAME, String(map_names.get(NAMING_HOME_ENTITY, ""))],
+		String(map_names.get(NAMING_HOME_ENTITY, "")) == NAMING_HOME_BAND_NAME)
+
+	# **AND THE EVENT DOCK'S JOIN REACHES THE PARTY.** A party carries its own `band_id`, so an event
+	# about one used to find nothing on a bands-only search and render nameless.
+	h._assert_hud("`band_label_for_id` names the PARTY too, not just the resident bands",
+		h._hud._band_labor.band_label_for_id(
+			int((wire[0] as Dictionary).get("band_id", -1))) == want_party)
+
+	h._hud._compose.reset_forage_source()
+	h._hud._compose.set_forage_band(ComposeState.NO_BAND_ENTITY)
 
 
 ## The three surfaces that used to say "many turns", each asserted by EQUALITY against a sentence
@@ -3779,9 +3935,10 @@ const PANEL_BAND_COLONY_IDLE := 2
 ## rather than coinciding with the parent's and hiding inside its failure.
 const PANEL_BAND_STALE_IDLE := 9
 
-## Where the colony sits in the roster, 1-based — the picker labels bands positionally
-## (`HudFormat.band_display_name`), so this is both its index and the `Band 2` its face must read.
-## Named because the frame's whole point is that the SECOND band is the one in focus.
+## Where the colony sits in the roster, 1-based. **It is no longer the colony's NAME** — since issue
+## #615 the picker's face is the cohort's own `name` (`HudFormat.band_name`) — but the index is still
+## what picks the colony out of the fixture roster, and the frame's whole point is that the SECOND
+## band is the one in focus.
 const PANEL_BAND_COLONY_INDEX := 2
 
 ## The crew both sheets are dialed to before the cap is read. Above every candidate idle count
@@ -3846,7 +4003,7 @@ func _band_picker_control(root: Node) -> OptionButton:
 ## any one of them right while the resolver is wrong.
 func _assert_composes_for_panel_band(state: String, colony: Dictionary, composed_entity: int) -> void:
 	var sheet: Control = h._hud._drawercompose._compose_sheet
-	var want_face := HudFormat.band_display_name(colony, PANEL_BAND_COLONY_INDEX)
+	var want_face := HudFormat.band_name(colony)
 	var got_face := _band_picker_face(sheet)
 	h._assert_hud("%s: the Band: picker names the band the panel is on (%s, got %s)"
 			% [state, want_face, got_face],
@@ -3892,7 +4049,8 @@ const ACTOR_SECOND_WORKER_ENTITY := 863
 const ACTOR_FIRST_WORKER_CREW := 2
 const ACTOR_SECOND_WORKER_CREW := 3
 
-## 1-based roster positions — the picker labels bands positionally (`HudFormat.band_display_name`), so
+## 1-based roster positions — they pick a band out of the fixture roster (its NAME comes off the
+## cohort now, `HudFormat.band_name`), so
 ## each is both the popup entry a press must land on (one less, the popup being 0-based) and the
 ## `Band N` the face must read.
 const ACTOR_FIRST_WORKER_INDEX := 2
@@ -3978,7 +4136,7 @@ func _actor_assignments(crew: int) -> Array:
 ## affordance the played defect took away.
 func _assert_actor_band(state: String, index: int, crew: int, verb: String, rung: String) -> void:
 	var sheet: Control = h._hud._drawercompose._compose_sheet
-	var want_face := HudFormat.band_display_name(_actor_band_roster()[index - 1], index)
+	var want_face := HudFormat.band_name(_actor_band_roster()[index - 1])
 	var got_face := _band_picker_face(sheet)
 	h._assert_hud("%s: the Band: picker names the band working the source (%s, got %s)"
 			% [state, want_face, got_face],

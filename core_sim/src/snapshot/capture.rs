@@ -2066,6 +2066,7 @@ pub(crate) type PopulationSnapshotQuery<'w, 's> = Query<
         Option<&'static BandTravel>,
         Option<&'static Expedition>,
         Option<&'static BandId>,
+        Option<&'static BandName>,
         Option<&'static BandEquipment>,
         Option<&'static crate::components::BandBench>,
     ),
@@ -2426,7 +2427,7 @@ pub fn capture_snapshot(
         std::collections::BTreeMap<String, bool>,
     > = populations
         .iter()
-        .map(|(_, cohort, _, _, _, _, _, _)| cohort.faction)
+        .map(|(_, cohort, _, _, _, _, _, _, _)| cohort.faction)
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .map(|faction| {
@@ -2475,7 +2476,7 @@ pub fn capture_snapshot(
     // (bands are nomadic). The `populations` query is read-only, so iterating it twice is fine.
     let cohort_positions: std::collections::HashMap<Entity, UVec2> = populations
         .iter()
-        .filter_map(|(entity, cohort, _, _, _, _, _, _)| {
+        .filter_map(|(entity, cohort, _, _, _, _, _, _, _)| {
             tile_positions
                 .get(&cohort.current_tile.to_bits())
                 .copied()
@@ -2485,7 +2486,17 @@ pub fn capture_snapshot(
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
         .map(
-            |(entity, cohort, allocation, travel, expedition, band_id, equipment, bench)| {
+            |(
+                entity,
+                cohort,
+                allocation,
+                travel,
+                expedition,
+                band_id,
+                band_name,
+                equipment,
+                bench,
+            )| {
                 let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
                 // A band is "traveling" while a `move_band` order is still en route to its target.
                 let is_traveling = travel
@@ -2575,6 +2586,7 @@ pub fn capture_snapshot(
                 population_state(PopulationStateInputs {
                     entity,
                     band_id,
+                    band_name,
                     cohort,
                     allocation,
                     expedition,
@@ -3065,7 +3077,7 @@ pub fn capture_snapshot(
     // filtered out rather than published against a guessed faction.
     let band_factions: HashMap<BandId, FactionId> = populations
         .iter()
-        .filter_map(|(_, cohort, _, _, _, band_id, _, _)| {
+        .filter_map(|(_, cohort, _, _, _, band_id, _, _, _)| {
             band_id.map(|band| (*band, cohort.faction))
         })
         .collect();

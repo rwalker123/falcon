@@ -94,6 +94,16 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // server's `u64` parse. It cannot arise: `BandIdAllocator` starts at 1 and increments by 1, so
     // ids stay astronomically inside `i64`. `0` means "no id" and does not occur for a real band.
     let _ = dict.insert("band_id", cohort.bandId() as i64);
+    // **THE BAND'S DISPLAY NAME, AND THE CLIENT MUST NEVER DERIVE ONE** (issue #615). The sim mints
+    // it once at founding from a curated pool and it is IDENTITY: it does not change when another
+    // band dies, splits, or launches a party, so nothing downstream may fabricate a name by counting
+    // rows. An expedition party publishes its HOME BAND's name verbatim while carrying its own
+    // distinct `band_id` — a party is those same people walking somewhere, not a second identity, and
+    // `HudFormat.band_name` is what tags it with the mission word so the two markers stay distinct.
+    //
+    // Empty is only reachable from a hand-built fixture (the sim always has a name); the client
+    // renders that as its `Band #<id>` fallback, which is the DURABLE id and still not a row number.
+    let _ = dict.insert("name", cohort.name().unwrap_or_default());
     let _ = dict.insert("home", cohort.home() as i64);
     let _ = dict.insert("current_x", cohort.currentX() as i64);
     let _ = dict.insert("current_y", cohort.currentY() as i64);

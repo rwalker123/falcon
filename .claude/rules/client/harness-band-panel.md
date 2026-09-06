@@ -101,7 +101,9 @@ drill-down claim fails. A card with nothing in it looks entirely plausible in a 
 
 ### …and its DORMANT form, beside a live row
 
-**One more frame and thirteen `: PASS`** — measured `139 / 815` → `140 / 828`, `assert OK` still 436.
+**One more frame and eleven `: PASS`** — thirteen when it landed (measured `139 / 815` → `140 / 828`,
+`assert OK` still 436), two fewer since the dormant row's two hover sentences were retired and the
+pair asserting them became ONE negative: no hay word reaches the block's `tooltip_text` at all.
 The frame is **`band_panel_faction_fodder_dormant`**: the faction page's dim `Fodder  —` with no
 caret, beside a band's live `Fodder ▸ 100.0  (100 turns)` in the drawer.
 

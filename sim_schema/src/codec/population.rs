@@ -174,6 +174,9 @@ fn create_populations<'a>(
                 )
             });
             let activity = Some(builder.create_string(&cohort.activity));
+            // Always written, even when empty: a field the sim leaves out and a field the sim says
+            // is blank must not be the same frame.
+            let band_name = Some(builder.create_string(&cohort.name));
             let labor_assignments = if cohort.labor_assignments.is_empty() {
                 None
             } else {
@@ -897,6 +900,9 @@ fn create_populations<'a>(
                     // and "hay is weightless".
                     expeditionCargoFodder: cohort.expedition_cargo_fodder,
                     expeditionTradeFodderCarryWeight: cohort.expedition_trade_fodder_carry_weight,
+                    // THE BAND'S NAME — appended last. The sim owns it; a client that counts rows
+                    // instead disagrees with itself the moment two screens filter differently.
+                    name: band_name,
                 },
             )
         })

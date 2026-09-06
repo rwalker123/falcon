@@ -137,7 +137,7 @@ func render() -> void:
 	_ensure_panel()
 	_panel.render({
 		CraftingPanel.PAYLOAD_BAND: band,
-		CraftingPanel.PAYLOAD_BAND_LABEL: HudFormat.band_display_name(band, index + 1),
+		CraftingPanel.PAYLOAD_BAND_LABEL: HudFormat.band_name(band),
 		CraftingPanel.PAYLOAD_BAND_INDEX: index + 1,
 		CraftingPanel.PAYLOAD_BAND_COUNT: bands.size(),
 		CraftingPanel.PAYLOAD_BAND_OPTIONS: _band_options(bands),
@@ -266,7 +266,7 @@ func _band_options(bands: Array) -> Array:
 			continue
 		var band: Dictionary = bands[i]
 		options.append({
-			"label": HudFormat.band_display_name(band, i + 1),
+			"label": HudFormat.band_name(band),
 			"entity": int(band.get("entity", NO_BAND_ENTITY)),
 		})
 	return options

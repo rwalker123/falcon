@@ -1507,9 +1507,9 @@ func _yield_preview_bbcode(model: Dictionary, overdraw_suffix: String) -> String
             HudStyle.WARN_HEX, SourceForecast.COMPONENT_SEPARATOR, waste]
     return body
 
-## A "Band: [▼]" dropdown row for the assign controls: lists every player band (positional
-## "Band N" names, matching the roster) and selects `selected_band`; `on_pick` fires with the
-## chosen band dict. The actor band is always explicit — shown even with one band (single-item
+## A "Band: [▼]" dropdown row for the assign controls: lists every player band by the client's one
+## naming rule (`HudFormat.band_name`, so the picker and the map cannot disagree) and selects
+## `selected_band`; `on_pick` fires with the chosen band dict. The actor band is always explicit — shown even with one band (single-item
 ## dropdown). NOTE: lists ALL player bands; in-range filtering (Forage within work_range / Hunt
 ## within work_range + leash) is deferred to the multi-band slice (needs the hunt-leash reach in
 ## the snapshot, and can't be exercised until a 2nd band can exist).
@@ -1534,7 +1534,7 @@ func _build_band_picker(selected_band: Dictionary, on_pick: Callable) -> HBoxCon
         if entity == selected_entity:
             selected_index = i
         entries.append({
-            "label": HudFormat.band_display_name(band, i + 1),
+            "label": HudFormat.band_name(band),
             # Resolved through the labor model at PRESS time rather than captured: the picker outlives
             # a snapshot, and the band dict this row was built from is a copy of a stale turn's.
             "on_pick": func() -> void: on_pick.call(_band_labor.player_band_by_entity(entity)),

@@ -572,10 +572,11 @@ pub fn migration_move_fraction(
 
 /// How a band is named in a world event's label.
 ///
-/// The snapshot carries no band *name* — the client renders a positional "Band N"
-/// (`HudFormat.band_display_name`) — so the sim names the band's durable id and every event also
-/// carries it as a `band=` detail token, which is what lets the client re-label the row with
-/// whatever it calls that band.
+/// **The durable id, not the band's name** — even though the snapshot now carries a real
+/// [`crate::components::BandName`] (issue #615). Every event repeats the id as a `band=` detail
+/// token, and the client substitutes what IT calls that band over this rendering; that join is what
+/// keeps a row's name current, and it needs a spelling it can find. A label baked from the name
+/// would freeze the name the band had when the event fired.
 fn band_label(band: BandId) -> String {
     format!("Band {}", band.0)
 }

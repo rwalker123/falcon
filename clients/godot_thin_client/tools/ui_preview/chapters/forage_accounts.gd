@@ -454,7 +454,7 @@ func _stale_verb_tile_fixture() -> Dictionary:
 ## different throughputs by fixture drift.
 func _stale_verb_band_fixture(rate: float) -> Dictionary:
 	return {
-		"id": "Band 1",
+		"name": "Windmere", "id": "Windmere",
 		"size": 30,
 		"entity": 821,
 		"faction": 0,
@@ -551,7 +551,7 @@ func _building_patch_tile_fixture() -> Dictionary:
 ## about one patch by construction.
 func _building_patch_band_fixture(rate: float) -> Dictionary:
 	return {
-		"id": "Band 1",
+		"name": "Windmere", "id": "Windmere",
 		"size": 34,
 		"entity": 823,
 		"faction": 0,

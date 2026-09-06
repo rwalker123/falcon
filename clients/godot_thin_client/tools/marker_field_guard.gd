@@ -50,7 +50,7 @@ const MAP_VIEW := preload("res://src/scripts/MapView.gd")
 # the stamps in `_rebuild_unit_markers`; a stamp added there and not named here fails the partition.
 const MARKER_STAMPED_KEYS := [
 	"pos",               # [current_x, current_y] RESOLVED through the home-tile fallback
-	"id",                # the de-duplicated display name ("Band 3"); the cohort's own `label` rides along
+	"id",                # the display name `HudFormat.band_name` resolves from the cohort's own `name`
 	"dest_x",            # travel destination, from `harvest`/`scout` — absent when the band has neither
 	"dest_y",
 	"travel_task_kind",  # which sub-tree that destination came from
@@ -138,7 +138,9 @@ const FIXTURE_ENTRY := {
 	"current_x": 8,
 	"current_y": 6,
 	"size": 30,
-	"label": "River Band",
+	# The sim's own band name (issue #615) — the field every display name is now resolved from. This
+	# fixture's cohort is an expedition, so `HudFormat.band_name` renders it "Riverbend (Scout)".
+	"name": "Riverbend",
 	"morale_cause": 1,
 	"activity": "forage",
 	"work_range": 2,

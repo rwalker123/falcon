@@ -404,6 +404,10 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// The band's durable id, published so a client can address it in a command without sending
     /// back an ECS handle that the next rollback renumbers.
     pub(crate) band_id: Option<&'a BandId>,
+    /// The band's **name**, published so a client never has to fabricate one by counting rows.
+    /// `None` is a hand-built fixture with no name component; it publishes empty, which the client
+    /// renders as its `Band #<id>` fallback. An expedition party carries its *home band's* name.
+    pub(crate) band_name: Option<&'a BandName>,
     pub(crate) cohort: &'a PopulationCohort,
     pub(crate) allocation: Option<&'a LaborAllocation>,
     pub(crate) expedition: Option<&'a Expedition>,
@@ -590,6 +594,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     let PopulationStateInputs {
         entity,
         band_id,
+        band_name,
         cohort,
         allocation,
         expedition,
@@ -1187,6 +1192,9 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     PopulationCohortState {
         entity: entity.to_bits(),
         band_id: band_id.map(|id| id.0).unwrap_or_default(),
+        // The sim's own answer for what this band is called — see `BandName`. Empty only when the
+        // entity carries no name component at all.
+        name: band_name.map(|name| name.0.clone()).unwrap_or_default(),
         home: cohort.home.to_bits(),
         current_x: current_position.map(|p| p.x).unwrap_or(0),
         current_y: current_position.map(|p| p.y).unwrap_or(0),
@@ -1770,6 +1778,7 @@ mod tests {
             entity: Entity::from_raw(1),
             // These fixtures assert on the derived readouts, not on band identity.
             band_id: None,
+            band_name: None,
             cohort,
             allocation,
             expedition,

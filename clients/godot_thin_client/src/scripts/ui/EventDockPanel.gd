@@ -377,10 +377,10 @@ var _retention_turns: int = DEFAULT_RETENTION_TURNS
 ## retention window is measured back from.
 var _current_turn: int = -1
 ## `band_id` (as a String) → the name the CLIENT gives that band. Pushed from `Hud` each snapshot
-## via `Main` (`band_labels_changed`). The sim names a band by its durable `BandId`; the client names
-## it by its ROSTER POSITION, and the two routinely disagree — so a demographic event's label is
-## re-written at RENDER time from the `band=` token rather than stamped at ingest, which also means a
-## roster change relabels the rows already held.
+## via `Main` (`band_labels_changed`), and it covers detached PARTIES as well as resident bands. An
+## event label is composed sim-side by durable `BandId`; the display name lives on the cohort — so a
+## demographic event's label is re-written at RENDER time from the `band=` token rather than stamped
+## at ingest, which also means a roster change relabels the rows already held.
 var _band_labels: Dictionary = {}
 
 # ---- nodes -----------------------------------------------------------------
@@ -1394,7 +1394,7 @@ func _turn_stamp(tick: int) -> String:
 		return HudEventVocab.TURN_STAMP_UNKNOWN
 	return HudEventVocab.TURN_STAMP_FORMAT % tick
 
-## The row's label with the sim's positional band name swapped for the CLIENT's, when the event
+## The row's label with the sim's id-spelled band name swapped for the CLIENT's, when the event
 ## carries a `band=` token naming a band the roster knows. Resolved here rather than at ingest so a
 ## roster change relabels rows already held, and so a row that arrives before the first
 ## `set_band_labels` is not stuck with the fallback forever.
@@ -1428,6 +1428,12 @@ func _swap_band_label(label: String, detail: String, token_key: String,
 	if raw_id == "" or not _band_labels.has(raw_id):
 		return label
 	var client_name := String(_band_labels[raw_id])
+	# **AN EMPTY NAME NEVER SUBSTITUTES.** `HudBandLaborState.band_label_for_id` answers `""` for a
+	# band the roster does not hold, and a fixture can publish one directly; swapping that in would
+	# delete the band from the sentence and leave `… has grown` with no subject. The sim's own
+	# `Band <id>` is a worse name than the roster's, and a strictly better one than nothing.
+	if client_name == "":
+		return label
 	var sim_name: String = sim_format % int(raw_id)
 	if client_name == sim_name:
 		return label

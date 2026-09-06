@@ -104,16 +104,14 @@ const KNOWLEDGE_METER_CELLS := FactionReadouts.KNOWLEDGE_METER_CELLS
 ## prints this zone's extent, and it has been at the edge of the ~300px a horizontal dock offers twice.
 ## The tier's threshold is `HudWorkVocab.FACTION_BAND_FULL_MIN_HEIGHT`, and it must stay above the
 ## full block's measured height.
-## `knowledge` is the player faction's `{track: progress}` row, threaded in as a PARAMETER like every
-## other input this stateless layer needs. Its ONE reader is the dormant `Fodder:` row's hover, which
-## states how far along Foddering is — knowledge is faction-scoped and no band dict carries it, so
-## this is the only level at which the figure exists.
+## **IT TAKES NO `knowledge` ROW.** It was threaded in for ONE reader — the dormant `Fodder:` row's
+## hover, which stated how far along Foddering is — and that row carries no hover now
+## (`DetailFormat.fodder_dormant_row`), so nothing on this page reads a knowledge track.
 static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureController,
-        sedentarization: Dictionary, sites: Array, full: bool,
-        knowledge: Dictionary) -> VBoxContainer:
+        sedentarization: Dictionary, sites: Array, full: bool) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     var bands := labor.player_bands()
-    col.add_child(_build_vitals_label(bands, disclosures, knowledge))
+    col.add_child(_build_vitals_label(bands, disclosures))
     var people := _build_people_block(bands)
     if people != null:
         col.add_child(people)
@@ -136,8 +134,7 @@ static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureCon
 ## numbers; a runway is one larder against one band's drain and a kit condition is three durabilities
 ## per band, so neither has a faction value to state and those rows carry the ALERT instead. The
 ## detail is one click away in every case.
-static func _build_vitals_label(bands: Array, disclosures: DisclosureController,
-        knowledge: Dictionary) -> RichTextLabel:
+static func _build_vitals_label(bands: Array, disclosures: DisclosureController) -> RichTextLabel:
     var label := RichTextLabel.new()
     label.bbcode_enabled = true
     label.fit_content = true
@@ -153,19 +150,21 @@ static func _build_vitals_label(bands: Array, disclosures: DisclosureController,
     # no longer has. `Kit` and `Growth` can both return "" the same way and had the same latent bug.
     _disclosures_clear(disclosures)
     var ctx := DetailFormat.Context.new()
-    # The context goes IN as well as out: the dormant `Fodder:` row registers its hover on it, exactly
-    # as the band page's producers do, and `block_tooltip` below reads it back off the same object.
-    var lines := _faction_summary_lines(bands, disclosures, knowledge, ctx)
+    # The context is this page's alone now: the row builders below take none, the only one that ever
+    # wrote to it being the dormant `Fodder:` row's retired hover. What still reads it here is the
+    # caret state and the tint table `detail_bbcode` resolves rows through.
+    var lines := _faction_summary_lines(bands, disclosures)
     # The carets are read from the CONTROLLER, not from a context the producer filled — every row
     # here registers its own disclosure as it is built, so the state is complete only after the last
     # of them. `BandDetailLines` hit exactly this ordering trap on the merged Growth clause.
     ctx.disclosures = disclosures.state()
     label.text = DetailFormat.detail_bbcode(lines, ctx)
-    # **THE HOVER A ROW REGISTERED, ANSWERED BY THE BLOCK.** The dormant `Fodder:` row says why it is
-    # dim this way; `[hint=…]` is not parsed by this Godot build (see `DetailFormat.block_tooltip`),
-    # so the label carries it. The band page's two hosts attach it exactly like this, and a page that
-    # skipped it would show the same dim row with no explanation on this scale alone. Empty for a
-    # block whose every row is live, which shows no tooltip at all.
+    # **A HOVER A ROW REGISTERS IS ANSWERED BY THE BLOCK, WHICH IS WHY NO ROW HERE REGISTERS ONE.**
+    # `[hint=…]` is not parsed by this Godot build (see `DetailFormat.block_tooltip`), so the label
+    # carries every registered sentence at once and a cursor anywhere over the block gets all of
+    # them — the dormant `Fodder:` row used to put a paragraph about hay under Growth and Morale
+    # that way. The attachment stays, in the shape both band-page hosts use, so a row that ever does
+    # have a block-wide sentence to make is answered; it joins nothing today and shows no tooltip.
     label.tooltip_text = DetailFormat.block_tooltip(ctx)
     return label
 
@@ -177,11 +176,10 @@ static func _disclosures_clear(disclosures: DisclosureController) -> void:
         disclosures.clear_rows()
 
 ## The rows, in the band page's order, registering each row's per-band drill-down as it goes.
-static func _faction_summary_lines(bands: Array, disclosures: DisclosureController,
-        knowledge: Dictionary, ctx: DetailFormat.Context) -> Array[String]:
+static func _faction_summary_lines(bands: Array, disclosures: DisclosureController) -> Array[String]:
     var lines: Array[String] = []
     lines.append(_food_line(bands, disclosures))
-    lines.append(_fodder_line(bands, disclosures, knowledge, ctx))
+    lines.append(_fodder_line(bands, disclosures))
     lines.append(_upkeep_line(bands, disclosures))
     lines.append(_morale_line(bands, disclosures))
     var growth := _growth_line(bands, disclosures)
@@ -206,7 +204,7 @@ static func _food_line(bands: Array, disclosures: DisclosureController) -> Strin
         var turns := float(band.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
         if BandFoodStatus.is_critical(turns):
             starving += 1
-        rows.append(_band_row(band, i, "%s · %s" % [
+        rows.append(_band_row(band, "%s · %s" % [
             SourceForecast.format_stock(DetailFormat.band_provisions(band)),
             SourceForecast.format_signed(DetailFormat.band_net_food(band))],
             DetailFormat.food_turns_text(turns)))
@@ -247,7 +245,9 @@ static func _food_line(bands: Array, disclosures: DisclosureController) -> Strin
 ## with no fodder economy anywhere used to read `Fodder: 0.0 · +0.0 /turn` in FULL INK — a live-looking
 ## readout for an economy that does not exist, and one that disagreed with the dim `—` every one of its
 ## own bands was showing. The two scales say it the same way now, through the same builder
-## (`DetailFormat.fodder_dormant_row`) and the same hover.
+## (`DetailFormat.fodder_dormant_row`) — and what that builder says is a dim dash and nothing else:
+## the row carries no hover at either scale, the only hover it could register being the whole
+## BLOCK's.
 ##
 ## **THE GATE IS `band_has_fodder_economy` OVER THE BANDS, NOT A SECOND PREDICATE.** `_any_fodder_economy`
 ## is a fold and nothing else: whatever the per-band test admits, this page admits, and a faction test
@@ -256,14 +256,9 @@ static func _food_line(bands: Array, disclosures: DisclosureController) -> Strin
 ##
 ## **A DORMANT ROW REGISTERS NO DISCLOSURE**, so it wears no caret: there are no per-band rows worth
 ## opening when not one of them has a larder, and an empty pull-down is worse than none.
-static func _fodder_line(bands: Array, disclosures: DisclosureController,
-        knowledge: Dictionary, ctx: DetailFormat.Context) -> String:
+static func _fodder_line(bands: Array, disclosures: DisclosureController) -> String:
     if not _any_fodder_economy(bands):
-        # `RungGates.track` is the ONE reader of a `{track: progress}` row in this client — the same
-        # accessor every gate reason goes through, so a faction that has never begun the craft reads
-        # 0.0 here exactly as it does there.
-        return DetailFormat.fodder_dormant_row(ctx,
-            RungGates.track(knowledge, HudFloraVocab.KNOWLEDGE_TRACK_FODDERING))
+        return DetailFormat.fodder_dormant_row()
     var store := 0.0
     var net := 0.0
     var rows: Array[String] = []
@@ -275,7 +270,7 @@ static func _fodder_line(bands: Array, disclosures: DisclosureController,
         var turns := float(band.get("turns_of_fodder", BandFoodStatus.UNLIMITED_TURNS))
         if BandFoodStatus.is_critical(turns):
             starving += 1
-        rows.append(_band_row(band, i, "%s · %s" % [
+        rows.append(_band_row(band, "%s · %s" % [
             SourceForecast.format_fodder(DetailFormat.band_fodder_store(band)),
             SourceForecast.format_signed_fodder(DetailFormat.band_net_fodder(band))],
             DetailFormat.food_turns_text(turns)))
@@ -356,7 +351,7 @@ static func _upkeep_line(bands: Array, disclosures: DisclosureController) -> Str
         var turns := float(worst[DetailFormat.MATERIAL_BILL_RUNWAY_KEY])
         if BandFoodStatus.is_critical(turns):
             alarmed += 1
-        rows.append(_band_row(band, i, "%s · %s" % [
+        rows.append(_band_row(band, "%s · %s" % [
             _material_face(String(worst[SourceForecast.MATERIAL_PAYOFF_ID_KEY]),
                 float(worst[DetailFormat.MATERIAL_BILL_STORE_KEY])),
             SourceForecast.format_signed(float(worst[DetailFormat.MATERIAL_BILL_INCOME_KEY])
@@ -418,7 +413,7 @@ static func _morale_line(bands: Array, disclosures: DisclosureController) -> Str
         var band: Dictionary = bands[i]
         if DetailFormat.morale_is_concerning(band):
             concerning += 1
-        rows.append(_band_row(band, i, "%d%%%s" % [
+        rows.append(_band_row(band, "%d%%%s" % [
             int(round(float(band.get("morale", 0.0)) * 100.0)), _trend_glyph(float(band.get("morale_delta", 0.0)))],
             DetailFormat.morale_cause_label(int(band.get("morale_cause", DetailFormat.MORALE_CAUSE_NONE)))))
     disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_MORALE,
@@ -445,7 +440,7 @@ static func _growth_line(bands: Array, disclosures: DisclosureController) -> Str
         weight += w
         if DetailFormat.growth_is_concerning(band):
             concerning += 1
-        rows.append(_band_row(band, i, HudWorkVocab.FACTION_PERCENT_FORMAT % int(
+        rows.append(_band_row(band, HudWorkVocab.FACTION_PERCENT_FORMAT % int(
             round(DetailFormat.band_fertility(band) * 100.0)), ""))
     if rows.is_empty():
         return ""
@@ -524,12 +519,14 @@ static func _severity_color(severity: String) -> Color:
 
 ## One row of a drill-down: the band's name, its value, and an optional dim note. The NAME is a
 ## clickable `[url]` so the popover doubles as the page's second, better way to reach a band.
-static func _band_row(band: Dictionary, index: int, value: String, note: String) -> String:
+## It takes no roster index: the name comes from the band itself (`HudFormat.band_name`), which is
+## what makes this row and the cycler's card agree about which band is which.
+static func _band_row(band: Dictionary, value: String, note: String) -> String:
     var suffix := "  [color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, note] if note != "" else ""
     return "%s%s%d][color=#%s]%s[/color][/url]  %s%s" % [
         DetailFormat.DISCLOSURE_URL_OPEN, HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX,
         int(band.get("entity", -1)), HudStyle.SIGNAL_HEX,
-        HudFormat.band_display_name(band, index + 1), value, suffix]
+        HudFormat.band_name(band), value, suffix]
 
 ## `  ⚠ 2 bands` — the alert clause a row appends when some band is in trouble. The COUNT and nothing
 ## more: which band it is lives one click away, which is the whole division of labour on this page.
@@ -634,7 +631,7 @@ static func build_parties_zone(labor: HudBandLaborState, herd_label_for_id: Call
     # **THE ROW'S TWO OWNERS ARE DIFFERENT ENTITIES HERE, and that is the whole reason `_summary_row`
     # takes them separately.** The TOGGLE is keyed on the PARTY, which is what the row's detail is
     # about and what `_faction_open_row` matches; the NAME's jump is keyed on the HOME BAND, which is
-    # what the name says. Binding one entity to both made a link reading `Band 2` select the
+    # what the name says. Binding one entity to both made a link reading a band's name select the
     # expedition — the row named one subject and delivered another.
     var names := _band_names_by_entity(labor)
     var shown: int = mini(parties.size(), HudWorkVocab.FACTION_LIST_ROWS_MAX)
@@ -913,7 +910,7 @@ static func _build_bands_block(labor: HudBandLaborState, attention: Array, open_
         var band: Dictionary = bands[i]
         var entity := int(band.get("entity", -1))
         var alerts: Array = by_owner.get(entity, [])
-        block.add_child(_summary_row(HudFormat.band_display_name(band, i + 1),
+        block.add_child(_summary_row(HudFormat.band_name(band),
             _work_summary(labor, band), worst_severity(alerts), entity, entity, on_toggle, on_jump))
         if entity == open_owner:
             block.add_child(_summary_detail(_work_detail_lines(labor, band), alerts))
@@ -1036,12 +1033,12 @@ static func _append_more_row(block: VBoxContainer, remaining: int) -> void:
         return
     block.add_child(HudWidgets.alloc_hint_label(HudWorkVocab.FACTION_LIST_MORE_FORMAT % remaining))
 
-## Entity → positional display name, for the parties zone's "which band did this party leave" column.
-## The index is the roster's, so a party's home band reads by the SAME name the cycler gives it.
+## Entity → display name, for the parties zone's "which band did this party leave" column. Resolved
+## through `HudFormat.band_name` like every other surface, so a party's home band reads by the SAME
+## name the cycler gives it.
 static func _band_names_by_entity(labor: HudBandLaborState) -> Dictionary:
     var names := {}
-    var bands := labor.player_bands()
-    for i in range(bands.size()):
-        var band: Dictionary = bands[i]
-        names[int(band.get("entity", -1))] = HudFormat.band_display_name(band, i + 1)
+    for band_variant in labor.player_bands():
+        var band: Dictionary = band_variant
+        names[int(band.get("entity", -1))] = HudFormat.band_name(band)
     return names

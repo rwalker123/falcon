@@ -1460,6 +1460,20 @@ pub struct PopulationCohortState {
     /// **Finite and `>= 0`, not positive** — `0` is a legitimate setting ("hay is weightless").
     #[serde(default)]
     pub expedition_trade_fodder_carry_weight: f32,
+    /// **THE BAND'S NAME — the sim owns it, and a client must never fall back to counting.**
+    ///
+    /// Minted once at founding from a per-faction permutation of a curated pool and never derived
+    /// positionally, so it does not change when another band dies. That is the whole of why it is
+    /// here: a client fabricating `Band N` from a row index gave two screens two different answers
+    /// for one band (they counted different rows), and renamed every band after a death.
+    ///
+    /// **An expedition party publishes its HOME BAND's name**, identical string and all — a party
+    /// is those same people walking somewhere, not a second identity.
+    ///
+    /// Empty means the sim has no name for this cohort, which is only reachable from a hand-built
+    /// fixture; a client renders that as its `Band #<id>` fallback.
+    #[serde(default)]
+    pub name: String,
 }
 
 /// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],

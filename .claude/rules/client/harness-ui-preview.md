@@ -987,7 +987,10 @@ Fodder row's now; the BBCode is byte-identical for all of them (`_key_cell` buil
 is Godot's table-cell underline pass and not a client difference. Do not "fix" it in the formatter.
 
 **MAKING THAT ROW UNCONDITIONAL cost one frame and fourteen `PASS`** — measured, `1504 -> 1518` on
-one windowed run, `EXPECTED_CHECKPOINTS` 86 -> 101. The frame is **`band_fodder_dormant`**, appended
+one windowed run, `EXPECTED_CHECKPOINTS` 86 -> 101. The chapter has grown since, and its count went
+**104 -> 101** when the row's two hover sentences were retired: five hover claims went and two took
+their place, a negative on each host that no hay word reaches its block `tooltip_text` at all.
+The frame is **`band_fodder_dormant`**, appended
 after the pull-down state so nothing before it moves, and it is the first in this chapter to hold a
 LIVE fodder row and a DORMANT one in ONE render — the dim treatment is a claim about a DIFFERENCE,
 and a difference photographed one half at a time is not photographed.
@@ -1002,9 +1005,10 @@ two and photograph perfectly tidily.
 
 **The block also moves the faction's Foddering and must put it back.** `_ingest_intensification`
 REPLACES a faction's whole row, and `band_expedition` is the FIRST chapter — every chapter after it
-inherits whatever this one leaves. The two dormant sentences need the track part-learned and then
-learned, so the block pushes both and restores the untouched zeros on the way out, the same restore
-`band_panel_preview` makes around its own five-track fixture.
+inherits whatever this one leaves. The row must read DORMANT with the track part-learned and with it
+learned — knowing the craft is not the same as keeping a larder — so the block pushes both and
+restores the untouched zeros on the way out, the same restore `band_panel_preview` makes around its
+own five-track fixture.
 
 **A `[url=` SEARCH OVER PRODUCED LINES IS A VACUOUS CARET TEST.** A line producer emits plain
 `Key: value` strings and `detail_bbcode` is what draws the clickable run, so the needle can never
@@ -1015,8 +1019,11 @@ band's registration beside it so "registers nothing" cannot pass on a build that
 anywhere.
 
 **Falsified four ways from this chapter**, each failing a disjoint set: dropping the dim treatment
-(2), dropping the hover (5), re-gating the row (9 — including the frame's own both-surfaces
-precondition), and registering a disclosure on the dormant row (2).
+(2), re-registering a hover on the dormant row (2), re-gating the row (9 — including the frame's own
+both-surfaces precondition), and registering a disclosure on the dormant row (2). Those two negatives
+are what the five hover claims became: **a sentence registered here reaches the whole block**, so the
+failure they catch is the opposite of the old one — a hay sentence coming BACK and landing under
+Growth or Morale.
 
 **`band_hay_and_pen` is the frame that carries a BAND and a PEN at once**, which the drawer cannot do
 on its own: a player band's detail moves into the Band/City dock when one is present, so the dock
@@ -2482,7 +2489,11 @@ longer exist — the fixture now stages the link-kind keys and the frame reads `
 trap: **a frame whose fixture is the last producer of a state can go on passing after the state
 becomes unreachable**, and it then guards nothing while looking like coverage.
 
-**A clean run is 420 frames / 1950 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+**A clean run is 420 frames / 1968 `PASS`, exit 0 — RE-MEASURED ON THE MERGED TREE**, as this file's
+own rule says. It read `420 / 1950` on this branch and `413 / 1875` on `main`; **neither is the
+merged answer and their sum is not either** — the two `EXPECTED_CHECKPOINTS` floors conflicted in the
+same merge and came out at 103 and 369, one BETWEEN the two sides and one ABOVE both. Take the
+measurement of the merged file, exactly as the merge callout below says.
 
 The loadout chapter's `_assert_the_footer_says_how_to_get_back` rides the existing `starting_loadout`
 frame: BOTH facts (the orb brings it back; the turn ends it), because either alone leaves the player
@@ -2612,3 +2623,35 @@ has been every previous time. Measure; do not sum.
 > were stale the moment the two branches met, because each figure counts the OTHER branch's frames
 > as absent. The merged figure was re-measured, not added — `396 + 7` and `1761 + 42` happen to land
 > near it, and that arithmetic is exactly the habit this paragraph exists to break.
+
+## The nearest-band readout's name (PR #634 review)
+
+Three `PASS` and NO frame, appended LAST in `chapters/tile_panel.gd` — it renders nothing and frees
+its map, so no capture before or after it moves. `EXPECTED_CHECKPOINTS` 116 → **123**, RE-MEASURED by
+raising the const to an impossible number and reading `reached 123` back; the declared 116 was
+already seven under the chapter's real count, so a delta applied to it would have set a floor the
+chapter could fall through.
+
+**`nearest_unit_label` is the only user-facing STRING the tile card composes out of a band**, and it
+is the shape a harness must catch: it degraded to the raw ECS entity while every frame in the corpus
+stayed byte-identical, because no fixture-fed state reaches `MapView._tile_info_at` and the card's
+own formatter is currently unreferenced. So the claim is asked of `_tile_info_at` DIRECTLY, over a
+real `MapView` with `set_fow_enabled(false)` — the `tile_panel_land_sticky` idiom — with a lone band
+three tiles from a bare probe hex.
+
+- **The fixture states `name` and NO `id`.** The marker's `id` is DERIVED from `name` by
+  `HudFormat.band_name`; a hand-stamped `id` would let the claim pass on a fixture doing the
+  derivation's job.
+- **The two keys are each other's control.** `nearest_unit_label` must be the NAME *and*
+  `nearest_unit_id` the entity, asserted in one breath — a claim about either alone passes on a card
+  that has stopped distinguishing them. The distance precondition rides ahead of both, or they pass
+  on the `""` an empty summary leaves.
+- ⛔ **`str()`, NEVER `String()`.** `String(…)` is a constructor accepting only the string types, so
+  it RAISES on the very int the regression puts in that slot — which aborts the chapter instead of
+  reporting the claim. Measured: the first cut failed as a `SCRIPT ERROR` at that line and surfaced
+  only as the checkpoint guard's `reached 121`. With `str()` the same sabotage names the value.
+
+Sabotage-verified by restoring `nearest_unit.get("id", "")`: exactly the two label claims fail, both
+naming `got "634"`, and the distance precondition correctly stays green.
+
+**A clean run is 413 frames / 1885 `PASS`, exit 0 — RE-MEASURED.**

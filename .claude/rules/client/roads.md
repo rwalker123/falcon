@@ -299,8 +299,8 @@ upkeep and kept by. We can show upkeep warnings, like `Upkeep: Band 3 (short 1 w
 four tiles away goes on paying and goes on being served. That fact did not move; only the row it is
 stated on did. The NAME is still resolved by the drawer and never by the vocab leaf — a road carries
 a `band_id`, this client has one band-naming rule (`HudBandLaborState.band_label_for_id` →
-`HudFormat.band_display_name`), and `""` reads `another people`, a road being keepable by a people
-you merely know of.
+`HudFormat.band_name`), and `""` reads `another people`, a road being keepable by a people you merely
+know of.
 
 ### ⛔ THE PAYOFF ROW IS THE POINT OF THE WHOLE READOUT, AND IT CARRIES NO LABEL
 
