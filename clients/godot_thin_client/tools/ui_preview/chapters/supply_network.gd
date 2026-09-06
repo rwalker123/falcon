@@ -217,12 +217,12 @@ func run(harness) -> void:
 ## Everything else is the reference band with a hay larder, so the only reason this state renders no
 ## transfer row is that there was no transfer.
 func _quiet_band() -> Dictionary:
-	return _hay_keeper(QUIET_ENTITY, "Band 1")
+	return _hay_keeper(QUIET_ENTITY, "Windmere")
 
 ## The camp of states 2 and 4 — goods in over BOTH links on the food account, hay in over one and out
 ## down the other on the fodder account. One band, both popovers, so the two can be held side by side.
 func _linked_band() -> Dictionary:
-	var band := _hay_keeper(LINKED_ENTITY, "Band 2")
+	var band := _hay_keeper(LINKED_ENTITY, "Greyfen")
 	band[DetailFormat.TRANSFER_LOCAL_RECEIVED_TURN_KEY] = FOOD_LOCAL_IN
 	band[DetailFormat.TRANSFER_ROUTE_RECEIVED_TURN_KEY] = FOOD_ROUTE_IN
 	# **THE HAY MOVES DIFFERENTLY FROM THE GRAIN, DELIBERATELY.** Same turn, same two links, different
@@ -237,16 +237,21 @@ func _linked_band() -> Dictionary:
 func _both_ways_band() -> Dictionary:
 	var band := _linked_band()
 	band["entity"] = BOTH_WAYS_ENTITY
-	band["id"] = "Band 3"
+	band["id"] = "Elderford"
+	band["name"] = "Elderford"
 	band = BandFx.with_band_id(band)
 	band[DetailFormat.TRANSFER_ROUTE_SENT_TURN_KEY] = FOOD_ROUTE_OUT
 	return band
 
 ## The chapter's band shape: the reference fixture under this chapter's own entity and handle, plus a
 ## hay larder — without one there is no `Fodder:` row and no fodder popover to make the claims about.
+## `id` and `name` are set to the SAME word deliberately: the real path stamps a marker's `id` from
+## `HudFormat.band_name` (`MapView._rebuild_unit_markers`), so a fixture where the two differ is a
+## shape the client never receives.
 func _hay_keeper(entity: int, id: String) -> Dictionary:
 	var band := BandFx.band_fixture()
 	band["id"] = id
+	band["name"] = id
 	band["entity"] = entity
 	band = BandFx.with_band_id(band)
 	band["fodder_store"] = HAY_STORE

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     env, fs, io,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -780,6 +780,79 @@ impl BandIdAllocator {
         self.next = self.next.max(next).max(FIRST_BAND_ID);
     }
 }
+
+/// Hands out [`crate::components::BandName`]s, and is **checkpoint state in its own right** for the
+/// same reason [`BandIdAllocator`] is.
+///
+/// It holds one counter per faction: how many names that faction has already minted. Minting takes
+/// the faction's next slot `k` and resolves it through
+/// [`crate::band_names::BandNameCatalog::name_for_slot`], a per-faction permutation of the name pool
+/// seeded from the map seed. That buys two properties with no probing and no collision check:
+///
+/// - **Deterministic** — the name depends only on `(map_seed, faction, k)`, so the same map seed and
+///   the same founding order always spell the same names. A save, a reload and a replay agree.
+/// - **Unique within a faction** — `k` is strictly increasing per faction, and
+///   `(k / len, permutation[k % len])` recovers `k`, so no two of a faction's bands are ever handed
+///   the same string. Past the end of the pool the name repeats with a cycle suffix
+///   (`Ashfell II`), so exhaustion stays correct rather than colliding.
+///
+/// **[`BTreeMap`], not [`HashMap`]** — the map is serialized into the checkpoint, and a hash map's
+/// iteration order is unstable, so a replay's bytes would differ from the capture's for no reason in
+/// the world.
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BandNameAllocator {
+    minted: BTreeMap<FactionId, u32>,
+}
+
+impl BandNameAllocator {
+    /// Take `faction`'s next name slot and resolve it.
+    pub fn mint(
+        &mut self,
+        faction: FactionId,
+        map_seed: u64,
+        catalog: &crate::band_names::BandNameCatalog,
+    ) -> crate::components::BandName {
+        let slot = self.minted.entry(faction).or_insert(FIRST_NAME_SLOT);
+        let taken = *slot;
+        *slot = slot.saturating_add(1);
+        crate::components::BandName(catalog.name_for_slot(faction, map_seed, taken))
+    }
+
+    /// How many names `faction` has minted — equivalently, the slot the next mint would take.
+    pub fn peek(&self, faction: FactionId) -> u32 {
+        self.minted
+            .get(&faction)
+            .copied()
+            .unwrap_or(FIRST_NAME_SLOT)
+    }
+
+    /// Every faction's counter, for the checkpoint.
+    pub fn counters(&self) -> &BTreeMap<FactionId, u32> {
+        &self.minted
+    }
+
+    /// Put one faction's counter back, refusing to move it backwards.
+    ///
+    /// The same aliasing case [`BandIdAllocator::restore`] guards: a checkpoint is the authority on
+    /// where a counter *was*, but a rollback must never lower one below a slot a living band in this
+    /// process already holds, or the next mint hands out a name that is already on screen.
+    pub fn restore(&mut self, faction: FactionId, next: u32) {
+        let slot = self.minted.entry(faction).or_insert(FIRST_NAME_SLOT);
+        *slot = (*slot).max(next);
+    }
+
+    /// Put every counter in `other` back, each under the no-going-backwards rule above.
+    pub fn restore_all(&mut self, other: &Self) {
+        for (faction, next) in &other.minted {
+            self.restore(*faction, *next);
+        }
+    }
+}
+
+/// First name slot handed to a faction. Unlike a band id there is no reserved "unset" slot — slot 0
+/// is a faction's first band, and an *absent* [`crate::components::BandName`] is what "unset" looks
+/// like.
+const FIRST_NAME_SLOT: u32 = 0;
 
 bitflags! {
     #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1973,5 +2046,130 @@ mod tests {
             "an incoherent value is a file that is there and wrong, so boot must panic rather \
              than fall back to the builtin"
         );
+    }
+
+    /// How many full passes over the name pool the uniqueness guard drives.
+    const NAME_CYCLES_UNDER_TEST: usize = 3;
+    /// ...plus a few more, so the guard also covers a partial cycle.
+    const NAME_MINTS_INTO_NEXT_CYCLE: usize = 5;
+    /// Enough names to compare two orderings without minting the whole pool.
+    const NAMES_PER_RUN: usize = 12;
+    /// An arbitrary fixed map seed; the orderings below are properties of it, not of a real world.
+    const TEST_MAP_SEED: u64 = 0x1234_5678_9ABC_DEF0;
+    /// A second seed, which must produce a different ordering.
+    const OTHER_TEST_MAP_SEED: u64 = 0x0FED_CBA9_8765_4321;
+
+    /// **The uniqueness guarantee, past the end of the pool.** `3 × len + 5` mints exercise three
+    /// full cycles of the permutation plus a partial fourth, so the roman-suffix arm is on the hook
+    /// too: a suffix that failed to distinguish a cycle would collide here and nowhere else.
+    #[test]
+    fn a_factions_names_are_all_distinct_even_past_the_end_of_the_pool() {
+        let catalog = crate::band_names::BandNameCatalog::builtin();
+        let mut allocator = BandNameAllocator::default();
+        let faction = FactionId(0);
+        let mints = catalog.len() * NAME_CYCLES_UNDER_TEST + NAME_MINTS_INTO_NEXT_CYCLE;
+
+        let mut seen: HashSet<String> = HashSet::with_capacity(mints);
+        for _ in 0..mints {
+            let name = allocator.mint(faction, TEST_MAP_SEED, catalog.as_ref());
+            assert!(
+                !name.0.is_empty(),
+                "a minted name is never blank; blank is what an ABSENT component publishes"
+            );
+            assert!(
+                seen.insert(name.0.clone()),
+                "two of one faction's bands were handed {:?}",
+                name.0
+            );
+        }
+        assert_eq!(
+            allocator.peek(faction),
+            mints as u32,
+            "the counter advances once per mint"
+        );
+    }
+
+    /// A save, a reload and a replay must spell the same names, which is only true if the sequence
+    /// is a pure function of `(map_seed, faction, slot)`.
+    #[test]
+    fn the_same_seed_and_faction_replay_the_same_sequence() {
+        let catalog = crate::band_names::BandNameCatalog::builtin();
+        let faction = FactionId(3);
+        let mint_run = |seed: u64| {
+            let mut allocator = BandNameAllocator::default();
+            (0..NAMES_PER_RUN)
+                .map(|_| allocator.mint(faction, seed, catalog.as_ref()).0)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            mint_run(TEST_MAP_SEED),
+            mint_run(TEST_MAP_SEED),
+            "two fresh allocators on one seed must agree"
+        );
+        assert_ne!(
+            mint_run(TEST_MAP_SEED),
+            mint_run(OTHER_TEST_MAP_SEED),
+            "a different world must not reuse the first world's naming order"
+        );
+    }
+
+    /// **What the permutation actually guarantees is uniqueness WITHIN a faction**, so that is what
+    /// is asserted: each faction's own run is internally distinct, and the two runs are not the same
+    /// ordering of the pool. Two factions *may* legitimately hold the same name — they are different
+    /// peoples — so nothing here claims otherwise.
+    #[test]
+    fn each_factions_sequence_is_its_own() {
+        let catalog = crate::band_names::BandNameCatalog::builtin();
+        let mint_run = |faction: FactionId| {
+            let mut allocator = BandNameAllocator::default();
+            (0..NAMES_PER_RUN)
+                .map(|_| allocator.mint(faction, TEST_MAP_SEED, catalog.as_ref()).0)
+                .collect::<Vec<_>>()
+        };
+        let first = mint_run(FactionId(0));
+        let second = mint_run(FactionId(1));
+
+        for run in [&first, &second] {
+            let unique: HashSet<&String> = run.iter().collect();
+            assert_eq!(
+                unique.len(),
+                run.len(),
+                "a faction's own run must be distinct"
+            );
+        }
+        assert_ne!(
+            first, second,
+            "a faction's permutation must depend on its id, or every faction founds the same band \
+             first"
+        );
+    }
+
+    /// One allocator, two factions: the counters are independent, and a stale checkpoint cannot
+    /// walk one backwards onto a slot a living band already holds.
+    #[test]
+    fn counters_are_per_faction_and_never_move_backwards() {
+        let catalog = crate::band_names::BandNameCatalog::builtin();
+        let mut allocator = BandNameAllocator::default();
+        allocator.mint(FactionId(0), TEST_MAP_SEED, catalog.as_ref());
+        allocator.mint(FactionId(0), TEST_MAP_SEED, catalog.as_ref());
+        allocator.mint(FactionId(1), TEST_MAP_SEED, catalog.as_ref());
+
+        assert_eq!(allocator.peek(FactionId(0)), 2);
+        assert_eq!(allocator.peek(FactionId(1)), 1);
+        assert_eq!(
+            allocator.peek(FactionId(7)),
+            0,
+            "a faction that has founded nothing sits at its first slot"
+        );
+
+        allocator.restore(FactionId(0), 1);
+        assert_eq!(
+            allocator.peek(FactionId(0)),
+            2,
+            "an older counter must not re-issue a slot a living band holds"
+        );
+        allocator.restore(FactionId(0), 9);
+        assert_eq!(allocator.peek(FactionId(0)), 9, "a later counter wins");
     }
 }

@@ -8858,8 +8858,12 @@ func _assert_faction_page() -> void:
 	# `_has_label_containing` walks Labels only, and a summary row's name is a `build_inline_link`
 	# BUTTON — it has to be, since clicking it jumps to that band — so the search has to know about
 	# both. That is the whole difference between this row and the stat row it replaced.
+	# The name is taken from the ROSTER the page is rendering, through the client's one naming rule —
+	# never spelled out here, or the claim would pass on a page naming a different band than the sim
+	# does (issue #615).
+	var home_band_name := HudFormat.band_name(_stamp_band_ids(_faction_roster())[0])
 	_assert_band_panel("faction page: a party row names the band it left",
-		parties_zone != null and _has_text_containing(parties_zone, HudFormat.band_display_name({}, 1)))
+		parties_zone != null and _has_text_containing(parties_zone, home_band_name))
 	_assert_faction_party_row_jumps_home(parties_zone)
 
 ## **THE FACTION'S FODDER ROW — THE FOOD ROW ON THE OTHER LARDER**, and every claim here is the Food
@@ -14444,11 +14448,18 @@ static func _queue_hunt_entry(herd_id: String) -> Dictionary:
 ## exactly how that defect shipped. The offset keeps ids readable (band 904 -> 4904) while
 ## guaranteeing they differ. Stamped at PUSH time, not at construction, because several fixtures
 ## override `entity` after the builder returns.
+## **AND ITS NAME**, from the same pool `BandFx.with_band_id` draws on, for the same reason the id is
+## stamped here: the sim sends a name on every cohort (issue #615), so a fixture without one reaches
+## the panel shaped unlike the decoder's output and renders `HudFormat`'s `Band #<id>` tell. A fixture
+## that sets `name` itself keeps it.
 static func _stamp_band_ids(cohorts: Array) -> Array:
 	var stamped: Array = []
 	for cohort_variant in cohorts:
 		var cohort: Dictionary = (cohort_variant as Dictionary).duplicate(true)
 		cohort["band_id"] = int(cohort.get("entity", 0)) + FIXTURE_BAND_ID_OFFSET
+		if not cohort.has("name"):
+			cohort["name"] = BandFx.FIXTURE_BAND_NAMES[
+				int(cohort["band_id"]) % BandFx.FIXTURE_BAND_NAMES.size()]
 		stamped.append(cohort)
 	return stamped
 

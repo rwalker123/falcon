@@ -179,7 +179,7 @@ const ROAD_HAZARD_CLAUSE_FORMAT := "%s %s"
 const ROAD_UNDER_KEPT_WORD := "washing out"
 
 ## **THE KEEPER'S NAME, WHICH IS NOW THE `Upkeep:` ROW'S HEADLINE.** The band's own label, as this
-## client names every band (`HudBandLaborState.band_label_for_id` → `HudFormat.band_display_name`), so
+## client names every band (`HudBandLaborState.band_label_for_id` → `HudFormat.band_name`), so
 ## a road's keeper and the same band on the dock cannot be called two different things.
 const ROAD_KEEPER_FORMAT := "%s"
 

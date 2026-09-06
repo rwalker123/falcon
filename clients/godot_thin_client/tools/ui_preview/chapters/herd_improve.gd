@@ -137,7 +137,7 @@ func _building_herd_fixture() -> Dictionary:
 ## resident take's now, which is what brought this locally-authored band under it.
 func _building_herd_band_fixture() -> Dictionary:
 	return BandFx.with_band_id({
-		"id": "Band 1", "entity": 846, "faction": 0, "size": 90,
+		"name": "Ravensgate", "id": "Ravensgate", "entity": 846, "faction": 0, "size": 90,
 		"current_x": 66, "current_y": 10, "pos": [66, 10],
 		"working_age": 30, "idle_workers": HERD_DIP_IDLE_WORKERS,
 		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,

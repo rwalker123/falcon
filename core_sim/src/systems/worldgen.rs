@@ -81,6 +81,10 @@ pub fn spawn_initial_world(
     // **The fourth half of the start kit** — the working-age share a spawn's stock is sized against
     // (see [`StartKit::working_fraction`]). `Option` for the same reason the three above are.
     demographics: Option<Res<crate::demographics_config::DemographicsConfigHandle>>,
+    // The pool a founded band's name is drawn from. `Option` for the same reason the start-kit
+    // handles above are: a hand-rolled test `World` that never installs it must not panic worldgen,
+    // and absent reads as the builtin pool - the very list `include_str!` baked in.
+    band_names: Option<Res<crate::band_names::BandNameCatalogHandle>>,
     tile_registry: Option<Res<TileRegistry>>,
 ) {
     // Guard FIRST: the starting inventory, knowledge and culture seeding below all run ahead of any
@@ -794,6 +798,19 @@ pub fn spawn_initial_world(
     // every hand-rolled test `World` in the crate to remember to insert one first — 33 of them —
     // and each of those is a place to forget, which is the omission failure this whole arc is about.
     let mut band_ids = BandIdAllocator::default();
+    // ...and the name space with it, for the same reason: worldgen founds the first bands, so it
+    // opens the per-faction name counters and inserts them below beside the id counter.
+    let mut band_names_alloc = BandNameAllocator::default();
+    let band_name_catalog = band_names
+        .as_ref()
+        .map(|handle| handle.get())
+        .unwrap_or_else(crate::band_names::BandNameCatalog::builtin);
+    let mut identity = BandIdentitySource {
+        ids: &mut band_ids,
+        names: &mut band_names_alloc,
+        catalog: band_name_catalog.as_ref(),
+        map_seed: config.map_seed,
+    };
     // Resolved once for both arms: which arm spawns the band does not change what it is stocked with.
     let start_kit_equipment = equipment
         .as_ref()
@@ -824,7 +841,7 @@ pub fn spawn_initial_world(
         spawn_default_population_clusters(
             &mut commands,
             &registry,
-            &mut band_ids,
+            &mut identity,
             &tiles,
             &tags_grid,
             width,
@@ -840,7 +857,7 @@ pub fn spawn_initial_world(
         spawn_profile_population(
             &mut commands,
             &registry,
-            &mut band_ids,
+            &mut identity,
             &tiles,
             &tags_grid,
             width,
@@ -853,9 +870,12 @@ pub fn spawn_initial_world(
         );
     }
 
-    // Publish the counter with the ids it just handed out, so the next band spawned (an
-    // expedition, a rollback) continues the sequence instead of colliding with a living band.
+    // Publish the counters with the ids and names they just handed out, so the next band spawned (an
+    // expedition, a rollback) continues both sequences instead of colliding with a living band.
+    // The bundle's borrows end here so the two allocators can be moved into the world.
+    let BandIdentitySource { .. } = identity;
     commands.insert_resource(band_ids);
+    commands.insert_resource(band_names_alloc);
     commands.insert_resource(StartLocation::new(Some(UVec2::new(start_x, start_y))));
     commands.insert_resource(FoodSiteRegistry::new(curated_entries));
 
@@ -2838,6 +2858,22 @@ fn module_distance_bonus(distance: u32, is_primary: bool) -> i32 {
     }
 }
 
+/// **Everything a founded band's identity is minted from** — its durable id and its name.
+///
+/// Bundled for the reason [`StartKit`] below is: the four spawn helpers thread it unchanged and
+/// exactly one place reads it, so four more parameters on four signatures would say the same thing
+/// four times. Keeping the two allocators together also makes it structurally hard to hand a band an
+/// id and forget its name, which is the omission this arc exists to close.
+struct BandIdentitySource<'a> {
+    ids: &'a mut BandIdAllocator,
+    names: &'a mut BandNameAllocator,
+    /// The pool the names come out of.
+    catalog: &'a BandNameCatalog,
+    /// The seed the pool's per-faction permutation is keyed on — the whole of why a reload spells
+    /// the same names.
+    map_seed: u64,
+}
+
 /// **The three tables a spawn's start kit is resolved from** — *what* the band owns, and the *grade*
 /// its gear is stamped with. Bundled because they travel together down every spawn helper and are
 /// read at exactly one place ([`BandEquipment::start_stocked_owned`]); passing three refs through
@@ -2904,7 +2940,7 @@ fn start_stocked_materials(
 fn spawn_default_population_clusters(
     commands: &mut Commands,
     registry: &GenerationRegistry,
-    band_ids: &mut BandIdAllocator,
+    identity: &mut BandIdentitySource<'_>,
     tiles: &[Entity],
     tags_grid: &[sim_runtime::TerrainTags],
     width: usize,
@@ -2934,7 +2970,7 @@ fn spawn_default_population_clusters(
                 spawn_population_entity(
                     commands,
                     registry,
-                    band_ids,
+                    identity,
                     tiles[idx],
                     1_000,
                     cohort_index,
@@ -2951,7 +2987,7 @@ fn spawn_default_population_clusters(
 fn spawn_profile_population(
     commands: &mut Commands,
     registry: &GenerationRegistry,
-    band_ids: &mut BandIdAllocator,
+    identity: &mut BandIdentitySource<'_>,
     tiles: &[Entity],
     tags_grid: &[sim_runtime::TerrainTags],
     width: usize,
@@ -2974,7 +3010,7 @@ fn spawn_profile_population(
                 spawn_population_entity(
                     commands,
                     registry,
-                    band_ids,
+                    identity,
                     tiles[idx],
                     spec.band_size(),
                     cohort_index,
@@ -2990,7 +3026,7 @@ fn spawn_profile_population(
         spawn_default_population_clusters(
             commands,
             registry,
-            band_ids,
+            identity,
             tiles,
             tags_grid,
             width,
@@ -3015,7 +3051,7 @@ fn spawn_profile_population(
 fn spawn_population_entity(
     commands: &mut Commands,
     registry: &GenerationRegistry,
-    band_ids: &mut BandIdAllocator,
+    identity: &mut BandIdentitySource<'_>,
     tile_entity: Entity,
     size: u32,
     cohort_index: &mut usize,
@@ -3025,6 +3061,10 @@ fn spawn_population_entity(
 ) {
     let generation = registry.assign_for_index(*cohort_index);
     *cohort_index = cohort_index.saturating_add(1);
+    // **Resolved once, because the cohort's own field and the name mint must not drift.** A name is
+    // unique within a *faction*, so minting against a different faction than the band is filed under
+    // would break the guarantee silently.
+    let faction = PLAYER_FACTION;
     // **Floored, because `available_workers` floors.** The stock is sized against the party the
     // band can actually field, so the two readings of "this band's workers" agree and the ledger
     // stays reproducible from the cohort. Resolved once, because the **material** stock and the
@@ -3062,7 +3102,7 @@ fn spawn_population_entity(
         last_immigrated: 0,
         age_turns: 0,
         generation,
-        faction: FactionId(0),
+        faction,
         knowledge: knowledge.to_vec(),
         migration: None,
     });
@@ -3090,7 +3130,15 @@ fn spawn_population_entity(
     entity.insert(crate::components::BandBench::default());
     // The band's durable identity — see `BandId`. Allocated here rather than derived from position
     // because several bands can share a hex and a band outlives the hex it started on.
-    entity.insert(band_ids.allocate());
+    entity.insert(identity.ids.allocate());
+    // ...and the band's NAME, minted from the same source in the same breath — see `BandName`. It is
+    // minted rather than derived for the same reason the id is: nothing about a band's identity may
+    // move when a different band dies.
+    entity.insert(
+        identity
+            .names
+            .mint(faction, identity.map_seed, identity.catalog),
+    );
     // The fractional carry that turns the demographic rates into whole-person feed events. Spawned
     // empty here, beside the cohort whose flows it accumulates — a band without one runs the model
     // but reports no births/deaths (see `simulate_population`'s query).

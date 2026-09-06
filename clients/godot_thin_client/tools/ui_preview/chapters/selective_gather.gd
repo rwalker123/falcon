@@ -314,7 +314,7 @@ func _cash_entry(species: String, display_name: String, share: float, standing: 
 ## The band, gathering this patch. `take_species` is the ONE field the two fixtures differ in.
 func _gather_band(take_species: Array, workers: int) -> Dictionary:
 	var band := BandFx.with_band_id({
-		"id": "Band 9",
+		"name": "Greyfen", "id": "Greyfen",
 		"size": 24,
 		"entity": GATHER_ENTITY,
 		"faction": 0,

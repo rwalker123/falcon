@@ -42,10 +42,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 40] = [
+const SIM_STATE_RESOURCES: [&str; 41] = [
     "ActiveCrisisLedger",
     // The band-id counter. Restoring the bands without it re-issues a live id after a rollback.
     "BandIdAllocator",
+    // The per-faction band-NAME counters, on the same rule: restore the bands without them and the
+    // next band founded is minted a name a living band already answers to.
+    "BandNameAllocator",
     "BeatLedger",
     "CapabilityFlags",
     // Append-only. A restore must TRUNCATE this to the checkpoint's length, not replace it —
@@ -226,7 +229,9 @@ const NOT_SIM_STATE_RESOURCES: [(&str, &str); 10] = [
 /// record beside each handle. `SimulationConfig` sits here because it is config the operator edits,
 /// not state the turn evolves — note the hot-reload path in `bin/server.rs` means a replay is only
 /// reproducible against the config it originally ran with.
-const CONFIG_RESOURCES: [&str; 42] = [
+const CONFIG_RESOURCES: [&str; 44] = [
+    "BandNameCatalogHandle",
+    "BandNameCatalogMetadata",
     "BeatCatalogHandle",
     "BeatCatalogMetadata",
     "BeatConfigHandle",
@@ -300,10 +305,14 @@ const CONFIG_RESOURCES_CONT: [&str; 21] = [
 /// Component state on entities. Omitting one of these is exactly the failure `PowerNode`'s missing
 /// `base_generation` / `base_demand` already is, which is why this table exists alongside the
 /// resource one: a resource-only guard would have missed the bug that motivated the guard.
-const SIM_STATE_COMPONENTS: [&str; 16] = [
+const SIM_STATE_COMPONENTS: [&str; 17] = [
     "Tile",
     // A band's durable identity — the thing `Entity` could not be across a restore.
     "BandId",
+    // The other half of that identity: what the band is CALLED. Carried for the same reason the id
+    // is — a checkpoint that forgot it would restore the band nameless and let a client's positional
+    // fallback rename it, which is the very defect the name exists to remove.
+    "BandName",
     // Carried by the checkpoint. A checkpoint is lossless; "rollback cancels an in-flight move" is
     // a gameplay rule, and it is applied as an explicit step in the rollback command path rather
     // than by leaving the state out. Implemented as an omission it would not be a rule, it would be

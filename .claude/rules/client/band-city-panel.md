@@ -5760,8 +5760,8 @@ rate or either tile is unknown, rather than quoting a fabricated 0.
 **A tie carries only ids, so the subject's NAME is resolved client-side** through
 `HudBandLaborState.band_label_for_id` — the ONE band-naming join in this client, and the same one the
 shipment's `Bound for` row and the parties-strip row use, so a band cannot be called three things on
-three surfaces. A subject still in `player_bands` is named exactly as the cycler names it (a roster
-POSITION, `HudFormat.band_display_name`); one the roster cannot resolve is named by where it was
+three surfaces. A subject still in `player_bands` is named exactly as the cycler names it (the cohort's
+own `name`, `HudFormat.band_name`); one the roster cannot resolve is named by where it was
 (`Band near (44, 9)`). The raw `BandId` is a database key and never reaches a label.
 
 ### THE MANIFEST IS ONE ROW PER PILE, AND A MATERIAL ROW SHOWS ITS RATING

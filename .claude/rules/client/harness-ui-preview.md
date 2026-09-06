@@ -2375,8 +2375,8 @@ longer exist — the fixture now stages the link-kind keys and the frame reads `
 trap: **a frame whose fixture is the last producer of a state can go on passing after the state
 becomes unreachable**, and it then guards nothing while looking like coverage.
 
-**A clean run is 403 frames / 1803 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
-last figure recorded above was `370 / 1594`; the gap is drift accumulated un-recorded, exactly as it
+**A clean run is 413 frames / 1875 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+last figure recorded above was `403 / 1803`; the gap is drift accumulated un-recorded, exactly as it
 has been every previous time. Measure; do not sum.
 
 > **AND A MERGE IS ONE OF THE WAYS IT DRIFTS.** This section landed on `main` reading `396 / 1761`

@@ -926,12 +926,15 @@ func _road_keeper_band() -> int:
 ## whole of what the keeper comparison reads — every other field on it is irrelevant to this claim and
 ## is left alone rather than invented.
 ##
-## **THE ROSTER ORDER IS THE NAME.** `update_band_alerts` makes the FIRST player band the acting one,
-## and `band_label_for_id` names a band by its roster index — so staged second, this band is `Band 2`
-## and the actor is `Band 1`.
+## **THE NAME IS THE BAND'S OWN, NOT ITS ROSTER SLOT** (issue #615). `update_band_alerts` still makes
+## the FIRST player band the acting one, but `band_label_for_id` now joins the durable `band_id` onto
+## the cohort's `name` — so this band reads `SECOND_BAND_NAME` wherever it is staged, and the keeper
+## claims below quote that word rather than a position that a third band would silently shift.
 func _second_band_fixture() -> Dictionary:
 	var band := BandFx.band_fixture()
 	band["entity"] = SECOND_BAND_ENTITY
+	band["name"] = SECOND_BAND_NAME
+	band["id"] = SECOND_BAND_NAME
 	return BandFx.with_band_id(band)
 
 ## …and its `band_id`, read back off the fixture rather than recomputed here: the offset that derives
@@ -1009,8 +1012,10 @@ const ROAD_STONE_PAID_PART := 0.05
 const ROAD_SHORTFALL_PAVED := 1.6
 const ROAD_SHORT_WORKERS_PAVED := 2
 
-## The keeper every state below is kept by, named once so the claims read against one band.
-const ROAD_STONE_KEEPER_LABEL := "Band 2"
+## The keeper every state below is kept by, named once so the claims read against one band. It is an
+## INPUT to `_road_lines_named` rather than a roster lookup — these states stage no roster — so it only
+## has to look like a band name, which since issue #615 means a name and not a row number.
+const ROAD_STONE_KEEPER_LABEL := "Stonereach"
 
 ## A paved road at the top of the branch, with its standing bill in whatever state the caller names.
 ## **Everything but the two shortfalls is held fixed**, so a claim that fails does so for the currency
@@ -1356,7 +1361,9 @@ func _assert_road_rows_are_conditional() -> void:
 ## fact only this row can carry, and the remoteness beside it is the only thing that can explain a
 ## bill larger than the rung's own — a real decision, priced and refused nowhere.
 func _assert_road_rows_say_whose_job_it_is() -> void:
-	var band_label := "Band 2"
+	# A plain input, like `ROAD_STONE_KEEPER_LABEL` above: this block hands the composer a keeper name
+	# and reads back the row, so the word only has to be a plausible band name.
+	var band_label := "Windmere"
 
 	# ⛔ **A KEPT ROAD'S BILL IS A NAME.** `Upkeep: Band 2` — nothing else, because nothing else is a
 	# decision. It was `Upkeep: 3.4 work a turn · wants 4 keepers` over `Kept by: Band 2`: two rows and
@@ -1486,7 +1493,7 @@ func _assert_the_real_drawer_prices_a_shortfall() -> void:
 		HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_METER_COMPLETE, ROAD_DEMAND_DIRT,
 		ROAD_SHORTFALL_DIRT, ROAD_WANTS_DIRT, ROAD_GRACE_LEFT, false, ROAD_FRICTION_DIRT,
 		ROAD_LINK_DIRT, _road_keeper_band())
-	var keeper := HudFormat.band_display_name(h._hud._band_labor.player_bands()[0], 1)
+	var keeper := HudFormat.band_name(h._hud._band_labor.player_bands()[0])
 	h._assert_hud("the REAL drawer resolves the rate off the catalog and states `short %d workers`"
 			% ROAD_SHORT_WORKERS_DIRT,
 		Readout.detail_row_value(_road_lines(short_road), HudRouteVocab.ROAD_UPKEEP_ROW)
@@ -2094,8 +2101,8 @@ func run(harness) -> void:
 		# differently, and the acting band opens SELECTED rather than blank.
 		h._assert_hud("the card carries a `%s` picker, and it opens on the acting band"
 				% HudWorkVocab.BAND_PICKER_LABEL,
-			_road_ladder_band_face() == HudFormat.band_display_name(
-				h._hud._band_labor.player_bands()[0], 1))
+			_road_ladder_band_face() == HudFormat.band_name(
+				h._hud._band_labor.player_bands()[0]))
 		# ⛔ **ABSENCE — nothing to put down on a road nobody keeps.** The abandon control is offered
 		# only where the keeper is in the player's roster: there is nothing to release otherwise, and a
 		# button that emitted a command the sim refuses is the shape the ladder's rows exist to avoid.
@@ -2343,8 +2350,8 @@ func run(harness) -> void:
 		# nearest band instead would open this card on a rung the sim refuses outright, greying its own
 		# live row on the frame it appeared.
 		h._assert_hud("the card opens on the band that already KEEPS the road, not the nearest one",
-			_road_ladder_band_face() == HudFormat.band_display_name(
-				h._hud._band_labor.player_bands()[1], 2))
+			_road_ladder_band_face() == HudFormat.band_name(
+				h._hud._band_labor.player_bands()[1]))
 		h._assert_hud("…so the top rung is OPEN for its own keeper, refused for nobody",
 			String(_road_ladder_states().get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
 					== RungLadder.STATE_OPEN
@@ -2356,8 +2363,8 @@ func run(harness) -> void:
 		await _pick_road_ladder_band(0)
 		h._assert_hud("picking another band RE-RENDERS the card in place rather than closing it",
 			_road_ladder_card(h._hud) != null and not _road_ladder_states().is_empty()
-				and _road_ladder_band_face() == HudFormat.band_display_name(
-					h._hud._band_labor.player_bands()[0], 1))
+				and _road_ladder_band_face() == HudFormat.band_name(
+					h._hud._band_labor.player_bands()[0]))
 		var taken_states := _road_ladder_states()
 		var taken_faces := _road_ladder_faces()
 		var taken_tip := String(_road_ladder_tooltips().get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
@@ -2718,7 +2725,7 @@ const ROW_DIRT_GATED_FACE := "300 work · 0.45/turn upkeep · needs Roadbuilding
 const ROW_PAVED_GATED_FACE := "800 work · 0.95/turn upkeep · needs Paving"
 ## …the keeper pair, which outrank the craft — no amount of learning helps a tile that is taken, and
 ## picking a band is the one gate on the card closed with a click.
-const ROW_PAVED_TAKEN_FACE := "800 work · 0.95/turn upkeep · Band 2 keeps it"
+const ROW_PAVED_TAKEN_FACE := "800 work · 0.95/turn upkeep · Brackwater keeps it"
 const ROW_PAVED_NO_BAND_FACE := "800 work · 0.95/turn upkeep · pick a band"
 ## …and a BUILDABLE rung nobody has started, whose price is the button and which has no refusal to
 ## state beside it. **It states no DURATION at all**, and that is deliberate rather than an omission:
@@ -2876,10 +2883,12 @@ const TIP_PAVING := "Paving known 0%. Learn it from a busy dirt road."
 ## …the same gate under a catalog where the TRAIL teaches Paving. The const above is then the wrong
 ## answer, and the fixture asserts its absence — see `_twisted_teaching_catalog`.
 const TIP_PAVING_BY_TRAIL := "Paving known 0%. Learn it from a busy trail."
-## ⛔ **`Band 2` IS THE SECOND BAND ON THE STAGED ROSTER**, which `HudBandLaborState.band_label_for_id`
-## names by roster index — so this claim covers the label plumbing as well as the gate, and a keeper
-## resolved as `another people` (the honest fallback for a band outside the roster) would fail it.
-const TIP_ANOTHER_KEEPER := "Band 2 keeps it. They must give it up first."
+## ⛔ **THIS IS THE SECOND STAGED BAND'S OWN NAME**, which `HudBandLaborState.band_label_for_id` joins
+## onto the road's durable keeper id — so this claim covers the label plumbing as well as the gate, and
+## a keeper resolved as `another people` (the honest fallback for a band outside the roster) would fail
+## it. It quotes `SECOND_BAND_NAME` rather than a roster position: a third band staged before it would
+## have silently rewritten a positional answer while this one stays put.
+const TIP_ANOTHER_KEEPER := "Brackwater keeps it. They must give it up first."
 const TIP_NO_KEEPER := "Pick a band first. Whoever builds a road keeps it."
 ## ⛔ **WHAT DISTANCE DOES TO THE PRICE**, stated APART from the base figure because multiplying the
 ## two client-side would put a copy of the sim's pricing formula where it can drift.
@@ -2889,6 +2898,10 @@ const TIP_REMOTE := "Far from your band, so it costs ×2.0."
 ## `band_id` cannot collide with the acting band's — the collision would make the gate answer *this
 ## is your own road* and pass every claim below for the wrong reason.
 const SECOND_BAND_ENTITY := 907
+
+## …and its NAME, set explicitly rather than taken from `BandFx`'s pool, because `TIP_ANOTHER_KEEPER`
+## quotes it verbatim and a const cannot read a fixture back.
+const SECOND_BAND_NAME := "Brackwater"
 
 ## **THE LINE A PRESS ON THE DIRT ROAD ROW WOULD TRANSMIT.** Composed from the FIXTURE's own values
 ## rather than read off the payload, so the claim is about the shipped grammar: `grade` is

@@ -8,6 +8,7 @@ use std::{
 use crate::{
     components::Tile,
     grid_utils::{hex_neighbor, HEX_CORNER_COUNT, HEX_DIRECTION_COUNT},
+    hashing::splitmix64,
     heightfield::ElevationField,
     map_preset::{
         default_river_base_runoff, default_river_channel_min_discharge,
@@ -102,19 +103,7 @@ const CHANNEL_MIN_DISCHARGE_FLOOR: f32 = 1e-6;
 /// everywhere" world, so hydrology degrades to plain drainage-area accumulation rather than failing.
 const DEFAULT_UNIFORM_PRECIP: f32 = 1.0;
 
-// --- splitmix64, the deterministic hash behind the flat-tie jitter (no RNG, no HashMap) ---
-/// splitmix64's increment (the odd 64-bit "golden gamma").
-const SPLITMIX_GAMMA: u64 = 0x9E37_79B9_7F4A_7C15;
-/// splitmix64's first mix multiplier.
-const SPLITMIX_MIX_A: u64 = 0xBF58_476D_1CE4_E5B9;
-/// splitmix64's second mix multiplier.
-const SPLITMIX_MIX_B: u64 = 0x94D0_49BB_1331_11EB;
-/// First xor-shift distance in splitmix64's finalizer.
-const SPLITMIX_SHIFT_A: u32 = 30;
-/// Second xor-shift distance.
-const SPLITMIX_SHIFT_B: u32 = 27;
-/// Third xor-shift distance.
-const SPLITMIX_SHIFT_C: u32 = 31;
+// --- the flat-tie jitter, hashed rather than drawn (no RNG, no HashMap) ---
 /// Bits of hash output mapped onto the unit interval — `f32` carries 24 significand bits, so taking
 /// the top 24 gives every representable value in `[0, 1)` exactly once.
 const HASH_UNIT_BITS: u32 = 24;
@@ -123,16 +112,6 @@ const HASH_UNIT_BITS: u32 = 24;
 #[inline]
 fn opposite_dir(dir: u8) -> u8 {
     (dir + CANONICAL_DIR_COUNT) % HEX_DIRECTION_COUNT as u8
-}
-
-/// splitmix64 — a pure, deterministic 64-bit mixer. No state, no RNG, no allocation: the same
-/// `(world_seed, corner)` always produces the same jitter, on every machine and every run.
-#[inline]
-fn splitmix64(x: u64) -> u64 {
-    let mut z = x.wrapping_add(SPLITMIX_GAMMA);
-    z = (z ^ (z >> SPLITMIX_SHIFT_A)).wrapping_mul(SPLITMIX_MIX_A);
-    z = (z ^ (z >> SPLITMIX_SHIFT_B)).wrapping_mul(SPLITMIX_MIX_B);
-    z ^ (z >> SPLITMIX_SHIFT_C)
 }
 
 /// A deterministic hash of `(world_seed, index)` into `[0, 1)`.

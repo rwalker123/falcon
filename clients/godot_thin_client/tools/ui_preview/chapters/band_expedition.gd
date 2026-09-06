@@ -152,7 +152,8 @@ func _foreign_band_fixture() -> Dictionary:
 func _pen_keeper_band_fixture() -> Dictionary:
 	var band := BandFx.band_fixture()
 	band["entity"] = PEN_KEEPER_BAND_ENTITY
-	band["id"] = "Band 4"
+	band["name"] = "Oakenshade"
+	band["id"] = band["name"]
 	band["turns_of_food"] = 22.0
 	band["food_income"] = 5.88          # forage 0.48 + the pen's gross 5.40
 	band["food_consumption"] = 1.15     # the PEOPLE's meals — the ONLY standing debit
@@ -219,7 +220,8 @@ func _unprojected_growth_band_fixture() -> Dictionary:
 func _concerning_food_band_fixture() -> Dictionary:
 	var band := BandFx.band_fixture()
 	band["entity"] = 905
-	band["id"] = "Band 3"
+	band["name"] = "Nettlebrook"
+	band["id"] = band["name"]
 	band["turns_of_food"] = 4.0
 	band["food_income"] = 0.30
 	band["food_consumption"] = 0.95
@@ -307,7 +309,8 @@ func _hunt_expedition_fixture() -> Dictionary:
 ## (∞) but morale 0.22 sits below the critical threshold, so the Morale row reads red.
 func _low_morale_band_fixture() -> Dictionary:
 	var fixture := BandFx.band_fixture()
-	fixture["id"] = "Band 5"
+	fixture["name"] = "Harrowmoor"
+	fixture["id"] = fixture["name"]
 	fixture["entity"] = 905
 	fixture["turns_of_food"] = 999.0
 	fixture["stores"] = {"provisions": 260.0}
@@ -1096,7 +1099,8 @@ const BAND_DISCLOSURE_UPKEEP := "upkeep:908"
 func _standing_bill_band_fixture() -> Dictionary:
 	var band := BandFx.band_fixture()
 	band["entity"] = 908
-	band["id"] = "Band 12"
+	band["name"] = "Marrowdeep"
+	band["id"] = band["name"]
 	band["material_upkeep_need"] = [{"material_id": BILL_MATERIAL, "amount": BILL_NEED}]
 	band["material_upkeep_income"] = [{"material_id": BILL_MATERIAL, "amount": BILL_INCOME}]
 	band["material_store"] = [{"material_id": BILL_MATERIAL, "amount": BILL_STORE}]
@@ -1359,7 +1363,8 @@ const HAY_ROW_FOLLOWERS := [HudDisclosureVocab.DETAIL_ROW_UPKEEP,
 func _hay_band_fixture(store: float, need: float, income: float, turns: float) -> Dictionary:
 	var band := _pen_keeper_band_fixture()
 	band["entity"] = HAY_BAND_ENTITY
-	band["id"] = "Band 5"
+	band["name"] = "Harrowmoor"
+	band["id"] = band["name"]
 	band["fodder_store"] = store
 	band["fodder_need"] = need
 	band["fodder_income"] = income

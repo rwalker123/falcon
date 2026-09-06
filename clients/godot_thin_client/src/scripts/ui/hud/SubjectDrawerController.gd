@@ -374,7 +374,7 @@ func _tile_terrain_lines(tile_info: Dictionary,
     #
     # ⛔ **THE KEEPER'S NAME IS RESOLVED HERE AND NOWHERE ELSE.** A road carries a `band_id`, and this
     # client has exactly one band-naming rule (`HudBandLaborState.band_label_for_id` →
-    # `HudFormat.band_display_name`) — so the vocab composer is HANDED the label rather than
+    # `HudFormat.band_name`) — so the vocab composer is HANDED the label rather than
     # inventing one from an id, and a road's keeper cannot be called something the dock does not.
     # `""` is a band outside the player's roster, which a road really can have: the composer says
     # *another people* rather than printing a number nobody can act on.

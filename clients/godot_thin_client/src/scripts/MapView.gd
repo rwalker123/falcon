@@ -2770,8 +2770,6 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 	var population_variant: Variant = snapshot.get("populations", [])
 	if not (population_variant is Array):
 		return
-	var counter := 1
-	var label_cache: Dictionary = {}
 	for entry_variant in population_variant:
 		if not (entry_variant is Dictionary):
 			continue
@@ -2790,13 +2788,15 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			current_x = coords.x
 			current_y = coords.y
 
-		var label: String = String(entry.get("label", ""))
-		if label == "":
-			label = "Band %d" % counter
-		while label_cache.has(label):
-			counter += 1
-			label = "Band %d" % counter
-		label_cache[label] = true
+		# **THE MAP USES THE CLIENT'S ONE BAND-NAMING RULE, LIKE EVERY OTHER SURFACE** (issue #615).
+		# This used to number rows itself — its own counter over the RAW cohort array, with no
+		# expedition skip, plus a dedup loop that bumped the counter on a collision — while
+		# `HudFormat` numbered the EXPEDITION-FILTERED roster. One live party was enough to make the
+		# map call a band `Band 5` while the Assign Hunters picker called that same band `Band 4`.
+		# Names come from the sim now, so there is nothing left to count and no collision to dedup: a
+		# name is unique within a faction by construction, and a band and its own party are told apart
+		# by the mission suffix `band_name` appends rather than by a bumped number.
+		var label := HudFormat.band_name(entry)
 
 		# **THE MARKER IS A STRUCTURAL COPY OF THE COHORT, NOT AN ALLOWLIST OF IT.**
 		#
@@ -2838,9 +2838,10 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 		# for a band that has never moved; `pos` is those resolved through the home-tile fallback above,
 		# and it is what every map draw and the drawer's "Position:" row read.
 		marker["pos"] = [current_x, current_y]
-		# The DE-DUPLICATED display name. The cohort's own `label` can be empty or repeated across bands;
-		# `id` is this run's unique, stable-per-frame name ("Band 3"), which the Occupants drawer titles
-		# itself with. `label` survives the copy untouched beside it.
+		# The display name, resolved above through `HudFormat.band_name` — "Ashfell", or "Ashfell
+		# (Scout)" for a detached party. `id` is what the Occupants drawer titles itself with, and it is
+		# now stable across frames AND across surfaces, because it is the sim's own name for the band
+		# rather than this loop's position in an array.
 		marker["id"] = label
 
 		# --- SUB-TREE ISOLATION, unchanged from the literal this replaced ----------------------------
@@ -2881,7 +2882,6 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 				and String(marker.get("expedition_phase", "")) == EXPEDITION_PHASE_AWAITING:
 			_has_awaiting_expedition = true
 		units.append(marker)
-		counter += 1
 
 func _rebuild_herd_markers(snapshot: Dictionary) -> void:
 	herds = []
@@ -3537,7 +3537,9 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 	var nearest_unit := _nearest_unit_sample(col, row)
 	if not nearest_unit.is_empty():
 		info["nearest_unit_distance"] = nearest_unit.get("distance", -1)
-		info["nearest_unit_label"] = nearest_unit.get("label", "")
+		# `id`, not a `label`: the wire has never carried a top-level cohort label, so the `label` this
+		# read resolved to "" for every band. `id` is `HudFormat.band_name`'s answer, stamped above.
+		info["nearest_unit_label"] = nearest_unit.get("id", "")
 		info["nearest_unit_id"] = nearest_unit.get("id", "")
 	return info
 

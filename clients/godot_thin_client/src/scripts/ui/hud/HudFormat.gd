@@ -42,10 +42,14 @@ const PANEL_EXPEDITION_DENY_GLYPH := "💀"
 ## The SHIPMENT's mark (arc #527) — the same 📦 its footer button and its map marker wear, the rule
 ## the denial glyph above states: one mission, one glyph, at every scale.
 const PANEL_EXPEDITION_TRADE_GLYPH := "📦"
-## Positional band names ("Band 1", "Band 2", …), matching the roster's numbering.
-const BAND_DISPLAY_NAME_FORMAT := "Band %d"
+## **THE LAST-RESORT BAND NAME, KEYED ON THE DURABLE `band_id` — NEVER ON A ROW NUMBER.** Used only
+## when the cohort carries no `name`, which a real snapshot never produces (the sim mints one at
+## founding for every band); it exists so a hand-built fixture that forgot the key shows a visible
+## tell instead of a blank row. The `#` is deliberate: this is an id, so it stays put when another
+## band dies, unlike the positional "Band 2" this replaced.
+const BAND_ID_FALLBACK_NAME_FORMAT := "Band #%d"
 ## The band's hex coordinates in the Band/City panel HEADER, beside its stage word — the header's
-## other word is `BAND_DISPLAY_NAME_FORMAT` above, so the pair lives together. Coordinates are the
+## other word is `band_name` below, so the pair lives together. Coordinates are the
 ## band's IDENTITY ("which one am I looking at"), not a vital, which is why they read as a bare
 ## parenthesised pair here rather than as a labelled `Position:` row in the band zone's vitals.
 const BAND_HEADER_POSITION_FORMAT := "(%d, %d)"
@@ -97,10 +101,38 @@ static func food_module_label(module_key: String) -> String:
         return FOOD_MODULE_UNKNOWN_LABEL
     return String(FOOD_MODULE_LABELS.get(module_key, module_key.capitalize().replace("_", " ")))
 
-## Best-effort readable band name: a positional "Band N". (Cohorts carry no top-level
-## band label in the snapshot yet — see the server-side follow-up.)
-static func band_display_name(_entry: Dictionary, index: int) -> String:
-    return BAND_DISPLAY_NAME_FORMAT % index
+## **THE CLIENT'S ONE BAND-NAMING RULE.** Every surface that prints a band — the cycler, the band
+## picker, the faction page's drill-downs, the map markers, the event dock's `band=` substitution —
+## resolves its words here, so one band cannot be called two things on two screens.
+##
+## **THE SIM OWNS THE NAME** (issue #615): the cohort's `name` is minted at founding and is IDENTITY,
+## so nothing here derives one by counting. The rule this replaced numbered ROSTER POSITIONS, and it
+## shipped two different counts — the picker skipped expedition parties and the map did not, so one
+## live party made the map call a band `Band 5` while the picker called the same band `Band 4`, and
+## any band death silently renamed every band after it.
+##
+## **AN EXPEDITION PARTY IS ITS BAND'S PEOPLE, TAGGED WITH WHAT THEY ARE OUT DOING** — `Ashfell
+## (Scout)`. The party publishes its home band's name verbatim (it is not a second identity) while
+## carrying its own `band_id`, so the suffix is what lets the map draw the band and its party as
+## distinct markers without inventing a second name for one people. An unknown or absent mission
+## degrades to the bare name rather than to an empty `Ashfell ()`.
+##
+## **THE SUFFIX IS COMPOSED HERE, NOT AT THE CALL SITES**, and that is the point: a caller that
+## appended its own mission word would be a second naming rule, which is exactly what this function
+## exists to make impossible.
+##
+## An empty `name` falls back to `BAND_ID_FALLBACK_NAME_FORMAT` — see its own comment for why that
+## is unreachable from a real snapshot.
+static func band_name(entry: Dictionary) -> String:
+    var name := String(entry.get("name", "")).strip_edges()
+    if name == "":
+        name = BAND_ID_FALLBACK_NAME_FORMAT % int(entry.get("band_id", HudConst.NO_BAND_ID))
+    if not bool(entry.get("is_expedition", false)):
+        return name
+    var mission := String(entry.get("expedition_mission", "")).strip_edges().to_lower()
+    if not HudExpeditionVocab.PARTY_SHORT_LABELS.has(mission):
+        return name
+    return HudExpeditionVocab.PARTY_NAME_FORMAT % [name, HudExpeditionVocab.PARTY_SHORT_LABELS[mission]]
 
 ## "<glyph> " for a resolved glyph, "" for none — so a Current-actions row degrades to bare text
 ## (no stray leading space) when the resource can't be resolved.

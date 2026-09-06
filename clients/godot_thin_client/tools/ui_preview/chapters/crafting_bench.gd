@@ -1701,7 +1701,7 @@ func _equipment_recipe(id: String, display_name: String, craft: String, group: S
 ## tell apart at once.
 func _crafting_band() -> Dictionary:
 	var band := BandFx.with_band_id({
-		"id": "Band 1",
+		"name": "Pinewold", "id": "Pinewold",
 		"entity": CRAFTING_BAND_ENTITY,
 		"faction": 0,
 		"size": 30,
