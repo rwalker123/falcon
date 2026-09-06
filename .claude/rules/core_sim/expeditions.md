@@ -18,7 +18,7 @@ paths:
 | File | Purpose |
 |------|---------|
 | `src/data/sites_config.json` | Wondrous Sites catalog (`catalog`: per-`site_id` `category`/`display_name`/`glyph`/`placement_rule`/`discovery_reward.morale_bonus`) + `placement` rules (per-rule `max_sites`, `min_spacing`, and the union of rule inputs: `min_relief`, `max_habitability_pressure`, `min_food_weight`). Loader `sites_config.rs`, env override `SITES_CONFIG_PATH`. Not wired into the `reload_config` hot-reload path (mirrors `fauna_config.json`) |
-| `src/data/expedition_config.json` | Expedition tuning. Scout: `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — a client display threshold on `turnsToFill`; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates a raid before giving up on completion; a raid is short — grab the surplus, come home — so simulating each to completion is cheap; **echoed onto every cohort as `expeditionForecastHorizonTurns`**, and it bounds the HUNTING only, never the trip). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Band-fission `settle` block: `min_founding_workers` (**4**) and `parent_min_workers` (**6**) — the two worker floors a `split_band` must clear, one on each half; the arc lives in `.claude/rules/core_sim/fission.md` and is nothing to do with an expedition. **Retired: `estimate_party_sizes` and the whole `deny` block (`requirement_rows`)** — both were sampling axes for the pre-computed estimate tables, and the forecast query answers exactly instead; see "The forecast is ASKED FOR". The retired `sustain_floor_fraction` is **gone** too: a hunting expedition is a **greedy raid** that grabs the standing surplus above the mission's **floor**, and the floor is chosen at launch (any fraction of `K` in `0.0..=1.0`; default `DEFAULT_ESCAPEMENT_FLOOR`, the food peak) rather than configured. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path is covered; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config refused, falling back to the builtin rather than silently disabling a feature. Enforced: `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`, `settle.min_founding_workers ≥ 1` (at `0` the gate cannot refuse anything — a silently disabled feature rather than a tuning; the "off for a playtest" value is `1`, which is a real band). **`settle.parent_min_workers` is deliberately NOT bounded below** — `0` there is a real policy ("the parent may give everything"), unlike its sibling, for which a band of nobody is not a band. Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the upper end of `forecast_horizon_turns` (it costs query time, on demand — an operator's call, not an invariant) |
+| `src/data/expedition_config.json` | Expedition tuning. Scout: `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (**9** — the per-turn LOS radius a party maps at, and it is the **EQUIPPED** tier: the party resolves it through `EquipmentStat::ExpeditionSightRange` off the kit it launched with, and the `wayfinding` item declares the **bare** `6.0` that this key used to be flatly. **PLAYTEST DIAL**; see "A party's reach is its KIT's" below), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — a client display threshold on `turnsToFill`; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates a raid before giving up on completion; a raid is short — grab the surplus, come home — so simulating each to completion is cheap; **echoed onto every cohort as `expeditionForecastHorizonTurns`**, and it bounds the HUNTING only, never the trip). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Band-fission `settle` block: `min_founding_workers` (**4**) and `parent_min_workers` (**6**) — the two worker floors a `split_band` must clear, one on each half; the arc lives in `.claude/rules/core_sim/fission.md` and is nothing to do with an expedition. **Retired: `estimate_party_sizes` and the whole `deny` block (`requirement_rows`)** — both were sampling axes for the pre-computed estimate tables, and the forecast query answers exactly instead; see "The forecast is ASKED FOR". The retired `sustain_floor_fraction` is **gone** too: a hunting expedition is a **greedy raid** that grabs the standing surplus above the mission's **floor**, and the floor is chosen at launch (any fraction of `K` in `0.0..=1.0`; default `DEFAULT_ESCAPEMENT_FLOOR`, the food peak) rather than configured. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path is covered; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config refused, falling back to the builtin rather than silently disabling a feature. Enforced: `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`, `settle.min_founding_workers ≥ 1` (at `0` the gate cannot refuse anything — a silently disabled feature rather than a tuning; the "off for a playtest" value is `1`, which is a real band). **`settle.parent_min_workers` is deliberately NOT bounded below** — `0` there is a real policy ("the parent may give everything"), unlike its sibling, for which a band of nobody is not a band. Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the upper end of `forecast_horizon_turns` (it costs query time, on demand — an operator's call, not an invariant) |
 ## Wondrous Sites
 
 Data-driven catalog of notable map features tiles can hold, hidden under fog until a faction's
@@ -105,10 +105,12 @@ band splitting in two; see `.claude/rules/core_sim/fission.md`.)
 **`advance_expeditions`** (`systems.rs`, `TurnStage::Population`, registered right after
 `advance_band_movement`, before the Visibility stage's `discover_sites`) runs per expedition each
 turn. **Map documentation — (a)+(b) — is SHARED by every mission (scout AND hunt):** a ranging party
-maps the terrain it crosses regardless of verb. **(a) observe** the tiles in `observe_sight_range` LOS
-of its current tile into the private `pending_reveal` buffer (reusing
+maps the terrain it crosses regardless of verb. **(a) observe** the tiles in LOS of its current tile
+— at **the radius its own kit resolves**, see "A party's reach is its KIT's" below — into the private
+`pending_reveal` buffer (reusing
 `visibility_systems::visible_tiles_in_range` — the pure geometry behind `reveal_tiles_in_range` —
-**without** touching the faction map); **(b) comm check + flush** — when within `effective_comm_range()`
+**without** touching the faction map), and charge the wayfinding gear for whatever of it was
+genuinely new; **(b) comm check + flush** — when within `effective_comm_range()`
 (= `comm_range_tiles × comm_range_tech_factor`, rounded) hex distance of the home band's **live** tile,
 promote every buffered tile to `Discovered` on the faction map (`FactionVisibilityMap::discover`,
 Unexplored→Discovered, never downgrading `Active`) and clear the buffer — so the map lights up **as a
@@ -1070,6 +1072,74 @@ readout is the collapse verdict, not a delivery ETA. Quoting "next delivery" for
 point is that nothing comes home would be the food-only blindness the mission reverses. The client
 half — the third launch verb, the range verdict line, the waste readout and the in-flight collapse
 line — is slice 2.
+
+## A party's reach is its KIT's — `observe_sight_range` is the EQUIPPED tier
+
+A detached party's observation radius was a **flat** `expedition_config.observe_sight_range` with no
+kit term in it at all, while the *resident* band's posted vantage had been kit-aware for a long time
+(`visibility_systems.rs` resolves `scout_vantage_range(labor.scout.vantage_range, &scout_kit, wear)`,
+so the wayfinding kit buys 2 tiles against 1 bare-handed). The party is priced the same way now:
+`advance_expeditions` resolves
+
+```text
+equipment_cfg.expedition_sight_range(cfg.observe_sight_range as f32, &party_kit, &party_wear)
+```
+
+**once per party per turn**, exactly as it resolves the haul and gather tiers beside it, and rounds
+the answer for the reveal geometry.
+
+**`observe_sight_range` is now the EQUIPPED value and ships `9`; the `wayfinding` item declares the
+bare `6.0`** — which is what that key used to be flatly. So **nothing regresses**: a party carrying
+no wayfinding gear sees exactly what it saw before, and a kitted one sees three tiles further. It is
+pure upside for carrying the gear, and `ranging` carries it (`equipment.md` → "The `expedition` job").
+
+### ⛔ IT IS A SECOND STAT, NOT THE VANTAGE'S
+
+`EquipmentStat::ExpeditionSightRange` is its own stat rather than a reuse of `ScoutVantageRange`, and
+the reason is mechanical: `rate_tier` takes the **equipped** side from the caller's baseline and the
+**unequipped** side from the item, and an item declares **one** unequipped side per stat. Reusing the
+vantage's stat would therefore drag a bare-handed *party* down to the vantage's bare `1.0` — wrong,
+because a band standing still sees `observe_sight_range` far with no gear at all, and a detached party
+is the same people with the same eyes. **What the gear buys is reach beyond unaided sight, never the
+ability to see at all.**
+
+A posted vantage (one or two people on a hilltop, equipped range 2) and a whole ranging party are two
+different observers with two different **bare** values, so they are two stats. One item may legally
+declare both, and `wayfinding` does.
+
+### The gear is charged AT OBSERVE TIME, on tiles genuinely new
+
+A party buffers its observations in `pending_reveal` and flushes them to the faction map later, so
+there are three places the charge could have gone and only one of them is a *use*:
+
+| where | what it would actually price |
+|---|---|
+| at the **comm flush** | the turn the party walked back into camp — and a long trip lands its whole bill in one lump |
+| per **buffered tile** | re-crossing ground the party already mapped — a turn clock in a per-use costume, which `docs/plan_denial_raid.md` §1.2 forbids outright |
+| **at observe, on new ground** | the looking that was actually done ✅ |
+
+So a tile is counted only if it is **not already in the party's own `pending_reveal` buffer** *and*
+**not already `Discovered`/`Active` on the party's faction map** (`ledger.is_discovered`, a **read** —
+the flush still owns every mutation of the ledger). The count is accumulated across the observe loop
+and charged once after it, `wear_kit(.., WearQuantum::TileRevealed, newly_seen)` — **accrue after
+take**, the ordering every wear site uses, so this turn's ground was seen at the tier it was priced
+with and any step-down lands next turn.
+
+Charging while the party is *out doing the looking* settles two things the flush could not: an
+**orphaned** party that never reports still wore its gear, and a long trip does not bill its whole
+march on one turn.
+
+**Pinned in `core_sim/tests/expedition_sight.rs`**, whose important test is
+`a_party_re_walking_mapped_ground_wears_nothing` — the turn-clock guard, asserted together with its
+liveness half (`a_party_mapping_new_ground_wears_the_kit_down`), because a charge that never fired at
+all would pass the guard on its own.
+
+### The resolved reach rides the wire per kit
+
+`KitOption.expeditionSightRange` (appended last, subsistence section) carries what a party carrying
+that kit observes at, so a launch sheet's gear line quotes the sim's own number. **It is not
+`scoutVantageRange` read twice** — the two observers have different bare readings, so a sheet quoting
+the vantage's would tell a bare ranging party it sees one tile when it sees six.
 
 ## Gather first, then hunt — how a provisioned party feeds itself
 

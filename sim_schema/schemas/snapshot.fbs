@@ -5182,6 +5182,19 @@ table KitOption {
   // offering the GRADING kit for a `pave`. An absent field decodes as "" = serves every rung, which
   // is the generous answer the bound exists to refuse.
   buildWorkRung:string;
+  // --- THE RANGING PARTY'S OBSERVATION RADIUS (appended last) -----------------------------------
+  // The per-turn LOS radius a DETACHED PARTY carrying this kit maps the ground at - what a launch
+  // sheet's gear line quotes.
+  //
+  // *** IT IS NOT scoutVantageRange READ TWICE. *** A posted vantage (one or two people on a
+  // hilltop) and a whole ranging party are different observers with different BARE readings - the
+  // vantage's bare is 1 tile, the party's is 6, because a band standing still sees that far with no
+  // gear at all. A sheet quoting the vantage's number would therefore tell a bare ranging party it
+  // sees ONE tile when it sees six. The one `wayfinding` item lifts both axes, which is why one kit
+  // row carries both numbers.
+  //
+  // 0 is the absent/unknown reading, exactly as the tiers above are.
+  expeditionSightRange:float = 0;
 }
 
 // ==============================================================================================

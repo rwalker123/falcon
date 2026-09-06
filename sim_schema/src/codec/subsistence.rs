@@ -353,6 +353,7 @@ fn create_kits<'a>(
                 forageCarryPerWorkerBiomass: state.forage_carry_per_worker_biomass,
                 // The scout vantage's tier — the role the roster gained with wayfinding gear.
                 scoutVantageRange: state.scout_vantage_range,
+                expeditionSightRange: state.expedition_sight_range,
                 // What the kit DOES beyond the tiers — all three neutral at 1.0, so a kit declaring
                 // none of them encodes exactly as it did before they existed.
                 attackMinBodyMass: state.attack_min_body_mass,

@@ -152,13 +152,18 @@ pub fn advance_band_movement(
 /// `advance_band_movement` (so it reads the party's fresh position) and before the Visibility
 /// stage's `discover_sites`. For each expedition:
 /// - **Observe + comm-flush is SHARED by every mission (scout AND hunt)** — a ranging party maps the
-///   terrain it crosses regardless of verb. Each turn it observes the tiles in `observe_sight_range`
-///   LOS of its current tile into a **private** pending-reveal buffer (it does NOT touch the faction
+///   terrain it crosses regardless of verb. Each turn it observes the tiles in LOS of its current
+///   tile — at the radius its own kit resolves through
+///   [`crate::equipment_config::EquipmentStat::ExpeditionSightRange`], `observe_sight_range` being
+///   the *equipped* tier — into a **private** pending-reveal buffer (it does NOT touch the faction
 ///   map — it is `Without<Expedition>` in `calculate_visibility`); and when within the effective comm
 ///   range of the home band's live tile, promotes every buffered tile to `Discovered` on the faction
 ///   map (never downgrading a live `Active` tile) and clears the buffer. For a hunt party this fires
 ///   at each Delivering drop-off / Returning fold-back. Site discovery rides the flushed tiles for
-///   free via the Visibility stage's `discover_sites`.
+///   free via the Visibility stage's `discover_sites`. The gear is charged
+///   [`crate::equipment_config::WearQuantum::TileRevealed`] **at observe time**, for tiles neither
+///   already buffered nor already on the faction map — never at the flush, which would be a turn
+///   clock.
 /// - **Provisions** drain by `party × provision_upkeep_per_worker` (scouts only — hunt lives off its
 ///   kills); non-fatal at zero in v1.
 /// - **Both halves of a kill's [`HuntYield`] come home** (#337) — the provisions into the party's
@@ -310,6 +315,21 @@ pub fn advance_expeditions(
         let per_worker_gather_biomass = coverage.weighted_rate(|kit| {
             equipment_cfg.forage_per_worker_biomass_capacity(baseline_gather_rate, kit, &party_wear)
         });
+        // **How far this party sees, resolved ONCE per party per turn like every tier beside it** —
+        // `expedition_config.observe_sight_range` is the *equipped* radius and the `wayfinding`
+        // item's `expedition_sight_range` declares the bare one, exactly the way a resident band's
+        // posted vantage splits `labor_config.scout.vantage_range` against the same item's
+        // `scout_vantage_range` in `calculate_visibility`.
+        //
+        // **NOT resolved through `coverage`, and that is the difference from the two carries above.**
+        // A carry is per worker, so a party of ten with four sleds hauls at two rates; sight is one
+        // question asked of one marching party, so it takes the kit's own tier the way the vantage
+        // does. Rounded here because the reveal geometry is a tile radius; the effects axis stays
+        // continuous so a designer can tune it.
+        let observe_sight_range = equipment_cfg
+            .expedition_sight_range(cfg.observe_sight_range as f32, &party_kit, &party_wear)
+            .max(0.0)
+            .round() as u32;
         // The weapon decides what the party can hurt at all (§4.2's gate), so it is resolved here and
         // not left at the intrinsic bare-handed tier. `exposure` and `dispersion` ride beside it —
         // a raid carrying a stand-off kit takes no injuries and scares nothing off, exactly as a
@@ -441,9 +461,12 @@ pub fn advance_expeditions(
         // a. Observe into the private buffer — no faction-map mutation here. Dedup against an
         // O(1) `HashSet` scratch (built once) instead of an O(n) `Vec::contains` per tile.
         let mut seen: HashSet<UVec2> = expedition.pending_reveal.iter().copied().collect();
+        // **What this party will be charged for on `WearQuantum::TileRevealed`** — counted here, at
+        // the moment of looking, and only for ground that is genuinely new. See the charge below.
+        let mut newly_seen: u32 = 0;
         for pos in crate::visibility_systems::visible_tiles_in_range(
             exp_pos,
-            cfg.observe_sight_range,
+            observe_sight_range,
             &elevation,
             vis_cfg.line_of_sight.enabled,
             &terrain_tags,
@@ -453,6 +476,16 @@ pub fn advance_expeditions(
         ) {
             if seen.insert(pos) {
                 expedition.pending_reveal.push(pos);
+                // **FIRST-EVER-REVEALED, on the party's OWN buffer AND on the faction map.** The
+                // buffer half alone would still charge a party walking home over ground its band
+                // mapped turns ago — a turn clock in a per-use costume, which
+                // `docs/plan_denial_raid.md` §1.2 forbids and which the `wayfinding` item's own
+                // comment calls out. `is_discovered` is true for `Discovered` *and* `Active`, i.e.
+                // "already on the faction map", and it is a **read**: the flush below still owns
+                // every mutation of the ledger.
+                if !ledger.is_discovered(faction, pos.x, pos.y) {
+                    newly_seen += 1;
+                }
             }
             // **Peoples found on the march go into the private buffer beside the tiles.** Not gated
             // on `seen`: a party that has already mapped a tile can still find somebody standing on
@@ -467,6 +500,33 @@ pub fn advance_expeditions(
                             .insert(*subject, (pos, current_turn));
                     }
                 }
+            }
+        }
+
+        // a2. **The wayfinding gear is charged for the ground this party mapped**, per tile revealed
+        // for the FIRST time — the same quantum a resident band's posted vantage pays on, named by
+        // quantum rather than by item so a kit carrying none of it wears nothing.
+        //
+        // # ⛔ CHARGED AT OBSERVE TIME, NOT AT THE COMM FLUSH, AND NOT PER TILE BUFFERED
+        //
+        // The buffer is a report, not work: flushing it charges the turn the party walked home, and
+        // charging every buffered tile bills a party for re-crossing ground it already mapped. Both
+        // are turn clocks wearing a per-use costume (`docs/plan_denial_raid.md` §1.2).
+        //
+        // Charging while the party is *out doing the looking* also settles two things the flush
+        // could not: an orphaned party that never reports still wore its gear, and a long trip does
+        // not land its whole bill in one lump on the turn it walks back into camp.
+        //
+        // **Accrue AFTER the take**, the ordering every wear site uses — this turn's ground was seen
+        // at the tier it was priced with above, so a step-down lands on the next turn.
+        if newly_seen > 0 {
+            if let Some(kit) = party_equipment.as_mut() {
+                kit.wear_kit(
+                    &equipment_cfg,
+                    &party_kit,
+                    crate::equipment_config::WearQuantum::TileRevealed,
+                    newly_seen as f32,
+                );
             }
         }
 

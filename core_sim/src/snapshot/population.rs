@@ -385,6 +385,11 @@ pub(crate) struct BandKitLevers<'a> {
     /// `labor_config.scout.vantage_range` — the *equipped* vantage sight range (the wayfinding
     /// gear's). Carried as `f32` because the effects axis is continuous; the reveal path rounds.
     pub(crate) equipped_vantage_range: f32,
+    /// `expedition_config.observe_sight_range` — the *equipped* observation radius a DETACHED PARTY
+    /// maps at, which the same wayfinding gear buys. Its own lever beside the vantage's because the
+    /// two observers have different **bare** readings; see
+    /// [`crate::equipment_config::EquipmentStat::ExpeditionSightRange`].
+    pub(crate) equipped_expedition_sight_range: f32,
 }
 
 /// **The two configs an assigned hunt row's useful-crew cap needs beyond the band's own gear** —
@@ -804,6 +809,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 kit_levers.baseline_haul_rate,
                 kit_levers.baseline_gather_rate,
                 kit_levers.equipped_vantage_range,
+                kit_levers.equipped_expedition_sight_range,
                 &choice,
                 &kit,
             );
@@ -1714,6 +1720,8 @@ mod tests {
             equipped_vantage_range: crate::labor_config::LaborConfig::builtin()
                 .scout
                 .vantage_range as f32,
+            equipped_expedition_sight_range: crate::expedition_config::ExpeditionConfig::builtin()
+                .observe_sight_range as f32,
         }
     }
 

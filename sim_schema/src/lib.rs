@@ -46,6 +46,10 @@ mod tests {
         const BARE_FORAGE_CARRY: f32 = 1.6;
         const BARE_ATTACK: f32 = 1.0;
         const BARE_VANTAGE_RANGE: f32 = 1.0;
+        // **The bare RANGING PARTY's reach, and deliberately not the vantage's.** A posted vantage
+        // and a whole marching party are different observers, so a codec entry wired to the wrong
+        // one of the two shows up here as a swapped number rather than as a coincidence.
+        const BARE_EXPEDITION_SIGHT: f32 = 6.0;
         // The BAND-resolved twins of the above (`PopulationCohortState`), deliberately unlike the
         // roster's fresh-kit numbers: a band's row is its own wear resolved against its own job
         // defaults, and the two must never be read as one value.
@@ -67,6 +71,7 @@ mod tests {
                     hunt_carry_per_worker_biomass: BARE_HUNT_CARRY,
                     forage_carry_per_worker_biomass: BARE_FORAGE_CARRY,
                     scout_vantage_range: BARE_VANTAGE_RANGE,
+                    expedition_sight_range: BARE_EXPEDITION_SIGHT,
                     // `none` carries nothing, so every multiplier reads its neutral and its attack —
                     // the bare hand's — is bounded by nothing.
                     attack_min_body_mass: 0.0,
@@ -143,6 +148,7 @@ mod tests {
         assert_eq!(option.huntCarryPerWorkerBiomass(), BARE_HUNT_CARRY);
         assert_eq!(option.forageCarryPerWorkerBiomass(), BARE_FORAGE_CARRY);
         assert_eq!(option.scoutVantageRange(), BARE_VANTAGE_RANGE);
+        assert_eq!(option.expeditionSightRange(), BARE_EXPEDITION_SIGHT);
         let jobs = option
             .jobs()
             .expect("a kit states the jobs it may be sent on");

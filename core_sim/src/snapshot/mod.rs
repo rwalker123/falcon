@@ -1375,6 +1375,8 @@ mod tests {
             equipped_vantage_range: crate::labor_config::LaborConfig::builtin()
                 .scout
                 .vantage_range as f32,
+            equipped_expedition_sight_range: crate::expedition_config::ExpeditionConfig::builtin()
+                .observe_sight_range as f32,
         };
         let expedition_config = crate::expedition_config::ExpeditionConfig::builtin();
         let levers = ExpeditionLevers {

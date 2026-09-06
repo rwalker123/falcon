@@ -2294,6 +2294,16 @@ pub struct KitOptionState {
     /// rung*, the generous answer the bound exists to refuse. Appended (append-only).
     #[serde(default)]
     pub build_work_rung: String,
+    /// **The per-turn observation radius a DETACHED PARTY carrying this kit maps the ground at** —
+    /// what the launch sheet's gear line quotes. Appended (append-only).
+    ///
+    /// ⛔ **NOT [`Self::scout_vantage_range`] READ TWICE.** A posted vantage and a whole ranging
+    /// party are different observers with different **bare** readings — the vantage's bare is `1`
+    /// tile, the party's is `6` — so a sheet quoting the vantage's number would tell a bare ranging
+    /// party it sees one tile when it sees six. The `wayfinding` item lifts both, which is why one
+    /// kit row carries both numbers.
+    #[serde(default)]
+    pub expedition_sight_range: f32,
 }
 
 /// **Hand-written rather than derived, for the same reason [`HerdTelemetryState`]'s is**: three of
@@ -2311,6 +2321,7 @@ impl Default for KitOptionState {
             hunt_carry_per_worker_biomass: 0.0,
             forage_carry_per_worker_biomass: 0.0,
             scout_vantage_range: 0.0,
+            expedition_sight_range: 0.0,
             // `0` is the *sentinel* on these two — "unbounded", the schema's own default and what
             // every weapon but the passive device ships. Not a multiplier, so not neutral-at-one.
             attack_min_body_mass: 0.0,

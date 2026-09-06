@@ -1,7 +1,8 @@
 {
   "comm_range_tiles": 2,
   "comm_range_tech_factor": 1.0,
-  "observe_sight_range": 6,
+  "_comment_observe_sight_range": "THE DETACHED PARTY'S PER-TURN OBSERVATION RADIUS, AND IT IS THE EQUIPPED TIER - the party resolves it through `EquipmentStat::expedition_sight_range` off the kit it was launched with and its own wear, exactly the way a resident band's posted vantage resolves labor_config.json's `scout.vantage_range`. The BARE reading lives on the `wayfinding` item in equipment.json (unequipped 6.0), which is the flat radius this key used to be, so a party carrying no wayfinding gear observes exactly as far as it always did and only a kitted one sees further. PLAYTEST DIAL.",
+  "observe_sight_range": 9,
   "provision_draw_per_worker_per_tile": 1.0,
   "provision_upkeep_per_worker": 0.5,
   "hunt": {

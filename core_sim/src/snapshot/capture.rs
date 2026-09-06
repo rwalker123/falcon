@@ -1994,6 +1994,7 @@ fn kit_roster_states(
                 labor.hunt.per_worker_biomass_capacity,
                 labor.forage.per_worker_biomass_capacity,
                 labor.scout.vantage_range as f32,
+                kit_levers.equipped_expedition_sight_range,
                 &choice,
                 &fresh,
             );
@@ -2012,6 +2013,11 @@ fn kit_roster_states(
                 // reach, exactly like the three above, so the picker renders the kit and not the
                 // band that happens to be selected.
                 scout_vantage_range: tiers.scout_vantage_range,
+                // **What a DETACHED PARTY carrying this kit observes at**, the launch sheet's gear
+                // line. Not the vantage's number read twice: the two are different observers with
+                // different bare readings, so a sheet quoting the vantage's would tell a bare
+                // ranging party it sees one tile when it sees six.
+                expedition_sight_range: tiers.expedition_sight_range,
                 // **The retired multiplier's slot, held at its neutral** — the stat is an
                 // additive per-worker contribution now (`buildWorkPerWorker` beside it), and a
                 // number in these units would read as a rate on a field the client renders as one.
@@ -2428,6 +2434,9 @@ pub fn capture_snapshot(
         baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
         baseline_gather_rate: labor_config.forage.per_worker_biomass_capacity,
         equipped_vantage_range: labor_config.scout.vantage_range as f32,
+        // The detached party's *equipped* observation radius, beside the posted vantage's — the
+        // second axis the one wayfinding item lifts.
+        equipped_expedition_sight_range: expedition_cfg.observe_sight_range as f32,
     };
     // **The crafting readout's config half, resolved ONCE for the capture.** `craftOffers` is
     // bands × recipes, and everything that is a function of the recipe alone — its group, its bench
