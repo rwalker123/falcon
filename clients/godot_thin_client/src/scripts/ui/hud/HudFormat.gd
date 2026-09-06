@@ -42,6 +42,23 @@ const PANEL_EXPEDITION_DENY_GLYPH := "💀"
 ## The SHIPMENT's mark (arc #527) — the same 📦 its footer button and its map marker wear, the rule
 ## the denial glyph above states: one mission, one glyph, at every scale.
 const PANEL_EXPEDITION_TRADE_GLYPH := "📦"
+
+## The mark for a party on `expedition_mission` — the ONE resolution of the four constants above, so
+## a surface that marks a party by its mission cannot pick a different glyph from the one
+## `panel_expedition_summary` prints or the map token draws (`MapView.EXPEDITION_*_GLYPH`). An absent
+## or unrecognised mission answers the SCOUT flag, the same last-resort branch the summary falls
+## through to: a party with no readable mission is still a venture staked out on the map, and the flag
+## is the client's generic mark for one.
+static func expedition_mission_glyph(mission: String) -> String:
+    var key := mission.strip_edges().to_lower()
+    if key == HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
+        return PANEL_EXPEDITION_HUNT_GLYPH
+    if key == HudExpeditionVocab.EXPEDITION_MISSION_DENY:
+        return PANEL_EXPEDITION_DENY_GLYPH
+    if key == HudExpeditionVocab.EXPEDITION_MISSION_TRADE:
+        return PANEL_EXPEDITION_TRADE_GLYPH
+    return PANEL_EXPEDITION_SCOUT_GLYPH
+
 ## **THE LAST-RESORT BAND NAME, KEYED ON THE DURABLE `band_id` — NEVER ON A ROW NUMBER.** Used only
 ## when the cohort carries no `name`, which a real snapshot never produces (the sim mints one at
 ## founding for every band); it exists so a hand-built fixture that forgot the key shows a visible

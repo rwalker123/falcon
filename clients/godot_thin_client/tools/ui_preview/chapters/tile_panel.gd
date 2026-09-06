@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 109
+const EXPECTED_CHECKPOINTS := 116
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -69,6 +69,22 @@ const CYCLE_BAND_ENTITY := 401
 const CYCLE_HERD_FIRST_ID := "game_aurochs_429a"
 
 const CYCLE_HERD_SECOND_ID := "game_boar_429b"
+
+# The flash-guard band's NAME, the handle every roster-row helper below finds its row by (a name, not
+# a child index — the roster interleaves the land row and a group header ahead of the bands).
+const FLASH_GUARD_BAND_NAME := "Band Steady"
+
+# The flash-guard band is 30 people, which is `settlement_stage_config.json`'s FIRST rung — so its row
+# leads with the bundled tent the map token draws for the same stage.
+const FLASH_GUARD_BAND_STAGE_ID := "nomadic"
+
+# A stage NO bundled art can answer — `settlement_stage_config.json` is user-editable, so a game may
+# define rungs past the three the client ships, and those render the server's emoji instead. The pair
+# is deliberately not one of `StageSprites.SPRITE_PATHS`' keys: the claim is that the miss takes the
+# emoji path, so a spelling that ever gained art would quietly stop testing it.
+const MODDED_STAGE_ID := "hillfort"
+
+const MODDED_STAGE_ICON := "🏯"
 
 const OCCUPANTS_HUNT_LOCAL_WORKERS := 4
 
@@ -136,14 +152,35 @@ func _assert_ungathered_stand_is_silent() -> void:
 ## patch path SWAPPED the mark's node or merely wrote to the old one — the two renderings are both
 ## perfectly plausible rows, so no frame can hold this claim.
 func _land_row_icon_class() -> String:
+	var icon := _land_row_icon_node()
+	return "" if icon == null else icon.get_class()
+
+## The land row's leading mark NODE itself — the shared finder behind the class helper above and the
+## no-symbol claims, which have to ask the node for its text and its width rather than its type.
+func _land_row_icon_node() -> Control:
 	if h._hud.subject_list == null or h._hud.subject_list.get_child_count() == 0:
-		return ""
+		return null
 	# The LAND is always the roster's first row (docs/plan_tile_panel_layout.md).
 	var row := h._hud.subject_list.get_child(0) as Button
 	if row == null or not row.has_meta("row_icon"):
-		return ""
-	var icon := row.get_meta("row_icon") as Control
-	return "" if icon == null else icon.get_class()
+		return null
+	return row.get_meta("row_icon") as Control
+
+## Where the land row's NAME starts, in screen space. Paired with `_band_row_name_x` it is the whole
+## of the mark-column claim: a mark slot that collapsed when its glyph went empty would pull this one
+## name a box to the left of every other row's, and a lone row is a perfectly plausible-looking frame.
+func _land_row_name_x() -> float:
+	if h._hud.subject_list == null or h._hud.subject_list.get_child_count() == 0:
+		return -1.0
+	var row := h._hud.subject_list.get_child(0) as Button
+	if row == null or not row.has_meta("name_label"):
+		return -1.0
+	return (row.get_meta("name_label") as Label).global_position.x
+
+## Where a BAND row's name starts, in screen space — the column the land row's must agree with.
+func _band_row_name_x(band_name: String = FLASH_GUARD_BAND_NAME) -> float:
+	var label := _band_row_child(band_name, "name_label") as Label
+	return -1.0 if label == null else label.global_position.x
 
 ## The CLASS of the land row's TRAILING activity mark (issue #249) — the `glyph_label` slot, which is
 ## a `TextureRect` while the hex is a gathering site (the drawn forage mark) and a zero-width empty
@@ -163,36 +200,60 @@ func _land_row_mark_class() -> String:
 ## child index — the roster interleaves the land row and a group header ahead of the bands, and an
 ## index is the kind of finder that quietly points at the wrong row after a layout change
 ## (`test-harnesses.md` → "An assertion asks a CONTROL, not the subtree").
-func _band_row_mark_class(band_name: String = "Band Steady") -> String:
+func _band_row_mark_class(band_name: String = FLASH_GUARD_BAND_NAME) -> String:
+	var mark := _band_row_child(band_name, "glyph_label")
+	return "" if mark == null else mark.get_class()
+
+## One stashed child of the band row called `band_name`, by its meta slot — the shared finder behind
+## both mark helpers, so the two slots are asked the same question in the same way and neither can
+## drift onto a child index.
+func _band_row_child(band_name: String, slot: String) -> Control:
 	if h._hud.subject_list == null:
-		return ""
+		return null
 	for child in h._hud.subject_list.get_children():
 		var row := child as Button
-		if row == null or not row.has_meta("name_label") or not row.has_meta("glyph_label"):
+		if row == null or not row.has_meta("name_label") or not row.has_meta(slot):
 			continue
 		var name_label := row.get_meta("name_label") as Label
 		if name_label == null or name_label.text != band_name:
 			continue
-		var mark := row.get_meta("glyph_label") as Control
-		return "" if mark == null else mark.get_class()
-	return ""
+		return row.get_meta(slot) as Control
+	return null
 
-## The land row's leading GLYPH mark and its NAME, as the colours those two labels actually RENDER
-## in: `get_theme_color` answers the override when one is set and Godot's stock `Label` default when
-## none is, so this reads what is on screen rather than whether anybody remembered to set something.
-## An "an override is set" assertion would pass on the broken version — the bug IS the missing
-## override — which is why the claim is phrased as the two rendered colours agreeing.
-## `[]` when the mark is not a glyph at all: a land row whose site has bundled art draws a
-## `TextureRect`, which is deliberately untinted and has no ink to compare.
-func _land_row_glyph_ink_pair() -> Array:
-	if h._hud.subject_list == null or h._hud.subject_list.get_child_count() == 0:
-		return []
-	# The LAND is always the roster's first row (docs/plan_tile_panel_layout.md).
-	var row := h._hud.subject_list.get_child(0) as Button
-	if row == null or not row.has_meta("row_icon") or not row.has_meta("name_label"):
-		return []
-	var icon := row.get_meta("row_icon") as Label
-	var name_label := row.get_meta("name_label") as Label
+## The CLASS of a BAND row's LEADING mark — `_band_row_mark_class`'s question one slot the other way,
+## on the `row_icon` meta. It is the one thing that can say whether the settlement stage is rendering
+## as bundled ART or as the server's emoji, which is exactly the pair the patch path has to swap
+## between and which no frame can tell apart.
+func _band_row_icon_class(band_name: String = FLASH_GUARD_BAND_NAME) -> String:
+	var icon := _band_row_child(band_name, "row_icon")
+	return "" if icon == null else icon.get_class()
+
+## The TEXTURE a band row's leading mark is drawing, `null` when the mark is a glyph. Asked so the
+## claim can be that the row leads with THE STAGE'S OWN ART rather than merely with some sprite —
+## a `TextureRect` carrying the wrong art is still a `TextureRect`.
+func _band_row_icon_texture(band_name: String = FLASH_GUARD_BAND_NAME) -> Texture2D:
+	var icon := _band_row_child(band_name, "row_icon") as TextureRect
+	return null if icon == null else icon.texture
+
+## The GLYPH a band row's leading mark is drawing, `""` when the mark is art.
+func _band_row_icon_text(band_name: String = FLASH_GUARD_BAND_NAME) -> String:
+	var icon := _band_row_child(band_name, "row_icon") as Label
+	return "" if icon == null else icon.text
+
+## A BAND row's leading GLYPH mark and its NAME, as the colours those two labels actually RENDER in:
+## `get_theme_color` answers the override when one is set and Godot's stock `Label` default when none
+## is, so this reads what is on screen rather than whether anybody remembered to set something. An
+## "an override is set" assertion would pass on the broken version — the bug IS the missing override —
+## which is why the claim is phrased as the two rendered colours agreeing.
+##
+## It asks the BAND row because that is where a glyph mark still lives: the land row's neutral `◈`
+## is gone (a module-less row wears no symbol), while a band on a settlement stage past the bundled
+## three renders the server's emoji and owes the ink rule exactly as the `◈` did.
+## `[]` when the mark is not a glyph at all — a band on a bundled stage draws a `TextureRect`, which
+## is deliberately untinted and has no ink to compare.
+func _band_row_glyph_ink_pair(band_name: String = FLASH_GUARD_BAND_NAME) -> Array:
+	var icon := _band_row_child(band_name, "row_icon") as Label
+	var name_label := _band_row_child(band_name, "name_label") as Label
 	if icon == null or name_label == null:
 		return []
 	return [icon.get_theme_color("font_color"), name_label.get_theme_color("font_color")]
@@ -282,6 +343,9 @@ func _no_flash_band_fixture(workers: int, yield_val: float) -> Dictionary:
 		"working_age": 16,
 		"idle_workers": maxi(0, 16 - workers),
 		"work_range": 3,
+		# The stage KEY as well as its emoji: the key is what resolves the bundled art the row (and the
+		# map token) leads with, and the emoji is only the fallback for a stage that has none.
+		"settlement_stage_id": FLASH_GUARD_BAND_STAGE_ID,
 		"settlement_stage_icon": "⛺",
 		"settlement_stage_label": "Nomadic band",
 		"output_multiplier": 1.0,
@@ -343,9 +407,15 @@ func _crowded_tile_fixture() -> Dictionary:
 ## Three player bands on the crowded hex, spanning the food tiers (green / amber / red dots) and
 ## carrying real labor so the auto-selected band's drawer renders a full allocation block — which is
 ## what makes the cap do any work at all.
+##
+## Each carries the SETTLEMENT STAGE its size earns on `settlement_stage_config.json`'s ladder (120 →
+## village, 86 and 54 → seasonal camp), because the row's leading mark IS that stage: a fixture that
+## invented a rung its size cannot reach would render a mark no snapshot could produce.
 func _crowded_bands_fixture() -> Array:
 	return [
 		{"id": "Band Fen", "entity": 301, "faction": 0, "size": 120, "pos": [58, 24],
+			"settlement_stage_id": "village", "settlement_stage_icon": "🏘️",
+			"settlement_stage_label": "Village",
 			"current_x": 58, "current_y": 24, "working_age": 62, "idle_workers": 9,
 			"work_range": 2, "hunt_reach": 4, "turns_of_food": 15.0, "morale": 0.72,
 			"activity": "forage", "stores": {"provisions": 180.0},
@@ -356,10 +426,14 @@ func _crowded_bands_fixture() -> Array:
 					"workers_needed": 5, "overdraws": false},
 			]},
 		{"id": "Band Ash", "entity": 302, "faction": 0, "size": 86, "pos": [58, 24],
+			"settlement_stage_id": "camp", "settlement_stage_icon": "🛖",
+			"settlement_stage_label": "Seasonal camp",
 			"current_x": 58, "current_y": 24, "working_age": 44, "idle_workers": 4,
 			"work_range": 2, "hunt_reach": 4, "turns_of_food": 7.0, "morale": 0.51,
 			"activity": "scout", "stores": {"provisions": 40.0}, "labor_assignments": []},
 		{"id": "Band Bryn", "entity": 303, "faction": 0, "size": 54, "pos": [58, 24],
+			"settlement_stage_id": "camp", "settlement_stage_icon": "🛖",
+			"settlement_stage_label": "Seasonal camp",
 			"current_x": 58, "current_y": 24, "working_age": 27, "idle_workers": 0,
 			"work_range": 2, "hunt_reach": 4, "turns_of_food": 2.0, "morale": 0.30,
 			"activity": "idle", "stores": {"provisions": 8.0}, "labor_assignments": []},
@@ -708,16 +782,19 @@ func run(harness) -> void:
 	h._show_tile(_barren_tile_fixture())
 	await h._settle()
 	await h._save("tile_panel_no_forage")
-	# THE MODULE-LESS LAND ROW'S `◈` WEARS THE ROW'S OWN INK — the LIT half of the claim (this hex has
-	# no occupants, so the land is the auto-picked subject). The mark has been its own bare `Label`
-	# since issue #439 and this client applies no `Theme`, so a glyph nobody colours renders at
-	# Godot's stock near-white: brighter than the name beside it, and no longer tracking the row.
-	# The unselected half rides on the icon-flip block further down, which is where a module-less land
-	# row renders UNLIT — the two together are what say the ink follows the state.
-	var lit_land_ink := _land_row_glyph_ink_pair()
-	h._assert_hud("the LIT module-less land row's ◈ renders in the same ink its name does (INK)",
-		lit_land_ink.size() == 2 and lit_land_ink[0] == lit_land_ink[1] \
-			and lit_land_ink[1] == HudStyle.INK)
+	# **A MODULE-LESS LAND ROW WEARS NO SYMBOL — AND KEEPS ITS SLOT.** There was a neutral `◈` here; it
+	# was never a site, it was the ABSENCE of one, drawn beside a meta that already reads `No forage`,
+	# so the row stated "nothing here" twice and one of the two was a mark the player could not read.
+	# What must NOT leave with it is the mark's WIDTH: an empty glyph still builds a `Label` at
+	# `ROSTER_ROW_ICON_BOX`, so the biome name keeps its column instead of sliding a box left on ground
+	# that offers nothing. A frame cannot hold either half — a row with no mark and a row whose name
+	# starts one box further left are both perfectly ordinary-looking rows.
+	var bare_land_mark := _land_row_icon_node()
+	h._assert_hud("a module-less land row leads with NO symbol, not a neutral one",
+		bare_land_mark is Label and (bare_land_mark as Label).text == "")
+	h._assert_hud("…and the empty mark still HOLDS the column, at the mark box's own width",
+		bare_land_mark != null \
+			and bare_land_mark.size.x >= HudSelectionVocab.ROSTER_ROW_ICON_BOX)
 
 	# tile_panel_ungathered — issue #464: a RICH stand on ground nobody gathers. Distinct from
 	# `tile_panel_no_forage` in the only way that matters: there the ground truly carries nothing,
@@ -829,8 +906,13 @@ func run(harness) -> void:
 		_child_instance_ids(h._hud.subject_list) == icon_flip_row_ids and not icon_flip_row_ids.is_empty())
 	h._assert_hud("a land row carrying a food module leads with the site's bundled ART",
 		land_icon_before == "TextureRect")
-	h._assert_hud("…and losing the module SWAPS that node for the glyph Label, never just its texture",
+	h._assert_hud("…and losing the module SWAPS that node for the empty Label, never just its texture",
 		_land_row_icon_class() == "Label")
+	# The mark COLUMN, claimed where both kinds of row are on screen at once: the land row's mark is now
+	# an empty Label and the band's is a stage sprite, and the two names must still start in the same
+	# place. This is the assertion that would catch an empty mark collapsing to zero width.
+	h._assert_hud("…and a marked band row and the module-less land row start their names in ONE column",
+		is_equal_approx(_land_row_name_x(), _band_row_name_x()) and _land_row_name_x() > 0.0)
 	h._assert_hud("a gathering hex's TRAILING staffing mark is the drawn forage art, not an emoji",
 		land_mark_before == "TextureRect")
 	# **THE TWO SLOTS ANSWER DIFFERENT QUESTIONS, and this one restate proves it.** The LEADING mark
@@ -866,23 +948,64 @@ func run(harness) -> void:
 		_child_instance_ids(h._hud.subject_list) == icon_flip_row_ids and not icon_flip_row_ids.is_empty())
 	h._assert_hud("…and a band whose activity has no art SWAPS that node for the glyph Label",
 		_band_row_mark_class() == "Label")
-	# THE UNLIT half of the ink claim `tile_panel_no_forage` makes for the lit one — and the half that
-	# can only be made on the PATCH path. The land row is lit here; selecting the band beside it dims
-	# the row WITHOUT rebuilding it, so a `◈` coloured only where it is BUILT would keep the ink it
-	# was born with while the name beside it dims. The precondition is what makes that a real claim:
-	# the same nodes must survive the selection change, or a rebuild would launder the bug.
-	var unlit_land_row_ids := _child_instance_ids(h._hud.subject_list)
+	# **THE BAND ROW'S LEADING MARK IS ITS SETTLEMENT STAGE, and it owes the same swap.** The stage is
+	# resolved sprite-first from `settlement_stage_id`, the order the map token draws in
+	# (`BandMarkerRenderer._draw_band_token`), so a band on a bundled rung leads with the SAME art its
+	# token does. The texture is compared, not just the node class: a `TextureRect` carrying some other
+	# sprite is still a `TextureRect`, and the row led with no mark at all before this claim existed.
+	h._assert_hud("a band row leads with its settlement stage's own ART, never a bare name",
+		_band_row_icon_class() == "TextureRect"
+			and _band_row_icon_texture() == StageSprites.for_stage(FLASH_GUARD_BAND_STAGE_ID))
+	# A stage the client ships NO art for — `settlement_stage_config.json` is user-editable, so a game
+	# can define rungs past the bundled three and those must keep rendering the server's emoji. Same
+	# entity and same tile, so the roster PATCHES: a mark that only wrote `.text` to the standing
+	# `TextureRect` would leave the tent beside a band that is no longer nomadic, silently.
+	var stage_flip_tile := _no_flash_tile_fixture(0.06, 61.0)
+	var modded_stage_band := _no_flash_band_fixture(5, 1.40)
+	modded_stage_band["settlement_stage_id"] = MODDED_STAGE_ID
+	modded_stage_band["settlement_stage_icon"] = MODDED_STAGE_ICON
+	modded_stage_band["activity"] = HudSelectionVocab.BAND_ACTIVITY_IDLE
+	stage_flip_tile["units"] = [modded_stage_band]
+	stage_flip_tile.erase("food_module")
+	h._hud.reapply_selection("tile", stage_flip_tile)
+	await h._settle()
+	h._assert_hud("precondition: the modded-stage restate PATCHED the roster rows, not rebuilt them",
+		_child_instance_ids(h._hud.subject_list) == icon_flip_row_ids and not icon_flip_row_ids.is_empty())
+	h._assert_hud("…a stage with no bundled art SWAPS that node for the server's own emoji",
+		_band_row_icon_class() == "Label" and _band_row_icon_text() == MODDED_STAGE_ICON)
+	# **THAT EMOJI WEARS THE ROW'S OWN INK — the UNLIT half.** A bare `Label` inherits nothing (this
+	# client applies no `Theme`), so a glyph nobody colours renders at Godot's stock near-white:
+	# brighter than the name beside it, and no longer tracking the row. The land row is the lit subject
+	# here, so this band row is the dim one. (The claim used to ride the land row's `◈`; that mark is
+	# gone — a module-less row wears no symbol — and the rule outlived it, because every emoji fallback
+	# owes it. The band's config-defined stage is where one still renders.)
+	var unlit_stage_ink := _band_row_glyph_ink_pair()
+	h._assert_hud("an UNLIT band row's stage emoji dims with its name (INK_DIM), never stock white",
+		unlit_stage_ink.size() == 2 and unlit_stage_ink[0] == unlit_stage_ink[1] \
+			and unlit_stage_ink[1] == HudStyle.INK_DIM)
+	# THE LIT half, and the half that can only be made on the PATCH path: lighting the band brightens
+	# the row WITHOUT rebuilding it, so a glyph coloured only where it is BUILT would keep the ink it
+	# was born with while the name beside it brightens. The precondition is what makes that a real
+	# claim — the same nodes must survive the selection change, or a rebuild would launder the bug.
+	var lit_stage_row_ids := _child_instance_ids(h._hud.subject_list)
 	# The band is addressed through the fixture that placed it, never a repeated literal id.
 	var icon_flip_band: Dictionary = icon_flip_bare["units"][0]
 	h._hud._selectioncard.select_roster_occupant("unit", int(icon_flip_band.get("entity", -1)))
 	await h._settle()
-	h._assert_hud("precondition: lighting the band PATCHED the land row rather than rebuilding it",
-		_child_instance_ids(h._hud.subject_list) == unlit_land_row_ids and not unlit_land_row_ids.is_empty())
-	var unlit_land_ink := _land_row_glyph_ink_pair()
-	h._assert_hud("the UNLIT module-less land row's ◈ dims with its name (INK_DIM), never stock white",
-		unlit_land_ink.size() == 2 and unlit_land_ink[0] == unlit_land_ink[1] \
-			and unlit_land_ink[1] == HudStyle.INK_DIM)
-	await h._save("tile_panel_land_glyph_unlit")
+	h._assert_hud("precondition: lighting the band PATCHED the roster rows rather than rebuilding them",
+		_child_instance_ids(h._hud.subject_list) == lit_stage_row_ids and not lit_stage_row_ids.is_empty())
+	var lit_stage_ink := _band_row_glyph_ink_pair()
+	h._assert_hud("…and the LIT one brightens with it (INK), through the patch path, not the build",
+		lit_stage_ink.size() == 2 and lit_stage_ink[0] == lit_stage_ink[1] \
+			and lit_stage_ink[1] == HudStyle.INK)
+	await h._save("tile_panel_stage_glyph_lit")
+	# …and back to ART, because the swap has to work in BOTH directions and only one of them is the
+	# branch `_set_row_icon` takes first. `mark_flip_idle` is the same band on the bundled rung.
+	h._hud.reapply_selection("tile", mark_flip_idle)
+	await h._settle()
+	h._assert_hud("…and a stage that has art again swaps back to the sprite, not a stale glyph",
+		_band_row_icon_class() == "TextureRect"
+			and _band_row_icon_texture() == StageSprites.for_stage(FLASH_GUARD_BAND_STAGE_ID))
 	h._hud.clear_selection()
 	h._hud._band_labor._player_band = {}
 

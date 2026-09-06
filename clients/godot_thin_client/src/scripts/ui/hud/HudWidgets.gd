@@ -339,7 +339,8 @@ static func wrapped_status_part_lines(text: String, width: float) -> int:
 ## **THE `null` BRANCH IS LOAD-BEARING even at full art coverage**, exactly as it is in the sprite
 ## tables themselves: it catches a herd label naming a species the client does not know
 ## (`FoodIcons.species_key_for` → `""`) and the `HERD_DEFAULT` case, neither of which has a key to
-## look art up by — and the land row's module-less `◈`, which is not a species at all.
+## look art up by — and a band standing on a settlement stage defined past the bundled three, which is
+## not a species at all.
 ##
 ## **THE SPRITE IS DRAWN UNTINTED — never set `modulate` on what this returns.** That is the map
 ## markers' own rule (`.claude/rules/client/sprites-widgets.md`): a full-colour animal carries no
