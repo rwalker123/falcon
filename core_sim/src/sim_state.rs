@@ -80,6 +80,7 @@ use crate::{
     routes::RoadRegistry,
     sedentarization::SedentarizationScore,
     sites::{DiscoveredSites, SiteTag},
+    starting_loadout::StartingLoadout,
     telling::BeatLedger,
     victory::VictoryState,
     visibility::{VisibilityLedger, VisibilitySweepTracker},
@@ -206,6 +207,11 @@ pub struct SimState {
     pub pending_crisis_seeds: PendingCrisisSeeds,
     pub pending_crisis_spawns: PendingCrisisSpawns,
     pub sedentarization: SedentarizationScore,
+    /// The opening outfitting window. **State, not derived**: nothing rebuilds it — the budget is a
+    /// fact about the band that spawned, and `open` is a fact about whether a turn has run — so a
+    /// checkpoint that dropped it would restore a turn-one world the player could no longer outfit,
+    /// or re-open a window a later turn had already shut.
+    pub starting_loadout: StartingLoadout,
     pub sentiment_bias: SentimentAxisBias,
     pub trade_telemetry: TradeTelemetry,
     pub victory: VictoryState,
@@ -401,6 +407,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         pending_crisis_seeds: world.resource::<PendingCrisisSeeds>().clone(),
         pending_crisis_spawns: world.resource::<PendingCrisisSpawns>().clone(),
         sedentarization: world.resource::<SedentarizationScore>().clone(),
+        starting_loadout: *world.resource::<StartingLoadout>(),
         sentiment_bias: world.resource::<SentimentAxisBias>().clone(),
         trade_telemetry: world.resource::<TradeTelemetry>().clone(),
         victory: world.resource::<VictoryState>().clone(),
@@ -586,6 +593,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.pending_crisis_seeds.clone());
     world.insert_resource(state.pending_crisis_spawns.clone());
     world.insert_resource(state.sedentarization.clone());
+    world.insert_resource(state.starting_loadout);
     world.insert_resource(state.sentiment_bias.clone());
     world.insert_resource(state.trade_telemetry.clone());
     world.insert_resource(state.victory.clone());

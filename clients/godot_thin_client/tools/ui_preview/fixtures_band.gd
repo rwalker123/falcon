@@ -486,6 +486,11 @@ const KIT_UNSTAFFED_HEADCOUNT := 0.0
 ## is the one readout that has only the first to go on.
 const KIT_UNITS_AS_PEOPLE_REACHED := -1
 
+## What the two UNSTAFFED items are OWNED in. The band keeps this gear; it simply has nobody on the
+## job that uses it, so the units and the people-reached are different numbers and the fixture states
+## both rather than letting one imply the other.
+const KIT_UNSTAFFED_UNITS_OWNED := 2
+
 static func kit_condition_row(item_id: String, remaining: float, workers_holding: float,
 		workers_on_quoted_job: float, units: int = KIT_UNITS_AS_PEOPLE_REACHED) -> Dictionary:
 	return {"item_id": item_id, "remaining": remaining, "workers_holding": workers_holding,
@@ -512,14 +517,21 @@ static func kit_condition_rows(spears_holding: float = KIT_HUNT_HEADCOUNT,
 			KIT_FORAGE_HEADCOUNT),
 		kit_condition_row(KIT_ITEM_TRAPS, KIT_CONDITION_TRAPS, KIT_HUNT_HEADCOUNT,
 			KIT_HUNT_HEADCOUNT),
+		# ⛔ **UNITS OWNED AND PEOPLE HOLDING PART COMPANY HERE, and `count` must be stated.** Nobody is
+		# staffed on this item's job, so `workers_holding` is `0` — but the band OWNS the gear, and the
+		# default (`count` follows the people reached) would publish a band that owns none of a crook
+		# it is simultaneously reporting a healthy condition for. That is a shape no server can send,
+		# and it is exactly the conflation `count` exists to break: once `kit_is_equipped` asked
+		# `count` instead of inferring ownership from `remaining`, this row began reporting a sound
+		# crook as unowned.
 		kit_condition_row(KIT_ITEM_CROOK, KIT_CONDITION_CROOK,
-			KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_HEADCOUNT),
+			KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_UNITS_OWNED),
 		# **THE PLANT WEB'S BUILD TOOL RIDES THE LIST TOO, because the wire's list is the CONFIG's item
 		# table and not the band's own holdings** — an item a band owns none of publishes `remaining 0`
 		# rather than vanishing. Omitting it made the Builders card read `Hoes dry` on a band that had
 		# simply never been asked about them, which is the reassuring lie one item over.
 		kit_condition_row(KIT_ITEM_HOES, KIT_CONDITION_HOES,
-			KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_HEADCOUNT),
+			KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_UNITS_OWNED),
 		kit_condition_row(KIT_ITEM_WAYFINDING, KIT_CONDITION_WAYFINDING, KIT_SCOUT_HEADCOUNT,
 			KIT_SCOUT_HEADCOUNT),
 		kit_condition_row(KIT_ITEM_CLUBS, KIT_CONDITION_CLUBS, KIT_WARRIOR_HEADCOUNT,

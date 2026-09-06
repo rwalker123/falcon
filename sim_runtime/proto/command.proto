@@ -724,6 +724,38 @@ message DeleteSaveCommand {
   string slot = 2;
 }
 
+// THE OPENING LOADOUT, COMPOSED ON TURN ONE — the ONE source of a faction's starting gear and
+// material. A spawning band owns nothing (equipment.json ships `start_stock_fraction: 0.0` and no
+// material declares a start stock), so this command is where a campaign's opening kit comes from.
+//
+// TWO BUDGETS. `kits` spends one point per allocated kit against one kit per working-age hand of the
+// starting band (a model fact derived from the band, never configured); `materials` spends one point
+// per unit against `start_profiles.json` `opening_loadout.material_points`. Anything unspent when
+// the first turn advances is forfeited.
+//
+// IT FAILS CLOSED, WHOLE. A closed window, an unknown kit id, a kit that carries nothing, a material
+// the profile does not offer, a duplicate line, or either budget overspent rejects the ENTIRE
+// command and changes nothing — a loadout is one composition against two budgets, so honouring the
+// legal half would spend the player's points on something they did not choose.
+message SetStartingLoadoutCommand {
+  uint32 faction_id = 1;
+  repeated StartingKitAllocation kits = 2;
+  repeated StartingMaterialAllocation materials = 3;
+}
+
+// `count` of the `equipment.json` kit `kit_id`. Every item that kit `uses` lands in the band's
+// ledger `count` times, so two kits that share an item ADD.
+message StartingKitAllocation {
+  string kit_id = 1;
+  uint32 count = 2;
+}
+
+// `units` of the `materials.json` material `material_id`. One budget point buys one unit.
+message StartingMaterialAllocation {
+  string material_id = 1;
+  uint32 units = 2;
+}
+
 // "What is on disk?" Answered from each file's HEADER alone — the save format puts the header in its
 // own uncompressed document precisely so a listing never inflates or decodes a world.
 message ListSavesQuery {}
@@ -1212,5 +1244,7 @@ message CommandEnvelope {
     SaveGameCommand save_game = 66;
     LoadGameCommand load_game = 67;
     DeleteSaveCommand delete_save = 68;
+    // 68 is held by `delete_save`, so the opening loadout takes 69 (append-only; never renumber).
+    SetStartingLoadoutCommand set_starting_loadout = 69;
   }
 }

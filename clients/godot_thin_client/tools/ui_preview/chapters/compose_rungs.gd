@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 104
+const EXPECTED_CHECKPOINTS := 114
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -65,6 +65,20 @@ const KIT_LIVENESS_FORAGERS := 2
 ## Read off `BandFx` rather than restated: the shared band fixtures state this kit's row on their own
 ## `kit_tiers` answer sheet, and a second spelling of the id here is how the roster entry below and the
 ## row the client looks it up in come apart.
+## The three coverage fixtures, against `BandFx.KIT_HUNT_HEADCOUNT` (17). Each is chosen so the
+## sentence it produces could not be produced by either of the others: five is a real shortfall, zero
+## is the owns-none case, and two is scarcer than the five so the "shortest item" claim has somewhere
+## to move to.
+const SHORTFALL_SPEARS_HELD := 5.0
+const SHORTFALL_NONE_HELD := 0.0
+const SHORTFALL_SLED_HELD := 2.0
+## How far past the crew the deep-store fixture reaches, so `min(held, crew)` has something to cap.
+const SHORTFALL_SURPLUS := 5.0
+
+## The retired word, asserted ABSENT: `dry` said the band owned some and had spent them, which is
+## exactly what an unowned item is not.
+const RETIRED_DRY_NEEDLE := "dry"
+
 const KIT_ID_TRAPPING := BandFx.KIT_ID_TRAPPING
 
 const KIT_TRAPPING_DISPLAY_NAME := "Trapping kit"
@@ -550,7 +564,9 @@ func run(harness) -> void:
 	# come from spears), and `trapping` alone would pass on a hint that named every item in the world.
 	# Both are asserted by EQUALITY against the vocabulary's own formats rather than by `contains`,
 	# because half of what the trapping line must get right is what it does NOT say.
-	_assert_kit_hint_names_the_kits_own_items()
+	_assert_the_crew_is_priced_on_the_gear_the_band_holds()
+	_assert_the_worker_cap_is_re_solved()
+	_assert_the_kit_line_is_a_shortfall_warning()
 
 	_assert_the_hint_states_each_kits_own_items()
 	_assert_the_appended_axes_read_the_band()
@@ -560,62 +576,209 @@ func run(harness) -> void:
 	await _herd_default_kit_states()
 	await _kit_swap_turn_estimate_states()
 
-## The two hints, driven at the roster + band the sim publishes: a band carrying all four items at four
-## DIFFERENT conditions, so a clause reading the wrong row quotes a visibly wrong number rather than a
-## coincidentally equal one.
-func _assert_kit_hint_names_the_kits_own_items() -> void:
+## ⛔ **THE KIT LINE IS A SHORTFALL WARNING, AND SAYS NOTHING WHEN NOBODY IS SHORT.**
+##
+## This block asserted the RETIRED line — `attack 20.0 · carry 40.0 per hunter · spears 87 · sled 54`
+## — and its subject was *which item does the clause name*. Both halves are gone: there are no tier
+## clauses and no condition clauses, so there is no item to name unless somebody is going without.
+## Reported from play as *"a very miserable 'baskets dry', which is Claude Speak, not real english …
+## carry 1.6 … and subsequent carry 8.0 … are really meaningless."*
+##
+## **THE THREE COVERAGE STATES ARE ONE CLAIM AND ARE ASSERTED TOGETHER.** Covered alone passes on a
+## line that never renders; short alone on a line that always does. The band is the same in all three
+## — only how many units it holds moves — so nothing but coverage can explain the difference.
+## ⛔ **THE CREW IS PRICED AGAINST THE GEAR THE BAND ACTUALLY HOLDS — the 9 / 2 / 2 defect.**
+##
+## Reported from play: with 0 harvesting kits the *hold it after* figure read 9, with 2 kits 2, and
+## with 1 kit **still 2**. A carry TIER is per EQUIPPED worker and steps at the FIRST unit — which is
+## what a tier means — so a client with no coverage term priced all nine gatherers at the basket rate
+## off a single basket. **The sim was never at fault**; `KitRoster.repriced_source` scaled by the tier.
+##
+##     carry(w) = w × bare + min(w, sat) × (equipped − bare)
+##
+## **THE TABLE IS THE REGRESSION, so it is asserted directly** — the exact figures from the arc's own
+## worked example, at both ends and at the ONE-unit case that is the whole defect. The three rows are
+## one claim: 0 and 9 alone are satisfied by a client that still steps at the first unit, and it is the
+## middle row that separates a blend from a step.
+func _assert_the_crew_is_priced_on_the_gear_the_band_holds() -> void:
+	for row in COVERAGE_TABLE:
+		var owned := int(row[0])
+		var want_carry := float(row[1])
+		var want_food := float(row[2])
+		var got_carry := KitRoster.carry_per_worker(COVERAGE_CREW, COVERAGE_EQUIPPED_CARRY,
+			COVERAGE_BARE_CARRY, owned)
+		h._assert_hud("coverage — %d basket(s) among %d gatherers carries %.4f per worker (got %.4f)"
+				% [owned, COVERAGE_CREW, want_carry, got_carry],
+			is_equal_approx(snappedf(got_carry, COVERAGE_EPSILON),
+				snappedf(want_carry, COVERAGE_EPSILON)))
+		# …and the same three rows THROUGH THE REAL SEAM, which is where the defect lived: the carry
+		# above is arithmetic, this is the number a compose sheet actually quotes.
+		var priced := KitRoster.priced_source(_coverage_patch(), "", _coverage_roster(),
+			KitRoster.JOB_FORAGE, COVERAGE_KIT_ID, COVERAGE_KIT_ID, _coverage_band(owned),
+			COVERAGE_CREW)
+		var got_food := float(priced[SourceForecast.FORECAST_PER_WORKER_KEY])
+		h._assert_hud("coverage — …and the sheet quotes %.4f food per worker for it (got %.4f)"
+				% [want_food, got_food],
+			is_equal_approx(snappedf(got_food, COVERAGE_EPSILON),
+				snappedf(want_food, COVERAGE_EPSILON)))
+	# **THE ONE-BASKET ROW IS NOT THE NINE-BASKET ROW**, stated outright: every equality above is
+	# satisfiable by a client that has stopped repricing at all, and this is what says the middle row
+	# is really between the two ends rather than pinned to either.
+	h._assert_hud("coverage — one basket is priced BETWEEN bare and fully equipped, not at either",
+		COVERAGE_TABLE[1][2] > COVERAGE_TABLE[0][2] and COVERAGE_TABLE[1][2] < COVERAGE_TABLE[2][2])
+
+## ⛔ **AND THE WORKER CAP IS RE-SOLVED, NEVER RESCALED.** The marginal worker past saturation still
+## contributes the BARE rate rather than zero, so a band short of gear needs a LARGER crew to reach a
+## ceiling than `ceiling / rate` says. The flat quotient is asserted beside the re-solved answer,
+## because the two agreeing is exactly the failure: a client that kept the quotient would pass any
+## claim that only named one number.
+func _assert_the_worker_cap_is_re_solved() -> void:
+	var per_worker := COVERAGE_TABLE[1][2]
+	var flat := int(ceil(CAP_TARGET / per_worker))
+	var solved := SourceForecast.crew_for_target(CAP_TARGET, per_worker,
+		COVERAGE_EQUIPPED_CARRY, COVERAGE_BARE_CARRY, CAP_SATURATING,
+		float(COVERAGE_TABLE[1][1]))
+	h._assert_hud("coverage — the cap RE-SOLVES the two-term form (%d hands, not the flat %d)"
+			% [solved, flat],
+		solved == CAP_RE_SOLVED_CREW and solved > flat)
+	# **A FULLY COVERED BAND IS THE CONTROL**: with the gear reaching everybody the two forms agree,
+	# so the claim above is about coverage rather than about the inversion always answering larger.
+	var covered := SourceForecast.crew_for_target(CAP_TARGET, COVERAGE_TABLE[2][2],
+		COVERAGE_EQUIPPED_CARRY, COVERAGE_BARE_CARRY, COVERAGE_CREW,
+		float(COVERAGE_TABLE[2][1]))
+	h._assert_hud("coverage — …while a fully covered band re-solves to the flat answer (%d)" % covered,
+		covered == int(ceil(CAP_TARGET / COVERAGE_TABLE[2][2])))
+	# **`bare == 0` IS GUARDED, NOT DIVIDED** — the target is simply unreachable past saturation, so
+	# the answer is the armed crew rather than an infinity.
+	var unreachable := SourceForecast.crew_for_target(CAP_TARGET, per_worker,
+		COVERAGE_EQUIPPED_CARRY, 0.0, CAP_SATURATING, float(COVERAGE_TABLE[1][1]))
+	h._assert_hud("coverage — a bare rate of zero caps at the armed crew, never an infinity (%d)"
+			% unreachable, unreachable == CAP_SATURATING)
+
+## The fixture the coverage table is measured on — the arc's own worked example.
+const COVERAGE_CREW := 9
+const COVERAGE_EQUIPPED_CARRY := 8.0
+const COVERAGE_BARE_CARRY := 1.6
+const COVERAGE_WIRE_PER_WORKER := 0.20
+const COVERAGE_KIT_ID := "gathering"
+## Rounding for the published figures, which are quoted to four places.
+const COVERAGE_EPSILON := 0.0001
+
+## `[baskets owned (== the saturating crew), carry per worker, food per worker]` — the table from the
+## arc, verbatim. `sat` equals the units held because every shipped item is held by one person.
+const COVERAGE_TABLE := [
+	[0, 1.6, 0.04],
+	[1, 2.3111, 0.0578],
+	[9, 8.0, 0.2],
+]
+
+## The cap fixture: a ceiling well past what one armed gatherer can carry, so the bare tail decides.
+const CAP_TARGET := 1.0
+const CAP_SATURATING := 1
+## `ceil(sat + (T − sat × equipped_pw) / bare_pw)` = `ceil(1 + (1.0 − 0.2) / 0.04)` = 21, against the
+## flat quotient's 18.
+const CAP_RE_SOLVED_CREW := 21
+
+func _coverage_roster() -> Array:
+	return [{
+		KitRoster.KIT_ID_KEY: COVERAGE_KIT_ID, "display_name": "Harvesting kit",
+		"jobs": [KitRoster.JOB_FORAGE],
+		KitRoster.KIT_FORAGE_CARRY_KEY: COVERAGE_EQUIPPED_CARRY,
+		KitRoster.KIT_HUNT_CARRY_KEY: 0.0, KitRoster.KIT_ATTACK_KEY: 0.0,
+		"item_ids": ["baskets"],
+	}]
+
+## The band's own resolved row — the shape the sim publishes, coverage terms included. `sat` is the
+## units held; the EQUIPPED tier does not move with them, which is the whole point.
+func _coverage_band(owned: int) -> Dictionary:
+	return {KitRoster.BAND_KIT_TIERS_KEY: [{
+		KitRoster.BAND_KIT_TIERS_ID_KEY: COVERAGE_KIT_ID,
+		KitRoster.KIT_FORAGE_CARRY_KEY: COVERAGE_EQUIPPED_CARRY,
+		KitRoster.KIT_FORAGE_CARRY_BARE_KEY: COVERAGE_BARE_CARRY,
+		KitRoster.KIT_FORAGE_SATURATING_CREW_KEY: owned,
+		KitRoster.KIT_HUNT_CARRY_KEY: 0.0, KitRoster.KIT_ATTACK_KEY: 0.0,
+	}]}
+
+func _coverage_patch() -> Dictionary:
+	return {SourceForecast.FORECAST_PER_WORKER_KEY: COVERAGE_WIRE_PER_WORKER}
+
+## The sentence, composed HERE from the vocabulary — never through `KitRoster.shortfall_line`, which
+## is the thing under test.
+func _kit_shortfall_want(held: int, crew: int, kit: Dictionary) -> String:
+	return HudComposeVocab.KIT_SHORTFALL_FORMAT % [held, crew,
+		KitRoster.kit_display_name(kit) + HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
+
+func _assert_the_kit_line_is_a_shortfall_warning() -> void:
 	var roster := BandFx.kit_roster_fixture()
-	roster.append({
-		"id": KIT_ID_TRAPPING, "display_name": KIT_TRAPPING_DISPLAY_NAME, "jobs": [KitRoster.JOB_HUNT],
-		"attack": BandFx.KIT_ATTACK_EQUIPPED,
-		"hunt_carry_per_worker_biomass": BandFx.KIT_HUNT_CARRY_EQUIPPED,
-		"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_BARE,
-		"scout_vantage_range": BandFx.KIT_SCOUT_VANTAGE_BARE,
-		# The passive device, then the haul aid it shares with `big_game` — config order, weapon first.
-		"item_ids": [BandFx.KIT_ITEM_TRAPS, BandFx.KIT_ITEM_SLED],
-	})
-	var band := BandFx.with_equipped_kit(BandFx.band_fixture())
-	# The tier half of both lines is identical (the two kits grant the same numbers), which is exactly
-	# why the item clauses are the only thing that can tell them apart.
-	var tiers := [
-		HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_EQUIPPED,
-			HudComposeVocab.KIT_TIER_DECIMALS),
-		HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % String.num(BandFx.KIT_HUNT_CARRY_EQUIPPED,
-			HudComposeVocab.KIT_TIER_DECIMALS),
-	]
-	var sled_clause := HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [BandFx.KIT_ITEM_SLED,
-		int(BandFx.KIT_CONDITION_SLED)]
-	var big_game_want := HudComposeVocab.KIT_HINT_SEPARATOR.join(tiers + [
-		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [BandFx.KIT_ITEM_SPEARS,
-			int(BandFx.KIT_CONDITION_SPEARS)],
-		sled_clause])
-	var trapping_want := HudComposeVocab.KIT_HINT_SEPARATOR.join(tiers + [
-		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [BandFx.KIT_ITEM_TRAPS,
-			int(BandFx.KIT_CONDITION_TRAPS)],
-		sled_clause])
-	var big_game_got := KitRoster.tier_hint(roster,
-		KitRoster.kit_by_id(roster, BandFx.KIT_ID_BIG_GAME), band, KitRoster.JOB_HUNT)
-	var trapping_got := KitRoster.tier_hint(roster,
-		KitRoster.kit_by_id(roster, KIT_ID_TRAPPING), band, KitRoster.JOB_HUNT)
-	h._assert_hud("the big-game hint is UNCHANGED — spears then sled, at their own conditions (\"%s\")"
-		% big_game_got, big_game_got == big_game_want)
-	h._assert_hud("…and the trapping hint names TRAPS at the traps' condition (wanted \"%s\", got \"%s\")"
-		% [trapping_want, trapping_got], trapping_got == trapping_want)
-	h._assert_hud("…naming no gear it does not carry — the reported defect (\"%s\")"
-		% trapping_got, not trapping_got.contains(BandFx.KIT_ITEM_SPEARS))
-	# The empty list is a real answer, not a missing field: `none` wears nothing, so it states its bare
-	# tiers and STOPS. Without this the whole claim is satisfiable by a hint that prints every item
-	# there is — and `none` is the entry that would show it, being in the same roster as both others.
-	var none_want := HudComposeVocab.KIT_HINT_SEPARATOR.join([
-		HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_BARE,
-			HudComposeVocab.KIT_TIER_DECIMALS),
-		HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % String.num(BandFx.KIT_HUNT_CARRY_BARE,
-			HudComposeVocab.KIT_TIER_DECIMALS),
-	])
-	var none_got := KitRoster.tier_hint(roster, KitRoster.kit_by_id(roster, BandFx.KIT_ID_NONE),
-		band, KitRoster.JOB_HUNT)
-	h._assert_hud("…while a kit that carries nothing states no condition clause at all (\"%s\")"
-		% none_got, none_got == none_want)
+	var big_game := KitRoster.kit_by_id(roster, BandFx.KIT_ID_BIG_GAME)
+	var crew := int(BandFx.KIT_HUNT_HEADCOUNT)
+
+	# **COVERED — every hunter holds what the kit is built around.** The gear is also visibly WORN
+	# (spears 87, sled 54), which is what makes this a claim about coverage rather than about
+	# condition: the old line would have printed both numbers here.
+	var covered := KitRoster.tier_hint(roster, big_game, BandFx.with_equipped_kit(
+		BandFx.band_fixture()), KitRoster.JOB_HUNT, crew)
+	h._assert_hud("a fully covered crew gets NO kit line at all (\"%s\")" % covered, covered == "")
+
+	# **SHORT — five complete Stalking kits among seventeen hunters.**
+	var partly := BandFx.band_fixture()
+	partly["kit_item_conditions"] = BandFx.kit_condition_rows(SHORTFALL_SPEARS_HELD)
+	var some := KitRoster.tier_hint(roster, big_game, partly, KitRoster.JOB_HUNT, crew)
+	h._assert_hud("…a partly outfitted crew counts KITS, not items (wanted \"%s\", got \"%s\")"
+			% [_kit_shortfall_want(int(SHORTFALL_SPEARS_HELD), crew, big_game), some],
+		some == _kit_shortfall_want(int(SHORTFALL_SPEARS_HELD), crew, big_game))
+
+	# **OWNS NONE — the same sentence, and the `0` says the difference.** The two formats it used to
+	# take are retired: `0 of 17` against `5 of 17` needs no second wording. It is also the state that
+	# once read `spears dry`, i.e. *you have spears and they are spent*.
+	var bare := BandFx.band_fixture()
+	bare["kit_item_conditions"] = BandFx.kit_condition_rows(SHORTFALL_NONE_HELD)
+	var none_held := KitRoster.tier_hint(roster, big_game, bare, KitRoster.JOB_HUNT, crew)
+	h._assert_hud("…and owning NONE reads `0 of %d` in the same sentence (got \"%s\")"
+			% [crew, none_held],
+		none_held == _kit_shortfall_want(0, crew, big_game))
+	h._assert_hud("…never as `dry`, which claimed the band owned some and had spent them",
+		not none_held.to_lower().contains(RETIRED_DRY_NEEDLE))
+	h._assert_hud("…and never naming an ITEM, which is the smaller and less honest number",
+		not none_held.to_lower().contains(BandFx.KIT_ITEM_SPEARS))
+
+	# ⛔ **A KIT IS EVERY ITEM IT CARRIES, AND THIS IS THE CLAIM THAT SAYS SO.** `big_game` is spears
+	# AND a sled: with plenty of spears and almost no sleds the band fields SLEDS-many complete kits,
+	# not spears-many. An item-counting line reported the spears here and was wrong by construction.
+	var sled_short := BandFx.band_fixture()
+	var rows: Array = BandFx.kit_condition_rows()
+	for row_variant in rows:
+		var row: Dictionary = row_variant
+		if String(row["item_id"]) == BandFx.KIT_ITEM_SLED:
+			row["count"] = int(SHORTFALL_SLED_HELD)
+	sled_short["kit_item_conditions"] = rows
+	var sled_line := KitRoster.tier_hint(roster, big_game, sled_short, KitRoster.JOB_HUNT, crew)
+	h._assert_hud("…a kit is only as complete as its SCARCEST item (wanted \"%s\", got \"%s\")"
+			% [_kit_shortfall_want(int(SHORTFALL_SLED_HELD), crew, big_game), sled_line],
+		sled_line == _kit_shortfall_want(int(SHORTFALL_SLED_HELD), crew, big_game))
+
+	# **AND IT IS CAPPED AT THE CREW.** A store deeper than the party reads `N of N`, never `store of
+	# N` — the question is how much of THIS party is outfitted, not how much gear is in the tent. It is
+	# the covered case, so the honest answer is SILENCE.
+	var deep := BandFx.band_fixture()
+	deep["kit_item_conditions"] = BandFx.kit_condition_rows(crew + SHORTFALL_SURPLUS)
+	h._assert_hud("…and a store deeper than the party says nothing at all, never `%d of %d`"
+			% [crew + SHORTFALL_SURPLUS, crew],
+		KitRoster.tier_hint(roster, big_game, deep, KitRoster.JOB_HUNT, crew) == "")
+
+	# **A KIT THAT CARRIES NOTHING CANNOT LEAVE ANYONE SHORT.** `none`'s tier IS the bare-handed one,
+	# which every worker already gets, so a warning here would be about gear the kit never claimed.
+	var nothing := KitRoster.tier_hint(roster, KitRoster.kit_by_id(roster, BandFx.KIT_ID_NONE),
+		bare, KitRoster.JOB_HUNT, crew)
+	h._assert_hud("…while a kit that carries nothing never warns (\"%s\")" % nothing, nothing == "")
+
+	# **A BAND THAT STATES NO LEDGER GETS NO WARNING** — the client has not read that count and will
+	# not quote a zero at it.
+	var silent := BandFx.band_fixture()
+	silent.erase("kit_item_conditions")
+	var unstated := KitRoster.tier_hint(roster, big_game, silent, KitRoster.JOB_HUNT, crew)
+	h._assert_hud("…and a band that publishes no item ledger is not accused (\"%s\")" % unstated,
+		unstated == "")
 
 # =====================================================================================
 #  A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED, AND THE TAKE IT WOULD HAVE QUOTED IS ZERO
@@ -1229,33 +1392,31 @@ func _assert_the_hint_states_each_kits_own_items() -> void:
 	var band := _pen_axis_band({})
 	var stalking := KitRoster.kit_by_id(kits, BandFx.KIT_ID_BIG_GAME)
 	var handling := KitRoster.kit_by_id(kits, HANDLING_KIT_ID)
-	var sep := HudComposeVocab.KIT_HINT_SEPARATOR
-	var attack_equipped := HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(
-		BandFx.KIT_ATTACK_EQUIPPED, HudComposeVocab.KIT_TIER_DECIMALS)
-	var attack_bare := HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(
-		BandFx.KIT_ATTACK_BARE, HudComposeVocab.KIT_TIER_DECIMALS)
-	var hunt_carry := HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % String.num(
-		BandFx.KIT_HUNT_CARRY_EQUIPPED, HudComposeVocab.KIT_TIER_DECIMALS)
-	# **THE ITEM NAMES ITSELF** — the clause takes the wire's own `item_ids` entry, so there is no
-	# axis→item table left for an expectation to borrow (nor for the hint to guess through).
-	var spears := HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [
-		BandFx.KIT_ITEM_SPEARS, int(BandFx.KIT_CONDITION_SPEARS)]
-	var sled := HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [
-		BandFx.KIT_ITEM_SLED, int(BandFx.KIT_CONDITION_SLED)]
-	var handling_gear := HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [
-		BandFx.KIT_ITEM_CROOK, int(BandFx.KIT_CONDITION_CROOK)]
-	# The hint is source-blind, so there is one column and it is the only one there can be — see the
-	# struck claim above for why a second, "penned" column here was a copy of this call, not a test.
-	var stalking_hint := KitRoster.tier_hint(kits, stalking, band, KitRoster.JOB_HUNT)
-	var handling_hint := KitRoster.tier_hint(kits, handling, band, KitRoster.JOB_HUNT)
-	h._assert_hud("a stalking kit states attack, the haul and its own items — \"%s\""
-		% stalking_hint, stalking_hint == sep.join([attack_equipped, hunt_carry, spears, sled]))
-	# The handling kit carries no spears, so it takes the bare-handed attack and names the crook it does
-	# carry — the ITEM half of the claim, which is what stops the two readings being one reading twice.
-	h._assert_hud("…and a handling kit states the BARE attack and names its crook — \"%s\"" % handling_hint,
-		handling_hint == sep.join([attack_bare, hunt_carry, handling_gear, sled]))
-	h._assert_hud("…so the KIT moves the line, and neither reading is a constant the other could be",
-		stalking_hint != handling_hint)
+	# ⛔ **RE-AIMED FROM THE RETIRED HINT LINE ONTO `effective_tiers`.** This asked the rendered string
+	# whether each kit "states attack, the haul and its own items"; there are no tier clauses and no
+	# item clauses on that line any more, so the string cannot carry the claim. The claim itself is
+	# untouched and is asked of the producer the line used to read: a kit's tiers are ITS OWN, resolved
+	# against this band, and the two kits must not be one reading twice.
+	var stalking_tiers := KitRoster.effective_tiers(kits, stalking, band)
+	var handling_tiers := KitRoster.effective_tiers(kits, handling, band)
+	h._assert_hud("a stalking kit resolves the EQUIPPED attack (%s)"
+			% str(stalking_tiers[KitRoster.KIT_ATTACK_KEY]),
+		is_equal_approx(float(stalking_tiers[KitRoster.KIT_ATTACK_KEY]),
+			BandFx.KIT_ATTACK_EQUIPPED))
+	# The handling kit carries no weapon, so it takes the bare-handed attack — the half that stops the
+	# two readings being one reading twice.
+	h._assert_hud("…and a handling kit the BARE one, carrying no weapon (%s)"
+			% str(handling_tiers[KitRoster.KIT_ATTACK_KEY]),
+		is_equal_approx(float(handling_tiers[KitRoster.KIT_ATTACK_KEY]), BandFx.KIT_ATTACK_BARE))
+	h._assert_hud("…while both haul at the sled's tier, which is what a pen is collected on (%s)"
+			% str(handling_tiers[KitRoster.KIT_HUNT_CARRY_KEY]),
+		is_equal_approx(float(handling_tiers[KitRoster.KIT_HUNT_CARRY_KEY]),
+			BandFx.KIT_HUNT_CARRY_EQUIPPED))
+	# **AND THE ITEM HALF SURVIVES ON THE SHORTFALL LINE**, which is the only place an item is named
+	# now: each kit's warning may name only gear that kit carries.
+	h._assert_hud("…so the KIT still decides which gear can be named, not the job",
+		KitRoster.kit_item_ids(handling).has(BandFx.KIT_ITEM_CROOK)
+			and not KitRoster.kit_item_ids(handling).has(BandFx.KIT_ITEM_SPEARS))
 
 ## **THE APPENDED AXES STEP DOWN WITH THE BAND'S OWN WEAR — a pair per axis, and neither half proves
 ## anything alone.**
@@ -1285,21 +1446,19 @@ func _assert_the_appended_axes_read_the_band() -> void:
 		_pen_axis_band({}))[KitRoster.KIT_HUNT_CARRY_KEY])
 	h._assert_hud("a keeper hauls at the EQUIPPED tier, the sled being what carries a pen (%s)"
 		% str(fresh_carry), is_equal_approx(fresh_carry, BandFx.KIT_HUNT_CARRY_EQUIPPED))
-	var worn_hint := KitRoster.tier_hint(pen_kits, handling, _pen_axis_band({}, true),
-		KitRoster.JOB_HUNT)
-	# **THE HAUL DOES NOT MOVE AND THE CROOK'S CLAUSE DOES.** The dry band differs from the fresh one in
-	# the CROOK alone, so a hint that stepped the carry down here would be reading the wrong item's
-	# condition — the exact class of bug `BandKitTiers` exists to remove.
-	var want_worn := HudComposeVocab.KIT_HINT_SEPARATOR.join([
-		HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(
-			BandFx.KIT_ATTACK_BARE, HudComposeVocab.KIT_TIER_DECIMALS),
-		HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % String.num(
-			BandFx.KIT_HUNT_CARRY_EQUIPPED, HudComposeVocab.KIT_TIER_DECIMALS),
-		HudComposeVocab.KIT_HINT_DRY_FORMAT % BandFx.KIT_ITEM_CROOK,
-		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [
-			BandFx.KIT_ITEM_SLED, int(BandFx.KIT_CONDITION_SLED)]])
-	h._assert_hud("…and a DRY crook shows as dry beside an untouched sled's own haul — \"%s\"" % worn_hint,
-		worn_hint == want_worn)
+	# ⛔ **RE-AIMED ONTO `effective_tiers` FOR THE SAME REASON AS THE BLOCK ABOVE.** It asserted the
+	# whole rendered hint — `attack … · carry … · crook dry · sled 54` — and both the tier clauses and
+	# the condition clauses are retired. The claim is the ARITHMETIC one and is unchanged: the dry band
+	# differs from the fresh one in the CROOK alone, so a haul that moved here would be reading the
+	# wrong item's condition, which is the exact class of bug `BandKitTiers` exists to remove.
+	var worn_tiers := KitRoster.effective_tiers(pen_kits, handling, _pen_axis_band({}, true))
+	h._assert_hud("a DRY crook does not move the sled's haul (%s)"
+			% str(worn_tiers[KitRoster.KIT_HUNT_CARRY_KEY]),
+		is_equal_approx(float(worn_tiers[KitRoster.KIT_HUNT_CARRY_KEY]),
+			BandFx.KIT_HUNT_CARRY_EQUIPPED))
+	h._assert_hud("…and the weaponless kit still fights bare-handed (%s)"
+			% str(worn_tiers[KitRoster.KIT_ATTACK_KEY]),
+		is_equal_approx(float(worn_tiers[KitRoster.KIT_ATTACK_KEY]), BandFx.KIT_ATTACK_BARE))
 	# The SCOUT's axis, on the shared roster: the wayfinding kit is the one entry that equips it, so a
 	# band that has worn that gear out sees one tile where the roster still advertises two.
 	var kits := BandFx.kit_roster_fixture()

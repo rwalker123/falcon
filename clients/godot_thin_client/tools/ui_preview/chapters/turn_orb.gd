@@ -28,6 +28,8 @@ const KnowledgeFx := preload("res://tools/ui_preview/fixtures_knowledge.gd")
 ## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
 ## rung off its own flags through this, and re-stamps after any mutation of them.
 const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
+## Shared node lookups, for the popover-row walk this chapter and `starting_loadout` both read.
+const NodeQuery := preload("res://tools/ui_preview/node_query.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -181,40 +183,11 @@ func _set_forage_patches(patches: Array) -> void:
 			ForageFx.floorify(p)
 	h._hud.update_forage_patches(patches)
 
-## **THE RENDERED reason rows of the open popover**, in the order they are drawn, each as
-## `{label, detail}` read off the two Labels themselves — never off `TurnOrb._entries`. A registry read
-## would pass on a row the popover never drew, and it would also skip the sort `set_attention` applies,
-## so a claim about which row sits ABOVE which could not be made against it. The popover body is a
-## header, one Button per entry, and a footer whose Advance button is nested one level deeper — so the
-## body's DIRECT Button children are exactly the reason rows.
+## The rendered reason rows of the open popover. **The walk itself lives in `node_query.gd`** — the
+## `starting_loadout` chapter reads the same rows for its own orb states, and a helper two chapters
+## need is a shared static rather than a copy in each.
 func _orb_rows() -> Array:
-	var rows: Array = []
-	var pop = h._hud.turn_orb._popover
-	if pop == null or pop.get_child_count() == 0:
-		return rows
-	for row_node in pop.get_child(0).get_children():
-		if not (row_node is Button) or row_node.get_child_count() == 0:
-			continue
-		# The row is stripe · icon · text stack · jump, and the text stack is the only VBox in it, so
-		# the label/detail pair is reached structurally rather than by counting siblings.
-		for cell in row_node.get_child(0).get_children():
-			if not (cell is VBoxContainer) or cell.get_child_count() < 2:
-				continue
-			# **AND THE AFFORDANCE**, which is the last child of the row's own HBox: `Jump →` for a
-			# locating row, `Open ▸` for a non-locating kind that a panel branch answers, and EMPTY for
-			# one that neither locates nor opens. Read here rather than asserted off the kind, because
-			# the failure this catches is a row that WEARS the affordance and does nothing when pressed.
-			var jump := ""
-			var last: Node = row_node.get_child(0).get_child(row_node.get_child(0).get_child_count() - 1)
-			if last is Label:
-				jump = String((last as Label).text)
-			rows.append({
-				"label": String((cell.get_child(0) as Label).text),
-				"detail": String((cell.get_child(1) as Label).text),
-				"jump": jump,
-			})
-			break
-	return rows
+	return NodeQuery.turn_orb_popover_rows(h._hud.turn_orb)
 
 ## The rendered row whose label is EXACTLY `label`, or `null`. Rows are found by the words the player
 ## reads, so a producer that fired with different text is a miss rather than a silent match.

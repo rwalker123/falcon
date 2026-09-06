@@ -12,7 +12,8 @@ use std::collections::BTreeSet;
 
 use crate::dict::campaign::{
     campaign_label_to_dict, campaign_profiles_to_array, command_events_to_array,
-    pending_forks_to_array, stance_axes_to_array, victory_state_to_dict, voice_medium_to_array,
+    opening_loadout_to_dict, pending_forks_to_array, stance_axes_to_array, victory_state_to_dict,
+    voice_medium_to_array,
 };
 use crate::dict::connections::connections_to_array;
 use crate::dict::culture::{
@@ -1366,6 +1367,14 @@ pub(crate) fn snapshot_to_dict(
 
     if let Some(voice_medium) = snapshot.campaign().and_then(|s| s.voiceMedium()) {
         let _ = dict.insert("voice_medium", &voice_medium_to_array(voice_medium));
+    }
+
+    // **THE TURN-ONE OUTFITTING WINDOW** (issue #629). A whole-diffed table on the campaign section,
+    // so it is decoded on BOTH this path and `decode_delta_against` — the same contract the kit
+    // roster below carries, and for the same reason: a field read only on the full path republishes
+    // the baseline's value for the life of the world, and this one's `open` flips on turn one.
+    if let Some(opening_loadout) = snapshot.campaign().and_then(|s| s.openingLoadout()) {
+        let _ = dict.insert("opening_loadout", &opening_loadout_to_dict(opening_loadout));
     }
 
     if let Some(server_build) = header.serverBuild() {

@@ -519,6 +519,40 @@ pub struct BandKitTiersState {
     /// `build_work_branch`. Appended (append-only).
     #[serde(default)]
     pub build_work_rung: String,
+    /// **How many workers this kit can actually equip for a HUNT haul out of what this band holds** —
+    /// the head count at or **above** which extra hands haul only at the bare rate. `0` = nothing
+    /// live in the kit lifts the axis.
+    ///
+    /// **It is the missing half of the two rates above**, and it is what makes them a closed form a
+    /// client can evaluate against a crew the player is *proposing*:
+    ///
+    /// ```text
+    /// carry(w) = w × bare + min(w, saturating_crew) × (equipped − bare)
+    /// ```
+    ///
+    /// ⛔ **Without it a tier is applied to people who do not hold the gear.** A carry tier is per
+    /// *equipped* worker and steps at the **first** unit, so
+    /// [`Self::forage_carry_per_worker_biomass`] reads `8.0` for a band holding one basket and `8.0`
+    /// for a band holding nine — and a consumer with no coverage term prices nine gatherers off that
+    /// single basket. Coverage arms a **prefix** of the party and the rest work bare, which is where
+    /// the two terms come from. The build pair has no `bare` half only because a builder with no tool
+    /// contributes nothing; a gatherer with no basket still gathers.
+    #[serde(default)]
+    pub hunt_carry_saturating_crew: u32,
+    /// The gather twin of [`Self::hunt_carry_saturating_crew`].
+    #[serde(default)]
+    pub forage_carry_saturating_crew: u32,
+    /// **What a hunter holding none of this kit's gear hauls** — the `bare` term of the form on
+    /// [`Self::hunt_carry_saturating_crew`].
+    ///
+    /// ⛔ **Do not substitute `labor_config`'s `per_worker_biomass_capacity` for it.** The two are
+    /// equal only while no item declares an unequipped side for the axis, which is a property of
+    /// today's item table rather than of the model.
+    #[serde(default)]
+    pub hunt_carry_bare_per_worker_biomass: f32,
+    /// The gather twin of [`Self::hunt_carry_bare_per_worker_biomass`].
+    #[serde(default)]
+    pub forage_carry_bare_per_worker_biomass: f32,
 }
 
 /// The neutral value of [`BandKitTiersState`]'s three multipliers — `1.0`, never `0`.
@@ -563,6 +597,12 @@ impl Default for BandKitTiersState {
             build_rate: kit_multiplier_neutral(),
             build_work_per_worker: 0.0,
             build_work_saturating_crew: 0,
+            // `0` on both pairs is the honest reading of a band holding nothing: no worker is
+            // equipped, and the bare rate is whatever the caller's baseline turns out to be.
+            hunt_carry_saturating_crew: 0,
+            forage_carry_saturating_crew: 0,
+            hunt_carry_bare_per_worker_biomass: 0.0,
+            forage_carry_bare_per_worker_biomass: 0.0,
             // An empty branch is the honest reading of a kit with no build tool, and the safe one:
             // naming a web here would price a build off gear the kit does not hold.
             build_work_branch: String::new(),

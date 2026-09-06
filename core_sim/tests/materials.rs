@@ -599,70 +599,68 @@ fn equipment_batches_survive_a_checkpoint_round_trip() {
     );
 }
 
-/// ⛔ **EVERY UNPRODUCED MATERIAL REACHES A SPAWNED BAND, AND NOTHING ELSE IS STOCKED TWICE.**
+/// ⛔ **A SPAWNED BAND OWNS NOTHING — NO EQUIPMENT AND AN EMPTY MATERIAL STORE.**
 ///
-/// Two materials on the roster have **no producer** — `wood` until forest foraging lands and `stone`
-/// until quarrying does (issue #583) — and `start_stock` is the whole of how a player ever holds
-/// either. An improvement that eats one of them (`animal:pen`'s hurdles are woven from wood;
-/// `route:paved_road` swallows stone) would otherwise declare a pile nobody could ever draw: dead
-/// content that reports nothing, because a rung short of a material simply stalls.
+/// Both halves used to be false and both were retired deliberately. `equipment.json` ships
+/// `start_stock_fraction: 0.0` (`.claude/rules/core_sim/equipment.md`), and the per-material
+/// `start_stock` that seeded `wood` and `stone` beside the kit is **deleted, mechanism and all**.
+/// The one source of opening gear and material is the loadout the player composes on turn one.
 ///
-/// **The seeding is automatic and this is what says so.** `worldgen::start_stocked_materials` walks
-/// the roster and deposits for every entry that declares a `start_stock`, so a new unproduced
-/// material is reachable the moment its roster row names an opening pile — no code edit. The test is
-/// therefore driven off the **config** rather than a literal list, and would catch the seeding pass
-/// being narrowed to the materials it happened to know about.
-///
-/// **The second half is the pairing**: a material that *has* a producer must NOT also be stocked, or
-/// the opening pile is a duplicate source nobody asked for.
+/// The store half is the one this test exists for: an empty `LocalStore` and a store the capture
+/// simply failed to publish look identical from the outside, so it asserts on the **cohort's own**
+/// store rather than on a wire row.
 #[test]
-fn a_spawned_band_holds_every_material_nothing_produces() {
+fn a_spawned_band_owns_no_equipment_and_holds_no_material() {
     let mut app = build_test_app();
+    // **The SHIPPED equipment config, put back deliberately.** `build_test_app` installs
+    // `for_a_stocked_fixture` so a fixture whose subject is something else gets bands that own gear;
+    // this fixture's subject IS the shipped opening, so it says so (`equipment.md` -> "A FIXTURE
+    // DECLARES THE STOCK").
+    app.world
+        .insert_resource(core_sim::EquipmentConfigHandle::default());
     // One update, so worldgen has run and its spawns are on the ground.
     app.update();
     let materials = app.world.resource::<MaterialsConfigHandle>().get();
-    let stocked: Vec<&str> = materials
-        .materials()
-        .filter(|(_, def)| def.start_stock.is_some())
-        .map(|(id, _)| id)
-        .collect();
-    assert!(
-        !stocked.is_empty(),
-        "**LIVENESS**: the roster must declare at least one opening pile, or the loop below asserts \
-         nothing"
-    );
-
-    let mut query = app.world.query::<(&PopulationCohort, &ResidentBand)>();
-    let (cohort, _) = query
+    let mut query = app
+        .world
+        .query::<(&PopulationCohort, &core_sim::BandEquipment, &ResidentBand)>();
+    let (cohort, equipment, _) = query
         .iter(&app.world)
         .next()
         .expect("the campaign spawns at least one resident band");
-    for id in &stocked {
-        let held = cohort.stores.material_total(id).to_f32();
-        assert!(
-            held > 0.0,
-            "'{id}' declares a `start_stock` and nothing produces it, so a spawned band must be \
-             holding some — it is holding {held}, which makes every rung that eats it unbuildable"
-        );
-    }
-    for (id, def) in materials.materials() {
-        if def.start_stock.is_some() {
-            continue;
+    assert_eq!(
+        equipment.batches().count(),
+        0,
+        "a spawning band owns NO equipment at all - `start_stock_fraction` ships 0.0, and the \
+         opening allocation is the only way gear reaches a band"
+    );
+    let mut held: Vec<(&str, f32)> = Vec::new();
+    for (id, _) in materials.materials() {
+        let amount = cohort.stores.material_total(id).to_f32();
+        if amount > 0.0 {
+            held.push((id, amount));
         }
-        assert_eq!(
-            cohort.stores.material_total(id).to_f32(),
-            0.0,
-            "'{id}' has a producer, so a spawn must not hand it out as well - an opening pile \
-             beside a producer is a second source nobody chose"
-        );
     }
+    assert!(
+        held.is_empty(),
+        "a spawning band's material store is EMPTY - every material is either produced or picked \
+         in the opening loadout, and nothing is stocked at spawn; it is holding {held:?}"
+    );
+}
 
-    // ⛔ **AND THE OTHER DIRECTION: EVERY MATERIAL AN IMPROVEMENT EATS MUST BE OBTAINABLE.** The
-    // half above says *what is stocked arrives*; on its own it passes a roster that quietly dropped
-    // an unproduced material's opening pile, because the material simply leaves the stocked list.
-    // What makes a pile dead content is a rung declaring it with **no way in at all** — no recipe
-    // that outputs it and no spawn that hands it over — and that is a rung whose builds stall
-    // for ever with no fault reported anywhere.
+/// ⛔ **EVERY MATERIAL AN IMPROVEMENT EATS MUST HAVE A WAY IN** — a recipe that outputs it, or a
+/// place on the opening loadout's pick list.
+///
+/// A rung declaring a pile of something with **no way in at all** is dead content that reports
+/// nothing: the build simply stalls for ever with no fault raised anywhere. The pairing used to be
+/// producer-or-`start_stock`; with that mechanism gone, the second arm is the player's opening pick,
+/// which is how `wood` (the pen's hurdles) and `stone` (a paved tile) stay reachable until forest
+/// foraging and quarrying (issue #583) land their producers.
+#[test]
+fn every_material_a_rung_eats_is_produced_or_pickable_at_the_start() {
+    let mut app = build_test_app();
+    app.update();
+    let materials = app.world.resource::<MaterialsConfigHandle>().get();
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let recipes = core_sim::RecipesConfig::builtin();
     let produced: Vec<&str> = recipes
@@ -670,18 +668,33 @@ fn a_spawned_band_holds_every_material_nothing_produces() {
         .flat_map(|(_, recipe)| recipe.outputs.iter())
         .filter_map(|output| output.material_id())
         .collect();
+    let pickable: Vec<String> = core_sim::StartProfiles::builtin()
+        .iter()
+        .flat_map(|profile| {
+            profile
+                .overrides()
+                .opening_loadout
+                .pickable_materials
+                .clone()
+        })
+        .collect();
+    assert!(
+        !pickable.is_empty(),
+        "**LIVENESS**: some profile must offer a pick list, or the second arm below is vacuous"
+    );
     let mut eaten = 0;
     for rung in &ladder.rungs {
         for (id, _) in rung.build_materials().chain(rung.upkeep_materials()) {
             eaten += 1;
-            let has_producer = produced.contains(&id);
-            let has_opening_pile = materials
-                .materials()
-                .any(|(other, def)| other == id && def.start_stock.is_some());
             assert!(
-                has_producer || has_opening_pile,
-                "rung '{}' eats '{id}', which no recipe makes and no spawn hands out - the rung's \
-                 builds would stall for ever with nothing reporting why",
+                materials.material(id).is_some(),
+                "rung '{}' eats '{id}', which the materials table does not carry",
+                rung.wire_key()
+            );
+            assert!(
+                produced.contains(&id) || pickable.iter().any(|pick| pick == id),
+                "rung '{}' eats '{id}', which no recipe makes and no opening loadout offers - the \
+                 rung's builds would stall for ever with nothing reporting why",
                 rung.wire_key()
             );
         }

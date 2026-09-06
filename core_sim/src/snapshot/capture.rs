@@ -45,6 +45,12 @@ pub struct SnapshotContext<'w> {
     pub map_presets: Res<'w, MapPresetsHandle>,
     pub campaign_label: Option<Res<'w, CampaignLabel>>,
     pub start_profiles: Res<'w, StartProfilesHandle>,
+    /// The profile this campaign is actually running — where the opening loadout's pick list and
+    /// pre-fill live. `Option` on `campaign_label`'s rule: a hand-rolled test `World` need not have
+    /// chosen a campaign.
+    pub active_profile: Option<Res<'w, crate::start_profile::ActiveStartProfile>>,
+    /// The opening outfitting window's live state. `Option` for the same reason.
+    pub starting_loadout: Option<Res<'w, crate::starting_loadout::StartingLoadout>>,
     pub victory: Res<'w, VictoryState>,
     pub faction_inventory: Res<'w, FactionInventory>,
     pub sedentarization: Res<'w, SedentarizationScore>,
@@ -261,6 +267,10 @@ pub(crate) struct PublishState {
     pending_forks: Whole<Vec<PendingForksState>>,
     stance_axes: Whole<Vec<StanceState>>,
     voice_medium: Whole<Vec<VoiceMediumState>>,
+    /// The opening outfitting window. In practice near-constant — it moves twice in a campaign, when
+    /// the loadout is applied and when the first turn shuts it — so it diffs out on every other
+    /// frame exactly as the kit roster does.
+    opening_loadout: Whole<OpeningLoadoutState>,
     herds: Whole<Vec<HerdTelemetryState>>,
     food_modules: Whole<Vec<FoodModuleState>>,
     /// The kit roster and the two per-job defaults — per-world constants, so in practice they diff
@@ -581,6 +591,7 @@ struct CampaignParts {
     pending_forks: Option<Vec<PendingForksState>>,
     stance_axes: Option<Vec<StanceState>>,
     voice_medium: Option<Vec<VoiceMediumState>>,
+    opening_loadout: Option<OpeningLoadoutState>,
     faction_inventory: Option<Vec<SchemaFactionInventoryState>>,
     sedentarization: Option<Vec<SchemaSedentarizationState>>,
     discovered_sites: Option<Vec<SchemaDiscoveredSitesState>>,
@@ -600,6 +611,7 @@ struct CampaignBaselines<'a> {
     pending_forks: &'a mut Whole<Vec<PendingForksState>>,
     stance_axes: &'a mut Whole<Vec<StanceState>>,
     voice_medium: &'a mut Whole<Vec<VoiceMediumState>>,
+    opening_loadout: &'a mut Whole<OpeningLoadoutState>,
     faction_inventory: &'a mut Whole<Vec<SchemaFactionInventoryState>>,
     sedentarization: &'a mut Whole<Vec<SchemaSedentarizationState>>,
     discovered_sites: &'a mut Whole<Vec<SchemaDiscoveredSitesState>>,
@@ -630,6 +642,7 @@ fn diff_campaign(
         pending_forks: diff_whole(baseline.pending_forks, &snapshot.pending_forks, write),
         stance_axes: diff_whole(baseline.stance_axes, &snapshot.stance_axes, write),
         voice_medium: diff_whole(baseline.voice_medium, &snapshot.voice_medium, write),
+        opening_loadout: diff_whole(baseline.opening_loadout, &snapshot.opening_loadout, write),
         faction_inventory: diff_whole(
             baseline.faction_inventory,
             &snapshot.faction_inventory,
@@ -855,6 +868,7 @@ impl PublishState {
             pending_forks: Whole::default(),
             stance_axes: Whole::default(),
             voice_medium: Whole::default(),
+            opening_loadout: Whole::default(),
             herds: Whole::default(),
             food_modules: Whole::default(),
             kits: Whole::default(),
@@ -976,6 +990,7 @@ impl PublishState {
             pending_forks,
             stance_axes,
             voice_medium,
+            opening_loadout,
             faction_inventory,
             sedentarization,
             discovered_sites,
@@ -1086,6 +1101,7 @@ impl PublishState {
                             pending_forks,
                             stance_axes,
                             voice_medium,
+                            opening_loadout,
                             faction_inventory,
                             sedentarization,
                             discovered_sites,
@@ -1185,6 +1201,7 @@ impl PublishState {
             pending_forks: campaign_parts.pending_forks,
             stance_axes: campaign_parts.stance_axes,
             voice_medium: campaign_parts.voice_medium,
+            opening_loadout: campaign_parts.opening_loadout,
             faction_inventory: campaign_parts.faction_inventory,
             sedentarization: campaign_parts.sedentarization,
             discovered_sites: campaign_parts.discovered_sites,
@@ -1407,6 +1424,8 @@ impl PublishState {
             .reset(entry.snapshot.pending_forks.clone());
         self.stance_axes.reset(entry.snapshot.stance_axes.clone());
         self.voice_medium.reset(entry.snapshot.voice_medium.clone());
+        self.opening_loadout
+            .reset(entry.snapshot.opening_loadout.clone());
         self.herds.reset(entry.snapshot.herds.clone());
         self.food_modules.reset(entry.snapshot.food_modules.clone());
         self.kits.reset(entry.snapshot.kits.clone());
@@ -1574,6 +1593,7 @@ impl PublishState {
             pending_forks: None,
             stance_axes: None,
             voice_medium: None,
+            opening_loadout: None,
             herds: None,
             food_modules: None,
             kits: None,
@@ -1713,6 +1733,7 @@ impl PublishState {
             pending_forks: None,
             stance_axes: None,
             voice_medium: None,
+            opening_loadout: None,
             herds: None,
             food_modules: None,
             kits: None,
@@ -1836,6 +1857,7 @@ impl PublishState {
             pending_forks: None,
             stance_axes: None,
             voice_medium: None,
+            opening_loadout: None,
             herds: None,
             food_modules: None,
             kits: None,
@@ -2174,6 +2196,8 @@ pub fn capture_snapshot(
         map_presets: _,
         campaign_label,
         start_profiles,
+        active_profile,
+        starting_loadout,
         victory,
         faction_inventory,
         sedentarization,
@@ -3139,6 +3163,22 @@ pub fn capture_snapshot(
         &discovery_progress,
         knowledge_threshold,
     );
+    // **The opening loadout picker's row.** A world with no chosen campaign publishes the default —
+    // a shut window with no budget — which is exactly what such a world has.
+    let opening_loadout_state = match (starting_loadout.as_deref(), active_profile.as_deref()) {
+        (Some(window), Some(profile)) => crate::snapshot::campaign::snapshot_opening_loadout(
+            window,
+            profile.profile(),
+            &recipes_config,
+            &crate::snapshot::crafting::known_crafts(
+                &materials_config,
+                &discovery_progress,
+                viewer_faction.0,
+                knowledge_threshold,
+            ),
+        ),
+        _ => OpeningLoadoutState::default(),
+    };
     let assembled = WorldSnapshot {
         header,
         kits: kit_states,
@@ -3194,6 +3234,7 @@ pub fn capture_snapshot(
         pending_forks: pending_forks_state.clone(),
         stance_axes: stance_axes_state.clone(),
         voice_medium: voice_medium_state.clone(),
+        opening_loadout: opening_loadout_state.clone(),
         capability_flags: capability_bits,
         axis_bias: axis_bias_state,
         sentiment: sentiment_state,

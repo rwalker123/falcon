@@ -822,6 +822,13 @@ enum Command {
         seed: u64,
         profile_id: String,
     },
+    /// **The opening loadout, composed on turn one** — the one source of a faction's starting gear
+    /// and material. Field 69. See `handle_set_starting_loadout`; it fails **closed and whole**.
+    SetStartingLoadout {
+        faction: FactionId,
+        kits: Vec<sim_runtime::StartingKitAllocation>,
+        materials: Vec<sim_runtime::StartingMaterialAllocation>,
+    },
     /// Stage a sparse config patch for the **next** `new_game`. Validated and installed by
     /// `core_sim::install_config_override`; the running world is never touched.
     SetConfigOverride {
@@ -5732,6 +5739,49 @@ fn cancel_scope_applied_message(scope: CancelScope, band_label: &str) -> String 
 /// the Scout/Warrior roles under `Roles`. The narrow scopes deliberately leave [`BandTravel`] alone:
 /// moving is not working. Rejects when *the requested scope* has nothing to clear, so a stray
 /// invocation reports a failure rather than a misleading "stood down".
+/// **Apply a composed opening loadout, or refuse the whole thing.**
+///
+/// The validation, the band selection and the deposit all live in `core_sim::starting_loadout` — the
+/// server's job is to translate the wire types and say what happened.
+///
+/// **A success and a refusal both leave the window open**, because committing a loadout never closes
+/// it: the player revises a pick for the whole of turn one. So `openingLoadout.open` is not the
+/// client's confirmation — what a client reads is the **band's own published state** on the recapture
+/// this command triggers, which after a success is exactly the allocation it sent (the apply is a
+/// replacement) and after a refusal is whatever stood before.
+fn handle_set_starting_loadout(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    kits: &[sim_runtime::StartingKitAllocation],
+    materials: &[sim_runtime::StartingMaterialAllocation],
+) {
+    let kits: Vec<core_sim::KitAllocation> = kits
+        .iter()
+        .map(|allocation| core_sim::KitAllocation {
+            kit_id: allocation.kit_id.clone(),
+            count: allocation.count,
+        })
+        .collect();
+    let materials: Vec<core_sim::MaterialAllocation> = materials
+        .iter()
+        .map(|allocation| core_sim::MaterialAllocation {
+            material_id: allocation.material_id.clone(),
+            units: allocation.units,
+        })
+        .collect();
+    if let Err(reason) =
+        core_sim::apply_starting_loadout(&mut app.world, faction, &kits, &materials)
+    {
+        warn!(
+            target: "shadow_scale::command",
+            command = "set_starting_loadout",
+            faction = %faction.0,
+            %reason,
+            "command.starting_loadout.rejected"
+        );
+    }
+}
+
 fn handle_cancel_order(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -8781,6 +8831,15 @@ fn command_from_payload(
             scope,
         }),
         ProtoCommandPayload::ExportMap { path } => Some(Command::ExportMap { path }),
+        ProtoCommandPayload::SetStartingLoadout {
+            faction_id,
+            kits,
+            materials,
+        } => Some(Command::SetStartingLoadout {
+            faction: FactionId(faction_id),
+            kits,
+            materials,
+        }),
         ProtoCommandPayload::SetConfigOverride { kind, patch_json } => {
             Some(Command::SetConfigOverride { kind, patch_json })
         }
@@ -9761,6 +9820,13 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             scope,
         } => {
             handle_cancel_order(app, faction, band_id, scope);
+        }
+        Command::SetStartingLoadout {
+            faction,
+            kits,
+            materials,
+        } => {
+            handle_set_starting_loadout(app, faction, &kits, &materials);
         }
         // The four non-replayable commands never reach here; the dispatch loop handles them.
         Command::Turn(_)

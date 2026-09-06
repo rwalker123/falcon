@@ -695,9 +695,12 @@ a store bleeding for ever. A store with nothing in it at all blocks the head wit
 `BuildGate::Materials` — the cause a rung whose *own* gate holds publishes, read off
 `BuildQuote::blocking_gate` and never off the gate directly.
 
-**`stone` has no producer.** It reaches the player through `materials.json`'s `start_stock` alone
-(`12.5` per worker — about ten paved tiles to the shipped band), seeded by worldgen for every material
-that declares one. Quarrying belongs to the minerals arc, issue #583.
+**`stone` has no producer.** It reaches the player through the **turn-one opening loadout** alone
+(`.claude/rules/core_sim/campaign.md` → "The opening loadout"): a spawn stocks no material at all, so a
+paved tile is reachable exactly insofar as the player spent opening points on stone — at the shipped
+30-point budget and the `route:paved_road` rung's pile of 20, that is at most one paved tile from a
+budget spent on nothing else. An opening pick cannot renew, so a faction that spends its stone has no
+road above a dirt one until a producer exists. Quarrying belongs to the minerals arc, issue #583.
 
 ## ⛔ TWO DECAY TRIGGERS, BECAUSE A FREE RUNG CANNOT BE SHORT
 

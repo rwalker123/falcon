@@ -1498,35 +1498,12 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
             {}, "", ROLE_CARD_KIT_KEY_TEXT, true)
         if kit_row != null:
             col.add_child(kit_row)
-            _lift_role_gear_line(kit_row)
     var hint_label := HudWidgets.alloc_hint_label(hint)
     if alert:
         hint_label.add_theme_color_override("font_color", HudStyle.THREAT_ACCENT)
     hint_label.custom_minimum_size = Vector2(0.0, HudWorkVocab.ROLE_CARD_HINT_HEIGHT)
     col.add_child(hint_label)
     return card
-
-## **LIFT THE GEAR LINE OUT OF THE DESCRIPTION IT NOW SITS ON.**
-##
-## Stacking the two put a LIVE readout and standing boilerplate in one treatment: both go through
-## `HudWidgets.alloc_hint_label`, so the card read as one grey paragraph and the tier — the only line
-## on it that MOVES as gear wears — was indistinguishable from copy the player reads once. Reported
-## on the prototype.
-##
-## **The gear line is lifted rather than the description dimmed**, because `INK_FAINT` is already the
-## faintest ink this HUD has: there is nowhere below it to put the boilerplate, and the readout is the
-## half that earns the emphasis anyway.
-##
-## **Scoped to the role card, and reached by META rather than by position.** The same builder mounts
-## this row on four compose sheets, where the hint stands alone with nothing to be confused with, so
-## brightening it there would move those frames for no reading. `KitRoster.KIT_HINT_META` is the
-## builder's own handle on that label; a child-index walk would silently re-tint whatever the row
-## gains next.
-func _lift_role_gear_line(kit_row: Control) -> void:
-    for child in kit_row.get_children():
-        if child is Label and (child as Label).has_meta(KitRoster.KIT_HINT_META):
-            (child as Label).add_theme_color_override("font_color", HudStyle.INK_DIM)
-            return
 
 ## The role card mounts the shared kit row with NO field key — see `_build_role_card`.
 const ROLE_CARD_KIT_KEY_TEXT := ""
@@ -7369,9 +7346,13 @@ func _mount_kit_row(sheet: VBoxContainer, kits: Array, job: String, kit_id: Stri
 ## two ways.
 func _mount_kit_gate_line(sheet: VBoxContainer, kits: Array, kit_id: String, band: Dictionary,
         herd: Dictionary, quarry: String) -> void:
+    var selected_kit := KitRoster.kit_by_id(kits, kit_id)
+    # The remedy is a fact about the KIT, the refusal about the band's resolved attack — see the
+    # compose sheet's twin, which carries the argument.
     var gate := SourceForecast.hunt_gate_model_at(KitRoster.effective_attack_against(
-        kits, KitRoster.kit_by_id(kits, kit_id), band,
-        float(herd.get(KitRoster.QUARRY_BODY_MASS_KEY, 0.0))), herd, quarry)
+        kits, selected_kit, band,
+        float(herd.get(KitRoster.QUARRY_BODY_MASS_KEY, 0.0))), herd, quarry,
+        KitRoster.kit_arms_the_party(kits, selected_kit))
     # **ONLY THE REFUSAL RENDERS.** The winnable branch used to state the effort in hunter-turns; that
     # face is retired (a species constant beside a forecast that already prices the trip), so a fight
     # this party CAN take says nothing here and the sheet's remaining lines are the answer.

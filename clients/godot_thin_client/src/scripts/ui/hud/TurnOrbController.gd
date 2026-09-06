@@ -34,6 +34,8 @@ var _telling: TellingPanel = null
 ## constructor argument would force one of the two to move for no reason but the wiring. The same
 ## late hand-over `_bandpanel.set_attention(_attention)` makes, for the same shape of reason.
 var _knowledge: KnowledgePanelController = null
+## The opening-loadout picker, for the loadout row's `Open ▸`.
+var _loadout: StartingLoadoutController = null
 ## Where a client-side note goes. It was the retired left-dock command feed; it is
 ## `HudLayer.note_system_event` now (→ `system_note_requested` → the event dock's System channel),
 ## injected as a Callable because the panel is `Main`'s and neither this controller nor the HUD owns
@@ -52,6 +54,10 @@ var _band_attention: Array = []
 ## half and for the same reason: `set_attention` is a full replace, so a fork arriving on its own
 ## delta has to be able to rebuild the whole registry without re-running the other producers.
 var _knowledge_attention: Array = []
+## The OPENING LOADOUT half (issue #629) — its own half for `_knowledge_attention`'s reason: it is
+## produced by a snapshot section the band loop never sees, and on a delta carrying only
+## `opening_loadout` that loop does not run at all.
+var _loadout_attention: Array = []
 # Beats already auto-opened this session, so a fork the player dismissed does not re-open on every
 # subsequent snapshot. Keyed by beat_id.
 var _auto_opened_forks: Dictionary = {}
@@ -175,9 +181,24 @@ func set_knowledge_attention(attention: Array) -> void:
 	_knowledge_attention = attention
 	_push_attention()
 
+## Store the OPENING LOADOUT half and push the whole registry — `set_knowledge_attention`'s seam, one
+## field over, guarded the same way and for the same measured reason. This half is EMPTY from turn
+## two onward (the window shuts on the first advance), so an unguarded push would cost a deep copy of
+## the band half and an orb redraw on every snapshot for the whole rest of a campaign.
+func set_loadout_attention(attention: Array) -> void:
+	if _loadout_attention == attention:
+		return
+	_loadout_attention = attention
+	_push_attention()
+
 ## The knowledge screen, handed over once `HudLayer` has built it. See `_knowledge`.
 func set_knowledge_panel(knowledge: KnowledgePanelController) -> void:
 	_knowledge = knowledge
+
+## The opening-loadout picker, handed over once `HudLayer` has built it — the panel the loadout row's
+## `Open ▸` brings back.
+func set_starting_loadout_panel(loadout: StartingLoadoutController) -> void:
+	_loadout = loadout
 
 ## Forward the authoritative snapshot turn to the orb, so HudLayer.update_overlay's fan-out no longer
 ## touches the orb node directly.
@@ -193,6 +214,7 @@ func _push_attention() -> void:
 		return
 	var attention: Array = _band_attention.duplicate(true)
 	attention.append_array(_knowledge_attention)
+	attention.append_array(_loadout_attention)
 	attention.append_array(_pending_fork_attention())
 	_turn_orb.set_attention(attention)
 
@@ -261,6 +283,10 @@ func _open_fork_panel() -> void:
 func _on_turn_orb_panel_requested(kind: String) -> void:
 	if kind == HudAttentionVocab.ATTENTION_KIND_DECISION:
 		_open_fork_panel()
+		return
+	if kind == HudAttentionVocab.ATTENTION_KIND_OPENING_LOADOUT:
+		if _loadout != null:
+			_loadout.open()
 		return
 	if _knowledge == null:
 		return

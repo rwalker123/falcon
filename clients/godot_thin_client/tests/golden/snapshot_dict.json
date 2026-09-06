@@ -1646,6 +1646,39 @@
       "tool_item_id": "materials[2].tool_item_id"
     }
   ],
+  "opening_loadout": {
+    "craftable_recipe_ids": [
+      "opening_loadout.craftable_recipe_ids[0]",
+      "opening_loadout.craftable_recipe_ids[1]"
+    ],
+    "kit_budget": 119,
+    "kit_defaults": [
+      {
+        "count": 173,
+        "kit_id": "opening_loadout.kit_defaults[0].kit_id"
+      },
+      {
+        "count": 166,
+        "kit_id": "opening_loadout.kit_defaults[1].kit_id"
+      }
+    ],
+    "material_budget": 18,
+    "material_defaults": [
+      {
+        "material_id": "opening_loadout.material_defaults[0].material_id",
+        "units": 42
+      },
+      {
+        "material_id": "opening_loadout.material_defaults[1].material_id",
+        "units": 93
+      }
+    ],
+    "open": true,
+    "pickable_materials": [
+      "opening_loadout.pickable_materials[0]",
+      "opening_loadout.pickable_materials[1]"
+    ]
+  },
   "orders": [],
   "overlays": {
     "channel_order": {"__packed": "PackedStringArray", "len": 12, "items": ["crisis", "sentiment", "corruption", "visibility", "culture", "military", "moisture", "elevation", "pasture", "forage", "hunt_danger", "threat"]},
@@ -2395,8 +2428,12 @@
           "build_work_saturating_crew": 187,
           "dispersion": 4.44,
           "exposure": 89.910004,
+          "forage_carry_bare_per_worker_biomass": 8.82,
           "forage_carry_per_worker_biomass": 42.849998,
+          "forage_carry_saturating_crew": 113,
+          "hunt_carry_bare_per_worker_biomass": 90.949997,
           "hunt_carry_per_worker_biomass": 73.699997,
+          "hunt_carry_saturating_crew": 88,
           "kit_id": "big_game",
           "scout_vantage_range": 46.830002
         },
@@ -2410,8 +2447,12 @@
           "build_work_saturating_crew": 106,
           "dispersion": 96.25,
           "exposure": 39.16,
+          "forage_carry_bare_per_worker_biomass": 37.200001,
           "forage_carry_per_worker_biomass": 20.09,
+          "forage_carry_saturating_crew": 124,
+          "hunt_carry_bare_per_worker_biomass": 96.849998,
           "hunt_carry_per_worker_biomass": 82.440002,
+          "hunt_carry_saturating_crew": 113,
           "kit_id": "trapping",
           "scout_vantage_range": 12.69
         },
@@ -2425,8 +2466,12 @@
           "build_work_saturating_crew": 105,
           "dispersion": 4.7,
           "exposure": 59.209999,
+          "forage_carry_bare_per_worker_biomass": 95.360001,
           "forage_carry_per_worker_biomass": 82.540001,
+          "forage_carry_saturating_crew": 159,
+          "hunt_carry_bare_per_worker_biomass": 71.959999,
           "hunt_carry_per_worker_biomass": 23.040001,
+          "hunt_carry_saturating_crew": 26,
           "kit_id": "gathering",
           "scout_vantage_range": 107.400002
         },
@@ -2440,8 +2485,12 @@
           "build_work_saturating_crew": 32,
           "dispersion": 67.370003,
           "exposure": 28.950001,
+          "forage_carry_bare_per_worker_biomass": 34.360001,
           "forage_carry_per_worker_biomass": 75.239998,
+          "forage_carry_saturating_crew": 138,
+          "hunt_carry_bare_per_worker_biomass": 59.779999,
           "hunt_carry_per_worker_biomass": 0.8,
+          "hunt_carry_saturating_crew": 43,
           "kit_id": "none",
           "scout_vantage_range": 20.26
         }
@@ -3131,8 +3180,12 @@
           "build_work_saturating_crew": 168,
           "dispersion": 99.980003,
           "exposure": 69.050003,
+          "forage_carry_bare_per_worker_biomass": 39.259998,
           "forage_carry_per_worker_biomass": 13.06,
+          "forage_carry_saturating_crew": 34,
+          "hunt_carry_bare_per_worker_biomass": 58.700001,
           "hunt_carry_per_worker_biomass": 10.58,
+          "hunt_carry_saturating_crew": 75,
           "kit_id": "big_game",
           "scout_vantage_range": 9.84
         },
@@ -3146,8 +3199,12 @@
           "build_work_saturating_crew": 41,
           "dispersion": 68.239998,
           "exposure": 70.529999,
+          "forage_carry_bare_per_worker_biomass": 58.02,
           "forage_carry_per_worker_biomass": 51.84,
+          "forage_carry_saturating_crew": 167,
+          "hunt_carry_bare_per_worker_biomass": 55.939999,
           "hunt_carry_per_worker_biomass": 32.560001,
+          "hunt_carry_saturating_crew": 138,
           "kit_id": "trapping",
           "scout_vantage_range": 44.200001
         },
@@ -3161,8 +3218,12 @@
           "build_work_saturating_crew": 122,
           "dispersion": 88.470001,
           "exposure": 10.98,
+          "forage_carry_bare_per_worker_biomass": 21.040001,
           "forage_carry_per_worker_biomass": 111.449997,
+          "forage_carry_saturating_crew": 92,
+          "hunt_carry_bare_per_worker_biomass": 4.37,
           "hunt_carry_per_worker_biomass": 89.0,
+          "hunt_carry_saturating_crew": 105,
           "kit_id": "gathering",
           "scout_vantage_range": 95.129997
         },
@@ -3176,8 +3237,12 @@
           "build_work_saturating_crew": 43,
           "dispersion": 91.199997,
           "exposure": 102.290001,
+          "forage_carry_bare_per_worker_biomass": 45.119999,
           "forage_carry_per_worker_biomass": 13.81,
+          "forage_carry_saturating_crew": 57,
+          "hunt_carry_bare_per_worker_biomass": 103.650002,
           "hunt_carry_per_worker_biomass": 29.91,
+          "hunt_carry_saturating_crew": 160,
           "kit_id": "none",
           "scout_vantage_range": 42.950001
         }

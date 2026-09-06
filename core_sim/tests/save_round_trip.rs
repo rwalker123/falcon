@@ -592,3 +592,28 @@ fn a_large_map_save_is_measured() {
         core_sim::save_store::HEADER_PREFIX_BYTES
     );
 }
+
+/// ⛔ **THE OPENING WINDOW SURVIVES A ROUND TRIP, OPEN AND WITH ITS BUDGETS.**
+///
+/// Nothing rebuilds it — a load skips worldgen entirely, so `stamp_starting_loadout` never runs —
+/// which means a checkpoint that dropped it would hand back a turn-one world the player could no
+/// longer outfit. Taken on the **world-build** turn, because that is the only moment the window is
+/// open and therefore the only state worth losing.
+#[test]
+fn a_blob_taken_before_the_first_turn_restores_an_open_opening_window() {
+    let original = spawn_world();
+    let live = *original.world.resource::<core_sim::StartingLoadout>();
+    assert!(
+        live.open && live.kit_budget > 0 && live.material_budget > 0,
+        "fixture: the window must be open with real budgets, or the equality below is trivial: \
+         {live:?}"
+    );
+
+    let blob = encode_save(&original.world).expect("the world encodes");
+    let (loaded, _) = load_save(&blob).expect("the blob loads");
+    assert_eq!(
+        *loaded.world.resource::<core_sim::StartingLoadout>(),
+        live,
+        "the restored world's window must be the one that was written - open, same budgets"
+    );
+}

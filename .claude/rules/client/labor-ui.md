@@ -15,6 +15,207 @@ paths:
 
 # Labor allocation UI — the compose sheet and forecasts
 
+## ⛔ THE KIT LINE COUNTS COMPLETE KITS, AND BOTH WEBS MUST HAND IT THE CREW
+
+`0 of 1 Stalking kits available` · `1 of 3 Harvesting kits available`
+
+**It counted the scarcest ITEM and named it** (`None of 1 hunters carry spears`). A Stalking kit is
+spears AND a sled, so a band holding three spears and no sled fields **zero** complete outfits while
+an item count reports three. What the player composes is an outfit, and the number has to answer for
+the thing they picked. Ray: *"get rid of that 'none of 1 hunters has spears', to be: '0 of X stalking
+kits available' … do the same in the forage."*
+
+- **The numerator is the `min` over every item the kit `uses`**, CAPPED at the denominator — five
+  spears and one hunter reads `1 of 1`, never `5 of 1`. The denominator is the composed crew.
+- **The plural is the kit's own display name plus `s`.** Every roster name is singular and unsuffixed
+  (`Stalking kit`, `Harvesting kit`), so the suffix reads correctly for all of them, and the count is
+  not inflected. The `none` entry would read `No kits` and **cannot reach this line** — it carries no
+  items, and `shortfall_line` returns early on an empty `uses` list.
+- **One sentence for both ends.** The owns-none and owns-some formats are retired: `0 of 1` against
+  `1 of 1` says the difference in the number itself. `KIT_SHORTFALL_CREW_NOUNS` went with them — the
+  sentence names the KIT, so there is no crew noun and no per-job table to keep in step.
+- **The role cards take the same sentence**, as they take everything else here.
+
+### ⛔ …AND THE FORAGE SHEET SAID NOTHING AT ALL, FOR THE WHOLE LIFE OF THE LINE
+
+Reported from play: a Harvesting kit, one harvester, **no line**. The producer was shared with the
+hunt sheet and correct; **the two webs diverged at the MOUNT.** `DrawerComposeController` handed
+`_compose.hunt_count()` to the hunt kit row and handed the forage row nothing, so `crew` defaulted to
+`KIT_CREW_UNCOMPOSED`, `shortfall_line` fell back to the published `workersOnQuotedJob` — **`0` before
+anyone is assigned** — and returned `""` on every forage sheet however short the band was.
+
+**Both mounts pass the stepper now.** A claim made against `KitRoster.shortfall_line` directly would
+have passed for the whole life of the bug — the arithmetic was never wrong, the crew never reached it
+— so the forage coverage is DRIVEN through the real compose sheet and reads the rendered label.
+
+## ⛔ THE KIT LINE UNDER THE COMPOSE PICKER IS A SHORTFALL WARNING, AND NOTHING ELSE
+
+**Everyone on the job covered → no line at all. Anyone short → one line, in `HudStyle.DANGER`, in
+plain English.** That is Ray's rule and it is literal. It serves the hunt sheets and the forage sheet
+alike — same problem, same fix, no forage special case.
+
+It read `attack 20.0 · carry 40.0 per hunter · spears 74 · sled 58`, and on a forage sheet
+`carry 1.6 per gatherer · baskets dry`. Reported from play: *"a very miserable 'baskets dry', which is
+Claude Speak, not real english. The whole carry 1.6 .. and subsequent carry 8.0 … are really
+meaningless. The user has no sense why it is saying that."*
+
+- **A RAW RATE WITH NO DENOMINATOR TELLS A PLAYER NOTHING**, and this one was wrong besides: **a tier
+  is what ONE EQUIPPED worker gets**, quoted beside a party of nine of whom one might be holding a
+  basket. The `N of M equipped` clause was an attempt to qualify it; the answer was to state the
+  shortfall and drop the rate.
+- **`dry` WAS A SEPARATE DEFECT.** It rendered for an item the band owns NONE of, which says *you have
+  baskets and they are spent*. `snapshot.fbs` settles it: *`remaining == 0` means owns none, never
+  "owns one that is dry" — a batch with no units left is removed*, and `count` is published beside it
+  so no client need infer ownership from a condition. `KitRoster.condition_of` is DELETED with the
+  clause it fed; `DetailFormat.kit_is_equipped` asks `count` now.
+- **OWNING NONE AND OWNING TOO FEW GET DIFFERENT SENTENCES**, because they are different situations:
+  `None of 17 hunters carry spears` against `Only 5 of 17 hunters carry spears`.
+- **ONE CLAUSE, NEVER TWO.** Both shipped with a trailing *"— the rest go without"* and it was cut on
+  sight: it restates the count standing in front of it. A second clause here is the same fault the
+  retired `carry 8.0 per gatherer` had — words spent on something the reader has already been told.
+- **THE DENOMINATOR IS THE COMPOSED CREW, not `workersOnQuotedJob`.** That published pair is the head
+  count of the job as STAFFED and is `0` on a sheet where nobody is assigned yet, so a party being
+  composed is measured against itself; a host with no stepper falls back to the published pair, which
+  is the sim's own answer wherever it applies.
+- **THE SENTENCE NAMES THE SHORTEST ITEM THE KIT CARRIES**, never `item_ids[0]`, and never an item
+  guessed from an axis — this layer may not map an axis to the component behind it.
+- ⛔ **A ROLE CARD'S LINE IS TWO RUNS AND ONLY THE SECOND IS RED.** It is one wrapped line —
+  `1-tile sight per vantage · 0 of 1 Wayfinding kits available` — and the effect half is a fact about
+  the gear, not a warning; reddening it would make a card that is merely SHORT read as a card that is
+  entirely wrong. A `Label` carries one `font_color`, so it could only be all-red or all-quiet, and it
+  rendered a live shortfall in the quiet ink. It is `HudWidgets.alloc_hint_markup` now — a
+  `RichTextLabel` styled term-for-term against `alloc_hint_label` (same font size, same
+  `AUTOWRAP_WORD_SMART`, same expand-fill) with the card's quiet ink as its DEFAULT colour and only the
+  shortfall run tagged.
+  **MEASURED: the swap moved nothing** — Scout content 175px, Warrior 158px, both rendering 175px,
+  identical before and after. That mattered: giving the shortfall its own line would have cost the
+  card a ROW, and the band zone's two-column split is authored against measured block heights.
+- ⛔ **AND THE BUG WAS A HOST RE-TINTING AFTER THE BUILDER.** `BandPanelController._lift_role_gear_line`
+  walked the kit row and unconditionally overwrote the gear line's `font_color` with `INK_DIM`,
+  clobbering the `DANGER` the builder had just applied. The ink is the builder's alone now and the
+  card asks for none of its own; the lift is retired. **Nothing may re-tint this line downstream** —
+  the only thing a host can do from there is paint both runs one colour, which is the whole defect.
+- **The band-wide ROLE cards say the SAME sentence.** `Clubs dry` was the last live instance of the
+  ownership defect — `dry` for an item the band owns NONE of — so the per-item condition clause is
+  retired there too and the card reads *effect*, then the shortfall only where somebody is going
+  without. **Its denominator is the published `workersOnQuotedJob`**: a role card is a COMMITTED
+  standing slot rather than a party being composed, so the sim's own head count for that role's job is
+  what the shortfall is a fraction of. It reads
+  `attack 6 defending the camp · Only 1 of 3 warriors carry clubs`.
+- **THE INK FOLLOWS THE SHORTFALL, asked of the producer.** A source job's line is only ever a
+  shortfall so it is always `DANGER`; a role card's turns red only when the sentence is appended. The
+  mount site calls `shortfall_line` rather than inspecting the text, so a copy change cannot silently
+  take the colour with it.
+
+**THE ITEM'S CONDITION IS NOT LOST WITH THE LINE.** The Materials & Crafting panel's kit ledger owns
+it in full, in the item's own quanta (`48 raids left` / `Worn out`), and `equipment.json`'s
+`life_readout` seams push `kit_life` to the event dock (warn → Notable, danger → Alert). The band's
+own `Gear` row was retired in `docs/plan_standing_upkeep.md` §4.9 item 12 for exactly that reason.
+
+## ⛔ THE COMBAT GATE STATES THE REMEDY, NOT THE ARITHMETIC
+
+It read `⚠ Your hunters cannot hurt Wild Boar — attack 1 against its defense 2. No party size changes
+that: they would take casualties and kill nothing.` Reported from play: *"way too wordy … you have
+given a bunch of text that means nothing to the user and doesn't tell them how to fix it."*
+
+**The producer's own comment defended that clause** — *knowing it is the WEAPON and not the headcount
+is the whole lesson* — and the lesson was right; two bare numbers were the wrong way to teach it. The
+remedy says it outright now, in fewer words:
+
+| the selected kit | reads |
+|---|---|
+| names a weapon | `⚠ Your hunters cannot hurt Woolly Mammoth — they need weapons.` |
+| names none (`none`) | `⚠ Your hunters cannot hurt Woolly Mammoth — pick a kit that carries a weapon.` |
+
+- ⛔ **THE REMEDY IS CHOSEN ON THE KIT, NEVER ON WHETHER THE BAND OWNS THE WEAPON.** Ownership is the
+  shortfall line's job one row up (`None of 1 hunters carry spears`) and restating it here is the same
+  fact twice. The two are genuinely different advice: **a Stalking kit with an empty store needs the
+  SPEARS, not a different kit** — "pick a kit that carries a weapon" would send that player to the kit
+  they already have. `KitRoster.kit_arms_the_party` is the test, and it asks the ROSTER tier against
+  the bare-handed one; a test that read the band's RESOLVED tier answers `false` for exactly the case
+  it is meant to separate.
+- **`cannot hurt`, not `cannot hunt`.** A party CAN hunt this quarry — it just kills nothing, which is
+  the whole point of the gate.
+- **`stated` / `blocked` / `effective_attack` are unchanged**; only `text` moved.
+
+### ⛔ …AND THE WEAPON IS NOT NAMED, BECAUSE THE WIRE CANNOT SAY WHICH ITEM IT IS
+
+`they need spears` would be a GUESS. `snapshot.fbs` states it outright on `BandKitTiers`:
+*`KitOption.itemIds` says what a kit carries but not what each item is FOR, and no rule over that list
+recovers it — set-cover and positional order both mis-assign.* That is the whole reason the sim
+publishes resolved per-kit tiers rather than letting a client derive them, and `KitRoster` carries the
+same prohibition in three places. **The role cards do not resolve an axis to an item either** — they
+print every item the kit carries, for exactly this reason.
+
+It is also wrong on shipped content: `trapping` supplies attack from `traps`, not spears.
+
+**The item's name reaches the player from the shortfall line directly above**, which names the item it
+is actually counting. If the weapon must be named IN the gate, the derivation would have to come from
+`equipment_config_json` — whose `items[].tiers[].effects[].stat` does say which item grants `attack` —
+which is a new dependency for this seam, not a lookup that exists today.
+
+## ⛔ THE CREW IS PRICED AGAINST THE GEAR THE BAND ACTUALLY HOLDS
+
+Reported from play: with 0 harvesting kits the *hold it after* figure read **9**, with 2 kits **2**,
+and with 1 kit **still 2**. A carry TIER is per EQUIPPED worker and steps at the FIRST unit — which is
+what a tier means — so `KitRoster.repriced_source`, scaling by `carry / reference` with no coverage
+term, priced all nine gatherers at the basket rate off a single basket. **The sim was never at fault.**
+
+Coverage arms a PREFIX of the party and the rest work bare — a gatherer with no basket still gathers —
+and all three terms ride the ONE `kitTiers` row whose `kitId` matches the kit being priced, so there
+is no join to get wrong:
+
+```
+carry(w)      = w × bare + min(w, sat) × (equipped − bare)
+per worker    = carry(w) / w
+```
+
+`KitRoster.carry_per_worker` is that, and `priced_source` now takes the composed crew so the seam has a
+`w` at all. Measured, 9 gatherers at `per_worker_yield` 0.20 with bare 1.6 against basket 8.0 — **this
+table is the regression and the preview asserts it directly**:
+
+| baskets | `sat` | carry per worker | food per worker |
+|---|---|---|---|
+| 0 | 0 | 1.60 | 0.0400 |
+| 1 | 1 | **2.31** | **0.0578** |
+| 9 | 9 | 8.00 | 0.2000 |
+
+- ⛔ **`bare` IS THE PUBLISHED FIELD, never `labor_config`'s `per_worker_biomass_capacity`.** They are
+  equal only while no item declares an unequipped side for either carry axis, which is a property of
+  today's item table rather than of the model.
+- ⛔ **AN ABSENT BARE RATE MEANS FULLY COVERED, NOT ZERO.** `_row_tier` answers `0.0` for a key a row
+  omits, and a bare rate of zero is a LEGITIMATE value — so reading absence as zero prices every
+  worker past saturation at nothing and, where the saturating crew is also absent, collapses the party
+  to a carry of zero that `repriced_source` then declines to price at all. `_coverage_bare` uses
+  `has()` and falls back to the EQUIPPED tier, which is the reading this file had before the terms
+  existed. A stated zero is still a stated zero.
+
+### …AND THE WORKER CAP IS RE-SOLVED, NOT RESCALED
+
+**The marginal worker past saturation still contributes `bare`, not zero**, so a band short of gear
+needs a LARGER crew to reach a ceiling than `ceiling / rate` says — and `per_worker` on a priced source
+is the AVERAGE over the crew it was priced for, which cannot answer a question about a different crew.
+`SourceForecast.crew_for_target` inverts the two-term form:
+
+```
+T <= sat × equipped :  w = ceil(T / equipped)
+otherwise           :  w = ceil(sat + (T − sat × equipped) / bare)
+```
+
+- **`bare == 0` is GUARDED, not divided** — the target is simply unreachable past saturation, so the
+  answer is the armed crew rather than an infinity.
+- **The terms reach it through the forecast**, written onto the priced source by `repriced_source` as
+  `coverage_{equipped,bare,saturating_crew,applied}_carry` and copied verbatim by `forecast_inputs`.
+  They are in CARRY units beside the per-worker carry actually applied, which is what lets the cap
+  recover the equipped and bare rates in whichever ACCOUNT it happens to be reading.
+- **With the terms absent it is the identical flat quotient**, which is why nothing that was not
+  priced changes.
+
+**IT MOVED NO EXISTING PREVIEW FRAME — 587/587 byte-identical**, measured against a build with both
+the blend and the re-solve reverted. No shipped fixture states the coverage terms, so every existing
+state takes the absent-means-covered path where `carry_per_worker` returns `equipped` and
+`crew_for_target` reduces to `ceil(target / per_worker)`.
+
 ## Key scripts
 
 | Script | Purpose |

@@ -36,6 +36,14 @@ static var SIGNAL_WASH   := Color(0.310, 0.878, 0.812, 0.14)  # SIGNAL @ SIGNAL_
 static var WARN          := Color(0.949, 0.694, 0.247, 1.0)   # #f2b13f  success / ETA
 static var DANGER        := Color(0.910, 0.455, 0.416, 1.0)   # #e8746a
 static var HEALTHY       := Color(0.463, 0.804, 0.502, 1.0)   # #76cd80  well-supplied / good
+## **SATISFIED — a requirement the player has FINISHED meeting**, and the fourth rung of the turn
+## orb's severity ladder (`ready`, below `info`). It is NOT `SIGNAL`: that ink means *calm, nothing
+## needs you*, which is a statement about the absence of news rather than about a thing being done,
+## and on three of the four themes it is not even cool. **Every palette carries its own**, in its own
+## register — see `HudPalette.THEMES`, where loam's goes teal because that theme's `SIGNAL` is
+## already the blue this token wanted. **Do not reach for `MapView.OVERLAY_FALLBACK_COLOR`**, which
+## is a near neighbour on the console palette and means "an overlay channel with no ramp of its own".
+static var READY         := Color("4373e8")                   # #4373e8  satisfied / complete
 # The two DANGER-overlay hues (Predators Phase 3), shared by the HUD alert surfaces so the command
 # feed's threat/casualty accents and the band panel's predator-nearby warning speak the SAME danger
 # language as the map's `threat` / `hunt_danger` washes. Values MIRROR MapView.THREAT_OVERLAY_COLOR /
@@ -117,6 +125,7 @@ static func apply_palette(p: Dictionary) -> void:
 	WARN = p["WARN"]
 	DANGER = p["DANGER"]
 	HEALTHY = p["HEALTHY"]
+	READY = p["READY"]
 	THREAT_ACCENT = p["THREAT_ACCENT"]
 	HUNT_DANGER_ACCENT = p["HUNT_DANGER_ACCENT"]
 	BUTTON_PRIMARY_BG = p["BUTTON_PRIMARY_BG"]

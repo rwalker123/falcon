@@ -186,6 +186,12 @@ signal clear_bench_requested(payload: Dictionary)
 ## of it, that grammar reading a lone trailing token as a herd id. RELAYED from
 ## `CraftingPanelController`.
 signal bench_priority_requested(payload: Dictionary)
+## Emitted when the OPENING LOADOUT picker's commit control is pressed (issue #629). Payload keys:
+## { faction, kits: [{id, count}], materials: [{id, units}] }. Main formats
+## `set_starting_loadout <faction> [kit <id> <n>]... [material <id> <n>]...`. **The whole allocation
+## goes in one line and never a diff** — the verb fails CLOSED and WHOLE server-side. RELAYED from
+## `StartingLoadoutController`.
+signal set_starting_loadout_requested(payload: Dictionary)
 ## Optimistic pending-labor state changed (Early-Game Labor slice 3b UX): carries the
 ## per-band pending map so MapView can draw the pending-action hex highlights. Main forwards
 ## it to `MapView.set_labor_pending`.
@@ -472,6 +478,12 @@ var _crafting: CraftingPanelController = null
 # earned by practice, so the screen is a reading rather than a planner — which is why nothing is
 # relayed off it; `_bandpanel.knowledge_requested` is the launch edge.
 var _knowledge: KnowledgePanelController = null
+# The OPENING LOADOUT cluster (issue #629): the turn-one outfitting picker, its own free-floating
+# panel. It has NO launcher on the Band/City header — the window opens itself on the first frame the
+# sim declares it open and is gone after the first turn advance, so a permanent launch glyph would
+# advertise a screen that does not exist for 99% of a campaign. It comes back through its own reopen
+# pill and through the turn orb's row.
+var _loadout: StartingLoadoutController = null
 var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
@@ -779,6 +791,19 @@ func _ready() -> void:
     # over HERE rather than in that controller's construction, which happens well above this line —
     # the `_bandpanel.set_attention(_attention)` hand-over, for the same shape of reason.
     _turnorb.set_knowledge_panel(_knowledge)
+    # The OPENING LOADOUT picker, on the same room and the same controller idiom — but with no
+    # launcher, because it opens itself once and is gone after the first turn advance (see `_loadout`).
+    # Its command signal relays onto HudLayer's like every other controller's, and its attention half
+    # goes to the orb through the same `set_*_attention` seam the knowledge half uses.
+    _loadout = StartingLoadoutController.new()
+    _loadout.setup(self, floating_room)
+    _loadout.set_starting_loadout_requested.connect(
+        func(payload: Dictionary) -> void: set_starting_loadout_requested.emit(payload))
+    _loadout.attention_changed.connect(
+        func(rows: Array) -> void: _turnorb.set_loadout_attention(rows))
+    # …and the orb's loadout row has to bring that picker back, the knowledge row's hand-over one
+    # line up, for the same reason.
+    _turnorb.set_starting_loadout_panel(_loadout)
     # The band/expedition attention producers + orb jump-routing. Constructed AFTER `_bandpanel` (its
     # expedition/pen jumps reuse the panel's own focus paths) and handed the ONE retained helper,
     # `_herd_label_for_id`. It emits its OWN `alert_focus_requested`, relayed onto the HudLayer signal
@@ -1158,6 +1183,10 @@ func update_crafting_catalogues(materials: Variant, characteristic_bands: Varian
     # field rather than a copy — re-deriving either would be a second answer to a question the
     # crafting panel already asks.
     _knowledge.set_catalogues(recipes, craft_knowledge)
+    # …and the opening-loadout picker is the THIRD reader of the recipe book: its "what this builds"
+    # column prices every row off the published `inputs` and `work`, and re-deriving a cost anywhere
+    # else would be a second answer to a question this book already answers.
+    _loadout.set_recipes(recipes)
     # The craft half of the readouts, re-run for `update_intensification`'s reason: a world whose
     # recipe book or craft tracks moved without its populations moving is a delta this section arrives
     # alone on, so the pip, the orb's knowledge rows and the columns would otherwise disagree about
@@ -1175,6 +1204,31 @@ func close_crafting_panel() -> void:
 ## The panel's controller, for the harnesses' assertions.
 func crafting_panel() -> CraftingPanelController:
     return _crafting
+
+## **THE TURN-ONE OUTFITTING WINDOW** (issue #629, `CampaignSection.openingLoadout`). The picker opens
+## itself on the first frame this says `open`, and closes when the sim says it has shut — the client
+## never decides that. Absence means unchanged, like every other whole section.
+func update_opening_loadout(state: Variant) -> void:
+    _loadout.set_window(state)
+
+## The whole effective `EquipmentConfig`, serialized (`SubsistenceSection.equipmentConfigJson`).
+## Forwarded to the loadout picker, which is the HUD's only consumer of it: the KIT ROSTER has no
+## typed wire field of its own and this blob is where it rides, so the picker parses it rather than
+## the sim publishing a second copy of a list it already sends.
+func update_equipment_config(config_json: Variant) -> void:
+    _loadout.set_equipment_config(config_json)
+
+## Open / close the OPENING LOADOUT picker. Reached BY NAME from the preview harnesses, which stand
+## the panel up without a live campaign — the `open_crafting_panel` idiom.
+func open_starting_loadout_panel() -> void:
+    _loadout.open()
+
+func close_starting_loadout_panel() -> void:
+    _loadout.collapse()
+
+## The picker's controller, for the harnesses' assertions.
+func starting_loadout_panel() -> StartingLoadoutController:
+    return _loadout
 
 ## Open / close the knowledge screen. Reached BY NAME from the preview harnesses, which stand the
 ## panel up without a Band/City panel to launch it from — the `open_crafting_panel` idiom.
@@ -1690,6 +1744,8 @@ func _refit_floating_cards() -> void:
         _crafting.refit_room()
     if _knowledge != null:
         _knowledge.refit_room()
+    if _loadout != null:
+        _loadout.refit_room()
 
 ## Write the two rects every other surface measures itself against: `LayoutRoot`, which the docked
 ## reservations inset and the HUD lays out inside, and `FloatingRoom`, which is that rect pulled
@@ -1817,6 +1873,11 @@ func reset_world_state() -> void:
     # to carry a section this pushes from. `_topbar.reset_world_state()` above has already emptied
     # the tracks, so what this pushes is the new world's nothing.
     _push_knowledge_attention(_knowledge.nodes())
+    # The OPENING LOADOUT window belongs to ONE world: its budgets are derived from the band that
+    # spawned in it, and its picks name that world's profile. A new world publishes its own section a
+    # frame later, so the surface and every pick go now — including `_auto_opened`, or the new world's
+    # picker would never open itself.
+    _loadout.reset_world_state()
 func show_tile_selection(tile_info: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
