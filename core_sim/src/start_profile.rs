@@ -455,8 +455,9 @@ impl StartProfiles {
         self.profiles.len()
     }
 
-    /// **A file with no profiles at all** — which `resolve_active_profile` answers with a
-    /// placeholder, and no shipped file is.
+    /// **True only for a profiles file that listed none** — loading tolerates that, and no shipped
+    /// file is empty. It is the counterpart [`Self::len`] requires (`clippy::len_without_is_empty`)
+    /// rather than a case the sim branches on.
     pub fn is_empty(&self) -> bool {
         self.profiles.is_empty()
     }

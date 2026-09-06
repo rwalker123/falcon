@@ -1496,41 +1496,12 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
             {}, "", ROLE_CARD_KIT_KEY_TEXT, true)
         if kit_row != null:
             col.add_child(kit_row)
-            _lift_role_gear_line(kit_row)
     var hint_label := HudWidgets.alloc_hint_label(hint)
     if alert:
         hint_label.add_theme_color_override("font_color", HudStyle.THREAT_ACCENT)
     hint_label.custom_minimum_size = Vector2(0.0, HudWorkVocab.ROLE_CARD_HINT_HEIGHT)
     col.add_child(hint_label)
     return card
-
-## **LIFT THE GEAR LINE OUT OF THE DESCRIPTION IT NOW SITS ON.**
-##
-## Stacking the two put a LIVE readout and standing boilerplate in one treatment: both go through
-## `HudWidgets.alloc_hint_label`, so the card read as one grey paragraph and the tier — the only line
-## on it that MOVES as gear wears — was indistinguishable from copy the player reads once. Reported
-## on the prototype.
-##
-## **The gear line is lifted rather than the description dimmed**, because `INK_FAINT` is already the
-## faintest ink this HUD has: there is nowhere below it to put the boilerplate, and the readout is the
-## half that earns the emphasis anyway.
-##
-## **Scoped to the role card, and reached by META rather than by position.** The same builder mounts
-## this row on four compose sheets, where the hint stands alone with nothing to be confused with, so
-## brightening it there would move those frames for no reading. `KitRoster.KIT_HINT_META` is the
-## builder's own handle on that label; a child-index walk would silently re-tint whatever the row
-## gains next.
-## ⛔ **RETIRED — IT WAS THE BUG.** This walked the kit row for the gear line and unconditionally
-## overwrote its `font_color` with `INK_DIM`, which CLOBBERED the `DANGER` the builder had just
-## applied to a card whose gear was short. Reported from play: `1-tile sight per vantage · 0 of 1
-## Wayfinding kits available`, a live shortfall in the quiet ink.
-##
-## **The ink is the builder's now, and the card asks for none of its own.** `build_kit_row` mounts the
-## role branch as rich text with `INK_DIM` as its DEFAULT colour — the same quiet the lift installed —
-## and tints the shortfall run alone. A card that re-tinted afterwards could only go back to painting
-## both runs one colour, which is the whole defect.
-func _lift_role_gear_line(_kit_row: Control) -> void:
-    pass
 
 ## The role card mounts the shared kit row with NO field key — see `_build_role_card`.
 const ROLE_CARD_KIT_KEY_TEXT := ""

@@ -478,6 +478,15 @@ static func alloc_section_label(text: String) -> Label:
     return label
 
 ## A dim wrapping hint line (role explanation / empty-state prompt).
+static func alloc_hint_label(text: String) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+    label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+    label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    return label
+
 ## **THE HINT LINE AS RICH TEXT — one wrapped line whose RUNS can differ in colour.** The twin of
 ## `alloc_hint_label` and deliberately styled to match it term for term (same font size, same
 ## `AUTOWRAP_WORD_SMART`, same expand-fill), so swapping one for the other does not move the line's
@@ -499,15 +508,6 @@ static func alloc_hint_markup(bbcode: String, ink: Color) -> RichTextLabel:
     label.add_theme_color_override("default_color", ink)
     label.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
     label.text = bbcode
-    return label
-
-static func alloc_hint_label(text: String) -> Label:
-    var label := Label.new()
-    label.text = text
-    label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-    label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
-    label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     return label
 
 ## An inline text link (the inspector's three actions / the parties footer reasons).

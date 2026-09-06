@@ -24,8 +24,6 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 # `CampaignSection.openingLoadout`, decoded onto the snapshot dict as `opening_loadout`
 # (`native/src/dict/campaign.rs`).
 
-## The section as the decoder publishes it.
-const SNAPSHOT_KEY := "opening_loadout"
 ## False once the window has shut. The picker draws nothing and the sim refuses the command.
 const OPEN_KEY := "open"
 ## One kit per working-age hand of the starting band — derived sim-side, never configured.
@@ -104,11 +102,9 @@ const BUILDS_NOTE := ""
 ## same fact subtracted from itself, and the bar beside it already draws the spent half.
 const BUDGET_REMAINING_FORMAT := "%d / %d left"
 
+## `Hunt · Builders` over `Spears, Sled` — the jobs a kit may be sent on, then what it puts in hands.
 const KIT_JOBS_SEPARATOR := " · "
 const KIT_USES_SEPARATOR := ", "
-## `Hunt · Builders` over `Spears, Sled` — the jobs a kit may be sent on, then what it puts in hands.
-const KIT_JOBS_FORMAT := "%s"
-const KIT_USES_FORMAT := "%s"
 
 ## The reachable count on a recipe row. `×3` reads as a MULTIPLICITY, which is what it is.
 const RECIPE_COUNT_FORMAT := "×%d"
@@ -119,7 +115,6 @@ const RECIPE_COUNT_NONE := "—"
 ## so the format keeps one decimal and trims a trailing `.0` (see `amount_text`).
 const RECIPE_INPUT_AMOUNT_FORMAT := "%s"
 const RECIPE_WORK_FORMAT := "%s work"
-const RECIPE_COST_SEPARATOR := "   "
 
 ## The legend above the recipe list: the key for every swatch drawn on a row, in the resources
 ## column's own order.
@@ -206,7 +201,6 @@ const COLUMN_SEPARATION := 18
 const COLUMN_MIN_WIDTH := 258.0
 const COLUMN_HEAD_FONT_SIZE := 12
 const COLUMN_NOTE_FONT_SIZE := 10
-const COLUMN_BLOCK_SEPARATION := 8
 const COLUMN_ROW_SEPARATION := 6
 
 ## The horizontal rules above and below the body.
@@ -231,8 +225,6 @@ const ROW_SEPARATION := 8
 const STEPPER_BUTTON_WIDTH := 26.0
 const STEPPER_VALUE_WIDTH := 26.0
 const STEPPER_PADDING_H := 4
-const STEPPER_FONT_SIZE := 12
-const STEPPER_PADDING_V := 2
 
 const SWATCH_SIZE := Vector2(10.0, 10.0)
 const SWATCH_SEPARATION := 6

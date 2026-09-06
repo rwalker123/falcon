@@ -17,10 +17,10 @@ class_name StartingLoadoutPanel
 ## DISMISSIBLE (the player has to be able to pan, zoom and read tiles before committing) and comes
 ## back through its own reopen pill and through the turn orb's row. `End Turn` is untouched.
 ##
-## **THE SIM IS AUTHORITATIVE ABOUT WHETHER IT CLOSED.** The commit control sends the order and puts
-## the card away optimistically; if the sim REFUSES, `opening_loadout.open` is still `true` on the
-## next frame and the controller re-opens the panel on the refusal notice rather than assuming the
-## order landed.
+## **COMMITTING IS NOT THE END OF ANYTHING, AND `open` IS NOT A SUCCESS SIGNAL.** An apply is a
+## REPLACEMENT, so the order may be sent, revised and sent again; every successful commit leaves the
+## window open, and a refusal is not visible on this card at all. `StartingLoadoutController`'s ⛔
+## block is the contract — nothing here may infer an outcome from `open`.
 ##
 ## **THIS IS THE FREE-FLOATING CASE, hence `AutoSizingPanel`**
 ## (`.claude/rules/client/panel-framework.md`): the card is measured against the ROOM — the viewport
@@ -349,8 +349,10 @@ func _build_columns(payload: Dictionary) -> void:
 	_columns.add_child(_column_seam())
 	_columns.add_child(_build_recipes_column(payload))
 
-## COLUMN 1 — the kits. **Every row starts at 0**: picking is the whole point of the screen, so a
-## pre-filled kit column would answer the one question it exists to ask.
+## COLUMN 1 — the kits. **It opens on the profile's `kit_defaults`**, the materials column's twin,
+## and those counts arrive ALREADY CLAMPED to the derived kit budget (a spawned head count the
+## profile cannot see, so the sim scales the spread at publish time). **Draw them as-is** — a second
+## clamp here would disagree with the sim's, and the player would see a pre-fill it never sent.
 func _build_kits_column(payload: Dictionary) -> Control:
 	var col := _column(HudLoadoutVocab.KITS_HEAD, HudLoadoutVocab.KITS_NOTE)
 	var budget: Dictionary = payload.get(PAYLOAD_KIT_BUDGET, {})

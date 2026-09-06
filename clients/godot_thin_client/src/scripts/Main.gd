@@ -1819,9 +1819,9 @@ static func format_set_bench(payload: Dictionary) -> Dictionary:
 ## **THE WHOLE ALLOCATION GOES EVERY TIME, never a diff.** The verb fails CLOSED and WHOLE — one bad
 ## line rejects the order and changes nothing — so a partial order has no meaning to send.
 ##
-## **AN EMPTY TAIL IS A REAL ORDER**: *spend nothing, close the window*. So this returns a line for an
-## empty allocation rather than the `{}` that means "nothing to send", which is the one place this
-## formatter deliberately departs from its neighbours above.
+## **AN EMPTY TAIL IS A REAL ORDER**: *spend nothing* — a replacement that empties the loadout. So
+## this returns a line for an empty allocation rather than the `{}` that means "nothing to send",
+## which is the one place this formatter deliberately departs from its neighbours above.
 static func format_set_starting_loadout(payload: Dictionary) -> Dictionary:
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
     var parts: Array[String] = ["set_starting_loadout %d" % faction]

@@ -141,9 +141,12 @@ pub fn stamp_starting_loadout(
     let Some(profile) = profile else {
         return;
     };
-    // The lowest `BandId` carrying `StartingUnit`, which is the same band `apply_starting_loadout`
-    // outfits — resolved by the same rule in both places so the budget cannot describe one band and
-    // the gear land on another.
+    // The globally lowest `BandId` carrying `StartingUnit`, with **no faction filter**, because
+    // `StartingLoadout` is a single global resource: one `kit_budget` and one `material_budget`,
+    // keyed by nothing. There is no per-faction budget to stamp, so there is no faction to select
+    // by here. `starting_band`, which decides where the gear lands, filters by faction first and
+    // then takes the lowest `BandId`; the two agree in the shipped world because it is
+    // single-faction — `spawn_population_entity` hard-codes every band's cohort to `FactionId(0)`.
     let Some((_, cohort)) = bands.iter().min_by_key(|(id, _)| **id) else {
         return;
     };

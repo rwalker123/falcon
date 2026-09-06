@@ -983,7 +983,8 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
         // reason: a loadout has no fixed arity, and two id namespaces (kits and materials) share one
         // token space, so a positional list could not say which a name belongs to. Any token that is
         // neither `kit` nor `material` is a misunderstanding of the verb and is refused rather than
-        // dropped. An EMPTY tail is legal and is a real order — *spend nothing, close the window*.
+        // dropped. An EMPTY tail is legal and is a real order — *spend nothing*: a replacement that
+        // leaves the band's loadout empty.
         "set_starting_loadout" => {
             let faction_str = parts
                 .next()
@@ -3372,8 +3373,8 @@ mod tests {
         );
     }
 
-    /// **An empty tail is a real order** — *spend nothing, close the window* — and not a missing
-    /// argument.
+    /// **An empty tail is a real order** — *spend nothing*, a replacement that empties the
+    /// loadout — and not a missing argument.
     #[test]
     fn parse_set_starting_loadout_accepts_an_empty_allocation() {
         assert_eq!(

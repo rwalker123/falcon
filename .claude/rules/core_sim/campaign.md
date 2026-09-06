@@ -156,10 +156,26 @@ What a successful loadout does, in order: **kits → equipment**, building a fre
 scavenged before setting out is unremarkable and a spread would be a number pretending to mean
 something. **The window is deliberately left open** — see the callout above.
 
-**The band outfitted is the lowest `BandId` carrying `StartingUnit` for that faction** — the same
-rule `stamp_starting_loadout` picks the budget's band by, so the budget cannot describe one band and
-the gear land on another. The shipped profile spawns exactly one; a profile that spawns several
-outfits the first and warns.
+**The band outfitted is the lowest `BandId` carrying `StartingUnit` FOR THAT FACTION.** The shipped
+profile spawns exactly one; a profile that spawns several outfits the first and warns.
+
+> #### ⛔ THE BUDGET'S BAND IS PICKED BY A DIFFERENT RULE, AND THE TWO AGREE ONLY BECAUSE ONE FACTION SPAWNS
+>
+> `stamp_starting_loadout` takes the **globally** lowest `StartingUnit` band — `min_by_key` over the
+> whole query, **no faction filter** — where `starting_band` filters `cohort.faction == faction`
+> first. This passage used to claim they were "the same rule … so the budget cannot describe one band
+> and the gear land on another", and that is an invariant the code does not enforce.
+>
+> **The unfiltered selector is deliberate rather than an oversight, and filtering it would not be the
+> fix.** `StartingLoadout` is ONE GLOBAL RESOURCE — a single `kit_budget` and `material_budget` with
+> no faction key, `init_resource`d once and published once — so a faction filter would align the two
+> selectors while the budget itself stayed global, buying a comment that reads correct and a model
+> that still is not. Genuinely per-faction outfitting needs a keyed resource, which is a design change
+> and not a comment fix.
+>
+> What holds today is an **assumption**, stated as one: `spawn_population_entity` hard-codes
+> `FactionId(0)`, so there is exactly one faction's starting band and the two selectors coincide. The
+> first `StartingUnit` band spawned for a second faction breaks that, silently.
 
 **On the wire**: `CampaignSection.openingLoadout` (`OpeningLoadoutState`) carries `open`, the two
 budgets, `pickableMaterials`, `materialDefaults`, **`kitDefaults`** (already clamped, so a client

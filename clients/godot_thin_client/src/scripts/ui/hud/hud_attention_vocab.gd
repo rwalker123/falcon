@@ -216,14 +216,6 @@ const ATTENTION_KNOWLEDGE_LEARNED_LABEL_FORMAT := "%s learned"
 const ATTENTION_KNOWLEDGE_LEARNED_DETAIL := "see what it lets your hands do"
 
 
-## **WHICH NON-LOCATING KINDS ACTUALLY OPEN SOMETHING.** A row with no `x`/`y` renders `Open ▸` and
-## routes through `panel_requested`, and `TurnOrbController` decides what that opens — so a kind with
-## no branch there renders an affordance that does nothing when pressed.
-##
-## `crew_handoff` is deliberately such a kind: the sim's completion event carries no coordinates, so
-## the row can name neither a hex to jump to nor one source to open (a turn may finish several). It
-## says WHERE those hands are in words instead, and wears no affordance at all — a promise the row
-## cannot keep is worse than no promise.
 ## **THE OPENING LOADOUT IS STILL UNSPENT** (issue #629) — the turn-one outfitting window is open and
 ## something in it has not been committed. NON-LOCATING (an opening loadout is a faction fact and no
 ## hex holds it), and deliberately **NOT `blocking`**: the window shutting is the SIM's business —
@@ -233,6 +225,14 @@ const ATTENTION_KNOWLEDGE_LEARNED_DETAIL := "see what it lets your hands do"
 const ATTENTION_KIND_OPENING_LOADOUT := "opening_loadout"
 
 
+## **WHICH NON-LOCATING KINDS ACTUALLY OPEN SOMETHING.** A row with no `x`/`y` renders `Open ▸` and
+## routes through `panel_requested`, and `TurnOrbController` decides what that opens — so a kind with
+## no branch there renders an affordance that does nothing when pressed.
+##
+## `crew_handoff` is deliberately such a kind: the sim's completion event carries no coordinates, so
+## the row can name neither a hex to jump to nor one source to open (a turn may finish several). It
+## says WHERE those hands are in words instead, and wears no affordance at all — a promise the row
+## cannot keep is worse than no promise.
 const ATTENTION_KINDS_WITH_A_PANEL: Array[String] = [ATTENTION_KIND_DECISION,
     ATTENTION_KIND_KNOWLEDGE_LEARNED, ATTENTION_KIND_OPENING_LOADOUT]
 

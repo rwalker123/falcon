@@ -1645,9 +1645,9 @@ const KIT_HINT_SHORTFALL_MARKUP := "[color=#%s]%s[/color]"
 ## off the range; a pen stands at the camp, and what bounds a slaughter there is handling gear — so a
 ## kit carrying only a sled collects a pen at the bare rate."* Handling gear left the roster when
 ## hurdles became a material, both sides of the rate landed on the sled, and `EquipmentStat::PenCarry`
-## was deleted. A penned herd's hint states `KIT_HINT_ATTACK_FORMAT` and `KIT_HINT_HUNT_CARRY_FORMAT`
-## like any other hunt row — the same haul number the pen clause used to print, plus the weapon,
-## because a pen is fought.
+## was deleted. A penned herd's hint now reads like any other hunt row's: the `KIT_SHORTFALL_*` line
+## when someone on the job is unequipped, and NOTHING when everyone is covered. The rates the pen
+## clause used to print are gone with every other tier.
 ## > #### ⛔ THE COVERAGE AND CONDITION CLAUSES ARE RETIRED WITH THE TIERS THEY QUALIFIED
 ## >
 ## > `KIT_HINT_COVERAGE_FORMAT` (`3 of 8 equipped`), `KIT_HINT_CONDITION_FORMAT` (`spears 74`) and
@@ -1669,12 +1669,6 @@ const KIT_HINT_SHORTFALL_MARKUP := "[color=#%s]%s[/color]"
 ## > band's own `Gear` row was retired in `docs/plan_standing_upkeep.md` §4.9 item 12 for exactly that
 ## > reason.
 
-## **A BAND-WIDE ROLE'S ITEM CLAUSE** — `Wayfinding 100`, `Clubs dry`. It takes `DetailFormat`'s own
-## capitalised item LABEL and condition FACE rather than the compose hint's raw wire id, because the
-## Gear popover states the identical pair for the identical band (`▲ Wayfinding 66 — …`) and two
-## spellings of one reading is how a card and the popover it sits above come to disagree. One format
-## for both states: the face is the number or the word `dry`, so this line needs no dry twin.
-const KIT_HINT_ROLE_ITEM_FORMAT := "%s %s"
 ## Tier decimals. The tiers span 1.0 (bare hands) to 40.0 (a sled), authored as small round numbers,
 ## so one decimal states them without claiming a precision the roster does not have.
 const KIT_TIER_DECIMALS := 1

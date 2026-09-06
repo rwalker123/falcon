@@ -1217,7 +1217,8 @@ static func effective_tiers(kits: Array, kit: Dictionary, band: Dictionary) -> D
 
 ## What an axis reads where nothing states it — a roster entry that predates the axis, or a band row
 ## that omits it. It is **not** a tier the game ships; it is the under-promise, the same direction
-## `condition_of` errs in, and the honest answer for a wire this client cannot read.
+## `DetailFormat.kit_is_equipped` errs in (an item with no published row reads UNEQUIPPED), and the
+## honest answer for a wire this client cannot read.
 const TIER_ABSENT := 0.0
 
 ## **ONE AXIS OFF THE BAND'S OWN ROW.** A row states every axis `BandKitTiers` carries, so an absent
