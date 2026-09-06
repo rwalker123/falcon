@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 104
+const EXPECTED_CHECKPOINTS := 101
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -1545,14 +1545,21 @@ func _hay_ledger_states() -> void:
 
 # ---- THE DORMANT FODDER ROW — the state the old gate rendered as nothing at all ------------------
 
-## The two values this block stages the faction's Foddering at: part-learned (the craft is missing,
-## and the row says how far along) and learned (the craft is there and the band still keeps no pen).
-## The track's own KEY is read from the vocabulary the gate reason reads
-## (`HudFloraVocab.KNOWLEDGE_TRACK_FODDERING`), so a renamed track cannot leave this pushing a key
-## nothing consults and quietly staging the WRONG half of the two-sentence claim.
+## The two values this block stages the faction's Foddering at: part-learned (the craft is missing)
+## and learned (the craft is there and the band still keeps no pen). The row is DIM at both, which is
+## the claim they exist as a pair to make. The track's own KEY is read from the vocabulary the gate
+## reason reads (`HudFloraVocab.KNOWLEDGE_TRACK_FODDERING`), so a renamed track cannot leave this
+## pushing a key nothing consults and quietly staging neither half.
 const FODDER_KNOWLEDGE_PART := 0.35
 
 const FODDER_KNOWLEDGE_LEARNED := 1.0
+
+## **THE WORDS A FODDER SENTENCE CANNOT AVOID.** The dormant row registers NO hover: a row's hover
+## here is the whole BLOCK's (`DetailFormat.block_tooltip` joins them onto one `tooltip_text`, per-run
+## `[hint=…]` being unparsed in this build), so the two sentences it used to register popped out from
+## under a cursor resting on Growth, Morale or Food. Asked as WORDS rather than against the retired
+## consts, because a re-worded sentence is the same defect back.
+const RETIRED_FODDER_HOVER_WORDS := ["fodder", "hay"]
 
 ## The dormant row as it lands in the produced lines, VALUE AND TINT TOGETHER. This is the one needle
 ## in the block deliberately recomposed rather than written as a flat answer: the claim IS the dim
@@ -1587,14 +1594,14 @@ func _push_foddering(progress: float) -> void:
 		"knowledges": {HudFloraVocab.KNOWLEDGE_TRACK_FODDERING: progress},
 	}])
 
-## The `Fodder:` row's registered hover, off a context the producer has just filled. The tooltip is
-## keyed by the ROW and `DetailFormat.block_tooltip` is what joins it onto a label — so asking the
-## CONTEXT here and asking the LABELS below are two different claims, and the second is the one that
-## catches a host that never attached it.
-func _fodder_row_tooltip(band: Dictionary) -> String:
-	var ctx := DetailFormat.Context.new()
-	h._hud._banddetail.unit_summary_lines(band, "", ctx)
-	return String(ctx.row_tooltips.get(HudDisclosureVocab.DETAIL_ROW_FODDER, ""))
+## Is `text` free of EVERY word in `words`, case-insensitively? The negative the dormant fodder row's
+## no-hover claim is made with.
+func _mentions_none_of(text: String, words: Array) -> bool:
+	var haystack := text.to_lower()
+	for word in words:
+		if haystack.contains(String(word).to_lower()):
+			return false
+	return true
 
 ## The Band/City dock's vitals label — the first `RichTextLabel` under the panel, which its band zone
 ## is. Re-found after every render rather than held: that label is rebuilt per render, so a handle
@@ -1702,44 +1709,31 @@ func _fodder_dormant_states() -> void:
 			+ DetailFormat.breakdown_key(HudDisclosureVocab.BREAKDOWN_KIND_FODDER,
 				_forager_band_fixture())) == null)
 
-	# **WHY IT IS DIM, SENTENCE ONE: THE CRAFT IS MISSING.** The faction is at 35% Foddering, so the
-	# hay in its meadows is unbankable, and the row says so in the words the forage panel already uses
-	# — the SHARED clause out of `GATE_REASON_WILD_FODDER_FORMAT`, with the live percent in it.
-	var locked_hover := _fodder_row_tooltip(_forager_band_fixture())
-	var locked_expected := DetailFormat.FODDER_LOCKED_TOOLTIP_FORMAT % [
-		HudFormat.progress_percent(FODDER_KNOWLEDGE_PART),
-		FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL)]
-	h._assert_hud("the dormant row says WHY, in the forage panel's own words: %s" % locked_hover,
-		locked_hover == locked_expected)
-	# **AND IT ATTACHES.** A registered hover with no host to carry it never reaches a cursor, and
-	# `[hint=…]` does not parse in this build — so the claim is made on the LABELS. The DOCK is the
-	# half `%OccupantDetail` cannot answer for: the two hosts attach the block hover separately, and
-	# the frame above deliberately has a LIVE band in the dock, whose label must therefore carry
-	# nothing. Both directions, one host: empty on the live band, the sentence on the dormant one.
-	h._assert_hud("…and the drawer label actually carries it",
-		h._hud.occupant_detail.tooltip_text.contains(locked_expected))
+	# **AND THE DIM DASH IS THE WHOLE STATE — NO HOVER, ON EITHER HOST.** The row registered two
+	# sentences here, a Foddering lock and a calm *no fodder yet*, and a row's hover on this surface
+	# is the BLOCK's: one `RichTextLabel`, one `tooltip_text`. So a paragraph about hay reached a
+	# cursor resting on Growth, Morale or Food — rows a fodder lock bears on not at all. Claimed on
+	# BOTH hosts, which attach the block hover separately, and on the DORMANT band in each: the frame
+	# above deliberately has a LIVE band in the dock, so the dock is re-rendered onto the dormant one
+	# before it is asked.
+	h._assert_hud("the dormant row registers no hover — no hay sentence reaches the drawer's block",
+		_mentions_none_of(h._hud.occupant_detail.tooltip_text, RETIRED_FODDER_HOVER_WORDS))
 	var live_vitals := _panel_vitals_label(panel)
 	h._assert_hud("…while the dock, showing a LIVE band, offers no hover at all",
 		live_vitals != null and live_vitals.tooltip_text == "")
 	h._hud._bandpanel.render_band(_forager_band_fixture())
 	await h._settle()
 	var dormant_vitals := _panel_vitals_label(panel)
-	h._assert_hud("…and the dock's own label carries it once the DORMANT band is its subject",
-		dormant_vitals != null and dormant_vitals.tooltip_text.contains(locked_expected))
+	h._assert_hud("…and the dock's block stays clear of it with the DORMANT band as its subject",
+		dormant_vitals != null
+			and _mentions_none_of(dormant_vitals.tooltip_text, RETIRED_FODDER_HOVER_WORDS))
 
-	# **SENTENCE TWO: NOTHING IS WRONG.** Learn Foddering and the same band's row is still dormant —
-	# it keeps no pen and grows no fodder crop — but the reason is calm and descriptive, and it must
-	# not be the lock's sentence. Asserted as an INEQUALITY against sentence one as well as an
-	# equality, since two states sharing one sentence is the defect being guarded.
+	# **AND KNOWING THE CRAFT DOES NOT HAND THE BAND A LARDER.** Learn Foddering and the same band's
+	# row is still dormant — it keeps no pen and grows no fodder crop — which is what catches a row
+	# reading the knowledge track instead of the band's own two flows.
 	_push_foddering(FODDER_KNOWLEDGE_LEARNED)
 	h._hud.show_unit_selection(_forager_band_fixture())
 	await h._settle()
-	var calm_hover := _fodder_row_tooltip(_forager_band_fixture())
-	h._assert_hud("a band that KNOWS Foddering and keeps no pen reads calm instead: %s" % calm_hover,
-		calm_hover == DetailFormat.FODDER_DORMANT_TOOLTIP)
-	h._assert_hud("…which is NOT the lock's sentence — the two reasons are different news",
-		calm_hover != locked_hover)
-	# …and the row itself is unchanged: knowing the craft does not hand the band a larder.
 	h._assert_hud("…and the row is dim either way — the craft is not a fodder economy",
 		_lines_any_contain(_band_lines(_forager_band_fixture()), dormant_needle))
 

@@ -342,28 +342,34 @@ const EMPTY_CELL := "—"
 ## The kit/tool distinction survives as **colour, not wording** (`DANGER` against `INK_FAINT` at the
 ## call site): a kit the band lacks has people working bare-handed right now, a bench tool it never
 ## built does not.
+##
+## **A CRAFTED-MATERIAL ROW ANSWERS IT THE SAME WAY.** The stock rows had a third sentence of their
+## own, `None on hand`, for the identical fact under the identical column head: a pile the band holds
+## none of. Three wordings for *we have none* read as three different states to anyone scanning the
+## column, so the material row says `Not made` alongside the kit and the tool. The distinction between
+## the kinds of thing stays where the rest of it already lives — in the INK, not in the words.
 const OWNED_NONE := "Not made"
 ## **ONE LINE PER GRADE**, counts summed across the batches that share one — two `good` batches at
 ## different wear are one line of `×5`, wear not being this panel's fact. Best grade first.
-const OWNED_COUNT_FORMAT := "×%d"
-## **WHAT THE BAND HOLDS OF A CRAFTED MATERIAL** — no wording of its own, because the pile reads as
-## ONE TOTAL in the rail's own `BATCH_AMOUNT_FORMAT` (`9.3`), summed across the material's batches.
-## **A stock recipe owns something and the panel knew it all along** — this cell stated the recipe's
+##
+## **WHAT THE BAND HOLDS OF A CRAFTED MATERIAL IS NOT COUNTED WITH THIS** — the pile reads as ONE
+## TOTAL in the rail's own `BATCH_AMOUNT_FORMAT` (`9.3`), summed across the material's batches.
+## **A stock recipe owns something and the panel knew it all along** — that cell stated the recipe's
 ## YIELD (`→ 1 hurdles`) under a column head that says *Owned*, while the band's 5.0 hurdles sat in
 ## `material_batches` being drawn in the rail 250px to its left. The yield moved to the Rebuild-costs
 ## cell, where an arrow has a left-hand side (see `COST_YIELD_FORMAT`).
 ##
-## **NO RATING CHIPS AND NO PER-BATCH SPLIT HERE** — both are the RAIL's fact, drawn 250px wide and
+## **NO RATING CHIPS AND NO PER-BATCH SPLIT THERE** — both are the RAIL's fact, drawn 250px wide and
 ## always visible, and at shipped axis names (`stoutness` / `span`) a chip pair wraps inside
 ## `COLUMN_OWNED_WIDTH`, so the duplicate cost the ledger real height. Without the chips the split
 ## would be two indistinguishable numbers anyway; equipment splits by GRADE because a grade is
 ## rendered nowhere else.
 ##
 ## **THE AMOUNT IS FRACTIONAL AND THE `×` IS DELIBERATELY ABSENT.** Equipment is counted (`×26`
-## sleds); a material is measured — 22.8 hide, 5.0 hurdles — and an `×5` here would be a lie the first
+## sleds); a material is measured — 22.8 hide, 5.0 hurdles — and an `×5` there would be a lie the first
 ## turn a pile is not whole. It is SIZED like the count (`OWNED_COUNT_FONT_SIZE`) all the same: the two
 ## answer the same question about different kinds of thing.
-const OWNED_STOCK_NONE := "None on hand"
+const OWNED_COUNT_FORMAT := "×%d"
 ## How the Owned cell is found by IDENTITY. It carries the row's own item id, so a claim about what
 ## reaches the CELL (a tier word, an owned note) can be scoped to the cell rather than to the ledger —
 ## the group HEAD is a tier word by design, and a panel-wide text scan cannot tell the two apart.

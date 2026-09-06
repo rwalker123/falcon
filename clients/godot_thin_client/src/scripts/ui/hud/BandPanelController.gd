@@ -1110,11 +1110,13 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     detail_label.text = DetailFormat.detail_bbcode(
         _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
             _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false), ctx)
-    # **THE HOVER A ROW REGISTERED, ANSWERED BY THE BLOCK** — the dormant `Fodder:` row says why it is
-    # dim this way. `[hint=…]` is not parsed by this Godot build (see `DetailFormat.block_tooltip`),
-    # so the label carries it; `SubjectDrawerController` does exactly this for the OTHER detail host,
-    # and without it the same row is dim with no explanation in the dock alone. Empty for a block
-    # whose every row is live, which shows no tooltip at all.
+    # **THE HOVER A ROW REGISTERED, ANSWERED BY THE BLOCK** — a lapsed rung, an under-kept pen.
+    # `[hint=…]` is not parsed by this Godot build (see `DetailFormat.block_tooltip`), so the label
+    # carries every registered sentence at once and a cursor anywhere over the block gets all of
+    # them; `SubjectDrawerController` does exactly this for the OTHER detail host. That is also the
+    # reason the dormant `Fodder:` row registers nothing at all: its sentence reached a cursor
+    # resting on Growth, Morale or Food. Empty for a block whose every row is live, which shows no
+    # tooltip at all.
     detail_label.tooltip_text = DetailFormat.block_tooltip(ctx)
     return detail_label
 
@@ -8848,8 +8850,7 @@ func render_faction() -> void:
         # of its blocks at the page's row size, so DISCOVERIES yields there.
         BandCityPanel.ZONE_BAND:
             HudWidgets.wrap_zone(FactionRollup.build_band_zone(_band_labor, _disclosures,
-                _faction_settling(), _faction_discoveries(), _faction_band_zone_is_full(),
-                _player_knowledge())),
+                _faction_settling(), _faction_discoveries(), _faction_band_zone_is_full())),
         BandCityPanel.ZONE_WORK:
             HudWidgets.wrap_zone(FactionRollup.build_work_zone(_band_labor,
                 attention, _faction_open_row, _toggle_faction_row, jump_to_band_entity)),
