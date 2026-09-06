@@ -5656,6 +5656,13 @@ table SubsistenceSection {
   // beside `ladderKnowledge` because the two are the same kind of thing: the DECLARATION of what
   // the ladder holds, carrying no faction and no tile.
   routeRungs:[RouteRungState];
+  // --- THE RANGING PARTY'S DEFAULT (appended last) ----------------------------------------------
+  // Which kit `send_expedition` / `send_trade_expedition` launch with when the player names none —
+  // the `expedition` job's default (`ranging`). It is its own default beside the four above because
+  // a PROVISIONED detached party feeds itself two ways, gathering and hunting, and one kit arms
+  // both: quoting it as `defaultHuntKitId` would show a launch sheet a kit that cannot gather.
+  // Never empty: it always names a real roster entry.
+  defaultExpeditionKitId:string;
 }
 
 table KnowledgeSection {

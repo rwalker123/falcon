@@ -1697,8 +1697,14 @@ pub struct Expedition {
     /// own [`BandEquipment`] wear still moves under it, so a `big_game` party still steps down when
     /// its spears run out; what is fixed is *which components it reaches for*.
     ///
-    /// A scouting party carries the hunt job's default: its roadside kills resolve through the same
-    /// hunt seams, and `send_expedition` names no kit.
+    /// **A provisioned party — a scout or a shipment — carries a [`crate::equipment_config::KitJob::Expedition`] kit**
+    /// (`equipment.json`'s `ranging` by default, or the one the launch verb named). That job exists
+    /// because such a party has to replace what it eats while out of contact with its band, and it
+    /// has two ways to do so: it **gathers** off a stand in reach, and only if that was not enough
+    /// does it **hunt** what it meets. One kit arms both.
+    ///
+    /// **A raid still carries a `hunt` kit** — it lives off its kills, pays no provisions upkeep,
+    /// and resolves its default off the *quarry* ([`crate::fauna::quarry_default_hunt_kit`]).
     pub kit: crate::equipment_config::KitChoice,
     /// **The shipment this party is carrying**, for an [`ExpeditionMission::Trade`] party (empty for
     /// every other verb) — food under the [`FOOD`] key and materials as batches, exactly as a band's

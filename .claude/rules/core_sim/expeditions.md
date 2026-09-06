@@ -115,7 +115,7 @@ Unexplored→Discovered, never downgrading `Active`) and clear the buffer — so
 lump on return** (for a hunt party, at each `Delivering` drop-off / `Returning` fold-back), and
 `discover_sites` records any `SiteTag` on the flushed tiles for free. **Scout-only** below: **(c)
 provisions** drain by `party × provision_upkeep_per_worker` (hunt lives off its kills; non-fatal at
-zero in v1) + opportunistic replenish; **(d) phase transitions** — `Outbound` + arrived (no `BandTravel`) →
+zero in v1) + opportunistic replenish — **gather first, then hunt**, see below; **(d) phase transitions** — `Outbound` + arrived (no `BandTravel`) →
 `AwaitingOrders` + one-shot `ExpeditionArrived` feed; `Returning` → chase the home band's live tile
 (refresh `BandTravel`) and, once within comm range **or the moment that band cannot be resolved at
 all**, fold workers + leftover provisions back into the band + despawn (`ExpeditionReturned`, after
@@ -428,7 +428,9 @@ branches on mission:
     already on the wire per batch, with their exact readings, for the whole trip. A scout hauling a
     wolf home is legible today and always was — what was missing was only the *promise* above.
   - **The scout's opportunistic replenish banks its hides too** — a roadside kill is skinned as well
-    as butchered — so it is no longer a pure waste of animals on an inedible herd.
+    as butchered. The hides are a **byproduct** of a food take and never the reason for one: the
+    replenish search skips inedible herds outright (issue #373, "Gather first, then hunt" below), so
+    a roadside kill on a wolf pack is not a thing that happens.
   - **Still expedition-side gaps:** no **husbandry/domestication accrual** (a Sustain *expedition*
     builds no domestication — that is place-bound work a resident band does), and the raid forecast
     states no material payload at all (arc #527's open item, above). Catching a *migratory* herd depends on the deferred
@@ -436,11 +438,15 @@ branches on mission:
     one-directional route).
 
 **Commands** (full proto/runtime/text/server plumbing, mirroring `move_band`):
-- `send_expedition <faction> <band> <party_workers> <x> <y>` — validates land target + `1 ≤
+- `send_expedition <faction> <band> <party_workers> <x> <y> [kit <id>]` — validates land target + `1 ≤
   party_workers ≤ available_workers` (the band, and nothing else — the retired sampling ladder was a
   sampling ladder, not a ceiling), draws `party × distance ×
   provision_draw_per_worker_per_tile` provisions from the band larder (partial OK), removes the
   workers from `band.working`, and spawns the detached `Expedition` cohort. Feed `ExpeditionSent`.
+  The **kit is a named trailing pair** (`kit <id>`, proto field `kit_id = 6`), on
+  `send_hunt_expedition`'s shape, and it **fails closed** — an unknown id, or one whose `jobs` does
+  not list `expedition`, is a command failure before anything is drawn off the band. Absent = the
+  `expedition` job's default (`ranging`). Nothing else may follow it.
 - `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor] [kit <id>]`
   — same resident-band gate + party validation, validates `fauna_id` resolves to a live herd, draws **no**
   provisions, removes the workers, spawns a `Hunt`-mission party in `Hunting` phase heading for the
@@ -1065,6 +1071,55 @@ point is that nothing comes home would be the food-only blindness the mission re
 half — the third launch verb, the range verdict line, the waste readout and the in-flight collapse
 line — is slice 2.
 
+## Gather first, then hunt — how a provisioned party feeds itself
+
+A **provisioned** party (`Scout` and `Trade`, the two missions that drain
+`provision_upkeep_per_worker`) tops itself up when its larder falls below
+`party × provision_upkeep_per_worker × replenish.low_turns`, off the ground within
+`replenish.reach_tiles`. It does so in **one order**:
+
+1. **Gather.** The nearest `ForagePatch` in reach with room above `DEFAULT_ESCAPEMENT_FLOOR` is drawn
+   through the same `forage::forage_take` primitive a resident band's gatherers use, at that same
+   restrained floor — so replenishing on the march can never be the thing that ruins a stand. The
+   draw is bounded by the party's **room to the low-water mark**, inverted through the stand's own
+   conversion rate (the plant twin of the roadside kill's `carry_room_biomass`), so a nearly
+   topped-up party takes less off the ground rather than gathering food it must drop. The kit's
+   baskets are charged `WearQuantum::BiomassGathered` for the biomass actually taken.
+2. **Hunt.** Only if the party is *still* below the mark does it fall through to the opportunistic
+   roadside kill, unchanged.
+
+> ### ⛔ IT IS AN ORDER, NOT A SCORE — do not add a ranking pass between the two
+>
+> Gathering costs no lives, no animals and no weapon wear; the party spends baskets and walks on. A
+> kill costs casualties, spears and a herd. So a party exhausts the safe option before it picks a
+> fight, and that single rule is the whole model. A scoring pass would let a fat herd outbid a stand
+> the party could have stripped for nothing — the one trade nobody would make.
+>
+> The stand is chosen by `(distance, y, x)` rather than by first match, because
+> `ForageRegistry::patches` is a `HashMap` and its iteration order is not deterministic; the herd
+> search keeps its "first match" walk over the herd `Vec`, which is ordered.
+
+**The gather rate is kit-resolved, like every other carry on both webs.** It is
+`coverage.weighted_rate(forage_per_worker_biomass_capacity(labor.forage.per_worker_biomass_capacity,
+…))` — the bare-handed baseline `1.6` stepped up to the baskets' own `8.0` tier, averaged over the
+crews the party's gear actually covers. A party sent out with `none` gathers bare-handed for its whole
+life, which is what the kit choice at launch is *for* (`equipment.md` → "The `expedition` job").
+
+### The replenish hunt skips INEDIBLE herds outright (issue #373)
+
+The herd search tests `HuntYield::edible()` (`provisions_per_biomass > 0`) before distance. A starving
+party used to kill a Grey Wolf Pack it could not eat — spending casualties, spears and a whole herd to
+bank pelts — and then walk on still starving.
+
+**Skipped, not ranked last**, and the reason is what the arm is *for*: it is triggered by the **food**
+low-water mark, so a quarry that pays no provisions cannot answer the question that was asked.
+Materials are a byproduct of a food take here and never the reason for one; the hunt verb remains the
+way to go after pelts deliberately.
+
+Pinned by `core_sim/tests/expedition_replenish.rs` — four fixtures: a party the stand can fill does
+not hunt, a party with no stand in reach does, a starving party leaves an inedible herd standing, and
+the `ranging` kit gathers strictly more than bare hands.
+
 ## One fold-back, two moments
 
 `systems::expeditions::fold_party_into_band` is **the** settlement routine for a party that has come
@@ -1272,7 +1327,8 @@ exactly two things and both already have a phase.
 
 It takes the scout provisions arm **whole** rather than a trade-shaped copy: a launch draw of
 `party × distance × provision_draw_per_worker_per_tile`, `party × provision_upkeep_per_worker` per
-turn, and the same opportunistic replenish off passing game. It is a walking party carrying no
+turn, and the same opportunistic replenish off the ground it crosses — **gathering before hunting**,
+on the `expedition` kit job like the scout. It is a walking party carrying no
 quarry, which is the same two facts about a scout.
 
 **So there is deliberately no friction or loss lever on the `trade` block.** A farther destination

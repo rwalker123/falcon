@@ -414,6 +414,12 @@ pub enum CommandPayload {
         party_workers: u32,
         target_x: u32,
         target_y: u32,
+        /// **The kit the ranging party is SENT OUT WITH** — an `equipment.json` roster id, resolved
+        /// **once** at launch and carried for the party's whole life. `None` = the **expedition**
+        /// job's default (`ranging`), which arms both of the ways a provisioned party feeds itself;
+        /// an unknown id, or one whose `jobs` does not include `expedition`, fails the command with
+        /// a reason. Same rule as [`Self::SendHuntExpedition::kit_id`].
+        kit_id: Option<String>,
     },
     RecallExpedition {
         faction_id: u32,
@@ -1621,12 +1627,14 @@ impl CommandEnvelope {
                 party_workers,
                 target_x,
                 target_y,
+                kit_id,
             } => pb::command_envelope::Command::SendExpedition(pb::SendExpeditionCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
                 party_workers: *party_workers,
                 target_x: *target_x,
                 target_y: *target_y,
+                kit_id: kit_id.clone(),
             }),
             CommandPayload::RecallExpedition {
                 faction_id,
@@ -2153,6 +2161,7 @@ impl CommandEnvelope {
                 party_workers: cmd.party_workers,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
+                kit_id: cmd.kit_id,
             },
             pb::command_envelope::Command::RecallExpedition(cmd) => {
                 CommandPayload::RecallExpedition {

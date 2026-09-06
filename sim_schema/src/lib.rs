@@ -99,6 +99,7 @@ mod tests {
             default_forage_kit_id: "gathering".to_string(),
             default_scout_kit_id: "wayfinding".to_string(),
             default_warrior_kit_id: "warrior".to_string(),
+            default_expedition_kit_id: "ranging".to_string(),
             herds: vec![HerdTelemetryState {
                 id: "herd_wild".to_string(),
                 // The quarry's OWN default kit, deliberately not the snapshot's

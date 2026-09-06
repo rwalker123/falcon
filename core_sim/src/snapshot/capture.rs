@@ -283,6 +283,8 @@ pub(crate) struct PublishState {
     /// re-send only on a world rebuild.
     default_scout_kit_id: Whole<String>,
     default_warrior_kit_id: Whole<String>,
+    /// The ranging party's default, diffed like the four above — a per-world constant.
+    default_expedition_kit_id: Whole<String>,
     /// The serialized TOE config the Workbench's designer pages print — a per-world constant like
     /// the roster above, and diffed for the same reason: it is the largest string on the section
     /// and nothing about it changes between world rebuilds.
@@ -676,6 +678,7 @@ struct SubsistenceParts {
     default_forage_kit_id: Option<String>,
     default_scout_kit_id: Option<String>,
     default_warrior_kit_id: Option<String>,
+    default_expedition_kit_id: Option<String>,
     equipment_config_json: Option<String>,
     materials: Option<Vec<MaterialDefState>>,
     characteristic_bands: Option<Vec<CharacteristicBandState>>,
@@ -695,6 +698,7 @@ fn diff_subsistence(
     default_forage_kit_id: &mut Whole<String>,
     default_scout_kit_id: &mut Whole<String>,
     default_warrior_kit_id: &mut Whole<String>,
+    default_expedition_kit_id: &mut Whole<String>,
     equipment_config_json: &mut Whole<String>,
     materials: &mut Whole<Vec<MaterialDefState>>,
     characteristic_bands: &mut Whole<Vec<CharacteristicBandState>>,
@@ -723,6 +727,11 @@ fn diff_subsistence(
         default_warrior_kit_id: diff_whole(
             default_warrior_kit_id,
             &snapshot.default_warrior_kit_id,
+            write,
+        ),
+        default_expedition_kit_id: diff_whole(
+            default_expedition_kit_id,
+            &snapshot.default_expedition_kit_id,
             write,
         ),
         equipment_config_json: diff_whole(
@@ -881,6 +890,7 @@ impl PublishState {
             default_forage_kit_id: Whole::default(),
             default_scout_kit_id: Whole::default(),
             default_warrior_kit_id: Whole::default(),
+            default_expedition_kit_id: Whole::default(),
             equipment_config_json: Whole::default(),
             history: VecDeque::new(),
         }
@@ -1013,6 +1023,7 @@ impl PublishState {
             default_forage_kit_id,
             default_scout_kit_id,
             default_warrior_kit_id,
+            default_expedition_kit_id,
             equipment_config_json,
             populations,
             generations,
@@ -1126,6 +1137,7 @@ impl PublishState {
                         default_forage_kit_id,
                         default_scout_kit_id,
                         default_warrior_kit_id,
+                        default_expedition_kit_id,
                         equipment_config_json,
                         materials,
                         characteristic_bands,
@@ -1224,6 +1236,7 @@ impl PublishState {
             default_forage_kit_id: subsistence_parts.default_forage_kit_id,
             default_scout_kit_id: subsistence_parts.default_scout_kit_id,
             default_warrior_kit_id: subsistence_parts.default_warrior_kit_id,
+            default_expedition_kit_id: subsistence_parts.default_expedition_kit_id,
             equipment_config_json: subsistence_parts.equipment_config_json,
             populations: people_parts.populations,
             removed_populations: people_parts.removed_populations,
@@ -1444,6 +1457,8 @@ impl PublishState {
             .reset(entry.snapshot.default_scout_kit_id.clone());
         self.default_warrior_kit_id
             .reset(entry.snapshot.default_warrior_kit_id.clone());
+        self.default_expedition_kit_id
+            .reset(entry.snapshot.default_expedition_kit_id.clone());
         self.equipment_config_json
             .reset(entry.snapshot.equipment_config_json.clone());
         self.great_discoveries.reset(
@@ -1606,6 +1621,7 @@ impl PublishState {
             default_forage_kit_id: None,
             default_scout_kit_id: None,
             default_warrior_kit_id: None,
+            default_expedition_kit_id: None,
             equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
@@ -1746,6 +1762,7 @@ impl PublishState {
             default_forage_kit_id: None,
             default_scout_kit_id: None,
             default_warrior_kit_id: None,
+            default_expedition_kit_id: None,
             equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
@@ -1870,6 +1887,7 @@ impl PublishState {
             default_forage_kit_id: None,
             default_scout_kit_id: None,
             default_warrior_kit_id: None,
+            default_expedition_kit_id: None,
             equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
@@ -3198,6 +3216,12 @@ pub fn capture_snapshot(
             .to_string(),
         default_warrior_kit_id: equipment_config
             .default_kit_id(crate::equipment_config::KitJob::Warrior)
+            .to_string(),
+        // **The ranging party's default** — the launch verbs' answer when the player names no kit,
+        // published beside the four role defaults for the same reason they are: the client's launch
+        // sheet has to open on the kit the sim will actually resolve.
+        default_expedition_kit_id: equipment_config
+            .default_kit_id(crate::equipment_config::KitJob::Expedition)
             .to_string(),
         tiles: tile_states,
         populations: population_states,
