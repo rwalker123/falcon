@@ -458,7 +458,7 @@ adding unrelated states therefore conflicted as a matter of course, and one merg
 | `tools/ui_preview.gd` | The harness `Node`: `_settle` / `_save` / `_capture` / `_assert_hud`, the canvas + prefs + tween plumbing, the prologue that stands the HUD up, the icon-probe epilogue, `CHAPTERS` + `_instantiate_chapters`, and the one exit `_finish()` |
 | `tools/ui_preview/chapters/*.gd` | One `RefCounted` per arc (`hunt`, `forage_crop`, `herd_graze_pen`, `event_dock`, `button_faces`, `forecast_seam`, …), each `run(harness)` plus the fixtures only it uses. A chapter need not render a frame — `button_faces` and `forecast_seam` are both PNG-less, and that is a normal shape |
 | `tools/ui_preview/fixtures_*.gd` | Pure `static func` fixtures shared by two or more chapters — `base` (the primitives the other three build on), `band`, `herd`, `forage`, `tile`, `world`, and `rung`, which derives every patch and herd row's `current_rung` from the flags the row already carries and is shared with `map_preview` / `band_panel_preview` / `snapshot_alias_guard` (`test-harnesses.md` → "A fixture's STANDING RUNG is DERIVED, never typed") |
-| `tools/ui_preview/node_query.gd`, `readouts.gd`, `compose_vocab.gd`, `input_probe.gd` | Shared `static` helpers: finding a control by identity, reading values back out of rendered text, the compose spine vocabulary, and driving real pointer input through `Viewport.push_input` (the canvas→window conversion, a hover, the two gestures, a wheel notch, a press-and-cancelled-release click, and the `press_left` / `release_left` pair a caller drives apart when the press itself opens a popup) |
+| `tools/ui_preview/node_query.gd`, `readouts.gd`, `compose_vocab.gd`, `input_probe.gd` | Shared `static` helpers: finding a control by identity, reading values back out of rendered text, **the turn-orb popover's rendered rows** (`turn_orb_popover_rows`, which was `turn_orb`'s own `_orb_rows` until `starting_loadout` became a second caller — a helper two chapters need is a shared static, not a copy in each), the compose spine vocabulary, and driving real pointer input through `Viewport.push_input` (the canvas→window conversion, a hover, the two gestures, a wheel notch, a press-and-cancelled-release click, and the `press_left` / `release_left` pair a caller drives apart when the press itself opens a popup) |
 
 **Where a new thing goes.** A state → the chapter that owns its arc. A fixture used by one chapter
 → a method on that chapter. A fixture used by two → a `fixtures_*.gd` `static func`. **`ui_preview.gd`
@@ -987,7 +987,10 @@ Fodder row's now; the BBCode is byte-identical for all of them (`_key_cell` buil
 is Godot's table-cell underline pass and not a client difference. Do not "fix" it in the formatter.
 
 **MAKING THAT ROW UNCONDITIONAL cost one frame and fourteen `PASS`** — measured, `1504 -> 1518` on
-one windowed run, `EXPECTED_CHECKPOINTS` 86 -> 101. The frame is **`band_fodder_dormant`**, appended
+one windowed run, `EXPECTED_CHECKPOINTS` 86 -> 101. The chapter has grown since, and its count went
+**104 -> 101** when the row's two hover sentences were retired: five hover claims went and two took
+their place, a negative on each host that no hay word reaches its block `tooltip_text` at all.
+The frame is **`band_fodder_dormant`**, appended
 after the pull-down state so nothing before it moves, and it is the first in this chapter to hold a
 LIVE fodder row and a DORMANT one in ONE render — the dim treatment is a claim about a DIFFERENCE,
 and a difference photographed one half at a time is not photographed.
@@ -1002,9 +1005,10 @@ two and photograph perfectly tidily.
 
 **The block also moves the faction's Foddering and must put it back.** `_ingest_intensification`
 REPLACES a faction's whole row, and `band_expedition` is the FIRST chapter — every chapter after it
-inherits whatever this one leaves. The two dormant sentences need the track part-learned and then
-learned, so the block pushes both and restores the untouched zeros on the way out, the same restore
-`band_panel_preview` makes around its own five-track fixture.
+inherits whatever this one leaves. The row must read DORMANT with the track part-learned and with it
+learned — knowing the craft is not the same as keeping a larder — so the block pushes both and
+restores the untouched zeros on the way out, the same restore `band_panel_preview` makes around its
+own five-track fixture.
 
 **A `[url=` SEARCH OVER PRODUCED LINES IS A VACUOUS CARET TEST.** A line producer emits plain
 `Key: value` strings and `detail_bbcode` is what draws the clickable run, so the needle can never
@@ -1015,8 +1019,11 @@ band's registration beside it so "registers nothing" cannot pass on a build that
 anywhere.
 
 **Falsified four ways from this chapter**, each failing a disjoint set: dropping the dim treatment
-(2), dropping the hover (5), re-gating the row (9 — including the frame's own both-surfaces
-precondition), and registering a disclosure on the dormant row (2).
+(2), re-registering a hover on the dormant row (2), re-gating the row (9 — including the frame's own
+both-surfaces precondition), and registering a disclosure on the dormant row (2). Those two negatives
+are what the five hover claims became: **a sentence registered here reaches the whole block**, so the
+failure they catch is the opposite of the old one — a hay sentence coming BACK and landing under
+Growth or Morale.
 
 **`band_hay_and_pen` is the frame that carries a BAND and a PEN at once**, which the drawer cannot do
 on its own: a player band's detail moves into the Band/City dock when one is present, so the dock
@@ -1690,6 +1697,113 @@ one verdict. Its claim survives, sharper, as `forage_take_chip_priced`'s useful-
 toggle fix added the two frames above and eleven claims net (four retired with the third chip state and
 the crop-picker distinction it carried, fifteen added across the subtraction, the regression and the
 refusal).
+
+## `chapters/starting_loadout.gd` — the turn-one outfitting picker (issue #629)
+
+**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Seven frames and
+thirty-eight assertions (`EXPECTED_CHECKPOINTS` **45** — frames count too). It ends by publishing a SHUT
+window, so the surface it stands up is gone before anything appended after it could inherit it.
+
+**MOST OF IT IS ASSERTIONS, AND THAT IS THE POINT.** Every claim the third column makes renders as a
+plausible picture whatever it says — a row reading `×3`, a dash on a row that should read `×1`, a
+knowledge-gated bench tool quietly present. So the arithmetic is asked of the rendered CONTROLS (by
+meta, never by scraping a subtree's text) and the frames carry the layout.
+
+| frame | what only IT can say |
+|---|---|
+| `starting_loadout` | the three columns fit side by side at the shipped width; the legend and the recipe rows draw the SAME five inks; the picker OPENED ITSELF, kits at 0 and the pile on the profile's defaults |
+| `starting_loadout_picked` | three real presses of the Stalking kit's `+` move the meter — and the commit control reads `Set out` with a budget still unspent, with the word `forfeit` absent from the whole card |
+| `starting_loadout_spent` | both budgets spent to the unit — `+` disabled, both bars full with **no remainder sliver**, and the commit control's face UNMOVED from the frame above |
+| `starting_loadout_dismissed` | the dismissed state leaves a live reopen control on screen rather than nothing at all |
+| `starting_loadout_resent` | ⛔ **a commit shuts nothing.** The still-open frame the sim really sends after an accepted order, reopened: the card comes back CLEAN — no refusal, no forfeiture claim, every pick intact — and the same control then re-sends a revised allocation |
+| `starting_loadout_orb_unspent` | the orb AMBER with one unit still to pick, its popover row reading `Band not outfitted` / `1 unit unspent` and wearing `Open ▸` |
+| `starting_loadout_orb_ready` | the same orb BLUE with everything picked, reading `Band outfitted` / `everything is picked` — **still present, still `Open ▸`**, which is what says a dismissed card is reachable right up to the advance |
+
+**THE TWO ORB FRAMES ARE A PAIR TOO, and the same argument applies**: either alone passes on an orb
+whose accent never moves, so both are taken on one registry with only the allocation between them.
+
+⛔ **ALL THREE OTHER HALVES OF THE REGISTRY ARE CLEARED FOR THEM, AND HANDED BACK AFTER.** The orb's
+accent is the highest-ranked entry's and `ready` ranks below everything, so any other row present
+paints both frames and they become evidence of nothing. **Clearing the band half alone was not
+enough** — measured: the orb came back `DANGER` on BOTH arms, off a pending narrative fork this
+long-lived HUD was still holding from the `telling` chapter — so the knowledge half and
+`_pending_forks` go too, and a precondition asserts the loadout row really is the orb's only entry.
+The fork and knowledge halves are written directly rather than through their setters, because
+`update_pending_forks` also AUTO-OPENS the fork panel, which would have put a card over these frames.
+
+**The accent is read off `TurnOrb._accent_color`, not inferred from the severity const** — a row can
+carry `ready` and paint nothing, which is exactly what a rank of 0 does. And the READY ink's
+separation from every palette's own `SIGNAL`/`WARN`/`DANGER`/`HEALTHY` is asserted **as data over all
+four themes at once**, with a second claim that the four are DISTINCT: without it, one hex pasted
+into four palettes passes as long as it clears each theme's accents, and it does not — it lands on
+loam's blue `SIGNAL`.
+
+Sabotage-verified three ways, each failing a DISJOINT set: `ready` returned to rank 0 fails **one**
+(the complete arm's accent, the orb coming back cream — the "silently inert" failure demonstrated);
+the producer falling silent once both budgets clear fails **five** (the whole complete arm, including
+the rendered row and its `Open ▸`); and one hex pasted into all four palettes fails **two** (the
+separation claim at loam and the distinctness claim, `1 distinct of 4`).
+
+**THE COMMIT CONTROL'S FACE IS A PAIR, and neither half is worth anything alone.** It is read off the
+rendered button (never off a producer) at a partly-spent budget and again at a fully-spent one, and
+the claim is that the two are EQUAL and both `Set out`: a face asserted only where something is
+unspent passes on a control that renames itself once the budgets clear, and only where they are clear
+on one that renames itself while they are not. That conditional face is exactly what was removed —
+it read `Set out — forfeit 17 kits and 2 units`, naming the cost of ending the turn on a button that
+does not end the turn.
+
+**THE COUNT IS READ OFF THE LABEL'S OWN META, never its face.** The face is `×3` or a dash, and
+parsing either back into a number is re-implementing the renderer in order to check it.
+
+**THE `+` IS PRESSED THROUGH THE REAL BUTTON, and the button is re-found on every press** — the panel
+rebuilds on each stepper move, so a cached node here is a freed control. The budget-spending loop is
+bounded by `STEPPER_PRESS_LIMIT`, a GUARD rather than the expected count: a `+` that stopped working
+would otherwise spin the chapter until the watchdog killed the run.
+
+**⛔ ONE ASSERTION RIDES THE DISMISSED FRAME AND IS THE ONLY THING THAT CAN SEE ITS DEFECT.** Every
+frame carries the window's section while it is open, so a controller that re-renders on *is the
+SURFACE up* rather than *is the CARD up* re-expands the picker the player just dismissed — on the very
+next snapshot and every one after it, which makes the window undismissible while each individual frame
+looks exactly right. The chapter pushes a second identical window after dismissing and requires the
+card to stay away. Sabotage-verified by reverting `is_expanded()` to `is_open()` in
+`StartingLoadoutController.set_window`: exactly that claim fails and nothing else in the run does.
+
+⛔ **THIS CHAPTER CANNOT REPRODUCE THE CARD'S DEAD-SPACE DEFECT, AND THAT IS A PROPERTY OF `_settle`.**
+A reported growth of ~400px on picking one kit could not be staged here under any condition tried —
+five kit rows or nine, a tall room or one shortened until the internal scroll turned on, `_settle` or
+bare `process_frame`s, press / unpress / re-press. `_settle` does `process_frame → force_draw →
+process_frame`, and **a draw flushes the deferred container sort** that a minimum-size read depends
+on, so this walk hands the card the very layout pass whose absence is the bug. Verified rather than
+assumed: with the fix reverted the run is still green. **Do not read this walk's silence as evidence
+that a fit is correct** — the same blindness covers every other card measured through `_settle`.
+
+What it carries instead is a BOUND, `_assert_no_dead_space`, in every card state — and its first
+version was **vacuous in exactly the reported case**: it asked the card against
+`PanelContainer.get_combined_minimum_size()` and skipped itself when the scroll was on, but a card
+grown past the room's ceiling turns the scroll ON, so with 400px injected it printed nothing and the
+run stayed green. It asks the SCROLL REGION now, one-sided (shorter than the body is the ceiling doing
+its job; taller is the defect), which needs no skip. With 400px injected it fails at `343 px of slack`
+on the picked and spent states.
+
+**THE KIT FIXTURE IS THE SHIPPED NINE-KIT ROSTER** (plus `none`, so the picker has something to drop).
+It was five while chasing this defect and stayed nine: the client's own roster is what the card is laid
+out against, and a fixture two-thirds of its height cannot show a column that is about to overflow.
+
+**THE KIT COLUMN'S PRE-FILL IS ASSERTED COUNT BY COUNT, not as a total.** `opening_loadout.kit_defaults`
+arrives already clamped to `kitBudget` sim-side, so the failure worth catching is a client that
+re-fits it — and with the shipped spread (4/4/4 of a 17 budget) comfortably inside the budget, a second
+clamp would leave a total that still looks reasonable. A kit the pre-fill does NOT name is asserted at
+zero beside them, without which "opens on the defaults" passes on a column that put the same number on
+every row. Sabotage-verified by ignoring the field: five claims fail, at `got 0`.
+
+**THE FIXTURE OFFERS THE `none` KIT AND THE GATED RECIPE ON PURPOSE.** The picker has to drop the
+first (by its empty `uses`) and never draw the second (it is in the recipe book and off
+`craftable_recipe_ids`), so a fixture that omitted either would assert nothing.
+
+**Its material defaults sum to 28 of 30, deliberately NOT to the budget** — a fixture that opened with
+nothing left could not tell a working meter from one stuck at zero. And `earthmoving` costs WOOD,
+which the default pile holds none of, so one row is unreachable and must be present-and-dimmed rather
+than filtered away.
 
 ## The ⚠'s one producer, and the biomass quantiser (this arc)
 
@@ -2375,8 +2489,133 @@ longer exist — the fixture now stages the link-kind keys and the frame reads `
 trap: **a frame whose fixture is the last producer of a state can go on passing after the state
 becomes unreachable**, and it then guards nothing while looking like coverage.
 
-**A clean run is 403 frames / 1803 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
-last figure recorded above was `370 / 1594`; the gap is drift accumulated un-recorded, exactly as it
+**A clean run is 420 frames / 1968 `PASS`, exit 0 — RE-MEASURED ON THE MERGED TREE**, as this file's
+own rule says. It read `420 / 1950` on this branch and `413 / 1875` on `main`; **neither is the
+merged answer and their sum is not either** — the two `EXPECTED_CHECKPOINTS` floors conflicted in the
+same merge and came out at 103 and 369, one BETWEEN the two sides and one ABOVE both. Take the
+measurement of the merged file, exactly as the merge callout below says.
+
+The loadout chapter's `_assert_the_footer_says_how_to_get_back` rides the existing `starting_loadout`
+frame: BOTH facts (the orb brings it back; the turn ends it), because either alone leaves the player
+stuck, plus the retired `forfeit` negative. Sabotage-verified two ways — unmounting the note fails
+both facts, trimming the second sentence fails the deadline alone.
+
+## The forage kit line, driven through the real sheet (`chapters/forage_accounts.gd`)
+
+⛔ **THE FORAGE WEB HAD NO COVERAGE AT ALL, WHICH IS HOW IT STAYED MUTE THROUGH THE WHOLE LIFE OF THE
+LINE.** The hunt sheet was asserted from the start and the forage sheet never was, so nobody noticed
+that `DrawerComposeController` handed the hunt kit row `_compose.hunt_count()` and handed the forage
+row nothing.
+
+**`_assert_the_forage_kit_line_reaches_the_sheet` is DRIVEN through `_compose_forage` and reads the
+RENDERED label**, and that is the whole point: a claim made against `KitRoster.shortfall_line` would
+have passed for the life of the bug, because the arithmetic was never wrong — the crew never reached
+it. Four legs on one band with only the baskets held moving: short, owns-none, covered (silence, the
+control), and **an UNSTAFFED forage job**, which is Ray's exact frame — `workersOnQuotedJob` is `0`
+there, which is what made the symptom total silence rather than a wrong number.
+
+⛔ **THE SHEET IS CLOSED BETWEEN LEGS.** Re-opening on the SAME tile is not a source change, so the
+sheet is not rebuilt and the previous band's label is still hanging there — measured: all three legs
+read `1 of 3` off the first one before the close was added.
+
+**Sabotage-verified** by removing the crew from the forage mount: all four legs fail, and the
+unstaffed one comes back `""` — the reported symptom, exactly.
+
+## The combat gate's remedy is a PAIR (`chapters/hunt.gd`)
+
+Two claims that used to assert the ARITHMETIC (*the refusal names BOTH terms*) are re-aimed at the
+REMEDY rather than deleted, by EQUALITY against the vocabulary's own format, with the retired clause
+asserted ABSENT beside them (`defense`, `casualties`). A third state composes the **`none`** kit on the
+same herd and the same band and requires the OTHER sentence.
+
+**Neither arm is worth anything alone** — a producer that always says *they need weapons* passes the
+first two, one that always says *pick a kit* passes the third — so the two are taken on one fixture
+with only the selected kit moving, plus an explicit claim that the sentences differ.
+
+⛔ **THE KIT IS SET AFTER THE COMPOSE, NOT BEFORE.** `reset_hunt_source` clears the composed kit, so a
+selection made ahead of it is thrown away and the sheet re-resolves the job DEFAULT — which names a
+weapon, so the `none` state silently became a second copy of the armed arm and read `they need
+weapons`. Caught by the pair; it is the reason the pair exists.
+
+⛔ **AND THE ARMED PEN LINE IS CAPTURED AS TEXT, NOT HELD AS A NODE** — the re-compose rebuilds the
+sheet, so a `pen_sheet` reference read afterwards answers for the state that replaced it. **The pen
+fixture is a DOMESTICATED herd and a different species** (`Red Deer`): it keeps the mammoth's combat
+terms, not its name.
+
+Sabotage-verified two ways, DISJOINT: hard-wiring the ARMED remedy fails the two unarmed claims,
+hard-wiring the UNARMED one fails the three armed claims (and `band_panel_preview`, whose denial sheet
+composes `none` and therefore pins the unarmed arm on its own surface).
+
+## The coverage blend, and the table that IS the regression (`chapters/compose_rungs.gd`)
+
+`_assert_the_crew_is_priced_on_the_gear_the_band_holds` asserts the arc's worked example verbatim —
+9 gatherers, `per_worker_yield` 0.20, bare 1.6 against basket 8.0 — at **0, 1 and 9** baskets, both as
+`KitRoster.carry_per_worker` arithmetic and through the real `priced_source` seam:
+
+| baskets | carry per worker | food per worker |
+|---|---|---|
+| 0 | 1.6000 | 0.0400 |
+| 1 | **2.3111** | **0.0578** |
+| 9 | 8.0000 | 0.2000 |
+
+**The three rows are ONE claim.** 0 and 9 alone are satisfied by a client that still steps at the
+first unit; the middle row is what separates a blend from a step, and it is the reported defect
+(`9 / 2 / 2`) in one number.
+
+`_assert_the_worker_cap_is_re_solved` covers Part B, and its shape is a TRIPLE: the re-solved crew
+(21) beside the flat quotient (18) — *the two agreeing is the failure* — a fully covered control where
+the two forms correctly DO agree, and the `bare == 0` guard answering the armed crew rather than an
+infinity.
+
+⛔ **THE COVERAGE CHANGE MOVED NO FRAME — 587/587 byte-identical**, measured directly against a build
+with both the blend and the re-solve reverted. No shipped fixture states the coverage terms, so every
+existing state takes the absent-means-covered path, where `carry_per_worker` returns the equipped tier
+and `crew_for_target` reduces to the identical `ceil(target / per_worker)`.
+
+**Sabotage-verified** by reverting both at once: four claims fail, and the failure text IS the reported
+bug — `0 baskets … (got 0.2000)` and `1 basket … (got 0.2000)`, the fully-equipped rate handed to a
+party holding one basket, with the cap collapsing to `18 hands, not the flat 18`.
+
+## The kit line's coverage states (`chapters/compose_rungs.gd`, `chapters/hunt.gd`)
+
+**`_assert_the_kit_line_is_a_shortfall_warning` replaced `_assert_kit_hint_names_the_kits_own_items`**,
+whose subject — *which item does the condition clause name* — went with the clause. The three coverage
+states are ONE claim and are asserted together on one band with only the units held moving: covered
+alone passes on a line that never renders, short alone on one that always does. Beside them: `none`
+(a kit that carries nothing can leave nobody short), an unstated ledger (not accused), and the
+**shortest-item** leg, which gives the sled a lower count than the spears so a line that always named
+`item_ids[0]` fails.
+
+**TWO NEIGHBOURING BLOCKS WERE RE-AIMED RATHER THAN DELETED** — they asserted the retired string but
+their subjects (a kit resolves ITS OWN tiers; a dry crook does not move the sled's haul) are live, so
+they ask `KitRoster.effective_tiers` now, which is the producer the line used to read.
+
+**`hunt.gd`'s `GATE_SPLIT_COVERED_KIT_HINT` INVERTED to `""`.** It asserted the clause STAYS at full
+coverage, arguing a player needs a `3 of 3` to watch become `3 of 4`; Ray's rule overrides that, and
+the baseline it preserved is exactly what made the sheet say something meaningless every frame.
+
+⛔ **AND A FIXTURE BUG SURFACED WITH IT.** `fixtures_band.kit_condition_rows` derived `count` from
+`workers_holding`, which parts company with ownership on an UNSTAFFED job: the band owns crooks and
+hoes but staffs no keeper, so those rows published *owns none* beside a healthy condition — a shape no
+server can send. They state `KIT_UNSTAFFED_UNITS_OWNED` now. It was invisible until
+`DetailFormat.kit_is_equipped` stopped inferring ownership from `remaining`.
+
+**The ownership claim is DRIVEN, not staged**, for the reason that fixture bug illustrates: the sim
+never publishes a live condition beside a zero count, so no fixture can carry the contradiction and a
+rendered row would be evidence of nothing. It is a pair — the forbidden shape must read UNOWNED, and
+an ordinary owned item must still read equipped, without which the first passes on a reader that
+answers `false` to everything.
+
+Sabotage-verified three ways, disjointly: the covered-state early return removed fails **two** (both
+covered claims, at `Only 17 of 17 hunters carry spears`); `kit_is_equipped` reverted to the condition
+test fails **one** (the driven ownership claim) — and **passed everything before that claim existed**,
+which is why it was added; and ignoring `kit_defaults` fails **five** in the loadout chapter. The
+figure recorded when the supply-network chapter landed was `403 / 1803`; the loadout chapter above adds
+seven frames and thirty-two claims and the rest is drift accumulated un-recorded, exactly as it has been
+every previous time. Measure; do not sum.
+
+**The previous entry, kept for its history.** The
+last figure recorded above it was `370 / 1594`; the gap is drift accumulated un-recorded, exactly as it
 has been every previous time. Measure; do not sum.
 
 > **AND A MERGE IS ONE OF THE WAYS IT DRIFTS.** This section landed on `main` reading `396 / 1761`
@@ -2384,3 +2623,35 @@ has been every previous time. Measure; do not sum.
 > were stale the moment the two branches met, because each figure counts the OTHER branch's frames
 > as absent. The merged figure was re-measured, not added — `396 + 7` and `1761 + 42` happen to land
 > near it, and that arithmetic is exactly the habit this paragraph exists to break.
+
+## The nearest-band readout's name (PR #634 review)
+
+Three `PASS` and NO frame, appended LAST in `chapters/tile_panel.gd` — it renders nothing and frees
+its map, so no capture before or after it moves. `EXPECTED_CHECKPOINTS` 116 → **123**, RE-MEASURED by
+raising the const to an impossible number and reading `reached 123` back; the declared 116 was
+already seven under the chapter's real count, so a delta applied to it would have set a floor the
+chapter could fall through.
+
+**`nearest_unit_label` is the only user-facing STRING the tile card composes out of a band**, and it
+is the shape a harness must catch: it degraded to the raw ECS entity while every frame in the corpus
+stayed byte-identical, because no fixture-fed state reaches `MapView._tile_info_at` and the card's
+own formatter is currently unreferenced. So the claim is asked of `_tile_info_at` DIRECTLY, over a
+real `MapView` with `set_fow_enabled(false)` — the `tile_panel_land_sticky` idiom — with a lone band
+three tiles from a bare probe hex.
+
+- **The fixture states `name` and NO `id`.** The marker's `id` is DERIVED from `name` by
+  `HudFormat.band_name`; a hand-stamped `id` would let the claim pass on a fixture doing the
+  derivation's job.
+- **The two keys are each other's control.** `nearest_unit_label` must be the NAME *and*
+  `nearest_unit_id` the entity, asserted in one breath — a claim about either alone passes on a card
+  that has stopped distinguishing them. The distance precondition rides ahead of both, or they pass
+  on the `""` an empty summary leaves.
+- ⛔ **`str()`, NEVER `String()`.** `String(…)` is a constructor accepting only the string types, so
+  it RAISES on the very int the regression puts in that slot — which aborts the chapter instead of
+  reporting the claim. Measured: the first cut failed as a `SCRIPT ERROR` at that line and surfaced
+  only as the checkpoint guard's `reached 121`. With `str()` the same sabotage names the value.
+
+Sabotage-verified by restoring `nearest_unit.get("id", "")`: exactly the two label claims fail, both
+naming `got "634"`, and the distance precondition correctly stays green.
+
+**A clean run is 413 frames / 1885 `PASS`, exit 0 — RE-MEASURED.**

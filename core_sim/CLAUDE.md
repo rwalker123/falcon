@@ -62,6 +62,7 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `telling.md` | The narrative beat engine, `when` grammar, stance, fork tier, memory threads | `telling/`, `tests/telling*.rs` |
 | `expeditions.md` | Wondrous sites, scouting & hunting expeditions | `sites.rs`, `expedition_config.rs` |
 | `fission.md` | Band fission — a band splits in two where it stands, the worker share, the two floors | `systems/fission.rs`, `tests/band_fission.rs` |
+| `band-names.md` | A band's name is identity, not a row number — the per-faction permutation, the four founding sites (mint at two, inherit at two), the wire field | `band_names.rs`, `components.rs`, `data/band_names.json`, the founding sites `systems/worldgen.rs`, `systems/fission.rs`, `bin/server.rs`, `tests/band_names.rs` |
 | `connections.md` | Contact and the connection primitive — range is the observing band's sight, the three clocks, the keystone (a connection grants `Discovered`, never `Seen`) | `connections*.rs`, `snapshot/connections.rs`, `visibility_systems.rs`, `tests/connections.rs` |
 | `campaign.md` | Start flow, population & demographics, supply network, sedentarization, wellbeing, victory | `supply.rs`, `demographics_config.rs`, `sedentarization*.rs` |
 | `routes.md` | Roads as the ladder's third branch — a road is a TILE improvement with one keeper, traffic wears the free floor in and `grade`/`pave` build above it, distance is a cost, and what a rung buys | `routes.rs`, `intensification_ladder.json`, `supply.rs`, `tests/route_traffic.rs` |

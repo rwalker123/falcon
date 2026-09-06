@@ -391,17 +391,14 @@ func _update_subject_row(node: Node, descriptor: Dictionary) -> void:
 ## a subject on this hex you can put workers on.
 ##
 ## Label = the BIOME name (more informative than a generic "The land", and it leaves the card title
-## as the coordinates). Glyph = the tile's food-module icon where it carries one — the SAME icon the
-## map marker draws, so a source reads identically in the panel and on the map — else the neutral
-## `◈`. Dot = the patch's ecology tier, the same vitality vocabulary as the band/herd dots.
+## as the coordinates). Mark = the tile's food-module icon where it carries one — the SAME icon the
+## map marker draws, so a source reads identically in the panel and on the map — and NO SYMBOL where
+## it carries none. Dot = the patch's ecology tier, the same vitality vocabulary as the band/herd dots.
 func _build_land_row(tile_info: Dictionary) -> Button:
 	var selected := _selection.subject() == HudSelectionState.SUBJECT_LAND
 	var patch_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges()
 	var dot_color := _ecology_tier_color(patch_phase) if patch_phase != "" else HudStyle.INK_FAINT
-	var module_key := String(tile_info.get("food_module", "")).strip_edges()
-	var glyph := HudSelectionVocab.LAND_ROW_GLYPH
-	if module_key != "":
-		glyph = FoodIcons.for_site(module_key, false, int(tile_info.get("terrain_id", -1)))
+	var glyph := _land_row_glyph(tile_info)
 	var button := _make_roster_button(selected)
 	var row := _make_roster_row(selected, dot_color)
 	var terrain_label := String(tile_info.get("terrain_label", "Unknown"))
@@ -433,11 +430,7 @@ func _update_land_row(button: Button, tile_info: Dictionary) -> void:
 	_apply_row_selection(button, selected)
 	var patch_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges()
 	_set_row_dot(button, _ecology_tier_color(patch_phase) if patch_phase != "" else HudStyle.INK_FAINT)
-	var module_key := String(tile_info.get("food_module", "")).strip_edges()
-	var glyph := HudSelectionVocab.LAND_ROW_GLYPH
-	if module_key != "":
-		glyph = FoodIcons.for_site(module_key, false, int(tile_info.get("terrain_id", -1)))
-	_set_row_icon(button, _land_row_sprite(tile_info), glyph, selected)
+	_set_row_icon(button, _land_row_sprite(tile_info), _land_row_glyph(tile_info), selected)
 	_set_row_name(button, String(tile_info.get("terrain_label", "Unknown")), selected)
 	_set_row_meta(button, _land_row_meta(tile_info))
 	_set_row_activity_mark(button, _land_row_activity(tile_info))
@@ -472,6 +465,35 @@ func _band_row_activity(unit: Dictionary, is_player: bool) -> String:
 		return ""
 	var activity := String(unit.get("activity", "")).strip_edges()
 	return activity if activity != "" else HudSelectionVocab.BAND_ACTIVITY_IDLE
+
+## A band row's leading ART — `StageSprites.for_stage` on the server's `settlement_stage_id`, the SAME
+## resolution the map's band token draws (`BandMarkerRenderer._draw_band_token`) and the band/city
+## panel header uses, so one band wears one stage mark at every scale. `null` when the stage has no
+## bundled art, and the row falls back to the server's emoji below — that miss is load-bearing rather
+## than defensive, because `settlement_stage_config.json` is user-editable and a game may define
+## stages past the three bundled ones.
+##
+## **A DETACHED PARTY TAKES NO STAGE ART AT ALL.** The map deliberately refuses a party a settlement
+## glyph (`_draw_band_token` returns early on `is_expedition` for its hollow flag disc), because a
+## party is not a settlement and must not read as one; the row obeys the same rule and takes the
+## mission mark from `_band_row_glyph` instead.
+func _band_row_sprite(unit: Dictionary) -> Texture2D:
+	if bool(unit.get("is_expedition", false)):
+		return null
+	return StageSprites.for_stage(String(unit.get("settlement_stage_id", "")).strip_edges())
+
+## A band row's leading GLYPH — the server's `settlement_stage_icon` (`⛺ 🛖 🏘️`), or a PARTY's
+## mission mark (`HudFormat.expedition_mission_glyph`, the same ⚑/🏹/💀/📦 its parties row and its map
+## marker wear). It is only ever the FALLBACK: `_row_icon` takes the sprite whenever one resolves, the
+## order `_draw_band_token` resolves in — and there the order is load-bearing, since its empty-glyph
+## branch returns early and would draw a placeholder square for a sprite-mapped stage whose glyph
+## happened to be blank. Nothing short-circuits here, but the two surfaces stay in the same order so
+## they cannot drift. A band with no stage on the wire yields `""`, which builds an empty `Label` that
+## holds the mark column's width — the zero-mark case the trailing activity slot already documents.
+func _band_row_glyph(unit: Dictionary) -> String:
+	if bool(unit.get("is_expedition", false)):
+		return HudFormat.expedition_mission_glyph(String(unit.get("expedition_mission", "")))
+	return String(unit.get("settlement_stage_icon", "")).strip_edges()
 
 ## Which ACTIVITY the land row's trailing mark states, `""` for none. It is the same predicate
 ## `_land_row_meta` uses for its count, asked as its own question so the count and the mark can never
@@ -543,6 +565,10 @@ func _build_band_row(unit: Dictionary) -> Button:
 		dot_color = BandFoodStatus.color_for_turns(float(unit.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS)))
 	var button := _make_roster_button(selected)
 	var row := _make_roster_row(selected, dot_color)
+	# The STAGE mark, its own child ahead of the name and never fused into it (issue #439) — the same
+	# rule the land and herd rows carry, so the three lead with one column of marks (issue #249).
+	var icon := _row_icon(_band_row_sprite(unit), _band_row_glyph(unit), selected)
+	row.add_child(icon)
 	var name_label := _roster_name_label(String(unit.get("id", "Band")), selected)
 	row.add_child(name_label)
 	var meta_label := _roster_meta_label(str(int(unit.get("size", 0))))
@@ -556,11 +582,13 @@ func _build_band_row(unit: Dictionary) -> Button:
 		button.tooltip_text = stage_label
 	button.add_child(row)
 	button.pressed.connect(_on_roster_row_selected.bind("unit", entity_id))
-	_store_row_refs(button, row, name_label, meta_label, glyph_label)
+	_store_row_refs(button, row, name_label, meta_label, glyph_label, icon)
 	return button
 
-## Patch a band row in place. `is_player` (hence the glyph's presence) is stable per entity and rides
-## the row key, so the glyph label is present here exactly when it was built.
+## Patch a band row in place. `is_player` (hence the trailing glyph's presence) is stable per entity
+## and rides the row key, so that label is present here exactly when it was built. The LEADING stage
+## mark needs no such flag: every band row carries one, so it is never an optional child, and the one
+## thing that does vary — art vs emoji — is a node-kind flip `_set_row_icon` swaps in place.
 func _update_band_row(button: Button, unit: Dictionary) -> void:
 	var entity_id := int(unit.get("entity", -1))
 	var is_player := _is_player_unit(unit)
@@ -570,6 +598,10 @@ func _update_band_row(button: Button, unit: Dictionary) -> void:
 	if is_player:
 		dot_color = BandFoodStatus.color_for_turns(float(unit.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS)))
 	_set_row_dot(button, dot_color)
+	# Through `_set_row_icon`, which SWAPS the node when the art⇄emoji kind flips — a real case here:
+	# a band whose stage crosses from a bundled one to a config-defined one changes the mark's node kind,
+	# and writing `.text` to a `TextureRect` is a silent no-op.
+	_set_row_icon(button, _band_row_sprite(unit), _band_row_glyph(unit), selected)
 	_set_row_name(button, String(unit.get("id", "Band")), selected)
 	_set_row_meta(button, str(int(unit.get("size", 0))))
 	_set_row_activity_mark(button, _band_row_activity(unit, is_player))
@@ -758,22 +790,40 @@ func _roster_row_ink(selected: bool) -> Color:
 ##
 ## The glyph FALLBACK is handed the row's ink. It used to be a prefix inside the name label's own
 ## text and inherited that label's colour for free; as its own bare `Label` it inherits nothing (this
-## client applies no `Theme`), so an un-tinted `◈` on a module-less land row rendered stock near-white
-## beside an `INK_DIM` name and stopped dimming with the row at all. Bundled ART takes no colour —
-## a marker sprite is drawn untinted (`HudWidgets.build_marker_icon`).
+## client applies no `Theme`), so an un-tinted glyph — a band on a config-defined settlement stage,
+## a herd whose species the client ships no art for — rendered stock near-white beside an `INK_DIM`
+## name and stopped dimming with the row at all. (The claim was first written against the land row's
+## neutral `◈`; that mark is GONE, and the rule outlived it because every emoji fallback owes it.)
+## Bundled ART takes no colour — a marker sprite is drawn untinted (`HudWidgets.build_marker_icon`).
 func _row_icon(texture: Texture2D, glyph: String, selected: bool) -> Control:
 	return HudWidgets.build_marker_icon(texture, glyph,
 		HudSelectionVocab.ROSTER_ROW_ICON_BOX, HudSelectionVocab.ROSTER_ROW_ICON_FONT_SIZE,
 		_roster_row_ink(selected))
 
 ## The land row's site art, resolved from the SAME `(module, is_hunt, terrain_id)` triple its emoji
-## is — so the two can never disagree about which site this is. `""` module ⇒ no art, and the row
-## falls back to `LAND_ROW_GLYPH`'s neutral `◈`, which is not a site at all.
+## is — so the two can never disagree about which site this is. `""` module ⇒ no art, and its glyph
+## twin below answers `""` on the same test, so the row leads with NO MARK rather than with a symbol
+## for the absence of one.
 func _land_row_sprite(tile_info: Dictionary) -> Texture2D:
 	var module_key := String(tile_info.get("food_module", "")).strip_edges()
 	if module_key == "":
 		return null
 	return SiteSprites.for_site(module_key, false, int(tile_info.get("terrain_id", -1)))
+
+## The land row's site EMOJI — the glyph fallback for a module the client has no art for, and `""`
+## for a tile carrying no module at all.
+##
+## **A MODULE-LESS ROW WEARS NO SYMBOL.** It used to wear a neutral `◈`, which was never a site: it
+## was the ABSENCE of one, drawn beside a meta label that already reads `No forage`, so the row stated
+## "nothing here" twice and one of the two statements was a mark the player had no way to read. `""`
+## still builds a mark NODE — `HudWidgets.build_marker_icon` gives an empty glyph a `Label` at the
+## mark box's width — so the slot is reserved and the biome name starts in the same column as a band's
+## or a herd's, rather than jumping left on ground that offers nothing.
+func _land_row_glyph(tile_info: Dictionary) -> String:
+	var module_key := String(tile_info.get("food_module", "")).strip_edges()
+	if module_key == "":
+		return ""
+	return FoodIcons.for_site(module_key, false, int(tile_info.get("terrain_id", -1)))
 
 ## Patch a row's leading mark in place — and REPLACE the node when the art⇄emoji kind flips.
 ##

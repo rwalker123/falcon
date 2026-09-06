@@ -440,10 +440,16 @@ retention window and not about the order.
 
 ## The dock names a band the way the rest of the HUD does
 
-**The snapshot carries no band NAME.** The sim writes a positional `Band <BandId>` into a demographic
-event's label and repeats the id as a `band=` detail token — precisely so the client can re-label the
-row. The client's own name is a **roster position** (`HudFormat.band_display_name`) and the sim's is a
-**durable id**; the two routinely disagree, and the token is the only thing that can join them.
+**An event label is composed sim-side, where no roster is in reach**, so it spells the band out from
+its durable `BandId` (`Band 7`) and repeats that id as a `band=` detail token — precisely so the
+client can re-label the row. The client's own name is the cohort's `name`, the sim's own field, run
+through `HudFormat.band_name`; the two renderings differ by construction, and the token is the only
+thing that can join them. `Band <id>` is an **id spelled out, not a row number** — it does not move
+when another band dies, and it is not a second naming rule.
+
+**An EMPTY client name never substitutes.** `band_label_for_id` answers `""` for a band the roster
+does not hold, and the map is published wholesale, so `EventDockPanel._swap_band_label` leaves the
+sim's own label standing rather than deleting the subject out of the sentence.
 
 The join needs the roster, which the HUD owns, and the dock is `Main`'s panel — so
 `HudLayer.update_band_alerts` publishes `band_labels_changed({band_id: name})` and `Main` relays it.

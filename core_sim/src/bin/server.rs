@@ -44,7 +44,7 @@ use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
     fold_party_into_band, hunt_trip_forecast, install_config_override, party_owes_a_report,
     publish_baseline_snapshot, recapture_snapshot_in_place, run_turn, scalar_from_f32,
-    shipment_carry_cap, split_band_from_parent, AgentAssignment, BandId, BandIdAllocator,
+    shipment_carry_cap, split_band_from_parent, AgentAssignment, BandId, BandIdAllocator, BandName,
     CommandEventEntry, CommandEventKind, CommandEventLog, CounterIntelBudgets,
     CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
     CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
@@ -828,6 +828,13 @@ enum Command {
         height: u32,
         seed: u64,
         profile_id: String,
+    },
+    /// **The opening loadout, composed on turn one** — the one source of a faction's starting gear
+    /// and material. Field 69. See `handle_set_starting_loadout`; it fails **closed and whole**.
+    SetStartingLoadout {
+        faction: FactionId,
+        kits: Vec<sim_runtime::StartingKitAllocation>,
+        materials: Vec<sim_runtime::StartingMaterialAllocation>,
     },
     /// Stage a sparse config patch for the **next** `new_game`. Validated and installed by
     /// `core_sim::install_config_override`; the running world is never touched.
@@ -3863,11 +3870,21 @@ fn handle_send_expedition(
 
     // A detached party is a band in its own right, so it takes its own durable id.
     let expedition_band_id = app.world.resource_mut::<BandIdAllocator>().allocate();
+    // **...but it INHERITS the home band's name, and must not mint one.** A party is those same
+    // people walking somewhere, not a new band: minting here would consume a name slot the faction
+    // never founded a band for, and put a second name on screen for one group of people. An absent
+    // parent name publishes empty, which the client renders as its `Band #<id>` fallback.
+    let expedition_band_name = app
+        .world
+        .get::<BandName>(band.entity)
+        .cloned()
+        .unwrap_or_else(|| BandName(String::default()));
     let expedition_entity = app
         .world
         .spawn((
             expedition_cohort,
             expedition_band_id,
+            expedition_band_name,
             LaborAllocation::default(),
             // **The party leaves OUTFITTED** — a detached party is a band in its own right, so it
             // carries the same full kit a band spawns with, and `advance_expeditions` then **wears**
@@ -4403,11 +4420,21 @@ fn launch_party_from_band(
 
     // A detached party is a band in its own right, so it takes its own durable id.
     let expedition_band_id = app.world.resource_mut::<BandIdAllocator>().allocate();
+    // **...but it INHERITS the home band's name, and must not mint one.** A party is those same
+    // people walking somewhere, not a new band: minting here would consume a name slot the faction
+    // never founded a band for, and put a second name on screen for one group of people. An absent
+    // parent name publishes empty, which the client renders as its `Band #<id>` fallback.
+    let expedition_band_name = app
+        .world
+        .get::<BandName>(band.entity)
+        .cloned()
+        .unwrap_or_else(|| BandName(String::default()));
     let expedition_entity = app
         .world
         .spawn((
             cohort,
             expedition_band_id,
+            expedition_band_name,
             LaborAllocation::default(),
             // **Outfitted, stated rather than defaulted** — see the scout's spawn above.
             outfitted_party_equipment(app, party_workers),
@@ -5719,6 +5746,49 @@ fn cancel_scope_applied_message(scope: CancelScope, band_label: &str) -> String 
 /// the Scout/Warrior roles under `Roles`. The narrow scopes deliberately leave [`BandTravel`] alone:
 /// moving is not working. Rejects when *the requested scope* has nothing to clear, so a stray
 /// invocation reports a failure rather than a misleading "stood down".
+/// **Apply a composed opening loadout, or refuse the whole thing.**
+///
+/// The validation, the band selection and the deposit all live in `core_sim::starting_loadout` — the
+/// server's job is to translate the wire types and say what happened.
+///
+/// **A success and a refusal both leave the window open**, because committing a loadout never closes
+/// it: the player revises a pick for the whole of turn one. So `openingLoadout.open` is not the
+/// client's confirmation — what a client reads is the **band's own published state** on the recapture
+/// this command triggers, which after a success is exactly the allocation it sent (the apply is a
+/// replacement) and after a refusal is whatever stood before.
+fn handle_set_starting_loadout(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    kits: &[sim_runtime::StartingKitAllocation],
+    materials: &[sim_runtime::StartingMaterialAllocation],
+) {
+    let kits: Vec<core_sim::KitAllocation> = kits
+        .iter()
+        .map(|allocation| core_sim::KitAllocation {
+            kit_id: allocation.kit_id.clone(),
+            count: allocation.count,
+        })
+        .collect();
+    let materials: Vec<core_sim::MaterialAllocation> = materials
+        .iter()
+        .map(|allocation| core_sim::MaterialAllocation {
+            material_id: allocation.material_id.clone(),
+            units: allocation.units,
+        })
+        .collect();
+    if let Err(reason) =
+        core_sim::apply_starting_loadout(&mut app.world, faction, &kits, &materials)
+    {
+        warn!(
+            target: "shadow_scale::command",
+            command = "set_starting_loadout",
+            faction = %faction.0,
+            %reason,
+            "command.starting_loadout.rejected"
+        );
+    }
+}
+
 fn handle_cancel_order(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -8952,6 +9022,15 @@ fn command_from_payload(
             scope,
         }),
         ProtoCommandPayload::ExportMap { path } => Some(Command::ExportMap { path }),
+        ProtoCommandPayload::SetStartingLoadout {
+            faction_id,
+            kits,
+            materials,
+        } => Some(Command::SetStartingLoadout {
+            faction: FactionId(faction_id),
+            kits,
+            materials,
+        }),
         ProtoCommandPayload::SetConfigOverride { kind, patch_json } => {
             Some(Command::SetConfigOverride { kind, patch_json })
         }
@@ -9939,6 +10018,13 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             scope,
         } => {
             handle_cancel_order(app, faction, band_id, scope);
+        }
+        Command::SetStartingLoadout {
+            faction,
+            kits,
+            materials,
+        } => {
+            handle_set_starting_loadout(app, faction, &kits, &materials);
         }
         // The four non-replayable commands never reach here; the dispatch loop handles them.
         Command::Turn(_)
@@ -19167,6 +19253,126 @@ mod tests {
         assert!(
             staffed > before,
             "the band's BUILDERS raise a graded tile: {staffed} against {before}"
+        );
+    }
+
+    /// Workers detached onto the scout party in the naming guard below — small enough that any
+    /// worldgen band can field it.
+    const NAMED_PARTY_WORKERS: u32 = 1;
+
+    /// **THE NAME AS PUBLISHED, not as held.** Read off the encoded envelope through the accessor
+    /// chain a client uses, because a component that is right while the wire is empty is exactly the
+    /// failure this arc removes — the client fell back to counting rows precisely because the frame
+    /// said nothing.
+    ///
+    /// Returns `(band_id, published name)` for every cohort on the frame.
+    fn published_band_names(app: &mut bevy::prelude::App) -> Vec<(u64, String)> {
+        use core_sim::{recapture_snapshot_in_place, SnapshotHistory};
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
+        envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the population section is published")
+            .iter()
+            .map(|cohort| {
+                (
+                    cohort.bandId(),
+                    cohort.name().unwrap_or_default().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    /// **Every published cohort carries a name, and a detached party publishes its HOME BAND's.**
+    ///
+    /// Both halves in one test on purpose: "every row has a name" passes on a party that minted a
+    /// *second* name for the same people, and "the party matches its home band" passes on a frame
+    /// where both are blank. Together they say the thing the client needs — the sim answers what a
+    /// band is called, for every row, and a party is not a new band.
+    #[test]
+    fn every_published_cohort_names_itself_and_a_party_carries_its_home_bands_name() {
+        let mut app = build_world_app();
+        let (home, faction, home_pos) = {
+            let mut query = app
+                .world
+                .query_filtered::<(Entity, &PopulationCohort), With<ResidentBand>>();
+            let (entity, cohort) = query
+                .iter(&app.world)
+                .next()
+                .expect("the campaign spawns a resident band");
+            (entity, cohort.faction, cohort.current_tile)
+        };
+        // The band's own people are the viewer, or its cohort row is not on the frame.
+        app.world.insert_resource(core_sim::ViewerFaction(faction));
+        let home_id = app
+            .world
+            .get::<BandId>(home)
+            .expect("a founded band has an id")
+            .0;
+        let target = app
+            .world
+            .get::<Tile>(home_pos)
+            .expect("a band stands on a tile")
+            .position;
+
+        handle_send_expedition(
+            &mut app,
+            faction,
+            Some(home_id),
+            NAMED_PARTY_WORKERS,
+            target.x,
+            target.y,
+        );
+        let party = app
+            .world
+            .query_filtered::<Entity, With<Expedition>>()
+            .iter(&app.world)
+            .next()
+            .expect("the scout party launched");
+        let party_id = app
+            .world
+            .get::<BandId>(party)
+            .expect("a party takes an id")
+            .0;
+        assert_ne!(party_id, home_id, "a party takes its own durable id");
+
+        let published = published_band_names(&mut app);
+        assert!(
+            !published.is_empty(),
+            "the frame carries at least the home band and its party"
+        );
+        for (band_id, name) in &published {
+            assert!(
+                !name.is_empty(),
+                "band {band_id} published no name; a client that reads a blank here falls back to \
+                 counting rows, which is the defect this field exists to remove"
+            );
+        }
+
+        let name_of = |id: u64| {
+            published
+                .iter()
+                .find(|(band_id, _)| *band_id == id)
+                .map(|(_, name)| name.clone())
+                .unwrap_or_else(|| panic!("band {id} is on the frame"))
+        };
+        assert_eq!(
+            name_of(party_id),
+            name_of(home_id),
+            "a detached party is the home band's people walking somewhere, so it publishes the \
+             home band's name rather than a second identity"
         );
     }
 }

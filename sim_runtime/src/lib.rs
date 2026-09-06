@@ -17,8 +17,9 @@ pub use commands::{
 };
 pub use commands::{
     CancelScope, CommandDecodeError, CommandEncodeError, CommandEnvelope, CommandPayload,
-    ConfigOverrideKind, OrdersDirective, ReloadConfigKind, SecurityPolicyKind, TradeCargoItem,
-    FODDER_CARGO_KEY, FOOD_CARGO_KEY, MAX_PROTO_FRAME,
+    ConfigOverrideKind, OrdersDirective, ReloadConfigKind, SecurityPolicyKind,
+    StartingKitAllocation, StartingMaterialAllocation, TradeCargoItem, FODDER_CARGO_KEY,
+    FOOD_CARGO_KEY, MAX_PROTO_FRAME,
 };
 
 pub mod command_text;
@@ -431,6 +432,7 @@ pub mod knowledge {
                 default_scout_kit_id: String::new(),
                 default_warrior_kit_id: String::new(),
                 equipment_config_json: String::new(),
+                opening_loadout: Default::default(),
                 faction_inventory: Vec::new(),
                 sedentarization: Vec::new(),
                 discovered_sites: Vec::new(),

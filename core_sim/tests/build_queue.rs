@@ -2991,17 +2991,27 @@ fn pave_a_road(app: &mut App, tile: UVec2) {
         .add_progress(FactionId(0), core_sim::PAVING_DISCOVERY_ID, scalar_one());
 }
 
-/// Put `units` of the paving material in the fixture band's stores. The characteristics come from
-/// the roster's own opening pile, which is the only source of this material in the game — it has no
-/// producer (issue #583).
+/// Every axis a material declares, read at [`core_sim::OPENING_MATERIAL_READING`] — what a unit
+/// bought in the turn-one loadout window arrives holding.
+fn opening_readings(
+    materials: &core_sim::MaterialsConfig,
+    material: &str,
+) -> std::collections::BTreeMap<String, f32> {
+    materials
+        .material(material)
+        .expect("the shipped roster carries the material")
+        .characteristics
+        .iter()
+        .map(|axis| (axis.clone(), core_sim::OPENING_MATERIAL_READING))
+        .collect()
+}
+
+/// Put `units` of the paving material in the fixture band's stores, at the reading the **opening
+/// loadout** deposits it at — the only source of this material in the game, since it has no producer
+/// (issue #583) and no material carries a start stock any more.
 fn stock_road_material(app: &mut App, band: Entity, units: f32) {
     let materials = core_sim::MaterialsConfig::builtin();
-    let characteristics = materials
-        .materials()
-        .find(|(id, _)| *id == ROAD_MATERIAL)
-        .and_then(|(_, def)| def.start_stock.as_ref())
-        .map(|stock| stock.characteristics.clone())
-        .expect("the shipped roster stocks the paving material at a spawn");
+    let characteristics = opening_readings(&materials, ROAD_MATERIAL);
     let key = materials
         .band_key(ROAD_MATERIAL, &characteristics)
         .expect("the shipped roster rates the paving material");

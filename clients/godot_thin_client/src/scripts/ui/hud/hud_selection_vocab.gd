@@ -29,13 +29,10 @@ const ROSTER_ROW_ICON_BOX := 18.0
 # splitting it out must not resize it.
 const ROSTER_ROW_ICON_FONT_SIZE := 16
 
-# Fallback glyph for the land row on a tile carrying no food module. Text-presentation (the line-art
-# policy in `FoodIcons`), so unlike an emoji it DRAWS in whatever `font_color` its label carries.
-# That colour is now applied EXPLICITLY — `SelectionCardController._roster_row_ink` hands it to
-# `HudWidgets.build_marker_icon` at build time and re-applies it on the in-place patch path — because
-# the mark is its own bare `Label` since issue #439 and inherits nothing (this client applies no
-# `Theme`). Left un-set it would render stock near-white beside an `INK_DIM` name.
-const LAND_ROW_GLYPH := "◈"
+# A module-less land row wears NO SYMBOL. There was a neutral `◈` here; it was not a site but the
+# ABSENCE of one, sitting beside a meta that already reads `No forage`, so the row said "nothing
+# here" twice — once in a mark nobody could read. The mark NODE stays (an empty glyph `Label` at
+# `ROSTER_ROW_ICON_BOX`), so the name goes on starting in the same column as every other row's.
 
 # Land-row meta, shortest true form: workers on it · else the module it offers · else nothing.
 #

@@ -10,12 +10,26 @@ extends RefCounted
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
 const EXPECTED_CHECKPOINTS := 56
 
+## **THE BANDS' NAMES, ONE PER PRODUCER.** The sim sends every cohort a name (issue #615) and every
+## attention row is composed from it, so a fixture without one renders `HudFormat`'s `Band #<id>` tell
+## on a frame whose whole subject is which band is in trouble. One distinct word per producer, so a
+## row attributed to the wrong band fails the eye as well as the claim.
+const ORB_STARVING_BAND_NAME := "Ashfell"
+const ORB_LOSING_BAND_NAME := "Brackwater"
+const ORB_IDLE_BAND_NAME := "Thornhollow"
+## The band whose four parties are parked awaiting orders (state 7b) …
+const ORB_AWAITING_HOME_BAND_NAME := "Windmere"
+## … and the one that could not pay its pen's feed (state 7c).
+const ORB_PEN_KEEPER_BAND_NAME := "Stonereach"
+
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const KnowledgeFx := preload("res://tools/ui_preview/fixtures_knowledge.gd")
 ## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
 ## rung off its own flags through this, and re-stamps after any mutation of them.
 const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
+## Shared node lookups, for the popover-row walk this chapter and `starting_loadout` both read.
+const NodeQuery := preload("res://tools/ui_preview/node_query.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -169,40 +183,11 @@ func _set_forage_patches(patches: Array) -> void:
 			ForageFx.floorify(p)
 	h._hud.update_forage_patches(patches)
 
-## **THE RENDERED reason rows of the open popover**, in the order they are drawn, each as
-## `{label, detail}` read off the two Labels themselves — never off `TurnOrb._entries`. A registry read
-## would pass on a row the popover never drew, and it would also skip the sort `set_attention` applies,
-## so a claim about which row sits ABOVE which could not be made against it. The popover body is a
-## header, one Button per entry, and a footer whose Advance button is nested one level deeper — so the
-## body's DIRECT Button children are exactly the reason rows.
+## The rendered reason rows of the open popover. **The walk itself lives in `node_query.gd`** — the
+## `starting_loadout` chapter reads the same rows for its own orb states, and a helper two chapters
+## need is a shared static rather than a copy in each.
 func _orb_rows() -> Array:
-	var rows: Array = []
-	var pop = h._hud.turn_orb._popover
-	if pop == null or pop.get_child_count() == 0:
-		return rows
-	for row_node in pop.get_child(0).get_children():
-		if not (row_node is Button) or row_node.get_child_count() == 0:
-			continue
-		# The row is stripe · icon · text stack · jump, and the text stack is the only VBox in it, so
-		# the label/detail pair is reached structurally rather than by counting siblings.
-		for cell in row_node.get_child(0).get_children():
-			if not (cell is VBoxContainer) or cell.get_child_count() < 2:
-				continue
-			# **AND THE AFFORDANCE**, which is the last child of the row's own HBox: `Jump →` for a
-			# locating row, `Open ▸` for a non-locating kind that a panel branch answers, and EMPTY for
-			# one that neither locates nor opens. Read here rather than asserted off the kind, because
-			# the failure this catches is a row that WEARS the affordance and does nothing when pressed.
-			var jump := ""
-			var last: Node = row_node.get_child(0).get_child(row_node.get_child(0).get_child_count() - 1)
-			if last is Label:
-				jump = String((last as Label).text)
-			rows.append({
-				"label": String((cell.get_child(0) as Label).text),
-				"detail": String((cell.get_child(1) as Label).text),
-				"jump": jump,
-			})
-			break
-	return rows
+	return NodeQuery.turn_orb_popover_rows(h._hud.turn_orb)
 
 ## The rendered row whose label is EXACTLY `label`, or `null`. Rows are found by the words the player
 ## reads, so a producer that fired with different text is a miss rather than a silent match.
@@ -821,31 +806,40 @@ func run(harness) -> void:
 	# Band 2 shrank 90→78 with emigrants (losing population → warn/amber), Band 3 has idle
 	# workers (warn/amber). The badge reads "3", the pulse stops, and the popover (opened here)
 	# lists all three with the starving/critical row sorted to the TOP, each with a Jump row.
-	# A starving EXPEDITION is interleaved between the bands to verify the bands-only numbering:
-	# it produces NO attention entry (never "Band N starving") and does not shift Band 2/Band 3's
-	# positional numbers — the idle-workers row still reads "Band 3", matching the picker/header.
+	# A starving EXPEDITION is interleaved between the bands to verify the bands-only producer set: it
+	# produces NO attention entry of its own class (a party's demand is "awaiting orders", state 7b)
+	# and — since issue #615 — cannot shift what the bands after it are CALLED either, every row here
+	# naming its band by the cohort's own `name` rather than by a position in this array.
 	h._hud.update_band_alerts([
-		{"faction": 0, "entity": 601, "size": 120, "turns_of_food": 12.0, "activity": "forage",
+		{"faction": 0, "entity": 601, "band_id": 4601, "name": ORB_STARVING_BAND_NAME,
+			"size": 120, "turns_of_food": 12.0, "activity": "forage",
 			"current_x": 21, "current_y": 15},
-		{"faction": 0, "entity": 602, "size": 90, "turns_of_food": 999.0, "activity": "hunt",
+		{"faction": 0, "entity": 602, "band_id": 4602, "name": ORB_LOSING_BAND_NAME,
+			"size": 90, "turns_of_food": 999.0, "activity": "hunt",
 			"current_x": 31, "current_y": 21},
-		{"faction": 0, "entity": 603, "size": 60, "turns_of_food": 999.0, "activity": "forage",
+		{"faction": 0, "entity": 603, "band_id": 4603, "name": ORB_IDLE_BAND_NAME,
+			"size": 60, "turns_of_food": 999.0, "activity": "forage",
 			"current_x": 12, "current_y": 9},
 	])
 	h._hud.update_band_alerts([
-		# Band 1 — starving (3 turns of food, below critical).
-		{"faction": 0, "entity": 601, "size": 120, "turns_of_food": 3.0, "activity": "forage",
+		# The starving band (3 turns of food, below critical).
+		{"faction": 0, "entity": 601, "band_id": 4601, "name": ORB_STARVING_BAND_NAME,
+			"size": 120, "turns_of_food": 3.0, "activity": "forage",
 			"current_x": 21, "current_y": 15},
-		# A detached hunt expedition, also starving — must NOT emit a "Band N starving" entry and
-		# must NOT consume a band number (Band 2/Band 3 below stay 2 and 3).
-		{"faction": 0, "entity": 650, "size": 6, "turns_of_food": 2.0, "is_expedition": true,
+		# A detached hunt expedition, also starving — it must NOT emit a band-class starving entry, and
+		# it must not disturb what the two bands after it are CALLED. It carries its HOME band's name,
+		# which is the wire contract (issue #615) and the shape the client must stay correct under.
+		{"faction": 0, "entity": 650, "band_id": 4650, "name": ORB_STARVING_BAND_NAME,
+			"size": 6, "turns_of_food": 2.0, "is_expedition": true,
 			"expedition_mission": "hunt", "expedition_phase": "hunting", "home_band_entity": 601,
 			"current_x": 25, "current_y": 18},
-		# Band 2 — losing population: 90 → 78, well-fed but 12 emigrated last turn → "people leaving".
-		{"faction": 0, "entity": 602, "size": 78, "turns_of_food": 999.0, "morale": 0.30,
+		# Losing population: 90 → 78, well-fed but 12 emigrated last turn → "people leaving".
+		{"faction": 0, "entity": 602, "band_id": 4602, "name": ORB_LOSING_BAND_NAME,
+			"size": 78, "turns_of_food": 999.0, "morale": 0.30,
 			"morale_cause": 1, "last_emigrated": 12, "activity": "hunt", "current_x": 31, "current_y": 21},
-		# Band 3 — idle labor: 4 working-age workers unassigned.
-		{"faction": 0, "entity": 603, "size": 60, "turns_of_food": 999.0, "activity": "forage",
+		# Idle labor: 4 working-age workers unassigned.
+		{"faction": 0, "entity": 603, "band_id": 4603, "name": ORB_IDLE_BAND_NAME,
+			"size": 60, "turns_of_food": 999.0, "activity": "forage",
 			"current_x": 12, "current_y": 9, "idle_workers": 4},
 	])
 	h._hud.turn_orb.open_popover()
@@ -861,7 +855,8 @@ func run(harness) -> void:
 	# popover must still fit above the orb with its `Advance ▸` footer on-screen.
 	h._hud.turn_orb.set_attention([])   # drop State 7's registry so this frame is only these rows
 	h._hud.update_band_alerts([
-		{"faction": 0, "entity": 701, "size": 60, "turns_of_food": 999.0, "activity": "forage",
+		{"faction": 0, "entity": 701, "band_id": 4701, "name": ORB_AWAITING_HOME_BAND_NAME,
+			"size": 60, "turns_of_food": 999.0, "activity": "forage",
 			"current_x": 12, "current_y": 9, "idle_workers": 4},
 		{"faction": 0, "entity": 751, "size": 6, "turns_of_food": 9.0, "is_expedition": true,
 			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
@@ -893,7 +888,8 @@ func run(harness) -> void:
 	h._hud.turn_orb.set_attention([])
 	h._set_world_herds([HerdFx.starving_pen_herd_fixture()])
 	h._hud.update_band_alerts([
-		{"faction": 0, "entity": 801, "size": 46, "turns_of_food": 1.0, "activity": "hunt",
+		{"faction": 0, "entity": 801, "band_id": 4801, "name": ORB_PEN_KEEPER_BAND_NAME,
+			"size": 46, "turns_of_food": 1.0, "activity": "hunt",
 			"current_x": 64, "current_y": 11, "idle_workers": 0,
 			"labor_assignments": [
 				# The drawer's standing summary reads through the same

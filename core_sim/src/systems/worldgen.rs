@@ -81,6 +81,10 @@ pub fn spawn_initial_world(
     // **The fourth half of the start kit** — the working-age share a spawn's stock is sized against
     // (see [`StartKit::working_fraction`]). `Option` for the same reason the three above are.
     demographics: Option<Res<crate::demographics_config::DemographicsConfigHandle>>,
+    // The pool a founded band's name is drawn from. `Option` for the same reason the start-kit
+    // handles above are: a hand-rolled test `World` that never installs it must not panic worldgen,
+    // and absent reads as the builtin pool - the very list `include_str!` baked in.
+    band_names: Option<Res<crate::band_names::BandNameCatalogHandle>>,
     tile_registry: Option<Res<TileRegistry>>,
 ) {
     // Guard FIRST: the starting inventory, knowledge and culture seeding below all run ahead of any
@@ -794,6 +798,19 @@ pub fn spawn_initial_world(
     // every hand-rolled test `World` in the crate to remember to insert one first — 33 of them —
     // and each of those is a place to forget, which is the omission failure this whole arc is about.
     let mut band_ids = BandIdAllocator::default();
+    // ...and the name space with it, for the same reason: worldgen founds the first bands, so it
+    // opens the per-faction name counters and inserts them below beside the id counter.
+    let mut band_names_alloc = BandNameAllocator::default();
+    let band_name_catalog = band_names
+        .as_ref()
+        .map(|handle| handle.get())
+        .unwrap_or_else(crate::band_names::BandNameCatalog::builtin);
+    let mut identity = BandIdentitySource {
+        ids: &mut band_ids,
+        names: &mut band_names_alloc,
+        catalog: band_name_catalog.as_ref(),
+        map_seed: config.map_seed,
+    };
     // Resolved once for both arms: which arm spawns the band does not change what it is stocked with.
     let start_kit_equipment = equipment
         .as_ref()
@@ -824,7 +841,7 @@ pub fn spawn_initial_world(
         spawn_default_population_clusters(
             &mut commands,
             &registry,
-            &mut band_ids,
+            &mut identity,
             &tiles,
             &tags_grid,
             width,
@@ -840,7 +857,7 @@ pub fn spawn_initial_world(
         spawn_profile_population(
             &mut commands,
             &registry,
-            &mut band_ids,
+            &mut identity,
             &tiles,
             &tags_grid,
             width,
@@ -853,9 +870,12 @@ pub fn spawn_initial_world(
         );
     }
 
-    // Publish the counter with the ids it just handed out, so the next band spawned (an
-    // expedition, a rollback) continues the sequence instead of colliding with a living band.
+    // Publish the counters with the ids and names they just handed out, so the next band spawned (an
+    // expedition, a rollback) continues both sequences instead of colliding with a living band.
+    // The bundle's borrows end here so the two allocators can be moved into the world.
+    let BandIdentitySource { .. } = identity;
     commands.insert_resource(band_ids);
+    commands.insert_resource(band_names_alloc);
     commands.insert_resource(StartLocation::new(Some(UVec2::new(start_x, start_y))));
     commands.insert_resource(FoodSiteRegistry::new(curated_entries));
 
@@ -2838,6 +2858,22 @@ fn module_distance_bonus(distance: u32, is_primary: bool) -> i32 {
     }
 }
 
+/// **Everything a founded band's identity is minted from** — its durable id and its name.
+///
+/// Bundled for the reason [`StartKit`] below is: the four spawn helpers thread it unchanged and
+/// exactly one place reads it, so four more parameters on four signatures would say the same thing
+/// four times. Keeping the two allocators together also makes it structurally hard to hand a band an
+/// id and forget its name, which is the omission this arc exists to close.
+struct BandIdentitySource<'a> {
+    ids: &'a mut BandIdAllocator,
+    names: &'a mut BandNameAllocator,
+    /// The pool the names come out of.
+    catalog: &'a BandNameCatalog,
+    /// The seed the pool's per-faction permutation is keyed on — the whole of why a reload spells
+    /// the same names.
+    map_seed: u64,
+}
+
 /// **The three tables a spawn's start kit is resolved from** — *what* the band owns, and the *grade*
 /// its gear is stamped with. Bundled because they travel together down every spawn helper and are
 /// read at exactly one place ([`BandEquipment::start_stocked_owned`]); passing three refs through
@@ -2858,53 +2894,11 @@ struct StartKit<'a> {
     working_fraction: f32,
 }
 
-/// **THE MATERIALS A SPAWNED BAND IS SENT OUT HOLDING** — one batch per material whose roster entry
-/// declares a `start_stock`, at `per_worker × workers` and the reading that block states
-/// (`docs/plan_standing_upkeep.md` §4.9 item 12).
-///
-/// # ⛔ `StartKit::materials` WAS NEVER A STOCK, AND THIS IS THE PATH THAT MAKES IT ONE
-///
-/// That field is the materials **table**, carried into the spawn so an equipment batch can resolve
-/// its anchor grade through `recipes.anchor_grade_for_item`. **Nothing in `StartKit` deposited a
-/// material batch**, and a spawned band's `LocalStore.materials` was empty — which is why the pen's
-/// hurdles have a recipe whose `wood` has no producer and no other way in.
-///
-/// **Today `wood` is the only declarer**, and the lever is on the *material* rather than in a start
-/// profile because the roster is where a material is described — one home per fact. The amount is a
-/// **config lever**, not a constant: it is the only thing between a band and its first pen until
-/// forest foraging lands, so it has to be tunable without a rebuild.
-///
-/// **A band with no workers stocks nothing**, which needs no special case: the amount is `0` and
-/// `LocalStore::deposit_material` refuses a non-positive deposit.
-fn start_stocked_materials(
-    materials: &crate::materials_config::MaterialsConfig,
-    workers: f32,
-) -> LocalStore {
-    let mut store = LocalStore::new();
-    for (id, def) in materials.materials() {
-        let Some(stock) = def.start_stock.as_ref() else {
-            continue;
-        };
-        // The batch's merge key is derived from the stated reading through the materials table's own
-        // lookup, exactly as a yield edge's is — the store stores, it does not interpret.
-        let Some(band) = materials.band_key(id, &stock.characteristics) else {
-            continue;
-        };
-        store.deposit_material(
-            id,
-            band,
-            scalar_from_f32(stock.per_worker * workers.max(0.0)),
-            &stock.characteristics,
-        );
-    }
-    store
-}
-
 #[allow(clippy::too_many_arguments)]
 fn spawn_default_population_clusters(
     commands: &mut Commands,
     registry: &GenerationRegistry,
-    band_ids: &mut BandIdAllocator,
+    identity: &mut BandIdentitySource<'_>,
     tiles: &[Entity],
     tags_grid: &[sim_runtime::TerrainTags],
     width: usize,
@@ -2934,7 +2928,7 @@ fn spawn_default_population_clusters(
                 spawn_population_entity(
                     commands,
                     registry,
-                    band_ids,
+                    identity,
                     tiles[idx],
                     1_000,
                     cohort_index,
@@ -2951,7 +2945,7 @@ fn spawn_default_population_clusters(
 fn spawn_profile_population(
     commands: &mut Commands,
     registry: &GenerationRegistry,
-    band_ids: &mut BandIdAllocator,
+    identity: &mut BandIdentitySource<'_>,
     tiles: &[Entity],
     tags_grid: &[sim_runtime::TerrainTags],
     width: usize,
@@ -2974,7 +2968,7 @@ fn spawn_profile_population(
                 spawn_population_entity(
                     commands,
                     registry,
-                    band_ids,
+                    identity,
                     tiles[idx],
                     spec.band_size(),
                     cohort_index,
@@ -2990,7 +2984,7 @@ fn spawn_profile_population(
         spawn_default_population_clusters(
             commands,
             registry,
-            band_ids,
+            identity,
             tiles,
             tags_grid,
             width,
@@ -3011,11 +3005,23 @@ fn spawn_profile_population(
     }
 }
 
+/// **The party a band of `size` can field** — its head count times the working-age share, **floored,
+/// because `available_workers` floors**. So the two readings of *"this band's workers"* agree and a
+/// spawn's ledger stays reproducible from the cohort.
+///
+/// One home, because two things are sized against it: the equipment a spawn stocks, and the
+/// [`crate::starting_loadout::StartingLoadout`] kit budget — one kit per working-age hand. A second
+/// copy of the expression is a second answer to *"how many hands has this band"*, free to drift the
+/// moment the demographics are retuned.
+pub fn party_workers(size: u32, working_fraction: f32) -> f32 {
+    (size as f32 * working_fraction).floor()
+}
+
 #[allow(clippy::too_many_arguments)] // one more id source than the linter's threshold likes
 fn spawn_population_entity(
     commands: &mut Commands,
     registry: &GenerationRegistry,
-    band_ids: &mut BandIdAllocator,
+    identity: &mut BandIdentitySource<'_>,
     tile_entity: Entity,
     size: u32,
     cohort_index: &mut usize,
@@ -3025,12 +3031,14 @@ fn spawn_population_entity(
 ) {
     let generation = registry.assign_for_index(*cohort_index);
     *cohort_index = cohort_index.saturating_add(1);
-    // **Floored, because `available_workers` floors.** The stock is sized against the party the
-    // band can actually field, so the two readings of "this band's workers" agree and the ledger
-    // stays reproducible from the cohort. Resolved once, because the **material** stock and the
-    // **equipment** stock are both sized against it and *"a party's worth"* has to mean one thing in
-    // this function.
-    let party_workers = (size as f32 * start_kit.working_fraction).floor();
+    // **Resolved once, because the cohort's own field and the name mint must not drift.** A name is
+    // unique within a *faction*, so minting against a different faction than the band is filed under
+    // would break the guarantee silently.
+    let faction = PLAYER_FACTION;
+    // The flooring rationale and the one-home rule live on [`party_workers`] itself — this branch
+    // extracted the expression because the KIT BUDGET is sized against it too, so an inlined copy
+    // here would be a second answer to *"how many hands has this band"*.
+    let party_workers = party_workers(size, start_kit.working_fraction);
     // Brackets and larder are seeded at Startup by `apply_starting_inventory_effects`
     // (it splits `size` via the demographics config distribution and distributes start-grant
     // provisions into larders) — spawn them empty here.
@@ -3041,13 +3049,12 @@ fn spawn_population_entity(
         children: scalar_zero(),
         working: scalar_zero(),
         elders: scalar_zero(),
-        // **…but the MATERIAL stock is seeded HERE, beside the kit** — the material half of the
-        // standing upkeep needs a band to have something to build a pen out of, and no producer
-        // yields `wood` until forest foraging lands (`docs/plan_standing_upkeep.md` §4.9 item 12).
-        // It rides the spawn rather than `apply_starting_inventory_effects` because it needs no
-        // demographic split — the party's own worker count, the same one the kit is sized against —
-        // and because the roster is where a material is described.
-        stores: start_stocked_materials(start_kit.materials, party_workers),
+        // **…and the material store is EMPTY too, deliberately.** A spawn stocks NO material at
+        // all: the per-material `start_stock` that used to seed `wood` and `stone` here is deleted,
+        // mechanism and all, so the only opening material in the game is what the player allocates
+        // in the turn-one loadout window (`.claude/rules/core_sim/equipment.md` → "the opening
+        // allocation is the one source"). Every other material has a producer.
+        stores: LocalStore::new(),
         morale: scalar_from_f32(0.6),
         last_food_consumption: 0.0,
         last_turn_food_transfers: Default::default(),
@@ -3062,7 +3069,7 @@ fn spawn_population_entity(
         last_immigrated: 0,
         age_turns: 0,
         generation,
-        faction: FactionId(0),
+        faction,
         knowledge: knowledge.to_vec(),
         migration: None,
     });
@@ -3090,7 +3097,15 @@ fn spawn_population_entity(
     entity.insert(crate::components::BandBench::default());
     // The band's durable identity — see `BandId`. Allocated here rather than derived from position
     // because several bands can share a hex and a band outlives the hex it started on.
-    entity.insert(band_ids.allocate());
+    entity.insert(identity.ids.allocate());
+    // ...and the band's NAME, minted from the same source in the same breath — see `BandName`. It is
+    // minted rather than derived for the same reason the id is: nothing about a band's identity may
+    // move when a different band dies.
+    entity.insert(
+        identity
+            .names
+            .mint(faction, identity.map_seed, identity.catalog),
+    );
     // The fractional carry that turns the demographic rates into whole-person feed events. Spawned
     // empty here, beside the cohort whose flows it accumulates — a band without one runs the model
     // but reports no births/deaths (see `simulate_population`'s query).

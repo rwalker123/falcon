@@ -26,11 +26,35 @@ const FIXTURE_BAND_ID_OFFSET := 4000
 ## HUD that is behaving correctly. Every band fixture here is therefore stamped.
 static func with_band_id(band: Dictionary) -> Dictionary:
 	band["band_id"] = int(band.get("entity", 0)) + FIXTURE_BAND_ID_OFFSET
+	if not band.has("name"):
+		band["name"] = FIXTURE_BAND_NAMES[int(band["band_id"]) % FIXTURE_BAND_NAMES.size()]
 	return band
+
+## **THE SIM ALWAYS SENDS A BAND NAME, SO EVERY FIXTURE COHORT MUST CARRY ONE** (issue #615). It is
+## minted here rather than typed into ~30 fixture literals for the reason `band_id` is: this is the
+## one function every band fixture in every chapter passes through, so a cohort cannot reach a panel
+## shaped unlike the decoder's output. A chapter that needs a SPECIFIC name (an assertion quoting one,
+## a party that must read as its home band) sets `name` itself and this leaves it alone.
+##
+## **A `Band #<id>` on any frame is therefore a real failure**, not fixture noise: it means a cohort
+## reached the HUD without going through here. That is the whole value of stamping it centrally.
+##
+## Indexed by `band_id` rather than by roster position — the pool is only a source of plausible words,
+## and picking from it by position would rebuild the very counting this arc removed. Names may repeat
+## across a long roster; nothing asserts uniqueness, because nothing in the client derives meaning
+## from it.
+const FIXTURE_BAND_NAMES := [
+	"Ashfell", "Brackwater", "Thornhollow", "Windmere", "Stonereach",
+	"Elderford", "Greyfen", "Harrowmoor", "Kestrelwatch", "Marrowdeep",
+	"Nettlebrook", "Oakenshade", "Pinewold", "Ravensgate", "Saltmarch",
+]
 
 static func band_fixture() -> Dictionary:
 	return with_band_id({
-		"id": "Band 2",
+		# `name` is the SIM's field and `id` the marker stamp `MapView._rebuild_unit_markers` derives
+		# from it — equal here because the real client can never make them differ (issue #615).
+		"name": "Saltmarch",
+		"id": "Saltmarch",
 		"size": 148,
 		"entity": 904,
 		"faction": 0,
@@ -289,7 +313,7 @@ static func without_builders(band: Dictionary) -> Dictionary:
 ## hunt's take differ from an expedition's.
 static func hunt_preview_local_band() -> Dictionary:
 	return with_band_id({
-		"id": "Band 1", "entity": 832, "faction": 0, "size": 120,
+		"name": "Kestrelwatch", "id": "Kestrelwatch", "entity": 832, "faction": 0, "size": 120,
 		"current_x": 66, "current_y": 10, "pos": [66, 10],
 		"working_age": 14, "idle_workers": 10,
 		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
@@ -462,6 +486,11 @@ const KIT_UNSTAFFED_HEADCOUNT := 0.0
 ## is the one readout that has only the first to go on.
 const KIT_UNITS_AS_PEOPLE_REACHED := -1
 
+## What the two UNSTAFFED items are OWNED in. The band keeps this gear; it simply has nobody on the
+## job that uses it, so the units and the people-reached are different numbers and the fixture states
+## both rather than letting one imply the other.
+const KIT_UNSTAFFED_UNITS_OWNED := 2
+
 static func kit_condition_row(item_id: String, remaining: float, workers_holding: float,
 		workers_on_quoted_job: float, units: int = KIT_UNITS_AS_PEOPLE_REACHED) -> Dictionary:
 	return {"item_id": item_id, "remaining": remaining, "workers_holding": workers_holding,
@@ -488,14 +517,21 @@ static func kit_condition_rows(spears_holding: float = KIT_HUNT_HEADCOUNT,
 			KIT_FORAGE_HEADCOUNT),
 		kit_condition_row(KIT_ITEM_TRAPS, KIT_CONDITION_TRAPS, KIT_HUNT_HEADCOUNT,
 			KIT_HUNT_HEADCOUNT),
+		# ⛔ **UNITS OWNED AND PEOPLE HOLDING PART COMPANY HERE, and `count` must be stated.** Nobody is
+		# staffed on this item's job, so `workers_holding` is `0` — but the band OWNS the gear, and the
+		# default (`count` follows the people reached) would publish a band that owns none of a crook
+		# it is simultaneously reporting a healthy condition for. That is a shape no server can send,
+		# and it is exactly the conflation `count` exists to break: once `kit_is_equipped` asked
+		# `count` instead of inferring ownership from `remaining`, this row began reporting a sound
+		# crook as unowned.
 		kit_condition_row(KIT_ITEM_CROOK, KIT_CONDITION_CROOK,
-			KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_HEADCOUNT),
+			KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_UNITS_OWNED),
 		# **THE PLANT WEB'S BUILD TOOL RIDES THE LIST TOO, because the wire's list is the CONFIG's item
 		# table and not the band's own holdings** — an item a band owns none of publishes `remaining 0`
 		# rather than vanishing. Omitting it made the Builders card read `Hoes dry` on a band that had
 		# simply never been asked about them, which is the reassuring lie one item over.
 		kit_condition_row(KIT_ITEM_HOES, KIT_CONDITION_HOES,
-			KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_HEADCOUNT),
+			KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_HEADCOUNT, KIT_UNSTAFFED_UNITS_OWNED),
 		kit_condition_row(KIT_ITEM_WAYFINDING, KIT_CONDITION_WAYFINDING, KIT_SCOUT_HEADCOUNT,
 			KIT_SCOUT_HEADCOUNT),
 		kit_condition_row(KIT_ITEM_CLUBS, KIT_CONDITION_CLUBS, KIT_WARRIOR_HEADCOUNT,

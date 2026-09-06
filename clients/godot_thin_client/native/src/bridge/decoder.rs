@@ -6,8 +6,8 @@ use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
 use crate::dict::campaign::{
-    campaign_profiles_to_array, command_events_to_array, pending_forks_to_array,
-    stance_axes_to_array, victory_state_to_dict, voice_medium_to_array,
+    campaign_profiles_to_array, command_events_to_array, opening_loadout_to_dict,
+    pending_forks_to_array, stance_axes_to_array, victory_state_to_dict, voice_medium_to_array,
 };
 use crate::dict::connections::connections_to_array;
 use crate::dict::culture::{
@@ -636,6 +636,13 @@ fn decode_delta_against(
 
     if let Some(voice_medium) = delta.campaign().and_then(|s| s.voiceMedium()) {
         frame.insert_changed("voice_medium", &voice_medium_to_array(voice_medium));
+    }
+
+    // The OPENING LOADOUT window, decoded here as well as on the full path. `insert_changed`: the
+    // sim whole-diffs the table, so its presence on a delta IS the change — and the one change that
+    // matters is `open` going false on the first turn advance, which is what puts the picker away.
+    if let Some(opening_loadout) = delta.campaign().and_then(|s| s.openingLoadout()) {
+        frame.insert_changed("opening_loadout", &opening_loadout_to_dict(opening_loadout));
     }
 
     if let Some(herds) = delta.subsistence().and_then(|s| s.herds()) {

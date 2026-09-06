@@ -25,7 +25,8 @@ use sim_runtime::{
     IntensificationKnowledgeState, KitOptionState, KnowledgeLedgerEntryState,
     KnowledgeMetricsState, KnowledgeTimelineEventState, LaborAssignmentState,
     LadderKnowledgeProgress, LadderKnowledgeState, MaterialDefState, MountainKind,
-    PendingForkState, PendingForksState, PendingMigrationState, PopulationCohortState,
+    OpeningKitDefaultState, OpeningLoadoutState, OpeningMaterialDefaultState, PendingForkState,
+    PendingForksState, PendingMigrationState, PopulationCohortState,
     PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
     PowerIncidentState, PowerNodeState, PowerTelemetryState, RecipeDefState, RouteRungState,
     RouteState, ScalarRasterState, SedentarizationState as SchemaSedentarizationState,
@@ -39,8 +40,8 @@ use sim_runtime::{
 
 use crate::{
     components::{
-        available_workers, fragments_to_contract, BandEquipment, BandId, BandTravel, BuildSource,
-        Expedition, ExpeditionMission, LaborAllocation, LaborAssignment, LaborTarget,
+        available_workers, fragments_to_contract, BandEquipment, BandId, BandName, BandTravel,
+        BuildSource, Expedition, ExpeditionMission, LaborAllocation, LaborAssignment, LaborTarget,
         PendingMigration, PopulationCohort, PowerNode, SourcePriority, SourceYield, Tile, FODDER,
         FOOD, NO_RAID_FLOOR,
     },
@@ -1128,6 +1129,7 @@ mod tests {
             pending_forks: Vec::new(),
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),
+            opening_loadout: OpeningLoadoutState::default(),
             herds: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
@@ -1203,6 +1205,7 @@ mod tests {
             pending_forks: Vec::new(),
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),
+            opening_loadout: OpeningLoadoutState::default(),
             herds: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
@@ -1273,6 +1276,7 @@ mod tests {
             pending_forks: Vec::new(),
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),
+            opening_loadout: OpeningLoadoutState::default(),
             herds: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
@@ -1389,6 +1393,7 @@ mod tests {
             entity: Entity::from_raw(1),
             // This fixture asserts on the derived readouts, not on band identity.
             band_id: None,
+            band_name: None,
             cohort,
             allocation: Some(allocation),
             expedition: None,

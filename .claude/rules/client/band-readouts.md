@@ -82,7 +82,7 @@ which is a property of the tier and not of the merge.
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/BandDetailLines.gd` | `RefCounted` producer (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **STATEFUL band/party detail-line producers** — the rows a BAND or a PARTY shows in whichever detail surface hosts it: `unit_summary_lines(unit, terrain_label, ctx, compact, with_position)` (Food · Fodder — on EVERY player band, live or dormant — · **Upkeep**, the standing MATERIAL bill, on a band that holds something which eats a good and NOWHERE else · Morale · Growth · Position, registering the Food/Morale/Growth disclosures through `DisclosureController` as it emits them; the **Trade** row and its disclosure were retired with the account by arc #527) and `expedition_summary_lines(unit, ctx)` (Mission · Target + its live `(x, y)` · **Orders** · Phase · Carried/Provisions · Next delivery · the trip-bound clause · Position — the **Orders** row being the floor alone since issue #491 retired the fill target it was merged with, still ONE row via `DetailFormat.expedition_orders_line` because this producer's output lands in a `clip_contents` strip capped at ~300px; see `band-city-panel.md` → "The parties strip's SEVEN lines"), plus the private row builders `_band_food_line` / **`_band_material_upkeep_line`** (the good in the WORST state and its runway, registering a fifth `Upkeep` disclosure whose popover states every good — see "THE STANDING MATERIAL BILL" at the foot of this file; **`_band_kit_line` and its `Gear` row are RETIRED** with `BAND_KIT_ROW_*` and the 22px `Zone_band` measurement their entry budget respected) / `_band_morale_line` / `_morale_breakdown_lines` and the DORMANT twin `_band_fodder_dormant_line` (the shared gate itself moved to `DetailFormat.band_has_fodder_economy` when the faction rollup started asking it). **The two trailing flags are DIFFERENT QUESTIONS and must not be folded together**: `compact` is the band zone's HEIGHT TIER (it merges Fodder onto the Food line and Growth onto Morale), while `with_position` is the host saying whether it states the band's coordinates somewhere ELSE — the Band/City dock does, in its panel header, in every tier. **There is no `_band_output_line`**: productivity reads on the WORK zone's head now (see the Civilization Wellbeing bullet below). **It is the stateful HALF of a three-way split**: the PURE producers became `DetailFormat` statics (`herd_summary_lines`, the expedition tooltip trio). (`_format_stockpile_label` was the third piece of that split, via `HudFormat.stockpile_label`; both it and the accessible-stockpile rows it served are retired — see the accessible-stockpile note further down this file.) Hud holds it as `_banddetail`, constructed in `_ready` AFTER `_disclosures` and BEFORE `_bandpanel`; **both detail hosts share the one instance** — the Occupants-card drawer (`Hud._render_occupant_drawer`) and `BandPanelController`'s vitals label + parties inspector strip, which is what retired three of that controller's nine Callable injections. **THE INJECTION SURFACE IS ONE CALLABLE** — `_herd_label_for_id`, which cannot fold onto `HudBandLaborState` because it reads THREE collaborators (`_selectioncard.find_roster_herd` AND `_selection.herd()` AND `_band_labor.find_world_herd`); `_is_player_unit` is a trivial private COPY (the `SelectionCardController` / `BandPanelController` precedent). **IT NEVER SEES THE SELECTION MODEL**: the old producers read `_selection` at exactly two sites, both `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload, so that ONE display string is now a `terrain_label` PARAMETER and both hosts resolve it through the new `SelectionCardController.selected_terrain_label()`. It also owns `_food_flow_present`, which is a **private handshake between `_band_food_line` (writer) and `unit_summary_lines` (its only reader)** — the formatter has never seen it, so it is deliberately not on the `DetailFormat.Context`. Consts follow the `DetailFormat` rule (a const lives here iff every reader moved here): the Fodder/FULL-badge/morale-arrow/contribution-label vocabulary came (the stockpile-row vocabulary went with those rows). The disclosure `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` protocol vocabulary lives in `hud_disclosure_vocab.gd` and `MORALE_CAUSE_*` in `DetailFormat.gd` — read back as `HudDisclosureVocab.X` / `DetailFormat.X`, NOT as `HudLayer.X`; `Hud.gd` defines none of them |
+| `ui/hud/BandDetailLines.gd` | `RefCounted` producer (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **STATEFUL band/party detail-line producers** — the rows a BAND or a PARTY shows in whichever detail surface hosts it: `unit_summary_lines(unit, terrain_label, ctx, compact, with_position)` (Food · Fodder — on EVERY player band, live or dormant — · **Upkeep**, the standing MATERIAL bill, on a band that holds something which eats a good and NOWHERE else · Morale · Growth · Position, registering the Food/Morale/Growth disclosures through `DisclosureController` as it emits them; the **Trade** row and its disclosure were retired with the account by arc #527) and `expedition_summary_lines(unit, ctx)` (Mission · Target + its live `(x, y)` · **Orders** · Phase · Carried/Provisions · Next delivery · the trip-bound clause · Position — the **Orders** row being the floor alone since issue #491 retired the fill target it was merged with, still ONE row via `DetailFormat.expedition_orders_line` because this producer's output lands in a `clip_contents` strip capped at ~300px; see `band-city-panel.md` → "The parties strip's SEVEN lines"), plus the private row builders `_band_food_line` / **`_band_material_upkeep_line`** (the good in the WORST state and its runway, registering a fifth `Upkeep` disclosure whose popover states every good — see "THE STANDING MATERIAL BILL" at the foot of this file; **`_band_kit_line` and its `Gear` row are RETIRED** with `BAND_KIT_ROW_*` and the 22px `Zone_band` measurement their entry budget respected) / `_band_morale_line` / `_morale_breakdown_lines`. **The DORMANT fodder row has no private builder here**: it is one dim dash with nothing a band can vary, so `unit_summary_lines` appends the shared static `DetailFormat.fodder_dormant_row()` directly (the gate it is chosen by, `DetailFormat.band_has_fodder_economy`, moved there too when the faction rollup started asking it). **The two trailing flags are DIFFERENT QUESTIONS and must not be folded together**: `compact` is the band zone's HEIGHT TIER (it merges Fodder onto the Food line and Growth onto Morale), while `with_position` is the host saying whether it states the band's coordinates somewhere ELSE — the Band/City dock does, in its panel header, in every tier. **There is no `_band_output_line`**: productivity reads on the WORK zone's head now (see the Civilization Wellbeing bullet below). **It is the stateful HALF of a three-way split**: the PURE producers became `DetailFormat` statics (`herd_summary_lines`, the expedition tooltip trio). (`_format_stockpile_label` was the third piece of that split, via `HudFormat.stockpile_label`; both it and the accessible-stockpile rows it served are retired — see the accessible-stockpile note further down this file.) Hud holds it as `_banddetail`, constructed in `_ready` AFTER `_disclosures` and BEFORE `_bandpanel`; **both detail hosts share the one instance** — the Occupants-card drawer (`Hud._render_occupant_drawer`) and `BandPanelController`'s vitals label + parties inspector strip, which is what retired three of that controller's nine Callable injections. **THE INJECTION SURFACE IS ONE CALLABLE** — `_herd_label_for_id`, which cannot fold onto `HudBandLaborState` because it reads THREE collaborators (`_selectioncard.find_roster_herd` AND `_selection.herd()` AND `_band_labor.find_world_herd`); `_is_player_unit` is a trivial private COPY (the `SelectionCardController` / `BandPanelController` precedent). **IT NEVER SEES THE SELECTION MODEL**: the old producers read `_selection` at exactly two sites, both `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload, so that ONE display string is now a `terrain_label` PARAMETER and both hosts resolve it through the new `SelectionCardController.selected_terrain_label()`. It also owns `_food_flow_present`, which is a **private handshake between `_band_food_line` (writer) and `unit_summary_lines` (its only reader)** — the formatter has never seen it, so it is deliberately not on the `DetailFormat.Context`. Consts follow the `DetailFormat` rule (a const lives here iff every reader moved here): the Fodder/FULL-badge/morale-arrow/contribution-label vocabulary came (the stockpile-row vocabulary went with those rows). The disclosure `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` protocol vocabulary lives in `hud_disclosure_vocab.gd` and `MORALE_CAUSE_*` in `DetailFormat.gd` — read back as `HudDisclosureVocab.X` / `DetailFormat.X`, NOT as `HudLayer.X`; `Hud.gd` defines none of them |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale and output warn/critical thresholds; morale carries the `color_for_morale`/`hex_for_morale` pair because it really has both a `Label` host and a BBCode host, while **output carries `color_for_output` ALONE** — its one surface is the WORK zone head, which is `Label`s), shared by MapView's band dot and Hud's food/morale lines + alerts |
 | `ui/TileSurvivability.gd` | Single source of truth for the sim's TEMPERATURE-MORTALITY model — the range outside which `systems::population` kills, food or no food. **TWO INDEPENDENT TAILS**, each with its own onset, slope and ceiling: `set_model(cold_onset, cold_scale, cold_max, heat_onset, heat_scale, heat_max)` adopts the constants the sim publishes per-run (`MapSection.temperatureSurvivability` → the native's `overlays.survivability_{cold,heat}_{onset_temp,mortality_scale,max_mortality}`, all six or none), pushed from `MapView._ingest_overlay_channels` on the same presence test the climate cut points use. `has_model()` gates every readout — no published model, no survivability claim. `survivable_min()`/`survivable_max()` are the two ONSETS themselves, so the survivable band is the interval `[cold_onset, heat_onset]` and **not** a deviation from an ambient; `death_rate(temp)` mirrors `active_temperature_tail` + `temperature_fraction` in `core_sim/src/systems/population.rs` (below the cold onset priced by the cold tail, above the heat onset by the heat tail, zero between, each capped by its own ceiling), with `is_lethal` / `is_cold` reading off it. **It is the TILE's base rate**: the sim's per-bracket vulnerabilities are applied after the cap and are deliberately not published, a tile not knowing who stands on it. Consumed by `SelectionCardController._tile_chip_descriptors` (the CLIMATE chip's ⚠, tint and hover — the warning has no chip of its own since the four-pill strip was merged down) and by `MapView._draw_temperature_lethality` / `_build_temperature_legend` (the map overlay's hatch, contour and Lethal row) — one authority, so the card and the map cannot disagree about which ground kills. **It answers about the MODEL, never about how a rate is printed:** the `<0.1%` floor that keeps an unprintably small rate off a rounded zero lives in `HudSelectionVocab`, not here |
 - **RETIRED — the demographics readout, and the wire section with no client reader.** The player
@@ -359,8 +359,9 @@ which is a property of the tier and not of the merge.
   > DORMANT form below. **A FOREIGN band still renders none** — that gate is `_is_player_unit` and is
   > untouched, for the reason the Food row has it: a rival's larder is not ours to count.
 
-  **THE DORMANT ROW — `Fodder: —`, dim, with the reason on the block's hover.**
-  `BandDetailLines._band_fodder_dormant_line`, `BAND_FODDER_DORMANT_ROW_FORMAT`.
+  **THE DORMANT ROW — `Fodder: —`, dim, and that is the whole of it.**
+  `DetailFormat.fodder_dormant_row`, `FODDER_DORMANT_ROW_FORMAT`. It takes no arguments: there is no
+  per-band or per-faction fact left in the row to vary.
   - **A DASH, NEVER A ZERO.** The live format on an empty larder renders `Fodder: 0.0  (∞)`, and a
     full-ink zero beside a healthy infinity reads as *this band has fodder and is fine* — the exact
     opposite of what the state means, and what a bare gate deletion ships. The em-dash is the glyph
@@ -374,25 +375,22 @@ which is a property of the tier and not of the merge.
   - **NO CARET, AND NOTHING REGISTERED.** `fodder_breakdown_lines` produces no rows for a band with
     neither flow, so the dormant branch registers no disclosure at all and `_key_cell` draws a plain
     dim key. An empty pull-down is worse than no pull-down.
-  - **TWO REASONS, TWO SENTENCES, because they are not the same news.** Without **Foddering** the
-    band cannot bank hay at any price — the craft is a whole rung away, taught by keeping a penned
-    herd — so the hover is the forage panel's own words:
-    `BAND_FODDER_LOCKED_TOOLTIP_FORMAT` is spelled from `HudFloraVocab.FODDERING_NOT_LEARNED_CLAUSE`,
-    the clause factored OUT of `GATE_REASON_WILD_FODDER_FORMAT` so both surfaces state one lock once
-    (the patch-only remedy — *or commit this patch to a fodder crop* — stays on the gate reason, a
-    band row having no patch). With Foddering learned and no pen kept, nothing is wrong, so
-    `BAND_FODDER_DORMANT_TOOLTIP` says calmly what the row WILL hold.
-  - **THE LIVE FODDERING PERCENT IS REACHABLE, through a TYPED collaborator.** Knowledge is
-    faction-scoped and no band dict carries it, so `BandDetailLines` holds `FactionReadouts` for this
-    ONE reading — the cluster `BandPanelController` and `DrawerComposeController` already hold by type
-    — and the class header's *"the injection surface is ONE CALLABLE"* is unchanged. A producer built
-    without one answers `0.0`, which reads as "not learned": the honest answer for a client that has
-    been told nothing.
-  - **THE HOVER IS THE BLOCK'S, AND BOTH HOSTS MUST ATTACH IT.** `[hint=…]` does not parse in this
-    Godot build (`DetailFormat.block_tooltip`), so the sentence rides the label's `tooltip_text`.
-    `SubjectDrawerController` already did that for the Occupants drawer;
-    `BandPanelController._build_vitals_label` did NOT, so the same row was dim with no explanation in
-    the dock alone until it did.
+  - ⛔ **AND IT CARRIES NO HOVER, BECAUSE THE HOVER A ROW REGISTERS HERE IS THE WHOLE BLOCK'S.** The
+    stat block is one `RichTextLabel` and `DetailFormat.block_tooltip` joins every registered row's
+    sentence into its single `tooltip_text` — `[hint=…]` is not parsed by this Godot build, so a
+    sentence cannot be scoped to the row that owns it. The row registered two (a Foddering lock in
+    the forage panel's own words, and a calm *no fodder yet*), and what a player got was a paragraph
+    about hay popping out from under a cursor resting on **Growth**, **Morale** or **Food** — rows a
+    fodder lock bears on not at all, on a block where hay is the one term that is dormant. Reported
+    from play. **A dormant account states itself with the dim dash and nothing else**; anything more
+    waits for a surface that can hover one row.
+  - **AND THE KNOWLEDGE READ WENT WITH BOTH SENTENCES.** The live Foddering percent was the only
+    thing either scale needed that a band dict does not carry, so `BandDetailLines` holds no
+    `FactionReadouts` cluster now and `FactionRollup.build_band_zone` takes no `knowledge` row: the
+    whole thread from `Hud._ready` and `BandPanelController` down to the row is gone rather than
+    passed and ignored. The forage panel's `GATE_REASON_WILD_FODDER_FORMAT` — and the shared
+    `FODDERING_NOT_LEARNED_CLAUSE` it is spelled from — are UNTOUCHED: that sentence is about a patch
+    the player is looking at, on a surface that can say so.
   - **THE `compact` (SHORT) TIER STAYS GATED.** That tier trades the row for a stock clause on the
     Food line, and a dim `— fodder` clause states nothing the row it rides on does not — so a
     dormant larder puts no clause there, and the tier's measured worst case is unmoved.
@@ -446,7 +444,9 @@ which is a property of the tier and not of the merge.
     warned against calm, live against dormant — and a contrast checked one half at a time is not
     checked. Falsified: dropping the warn (2), restoring the store-only gate (1), printing the
     sentinel raw (1), dropping the rate clauses (3), re-gating the row (9), dropping the dim
-    treatment (2), dropping the hover (5), putting a caret on the dormant row (2).
+    treatment (2), re-registering a hover on the dormant row (2 — the negatives that replaced the
+    five hover claims, a sentence registered there reaching the whole block), putting a caret on the
+    dormant row (2).
     `band_panel_preview`'s `_vitals_worst_case_band_fixture` carries the ledger too: the widened row
     is by some distance the longest optional row a band can hold, so a worst case seeding the stock
     alone stopped being one.
@@ -505,12 +505,14 @@ which is a property of the tier and not of the merge.
     the divergence the fold exists to make impossible. `band_panel_preview` stages the roster ON that
     floor for exactly this reason.
   - **THE DORMANT ROW IS BUILT BY THE BAND ROW'S OWN BUILDER.** `DetailFormat.fodder_dormant_row`
-    took the vocabulary and the two-sentence hover off `BandDetailLines` when this landed: a const
-    lives where every one of its readers can reach it, and a static rollup must not reach into a
-    stateful producer. One builder is also what stops the band's dim dash and the faction's coming to
-    mean different things. The faction's Foddering comes off the `knowledge` row threaded into
-    `build_band_zone` (through `RungGates.track`, the client's one reader of a `{track: progress}`
-    row) — a faction-scoped figure read at the scale it actually lives at.
+    took the vocabulary off `BandDetailLines` when this landed: a const lives where every one of its
+    readers can reach it, and a static rollup must not reach into a stateful producer. One builder is
+    also what stops the band's dim dash and the faction's coming to mean different things.
+  - **AND IT TAKES NOTHING — NOT EVEN THE FACTION'S FODDERING.** The builder's one argument was the
+    Foddering percent its hover stated, and the row carries no hover now (see "THE DORMANT ROW" above
+    for why a row's hover here is the whole block's). So `build_band_zone` takes no `knowledge` row,
+    this page reads no `{track: progress}` row through `RungGates` at all, and a caller that
+    re-threads one is restoring a parameter nothing downstream reads.
   - **A DORMANT FACTION ROW REGISTERS NO DISCLOSURE**, so it wears no caret: with no band holding a
     larder there is nothing worth opening.
   - ⛔ **THE FACTION PAGE NOW DROPS THE PREVIOUS RENDER'S CARETS, AND DID NOT BEFORE.**
@@ -620,14 +622,14 @@ which is a property of the tier and not of the merge.
       findable in the good state too. **It can exceed 100%**, which is why the value spells its anchor
       out rather than leaving a bare percentage to read as a cap.
     - **The breakdown rows are MULTIPLIERS, not signed deltas** — `    ▼ ×0.60  short rations` /
-      `    ▲ ×1.05  larder reserve` / `    ▼ ×0.25  larder shrinking`. They reuse the morale
+      `    ▲ ×1.05  storage reserve` / `    ▼ ×0.25  storage shrinking`. They reuse the morale
       breakdown's indent + ▲/▼ sign glyph so `DetailFormat.detail_bbcode`'s shared indented-sub-line
       branch tints them (no parallel styling path), but these factors combine by PRODUCT where the
       morale contributions combine by SUM: three signed percentages that refuse to add up to the
       headline would invite exactly the arithmetic they cannot support, whereas `0.60 × 1.05 × 0.25`
       reads down to the `16%` above it. `hunger` is only ever ≤ 1 and `reserve` only ever ≥ 1, so each
       of those labels states its one direction outright; `trend` is two-sided and forks on sign
-      (`larder growing` / `larder shrinking`) the way the morale row's culture/unrest does. Only
+      (`storage growing` / `storage shrinking`) the way the morale row's culture/unrest does. Only
       factors off the neutral 1.0 by more than `fertility.breakdown_epsilon` (`0.002`) list, so a
       thriving band's disclosure names what is HELPING rather than showing no-op rows.
     - **NO DATA IS NOT A FAMINE, and the sentinel is a ZERO RESERVE.** The factors are derived per

@@ -342,6 +342,8 @@ func _ready() -> void:
             hud.connect("clear_bench_requested", Callable(self, "_on_hud_clear_bench"))
         if hud.has_signal("bench_priority_requested") and not hud.is_connected("bench_priority_requested", Callable(self, "_on_hud_bench_priority")):
             hud.connect("bench_priority_requested", Callable(self, "_on_hud_bench_priority"))
+        if hud.has_signal("set_starting_loadout_requested") and not hud.is_connected("set_starting_loadout_requested", Callable(self, "_on_hud_set_starting_loadout")):
+            hud.connect("set_starting_loadout_requested", Callable(self, "_on_hud_set_starting_loadout"))
         if hud.has_signal("answer_fork_requested") and not hud.is_connected("answer_fork_requested", Callable(self, "_on_hud_answer_fork")):
             hud.connect("answer_fork_requested", Callable(self, "_on_hud_answer_fork"))
         # **THE FORECAST QUERY'S TRANSPORT, injected rather than reached for.** The HUD composes the
@@ -813,6 +815,18 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_crafting_catalogues", [snapshot.get("materials", null),
             snapshot.get("characteristic_bands", null), snapshot.get("recipes", null),
             snapshot["craft_knowledge"]])
+    # THE WHOLE EFFECTIVE EQUIPMENT CONFIG, and the HUD's one consumer of it is the opening-loadout
+    # picker's KIT COLUMN — the roster rides this blob and has no typed wire field of its own. The
+    # Workbench parses the same string for its Equipment and Kits pages; two readers of one field
+    # rather than a second copy of a list the sim already sends.
+    if snapshot.has("equipment_config_json") and SnapshotSections.changed(snapshot, "equipment_config_json"):
+        _hud_invoke("update_equipment_config", [snapshot["equipment_config_json"]])
+    # THE TURN-ONE OUTFITTING WINDOW (issue #629). Gated like every other whole section: absence means
+    # unchanged, which on turn two onward is what keeps a shut window shut without a frame re-stating
+    # it. The one change that matters — `open` going false on the first turn advance — DOES ride a
+    # delta, because the sim whole-diffs the table.
+    if snapshot.has("opening_loadout") and SnapshotSections.changed(snapshot, "opening_loadout"):
+        _hud_invoke("update_opening_loadout", [snapshot["opening_loadout"]])
     if snapshot.has("forage_patches") and SnapshotSections.changed(snapshot, "forage_patches"):
         # The HUD needs the forage patches to cap each Current-actions Forage row's worker stepper at
         # the patch's max-useful (the same forecast the compose control reads off tile_info). Same
@@ -1795,6 +1809,49 @@ static func format_set_bench(payload: Dictionary) -> Dictionary:
         "message": "Put %s on the bench." % recipe_id,
     }
 
+## **`set_starting_loadout <faction_id> [kit <kit_id> <n>]... [material <material_id> <n>]...`** —
+## compose the opening loadout, the ONE source of a faction's starting gear and material.
+##
+## **A NAMED TAIL, NOT A POSITIONAL LIST**, and that is the grammar's own shape: a loadout has no
+## fixed arity, and kits and materials are two id namespaces sharing one token space, so a bare list
+## could not say which a name belongs to.
+##
+## **THE WHOLE ALLOCATION GOES EVERY TIME, never a diff.** The verb fails CLOSED and WHOLE — one bad
+## line rejects the order and changes nothing — so a partial order has no meaning to send.
+##
+## **AN EMPTY TAIL IS A REAL ORDER**: *spend nothing* — a replacement that empties the loadout. So
+## this returns a line for an empty allocation rather than the `{}` that means "nothing to send",
+## which is the one place this formatter deliberately departs from its neighbours above.
+static func format_set_starting_loadout(payload: Dictionary) -> Dictionary:
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var parts: Array[String] = ["set_starting_loadout %d" % faction]
+    var kits := 0
+    for entry_variant in payload.get("kits", []):
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        var kit_id := String(entry.get("id", "")).strip_edges()
+        var count := int(entry.get("count", 0))
+        if kit_id == "" or count <= 0:
+            continue
+        parts.append("kit %s %d" % [kit_id, count])
+        kits += count
+    var units := 0
+    for entry_variant in payload.get("materials", []):
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        var material_id := String(entry.get("id", "")).strip_edges()
+        var amount := int(entry.get("units", 0))
+        if material_id == "" or amount <= 0:
+            continue
+        parts.append("material %s %d" % [material_id, amount])
+        units += amount
+    return {
+        "line": " ".join(parts),
+        "message": "Outfitted the band: %d kits, %d units." % [kits, units],
+    }
+
 ## **`clear_bench <faction_id> <band_id>`** — take the job off a band's bench. The crew returns to the
 ## idle pool.
 ##
@@ -2047,6 +2104,12 @@ func _on_hud_clear_bench(payload: Dictionary) -> void:
 ## the mark is captured live off the bench and lands on this command's own recapture.
 func _on_hud_bench_priority(payload: Dictionary) -> void:
     _send_formatted_command(format_bench_priority(payload))
+
+## Compose the opening loadout. **No optimistic write**, deliberately: the verb fails CLOSED and
+## WHOLE, and the HUD already treats the next frame's `opening_loadout.open` as the answer — a local
+## write here would be a second, disagreeing one.
+func _on_hud_set_starting_loadout(payload: Dictionary) -> void:
+    _send_formatted_command(format_set_starting_loadout(payload))
 
 ## Recall an in-flight expedition home (folds workers + provisions back on arrival).
 func _on_hud_recall_expedition(payload: Dictionary) -> void:
@@ -2712,11 +2775,11 @@ func _connect_event_dock() -> void:
     if hud != null and hud.has_signal("system_note_requested") and not hud.is_connected(
             "system_note_requested", Callable(self, "_on_system_note_requested")):
         hud.connect("system_note_requested", Callable(self, "_on_system_note_requested"))
-    # THE DOCK NAMES A BAND THE WAY THE REST OF THE HUD DOES. The snapshot carries no band NAME, so
-    # the sim writes a positional `Band <BandId>` into a demographic event's label and repeats the id
-    # in the detail's `band=` token; the client's own name is a ROSTER POSITION, which the HUD owns.
-    # So the HUD publishes the map and the dock does the substitution — the sim's label is never
-    # changed, and neither surface reaches into the other.
+    # THE DOCK NAMES A BAND THE WAY THE REST OF THE HUD DOES. An event label is composed sim-side
+    # with no roster in reach, so it says `Band <BandId>` and repeats the id in the detail's `band=`
+    # token; the display name lives on the cohort, which the HUD owns. So the HUD publishes the
+    # id→name map and the dock does the substitution — the sim's label is never changed, and neither
+    # surface reaches into the other.
     if hud != null and hud.has_signal("band_labels_changed") and not hud.is_connected(
             "band_labels_changed", Callable(self, "_on_band_labels_changed")):
         hud.connect("band_labels_changed", Callable(self, "_on_band_labels_changed"))

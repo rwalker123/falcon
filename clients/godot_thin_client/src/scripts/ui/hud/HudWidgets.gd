@@ -339,7 +339,8 @@ static func wrapped_status_part_lines(text: String, width: float) -> int:
 ## **THE `null` BRANCH IS LOAD-BEARING even at full art coverage**, exactly as it is in the sprite
 ## tables themselves: it catches a herd label naming a species the client does not know
 ## (`FoodIcons.species_key_for` → `""`) and the `HERD_DEFAULT` case, neither of which has a key to
-## look art up by — and the land row's module-less `◈`, which is not a species at all.
+## look art up by — and a band standing on a settlement stage defined past the bundled three, which is
+## not a species at all.
 ##
 ## **THE SPRITE IS DRAWN UNTINTED — never set `modulate` on what this returns.** That is the map
 ## markers' own rule (`.claude/rules/client/sprites-widgets.md`): a full-colour animal carries no
@@ -485,6 +486,29 @@ static func alloc_hint_label(text: String) -> Label:
     label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    return label
+
+## **THE HINT LINE AS RICH TEXT — one wrapped line whose RUNS can differ in colour.** The twin of
+## `alloc_hint_label` and deliberately styled to match it term for term (same font size, same
+## `AUTOWRAP_WORD_SMART`, same expand-fill), so swapping one for the other does not move the line's
+## measured height; `ink` is installed as the DEFAULT colour, which is what an untagged run reads.
+##
+## It exists because a role card states TWO things on one line — what the gear buys, and whether there
+## is enough of it — and only the second is a warning. A `Label` carries one `font_color`, so the card
+## could only redden both or neither; an `HBox` of two labels cannot wrap as one line, and giving the
+## shortfall its own line would cost the card a ROW, which the band zone's measured stacking budget
+## cannot afford.
+static func alloc_hint_markup(bbcode: String, ink: Color) -> RichTextLabel:
+    var label := RichTextLabel.new()
+    label.bbcode_enabled = true
+    label.fit_content = true
+    label.scroll_active = false
+    label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    label.add_theme_font_size_override("normal_font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+    label.add_theme_color_override("default_color", ink)
+    label.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
+    label.text = bbcode
     return label
 
 ## An inline text link (the inspector's three actions / the parties footer reasons).

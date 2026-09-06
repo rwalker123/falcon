@@ -447,6 +447,28 @@ impl LocalStore {
             .map(|(id, batches)| (id.as_str(), batches))
     }
 
+    /// **Discard every material batch, leaving the COMMODITY account untouched.**
+    ///
+    /// A `LocalStore` is two accounts that share one component: `goods`, the commodity bag the
+    /// larder's food and fodder live in, and `materials`, the per-rating batch store. This clears the
+    /// second and only the second, which is what makes it safe for a caller that means *"forget the
+    /// materials"* and would destroy a band's food by saying `LocalStore::new()`.
+    ///
+    /// **It exists for the opening loadout, whose allocation is a REPLACEMENT** — the outfitting
+    /// window stays open for the whole of turn one, so a player may revise their pick as often as
+    /// they like, and each apply must leave the band holding exactly what the *latest* allocation
+    /// describes rather than the sum of every draft (`crate::starting_loadout`). Expressing that as
+    /// "clear the material account, then deposit" keeps the account distinction inside the store: the
+    /// alternative is a call site that names `FOOD` and `FODDER` to preserve them, which is a list
+    /// that goes stale the day a third commodity lands.
+    ///
+    /// ⛔ **Not a general withdrawal.** Materials leave a store through
+    /// [`Self::take_material`], which returns what was drawn and from which batch; this destroys
+    /// them and reports nothing, so nothing that has to *account* for a material may use it.
+    pub fn clear_materials(&mut self) {
+        self.materials.clear();
+    }
+
     /// **Withdraw up to `amount` of `material`, WORST-FIRST on `axis`** — you spend the poor hide
     /// before the excellent one, which is the only ordering that does not silently burn the player's
     /// best stock on the first thing they make.
@@ -1258,6 +1280,25 @@ pub struct ResidentBand;
     Component, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
 pub struct BandId(pub u64);
+
+/// A band's **name** — the words a player calls it by, minted once at founding and never derived.
+///
+/// **It is IDENTITY, not presentation.** Nothing about the name is a function of where the band
+/// sits in a list, which is exactly the property the client could not supply for itself: two
+/// screens counting different rows (one filtered to resident bands, one over the raw wire array)
+/// named the same band differently, and a band dying renumbered every band after it. A name minted
+/// at founding cannot move when somebody else dies.
+///
+/// Minted from [`crate::resources::BandNameAllocator`] at the two places a band is **founded** —
+/// worldgen and a fission splinter — and **inherited** at the two places a band is *detached*: an
+/// expedition party is the same people as its home band walking somewhere, so it carries the home
+/// band's name rather than consuming a name slot of its own.
+///
+/// **It sits beside [`BandId`] rather than on [`PopulationCohort`] deliberately.** Identity
+/// components live together, and the cohort is a hot struct cloned per checkpoint capture and per
+/// expedition spawn — it does not need a heap allocation added to it.
+#[derive(Component, Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BandName(pub String);
 
 /// What an expedition was sent to do: `Scout` (explore + report the map, PR 1) or `Hunt` (follow a
 /// migratory herd, harvest food, deliver it, PR 2) — two verbs on one traveling-party system.
@@ -3030,12 +3071,7 @@ impl BandEquipment {
     ) -> Self {
         let mut stocked = Self::default();
         for (id, item) in equipment.start_stocked_items() {
-            let grade = recipes
-                .anchor_grade_for_item(id, materials)
-                .map(|band| BatchGrade {
-                    id: band.to_string(),
-                    effects: Vec::new(),
-                });
+            let grade = Self::anchor_grade(recipes, materials, id);
             stocked.stock(
                 id,
                 equipment.start_stock_units(item, workers),
@@ -3044,6 +3080,30 @@ impl BandEquipment {
             );
         }
         stocked
+    }
+
+    /// **The grade a batch nobody crafted is stamped with** — the band a bare-handed craft of this
+    /// item comes out at ([`crate::recipes_config::RecipesConfig::anchor_grade_for_item`]), NAME
+    /// only, with an empty effects payload.
+    ///
+    /// One home, because two paths hand a band gear it did not make: a spawn
+    /// ([`Self::start_stocked_owned`]) and the player's opening loadout
+    /// ([`crate::starting_loadout`]). A second copy of this resolution is a second answer to *"what
+    /// quality is a thing that was never crafted"*, free to drift from the one `validate` ties to
+    /// the shipped tier's numbers.
+    ///
+    /// `None` for an item no recipe makes: there is no crafted equivalent to claim.
+    pub fn anchor_grade(
+        recipes: &crate::recipes_config::RecipesConfig,
+        materials: &crate::materials_config::MaterialsConfig,
+        item: &str,
+    ) -> Option<BatchGrade> {
+        recipes
+            .anchor_grade_for_item(item, materials)
+            .map(|band| BatchGrade {
+                id: band.to_string(),
+                effects: Vec::new(),
+            })
     }
 
     /// **Add a batch of `count` units** — a spawn's start kit, or the bench delivering a finished

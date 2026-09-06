@@ -789,10 +789,15 @@ const FERTILITY_BREAKDOWN_ROW_FORMAT := "%s%s ×%.2f  %s"
 # hunger (the gate) → reserve (stock) → trend (flow). `hunger` is only ever ≤ 1 and `reserve` only
 # ever ≥ 1, so each of those labels states its one direction outright; `trend` is two-sided, so it
 # forks on sign the way the morale breakdown's culture/unrest row does.
+#
+# **THE WORD IS `storage`, NOT `larder`.** A breakdown row is read at a glance, beside a multiplier,
+# by a player who opened it to answer "why is growth slow?" — a word half of them have to stop and
+# translate is a worse label than the plain one, whatever it costs in flavour. The stock and the flow
+# rows share it so the two read as one account seen twice.
 const FERTILITY_LABEL_HUNGER := "short rations"
-const FERTILITY_LABEL_RESERVE := "larder reserve"
-const FERTILITY_LABEL_TREND_GROWING := "larder growing"
-const FERTILITY_LABEL_TREND_SHRINKING := "larder shrinking"
+const FERTILITY_LABEL_RESERVE := "storage reserve"
+const FERTILITY_LABEL_TREND_GROWING := "storage growing"
+const FERTILITY_LABEL_TREND_SHRINKING := "storage shrinking"
 
 ## The longest `Key` `_split_kv` will align into a table row; anything wider reads as a sentence.
 const DETAIL_KEY_MAX_LENGTH := 16
@@ -2837,8 +2842,8 @@ static func band_fodder_store(band: Dictionary) -> float:
 
 ## ---- THE DORMANT FODDER ROW, AT BOTH SCALES ------------------------------------------------------
 ##
-## `Fodder: —`, dim, with the reason on the block's hover. The band's own row renders it for a band
-## with no fodder economy (`BandDetailLines._band_fodder_dormant_line`) and the FACTION page renders
+## `Fodder: —`, dim, and that is the whole row. The band's own page renders it for a band with no
+## fodder economy (`BandDetailLines.unit_summary_lines`) and the FACTION page renders
 ## it when NO band on the roster has one (`FactionRollup._fodder_line`) — one builder, because two
 ## surfaces spelling "there is no fodder here" two ways is the disagreement this state was added to
 ## remove. A faction reading `Fodder: 0.0 · +0.0 /turn` in full ink while every one of its bands read
@@ -2858,44 +2863,27 @@ const FODDER_DORMANT_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_FODDER + ": [co
 
 const FODDER_DORMANT_VALUE := HudComposeVocab.YIELD_LOCKED_GLYPH
 
-## **NO FODDERING — nothing here can bank hay, at any price.** Foddering is what keeping a penned herd
-## teaches, so a pre-pastoral faction banks none of what its meadows grow. That is a sentence the
-## client already says, on the forage panel's yields row
-## (`HudFloraVocab.GATE_REASON_WILD_FODDER_FORMAT`), so this reads the SHARED clause out of it rather
-## than wording one lock twice — the patch-only half of that sentence ("or commit this patch to its
-## crop") is dropped, neither a band row nor a faction row having a patch to commit.
-## Format args: %d = the live faction Foddering percent, then the CORRAL glyph.
-const FODDER_LOCKED_TOOLTIP_FORMAT := "Hay stays in the field: " \
-    + HudFloraVocab.FODDERING_NOT_LEARNED_CLAUSE + "."
-
-## **KNOWS FODDERING, KEEPS NOTHING YET — nothing is wrong.** There is simply no fodder economy here,
-## so the sentence is calm and descriptive: it says what the row WILL hold, which is the whole reason
-## the row renders at all with nothing to put in it.
-const FODDER_DORMANT_TOOLTIP := "No fodder yet. Once your people keep a pen or grow a fodder crop, the hay store and what the pens draw on it read here."
-
-## The dormant row, and the hover that says why it is dim — the WHOLE of that state, so a caller adds
-## nothing to it but the faction's Foddering.
+## The dormant row, and the WHOLE of that state: a dim dash, and nothing a caller can add to it. It
+## takes no arguments for that reason — there is no per-faction, per-band or per-render fact left in
+## the row to vary.
 ##
-## **TWO REASONS, TWO SENTENCES, and the knowledge one goes first because it is the harder wall.** A
-## faction that cannot bank hay at all is blocked by a whole rung; one that simply keeps no pen is not
-## blocked by anything, and folding the two into one sentence would tell a pastoral player their
-## working ladder is locked.
+## ⛔ **IT CARRIES NO HOVER, BECAUSE THE HOVER A ROW REGISTERS HERE IS THE WHOLE BLOCK'S.** The stat
+## block is ONE `RichTextLabel`, and `block_tooltip` joins every row's registered sentence into that
+## label's single `tooltip_text` — a per-run `[hint=…]` is not parsed by this Godot build, so there is
+## no way to scope a sentence to the row that owns it. The row registered two here (a Foddering lock,
+## and a calm *no fodder yet*), and what a player actually got was a paragraph about HAY popping out
+## from under a cursor resting on Growth, Morale or Food — rows a fodder lock bears on not at all.
+## **A dormant account states itself with the dim dash and nothing else.** Anything more has to wait
+## for a surface that can hover one row.
 ##
 ## **THE RUNWAY CONTEXT IS DELIBERATELY LEFT ALONE.** Callers reset `Context.fodder_turns` to `NAN`
-## per render; writing a real `turns_of_fodder` here (999 for anything that drains nothing) would tint
-## the dash HEALTHY green through `_value_hex`'s runway branch — a calm reading of an account that
-## does not exist.
+## per render; writing a real `turns_of_fodder` for this row (999 for anything that drains nothing)
+## would tint the dash HEALTHY green through `_value_hex`'s runway branch — a calm reading of an
+## account that does not exist.
 ##
 ## **IT REGISTERS NO DISCLOSURE AND MUST NOT**, which is the caller's half of the contract: there is
 ## no flow to put behind a caret, and a caret over an empty pull-down is worse than no pull-down.
-static func fodder_dormant_row(ctx: Context, foddering: float) -> String:
-    if ctx != null:
-        if foddering >= HudConst.KNOWLEDGE_COMPLETE:
-            ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_FODDER] = FODDER_DORMANT_TOOLTIP
-        else:
-            ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_FODDER] = FODDER_LOCKED_TOOLTIP_FORMAT % [
-                HudFormat.progress_percent(foddering),
-                FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL)]
+static func fodder_dormant_row() -> String:
     return FODDER_DORMANT_ROW_FORMAT % [HudStyle.INK_DIM_HEX, FODDER_DORMANT_VALUE]
 
 ## Does this band have a FODDER ECONOMY at all — **does it HOLD hay, or does it OWE a hay bill?**
@@ -3113,7 +3101,19 @@ static func kit_coverage(band: Dictionary, item_id: String) -> Dictionary:
 ## **An item with no published row reads as DRY, not as equipped.** A missing row means the server
 ## never confirmed the gear; promising a kitted tier on that silence is the failure this whole model
 ## exists to prevent, so it errs toward the unequipped answer.
+## ⛔ **OWNERSHIP IS `count`, NOT A NON-ZERO CONDITION.** This asked `kit_condition(...) > KIT_DRY`,
+## which reports an item the band owns NONE of as one it owns and has worn out — so a role card for a
+## band with no clubs read `Clubs dry`. `snapshot.fbs` is explicit: *`remaining == 0` means owns none,
+## never "owns one that is dry" — a batch with no units left is removed*, and `count` is the field
+## published beside it precisely so a client need not infer ownership from a condition.
+##
+## The condition is still the answer where the band states no `count` at all: that is a ledger this
+## client has not been given rather than a claim of ownership either way, and the old reading is the
+## conservative one there.
 static func kit_is_equipped(band: Dictionary, item_id: String) -> bool:
+    var owned := kit_units_owned(band, item_id)
+    if owned != KIT_UNITS_UNSTATED:
+        return owned > 0
     return kit_condition(band, item_id) > KIT_DRY
 
 ## One item's remaining condition, `KIT_DRY` when the band publishes no row for it.

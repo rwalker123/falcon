@@ -55,6 +55,7 @@ const CHAPTERS := [
 	"res://tools/ui_preview/chapters/selective_gather.gd",
 	"res://tools/ui_preview/chapters/knowledge_panel.gd",
 	"res://tools/ui_preview/chapters/supply_network.gd",
+	"res://tools/ui_preview/chapters/starting_loadout.gd",
 ]
 
 ## The one method a chapter owes the harness (see the chapter contract in

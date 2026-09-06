@@ -7387,6 +7387,24 @@ func _assert_role_card_gear() -> void:
 		DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
 			BandFx.KIT_ATTACK_CLUBS, DetailFormat.KIT_CONDITION_DECIMALS),
 		DetailFormat.KIT_LABEL_CLUBS, BandFx.KIT_CONDITION_CLUBS)
+	_assert_role_card_shortfall()
+
+## How many clubs the short warrior band holds, against `BandFx.KIT_WARRIOR_HEADCOUNT`. Below it and
+## above zero, so the sentence is the SOME form rather than either extreme.
+const ROLE_SHORTFALL_CLUBS_HELD := 1
+
+## The first word of the Warrior card's EFFECT clause. The line must OPEN with it UNTAGGED, which is
+## what says the neutral run really is neutral rather than merely un-asserted.
+const ROLE_EFFECT_WARRIOR_OPENING := "attack"
+## **THE OPENINGS OF THE TWO SHORTFALL SENTENCES, asserted ABSENT on the covered card** — derived
+## from the formats rather than quoted, because a literal needle goes stale silently the moment the
+## copy is reworded. It already did: this held `"go without"`, the trailing clause both sentences
+## carried until Ray cut it as a restatement of the count in front of it, and a quoted needle would
+## have kept passing against text that no longer exists.
+static func _shortfall_openings() -> Array:
+	# **ONE SENTENCE NOW**, so one needle — and it is the TAIL rather than the opening, the format
+	# beginning with its own count (`%d of %d …`). `available` is the word only this line says.
+	return [HudComposeVocab.KIT_SHORTFALL_FORMAT.split(" ")[-1]]
 
 func _assert_one_role_card_gear(role_name: String, job: String, kit_name: String, effect: String,
 		item_label: String, condition: float) -> void:
@@ -7400,15 +7418,86 @@ func _assert_one_role_card_gear(role_name: String, job: String, kit_name: String
 		return
 	_assert_kit_picker_face(picker, job, kit_name,
 		"…whose face names this role's own kit (\"%s\")" % picker.text)
-	var hint := _find_meta_control(card, KitRoster.KIT_HINT_META) as Label
+	# **RICH TEXT NOW, NOT A `Label`** — the line carries two runs at two colours (see
+	# `KitRoster.build_kit_row`), so the reader takes its parsed text and the ink claim below reads the
+	# markup it was built from.
+	var hint := _find_meta_control(card, KitRoster.KIT_HINT_META) as RichTextLabel
 	if hint == null:
 		_fail("the %s card has no gear line" % role_name)
 		return
-	var want := HudComposeVocab.KIT_HINT_SEPARATOR.join([effect,
-		HudComposeVocab.KIT_HINT_ROLE_ITEM_FORMAT % [item_label,
-			String.num(condition, DetailFormat.KIT_CONDITION_DECIMALS)]])
-	_assert_band_panel("…over a gear line stating what it buys and the item behind it — \"%s\""
-			% hint.text, hint.text == want)
+	# ⛔ **THE ITEM CLAUSE IS RETIRED AND THIS CARD IS FULLY COVERED, so the line is the EFFECT alone.**
+	# It read `2-tile sight per vantage · Wayfinding 100`, and the condition half rendered `dry` for an
+	# item the band owns NONE of — *you have clubs and they are spent* — because ownership was inferred
+	# from a condition of zero. The card says what the compose sheets say now: its effect, then a
+	# shortfall sentence only where somebody is going without.
+	#
+	# **The absence is only half the claim**; `_assert_role_card_shortfall` below renders the same card
+	# for a band that IS short and requires the sentence, so a line that lost its second half entirely
+	# fails there rather than passing here.
+	var reads := hint.get_parsed_text()
+	_assert_band_panel("…over a gear line stating what this role's gear buys — \"%s\"" % reads,
+		reads == effect)
+	_assert_band_panel("…and NOT the retired item clause, which called unowned gear `%s`"
+			% DetailFormat.KIT_DRY_FACE,
+		not reads.contains(item_label) and not reads.contains(DetailFormat.KIT_DRY_FACE))
+	# **A COVERED CARD CARRIES NO RED AT ALL** — the control for the ink pair below. Without it, "the
+	# shortfall run is DANGER" passes on a card that tints something on every render.
+	_assert_band_panel("…and nothing on a fully equipped card is tinted `DANGER` (\"%s\")" % hint.text,
+		not hint.text.contains(HudStyle.DANGER_HEX))
+	# ⛔ **THE RENDERED NEUTRAL INK, asked of the mounted control.** The markup claims below say what
+	# the PRODUCER composed; this says what the card actually installed, and it is the half that sees a
+	# host re-tinting the line after the builder handed it over — which is exactly what the retired
+	# `_lift_role_gear_line` did, clobbering `DANGER` back to the quiet ink on a card whose gear was
+	# short.
+	_assert_band_panel("…and the line's DEFAULT ink is the card's quiet one, not a host's override",
+		hint.get_theme_color("default_color") == HudStyle.INK_DIM)
+
+## **THE OTHER HALF: a role whose gear does not reach its own head count says so, in the compose
+## sheets' own sentence.** Driven over `KitRoster.role_hint` rather than through the card, because the
+## panel's band is fully covered and re-staging it would move every frame this state renders.
+##
+## **THE DENOMINATOR IS THE PUBLISHED `workersOnQuotedJob`** — a role card is a COMMITTED standing slot
+## rather than a party being composed, so the sim's own head count for that role's job is the number
+## the shortfall is a fraction of.
+func _assert_role_card_shortfall() -> void:
+	var kits := BandFx.kit_roster_fixture()
+	var warrior := KitRoster.kit_by_id(kits, BandFx.KIT_ID_WARRIOR)
+	var covered := KitRoster.role_hint(kits, warrior, BandFx.with_equipped_kit(
+		BandFx.band_fixture()), KitRoster.JOB_WARRIOR)
+	var opens_a_shortfall := false
+	for opening in _shortfall_openings():
+		if covered.contains(String(opening)):
+			opens_a_shortfall = true
+	_assert_band_panel("a fully armed Warrior role states its effect and no shortfall — \"%s\""
+			% covered, not opens_a_shortfall)
+	var short_band := BandFx.band_fixture()
+	var rows: Array = BandFx.kit_condition_rows()
+	for row_variant in rows:
+		var row: Dictionary = row_variant
+		if String(row["item_id"]) == BandFx.KIT_ITEM_CLUBS:
+			row["count"] = ROLE_SHORTFALL_CLUBS_HELD
+	short_band["kit_item_conditions"] = rows
+	var short_line := KitRoster.role_hint(kits, warrior, short_band, KitRoster.JOB_WARRIOR)
+	# **THE ROLE CARD TAKES THE SAME SENTENCE, counting complete kits and naming the KIT** — one
+	# phrasing wherever gear runs short. Composed from the vocabulary, never through the producer.
+	var want := HudComposeVocab.KIT_SHORTFALL_FORMAT % [ROLE_SHORTFALL_CLUBS_HELD,
+		int(BandFx.KIT_WARRIOR_HEADCOUNT),
+		KitRoster.kit_display_name(warrior) + HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
+	_assert_band_panel("…while a short one says so in the compose sheets' own words — \"%s\""
+			% short_line, short_line.ends_with(want))
+	# ⛔ **THE INK IS A PAIR, AND A ONE-SIDED CLAIM CANNOT SEE THE BUG.** The reported defect was a live
+	# shortfall in the QUIET ink; the obvious over-correction is a card that reddens the whole line,
+	# which would make a card that is merely short read as a card that is entirely wrong. So: the
+	# shortfall run IS tinted, and the effect run is NOT.
+	var markup := KitRoster.role_hint_markup(kits, warrior, short_band, KitRoster.JOB_WARRIOR)
+	var tinted := HudComposeVocab.KIT_HINT_SHORTFALL_MARKUP % [HudStyle.DANGER_HEX, want]
+	_assert_band_panel("…with the SHORTFALL run tinted DANGER — \"%s\"" % markup,
+		markup.contains(tinted))
+	_assert_band_panel("…and the EFFECT run left neutral, so a short card is not a wrong card",
+		markup.begins_with(ROLE_EFFECT_WARRIOR_OPENING))
+	# **AND IT NEVER SAYS `dry`**, which claimed the band owned some and had spent them.
+	_assert_band_panel("…never calling gear it simply lacks `%s`" % DetailFormat.KIT_DRY_FACE,
+		not short_line.contains(DetailFormat.KIT_DRY_FACE))
 
 ## **THE TWO ROLE CARDS DRAW TO THE SAME HEIGHT.** Reported on sight: side by side at unequal heights
 ## the pair reads as ragged. Their content genuinely differs in height — the Scout's description wraps
@@ -8858,8 +8947,12 @@ func _assert_faction_page() -> void:
 	# `_has_label_containing` walks Labels only, and a summary row's name is a `build_inline_link`
 	# BUTTON — it has to be, since clicking it jumps to that band — so the search has to know about
 	# both. That is the whole difference between this row and the stat row it replaced.
+	# The name is taken from the ROSTER the page is rendering, through the client's one naming rule —
+	# never spelled out here, or the claim would pass on a page naming a different band than the sim
+	# does (issue #615).
+	var home_band_name := HudFormat.band_name(_stamp_band_ids(_faction_roster())[0])
 	_assert_band_panel("faction page: a party row names the band it left",
-		parties_zone != null and _has_text_containing(parties_zone, HudFormat.band_display_name({}, 1)))
+		parties_zone != null and _has_text_containing(parties_zone, home_band_name))
 	_assert_faction_party_row_jumps_home(parties_zone)
 
 ## **THE FACTION'S FODDER ROW — THE FOOD ROW ON THE OTHER LARDER**, and every claim here is the Food
@@ -9029,10 +9122,16 @@ const FACTION_SUB_FLOOR_FRACTION := 0.5
 
 const FACTION_SUB_FLOOR_FODDER := SourceForecast.FODDER_FLOW_MIN * FACTION_SUB_FLOOR_FRACTION
 
-## Foddering LEARNED, for the calm half of the dormant hover. The standing faction fixture carries
-## `foddering: 0.07`, which is the locked half — so the two sentences are staged by moving one track
-## and putting the fixture back, never by two rosters.
+## Foddering LEARNED, for the other half of the dormant claim. The standing faction fixture carries
+## `foddering: 0.07`, so learning the craft is staged by moving one track and putting the fixture
+## back, never by two rosters: the row must stay dim either way, a craft not being an economy.
 const FACTION_FODDERING_LEARNED := 1.0
+
+## **THE WORDS A FODDER SENTENCE CANNOT AVOID.** The dormant row registers NO hover, and the defect
+## that is about is block-wide: the stat block is one `RichTextLabel`, so anything the row registered
+## popped under a cursor resting on Growth, Morale or Food. Asked as words rather than against the two
+## retired consts, because a re-worded sentence would be the same defect back.
+const RETIRED_FODDER_HOVER_WORDS := ["fodder", "hay"]
 
 ## THE ROSTER WITH NO FODDER ECONOMY ANYWHERE — the same two bands, their larders stripped to a
 ## sub-floor crumb. Built off `_faction_roster` rather than beside it, so every OTHER fact the page
@@ -9124,32 +9223,24 @@ func _assert_faction_fodder_dormant() -> void:
 	_assert_band_panel("faction dormant: …and the two agree, off the ONE shared gate",
 		band_dormant and vitals.contains(dormant_needle))
 
-	# **WHY IT IS DIM, SENTENCE ONE: THE CRAFT IS MISSING.** The standing faction fixture is 7% along
-	# Foddering, so the page states the forage panel's own lock — and it must reach a cursor, which on
-	# a `RichTextLabel` means the label's own `tooltip_text` (`[hint=…]` does not parse in this build).
-	var locked_expected := DetailFormat.FODDER_LOCKED_TOOLTIP_FORMAT % [
-		HudFormat.progress_percent(float((_faction_knowledge_fixture()["knowledges"] as Dictionary)
-			.get(HudFloraVocab.KNOWLEDGE_TRACK_FODDERING, 0.0))),
-		FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL)]
+	# **AND IT SAYS NOTHING ELSE — THE DIM DASH IS THE WHOLE STATE.** The row registered two sentences
+	# here, a Foddering lock and a calm *no fodder yet*, and a row's hover on this surface is the
+	# BLOCK's: one `RichTextLabel`, one `tooltip_text`, `[hint=…]` unparsed by this build. So a
+	# paragraph about hay popped out from under a cursor resting on Growth, Morale or Food. Asserted
+	# on the label the block IS, since that is the only place such a sentence could land.
 	var label := _first_rich_text(band_zone)
-	_assert_band_panel("faction dormant: the page says WHY, in the forage panel's words: %s"
-		% locked_expected,
-		label != null and label.tooltip_text.contains(locked_expected))
+	_assert_band_panel("faction dormant: the dim row registers no hover — no hay reaches the block",
+		label != null and _mentions_none_of(label.tooltip_text, RETIRED_FODDER_HOVER_WORDS))
 
-	# **SENTENCE TWO: NOTHING IS WRONG.** Learn Foddering and the page is still dormant — nobody keeps
-	# a pen — but the reason is calm, and it must NOT be the lock's sentence. The inequality is the
-	# half that catches a build stating one sentence in both states.
+	# **AND KNOWING THE CRAFT DOES NOT MAKE AN ECONOMY.** Learn Foddering and the page is still
+	# dormant — nobody keeps a pen — which is the half that catches a page reading the knowledge track
+	# instead of the roster's larders.
 	var learned := _faction_knowledge_fixture()
 	(learned["knowledges"] as Dictionary)[HudFloraVocab.KNOWLEDGE_TRACK_FODDERING] = \
 		FACTION_FODDERING_LEARNED
 	_hud.update_intensification([learned])
 	_push_bands(_fodderless_faction_roster())
 	await _settle()
-	var calm_label := _first_rich_text(_panel._zones.get(BandCityPanel.ZONE_BAND))
-	_assert_band_panel("faction dormant: a faction that KNOWS Foddering and keeps no pen reads calm",
-		calm_label != null and calm_label.tooltip_text.contains(DetailFormat.FODDER_DORMANT_TOOLTIP))
-	_assert_band_panel("faction dormant: …which is NOT the lock's sentence",
-		calm_label != null and not calm_label.tooltip_text.contains(locked_expected))
 	_assert_band_panel("faction dormant: …and the row is dim either way — the craft is not an economy",
 		_faction_vitals_text(_panel._zones.get(BandCityPanel.ZONE_BAND)).contains(dormant_needle))
 	# The standing five-track row goes back before the frame: every claim above this line was made
@@ -9331,6 +9422,15 @@ func _assert_faction_caret_keeps_the_page() -> void:
 			and _hud._disclosures._breakdown_popover_label.text.contains(
 				HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX))
 	_hud._disclosures._close_popover()
+
+## Is `text` free of EVERY word in `words`, case-insensitively? A negative asked as words rather than
+## as a retired const, so a sentence re-worded rather than removed still fails it.
+func _mentions_none_of(text: String, words: Array) -> bool:
+	var haystack := text.to_lower()
+	for word in words:
+		if haystack.contains(String(word).to_lower()):
+			return false
+	return true
 
 ## The first `RichTextLabel` under a node — the faction zone's vitals block, which is its only one.
 func _first_rich_text(node: Node) -> RichTextLabel:
@@ -13708,21 +13808,18 @@ func _assert_kit_picker_closed() -> void:
 	# so a face equal to the LIST entry means the override never ran, and the equality catches it.
 	_assert_kit_picker_face(picker, KitRoster.JOB_HUNT, "Stalking kit",
 		"…whose face names the selected kit (\"%s\")" % picker.text)
-	var hint := HudComposeVocab.KIT_HINT_SEPARATOR.join([
-		HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_EQUIPPED,
-			HudComposeVocab.KIT_TIER_DECIMALS),
-		HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % String.num(BandFx.KIT_HUNT_CARRY_BARE,
-			HudComposeVocab.KIT_TIER_DECIMALS),
-		# **THE ITEMS ARE THE KIT'S OWN, IN ITS OWN ORDER** — `big_game` carries spears then the sled, so
-		# the hint reads them out in that order and names nothing else. Taken from the ROSTER fixture's
-		# item ids, which is where the wire states them.
-		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [BandFx.KIT_ITEM_SPEARS,
-			int(KIT_FRAME_SPEARS_CONDITION)],
-		HudComposeVocab.KIT_HINT_DRY_FORMAT % BandFx.KIT_ITEM_SLED,
-	])
+	# ⛔ **THE HINT LINE IS A SHORTFALL WARNING NOW, AND THIS BAND IS FULLY COVERED, SO THERE IS NONE.**
+	# It asserted `attack 20.0 · carry 8.0 per hunter · spears 74 · sled dry` — a row of tiers and item
+	# conditions, every part of which is retired. A raw rate with no denominator told a player nothing
+	# and was wrong besides: a tier is what ONE EQUIPPED worker gets, quoted beside a whole crew.
+	#
+	# **The ABSENCE is the claim, and it is not vacuous**: `compose_rungs`'s
+	# `_assert_the_kit_line_is_a_shortfall_warning` renders the same control for a band that IS short
+	# and gets a sentence, so a line that never mounts fails there rather than passing here.
 	var rendered := _find_meta_control(_panel, KitRoster.KIT_HINT_META) as Label
-	_assert_band_panel("…over a hint stating the EFFECTIVE tier, not the fresh one — \"%s\"" % hint,
-		rendered != null and rendered.text == hint)
+	_assert_band_panel("…and a fully covered crew is given NO kit line to read (%s)"
+			% ("none" if rendered == null else "\"%s\"" % rendered.text),
+		rendered == null)
 
 ## The picker OPEN. A screenshot cannot say which entry carries the radio dot, so the structure rides
 ## here: the roster's hunt kits and only those, the composed one marked, the job default TAGGED, and
@@ -13767,26 +13864,34 @@ func _assert_kit_picker_open(picker: OptionButton) -> void:
 ## moved: the table was priced for another kit, and now the answer simply has not landed. Its caller
 ## uninstalls the canned answerer to reach it, since the prologue otherwise answers everything.
 func _assert_forecastless_sheet_suppresses_estimates() -> void:
+	# ⛔ **THE ANCHOR MOVED FROM THE HINT TO THE KIT ROW'S OWN FIELD KEY, and it had to.** This sliced
+	# the sheet's lines after the kit HINT, which stated the picked kit's tier on every sheet; that
+	# line is a shortfall WARNING now and this sheet composes `none`, a kit that carries nothing and
+	# so can never leave anyone short. The `Kit` key beside the picker is unconditional, sits in the
+	# same row, and gives the identical slice — so the claim below is unchanged in what it walks.
 	var hint := _find_meta_control(_panel, KitRoster.KIT_HINT_META) as Label
-	_assert_band_panel("the unanswered sheet still states the picked kit's tier", hint != null)
-	if hint == null:
-		return
+	_assert_band_panel("a kit that carries nothing states no shortfall line (%s)"
+			% ("none" if hint == null else "\"%s\"" % hint.text),
+		hint == null)
 	var lines := _text_lines(_panel)
-	var at := lines.find(hint.text)
-	_assert_band_panel("…and that hint is on the sheet the assertion walks", at >= 0)
+	var at := lines.find(HudComposeVocab.COMPOSE_FIELD_KIT)
+	_assert_band_panel("…and the kit row IS on the sheet the assertion walks", at >= 0)
 	if at < 0:
 		return
 	var tail := lines.slice(at + 1)
-	# The gate at the BARE-handed tier against this quarry's defense: the effective attack is 0, so it
-	# refuses outright — the honest verdict for a party carrying nothing, and the one thing this sheet
-	# can still say. Composed from the vocabulary, never through `hunt_gate_model_at`.
-	var gate := SourceForecast.HUNT_GATE_BLOCKED_FORMAT % [
-		SourceForecast.HUNT_FORECAST_WARN_GLYPH, "Wild Boar",
-		String.num(BandFx.KIT_ATTACK_BARE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS),
-		String.num(QUARRY_DEFENSE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS)]
+	# The gate at the BARE-handed tier: the effective attack is 0, so it refuses outright — the honest
+	# verdict for a party carrying nothing, and the one thing this sheet can still say. Composed from
+	# the vocabulary, never through `hunt_gate_model_at`.
+	#
+	# **THIS SHEET COMPOSES `none`, so it takes the UNARMED remedy** — the kit names no weapon, so the
+	# fix really is to pick one that does. Its armed twin (a kit that names a weapon the band does not
+	# hold) is asserted in `ui_preview`'s hunt chapter; the two are one claim and neither is worth
+	# anything alone.
+	var gate := SourceForecast.HUNT_GATE_BLOCKED_UNARMED_FORMAT % [
+		SourceForecast.HUNT_FORECAST_WARN_GLYPH, "Wild Boar"]
 	var note := HudComposeVocab.DENIAL_FORECAST_PENDING
 	var want: Array[String] = [gate, note]
-	_assert_band_panel(("…and below it says EXACTLY the gate and the quoted-kit note — "
+	_assert_band_panel(("…and below the kit row it says EXACTLY the gate and the quoted-kit note — "
 			+ "no verdict, no caveat, no take, no refusal. Got %s") % str(tail),
 		tail == want)
 	# The send stays LIVE: the raid is perfectly launchable, we simply cannot quote its length. A
@@ -14444,11 +14549,18 @@ static func _queue_hunt_entry(herd_id: String) -> Dictionary:
 ## exactly how that defect shipped. The offset keeps ids readable (band 904 -> 4904) while
 ## guaranteeing they differ. Stamped at PUSH time, not at construction, because several fixtures
 ## override `entity` after the builder returns.
+## **AND ITS NAME**, from the same pool `BandFx.with_band_id` draws on, for the same reason the id is
+## stamped here: the sim sends a name on every cohort (issue #615), so a fixture without one reaches
+## the panel shaped unlike the decoder's output and renders `HudFormat`'s `Band #<id>` tell. A fixture
+## that sets `name` itself keeps it.
 static func _stamp_band_ids(cohorts: Array) -> Array:
 	var stamped: Array = []
 	for cohort_variant in cohorts:
 		var cohort: Dictionary = (cohort_variant as Dictionary).duplicate(true)
 		cohort["band_id"] = int(cohort.get("entity", 0)) + FIXTURE_BAND_ID_OFFSET
+		if not cohort.has("name"):
+			cohort["name"] = BandFx.FIXTURE_BAND_NAMES[
+				int(cohort["band_id"]) % BandFx.FIXTURE_BAND_NAMES.size()]
 		stamped.append(cohort)
 	return stamped
 

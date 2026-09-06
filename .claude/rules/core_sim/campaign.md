@@ -3,6 +3,9 @@ paths:
   - "core_sim/src/{demographics_config,generations,supply,supply_network_config}.rs"
   - "core_sim/src/{sedentarization,sedentarization_config,settlement_stage_config}.rs"
   - "core_sim/src/{wellbeing_config,victory,provinces,start_profile}.rs"
+  - "core_sim/src/starting_loadout.rs"
+  - "core_sim/src/data/start_profiles.json"
+  - "core_sim/tests/starting_loadout.rs"
   - "core_sim/src/systems/{population,trade}.rs"
   - "core_sim/src/snapshot/population.rs"
   - "core_sim/src/data/{demographics_config,supply_network_config,sedentarization_config}.json"
@@ -22,6 +25,7 @@ paths:
 |------|---------|
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
+| `src/data/start_profiles.json` | Campaign initialization. Per profile: `starting_units` (`kind`/`count`/`band_size`), `starting_knowledge_tags`, `inventory`, `food_modules`, `victory_modes_enabled`, `ai_profile_overrides` — plus the **required** `opening_loadout` block (see "The opening loadout" below): `material_points` (**30**, one point buys one unit), `pickable_materials` (`bone`, `fibre`, `hide`, `wood`, `stone` — the picker's list, in the order it is drawn), `material_defaults` (`bone 3` / `fibre 17` / `hide 8`, serde-defaulting to empty — the pre-fill the window opens on, never a grant), and **`kit_defaults`** (`big_game 4` / `trapping 4` / `gathering 4`, same optionality — the kit column's twin pre-fill, opening on Stalking / Trapping / Harvesting so the picker shows a plausible band instead of a column of zeros, with hands still left to spend). **There is deliberately no kit budget here.** `validate` rejects a `material_points` of `0`, an empty or duplicated `pickable_materials`, a `material_defaults` key outside the pick list, defaults summing above the budget, and a `kit_defaults` count of `0`; `StartProfiles::validate_against_materials` rejects a pickable or default naming a material the roster does not carry, and `validate_against_equipment` rejects a `kit_defaults` key the equipment roster does not carry **or one whose `uses` is empty** — both run from `build_headless_app`, the one place all three tables are in scope. ⛔ **There is no sum check on `kit_defaults` and there cannot be**, because the kit budget is the spawned band's head count rather than a number in this file; an over-allocation is clamped at publish time instead (see "The opening loadout") |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
 ## Campaign Loop & System Activation
@@ -42,6 +46,154 @@ paths:
 - **Camps**: Transient settlement-likes with `PortableBuildings`, `CampStorage`, `DecayOnAbandon` (backlog — not yet built)
 - **Sedentarization**: implemented — see the dedicated section below.
 - **Founding**: `Command::FoundSettlement { q, r }` requires Founders unit, consumes provisions, spawns Settlement
+
+### The opening loadout — the ONE source of starting gear and material
+
+A spawned band owns **nothing**: `equipment.json` ships `start_stock_fraction: 0.0`
+(`.claude/rules/core_sim/equipment.md`) and no material declares a start stock
+(`.claude/rules/core_sim/crafting.md`). What a campaign opens with is what the **player** allocated on
+turn one, *after* the generated map is on screen — which is the point: an opening kit chosen against
+a map you have not seen is a coin toss, and one chosen against the herds and forage actually in front
+of you is the first real decision of the game.
+
+`starting_loadout.rs` holds all of it: the `StartingLoadout` resource, the two systems that open and
+shut the window, and `apply_starting_loadout`, which does the validating, the band selection and the
+deposit. `bin/server.rs`'s handler only translates the wire types and logs the refusal.
+
+> #### ⛔ ONE BUDGET IS A MODEL FACT AND THE OTHER IS A NUMBER, AND THAT ASYMMETRY IS DELIBERATE
+>
+> **The KIT budget is one kit per working-age hand**, derived from the band that actually spawned —
+> `systems::party_workers(cohort.size, demographics.initial_distribution.working)`, the *same*
+> expression the equipment stock is sized against, in one home. It is **not** in
+> `start_profiles.json` and must not move there: a dial would be a second statement of how many
+> people the band has, free to disagree with the band itself the moment `band_size` or
+> `initial_distribution.working` were retuned.
+>
+> **The MATERIAL budget is `opening_loadout.material_points`**, because there is no head count to
+> derive it from — nothing in the model says how much bone a band walked in with. One point buys one
+> unit.
+>
+> **The asymmetry has a second consequence, on the PRE-FILLS.** `material_defaults` is sum-checked
+> against `material_points` at load, because both are config. `kit_defaults` cannot be — the budget
+> does not exist until worldgen has run — so an over-allocating kit pre-fill parses, and is
+> **clamped at publish time** by `starting_loadout::clamped_kit_defaults`: each row becomes
+> `floor(count × budget / declared_total)`, a row that floors to zero is dropped, and the floor's
+> remainder is **left unspent**. Proportional rather than first-come because the config is a
+> `BTreeMap` with no author's order to consume in — "declaration order" would really be *id* order,
+> making `gathering` beat `trapping` because `g` sorts first — and handing the leftover point to
+> whichever id sorts first would put that arbitrary tiebreak straight back. A couple of unallocated
+> hands is exactly the state the player is being invited to resolve. **The warn lives in
+> `stamp_starting_loadout`**, not at the publish site: a config fault of that shape should be
+> reported once per world rather than once per captured frame, and world build is the first moment
+> the budget exists to compare against. The shipped `4/4/4 = 12` against ~17 hands never binds.
+
+> #### ⛔ COMMITTING A LOADOUT DOES NOT CLOSE THE WINDOW — THE TURN ADVANCE DOES, AND NOTHING ELSE
+>
+> The whole of turn one is a **working surface**. The player looks around the map they were just
+> given, tries an allocation, sees what it buys, and revises it — which is the entire reason the pick
+> happens after worldgen rather than before it. A commit that shut the window would turn *"compose
+> your opening"* back into *"guess right first time"*.
+>
+> So `apply_starting_loadout` never clears `open`; only `close_opening_window` does, on the turn
+> advance, and unspent budget is **forfeited** there.
+>
+> **That makes an allocation a REPLACEMENT, not a purchase**, and it is the invariant to hold onto:
+> after applying `A`, the band's equipment ledger and its material stock are exactly what `A`
+> describes, however many drafts preceded it. `6 big_game` revised to `4 big_game` leaves **four**
+> kits' worth of gear, not ten. Both halves are therefore rebuilt from empty — the ledger from
+> `BandEquipment::default()`, the store through `LocalStore::clear_materials` — rather than added to;
+> an additive apply would silently refill the budget every time the player changed their mind.
+>
+> **The material reset is account-aware, and the STORE is what makes it so.** A band's `LocalStore`
+> holds two accounts: the commodity bag its opening food reserve lives in, and the per-rating
+> material batch store. `clear_materials` empties the second only, so a revision cannot starve the
+> band — and the distinction lives in the store rather than in a call site that would otherwise have
+> to name `FOOD` and `FODDER` to spare them, a list that goes stale the day a third commodity lands.
+
+**The window is open from world build until the first turn advance**, then it shuts and anything
+unspent is **forfeited**. Two systems, and the split matters:
+
+- `stamp_starting_loadout` — a **Startup** system chained after `spawn_initial_world`, so it can read
+  the spawned band's own worker count. It runs under the same `worldgen_wanted` gate as the spawn, so
+  a **load** never re-stamps: the window comes back from the checkpoint as it was written.
+- `close_opening_window` — `Update`, `.before(TurnStage::Influence)`, so the budget is spent before
+  the first turn resolves or it is not spent at all. **It is the only writer that ever clears
+  `open`.** It **skips `WORLD_BUILD_TICK` (`0`)**, and that exemption is load-bearing:
+  `rebuild_world_from_config` ends in one `run_turn`, which is what produces the baseline frame the
+  client first draws, so closing there would shut the window before the map it is composed against
+  had ever been seen.
+
+`StartingLoadout` is **checkpoint state** (`SimState`, `SIM_STATE_RESOURCES`): nothing rebuilds it, so
+a rollback into turn one has to land in a world whose window is still open.
+
+**The command is `SetStartingLoadout` (proto field 69, text `set_starting_loadout`)**, and it is
+replayable like every other world-mutating verb. It carries a faction, a repeated `{kit_id, count}`
+and a repeated `{material_id, units}`.
+
+> #### It fails CLOSED and WHOLE
+>
+> A loadout is one composition against two budgets, so honouring the lines that happened to be legal
+> would spend the player's points on something they did not choose. `LoadoutRejection` refuses the
+> **entire** command — changing no ledger, no store and **not the window** — for: a shut window; a
+> `kit_id` the roster does not carry; a kit that **carries nothing** (the roster's `none`, refused by
+> its empty `uses` rather than by its id, so the rule stays true of any future empty entry); a
+> material outside the profile's `pickable_materials`; a repeated kit or material line; and either
+> budget overspent on the **sum**, not per line.
+>
+> **`openingLoadout.open` is NOT the client's success signal** — it reads `true` after a refusal and
+> after a success alike, because a commit never closes the window. There is no failure event either.
+> What a client reads is the **band's own published state** on the recapture the command triggers:
+> after a success that is exactly the allocation it sent (the apply is a replacement), and after a
+> refusal it is whatever stood before.
+
+What a successful loadout does, in order: **kits → equipment**, building a fresh ledger holding
+`count` units of every item each allocated kit `uses`, stamped through `BandEquipment::anchor_grade`
+— the one home of *"what quality is a thing nobody crafted"*, shared with `start_stocked_owned`.
+**Within one allocation, two kits that share an item ADD**: 3 `big_game` + 3 `trapping` is 3 spears,
+3 traps and **6** sleds. (Across allocations they do not — the later one replaces the earlier.) Then
+**materials → the band's `LocalStore`**, cleared of materials first and then `deposit_material` at the allocated units and **`OPENING_MATERIAL_READING`
+(0.5) on every axis the material declares** — the middle of the band table, because what the band
+scavenged before setting out is unremarkable and a spread would be a number pretending to mean
+something. **The window is deliberately left open** — see the callout above.
+
+**The band outfitted is the lowest `BandId` carrying `StartingUnit` FOR THAT FACTION.** The shipped
+profile spawns exactly one; a profile that spawns several outfits the first and warns.
+
+> #### ⛔ THE BUDGET'S BAND IS PICKED BY A DIFFERENT RULE, AND THE TWO AGREE ONLY BECAUSE ONE FACTION SPAWNS
+>
+> `stamp_starting_loadout` takes the **globally** lowest `StartingUnit` band — `min_by_key` over the
+> whole query, **no faction filter** — where `starting_band` filters `cohort.faction == faction`
+> first. This passage used to claim they were "the same rule … so the budget cannot describe one band
+> and the gear land on another", and that is an invariant the code does not enforce.
+>
+> **The unfiltered selector is deliberate rather than an oversight, and filtering it would not be the
+> fix.** `StartingLoadout` is ONE GLOBAL RESOURCE — a single `kit_budget` and `material_budget` with
+> no faction key, `init_resource`d once and published once — so a faction filter would align the two
+> selectors while the budget itself stayed global, buying a comment that reads correct and a model
+> that still is not. Genuinely per-faction outfitting needs a keyed resource, which is a design change
+> and not a comment fix.
+>
+> What holds today is an **assumption**, stated as one: `spawn_population_entity` hard-codes
+> `FactionId(0)`, so there is exactly one faction's starting band and the two selectors coincide. The
+> first `StartingUnit` band spawned for a second faction breaks that, silently.
+
+**On the wire**: `CampaignSection.openingLoadout` (`OpeningLoadoutState`) carries `open`, the two
+budgets, `pickableMaterials`, `materialDefaults`, **`kitDefaults`** (already clamped, so a client
+draws the counts as they arrive and never re-fits them) and **`craftableRecipeIds`** — the recipes this
+faction can put on a bench right now, which is what excludes the three knowledge-gated bench tools
+(tanning frame, loom, bone awl) from the picker's *"what this material builds"* readout. Published as
+**ids** rather than left for the client to infer from a craft offer's refusal sentence, which would
+make a player-facing string into a machine contract. The kit roster and a recipe's input costs are
+deliberately **absent**: both already ride the wire, in `SubsistenceSection.equipmentConfigJson` and
+the per-band `craftOffers` rows, and a second copy is a second contract for one fact.
+
+> #### ⛔ A PRE-FILL IS A CLIENT SEED AND MUST NEVER BECOME A BACK-DOOR SPAWN STOCK
+>
+> Neither defaults block is applied to anything. A band that never receives a `SetStartingLoadout`
+> owns **no gear and no material**, forever — which is the whole arc, and exactly what a default that
+> quietly applied itself would undo while looking like a UI convenience. Pinned by
+> `starting_loadout::the_published_defaults_grant_the_band_nothing`, which advances past the window
+> and then asserts an empty ledger and a zero holding of *every* material on the roster.
 
 ### Population & Demographics (Settlement & Population Economy — Phase 1)
 The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a band — the first

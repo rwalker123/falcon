@@ -13,6 +13,7 @@ use crate::map_preset::{MapPreset, MapPresetsHandle, TerrainClassifierConfig};
 #[cfg(test)]
 use crate::snapshot_overlays_config::SnapshotOverlaysConfig;
 use crate::{
+    band_names::BandNameCatalog,
     biome_palette::BiomePalette,
     combat::{
         resolve_fight, CombatStats, Contingent, ContingentId, FightPayload, Force, ForceId,
@@ -71,11 +72,12 @@ use crate::{
     },
     provinces::{ProvinceId, ProvinceMap},
     resources::{
-        BandIdAllocator, ClimateConfig, CommandEventEntry, CommandEventKind, CommandEventLog,
-        CorruptionExposureRecord, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
-        DiscoveryProgressLedger, FactionInventory, FoodSiteEntry, FoodSiteRegistry,
-        FoodSiteWaterBiasReport, MoistureRaster, SentimentAxisBias, SimulationConfig,
-        SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
+        BandIdAllocator, BandNameAllocator, ClimateConfig, CommandEventEntry, CommandEventKind,
+        CommandEventLog, CorruptionExposureRecord, CorruptionLedgers, CorruptionTelemetry,
+        DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FoodSiteEntry,
+        FoodSiteRegistry, FoodSiteWaterBiasReport, MoistureRaster, SentimentAxisBias,
+        SimulationConfig, SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord,
+        TradeTelemetry,
     },
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
     snapshot_overlays_config::SnapshotOverlaysConfigHandle,

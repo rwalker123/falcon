@@ -345,9 +345,11 @@ const IMPROVEMENT_HINTS := {
     "tame": "Tame — gentle this herd into livestock: a reduced take while you work it, then it keeps to your band instead of roaming, and the same hunters bring back about half again as much. Your people still work it every turn.",
     # Corral is the ladder's best yield AND its only rung with a running cost. The hint has to carry
     # all three halves of that bargain — the ~25-turn investment dip, the top payoff, and the fact
-    # that a penned herd is a POPULATION YOU FEED: its food comes off your larder every turn, and an
+    # that a penned herd is a POPULATION YOU FEED: its food comes off the larder every turn, and an
     # underfed herd shrinks (and takes its yield down with it). It also still escapes if unstaffed.
-    "corral": "Corral — pen this herd: half yield for ~25 turns while you build, then the best yield of any herd. But penned animals can't graze: you feed them from your larder every turn, and an underfed herd shrinks. It must stay staffed or the herd goes wild again.",
+    # The hint calls that store `storage`, not `larder`: a hint is read at a glance, and one food
+    # store carries one word across the panel (`DetailFormat.FERTILITY_LABEL_RESERVE` and its twins).
+    "corral": "Corral — pen this herd: half yield for ~25 turns while you build, then the best yield of any herd. But penned animals can't graze: you feed them from your storage every turn, and an underfed herd shrinks. It must stay staffed or the herd goes wild again.",
 }
 
 # The overhunting flag itself. **What it MEANS is `LaborAssignment.overdraws` and nothing else** —
@@ -1581,47 +1583,94 @@ const KIT_WITHHELD_REASON_BUILD_RUNG := "its tools are for a different rung"
 ## nothing, and it sorts last only because the roster authors it last.
 const KIT_DEFAULT_ENTRY_SUFFIX := "  (default)"
 
-# The hint line under the picker — `attack 20.0 · carry 40.0 per hunter · spears 74 · sled 58`.
+# The line under the picker. **Still the separator for the band-wide ROLE cards**, which keep their
+# own `effect · condition` reading — see `KitRoster.role_hint`.
 const KIT_HINT_SEPARATOR := " · "
-const KIT_HINT_ATTACK_FORMAT := "attack %s"
-const KIT_HINT_HUNT_CARRY_FORMAT := "carry %s per hunter"
-const KIT_HINT_FORAGE_CARRY_FORMAT := "carry %s per gatherer"
+
+## > #### ⛔ THE SOURCE-JOB LINE IS A SHORTFALL WARNING NOW, AND SAYS NOTHING WHEN THERE IS NO SHORTFALL
+## >
+## > It read `attack 20.0 · carry 40.0 per hunter · spears 74 · sled 58` — a row of TIERS and item
+## > CONDITIONS — and every part of that is retired: `KIT_HINT_ATTACK_FORMAT`,
+## > `KIT_HINT_HUNT_CARRY_FORMAT`, `KIT_HINT_FORAGE_CARRY_FORMAT`, `KIT_HINT_COVERAGE_FORMAT`,
+## > `KIT_HINT_CONDITION_FORMAT` and `KIT_HINT_DRY_FORMAT` are all gone.
+## >
+## > **A RAW RATE WITH NO DENOMINATOR TELLS A PLAYER NOTHING**, and this one was also WRONG: the tier
+## > is what ONE EQUIPPED worker gets, and the line quoted it beside a crew of nine of whom one might
+## > be holding a basket. Reported from play as *"carry 1.6 … and subsequent carry 8.0 … are really
+## > meaningless. The user has no sense why it is saying that."*
+## >
+## > **THE RULE, and it is literal:** everyone on the job covered → **no line at all**; anyone short →
+## > **one line, in `HudStyle.DANGER`**, saying so in plain English. Do not add a second clause, do not
+## > bring a number back "just for information", and do not special-case one web — the hunt sheets
+## > mount the same line for the same reason.
+
+## **ONE CLAUSE, NEVER TWO.** The sentence states a count against a crew, and a trailing *"— the rest
+## go without"* only restated what the count already said. Ray, on the pair that shipped: *"remove
+## that, obviously that is true when you say 1 of 3 warriors carry clubs"*.
+##
+## ⛔ **AND IT COUNTS COMPLETE KITS, NOT ITEMS — `0 of 1 Stalking kits available`.**
+##
+## It counted the scarcest ITEM and named it (`None of 1 hunters carry spears`). **A Stalking kit is
+## spears AND a sled**, so a band holding three spears and no sled can field ZERO complete outfits
+## while an item-counting line reports three. What the player composes is an OUTFIT, and the number
+## has to answer for the thing they picked. Ray: *"get rid of that 'none of 1 hunters has spears', to
+## be: '0 of X stalking kits available' … do the same in the forage."*
+##
+## **ONE SENTENCE FOR BOTH ENDS.** The owns-none and owns-some cases had a format each; `0 of 1`
+## against `1 of 1` says the difference in the number itself, so the split is retired rather than kept
+## for a distinction the reader can already see. **`KIT_SHORTFALL_CREW_NOUNS` went with it** — the
+## sentence names the KIT now, so there is no crew noun in it and no per-job table to keep in step.
+##
+## The numerator is the `min` over every item the kit `uses` of the live units the band holds, CAPPED
+## at the denominator — five spears and one hunter reads `1 of 1`, never `5 of 1`. The denominator is
+## the composed crew.
+const KIT_SHORTFALL_FORMAT := "%d of %d %s available"
+
+## ⛔ **THE PLURAL IS THE KIT'S OWN DISPLAY NAME PLUS `s`, and that is a stated rule rather than a
+## coincidence that happens to hold.** Every roster name is singular and unsuffixed (`Stalking kit`,
+## `Harvesting kit`, `Wayfinding kit`), so appending `s` reads correctly for all of them; the count is
+## NOT inflected (`1 of 1 Harvesting kits available`), which is Ray's own wording.
+##
+## **The `none` entry would read `No kits`, and cannot reach this line**: it carries no items, and
+## `shortfall_line` returns early on an empty `uses` list — a kit that grants nothing can leave nobody
+## short. That is a structural guarantee rather than luck, but the suffix is documented here because a
+## roster whose names ever went plural would need a different rule.
+const KIT_SHORTFALL_PLURAL_SUFFIX := "s"
+
+## **THE SHORTFALL RUN'S WRAPPER on a line that carries a neutral clause beside it** — the role cards'
+## gear line, whose effect half must stay quiet. The colour is passed in rather than baked, so the ink
+## stays `HudStyle`'s to choose and this leaf keeps no palette of its own.
+const KIT_HINT_SHORTFALL_MARKUP := "[color=#%s]%s[/color]"
+
 ## ⛔ **THERE IS NO PEN CLAUSE ON THE HINT LINE ANY MORE** (issue #543). A
 ## `KIT_HINT_PEN_CARRY_FORMAT := "pen %s per keeper"` stood here arguing *"a sled drags a carcass in
 ## off the range; a pen stands at the camp, and what bounds a slaughter there is handling gear — so a
 ## kit carrying only a sled collects a pen at the bare rate."* Handling gear left the roster when
 ## hurdles became a material, both sides of the rate landed on the sled, and `EquipmentStat::PenCarry`
-## was deleted. A penned herd's hint states `KIT_HINT_ATTACK_FORMAT` and `KIT_HINT_HUNT_CARRY_FORMAT`
-## like any other hunt row — the same haul number the pen clause used to print, plus the weapon,
-## because a pen is fought.
-## **HOW MANY OF THE COMPOSED CREW THIS KIT ACTUALLY REACHES** — `3 of 8 equipped`, printed after the
-## tier clauses and before the item conditions.
-##
-## **THE TIERS ABOVE IT DESCRIBE A PERSON, NOT THE PARTY, and without this clause the line let the
-## party inherit them.** A band holding ONE spear and composing EIGHT hunters read `attack 20.0`
-## while the sim priced seven of the eight bare-handed inside the take curve: the take was right and
-## the line was wrong about why.
-##
-## **IT STATES THE COVERAGE AND NEVER BLENDS THE ATTACK.** A crew-averaged tier would describe
-## nobody, and it would be a third number for a division the sim has already published
-## (`PopulationCohortState.huntCrews`). The count is the crew the WHOLE kit reaches, not one axis's,
-## because this client may not map an axis to the component behind it — see `KitRoster.tier_hint`.
-const KIT_HINT_COVERAGE_FORMAT := "%d of %d equipped"
-## A component's remaining condition on `equipment.json`'s 0-100 scale, and the word for a spent one.
-## **Performance is FLAT until expiry** (durability and performance are orthogonal axes), so this
-## number never scales anything above it — it says how much longer the tier lasts, not how good it is.
-## **THE ITEM NAMES ITSELF — there is no table of them here.** These two formats take the wire's own
-## `KitOption.item_ids` entry, which is the `equipment.json` id (`spears` / `traps` / `sled` /
-## `baskets`). The three `KIT_COMPONENT_*` constants that used to supply the name are deleted: they were
-## reached through an axis→item guess, and on the Trapping kit that guess printed `spears`.
-const KIT_HINT_CONDITION_FORMAT := "%s %d"
-const KIT_HINT_DRY_FORMAT := "%s dry"
-## **A BAND-WIDE ROLE'S ITEM CLAUSE** — `Wayfinding 100`, `Clubs dry`. It takes `DetailFormat`'s own
-## capitalised item LABEL and condition FACE rather than the compose hint's raw wire id, because the
-## Gear popover states the identical pair for the identical band (`▲ Wayfinding 66 — …`) and two
-## spellings of one reading is how a card and the popover it sits above come to disagree. One format
-## for both states: the face is the number or the word `dry`, so this line needs no dry twin.
-const KIT_HINT_ROLE_ITEM_FORMAT := "%s %s"
+## was deleted. A penned herd's hint now reads like any other hunt row's: the `KIT_SHORTFALL_*` line
+## when someone on the job is unequipped, and NOTHING when everyone is covered. The rates the pen
+## clause used to print are gone with every other tier.
+## > #### ⛔ THE COVERAGE AND CONDITION CLAUSES ARE RETIRED WITH THE TIERS THEY QUALIFIED
+## >
+## > `KIT_HINT_COVERAGE_FORMAT` (`3 of 8 equipped`), `KIT_HINT_CONDITION_FORMAT` (`spears 74`) and
+## > `KIT_HINT_DRY_FORMAT` (`baskets dry`) all stood here. The coverage clause existed to stop the
+## > party inheriting a tier that describes ONE PERSON — a real correction, but it was a fourth
+## > fragment on a line whose first three fragments have now gone, and the shortfall it hinted at is
+## > said outright by `KIT_SHORTFALL_*` above.
+## >
+## > **`KIT_HINT_DRY_FORMAT` WAS ALSO WRONG, not merely terse.** It rendered whenever `condition_of`
+## > answered `0`, and that answer was returned for an item the band publishes NO ROW for — so a band
+## > owning no baskets at all read `baskets dry`, which says it owns some and they are spent.
+## > `KitItemCondition.count` is the field that separates those, and `snapshot.fbs` states the rule
+## > outright: *`remaining == 0` means owns none, never "owns one that is dry" — a batch with no units
+## > left is removed*.
+## >
+## > **THE ITEM'S CONDITION IS NOT LOST WITH THIS LINE.** The Materials & Crafting panel's kit ledger
+## > owns it in full, in its own quanta (`48 raids left` / `Worn out`), and `equipment.json`'s
+## > `life_readout` seams push `kit_life` to the event dock (warn → Notable, danger → Alert). The
+## > band's own `Gear` row was retired in `docs/plan_standing_upkeep.md` §4.9 item 12 for exactly that
+## > reason.
+
 ## Tier decimals. The tiers span 1.0 (bare hands) to 40.0 (a sled), authored as small round numbers,
 ## so one decimal states them without claiming a precision the roster does not have.
 const KIT_TIER_DECIMALS := 1

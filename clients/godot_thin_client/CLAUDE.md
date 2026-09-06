@@ -152,6 +152,7 @@ wrapped `##` section instead. Follow the shape the file already uses.
 | `event-dock.md` | The notification bar: importance rungs, channels, the pinned alert, `seq` de-dup | `EventDockPanel.gd`, `hud_event_vocab.gd` |
 | `crafting-panel.md` | Materials & Crafting: the material rail, the bench, the kit ledger, and the rule that the sim resolves the refusal | `CraftingPanel.gd`, `CraftingPanelController.gd`, `hud_crafting_vocab.gd` |
 | `knowledge-panel.md` | The knowledge screen: what your people know, the derived "nothing is using it", and the action-bar launcher | `KnowledgePanel.gd`, `KnowledgeRoster.gd`, `hud_knowledge_vocab.gd` |
+| `starting-loadout.md` | The turn-one outfitting picker: the two budgets, the "what this builds" readout, and the window the SIM closes | `StartingLoadoutPanel.gd`, `StartingLoadoutController.gd`, `hud_loadout_vocab.gd` |
 | `panel-framework.md` | Docked `PanelCard`s, `DockScrollFit`, `AutoSizingPanel` | `PanelCard.gd`, `PanelDock.gd` |
 | `terrain-blend-shader.md` | The per-pixel biome-blend shader: blend, shore, canopy, peaks, rivers, roads | `*.gdshader`, `TerrainRenderer.gd` |
 | `terrain-textures.md` | Atlas assets, `terrain_config.json`, loading, the 2D pipeline | `TerrainTextureManager.gd` |
@@ -219,7 +220,7 @@ What scales *all* text at once is the Options pane's **Interface scale**, which 
 scale applied to the window, not a font system — see `.claude/rules/client/interface-scale.md`.
 
 **The palette authority is `HudStyle.gd`**, and it is real: `SIGNAL`,
-`SIGNAL_WASH`, `DANGER`, `WARN`, `HEALTHY`, `INK`, `INK_DIM`, `INK_FAINT`,
+`SIGNAL_WASH`, `DANGER`, `WARN`, `HEALTHY`, `READY`, `INK`, `INK_DIM`, `INK_FAINT`,
 `GROUND`, `PANEL_SOLID`, `LINE_SOFT`, plus `card_stylebox()`, `banner_stylebox()`,
 `empty_stylebox()`, `apply_button(btn, "primary"|"ghost")`. **No hardcoded hexes**
 — the one surviving exception is documented at its call site.

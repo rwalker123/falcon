@@ -2114,6 +2114,97 @@ impl EquipmentConfig {
         self.rate_tier(EquipmentStat::ForageCarry, baseline_rate, kit, wear)
     }
 
+    /// **HOW MANY WORKERS THIS KIT CAN ACTUALLY EQUIP FOR A CARRY, out of what the band holds** —
+    /// the carry twin of [`Self::build_work_saturating_crew`], and the term that turns a
+    /// piecewise-linear coverage resolution into a closed form a client can evaluate against a
+    /// *proposed* crew:
+    ///
+    /// ```text
+    /// carry(w) = w × bare + min(w, saturating_crew) × (equipped − bare)
+    /// ```
+    ///
+    /// # ⛔ WITHOUT IT, A TIER IS APPLIED TO PEOPLE WHO DO NOT HOLD THE GEAR
+    ///
+    /// A carry tier is **per equipped worker** and steps at the *first* unit, which is what a tier
+    /// means. The published [`Self::forage_per_worker_biomass_capacity`] therefore reads `8.0` for a
+    /// band holding **one** basket and `8.0` for a band holding nine, and a consumer with no coverage
+    /// term prices nine gatherers at the basket rate off a single basket — the exact defect this
+    /// closes. It was invisible while `start_stock_fraction` was `1.5` (a band always held more units
+    /// than people, so coverage was always 100 %); the opening loadout makes partial coverage the
+    /// ordinary case.
+    ///
+    /// # The shape is the build term's, because the arithmetic is the same
+    ///
+    /// Coverage arms a **prefix** of the party (`min(live units × workers_per_unit, the people
+    /// brought)`) and the rest work bare, so
+    /// `min(w, units) × equipped + max(0, w − units) × bare` — which is the baseline every worker
+    /// gets plus a gear bonus capped by a saturating crew. The build term has no `bare` half only
+    /// because a builder with no tool contributes [`NO_BUILD_GEAR`]; a gatherer with no basket still
+    /// gathers.
+    ///
+    /// # It is a property of the KIT and the LEDGER — of no source and no crew
+    ///
+    /// Both terms behind it — the units held and each unit's reach — are facts about what the band
+    /// owns, so it rides `PopulationCohortState.kitTiers[]` beside the rate it caps and is answered
+    /// **per offered kit**: a kit the player is merely *considering* gets its own.
+    ///
+    /// # It counts the items setting the kit's BEST rate for this stat
+    ///
+    /// [`KitChoice::declared_by_live_item`] takes the **maximum** of what the live items declare (a
+    /// worker uses the better tool; two do not compound), so the crew this answers for is the one
+    /// covered by the items declaring that best value. **Each shipped kit carries exactly one item
+    /// per carry axis**, and every shipped carry item is `workers_per_unit: 1` — so `min(w, this)`
+    /// **is** `coverage`'s own prefix, pinned at every crew size by
+    /// `the_carry_saturating_crew_reproduces_the_coverage_sum_at_every_crew_size`. A kit carrying a
+    /// *second*, weaker item on the same axis that reached further — or a carry item needing a crew
+    /// per unit, where `coverage` floors to **whole** crews and this does not — would break the
+    /// form; that test is what makes the day one ships a decision rather than a silent drift.
+    ///
+    /// [`NO_SATURATING_CREW`] where nothing live in the kit lifts the stat, including a kit that
+    /// declares it and has worn every unit out — the same self-correcting shape the build side has,
+    /// since the published rate is then multiplied by a zero crew.
+    pub fn carry_saturating_crew(
+        &self,
+        stat: EquipmentStat,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> u32 {
+        let Some(best) = kit.declared_by_live_item(stat, wear, self) else {
+            return NO_SATURATING_CREW;
+        };
+        kit.uses
+            .iter()
+            .filter_map(|item| {
+                let live = self.live_item(item, wear)?;
+                let effect = live.effect(stat)?;
+                // `>=` rather than `==` because `best` IS one of these values by construction — the
+                // comparison is a "did this item set the maximum" test, not float equality.
+                (effect.value() >= best.value()).then(|| {
+                    wear.live_units(item, self)
+                        .saturating_mul(live.item.workers_per_unit)
+                })
+            })
+            .max()
+            .unwrap_or(NO_SATURATING_CREW)
+    }
+
+    /// **What a worker holding NONE of this kit's gear achieves on `stat`** — the `bare` half of the
+    /// closed form on [`Self::carry_saturating_crew`], and exactly what
+    /// [`Self::hunt_per_worker_biomass_capacity`] answers for a party carrying nothing.
+    ///
+    /// It is the caller's `labor_config` no-equipment baseline unless the **item table itself**
+    /// declares an unequipped side for the stat, which no shipped item does — so it is `12.0` for a
+    /// hunt and `1.6` for a gather today. Resolved here rather than left as *"just use the labor
+    /// baseline"* because that equivalence is a property of the current table, not of the model: the
+    /// day an item declares an unequipped carry, a client holding the raw config lever would price
+    /// the unequipped crew wrong and nothing would say so.
+    pub fn unequipped_reference(&self, stat: EquipmentStat, baseline: f32) -> f32 {
+        match self.declared_tier(stat) {
+            Some(EffectTier::Unequipped(value)) => value,
+            _ => baseline,
+        }
+    }
+
     /// **The sight range a band's posted scout vantages reveal at** — resolved against the equipped
     /// range the caller already holds (`labor_config.scout.vantage_range`).
     ///
@@ -2484,6 +2575,23 @@ impl EquipmentConfig {
                 kit,
                 wear,
             ),
+            // **The coverage half of both carries, resolved beside the rates they cap.** A rate
+            // alone says what an *equipped* worker achieves and nothing about how many of them there
+            // are, which is what let one basket price nine gatherers.
+            hunt_carry_saturating_crew: self.carry_saturating_crew(
+                EquipmentStat::HuntCarry,
+                kit,
+                wear,
+            ),
+            forage_carry_saturating_crew: self.carry_saturating_crew(
+                EquipmentStat::ForageCarry,
+                kit,
+                wear,
+            ),
+            hunt_carry_bare_per_worker_biomass: self
+                .unequipped_reference(EquipmentStat::HuntCarry, baseline_haul_rate),
+            forage_carry_bare_per_worker_biomass: self
+                .unequipped_reference(EquipmentStat::ForageCarry, baseline_gather_rate),
             scout_vantage_range: self.scout_vantage_range(equipped_vantage_range, kit, wear),
             // `0` is the *sentinel* for "unbounded" on both ends — the schema's own default, and what
             // every weapon but the passive device ships.
@@ -3313,6 +3421,18 @@ pub struct ResolvedKitTiers {
     pub hunt_carry_per_worker_biomass: f32,
     /// Per-gatherer throughput (biomass/turn, **before** the tile's seasonal weight) — the baskets'.
     pub forage_carry_per_worker_biomass: f32,
+    /// **How many workers this kit can equip for a HUNT haul out of what the band holds** — see
+    /// [`EquipmentConfig::carry_saturating_crew`]. The cap on the *bonus* half of
+    /// [`Self::hunt_carry_per_worker_biomass`]; without it a single sled prices a whole party.
+    pub hunt_carry_saturating_crew: u32,
+    /// The gather twin of [`Self::hunt_carry_saturating_crew`].
+    pub forage_carry_saturating_crew: u32,
+    /// **What a hunter holding none of this kit's gear hauls** — the `bare` half of the closed form
+    /// ([`EquipmentConfig::unequipped_reference`]). `12.0` today, and *not* to be assumed equal to
+    /// the caller's `labor_config` lever: see that function.
+    pub hunt_carry_bare_per_worker_biomass: f32,
+    /// The gather twin of [`Self::hunt_carry_bare_per_worker_biomass`]. `1.6` today.
+    pub forage_carry_bare_per_worker_biomass: f32,
     /// The sight range each posted scout vantage reveals at — the wayfinding gear's. A distance in
     /// tiles, carried as `f32` because the effects axis is continuous; the reveal path rounds.
     pub scout_vantage_range: f32,
@@ -4338,6 +4458,116 @@ mod tests {
                 "at {workers} keepers the published pair must equal what the pool's kit delivers"
             );
         }
+    }
+
+    /// **THE PUBLISHED CARRY PAIR IS THE COVERAGE SUM, at every crew size** — the closed form
+    /// `w × bare + min(w, saturating crew) × (equipped − bare)` against `weighted_rate × w`, which is
+    /// the arithmetic a take actually pays.
+    ///
+    /// The client evaluates the left side against a crew the player is *proposing*, and the sim pays
+    /// the right side for the crew that shows up; this is what says they are one number. **It sweeps
+    /// ACROSS the saturation point** — `w = 0`, below the units held, exactly at it, and above —
+    /// because below it the two agree for the trivial reason that neither is capped, and it is only
+    /// above it that a client applying the tier to everybody diverges.
+    ///
+    /// **It is also the guard on the two conditions the form assumes**, and both are properties of
+    /// today's roster rather than of the model. The saturating crew counts the items declaring the
+    /// kit's **best** rate for the axis, so a kit carrying a *second, weaker* item on the same axis
+    /// that reached further would carry more than the form credits. And `coverage` floors a
+    /// multi-worker item to **whole crews** where `min(w, sat)` does not, so a carry item shipping
+    /// `workers_per_unit > 1` would diverge at every crew size that is not a multiple of it. No
+    /// shipped kit does either — one carry item per axis, every one `workers_per_unit: 1` — and this
+    /// is what makes the day one ships a **decision** rather than a silent mispricing.
+    #[test]
+    fn the_carry_saturating_crew_reproduces_the_coverage_sum_at_every_crew_size() {
+        /// Baskets held, so the saturation point sits inside the sweep below and is straddled.
+        const HELD: u32 = 3;
+        /// `labor_config.forage.per_worker_biomass_capacity` — the bare-handed gather.
+        const BARE: f32 = 1.6;
+        let config = EquipmentConfig::builtin();
+        let gathering = config
+            .kit("gathering")
+            .expect("the shipped roster carries the gathering kit");
+        let mut wear = crate::components::BandEquipment::default();
+        wear.stock(
+            "baskets",
+            HELD,
+            &config
+                .item("baskets")
+                .expect("the shipped roster carries baskets")
+                .default_tier()
+                .id,
+            None,
+        );
+
+        let equipped = config.forage_per_worker_biomass_capacity(BARE, &gathering, &wear);
+        let bare = config.unequipped_reference(EquipmentStat::ForageCarry, BARE);
+        let saturating =
+            config.carry_saturating_crew(EquipmentStat::ForageCarry, &gathering, &wear);
+        assert_eq!(
+            saturating, HELD,
+            "fixture: three one-worker baskets equip three gatherers - got {saturating}"
+        );
+        assert!(
+            equipped > bare,
+            "fixture: the basket must lift the rate ({equipped} over {bare}), or every crew size \
+             below agrees for the wrong reason"
+        );
+        assert_eq!(
+            bare, BARE,
+            "no shipped item declares an unequipped forage carry, so the bare term is the labor \
+             baseline - if this moves, the client's `bare` half moved with it"
+        );
+
+        for workers in 0..=6u32 {
+            let w = workers as f32;
+            let published = w * bare + w.min(saturating as f32) * (equipped - bare);
+            let paid = w * config
+                .coverage(&gathering, w, &wear)
+                .weighted_rate(|kit| config.forage_per_worker_biomass_capacity(BARE, kit, &wear));
+            assert!(
+                (published - paid).abs() < 1e-4,
+                "at {workers} gatherers the published closed form must equal what the party \
+                 collects - form {published}, coverage {paid}"
+            );
+        }
+    }
+
+    /// **A kit that lifts NOTHING on an axis saturates nobody, and the form is self-correcting
+    /// there** — the bonus is multiplied by a zero crew, so every worker reads the bare rate.
+    ///
+    /// Both arms matter: a kit carrying no such item at all, and a kit that carries one and has worn
+    /// every unit of it out. The second is the one a published rate cannot express on its own.
+    #[test]
+    fn a_kit_that_lifts_no_carry_saturates_nobody() {
+        const BARE: f32 = 1.6;
+        let config = EquipmentConfig::builtin();
+        let gathering = config
+            .kit("gathering")
+            .expect("the shipped roster carries the gathering kit");
+        let empty = crate::components::BandEquipment::default();
+        assert_eq!(
+            config.carry_saturating_crew(EquipmentStat::ForageCarry, &gathering, &empty),
+            NO_SATURATING_CREW,
+            "a band owning no baskets equips nobody"
+        );
+        assert_eq!(
+            config.forage_per_worker_biomass_capacity(BARE, &gathering, &empty),
+            BARE,
+            "...and every gatherer is on the bare rate, so the pair agrees with itself"
+        );
+
+        // The kit that carries no basket at all: the rate is bare and the crew is zero, so a client
+        // multiplying a bonus of zero by a crew of zero lands on the bare rate either way.
+        let hunting = config
+            .kit("big_game")
+            .expect("the shipped roster carries the stalking kit");
+        let stocked = crate::components::BandEquipment::start_stocked(&config);
+        assert_eq!(
+            config.carry_saturating_crew(EquipmentStat::ForageCarry, &hunting, &stocked),
+            NO_SATURATING_CREW,
+            "a sled lifts no gather, however many of them the band holds"
+        );
     }
 
     #[test]

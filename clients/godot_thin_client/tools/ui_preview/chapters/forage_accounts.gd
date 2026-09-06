@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 192
+const EXPECTED_CHECKPOINTS := 196
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -454,7 +454,7 @@ func _stale_verb_tile_fixture() -> Dictionary:
 ## different throughputs by fixture drift.
 func _stale_verb_band_fixture(rate: float) -> Dictionary:
 	return {
-		"id": "Band 1",
+		"name": "Windmere", "id": "Windmere",
 		"size": 30,
 		"entity": 821,
 		"faction": 0,
@@ -551,7 +551,7 @@ func _building_patch_tile_fixture() -> Dictionary:
 ## about one patch by construction.
 func _building_patch_band_fixture(rate: float) -> Dictionary:
 	return {
-		"id": "Band 1",
+		"name": "Windmere", "id": "Windmere",
 		"size": 34,
 		"entity": 823,
 		"faction": 0,
@@ -1083,8 +1083,117 @@ func _assert_readout_names_both_rates() -> void:
 		not String(forage["tooltip"]).contains(RETIRED_ACTUAL_NEEDLE)
 			and not String(hunt["tooltip"]).contains(RETIRED_ACTUAL_NEEDLE))
 
+
+## ⛔ **THE FORAGE SHEET'S KIT LINE — THE WEB THAT HAD NO COVERAGE, WHICH IS HOW IT STAYED MUTE.**
+##
+## Reported from play as *"in the forage image you say nothing"*: a Harvesting kit, one harvester, no
+## line at all. The producer was shared with the hunt sheet and correct; the two webs diverged at the
+## MOUNT. `DrawerComposeController` handed `_compose.hunt_count()` to the hunt kit row and handed the
+## forage row NOTHING, so `crew` defaulted to `KIT_CREW_UNCOMPOSED`, `shortfall_line` fell back to the
+## published `workersOnQuotedJob` — which is `0` before anyone is assigned — and returned `""` on every
+## forage sheet however short the band was.
+##
+## ⛔ **SO THIS IS DRIVEN THROUGH THE REAL COMPOSE SHEET AND READS THE RENDERED LABEL.** A claim made
+## against `KitRoster.shortfall_line` directly would have passed for the whole life of the bug: the
+## arithmetic was never wrong, the crew never reached it. Only a state that goes through
+## `_build_forage_assign_controls` can see the mount.
+##
+## The three coverage states are ONE claim, on one band with only the baskets held moving.
+func _assert_the_forage_kit_line_reaches_the_sheet() -> void:
+	var band_before = h._hud._band_labor.player_band()
+	var bands_before = h._hud._band_labor._player_bands
+	var tile := ForageFx.floorify(_hay_meadow_tile_fixture(),
+		HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var kit := KitRoster.kit_by_id(BandFx.kit_roster_fixture(), BandFx.KIT_ID_GATHERING)
+
+	# **SHORT — one basket among the composed harvesters.**
+	var short_line: String = await _forage_kit_line(tile, FORAGE_COVER_SHORT_HELD)
+	h._assert_hud("forage — a short crew gets the kit line the hunt sheet has always had (\"%s\")"
+			% short_line,
+		short_line == _forage_shortfall_want(FORAGE_COVER_SHORT_HELD, kit))
+
+	# **OWNS NONE — the same sentence, `0` in front.** It is the state Ray photographed.
+	var none_line: String = await _forage_kit_line(tile, FORAGE_COVER_NONE_HELD)
+	h._assert_hud("forage — …and a band with no baskets reads `0 of %d` rather than SAYING NOTHING (\"%s\")"
+			% [FORAGE_COVER_CREW, none_line],
+		none_line == _forage_shortfall_want(FORAGE_COVER_NONE_HELD, kit))
+
+	# **COVERED — the control, and the half that keeps the rule intact.** Silence here is correct;
+	# without it every claim above is satisfied by a sheet that has started shouting at everyone.
+	var covered_line: String = await _forage_kit_line(tile, FORAGE_COVER_CREW)
+	h._assert_hud("forage — …while a fully outfitted crew is told nothing at all (\"%s\")"
+			% covered_line, covered_line == "")
+
+	# ⛔ **RAY'S EXACT FRAME: a forage job NOBODY IS STAFFED ON YET.** `workersOnQuotedJob` is `0`
+	# there, which is what made the bug TOTAL SILENCE rather than a wrong number — the fallback had
+	# nothing to be a fraction of and returned `""`. The fixture's ordinary rows publish a staffed 4,
+	# so without this leg the bug shows only as a wrong denominator and the reported symptom is not
+	# staged at all.
+	var unstaffed: String = await _forage_kit_line_unstaffed(tile)
+	h._assert_hud("forage — …and an UNSTAFFED forage job still gets the line, where it said nothing (\"%s\")"
+			% unstaffed,
+		unstaffed == _forage_shortfall_want(FORAGE_COVER_NONE_HELD, kit))
+
+	h._hud._band_labor._player_band = band_before
+	h._hud._band_labor._player_bands = bands_before
+	h._hud.close_compose_sheet()
+
+## Open the forage sheet on `tile` for a band holding `held` baskets, and answer the RENDERED kit line.
+## The crew is dialled and the sheet re-opened, which is the chapter's own idiom: `seed_forage` only
+## runs on a source change, so a count set before the first open is thrown away.
+func _forage_kit_line(tile: Dictionary, held: float) -> String:
+	# ⛔ **THE SHEET IS CLOSED BETWEEN STATES, or the swap is invisible.** Re-opening on the SAME tile
+	# is not a source change, so the sheet is not rebuilt and the label from the previous band is still
+	# hanging there — measured: all three states read `1 of 3` off the first one.
+	h._hud.close_compose_sheet()
+	var band := BandFx.band_fixture()
+	band["kit_item_conditions"] = BandFx.kit_condition_rows(BandFx.KIT_HUNT_HEADCOUNT, held)
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	h._hud._compose.reset_forage_source()
+	h._show_tile(tile)
+	h._compose_forage(tile)
+	h._hud._compose.set_forage_count(FORAGE_COVER_CREW)
+	h._compose_forage(tile)
+	await h._settle()
+	return Readout.kit_hint_line(h._hud._drawercompose._compose_sheet)
+
+## The same drive, with the BASKETS row quoted at an unstaffed job — the shape a pre-commit sheet
+## really has before anybody is assigned, and the one the composed crew is the only honest denominator
+## for.
+func _forage_kit_line_unstaffed(tile: Dictionary) -> String:
+	h._hud.close_compose_sheet()
+	var band := BandFx.band_fixture()
+	var rows: Array = BandFx.kit_condition_rows(BandFx.KIT_HUNT_HEADCOUNT, FORAGE_COVER_NONE_HELD)
+	for row_variant in rows:
+		var row: Dictionary = row_variant
+		if String(row["item_id"]) == BandFx.KIT_ITEM_BASKETS:
+			row["workers_on_quoted_job"] = BandFx.KIT_UNSTAFFED_HEADCOUNT
+	band["kit_item_conditions"] = rows
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	h._hud._compose.reset_forage_source()
+	h._show_tile(tile)
+	h._compose_forage(tile)
+	h._hud._compose.set_forage_count(FORAGE_COVER_CREW)
+	h._compose_forage(tile)
+	await h._settle()
+	return Readout.kit_hint_line(h._hud._drawercompose._compose_sheet)
+
+## The sentence, composed from the vocabulary rather than through the producer under test.
+func _forage_shortfall_want(held: float, kit: Dictionary) -> String:
+	return HudComposeVocab.KIT_SHORTFALL_FORMAT % [int(held), FORAGE_COVER_CREW,
+		KitRoster.kit_display_name(kit) + HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
+
+## The composed crew these three states share. Above one, so `0 of N` and `1 of N` are different
+## sentences and the short arm is not the owns-none arm wearing another number.
+const FORAGE_COVER_CREW := 3
+const FORAGE_COVER_SHORT_HELD := 1.0
+const FORAGE_COVER_NONE_HELD := 0.0
+
 func run(harness) -> void:
 	h = harness
+	await _assert_the_forage_kit_line_reaches_the_sheet()
 
 	# State forage_stale_verb — **THE TWO PUBLISHED NUMBERS MUST IMPLY ONE THROUGHPUT.** The state above
 	# proved the finished patch stops OFFERING Cultivate; this one proves it stops being PRICED as one.

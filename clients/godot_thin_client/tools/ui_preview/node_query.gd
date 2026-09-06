@@ -108,3 +108,44 @@ static func widest_control_face(root: Control) -> String:
 	elif best is RichTextLabel:
 		face = (best as RichTextLabel).get_parsed_text()
 	return "%s(%.0f) %s" % [best.get_class(), best.get_combined_minimum_size().x, face.substr(0, 40)]
+
+
+## **THE RENDERED reason rows of an OPEN turn-orb popover**, in the order they are drawn, each as
+## `{label, detail, jump}` read off the Labels themselves — never off `TurnOrb._entries`. A registry
+## read would pass on a row the popover never drew, and it would also skip the sort `set_attention`
+## applies, so a claim about which row sits ABOVE which could not be made against it. The popover body
+## is a header, one Button per entry, and a footer whose Advance button is nested one level deeper —
+## so the body's DIRECT Button children are exactly the reason rows.
+##
+## Takes the ORB NODE rather than the harness: it is `turn_orb`'s original helper, moved here when the
+## `starting_loadout` chapter became a second caller, which is the rule for a helper two chapters need.
+static func turn_orb_popover_rows(orb: Node) -> Array:
+	var rows: Array = []
+	if orb == null:
+		return rows
+	var pop = orb._popover
+	if pop == null or pop.get_child_count() == 0:
+		return rows
+	for row_node in pop.get_child(0).get_children():
+		if not (row_node is Button) or row_node.get_child_count() == 0:
+			continue
+		# The row is stripe / icon / text stack / jump, and the text stack is the only VBox in it, so
+		# the label/detail pair is reached structurally rather than by counting siblings.
+		for cell in row_node.get_child(0).get_children():
+			if not (cell is VBoxContainer) or cell.get_child_count() < 2:
+				continue
+			# **AND THE AFFORDANCE**, which is the last child of the row's own HBox: `Jump ->` for a
+			# locating row, `Open >` for a non-locating kind that a panel branch answers, and EMPTY for
+			# one that neither locates nor opens. Read here rather than asserted off the kind, because
+			# the failure this catches is a row that WEARS the affordance and does nothing when pressed.
+			var jump := ""
+			var last: Node = row_node.get_child(0).get_child(row_node.get_child(0).get_child_count() - 1)
+			if last is Label:
+				jump = String((last as Label).text)
+			rows.append({
+				"label": String((cell.get_child(0) as Label).text),
+				"detail": String((cell.get_child(1) as Label).text),
+				"jump": jump,
+			})
+			break
+	return rows

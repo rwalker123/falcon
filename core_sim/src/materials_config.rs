@@ -131,42 +131,6 @@ pub struct MaterialDef {
     /// *"this material is not named further"*.
     #[serde(default)]
     pub varieties: BTreeMap<String, VarietyReadings>,
-    /// **WHAT A SPAWNED BAND IS SENT OUT HOLDING OF THIS MATERIAL** ([`MaterialStartStock`]).
-    ///
-    /// **Absent is the ordinary case and means *"a band starts with none"*** — every material with a
-    /// producer, since a band that can gather a thing needs no opening pile of it. Today exactly one
-    /// material declares one: `wood`, which has **no producer at all** until forest foraging lands,
-    /// so without a start stock nothing in the game could ever raise a pen.
-    ///
-    /// **The lever lives here rather than in `start_profiles.json` for the roster's own reason** —
-    /// one home per fact, and a material is described in exactly one place.
-    #[serde(default)]
-    pub start_stock: Option<MaterialStartStock>,
-}
-
-/// **A MATERIAL A SPAWN STOCKS, AND THE READING IT ARRIVES AT** — the material twin of
-/// `EquipmentConfig::start_stock_fraction`, seeded by `worldgen::spawn_population_entity` beside the
-/// band's opening kit.
-///
-/// It exists because `StartKit.materials` was never a *stock*: it is the materials **table**, carried
-/// so an equipment batch can resolve its anchor grade, and nothing in `StartKit` ever deposited a
-/// material batch at all. This is that path.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MaterialStartStock {
-    /// **Units per WORKER the band will field**, scaled by the same floored worker count the
-    /// equipment stock is sized against (`size × working_fraction`, floored) — so *"a party's
-    /// worth"* means one thing in that function.
-    ///
-    /// **A config lever, not a constant**: on `wood` it is the only thing standing between a band and
-    /// its first pen until a producer exists, so it has to be tunable without a rebuild. Validated
-    /// finite and `> 0` — a stock of nothing is a block that should not be there.
-    pub per_worker: f32,
-    /// **The exact reading the stocked batch arrives at**, per axis, which is what resolves its
-    /// `BandKey`. Validated to name **exactly** the material's declared axes, both directions, on
-    /// [`MaterialYieldDef::characteristics`]' own rule: a missing axis is a silently defaulted and
-    /// therefore silently wrong reading, and an invented one is read by nothing.
-    pub characteristics: BTreeMap<String, f32>,
 }
 
 impl MaterialDef {
@@ -446,44 +410,6 @@ impl MaterialsConfig {
             }
             self.validate_hand_working(id, def)?;
             self.validate_varieties(id, def)?;
-            self.validate_start_stock(id, def)?;
-        }
-        Ok(())
-    }
-
-    /// **The opening pile's bounds** ([`MaterialStartStock`]). The rate is finite and `> 0` — a
-    /// stocked nothing is a block that should not be there — and the readings name **exactly** the
-    /// material's declared axes, through [`exact_axes_fault`], the one home of that rule.
-    fn validate_start_stock(
-        &self,
-        id: &str,
-        def: &MaterialDef,
-    ) -> Result<(), MaterialsConfigError> {
-        let Some(stock) = def.start_stock.as_ref() else {
-            return Ok(());
-        };
-        if !stock.per_worker.is_finite() || stock.per_worker <= 0.0 {
-            return Err(MaterialsConfigError::Invalid {
-                field: format!("materials.{id}.start_stock.per_worker"),
-                constraint: "be finite and greater than 0 - a start stock of nothing is a block \
-                             that should not be there, which is what an absent `start_stock` says"
-                    .to_string(),
-                value: stock.per_worker.to_string(),
-            });
-        }
-        if let Some((axis, fault)) = exact_axes_fault(def, &stock.characteristics) {
-            return Err(MaterialsConfigError::InvalidTable {
-                reason: format!("material '{id}' start_stock states '{axis}', which {fault}"),
-            });
-        }
-        for (axis, reading) in &stock.characteristics {
-            if !reading_in_range(*reading) {
-                return Err(MaterialsConfigError::Invalid {
-                    field: format!("materials.{id}.start_stock.{axis}"),
-                    constraint: format!("be finite and within {READING_MIN}..={READING_MAX}"),
-                    value: reading.to_string(),
-                });
-            }
         }
         Ok(())
     }
@@ -905,9 +831,9 @@ mod tests {
     /// of equipment; `wood` is what a panel is woven from.
     const WOOD: &str = "wood";
     const HURDLES: &str = "hurdles";
-    /// **The paved road's**, and the second material on the roster with no producer. It reaches the
-    /// player through `start_stock` alone — quarrying belongs to the minerals arc (issue #583) —
-    /// which is why the *unproduced* set below is two rather than one.
+    /// **The paved road's**, and the second material on the roster with no producer. Quarrying
+    /// belongs to the minerals arc (issue #583), so until it lands the only stone in the game is
+    /// what the player buys with the turn-one opening allocation.
     const STONE: &str = "stone";
 
     fn builtin() -> MaterialsConfig {
@@ -939,10 +865,12 @@ mod tests {
     /// *nothing takes this as an INPUT* for the fence panels and the roadstone — they are consumed
     /// by an improvement, not by a bench (`docs/plan_standing_upkeep.md` §2.7).
     ///
-    /// **Two are *unproduced*, and their `start_stock` is what keeps them reachable**: `wood` until
-    /// forest foraging lands, `stone` until quarrying does (issue #583). The pairing is the point of
-    /// the second assertion — an unproduced material with no opening pile is dead content, and an
-    /// opening pile on a material that *has* a producer is a duplicate source nobody asked for.
+    /// **NOTHING IS STOCKED AT SPAWN** — every material on this roster is either *produced* (a
+    /// yield edge or a recipe pays it) or *picked* in the opening loadout the player composes on
+    /// turn one (`start_profiles.json` `opening_loadout`). There is no third way in, which is the
+    /// point of the second assertion: the per-material `start_stock` that used to hand `wood` and
+    /// `stone` out automatically is **deleted**, mechanism and all, so the roster cannot quietly
+    /// grow a second source beside the two the player can see.
     #[test]
     fn the_builtin_table_parses_and_validates() {
         let config = builtin();
@@ -951,16 +879,22 @@ mod tests {
             ids,
             vec![BONE, FIBRE, GRAPE, HIDE, HURDLES, STONE, TEA, TOBACCO, WOOD]
         );
-        assert_eq!(
-            config
-                .materials()
-                .filter(|(_, def)| def.start_stock.is_some())
-                .map(|(id, _)| id)
-                .collect::<Vec<_>>(),
-            vec![STONE, WOOD],
-            "`stone` and `wood` are the two materials nothing produces, so a spawn is where every \
-             stick and every block comes from; every other material has a producer and must not be \
-             stocked as well"
+        // Asserted against the shipped FILE rather than the parsed struct, because there is no
+        // longer a field to read: `MaterialDef` is `deny_unknown_fields`, so a re-added key is a
+        // parse error — and this says which key and why, instead of "unknown field".
+        let raw: serde_json::Value =
+            serde_json::from_str(BUILTIN_MATERIALS_CONFIG).expect("builtin parses as json");
+        let stocked: Vec<&str> = raw["materials"]
+            .as_object()
+            .expect("the materials block is an object")
+            .iter()
+            .filter(|(_, def)| def.get("start_stock").is_some())
+            .map(|(id, _)| id.as_str())
+            .collect();
+        assert!(
+            stocked.is_empty(),
+            "no material may declare a start stock — nothing is stocked at spawn, and every \
+             material is either produced or picked in the opening loadout; {stocked:?} declare one"
         );
         for (id, def) in config.materials() {
             let crafted = [BONE, FIBRE, HIDE, WOOD].contains(&id);

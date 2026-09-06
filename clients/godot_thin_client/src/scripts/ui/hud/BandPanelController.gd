@@ -1110,11 +1110,13 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     detail_label.text = DetailFormat.detail_bbcode(
         _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
             _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false), ctx)
-    # **THE HOVER A ROW REGISTERED, ANSWERED BY THE BLOCK** — the dormant `Fodder:` row says why it is
-    # dim this way. `[hint=…]` is not parsed by this Godot build (see `DetailFormat.block_tooltip`),
-    # so the label carries it; `SubjectDrawerController` does exactly this for the OTHER detail host,
-    # and without it the same row is dim with no explanation in the dock alone. Empty for a block
-    # whose every row is live, which shows no tooltip at all.
+    # **THE HOVER A ROW REGISTERED, ANSWERED BY THE BLOCK** — a lapsed rung, an under-kept pen.
+    # `[hint=…]` is not parsed by this Godot build (see `DetailFormat.block_tooltip`), so the label
+    # carries every registered sentence at once and a cursor anywhere over the block gets all of
+    # them; `SubjectDrawerController` does exactly this for the OTHER detail host. That is also the
+    # reason the dormant `Fodder:` row registers nothing at all: its sentence reached a cursor
+    # resting on Growth, Morale or Food. Empty for a block whose every row is live, which shows no
+    # tooltip at all.
     detail_label.tooltip_text = DetailFormat.block_tooltip(ctx)
     return detail_label
 
@@ -1496,35 +1498,12 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
             {}, "", ROLE_CARD_KIT_KEY_TEXT, true)
         if kit_row != null:
             col.add_child(kit_row)
-            _lift_role_gear_line(kit_row)
     var hint_label := HudWidgets.alloc_hint_label(hint)
     if alert:
         hint_label.add_theme_color_override("font_color", HudStyle.THREAT_ACCENT)
     hint_label.custom_minimum_size = Vector2(0.0, HudWorkVocab.ROLE_CARD_HINT_HEIGHT)
     col.add_child(hint_label)
     return card
-
-## **LIFT THE GEAR LINE OUT OF THE DESCRIPTION IT NOW SITS ON.**
-##
-## Stacking the two put a LIVE readout and standing boilerplate in one treatment: both go through
-## `HudWidgets.alloc_hint_label`, so the card read as one grey paragraph and the tier — the only line
-## on it that MOVES as gear wears — was indistinguishable from copy the player reads once. Reported
-## on the prototype.
-##
-## **The gear line is lifted rather than the description dimmed**, because `INK_FAINT` is already the
-## faintest ink this HUD has: there is nowhere below it to put the boilerplate, and the readout is the
-## half that earns the emphasis anyway.
-##
-## **Scoped to the role card, and reached by META rather than by position.** The same builder mounts
-## this row on four compose sheets, where the hint stands alone with nothing to be confused with, so
-## brightening it there would move those frames for no reading. `KitRoster.KIT_HINT_META` is the
-## builder's own handle on that label; a child-index walk would silently re-tint whatever the row
-## gains next.
-func _lift_role_gear_line(kit_row: Control) -> void:
-    for child in kit_row.get_children():
-        if child is Label and (child as Label).has_meta(KitRoster.KIT_HINT_META):
-            (child as Label).add_theme_color_override("font_color", HudStyle.INK_DIM)
-            return
 
 ## The role card mounts the shared kit row with NO field key — see `_build_role_card`.
 const ROLE_CARD_KIT_KEY_TEXT := ""
@@ -7367,9 +7346,13 @@ func _mount_kit_row(sheet: VBoxContainer, kits: Array, job: String, kit_id: Stri
 ## two ways.
 func _mount_kit_gate_line(sheet: VBoxContainer, kits: Array, kit_id: String, band: Dictionary,
         herd: Dictionary, quarry: String) -> void:
+    var selected_kit := KitRoster.kit_by_id(kits, kit_id)
+    # The remedy is a fact about the KIT, the refusal about the band's resolved attack — see the
+    # compose sheet's twin, which carries the argument.
     var gate := SourceForecast.hunt_gate_model_at(KitRoster.effective_attack_against(
-        kits, KitRoster.kit_by_id(kits, kit_id), band,
-        float(herd.get(KitRoster.QUARRY_BODY_MASS_KEY, 0.0))), herd, quarry)
+        kits, selected_kit, band,
+        float(herd.get(KitRoster.QUARRY_BODY_MASS_KEY, 0.0))), herd, quarry,
+        KitRoster.kit_arms_the_party(kits, selected_kit))
     # **ONLY THE REFUSAL RENDERS.** The winnable branch used to state the effort in hunter-turns; that
     # face is retired (a species constant beside a forecast that already prices the trip), so a fight
     # this party CAN take says nothing here and the sheet's remaining lines are the answer.
@@ -8787,7 +8770,7 @@ func render_band(unit: Dictionary) -> void:
     var glyph := String(_band_labor.panel_band().get("settlement_stage_icon", "")).strip_edges()
     var stage_label := String(_band_labor.panel_band().get("settlement_stage_label", "")).strip_edges()
     var index := _index_of_player_band(int(_band_labor.panel_band().get("entity", -1)))
-    _panel.set_header(stage_id, glyph, HudFormat.band_display_name(_band_labor.panel_band(), index + 1), stage_label,
+    _panel.set_header(stage_id, glyph, HudFormat.band_name(_band_labor.panel_band()), stage_label,
         _panel_position_label(_band_labor.panel_band()))
     _panel.set_cycler(_cycler_index_of_band(index), _cycler_count())
     # A band HAS a tile, and its `band` zone is a band's, so both header affordances come back on. Both
@@ -8848,8 +8831,7 @@ func render_faction() -> void:
         # of its blocks at the page's row size, so DISCOVERIES yields there.
         BandCityPanel.ZONE_BAND:
             HudWidgets.wrap_zone(FactionRollup.build_band_zone(_band_labor, _disclosures,
-                _faction_settling(), _faction_discoveries(), _faction_band_zone_is_full(),
-                _player_knowledge())),
+                _faction_settling(), _faction_discoveries(), _faction_band_zone_is_full())),
         BandCityPanel.ZONE_WORK:
             HudWidgets.wrap_zone(FactionRollup.build_work_zone(_band_labor,
                 attention, _faction_open_row, _toggle_faction_row, jump_to_band_entity)),

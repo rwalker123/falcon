@@ -22,9 +22,10 @@ extends RefCounted
 ## herd id to a species reads THREE collaborators — the selection card's roster, the current selection,
 ## and the snapshot herd list — so it cannot fold onto `HudBandLaborState` the way `find_world_herd`
 ## did. `_is_player_unit` is a trivial private COPY (the `SelectionCardController` /
-## `BandPanelController` precedent — a one-line predicate is not worth a Callable). The `FactionReadouts`
-## reference the dormant Fodder row's hover needs is a TYPED collaborator, not a fourth Callable —
-## the same cluster `BandPanelController` and `DrawerComposeController` already hold by type.
+## `BandPanelController` precedent — a one-line predicate is not worth a Callable). It holds NO
+## faction-scope cluster: the one reading it ever wanted off `FactionReadouts` was the live Foddering
+## percent for the dormant Fodder row's hover, and that row carries no hover now
+## (`DetailFormat.fodder_dormant_row`).
 ##
 ## IT NEVER SEES THE SELECTION MODEL. The old producers read `_selection` at exactly two sites, both
 ## `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload — ONE display
@@ -72,11 +73,11 @@ extends RefCounted
 const BAND_FODDER_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_FODDER + ": %s  (%s)"
 
 # ---- **THE DORMANT FODDER ROW LIVES ON `DetailFormat` NOW**, vocabulary and producer both
-# (`FODDER_DORMANT_ROW_FORMAT` / `FODDER_DORMANT_VALUE` / `FODDER_LOCKED_TOOLTIP_FORMAT` /
-# `FODDER_DORMANT_TOOLTIP` / `fodder_dormant_row`). It moved the moment the FACTION page grew the
-# same state: a const lives where every one of its readers can reach it, and the rollup is a static
-# layer that must not reach into a stateful producer. One row builder for both scales is also what
-# stops the band's dim dash and the faction's coming to mean different things.
+# (`FODDER_DORMANT_ROW_FORMAT` / `FODDER_DORMANT_VALUE` / `fodder_dormant_row`). It moved the moment
+# the FACTION page grew the same state: a const lives where every one of its readers can reach it,
+# and the rollup is a static layer that must not reach into a stateful producer. One row builder for
+# both scales is also what stops the band's dim dash and the faction's coming to mean different
+# things.
 
 # ---- The SAME fodder stock as a CLAUSE on the Food row, for the `compact` (SHORT band-zone tier)
 # host. A horizontal dock is short of HEIGHT and has width to spare, so the two larders share one line
@@ -258,14 +259,6 @@ var _band_labor: HudBandLaborState = null
 # The Food/Morale caret + popover cluster. `unit_summary_lines` clears its rows, registers the two
 # disclosures as it emits them, and reads the caret state back onto the render context.
 var _disclosures: DisclosureController = null
-# The FACTION-scope readout cluster, for ONE question: how far along is the player's Foddering? A
-# band's dormant `Fodder:` row states the live percent when the craft is what is missing, and
-# knowledge is held faction-scoped — no band dict carries it. A TYPED collaborator, exactly as
-# `BandPanelController` and `DrawerComposeController` hold the same cluster for their own gate
-# reasons, so the class header's "the injection surface is ONE CALLABLE" is unchanged. Read for
-# nothing else.
-var _topbar: FactionReadouts = null
-
 # --- The one retained HudLayer helper, injected as a Callable (see the class header) ---
 # Reached through the typed adapter below rather than called raw: `Callable.call` returns `Variant`,
 # which would push an untyped value into every consumer here.
@@ -280,18 +273,10 @@ var _herd_label_for_id_fn: Callable
 var _food_flow_present: bool = false
 
 func _init(band_labor: HudBandLaborState, disclosures: DisclosureController,
-        herd_label_for_id: Callable, topbar: FactionReadouts = null) -> void:
+        herd_label_for_id: Callable) -> void:
     _band_labor = band_labor
     _disclosures = disclosures
     _herd_label_for_id_fn = herd_label_for_id
-    _topbar = topbar
-
-## The player faction's progress on ONE knowledge track, 0..1 — the dormant Fodder row's only reach
-## outside the band dict. `0.0` with no readouts cluster, which is what the preview harnesses that
-## construct this producer bare get, and which reads as "not learned" — the honest answer for a
-## client that has been told nothing.
-func _player_knowledge(track: String) -> float:
-    return _topbar.faction_knowledge(HudConst.PLAYER_FACTION_ID, track) if _topbar != null else 0.0
 
 ## A friendlier label for a herd id. Retained on HudLayer, which resolves it from the roster, the
 ## current selection AND the snapshot herd list, and which also feeds the targeting banner and the
@@ -394,8 +379,11 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
                     _disclosures.fodder_breakdown_lines(unit_data))
             else:
                 # **NOTHING IS REGISTERED HERE**, deliberately: there is no flow to put behind a
-                # caret, so the row renders as a plain dim key with no clickable run at all.
-                lines.append(_band_fodder_dormant_line(context))
+                # caret, so the row renders as a plain dim key with no clickable run at all — and no
+                # hover either, the block's being the only hover a row here can reach
+                # (`DetailFormat.fodder_dormant_row`). The dim dash IS the whole state, which is why
+                # this side contributes nothing to it and calls the shared builder bare.
+                lines.append(DetailFormat.fodder_dormant_row())
         # **THE STANDING MATERIAL BILL, BESIDE THE TWO LARDERS** (`docs/plan_standing_upkeep.md`
         # §2.7) — what this band's holdings swallow every turn in GOODS. A pen frays its fence; a
         # road washes out. It is the Fodder row beat for beat: one summary line naming the good in
@@ -797,15 +785,6 @@ func _band_material_upkeep_line(unit_data: Dictionary, ctx: DetailFormat.Context
                 HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
             String(worst.get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, ""))],
         DetailFormat.food_turns_text(turns)]
-
-## The SAME row on a band with no fodder economy — a dim em-dash and the reason on the block's hover,
-## built by `DetailFormat.fodder_dormant_row` so this row and the FACTION page's twin cannot diverge.
-##
-## **ALL THIS SIDE CONTRIBUTES IS THE FACTION'S FODDERING**, which is the one fact the shared builder
-## cannot read for itself: knowledge is faction-scoped and no band dict carries it.
-func _band_fodder_dormant_line(ctx: DetailFormat.Context) -> String:
-    return DetailFormat.fodder_dormant_row(ctx,
-        _player_knowledge(HudFloraVocab.KNOWLEDGE_TRACK_FODDERING))
 
 ## Selection-panel band food row: "Food  <provisions>  (<turns>)" — provisions from
 ## the band's larder stores, turns from `turns_of_food` (∞ when not food-limited).

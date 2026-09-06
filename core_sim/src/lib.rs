@@ -15,6 +15,7 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
     None => "dev-unknown",
 };
 
+mod band_names;
 mod biome_palette;
 pub mod climate;
 pub mod combat;
@@ -77,6 +78,7 @@ mod sites_config;
 mod snapshot;
 mod snapshot_overlays_config;
 mod start_profile;
+pub mod starting_loadout;
 mod supply;
 mod supply_network_config;
 mod systems;
@@ -99,6 +101,10 @@ use crate::start_profile::{
 use bevy::ecs::schedule::{LogLevel, ScheduleBuildSettings};
 use bevy::prelude::*;
 
+pub use band_names::{
+    load_band_names_from_env, BandNameCatalog, BandNameCatalogHandle, BandNameCatalogMetadata,
+    BandNamesError, BAND_NAME_SALT, BUILTIN_BAND_NAMES,
+};
 pub use combat::{
     attacks_landed_at, landed_strikes_seeded, resolve_fight, strike_damage, units_brought_down,
     CombatStats, CombatTuning, Contingent, ContingentId, ContingentResult, DamageLedger,
@@ -111,7 +117,7 @@ pub use combat_config::{
 };
 pub use components::{
     available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, take_overdraws,
-    BandBench, BandEquipment, BandId, BandTravel, BandWorkforce, BatchGrade, BuildJob,
+    BandBench, BandEquipment, BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BuildJob,
     BuildQueueEntry, BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs,
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
     Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
@@ -332,9 +338,13 @@ pub use snapshot_overlays_config::{
 };
 pub use start_profile::{
     resolve_active_profile, snapshot_profiles, ActiveStartProfile, CampaignLabel, InventoryEntry,
-    StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
-    StartProfileKnowledgeTagsMetadata, StartProfileLookup, StartProfileOverrides,
+    OpeningLoadoutConfig, StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    StartProfileKnowledgeTagsMetadata, StartProfileLookup, StartProfileOverrides, StartProfiles,
     StartProfilesHandle, StartProfilesMetadata, StartingUnitSpec,
+};
+pub use starting_loadout::{
+    apply_starting_loadout, clamped_kit_defaults, KitAllocation, LoadoutRejection,
+    MaterialAllocation, StartingLoadout, OPENING_MATERIAL_READING,
 };
 pub use supply::{balance_supply_networks, SupplyNetworkMembership};
 pub use supply_network_config::{
@@ -377,12 +387,13 @@ pub use power::{
 pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
     apply_port_base, apply_port_base_override, carry_runtime_owned_fields,
-    load_simulation_config_for_new_world, port_base_override, BandIdAllocator, CapabilityFlags,
-    CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
-    DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FoodSiteEntry, FoodSiteRegistry,
-    FoodSiteWaterBiasReport, HydrologyOverrides, MapTopology, MoistureRaster, PendingCrisisSeeds,
-    PendingCrisisSpawns, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata,
-    SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry, WorldEpoch,
+    load_simulation_config_for_new_world, port_base_override, BandIdAllocator, BandNameAllocator,
+    CapabilityFlags, CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers,
+    CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory,
+    FoodSiteEntry, FoodSiteRegistry, FoodSiteWaterBiasReport, HydrologyOverrides, MapTopology,
+    MoistureRaster, PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord,
+    TradeTelemetry, WorldEpoch,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{
@@ -540,6 +551,10 @@ pub fn build_headless_app() -> App {
     let (connections_config, connections_metadata) =
         connections_config::load_connections_config_from_env();
     let connections_handle = connections_config::ConnectionsConfigHandle::new(connections_config);
+    // The pool a band's name is drawn from. Content rather than tuning, but it loads on the same
+    // boot seam as everything else so an operator can point a campaign at a different name list.
+    let (band_names_catalog, band_names_metadata) = band_names::load_band_names_from_env();
+    let band_names_handle = band_names::BandNameCatalogHandle::new(band_names_catalog);
     // **The materials table loads FIRST of the three**, because both food webs' yield edges are
     // reconciled against it: a species (plant or animal) naming a material that does not exist, or
     // stating a reading on an axis that material does not declare, is a boot panic rather than a
@@ -597,6 +612,19 @@ pub fn build_headless_app() -> App {
     // validate, and then be the bench tool for nothing.
     if let Err(err) = equipment_config.validate_against_materials(&materials_config) {
         panic!("equipment config does not reconcile with the materials table: {err}");
+    }
+    // **The opening loadout's pick list is reconciled against the materials table**, the same
+    // `UnknownItem` debt every other roster pays: a profile offering `hyde` would parse, validate,
+    // and be a row the player can spend points on that deposits nothing. Checked here rather than at
+    // load because the profiles are read before the materials table exists.
+    if let Err(err) = start_profiles.validate_against_materials(&materials_config) {
+        panic!("start profiles do not reconcile with the materials table: {err}");
+    }
+    // **And the kit half against the roster**, for the same debt: a `kit_defaults` key naming a kit
+    // that does not exist — or one that carries nothing — would draw the picker opening on a row the
+    // `set_starting_loadout` handler then refuses, which reports nothing to anybody.
+    if let Err(err) = start_profiles.validate_against_equipment(&equipment_config) {
+        panic!("start profiles do not reconcile with the equipment roster: {err}");
     }
     let equipment_handle = equipment_config::EquipmentConfigHandle::new(equipment_config.clone());
     // **The recipe book is reconciled against BOTH tables**, here and only here, because this is the
@@ -662,6 +690,12 @@ pub fn build_headless_app() -> App {
         // it with the live counter on every world (re)build; the idle boot app never captures.
         .insert_resource(WorldEpoch::default())
         .insert_resource(BandIdAllocator::default())
+        // Empty at boot: every counter is minted by worldgen, which inserts its own filled copy the
+        // way it does for `BandIdAllocator`. Present here so a hand-rolled test `World` and the
+        // idle boot app always find the resource.
+        .insert_resource(BandNameAllocator::default())
+        .insert_resource(band_names_handle)
+        .insert_resource(band_names_metadata)
         .insert_resource(sim_state::Replaying::default())
         .insert_resource(CapabilityFlags::default())
         .insert_resource(SimulationMetrics::default())
@@ -749,6 +783,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(command_event_log)
         .insert_resource(FoodSiteRegistry::default())
         .init_resource::<FoodSiteWaterBiasReport>()
+        // The opening outfitting window. `Default` is CLOSED with no budget, which is the right
+        // reading for a world that never ran worldgen — a load restores the saved window, and a
+        // fresh world has `stamp_starting_loadout` open it.
+        .init_resource::<starting_loadout::StartingLoadout>()
         .insert_resource(snapshot_history)
         .insert_resource(snapshot::SnapshotCaptureMode::default())
         .insert_resource(generation_registry)
@@ -809,6 +847,14 @@ pub fn build_headless_app() -> App {
         // a stage whose systems are gated off records ~0 rather than disappearing from the profile.
         // `begin_turn` is *not* called here — the server owns it, because order application and
         // snapshot broadcast happen outside `app.update()` and belong to the same turn's profile.
+        // **The opening window shuts before the turn's first stage runs**, not after it: the
+        // budget is spent before the first turn resolves or it is not spent at all, and a system
+        // ordered later would leave a window one stage wide where a loadout could still land on a
+        // world that had already begun moving.
+        .add_systems(
+            Update,
+            starting_loadout::close_opening_window.before(TurnStage::Influence),
+        )
         .add_systems(
             Update,
             (
@@ -850,6 +896,9 @@ pub fn build_headless_app() -> App {
             Startup,
             (
                 systems::spawn_initial_world,
+                // **After the spawn, because the kit budget is the spawned band's own worker
+                // count** — one kit per working-age hand is derived from the band, not configured.
+                starting_loadout::stamp_starting_loadout,
                 systems::apply_starting_inventory_effects,
                 hydrology::generate_hydrology,
                 systems::apply_tag_budget_solver,

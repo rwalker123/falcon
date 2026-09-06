@@ -351,12 +351,7 @@ fn stage_a_paving(app: &mut App, band: Entity, tile: UVec2, builders: u32, stone
     app.world.entity_mut(band).insert(allocation);
 
     let materials = core_sim::MaterialsConfig::builtin();
-    let characteristics = materials
-        .materials()
-        .find(|(id, _)| *id == "stone")
-        .and_then(|(_, def)| def.start_stock.as_ref())
-        .map(|stock| stock.characteristics.clone())
-        .expect("the shipped roster stocks the paving material at a spawn");
+    let characteristics = opening_readings(&materials, "stone");
     let key = materials
         .band_key("stone", &characteristics)
         .expect("the shipped roster rates the paving material");
@@ -375,15 +370,26 @@ fn stage_a_paving(app: &mut App, band: Entity, tile: UVec2, builders: u32, stone
     }
 }
 
+/// Every axis a material declares, read at [`core_sim::OPENING_MATERIAL_READING`] - what a unit
+/// bought in the turn-one loadout window arrives holding. Stone has no producer (issue #583), so
+/// that window is the only place a band gets any.
+fn opening_readings(
+    materials: &core_sim::MaterialsConfig,
+    material: &str,
+) -> std::collections::BTreeMap<String, f32> {
+    materials
+        .material(material)
+        .expect("the shipped roster carries the material")
+        .characteristics
+        .iter()
+        .map(|axis| (axis.clone(), core_sim::OPENING_MATERIAL_READING))
+        .collect()
+}
+
 /// Put `units` of the paving material in this band's stores, replacing whatever was there.
 fn stock_stone(app: &mut App, band: Entity, units: f32) {
     let materials = core_sim::MaterialsConfig::builtin();
-    let characteristics = materials
-        .materials()
-        .find(|(id, _)| *id == "stone")
-        .and_then(|(_, def)| def.start_stock.as_ref())
-        .map(|stock| stock.characteristics.clone())
-        .expect("the shipped roster stocks the paving material at a spawn");
+    let characteristics = opening_readings(&materials, "stone");
     let key = materials
         .band_key("stone", &characteristics)
         .expect("the shipped roster rates the paving material");

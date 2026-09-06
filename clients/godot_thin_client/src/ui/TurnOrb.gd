@@ -14,7 +14,7 @@ class_name TurnOrb
 ## producers (wars / decisions / awaiting expeditions) slot in with no orb change.
 ##   Attention := {
 ##     kind:     String   # "idle_workers" | "war" | "decision" | …
-##     severity: String   # "info" | "warn" | "critical"  → color + badge tint
+##     severity: String   # "ready" | "info" | "warn" | "critical"  → color + badge tint
 ##     label:    String   # "3 idle workers"      one-line summary
 ##     detail:   String   # "Band 2"              secondary context
 ##     x: int, y: int     # map focus for the jump; (-1, -1) = non-locating
@@ -51,10 +51,24 @@ signal advance_requested
 signal panel_requested(kind: String)
 
 # ---- severity model --------------------------------------------------------
+## **SATISFIED, and it is the BOTTOM of the ladder rather than a kind of `info`.** `info` means
+## *neutral news* — a build finished, a discovery landed — which is a statement about something that
+## HAPPENED. This one says a standing requirement is now MET, so it must lose the orb's accent to any
+## real news and to every warning, while still painting the orb when it is all there is.
+const SEVERITY_READY := "ready"
 const SEVERITY_INFO := "info"
 const SEVERITY_WARN := "warn"
 const SEVERITY_CRITICAL := "critical"
-const SEVERITY_RANK := {SEVERITY_CRITICAL: 3, SEVERITY_WARN: 2, SEVERITY_INFO: 1}
+## ⛔ **EVERY RANK IS >= 1, and that is load-bearing rather than cosmetic.** `_rank` answers `0` for a
+## severity absent from this table, and `_highest_severity_color` only replaces on a STRICTLY greater
+## rank — so a severity sitting at rank 0 could never paint the orb, whatever colour it mapped to. The
+## whole ladder was shifted up by one to make room for `ready` beneath `info` instead of giving the new
+## rung the 0 that would have made it silently inert. The seed is `RANK_NONE`, below all of them, so an
+## UNKNOWN severity paints too (in `_severity_color`'s fallback ink) rather than leaving the orb on a
+## colour no entry asked for.
+const SEVERITY_RANK := {SEVERITY_CRITICAL: 4, SEVERITY_WARN: 3, SEVERITY_INFO: 2, SEVERITY_READY: 1}
+## Below every rank in the table above — the seed for a "highest so far" scan, never a severity.
+const RANK_NONE := 0
 
 const KIND_IDLE_WORKERS := "idle_workers"
 const KIND_STARVING := "starving"
@@ -81,6 +95,11 @@ const KIND_CREW_HANDOFF := "crew_handoff"
 # turn. Non-locating, and it opens that screen, so it wears the screen's launcher's own mark rather
 # than a glyph of its own.
 const KIND_KNOWLEDGE_LEARNED := "knowledge_learned"
+# The turn-one outfitting window, still holding an unspent budget (issue #629). Non-locating — it
+# opens the picker, not a hex — and it wears the same pennant the reopen pill does, which is line
+# art rather than an emoji for `KIND_DECISION`'s reason: emoji presentation rasterizes to a blob at
+# row size.
+const KIND_OPENING_LOADOUT := "opening_loadout"
 const KIND_ICON := {
 	KIND_IDLE_WORKERS: "🛠",
 	KIND_STARVING: "🍖",
@@ -101,6 +120,7 @@ const KIND_ICON := {
 	# the policy icons to hand-draw). Verified at true size in `turn_orb_fork_blocks.png`.
 	KIND_DECISION: "?",
 	KIND_KNOWLEDGE_LEARNED: HudKnowledgeVocab.LAUNCH_GLYPH,
+	KIND_OPENING_LOADOUT: "⚑",
 }
 const KIND_ICON_FALLBACK := "●"
 ## Kind → BUNDLED-ART mark id, resolved through `HudSprites`. A kind listed here draws a `TextureRect`
@@ -694,11 +714,16 @@ func _severity_color(severity: String) -> Color:
 			return HudStyle.DANGER
 		SEVERITY_WARN:
 			return HudStyle.WARN
+		SEVERITY_READY:
+			return HudStyle.READY
 		_:
 			return HudStyle.SIGNAL
 
+## The accent the orb wears: the colour of the HIGHEST-ranked entry present. Seeded at `RANK_NONE`
+## rather than at a rank a real severity could hold — see `SEVERITY_RANK`, where a rank-0 severity was
+## unpaintable by construction.
 func _highest_severity_color() -> Color:
-	var best_rank := 0
+	var best_rank := RANK_NONE
 	var color := HudStyle.SIGNAL
 	for entry in _entries:
 		var r := _rank(entry)

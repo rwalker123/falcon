@@ -86,9 +86,9 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## still reads the pre-ingest `prev_band_sizes` (the load-bearing ordering — see the class header).
 ## MUST NOT ingest; that stays in `update_band_alerts`.
 ##
-## The bands-only counter is `i + 1`: the old loop incremented `band_number` once per resident band,
-## right after `player_bands.append`, so the Nth resident band's number is its index + 1 — matching
-## the band-picker (`i + 1`) and the panel header, all numbered positionally within `player_bands`.
+## A row NAMES its band through `HudFormat.band_name`, the client's one naming rule, so the orb, the
+## picker and the map all say the same word for one band. It used to number `player_bands` positions
+## here instead, which is the counting this arc removed (issue #615).
 ## **EVERY ENTRY NAMES ITS `owner`**, the entity the alert is ABOUT — the band for the five band-scoped
 ## producers, the party for the awaiting-orders one. The turn orb never needed it (it renders one flat
 ## list and jumps by `x`/`y`), but the faction page's Work and Parties tabs GROUP by it, and an alert
@@ -274,7 +274,6 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
         if not (player_bands[i] is Dictionary):
             continue
         var entry: Dictionary = player_bands[i]
-        var band_number := i + 1
         var entity := int(entry.get("entity", -1))
         var size := int(entry.get("size", 0))
         var turns := float(entry.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
@@ -283,7 +282,7 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
         var last_emigrated := int(entry.get("last_emigrated", 0))
         var x := int(entry.get("current_x", -1))
         var y := int(entry.get("current_y", -1))
-        var band_name := HudFormat.band_display_name(entry, band_number)
+        var band_name := HudFormat.band_name(entry)
         # Producer 1 — starving: larder below the critical threshold (red/critical).
         if BandFoodStatus.is_critical(turns):
             attention.append({
@@ -329,7 +328,7 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
         attention.append_array(_under_kept_herd_attention(entry))
     # Producer 4 — awaiting orders: a detached party parked at its objective, burning provisions
     # until the player acts (amber/warn, same class as idle labor). Runs over the EXPEDITIONS split
-    # out above, not the bands — an expedition is never "Band N", so it never enters the band loop.
+    # out above, not the bands — a party is never a labor actor, so it never enters the band loop.
     attention.append_array(_awaiting_orders_attention(player_expeditions))
     # Producer 6 — a BUILT plant rung whose keeping the Agriculture pool did not cover. Runs over the
     # PATCHES, outside the band loop, and that is structural rather than stylistic: the whole point is

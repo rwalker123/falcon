@@ -120,3 +120,59 @@ pub fn command_events_to_state(log: &CommandEventLog) -> Vec<CommandEventState> 
         })
         .collect()
 }
+
+/// **What the turn-one loadout picker needs to draw itself** — the window's two budgets, the
+/// profile's pick list and its pre-fill, and the recipes this faction could put on a bench today.
+///
+/// The **kit roster is deliberately not here**: it already rides
+/// `SubsistenceSection.equipmentConfigJson`, and a recipe's input costs already ride the per-band
+/// `craftOffers` rows. `craftable_recipe_ids` is here rather than inferred client-side because the
+/// alternative is sniffing a craft offer's *refusal sentence* — turning a player-facing string into
+/// a machine contract.
+pub(crate) fn snapshot_opening_loadout(
+    window: &crate::starting_loadout::StartingLoadout,
+    profile: &crate::start_profile::StartProfile,
+    recipes: &crate::recipes_config::RecipesConfig,
+    known_crafts: &BTreeMap<String, bool>,
+) -> OpeningLoadoutState {
+    let loadout = &profile.overrides().opening_loadout;
+    OpeningLoadoutState {
+        open: window.open,
+        kit_budget: window.kit_budget,
+        material_budget: window.material_budget,
+        pickable_materials: loadout.pickable_materials.clone(),
+        material_defaults: loadout
+            .material_defaults
+            .iter()
+            .map(|(material_id, units)| OpeningMaterialDefaultState {
+                material_id: material_id.clone(),
+                units: *units,
+            })
+            .collect(),
+        // The same test `handle_set_bench` applies: every craft a recipe requires must be learned.
+        // A recipe requiring nothing is craftable by anyone, which is what puts the four opening
+        // recipes on the list and keeps the three knowledge-gated bench tools off it.
+        craftable_recipe_ids: recipes
+            .recipes()
+            .filter(|(_, recipe)| {
+                recipe
+                    .requires_knowledge
+                    .iter()
+                    .all(|craft| known_crafts.get(craft).copied().unwrap_or(false))
+            })
+            .map(|(id, _)| id.to_string())
+            .collect(),
+        // **Clamped here, warned about once at world build.** The publish site owns the value
+        // because this is where the budget and the profile are both in scope; the warn lives in
+        // `stamp_starting_loadout` so a config fault is reported once per world rather than once per
+        // captured frame. One rule, one helper, two callers.
+        kit_defaults: crate::starting_loadout::clamped_kit_defaults(
+            &loadout.kit_defaults,
+            window.kit_budget,
+        )
+        .0
+        .into_iter()
+        .map(|(kit_id, count)| OpeningKitDefaultState { kit_id, count })
+        .collect(),
+    }
+}

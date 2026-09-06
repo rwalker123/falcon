@@ -48,8 +48,9 @@ paths:
   - **`%SubjectList`** — the selectable list, with **the LAND as its first row**
     (`_build_land_row`, no group header) above the `Bands (N)` / `Wildlife (N)` sub-groups. The
     land is the same KIND of thing they are — a subject on this hex you can put workers on. Its
-    label is the BIOME name, its glyph the tile's food-module icon (`FoodIcons.for_site`, the
-    same one the map marker draws) or the neutral `◈`, its dot the patch's ecology tier, and its
+    label is the BIOME name, its mark the tile's food-module icon (`FoodIcons.for_site`/`SiteSprites`,
+    the same one the map marker draws) and NO SYMBOL where the tile carries no module, its dot the
+    patch's ecology tier, and its
     meta the shortest true form: `N` + the drawn forage mark when staffed · else the module label ·
     else `No forage` (gated
     on the module KEY, never its `"None"` label). Selecting it emits
@@ -188,7 +189,7 @@ paths:
   HBox — a selection accent, a **vitality dot**, name, size, and (bands) an
   activity glyph; a **wildlife** row reads **species + its STAFFING** — the hunters on the herd in
   the same `<count> <activity mark>` form the land row uses (`<deer> Red Deer   1 <hunt>`, twin of
-  `◈ Savanna   2 <forage>`; both marks are bundled art since issue #249 — see "The TRAILING mark is
+  `<site> Savanna   2 <forage>`; both marks are bundled art since issue #249 — see "The TRAILING mark is
   the same story one slot over" below),
   with the unworked-but-huntable form `0 <hunt>` and *no* meta or mark at all on a non-huntable herd. The
   **size class** moved into the herd drawer's first row (`Size: Big game`) because the row's one
@@ -286,24 +287,68 @@ rebuild-free and the flip is still correct.
 
 **THE GLYPH FALLBACK'S INK IS APPLIED, NOT INHERITED, AND BOTH PATHS OWE IT.** Fusing the glyph into
 the name label used to give it that label's `font_color` for free; as its own bare `Label` it inherits
-nothing (this client applies no `Theme`), so a `◈` nobody colours renders at Godot's stock near-white —
-brighter than the `INK_DIM` name beside it and no longer dimming or brightening with the row. The pair
-is decided in ONE place, `_roster_row_ink(selected)`, which `_roster_name_label` / `_set_row_name` and
-`_row_icon` / `_set_row_icon` all read, so the mark and the name cannot disagree about how lit the row
-is. **`_set_row_icon` re-applies it on the patch path**, not only at build time: a row's lit state
-changes without the row being rebuilt — that is what the patch path is FOR — so a mark coloured only at
-birth keeps its original ink while the name moves. Art takes no colour: a marker sprite is drawn
-untinted (`hud-modules.md` → `build_marker_icon`). `ui_preview`'s `tile_panel` chapter holds both
-halves as claims about the colours the two labels actually RESOLVE (`get_theme_color`, which answers
-the stock default when no override is set — an "an override is set" assertion would pass on the bug,
-which IS a missing override): the LIT half on `tile_panel_no_forage`, the UNLIT half on
-`tile_panel_land_glyph_unlit`, where lighting the band beside the land row dims it through the patch
-path. Sabotage-verified, and they fail DISJOINTLY — dropping the build-time colour fails only the lit
-one, dropping the patch-path re-apply only the unlit one.
+nothing (this client applies no `Theme`), so a glyph nobody colours renders at Godot's stock
+near-white — brighter than the `INK_DIM` name beside it and no longer dimming or brightening with the
+row. The pair is decided in ONE place, `_roster_row_ink(selected)`, which `_roster_name_label` /
+`_set_row_name` and `_row_icon` / `_set_row_icon` all read, so the mark and the name cannot disagree
+about how lit the row is. **`_set_row_icon` re-applies it on the patch path**, not only at build time:
+a row's lit state changes without the row being rebuilt — that is what the patch path is FOR — so a
+mark coloured only at birth keeps its original ink while the name moves. Art takes no colour: a marker
+sprite is drawn untinted (`hud-modules.md` → `build_marker_icon`). `ui_preview`'s `tile_panel` chapter
+holds both halves on the frame `tile_panel_stage_glyph_lit`, as claims about the colours the two labels
+actually RESOLVE (`get_theme_color`, which answers the stock default when no override is set — an "an
+override is set" assertion would pass on the bug, which IS a missing override): a band standing on a
+config-defined settlement stage renders the server's emoji, so it is dim while the land row is the lit
+subject and bright once it is selected, and the selection change PATCHES rather than rebuilds. They
+fail DISJOINTLY — dropping the build-time colour fails only the unlit one, dropping the patch-path
+re-apply only the lit one.
+
+⛔ **THE CLAIM USED TO RIDE THE LAND ROW'S NEUTRAL `◈`, AND THAT MARK IS GONE.** A module-less land row
+wears **no symbol**: the `◈` was never a site, it was the ABSENCE of one, drawn beside a meta that
+already reads `No forage`, so the row stated "nothing here" twice and one of the two was a mark the
+player had no way to read. What did NOT go with it is the mark NODE — an empty glyph still builds a
+`Label` at `ROSTER_ROW_ICON_BOX`, so the biome name keeps its column instead of sliding a box left on
+ground that offers nothing, and `tile_panel_no_forage` asserts both halves (no symbol, and the slot
+still at the box's width) because no frame can hold either. The mark COLUMN itself is claimed one
+restate later, where a marked band row and the module-less land row are on screen together and their
+two names must start at the same x.
 
 `row_icon` is deliberately **not** the `glyph_label` meta slot: that is the row's TRAILING activity
 mark, a different question in a different place, and folding them would make one meta key mean two
 things.
+
+### The BAND row's leading mark is its SETTLEMENT STAGE, and a PARTY's is its MISSION
+
+The band row was the one subject row with no leading mark at all — a dot, a name and a size — so
+nothing on it said *band* rather than some other kind of subject, and it broke the one-column-of-marks
+rule the land and wildlife rows keep. It now leads with the settlement stage, resolved **sprite-first
+then emoji** (`_band_row_sprite` → `StageSprites.for_stage(settlement_stage_id)`, else
+`_band_row_glyph` → the server's `settlement_stage_icon`). That is the SAME pair, in the same order,
+that `BandMarkerRenderer._draw_band_token` and the band/city panel header resolve, so one band wears
+one stage mark at every scale. The sprite miss is load-bearing rather than defensive:
+`settlement_stage_config.json` is user-editable, so a game can define rungs past the three bundled
+ones and those keep rendering their configured emoji. On the map that order is load-bearing for a
+second reason — the token's empty-glyph branch returns early, so a sprite-mapped stage whose glyph
+happened to be blank would draw a placeholder square; nothing short-circuits on the row, and the two
+surfaces stay in the same order so they cannot drift apart.
+
+**A DETACHED PARTY TAKES NO STAGE MARK.** A party is not a settlement and must not read as one — the
+map says so by returning early on `is_expedition` before any stage glyph is reached — so the row wears
+its MISSION's mark instead (`HudFormat.expedition_mission_glyph`: ⚑ scout, 🏹 hunt, 💀 deny, 📦 trade,
+the scout flag for an absent or unrecognised mission). That resolver is the one place the four
+`PANEL_EXPEDITION_*_GLYPH` constants are chosen between, so a party's subject row, its Active-expeditions
+row and its map marker cannot name the same mission three different marks. Parties genuinely reach this
+row: `_assemble_roster` lists your OWN units even on an unseen hex precisely because a scouting party
+routinely stands on ground it cannot see, and the selected-subject append puts a party on the roster
+whenever one is picked.
+
+**IT NEEDS NO NEW ROW-KEY FLAG.** The mark is on EVERY band row, so it is not an optional child, and
+the only thing that varies — art vs emoji — is the node-kind flip `_set_row_icon` already swaps in
+place (the same trap, one row kind over). `ui_preview`'s `tile_panel` chapter carries the claims on the
+existing patch-path block: that a band row leads with **that stage's own texture** (compared against
+`StageSprites.for_stage`, since a `TextureRect` holding the wrong art is still a `TextureRect`), that a
+stage with no bundled art swaps the node for the server's emoji `Label`, and that it swaps back — both
+directions, since only one of them is the branch `_set_row_icon` tests first.
 
 ### The TRAILING mark is the same story one slot over, and ALL THREE row kinds share it (issue #249)
 

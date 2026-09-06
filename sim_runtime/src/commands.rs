@@ -542,6 +542,33 @@ pub enum CommandPayload {
         request_id: u64,
         slot: String,
     },
+    /// **The opening loadout, composed on turn one.** Proto field 69, and the **one** source of a
+    /// faction's starting gear and material — a spawning band owns nothing.
+    ///
+    /// World-mutating, so it rides the replay log like the other outfitting verbs. It fails
+    /// **closed and whole**: the server refuses the entire command on a closed window, an unknown or
+    /// empty kit, an unpickable material, a duplicate line, or either budget overspent.
+    SetStartingLoadout {
+        faction_id: u32,
+        kits: Vec<StartingKitAllocation>,
+        materials: Vec<StartingMaterialAllocation>,
+    },
+}
+
+/// One line of the kit half of an opening loadout: `count` of an `equipment.json` roster kit. Every
+/// item that kit `uses` lands `count` times, so two kits sharing an item **add**.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartingKitAllocation {
+    pub kit_id: String,
+    pub count: u32,
+}
+
+/// One line of the material half: `units` of a `materials.json` material. One budget point buys one
+/// unit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartingMaterialAllocation {
+    pub material_id: String,
+    pub units: u32,
 }
 
 /// **The slot the autosave hook owns.** An explicit [`CommandPayload::SaveGame`] naming it is
@@ -1721,6 +1748,27 @@ impl CommandEnvelope {
                     slot: slot.clone(),
                 })
             }
+            CommandPayload::SetStartingLoadout {
+                faction_id,
+                kits,
+                materials,
+            } => pb::command_envelope::Command::SetStartingLoadout(pb::SetStartingLoadoutCommand {
+                faction_id: *faction_id,
+                kits: kits
+                    .iter()
+                    .map(|allocation| pb::StartingKitAllocation {
+                        kit_id: allocation.kit_id.clone(),
+                        count: allocation.count,
+                    })
+                    .collect(),
+                materials: materials
+                    .iter()
+                    .map(|allocation| pb::StartingMaterialAllocation {
+                        material_id: allocation.material_id.clone(),
+                        units: allocation.units,
+                    })
+                    .collect(),
+            }),
             CommandPayload::Query { request_id, query } => {
                 pb::command_envelope::Command::Query(pb::QueryCommand {
                     request_id: *request_id,
@@ -1875,6 +1923,27 @@ impl CommandEnvelope {
                 request_id: cmd.request_id,
                 slot: cmd.slot,
             },
+            pb::command_envelope::Command::SetStartingLoadout(cmd) => {
+                CommandPayload::SetStartingLoadout {
+                    faction_id: cmd.faction_id,
+                    kits: cmd
+                        .kits
+                        .into_iter()
+                        .map(|allocation| StartingKitAllocation {
+                            kit_id: allocation.kit_id,
+                            count: allocation.count,
+                        })
+                        .collect(),
+                    materials: cmd
+                        .materials
+                        .into_iter()
+                        .map(|allocation| StartingMaterialAllocation {
+                            material_id: allocation.material_id,
+                            units: allocation.units,
+                        })
+                        .collect(),
+                }
+            }
             pb::command_envelope::Command::DeleteSave(cmd) => CommandPayload::DeleteSave {
                 request_id: cmd.request_id,
                 slot: cmd.slot,
@@ -2718,6 +2787,47 @@ mod tests {
                 payload
             );
         }
+    }
+
+    /// ⛔ **THE OPENING LOADOUT SURVIVES THE ENVELOPE, BOTH REPEATED HALVES INTACT.**
+    ///
+    /// It is world-mutating, so it is replayed out of the command log after a rollback — and a
+    /// loadout that came back with one line dropped would re-outfit the band differently from the
+    /// world being reproduced, silently.
+    #[test]
+    fn the_opening_loadout_round_trips_through_the_envelope() {
+        let payload = CommandPayload::SetStartingLoadout {
+            faction_id: 0,
+            kits: vec![
+                StartingKitAllocation {
+                    kit_id: "big_game".to_string(),
+                    count: 6,
+                },
+                StartingKitAllocation {
+                    kit_id: "trapping".to_string(),
+                    count: 3,
+                },
+            ],
+            materials: vec![
+                StartingMaterialAllocation {
+                    material_id: "bone".to_string(),
+                    units: 3,
+                },
+                StartingMaterialAllocation {
+                    material_id: "fibre".to_string(),
+                    units: 17,
+                },
+            ],
+        };
+        let envelope = CommandEnvelope {
+            payload: payload.clone(),
+            correlation_id: None,
+        };
+        let bytes = envelope.encode_to_vec().expect("encode");
+        assert_eq!(
+            CommandEnvelope::decode(&bytes).expect("decode").payload,
+            payload
+        );
     }
 
     /// The slot listing is a QUERY — it mutates nothing, and it is the one save operation that is
