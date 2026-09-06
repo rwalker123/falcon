@@ -789,10 +789,15 @@ const FERTILITY_BREAKDOWN_ROW_FORMAT := "%s%s ×%.2f  %s"
 # hunger (the gate) → reserve (stock) → trend (flow). `hunger` is only ever ≤ 1 and `reserve` only
 # ever ≥ 1, so each of those labels states its one direction outright; `trend` is two-sided, so it
 # forks on sign the way the morale breakdown's culture/unrest row does.
+#
+# **THE WORD IS `storage`, NOT `larder`.** A breakdown row is read at a glance, beside a multiplier,
+# by a player who opened it to answer "why is growth slow?" — a word half of them have to stop and
+# translate is a worse label than the plain one, whatever it costs in flavour. The stock and the flow
+# rows share it so the two read as one account seen twice.
 const FERTILITY_LABEL_HUNGER := "short rations"
-const FERTILITY_LABEL_RESERVE := "larder reserve"
-const FERTILITY_LABEL_TREND_GROWING := "larder growing"
-const FERTILITY_LABEL_TREND_SHRINKING := "larder shrinking"
+const FERTILITY_LABEL_RESERVE := "storage reserve"
+const FERTILITY_LABEL_TREND_GROWING := "storage growing"
+const FERTILITY_LABEL_TREND_SHRINKING := "storage shrinking"
 
 ## The longest `Key` `_split_kv` will align into a table row; anything wider reads as a sentence.
 const DETAIL_KEY_MAX_LENGTH := 16

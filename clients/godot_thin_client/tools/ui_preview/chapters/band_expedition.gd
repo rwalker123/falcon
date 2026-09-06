@@ -471,8 +471,8 @@ func run(harness) -> void:
 	_click_disclosure(BAND_DISCLOSURE_MORALE)
 
 	# State 1-growth-a — GOOD growth, breakdown OPEN. The band out-breeds its base rate (188% of
-	# normal), so the row reads neutral ink and its disclosure names what is HELPING: `▲ ×1.50 larder
-	# reserve` / `▲ ×1.25 larder growing`. `hunger` is neutral (the band ate) so its row is omitted
+	# normal), so the row reads neutral ink and its disclosure names what is HELPING: `▲ ×1.50 storage
+	# reserve` / `▲ ×1.25 storage growing`. `hunger` is neutral (the band ate) so its row is omitted
 	# rather than listed as a no-op — and the multipliers read down to the headline: 1.50 × 1.25.
 	h._hud.show_unit_selection(BandFx.band_fixture())
 	await h._settle()

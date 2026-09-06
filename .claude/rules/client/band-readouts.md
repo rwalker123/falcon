@@ -618,14 +618,14 @@ which is a property of the tier and not of the merge.
       findable in the good state too. **It can exceed 100%**, which is why the value spells its anchor
       out rather than leaving a bare percentage to read as a cap.
     - **The breakdown rows are MULTIPLIERS, not signed deltas** — `    ▼ ×0.60  short rations` /
-      `    ▲ ×1.05  larder reserve` / `    ▼ ×0.25  larder shrinking`. They reuse the morale
+      `    ▲ ×1.05  storage reserve` / `    ▼ ×0.25  storage shrinking`. They reuse the morale
       breakdown's indent + ▲/▼ sign glyph so `DetailFormat.detail_bbcode`'s shared indented-sub-line
       branch tints them (no parallel styling path), but these factors combine by PRODUCT where the
       morale contributions combine by SUM: three signed percentages that refuse to add up to the
       headline would invite exactly the arithmetic they cannot support, whereas `0.60 × 1.05 × 0.25`
       reads down to the `16%` above it. `hunger` is only ever ≤ 1 and `reserve` only ever ≥ 1, so each
       of those labels states its one direction outright; `trend` is two-sided and forks on sign
-      (`larder growing` / `larder shrinking`) the way the morale row's culture/unrest does. Only
+      (`storage growing` / `storage shrinking`) the way the morale row's culture/unrest does. Only
       factors off the neutral 1.0 by more than `fertility.breakdown_epsilon` (`0.002`) list, so a
       thriving band's disclosure names what is HELPING rather than showing no-op rows.
     - **NO DATA IS NOT A FAMINE, and the sentinel is a ZERO RESERVE.** The factors are derived per
