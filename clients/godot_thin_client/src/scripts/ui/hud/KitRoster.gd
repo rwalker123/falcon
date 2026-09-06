@@ -54,6 +54,32 @@ const KIT_ATTACK_KEY := "attack"
 const KIT_HUNT_CARRY_KEY := "hunt_carry_per_worker_biomass"
 const KIT_FORAGE_CARRY_KEY := "forage_carry_per_worker_biomass"
 
+## **THE COVERAGE PAIR, PER AXIS** — the terms that stop a TIER being applied to people who do not
+## hold the gear. A carry tier is per EQUIPPED worker and steps at the FIRST unit, so the two keys
+## above read `8.0` for a band holding one basket and `8.0` for a band holding nine. Coverage arms a
+## PREFIX of the party and the rest work bare:
+##
+##     carry(w) = w × bare + min(w, saturating_crew) × (equipped − bare)
+##
+## ⛔ **THE BARE RATE IS NOT `labor_config`'s `per_worker_biomass_capacity`.** It equals it only while
+## no item declares an unequipped side for the axis, which is a property of today's item table rather
+## than of the model. Read the published field.
+const KIT_HUNT_CARRY_BARE_KEY := "hunt_carry_bare_per_worker_biomass"
+const KIT_FORAGE_CARRY_BARE_KEY := "forage_carry_bare_per_worker_biomass"
+const KIT_HUNT_SATURATING_CREW_KEY := "hunt_carry_saturating_crew"
+const KIT_FORAGE_SATURATING_CREW_KEY := "forage_carry_saturating_crew"
+
+## The bare twin of `carry_axis_for`, and the saturating one. Named tables for the same reason that
+## one is: a caller that can spell an axis can spell the wrong one.
+const JOB_CARRY_BARE_AXES := {
+	JOB_HUNT: KIT_HUNT_CARRY_BARE_KEY,
+	JOB_FORAGE: KIT_FORAGE_CARRY_BARE_KEY,
+}
+const JOB_SATURATING_CREW_AXES := {
+	JOB_HUNT: KIT_HUNT_SATURATING_CREW_KEY,
+	JOB_FORAGE: KIT_FORAGE_SATURATING_CREW_KEY,
+}
+
 ## ⛔ **THERE IS ONE CARRY RATE AND A PEN IS COLLECTED ON IT** (issue #543). A `KIT_PEN_CARRY_KEY`
 ## stood here reading *"**`pen_carry` is NOT a second reading of `hunt_carry`** — a sled drags a
 ## carcass in off the range and a pen stands at the camp, so a kit carrying only a sled collects a
@@ -572,6 +598,19 @@ static func equipped_tier(kits: Array, axis_key: String) -> float:
 ##
 ## **THE MATERIAL ACCOUNT IS NOT ON THIS LIST BECAUSE IT IS NOT A SCALAR** — see
 ## `SOURCE_PER_WORKER_VECTOR_KEYS` below, which is the same substitution one type further out.
+## **THE COVERAGE BLOCK `repriced_source` WRITES ONTO A PRICED SOURCE.** In CARRY units, beside the
+## per-worker average actually applied — `SourceForecast` reads them to RE-SOLVE a worker cap rather
+## than rescale one, since the marginal worker past saturation still contributes `bare` and not zero.
+const COVERAGE_EQUIPPED_KEY := SourceForecast.FORECAST_COVERAGE_EQUIPPED_KEY
+const COVERAGE_BARE_KEY := SourceForecast.FORECAST_COVERAGE_BARE_KEY
+const COVERAGE_SATURATING_CREW_KEY := SourceForecast.FORECAST_COVERAGE_SATURATING_CREW_KEY
+const COVERAGE_APPLIED_KEY := SourceForecast.FORECAST_COVERAGE_APPLIED_KEY
+
+## No caller stated the coverage terms — the raw `repriced_source` call sites that predate them, which
+## price at a flat tier and want the behaviour they always had. Deliberately a sentinel rather than
+## `0.0`: a real equipped tier of zero is a dead-season patch, which is a different thing.
+const COVERAGE_UNSTATED := -1.0
+
 const SOURCE_PER_WORKER_KEYS := [
 	SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY,
 	SourceForecast.FORECAST_PER_WORKER_KEY,
@@ -641,8 +680,21 @@ const STAY_FRACTION_NONE_BREAKS_OFF := SourceForecast.STAY_FRACTION_NONE_BREAKS_
 ## The non-linear halves stay the sim's answer — the whole-animal quantiser and the fight — exactly as
 ## `yield-forecast.md`'s "THE BOUNDARY" requires; nothing here re-derives a take.
 static func repriced_source(src: Dictionary, prefix: String, carry: float, reference: float,
-		dispersion: float) -> Dictionary:
+		dispersion: float, equipped: float = COVERAGE_UNSTATED,
+		bare: float = COVERAGE_UNSTATED, saturating: int = 0) -> Dictionary:
 	var out := src.duplicate()
+	# **THE COVERAGE TERMS TRAVEL WITH THE SOURCE, because a CREW-DEPENDENT rate cannot answer a
+	# question about the crew.** `carry` above is `carry_per_worker(w)`, so scaling by it prices the
+	# take for the party on the stepper — but anything solving *how many workers before a ceiling
+	# binds* has to invert the two-term form instead, and to do that it needs the terms rather than
+	# their average. They are written in CARRY units beside the ratio actually applied, which is what
+	# lets `SourceForecast.max_useful_workers` recover the equipped and bare per-worker rates in
+	# whichever currency it happens to be reading.
+	if equipped != COVERAGE_UNSTATED and reference > 0.0:
+		out[prefix + COVERAGE_EQUIPPED_KEY] = equipped
+		out[prefix + COVERAGE_BARE_KEY] = bare
+		out[prefix + COVERAGE_SATURATING_CREW_KEY] = maxi(saturating, 0)
+		out[prefix + COVERAGE_APPLIED_KEY] = carry
 	# **A zero reference or a zero carry is a real reading** (an empty roster; a dead-season patch moves
 	# no biomass), so there is no ratio to take and no repricing to do — never a division that would
 	# land an INF in three keys.
@@ -721,7 +773,8 @@ static func carry_axis_for(job: String) -> String:
 ## roster that cannot resolve the selection at all (a world rebuilt under the open sheet). Never a
 ## guess, and never a partial substitution.
 static func priced_source(src: Dictionary, prefix: String, kits: Array, job: String,
-		default_kit_id: String, composed_kit_id: String, band: Dictionary) -> Dictionary:
+		default_kit_id: String, composed_kit_id: String, band: Dictionary,
+		crew: int = KIT_CREW_UNCOMPOSED) -> Dictionary:
 	var carry_key := carry_axis_for(job)
 	if carry_key.is_empty():
 		return src
@@ -732,9 +785,33 @@ static func priced_source(src: Dictionary, prefix: String, kits: Array, job: Str
 	if job == JOB_HUNT and hunt_gate_closes(kits, kit, band, src, prefix):
 		return gate_closed_source(src, prefix)
 	var tiers := effective_tiers(kits, kit, band)
-	return repriced_source(src, prefix, float(tiers.get(carry_key, 0.0)),
+	var equipped := float(tiers.get(carry_key, 0.0))
+	var bare := float(tiers.get(String(JOB_CARRY_BARE_AXES.get(job, "")), equipped))
+	var saturating := int(tiers.get(String(JOB_SATURATING_CREW_AXES.get(job, "")), 0))
+	return repriced_source(src, prefix, carry_per_worker(crew, equipped, bare, saturating),
 		equipped_tier(kits, carry_key),
-		float(kit.get(KIT_DISPERSION_KEY, DISPERSION_NEUTRAL)))
+		float(kit.get(KIT_DISPERSION_KEY, DISPERSION_NEUTRAL)),
+		equipped, bare, saturating)
+
+## **WHAT ONE WORKER OF A CREW OF `w` CARRIES ON AVERAGE**, which is the number a per-worker rate may
+## be scaled by and the tier is not.
+##
+##     carry(w)  = w × bare + min(w, saturating) × (equipped − bare)
+##     per worker = carry(w) / w
+##
+## Coverage arms a PREFIX of the party and the rest work bare — a gatherer with no basket still
+## gathers — so a band holding ONE basket among nine reads `(9×1.6 + 1×6.4) / 9 = 2.31`, not the
+## `8.0` a bare tier would hand all nine.
+##
+## **AN UNCOMPOSED CREW READS THE EQUIPPED TIER**, unchanged: with no party there is no prefix to arm
+## and nothing to average over, and every caller that had no stepper before this term existed keeps
+## the reading it had. A `saturating` of `0` is likewise self-correcting — the bonus is multiplied by
+## a zero crew and every worker reads `bare`.
+static func carry_per_worker(crew: int, equipped: float, bare: float, saturating: int) -> float:
+	if crew <= 0:
+		return equipped
+	var armed := mini(crew, maxi(saturating, 0))
+	return (float(crew) * bare + float(armed) * (equipped - bare)) / float(crew)
 
 ## **DOES A WEAPON'S SIZE WINDOW REACH AN ANIMAL OF THIS MASS AT ALL?** — the ONE home of the bound,
 ## so the fresh-tier offer test and the wear-resolved gate cannot read it two ways. An absent or `0`
@@ -1081,16 +1158,42 @@ static func gate_closed_source(src: Dictionary, prefix: String) -> Dictionary:
 static func effective_tiers(kits: Array, kit: Dictionary, band: Dictionary) -> Dictionary:
 	var resolved := band_kit_tiers(band, String(kit.get(KIT_ID_KEY, "")))
 	if resolved.is_empty():
+		# **THE ROSTER STATES NO COVERAGE, and it cannot**: how far the gear reaches is a fact about
+		# THIS BAND's holdings, which a per-world kit definition knows nothing about. A zero saturating
+		# crew with the equipped rate as its bare twin is the self-correcting reading — every worker
+		# gets the roster's fresh tier, exactly as this branch has always promised — so a consumer
+		# needs no special case for a band the wire has not described.
 		return {
 			KIT_ATTACK_KEY: float(kit.get(KIT_ATTACK_KEY, TIER_ABSENT)),
 			KIT_HUNT_CARRY_KEY: float(kit.get(KIT_HUNT_CARRY_KEY, TIER_ABSENT)),
 			KIT_FORAGE_CARRY_KEY: float(kit.get(KIT_FORAGE_CARRY_KEY, TIER_ABSENT)),
+			KIT_HUNT_CARRY_BARE_KEY: float(kit.get(KIT_HUNT_CARRY_KEY, TIER_ABSENT)),
+			KIT_FORAGE_CARRY_BARE_KEY: float(kit.get(KIT_FORAGE_CARRY_KEY, TIER_ABSENT)),
+			KIT_HUNT_SATURATING_CREW_KEY: 0,
+			KIT_FORAGE_SATURATING_CREW_KEY: 0,
 			"stated": false,
 		}
 	return {
 		KIT_ATTACK_KEY: _row_tier(resolved, KIT_ATTACK_KEY),
 		KIT_HUNT_CARRY_KEY: _row_tier(resolved, KIT_HUNT_CARRY_KEY),
 		KIT_FORAGE_CARRY_KEY: _row_tier(resolved, KIT_FORAGE_CARRY_KEY),
+		# **THE COVERAGE PAIR RIDES THE SAME ROW**, so no consumer has a join to get wrong: every term
+		# of `carry(w)` comes off the one `kitTiers` entry whose `kitId` matches the kit being priced.
+		#
+		# ⛔ **AN ABSENT BARE RATE IS "FULLY COVERED", NOT ZERO, and the difference is the whole
+		# reading.** `_row_tier` answers `TIER_ABSENT` (0.0) for a key the row omits, and a bare rate
+		# of zero is a LEGITIMATE value meaning *a worker without the gear carries nothing* — so
+		# reading absence as zero would silently price every worker past saturation at nothing and, on
+		# a kit whose saturating crew is also absent, collapse the whole party to a carry of zero
+		# (which `repriced_source` then declines to price at all). Absence means the wire has not
+		# described this band's coverage; the honest reading there is the one this file had before the
+		# terms existed — every worker gets the tier. `has()` is what separates the two, and a stated
+		# zero is still a stated zero.
+		KIT_HUNT_CARRY_BARE_KEY: _coverage_bare(resolved, KIT_HUNT_CARRY_BARE_KEY, KIT_HUNT_CARRY_KEY),
+		KIT_FORAGE_CARRY_BARE_KEY: _coverage_bare(resolved, KIT_FORAGE_CARRY_BARE_KEY,
+			KIT_FORAGE_CARRY_KEY),
+		KIT_HUNT_SATURATING_CREW_KEY: int(resolved.get(KIT_HUNT_SATURATING_CREW_KEY, 0)),
+		KIT_FORAGE_SATURATING_CREW_KEY: int(resolved.get(KIT_FORAGE_SATURATING_CREW_KEY, 0)),
 		"stated": true,
 	}
 
@@ -1105,6 +1208,14 @@ const TIER_ABSENT := 0.0
 ## server never confirmed is the reassuring lie the per-band field was published to end. The
 ## whole-row absence is a different question and `effective_tiers` / `role_gear` answer it above.
 ## **It is a read, never a derivation** — nothing here consults `kit_item_conditions`.
+## One axis's BARE rate off the band's row — the stated value, or the EQUIPPED tier where the row
+## states none. See `effective_tiers`: bare == equipped makes `carry(w) = w × equipped` whatever the
+## saturating crew says, which is exactly the reading this file had before coverage was on the wire.
+static func _coverage_bare(resolved: Dictionary, bare_key: String, equipped_key: String) -> float:
+	if resolved.has(bare_key):
+		return float(resolved[bare_key])
+	return _row_tier(resolved, equipped_key)
+
 static func _row_tier(resolved: Dictionary, axis_key: String) -> float:
 	return float(resolved.get(axis_key, TIER_ABSENT))
 
@@ -1490,13 +1601,24 @@ static func role_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 	var phrase := _role_effect_phrase(job, float(gear[ROLE_GEAR_TIER_KEY]))
 	if phrase != "":
 		parts.append(phrase)
-	if bool(gear[ROLE_GEAR_STATED_KEY]):
-		for item_variant in kit_item_ids(kit):
-			var item_id := String(item_variant)
-			if item_id.is_empty():
-				continue
-			parts.append(HudComposeVocab.KIT_HINT_ROLE_ITEM_FORMAT % [
-				DetailFormat.kit_item_label(item_id), DetailFormat.kit_condition_face(band, item_id)])
+	# ⛔ **`Clubs dry` IS GONE, AND IT WAS THE LAST LIVE INSTANCE OF THE OWNERSHIP DEFECT.** This
+	# appended one `<Item> <condition-or-`dry`>` clause per item, and `dry` rendered for an item the
+	# band owns NONE of — *you have clubs and they are spent* — because ownership was inferred from a
+	# condition of zero. `snapshot.fbs` settles it: *`remaining == 0` means owns none, never "owns one
+	# that is dry"*, and `count` is published beside it so no client need infer.
+	#
+	# **THE CARD SAYS WHAT THE COMPOSE SHEETS SAY**, in the same sentence, rather than growing a
+	# second vocabulary for the same fact: the effect this role actually gets, then — only where
+	# somebody is going without — the shortfall. A fully equipped role states its effect and stops.
+	#
+	# **ITS DENOMINATOR IS THE PUBLISHED `workersOnQuotedJob`**, which is the honest head count here:
+	# a role card is a COMMITTED standing slot rather than a party being composed, so the sim's own
+	# count for that role's job is the number the shortfall is a fraction of. (The compose sheets
+	# cannot use it — it is `0` before anyone is assigned — which is why `shortfall_line` takes a crew
+	# and falls back to this pair when there is none.)
+	var shortfall := shortfall_line(kits, kit, band, job)
+	if shortfall != "":
+		parts.append(shortfall)
 	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
 
 ## What this role's tier BUYS, in words. **A vantage is a DISTANCE and the camp's attack is a small
@@ -1649,11 +1771,13 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 	if hint_text != "":
 		var hint := HudWidgets.alloc_hint_label(hint_text)
 		hint.set_meta(KIT_HINT_META, true)
-		# **ON A SOURCE JOB THIS LINE IS ONLY EVER A SHORTFALL, so it is only ever DANGER.** The
-		# faint hint ink `alloc_hint_label` installs was right for a row of tiers and conditions; a
-		# line that renders exclusively to say *some of these people have no gear* has to read as a
-		# warning. The band-wide ROLE cards keep their own reading and their own quiet ink.
-		if not is_band_wide_role(job):
+		# **THE INK FOLLOWS THE SHORTFALL, on both surfaces.** A source job's line is ONLY ever a
+		# shortfall, so it is always DANGER; a role card's carries its effect phrase too and turns red
+		# only when the sentence is appended to it. The faint hint ink `alloc_hint_label` installs was
+		# right for a row of tiers and conditions and is wrong for a line saying *some of these people
+		# have no gear*. Asked of the producer rather than by inspecting the text, so a copy change
+		# cannot silently take the colour with it.
+		if shortfall_line(kits, selected, band, job, crew) != "":
 			hint.add_theme_color_override("font_color", HudStyle.DANGER)
 		block.add_child(hint)
 	return block

@@ -445,6 +445,38 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 "forage_carry_per_worker_biomass",
                 row.forageCarryPerWorkerBiomass() as f64,
             );
+            // **THE COVERAGE PAIR, PER AXIS — the terms that stop a TIER being applied to people who
+            // do not hold the gear.** A carry tier is per EQUIPPED worker and steps at the FIRST
+            // unit, so `forageCarryPerWorkerBiomass` reads 8.0 for a band holding one basket and 8.0
+            // for a band holding nine; a consumer with no coverage term priced nine gatherers at the
+            // basket rate off a single basket. Coverage arms a PREFIX of the party and the rest work
+            // bare:
+            //
+            //   carry(w) = w * bare + min(w, saturating_crew) * (equipped - bare)
+            //
+            // `0` on a saturating crew means nothing live in the kit lifts that axis, and the form
+            // is self-correcting there — the bonus is multiplied by a zero crew and every worker
+            // reads the bare rate.
+            //
+            // ⛔ **THE BARE RATE IS NOT `labor_config`'s `per_worker_biomass_capacity`.** It equals
+            // it only while no item declares an unequipped side for the axis, which is a property of
+            // today's item table rather than of the model. Read the published field.
+            let _ = entry.insert(
+                "hunt_carry_bare_per_worker_biomass",
+                row.huntCarryBarePerWorkerBiomass() as f64,
+            );
+            let _ = entry.insert(
+                "forage_carry_bare_per_worker_biomass",
+                row.forageCarryBarePerWorkerBiomass() as f64,
+            );
+            let _ = entry.insert(
+                "hunt_carry_saturating_crew",
+                row.huntCarrySaturatingCrew() as i64,
+            );
+            let _ = entry.insert(
+                "forage_carry_saturating_crew",
+                row.forageCarrySaturatingCrew() as i64,
+            );
             let _ = entry.insert("attack_min_body_mass", row.attackMinBodyMass() as f64);
             let _ = entry.insert("attack_max_body_mass", row.attackMaxBodyMass() as f64);
             let _ = entry.insert("dispersion", row.dispersion() as f64);

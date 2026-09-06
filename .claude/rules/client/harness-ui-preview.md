@@ -2482,7 +2482,37 @@ longer exist — the fixture now stages the link-kind keys and the frame reads `
 trap: **a frame whose fixture is the last producer of a state can go on passing after the state
 becomes unreachable**, and it then guards nothing while looking like coverage.
 
-**A clean run is 420 frames / 1928 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+**A clean run is 420 frames / 1938 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+
+## The coverage blend, and the table that IS the regression (`chapters/compose_rungs.gd`)
+
+`_assert_the_crew_is_priced_on_the_gear_the_band_holds` asserts the arc's worked example verbatim —
+9 gatherers, `per_worker_yield` 0.20, bare 1.6 against basket 8.0 — at **0, 1 and 9** baskets, both as
+`KitRoster.carry_per_worker` arithmetic and through the real `priced_source` seam:
+
+| baskets | carry per worker | food per worker |
+|---|---|---|
+| 0 | 1.6000 | 0.0400 |
+| 1 | **2.3111** | **0.0578** |
+| 9 | 8.0000 | 0.2000 |
+
+**The three rows are ONE claim.** 0 and 9 alone are satisfied by a client that still steps at the
+first unit; the middle row is what separates a blend from a step, and it is the reported defect
+(`9 / 2 / 2`) in one number.
+
+`_assert_the_worker_cap_is_re_solved` covers Part B, and its shape is a TRIPLE: the re-solved crew
+(21) beside the flat quotient (18) — *the two agreeing is the failure* — a fully covered control where
+the two forms correctly DO agree, and the `bare == 0` guard answering the armed crew rather than an
+infinity.
+
+⛔ **THE COVERAGE CHANGE MOVED NO FRAME — 587/587 byte-identical**, measured directly against a build
+with both the blend and the re-solve reverted. No shipped fixture states the coverage terms, so every
+existing state takes the absent-means-covered path, where `carry_per_worker` returns the equipped tier
+and `crew_for_target` reduces to the identical `ceil(target / per_worker)`.
+
+**Sabotage-verified** by reverting both at once: four claims fail, and the failure text IS the reported
+bug — `0 baskets … (got 0.2000)` and `1 basket … (got 0.2000)`, the fully-equipped rate handed to a
+party holding one basket, with the cap collapsing to `18 hands, not the flat 18`.
 
 ## The kit line's coverage states (`chapters/compose_rungs.gd`, `chapters/hunt.gd`)
 

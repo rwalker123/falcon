@@ -1182,6 +1182,69 @@ in-flight ETA each resolve the same coverage for the same reason.
 **`hunt_carry` and `forage_carry` — the whole carry surface, a pen included — are therefore
 crew-weighted; a third rate must be too**, or it becomes the one stat a shortfall cannot reach.
 
+### ⛔ A CARRY TIER IS PER EQUIPPED WORKER, AND THE WIRE HAS TO SAY SO — the saturating crew
+
+`huntCarryPerWorkerBiomass` / `forageCarryPerWorkerBiomass` are what an **equipped** worker achieves,
+and a tier steps at the **first** unit, which is what a tier means. So a band holding **one** basket
+publishes `8.0` and a band holding nine publishes `8.0`, and a consumer with no coverage term applies
+that to the whole crew. Measured, nine gatherers at `per_worker_yield 0.20`:
+
+| baskets owned | published tier | a coverage-blind per-worker reading |
+|---|---|---|
+| 0 | 1.60 | 0.0400 |
+| 1 | 8.00 | **0.2000** |
+| 9 | 8.00 | **0.2000** |
+
+**The sim is not wrong** — it pays `Σ share × rate` through `coverage`, so one basket among nine
+really does deliver `1 × 8 + 8 × 1.6`. What was missing is the term a consumer needs to reproduce
+that against a crew the player is *proposing*, and it was **invisible until the opening loadout**:
+`start_stock_fraction` was `1.5`, so a band always held more units than people and coverage was
+always 100 %. Partial coverage is the ordinary case now.
+
+**`EquipmentConfig::carry_saturating_crew(stat, kit, wear)` is that term**, and it is
+`build_work_saturating_crew`'s twin in shape and in home — both are facts about the units the band
+**owns**, answered **per offered kit**, so both ride `kitTiers[]`. It publishes as
+`huntCarrySaturatingCrew` / `forageCarrySaturatingCrew`, `NO_SATURATING_CREW` (`0`) where nothing
+live in the kit lifts the axis.
+
+```text
+carry(w) = min(w, units) × equipped + max(0, w − units) × bare
+         = w × bare + min(w, saturating_crew) × (equipped − bare)
+```
+
+— a baseline every worker gets, plus a gear bonus capped by a saturating crew. **The build term has
+no `bare` half only because a builder with no tool contributes `NO_BUILD_GEAR`**; a gatherer with no
+basket still gathers, so the carry form carries one more term than the build form does.
+
+**The bare rate rides the row too** (`huntCarryBarePerWorkerBiomass` /
+`forageCarryBarePerWorkerBiomass`, from `EquipmentConfig::unequipped_reference`), rather than being
+left to the client as *"just use `labor_config`'s `per_worker_biomass_capacity`"*. Those are equal —
+`12.0` and `1.6` — only because **no shipped item declares an unequipped side for either carry**
+(the two flipped to declaring the *equipped* side when quality tiers landed, see "THE EQUIPPED CARRY
+RATES CAME OUT OF `labor_config.json`"). That is a property of today's item table, not of the model,
+and a client holding the raw config lever would price the unequipped crew wrong on the day it
+changes with nothing saying so.
+
+> **A MARGINAL WORKER PAST SATURATION CONTRIBUTES THE BARE RATE, NOT ZERO**, which is where a
+> `max_useful_workers` inversion goes wrong if it keeps the flat-rate shape. Solving *"how many
+> workers before a ceiling binds"* has to invert the two-term form: below saturation the crew grows
+> the take at `equipped` a head, above it at `bare` a head, so a band short of gear needs a **larger**
+> crew to reach the same ceiling than `ceiling / equipped` says. The flat form under-counts it.
+
+**Two conditions the closed form assumes, and the test is what makes the day either breaks a
+decision.** `the_carry_saturating_crew_reproduces_the_coverage_sum_at_every_crew_size` sweeps the
+form against `coverage`'s own sum at `w = 0`, below the units held, exactly at it, and above —
+because below saturation the two agree for the trivial reason that neither is capped, and it is only
+above it that the coverage-blind reading diverges (at 4 gatherers over 3 baskets: `32` against
+`25.6`). It fails if either assumption stops holding:
+
+- **One item per axis per kit.** The saturating crew counts the items declaring the kit's *best* rate
+  for the axis (`KitChoice::declared_by_live_item` takes the max), so a second, weaker carry item on
+  the same axis that reached further would carry more than the form credits.
+- **`workers_per_unit: 1` on every carry item.** `coverage` floors a multi-worker item to **whole
+  crews** and `min(w, sat)` does not, so a four-worker net would diverge at every crew size that is
+  not a multiple of four.
+
 **`advance_predator_raids`** builds the warrior line the same way: `coverage(&warrior_kit,
 warrior_count, wear)`, one contingent per crew off `warrior_profile`. The **`exposed` non-combatant
 contingent is untouched**, hand-zeroed `attack` and all — it is the people holding nothing, which is
@@ -1294,6 +1357,10 @@ party that never engaged.
     (`huntCarryPerWorkerBiomass` / `forageCarryPerWorkerBiomass`):
     those are liveness readouts saying *what the kit buys*, and only the **hunt gate** — the thing
     that decides whether a species can be taken at all — was worth a per-crew wire shape.
+  - ⛔ **The CARRY coverage is published and NOT YET CONSUMED.** `huntCarrySaturatingCrew` /
+    `forageCarrySaturatingCrew` and the two bare rates ride `kitTiers[]` (see "A CARRY TIER IS PER
+    EQUIPPED WORKER" above); a client still pricing a proposed crew at `workers × tier` reads one
+    basket as nine. The `max_useful_workers` inversion is the second half of the same consumption.
   - ~~The Godot client does not read either field yet.~~ **Wired** — the decoder maps both, the hunt
     compose sheets state the split beside the combat gate, and the Gear row and its popover state a
     shortfall (`.claude/rules/client/labor-ui.md` → "…AND A CLEARED GATE IS THE REASSURING HALF OF A
@@ -1720,7 +1787,7 @@ one place):
 | `huntCrews:[BandKitCrew]` | **How this band's gear divides its HUNT workers** — `workers` + that run's own `hunterAttack` + the `itemIds` it holds, best-equipped first, `Σ workers ==` the hunt head count. **Never empty**: a uniform band is one row |
 | `huntCarryPerWorkerBiomass:float` | The band's resolved per-worker **hunt** haul rate (40 sledded / 12 sledless) |
 | `forageCarryPerWorkerBiomass:float` | The band's resolved per-**gatherer** throughput, *before* the tile's seasonal weight (8 with baskets / 1.6 bare-handed) |
-| `kitTiers:[BandKitTiers]` | **What EVERY offered kit would grant this band, at its live wear** — one row per roster kit (`kitId` + the same **eight** tiers `KitOption` carries: `attack`, the two mass bounds, `huntCarryPerWorkerBiomass`, `forageCarryPerWorkerBiomass`, `scoutVantageRange`, `dispersion`, `exposure`). See below: it is the resolved answer, and a client must not re-derive it |
+| `kitTiers:[BandKitTiers]` | **What EVERY offered kit would grant this band, at its live wear** — one row per roster kit (`kitId` + the same **eight** tiers `KitOption` carries: `attack`, the two mass bounds, `huntCarryPerWorkerBiomass`, `forageCarryPerWorkerBiomass`, `scoutVantageRange`, `dispersion`, `exposure`), **plus the build trio and the carry coverage pair** — the two things that are facts about the band's LEDGER rather than about the kit, so `KitOption` cannot carry them. See below: it is the resolved answer, and a client must not re-derive it |
 | ~~`penCarryPerWorkerBiomass:float`~~ | **REMOVED FROM THE WIRE, on all three tables** (issue #543). It read *"the band's resolved per-**keeper** pen collection rate (40 with a sled / 12 without)… resolves through `EquipmentStat::PenCarry`, so a Hunt row on the stalking kit works the pen at the bare rate"*. **A keeper's rate IS `huntCarryPerWorkerBiomass`** — see "Carry is carry" — so the field could only republish that one under a second name, which is the second-producer shape this wire keeps deleting. The slots were **deleted rather than `(deprecated)`**: rollback replays an in-memory `CommandLog` (origin `SimState` + ordered commands), nothing writes a snapshot buffer to disk, and the only on-disk FlatBuffers are `xtask decode-guard`'s gitignored, regenerated fixtures — so no persisted buffer could be renumbered by the removal |
 | `scoutVantageRange:float` | The sight range each posted vantage reveals at (2 with wayfinding gear / 1 without). **How far the vantages are posted is not a kit axis** — three `labor_config.scout.*` dials — and `calculate_visibility` rounds this to whole tiles |
 | `warriorAttack:float` | The band's resolved per-**warrior** `attack` (1 bare / 6 with clubs) — the defending contingent's side of `advance_predator_raids`. The same stat and the same seam `hunterAttack` resolves through, quoted at a different kit |

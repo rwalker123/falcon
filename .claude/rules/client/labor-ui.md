@@ -44,42 +44,84 @@ meaningless. The user has no sense why it is saying that."*
   is the sim's own answer wherever it applies.
 - **THE SENTENCE NAMES THE SHORTEST ITEM THE KIT CARRIES**, never `item_ids[0]`, and never an item
   guessed from an axis — this layer may not map an axis to the component behind it.
-- **The band-wide ROLE cards keep their own reading and their own quiet ink** (`KitRoster.role_hint`).
-  They are a different surface and were not what the rule was written about.
+- **The band-wide ROLE cards say the SAME sentence.** `Clubs dry` was the last live instance of the
+  ownership defect — `dry` for an item the band owns NONE of — so the per-item condition clause is
+  retired there too and the card reads *effect*, then the shortfall only where somebody is going
+  without. **Its denominator is the published `workersOnQuotedJob`**: a role card is a COMMITTED
+  standing slot rather than a party being composed, so the sim's own head count for that role's job is
+  what the shortfall is a fraction of. It reads
+  `attack 6 defending the camp · Only 1 of 3 warriors carry clubs — the rest go without`.
+- **THE INK FOLLOWS THE SHORTFALL, asked of the producer.** A source job's line is only ever a
+  shortfall so it is always `DANGER`; a role card's turns red only when the sentence is appended. The
+  mount site calls `shortfall_line` rather than inspecting the text, so a copy change cannot silently
+  take the colour with it.
 
 **THE ITEM'S CONDITION IS NOT LOST WITH THE LINE.** The Materials & Crafting panel's kit ledger owns
 it in full, in the item's own quanta (`48 raids left` / `Worn out`), and `equipment.json`'s
 `life_readout` seams push `kit_life` to the event dock (warn → Notable, danger → Alert). The band's
 own `Gear` row was retired in `docs/plan_standing_upkeep.md` §4.9 item 12 for exactly that reason.
 
-> #### ⛔ AND THE 9 / 2 / 2 WORKER COUNT IS A SEPARATE, UNFIXED DEFECT — IN THE CLIENT
->
-> Reported alongside the line: with 0 harvesting kits the *hold it after* figure is **9**, with 2 kits
-> **2**, and with 1 kit **still 2**. It is **client-side preview arithmetic**, not the sim's blend, and
-> it is `KitRoster.repriced_source`: it scales the wire's `per_worker_yield` by `carry / reference`
-> where `carry` is the kit's EFFECTIVE TIER, **with no coverage term at all**, so the whole composed
-> crew is priced as equipped the moment the band owns ONE unit.
->
-> Measured directly (9-gatherer crew, `per_worker_yield` 0.20, bare 1.6 against basket 8.0):
->
-> | baskets owned | sim's published tier | client's per-worker |
-> |---|---|---|
-> | 0 | 1.60 | 0.0400 |
-> | 1 | 8.00 | **0.2000** |
-> | 2 | 8.00 | **0.2000** |
-> | 9 | 8.00 | **0.2000** |
->
-> **The sim is not at fault**: a tier IS per equipped worker, and it steps at the first unit because
-> that is what a tier means. The client is applying it to nine people.
->
-> **IT IS NOT FIXED HERE, and the fix is not a one-liner**, which is why: coverage makes the take
-> PIECEWISE-LINEAR in the crew (`min(crew, units)` armed, the rest bare), and
-> `max_useful_workers = ceil(ceiling / per_worker_yield)` assumes a rate that does not depend on the
-> crew. Blending would change the shape of the model the crew targets, the harvest-floor chart and
-> every compose sheet are drawn from. `SourceForecast.pool_work_supply` already does it correctly for
-> BUILD work, off a published `saturating_crew` — that is the shape to copy, and the take side has no
-> such published term yet.
+## ⛔ THE CREW IS PRICED AGAINST THE GEAR THE BAND ACTUALLY HOLDS
 
+Reported from play: with 0 harvesting kits the *hold it after* figure read **9**, with 2 kits **2**,
+and with 1 kit **still 2**. A carry TIER is per EQUIPPED worker and steps at the FIRST unit — which is
+what a tier means — so `KitRoster.repriced_source`, scaling by `carry / reference` with no coverage
+term, priced all nine gatherers at the basket rate off a single basket. **The sim was never at fault.**
+
+Coverage arms a PREFIX of the party and the rest work bare — a gatherer with no basket still gathers —
+and all three terms ride the ONE `kitTiers` row whose `kitId` matches the kit being priced, so there
+is no join to get wrong:
+
+```
+carry(w)      = w × bare + min(w, sat) × (equipped − bare)
+per worker    = carry(w) / w
+```
+
+`KitRoster.carry_per_worker` is that, and `priced_source` now takes the composed crew so the seam has a
+`w` at all. Measured, 9 gatherers at `per_worker_yield` 0.20 with bare 1.6 against basket 8.0 — **this
+table is the regression and the preview asserts it directly**:
+
+| baskets | `sat` | carry per worker | food per worker |
+|---|---|---|---|
+| 0 | 0 | 1.60 | 0.0400 |
+| 1 | 1 | **2.31** | **0.0578** |
+| 9 | 9 | 8.00 | 0.2000 |
+
+- ⛔ **`bare` IS THE PUBLISHED FIELD, never `labor_config`'s `per_worker_biomass_capacity`.** They are
+  equal only while no item declares an unequipped side for either carry axis, which is a property of
+  today's item table rather than of the model.
+- ⛔ **AN ABSENT BARE RATE MEANS FULLY COVERED, NOT ZERO.** `_row_tier` answers `0.0` for a key a row
+  omits, and a bare rate of zero is a LEGITIMATE value — so reading absence as zero prices every
+  worker past saturation at nothing and, where the saturating crew is also absent, collapses the party
+  to a carry of zero that `repriced_source` then declines to price at all. `_coverage_bare` uses
+  `has()` and falls back to the EQUIPPED tier, which is the reading this file had before the terms
+  existed. A stated zero is still a stated zero.
+
+### …AND THE WORKER CAP IS RE-SOLVED, NOT RESCALED
+
+**The marginal worker past saturation still contributes `bare`, not zero**, so a band short of gear
+needs a LARGER crew to reach a ceiling than `ceiling / rate` says — and `per_worker` on a priced source
+is the AVERAGE over the crew it was priced for, which cannot answer a question about a different crew.
+`SourceForecast.crew_for_target` inverts the two-term form:
+
+```
+T <= sat × equipped :  w = ceil(T / equipped)
+otherwise           :  w = ceil(sat + (T − sat × equipped) / bare)
+```
+
+- **`bare == 0` is GUARDED, not divided** — the target is simply unreachable past saturation, so the
+  answer is the armed crew rather than an infinity.
+- **The terms reach it through the forecast**, written onto the priced source by `repriced_source` as
+  `coverage_{equipped,bare,saturating_crew,applied}_carry` and copied verbatim by `forecast_inputs`.
+  They are in CARRY units beside the per-worker carry actually applied, which is what lets the cap
+  recover the equipped and bare rates in whichever ACCOUNT it happens to be reading.
+- **With the terms absent it is the identical flat quotient**, which is why nothing that was not
+  priced changes.
+
+**IT MOVED NO EXISTING PREVIEW FRAME — 587/587 byte-identical**, measured against a build with both
+the blend and the re-solve reverted. No shipped fixture states the coverage terms, so every existing
+state takes the absent-means-covered path where `carry_per_worker` returns `equipped` and
+`crew_for_target` reduces to `ceil(target / per_worker)`.
 
 ## Key scripts
 

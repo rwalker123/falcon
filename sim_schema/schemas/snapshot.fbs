@@ -1587,6 +1587,41 @@ table BandKitTiers {
   // mismatch as 0. An empty string is "no rung bound", not "no rung": it matches every rung on the
   // branch.
   buildWorkRung:string;
+  // --- THE CARRY COVERAGE PAIR, PER AXIS (appended last) ----------------------------------------
+  // HOW MANY WORKERS THIS KIT CAN ACTUALLY EQUIP FOR A CARRY out of what this band holds, and what
+  // the workers it cannot equip achieve anyway. The carry twin of buildWorkSaturatingCrew, and the
+  // term that makes the two rates above a CLOSED FORM the client can evaluate against a crew the
+  // player is PROPOSING:
+  //
+  //   carry(w) = w x <axis>CarryBarePerWorkerBiomass
+  //            + min(w, <axis>CarrySaturatingCrew)
+  //              x (<axis>CarryPerWorkerBiomass - <axis>CarryBarePerWorkerBiomass)
+  //
+  // WITHOUT THEM A TIER IS APPLIED TO PEOPLE WHO DO NOT HOLD THE GEAR. A carry tier is per EQUIPPED
+  // worker and steps at the FIRST unit - which is what a tier means - so forageCarryPerWorkerBiomass
+  // reads 8.0 for a band holding one basket and 8.0 for a band holding nine. A consumer with no
+  // coverage term priced nine gatherers at the basket rate off a single basket: measured, 9
+  // gatherers at per_worker_yield 0.20 read 0.2000 per worker with ONE basket, identical to nine.
+  // It was invisible while start_stock_fraction was 1.5 (a band always held more units than people),
+  // and the turn-one opening loadout makes partial coverage the ordinary case.
+  //
+  // Coverage arms a PREFIX of the party and the rest work bare, which is where the two terms come
+  // from: min(w, units) x equipped + max(0, w - units) x bare. The build term has no bare half only
+  // because a builder with no tool contributes nothing; a gatherer with no basket still gathers.
+  //
+  // `0` on a saturating crew = nothing live in the kit lifts that axis, and the form is
+  // self-correcting there: the bonus is multiplied by a zero crew and every worker reads the bare
+  // rate. THE BARE RATE IS NOT THE labor_config LEVER, and a client must not substitute one: it
+  // equals it only while no item declares an unequipped side for the axis, which is a property of
+  // today's item table rather than of the model.
+  //
+  // A MARGINAL WORKER PAST SATURATION STILL CONTRIBUTES THE BARE RATE, NOT ZERO. Anything solving
+  // for "how many workers before a ceiling binds" must invert the two-term form above; the flat
+  // `ceiling / rate` shape under-counts the crew a band short of gear actually needs.
+  huntCarrySaturatingCrew:uint = 0;
+  forageCarrySaturatingCrew:uint = 0;
+  huntCarryBarePerWorkerBiomass:float = 0;
+  forageCarryBarePerWorkerBiomass:float = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

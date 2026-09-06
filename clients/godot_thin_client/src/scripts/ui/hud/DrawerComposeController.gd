@@ -757,13 +757,16 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float
 ## the roster's tier rather than a field the substitution overwrites), so a producer prices at its own
 ## top and never hands a priced dict to another producer that prices too.
 func _hunt_priced_herd(herd: Dictionary, band: Dictionary) -> Dictionary:
+    # **THE COMPOSED PARTY IS WHAT THE GEAR HAS TO COVER.** A carry tier is per EQUIPPED worker, so
+    # pricing without the crew hands the whole party a tier one unit buys — the defect this seam now
+    # carries the stepper's own value to close.
     return _kit_priced_source(herd, HudComposeVocab.BARE_FORECAST_PREFIX, band, KitRoster.JOB_HUNT,
-        _compose.hunt_kit_id())
+        _compose.hunt_kit_id(), _compose.hunt_count())
 
 ## The plant twin. A patch publishes no retreat, so only the carry half of the substitution bites.
 func _forage_priced_patch(tile_info: Dictionary, band: Dictionary) -> Dictionary:
     return _kit_priced_source(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX, band,
-        KitRoster.JOB_FORAGE, _compose.forage_kit_id())
+        KitRoster.JOB_FORAGE, _compose.forage_kit_id(), _compose.forage_count())
 
 ## The hunt forecast, priced — and the ONLY way this sheet builds one. Pairing the repricing with the
 ## construction is what makes "some call sites were missed" unrepresentable rather than a thing to
@@ -787,9 +790,9 @@ func _forage_forecast(tile_info: Dictionary, band: Dictionary, floor: float) -> 
 ## nothing else. The resolve, the axis and the arithmetic all live there, so the dock's raid sheet
 ## prices its chart through the identical code rather than a second copy of this.
 func _kit_priced_source(src: Dictionary, prefix: String, band: Dictionary, job: String,
-        kit_id: String) -> Dictionary:
+        kit_id: String, crew: int = KitRoster.KIT_CREW_UNCOMPOSED) -> Dictionary:
     return KitRoster.priced_source(src, prefix, _band_labor.kits(), job,
-        _band_labor.default_kit_id(job), kit_id, band)
+        _band_labor.default_kit_id(job), kit_id, band, crew)
 
 ## **DOES THIS READOUT STATE THE FLOOR WALK AT ALL?** — the one gate on every `after` reading both
 ## webs compose, and therefore on the row's arrow and on the caption's `now → after` alike.

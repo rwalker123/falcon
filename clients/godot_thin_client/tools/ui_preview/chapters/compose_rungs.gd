@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 104
+const EXPECTED_CHECKPOINTS := 114
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -562,6 +562,8 @@ func run(harness) -> void:
 	# come from spears), and `trapping` alone would pass on a hint that named every item in the world.
 	# Both are asserted by EQUALITY against the vocabulary's own formats rather than by `contains`,
 	# because half of what the trapping line must get right is what it does NOT say.
+	_assert_the_crew_is_priced_on_the_gear_the_band_holds()
+	_assert_the_worker_cap_is_re_solved()
 	_assert_the_kit_line_is_a_shortfall_warning()
 
 	_assert_the_hint_states_each_kits_own_items()
@@ -583,6 +585,121 @@ func run(harness) -> void:
 ## **THE THREE COVERAGE STATES ARE ONE CLAIM AND ARE ASSERTED TOGETHER.** Covered alone passes on a
 ## line that never renders; short alone on a line that always does. The band is the same in all three
 ## — only how many units it holds moves — so nothing but coverage can explain the difference.
+## ⛔ **THE CREW IS PRICED AGAINST THE GEAR THE BAND ACTUALLY HOLDS — the 9 / 2 / 2 defect.**
+##
+## Reported from play: with 0 harvesting kits the *hold it after* figure read 9, with 2 kits 2, and
+## with 1 kit **still 2**. A carry TIER is per EQUIPPED worker and steps at the FIRST unit — which is
+## what a tier means — so a client with no coverage term priced all nine gatherers at the basket rate
+## off a single basket. **The sim was never at fault**; `KitRoster.repriced_source` scaled by the tier.
+##
+##     carry(w) = w × bare + min(w, sat) × (equipped − bare)
+##
+## **THE TABLE IS THE REGRESSION, so it is asserted directly** — the exact figures from the arc's own
+## worked example, at both ends and at the ONE-unit case that is the whole defect. The three rows are
+## one claim: 0 and 9 alone are satisfied by a client that still steps at the first unit, and it is the
+## middle row that separates a blend from a step.
+func _assert_the_crew_is_priced_on_the_gear_the_band_holds() -> void:
+	for row in COVERAGE_TABLE:
+		var owned := int(row[0])
+		var want_carry := float(row[1])
+		var want_food := float(row[2])
+		var got_carry := KitRoster.carry_per_worker(COVERAGE_CREW, COVERAGE_EQUIPPED_CARRY,
+			COVERAGE_BARE_CARRY, owned)
+		h._assert_hud("coverage — %d basket(s) among %d gatherers carries %.4f per worker (got %.4f)"
+				% [owned, COVERAGE_CREW, want_carry, got_carry],
+			is_equal_approx(snappedf(got_carry, COVERAGE_EPSILON),
+				snappedf(want_carry, COVERAGE_EPSILON)))
+		# …and the same three rows THROUGH THE REAL SEAM, which is where the defect lived: the carry
+		# above is arithmetic, this is the number a compose sheet actually quotes.
+		var priced := KitRoster.priced_source(_coverage_patch(), "", _coverage_roster(),
+			KitRoster.JOB_FORAGE, COVERAGE_KIT_ID, COVERAGE_KIT_ID, _coverage_band(owned),
+			COVERAGE_CREW)
+		var got_food := float(priced[SourceForecast.FORECAST_PER_WORKER_KEY])
+		h._assert_hud("coverage — …and the sheet quotes %.4f food per worker for it (got %.4f)"
+				% [want_food, got_food],
+			is_equal_approx(snappedf(got_food, COVERAGE_EPSILON),
+				snappedf(want_food, COVERAGE_EPSILON)))
+	# **THE ONE-BASKET ROW IS NOT THE NINE-BASKET ROW**, stated outright: every equality above is
+	# satisfiable by a client that has stopped repricing at all, and this is what says the middle row
+	# is really between the two ends rather than pinned to either.
+	h._assert_hud("coverage — one basket is priced BETWEEN bare and fully equipped, not at either",
+		COVERAGE_TABLE[1][2] > COVERAGE_TABLE[0][2] and COVERAGE_TABLE[1][2] < COVERAGE_TABLE[2][2])
+
+## ⛔ **AND THE WORKER CAP IS RE-SOLVED, NEVER RESCALED.** The marginal worker past saturation still
+## contributes the BARE rate rather than zero, so a band short of gear needs a LARGER crew to reach a
+## ceiling than `ceiling / rate` says. The flat quotient is asserted beside the re-solved answer,
+## because the two agreeing is exactly the failure: a client that kept the quotient would pass any
+## claim that only named one number.
+func _assert_the_worker_cap_is_re_solved() -> void:
+	var per_worker := COVERAGE_TABLE[1][2]
+	var flat := int(ceil(CAP_TARGET / per_worker))
+	var solved := SourceForecast.crew_for_target(CAP_TARGET, per_worker,
+		COVERAGE_EQUIPPED_CARRY, COVERAGE_BARE_CARRY, CAP_SATURATING,
+		float(COVERAGE_TABLE[1][1]))
+	h._assert_hud("coverage — the cap RE-SOLVES the two-term form (%d hands, not the flat %d)"
+			% [solved, flat],
+		solved == CAP_RE_SOLVED_CREW and solved > flat)
+	# **A FULLY COVERED BAND IS THE CONTROL**: with the gear reaching everybody the two forms agree,
+	# so the claim above is about coverage rather than about the inversion always answering larger.
+	var covered := SourceForecast.crew_for_target(CAP_TARGET, COVERAGE_TABLE[2][2],
+		COVERAGE_EQUIPPED_CARRY, COVERAGE_BARE_CARRY, COVERAGE_CREW,
+		float(COVERAGE_TABLE[2][1]))
+	h._assert_hud("coverage — …while a fully covered band re-solves to the flat answer (%d)" % covered,
+		covered == int(ceil(CAP_TARGET / COVERAGE_TABLE[2][2])))
+	# **`bare == 0` IS GUARDED, NOT DIVIDED** — the target is simply unreachable past saturation, so
+	# the answer is the armed crew rather than an infinity.
+	var unreachable := SourceForecast.crew_for_target(CAP_TARGET, per_worker,
+		COVERAGE_EQUIPPED_CARRY, 0.0, CAP_SATURATING, float(COVERAGE_TABLE[1][1]))
+	h._assert_hud("coverage — a bare rate of zero caps at the armed crew, never an infinity (%d)"
+			% unreachable, unreachable == CAP_SATURATING)
+
+## The fixture the coverage table is measured on — the arc's own worked example.
+const COVERAGE_CREW := 9
+const COVERAGE_EQUIPPED_CARRY := 8.0
+const COVERAGE_BARE_CARRY := 1.6
+const COVERAGE_WIRE_PER_WORKER := 0.20
+const COVERAGE_KIT_ID := "gathering"
+## Rounding for the published figures, which are quoted to four places.
+const COVERAGE_EPSILON := 0.0001
+
+## `[baskets owned (== the saturating crew), carry per worker, food per worker]` — the table from the
+## arc, verbatim. `sat` equals the units held because every shipped item is held by one person.
+const COVERAGE_TABLE := [
+	[0, 1.6, 0.04],
+	[1, 2.3111, 0.0578],
+	[9, 8.0, 0.2],
+]
+
+## The cap fixture: a ceiling well past what one armed gatherer can carry, so the bare tail decides.
+const CAP_TARGET := 1.0
+const CAP_SATURATING := 1
+## `ceil(sat + (T − sat × equipped_pw) / bare_pw)` = `ceil(1 + (1.0 − 0.2) / 0.04)` = 21, against the
+## flat quotient's 18.
+const CAP_RE_SOLVED_CREW := 21
+
+func _coverage_roster() -> Array:
+	return [{
+		KitRoster.KIT_ID_KEY: COVERAGE_KIT_ID, "display_name": "Harvesting kit",
+		"jobs": [KitRoster.JOB_FORAGE],
+		KitRoster.KIT_FORAGE_CARRY_KEY: COVERAGE_EQUIPPED_CARRY,
+		KitRoster.KIT_HUNT_CARRY_KEY: 0.0, KitRoster.KIT_ATTACK_KEY: 0.0,
+		"item_ids": ["baskets"],
+	}]
+
+## The band's own resolved row — the shape the sim publishes, coverage terms included. `sat` is the
+## units held; the EQUIPPED tier does not move with them, which is the whole point.
+func _coverage_band(owned: int) -> Dictionary:
+	return {KitRoster.BAND_KIT_TIERS_KEY: [{
+		KitRoster.BAND_KIT_TIERS_ID_KEY: COVERAGE_KIT_ID,
+		KitRoster.KIT_FORAGE_CARRY_KEY: COVERAGE_EQUIPPED_CARRY,
+		KitRoster.KIT_FORAGE_CARRY_BARE_KEY: COVERAGE_BARE_CARRY,
+		KitRoster.KIT_FORAGE_SATURATING_CREW_KEY: owned,
+		KitRoster.KIT_HUNT_CARRY_KEY: 0.0, KitRoster.KIT_ATTACK_KEY: 0.0,
+	}]}
+
+func _coverage_patch() -> Dictionary:
+	return {SourceForecast.FORECAST_PER_WORKER_KEY: COVERAGE_WIRE_PER_WORKER}
+
 func _assert_the_kit_line_is_a_shortfall_warning() -> void:
 	var roster := BandFx.kit_roster_fixture()
 	var big_game := KitRoster.kit_by_id(roster, BandFx.KIT_ID_BIG_GAME)

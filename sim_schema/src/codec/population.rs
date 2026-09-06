@@ -416,6 +416,12 @@ fn create_populations<'a>(
                                 buildRate: tiers.build_rate,
                                 buildWorkPerWorker: tiers.build_work_per_worker,
                                 buildWorkSaturatingCrew: tiers.build_work_saturating_crew,
+                                huntCarrySaturatingCrew: tiers.hunt_carry_saturating_crew,
+                                forageCarrySaturatingCrew: tiers.forage_carry_saturating_crew,
+                                huntCarryBarePerWorkerBiomass: tiers
+                                    .hunt_carry_bare_per_worker_biomass,
+                                forageCarryBarePerWorkerBiomass: tiers
+                                    .forage_carry_bare_per_worker_biomass,
                                 buildWorkBranch: Some(build_work_branch),
                                 buildWorkRung: Some(build_work_rung),
                             },

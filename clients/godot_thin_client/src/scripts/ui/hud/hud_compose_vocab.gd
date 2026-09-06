@@ -1615,6 +1615,10 @@ const KIT_SHORTFALL_SOME_FORMAT := "Only %d of %d %s carry %s — the rest go wi
 const KIT_SHORTFALL_CREW_NOUNS := {
 	"hunt": "hunters",
 	"forage": "harvesters",
+	# **THE BAND-WIDE ROLES TAKE THE SAME SENTENCE**, so a player reads one voice whether the gear is
+	# short on a party being composed or on a standing slot.
+	"scout": "scouts",
+	"warrior": "warriors",
 }
 const KIT_SHORTFALL_CREW_NOUN_FALLBACK := "workers"
 ## ⛔ **THERE IS NO PEN CLAUSE ON THE HINT LINE ANY MORE** (issue #543). A

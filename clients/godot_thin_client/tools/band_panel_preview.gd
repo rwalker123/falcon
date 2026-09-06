@@ -7387,6 +7387,13 @@ func _assert_role_card_gear() -> void:
 		DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
 			BandFx.KIT_ATTACK_CLUBS, DetailFormat.KIT_CONDITION_DECIMALS),
 		DetailFormat.KIT_LABEL_CLUBS, BandFx.KIT_CONDITION_CLUBS)
+	_assert_role_card_shortfall()
+
+## How many clubs the short warrior band holds, against `BandFx.KIT_WARRIOR_HEADCOUNT`. Below it and
+## above zero, so the sentence is the SOME form rather than either extreme.
+const ROLE_SHORTFALL_CLUBS_HELD := 1
+## The word every shortfall sentence is built around, asserted ABSENT on the covered card.
+const ROLE_SHORTFALL_NEEDLE := "go without"
 
 func _assert_one_role_card_gear(role_name: String, job: String, kit_name: String, effect: String,
 		item_label: String, condition: float) -> void:
@@ -7404,11 +7411,52 @@ func _assert_one_role_card_gear(role_name: String, job: String, kit_name: String
 	if hint == null:
 		_fail("the %s card has no gear line" % role_name)
 		return
-	var want := HudComposeVocab.KIT_HINT_SEPARATOR.join([effect,
-		HudComposeVocab.KIT_HINT_ROLE_ITEM_FORMAT % [item_label,
-			String.num(condition, DetailFormat.KIT_CONDITION_DECIMALS)]])
-	_assert_band_panel("…over a gear line stating what it buys and the item behind it — \"%s\""
-			% hint.text, hint.text == want)
+	# ⛔ **THE ITEM CLAUSE IS RETIRED AND THIS CARD IS FULLY COVERED, so the line is the EFFECT alone.**
+	# It read `2-tile sight per vantage · Wayfinding 100`, and the condition half rendered `dry` for an
+	# item the band owns NONE of — *you have clubs and they are spent* — because ownership was inferred
+	# from a condition of zero. The card says what the compose sheets say now: its effect, then a
+	# shortfall sentence only where somebody is going without.
+	#
+	# **The absence is only half the claim**; `_assert_role_card_shortfall` below renders the same card
+	# for a band that IS short and requires the sentence, so a line that lost its second half entirely
+	# fails there rather than passing here.
+	_assert_band_panel("…over a gear line stating what this role's gear buys — \"%s\"" % hint.text,
+		hint.text == effect)
+	_assert_band_panel("…and NOT the retired item clause, which called unowned gear `%s`"
+			% DetailFormat.KIT_DRY_FACE,
+		not hint.text.contains(item_label) and not hint.text.contains(DetailFormat.KIT_DRY_FACE))
+
+## **THE OTHER HALF: a role whose gear does not reach its own head count says so, in the compose
+## sheets' own sentence.** Driven over `KitRoster.role_hint` rather than through the card, because the
+## panel's band is fully covered and re-staging it would move every frame this state renders.
+##
+## **THE DENOMINATOR IS THE PUBLISHED `workersOnQuotedJob`** — a role card is a COMMITTED standing slot
+## rather than a party being composed, so the sim's own head count for that role's job is the number
+## the shortfall is a fraction of.
+func _assert_role_card_shortfall() -> void:
+	var kits := BandFx.kit_roster_fixture()
+	var warrior := KitRoster.kit_by_id(kits, BandFx.KIT_ID_WARRIOR)
+	var covered := KitRoster.role_hint(kits, warrior, BandFx.with_equipped_kit(
+		BandFx.band_fixture()), KitRoster.JOB_WARRIOR)
+	_assert_band_panel("a fully armed Warrior role states its effect and no shortfall — \"%s\""
+			% covered, not covered.contains(ROLE_SHORTFALL_NEEDLE))
+	var short_band := BandFx.band_fixture()
+	var rows: Array = BandFx.kit_condition_rows()
+	for row_variant in rows:
+		var row: Dictionary = row_variant
+		if String(row["item_id"]) == BandFx.KIT_ITEM_CLUBS:
+			row["count"] = ROLE_SHORTFALL_CLUBS_HELD
+	short_band["kit_item_conditions"] = rows
+	var short_line := KitRoster.role_hint(kits, warrior, short_band, KitRoster.JOB_WARRIOR)
+	var want := HudComposeVocab.KIT_SHORTFALL_SOME_FORMAT % [ROLE_SHORTFALL_CLUBS_HELD,
+		int(BandFx.KIT_WARRIOR_HEADCOUNT),
+		HudComposeVocab.KIT_SHORTFALL_CREW_NOUNS[KitRoster.JOB_WARRIOR],
+		DetailFormat.kit_item_label(BandFx.KIT_ITEM_CLUBS).to_lower()]
+	_assert_band_panel("…while a short one says so in the compose sheets' own words — \"%s\""
+			% short_line, short_line.ends_with(want))
+	# **AND IT NEVER SAYS `dry`**, which claimed the band owned some and had spent them.
+	_assert_band_panel("…never calling gear it simply lacks `%s`" % DetailFormat.KIT_DRY_FACE,
+		not short_line.contains(DetailFormat.KIT_DRY_FACE))
 
 ## **THE TWO ROLE CARDS DRAW TO THE SAME HEIGHT.** Reported on sight: side by side at unequal heights
 ## the pair reads as ragged. Their content genuinely differs in height — the Scout's description wraps

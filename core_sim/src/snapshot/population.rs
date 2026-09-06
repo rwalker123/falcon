@@ -846,6 +846,27 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         )
                     })
                     .unwrap_or(crate::equipment_config::NO_SATURATING_CREW),
+                // **The CARRY coverage pair, and it rides here for the build term's own reason.**
+                // The tiers say what a kit grants *one equipped worker*, which is a fact about the
+                // kit and is why `kit_roster_states` can quote them over a fresh ledger. How many
+                // workers the band can equip is a fact about **this band's ledger**, so it is
+                // answered only here — and without it a client applies the tier to everybody and
+                // prices nine gatherers off a single basket.
+                hunt_carry_saturating_crew: kit_levers.config.carry_saturating_crew(
+                    crate::equipment_config::EquipmentStat::HuntCarry,
+                    &choice,
+                    &kit,
+                ),
+                forage_carry_saturating_crew: kit_levers.config.carry_saturating_crew(
+                    crate::equipment_config::EquipmentStat::ForageCarry,
+                    &choice,
+                    &kit,
+                ),
+                // **The other half of the closed form** — what the workers the kit cannot equip
+                // achieve anyway. Resolved rather than left as *"the client knows the labor
+                // baseline"*: the two are equal only while no item declares an unequipped carry.
+                hunt_carry_bare_per_worker_biomass: tiers.hunt_carry_bare_per_worker_biomass,
+                forage_carry_bare_per_worker_biomass: tiers.forage_carry_bare_per_worker_biomass,
             })
         })
         .collect();

@@ -646,6 +646,63 @@ static func rescaled_from_biomass(src: Dictionary, prefix: String, carried: floa
 # impossible up front; the post-hoc note still covers a source whose biomass FELL after staffing.
 # max_useful is independent of the band's output multiplier — it scales both terms linearly.
 const FORECAST_PER_WORKER_KEY := "per_worker_yield"
+
+## **THE COVERAGE BLOCK, WRITTEN ONTO A PRICED SOURCE BY `KitRoster.repriced_source`** and copied onto
+## the forecast below. A carry TIER is per equipped worker and coverage arms only a prefix of the
+## party, so a priced source's `per_worker_yield` is the average over the crew it was priced for —
+## and a question about *how many workers* cannot be answered by rescaling a crew-dependent rate.
+##
+## ⛔ **THE MARGINAL WORKER PAST SATURATION STILL CONTRIBUTES THE BARE RATE, NOT ZERO**, so a band
+## short of gear needs a LARGER crew to reach a ceiling than `ceiling / rate` says. `crew_for_target`
+## inverts the two-term form; nothing may go back to the flat quotient where these terms are present.
+const FORECAST_COVERAGE_EQUIPPED_KEY := "coverage_equipped_carry"
+const FORECAST_COVERAGE_BARE_KEY := "coverage_bare_carry"
+const FORECAST_COVERAGE_SATURATING_CREW_KEY := "coverage_saturating_crew"
+## The per-worker carry actually applied to this source's rates — `carry_per_worker(w)`. It is the
+## denominator that converts the two carry terms above into the forecast's OWN currency, whichever
+## account it is reading.
+const FORECAST_COVERAGE_APPLIED_KEY := "coverage_applied_carry"
+
+## No coverage terms on this source — nothing priced it, so there is no prefix of the party to arm and
+## the flat `ceiling / rate` quotient is the honest answer. A sentinel rather than `0.0`, which is a
+## real reading (a dead-season patch equips nobody with anything).
+const COVERAGE_ABSENT := -1.0
+
+## **THE CREW THAT REACHES `target`, INVERTING THE TWO-TERM COVERAGE FORM.**
+##
+##     carry(w) = w × bare + min(w, sat) × (equipped − bare)
+##
+## so up to saturation every worker is armed and the crew is `target / equipped`; past it each further
+## worker adds only `bare`:
+##
+##     T <= sat × equipped :  w = ceil(T / equipped)
+##     otherwise           :  w = ceil(sat + (T − sat × equipped) / bare)
+##
+## ⛔ **`bare == 0` IS GUARDED RATHER THAN DIVIDED**: it means the target is simply UNREACHABLE past
+## saturation — a further worker adds nothing — so the answer is the armed crew itself and not an
+## infinity. **And the flat quotient is NOT a special case of this**; it is what a caller gets when
+## the coverage terms are absent, which is the honest reading for a source nothing priced.
+##
+## The terms arrive in CARRY units and the target in the forecast's own account, so both are converted
+## through `applied` — the per-worker carry the source's rates were actually scaled by.
+static func crew_for_target(target: float, per_worker: float, equipped_carry: float,
+        bare_carry: float, saturating: int, applied_carry: float) -> int:
+    if per_worker <= 0.0:
+        return 0
+    if equipped_carry <= COVERAGE_ABSENT or applied_carry <= 0.0:
+        return int(ceilf(target / per_worker))
+    # The two carry terms, in whatever currency `per_worker` is denominated in.
+    var equipped := per_worker * equipped_carry / applied_carry
+    var bare := per_worker * bare_carry / applied_carry
+    var sat := maxi(saturating, 0)
+    if equipped <= 0.0:
+        return int(ceilf(target / per_worker))
+    var armed_ceiling := float(sat) * equipped
+    if target <= armed_ceiling:
+        return int(ceilf(target / equipped))
+    if bare <= 0.0:
+        return sat
+    return int(ceilf(float(sat) + (target - armed_ceiling) / bare))
 # One animal's worth of FOOD — the quantum every whole-animal derivation divides by (the kill rhythm,
 # the carry-aware delivered take, the averaging window, the whole-animal worker cap). Herd-only.
 #
@@ -4108,6 +4165,18 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     return {
         "per_worker": per_worker,
         "ceiling": ceiling,
+        # **THE COVERAGE BLOCK, CARRIED VERBATIM.** `max_useful_workers` re-solves the crew from these
+        # rather than dividing by `per_worker`, which is the average over the crew this source was
+        # priced for and therefore cannot answer a question about a different crew. Absent on any
+        # source nothing priced, where the flat quotient is still the right answer.
+        FORECAST_COVERAGE_EQUIPPED_KEY: float(src.get(
+            prefix + FORECAST_COVERAGE_EQUIPPED_KEY, COVERAGE_ABSENT)),
+        FORECAST_COVERAGE_BARE_KEY: float(src.get(
+            prefix + FORECAST_COVERAGE_BARE_KEY, COVERAGE_ABSENT)),
+        FORECAST_COVERAGE_SATURATING_CREW_KEY: int(src.get(
+            prefix + FORECAST_COVERAGE_SATURATING_CREW_KEY, 0)),
+        FORECAST_COVERAGE_APPLIED_KEY: float(src.get(
+            prefix + FORECAST_COVERAGE_APPLIED_KEY, COVERAGE_ABSENT)),
         "food_per_animal": food_per_animal,
         # THE SECOND ACCOUNT (#426) — plant-only: no animal pays fodder, so a herd reads 0 here and
         # every hunt-side answer is unchanged.
@@ -5773,7 +5842,15 @@ static func max_useful_workers(forecast: Dictionary) -> int:
         return maxi(take_workers(ceiling, per_animal, per_worker,
             float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
             float(forecast.get("stay", STAY_FRACTION_NONE_BREAKS_OFF))), hold)
-    return maxi(int(ceilf(ceiling / per_worker)), hold)
+    # ⛔ **RE-SOLVED, NEVER RESCALED.** `per_worker` is the average over the crew this source was
+    # priced for; a band short of gear needs a LARGER crew to reach the ceiling than the flat quotient
+    # says, because the marginal worker past saturation still contributes the bare rate. With no
+    # coverage terms on the forecast this returns the identical quotient it always did.
+    return maxi(crew_for_target(ceiling, per_worker,
+        float(forecast.get(FORECAST_COVERAGE_EQUIPPED_KEY, COVERAGE_ABSENT)),
+        float(forecast.get(FORECAST_COVERAGE_BARE_KEY, COVERAGE_ABSENT)),
+        int(forecast.get(FORECAST_COVERAGE_SATURATING_CREW_KEY, 0)),
+        float(forecast.get(FORECAST_COVERAGE_APPLIED_KEY, COVERAGE_ABSENT))), hold)
 
 ## Per-SOURCE `+`-gate for a CONFIRMED Current-actions Forage/Hunt row — the worked-row twin of the
 ## compose stepper's `max_useful_workers` cap (`DrawerComposeController._forecast_worker_cap`), and
