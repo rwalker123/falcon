@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 350
+const EXPECTED_CHECKPOINTS := 353
 
 ## The countdown verdict's opening, as a needle — the precondition every claim about that sentence
 ## rests on ("this model reached the reaching branch at all").
@@ -2013,6 +2013,18 @@ func run(harness) -> void:
 ## moved one would move only one of the two assertions below.
 const GATE_MAMMOTH_DEFENSE := 12.0
 
+## The quarries the gate names. Spelled here rather than read back off the fixtures, so the
+## expectations are not composed through the thing under test. **The pen is a DOMESTICATED herd and a
+## different species** — the corralled fixture keeps the mammoth's combat terms, not its name.
+const GATE_MAMMOTH_NAME := "Woolly Mammoth"
+const GATE_PEN_NAME := "Red Deer"
+
+## The two halves of the RETIRED clause, asserted absent. `defense 12` was the arithmetic and the
+## casualties sentence was the paragraph after it; both were *"way too wordy"* and neither told the
+## player what to do.
+const RETIRED_GATE_DEFENSE_NEEDLE := "defense"
+const RETIRED_GATE_CASUALTIES_NEEDLE := "casualties"
+
 ## The gentle pen's own id and `defense`. **Its own id** because the sheet re-reads its quarry from the
 ## SELECTION by id, so a twin sharing the fixture's id renders against the herd already selected and
 ## its terms never arrive. **`0` defence** because the bare hand's `attack 1` has to CLEAR it — this is
@@ -2119,11 +2131,20 @@ func _combat_gate_states() -> void:
 	var bare_sheet: Control = h._hud._drawercompose._compose_sheet
 	h._assert_hud("bare hands against a mammoth is refused IN WORDS, before the party is sent",
 		Readout.hunt_gate_blocked(bare_sheet) == Readout.HUNT_GATE_BLOCKED)
-	h._assert_hud("…and the refusal names BOTH terms, so the lesson is the weapon and not the headcount",
-		Readout.hunt_gate_line(bare_sheet).contains(
-				String.num(BandFx.KIT_ATTACK_BARE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS))
-			and Readout.hunt_gate_line(bare_sheet).contains(
-				String.num(GATE_MAMMOTH_DEFENSE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS)))
+	# ⛔ **RE-AIMED FROM THE ARITHMETIC TO THE REMEDY.** This asserted the line named `attack 1` and
+	# `defense 12` — *"so the lesson is the weapon and not the headcount"*. The lesson is unchanged and
+	# is now stated outright instead of left to be inferred from two bare numbers, which is what the
+	# report called *"text that means nothing to the user and doesn't tell them how to fix it"*.
+	#
+	# **THE SELECTED KIT HERE ARMS THE PARTY** (the hunt default names a weapon); the band simply holds
+	# none, which is the shortfall line's business one row up. So the remedy is GET the weapon.
+	h._assert_hud("…and the refusal says how to FIX it: \"%s\"" % Readout.hunt_gate_line(bare_sheet),
+		Readout.hunt_gate_line(bare_sheet) == SourceForecast.HUNT_GATE_BLOCKED_ARMED_FORMAT % [
+			SourceForecast.HUNT_FORECAST_WARN_GLYPH, GATE_MAMMOTH_NAME])
+	# …and the retired arithmetic is gone, asserted as an absence so it cannot creep back beside it.
+	h._assert_hud("…with neither bare number nor the casualties sentence left on it",
+		not Readout.hunt_gate_line(bare_sheet).contains(RETIRED_GATE_DEFENSE_NEEDLE)
+			and not Readout.hunt_gate_line(bare_sheet).contains(RETIRED_GATE_CASUALTIES_NEEDLE))
 	# ⛔ **THIS CLAIM INVERTED AT §4.9 item 12b, and its old form is the sentence someone would use to
 	# reinstate the exemption.** It read *"a PEN is not stalked and not fought — the refusal does not
 	# render on one"*, mounted on `has_engagement_stage` and justified by a pen publishing
@@ -2145,11 +2166,36 @@ func _combat_gate_states() -> void:
 	var pen_sheet: Control = h._hud._drawercompose._compose_sheet
 	h._assert_hud("a fence does not kill the mammoth: bare hands at a PEN are refused IN WORDS too",
 		Readout.hunt_gate_blocked(pen_sheet) == Readout.HUNT_GATE_BLOCKED)
-	h._assert_hud("…and that refusal names BOTH terms at the pen exactly as it does on the range",
-		Readout.hunt_gate_line(pen_sheet).contains(
-				String.num(BandFx.KIT_ATTACK_BARE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS))
-			and Readout.hunt_gate_line(pen_sheet).contains(
-				String.num(GATE_MAMMOTH_DEFENSE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS)))
+	h._assert_hud("…and that refusal reads the same at the pen as on the range: \"%s\""
+			% Readout.hunt_gate_line(pen_sheet),
+		Readout.hunt_gate_line(pen_sheet) == SourceForecast.HUNT_GATE_BLOCKED_ARMED_FORMAT % [
+			SourceForecast.HUNT_FORECAST_WARN_GLYPH, GATE_PEN_NAME])
+	# ⛔ **THE OTHER REMEDY, ON THE SAME HERD AND THE SAME BAND — the pair is the claim.** A producer
+	# that always says *they need weapons* passes the two claims above; one that always says *pick a
+	# kit* passes this one. Only the two together say the sentence is chosen on whether the SELECTED
+	# KIT names a weapon at all, which is the whole of Ray's correction: telling a Stalking-kit player
+	# to change kit sends them to the kit they already have.
+	# ⛔ **THE KIT IS SET AFTER THE COMPOSE, NOT BEFORE.** `reset_hunt_source` clears the composed kit,
+	# so a selection made ahead of it is thrown away and the sheet re-resolves the job DEFAULT — which
+	# names a weapon, so the state silently became a second copy of the armed arm above. It read
+	# `they need weapons` for the `none` kit and the pair proved nothing.
+	# **CAPTURED AS TEXT, not held as a NODE.** The re-compose below rebuilds the sheet, so a
+	# `pen_sheet` reference read afterwards answers for the state that replaced it.
+	var armed_line := Readout.hunt_gate_line(pen_sheet)
+	var kit_before: String = h._hud._compose.hunt_kit_id()
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(pen)
+	h._compose_herd(pen, LOCAL_HUNT_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	h._hud._compose.set_hunt_kit_id(BandFx.KIT_ID_NONE)
+	h._compose_herd(pen, LOCAL_HUNT_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	var none_line := Readout.hunt_gate_line(h._hud._drawercompose._compose_sheet)
+	h._assert_hud("…while a kit that names NO weapon is told to pick one: \"%s\"" % none_line,
+		none_line == SourceForecast.HUNT_GATE_BLOCKED_UNARMED_FORMAT % [
+			SourceForecast.HUNT_FORECAST_WARN_GLYPH, GATE_PEN_NAME])
+	h._assert_hud("…and the two remedies are genuinely different sentences",
+		none_line != armed_line and armed_line != "")
+	h._hud._compose.set_hunt_kit_id(kit_before)
 	# **THE POSITIVE HALF.** The same bare party, the same fence, an animal it CAN kill: no refusal.
 	# Without this a rule that silenced every pen's sheet — or blocked every pen's — passes above.
 	var gentle := _combat_gate_pen_gentle()
@@ -2195,8 +2241,10 @@ const GATE_SPLIT_COVERED_HUNTERS := 3
 ## play as meaningless: a tier is what ONE EQUIPPED worker gets, and quoting it beside a party of six
 ## of whom four are armed describes nobody on the sheet.
 ##
-## **The shortfall it was hinting at is now said outright, and only when there IS one.**
-const GATE_SPLIT_KIT_HINT := "Only 4 of 6 hunters carry spears"
+## **The shortfall it was hinting at is now said outright, and only when there IS one** — and it counts
+## COMPLETE KITS rather than the scarcest item, because a Stalking kit is spears AND a sled and what
+## the player composes is an outfit.
+const GATE_SPLIT_KIT_HINT := "4 of 6 Stalking kits available"
 
 ## ⛔ **AND THE COVERED PARTY'S LINE IS GONE ENTIRELY — this claim INVERTED.**
 ##

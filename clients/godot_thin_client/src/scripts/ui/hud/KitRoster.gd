@@ -546,6 +546,24 @@ static func resolve_selection(kits: Array, job: String, default_id: String,
 ##
 ## `INF` when the roster is empty, which the one caller reads as "say nothing": with no roster there
 ## is no bare-handed tier to step down to, and inventing one would quote a number the sim never sent.
+## **DOES THIS KIT ARM THE PARTY AT ALL** — its ROSTER attack against the roster's bare-handed tier.
+##
+## It is the one half of the weapon question the wire CAN answer, and it is deliberately asked of the
+## roster rather than of the band: *does this kit name a weapon* is a fact about the kit, where *does
+## the band hold one* is the shortfall line's job. A test that read the band's resolved tier would
+## answer `false` for a Stalking kit with an empty store and send that player to change kit — the
+## remedy that is wrong for exactly the case it fires on.
+##
+## An empty roster answers `false`: with nothing to compare against there is no evidence this kit arms
+## anyone, and the softer remedy (*pick a kit that carries a weapon*) is the safe one to give.
+static func kit_arms_the_party(kits: Array, kit: Dictionary) -> bool:
+	if kit.is_empty():
+		return false
+	var bare := unequipped_tier(kits, KIT_ATTACK_KEY)
+	if is_inf(bare):
+		return false
+	return float(kit.get(KIT_ATTACK_KEY, 0.0)) > bare
+
 static func unequipped_tier(kits: Array, axis_key: String) -> float:
 	var lowest := INF
 	for entry_variant in kits:
@@ -1540,8 +1558,10 @@ static func shortfall_line(kits: Array, kit: Dictionary, band: Dictionary, job: 
 	if items.is_empty():
 		return ""
 	var on_job := crew
+	# **COMPLETE OUTFITS — the `min` over every item the kit carries.** A Stalking kit is spears AND a
+	# sled, so three spears and no sled field ZERO kits; counting the scarcest item and naming it
+	# reported three.
 	var held := -1
-	var short_item := ""
 	for item_variant in items:
 		var item_id := String(item_variant)
 		var owned := DetailFormat.kit_units_owned(band, item_id)
@@ -1549,23 +1569,20 @@ static func shortfall_line(kits: Array, kit: Dictionary, band: Dictionary, job: 
 			return ""
 		if held < 0 or owned < held:
 			held = owned
-			short_item = item_id
 		if on_job <= KIT_CREW_UNCOMPOSED:
 			# No party is being composed, so the published pair is the reading — the head count of the
 			# job as staffed, which is what the sim divided its own `workersHolding` against.
 			on_job = maxi(on_job, _published_on_quoted_job(band, item_id))
 	if on_job <= 0 or held < 0:
 		return ""
+	# **CAPPED AT THE CREW**: five spears and one hunter is `1 of 1`, never `5 of 1` — the question is
+	# how much of THIS party is outfitted, not how deep the store is.
 	var covered := mini(held, on_job)
 	if covered >= on_job:
 		return ""
 
-	var crew_noun := String(HudComposeVocab.KIT_SHORTFALL_CREW_NOUNS.get(job,
-		HudComposeVocab.KIT_SHORTFALL_CREW_NOUN_FALLBACK))
-	var item_label := DetailFormat.kit_item_label(short_item).to_lower()
-	if covered <= 0:
-		return HudComposeVocab.KIT_SHORTFALL_NONE_FORMAT % [on_job, crew_noun, item_label]
-	return HudComposeVocab.KIT_SHORTFALL_SOME_FORMAT % [covered, on_job, crew_noun, item_label]
+	return HudComposeVocab.KIT_SHORTFALL_FORMAT % [covered, on_job,
+		kit_display_name(kit) + HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
 
 ## The sim's own head count for the job this item is quoted at, `0` when it states none. **`0` is not
 ## a shortfall** — `snapshot.fbs` is explicit that `workersOnQuotedJob == 0` means nobody is staffed,

@@ -1602,30 +1602,39 @@ const KIT_HINT_SEPARATOR := " · "
 ## > bring a number back "just for information", and do not special-case one web — the hunt sheets
 ## > mount the same line for the same reason.
 
-## **ONE CLAUSE, NEVER TWO.** Both sentences state a count against a crew, and a trailing *"— the
-## rest go without"* only restated what the count already said. Ray, on the pair that shipped: *"remove
-## that, obviously that is true when you say 1 of 3 warriors carry clubs"*. The same objection applies
-## to an `all %d … go without` half, so both lines took the cut rather than only the one he quoted.
+## **ONE CLAUSE, NEVER TWO.** The sentence states a count against a crew, and a trailing *"— the rest
+## go without"* only restated what the count already said. Ray, on the pair that shipped: *"remove
+## that, obviously that is true when you say 1 of 3 warriors carry clubs"*.
+##
+## ⛔ **AND IT COUNTS COMPLETE KITS, NOT ITEMS — `0 of 1 Stalking kits available`.**
+##
+## It counted the scarcest ITEM and named it (`None of 1 hunters carry spears`). **A Stalking kit is
+## spears AND a sled**, so a band holding three spears and no sled can field ZERO complete outfits
+## while an item-counting line reports three. What the player composes is an OUTFIT, and the number
+## has to answer for the thing they picked. Ray: *"get rid of that 'none of 1 hunters has spears', to
+## be: '0 of X stalking kits available' … do the same in the forage."*
+##
+## **ONE SENTENCE FOR BOTH ENDS.** The owns-none and owns-some cases had a format each; `0 of 1`
+## against `1 of 1` says the difference in the number itself, so the split is retired rather than kept
+## for a distinction the reader can already see. **`KIT_SHORTFALL_CREW_NOUNS` went with it** — the
+## sentence names the KIT now, so there is no crew noun in it and no per-job table to keep in step.
+##
+## The numerator is the `min` over every item the kit `uses` of the live units the band holds, CAPPED
+## at the denominator — five spears and one hunter reads `1 of 1`, never `5 of 1`. The denominator is
+## the composed crew.
+const KIT_SHORTFALL_FORMAT := "%d of %d %s available"
 
-## **OWNS NONE** — the band holds not one of the item this kit is built around.
-const KIT_SHORTFALL_NONE_FORMAT := "None of %d %s carry %s"
-## **OWNS SOME BUT NOT ENOUGH** — a different situation for the player, so it gets its own sentence:
-## there IS gear, it just does not reach the party being composed.
-const KIT_SHORTFALL_SOME_FORMAT := "Only %d of %d %s carry %s"
+## ⛔ **THE PLURAL IS THE KIT'S OWN DISPLAY NAME PLUS `s`, and that is a stated rule rather than a
+## coincidence that happens to hold.** Every roster name is singular and unsuffixed (`Stalking kit`,
+## `Harvesting kit`, `Wayfinding kit`), so appending `s` reads correctly for all of them; the count is
+## NOT inflected (`1 of 1 Harvesting kits available`), which is Ray's own wording.
+##
+## **The `none` entry would read `No kits`, and cannot reach this line**: it carries no items, and
+## `shortfall_line` returns early on an empty `uses` list — a kit that grants nothing can leave nobody
+## short. That is a structural guarantee rather than luck, but the suffix is documented here because a
+## roster whose names ever went plural would need a different rule.
+const KIT_SHORTFALL_PLURAL_SUFFIX := "s"
 
-## What to call the people on each source job, in the sentence above. **The sheet's own crew nouns** —
-## the eyebrow over the stepper says ASSIGN HARVESTERS / ASSIGN HUNTERS — so the warning names them
-## the way the control beside it does. Keyed by the raw job string, as `KIT_JOB_GLYPHS` is, so this
-## vocabulary leaf stays free of a `KitRoster` reference.
-const KIT_SHORTFALL_CREW_NOUNS := {
-	"hunt": "hunters",
-	"forage": "harvesters",
-	# **THE BAND-WIDE ROLES TAKE THE SAME SENTENCE**, so a player reads one voice whether the gear is
-	# short on a party being composed or on a standing slot.
-	"scout": "scouts",
-	"warrior": "warriors",
-}
-const KIT_SHORTFALL_CREW_NOUN_FALLBACK := "workers"
 ## ⛔ **THERE IS NO PEN CLAUSE ON THE HINT LINE ANY MORE** (issue #543). A
 ## `KIT_HINT_PEN_CARRY_FORMAT := "pen %s per keeper"` stood here arguing *"a sled drags a carcass in
 ## off the range; a pen stands at the camp, and what bounds a slaughter there is handling gear — so a

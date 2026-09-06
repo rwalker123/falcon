@@ -7398,10 +7398,9 @@ const ROLE_SHORTFALL_CLUBS_HELD := 1
 ## carried until Ray cut it as a restatement of the count in front of it, and a quoted needle would
 ## have kept passing against text that no longer exists.
 static func _shortfall_openings() -> Array:
-	return [
-		HudComposeVocab.KIT_SHORTFALL_NONE_FORMAT.split("%")[0],
-		HudComposeVocab.KIT_SHORTFALL_SOME_FORMAT.split("%")[0],
-	]
+	# **ONE SENTENCE NOW**, so one needle — and it is the TAIL rather than the opening, the format
+	# beginning with its own count (`%d of %d …`). `available` is the word only this line says.
+	return [HudComposeVocab.KIT_SHORTFALL_FORMAT.split(" ")[-1]]
 
 func _assert_one_role_card_gear(role_name: String, job: String, kit_name: String, effect: String,
 		item_label: String, condition: float) -> void:
@@ -7460,10 +7459,11 @@ func _assert_role_card_shortfall() -> void:
 			row["count"] = ROLE_SHORTFALL_CLUBS_HELD
 	short_band["kit_item_conditions"] = rows
 	var short_line := KitRoster.role_hint(kits, warrior, short_band, KitRoster.JOB_WARRIOR)
-	var want := HudComposeVocab.KIT_SHORTFALL_SOME_FORMAT % [ROLE_SHORTFALL_CLUBS_HELD,
+	# **THE ROLE CARD TAKES THE SAME SENTENCE, counting complete kits and naming the KIT** — one
+	# phrasing wherever gear runs short. Composed from the vocabulary, never through the producer.
+	var want := HudComposeVocab.KIT_SHORTFALL_FORMAT % [ROLE_SHORTFALL_CLUBS_HELD,
 		int(BandFx.KIT_WARRIOR_HEADCOUNT),
-		HudComposeVocab.KIT_SHORTFALL_CREW_NOUNS[KitRoster.JOB_WARRIOR],
-		DetailFormat.kit_item_label(BandFx.KIT_ITEM_CLUBS).to_lower()]
+		KitRoster.kit_display_name(warrior) + HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
 	_assert_band_panel("…while a short one says so in the compose sheets' own words — \"%s\""
 			% short_line, short_line.ends_with(want))
 	# **AND IT NEVER SAYS `dry`**, which claimed the band owned some and had spent them.
@@ -13839,13 +13839,16 @@ func _assert_forecastless_sheet_suppresses_estimates() -> void:
 	if at < 0:
 		return
 	var tail := lines.slice(at + 1)
-	# The gate at the BARE-handed tier against this quarry's defense: the effective attack is 0, so it
-	# refuses outright — the honest verdict for a party carrying nothing, and the one thing this sheet
-	# can still say. Composed from the vocabulary, never through `hunt_gate_model_at`.
-	var gate := SourceForecast.HUNT_GATE_BLOCKED_FORMAT % [
-		SourceForecast.HUNT_FORECAST_WARN_GLYPH, "Wild Boar",
-		String.num(BandFx.KIT_ATTACK_BARE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS),
-		String.num(QUARRY_DEFENSE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS)]
+	# The gate at the BARE-handed tier: the effective attack is 0, so it refuses outright — the honest
+	# verdict for a party carrying nothing, and the one thing this sheet can still say. Composed from
+	# the vocabulary, never through `hunt_gate_model_at`.
+	#
+	# **THIS SHEET COMPOSES `none`, so it takes the UNARMED remedy** — the kit names no weapon, so the
+	# fix really is to pick one that does. Its armed twin (a kit that names a weapon the band does not
+	# hold) is asserted in `ui_preview`'s hunt chapter; the two are one claim and neither is worth
+	# anything alone.
+	var gate := SourceForecast.HUNT_GATE_BLOCKED_UNARMED_FORMAT % [
+		SourceForecast.HUNT_FORECAST_WARN_GLYPH, "Wild Boar"]
 	var note := HudComposeVocab.DENIAL_FORECAST_PENDING
 	var want: Array[String] = [gate, note]
 	_assert_band_panel(("…and below the kit row it says EXACTLY the gate and the quoted-kit note — "

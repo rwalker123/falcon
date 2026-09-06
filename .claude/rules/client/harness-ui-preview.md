@@ -2482,7 +2482,53 @@ longer exist — the fixture now stages the link-kind keys and the frame reads `
 trap: **a frame whose fixture is the last producer of a state can go on passing after the state
 becomes unreachable**, and it then guards nothing while looking like coverage.
 
-**A clean run is 420 frames / 1938 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+**A clean run is 420 frames / 1947 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+
+## The forage kit line, driven through the real sheet (`chapters/forage_accounts.gd`)
+
+⛔ **THE FORAGE WEB HAD NO COVERAGE AT ALL, WHICH IS HOW IT STAYED MUTE THROUGH THE WHOLE LIFE OF THE
+LINE.** The hunt sheet was asserted from the start and the forage sheet never was, so nobody noticed
+that `DrawerComposeController` handed the hunt kit row `_compose.hunt_count()` and handed the forage
+row nothing.
+
+**`_assert_the_forage_kit_line_reaches_the_sheet` is DRIVEN through `_compose_forage` and reads the
+RENDERED label**, and that is the whole point: a claim made against `KitRoster.shortfall_line` would
+have passed for the life of the bug, because the arithmetic was never wrong — the crew never reached
+it. Four legs on one band with only the baskets held moving: short, owns-none, covered (silence, the
+control), and **an UNSTAFFED forage job**, which is Ray's exact frame — `workersOnQuotedJob` is `0`
+there, which is what made the symptom total silence rather than a wrong number.
+
+⛔ **THE SHEET IS CLOSED BETWEEN LEGS.** Re-opening on the SAME tile is not a source change, so the
+sheet is not rebuilt and the previous band's label is still hanging there — measured: all three legs
+read `1 of 3` off the first one before the close was added.
+
+**Sabotage-verified** by removing the crew from the forage mount: all four legs fail, and the
+unstaffed one comes back `""` — the reported symptom, exactly.
+
+## The combat gate's remedy is a PAIR (`chapters/hunt.gd`)
+
+Two claims that used to assert the ARITHMETIC (*the refusal names BOTH terms*) are re-aimed at the
+REMEDY rather than deleted, by EQUALITY against the vocabulary's own format, with the retired clause
+asserted ABSENT beside them (`defense`, `casualties`). A third state composes the **`none`** kit on the
+same herd and the same band and requires the OTHER sentence.
+
+**Neither arm is worth anything alone** — a producer that always says *they need weapons* passes the
+first two, one that always says *pick a kit* passes the third — so the two are taken on one fixture
+with only the selected kit moving, plus an explicit claim that the sentences differ.
+
+⛔ **THE KIT IS SET AFTER THE COMPOSE, NOT BEFORE.** `reset_hunt_source` clears the composed kit, so a
+selection made ahead of it is thrown away and the sheet re-resolves the job DEFAULT — which names a
+weapon, so the `none` state silently became a second copy of the armed arm and read `they need
+weapons`. Caught by the pair; it is the reason the pair exists.
+
+⛔ **AND THE ARMED PEN LINE IS CAPTURED AS TEXT, NOT HELD AS A NODE** — the re-compose rebuilds the
+sheet, so a `pen_sheet` reference read afterwards answers for the state that replaced it. **The pen
+fixture is a DOMESTICATED herd and a different species** (`Red Deer`): it keeps the mammoth's combat
+terms, not its name.
+
+Sabotage-verified two ways, DISJOINT: hard-wiring the ARMED remedy fails the two unarmed claims,
+hard-wiring the UNARMED one fails the three armed claims (and `band_panel_preview`, whose denial sheet
+composes `none` and therefore pins the unarmed arm on its own surface).
 
 ## The coverage blend, and the table that IS the regression (`chapters/compose_rungs.gd`)
 

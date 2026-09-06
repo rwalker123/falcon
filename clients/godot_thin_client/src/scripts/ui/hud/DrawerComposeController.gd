@@ -2944,9 +2944,15 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # **AND AT ITS ATTACK AGAINST *THIS ANIMAL*, NOT THE KIT'S BEST CASE.** A weapon bounded to a
         # size window grants nothing above it, so a snare reads the bare hand's attack against a Red
         # Deer — and the unbounded reading is what let a trapping sheet clear a gate the sim shuts.
+        # **THE REMEDY IS CHOSEN ON THE KIT, THE REFUSAL ON THE BAND'S RESOLVED ATTACK.** The two are
+        # different questions and the second cannot answer the first: a Stalking kit with an empty
+        # store resolves to the bare hand, so a remedy read off that reading would tell this player to
+        # change kit — to the kit they already have.
+        var selected_kit := KitRoster.kit_by_id(kits, kit_id)
         var gate := SourceForecast.hunt_gate_model_at(KitRoster.effective_attack_against(
-            kits, KitRoster.kit_by_id(kits, kit_id), band,
-            float(herd.get(KitRoster.QUARRY_BODY_MASS_KEY, 0.0))), herd, quarry)
+            kits, selected_kit, band,
+            float(herd.get(KitRoster.QUARRY_BODY_MASS_KEY, 0.0))), herd, quarry,
+            KitRoster.kit_arms_the_party(kits, selected_kit))
         if bool(gate["blocked"]):
             var gate_label := HudWidgets.forecast_label("[color=#%s]%s[/color]" % [
                 HudStyle.DANGER_HEX, String(gate["text"])])
@@ -3722,10 +3728,17 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     var forage_kit_id := KitRoster.resolve_selection(forage_kits, KitRoster.JOB_FORAGE,
         forage_default_kit, _compose.forage_kit_id())
     _compose.set_forage_kit_id(forage_kit_id)
+    # ⛔ **THE CREW IS HANDED ON HERE, AND ITS ABSENCE MADE THE FORAGE SHEET MUTE.** This call omitted
+    # it, so `crew` defaulted to `KIT_CREW_UNCOMPOSED` and `shortfall_line` fell back to the published
+    # `workersOnQuotedJob` — which is `0` on a sheet where nobody is assigned yet — and returned `""`
+    # on EVERY forage sheet, however short the band was. The hunt row one screen up had always passed
+    # `_compose.hunt_count()`, so the two webs looked identical in the producer and diverged at the
+    # mount. Reported from play as *"in the forage image you say nothing."*
     _mount_kit_row(target, forage_kits, KitRoster.JOB_FORAGE, forage_kit_id, forage_default_kit, band,
         func(picked: String) -> void:
             _compose.set_forage_kit_id(picked)
-            _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
+            _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target),
+        {}, "", _compose.forage_count())
     # **THE SPECIES CHIPS — what this crew carries home**, standing where the retired crop picker stood
     # and doing both of that control's jobs: on a plain gather it narrows the TAKE (multi-select, the
     # selective gather); with a rung composed it is the COMMIT crop (single-select), which is the same

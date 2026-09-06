@@ -72,6 +72,8 @@ const KIT_LIVENESS_FORAGERS := 2
 const SHORTFALL_SPEARS_HELD := 5.0
 const SHORTFALL_NONE_HELD := 0.0
 const SHORTFALL_SLED_HELD := 2.0
+## How far past the crew the deep-store fixture reaches, so `min(held, crew)` has something to cap.
+const SHORTFALL_SURPLUS := 5.0
 
 ## The retired word, asserted ABSENT: `dry` said the band owned some and had spent them, which is
 ## exactly what an unowned item is not.
@@ -700,6 +702,12 @@ func _coverage_band(owned: int) -> Dictionary:
 func _coverage_patch() -> Dictionary:
 	return {SourceForecast.FORECAST_PER_WORKER_KEY: COVERAGE_WIRE_PER_WORKER}
 
+## The sentence, composed HERE from the vocabulary — never through `KitRoster.shortfall_line`, which
+## is the thing under test.
+func _kit_shortfall_want(held: int, crew: int, kit: Dictionary) -> String:
+	return HudComposeVocab.KIT_SHORTFALL_FORMAT % [held, crew,
+		KitRoster.kit_display_name(kit) + HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
+
 func _assert_the_kit_line_is_a_shortfall_warning() -> void:
 	var roster := BandFx.kit_roster_fixture()
 	var big_game := KitRoster.kit_by_id(roster, BandFx.KIT_ID_BIG_GAME)
@@ -712,32 +720,31 @@ func _assert_the_kit_line_is_a_shortfall_warning() -> void:
 		BandFx.band_fixture()), KitRoster.JOB_HUNT, crew)
 	h._assert_hud("a fully covered crew gets NO kit line at all (\"%s\")" % covered, covered == "")
 
-	# **SOME BUT NOT ENOUGH.** Five sets of spears among seventeen hunters.
+	# **SHORT — five complete Stalking kits among seventeen hunters.**
 	var partly := BandFx.band_fixture()
 	partly["kit_item_conditions"] = BandFx.kit_condition_rows(SHORTFALL_SPEARS_HELD)
 	var some := KitRoster.tier_hint(roster, big_game, partly, KitRoster.JOB_HUNT, crew)
-	var some_want := HudComposeVocab.KIT_SHORTFALL_SOME_FORMAT % [int(SHORTFALL_SPEARS_HELD), crew,
-		HudComposeVocab.KIT_SHORTFALL_CREW_NOUNS[KitRoster.JOB_HUNT],
-		DetailFormat.kit_item_label(BandFx.KIT_ITEM_SPEARS).to_lower()]
-	h._assert_hud("…a partly equipped crew says so in plain English (wanted \"%s\", got \"%s\")"
-		% [some_want, some], some == some_want)
+	h._assert_hud("…a partly outfitted crew counts KITS, not items (wanted \"%s\", got \"%s\")"
+			% [_kit_shortfall_want(int(SHORTFALL_SPEARS_HELD), crew, big_game), some],
+		some == _kit_shortfall_want(int(SHORTFALL_SPEARS_HELD), crew, big_game))
 
-	# **OWNS NONE — a different situation, so a different sentence.** It is also the state that used to
-	# read `spears dry`, i.e. *you have spears and they are spent*.
+	# **OWNS NONE — the same sentence, and the `0` says the difference.** The two formats it used to
+	# take are retired: `0 of 17` against `5 of 17` needs no second wording. It is also the state that
+	# once read `spears dry`, i.e. *you have spears and they are spent*.
 	var bare := BandFx.band_fixture()
 	bare["kit_item_conditions"] = BandFx.kit_condition_rows(SHORTFALL_NONE_HELD)
 	var none_held := KitRoster.tier_hint(roster, big_game, bare, KitRoster.JOB_HUNT, crew)
-	var none_want := HudComposeVocab.KIT_SHORTFALL_NONE_FORMAT % [crew,
-		HudComposeVocab.KIT_SHORTFALL_CREW_NOUNS[KitRoster.JOB_HUNT],
-		DetailFormat.kit_item_label(BandFx.KIT_ITEM_SPEARS).to_lower()]
-	h._assert_hud("…and owning NONE reads differently from owning too few (wanted \"%s\", got \"%s\")"
-		% [none_want, none_held], none_held == none_want)
+	h._assert_hud("…and owning NONE reads `0 of %d` in the same sentence (got \"%s\")"
+			% [crew, none_held],
+		none_held == _kit_shortfall_want(0, crew, big_game))
 	h._assert_hud("…never as `dry`, which claimed the band owned some and had spent them",
 		not none_held.to_lower().contains(RETIRED_DRY_NEEDLE))
+	h._assert_hud("…and never naming an ITEM, which is the smaller and less honest number",
+		not none_held.to_lower().contains(BandFx.KIT_ITEM_SPEARS))
 
-	# **THE SENTENCE NAMES THE SHORTEST ITEM, NOT THE FIRST.** `big_game` carries spears then the sled;
-	# with the SLED the scarcer of the two the warning must move to it, or the claim above is satisfied
-	# by a line that always names `item_ids[0]`.
+	# ⛔ **A KIT IS EVERY ITEM IT CARRIES, AND THIS IS THE CLAIM THAT SAYS SO.** `big_game` is spears
+	# AND a sled: with plenty of spears and almost no sleds the band fields SLEDS-many complete kits,
+	# not spears-many. An item-counting line reported the spears here and was wrong by construction.
 	var sled_short := BandFx.band_fixture()
 	var rows: Array = BandFx.kit_condition_rows()
 	for row_variant in rows:
@@ -746,11 +753,18 @@ func _assert_the_kit_line_is_a_shortfall_warning() -> void:
 			row["count"] = int(SHORTFALL_SLED_HELD)
 	sled_short["kit_item_conditions"] = rows
 	var sled_line := KitRoster.tier_hint(roster, big_game, sled_short, KitRoster.JOB_HUNT, crew)
-	h._assert_hud("…and it names the SHORTEST item the kit carries, not the first (\"%s\")"
-			% sled_line,
-		sled_line.contains(DetailFormat.kit_item_label(BandFx.KIT_ITEM_SLED).to_lower())
-			and not sled_line.contains(DetailFormat.kit_item_label(
-				BandFx.KIT_ITEM_SPEARS).to_lower()))
+	h._assert_hud("…a kit is only as complete as its SCARCEST item (wanted \"%s\", got \"%s\")"
+			% [_kit_shortfall_want(int(SHORTFALL_SLED_HELD), crew, big_game), sled_line],
+		sled_line == _kit_shortfall_want(int(SHORTFALL_SLED_HELD), crew, big_game))
+
+	# **AND IT IS CAPPED AT THE CREW.** A store deeper than the party reads `N of N`, never `store of
+	# N` — the question is how much of THIS party is outfitted, not how much gear is in the tent. It is
+	# the covered case, so the honest answer is SILENCE.
+	var deep := BandFx.band_fixture()
+	deep["kit_item_conditions"] = BandFx.kit_condition_rows(crew + SHORTFALL_SURPLUS)
+	h._assert_hud("…and a store deeper than the party says nothing at all, never `%d of %d`"
+			% [crew + SHORTFALL_SURPLUS, crew],
+		KitRoster.tier_hint(roster, big_game, deep, KitRoster.JOB_HUNT, crew) == "")
 
 	# **A KIT THAT CARRIES NOTHING CANNOT LEAVE ANYONE SHORT.** `none`'s tier IS the bare-handed one,
 	# which every worker already gets, so a warning here would be about gear the kit never claimed.

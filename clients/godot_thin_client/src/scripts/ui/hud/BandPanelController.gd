@@ -7367,9 +7367,13 @@ func _mount_kit_row(sheet: VBoxContainer, kits: Array, job: String, kit_id: Stri
 ## two ways.
 func _mount_kit_gate_line(sheet: VBoxContainer, kits: Array, kit_id: String, band: Dictionary,
         herd: Dictionary, quarry: String) -> void:
+    var selected_kit := KitRoster.kit_by_id(kits, kit_id)
+    # The remedy is a fact about the KIT, the refusal about the band's resolved attack — see the
+    # compose sheet's twin, which carries the argument.
     var gate := SourceForecast.hunt_gate_model_at(KitRoster.effective_attack_against(
-        kits, KitRoster.kit_by_id(kits, kit_id), band,
-        float(herd.get(KitRoster.QUARRY_BODY_MASS_KEY, 0.0))), herd, quarry)
+        kits, selected_kit, band,
+        float(herd.get(KitRoster.QUARRY_BODY_MASS_KEY, 0.0))), herd, quarry,
+        KitRoster.kit_arms_the_party(kits, selected_kit))
     # **ONLY THE REFUSAL RENDERS.** The winnable branch used to state the effort in hunter-turns; that
     # face is retired (a species constant beside a forecast that already prices the trip), so a fight
     # this party CAN take says nothing here and the sheet's remaining lines are the answer.

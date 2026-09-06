@@ -15,6 +15,39 @@ paths:
 
 # Labor allocation UI — the compose sheet and forecasts
 
+## ⛔ THE KIT LINE COUNTS COMPLETE KITS, AND BOTH WEBS MUST HAND IT THE CREW
+
+`0 of 1 Stalking kits available` · `1 of 3 Harvesting kits available`
+
+**It counted the scarcest ITEM and named it** (`None of 1 hunters carry spears`). A Stalking kit is
+spears AND a sled, so a band holding three spears and no sled fields **zero** complete outfits while
+an item count reports three. What the player composes is an outfit, and the number has to answer for
+the thing they picked. Ray: *"get rid of that 'none of 1 hunters has spears', to be: '0 of X stalking
+kits available' … do the same in the forage."*
+
+- **The numerator is the `min` over every item the kit `uses`**, CAPPED at the denominator — five
+  spears and one hunter reads `1 of 1`, never `5 of 1`. The denominator is the composed crew.
+- **The plural is the kit's own display name plus `s`.** Every roster name is singular and unsuffixed
+  (`Stalking kit`, `Harvesting kit`), so the suffix reads correctly for all of them, and the count is
+  not inflected. The `none` entry would read `No kits` and **cannot reach this line** — it carries no
+  items, and `shortfall_line` returns early on an empty `uses` list.
+- **One sentence for both ends.** The owns-none and owns-some formats are retired: `0 of 1` against
+  `1 of 1` says the difference in the number itself. `KIT_SHORTFALL_CREW_NOUNS` went with them — the
+  sentence names the KIT, so there is no crew noun and no per-job table to keep in step.
+- **The role cards take the same sentence**, as they take everything else here.
+
+### ⛔ …AND THE FORAGE SHEET SAID NOTHING AT ALL, FOR THE WHOLE LIFE OF THE LINE
+
+Reported from play: a Harvesting kit, one harvester, **no line**. The producer was shared with the
+hunt sheet and correct; **the two webs diverged at the MOUNT.** `DrawerComposeController` handed
+`_compose.hunt_count()` to the hunt kit row and handed the forage row nothing, so `crew` defaulted to
+`KIT_CREW_UNCOMPOSED`, `shortfall_line` fell back to the published `workersOnQuotedJob` — **`0` before
+anyone is assigned** — and returned `""` on every forage sheet however short the band was.
+
+**Both mounts pass the stepper now.** A claim made against `KitRoster.shortfall_line` directly would
+have passed for the whole life of the bug — the arithmetic was never wrong, the crew never reached it
+— so the forage coverage is DRIVEN through the real compose sheet and reads the rendered label.
+
 ## ⛔ THE KIT LINE UNDER THE COMPOSE PICKER IS A SHORTFALL WARNING, AND NOTHING ELSE
 
 **Everyone on the job covered → no line at all. Anyone short → one line, in `HudStyle.DANGER`, in
@@ -62,6 +95,48 @@ meaningless. The user has no sense why it is saying that."*
 it in full, in the item's own quanta (`48 raids left` / `Worn out`), and `equipment.json`'s
 `life_readout` seams push `kit_life` to the event dock (warn → Notable, danger → Alert). The band's
 own `Gear` row was retired in `docs/plan_standing_upkeep.md` §4.9 item 12 for exactly that reason.
+
+## ⛔ THE COMBAT GATE STATES THE REMEDY, NOT THE ARITHMETIC
+
+It read `⚠ Your hunters cannot hurt Wild Boar — attack 1 against its defense 2. No party size changes
+that: they would take casualties and kill nothing.` Reported from play: *"way too wordy … you have
+given a bunch of text that means nothing to the user and doesn't tell them how to fix it."*
+
+**The producer's own comment defended that clause** — *knowing it is the WEAPON and not the headcount
+is the whole lesson* — and the lesson was right; two bare numbers were the wrong way to teach it. The
+remedy says it outright now, in fewer words:
+
+| the selected kit | reads |
+|---|---|
+| names a weapon | `⚠ Your hunters cannot hurt Woolly Mammoth — they need weapons.` |
+| names none (`none`) | `⚠ Your hunters cannot hurt Woolly Mammoth — pick a kit that carries a weapon.` |
+
+- ⛔ **THE REMEDY IS CHOSEN ON THE KIT, NEVER ON WHETHER THE BAND OWNS THE WEAPON.** Ownership is the
+  shortfall line's job one row up (`None of 1 hunters carry spears`) and restating it here is the same
+  fact twice. The two are genuinely different advice: **a Stalking kit with an empty store needs the
+  SPEARS, not a different kit** — "pick a kit that carries a weapon" would send that player to the kit
+  they already have. `KitRoster.kit_arms_the_party` is the test, and it asks the ROSTER tier against
+  the bare-handed one; a test that read the band's RESOLVED tier answers `false` for exactly the case
+  it is meant to separate.
+- **`cannot hurt`, not `cannot hunt`.** A party CAN hunt this quarry — it just kills nothing, which is
+  the whole point of the gate.
+- **`stated` / `blocked` / `effective_attack` are unchanged**; only `text` moved.
+
+### ⛔ …AND THE WEAPON IS NOT NAMED, BECAUSE THE WIRE CANNOT SAY WHICH ITEM IT IS
+
+`they need spears` would be a GUESS. `snapshot.fbs` states it outright on `BandKitTiers`:
+*`KitOption.itemIds` says what a kit carries but not what each item is FOR, and no rule over that list
+recovers it — set-cover and positional order both mis-assign.* That is the whole reason the sim
+publishes resolved per-kit tiers rather than letting a client derive them, and `KitRoster` carries the
+same prohibition in three places. **The role cards do not resolve an axis to an item either** — they
+print every item the kit carries, for exactly this reason.
+
+It is also wrong on shipped content: `trapping` supplies attack from `traps`, not spears.
+
+**The item's name reaches the player from the shortfall line directly above**, which names the item it
+is actually counting. If the weapon must be named IN the gate, the derivation would have to come from
+`equipment_config_json` — whose `items[].tiers[].effects[].stat` does say which item grants `attack` —
+which is a new dependency for this seam, not a lookup that exists today.
 
 ## ⛔ THE CREW IS PRICED AGAINST THE GEAR THE BAND ACTUALLY HOLDS
 

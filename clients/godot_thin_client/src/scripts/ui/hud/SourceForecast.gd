@@ -2047,17 +2047,47 @@ static func quarry_is_fought(src: Dictionary, prefix: String) -> bool:
 static func is_fought(engage_rate: float, corralled: bool) -> bool:
     return corralled or has_engagement_stage(engage_rate)
 
-# THE GATE's ONE verdict. It names both terms, because "you cannot" without the arithmetic is a
-# tooltip the player has no way to act on: knowing it is the WEAPON and not the headcount is the whole
-# lesson (`4.8` — the first spear should feel like a different game). It is also the honesty line the
+# THE GATE's ONE verdict: **the refusal, then WHAT TO DO ABOUT IT.** It is also the honesty line the
 # `none` kit depends on (`docs/plan_denial_raid.md`): with the estimate tables suppressed for a kit
 # they are not quoted at, this is what still answers what the party can and cannot hurt.
 #
-# **THE WINNABLE BRANCH'S FACE IS RETIRED** (reported from playtest). `0.1 hunter-turns to bring one
-# Wild Fowl down` was a species constant that never moved with anything the player was dialling,
-# printed directly above a forecast that already prices the whole trip. The MODEL still answers
-# `blocked` / `effective_attack`; what went is the sentence for the case that needs none.
-const HUNT_GATE_BLOCKED_FORMAT := "%sYour hunters cannot hurt %s — attack %s against its defense %s. No party size changes that: they would take casualties and kill nothing."
+# > #### ⛔ THE ARITHMETIC IS RETIRED, AND SO IS THE SENTENCE THAT DEFENDED IT
+# >
+# > It read `… — attack 1 against its defense 2. No party size changes that: they would take
+# > casualties and kill nothing.`, and this comment argued for it: *"you cannot" without the
+# > arithmetic is a tooltip the player has no way to act on: knowing it is the WEAPON and not the
+# > headcount is the whole lesson.*
+# >
+# > **The lesson is right and the clause was the wrong way to teach it.** Reported from play: *"way
+# > too wordy … you have given a bunch of text that means nothing to the user and doesn't tell them
+# > how to fix it."* Two bare numbers are not a remedy — the player has to infer *therefore get a
+# > weapon* from `1 against 2` — so the remedy is stated OUTRIGHT now, in fewer words, and the lesson
+# > lands harder for it. Do not restore either clause.
+#
+# **THE WINNABLE BRANCH'S FACE IS RETIRED TOO** (reported from playtest). `0.1 hunter-turns to bring
+# one Wild Fowl down` was a species constant that never moved with anything the player was dialling.
+# The MODEL still answers `stated` / `blocked` / `effective_attack`; only `text` has changed.
+#
+# ⛔ **THE REMEDY IS CHOSEN ON WHETHER THE SELECTED KIT ARMS THE PARTY AT ALL — never on whether the
+# band OWNS the weapon.** Ownership is the shortfall line's job one row up (`None of 1 hunters carry
+# spears`), and restating it here would be the same fact twice. The two cases are genuinely different
+# advice: a Stalking kit with no spears in the store needs the SPEARS, not a different kit — telling
+# that player to "pick a kit that carries a weapon" sends them to the kit they already have.
+const HUNT_GATE_BLOCKED_ARMED_FORMAT := "%sYour hunters cannot hurt %s — they need weapons."
+const HUNT_GATE_BLOCKED_UNARMED_FORMAT := "%sYour hunters cannot hurt %s — pick a kit that carries a weapon."
+
+## ⛔ **THE WEAPON IS NOT NAMED, AND IT IS NOT AN OVERSIGHT — THE WIRE CANNOT ANSWER WHICH ITEM IT IS.**
+## `snapshot.fbs` on `BandKitTiers` states it outright: *`KitOption.itemIds` says what a kit carries
+## but not what each item is FOR, and no rule over that list recovers it — set-cover and positional
+## order both mis-assign.* That is the whole reason the sim publishes resolved per-kit tiers instead of
+## letting a client derive them, and `KitRoster` carries the same prohibition in three places (*this
+## file may not map an axis to the component behind it*). The role cards do not resolve an axis to an
+## item either — they print EVERY item the kit carries, for exactly this reason.
+##
+## So a `they need spears` would be a GUESS, and it is wrong on two shipped kits: `trapping` supplies
+## attack from `traps`. The item's name reaches the player from the shortfall line directly above,
+## which names the item it is actually counting.
+const HUNT_GATE_WEAPON_UNNAMED := true
 # What `attack`/`defense`/`durability` are printed with. They are open-ended strength scalars on a
 # human anchor of 1, authored as small whole-ish numbers, so a rate's two decimals would be false
 # precision — `attack 20.00` claims a resolution the roster does not have.
@@ -2090,7 +2120,11 @@ static func hunt_gate_model(band: Dictionary, herd: Dictionary, quarry: String) 
 ##
 ## `hunt_gate_model` is exactly this asked at the band's own tier, so the two can never disagree about
 ## what a gate is; only about whose attack it is.
-static func hunt_gate_model_at(attack: float, herd: Dictionary, quarry: String) -> Dictionary:
+## `arms_the_party` — does the SELECTED KIT grant attack over the bare hand at all? It picks the
+## remedy and nothing else. `true` by default, which is the right reading for every caller that asks
+## at the band's own default kit (a weapon kit) and for every caller that reads only `blocked`.
+static func hunt_gate_model_at(attack: float, herd: Dictionary, quarry: String,
+        arms_the_party: bool = true) -> Dictionary:
     var blank := {"stated": false, "blocked": false, "effective_attack": 0.0, "text": ""}
     var defense := float(herd.get(HERD_DEFENSE_KEY, 0.0))
     # `durability` is still the STATED-ness test even though no surviving face quotes it: a species
@@ -2103,11 +2137,10 @@ static func hunt_gate_model_at(attack: float, herd: Dictionary, quarry: String) 
         # **A WINNABLE FIGHT SAYS NOTHING, and `text` is empty rather than absent.** The reading the
         # caller acts on is `blocked`; `effective_attack` stays for anyone composing on the margin.
         return {"stated": true, "blocked": false, "effective_attack": effective, "text": ""}
+    var remedy := HUNT_GATE_BLOCKED_ARMED_FORMAT if arms_the_party \
+        else HUNT_GATE_BLOCKED_UNARMED_FORMAT
     return {"stated": true, "blocked": true, "effective_attack": 0.0,
-        "text": HUNT_GATE_BLOCKED_FORMAT % [
-            HUNT_FORECAST_WARN_GLYPH, quarry,
-            String.num(attack, HUNT_GATE_SCALAR_DECIMALS),
-            String.num(defense, HUNT_GATE_SCALAR_DECIMALS)]}
+        "text": remedy % [HUNT_FORECAST_WARN_GLYPH, quarry]}
 
 # The three wire terms the gate is composed from — the BAND's resolved per-hunter attack (1 bare-
 # handed, 20 speared) and the HERD's two defensive axes. `defense` is whether a hit counts at all,
