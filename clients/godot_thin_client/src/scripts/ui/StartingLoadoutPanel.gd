@@ -521,6 +521,11 @@ func _recipe_row(row: Dictionary) -> Control:
 ## apply is a replacement the player may revise until the turn advances, so a label conditioned on
 ## what is unspent would name a consequence the press does not have.
 func _build_footer() -> void:
+	# **THE LEADING END OF A ROW THE CARD IS ALREADY SPENDING.** It adds no row and moves no height —
+	# the footer exists for the button, and the space to its left was empty. The spacer below still
+	# holds `Set out` hard right, so the control does not move either.
+	_footer.add_child(_caption(HudLoadoutVocab.FOOTER_NOTE, HudStyle.INK_DIM,
+		HudLoadoutVocab.SUBTITLE_FONT_SIZE))
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE

@@ -134,6 +134,20 @@ const LEGEND_HEAD := "Materials"
 ##
 ## The remainder is still worth saying and is said ONCE, on the **turn orb**, which is the surface
 ## that already counts down to the advance. Nothing on this card may state it a second time.
+## **THE FOOTER'S LEADING TEXT — two short declaratives, one fact each.** The card is dismissible and
+## the orb's row is the way back to it; the TURN is what ends that, and a player who has put the card
+## away has no other way to learn either.
+##
+## ⛔ **IT IS NOT THE RETIRED FORFEITURE CLAIM.** That one said COMMITTING shuts the window, which is
+## false — an apply is a replacement and the order may be revised as often as the player likes. This
+## names the TURN, which is true: `close_opening_window` is the only writer that ever clears `open`.
+## Do not let the two drift back together.
+##
+## The quiet ink, the subtitle's register: it is guidance rather than a warning, and this card carries
+## no warning ink anywhere else. **If it ever has to be trimmed, the SECOND sentence is the one that
+## survives** — the way back is discoverable by pressing things; the deadline is not.
+const FOOTER_NOTE := "The turn orb reopens this. Ending the turn closes it for good."
+
 const COMMIT_CLEAR_LABEL := "Set out"
 const COMMIT_TOOLTIP := "You can change this until you end the turn."
 

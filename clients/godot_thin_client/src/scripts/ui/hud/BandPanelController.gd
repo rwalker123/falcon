@@ -1520,11 +1520,17 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
 ## brightening it there would move those frames for no reading. `KitRoster.KIT_HINT_META` is the
 ## builder's own handle on that label; a child-index walk would silently re-tint whatever the row
 ## gains next.
-func _lift_role_gear_line(kit_row: Control) -> void:
-    for child in kit_row.get_children():
-        if child is Label and (child as Label).has_meta(KitRoster.KIT_HINT_META):
-            (child as Label).add_theme_color_override("font_color", HudStyle.INK_DIM)
-            return
+## ⛔ **RETIRED — IT WAS THE BUG.** This walked the kit row for the gear line and unconditionally
+## overwrote its `font_color` with `INK_DIM`, which CLOBBERED the `DANGER` the builder had just
+## applied to a card whose gear was short. Reported from play: `1-tile sight per vantage · 0 of 1
+## Wayfinding kits available`, a live shortfall in the quiet ink.
+##
+## **The ink is the builder's now, and the card asks for none of its own.** `build_kit_row` mounts the
+## role branch as rich text with `INK_DIM` as its DEFAULT colour — the same quiet the lift installed —
+## and tints the shortfall run alone. A card that re-tinted afterwards could only go back to painting
+## both runs one colour, which is the whole defect.
+func _lift_role_gear_line(_kit_row: Control) -> void:
+    pass
 
 ## The role card mounts the shared kit row with NO field key — see `_build_role_card`.
 const ROLE_CARD_KIT_KEY_TEXT := ""

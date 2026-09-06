@@ -162,6 +162,27 @@ the region may be **shorter** than the body wants (the room's ceiling doing its 
 carrying the rest) but never **taller**. With 400px injected it fails at `343 px of slack` on exactly
 the picked and spent states.
 
+## The footer says how to get the card back, and when you cannot
+
+> `The turn orb reopens this. Ending the turn closes it for good.`
+
+Two short declaratives, one fact each, in the subtitle's quiet ink — it is guidance, not a warning,
+and this card carries no warning ink anywhere else. A player who has dismissed the card has no other
+way to learn either fact.
+
+⛔ **IT IS NOT THE RETIRED FORFEITURE CLAIM.** That one said COMMITTING shuts the window, which is
+false — an apply is a replacement and the order may be revised as often as the player likes. This
+names the TURN, which is true: `close_opening_window` is the only writer that ever clears `open`. The
+two are one word apart in the source, so the preview asserts both facts AND keeps the `forfeit`
+negative beside them.
+
+**If it ever has to be trimmed, the SECOND sentence survives** — the way back is discoverable by
+pressing things; the deadline is not.
+
+**It costs no row and no height.** It fills the leading end of a footer the card was already spending
+on the button, with the existing spacer still holding `Set out` hard right. **MEASURED: the card is
+587px before and after, and the sentence renders on ONE line** at the card's width — no wrap.
+
 ## Two measurements that a screenshot is the only witness for
 
 - **The column seam is 2px where the horizontal rules are 1px.** The HUD renders at a fractional

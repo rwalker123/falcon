@@ -1635,6 +1635,11 @@ const KIT_SHORTFALL_FORMAT := "%d of %d %s available"
 ## roster whose names ever went plural would need a different rule.
 const KIT_SHORTFALL_PLURAL_SUFFIX := "s"
 
+## **THE SHORTFALL RUN'S WRAPPER on a line that carries a neutral clause beside it** — the role cards'
+## gear line, whose effect half must stay quiet. The colour is passed in rather than baked, so the ink
+## stays `HudStyle`'s to choose and this leaf keeps no palette of its own.
+const KIT_HINT_SHORTFALL_MARKUP := "[color=#%s]%s[/color]"
+
 ## ⛔ **THERE IS NO PEN CLAUSE ON THE HINT LINE ANY MORE** (issue #543). A
 ## `KIT_HINT_PEN_CARRY_FORMAT := "pen %s per keeper"` stood here arguing *"a sled drags a carcass in
 ## off the range; a pen stands at the camp, and what bounds a slaughter there is handling gear — so a

@@ -2482,7 +2482,12 @@ longer exist — the fixture now stages the link-kind keys and the frame reads `
 trap: **a frame whose fixture is the last producer of a state can go on passing after the state
 becomes unreachable**, and it then guards nothing while looking like coverage.
 
-**A clean run is 420 frames / 1947 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+**A clean run is 420 frames / 1950 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+
+The loadout chapter's `_assert_the_footer_says_how_to_get_back` rides the existing `starting_loadout`
+frame: BOTH facts (the orb brings it back; the turn ends it), because either alone leaves the player
+stuck, plus the retired `forfeit` negative. Sabotage-verified two ways — unmounting the note fails
+both facts, trimming the second sentence fails the deadline alone.
 
 ## The forage kit line, driven through the real sheet (`chapters/forage_accounts.gd`)
 

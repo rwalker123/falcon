@@ -25,7 +25,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 45
+const EXPECTED_CHECKPOINTS := 48
 
 const Q := preload("res://tools/ui_preview/node_query.gd")
 ## The four shipped HUD palettes, read as DATA — the ready ink's separation claim is made
@@ -153,6 +153,7 @@ func run(harness) -> void:
 	_assert_recipe_counts()
 	_assert_reachable_first()
 	_assert_orb_row()
+	_assert_the_footer_says_how_to_get_back()
 	_assert_no_dead_space("opened")
 	await h._save("starting_loadout")
 
@@ -431,6 +432,29 @@ func _assert_no_dead_space(arm: String) -> void:
 	h._assert_hud("loadout/%s — no dead space under the columns (%.0f px of slack in the scroll)"
 			% [arm, slack],
 		slack <= CARD_DEAD_SPACE_TOLERANCE)
+
+## **THE FOOTER TELLS THE PLAYER HOW TO GET THIS CARD BACK, AND WHEN THEY CANNOT.** Two facts, and
+## both are asserted, because either alone leaves the player stuck: the orb is the only way back to a
+## dismissed card, and the turn is the thing that ends it.
+##
+## ⛔ **THE RETIRED FORFEITURE CLAIM STAYS ABSENT BESIDE THEM.** That one said COMMITTING shuts the
+## window, which is false — an apply is a replacement. This names the TURN, which is true. They are one
+## `forfeit` apart in the source and must not drift back together, so the negative rides here.
+func _assert_the_footer_says_how_to_get_back() -> void:
+	var note := HudLoadoutVocab.FOOTER_NOTE
+	h._assert_hud("loadout — the footer says the ORB brings this back (\"%s\")" % note,
+		Q.has_label_containing(_panel(), FOOTER_ORB_NEEDLE)
+			and note.contains(FOOTER_ORB_NEEDLE))
+	h._assert_hud("loadout — …and that ENDING THE TURN is what closes it",
+		Q.has_label_containing(_panel(), FOOTER_TURN_NEEDLE)
+			and note.contains(FOOTER_TURN_NEEDLE))
+	h._assert_hud("loadout — …while still claiming nothing is forfeited by committing",
+		not Q.has_label_containing(_panel(), FORFEIT_NEEDLE))
+
+## The two facts, as the words only this line says. Needles rather than the whole sentence, so a
+## reworded second clause does not silently stop being asserted — what must survive is the FACT.
+const FOOTER_ORB_NEEDLE := "turn orb"
+const FOOTER_TURN_NEEDLE := "Ending the turn"
 
 # ---- the orb, in both of its states ------------------------------------------
 

@@ -7392,6 +7392,10 @@ func _assert_role_card_gear() -> void:
 ## How many clubs the short warrior band holds, against `BandFx.KIT_WARRIOR_HEADCOUNT`. Below it and
 ## above zero, so the sentence is the SOME form rather than either extreme.
 const ROLE_SHORTFALL_CLUBS_HELD := 1
+
+## The first word of the Warrior card's EFFECT clause. The line must OPEN with it UNTAGGED, which is
+## what says the neutral run really is neutral rather than merely un-asserted.
+const ROLE_EFFECT_WARRIOR_OPENING := "attack"
 ## **THE OPENINGS OF THE TWO SHORTFALL SENTENCES, asserted ABSENT on the covered card** — derived
 ## from the formats rather than quoted, because a literal needle goes stale silently the moment the
 ## copy is reworded. It already did: this held `"go without"`, the trailing clause both sentences
@@ -7414,7 +7418,10 @@ func _assert_one_role_card_gear(role_name: String, job: String, kit_name: String
 		return
 	_assert_kit_picker_face(picker, job, kit_name,
 		"…whose face names this role's own kit (\"%s\")" % picker.text)
-	var hint := _find_meta_control(card, KitRoster.KIT_HINT_META) as Label
+	# **RICH TEXT NOW, NOT A `Label`** — the line carries two runs at two colours (see
+	# `KitRoster.build_kit_row`), so the reader takes its parsed text and the ink claim below reads the
+	# markup it was built from.
+	var hint := _find_meta_control(card, KitRoster.KIT_HINT_META) as RichTextLabel
 	if hint == null:
 		_fail("the %s card has no gear line" % role_name)
 		return
@@ -7427,11 +7434,23 @@ func _assert_one_role_card_gear(role_name: String, job: String, kit_name: String
 	# **The absence is only half the claim**; `_assert_role_card_shortfall` below renders the same card
 	# for a band that IS short and requires the sentence, so a line that lost its second half entirely
 	# fails there rather than passing here.
-	_assert_band_panel("…over a gear line stating what this role's gear buys — \"%s\"" % hint.text,
-		hint.text == effect)
+	var reads := hint.get_parsed_text()
+	_assert_band_panel("…over a gear line stating what this role's gear buys — \"%s\"" % reads,
+		reads == effect)
 	_assert_band_panel("…and NOT the retired item clause, which called unowned gear `%s`"
 			% DetailFormat.KIT_DRY_FACE,
-		not hint.text.contains(item_label) and not hint.text.contains(DetailFormat.KIT_DRY_FACE))
+		not reads.contains(item_label) and not reads.contains(DetailFormat.KIT_DRY_FACE))
+	# **A COVERED CARD CARRIES NO RED AT ALL** — the control for the ink pair below. Without it, "the
+	# shortfall run is DANGER" passes on a card that tints something on every render.
+	_assert_band_panel("…and nothing on a fully equipped card is tinted `DANGER` (\"%s\")" % hint.text,
+		not hint.text.contains(HudStyle.DANGER_HEX))
+	# ⛔ **THE RENDERED NEUTRAL INK, asked of the mounted control.** The markup claims below say what
+	# the PRODUCER composed; this says what the card actually installed, and it is the half that sees a
+	# host re-tinting the line after the builder handed it over — which is exactly what the retired
+	# `_lift_role_gear_line` did, clobbering `DANGER` back to the quiet ink on a card whose gear was
+	# short.
+	_assert_band_panel("…and the line's DEFAULT ink is the card's quiet one, not a host's override",
+		hint.get_theme_color("default_color") == HudStyle.INK_DIM)
 
 ## **THE OTHER HALF: a role whose gear does not reach its own head count says so, in the compose
 ## sheets' own sentence.** Driven over `KitRoster.role_hint` rather than through the card, because the
@@ -7466,6 +7485,16 @@ func _assert_role_card_shortfall() -> void:
 		KitRoster.kit_display_name(warrior) + HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
 	_assert_band_panel("…while a short one says so in the compose sheets' own words — \"%s\""
 			% short_line, short_line.ends_with(want))
+	# ⛔ **THE INK IS A PAIR, AND A ONE-SIDED CLAIM CANNOT SEE THE BUG.** The reported defect was a live
+	# shortfall in the QUIET ink; the obvious over-correction is a card that reddens the whole line,
+	# which would make a card that is merely short read as a card that is entirely wrong. So: the
+	# shortfall run IS tinted, and the effect run is NOT.
+	var markup := KitRoster.role_hint_markup(kits, warrior, short_band, KitRoster.JOB_WARRIOR)
+	var tinted := HudComposeVocab.KIT_HINT_SHORTFALL_MARKUP % [HudStyle.DANGER_HEX, want]
+	_assert_band_panel("…with the SHORTFALL run tinted DANGER — \"%s\"" % markup,
+		markup.contains(tinted))
+	_assert_band_panel("…and the EFFECT run left neutral, so a short card is not a wrong card",
+		markup.begins_with(ROLE_EFFECT_WARRIOR_OPENING))
 	# **AND IT NEVER SAYS `dry`**, which claimed the band owned some and had spent them.
 	_assert_band_panel("…never calling gear it simply lacks `%s`" % DetailFormat.KIT_DRY_FACE,
 		not short_line.contains(DetailFormat.KIT_DRY_FACE))

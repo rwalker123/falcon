@@ -1638,6 +1638,23 @@ static func role_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 		parts.append(shortfall)
 	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
 
+## **THE SAME LINE AS BBCODE, with the SHORTFALL RUN ALONE tinted `DANGER`.**
+##
+## The effect clause is left UNTAGGED and so reads the label's default ink — a fact about the gear is
+## not a warning, and reddening it would make a card that is merely short read as a card that is
+## entirely wrong. Only the run that IS the warning carries the colour.
+##
+## It is a separate producer from `role_hint` rather than a flag on it, because plain text is what the
+## harnesses compare and what any non-rich host would need; the two compose the identical clauses, so
+## a wording change reaches both.
+static func role_hint_markup(kits: Array, kit: Dictionary, band: Dictionary, job: String) -> String:
+	var plain := role_hint(kits, kit, band, job)
+	var shortfall := shortfall_line(kits, kit, band, job)
+	if plain == "" or shortfall == "":
+		return plain
+	return plain.replace(shortfall, HudComposeVocab.KIT_HINT_SHORTFALL_MARKUP % [
+		HudStyle.DANGER_HEX, shortfall])
+
 ## What this role's tier BUYS, in words. **A vantage is a DISTANCE and the camp's attack is a small
 ## whole number**, so each takes the rounding the Gear popover already gives it — the vantage its own
 ## (the sim reveals in whole tiles), the attack the popover's shared whole-number face — and neither
@@ -1786,16 +1803,29 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 	block.add_child(row)
 	var hint_text := tier_hint(kits, selected, band, job, crew)
 	if hint_text != "":
-		var hint := HudWidgets.alloc_hint_label(hint_text)
+		# **THE INK FOLLOWS THE SHORTFALL, and it is asked of the PRODUCER rather than read off the
+		# text** — so a copy edit cannot silently take the colour with it.
+		var shortfall := shortfall_line(kits, selected, band, job, crew)
+		var hint: Control
+		if is_band_wide_role(job):
+			# ⛔ **A ROLE CARD'S LINE IS TWO RUNS AND ONLY THE SECOND IS A WARNING.** `1-tile sight per
+			# vantage` is a fact about the gear; reddening it would make a card that is merely short
+			# read as a card that is entirely wrong. A `Label` carries ONE `font_color`, so this line
+			# could only be all-red or all-quiet — which is why it rendered a live shortfall in the
+			# quiet ink. It is rich text now, quiet by default with the shortfall run alone tinted.
+			#
+			# **IT COSTS NO ROW**, which is the constraint that picked the mechanism: the band zone's
+			# two-column split is authored against MEASURED block heights, so a second line here would
+			# re-open a flank that has been re-authored four times.
+			hint = HudWidgets.alloc_hint_markup(role_hint_markup(kits, selected, band, job),
+				HudStyle.INK_DIM)
+		else:
+			# A source job's line is ONLY ever a shortfall, so it is all one run and all DANGER.
+			var plain := HudWidgets.alloc_hint_label(hint_text)
+			if shortfall != "":
+				plain.add_theme_color_override("font_color", HudStyle.DANGER)
+			hint = plain
 		hint.set_meta(KIT_HINT_META, true)
-		# **THE INK FOLLOWS THE SHORTFALL, on both surfaces.** A source job's line is ONLY ever a
-		# shortfall, so it is always DANGER; a role card's carries its effect phrase too and turns red
-		# only when the sentence is appended to it. The faint hint ink `alloc_hint_label` installs was
-		# right for a row of tiers and conditions and is wrong for a line saying *some of these people
-		# have no gear*. Asked of the producer rather than by inspecting the text, so a copy change
-		# cannot silently take the colour with it.
-		if shortfall_line(kits, selected, band, job, crew) != "":
-			hint.add_theme_color_override("font_color", HudStyle.DANGER)
 		block.add_child(hint)
 	return block
 

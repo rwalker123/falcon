@@ -79,6 +79,22 @@ meaningless. The user has no sense why it is saying that."*
   is the sim's own answer wherever it applies.
 - **THE SENTENCE NAMES THE SHORTEST ITEM THE KIT CARRIES**, never `item_ids[0]`, and never an item
   guessed from an axis — this layer may not map an axis to the component behind it.
+- ⛔ **A ROLE CARD'S LINE IS TWO RUNS AND ONLY THE SECOND IS RED.** It is one wrapped line —
+  `1-tile sight per vantage · 0 of 1 Wayfinding kits available` — and the effect half is a fact about
+  the gear, not a warning; reddening it would make a card that is merely SHORT read as a card that is
+  entirely wrong. A `Label` carries one `font_color`, so it could only be all-red or all-quiet, and it
+  rendered a live shortfall in the quiet ink. It is `HudWidgets.alloc_hint_markup` now — a
+  `RichTextLabel` styled term-for-term against `alloc_hint_label` (same font size, same
+  `AUTOWRAP_WORD_SMART`, same expand-fill) with the card's quiet ink as its DEFAULT colour and only the
+  shortfall run tagged.
+  **MEASURED: the swap moved nothing** — Scout content 175px, Warrior 158px, both rendering 175px,
+  identical before and after. That mattered: giving the shortfall its own line would have cost the
+  card a ROW, and the band zone's two-column split is authored against measured block heights.
+- ⛔ **AND THE BUG WAS A HOST RE-TINTING AFTER THE BUILDER.** `BandPanelController._lift_role_gear_line`
+  walked the kit row and unconditionally overwrote the gear line's `font_color` with `INK_DIM`,
+  clobbering the `DANGER` the builder had just applied. The ink is the builder's alone now and the
+  card asks for none of its own; the lift is retired. **Nothing may re-tint this line downstream** —
+  the only thing a host can do from there is paint both runs one colour, which is the whole defect.
 - **The band-wide ROLE cards say the SAME sentence.** `Clubs dry` was the last live instance of the
   ownership defect — `dry` for an item the band owns NONE of — so the per-item condition clause is
   retired there too and the card reads *effect*, then the shortfall only where somebody is going
