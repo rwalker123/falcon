@@ -839,6 +839,35 @@ pub struct HerdTelemetryState {
     /// Appended (append-only).
     #[serde(default)]
     pub pen_extend_cost: f32,
+    /// **HOW MUCH OF ITSELF THIS HERD GIVES AS STANDING OUTPUT** — milk, eggs and wool instead of
+    /// meat, `0..1` (`docs/plan_pen_standing_yield.md`). The meat take is the ordinary take
+    /// `× (1 − this)`; the standing yield is the species' per-head rates `× head count × this ×`
+    /// the rung's share. `0.0` is every herd's reading until a player pays to change it.
+    ///
+    /// **At `1.0` the herd is taken from not at all**, so it rides at `K` and its surplus births
+    /// are self-limiting — *the cull is the meat take*, and moving this below `1` is how one is
+    /// performed. **One fraction, not one per output**: only meat trades off, so a herd that gives
+    /// milk and wool gives both at this. Appended (append-only).
+    #[serde(default)]
+    pub standing_output_fraction: f32,
+    /// **THE FRACTION THE PLAYER HAS ORDERED AND IS PAYING FOR**, or
+    /// [`NO_OUTPUT_COMMITMENT_IN_FLIGHT`] when none is.
+    ///
+    /// **A negative sentinel rather than `0.0`**, because `0.0` is a real, ordinary order (*"go back
+    /// to all meat"*) and a reader must be able to tell *committing to nothing* from *not
+    /// committing*. Appended (append-only).
+    #[serde(default = "no_output_commitment_in_flight")]
+    pub standing_output_target: f32,
+    /// **The in-flight commitment's build meter**, in work units — exactly what
+    /// [`Self::pen_extend_progress`] is, read exactly the same way. Appended (append-only).
+    #[serde(default)]
+    pub output_recommit_progress: f32,
+    /// **What the in-flight commitment costs**, in work units — the denominator of
+    /// [`Self::output_recommit_progress`], and the herd's **stamped** cost rather than a live quote
+    /// ([`Self::pen_extend_cost`]'s rule). `0.0 / 0.0` is *"no commitment"*, never *"0%"*.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub output_recommit_cost: f32,
     /// **WHAT RUNG THIS HERD IS STANDING ON NOW** — the animal twin of
     /// [`ForagePatchState::current_rung`], which carries the rationale: `<branch>:<id>`, the
     /// [`Self::build_destination_rung`] spelling, saying where the source **is** rather than where a
@@ -1008,6 +1037,10 @@ impl Default for HerdTelemetryState {
             // a different statement from the roster's own bare kit.
             build_kit_id: String::new(),
             pen_extend_cost: 0.0,
+            standing_output_fraction: 0.0,
+            standing_output_target: NO_OUTPUT_COMMITMENT_IN_FLIGHT,
+            output_recommit_progress: 0.0,
+            output_recommit_cost: 0.0,
             // **A herd nothing has described names no rung** — the same "not described" reading
             // `build_destination_rung` above takes, and NOT a wire state: the capture strikes this
             // from `fauna::herd_rung_key` on every row, so an empty string only ever reaches a
@@ -2401,3 +2434,15 @@ pub const GRAZE_PHASE_STRESSED: u8 = 2;
 /// `TileState::graze_ecology_phase` — pasture stripped below the collapse band (severely overgrazed;
 /// it still recovers — grass reseeds — but slowly).
 pub const GRAZE_PHASE_COLLAPSING: u8 = 3;
+
+/// **NO OUTPUT COMMITMENT IS IN FLIGHT** — the sentinel
+/// [`HerdTelemetryState::standing_output_target`] carries when the player has ordered nothing.
+///
+/// **It is negative on purpose.** `0.0` is a real order — *"go back to all meat"* — so it cannot
+/// double as *"no order"*, and a client that tested `target == 0.0` for absence would hide exactly
+/// the commitment a dairy herd's owner is waiting on.
+pub const NO_OUTPUT_COMMITMENT_IN_FLIGHT: f32 = -1.0;
+
+fn no_output_commitment_in_flight() -> f32 {
+    NO_OUTPUT_COMMITMENT_IN_FLIGHT
+}

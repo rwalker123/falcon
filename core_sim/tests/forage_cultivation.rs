@@ -322,7 +322,9 @@ fn declared_rung(app: &App, band: bevy::prelude::Entity, tile: UVec2) -> Option<
         .map(|entry| entry.declared)
     {
         Some(core_sim::BuildJob::Rung(improvement)) => Some(improvement),
-        Some(core_sim::BuildJob::ExtendPen) | None => None,
+        Some(core_sim::BuildJob::ExtendPen) | Some(core_sim::BuildJob::SetHerdOutput(_)) | None => {
+            None
+        }
     }
 }
 

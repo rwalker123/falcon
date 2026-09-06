@@ -2,7 +2,7 @@
 paths:
   - "core_sim/src/{fauna,fauna_config,intensification}.rs"
   - "core_sim/src/data/intensification_ladder.json"
-  - "core_sim/tests/{fauna_husbandry,grazing_2d_pen,rollback_tended_survival}.rs"
+  - "core_sim/tests/{fauna_husbandry,grazing_2d_pen,pen_standing_yield,rollback_tended_survival}.rs"
 ---
 
 <!-- Extracted verbatim from lines 1589-2062 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
@@ -1072,6 +1072,153 @@ production-limited pen and a handling-limited pen both end with `brought_down ==
 `HuntTakeBound` has no *"the herd could not spare more"* variant short of `Floor`, which fires only
 when nothing whole could be taken at all. Which of the two is really binding is read by comparing the
 measured take against `r_pen · K / 4` and against `floor(reach × stay_fraction) × body_mass`.
+
+## Standing yield — a kept herd chooses its output (`docs/plan_pen_standing_yield.md`, issue #630)
+
+A kept herd produced only **meat**, so its food rate had to be tuned up against a Field to feel worth
+building at all — the `pen_density` retune above happened for exactly that reason. Milk, eggs and
+wool are the renewable half: you harvest without killing, so the standing stock keeps compounding and
+the animal pays over its whole life rather than once.
+
+**The model is one line.** `Herd::standing_output_fraction` (`f ∈ [0,1]`, default `0.0`):
+
+```text
+meat take     = the existing take x (1 - f)
+standing take = the species' per-head rates x head count x f x rung_fraction
+```
+
+`rung_fraction` is `1.0` at `animal:pen`, `husbandry.pastoral_standing_fraction` at
+`animal:pastoral`, and nothing wild (`fauna::herd_standing_rung_share`). At `f = 1` the herd is taken
+from not at all, so it rides at `K` and its surplus births are self-limiting — **the cull IS the meat
+take**, and moving `f` below `1` is how a player performs one. There is no separate culling mechanism
+and none is needed.
+
+**ONE fraction, not one per output.** A herd that gives milk *and* wool gives both at `f`, because
+only meat trades off: only meat is paid for by killing the animal, and a shorn sheep is still milked.
+
+### ⛔ THE SPLIT IS APPLIED TO THE TAKE'S *CEILING*, NOT TO ITS RESULT
+
+`resolve_hunt_engagement` — the one definition of engagement/retreat/fight, shared by the live take
+and the crew-take curve — multiplies `herd_take_room` by `Herd::meat_take_fraction()`. Scaling there
+rather than un-killing a resolved take afterwards is what makes `f = 1` mean *the party engages
+nothing*: no fight, no whole-animal rounding, **no waste**, and no draw on the herd. Carry waste is a
+property of hauling meat home and there is none on milk, so `wasted → 0` as `f → 1` falls out instead
+of being clamped.
+
+**It is deliberately NOT scaled inside `herd_take_room` itself**, which is also the *build* gate
+(`systems::labor`'s `herd_is_workable`) and the earn gate (`crew_is_working_the_source`): a fully
+committed dairy herd is still a legal thing to gentle, to fence and to learn from, and a scaled room
+there would make it unbuildable. `project_realized_hunt` and `project_arrivals_hunt` carry the same
+`× (1 − f)` **and add the standing half per projected turn**, so the headline food/turn and the
+arrival schedule describe a committed herd honestly (the milk lands every turn where the meat lands in
+lumps).
+
+### The pre-commit row carries the split too, and the two halves reach it differently
+
+**`SourceYieldForecast` carries BOTH terms**, and which expressions each may enter is the whole of
+what makes this safe.
+
+| Term | Field | Where it enters | Where it must NEVER enter |
+|---|---|---|---|
+| the meat side | `standing_commitment` | `ceiling_at`, as `× (1 − f)` on the room — the same factor at the same place `resolve_hunt_engagement` applies | — |
+| the standing side | `standing_provisions` | `forecast_source_yield` alone: the row's `actual`, its `meat`/`standing` split, its `sustainable`, both `range` ends | `ceiling_at`, `production`, `per_worker_yield` |
+
+**The meat factor belongs in the ceiling because a fraction of a room is unit-free**: the quantiser
+divides the scaled ceiling by `body_mass_yield` and counts exactly the animals the live take's scaled
+room lets it kill. **A flat food term is not**, and the three exclusions above are each a real defect
+avoided: in `ceiling_at` it would invent animals out of milk; in `per_worker_yield` a second keeper
+would appear to double the dairy; in `production` it would manufacture carry waste on a thing that is
+never hauled.
+
+**`standing_commitment` stores `f` rather than `1 − f` on purpose.** The type derives `Default` and
+fixtures build one with `..Default::default()`, so a field holding the complement would default to
+`0.0` — *"take nothing, ever"* — and silently zero every unspelled forecast's ceiling. Storing the
+commitment makes the neutral reading the zero one.
+
+**The staffing signals answer for the meat side alone**, on both the seeded and the resolved row: no
+number of extra hands increases milk, so `workers_needed` inverts the scaled room and
+`hunt_useful_crew` reads the crew-take curve, which runs the meat path only. Committing a herd can
+only ever shrink its take crew.
+
+**What `forecast == actual` means here** is what `yield-forecast.md` already restates for a hunt: the
+meat half is an **expectation over a seed a projection cannot draw**, so the resolved take lands
+inside the seeded `[low, high]`. **The standing half is not stochastic and is exact** — a per-head
+rate times a head count, agreeing to the float — and at `f = 1` there is no meat, hence no stochastic
+stage, so the whole row is exact. `pen_standing_yield.rs` pins all three readings on the encoded
+buffer at `f = 0`, `0.5` and `1`.
+
+### The rates are DERIVED, not invented
+
+`per_head = k × per_unit_biomass_rate × r × body_mass / 4`, which falls out of setting a full-standing
+herd's output to `k ×` what the same herd's meat line pays. Since meat/turn `= rate × r × K/4` and
+head `= K / body_mass`, **`K` cancels** — the per-head rate is a pure function of the species' own
+breeding rate and body size and is *independent of how big the pen is*, which is what makes it survive
+a `pen_density` or `capacity_by_biome` retune without re-derivation. **`k` is the fiction and the only
+judgement call**; the per-head column is arithmetic and must be **re-derived, never nudged**. The
+per-species table and every `k` live in `fauna_config.json`'s `_comment_standing_yield`.
+
+**Nothing in the config is milk-shaped or wool-shaped.** Milk and eggs are both just `provisions`;
+wool, down and cashmere are all just `fibre`. **No material was added.** `StandingYieldDef` is the
+living twin of `HuntYieldDef` in the same row shape, and the shipped `fibre` readings are deliberately
+*finer and weaker* than the sinew a carcass gives — a fleece and an aurochs' sinew are opposite
+corners of the same axes, so the weaver wanting a bowstring still has to go hunting.
+
+**The material half is credited through the ONE seam**, `materials_config::credit_material_yield`,
+handed the head-count scale where a hunt hands it a biomass — and its result is merged with the
+carcass' own rows by `materials_config::merge_material_payoffs`, because a readout row says *"0.29
+fibre"* however many ways the band earned it. **The per-turn payout is never rounded**: a material
+store is fixed-point micro-units, so the fowl's `0.0000455` draw subtracts exactly that and the stock
+crosses whole units by itself.
+
+### The commitment costs work
+
+`set_herd_output <faction> <herd_id> <fraction>` (`SetHerdOutputCommand`, `handle_set_herd_output`) is
+modelled on `extend_pen` end to end, with one shape difference: **it names the HERD, not a tile**,
+because `steppe_runner` and `marsh_grazer` carry `husbandry_ceiling: "pastoral"`, can never be penned,
+and have no pen anchor to point at. It queues `BuildJob::SetHerdOutput(RungKey)` — the second entry
+kind that names no rung verb — and the new fraction lands when the meter completes
+(`Herd::accrue_output_recommit`, resolved by `systems::labor`'s `advance_output_recommit` **after**
+the take, mirroring the ring).
+
+**`BuildJob::SetHerdOutput` CARRIES its rung and `ExtendPen` does not**, because a ring is only ever
+fencing while a commitment happens at either managed rung — and the rung is what prices the job.
+
+**Every commitment costs, including the first**, and including going back:
+`husbandry.output_recommit_work_fraction × the herd's CURRENT rung's build.work_cost` — **25 work** at
+`animal:pen` (75), **16.67** at `animal:pastoral` (50). Derived from the rung rather than invented, on
+the precedent `route:paved_road` set, so a rung retune carries it. It draws **no material pile**:
+re-sorting a herd is labor, not panels.
+
+### Why the pastoral share is load-bearing rather than a nicety
+
+`husbandry.pastoral_standing_fraction` is **global, not per species**, because the reason a roaming
+herd yields less is structural — it is milked opportunistically, not twice daily — rather than a fact
+about the animal. Without it the two migratory species, which can never be penned, would get nothing
+at all; it is also the first thing that makes the mobile rung worth *staying* on rather than a waypoint
+to the pen. The steppe economy was milk.
+
+### One row per herd, split on the row
+
+The standing yield folds into the herd's **existing** `SourceYield`; it does **not** add a second
+source row. A herd is one source, and a second row would double-count in `food_income`, which is
+`Σ actual` and one side of the pinned larder identity. `SourceYield::meat` / `::standing` state what
+`actual` is made of and are **published rather than left to be subtracted** (`meatYield` /
+`standingYield` on the wire), so a client itemizes without re-implementing an accounting rule.
+
+**`sustainable` carries the standing half on both arms**, because a yield harvested without killing
+is income the source reproduces indefinitely — the definition of the field. The seeded row states the
+same sum (`fauna::forecast_source_yield`), so the two cannot disagree. It does not affect the ⚠,
+which is `fauna::hunt_take_overdraws` and never the `actual > sustainable` comparison — see the
+`SourceYield` doc for why that comparison was retired.
+
+### Config levers
+
+| Key | Ships | What it does |
+|---|---|---|
+| `species.*.standing_yield.provisions_per_head` | per species | Food one live head gives per turn. Absent block = no renewable option, with no *"this species can't"* branch anywhere. `boar` / `rabbit` / `snow_hare` omit it. |
+| `species.*.standing_yield.materials[].per_head` | per species | What a live head gives per turn, per material — the same row shape `hunt_yield.materials` uses, with the rate key renamed. |
+| `husbandry.pastoral_standing_fraction` | `0.4` | The `rung_fraction` at `animal:pastoral`. Validated finite, `[0,1]`. |
+| `husbandry.output_recommit_work_fraction` | `0.333` | The `set_herd_output` job's price, as a share of the herd's current rung's `build.work_cost`. Validated finite, `> 0`. |
 
 ## ⛔ A SPECIES MAY OVERRIDE THE PASTORAL RUNG GAINS — absent means "use the global"
 

@@ -931,6 +931,20 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 pen_pasture_fraction: herd.map(|herd| herd.pen_pasture_fraction).unwrap_or(0.0),
                 pen_extend_progress: herd.map(|herd| herd.pen_extend_progress).unwrap_or(0.0),
                 pen_extend_cost: herd.map(|herd| herd.pen_extend_cost).unwrap_or(0.0),
+                // **The standing split's player-facing half** (`docs/plan_pen_standing_yield.md`):
+                // what this herd gives as milk, eggs and wool, and the order that is being paid
+                // for. The target rides a **negative sentinel** when nothing is in flight, because
+                // `0.0` is a real order — see `HerdTelemetryState::standing_output_target`.
+                standing_output_fraction: herd
+                    .map(|herd| herd.standing_output_fraction)
+                    .unwrap_or(0.0),
+                standing_output_target: herd
+                    .and_then(|herd| herd.standing_output_target)
+                    .unwrap_or(sim_schema::NO_OUTPUT_COMMITMENT_IN_FLIGHT),
+                output_recommit_progress: herd
+                    .map(|herd| herd.output_recommit_progress)
+                    .unwrap_or(0.0),
+                output_recommit_cost: herd.map(|herd| herd.output_recommit_cost).unwrap_or(0.0),
                 // Husbandry ceiling (Grazing 2d-δ) — the client hides the corral/extend affordance on a
                 // non-`pen` herd and the domestication track on a `wild` one.
                 husbandry_ceiling: herd

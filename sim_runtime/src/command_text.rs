@@ -238,6 +238,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "extend_pen <faction_id> <x> <y>",
     },
     CommandVerbHelp {
+        verb: "set_herd_output",
+        aliases: &[],
+        summary: "Commit a fraction of one KEPT herd to standing output - milk, eggs and wool - instead of meat. The meat take becomes the existing take x (1 - fraction); the herd pays its species' per-head standing rates for the share it keeps, in full behind a fence and at husbandry.pastoral_standing_fraction on the range. It costs work like every other build: appended to the build queue of every band keeping the herd and raised by that band's `builders` pool when it reaches the head, so it names no workers. EVERY commitment costs, including the first and including going back. Names the HERD rather than a tile, because the two pastoral-only species this exists for roam. Needs an owned tamed or penned herd, a band keeping it, a fraction in 0..1, and no commitment already in flight.",
+        usage: "set_herd_output <faction_id> <herd_id> <fraction>",
+    },
+    CommandVerbHelp {
         verb: "answer_fork",
         aliases: &[],
         summary: "Answer a pending narrative fork (The Telling) with one of its choices; every fork offers an explicit defer.",
@@ -1180,6 +1186,22 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 faction_id: parse_u32(faction_str, "extend_pen faction")?,
                 target_x: parse_u32(x_str, "extend_pen target_x")?,
                 target_y: parse_u32(y_str, "extend_pen target_y")?,
+            })
+        }
+        "set_herd_output" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let herd_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("herd_id"))?;
+            let fraction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("fraction"))?;
+            Ok(CommandPayload::SetHerdOutput {
+                faction_id: parse_u32(faction_str, "set_herd_output faction")?,
+                herd_id: herd_str.to_string(),
+                fraction: parse_f32(fraction_str, "set_herd_output fraction")?,
             })
         }
         "cancel_order" => {

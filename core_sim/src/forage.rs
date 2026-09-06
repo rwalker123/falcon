@@ -4195,6 +4195,14 @@ pub(crate) fn forage_forecast(
         // `Tame` is hunt-only — a patch has no pastoral rung — so it advertises no Tame payoff (the
         // plant twin of `ceiling_tame: 0`).
         pastoral_yield: NO_PASTORAL_YIELD,
+        // **A PLANT IS NOT KEPT ALIVE AND MILKED** — a structural zero, not an unprojected gap: the
+        // standing half of `docs/plan_pen_standing_yield.md` is an animal-web concept in the same
+        // way `engage_rate` and `fight` above are, and there is nothing on this web that could ever
+        // pay it.
+        // A stand is never held back for milk, so the whole of its room is on offer — the same
+        // neutral reading every uncommitted herd carries.
+        standing_commitment: crate::fauna::NO_STANDING_COMMITMENT,
+        standing_provisions: crate::fauna_config::NO_STANDING_YIELD,
         // **The plant web quotes no investment payoff in BIOMASS.** Rung 2's own harvest is
         // `rung_msy_take` and the crop picker prices its material quote on that directly
         // (`commit_material_payoff`), so nothing reads these here — and a patch offers no `Tame`

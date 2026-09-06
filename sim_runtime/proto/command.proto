@@ -254,6 +254,22 @@ message ExtendPenCommand {
   reserved "workers";
 }
 
+// Standing yield (docs/plan_pen_standing_yield.md): commit a fraction of a kept herd to STANDING
+// output - milk, eggs, wool - instead of meat. `fraction` is 0..1: the meat take becomes the
+// existing take x (1 - fraction), and the herd pays its species' per-head standing rates x head
+// count x fraction x the rung's share (1.0 penned, husbandry.pastoral_standing_fraction roaming).
+// Modelled on ExtendPenCommand and queued the same way: it banks work against the herd's own rung
+// (husbandry.output_recommit_work_fraction of that rung's build.work_cost) and the new fraction
+// takes effect when the meter completes. `herd_id` names the herd directly rather than a tile,
+// because the two PASTORAL-ONLY species this exists for roam and have no pen anchor to point at.
+// Needs an owned, managed (tamed or penned) herd, a fraction inside 0..1 that differs from the one
+// it already holds, no commitment already in flight, and a band keeping it.
+message SetHerdOutputCommand {
+  uint32 faction_id = 1;
+  string herd_id = 2;
+  float fraction = 3;
+}
+
 // The Telling (fork tier): answer a pending narrative fork. `beat_id` names the fork the faction
 // has on the table and `choice_id` one of that beat's authored choices; the choice's writes land in
 // the BeatLedger (declared stance offsets, flags), the beat is marked fired, and its echo line joins
@@ -1246,5 +1262,9 @@ message CommandEnvelope {
     DeleteSaveCommand delete_save = 68;
     // 68 is held by `delete_save`, so the opening loadout takes 69 (append-only; never renumber).
     SetStartingLoadoutCommand set_starting_loadout = 69;
+    // 69 is held by `set_starting_loadout`, so `set_herd_output` takes 70 (append-only; never
+    // renumber). It was authored against 69 on a branch cut before the loadout picker landed and
+    // was moved on the merge: a tag is the wire, so two messages can never share one.
+    SetHerdOutputCommand set_herd_output = 70;
   }
 }

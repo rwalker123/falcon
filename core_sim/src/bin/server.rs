@@ -782,6 +782,13 @@ enum Command {
         target_x: u32,
         target_y: u32,
     },
+    /// Commit a fraction of a kept herd to **standing output** — milk, eggs, wool — instead of meat
+    /// (`docs/plan_pen_standing_yield.md`). See `handle_set_herd_output`.
+    SetHerdOutput {
+        faction: FactionId,
+        herd_id: String,
+        fraction: f32,
+    },
     /// Put a recipe on a band's crafting bench and draw idle workers onto it. See
     /// `handle_set_bench` — **make IS the assignment**, so there is no Crafter role card and no
     /// `LaborTarget` variant.
@@ -7209,6 +7216,180 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
     );
 }
 
+/// **COMMIT A KEPT HERD'S OUTPUT** — the `SetHerdOutput` command
+/// (`docs/plan_pen_standing_yield.md` §4). Put an owned, **managed** herd into the "recommitting"
+/// state so its keeper band works off the change; at completion `standing_output_fraction` becomes
+/// `fraction` and the herd starts paying milk, eggs and wool in place of that share of its meat.
+///
+/// **It names the HERD, not a tile**, which is the one shape difference from `handle_extend_pen`:
+/// the two species the pastoral share exists for (`steppe_runner`, `marsh_grazer`) can never be
+/// penned, so they have no `corralled_at` anchor to point at. Everything else follows that handler
+/// step for step — the same ownership check, the same keeper requirement, the same
+/// `queue_build_on_working_bands`, the same feed channel.
+///
+/// **The pen's whole life rides `CommandEventKind::Corral`**, and so does this: a commitment is
+/// husbandry work on the herd's own rung.
+///
+/// Validates: a herd with that id, owned by `faction`, **managed** (tamed or penned — a wild herd
+/// stands on a rung with no build meter, so there is nothing to price the job against), a
+/// `fraction` that is finite and inside `[0, 1]` and **different from the one the herd already
+/// holds** (charging a rung's work for no change is the one thing the price must not buy), no
+/// commitment already in flight, and a band keeping it (or the meter never accrues).
+fn handle_set_herd_output(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    herd_id: &str,
+    fraction: f32,
+) {
+    let Some(state) = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(herd_id)
+        .map(|herd| {
+            (
+                herd.id.clone(),
+                herd.owner == Some(faction),
+                herd.is_corralled() || herd.is_domesticated(),
+                herd.standing_output_target.is_some(),
+                herd.standing_output_fraction,
+            )
+        })
+    else {
+        warn!(
+            target: "shadow_scale::command",
+            command = "set_herd_output",
+            faction = %faction.0,
+            herd = %herd_id,
+            "command.set_herd_output.rejected=no_herd"
+        );
+        emit_command_failure(
+            app,
+            CommandEventKind::Corral,
+            faction,
+            format!("There is no herd {herd_id} to commit."),
+        );
+        return;
+    };
+    let (fauna_id, owns, managed, already_committing, held) = state;
+    let reason = if !owns {
+        Some(format!("You do not keep {fauna_id}."))
+    } else if !managed {
+        // A wild herd is not yours to re-sort, and its rung declares no build meter to price the
+        // work against — two statements of the same fact, so one refusal covers both.
+        Some(format!(
+            "{fauna_id} is not a kept herd. Tame it before deciding what it produces."
+        ))
+    } else if !fraction.is_finite()
+        || !(core_sim::NO_STANDING_COMMITMENT..=WHOLE_HERD_COMMITTED).contains(&fraction)
+    {
+        Some(format!(
+            "A herd's standing share must be between 0 and 1, not {fraction}."
+        ))
+    } else if fraction == held {
+        Some(format!(
+            "{fauna_id} already gives that share of itself as milk, eggs and wool."
+        ))
+    } else if already_committing {
+        Some(format!("{fauna_id} is already being re-sorted."))
+    } else {
+        None
+    };
+    if let Some(reason) = reason {
+        warn!(
+            target: "shadow_scale::command",
+            command = "set_herd_output",
+            faction = %faction.0,
+            herd = %fauna_id,
+            reason = %reason,
+            "command.set_herd_output.rejected"
+        );
+        emit_command_failure(app, CommandEventKind::Corral, faction, reason);
+        return;
+    }
+
+    // A band must be keeping the herd (a Hunt assignment on it, any policy) or the meter never
+    // accrues — `extend_pen`'s own requirement, for its own reason.
+    let keeper_target = LaborTarget::Hunt {
+        fauna_id: fauna_id.clone(),
+        floor: SOURCE_NAMED_NOT_ASSIGNED, // matched by `same_source` (herd id) — the floor is irrelevant
+    };
+    let keepers = app
+        .world
+        .query::<(&PopulationCohort, &LaborAllocation)>()
+        .iter(&app.world)
+        .filter(|(cohort, _)| cohort.faction == faction)
+        .filter(|(_, allocation)| allocation.workers_on(&keeper_target) > 0)
+        .count();
+    if keepers == 0 {
+        emit_command_failure(
+            app,
+            CommandEventKind::Corral,
+            faction,
+            format!(
+                "No band is keeping {fauna_id}. Assign herders to it first, then set its output."
+            ),
+        );
+        return;
+    }
+
+    // Enter the recommitting state — `begin_output_recommit` re-checks managed / not-in-flight /
+    // in-range / actually-a-change, so the guard and the validation above can never disagree. The
+    // herd's rung is read back afterwards so the queue entry names the rung the order was priced
+    // against.
+    let (began, rung) = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|h| h.id == fauna_id)
+            .expect("herd resolved above");
+        (
+            herd.begin_output_recommit(fraction),
+            core_sim::herd_rung_key(herd),
+        )
+    };
+    if !began {
+        emit_command_failure(
+            app,
+            CommandEventKind::Corral,
+            faction,
+            format!("Cannot change what {fauna_id} produces right now."),
+        );
+        return;
+    }
+
+    // **A COMMITMENT IS A QUEUE ENTRY LIKE EVERY OTHER BUILD** — it is husbandry work on the rung
+    // the herd already stands on, so it waits its turn in the same line and is funded from the same
+    // `builders` pool. It is the second entry kind that names no rung verb, and it carries its rung
+    // because — unlike a ring, which is always fencing — it can be raised at either managed rung.
+    queue_build_on_working_bands(app, faction, &keeper_target, BuildJob::SetHerdOutput(rung));
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "set_herd_output",
+        faction = %faction.0,
+        herd = %fauna_id,
+        fraction,
+        "command.set_herd_output.committing"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Corral,
+        faction,
+        format!("Re-sorting {fauna_id} to give {fraction:.0} of itself as milk, eggs and wool"),
+        Some(format!(
+            "status=committing action=set_herd_output herd={fauna_id} fraction={fraction:.3}"
+        )),
+    );
+}
+
+/// **A HERD COMMITTED ENTIRELY TO STANDING OUTPUT** — the top of `set_herd_output`'s accepted range,
+/// where the herd is taken from not at all and rides at `K`. Named rather than a bare `1.0` because
+/// it is a *state* the command's bound is stated in terms of, not a multiplier.
+const WHOLE_HERD_COMMITTED: f32 = 1.0;
+
 /// **PUT A SOURCE DOWN** — `abandon <faction> <x> <y>` / `abandon <faction> <herd_id>`
 /// (`docs/plan_standing_upkeep.md` §2.5).
 ///
@@ -7868,7 +8049,8 @@ fn build_verb_on_source(
     let source = BuildSource::of(target)?;
     let declared = match allocation.build_queue_entry(&source)?.declared {
         BuildJob::Rung(improvement) => improvement,
-        BuildJob::ExtendPen => return None,
+        // Neither "work on a rung already held" kind raises a rung or pays a dip.
+        BuildJob::ExtendPen | BuildJob::SetHerdOutput(_) => return None,
     };
     match source {
         BuildSource::Patch(tile) => app
@@ -8793,6 +8975,15 @@ fn command_from_payload(
             faction: FactionId(faction_id),
             target_x,
             target_y,
+        }),
+        ProtoCommandPayload::SetHerdOutput {
+            faction_id,
+            herd_id,
+            fraction,
+        } => Some(Command::SetHerdOutput {
+            faction: FactionId(faction_id),
+            herd_id,
+            fraction,
         }),
         ProtoCommandPayload::SetBench {
             faction_id,
@@ -9788,6 +9979,13 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             target_y,
         } => {
             handle_extend_pen(app, faction, UVec2::new(target_x, target_y));
+        }
+        Command::SetHerdOutput {
+            faction,
+            herd_id,
+            fraction,
+        } => {
+            handle_set_herd_output(app, faction, &herd_id, fraction);
         }
         Command::SetBench {
             faction,
@@ -11363,7 +11561,7 @@ mod tests {
         let source = BuildSource::of(&allocation.assignments[0].target)?;
         match allocation.build_queue_entry(&source)?.declared {
             BuildJob::Rung(improvement) => Some(improvement),
-            BuildJob::ExtendPen => None,
+            BuildJob::ExtendPen | BuildJob::SetHerdOutput(_) => None,
         }
     }
 
@@ -14900,6 +15098,186 @@ mod tests {
             );
             assert!(!herd_is_corralled(&app, &id));
         }
+    }
+
+    // --- SetHerdOutput (standing yield) — committing a kept herd's output. ------------------------
+
+    /// The fraction the fixtures order — a real change from the all-meat default, and short of the
+    /// whole herd, so nothing about the assertions depends on either endpoint.
+    const HALF_TO_MILK: f32 = 0.5;
+
+    /// `(standing_output_fraction, standing_output_target)` — what the herd is producing, and what it
+    /// has been ordered to produce.
+    fn herd_output_state(app: &bevy::prelude::App, id: &str) -> (f32, Option<f32>) {
+        let herd = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(id)
+            .expect("the fixture herd survives");
+        (herd.standing_output_fraction, herd.standing_output_target)
+    }
+
+    /// **A commitment is a queue entry like every other build**, under the kind that names no rung
+    /// verb — the ring's own shape, and the state the labor pass funds off.
+    #[test]
+    fn set_herd_output_queues_the_commitment_under_its_own_kind() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_penned_herd(&mut app, coord, Some(faction));
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                floor: 0.5,
+            },
+        );
+
+        handle_set_herd_output(&mut app, faction, &id, HALF_TO_MILK);
+
+        assert_eq!(
+            herd_output_state(&app, &id),
+            (0.0, Some(HALF_TO_MILK)),
+            "the order is in flight and the herd is STILL producing what it was — the new fraction \
+             arrives when the meter completes, not when the order is given"
+        );
+        assert_eq!(
+            band_queue_job(&app, band, BuildSource::Herd(id.clone())),
+            Some(BuildJob::SetHerdOutput(RungKey::AnimalPen)),
+            "a commitment waits in the same queue, carrying the rung it was priced against"
+        );
+        assert_eq!(
+            band_improvement(&app, band),
+            None,
+            "…and it declares no rung verb, exactly as a ring does not"
+        );
+    }
+
+    /// **Committing to the fraction the herd already holds is refused** — the price must not buy a
+    /// state change that is not one.
+    #[test]
+    fn set_herd_output_rejected_for_the_fraction_already_held() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_penned_herd(&mut app, coord, Some(faction));
+
+        handle_set_herd_output(&mut app, faction, &id, core_sim::NO_STANDING_COMMITMENT);
+
+        assert!(corral_failure_detail_contains(&app, "already gives"));
+        assert_eq!(herd_output_state(&app, &id), (0.0, None));
+    }
+
+    /// A fraction outside `[0, 1]` is refused by name rather than clamped — a clamp would silently
+    /// charge the player for an order they did not give.
+    #[test]
+    fn set_herd_output_rejected_for_a_fraction_outside_the_unit_range() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_penned_herd(&mut app, coord, Some(faction));
+
+        handle_set_herd_output(&mut app, faction, &id, 1.5);
+
+        assert!(corral_failure_detail_contains(&app, "between 0 and 1"));
+        assert_eq!(herd_output_state(&app, &id), (0.0, None));
+    }
+
+    /// **A WILD HERD IS NOT YOURS TO RE-SORT**, and its rung declares no build meter to price the
+    /// work against — one refusal for both halves of the same fact.
+    #[test]
+    fn set_herd_output_rejected_for_a_wild_herd() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        // **Owned, but never tamed** — the one shape that reaches this arm rather than the
+        // ownership one above. `seed_herd(.., Some(faction))` tames outright, so the owner is
+        // stamped by hand here to leave the herd standing on `animal:wild`.
+        let id = seed_herd(&mut app, coord, None);
+        app.world
+            .resource_mut::<HerdRegistry>()
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == id)
+            .expect("the fixture herd exists")
+            .owner = Some(faction);
+
+        handle_set_herd_output(&mut app, faction, &id, HALF_TO_MILK);
+
+        assert!(corral_failure_detail_contains(&app, "not a kept herd"));
+        assert_eq!(herd_output_state(&app, &id), (0.0, None));
+    }
+
+    /// A faction that does not keep the herd cannot decide what it produces.
+    #[test]
+    fn set_herd_output_rejected_for_non_owner() {
+        let mut app = build_test_app();
+        let owner = FactionId(0);
+        let intruder = FactionId(1);
+        let coord = UVec2::new(1, 1);
+        let id = seed_penned_herd(&mut app, coord, Some(owner));
+
+        handle_set_herd_output(&mut app, intruder, &id, HALF_TO_MILK);
+
+        assert!(corral_failure_detail_contains(&app, "do not keep"));
+        assert_eq!(herd_output_state(&app, &id), (0.0, None));
+    }
+
+    /// With nobody keeping the herd the meter could never accrue, so the command says to staff it
+    /// first — `extend_pen`'s own requirement, for its own reason.
+    #[test]
+    fn set_herd_output_rejected_when_no_band_is_keeping_it() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_penned_herd(&mut app, coord, Some(faction));
+
+        handle_set_herd_output(&mut app, faction, &id, HALF_TO_MILK);
+
+        assert!(corral_failure_detail_contains(&app, "No band is keeping"));
+        assert_eq!(herd_output_state(&app, &id), (0.0, None));
+    }
+
+    /// An unknown herd id is refused by name.
+    #[test]
+    fn set_herd_output_rejected_for_an_unknown_herd() {
+        let mut app = build_test_app();
+
+        handle_set_herd_output(&mut app, FactionId(0), "game_nonexistent", HALF_TO_MILK);
+
+        assert!(corral_failure_detail_contains(&app, "no herd"));
+    }
+
+    /// **A SECOND ORDER ON A HERD ALREADY RE-SORTING IS REFUSED** — the ring's rule, and it is what
+    /// stops one meter serving two targets.
+    #[test]
+    fn set_herd_output_rejected_while_a_commitment_is_in_flight() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_penned_herd(&mut app, coord, Some(faction));
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                floor: 0.5,
+            },
+        );
+        handle_set_herd_output(&mut app, faction, &id, HALF_TO_MILK);
+
+        handle_set_herd_output(&mut app, faction, &id, 1.0);
+
+        assert!(corral_failure_detail_contains(
+            &app,
+            "already being re-sorted"
+        ));
+        assert_eq!(
+            herd_output_state(&app, &id),
+            (0.0, Some(HALF_TO_MILK)),
+            "the first order stands untouched"
+        );
     }
 
     /// `extend_pen`'s belt-and-braces ceiling check: a (hypothetically) penned non-`pen` species is

@@ -671,6 +671,33 @@ pub fn credit_material_yield(
         .collect()
 }
 
+/// **MERGE SEVERAL CREDITED BASKETS INTO ONE ROW SET** — per material id, in id order, exactly the
+/// discipline [`credit_material_yield`] already applies *within* one basket.
+///
+/// It exists because a **kept herd is paid twice from one source**: the carcass' hide and sinew off
+/// what came home, and the fleece off the head count it still has
+/// (`docs/plan_pen_standing_yield.md`). Those are two calls to the one crediting seam — the bases
+/// differ, so one call cannot do both — and the row that reports them is one row, which says
+/// *"0.29 fibre"* however many ways the band earned it.
+///
+/// **Reported, never recomputed** still holds: every amount here came back from a real deposit, and
+/// this only adds the ones that name the same material. A non-positive total is dropped, so *"no
+/// row"* stays distinct from a published zero.
+pub fn merge_material_payoffs<I>(payoffs: I) -> Vec<MaterialPayoff>
+where
+    I: IntoIterator<Item = MaterialPayoff>,
+{
+    let mut totals: BTreeMap<String, f32> = BTreeMap::new();
+    for payoff in payoffs {
+        *totals.entry(payoff.material).or_insert(0.0) += payoff.amount;
+    }
+    totals
+        .into_iter()
+        .filter(|(_, amount)| *amount > 0.0)
+        .map(|(material, amount)| MaterialPayoff { material, amount })
+        .collect()
+}
+
 /// Why a materials table cannot be used.
 #[derive(Debug, Error)]
 pub enum MaterialsConfigError {

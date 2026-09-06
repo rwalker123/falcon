@@ -603,6 +603,12 @@ fn create_herds<'a>(
                 // **The pen ring's DENOMINATOR** — appended last (append-only wire). Rides beside
                 // `penExtendProgress` above in the same work units; `0` with no ring in flight.
                 penExtendCost: herd.pen_extend_cost,
+                // **What this herd is committed to producing, and the order in flight** — appended
+                // last (append-only wire). See `HerdTelemetryState::standing_output_fraction`.
+                standingOutputFraction: herd.standing_output_fraction,
+                standingOutputTarget: herd.standing_output_target,
+                outputRecommitProgress: herd.output_recommit_progress,
+                outputRecommitCost: herd.output_recommit_cost,
                 // **The rung this herd STANDS on** — appended last (append-only wire), the
                 // twin of `buildDestinationRung`'s spelling at the source's own position.
                 currentRung: Some(current_rung),

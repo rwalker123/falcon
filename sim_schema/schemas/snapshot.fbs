@@ -1994,6 +1994,34 @@ table LaborAssignment {
   // two fractions and the two accounts stay separate everywhere.
   materialUpkeepDemand:[MaterialPayoff];
   materialUpkeepSupplied:[MaterialPayoff];
+  // --- WHAT `actualYield` IS MADE OF (appended last, append-only wire; standing yield) ----------
+  // THE TWO WAYS A KEPT HERD PAYS, on one row. `meatYield` is provisions this source produced by
+  // KILLING something; `standingYield` is provisions it produced WITHOUT anything being killed -
+  // milk and eggs, at the species' standing_yield.provisions_per_head x head count x the herd's
+  // committed fraction x the rung's share (1.0 penned, husbandry.pastoral_standing_fraction
+  // roaming, nothing wild). See docs/plan_pen_standing_yield.md.
+  //
+  // ONE ROW PER HERD, SPLIT ON THE ROW. A kept herd pays both ways at once from one source, and
+  // they do NOT arrive as two assignment rows: a herd is one source, and a second row would
+  // double-count in `PopulationCohortState.foodIncome`, which is Sum(actualYield) and one side of
+  // the pinned larder identity. So `actualYield` stays the total and this pair says what it is
+  // made of: meatYield + standingYield == actualYield, by construction.
+  //
+  // PUBLISHED, NOT SUBTRACTED. The itemized readout renders them as two lines; a client deriving
+  // one as `actualYield - other` would be re-implementing an accounting rule the sim owns. Render
+  // the standing line ONLY when standingYield > 0, the rule the fodder and material lines use.
+  //
+  // A PLANT ROW AND A WILD HUNT ROW report the whole of actualYield as meatYield and 0 standing -
+  // nothing but a KEPT herd can pay the other way. A PRE-COMMIT (seeded) row does the same even on
+  // a committed herd: the seed resolves the take in currency space and holds no head count. The
+  // RESOLVED row carries the real split, and so do `realizedYield` / `arrivalSchedule`, which are
+  // projected off the herd itself and DO include the standing half.
+  //
+  // THE MATERIAL half of the same standing yield is merged into `materialYield` above rather than
+  // split out: a fleece and a hide are both "fibre this band was credited this turn", and the row
+  // that reports them says "0.29 fibre" however many ways the band earned it.
+  meatYield:float = 0;
+  standingYield:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -4695,6 +4723,42 @@ table HerdTelemetryState {
   // The three standing MaterialPayoff rules hold unchanged - NEVER SUMMED, EMPTY MEANS "no row" and
   // never zero, and the key is always present.
   corralBuildMaterialCost:[MaterialPayoff];
+
+  // --- WHAT THIS HERD IS COMMITTED TO PRODUCING (appended last, append-only wire) ---------------
+  // `standingOutputFraction` = HOW MUCH OF ITSELF THIS HERD GIVES AS STANDING OUTPUT - milk, eggs
+  // and wool - instead of meat, 0..1 (docs/plan_pen_standing_yield.md). The meat take is the
+  // ordinary take x (1 - this); the standing yield is the species' per-head rates x head count x
+  // this x the rung's share. 0 is every herd's reading until a player pays to change it, and is
+  // byte-for-byte today's all-meat behaviour.
+  //
+  // AT 1 THE HERD IS TAKEN FROM NOT AT ALL, so it rides at K and its surplus births are
+  // self-limiting: THE CULL *IS* THE MEAT TAKE, and moving this below 1 is how a player performs
+  // one. There is no separate culling command and none is needed.
+  //
+  // ONE FRACTION, NOT ONE PER OUTPUT: a herd that gives milk AND wool gives both at this, because
+  // only meat trades off - only meat is paid for by killing the animal. Do not offer a per-output
+  // slider; it would model a tradeoff that does not exist.
+  //
+  // `standingOutputTarget` = THE FRACTION THE PLAYER HAS ORDERED AND IS PAYING FOR, or -1 when no
+  // commitment is in flight. A NEGATIVE SENTINEL RATHER THAN 0, because 0 is a real, ordinary
+  // order ("go back to all meat") and a client must be able to tell "committing to nothing" from
+  // "not committing". Read it as "in flight" first, and only then as a number.
+  //
+  // `outputRecommitProgress` / `outputRecommitCost` = the in-flight commitment's build meter and
+  // its denominator, in WORK UNITS - exactly the pair `penExtendProgress`/`penExtendCost` are, and
+  // read the same way: a "Re-sorting N%" badge is the quotient, `0 / 0` is "no commitment", never
+  // "0%", and the cost is the herd's STAMPED cost (struck on the first worked turn), not a live
+  // quote. The price is husbandry.output_recommit_work_fraction x the herd's CURRENT rung's
+  // build.work_cost - 25 work at animal:pen (75), 16.67 at animal:pastoral (50) - so EVERY
+  // commitment costs, including the first and including going back.
+  //
+  // THE COMMAND IS `set_herd_output <faction> <herd_id> <fraction>` (SetHerdOutputCommand), and it
+  // names the HERD rather than a tile because the two species the pastoral share exists for
+  // (steppe_runner, marsh_grazer) can never be penned and have no pen anchor to point at.
+  standingOutputFraction:float = 0;
+  standingOutputTarget:float = -1;
+  outputRecommitProgress:float = 0;
+  outputRecommitCost:float = 0;
 }
 
 table CommandEventState {
