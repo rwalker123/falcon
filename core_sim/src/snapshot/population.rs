@@ -40,6 +40,12 @@ pub(crate) fn labor_assignment_to_state(
         sustainable_yield: yields.sustainable,
         workers_needed: yields.workers_needed,
         wasted_yield: yields.wasted,
+        // **What `actual_yield` is made of** (`docs/plan_pen_standing_yield.md`) — the cull and the
+        // milk, published as two terms so the itemized readout does no arithmetic. They sum to
+        // `actual_yield` by construction; a plant row and a wild hunt row report the whole of it as
+        // meat.
+        meat_yield: yields.meat,
+        standing_yield: yields.standing,
         overdraws: yields.overdraws,
         realized_yield: yields.realized,
         // The discrete arrival schedule: index `i` = the food landing `i + 1` turns ahead. Cloned
@@ -519,6 +525,11 @@ fn resolved_build_job(
     match (&entry.declared, &source) {
         (crate::components::BuildJob::ExtendPen, _) => {
             crate::systems::labor::EXTEND_PEN_ACTION.to_string()
+        }
+        // A commitment is its own job token too, for the ring's reason: the herd's rung is already
+        // built, so no meter-derived verb can name it.
+        (crate::components::BuildJob::SetHerdOutput(_), _) => {
+            crate::systems::labor::SET_HERD_OUTPUT_ACTION.to_string()
         }
         (
             crate::components::BuildJob::Rung(declared),

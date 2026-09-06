@@ -297,6 +297,22 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
     },
+    /// **Commit a fraction of a kept herd to STANDING output** — milk, eggs and wool instead of meat
+    /// (`docs/plan_pen_standing_yield.md`). The meat take becomes the existing take `× (1 −
+    /// fraction)`; the herd pays its species' per-head rates for the share it keeps.
+    ///
+    /// **It names the HERD, not a tile**, unlike [`Self::ExtendPen`]: the two pastoral-only species
+    /// the pastoral share exists for roam and have no pen anchor to point at.
+    ///
+    /// Queued like a ring — it banks work against the herd's own rung, and the new fraction takes
+    /// effect when the meter completes.
+    SetHerdOutput {
+        faction_id: u32,
+        herd_id: String,
+        /// `0..1`. Refused outside that range, and refused when it is the fraction the herd already
+        /// holds — that would charge the player a rung's work for no change.
+        fraction: f32,
+    },
     /// **Put a recipe on a band's crafting bench.** The crew is the player's to name — see
     /// [`BENCH_CREW_UNSPECIFIED`].
     ///
@@ -1507,6 +1523,15 @@ impl CommandEnvelope {
                 target_x: *target_x,
                 target_y: *target_y,
             }),
+            CommandPayload::SetHerdOutput {
+                faction_id,
+                herd_id,
+                fraction,
+            } => pb::command_envelope::Command::SetHerdOutput(pb::SetHerdOutputCommand {
+                faction_id: *faction_id,
+                herd_id: herd_id.clone(),
+                fraction: *fraction,
+            }),
             CommandPayload::AnswerFork {
                 faction_id,
                 beat_id,
@@ -2011,6 +2036,11 @@ impl CommandEnvelope {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
+            },
+            pb::command_envelope::Command::SetHerdOutput(cmd) => CommandPayload::SetHerdOutput {
+                faction_id: cmd.faction_id,
+                herd_id: cmd.herd_id,
+                fraction: cmd.fraction,
             },
             pb::command_envelope::Command::AnswerFork(cmd) => CommandPayload::AnswerFork {
                 faction_id: cmd.faction_id,

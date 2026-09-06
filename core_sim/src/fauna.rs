@@ -416,6 +416,40 @@ pub struct Herd {
     /// **What the in-flight fence ring costs, in work units** — the `animal:pen` rung's own
     /// `work_cost`, stamped when the ring is worked. Reset with the meter when a ring completes.
     pub pen_extend_cost: f32,
+    /// **HOW MUCH OF ITSELF THIS HERD IS COMMITTED TO STANDING OUTPUT** — `f ∈ [0, 1]`, the milk /
+    /// eggs / wool half (`docs/plan_pen_standing_yield.md` §1). The meat take is the existing take
+    /// `× (1 − f)`; the standing yield is the species' per-head rates `× head count × f ×
+    /// rung_fraction`.
+    ///
+    /// **`0.0` is today's all-meat behaviour, byte for byte** — nothing changes until a player
+    /// commits, which they do by paying for a [`crate::components::BuildJob::SetHerdOutput`] job.
+    ///
+    /// At `f = 1` the herd is taken from not at all, so it rides at `K` and its surplus births are
+    /// self-limiting: **the cull IS the meat take**, and moving `f` below `1` is how it is performed.
+    /// There is no separate culling mechanism and none is needed.
+    ///
+    /// **ONE fraction, not one per output.** A herd that gives milk *and* wool gives both at `f`,
+    /// because only meat trades off — only meat is paid for by killing the animal, and a shorn sheep
+    /// is still milked. Splitting `f` per output would model a tradeoff that does not exist.
+    ///
+    /// Authoritative sim state — rewound by rollback with the cloned registry.
+    pub standing_output_fraction: f32,
+    /// **THE FRACTION THE PLAYER HAS ORDERED AND IS PAYING FOR**, `None` when no commitment is in
+    /// flight — the `SetHerdOutput` job's twin of [`Self::pen_extending`], carrying its target rather
+    /// than only a flag because *what* was ordered is the whole of what the job delivers.
+    ///
+    /// One field rather than a `bool` beside a target for the reason this file states everywhere
+    /// else: two statements of one fact can drift. `is_some()` **is** the in-flight test.
+    pub standing_output_target: Option<f32>,
+    /// Output-**recommit** build progress in absolute work units for the in-flight
+    /// [`Self::standing_output_target`], accrued exactly as [`Self::pen_extend_progress`] is; at
+    /// [`Self::output_recommit_cost`] the job completes and the target becomes the live fraction.
+    pub output_recommit_progress: f32,
+    /// **What the in-flight commitment costs, in work units** — the herd's *current* rung's
+    /// `build.work_cost` scaled by `husbandry.output_recommit_work_fraction`, stamped when the job
+    /// is worked so the meter always ships with the denominator it completes against. Reset with the
+    /// meter on completion.
+    pub output_recommit_cost: f32,
     /// **How many more turns a build on this herd needs, at the crew, floor and kit that worked it
     /// this turn** — stamped by the labor arm (Tame or Corral) and published as
     /// `HerdTelemetryState.buildTurnsRemaining`.
@@ -820,6 +854,12 @@ impl Herd {
             pen_radius: 0,
             pen_extend_progress: RUNG_UNSTARTED,
             pen_extend_cost: RUNG_UNSTARTED,
+            // A fresh herd is all-meat, which is every herd's behaviour before a player pays to
+            // change it (see [`Self::standing_output_fraction`]).
+            standing_output_fraction: NO_STANDING_COMMITMENT,
+            standing_output_target: None,
+            output_recommit_progress: RUNG_UNSTARTED,
+            output_recommit_cost: RUNG_UNSTARTED,
             build_turns_remaining: None,
             build_work_from_gear: NO_BUILD_GEAR,
             build_queue_position: crate::intensification::NOT_IN_ANY_BUILD_QUEUE,
@@ -1187,6 +1227,77 @@ impl Herd {
         false
     }
 
+    /// **HOW MUCH OF THE TAKE IS STILL MEAT** — `1 − standing_output_fraction`, clamped to the unit
+    /// range, and the **one place** the split's meat side is expressed
+    /// (`docs/plan_pen_standing_yield.md` §1).
+    ///
+    /// It is a method rather than a subtraction at each call site because the take reads it in four
+    /// places (the live take, the crew curve, the realized projection and the arrival schedule) and a
+    /// fifth that computed `1 - f` itself could disagree about the clamp.
+    pub fn meat_take_fraction(&self) -> f32 {
+        WHOLE_TAKE_IS_MEAT
+            - self
+                .standing_output_fraction
+                .clamp(NO_STANDING_COMMITMENT, WHOLE_HERD)
+    }
+
+    /// **Begin a `SetHerdOutput` commitment** — enter the recommitting state with a fresh meter, the
+    /// exact twin of [`Herd::begin_pen_extension`]. Requires a **managed** herd (the rung is what
+    /// prices the job, and a wild herd stands on none) with **no commitment already in flight**, and
+    /// a target inside `[0, 1]`; returns `false` (a no-op) otherwise, so the command handler's
+    /// validation and this guard can never disagree.
+    ///
+    /// **Committing to the fraction already held is refused**, because it would charge the player
+    /// the rung's work for a state change that is not one.
+    pub fn begin_output_recommit(&mut self, target: f32) -> bool {
+        let managed = self.is_corralled() || self.is_domesticated();
+        let sane = target.is_finite()
+            && (NO_STANDING_COMMITMENT..=WHOLE_HERD).contains(&target)
+            && target != self.standing_output_fraction;
+        if !managed || self.standing_output_target.is_some() || !sane {
+            return false;
+        }
+        self.standing_output_target = Some(target);
+        self.output_recommit_progress = RUNG_UNSTARTED;
+        self.output_recommit_cost = RUNG_UNSTARTED;
+        true
+    }
+
+    /// Accrue one turn of output-**recommit** progress, the exact twin of
+    /// [`Herd::accrue_pen_extension`]: while a target is in flight, add `amount` (**work units**) and
+    /// **stamp `cost`**, so the meter always ships with the denominator it completes against; at
+    /// `cost` the commitment lands — [`Self::standing_output_fraction`] becomes the target, the
+    /// target clears and both meter and cost reset. Returns `true` on the completion turn so the
+    /// caller can announce it. Called **after** the turn's take, mirroring `accrue_pen_extension`.
+    pub(crate) fn accrue_output_recommit(&mut self, amount: f32, cost: f32) -> bool {
+        let Some(target) = self.standing_output_target else {
+            return false;
+        };
+        self.output_recommit_cost = cost;
+        self.output_recommit_progress =
+            crate::forage::banked_up_to_cost(self.output_recommit_progress + amount, cost);
+        if self.output_recommit_progress >= cost {
+            self.standing_output_fraction = target;
+            self.standing_output_target = None;
+            self.output_recommit_progress = RUNG_UNSTARTED;
+            self.output_recommit_cost = RUNG_UNSTARTED;
+            return true;
+        }
+        false
+    }
+
+    /// **STOP AN UNFINISHED COMMITMENT AND CLEAR ITS METER** — the state a recommit leaves behind
+    /// when its queue entry goes, and [`Herd::cancel_pen_extension`]'s twin in every respect
+    /// including the discarded progress: [`Self::begin_output_recommit`] resets the meter on every
+    /// start, so preserved progress could never be resumed by any path the game has. The live
+    /// fraction is untouched — a withdrawn order leaves the herd producing exactly what it was.
+    /// Idempotent.
+    pub(crate) fn cancel_output_recommit(&mut self) {
+        self.standing_output_target = None;
+        self.output_recommit_progress = RUNG_UNSTARTED;
+        self.output_recommit_cost = RUNG_UNSTARTED;
+    }
+
     /// Begin an `ExtendPen` extension (Grazing 2d-β): enter the "extending" state with a fresh ring
     /// meter. Requires a **built pen with room to grow** (`is_corralled()` and `pen_radius <
     /// radius_max`) and **no extension already in flight** — returns `false` (a no-op) otherwise, so the
@@ -1277,11 +1388,7 @@ impl Herd {
             return 0;
         }
         let current = self.herders_needed;
-        let animals = if self.body_mass > 0.0 {
-            self.biomass / self.body_mass
-        } else {
-            0.0
-        };
+        let animals = crate::fauna::herd_head_count(self.biomass, self.body_mass);
         let next = if current == 0 || raw > current {
             // First stabilized turn, or a rise: respond at once.
             raw
@@ -1547,8 +1654,38 @@ pub fn herd_keeper_loads(biomass: f32, body_mass: f32, animals_per_herder: f32) 
     if !sane {
         return NO_KEEPER_LOAD;
     }
-    (biomass / body_mass) / animals_per_herder
+    herd_head_count(biomass, body_mass) / animals_per_herder
 }
+
+/// **HOW MANY ANIMALS ARE STANDING THERE** — `biomass / body_mass`, and the **one** place that
+/// division is written.
+///
+/// # It is arithmetic, not a rate basis — read the note this revives
+///
+/// A function of this name was retired (see [`herd_rung_key`]) because it was being used as the
+/// *scale term a rung's upkeep was quoted against*, which is the measurement error
+/// [`crate::fauna_config::SpeciesDef::animals_per_herder`] exists to prevent: *"one keeper per 100
+/// fowl but one per 2 boar"*. **That reading stays retired** — [`herd_keeper_loads`] still quotes
+/// keeping per keeper-**load**, and this is simply the division inside it.
+///
+/// What legitimately *is* per head is a **standing yield**: a cow gives the same milk whatever the
+/// crew size, so `docs/plan_pen_standing_yield.md`'s rates are per head by derivation rather than by
+/// convention. Both readers go through here so no second `biomass / body_mass` can appear.
+///
+/// A herd with no animals, or the impossible non-positive `body_mass` (`FaunaConfig::validate` pins
+/// it positive), presents [`NO_HEADS`]. NaN-safe by the same positive-test construction its caller
+/// uses.
+pub fn herd_head_count(biomass: f32, body_mass: f32) -> f32 {
+    if !(biomass > 0.0 && body_mass > 0.0) {
+        return NO_HEADS;
+    }
+    biomass / body_mass
+}
+
+/// **AN EMPTY HERD** — the head count of a herd with nothing standing in it. Named for
+/// [`NO_KEEPER_LOAD`]'s reason: a bare `0.0` in a count position reads as a missing value rather
+/// than *"there is nothing here"*.
+pub const NO_HEADS: f32 = 0.0;
 
 /// **AN UNFRAYED HERD** — the floor of [`Herd::neglect_pressure`], and the reading of a herd whose
 /// keeping has been met long enough to work off every turn of neglect. Named rather than a bare `0.0`
@@ -1557,8 +1694,21 @@ pub const NO_NEGLECT_PRESSURE: f32 = 0.0;
 
 /// **THE WHOLE HERD** — the ceiling on a shed fraction: you cannot lose more animals than are
 /// standing there. Named because the accelerating rate reaches it quickly by design, so the clamp is
-/// a reachable state rather than a defensive rail.
+/// a reachable state rather than a defensive rail. Also the top of
+/// [`Herd::standing_output_fraction`]'s range, where it means *"every head is kept for milk"*.
 const WHOLE_HERD: f32 = 1.0;
+
+/// **AN ALL-MEAT HERD** — the floor of [`Herd::standing_output_fraction`], and every herd's reading
+/// before a player pays to change it. Named rather than a bare `0.0` because *"nothing is committed
+/// to standing output"* is a deliberate state and the arc's byte-identical baseline, not an unset
+/// value.
+pub const NO_STANDING_COMMITMENT: f32 = 0.0;
+
+/// **NOTHING IS HELD BACK FOR MILK** — [`Herd::meat_take_fraction`] at
+/// [`NO_STANDING_COMMITMENT`], which is what every source on the map reads until a player pays to
+/// change one. Named because a bare `1.0` in a multiplier position says nothing about what it
+/// leaves alone.
+pub const WHOLE_TAKE_IS_MEAT: f32 = 1.0;
 
 /// **A herd that presents nothing to mind** — an empty herd, or one whose species declares no
 /// `animals_per_herder`. Named because a bare `0.0` in a load position reads as a missing value
@@ -3593,7 +3743,7 @@ pub(crate) fn herd_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> &'a RungDe
 /// rungs quote per **keeper-load** instead ([`herd_keeper_loads`] — `head count /
 /// animals_per_herder`), which folds the species' own ratio in before the ladder sees it, so one rate
 /// covers a shepherd's 300 sheep and a cowherd's 80 cattle.
-pub(crate) fn herd_rung_key(herd: &Herd) -> RungKey {
+pub fn herd_rung_key(herd: &Herd) -> RungKey {
     if herd.is_corralled() {
         RungKey::AnimalPen
     } else if herd.is_domesticated() {
@@ -4354,13 +4504,21 @@ pub fn cancel_dropped_rings(
     dropped: &[crate::components::BuildQueueEntry],
 ) {
     for entry in dropped {
-        let (crate::components::BuildJob::ExtendPen, crate::components::BuildSource::Herd(id)) =
-            (&entry.declared, &entry.source)
-        else {
+        let crate::components::BuildSource::Herd(id) = &entry.source else {
             continue;
         };
-        if let Some(herd) = herds.herds.iter_mut().find(|herd| &herd.id == id) {
-            herd.cancel_pen_extension();
+        let Some(herd) = herds.herds.iter_mut().find(|herd| &herd.id == id) else {
+            continue;
+        };
+        match entry.declared {
+            crate::components::BuildJob::ExtendPen => herd.cancel_pen_extension(),
+            // **A withdrawn output commitment is cancelled, not paused** — the ring's own rule, and
+            // it belongs here for the ring's reason: both kinds set their in-flight state on the
+            // *herd* before queueing, so an entry going away has to take that state with it or the
+            // herd would sit "recommitting" for ever with nothing funding it. The live fraction is
+            // untouched; only the order is dropped.
+            crate::components::BuildJob::SetHerdOutput(_) => herd.cancel_output_recommit(),
+            crate::components::BuildJob::Rung(_) => {}
         }
     }
 }
@@ -5134,6 +5292,50 @@ pub struct SourceYieldForecast {
     /// `0` on a source that never offers Tame: a forage patch (hunt-only verb), or a herd already
     /// penned or forage-tended. Crosses the wire as `HerdTelemetryState.pastoralYield`.
     pub pastoral_yield: YieldAccounts,
+    /// **HOW MUCH OF ITSELF THIS SOURCE IS HOLDING BACK FROM THE KNIFE** — [`Herd::standing_output_fraction`]
+    /// carried onto the forecast, so a pre-commit quote scales its room exactly as the live take
+    /// scales its own ([`resolve_hunt_engagement`]). `0.0` on the whole plant web and on every
+    /// uncommitted herd, which is every herd until a player pays to change one.
+    ///
+    /// # ⛔ IT IS STORED AS THE COMMITMENT, NOT AS ITS COMPLEMENT, SO `Default` IS NEUTRAL
+    ///
+    /// This type derives `Default` and several fixtures build one with `..Default::default()`. A
+    /// field holding `1 − f` would default to `0.0` — *"take nothing, ever"* — and silently zero the
+    /// ceiling of every forecast a fixture did not spell out. Storing `f` makes the neutral reading
+    /// the zero one, which is a property of the representation rather than of anyone remembering.
+    ///
+    /// # ⛔ THIS one DOES belong in [`Self::ceiling_at`], and the flat term beside it does NOT
+    ///
+    /// A *fraction of the room* is unit-free: the quantiser divides the scaled ceiling by
+    /// `body_mass_yield` and counts exactly the animals the live take's scaled room lets it kill —
+    /// which is the whole point, since the live path applies the identical factor at the identical
+    /// place. A *flat food term* is not unit-free and must never enter here; see
+    /// [`Self::standing_provisions`] for what that would invent.
+    pub standing_commitment: f32,
+    /// **WHAT THIS SOURCE PAYS FOR STANDING THERE, PER TURN** — the milk, eggs and down of
+    /// `docs/plan_pen_standing_yield.md`, already resolved into provisions at the band's output
+    /// multiplier: `per_head × head count × f × rung_fraction`. `0.0` on the whole plant web and on
+    /// every herd that is not a *kept* herd committed to standing output.
+    ///
+    /// # ⛔ IT IS FLAT, AND IT MUST NOT ENTER ANY EXPRESSION THAT SIZES A TAKE OR A CREW
+    ///
+    /// Three exclusions, each load-bearing and each easy to undo by accident:
+    ///
+    /// - **NOT in [`Self::ceiling_at`]**, which feeds the whole-animal quantiser
+    ///   ([`animals_affordable`]) — a flat food term added to a ceiling that is then divided by
+    ///   `body_mass_yield` would invent animals out of milk.
+    /// - **NOT in [`Self::per_worker_yield`]**, because it does not scale with the crew. A cow gives
+    ///   the same milk to one keeper as to six, so folding it in would make a second keeper appear
+    ///   to double the dairy and would corrupt every staffing inversion taken on that rate.
+    /// - **NOT in `production`**, so `wasted = production − actual` stays what it has always meant:
+    ///   food this source gave up that the crew could not bring home. There is no carry waste on
+    ///   milk.
+    ///
+    /// So it is added **once**, in [`forecast_source_yield`], to the row's `actual`, its
+    /// `meat`/`standing` split, its `sustainable` and both `range` endpoints — after the take has
+    /// been resolved in currency space. `low <= actual <= high` survives because the same constant
+    /// is added to all three.
+    pub standing_provisions: f32,
     /// **The BIOMASS [`Self::managed_yield`] and [`Self::pastoral_yield`] are the conversion of** —
     /// the two investment rungs' harvests before any rate is applied.
     ///
@@ -5323,7 +5525,16 @@ impl SourceYieldForecast {
         if let Some(production) = self.managed_production {
             return production;
         }
-        let room = take_room(floor, self.biomass, self.carrying_capacity, self.growth);
+        // **THE STANDING SPLIT'S MEAT SIDE, ON THE ROOM** — the same `× (1 − f)`
+        // [`resolve_hunt_engagement`] applies to the live take's ceiling, at the same place, so the
+        // quote and the take offer the knife the same herd (`docs/plan_pen_standing_yield.md` §1).
+        // A committed herd whose quote skipped this would promise meat the turn will not hand over
+        // — and at `f = 1` would publish a whole cull for a herd nothing is ever taken from.
+        let room = take_room(floor, self.biomass, self.carrying_capacity, self.growth)
+            * (WHOLE_TAKE_IS_MEAT
+                - self
+                    .standing_commitment
+                    .clamp(NO_STANDING_COMMITMENT, WHOLE_HERD));
         self.per_biomass_yield
             .scale(room)
             .min(self.per_biomass_yield.scale(self.biomass.max(0.0)))
@@ -5583,7 +5794,11 @@ pub fn project_realized_hunt(
         // stamped this turn's growth, so the backstop's term is a measurement here exactly as it is
         // in the live arm. A forecast on the pure escapement room would quote `0` for every turn a
         // herd spends below its own climbing floor while the sim pays the growth share.
-        let rate = hunt_take_room(floor, quarry.biomass, capacity, quarry.growth_this_turn());
+        // **The meat side of the standing split** — the same `× (1 − f)` the live take's ceiling
+        // carries ([`resolve_hunt_engagement`]), so a committed herd's headline food/turn is not a
+        // promise of meat it will never hand over.
+        let rate = hunt_take_room(floor, quarry.biomass, capacity, quarry.growth_this_turn())
+            * quarry.meat_take_fraction();
         // Dropping the *quantiser* here is sound because rounding is a timing effect; dropping the
         // fight would not be, for exactly the reason the engagement bound belongs here — a
         // bare-handed party brings down **nothing** from a mammoth herd however much room stands
@@ -5616,6 +5831,11 @@ pub fn project_realized_hunt(
             quarry_fight = quarry_fight.map(|held| held.with_wounds(fight.wounds));
             fight.brought_down * quarry.body_mass
         };
+        // **AND THE OTHER HALF OF THE SPLIT** — the milk, eggs and down the same herd pays for
+        // standing there, at this turn's head count. It rides the projection rather than being
+        // added to the average afterwards because the head count moves as the herd grows, and a
+        // flat term struck once would quote a shrinking herd's dairy at its opening size.
+        let standing_provisions = herd_standing_provisions(&quarry, fauna) * output_multiplier;
         // **The SOURCE-side offer is what decides whether the run is over** — the stock standing
         // above the floor. A zero take is no longer proof the source is spent: since damage carries
         // between turns a party can grind for several turns and *then* land a body (§4.2), and
@@ -5623,14 +5843,29 @@ pub fn project_realized_hunt(
         // accumulator exists to serve. So the wait turns stay in, counted in the denominator like the
         // `0.0` slots the arrivals schedule already publishes, and only a spent source breaks.
         let offered = rate.min(quarry.biomass).max(0.0);
-        if offered <= REALIZED_PROJECTION_TAKE_EPSILON {
+        // **A COMMITTED HERD IS NOT A SPENT ONE.** The break asks *"is there anything left here"*,
+        // and since the standing split a herd can offer no meat at all and still pay milk every
+        // turn — so both halves have to be nothing before the run is over. Without the second
+        // clause a fully-committed dairy herd broke on its first projected turn and published a
+        // steady food/turn of zero while its larder filled (`docs/plan_pen_standing_yield.md` §1).
+        // At `f = 0` the standing term is a structural zero, so this reads exactly as it did.
+        if offered <= REALIZED_PROJECTION_TAKE_EPSILON
+            && standing_provisions <= crate::fauna_config::NO_STANDING_YIELD
+        {
             break; // the source is spent — stop before diluting the average with dead turns.
         }
         let take = offered.min(collection).min(engagement_biomass).max(0.0);
         quarry.biomass -= take;
         // **Both products are projected from the same simulated take**, so the steady trade headline
         // can never drift from the steady food one (`docs/plan_hunt_yield_model.md` §9).
-        total = total.plus(hunt_yield.apply(take, output_multiplier));
+        total = total
+            .plus(hunt_yield.apply(take, output_multiplier))
+            .plus(YieldAccounts {
+                provisions: standing_provisions,
+                // **Neither half of an animal's yield pays fodder** — the second account is the plant
+                // web's, exactly as [`crate::fauna_config::HuntYield::apply`] states for the meat side.
+                fodder: 0.0,
+            });
         turns += 1;
     }
     if turns > 0 {
@@ -5733,8 +5968,11 @@ pub fn project_arrivals_hunt(
         let carried = {
             // A wild/pastoral herd hands over the stock standing above its stance's floor, rounded to
             // whole animals — the `systems::hunt_take` sequence, helper for helper.
+            // The meat side of the standing split, exactly as the live take and the realized
+            // projection carry it.
             let ceiling =
-                hunt_take_room(floor, quarry.biomass, capacity, quarry.growth_this_turn());
+                hunt_take_room(floor, quarry.biomass, capacity, quarry.growth_this_turn())
+                    * quarry.meat_take_fraction();
             // Engagement clamped by what the herd can spare, **then** the retreat's expectation,
             // then the fight — the take's order at **every rung**, because the retreat keeps a
             // fraction of whatever it is handed and clamping after it would quote a take off a
@@ -5765,7 +6003,11 @@ pub fn project_arrivals_hunt(
             quarry.biomass -= take.killed_biomass();
             take.carried
         };
-        *slot = hunt_yield.apply(carried, output_multiplier).provisions;
+        // **Milk lands every turn, meat lands in lumps** — which is exactly what this schedule
+        // exists to show, so the standing half is added to each slot rather than averaged into
+        // one. A fully-committed herd reads a flat run instead of a row of zeros.
+        *slot = hunt_yield.apply(carried, output_multiplier).provisions
+            + herd_standing_provisions(&quarry, fauna) * output_multiplier;
     }
     schedule
 }
@@ -5945,12 +6187,27 @@ pub(crate) fn forecast_source_yield(
     let range = forecast_take_range(forecast, workers, floor, range_sigmas);
     let (production, actual) =
         forecast_production_and_take_at(forecast, workers, floor, HuntDraw::EXPECTED);
+    // **THE STANDING HALF, ADDED ONCE AND AFTER THE TAKE IS RESOLVED**
+    // (`docs/plan_pen_standing_yield.md`). It is flat and worker-independent, so it is deliberately
+    // absent from `production`, from `ceiling_at` and from `per_worker_yield` — see
+    // [`SourceYieldForecast::standing_provisions`] for the three defects that would cause. What it
+    // reaches is the four *readout* figures below: the row's total, its two-term split, its
+    // sustainable line and both ends of its band.
+    let standing = forecast.standing_provisions;
     // What ONE worker on this assignment moves — the whole `per_worker_yield`, because the take
     // crew is the only crew in the take. It was scaled by the retired build dip (and then by the
     // retired work budget's share); with the build staffed in its own right there is nothing left to
     // scale it by.
     SourceYield {
-        actual: actual.provisions,
+        actual: actual.provisions + standing,
+        // **THE SPLIT, ON THE PRE-COMMIT ROW TOO.** A seeded row is what the player reads on the
+        // screen where they assign keepers, so a committed herd that quoted meat alone would say
+        // *"this produces nothing"* about the very thing they are being asked to staff — and the
+        // seed would then disagree with the row the turn resolves, which is the defect class this
+        // arc exists to delete. Both terms are struck from the same forecast the take is, so
+        // `meat + standing == actual` holds here exactly as it does on the resolved row.
+        meat: actual.provisions,
+        standing,
         // **The FEED currency, taken off the same take vector** (issue #449) — never a second
         // derivation. It is `0` today on both webs and for two different reasons: no animal pays
         // fodder at all, and the plant web's forecast is deliberately food-only
@@ -5969,14 +6226,22 @@ pub(crate) fn forecast_source_yield(
         // The band `actual` sits in the middle of. Built from the SAME
         // `forecast_production_and_take_at`, three quantiles apart, so `low <= actual <= high` is a
         // property of the arithmetic rather than a clamp.
+        // **The same flat term on BOTH ends**, which is what keeps `low <= actual <= high` a
+        // property of the arithmetic: adding one constant to three ordered values preserves the
+        // order. The milk is not a distribution — nothing about it is stochastic — so it widens
+        // nothing, it shifts.
         range: YieldRange {
-            low: range.low.provisions,
-            high: range.high.provisions,
+            low: range.low.provisions + standing,
+            high: range.high.provisions + standing,
         },
+        // **The standing half IS sustainable** — it is harvested without killing, so it is income
+        // the source reproduces indefinitely. On a managed source this is `actual` and already
+        // carries it; on a drawn-down one it joins the meat MSY, matching what the resolved Hunt
+        // arm reports.
         sustainable: if managed {
-            actual.provisions
+            actual.provisions + standing
         } else {
-            sustainable
+            sustainable + standing
         },
         // The discrete twin of `realized`, from the same forward simulation run with the kill-credit
         // bank (`project_arrivals_hunt` / `project_arrivals_forage`) — also the caller's, for the same
@@ -6235,6 +6500,56 @@ pub fn herd_take_room(herd: &Herd, floor: f32, fauna: &FaunaConfig) -> f32 {
         herd_capacity(herd, fauna),
         herd.growth_this_turn(),
     )
+}
+
+/// **WHAT SHARE OF ITS STANDING RATES THIS HERD'S RUNG DELIVERS** — the `rung_fraction` of
+/// `docs/plan_pen_standing_yield.md` §3, and the one place the husbandry ladder's answer to *"can
+/// you milk this herd"* is stated.
+///
+/// [`crate::fauna_config::PEN_STANDING_RUNG_SHARE`] behind a fence, `husbandry.pastoral_standing_fraction`
+/// on a halter, and [`crate::fauna_config::NO_STANDING_RUNG_SHARE`] wild — you do not milk an animal
+/// that runs from you. Stepped at the fence exactly as [`herd_engage_rate`] and [`herd_wariness`]
+/// are, and resolved **live** off the config so a retune reaches herds already on the map.
+pub fn herd_standing_rung_share(herd: &Herd, fauna: &FaunaConfig) -> f32 {
+    if herd.is_corralled() {
+        crate::fauna_config::PEN_STANDING_RUNG_SHARE
+    } else if herd.is_domesticated() {
+        fauna.husbandry.pastoral_standing_fraction
+    } else {
+        crate::fauna_config::NO_STANDING_RUNG_SHARE
+    }
+}
+
+/// **THE QUANTITY EVERY STANDING RATE IS MULTIPLIED BY** — `head count × f × rung_fraction`, the
+/// whole right-hand side of `docs/plan_pen_standing_yield.md` §1's standing-yield expression.
+///
+/// # ⛔ ONE SCALE, BOTH ACCOUNTS
+///
+/// The food rate and every material rate are per **head**, so they are all scaled by the same
+/// number — which is why this is resolved once and handed to both
+/// ([`crate::materials_config::credit_material_yield`] takes it exactly where a hunt hands it a
+/// biomass). Two derivations of it are how a herd starts paying milk on one account and nothing on
+/// the other.
+///
+/// `0` for a wild herd, for an uncommitted one (`f = 0`, every herd's default), and for an empty
+/// one — three different reasons for the same honest nothing.
+pub fn herd_standing_scale(herd: &Herd, fauna: &FaunaConfig) -> f32 {
+    herd_head_count(herd.biomass, herd.body_mass)
+        * herd
+            .standing_output_fraction
+            .clamp(NO_STANDING_COMMITMENT, WHOLE_HERD)
+        * herd_standing_rung_share(herd, fauna)
+}
+
+/// **THE FOOD A KEPT HERD PAYS WITHOUT ANYTHING BEING KILLED**, per turn — the species' own
+/// `standing_yield.provisions_per_head` at [`herd_standing_scale`], before the band's output
+/// multiplier.
+///
+/// The material half cannot live here for [`crate::fauna_config::HuntYield::apply`]'s reason:
+/// materials are per-material batches with a characteristic vector each, credited at the take site.
+/// This is the flat, addable half, and [`herd_standing_scale`] is what keeps the two on one basis.
+pub fn herd_standing_provisions(herd: &Herd, fauna: &FaunaConfig) -> f32 {
+    fauna.standing_yield_for(&herd.species).provisions_per_head * herd_standing_scale(herd, fauna)
 }
 
 /// **One turn's whole-animal hunt take** — the result of [`quantise_animal_take`].
@@ -8406,7 +8721,17 @@ pub fn resolve_hunt_engagement(
     // wants a rate.
     quantum: EngagementQuantum,
 ) -> HuntEngagement {
-    let ceiling = herd_take_room(herd, floor, fauna);
+    // **THE STANDING SPLIT, APPLIED WHERE THE TAKE IS BOUND** (`docs/plan_pen_standing_yield.md`
+    // §1): a herd committed `f` to milk offers only `1 − f` of its room to the knife. It is scaled
+    // **here**, on the ceiling the engagement is clamped by, rather than off the resulting take —
+    // so at `f = 1` the party engages nothing, brings nothing down, wastes nothing and the herd is
+    // not drawn at all, instead of a full slaughter being un-killed afterwards. `f = 0` is the
+    // identity, which is what keeps every existing herd byte-identical.
+    //
+    // **⛔ It is NOT scaled inside [`herd_take_room`]**, which is also the *build* gate
+    // (`systems::labor`'s `herd_is_workable`): a fully-committed dairy herd is still a legal thing
+    // to gentle or to fence, and a scaled room there would make it unbuildable.
+    let ceiling = herd_take_room(herd, floor, fauna) * herd.meat_take_fraction();
     // **BOTH TERMS ARE READ AT THE HERD'S OWN RUNG**, through the two seams that step at the fence
     // ([`herd_engage_rate`], [`herd_wariness`]) rather than off the species table. Both are
     // identities on a wild herd, so nothing on the range moved; what changed is that a *penned* herd
@@ -8965,6 +9290,11 @@ pub(crate) fn hunt_forecast(
         // *same* harvest the food quote does rather than a second `sustainable_yield` call.
         managed_yield_biomass: pen_msy_biomass,
         pastoral_yield_biomass: pastoral_msy_biomass,
+        // **The standing half, off the SAME next-turn herd every stock term above comes from** —
+        // so the quote and the payout read one head count, exactly as they read one biomass. It is
+        // a *flat* per-turn figure and every take-sizing expression is blind to it; see the field.
+        standing_commitment: herd.standing_output_fraction,
+        standing_provisions: herd_standing_provisions(&quarry, fauna) * output_multiplier,
     }
 }
 

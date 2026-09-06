@@ -1596,12 +1596,20 @@ fn every_build_job_and_source_kind_is_stated() {
         BuildJob::Rung(Improvement::Tame),
         BuildJob::Rung(Improvement::Corral),
         BuildJob::ExtendPen,
+        BuildJob::SetHerdOutput(core_sim::RungKey::AnimalPen),
     ] {
         match job {
             // A rung verb names a meter, so the derived rung can answer for it.
             BuildJob::Rung(improvement) => assert!(!improvement.as_str().is_empty()),
             // A ring names none — that is the gap this kind fills.
             BuildJob::ExtendPen => {}
+            // Nor does an output commitment; it carries the rung it was priced against instead.
+            BuildJob::SetHerdOutput(rung) => {
+                assert!(matches!(
+                    rung,
+                    core_sim::RungKey::AnimalPastoral | core_sim::RungKey::AnimalPen
+                ));
+            }
         }
     }
 

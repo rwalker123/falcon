@@ -2724,6 +2724,38 @@ pub struct SourceYield {
     /// **The band around [`SourceYield::actual`]** — *"6–11, likely 9"*
     /// (`docs/plan_hunt_through_combat.md` §6.4). See [`YieldRange`].
     pub range: YieldRange,
+    /// **THE MEAT HALF of [`Self::actual`]** — provisions this source paid by *killing something*
+    /// (`docs/plan_pen_standing_yield.md` §5).
+    ///
+    /// # ⛔ ONE ROW PER HERD, SPLIT ON THE ROW
+    ///
+    /// A kept herd pays in two ways at once — the cull, and the milk it gives for standing there —
+    /// and both land in the same larder from the same source. **They do not get a second
+    /// [`SourceYield`] row**: a herd is one source, and a second row would double-count in
+    /// `PopulationCohortState::food_income`, which is `Σ actual` and one side of the pinned larder
+    /// identity. So `actual` stays the total and this pair states what it is made of.
+    ///
+    /// It is deliberately a **published split rather than a subtraction the client performs**: the
+    /// itemized readout renders `meat` and `standing` as two lines, and a reader that derived one of
+    /// them as `actual − other` would be re-implementing an accounting rule in a language with no
+    /// tests over it. `meat + standing == actual` is an invariant of the arms that write them.
+    ///
+    /// Every plant row and every wild hunt row reports the whole of `actual` here, because nothing
+    /// but a *kept* herd can pay the other way.
+    pub meat: f32,
+    /// **THE STANDING HALF of [`Self::actual`]** — provisions this source paid **without anything
+    /// being killed**: milk and eggs, at the species' `standing_yield.provisions_per_head`
+    /// (`docs/plan_pen_standing_yield.md`). See [`Self::meat`] for why the split is published rather
+    /// than derived.
+    ///
+    /// **The material half of the same standing yield is in [`Self::materials`]**, merged with the
+    /// take's own rows exactly as the food halves are merged into `actual` — a fleece and a hide are
+    /// both *fibre this band was credited this turn*, and splitting the material account by which
+    /// half paid it would be a second axis nothing renders.
+    ///
+    /// `0.0` on every source that is not a kept herd committed to standing output, which is every
+    /// source until a player pays for a `set_herd_output`.
+    pub standing: f32,
 }
 
 /// **The distribution a [`SourceYield`]'s `actual` sits in the middle of**, in the same currency and
@@ -2797,6 +2829,9 @@ impl SourceYield {
         arrivals: Vec::new(),
         // Nothing was taken, so there is nothing to be uncertain about either.
         range: YieldRange::ZERO,
+        // Nothing was killed and nothing was milked — the two halves of the nothing above.
+        meat: 0.0,
+        standing: 0.0,
     };
 }
 
@@ -3865,6 +3900,19 @@ pub enum BuildJob {
     /// already built, so there is no meter for a verb to name and the derived rung cannot say it.
     /// A queue kind states it instead, which is what the ring lost when it stopped naming a crew.
     ExtendPen,
+    /// **THE OUTPUT COMMITMENT** — `set_herd_output` (`docs/plan_pen_standing_yield.md` §4). Like a
+    /// ring it is work on a rung the herd already stands on, so there is no meter for a verb to name
+    /// and the queue kind states it instead.
+    ///
+    /// # It CARRIES its rung, and the ring does not
+    ///
+    /// A ring is only ever fencing, so `ExtendPen` can answer `AnimalPen` with no state. A
+    /// commitment happens at **either** managed rung — `steppe_runner` and `marsh_grazer` can never
+    /// be penned and are exactly the species the arc exists for — and the rung is what *prices* the
+    /// job (`husbandry.output_recommit_work_fraction × that rung's build.work_cost`). Stamped by the
+    /// command off the herd's standing at the moment it was ordered, which is the same reading the
+    /// handler validated against.
+    SetHerdOutput(RungKey),
 }
 
 impl BuildJob {
@@ -3893,6 +3941,9 @@ impl BuildJob {
             // A ring is fencing work on a pen that already stands, so its destination is the rung it
             // widens: there is no leg to climb, only more of the one the source is already on.
             BuildJob::ExtendPen => RungKey::AnimalPen,
+            // A commitment climbs nothing either — it re-sorts a herd on the rung it already holds,
+            // which is the rung the order stamped.
+            BuildJob::SetHerdOutput(rung) => rung,
         }
     }
 }

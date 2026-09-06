@@ -94,6 +94,28 @@ pub struct LaborAssignmentState {
     /// stock and regrows. Derived per-turn at capture. Appended (append-only).
     #[serde(default)]
     pub wasted_yield: f32,
+    /// **THE MEAT HALF of [`Self::actual_yield`]** — provisions this source produced by *killing
+    /// something* (`docs/plan_pen_standing_yield.md`).
+    ///
+    /// **One row per herd, split on the row.** A kept herd pays both ways at once from one source
+    /// and they do **not** arrive as two rows: a herd is one source, and a second row would
+    /// double-count in `food_income`, which is `Σ actual_yield`. So `actual_yield` stays the total
+    /// and this pair says what it is made of — `meat_yield + standing_yield == actual_yield`.
+    ///
+    /// **Published, not subtracted**: a client renders the two as lines and must not derive one
+    /// from the other. Appended (append-only).
+    #[serde(default)]
+    pub meat_yield: f32,
+    /// **THE STANDING HALF of [`Self::actual_yield`]** — provisions produced **without anything
+    /// being killed**: milk and eggs, at the species' per-head rates times the herd's committed
+    /// fraction times its rung's share.
+    ///
+    /// `0.0` on every plant row and every wild hunt row — nothing but a *kept* herd can pay this
+    /// way — and on a **pre-commit** row even for a committed herd, which resolves the take in
+    /// currency space and holds no head count. Render the line only when it is `> 0`, the rule the
+    /// fodder and material lines already use. Appended (append-only).
+    #[serde(default)]
+    pub standing_yield: f32,
     /// **THE overhunting ⚠, answered by the sim** — core_sim's `components::take_overdraws`: does
     /// this take draw the stock below what it sustains? **Intent AND ability** — the floor is below
     /// the food peak *and* this crew's per-turn throughput out-takes the biggest one-turn regrowth

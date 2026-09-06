@@ -513,6 +513,22 @@ pub struct SpeciesDef {
     /// component: finite & `>= 0.0` — **zero is legal**, it is the whole point (see [`HuntYieldDef`]).
     #[serde(default)]
     pub hunt_yield: HuntYieldDef,
+    /// **What a LIVE animal of this species PAYS, per head per turn** (`docs/plan_pen_standing_yield.md`)
+    /// — the living twin of [`SpeciesDef::hunt_yield`]. Milk, eggs, wool, down: the renewable half of
+    /// a kept herd, harvested without killing, so the standing stock keeps compounding and the animal
+    /// pays over its whole life rather than once.
+    ///
+    /// **`None` means the species has no renewable option at all**, and it needs no *"this species
+    /// can't"* branch anywhere — the same shape an absent `craft` or an absent `hand_working` already
+    /// has. `boar`, `rabbit` and `snow_hare` omit it: pigs and lagomorphs give neither milk nor
+    /// fleece. Resolved through the two seams [`FaunaConfig::standing_yield_for`] /
+    /// [`FaunaConfig::standing_materials_for`], so no call site re-derives the absent case.
+    ///
+    /// Validated per *present* component: finite & `>= 0.0`, and every material row reconciled
+    /// against the materials table by the same cross-config check `hunt_yield` takes
+    /// ([`FaunaConfig::validate_against_materials`]).
+    #[serde(default)]
+    pub standing_yield: Option<StandingYieldDef>,
 }
 
 /// Default graze pause: one turn of grazing between hex steps (≈ half movement speed).
@@ -897,6 +913,113 @@ pub struct HuntYieldDef {
     /// ([`crate::materials_config::MaterialsConfig::validate_yield`]) — the material must exist and
     /// the reading must name **exactly** the axes it declares.
     pub materials: Vec<crate::materials_config::MaterialYieldDef>,
+}
+
+/// **The per-species STANDING-yield vector, as CONFIGURED** — what one *live* animal of this species
+/// pays its keepers **per head per turn** (`docs/plan_pen_standing_yield.md` §2), and the exact twin
+/// of [`HuntYieldDef`] one verb over: `hunt_yield` says what a dead animal pays, this says what a
+/// live one does.
+///
+/// # Nothing here is milk-shaped or wool-shaped
+///
+/// Milk and eggs are both just `provisions`; wool, down and cashmere are all just `fibre` — which
+/// `materials.json` already defines as *"bast, sinew, grass and wool — anything twisted or woven"*.
+/// **No material was added for this arc**, which is the whole reason the row shape could be reused.
+///
+/// # The rates are DERIVED, not invented
+///
+/// `per_head = k × per_unit_biomass_rate × r × body_mass / 4`, which falls out of setting a
+/// full-standing herd's output to `k ×` what the same herd's meat line pays. `K` cancels, so the
+/// rate is a pure function of the species' own breeding rate and body size and survives a
+/// `pen_density` retune without re-derivation. `k` is the fiction and the only judgement call — see
+/// `fauna_config.json`'s `_comment_standing_yield` for the per-species table.
+///
+/// Both sub-fields are optional, so a species may pay food only (`aurochs`), fibre only, or both
+/// (`wild_sheep`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StandingYieldDef {
+    /// **Food one head gives per turn while it is kept** — milk, eggs. `None` (or an absent block)
+    /// means this species gives none, and unlike [`HuntYieldDef::provisions_per_biomass`] there is
+    /// **no global to fall back to**: there is no species-blind statement of how much milk an animal
+    /// gives, exactly as there is none of what it is made of.
+    pub provisions_per_head: Option<f32>,
+    /// **What a live head gives per turn, per material** — fleece, down, cashmere — in the *same row
+    /// shape* [`HuntYieldDef::materials`] uses and drawn against the same materials table.
+    ///
+    /// # ⛔ The rate key is `per_head`, and the row is a [`crate::materials_config::MaterialYieldDef`] at rest
+    ///
+    /// [`crate::materials_config::credit_material_yield`] is **the one crediting seam** and it is
+    /// unit-agnostic (`quantity × rate`), so a standing row is stored as the very type the hunt rows
+    /// are and is credited by handing it a head count where a hunt hands it a biomass. What differs
+    /// is only what the author writes, so the JSON key is renamed on the way in
+    /// ([`deserialize_per_head_rows`]) rather than a second row type being introduced that the
+    /// credit and the validator would each need an arm for.
+    #[serde(deserialize_with = "deserialize_per_head_rows")]
+    pub materials: Vec<crate::materials_config::MaterialYieldDef>,
+}
+
+/// **One authored standing material row** — the file form of a [`StandingYieldDef::materials`] entry,
+/// which exists only so the rate key reads `per_head` where a head is what it is per. Never held: it
+/// is mapped to a [`crate::materials_config::MaterialYieldDef`] at load. See that field's doc.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StandingMaterialRow {
+    material: String,
+    per_head: f32,
+    characteristics: std::collections::BTreeMap<String, f32>,
+}
+
+/// Read `{material, per_head, characteristics}` rows into the shared
+/// [`crate::materials_config::MaterialYieldDef`] the credit and the validator both take.
+fn deserialize_per_head_rows<'de, D>(
+    deserializer: D,
+) -> Result<Vec<crate::materials_config::MaterialYieldDef>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let rows = Vec::<StandingMaterialRow>::deserialize(deserializer)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| crate::materials_config::MaterialYieldDef {
+            material: row.material,
+            per_biomass: row.per_head,
+            characteristics: row.characteristics,
+        })
+        .collect())
+}
+
+/// **A species that gives nothing while it stands** — the resolved reading of an absent
+/// `standing_yield` block, and of an unresolvable species name. Named because a bare `0.0` in a rate
+/// position reads as a missing value rather than the deliberate *"pigs do not give milk"* it is.
+pub const NO_STANDING_YIELD: f32 = 0.0;
+
+/// **The per-species standing-yield vector, RESOLVED** — the configured [`StandingYieldDef`] with its
+/// absences filled in. Produced by exactly one seam, [`FaunaConfig::standing_yield_for`], so no call
+/// site re-derives *"this species has no renewable option"*.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StandingYield {
+    /// Food one head gives per turn, [`NO_STANDING_YIELD`] for a species that gives none.
+    pub provisions_per_head: f32,
+    /// **Does a live head give any MATERIAL at all** — the one thing the row list can say that a
+    /// rate cannot, carried here for [`HuntYield::yields_materials`]'s reason: this vector is `Copy`
+    /// and *"is there anything here at all"* is the only question asked of it.
+    pub yields_materials: bool,
+}
+
+impl StandingYield {
+    /// **A species with no renewable option** — what an absent block and an unresolvable name both
+    /// read as.
+    pub const NONE: Self = Self {
+        provisions_per_head: NO_STANDING_YIELD,
+        yields_materials: false,
+    };
+
+    /// **Does keeping this animal alive pay anything?** Derived from the vector rather than stored
+    /// beside it, the discipline [`HuntYield::yields_nothing`] already carries.
+    pub fn yields_nothing(self) -> bool {
+        self.provisions_per_head <= NO_STANDING_YIELD && !self.yields_materials
+    }
 }
 
 /// **The per-species hunt-yield vector, RESOLVED** — the configured [`HuntYieldDef`] with its `None`
@@ -1525,6 +1648,42 @@ pub struct HusbandryConfig {
     /// Validated finite and `>= 0`. A **playtest dial**; `docs/plan_standing_upkeep.md` §4.14 owns it,
     /// and it is the number the "how many turns of keeping undo a turn of neglect" measurement tunes.
     pub neglect_recovery_rate: f32,
+    /// **What share of its standing rates a ROAMING herd delivers** (`docs/plan_pen_standing_yield.md`
+    /// §3) — the `rung_fraction` at `animal:pastoral`, against `1.0` at `animal:pen` and nothing at
+    /// all wild.
+    ///
+    /// # It is GLOBAL, not per species, because the reason is structural
+    ///
+    /// A roaming herd yields less because it is milked opportunistically rather than twice daily —
+    /// a fact about the rung, not about the animal. A per-species dial here would say the *cow* is
+    /// worse at being mobile, which is not what anybody means.
+    ///
+    /// # ⛔ IT IS LOAD-BEARING, NOT A NICETY
+    ///
+    /// `steppe_runner` and `marsh_grazer` carry `husbandry_ceiling: "pastoral"` and **can never be
+    /// penned**, so a pen-only gate would hand the two migratory species nothing at all. It is also
+    /// the first thing that makes the mobile rung worth *staying* on rather than a waypoint to the
+    /// pen — the steppe economy was milk.
+    ///
+    /// Validated finite and in `[0, 1]`: a roaming herd cannot out-yield a penned one, and a
+    /// negative share would pay the keepers backwards. A **playtest dial**.
+    pub pastoral_standing_fraction: f32,
+    /// **What committing a herd's output COSTS, as a fraction of the herd's current rung's
+    /// `build.work_cost`** (`docs/plan_pen_standing_yield.md` §4) — the `SetHerdOutput` job's price,
+    /// and the reason every commitment costs, including the first.
+    ///
+    /// A herd reaching the pen is all-meat and pays to become a dairy herd, exactly as it pays again
+    /// to go back: re-sorting a herd, keeping and raising the females and drying off is months of
+    /// real work. But it is **not** rebuilding the fence, so it is a fraction of the rung rather than
+    /// the rung's whole price.
+    ///
+    /// **DERIVED FROM THE RUNG, NOT INVENTED**, on the precedent `route:paved_road` set when it took
+    /// `animal:pen`'s own pile-to-rate ratio — so a rung retune carries it. At the shipped ladder
+    /// that is **25 work** at `animal:pen` (75) and **16.67** at `animal:pastoral` (50).
+    ///
+    /// Validated finite and `> 0`: a `0` would make the commitment free, which is the one thing this
+    /// dial exists to prevent. A **playtest dial**.
+    pub output_recommit_work_fraction: f32,
 }
 
 impl Default for HusbandryConfig {
@@ -1549,6 +1708,8 @@ impl Default for HusbandryConfig {
             escape_fraction_jitter: DEFAULT_ESCAPE_FRACTION_JITTER,
             escape_acceleration: DEFAULT_ESCAPE_ACCELERATION,
             neglect_recovery_rate: DEFAULT_NEGLECT_RECOVERY_RATE,
+            pastoral_standing_fraction: DEFAULT_PASTORAL_STANDING_FRACTION,
+            output_recommit_work_fraction: DEFAULT_OUTPUT_RECOMMIT_WORK_FRACTION,
         }
     }
 }
@@ -1772,6 +1933,25 @@ const DEFAULT_ESCAPE_ACCELERATION: f32 = 0.05;
 /// glance rather than fine — §4.14 owns the number, and the measurement it will tune against is *how
 /// many kept turns bring a frayed herd back to zero*. A **playtest dial**.
 const DEFAULT_NEGLECT_RECOVERY_RATE: f32 = 0.25;
+
+/// The shipped [`HusbandryConfig::pastoral_standing_fraction`] — a roaming herd delivers 40% of its
+/// standing rates. See that field.
+const DEFAULT_PASTORAL_STANDING_FRACTION: f32 = 0.4;
+
+/// The shipped [`HusbandryConfig::output_recommit_work_fraction`] — a third of the herd's current
+/// rung's `build.work_cost`. See that field.
+const DEFAULT_OUTPUT_RECOMMIT_WORK_FRACTION: f32 = 0.333;
+
+/// **A HERD THAT KEEPS NOTHING BACK** — `rung_fraction` for a wild herd, and the neutral reading of
+/// [`FaunaConfig::husbandry`]'s standing dials for a rung that delivers no standing yield at all.
+/// Named because a bare `0.0` beside a fraction reads as an unset value rather than *"nobody is
+/// milking this herd"*.
+pub const NO_STANDING_RUNG_SHARE: f32 = 0.0;
+
+/// **A PENNED HERD DELIVERS ITS STANDING RATES IN FULL** — the `rung_fraction` at `animal:pen`, the
+/// value [`HusbandryConfig::pastoral_standing_fraction`] is a share *of*. It is `1.0` by definition
+/// (the rates are authored at the pen), which is why it is a named constant rather than a dial.
+pub const PEN_STANDING_RUNG_SHARE: f32 = 1.0;
 
 // **RETIRED: `DEFAULT_PEN_UPKEEP_PER_BIOMASS` (0.002) and `PenConfig::upkeep_per_biomass`** — the
 // food/turn a pen drew from its keeper's `FOOD` larder for the share its footprint could not graze.
@@ -2077,6 +2257,26 @@ impl FaunaConfig {
                     provisions,
                 )?;
             }
+            // **The standing-yield vector** (`docs/plan_pen_standing_yield.md` §5). Same shape as the
+            // hunt vector above, same bound and for the same reason: only *present* components are
+            // checked, and `>= 0` rather than `> 0` — a `0.0` states *"this animal is kept and gives
+            // no milk"* explicitly where an absent block says the species has no renewable option at
+            // all. The material rows' own rates are reconciled against the materials table by
+            // [`Self::validate_against_materials`], which is where a row's `> 0` bound lives.
+            if let Some(standing) = def.standing_yield.as_ref() {
+                if let Some(provisions) = standing.provisions_per_head {
+                    require_non_negative_finite(
+                        species_field("standing_yield.provisions_per_head"),
+                        provisions,
+                    )?;
+                }
+                for row in &standing.materials {
+                    require_non_negative_finite(
+                        species_field("standing_yield.materials.per_head"),
+                        row.per_biomass,
+                    )?;
+                }
+            }
             if let Some(regrowth_rate) = def.regrowth_rate {
                 require_positive_finite(species_field("regrowth_rate"), regrowth_rate)?;
             }
@@ -2347,6 +2547,21 @@ impl FaunaConfig {
             "husbandry.neglect_recovery_rate",
             self.husbandry.neglect_recovery_rate,
         )?;
+        // **A share of the pen's rates, so `[0, 1]`** — a roaming herd cannot out-milk a penned one,
+        // and `0` is a legible off-switch (*"only pens yield standing output"*) rather than a
+        // catastrophe.
+        require_in_unit_range(
+            "husbandry.pastoral_standing_fraction",
+            self.husbandry.pastoral_standing_fraction,
+        )?;
+        // **Strictly positive** — at `0` committing a herd's output would be free, which is the one
+        // thing this dial exists to prevent (`docs/plan_pen_standing_yield.md` §4: *every commitment
+        // costs, including the first*). Unbounded above: a fraction over 1 would simply price a
+        // re-sort above the rung itself, which is a tuning statement rather than an incoherence.
+        require_positive_finite(
+            "husbandry.output_recommit_work_fraction",
+            self.husbandry.output_recommit_work_fraction,
+        )?;
         require_greater_than(
             "husbandry.pastoral_escape_fraction",
             self.husbandry.pastoral_escape_fraction,
@@ -2558,6 +2773,42 @@ impl FaunaConfig {
             .unwrap_or_default()
     }
 
+    /// **The species' resolved STANDING-yield vector** ([`SpeciesDef::standing_yield`]) — what one
+    /// *live* head pays per turn. **THE single seam**, the twin of [`Self::hunt_yield_for`]: the
+    /// *"this species has no renewable option"* answer is stated exactly once, so a herd cannot pay
+    /// milk on one path and nothing on another.
+    ///
+    /// Resolved **live** by display name, the [`FaunaConfig::taming_cost_multiplier_for`] path, so a
+    /// retune reaches herds already on the map and it needs no snapshot field. An unresolvable name
+    /// reads [`StandingYield::NONE`], matching the sibling resolvers' fixture-tolerant behaviour —
+    /// and here it is also the honest answer, because there is no global to fall back to.
+    pub fn standing_yield_for(&self, display: &str) -> StandingYield {
+        self.species_by_display(display)
+            .and_then(|def| def.standing_yield.as_ref())
+            .map_or(StandingYield::NONE, |standing| StandingYield {
+                provisions_per_head: standing.provisions_per_head.unwrap_or(NO_STANDING_YIELD),
+                yields_materials: !standing.materials.is_empty(),
+            })
+    }
+
+    /// **The species' STANDING material yield rows** ([`StandingYieldDef::materials`]) — what a live
+    /// head gives per turn, the twin of [`Self::hunt_materials_for`] and a separate seam from
+    /// [`Self::standing_yield_for`] for that seam's reason: a material is a *thing*, and a list has
+    /// nothing to fall back to. An absent block and an unresolvable name both yield none.
+    ///
+    /// **The rate on each row is per HEAD, not per biomass** — see [`StandingYieldDef::materials`]
+    /// for why the shared row type is the right one to hand
+    /// [`crate::materials_config::credit_material_yield`].
+    pub fn standing_materials_for(
+        &self,
+        display: &str,
+    ) -> &[crate::materials_config::MaterialYieldDef] {
+        self.species_by_display(display)
+            .and_then(|def| def.standing_yield.as_ref())
+            .map(|standing| standing.materials.as_slice())
+            .unwrap_or_default()
+    }
+
     /// Reconcile every species' material yield with the materials table — the cross-config half of
     /// `validate`, run by [`load_fauna_config_from_env`] with the loaded table passed in so it has
     /// exactly one copy. See [`crate::materials_config::MaterialsConfig::validate_yield`].
@@ -2570,6 +2821,16 @@ impl FaunaConfig {
                 &format!("species.{key}.hunt_yield"),
                 &def.hunt_yield.materials,
             )?;
+            // **The living rows take the SAME check** — a fleece named against a material the table
+            // does not carry is exactly the fault a hide would be, so it is caught here rather than
+            // skipped at the credit ([`crate::materials_config::credit_material_yield`] silently
+            // drops an unknown material, which is what makes this the check that matters).
+            if let Some(standing) = def.standing_yield.as_ref() {
+                materials.validate_yield(
+                    &format!("species.{key}.standing_yield"),
+                    &standing.materials,
+                )?;
+            }
         }
         Ok(())
     }

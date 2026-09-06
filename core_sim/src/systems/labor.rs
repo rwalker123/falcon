@@ -725,7 +725,9 @@ fn source_banking_its_first_work(
         .first()
         .and_then(|entry| match entry.declared {
             BuildJob::Rung(improvement) => Some((entry.source.clone(), improvement)),
-            BuildJob::ExtendPen => None,
+            // Neither of the two "work on a rung already held" kinds names a verb, so neither is
+            // ever the source banking its first *rung* work.
+            BuildJob::ExtendPen | BuildJob::SetHerdOutput(_) => None,
         })
         .filter(|(source, improvement)| head_gate(source, *improvement).holds());
     SourceBankingFirstWork { source }
@@ -3393,7 +3395,9 @@ pub fn advance_labor_allocation(
             // and therefore declares nothing here; it is the tend branch's own kind.
             let declared = match queued.map(|entry| entry.declared) {
                 Some(BuildJob::Rung(improvement)) => Some(improvement),
-                Some(BuildJob::ExtendPen) | None => None,
+                // Neither "work on a rung already held" kind names a rung verb, so neither declares
+                // anything here; each is its own arm's own kind.
+                Some(BuildJob::ExtendPen) | Some(BuildJob::SetHerdOutput(_)) | None => None,
             };
             // **IS THIS SOURCE THE HEAD?** — the one test that decides where the pool lands. Only
             // the head receives work; everything below it is dated, not funded.
@@ -3458,6 +3462,19 @@ pub fn advance_labor_allocation(
             // The **ring's** own funding, which the head declares as its own queue kind rather than
             // through a rung verb: a built pen carries no meter for a verb to name.
             let ring_workers = if is_queue_head && ring_queued {
+                builders
+            } else {
+                NO_CREW_ON_THIS_ACTIVITY
+            };
+            // **HAS THIS BAND ORDERED AN OUTPUT COMMITMENT HERE?** — the ring's pair, one job over
+            // (`docs/plan_pen_standing_yield.md` §4), and split from the head test for the ring's
+            // reason: a *waiting* commitment is still quoted at the full pool even though it is
+            // funded at nothing.
+            let recommit_queued = matches!(
+                queued.map(|entry| entry.declared),
+                Some(BuildJob::SetHerdOutput(_))
+            );
+            let recommit_workers = if is_queue_head && recommit_queued {
                 builders
             } else {
                 NO_CREW_ON_THIS_ACTIVITY
@@ -4579,6 +4596,11 @@ pub fn advance_labor_allocation(
                     );
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
+                        // **THE PLANT WEB PAYS ONLY THE ONE WAY** — there is nothing to keep
+                        // alive and milk, so the whole of `actual` is the "meat" half and the
+                        // standing half is a structural zero (`docs/plan_pen_standing_yield.md`).
+                        meat: provisions.to_f32(),
+                        standing: NO_STANDING_YIELD_HERE,
                         // **The credited value, not a recomputation** (issue #449) — the very
                         // `fodder` scalar added to the `FODDER` store above, **including the
                         // `fodder_permitted` gate**: a faction that has not learned Foddering was
@@ -4908,7 +4930,12 @@ pub fn advance_labor_allocation(
                         // **One draw model means one basis** — the same [`fauna::take_room`] the
                         // range take is bounded by, growth share and all, so a penned herd below its
                         // own climbing floor is not quietly harvested on a different rule.
-                        let production = fauna::herd_take_room(herd, *floor, &fauna);
+                        // **THE MEAT SIDE OF THE ROOM** (`docs/plan_pen_standing_yield.md` §1). It
+                        // sizes this row's `workers_needed`, and no number of extra hands increases
+                        // milk — so a committed herd wants haulers for the cull it will actually
+                        // perform, which is the same scaled room the seed's `ceiling_at` quotes.
+                        let production =
+                            fauna::herd_take_room(herd, *floor, &fauna) * herd.meat_take_fraction();
                         // **Collection** (slice 7 — the Field's twin): the keeper still has to carry
                         // the meat home, so the take is capped by the crew's own throughput — the
                         // *same* `per_worker_biomass_capacity` a wild hunt is capped by. The pen
@@ -4962,6 +4989,16 @@ pub fn advance_labor_allocation(
                         // floor. The band has no carry
                         // room, so the cap is unbounded exactly as the Hunt row passes it.
                         //
+                        // **THE STANDING SPLIT'S OTHER HALF, MEASURED BEFORE THE TAKE**
+                        // (`docs/plan_pen_standing_yield.md` §1) — `head count × f × rung_fraction`,
+                        // the one quantity every per-head rate is multiplied by
+                        // ([`fauna::herd_standing_scale`]).
+                        //
+                        // **Pre-take deliberately**: the animals stood there all turn and were
+                        // milked before any of them were slaughtered, so the head count is the one
+                        // the turn opened with. Reading it after `hunt_take` would dock the herd its
+                        // dairy for the very animals the cull removed.
+                        let standing_scale = fauna::herd_standing_scale(herd, &fauna);
                         // `hunt_take` does the room, the three stages, the wound store-back, the
                         // quantiser and the herd's own loss — one path rather than two that agree
                         // today.
@@ -5027,7 +5064,20 @@ pub fn advance_labor_allocation(
                         // exactly as a wild one does (`docs/plan_hunt_yield_model.md`).
                         let pen_yield = herd_hunt_yield(herd, &fauna);
                         let paid = pen_yield.apply(take.carried, mult_f);
-                        let provisions = scalar_from_f32(paid.provisions);
+                        // **THE MILK, THE EGGS AND THE DOWN** — what the herd pays for standing
+                        // there, at the species' own per-head rates
+                        // (`docs/plan_pen_standing_yield.md`). It rides the band's `mult_f` exactly
+                        // as the meat does: a productive band gets more out of the same animals
+                        // whichever way it takes it.
+                        let meat_provisions = paid.provisions;
+                        let standing_provisions =
+                            fauna.standing_yield_for(&herd.species).provisions_per_head
+                                * standing_scale
+                                * mult_f;
+                        // **ONE DEPOSIT, because it is one larder.** The split is a *readout* fact
+                        // (the row below carries it); the store is paid the total, which is what
+                        // keeps `food_income == Σ actual` and the larder identity intact.
+                        let provisions = scalar_from_f32(meat_provisions + standing_provisions);
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
                         }
@@ -5048,12 +5098,29 @@ pub fn advance_labor_allocation(
                         // **A pen changes the INTENSITY, never the PRODUCT** — so the keeper is paid
                         // this herd's own material rows too, off what was carried home, exactly as
                         // the range take is. Penning an animal does not change what it is made of.
-                        let credited_materials = crate::materials_config::credit_material_yield(
-                            &mut cohort.stores,
-                            &materials_cfg,
-                            fauna.hunt_materials_for(&herd.species),
-                            take.carried,
-                            mult_f,
+                        let credited_materials = crate::materials_config::merge_material_payoffs(
+                            crate::materials_config::credit_material_yield(
+                                &mut cohort.stores,
+                                &materials_cfg,
+                                fauna.hunt_materials_for(&herd.species),
+                                take.carried,
+                                mult_f,
+                            )
+                            .into_iter()
+                            // **AND THE FLEECE, THROUGH THE VERY SAME SEAM** — the standing rows are
+                            // per **head**, so the quantity handed over is the head-count scale
+                            // rather than a biomass. That is the whole difference: one credit
+                            // function, two bases, and **no rounding** — a draw of `0.0000455` fibre
+                            // subtracts exactly that and the stock crosses whole units by itself.
+                            .chain(
+                                crate::materials_config::credit_material_yield(
+                                    &mut cohort.stores,
+                                    &materials_cfg,
+                                    fauna.standing_materials_for(&herd.species),
+                                    standing_scale,
+                                    mult_f,
+                                ),
+                            ),
                         );
                         let tended = provisions.to_f32();
                         // **Extending** a pen (2d-β) re-uses the pen rung's own build dials — a ring
@@ -5209,6 +5276,79 @@ pub fn advance_labor_allocation(
                                 )),
                             ));
                         }
+                        // **THE OUTPUT COMMITMENT, ONE TURN OF IT** (`docs/plan_pen_standing_yield.md` §4)
+                        // — a `set_herd_output` job is work on the rung the herd already stands on, so it is
+                        // the ring's shape exactly: the band's `builders` pool, only at the head of the queue,
+                        // its own in-flight state on the herd, and its own queue kind because no rung verb can
+                        // name it.
+                        //
+                        // **Resolved AFTER the take, mirroring the ring and `accrue_corral`** — so the turn a
+                        // commitment lands still pays at the fraction the forecast promised, and the new
+                        // fraction arrives on the next turn's take.
+                        //
+                        // **It draws no material pile**, so its coverage is the band's own: re-sorting a herd
+                        // is labor, not panels.
+                        let recommit = advance_output_recommit(
+                            herd,
+                            recommit_workers,
+                            entry_gear.work_per_worker,
+                            build_coverage,
+                            &ladder,
+                            husbandry,
+                        );
+                        // **The tools wear on the offered accrual, not the meter's delta** — the ring's own
+                        // rule and for the ring's reason: a completion *resets* the meter, so a before/after
+                        // delta would read negative on exactly the turn the crew worked hardest.
+                        if recommit.in_flight {
+                            charge_build_wear(
+                                band_equipment.as_deref_mut(),
+                                &equipment_cfg,
+                                &entry_gear.wear_kit,
+                                recommit.accrual,
+                            );
+                        }
+                        // A commitment is an ordinary build and is dated like one, so the band's chain pass
+                        // has a quote to date rather than minting `Blocked` for a job accruing normally.
+                        if recommit_queued {
+                            build_quotes.push((
+                                BuildSource::Herd(herd.id.clone()),
+                                BuildQuote {
+                                    cost: recommit.cost,
+                                    banked: recommit.banked,
+                                    // It eats no material, so nothing can be short of one.
+                                    material_coverage: FULLY_SERVED,
+                                    // One rung, no legs — the animal web's shape.
+                                    legs: Vec::new(),
+                                    balance: recommit.accrual - meter_rot,
+                                    // The job's whole gate is its in-flight state, the ring's rule.
+                                    gate: if recommit.in_flight {
+                                        crate::intensification::BuildGate::Open
+                                    } else {
+                                        BuildGate::RingIdle
+                                    },
+                                },
+                            ));
+                        }
+                        if recommit.finished {
+                            completed.push((
+                                BuildSource::Herd(herd.id.clone()),
+                                BuildJob::SetHerdOutput(fauna::herd_rung_key(herd)),
+                            ));
+                            event_log.push(CommandEventEntry::new(
+                                tick.0,
+                                CommandEventKind::Corral,
+                                faction,
+                                format!(
+                                    "{} now gives {:.0}% of itself as milk, eggs and wool",
+                                    fauna_id,
+                                    herd.standing_output_fraction * PERCENT_PER_UNIT
+                                ),
+                                Some(format!(
+                                    "status=committed action=set_herd_output herd={} fraction={:.3}",
+                                    fauna_id, herd.standing_output_fraction
+                                )),
+                            ));
+                        }
                         // A *managed* harvest never overdraws — it takes at most the escapement MSY —
                         // so `sustainable == actual` (no overdraw ⚠). The two staffing signals are
                         // derived like every other rung's: how many keepers the take really needed,
@@ -5234,6 +5374,12 @@ pub fn advance_labor_allocation(
                         );
                         yields[idx] = SourceYield {
                             actual: tended,
+                            // **THE SPLIT, PUBLISHED RATHER THAN LEFT TO BE SUBTRACTED** — one row
+                            // for one herd, itemized on the row (`docs/plan_pen_standing_yield.md`
+                            // §5). `meat + standing == actual` by construction: they are the two
+                            // terms the deposit above was the sum of.
+                            meat: meat_provisions,
+                            standing: standing_provisions,
                             // No animal pays fodder, so this arm credits the `FODDER` store nothing
                             // and the row reports the same nothing (see [`SourceYield::fodder`]).
                             fodder: 0.0,
@@ -5326,6 +5472,14 @@ pub fn advance_labor_allocation(
                     // legal build target that yields nothing is unrepresentable.
                     let herd_is_workable =
                         source_is_workable(fauna::herd_take_room(herd, *floor, &fauna));
+                    // **THE STANDING SPLIT'S OTHER HALF, MEASURED BEFORE THE TAKE** — the pen
+                    // branch's own line, and the reason it is here too is
+                    // `docs/plan_pen_standing_yield.md` §3: `steppe_runner` and `marsh_grazer` carry
+                    // `husbandry_ceiling: "pastoral"` and can **never** be penned, so a pen-only
+                    // payout would hand the two migratory species nothing at all. The scale folds
+                    // in the rung share itself ([`fauna::herd_standing_rung_share`]), so a **wild**
+                    // herd on this same path resolves an honest zero with no branch here.
+                    let standing_scale = fauna::herd_standing_scale(herd, &fauna);
                     // The band has no carry room — it eats/banks whatever it hauls, so pass an
                     // unbounded carry cap (behaviour unchanged from before the expedition clamp).
                     let outcome = hunt_take(
@@ -5392,7 +5546,15 @@ pub fn advance_labor_allocation(
                     // yields both products so neither can be converted without the other.
                     let hunt_yield = herd_hunt_yield(herd, &fauna);
                     let paid = hunt_yield.apply(take.carried, mult_f);
-                    let provisions = scalar_from_f32(paid.provisions);
+                    // **The milk half, at the pastoral share** — see `standing_scale` above. A wild
+                    // herd's share is zero, so this arm is byte-identical on the range.
+                    let meat_provisions = paid.provisions;
+                    let standing_provisions =
+                        fauna.standing_yield_for(&herd.species).provisions_per_head
+                            * standing_scale
+                            * mult_f;
+                    // One deposit, because it is one larder — the pen branch's rule.
+                    let provisions = scalar_from_f32(meat_provisions + standing_provisions);
                     // **Tame — the investment** (the animal twin of Cultivate, and the rung
                     // below Corral). The crew is gentling the herd, not hunting it: `hunt_take`
                     // above already paid only the reduced Tame ceiling (the `animal:pastoral` rung's
@@ -5720,13 +5882,102 @@ pub fn advance_labor_allocation(
                     // §2) — hide, sinew and bone, off the meat **carried home** exactly as the two
                     // accounts above are, so a party that killed a mammoth and hauled a leg of it
                     // brings back a leg's worth of hide. A take that hauls nothing home yields none.
-                    let credited_materials = crate::materials_config::credit_material_yield(
-                        &mut cohort.stores,
-                        &materials_cfg,
-                        fauna.hunt_materials_for(&herd.species),
-                        take.carried,
-                        mult_f,
+                    let credited_materials = crate::materials_config::merge_material_payoffs(
+                        crate::materials_config::credit_material_yield(
+                            &mut cohort.stores,
+                            &materials_cfg,
+                            fauna.hunt_materials_for(&herd.species),
+                            take.carried,
+                            mult_f,
+                        )
+                        .into_iter()
+                        // **And the standing rows, off the head count** — the pen branch's comment
+                        // applies here word for word; the roster's two pastoral-only species carry
+                        // no standing material today, so this is a structural seam rather than a
+                        // live payment on the shipped table.
+                        .chain(
+                            crate::materials_config::credit_material_yield(
+                                &mut cohort.stores,
+                                &materials_cfg,
+                                fauna.standing_materials_for(&herd.species),
+                                standing_scale,
+                                mult_f,
+                            ),
+                        ),
                     );
+                    // **THE OUTPUT COMMITMENT, ONE TURN OF IT** (`docs/plan_pen_standing_yield.md` §4)
+                    // — a `set_herd_output` job is work on the rung the herd already stands on, so it is
+                    // the ring's shape exactly: the band's `builders` pool, only at the head of the queue,
+                    // its own in-flight state on the herd, and its own queue kind because no rung verb can
+                    // name it.
+                    //
+                    // **Resolved AFTER the take, mirroring the ring and `accrue_corral`** — so the turn a
+                    // commitment lands still pays at the fraction the forecast promised, and the new
+                    // fraction arrives on the next turn's take.
+                    //
+                    // **It draws no material pile**, so its coverage is the band's own: re-sorting a herd
+                    // is labor, not panels.
+                    let recommit = advance_output_recommit(
+                        herd,
+                        recommit_workers,
+                        entry_gear.work_per_worker,
+                        build_coverage,
+                        &ladder,
+                        husbandry,
+                    );
+                    // **The tools wear on the offered accrual, not the meter's delta** — the ring's own
+                    // rule and for the ring's reason: a completion *resets* the meter, so a before/after
+                    // delta would read negative on exactly the turn the crew worked hardest.
+                    if recommit.in_flight {
+                        charge_build_wear(
+                            band_equipment.as_deref_mut(),
+                            &equipment_cfg,
+                            &entry_gear.wear_kit,
+                            recommit.accrual,
+                        );
+                    }
+                    // A commitment is an ordinary build and is dated like one, so the band's chain pass
+                    // has a quote to date rather than minting `Blocked` for a job accruing normally.
+                    if recommit_queued {
+                        build_quotes.push((
+                            BuildSource::Herd(herd.id.clone()),
+                            BuildQuote {
+                                cost: recommit.cost,
+                                banked: recommit.banked,
+                                // It eats no material, so nothing can be short of one.
+                                material_coverage: FULLY_SERVED,
+                                // One rung, no legs — the animal web's shape.
+                                legs: Vec::new(),
+                                balance: recommit.accrual - meter_rot,
+                                // The job's whole gate is its in-flight state, the ring's rule.
+                                gate: if recommit.in_flight {
+                                    crate::intensification::BuildGate::Open
+                                } else {
+                                    BuildGate::RingIdle
+                                },
+                            },
+                        ));
+                    }
+                    if recommit.finished {
+                        completed.push((
+                            BuildSource::Herd(herd.id.clone()),
+                            BuildJob::SetHerdOutput(fauna::herd_rung_key(herd)),
+                        ));
+                        event_log.push(CommandEventEntry::new(
+                            tick.0,
+                            CommandEventKind::Corral,
+                            faction,
+                            format!(
+                                "{} now gives {:.0}% of itself as milk, eggs and wool",
+                                fauna_id,
+                                herd.standing_output_fraction * PERCENT_PER_UNIT
+                            ),
+                            Some(format!(
+                                "status=committed action=set_herd_output herd={} fraction={:.3}",
+                                fauna_id, herd.standing_output_fraction
+                            )),
+                        ));
+                    }
                     // **The LONG-RUN sustainable rate** — one turn's net regrowth at the herd's
                     // **pre-take** biomass (the herd's OWN ecology/capacity: a tamed herd grows 1.5×
                     // faster, so its sustainable skim is 1.5× a wild one's).
@@ -5738,6 +5989,11 @@ pub fn advance_labor_allocation(
                     // average ("this herd sustains ~0.78/turn"), and whether the take **overdraws** is
                     // answered by the policy's own floor (`overdraws` below) instead of by comparing
                     // the two. See `SourceYield`.
+                    // **THE STANDING HALF IS SUSTAINABLE TOO** — it is harvested without killing,
+                    // so it is income the herd reproduces indefinitely, and the seeded row
+                    // (`fauna::forecast_source_yield`) states the same sum. A structural zero on
+                    // every wild and uncommitted herd, which is why this line is unchanged for
+                    // every row that existed before the arc.
                     let sustainable = hunt_yield
                         .apply(
                             sustainable_yield(
@@ -5747,7 +6003,8 @@ pub fn advance_labor_allocation(
                             ),
                             mult_f,
                         )
-                        .provisions;
+                        .provisions
+                        + standing_provisions;
                     // The two staffing signals, from the same take. **Overstaffing**: invert the
                     // carried biomass by the per-hunter throughput (hunt has no seasonal factor,
                     // unlike forage). **Understaffing** (`wasted`): the meat the crew killed but could
@@ -5801,7 +6058,11 @@ pub fn advance_labor_allocation(
                     // rate by hand at *one* of the two `hunt_take_workers` sites is exactly how the
                     // pen's site went on inverting a sled the take had stopped reading.
                     let workers_needed = fauna::hunt_take_workers(
-                        standing_above_floor,
+                        // **The meat side of the room, and ONLY here.** The two gates above read
+                        // `standing_above_floor` raw and must go on doing so: a fully committed herd
+                        // is still a herd to gentle, to fence and to learn from. What scales is the
+                        // crew this row asks for, because no number of extra hands increases milk.
+                        standing_above_floor * herd.meat_take_fraction(),
                         herd.body_mass,
                         fauna::herd_carry_rate(herd, &fauna, herd_carry_per_worker),
                         fauna.engage_rate_for(&herd.species),
@@ -5824,6 +6085,10 @@ pub fn advance_labor_allocation(
                     );
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
+                        // The split, published rather than subtracted — the pen branch's rule. On a
+                        // wild herd `standing` is a structural zero and `meat` is the whole row.
+                        meat: meat_provisions,
+                        standing: standing_provisions,
                         // No animal pays fodder, so this arm credits the `FODDER` store nothing and
                         // the row reports the same nothing (see [`SourceYield::fodder`]).
                         fodder: 0.0,
@@ -6222,6 +6487,9 @@ pub fn advance_labor_allocation(
                 // A ring is fencing work on the pen rung, so it reports on the pen's channel under
                 // the command's own name — the same name the player typed.
                 BuildJob::ExtendPen => (CommandEventKind::Corral, EXTEND_PEN_ACTION),
+                // A commitment is husbandry work on the herd's own rung, so it reports on the same
+                // channel a pen's whole life reads on, under the command's own name.
+                BuildJob::SetHerdOutput(_) => (CommandEventKind::Corral, SET_HERD_OUTPUT_ACTION),
             };
             let named = describe_build_source(source);
             event_log.push(CommandEventEntry::new(
@@ -6374,6 +6642,7 @@ fn retire_entries_already_built(
                 (improvement_feed_channel(improvement), improvement.as_str())
             }
             BuildJob::ExtendPen => (CommandEventKind::Corral, EXTEND_PEN_ACTION),
+            BuildJob::SetHerdOutput(_) => (CommandEventKind::Corral, SET_HERD_OUTPUT_ACTION),
         };
         let named = describe_build_source(&entry.source);
         event_log.push(CommandEventEntry::new(
@@ -6422,6 +6691,14 @@ fn entry_job_already_built(
         }
         // A ring names a herd; a road entry can never carry one.
         (BuildSource::Road(_), BuildJob::ExtendPen) => false,
+        // **A commitment's "already built" test is its own in-flight target**, exactly as the
+        // ring's is `pen_extending`: the order lands the moment the meter fills, and an entry
+        // standing over a cleared target is describing a job that is done.
+        (BuildSource::Herd(id), BuildJob::SetHerdOutput(_)) => herds
+            .find(id.as_str())
+            .is_some_and(|herd| herd.standing_output_target.is_none()),
+        // A commitment names a herd; neither other source kind can carry one.
+        (BuildSource::Patch(_) | BuildSource::Road(_), BuildJob::SetHerdOutput(_)) => false,
     }
 }
 
@@ -6870,7 +7147,95 @@ const BUILD_QUEUE_HEAD: usize = 0;
 /// The `extend_pen` command's own name — the feed detail of a ring that completed, and the job token
 /// a ring's row publishes. A ring is not one of the four rung verbs, so it has no
 /// `Improvement::as_str` to borrow, and the command's own name is the one word the player typed.
+/// **ONE TURN OF A `set_herd_output` COMMITMENT** — the accrual, its cost, the quote's two terms and
+/// the completion test, resolved in one place (`docs/plan_pen_standing_yield.md` §4).
+///
+/// # ⛔ IT IS A FUNCTION BECAUSE **BOTH** MANAGED RUNGS RUN IT
+///
+/// The ring is fencing, so it lives entirely inside the Hunt arm's pen branch. A commitment happens
+/// at either managed rung — `steppe_runner` and `marsh_grazer` can never be penned and are exactly
+/// the species §3 exists for — so it is reached from the pen branch *and* from the range branch. Two
+/// inline copies is how the two rungs would come to price a re-sort differently.
+///
+/// **The cost is the herd's CURRENT rung's**, unscaled by the species' taming multiplier: re-sorting
+/// a herd is the same job whatever the animal, and pricing it off the rung is what makes a rung
+/// retune carry it (`husbandry.output_recommit_work_fraction`).
+///
+/// **No material pile.** A recommit is labor — keeping and raising the females, drying off — not
+/// panels, so it draws nothing from the store and its `coverage` is the caller's whole share.
+struct OutputRecommit {
+    /// Work this turn's crew banked, already scaled by the caller's material coverage.
+    accrual: f32,
+    /// The job's whole price in work units — [`Herd::output_recommit_cost`]'s denominator.
+    cost: f32,
+    /// The meter **as the commitment left it**, which on the completing turn is the cost it just
+    /// cleared rather than the reset the completion performed — the ring's rule, and for the ring's
+    /// reason: quoting the live field there would publish a whole fresh job's span on the very turn
+    /// the old one finished.
+    banked: f32,
+    /// Was a commitment in flight when this turn began? The job's whole gate, passed to the rung's
+    /// `eligible` rather than tested beside it so the accrual and the quote cannot disagree.
+    in_flight: bool,
+    /// Did the commitment land this turn? `true` exactly on the completion turn, so the caller can
+    /// announce it and retire the entry.
+    finished: bool,
+}
+
+fn advance_output_recommit(
+    herd: &mut fauna::Herd,
+    workers: u32,
+    work_per_worker: f32,
+    coverage: f32,
+    ladder: &crate::intensification::LadderConfig,
+    husbandry: &crate::fauna_config::HusbandryConfig,
+) -> OutputRecommit {
+    let in_flight = herd.standing_output_target.is_some();
+    let rung = fauna::herd_rung(herd, ladder);
+    // A wild herd stands on a rung with no build meter, so it has no price and can hold no
+    // commitment — which is the same answer `begin_output_recommit` refuses one with.
+    let cost = rung
+        .build_cost(RUNG_COST_UNSCALED)
+        .map_or(NO_RECOMMIT_PRICE, |work| {
+            work * husbandry.output_recommit_work_fraction
+        });
+    let accrual =
+        rung.build_accrual(rung.verb_improvement(), in_flight, workers, work_per_worker) * coverage;
+    let finished = herd.accrue_output_recommit(accrual, cost);
+    OutputRecommit {
+        accrual,
+        cost,
+        banked: if finished {
+            cost
+        } else {
+            herd.output_recommit_progress
+        },
+        in_flight,
+        finished,
+    }
+}
+
+/// **A RUNG THAT CANNOT BE RE-SORTED** — the price of a commitment on a rung with no build meter,
+/// which is the wild rung and only the wild rung. Named because a bare `0.0` in a cost position
+/// reads as *"free"* rather than *"there is no job here"*; a `0` cost also completes the meter
+/// immediately, which is why `begin_output_recommit` refuses a wild herd before this is ever read.
+const NO_RECOMMIT_PRICE: f32 = 0.0;
+
+/// **A UNIT FRACTION AS A PERCENTAGE** — the feed line's only arithmetic, named so the `100` in it
+/// is a unit conversion rather than a number somebody chose.
+const PERCENT_PER_UNIT: f32 = 100.0;
+
+/// **A ROW THAT PAYS NOTHING FOR STANDING THERE** — [`SourceYield::standing`] on every source that
+/// is not a kept herd committed to standing output: the whole plant web (there is nothing alive to
+/// milk) and every wild hunt (you do not milk an animal that runs from you). Named because a bare
+/// `0.0` in that field reads as a missing value rather than the structural nothing it is.
+pub const NO_STANDING_YIELD_HERE: f32 = 0.0;
+
 pub const EXTEND_PEN_ACTION: &str = "extend_pen";
+
+/// The `set_herd_output` command's own name — the feed detail of a commitment that completed, and
+/// the job token its queue entry publishes. [`EXTEND_PEN_ACTION`]'s twin, and here for its reason:
+/// the job names no rung verb, so the token is the only thing that can say what the entry is.
+pub const SET_HERD_OUTPUT_ACTION: &str = "set_herd_output";
 
 /// **SAY WHOSE WORK BOARD A LOST ROW WAS ON** — appends the `band=` detail token to `detail`, or
 /// leaves it alone for a cohort carrying no durable id.

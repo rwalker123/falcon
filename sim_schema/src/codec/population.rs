@@ -260,6 +260,10 @@ fn create_populations<'a>(
                                 sustainableYield: assignment.sustainable_yield,
                                 workersNeeded: assignment.workers_needed,
                                 wastedYield: assignment.wasted_yield,
+                                // **What `actualYield` is made of** — the cull and the milk, on one
+                                // row. See `LaborAssignmentState::meat_yield`.
+                                meatYield: assignment.meat_yield,
+                                standingYield: assignment.standing_yield,
                                 overdraws: assignment.overdraws,
                                 realizedYield: assignment.realized_yield,
                                 arrivalSchedule: arrival_schedule,

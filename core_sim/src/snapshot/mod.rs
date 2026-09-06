@@ -1463,6 +1463,9 @@ mod tests {
                     arrivals: vec![2.5; 3],
                     // A resolved fixture row: the take happened, so its band is a point.
                     range: YieldRange::certain(2.5),
+                    // A gather kills nothing and milks nothing: the plant web pays one way.
+                    meat: 2.5,
+                    standing: 0.0,
                 },
                 SourceYield {
                     // A hunt: no animal pays fodder, and this fixture's quarry is made of nothing.
@@ -1478,6 +1481,9 @@ mod tests {
                     // A lumpy hunt: nothing for two turns, then a whole animal.
                     arrivals: vec![0.0, 0.0, 0.75],
                     range: YieldRange::certain(0.5),
+                    // An uncommitted herd: the whole row is meat.
+                    meat: 0.5,
+                    standing: 0.0,
                 },
             ],
             last_raid_forfeit: 0.0,
