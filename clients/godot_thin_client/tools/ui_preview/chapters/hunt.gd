@@ -2196,7 +2196,7 @@ const GATE_SPLIT_COVERED_HUNTERS := 3
 ## of whom four are armed describes nobody on the sheet.
 ##
 ## **The shortfall it was hinting at is now said outright, and only when there IS one.**
-const GATE_SPLIT_KIT_HINT := "Only 4 of 6 hunters carry spears — the rest go without"
+const GATE_SPLIT_KIT_HINT := "Only 4 of 6 hunters carry spears"
 
 ## ⛔ **AND THE COVERED PARTY'S LINE IS GONE ENTIRELY — this claim INVERTED.**
 ##

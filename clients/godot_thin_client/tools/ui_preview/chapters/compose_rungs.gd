@@ -727,9 +727,9 @@ func _assert_the_kit_line_is_a_shortfall_warning() -> void:
 	var bare := BandFx.band_fixture()
 	bare["kit_item_conditions"] = BandFx.kit_condition_rows(SHORTFALL_NONE_HELD)
 	var none_held := KitRoster.tier_hint(roster, big_game, bare, KitRoster.JOB_HUNT, crew)
-	var none_want := HudComposeVocab.KIT_SHORTFALL_NONE_FORMAT % [
-		DetailFormat.kit_item_label(BandFx.KIT_ITEM_SPEARS).to_lower(), crew,
-		HudComposeVocab.KIT_SHORTFALL_CREW_NOUNS[KitRoster.JOB_HUNT]]
+	var none_want := HudComposeVocab.KIT_SHORTFALL_NONE_FORMAT % [crew,
+		HudComposeVocab.KIT_SHORTFALL_CREW_NOUNS[KitRoster.JOB_HUNT],
+		DetailFormat.kit_item_label(BandFx.KIT_ITEM_SPEARS).to_lower()]
 	h._assert_hud("…and owning NONE reads differently from owning too few (wanted \"%s\", got \"%s\")"
 		% [none_want, none_held], none_held == none_want)
 	h._assert_hud("…never as `dry`, which claimed the band owned some and had spent them",

@@ -1564,12 +1564,12 @@ static func shortfall_line(kits: Array, kit: Dictionary, band: Dictionary, job: 
 		HudComposeVocab.KIT_SHORTFALL_CREW_NOUN_FALLBACK))
 	var item_label := DetailFormat.kit_item_label(short_item).to_lower()
 	if covered <= 0:
-		return HudComposeVocab.KIT_SHORTFALL_NONE_FORMAT % [item_label, on_job, crew_noun]
+		return HudComposeVocab.KIT_SHORTFALL_NONE_FORMAT % [on_job, crew_noun, item_label]
 	return HudComposeVocab.KIT_SHORTFALL_SOME_FORMAT % [covered, on_job, crew_noun, item_label]
 
 ## The sim's own head count for the job this item is quoted at, `0` when it states none. **`0` is not
 ## a shortfall** — `snapshot.fbs` is explicit that `workersOnQuotedJob == 0` means nobody is staffed,
-## so there was no gear to go round and none went unheld.
+## so there was nobody to hand gear to and nobody went without.
 static func _published_on_quoted_job(band: Dictionary, item_id: String) -> int:
 	for row_variant in band.get(DetailFormat.KIT_ITEM_CONDITIONS_KEY, []):
 		if not (row_variant is Dictionary):

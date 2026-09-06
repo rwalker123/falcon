@@ -36,8 +36,10 @@ meaningless. The user has no sense why it is saying that."*
   so no client need infer ownership from a condition. `KitRoster.condition_of` is DELETED with the
   clause it fed; `DetailFormat.kit_is_equipped` asks `count` now.
 - **OWNING NONE AND OWNING TOO FEW GET DIFFERENT SENTENCES**, because they are different situations:
-  `No spears to go round — all 17 hunters go without` against
-  `Only 5 of 17 hunters carry spears — the rest go without`.
+  `None of 17 hunters carry spears` against `Only 5 of 17 hunters carry spears`.
+- **ONE CLAUSE, NEVER TWO.** Both shipped with a trailing *"— the rest go without"* and it was cut on
+  sight: it restates the count standing in front of it. A second clause here is the same fault the
+  retired `carry 8.0 per gatherer` had — words spent on something the reader has already been told.
 - **THE DENOMINATOR IS THE COMPOSED CREW, not `workersOnQuotedJob`.** That published pair is the head
   count of the job as STAFFED and is `0` on a sheet where nobody is assigned yet, so a party being
   composed is measured against itself; a host with no stepper falls back to the published pair, which
@@ -50,7 +52,7 @@ meaningless. The user has no sense why it is saying that."*
   without. **Its denominator is the published `workersOnQuotedJob`**: a role card is a COMMITTED
   standing slot rather than a party being composed, so the sim's own head count for that role's job is
   what the shortfall is a fraction of. It reads
-  `attack 6 defending the camp · Only 1 of 3 warriors carry clubs — the rest go without`.
+  `attack 6 defending the camp · Only 1 of 3 warriors carry clubs`.
 - **THE INK FOLLOWS THE SHORTFALL, asked of the producer.** A source job's line is only ever a
   shortfall so it is always `DANGER`; a role card's turns red only when the sentence is appended. The
   mount site calls `shortfall_line` rather than inspecting the text, so a copy change cannot silently

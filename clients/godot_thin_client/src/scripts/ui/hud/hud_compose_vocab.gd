@@ -1602,11 +1602,16 @@ const KIT_HINT_SEPARATOR := " · "
 ## > bring a number back "just for information", and do not special-case one web — the hunt sheets
 ## > mount the same line for the same reason.
 
+## **ONE CLAUSE, NEVER TWO.** Both sentences state a count against a crew, and a trailing *"— the
+## rest go without"* only restated what the count already said. Ray, on the pair that shipped: *"remove
+## that, obviously that is true when you say 1 of 3 warriors carry clubs"*. The same objection applies
+## to an `all %d … go without` half, so both lines took the cut rather than only the one he quoted.
+
 ## **OWNS NONE** — the band holds not one of the item this kit is built around.
-const KIT_SHORTFALL_NONE_FORMAT := "No %s to go round — all %d %s go without"
+const KIT_SHORTFALL_NONE_FORMAT := "None of %d %s carry %s"
 ## **OWNS SOME BUT NOT ENOUGH** — a different situation for the player, so it gets its own sentence:
 ## there IS gear, it just does not reach the party being composed.
-const KIT_SHORTFALL_SOME_FORMAT := "Only %d of %d %s carry %s — the rest go without"
+const KIT_SHORTFALL_SOME_FORMAT := "Only %d of %d %s carry %s"
 
 ## What to call the people on each source job, in the sentence above. **The sheet's own crew nouns** —
 ## the eyebrow over the stepper says ASSIGN HARVESTERS / ASSIGN HUNTERS — so the warning names them

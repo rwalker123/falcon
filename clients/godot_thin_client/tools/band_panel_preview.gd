@@ -7392,8 +7392,16 @@ func _assert_role_card_gear() -> void:
 ## How many clubs the short warrior band holds, against `BandFx.KIT_WARRIOR_HEADCOUNT`. Below it and
 ## above zero, so the sentence is the SOME form rather than either extreme.
 const ROLE_SHORTFALL_CLUBS_HELD := 1
-## The word every shortfall sentence is built around, asserted ABSENT on the covered card.
-const ROLE_SHORTFALL_NEEDLE := "go without"
+## **THE OPENINGS OF THE TWO SHORTFALL SENTENCES, asserted ABSENT on the covered card** — derived
+## from the formats rather than quoted, because a literal needle goes stale silently the moment the
+## copy is reworded. It already did: this held `"go without"`, the trailing clause both sentences
+## carried until Ray cut it as a restatement of the count in front of it, and a quoted needle would
+## have kept passing against text that no longer exists.
+static func _shortfall_openings() -> Array:
+	return [
+		HudComposeVocab.KIT_SHORTFALL_NONE_FORMAT.split("%")[0],
+		HudComposeVocab.KIT_SHORTFALL_SOME_FORMAT.split("%")[0],
+	]
 
 func _assert_one_role_card_gear(role_name: String, job: String, kit_name: String, effect: String,
 		item_label: String, condition: float) -> void:
@@ -7438,8 +7446,12 @@ func _assert_role_card_shortfall() -> void:
 	var warrior := KitRoster.kit_by_id(kits, BandFx.KIT_ID_WARRIOR)
 	var covered := KitRoster.role_hint(kits, warrior, BandFx.with_equipped_kit(
 		BandFx.band_fixture()), KitRoster.JOB_WARRIOR)
+	var opens_a_shortfall := false
+	for opening in _shortfall_openings():
+		if covered.contains(String(opening)):
+			opens_a_shortfall = true
 	_assert_band_panel("a fully armed Warrior role states its effect and no shortfall — \"%s\""
-			% covered, not covered.contains(ROLE_SHORTFALL_NEEDLE))
+			% covered, not opens_a_shortfall)
 	var short_band := BandFx.band_fixture()
 	var rows: Array = BandFx.kit_condition_rows()
 	for row_variant in rows:
