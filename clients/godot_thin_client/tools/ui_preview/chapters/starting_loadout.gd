@@ -124,6 +124,17 @@ const READY_RIVAL_KEYS := ["SIGNAL", "WARN", "DANGER", "HEALTHY"]
 ## guaranteed way back to a dismissed card.
 const ORB_OPEN_AFFORDANCE := "Open ▸"
 
+## **THE ORB ROW'S DETAIL, SPELLED OUT RATHER THAN COMPOSED THROUGH `HudLoadoutVocab`.** The remainder
+## must be named whatever the PICKER names it — its second column is headed `RESOURCES`, and the orb
+## read `2 units unspent` beside it until a player asked what a unit was. An expectation taken from
+## the const under test moves with it, so both sides of the comparison change together and the claim
+## passes on the very rename it exists to catch; measured, sabotaging the const failed this claim not
+## at all. These are literals for the same reason `_assert_horizon_floor_is_the_whole_trip`'s are.
+const ORB_DETAIL_ONE_RESOURCE := "1 resource unspent"
+const ORB_DETAIL_EVERYTHING_PICKED := "everything is picked"
+## …and the noun it must never go back to, asserted ABSENT so the rename cannot quietly revert.
+const ORB_DETAIL_RETIRED_NOUN := "unit"
+
 ## **HOW MUCH TALLER THAN THE BODY THE SCROLL REGION MAY BE**, in pixels. The card is fitted to a
 ## measured minimum, so the honest tolerance is rounding, not a design allowance — even a row of slack
 ## is the dead-space defect, and the whole point of this bound is that it cannot be satisfied by a
@@ -291,7 +302,7 @@ func _pick_a_kit() -> void:
 	# worth anything alone: a face reading `Set out` here alone passes on a control that renames
 	# itself once the budgets clear, and there alone on one that renames itself while they do not.
 	_unspent_commit_face = _commit_face()
-	h._assert_hud("loadout — the commit control reads `%s` with 14 kits and 2 units unspent"
+	h._assert_hud("loadout — the commit control reads `%s` with 14 kits and 2 resources unspent"
 			% _unspent_commit_face,
 		_unspent_commit_face == HudLoadoutVocab.COMMIT_CLEAR_LABEL)
 	# …and it makes NO forfeiture claim, which is the orb's to make. Asked of the whole card, because
@@ -489,7 +500,8 @@ func _orb_states() -> void:
 		h._hud.turn_orb._entries.size() == 1)
 	_assert_orb_state("unspent", HudAttentionVocab.ATTENTION_SEVERITY_WARN, HudStyle.WARN)
 	await _open_orb_popover()
-	_assert_orb_row_reads("unspent", HudLoadoutVocab.ATTENTION_LABEL_UNSPENT)
+	_assert_orb_row_reads("unspent", HudLoadoutVocab.ATTENTION_LABEL_UNSPENT,
+		ORB_DETAIL_ONE_RESOURCE)
 	await h._save("starting_loadout_orb_unspent")
 	_close_orb_popover()
 
@@ -501,7 +513,8 @@ func _orb_states() -> void:
 		_controller().kits_left() == 0 and _controller().materials_left() == 0)
 	_assert_orb_state("complete", HudAttentionVocab.ATTENTION_SEVERITY_READY, HudStyle.READY)
 	await _open_orb_popover()
-	_assert_orb_row_reads("complete", HudLoadoutVocab.ATTENTION_LABEL_READY)
+	_assert_orb_row_reads("complete", HudLoadoutVocab.ATTENTION_LABEL_READY,
+		ORB_DETAIL_EVERYTHING_PICKED)
 	await h._save("starting_loadout_orb_ready")
 	_close_orb_popover()
 	h._hud._turnorb._knowledge_attention = held_knowledge
@@ -528,7 +541,7 @@ func _assert_orb_state(arm: String, severity: String, want: Color) -> void:
 		h._hud.turn_orb._accent_color == want)
 
 ## …and the RENDERED row, which is what says the way back to a dismissed card is really on screen.
-func _assert_orb_row_reads(arm: String, label: String) -> void:
+func _assert_orb_row_reads(arm: String, label: String, detail: String) -> void:
 	var rendered := Q.turn_orb_popover_rows(h._hud.turn_orb)
 	var found := {}
 	for row_variant in rendered:
@@ -538,6 +551,16 @@ func _assert_orb_row_reads(arm: String, label: String) -> void:
 	h._assert_hud("loadout/%s — the popover row reads `%s` (%d rows drawn)"
 			% [arm, label, rendered.size()],
 		not found.is_empty())
+	# **THE DETAIL NAMES THE BUDGET THE PICKER NAMES.** It read `2 units unspent` beside a column
+	# headed `RESOURCES`, and a player asked what a unit was. The label alone cannot see that: both
+	# arms carry the same label whatever the remainder is worded as. `detail` is a LITERAL from this
+	# chapter — see `ORB_DETAIL_ONE_RESOURCE`.
+	h._assert_hud("loadout/%s — …and its detail reads `%s` (got `%s`)"
+			% [arm, detail, found.get("detail", "")],
+		String(found.get("detail", "")) == detail)
+	h._assert_hud("loadout/%s — …and never calls a resource a `%s` (got `%s`)"
+			% [arm, ORB_DETAIL_RETIRED_NOUN, found.get("detail", "")],
+		not String(found.get("detail", "")).contains(ORB_DETAIL_RETIRED_NOUN))
 	h._assert_hud("loadout/%s — …and wears `%s`, the way back to a dismissed card (got `%s`)"
 			% [arm, ORB_OPEN_AFFORDANCE, found.get("jump", "")],
 		String(found.get("jump", "")) == ORB_OPEN_AFFORDANCE)

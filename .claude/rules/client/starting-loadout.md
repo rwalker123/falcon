@@ -213,12 +213,18 @@ before ending the turn. What moves is the SEVERITY and the WORDING:
 
 | state | severity | reads |
 |---|---|---|
-| anything unspent | `warn` → `HudStyle.WARN` | `Band not outfitted` / `1 kit unspent, 2 units unspent` |
+| anything unspent | `warn` → `HudStyle.WARN` | `Band not outfitted` / `1 kit unspent, 2 resources unspent` |
 | both budgets clear | `ready` → `HudStyle.READY` | `Band outfitted` / `everything is picked` |
 
 It is **NOT `blocking` in either state**: closing the window is the sim's business, so the
 `Advance ▸` footer stays live and this row only ever warns. It is NON-LOCATING and on
 `ATTENTION_KINDS_WITH_A_PANEL`.
+
+⛔ **THE REMAINDER IS NAMED WHATEVER THE CONTROL THAT SPENDS IT IS NAMED.** It read `2 units unspent`
+beside a picker column headed `RESOURCES`, and a player asked what a unit was — the orb had invented a
+noun for a budget the card already names. The preview asserts the row's DETAIL as well as its label,
+because both arms carry the same label whatever the remainder is worded as, so a label-only claim
+cannot see this.
 
 ### `ready` is a new rung on the orb's ladder, and it had to be the BOTTOM one
 

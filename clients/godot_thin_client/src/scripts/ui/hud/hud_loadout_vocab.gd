@@ -179,8 +179,11 @@ const ATTENTION_LABEL_READY := "Band outfitted"
 const ATTENTION_DETAIL_SEPARATOR := ", "
 const ATTENTION_DETAIL_KITS_ONE := "1 kit unspent"
 const ATTENTION_DETAIL_KITS_MANY := "%d kits unspent"
-const ATTENTION_DETAIL_UNITS_ONE := "1 unit unspent"
-const ATTENTION_DETAIL_UNITS_MANY := "%d units unspent"
+## **`resources`, NEVER `units`** — the picker's own second column is headed `RESOURCES`, and the orb
+## naming the same budget something else made a player ask what a "unit" was. A budget is called
+## whatever the control that spends it is called.
+const ATTENTION_DETAIL_UNITS_ONE := "1 resource unspent"
+const ATTENTION_DETAIL_UNITS_MANY := "%d resources unspent"
 ## Both budgets are clear. It reads as a statement of fact rather than as an instruction, because at
 ## this point there is nothing the player still has to do.
 const ATTENTION_DETAIL_READY := "everything is picked"
