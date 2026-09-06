@@ -1691,6 +1691,50 @@ toggle fix added the two frames above and eleven claims net (four retired with t
 the crop-picker distinction it carried, fifteen added across the subtraction, the regression and the
 refusal).
 
+## `chapters/starting_loadout.gd` — the turn-one outfitting picker (issue #629)
+
+**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Five frames and
+twenty assertions (`EXPECTED_CHECKPOINTS` **25** — frames count too). It ends by publishing a SHUT
+window, so the surface it stands up is gone before anything appended after it could inherit it.
+
+**MOST OF IT IS ASSERTIONS, AND THAT IS THE POINT.** Every claim the third column makes renders as a
+plausible picture whatever it says — a row reading `×3`, a dash on a row that should read `×1`, a
+knowledge-gated bench tool quietly present. So the arithmetic is asked of the rendered CONTROLS (by
+meta, never by scraping a subtree's text) and the frames carry the layout.
+
+| frame | what only IT can say |
+|---|---|
+| `starting_loadout` | the three columns fit side by side at the shipped width; the legend and the recipe rows draw the SAME five inks; the picker OPENED ITSELF, kits at 0 and the pile on the profile's defaults |
+| `starting_loadout_picked` | three real presses of the Stalking kit's `+` move the meter, and the commit control names the forfeit |
+| `starting_loadout_spent` | both budgets spent to the unit — `+` disabled, both bars full with **no remainder sliver**, and the commit control simply confirming |
+| `starting_loadout_dismissed` | the dismissed state leaves a live reopen control on screen rather than nothing at all |
+| `starting_loadout_refused` | a window still `open` after a commit brings the card back carrying the refusal, with every pick intact |
+
+**THE COUNT IS READ OFF THE LABEL'S OWN META, never its face.** The face is `×3` or a dash, and
+parsing either back into a number is re-implementing the renderer in order to check it.
+
+**THE `+` IS PRESSED THROUGH THE REAL BUTTON, and the button is re-found on every press** — the panel
+rebuilds on each stepper move, so a cached node here is a freed control. The budget-spending loop is
+bounded by `STEPPER_PRESS_LIMIT`, a GUARD rather than the expected count: a `+` that stopped working
+would otherwise spin the chapter until the watchdog killed the run.
+
+**⛔ ONE ASSERTION RIDES THE DISMISSED FRAME AND IS THE ONLY THING THAT CAN SEE ITS DEFECT.** Every
+frame carries the window's section while it is open, so a controller that re-renders on *is the
+SURFACE up* rather than *is the CARD up* re-expands the picker the player just dismissed — on the very
+next snapshot and every one after it, which makes the window undismissible while each individual frame
+looks exactly right. The chapter pushes a second identical window after dismissing and requires the
+card to stay away. Sabotage-verified by reverting `is_expanded()` to `is_open()` in
+`StartingLoadoutController.set_window`: exactly that claim fails and nothing else in the run does.
+
+**THE FIXTURE OFFERS THE `none` KIT AND THE GATED RECIPE ON PURPOSE.** The picker has to drop the
+first (by its empty `uses`) and never draw the second (it is in the recipe book and off
+`craftable_recipe_ids`), so a fixture that omitted either would assert nothing.
+
+**Its material defaults sum to 28 of 30, deliberately NOT to the budget** — a fixture that opened with
+nothing left could not tell a working meter from one stuck at zero. And `earthmoving` costs WOOD,
+which the default pile holds none of, so one row is unreachable and must be present-and-dimmed rather
+than filtered away.
+
 ## The ⚠'s one producer, and the biomass quantiser (this arc)
 
 Two PNG-less blocks appended to `chapters/hunt.gd`, one 2x2 re-pointed in
@@ -2375,8 +2419,13 @@ longer exist — the fixture now stages the link-kind keys and the frame reads `
 trap: **a frame whose fixture is the last producer of a state can go on passing after the state
 becomes unreachable**, and it then guards nothing while looking like coverage.
 
-**A clean run is 403 frames / 1803 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
-last figure recorded above was `370 / 1594`; the gap is drift accumulated un-recorded, exactly as it
+**A clean run is 418 frames / 1898 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+figure recorded when the supply-network chapter landed was `403 / 1803`; the loadout chapter above adds
+five frames and twenty claims and the rest is drift accumulated un-recorded, exactly as it has been
+every previous time. Measure; do not sum.
+
+**The previous entry, kept for its history.** The
+last figure recorded above it was `370 / 1594`; the gap is drift accumulated un-recorded, exactly as it
 has been every previous time. Measure; do not sum.
 
 > **AND A MERGE IS ONE OF THE WAYS IT DRIFTS.** This section landed on `main` reading `396 / 1761`

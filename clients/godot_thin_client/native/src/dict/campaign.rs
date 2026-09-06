@@ -359,3 +359,67 @@ fn format_victory_label(raw: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+
+/// **THE TURN-ONE OUTFITTING WINDOW** (`CampaignSection.openingLoadout`, issue #629) — the two
+/// budgets the picker spends, the profile's pick list and its pre-fill, and the recipes the faction
+/// could put on a bench today.
+///
+/// **THE KIT ROSTER AND THE RECIPE COSTS ARE DELIBERATELY NOT IN HERE.** The roster rides
+/// `SubsistenceSection.equipmentConfigJson` and a recipe's inputs ride `SubsistenceSection.recipes`,
+/// both already decoded on both paths, so the picker JOINS onto what is published rather than
+/// reading a second copy of it.
+///
+/// Every field is inserted UNCONDITIONALLY, empty vectors included: this dict is the whole state of
+/// one window, so a client reading a missing key would have to invent the difference between *"the
+/// profile offers no materials"* and *"the frame did not say"*. Absence is decided one level up, by
+/// whether `openingLoadout` rode the section at all.
+pub(crate) fn opening_loadout_to_dict(state: fb::OpeningLoadoutState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
+    // False once the window has shut — the picker draws nothing and the sim refuses the command.
+    let _ = dict.insert("open", state.open());
+    // One kit per working-age hand of the starting band; DERIVED sim-side, never configured.
+    let _ = dict.insert("kit_budget", state.kitBudget() as i64);
+    // `start_profiles.json` `opening_loadout.material_points`. One point buys one unit.
+    let _ = dict.insert("material_budget", state.materialBudget() as i64);
+    // **THE PICK LIST IS ALSO THE DRAW ORDER** — the profile's own order, which the resources column
+    // and the legend above the recipe list both render in, so the two cannot disagree.
+    let _ = dict.insert(
+        "pickable_materials",
+        &state
+            .pickableMaterials()
+            .map(strings_to_variant_array)
+            .unwrap_or_default(),
+    );
+    let _ = dict.insert(
+        "material_defaults",
+        &opening_material_defaults_to_array(state.materialDefaults()),
+    );
+    // Published as IDS so the client never has to sniff a craft offer's refusal SENTENCE to work out
+    // which bench tools are still knowledge-gated.
+    let _ = dict.insert(
+        "craftable_recipe_ids",
+        &state
+            .craftableRecipeIds()
+            .map(strings_to_variant_array)
+            .unwrap_or_default(),
+    );
+    dict
+}
+
+/// The allocation the window OPENS on — a suggestion, never a grant. Nothing is deposited until a
+/// `set_starting_loadout` arrives.
+fn opening_material_defaults_to_array(
+    defaults: Option<Vector<'_, ForwardsUOffset<fb::OpeningMaterialDefault<'_>>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    let Some(defaults) = defaults else {
+        return array;
+    };
+    for entry in defaults {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("material_id", entry.materialId().unwrap_or(""));
+        let _ = dict.insert("units", entry.units() as i64);
+        array.push(&dict.to_variant());
+    }
+    array
+}

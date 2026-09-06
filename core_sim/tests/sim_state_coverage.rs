@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 40] = [
+const SIM_STATE_RESOURCES: [&str; 41] = [
     "ActiveCrisisLedger",
     // The band-id counter. Restoring the bands without it re-issues a live id after a rollback.
     "BandIdAllocator",
@@ -91,6 +91,11 @@ const SIM_STATE_RESOURCES: [&str; 40] = [
     "RoadRegistry",
     "SentimentAxisBias",
     "SimulationTick",
+    // The opening outfitting window. Nothing rebuilds it: the budget is a fact about the band that
+    // spawned and `open` is a fact about whether a turn has run, so a checkpoint that dropped it
+    // would either restore a turn-one world the player can no longer outfit or re-open a window a
+    // later turn had already shut.
+    "StartingLoadout",
     "TradeTelemetry",
     "VictoryState",
     // Permanent-memory fog: the ledger IS the record of what has ever been seen.

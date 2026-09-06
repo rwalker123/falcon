@@ -2995,12 +2995,7 @@ impl BandEquipment {
     ) -> Self {
         let mut stocked = Self::default();
         for (id, item) in equipment.start_stocked_items() {
-            let grade = recipes
-                .anchor_grade_for_item(id, materials)
-                .map(|band| BatchGrade {
-                    id: band.to_string(),
-                    effects: Vec::new(),
-                });
+            let grade = Self::anchor_grade(recipes, materials, id);
             stocked.stock(
                 id,
                 equipment.start_stock_units(item, workers),
@@ -3009,6 +3004,30 @@ impl BandEquipment {
             );
         }
         stocked
+    }
+
+    /// **The grade a batch nobody crafted is stamped with** — the band a bare-handed craft of this
+    /// item comes out at ([`crate::recipes_config::RecipesConfig::anchor_grade_for_item`]), NAME
+    /// only, with an empty effects payload.
+    ///
+    /// One home, because two paths hand a band gear it did not make: a spawn
+    /// ([`Self::start_stocked_owned`]) and the player's opening loadout
+    /// ([`crate::starting_loadout`]). A second copy of this resolution is a second answer to *"what
+    /// quality is a thing that was never crafted"*, free to drift from the one `validate` ties to
+    /// the shipped tier's numbers.
+    ///
+    /// `None` for an item no recipe makes: there is no crafted equivalent to claim.
+    pub fn anchor_grade(
+        recipes: &crate::recipes_config::RecipesConfig,
+        materials: &crate::materials_config::MaterialsConfig,
+        item: &str,
+    ) -> Option<BatchGrade> {
+        recipes
+            .anchor_grade_for_item(item, materials)
+            .map(|band| BatchGrade {
+                id: band.to_string(),
+                effects: Vec::new(),
+            })
     }
 
     /// **Add a batch of `count` units** — a spawn's start kit, or the bench delivering a finished

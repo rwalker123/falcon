@@ -81,6 +81,11 @@ const KIND_CREW_HANDOFF := "crew_handoff"
 # turn. Non-locating, and it opens that screen, so it wears the screen's launcher's own mark rather
 # than a glyph of its own.
 const KIND_KNOWLEDGE_LEARNED := "knowledge_learned"
+# The turn-one outfitting window, still holding an unspent budget (issue #629). Non-locating — it
+# opens the picker, not a hex — and it wears the same pennant the reopen pill does, which is line
+# art rather than an emoji for `KIND_DECISION`'s reason: emoji presentation rasterizes to a blob at
+# row size.
+const KIND_OPENING_LOADOUT := "opening_loadout"
 const KIND_ICON := {
 	KIND_IDLE_WORKERS: "🛠",
 	KIND_STARVING: "🍖",
@@ -101,6 +106,7 @@ const KIND_ICON := {
 	# the policy icons to hand-draw). Verified at true size in `turn_orb_fork_blocks.png`.
 	KIND_DECISION: "?",
 	KIND_KNOWLEDGE_LEARNED: HudKnowledgeVocab.LAUNCH_GLYPH,
+	KIND_OPENING_LOADOUT: "⚑",
 }
 const KIND_ICON_FALLBACK := "●"
 ## Kind → BUNDLED-ART mark id, resolved through `HudSprites`. A kind listed here draws a `TextureRect`

@@ -6,8 +6,8 @@
 //! nothing hashes a snapshot per frame any more. See [`SnapshotHeader::hash`].
 
 use crate::state::campaign::{
-    CampaignLabel, CampaignProfileState, CommandEventState, PendingForksState, StanceState,
-    VictorySnapshotState, VoiceMediumState,
+    CampaignLabel, CampaignProfileState, CommandEventState, OpeningLoadoutState, PendingForksState,
+    StanceState, VictorySnapshotState, VoiceMediumState,
 };
 use crate::state::connections::ConnectionState;
 use crate::state::culture::{
@@ -169,6 +169,9 @@ pub struct WorldSnapshot {
     /// The Telling's narrator medium per faction (presentational — see `VoiceMediumState`).
     #[serde(default)]
     pub voice_medium: Vec<VoiceMediumState>,
+    /// The turn-one outfitting window, as the picker draws it — see [`OpeningLoadoutState`].
+    #[serde(default)]
+    pub opening_loadout: OpeningLoadoutState,
     #[serde(default)]
     pub herds: Vec<HerdTelemetryState>,
     #[serde(default)]
@@ -317,6 +320,9 @@ pub struct WorldDelta {
     pub pending_forks: Option<Vec<PendingForksState>>,
     pub stance_axes: Option<Vec<StanceState>>,
     pub voice_medium: Option<Vec<VoiceMediumState>>,
+    /// The opening outfitting window. `None` means unchanged — an ordinary whole-section diff, so a
+    /// steady-state delta re-sends it only when the window's budgets or its `open` flag move.
+    pub opening_loadout: Option<OpeningLoadoutState>,
     /// The knowledge timeline, sent as a whole section. `None` means unchanged.
     ///
     /// Not a diff list: it carries no `removed_*` counterpart and the capture path replaces it

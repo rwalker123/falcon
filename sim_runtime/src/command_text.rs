@@ -190,6 +190,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "set_bench <faction_id> <band_id> recipe <recipe_id> [workers <n>]",
     },
     CommandVerbHelp {
+        verb: "set_starting_loadout",
+        aliases: &[],
+        summary: "COMPOSE THE OPENING LOADOUT, the ONE source of a faction's starting gear and material - a spawning band owns nothing at all. Two budgets: one KIT per working-age hand of the starting band (derived from the band, never configured), and the start profile's material points, where one point buys one unit. Every item a named kit uses lands 'count' times, so two kits sharing an item ADD. Anything unspent when the first turn advances is forfeited. It fails CLOSED and WHOLE: a closed window, an unknown kit, a kit that carries nothing, a material the profile does not offer, a repeated line, or either budget overspent rejects the entire order and changes nothing.",
+        usage: "set_starting_loadout <faction_id> [kit <kit_id> <count>]... [material <material_id> <units>]...",
+    },
+    CommandVerbHelp {
         verb: "clear_bench",
         aliases: &[],
         summary: "Take the job off a band's crafting bench and hand its crew back to the idle pool. Materials already drawn for the pass in flight are spent - they were cut for the thing you stopped making.",
@@ -971,6 +977,52 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 faction_id: parse_u32(faction_str, "upkeep_mode faction")?,
                 band_id: parse_u64(band_str, "upkeep_mode band_id")?,
                 mode,
+            })
+        }
+        // **The loadout's grammar is a NAMED TAIL**, on `send_trade_expedition`'s shape and for its
+        // reason: a loadout has no fixed arity, and two id namespaces (kits and materials) share one
+        // token space, so a positional list could not say which a name belongs to. Any token that is
+        // neither `kit` nor `material` is a misunderstanding of the verb and is refused rather than
+        // dropped. An EMPTY tail is legal and is a real order — *spend nothing, close the window*.
+        "set_starting_loadout" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let mut kits: Vec<crate::StartingKitAllocation> = Vec::new();
+            let mut materials: Vec<crate::StartingMaterialAllocation> = Vec::new();
+            while let Some(token) = parts.next() {
+                match token.to_ascii_lowercase().as_str() {
+                    "kit" => {
+                        let kit_id = parts.next().ok_or(CommandParseError::MissingArgument(
+                            "set_starting_loadout kit id",
+                        ))?;
+                        let count = parts.next().ok_or(CommandParseError::MissingArgument(
+                            "set_starting_loadout kit count",
+                        ))?;
+                        kits.push(crate::StartingKitAllocation {
+                            kit_id: kit_id.to_string(),
+                            count: parse_u32(count, "set_starting_loadout kit count")?,
+                        });
+                    }
+                    "material" => {
+                        let material_id = parts.next().ok_or(
+                            CommandParseError::MissingArgument("set_starting_loadout material id"),
+                        )?;
+                        let units = parts.next().ok_or(CommandParseError::MissingArgument(
+                            "set_starting_loadout material units",
+                        ))?;
+                        materials.push(crate::StartingMaterialAllocation {
+                            material_id: material_id.to_string(),
+                            units: parse_u32(units, "set_starting_loadout material units")?,
+                        });
+                    }
+                    _ => return Err(CommandParseError::UnexpectedArgument(token.to_string())),
+                }
+            }
+            Ok(CommandPayload::SetStartingLoadout {
+                faction_id: parse_u32(faction_str, "set_starting_loadout faction")?,
+                kits,
+                materials,
             })
         }
         "set_bench" => {
@@ -3280,5 +3332,75 @@ mod tests {
             parse_command_line("clear_config_overrides").unwrap(),
             CommandPayload::ClearConfigOverrides
         );
+    }
+
+    /// ⛔ **THE OPENING LOADOUT'S NAMED TAIL PARSES INTO BOTH HALVES, IN ORDER.**
+    ///
+    /// The grammar is closed: anything that is neither `kit` nor `material` is a misunderstanding of
+    /// the verb and is refused rather than dropped, because a silently ignored token would spend the
+    /// player's budget on something other than what they typed.
+    #[test]
+    fn parse_set_starting_loadout_reads_kits_and_materials() {
+        assert_eq!(
+            parse_command_line(
+                "set_starting_loadout 0 kit big_game 6 kit trapping 3 material bone 3 material fibre 17"
+            )
+            .unwrap(),
+            CommandPayload::SetStartingLoadout {
+                faction_id: 0,
+                kits: vec![
+                    crate::StartingKitAllocation {
+                        kit_id: "big_game".to_string(),
+                        count: 6,
+                    },
+                    crate::StartingKitAllocation {
+                        kit_id: "trapping".to_string(),
+                        count: 3,
+                    },
+                ],
+                materials: vec![
+                    crate::StartingMaterialAllocation {
+                        material_id: "bone".to_string(),
+                        units: 3,
+                    },
+                    crate::StartingMaterialAllocation {
+                        material_id: "fibre".to_string(),
+                        units: 17,
+                    },
+                ],
+            }
+        );
+    }
+
+    /// **An empty tail is a real order** — *spend nothing, close the window* — and not a missing
+    /// argument.
+    #[test]
+    fn parse_set_starting_loadout_accepts_an_empty_allocation() {
+        assert_eq!(
+            parse_command_line("set_starting_loadout 0").unwrap(),
+            CommandPayload::SetStartingLoadout {
+                faction_id: 0,
+                kits: Vec::new(),
+                materials: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_set_starting_loadout_refuses_a_token_it_does_not_know() {
+        assert!(matches!(
+            parse_command_line("set_starting_loadout 0 gear big_game 1"),
+            Err(CommandParseError::UnexpectedArgument(token)) if token == "gear"
+        ));
+        assert!(matches!(
+            parse_command_line("set_starting_loadout 0 kit big_game"),
+            Err(CommandParseError::MissingArgument(
+                "set_starting_loadout kit count"
+            ))
+        ));
+        assert!(matches!(
+            parse_command_line("set_starting_loadout"),
+            Err(CommandParseError::MissingArgument("faction_id"))
+        ));
     }
 }

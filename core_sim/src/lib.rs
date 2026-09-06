@@ -77,6 +77,7 @@ mod sites_config;
 mod snapshot;
 mod snapshot_overlays_config;
 mod start_profile;
+pub mod starting_loadout;
 mod supply;
 mod supply_network_config;
 mod systems;
@@ -331,9 +332,13 @@ pub use snapshot_overlays_config::{
 };
 pub use start_profile::{
     resolve_active_profile, snapshot_profiles, ActiveStartProfile, CampaignLabel, InventoryEntry,
-    StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
-    StartProfileKnowledgeTagsMetadata, StartProfileLookup, StartProfileOverrides,
+    OpeningLoadoutConfig, StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    StartProfileKnowledgeTagsMetadata, StartProfileLookup, StartProfileOverrides, StartProfiles,
     StartProfilesHandle, StartProfilesMetadata, StartingUnitSpec,
+};
+pub use starting_loadout::{
+    apply_starting_loadout, KitAllocation, LoadoutRejection, MaterialAllocation, StartingLoadout,
+    OPENING_MATERIAL_READING,
 };
 pub use supply::{balance_supply_networks, SupplyNetworkMembership};
 pub use supply_network_config::{
@@ -597,6 +602,13 @@ pub fn build_headless_app() -> App {
     if let Err(err) = equipment_config.validate_against_materials(&materials_config) {
         panic!("equipment config does not reconcile with the materials table: {err}");
     }
+    // **The opening loadout's pick list is reconciled against the materials table**, the same
+    // `UnknownItem` debt every other roster pays: a profile offering `hyde` would parse, validate,
+    // and be a row the player can spend points on that deposits nothing. Checked here rather than at
+    // load because the profiles are read before the materials table exists.
+    if let Err(err) = start_profiles.validate_against_materials(&materials_config) {
+        panic!("start profiles do not reconcile with the materials table: {err}");
+    }
     let equipment_handle = equipment_config::EquipmentConfigHandle::new(equipment_config.clone());
     // **The recipe book is reconciled against BOTH tables**, here and only here, because this is the
     // one place all three configs are in scope at once — a recipe naming a material or an item that
@@ -748,6 +760,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(command_event_log)
         .insert_resource(FoodSiteRegistry::default())
         .init_resource::<FoodSiteWaterBiasReport>()
+        // The opening outfitting window. `Default` is CLOSED with no budget, which is the right
+        // reading for a world that never ran worldgen — a load restores the saved window, and a
+        // fresh world has `stamp_starting_loadout` open it.
+        .init_resource::<starting_loadout::StartingLoadout>()
         .insert_resource(snapshot_history)
         .insert_resource(snapshot::SnapshotCaptureMode::default())
         .insert_resource(generation_registry)
@@ -808,6 +824,14 @@ pub fn build_headless_app() -> App {
         // a stage whose systems are gated off records ~0 rather than disappearing from the profile.
         // `begin_turn` is *not* called here — the server owns it, because order application and
         // snapshot broadcast happen outside `app.update()` and belong to the same turn's profile.
+        // **The opening window shuts before the turn's first stage runs**, not after it: the
+        // budget is spent before the first turn resolves or it is not spent at all, and a system
+        // ordered later would leave a window one stage wide where a loadout could still land on a
+        // world that had already begun moving.
+        .add_systems(
+            Update,
+            starting_loadout::close_opening_window.before(TurnStage::Influence),
+        )
         .add_systems(
             Update,
             (
@@ -849,6 +873,9 @@ pub fn build_headless_app() -> App {
             Startup,
             (
                 systems::spawn_initial_world,
+                // **After the spawn, because the kit budget is the spawned band's own worker
+                // count** — one kit per working-age hand is derived from the band, not configured.
+                starting_loadout::stamp_starting_loadout,
                 systems::apply_starting_inventory_effects,
                 hydrology::generate_hydrology,
                 systems::apply_tag_budget_solver,

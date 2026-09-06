@@ -5671,6 +5671,46 @@ table CampaignSection {
   // `command_events_retention_turns`). The client shows how far back the dock can read, and knows
   // that anything older has been evicted rather than lost in transit. Appended at the END.
   commandEventsRetentionTurns:uint;
+  // --- THE OPENING OUTFITTING WINDOW (appended last) --------------------------------------------
+  // What the turn-one loadout picker needs to draw itself. Absent means "unchanged" on a delta, as
+  // for every other whole-diffed table on this section.
+  openingLoadout:OpeningLoadoutState;
+}
+
+// --- The opening loadout: what the turn-one picker draws ---------------------------------------
+// A SPAWNING BAND OWNS NOTHING, so this window is the one source of a campaign's starting gear and
+// material. It is open from world build until the first turn advance; unspent budget is forfeited.
+//
+// THE KIT ROSTER IS NOT HERE and must not be added: it already rides
+// `SubsistenceSection.equipmentConfigJson`, and a recipe's input costs already ride the per-band
+// `craftOffers` rows. A second copy of either is a second wire contract for one fact.
+table OpeningLoadoutState {
+  // False once the window has shut. The picker draws nothing and the server refuses a
+  // `set_starting_loadout`.
+  open:bool;
+  // One per working-age hand of the starting band. DERIVED from the band, never configured — see
+  // `start_profiles.json` `opening_loadout`, which deliberately carries no kit dial.
+  kitBudget:uint;
+  // `start_profiles.json` `opening_loadout.material_points`. One point buys one unit.
+  materialBudget:uint;
+  // The pick list, in the order the profile declares it. A material absent from it cannot be bought.
+  pickableMaterials:[string];
+  // The allocation the window OPENS on — a suggestion, never a grant. Nothing is deposited until a
+  // `set_starting_loadout` arrives.
+  materialDefaults:[OpeningMaterialDefault];
+  // THE RECIPES THIS FACTION CAN PUT ON A BENCH RIGHT NOW — every recipe whose `requires_knowledge`
+  // crafts are all learned. It is what excludes the knowledge-gated bench tools (tanning frame,
+  // loom, bone awl) from the picker's "what this material builds" readout.
+  //
+  // PUBLISHED AS IDS rather than left for the client to infer: the alternative is sniffing a refusal
+  // string off a craft offer, which makes a player-facing sentence into a machine contract.
+  craftableRecipeIds:[string];
+}
+
+// One pre-filled material allocation. `units` is in the same points the budget is counted in.
+table OpeningMaterialDefault {
+  materialId:string;
+  units:uint;
 }
 
 // --- Connections: the contact primitive (arc #527, `docs/plan_contact_and_logistics.md` §Q2) ---

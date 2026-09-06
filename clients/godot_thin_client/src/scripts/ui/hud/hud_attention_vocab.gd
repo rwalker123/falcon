@@ -224,8 +224,17 @@ const ATTENTION_KNOWLEDGE_LEARNED_DETAIL := "see what it lets your hands do"
 ## the row can name neither a hex to jump to nor one source to open (a turn may finish several). It
 ## says WHERE those hands are in words instead, and wears no affordance at all — a promise the row
 ## cannot keep is worse than no promise.
+## **THE OPENING LOADOUT IS STILL UNSPENT** (issue #629) — the turn-one outfitting window is open and
+## something in it has not been committed. NON-LOCATING (an opening loadout is a faction fact and no
+## hex holds it), and deliberately **NOT `blocking`**: the window shutting is the SIM's business —
+## it closes on the first turn advance whether or not an order was sent — so the orb's job here is to
+## say what walking away costs, never to hold the turn. The row's `Open ▸` brings the picker back,
+## which is why the kind is on `ATTENTION_KINDS_WITH_A_PANEL` below.
+const ATTENTION_KIND_OPENING_LOADOUT := "opening_loadout"
+
+
 const ATTENTION_KINDS_WITH_A_PANEL: Array[String] = [ATTENTION_KIND_DECISION,
-    ATTENTION_KIND_KNOWLEDGE_LEARNED]
+    ATTENTION_KIND_KNOWLEDGE_LEARNED, ATTENTION_KIND_OPENING_LOADOUT]
 
 const ATTENTION_SEVERITY_INFO := "info"
 

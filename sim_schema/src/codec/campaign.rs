@@ -2,8 +2,8 @@
 
 use crate::codec::FbBuilder;
 use crate::state::campaign::{
-    CampaignLabel, CampaignProfileState, CommandEventState, PendingForksState, StanceState,
-    VictorySnapshotState, VoiceLineState, VoiceMediumState,
+    CampaignLabel, CampaignProfileState, CommandEventState, OpeningLoadoutState, PendingForksState,
+    StanceState, VictorySnapshotState, VoiceLineState, VoiceMediumState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -19,6 +19,7 @@ pub(crate) fn serialize_campaign_section<'a>(
     let pending_forks = create_pending_forks(builder, &snapshot.pending_forks);
     let stance_axes = create_stance_axes(builder, &snapshot.stance_axes);
     let voice_medium = create_voice_medium(builder, &snapshot.voice_medium);
+    let opening_loadout = create_opening_loadout(builder, &snapshot.opening_loadout);
     fb::CampaignSection::create(
         builder,
         &fb::CampaignSectionArgs {
@@ -29,6 +30,7 @@ pub(crate) fn serialize_campaign_section<'a>(
             stanceAxes: Some(stance_axes),
             voiceMedium: Some(voice_medium),
             commandEventsRetentionTurns: snapshot.command_events_retention_turns,
+            openingLoadout: Some(opening_loadout),
         },
     )
 }
@@ -58,6 +60,10 @@ pub(crate) fn serialize_campaign_section_delta<'a>(
         .voice_medium
         .as_ref()
         .map(|entries| create_voice_medium(builder, entries));
+    let opening_loadout = delta
+        .opening_loadout
+        .as_ref()
+        .map(|state| create_opening_loadout(builder, state));
     fb::CampaignSection::create(
         builder,
         &fb::CampaignSectionArgs {
@@ -67,6 +73,7 @@ pub(crate) fn serialize_campaign_section_delta<'a>(
             pendingForks: pending_forks,
             stanceAxes: stance_axes,
             voiceMedium: voice_medium,
+            openingLoadout: opening_loadout,
             // `0` IS the absent encoding — FlatBuffers omits a default-valued scalar, and a
             // zero-turn retention window is not a legal value, so the client reads 0 as "unchanged"
             // and keeps what it holds. The same shape `capabilityFlags` uses.
@@ -358,6 +365,47 @@ fn create_voice_medium<'a>(
         ));
     }
     builder.create_vector(&entries)
+}
+
+fn create_opening_loadout<'a>(
+    builder: &mut FbBuilder<'a>,
+    state: &OpeningLoadoutState,
+) -> WIPOffset<fb::OpeningLoadoutState<'a>> {
+    let pickable: Vec<_> = state
+        .pickable_materials
+        .iter()
+        .map(|id| builder.create_string(id.as_str()))
+        .collect();
+    let pickable = builder.create_vector(&pickable);
+    let mut defaults = Vec::with_capacity(state.material_defaults.len());
+    for entry in &state.material_defaults {
+        let material_id = builder.create_string(entry.material_id.as_str());
+        defaults.push(fb::OpeningMaterialDefault::create(
+            builder,
+            &fb::OpeningMaterialDefaultArgs {
+                materialId: Some(material_id),
+                units: entry.units,
+            },
+        ));
+    }
+    let defaults = builder.create_vector(&defaults);
+    let craftable: Vec<_> = state
+        .craftable_recipe_ids
+        .iter()
+        .map(|id| builder.create_string(id.as_str()))
+        .collect();
+    let craftable = builder.create_vector(&craftable);
+    fb::OpeningLoadoutState::create(
+        builder,
+        &fb::OpeningLoadoutStateArgs {
+            open: state.open,
+            kitBudget: state.kit_budget,
+            materialBudget: state.material_budget,
+            pickableMaterials: Some(pickable),
+            materialDefaults: Some(defaults),
+            craftableRecipeIds: Some(craftable),
+        },
+    )
 }
 
 fn create_command_events<'a>(

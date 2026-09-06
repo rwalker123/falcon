@@ -2858,48 +2858,6 @@ struct StartKit<'a> {
     working_fraction: f32,
 }
 
-/// **THE MATERIALS A SPAWNED BAND IS SENT OUT HOLDING** — one batch per material whose roster entry
-/// declares a `start_stock`, at `per_worker × workers` and the reading that block states
-/// (`docs/plan_standing_upkeep.md` §4.9 item 12).
-///
-/// # ⛔ `StartKit::materials` WAS NEVER A STOCK, AND THIS IS THE PATH THAT MAKES IT ONE
-///
-/// That field is the materials **table**, carried into the spawn so an equipment batch can resolve
-/// its anchor grade through `recipes.anchor_grade_for_item`. **Nothing in `StartKit` deposited a
-/// material batch**, and a spawned band's `LocalStore.materials` was empty — which is why the pen's
-/// hurdles have a recipe whose `wood` has no producer and no other way in.
-///
-/// **Today `wood` is the only declarer**, and the lever is on the *material* rather than in a start
-/// profile because the roster is where a material is described — one home per fact. The amount is a
-/// **config lever**, not a constant: it is the only thing between a band and its first pen until
-/// forest foraging lands, so it has to be tunable without a rebuild.
-///
-/// **A band with no workers stocks nothing**, which needs no special case: the amount is `0` and
-/// `LocalStore::deposit_material` refuses a non-positive deposit.
-fn start_stocked_materials(
-    materials: &crate::materials_config::MaterialsConfig,
-    workers: f32,
-) -> LocalStore {
-    let mut store = LocalStore::new();
-    for (id, def) in materials.materials() {
-        let Some(stock) = def.start_stock.as_ref() else {
-            continue;
-        };
-        // The batch's merge key is derived from the stated reading through the materials table's own
-        // lookup, exactly as a yield edge's is — the store stores, it does not interpret.
-        let Some(band) = materials.band_key(id, &stock.characteristics) else {
-            continue;
-        };
-        store.deposit_material(
-            id,
-            band,
-            scalar_from_f32(stock.per_worker * workers.max(0.0)),
-            &stock.characteristics,
-        );
-    }
-    store
-}
-
 #[allow(clippy::too_many_arguments)]
 fn spawn_default_population_clusters(
     commands: &mut Commands,
@@ -3011,6 +2969,18 @@ fn spawn_profile_population(
     }
 }
 
+/// **The party a band of `size` can field** — its head count times the working-age share, **floored,
+/// because `available_workers` floors**. So the two readings of *"this band's workers"* agree and a
+/// spawn's ledger stays reproducible from the cohort.
+///
+/// One home, because two things are sized against it: the equipment a spawn stocks, and the
+/// [`crate::starting_loadout::StartingLoadout`] kit budget — one kit per working-age hand. A second
+/// copy of the expression is a second answer to *"how many hands has this band"*, free to drift the
+/// moment the demographics are retuned.
+pub fn party_workers(size: u32, working_fraction: f32) -> f32 {
+    (size as f32 * working_fraction).floor()
+}
+
 #[allow(clippy::too_many_arguments)] // one more id source than the linter's threshold likes
 fn spawn_population_entity(
     commands: &mut Commands,
@@ -3025,12 +2995,7 @@ fn spawn_population_entity(
 ) {
     let generation = registry.assign_for_index(*cohort_index);
     *cohort_index = cohort_index.saturating_add(1);
-    // **Floored, because `available_workers` floors.** The stock is sized against the party the
-    // band can actually field, so the two readings of "this band's workers" agree and the ledger
-    // stays reproducible from the cohort. Resolved once, because the **material** stock and the
-    // **equipment** stock are both sized against it and *"a party's worth"* has to mean one thing in
-    // this function.
-    let party_workers = (size as f32 * start_kit.working_fraction).floor();
+    let party_workers = party_workers(size, start_kit.working_fraction);
     // Brackets and larder are seeded at Startup by `apply_starting_inventory_effects`
     // (it splits `size` via the demographics config distribution and distributes start-grant
     // provisions into larders) — spawn them empty here.
@@ -3041,13 +3006,12 @@ fn spawn_population_entity(
         children: scalar_zero(),
         working: scalar_zero(),
         elders: scalar_zero(),
-        // **…but the MATERIAL stock is seeded HERE, beside the kit** — the material half of the
-        // standing upkeep needs a band to have something to build a pen out of, and no producer
-        // yields `wood` until forest foraging lands (`docs/plan_standing_upkeep.md` §4.9 item 12).
-        // It rides the spawn rather than `apply_starting_inventory_effects` because it needs no
-        // demographic split — the party's own worker count, the same one the kit is sized against —
-        // and because the roster is where a material is described.
-        stores: start_stocked_materials(start_kit.materials, party_workers),
+        // **…and the material store is EMPTY too, deliberately.** A spawn stocks NO material at
+        // all: the per-material `start_stock` that used to seed `wood` and `stone` here is deleted,
+        // mechanism and all, so the only opening material in the game is what the player allocates
+        // in the turn-one loadout window (`.claude/rules/core_sim/equipment.md` → "the opening
+        // allocation is the one source"). Every other material has a producer.
+        stores: LocalStore::new(),
         morale: scalar_from_f32(0.6),
         last_food_consumption: 0.0,
         last_turn_food_transfers: Default::default(),

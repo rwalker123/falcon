@@ -1646,6 +1646,29 @@
       "tool_item_id": "materials[2].tool_item_id"
     }
   ],
+  "opening_loadout": {
+    "craftable_recipe_ids": [
+      "opening_loadout.craftable_recipe_ids[0]",
+      "opening_loadout.craftable_recipe_ids[1]"
+    ],
+    "kit_budget": 119,
+    "material_budget": 18,
+    "material_defaults": [
+      {
+        "material_id": "opening_loadout.material_defaults[0].material_id",
+        "units": 42
+      },
+      {
+        "material_id": "opening_loadout.material_defaults[1].material_id",
+        "units": 93
+      }
+    ],
+    "open": true,
+    "pickable_materials": [
+      "opening_loadout.pickable_materials[0]",
+      "opening_loadout.pickable_materials[1]"
+    ]
+  },
   "orders": [],
   "overlays": {
     "channel_order": {"__packed": "PackedStringArray", "len": 12, "items": ["crisis", "sentiment", "corruption", "visibility", "culture", "military", "moisture", "elevation", "pasture", "forage", "hunt_danger", "threat"]},

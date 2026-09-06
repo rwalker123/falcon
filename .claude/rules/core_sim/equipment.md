@@ -914,9 +914,15 @@ hunt arc is still moving; it rides with the hunt-effectiveness tuning on **issue
    `baskets_run_dry_on_their_own_quantum_and_stay_dry`, both of which run worlds with an empty
    bench): nothing *decays* wear, nothing repairs a batch, and a band that makes nothing stays dry.
 
-## ⛔ A SPAWNING BAND OWNS NO EQUIPMENT AT ALL — `start_stock_fraction` ships `0.0`
+## ⛔ A SPAWNING BAND OWNS NOTHING — `start_stock_fraction` ships `0.0`, AND SO DOES ITS STORE
 
-Not fewer units: **none**, of every item some kit names. The bench is the only source of gear.
+Not fewer units: **none**, of every item some kit names — and **no material either**. The
+per-material `start_stock` that used to seed `wood` and `stone` beside the kit is deleted, mechanism
+and all (`crafting.md` → "Nothing is stocked at spawn").
+
+**What a band opens with is what the PLAYER allocated**, in the turn-one loadout window
+(`starting_loadout.rs`), composed after the generated map is on screen. It is the one source of
+opening gear and material; there is no automatic grant of either anywhere in the sim.
 
 **Setting the fraction to zero was not sufficient on its own, and that is the trap worth recording.**
 `start_stock_units` ended `.max(1.0) as u32).max(1)` — a floor documented *"for the degenerate party
@@ -934,8 +940,17 @@ lies in the direction nobody checks. The floor is gone, `validate` relaxed from 
   `start_stocked_owned` in the first place.
 - **`start_stocked_items`** still lists the roster. The question *"which items could a spawn stock"*
   has not changed; only the count has.
-- **Starting MATERIALS** (stone and wood, `start_profiles.json`). They cannot be collected yet, so
-  the material stock is not the generous part — it is the input the first spear is made from.
+- **`EquipmentConfig::for_a_stocked_fixture()`** and the `build_test_app` install of it — see below.
+  Disarming the spawn is what a hundred fixtures had been silently inheriting, and that seam is what
+  made them say so.
+
+**What DID change beside the fraction: the material store.** It used to arrive holding a per-worker
+pile of `wood` and `stone` seeded by `worldgen::start_stocked_materials`, off a `start_stock` block on
+the material's own roster row. Both the block and the function are gone. Neither material has a
+producer, so **the opening allocation is the only way a band ever holds either** — a paved tile
+(20 stone) and a pen (6 hurdles = wood 24 + hide 12) are reachable exactly insofar as the player spent
+points on them. That is a stated consequence of shipping the consumers ahead of forest foraging and
+quarrying (issue #583), not an accident.
 
 ### The consequence is the design, not a side effect
 

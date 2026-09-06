@@ -2372,10 +2372,11 @@ fn the_benchs_rank_reaches_the_client_running_or_idle() {
 ///
 /// Two of the three fields have producers this world can reach, and each proves a different one:
 ///
-/// - **`materialStore`** proves the **worldgen** path. `StartKit.materials` was the materials *table*
-///   and stocked nothing; `MaterialDef::start_stock` is the path this slice added, and `wood` is its
-///   one declarer — with **no producer at all** until forest foraging lands, so a band that does not
-///   spawn holding it can never craft a hurdle and can never raise a pen.
+/// - **`materialStore`** proves the **deposit** path, and it is asserted as a PAIR against the
+///   spawn: a spawned band's store is **empty** (nothing is stocked at spawn any more — every
+///   material is either produced or picked in the turn-one opening loadout), and the row appears
+///   only once something is actually put there. `wood` has **no producer at all** until forest
+///   foraging lands, so an opening pick is the only way a band ever holds any.
 /// - **`materialUpkeepIncome`** proves the **bench** term. It is a *projection* off the bench's own
 ///   `ratePerTurn`, and on the shipped roster the pen's `hurdles` have **no producer but a bench** —
 ///   a ledger without that term would read zero income for ever for the one material a pen eats.
@@ -2391,14 +2392,29 @@ fn the_standing_material_bill_reaches_the_client() {
     const HURDLES: &str = "hurdles";
     let (mut app, band) = world();
 
-    // --- the STORE, straight off the spawn ------------------------------------------------------
+    // --- the STORE, empty at the spawn and populated by what the player picked -------------------
+    assert!(
+        publish(&mut app, band).material_store.is_empty(),
+        "a spawning band holds NO material at all - the per-material `start_stock` that used to \
+         seed `wood` here is deleted, mechanism and all"
+    );
+    deposit(
+        &mut app,
+        band,
+        WOOD,
+        24.0,
+        &[
+            ("hardness", core_sim::OPENING_MATERIAL_READING),
+            ("pliancy", core_sim::OPENING_MATERIAL_READING),
+        ],
+    );
     let stocked = publish(&mut app, band).material_store;
     let wood = stocked
         .iter()
         .find(|(id, _)| id == WOOD)
         .map(|(_, amount)| *amount)
         .unwrap_or_else(|| {
-            panic!("a spawned band must publish the wood its `start_stock` seeded, got {stocked:?}")
+            panic!("the wood the opening loadout deposited must publish a row, got {stocked:?}")
         });
     assert!(
         wood > 0.0,
