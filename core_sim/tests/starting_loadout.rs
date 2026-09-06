@@ -20,6 +20,8 @@ const PLAYER: FactionId = FactionId(0);
 /// each buys three spears, three traps and *six* sleds.
 const BIG_GAME: &str = "big_game";
 const TRAPPING: &str = "trapping";
+/// The third kit the shipped profile pre-fills — Harvesting, the forage side of the opening column.
+const GATHERING: &str = "gathering";
 const SPEARS: &str = "spears";
 const TRAPS: &str = "traps";
 const SLED: &str = "sled";
@@ -593,6 +595,28 @@ fn the_opening_loadout_reaches_the_client() {
         "the pre-fill names only pickable materials: {defaults:?}"
     );
 
+    // **The kit column's pre-fill, published at the shipped 4/4/4** — the picker opens on a
+    // plausible band rather than a column of zeros. Twelve against ~17 hands, so the clamp does not
+    // bind here and these are the profile's numbers verbatim (the clamp has its own test).
+    let kit_defaults: Vec<(String, u32)> = published
+        .kitDefaults()
+        .expect("the kit pre-fill is published")
+        .iter()
+        .map(|entry| (entry.kitId().unwrap_or_default().to_string(), entry.count()))
+        .collect();
+    assert_eq!(
+        kit_defaults,
+        vec![
+            (BIG_GAME.to_string(), 4),
+            (GATHERING.to_string(), 4),
+            (TRAPPING.to_string(), 4),
+        ]
+    );
+    assert!(
+        kit_defaults.iter().map(|(_, count)| count).sum::<u32>() <= published.kitBudget(),
+        "a published pre-fill always fits the budget it is drawn against"
+    );
+
     let craftable: Vec<String> = published
         .craftableRecipeIds()
         .expect("the craftable list is published")
@@ -639,5 +663,138 @@ fn a_legal_half_beside_an_illegal_half_lands_nothing() {
     assert_eq!(
         reason,
         LoadoutRejection::UnpickableMaterial(HURDLES.to_string())
+    );
+}
+
+/// ⛔ **THE PRE-FILL IS A CLIENT SEED AND MUST NEVER BECOME A BACK-DOOR SPAWN STOCK.**
+///
+/// The shipped profile pre-fills twelve kits and twenty-eight material points, and a band that never
+/// receives a `SetStartingLoadout` must still own **nothing at all** — the whole arc rests on the
+/// spawn granting no gear and no material, and a default that quietly applied itself would undo that
+/// while looking like a UI convenience.
+#[test]
+fn the_published_defaults_grant_the_band_nothing() {
+    let (mut app, band) = open_window();
+    let (kit_defaults, material_defaults) = {
+        let loadout = &app
+            .world
+            .resource::<core_sim::ActiveStartProfile>()
+            .profile()
+            .overrides()
+            .opening_loadout;
+        (loadout.kit_defaults.len(), loadout.material_defaults.len())
+    };
+    assert!(
+        kit_defaults > 0 && material_defaults > 0,
+        "**LIVENESS**: the shipped profile must pre-fill something, or this asserts nothing"
+    );
+
+    // A turn passes and the window shuts with the defaults never committed.
+    run_turn(&mut app);
+    assert!(!app.world.resource::<StartingLoadout>().open);
+
+    assert!(
+        owned(&app, band).is_empty(),
+        "a pre-filled kit column is a SUGGESTION - a band that never sent a loadout owns no gear"
+    );
+    let materials_table = app.world.resource::<MaterialsConfigHandle>().get();
+    for (id, _) in materials_table.materials() {
+        assert_eq!(
+            held(&app, band, id),
+            0.0,
+            "'{id}' is pre-filled or pickable, and the band still holds none of it - nothing is \
+             stocked at spawn and a default applies itself to nobody"
+        );
+    }
+}
+
+/// ⛔ **AN OVER-ALLOCATING PRE-FILL IS CLAMPED, PROPORTIONALLY, AND THE REMAINDER IS LEFT UNSPENT.**
+///
+/// The kit budget is the spawned band's head count, so `start_profiles.json` cannot sum-check its own
+/// pre-fill and an over-allocation has to be survivable at runtime. The shipped 12-against-~17 never
+/// binds, which is exactly why the rule needs a case that does.
+#[test]
+fn an_over_allocating_kit_pre_fill_is_clamped_proportionally() {
+    let declared: std::collections::BTreeMap<String, u32> =
+        [(BIG_GAME, 6u32), (TRAPPING, 3), (GATHERING, 1)]
+            .into_iter()
+            .map(|(id, count)| (id.to_string(), count))
+            .collect();
+
+    // Inside the budget: passed through verbatim, and reported as not clamped.
+    let (rows, clamped) = core_sim::clamped_kit_defaults(&declared, 10);
+    assert!(!clamped);
+    assert_eq!(
+        rows,
+        vec![
+            (BIG_GAME.to_string(), 6),
+            (GATHERING.to_string(), 1),
+            (TRAPPING.to_string(), 3),
+        ]
+    );
+
+    // Over the budget: `floor(count × 5 / 10)` — 3 / 0 / 1, and the zero row is DROPPED rather than
+    // published as a pre-fill of nothing. The floor's leftover point is deliberately not handed to
+    // whichever id sorts first: a suggestion that leaves a hand free beats an arbitrary winner
+    // dressed as a rule.
+    let (rows, clamped) = core_sim::clamped_kit_defaults(&declared, 5);
+    assert!(clamped, "the clamp must report that it bound");
+    assert_eq!(
+        rows,
+        vec![(BIG_GAME.to_string(), 3), (TRAPPING.to_string(), 1)],
+        "proportional, floored, and `gathering` floors out entirely"
+    );
+    assert!(
+        rows.iter().map(|(_, count)| count).sum::<u32>() <= 5,
+        "a clamped pre-fill never exceeds the budget it was fitted to"
+    );
+
+    // A band with no hands pre-fills nothing, with no special case anywhere.
+    let (rows, clamped) = core_sim::clamped_kit_defaults(&declared, 0);
+    assert!(clamped);
+    assert!(rows.is_empty());
+}
+
+/// The clamp is wired into the **publish** path, not merely available beside it — asserted through
+/// the live capture, with a band whose budget has been forced below what the profile pre-fills.
+#[test]
+fn the_published_pre_fill_is_the_clamped_one() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    const FORCED_BUDGET: u32 = 6;
+    let (mut app, _) = open_window();
+    app.world.resource_mut::<StartingLoadout>().kit_budget = FORCED_BUDGET;
+    core_sim::recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<core_sim::SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let published = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .campaign()
+        .expect("the envelope carries a campaign section")
+        .openingLoadout()
+        .expect("the campaign section carries the opening loadout");
+
+    let total: u32 = published
+        .kitDefaults()
+        .expect("the kit pre-fill is published")
+        .iter()
+        .map(|entry| entry.count())
+        .sum();
+    assert!(
+        total <= FORCED_BUDGET,
+        "the shipped 4/4/4 pre-fills 12 kits; against a budget of {FORCED_BUDGET} the PUBLISHED \
+         rows must already be fitted to it, and they sum to {total}"
+    );
+    assert!(
+        total > 0,
+        "**LIVENESS**: a clamp that published nothing would satisfy the bound above for the wrong \
+         reason"
     );
 }

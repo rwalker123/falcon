@@ -19,7 +19,7 @@ spawns owning nothing at all and this screen is what it walks away with.
 | `ui/StartingLoadoutPanel.gd` | The free-floating card — three columns (kits / resources / what the resources can build), two budget meters, an **unconditional** commit control and its own reopen pill. **`AutoSizingPanel`, not `PanelCard` + `DockScrollFit`** (`panel-framework.md`): it is measured against the ROOM. **ONE NODE CARRIES BOTH STATES** — the card and the pill are two children and exactly one is visible, so one fit and one placement serve the expanded and dismissed states; the fit measures whichever is showing and `_place` centres the card in the room and puts the pill at the top of it. It renders a payload and emits five intents (`dismissed` / `reopened` / `kit_count_changed` / `material_units_changed` / `commit_requested`) and holds no allocation of its own. `_column` draws NO caption for an empty note, which is what keeps the builds column from carrying a blank row where the other two carry a line |
 | `ui/hud/StartingLoadoutController.gd` | The controller half, held by `HudLayer` as `_loadout`. **Holds the allocation, every clamp, both remainders and the "what this builds" arithmetic.** Ingests the window (`set_window`), the parsed equipment config (`set_equipment_config`) and the recipe book (`set_recipes`); relays `set_starting_loadout_requested` onto `HudLayer`'s and pushes its orb half through `attention_changed` |
 | `ui/hud/hud_loadout_vocab.gd` (`HudLoadoutVocab`) | The vocabulary leaf — the wire keys, the words, the measured geometry, and the **swatch ring** (`apply_palette`, registered in `HudPalette.apply`) |
-| `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — seven frames and thirty-nine checkpoints, including the orb's two colours. See `harness-ui-preview.md` |
+| `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — seven frames and forty-three checkpoints, including the orb's two colours and the no-dead-space bound. Its kit fixture is the **shipped nine-kit roster**, `none` included so the picker has something to drop. See `harness-ui-preview.md` |
 
 ## What the client owns, and what it must not decide
 
@@ -52,6 +52,13 @@ spawns owning nothing at all and this screen is what it walks away with.
 Neither the kit roster nor a recipe's input costs is copied into the loadout section, and neither
 should be:
 
+- **The KIT COLUMN'S PRE-FILL rides `openingLoadout.kitDefaults`** (`[{kitId, count}]`), the material
+  one's twin. ⛔ **It arrives ALREADY CLAMPED to `kitBudget`** — that budget is the spawned band's
+  working-age head count rather than a config number, so `start_profiles.json` cannot sum-check its own
+  pre-fill and the sim scales it proportionally at publish time. **Draw the counts as-is**; a second
+  clamp here would disagree with the first, and with the shipped spread (12 of 17) comfortably inside
+  the budget that disagreement would be invisible unless the individual counts are checked — which is
+  why the preview asserts each one rather than the total.
 - **The kit roster rides `SubsistenceSection.equipmentConfigJson`** — the picker parses that blob (it
   is the only HUD consumer of it; the Workbench is the other reader) and drops the carry-nothing entry
   **by its EMPTY `uses`**, never by matching `none`. A roster that renamed that entry is still
@@ -99,6 +106,61 @@ stop on the two Ray rewrote.
 The remainder is worth saying and is said ONCE, on the **turn orb**, which is the surface that already
 counts down to the advance that causes it. The preview chapter asserts the word `forfeit` is absent
 from the whole card, so a second copy cannot come back quietly.
+
+## ⛔ THE FIT IS TWO FRAMES, AND THE SECOND ONE IS NOT OPTIONAL
+
+Reported from the real client: **picking a single kit grew the card by roughly 400px**, all of it dead
+space between the bottom of the kit list and the footer rule, with the three columns rendering
+identically. Nothing in the content can do that — a pick changes an ink, a stepper value, a budget
+label and one bar segment. Only the FIT can.
+
+`refit()` waits one frame for the rebuilt body to be laid out, fits the WIDTH, **waits a second
+frame**, and only then reads the height. The second wait is the whole point:
+
+- `fit_width` resolves the card to its CONTENT's width, which is not `target_width` — the three
+  columns want 916 against a 900 nominal — so the width really does move.
+- **Applying a width does not lay the body out.** The container sorts on the next layout pass, so a
+  height read in the same pass is the wrapping of a column that no longer exists.
+- This card is full of `AUTOWRAP_WORD_SMART` labels — the subtitle, both column notes, every empty
+  notice — and **an autowrapping label's minimum HEIGHT is a function of the width it was last laid
+  out at**. Measured against a stale narrow width they approach one word per line, which is a card
+  hundreds of pixels taller than its content with all of it as slack in the scroll region.
+
+**`ComposeSheet.refit` shipped exactly this bug and was fixed exactly this way**
+(`harness-ui-preview.md` → "a latent fit race was fixed", where it cost one frame 19px). It is
+repeated here rather than shared because the two cards have different chrome and different collapsed
+states.
+
+**`_fit_pending` spans BOTH frames**, so a re-entrant `refit()` cannot interleave halves, and every
+exit path clears it. **The collapsed branch is re-checked after the second wait** — a dismissal
+landing between the two frames has already had its own `refit()` dropped by `_fit_pending`, so this is
+the call that must notice; without it the reopen pill is left wearing a 900px panel, which is the
+state the collapsed branch exists to prevent.
+
+## ⛔ …AND THE WALK NEVER REPRODUCED IT, WHICH IS ITSELF THE FINDING
+
+The fix above is reasoned from the code, **not from a staged failure**. Every reproduction attempt
+came back stable at 761px: five kit rows and nine; a tall room and one shortened to 684 with the
+internal scroll on; `_settle` and bare `process_frame`s; press, unpress and re-press. The harness's
+`_settle` does `process_frame → force_draw → process_frame`, and a draw flushes the deferred container
+sort the minimum-size read depends on — so this walk hands the card the very layout pass whose absence
+is the bug.
+
+**Proven rather than assumed**: with the two-frame split reverted to the original single pass, the run
+is still green. Do not read the walk's silence here as evidence the card is correct.
+
+What the walk DOES carry is a **bound**: `_assert_no_dead_space`, asked in every card state the
+chapter renders. Its shape was got wrong once and the wrong version is worth knowing —
+
+> The first version compared the panel against `PanelContainer.get_combined_minimum_size()` and
+> **skipped itself when the internal scroll was on**. A card that has grown past the room's ceiling
+> turns the scroll ON, so the skip fired *precisely when the defect was present*: with 400px of dead
+> space injected it printed nothing at all and the run stayed green.
+
+It asks the SCROLL REGION instead, where the space would actually be, one-sided so it needs no skip:
+the region may be **shorter** than the body wants (the room's ceiling doing its job, the scrollbar
+carrying the rest) but never **taller**. With 400px injected it fails at `343 px of slack` on exactly
+the picked and spent states.
 
 ## Two measurements that a screenshot is the only witness for
 

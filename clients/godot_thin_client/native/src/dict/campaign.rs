@@ -394,6 +394,10 @@ pub(crate) fn opening_loadout_to_dict(state: fb::OpeningLoadoutState<'_>) -> Var
         "material_defaults",
         &opening_material_defaults_to_array(state.materialDefaults()),
     );
+    let _ = dict.insert(
+        "kit_defaults",
+        &opening_kit_defaults_to_array(state.kitDefaults()),
+    );
     // Published as IDS so the client never has to sniff a craft offer's refusal SENTENCE to work out
     // which bench tools are still knowledge-gated.
     let _ = dict.insert(
@@ -404,6 +408,28 @@ pub(crate) fn opening_loadout_to_dict(state: fb::OpeningLoadoutState<'_>) -> Var
             .unwrap_or_default(),
     );
     dict
+}
+
+/// The KIT column's pre-fill, the material one's twin.
+///
+/// **ALREADY CLAMPED to `kitBudget` sim-side** — that budget is the spawned band's working-age head
+/// count rather than a config number, so the profile cannot sum-check its own pre-fill and the sim
+/// scales it proportionally at publish time. The client draws these counts as-is; re-fitting them
+/// against the budget here would be a second clamp to disagree with the first.
+fn opening_kit_defaults_to_array(
+    defaults: Option<Vector<'_, ForwardsUOffset<fb::OpeningKitDefault<'_>>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    let Some(defaults) = defaults else {
+        return array;
+    };
+    for entry in defaults {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("kit_id", entry.kitId().unwrap_or(""));
+        let _ = dict.insert("count", entry.count() as i64);
+        array.push(&dict.to_variant());
+    }
+    array
 }
 
 /// The allocation the window OPENS on — a suggestion, never a grant. Nothing is deposited until a

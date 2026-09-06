@@ -162,5 +162,17 @@ pub(crate) fn snapshot_opening_loadout(
             })
             .map(|(id, _)| id.to_string())
             .collect(),
+        // **Clamped here, warned about once at world build.** The publish site owns the value
+        // because this is where the budget and the profile are both in scope; the warn lives in
+        // `stamp_starting_loadout` so a config fault is reported once per world rather than once per
+        // captured frame. One rule, one helper, two callers.
+        kit_defaults: crate::starting_loadout::clamped_kit_defaults(
+            &loadout.kit_defaults,
+            window.kit_budget,
+        )
+        .0
+        .into_iter()
+        .map(|(kit_id, count)| OpeningKitDefaultState { kit_id, count })
+        .collect(),
     }
 }

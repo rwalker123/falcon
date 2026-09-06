@@ -3113,7 +3113,19 @@ static func kit_coverage(band: Dictionary, item_id: String) -> Dictionary:
 ## **An item with no published row reads as DRY, not as equipped.** A missing row means the server
 ## never confirmed the gear; promising a kitted tier on that silence is the failure this whole model
 ## exists to prevent, so it errs toward the unequipped answer.
+## ⛔ **OWNERSHIP IS `count`, NOT A NON-ZERO CONDITION.** This asked `kit_condition(...) > KIT_DRY`,
+## which reports an item the band owns NONE of as one it owns and has worn out — so a role card for a
+## band with no clubs read `Clubs dry`. `snapshot.fbs` is explicit: *`remaining == 0` means owns none,
+## never "owns one that is dry" — a batch with no units left is removed*, and `count` is the field
+## published beside it precisely so a client need not infer ownership from a condition.
+##
+## The condition is still the answer where the band states no `count` at all: that is a ledger this
+## client has not been given rather than a claim of ownership either way, and the old reading is the
+## conservative one there.
 static func kit_is_equipped(band: Dictionary, item_id: String) -> bool:
+    var owned := kit_units_owned(band, item_id)
+    if owned != KIT_UNITS_UNSTATED:
+        return owned > 0
     return kit_condition(band, item_id) > KIT_DRY
 
 ## One item's remaining condition, `KIT_DRY` when the band publishes no row for it.

@@ -39,6 +39,14 @@ const PICKABLE_MATERIALS_KEY := "pickable_materials"
 const MATERIAL_DEFAULTS_KEY := "material_defaults"
 const MATERIAL_DEFAULT_ID_KEY := "material_id"
 const MATERIAL_DEFAULT_UNITS_KEY := "units"
+## The KIT column's pre-fill, the material one's twin. **ALREADY CLAMPED to `kit_budget` sim-side** —
+## that budget is the spawned band's working-age head count rather than a config number, so the
+## profile cannot sum-check its own pre-fill and the sim scales it proportionally at publish time.
+## **Draw these counts as-is**: re-fitting them against the budget here would be a second clamp, and
+## two clamps disagree.
+const KIT_DEFAULTS_KEY := "kit_defaults"
+const KIT_DEFAULT_ID_KEY := "kit_id"
+const KIT_DEFAULT_COUNT_KEY := "count"
 ## **THE RECIPES THIS FACTION COULD PUT ON A BENCH TODAY, AS IDS.** It is what keeps the
 ## knowledge-gated bench tools off the "what this builds" list. The client must never work that out
 ## by sniffing a craft offer's refusal SENTENCE — that would make a player-facing string into a

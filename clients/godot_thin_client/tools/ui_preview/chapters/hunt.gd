@@ -2188,29 +2188,25 @@ const GATE_SPLIT_LINE := "⚠ 4 of your 6 hunters can take Woolly Mammoth; the o
 ## split whatever the rest of the band is carrying.
 const GATE_SPLIT_COVERED_HUNTERS := 3
 
-## **THE KIT LINE'S OWN SENTENCE ON THE SAME PARTLY-ARMED BAND**, spelled out rather than recomposed
-## through `KitRoster.tier_hint` — an expectation built from the function under test agrees only with
-## itself, and the whole finding here is a clause of four small numbers.
+## **THE KIT LINE IS A SHORTFALL WARNING NOW, so the two constants are a sentence and an ABSENCE.**
 ##
-## **THE TIERS ARE THE EQUIPPED ONES AND THE COVERAGE IS NOT, WHICH IS THE DEFECT IN ONE LINE.**
-## `with_short_spears` holds four spears; `effective_tiers` resolves `attack` through the band's best
-## live item, so the line quoted `attack 20.0` to a party of six while the sim priced two of the six
-## bare-handed inside its take curve. The take was right and the line was wrong about why. The fix
-## STATES the coverage — it does not blend the attack, which would describe nobody and would be a
-## third number for a division `huntCrews` has already published.
-const GATE_SPLIT_KIT_HINT := "attack 20.0 · carry 40.0 per hunter · 4 of 6 equipped · spears 87 · sled 54"
+## They were `attack 20.0 · carry 40.0 per hunter · 4 of 6 equipped · spears 87 · sled 54` and its
+## `3 of 3 equipped` twin — a row of tiers, a coverage fraction and item conditions. Reported from
+## play as meaningless: a tier is what ONE EQUIPPED worker gets, and quoting it beside a party of six
+## of whom four are armed describes nobody on the sheet.
+##
+## **The shortfall it was hinting at is now said outright, and only when there IS one.**
+const GATE_SPLIT_KIT_HINT := "Only 4 of 6 hunters carry spears — the rest go without"
 
-## **THE SAME BAND, THE SAME KIT, A PARTY THE GEAR COVERS — AND THE CLAUSE STILL PRINTS.** It is the
-## half that makes the assertion above a claim about the NUMBERS rather than about a clause existing:
-## `4 of 6` and `3 of 3` differ in every digit, so a client that hardcoded either, or that only ever
-## printed on a shortfall, fails one of the pair.
+## ⛔ **AND THE COVERED PARTY'S LINE IS GONE ENTIRELY — this claim INVERTED.**
 ##
-## **FULL COVERAGE IS STATED, NOT WITHHELD.** A clause that appeared only when the band was short
-## would be a warning glyph in words: the player would have no baseline to watch `6 of 6` become
-## `5 of 6` against, and a clause POPPING INTO EXISTENCE as the stepper crosses the gear's reach reads
-## as the step having broken something. It is the same rule the condition clauses beside it follow —
-## `spears 74` prints every frame, not only once the spears are nearly gone.
-const GATE_SPLIT_COVERED_KIT_HINT := "attack 20.0 · carry 40.0 per hunter · 3 of 3 equipped · spears 87 · sled 54"
+## It used to assert the clause STAYS at full coverage, arguing that *"a clause popping into existence
+## as the stepper crosses the gear's reach reads as the step having broken something"*, and that the
+## player needs a `3 of 3` to watch become `3 of 4`. Ray's rule overrides it: **everyone covered → no
+## line at all**; anyone short → one line, in DANGER. A line that renders on a party with nothing
+## wrong is the noise this whole change is removing, and the baseline it was preserving is exactly
+## what made the sheet say something meaningless on every frame.
+const GATE_SPLIT_COVERED_KIT_HINT := ""
 
 ## The partly-equipped party's own frame. Its band is `with_short_spears`, which differs from the
 ## speared band of gate-a in NOTHING a condition readout can see — every item is live and at the same
@@ -2237,7 +2233,7 @@ func _combat_gate_split_state() -> void:
 	# different questions off different wire terms — the split says who can beat THIS quarry's
 	# defence (`huntCrews` against `defense`), the kit line says how far the gear reaches into the
 	# party at all — so a band whose spears simply ran short would state the second and not the first.
-	h._assert_hud("…and the Kit line states the coverage beside the tiers: \"%s\""
+	h._assert_hud("…and the Kit line says plainly who is going without: \"%s\""
 		% Readout.kit_hint_line(sheet), Readout.kit_hint_line(sheet) == GATE_SPLIT_KIT_HINT)
 	# **THE SAME BAND AND THE SAME QUARRY, A SMALLER PARTY — AND NOW THERE IS NOTHING TO SAY.** The
 	# gear covers a prefix of whoever is sent, so three hunters drawn from four spears are all armed;
@@ -2250,10 +2246,10 @@ func _combat_gate_split_state() -> void:
 	await h._settle()
 	h._assert_hud("…and a party that fits inside the armed run states NO split",
 		Readout.hunt_crew_split_line(h._hud._drawercompose._compose_sheet) == "")
-	# **THE KIT LINE STILL SPEAKS, and it says everybody.** The split line above goes quiet because
-	# there is no division in THIS party to report; the coverage clause is not a warning and stays,
-	# which is what gives the player a `3 of 3` to watch turn into `3 of 4` on the very next step.
-	h._assert_hud("…while the Kit line states FULL coverage rather than falling silent: \"%s\""
+	# **AND THE KIT LINE GOES QUIET TOO — the same party, nothing short.** Both lines are absences here
+	# and they are absences for DIFFERENT reasons, which is why both are asserted: the split line has no
+	# division in THIS party to report, and the kit line has no shortfall in it at all.
+	h._assert_hud("…and the Kit line falls silent, everyone being covered: \"%s\""
 		% Readout.kit_hint_line(h._hud._drawercompose._compose_sheet),
 		Readout.kit_hint_line(h._hud._drawercompose._compose_sheet) == GATE_SPLIT_COVERED_KIT_HINT)
 

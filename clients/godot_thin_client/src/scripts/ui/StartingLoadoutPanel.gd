@@ -228,43 +228,88 @@ func card() -> PanelContainer:
 func reopen_pill() -> Button:
 	return _pill
 
-## Re-fit to content and re-place. Coalesced across one frame: the content's height is a function of
-## the card's width, so a measurement taken in the same frame the body was rebuilt reports the
-## PREVIOUS content's wrapping. `KnowledgePanel.refit`'s contract, for its reasons.
+## Re-fit to content and re-place, across TWO frames.
+##
+## **FRAME ONE waits for the rebuilt body to be laid out at all**; a measurement taken in the same
+## frame the body was rebuilt reports the PREVIOUS content's wrapping.
+##
+## ⛔ **FRAME TWO IS THE ONE THAT IS EASY TO LEAVE OUT, AND IT IS WHY THE HEIGHT IS READ AFTER THE
+## WIDTH FIT RATHER THAN BESIDE IT.** `fit_width` resolves the card to its content's width, which is
+## NOT `target_width` — the three columns want 916 against a 900 nominal — and applying a width does
+## not lay the body out; the container sorts on the next layout pass. So a height read in the same
+## pass is the wrapping of a column that no longer exists, and this card is full of `AUTOWRAP_WORD_SMART`
+## labels (the subtitle, both column notes, every empty notice) whose minimum HEIGHT is a function of
+## the width they were last laid out at. Measured against a stale narrow width they report close to
+## one word per line, which is a card hundreds of pixels taller than its content with all of it as
+## dead space under the columns.
+##
+## **`ComposeSheet.refit` shipped exactly this bug** and was fixed exactly this way — see
+## `.claude/rules/client/harness-ui-preview.md` → "a latent fit race was fixed". It is repeated here
+## rather than shared because the two cards have different chrome and different collapsed states.
+##
+## `_fit_pending` spans BOTH frames, so a re-entrant `refit()` cannot interleave halves; every exit
+## path clears it.
 func refit() -> void:
 	if not visible or _fit_pending or _body == null:
 		return
 	_fit_pending = true
 	await get_tree().process_frame
+	if not visible or _body == null:
+		_fit_pending = false
+		return
+	if _fit_collapsed():
+		_fit_pending = false
+		return
+	_fit_expanded_width()
+	await get_tree().process_frame
 	_fit_pending = false
 	if not visible or _body == null:
 		return
-	var room := _room()
-	var chrome := HudStyle.card_stylebox().get_minimum_size()
-	if not _card.visible:
-		# The collapsed state is a BUTTON, and it brings its own minimum — no card chrome, no scroll
-		# gutter and no nominal width, or the pill would be dressed in 900px of invisible panel that
-		# still eats every click behind it.
-		var pill_min := _pill.get_combined_minimum_size()
-		# **THE NOMINAL WIDTH MOVES WITH THE STATE.** `fit_width` never resolves below `target_width`,
-		# so leaving it at the card's would keep the collapsed panel a full card wide with the pill
-		# drawn in its corner.
-		target_width = pill_min.x
-		max_width = maxf(room.size.x, pill_min.x)
-		fit_width(pill_min.x, 0.0)
-		max_height = room.size.y
-		min_height = pill_min.y
-		fit_to_content(pill_min.y, 0.0)
-		_place()
+	# **RE-CHECKED, because the card can be dismissed BETWEEN the two frames** — the collapse's own
+	# `refit()` was dropped by `_fit_pending`, so this is the call that has to notice. Without it the
+	# pill would be left wearing a 900px panel, which is the state the collapsed branch exists to
+	# prevent.
+	if _fit_collapsed():
 		return
+	_fit_expanded_height()
+
+## The COLLAPSED fit — the reopen pill and nothing else. Answers whether it applied, so both frames of
+## `refit` can ask the same question and get the same answer.
+func _fit_collapsed() -> bool:
+	if _card.visible:
+		return false
+	var room := _room()
+	# The collapsed state is a BUTTON, and it brings its own minimum — no card chrome, no scroll
+	# gutter and no nominal width, or the pill would be dressed in 900px of invisible panel that
+	# still eats every click behind it.
+	var pill_min := _pill.get_combined_minimum_size()
+	# **THE NOMINAL WIDTH MOVES WITH THE STATE.** `fit_width` never resolves below `target_width`, so
+	# leaving it at the card's would keep the collapsed panel a full card wide with the pill drawn in
+	# its corner.
+	target_width = pill_min.x
+	max_width = maxf(room.size.x, pill_min.x)
+	fit_width(pill_min.x, 0.0)
+	max_height = room.size.y
+	min_height = pill_min.y
+	fit_to_content(pill_min.y, 0.0)
+	_place()
+	return true
+
+func _fit_expanded_width() -> void:
+	var room := _room()
 	min_height = HudLoadoutVocab.PANEL_MIN_HEIGHT
 	target_width = HudLoadoutVocab.PANEL_WIDTH
 	max_width = maxf(room.size.x, target_width)
-	fit_width(_body.get_combined_minimum_size().x, chrome.x + _scroll_gutter())
+	fit_width(_body.get_combined_minimum_size().x,
+		HudStyle.card_stylebox().get_minimum_size().x + _scroll_gutter())
+
+func _fit_expanded_height() -> void:
+	var room := _room()
 	# The height fit's ceiling is the WHOLE room and the card does not move to be measured —
 	# `centred_in_room` is how the base class is told so.
 	max_height = room.size.y
-	fit_to_content(_body.get_combined_minimum_size().y + _chrome_height(), chrome.y, _scroll)
+	fit_to_content(_body.get_combined_minimum_size().y + _chrome_height(),
+		HudStyle.card_stylebox().get_minimum_size().y, _scroll)
 	_place()
 
 # ---- header -----------------------------------------------------------------

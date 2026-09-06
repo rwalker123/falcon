@@ -395,6 +395,18 @@ fn create_opening_loadout<'a>(
         .map(|id| builder.create_string(id.as_str()))
         .collect();
     let craftable = builder.create_vector(&craftable);
+    let mut kit_defaults = Vec::with_capacity(state.kit_defaults.len());
+    for entry in &state.kit_defaults {
+        let kit_id = builder.create_string(entry.kit_id.as_str());
+        kit_defaults.push(fb::OpeningKitDefault::create(
+            builder,
+            &fb::OpeningKitDefaultArgs {
+                kitId: Some(kit_id),
+                count: entry.count,
+            },
+        ));
+    }
+    let kit_defaults = builder.create_vector(&kit_defaults);
     fb::OpeningLoadoutState::create(
         builder,
         &fb::OpeningLoadoutStateArgs {
@@ -404,6 +416,7 @@ fn create_opening_loadout<'a>(
             pickableMaterials: Some(pickable),
             materialDefaults: Some(defaults),
             craftableRecipeIds: Some(craftable),
+            kitDefaults: Some(kit_defaults),
         },
     )
 }

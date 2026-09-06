@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 104
+const EXPECTED_CHECKPOINTS := 106
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -1028,6 +1028,27 @@ func _kit_states() -> void:
 	h._assert_hud("…and it keeps the SOUND glyph, where the short spears wear the warning one",
 		keeper_line.contains(DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH)
 			and short_spears_line.contains(DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH))
+	# ⛔ **OWNERSHIP IS `count`, NEVER A NON-ZERO CONDITION** (`snapshot.fbs`: *`remaining == 0` means
+	# owns none, never "owns one that is dry" — a batch with no units left is removed*). Driven rather
+	# than staged, because the sim cannot currently SEND the shape that separates the two readings —
+	# it never publishes a live condition beside a zero count — so no fixture can carry the claim and
+	# a rendered row would be evidence of nothing.
+	#
+	# **The pair is the claim.** The first row is the contradiction the wire forbids and a client must
+	# still not resolve in favour of the condition; the second is an ordinary owned item, without which
+	# "reads as unowned" passes on a reader that answers `false` to everything.
+	var unowned_band := {DetailFormat.KIT_ITEM_CONDITIONS_KEY: [
+		{DetailFormat.KIT_ITEM_ID_KEY: BandFx.KIT_ITEM_CLUBS,
+			KitRoster.ITEM_CONDITION_REMAINING_KEY: BandFx.KIT_CONDITION_CLUBS,
+			DetailFormat.KIT_ITEM_COUNT_KEY: 0},
+		{DetailFormat.KIT_ITEM_ID_KEY: BandFx.KIT_ITEM_SPEARS,
+			KitRoster.ITEM_CONDITION_REMAINING_KEY: BandFx.KIT_CONDITION_SPEARS,
+			DetailFormat.KIT_ITEM_COUNT_KEY: 3},
+	]}
+	h._assert_hud("a live condition beside a ZERO count reads as UNOWNED, not as equipped",
+		not DetailFormat.kit_is_equipped(unowned_band, BandFx.KIT_ITEM_CLUBS))
+	h._assert_hud("…while an item the band really holds still reads as equipped",
+		DetailFormat.kit_is_equipped(unowned_band, BandFx.KIT_ITEM_SPEARS))
 
 	# State kit-e — **TWO BASKETS AMONG FOUR GATHERERS** (issue #520, the four-job denominator). The
 	# hunt is perfectly equipped here and every item is at full condition, so until each row carried

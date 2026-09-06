@@ -15,6 +15,72 @@ paths:
 
 # Labor allocation UI — the compose sheet and forecasts
 
+## ⛔ THE KIT LINE UNDER THE COMPOSE PICKER IS A SHORTFALL WARNING, AND NOTHING ELSE
+
+**Everyone on the job covered → no line at all. Anyone short → one line, in `HudStyle.DANGER`, in
+plain English.** That is Ray's rule and it is literal. It serves the hunt sheets and the forage sheet
+alike — same problem, same fix, no forage special case.
+
+It read `attack 20.0 · carry 40.0 per hunter · spears 74 · sled 58`, and on a forage sheet
+`carry 1.6 per gatherer · baskets dry`. Reported from play: *"a very miserable 'baskets dry', which is
+Claude Speak, not real english. The whole carry 1.6 .. and subsequent carry 8.0 … are really
+meaningless. The user has no sense why it is saying that."*
+
+- **A RAW RATE WITH NO DENOMINATOR TELLS A PLAYER NOTHING**, and this one was wrong besides: **a tier
+  is what ONE EQUIPPED worker gets**, quoted beside a party of nine of whom one might be holding a
+  basket. The `N of M equipped` clause was an attempt to qualify it; the answer was to state the
+  shortfall and drop the rate.
+- **`dry` WAS A SEPARATE DEFECT.** It rendered for an item the band owns NONE of, which says *you have
+  baskets and they are spent*. `snapshot.fbs` settles it: *`remaining == 0` means owns none, never
+  "owns one that is dry" — a batch with no units left is removed*, and `count` is published beside it
+  so no client need infer ownership from a condition. `KitRoster.condition_of` is DELETED with the
+  clause it fed; `DetailFormat.kit_is_equipped` asks `count` now.
+- **OWNING NONE AND OWNING TOO FEW GET DIFFERENT SENTENCES**, because they are different situations:
+  `No spears to go round — all 17 hunters go without` against
+  `Only 5 of 17 hunters carry spears — the rest go without`.
+- **THE DENOMINATOR IS THE COMPOSED CREW, not `workersOnQuotedJob`.** That published pair is the head
+  count of the job as STAFFED and is `0` on a sheet where nobody is assigned yet, so a party being
+  composed is measured against itself; a host with no stepper falls back to the published pair, which
+  is the sim's own answer wherever it applies.
+- **THE SENTENCE NAMES THE SHORTEST ITEM THE KIT CARRIES**, never `item_ids[0]`, and never an item
+  guessed from an axis — this layer may not map an axis to the component behind it.
+- **The band-wide ROLE cards keep their own reading and their own quiet ink** (`KitRoster.role_hint`).
+  They are a different surface and were not what the rule was written about.
+
+**THE ITEM'S CONDITION IS NOT LOST WITH THE LINE.** The Materials & Crafting panel's kit ledger owns
+it in full, in the item's own quanta (`48 raids left` / `Worn out`), and `equipment.json`'s
+`life_readout` seams push `kit_life` to the event dock (warn → Notable, danger → Alert). The band's
+own `Gear` row was retired in `docs/plan_standing_upkeep.md` §4.9 item 12 for exactly that reason.
+
+> #### ⛔ AND THE 9 / 2 / 2 WORKER COUNT IS A SEPARATE, UNFIXED DEFECT — IN THE CLIENT
+>
+> Reported alongside the line: with 0 harvesting kits the *hold it after* figure is **9**, with 2 kits
+> **2**, and with 1 kit **still 2**. It is **client-side preview arithmetic**, not the sim's blend, and
+> it is `KitRoster.repriced_source`: it scales the wire's `per_worker_yield` by `carry / reference`
+> where `carry` is the kit's EFFECTIVE TIER, **with no coverage term at all**, so the whole composed
+> crew is priced as equipped the moment the band owns ONE unit.
+>
+> Measured directly (9-gatherer crew, `per_worker_yield` 0.20, bare 1.6 against basket 8.0):
+>
+> | baskets owned | sim's published tier | client's per-worker |
+> |---|---|---|
+> | 0 | 1.60 | 0.0400 |
+> | 1 | 8.00 | **0.2000** |
+> | 2 | 8.00 | **0.2000** |
+> | 9 | 8.00 | **0.2000** |
+>
+> **The sim is not at fault**: a tier IS per equipped worker, and it steps at the first unit because
+> that is what a tier means. The client is applying it to nine people.
+>
+> **IT IS NOT FIXED HERE, and the fix is not a one-liner**, which is why: coverage makes the take
+> PIECEWISE-LINEAR in the crew (`min(crew, units)` armed, the rest bare), and
+> `max_useful_workers = ceil(ceiling / per_worker_yield)` assumes a rate that does not depend on the
+> crew. Blending would change the shape of the model the crew targets, the harvest-floor chart and
+> every compose sheet are drawn from. `SourceForecast.pool_work_supply` already does it correctly for
+> BUILD work, off a published `saturating_crew` — that is the shape to copy, and the take side has no
+> such published term yet.
+
+
 ## Key scripts
 
 | Script | Purpose |

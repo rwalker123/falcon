@@ -25,7 +25,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 39
+const EXPECTED_CHECKPOINTS := 45
 
 const Q := preload("res://tools/ui_preview/node_query.gd")
 ## The four shipped HUD palettes, read as DATA — the ready ink's separation claim is made
@@ -51,6 +51,14 @@ const DEFAULT_BONE := 3
 const DEFAULT_FIBRE := 17
 const DEFAULT_HIDE := 8
 const DEFAULTS_TOTAL := DEFAULT_BONE + DEFAULT_FIBRE + DEFAULT_HIDE
+
+## The KIT column's own pre-fill — the shipped spread, and 12 of the 17-kit budget so the meter opens
+## with something left for the same reason the material one does. **The wire sends these ALREADY
+## CLAMPED**; the fixture states them as the sim would and the picker must draw them unchanged.
+const DEFAULT_STALKING := 4
+const DEFAULT_TRAPPING := 4
+const DEFAULT_GATHERING := 4
+const KIT_DEFAULTS_TOTAL := DEFAULT_STALKING + DEFAULT_TRAPPING + DEFAULT_GATHERING
 
 ## **THE GATED BENCH TOOL, PRESENT IN THE RECIPE BOOK AND ABSENT FROM `craftable_recipe_ids`.** It is
 ## the whole reason the list of ids is published: a client that filtered on anything else — a refusal
@@ -116,6 +124,12 @@ const READY_RIVAL_KEYS := ["SIGNAL", "WARN", "DANGER", "HEALTHY"]
 ## guaranteed way back to a dismissed card.
 const ORB_OPEN_AFFORDANCE := "Open ▸"
 
+## **HOW MUCH TALLER THAN THE BODY THE SCROLL REGION MAY BE**, in pixels. The card is fitted to a
+## measured minimum, so the honest tolerance is rounding, not a design allowance — even a row of slack
+## is the dead-space defect, and the whole point of this bound is that it cannot be satisfied by a
+## card that is merely "about right".
+const CARD_DEAD_SPACE_TOLERANCE := 2.0
+
 ## The face the commit control wears while a budget is unspent, captured so the fully-spent state can
 ## be compared against it. The claim is that the two are EQUAL.
 var _unspent_commit_face := ""
@@ -133,18 +147,21 @@ func run(harness) -> void:
 	h._hud.update_opening_loadout(_window())
 	await h._settle()
 	_assert_opened_itself()
-	_assert_kits_start_at_zero()
+	_assert_kits_open_on_the_published_prefill()
 	_assert_defaults_seeded()
 	_assert_gated_recipe_is_absent()
 	_assert_recipe_counts()
 	_assert_reachable_first()
 	_assert_orb_row()
+	_assert_no_dead_space("opened")
 	await h._save("starting_loadout")
 
 	await _pick_a_kit()
+	_assert_no_dead_space("picked")
 	await h._save("starting_loadout_picked")
 
 	await _spend_both_budgets()
+	_assert_no_dead_space("spent")
 	await h._save("starting_loadout_spent")
 
 	await _dismiss_and_reopen()
@@ -165,19 +182,35 @@ func _assert_opened_itself() -> void:
 	h._assert_hud("loadout — the picker opens ITSELF on the first frame the window is open",
 		_controller().is_expanded())
 
-## **EVERY KIT STARTS AT 0**, and the carry-nothing entry is not on the list at all. A roster row is
-## found by its own meta rather than by its face: the face is a config string, so a text match would
-## only confirm the fixture back to itself.
-func _assert_kits_start_at_zero() -> void:
+## **THE KIT COLUMN OPENS ON THE PUBLISHED PRE-FILL**, not on zeros — the material column's rule, one
+## column over. A roster row is found by its own meta rather than by its face: the face is a config
+## string, so a text match would only confirm the fixture back to itself.
+##
+## ⛔ **THE COUNTS ARE ASSERTED AS PUBLISHED, which is what catches a second clamp.** The wire's spread
+## is already fitted to `kit_budget` sim-side, so a client that re-fitted it would render a different
+## pre-fill from the one that was sent — and with a spread comfortably inside the budget (12 of 17)
+## that re-fit would be INVISIBLE unless the individual counts are checked, since the total would
+## still look reasonable.
+func _assert_kits_open_on_the_published_prefill() -> void:
 	var rows := _rows(HudLoadoutVocab.KIT_ROW_META)
-	h._assert_hud("loadout — every kit row starts at 0 (%d rows, %d kits spent)"
-			% [rows.size(), _controller().kits_spent()],
-		not rows.is_empty() and _controller().kits_spent() == 0)
 	h._assert_hud("loadout — the `%s` kit is not offered (it grants nothing)" % KIT_NONE,
-		not rows.has(KIT_NONE))
-	h._assert_hud("loadout — the whole kit budget is still there (%d of %d)"
-			% [_controller().kits_left(), KIT_BUDGET],
-		_controller().kits_left() == KIT_BUDGET)
+		not rows.is_empty() and not rows.has(KIT_NONE))
+	for expectation in [[KIT_STALKING, DEFAULT_STALKING], ["trapping", DEFAULT_TRAPPING],
+			["gathering", DEFAULT_GATHERING]]:
+		var kit_id := String(expectation[0])
+		var want := int(expectation[1])
+		var got := _stepper_count(HudLoadoutVocab.KIT_ROW_META, kit_id)
+		h._assert_hud("loadout — %s opens on the published %d (got %d)" % [kit_id, want, got],
+			got == want)
+	# …and a kit the pre-fill does not name really does open at zero, without which "opens on the
+	# defaults" passes on a column that put the same number on every row.
+	h._assert_hud("loadout — a kit the pre-fill does not name opens at 0 (got %d)"
+			% _stepper_count(HudLoadoutVocab.KIT_ROW_META, "warrior"),
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, "warrior") == 0)
+	h._assert_hud("loadout — the meter accounts for the pre-fill (%d spent, %d of %d left)"
+			% [_controller().kits_spent(), _controller().kits_left(), KIT_BUDGET],
+		_controller().kits_spent() == KIT_DEFAULTS_TOTAL
+			and _controller().kits_left() == KIT_BUDGET - KIT_DEFAULTS_TOTAL)
 
 ## …and the resources column opens on the PROFILE'S DEFAULTS rather than on zero. It is the one
 ## column that does, and a picker that opened both at zero would look identical in a screenshot.
@@ -247,10 +280,11 @@ func _pick_a_kit() -> void:
 	for _i in range(KIT_PRESSES):
 		_press_plus(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
 	await h._settle()
-	h._assert_hud("loadout — %d presses buy %d kits, and the meter says so (%d left of %d)"
+	var want_spent := KIT_DEFAULTS_TOTAL + KIT_PRESSES
+	h._assert_hud("loadout — %d presses buy %d more kits, and the meter says so (%d left of %d)"
 			% [KIT_PRESSES, _controller().kits_spent(), _controller().kits_left(), KIT_BUDGET],
-		_controller().kits_spent() == KIT_PRESSES
-			and _controller().kits_left() == KIT_BUDGET - KIT_PRESSES)
+		_controller().kits_spent() == want_spent
+			and _controller().kits_left() == KIT_BUDGET - want_spent)
 	# **THE COMMIT CONTROL'S FACE IS UNCONDITIONAL, and this is the half of that claim taken with a
 	# budget still holding something.** Its pair rides the fully-spent state below, and neither is
 	# worth anything alone: a face reading `Set out` here alone passes on a control that renames
@@ -339,6 +373,7 @@ func _commit_is_revisable() -> void:
 		_controller().is_expanded()
 			and not Q.has_label_containing(_panel(), REFUSAL_NEEDLE)
 			and not Q.has_label_containing(_panel(), FORFEIT_NEEDLE))
+	_assert_no_dead_space("reopened")
 	await h._save("starting_loadout_resent")
 	# **AND THE SAME CONTROL SENDS AGAIN.** A revised allocation, then a re-send — the ordinary act
 	# under replacement semantics, and one a client that latched "already committed" would refuse.
@@ -360,6 +395,42 @@ func _assert_window_shuts() -> void:
 		not _controller().is_open())
 	h._assert_hud("loadout — …and the orb's row goes with it",
 		_controller().attention_rows().is_empty())
+
+## ⛔ **NO BAND OF EMPTY SPACE UNDER THE COLUMNS.**
+##
+## Reported from the real client: picking a single kit grew the card by roughly 400px, all of it dead
+## space between the bottom of the kit list and the footer rule, with the three columns rendering
+## identically. Nothing in the CONTENT can do that; only the FIT can, by measuring a body full of
+## `AUTOWRAP_WORD_SMART` labels against a width they were not laid out at — see
+## `StartingLoadoutPanel.refit`.
+##
+## **This walk never reproduced it** (see the rule file), so this is a BOUND rather than a repro.
+##
+## ⛔ **IT IS ASKED OF THE SCROLL REGION, NOT OF THE CARD, and the first version asked the card and was
+## VACUOUS IN EXACTLY THE REPORTED CASE.** That one compared the panel against
+## `PanelContainer.get_combined_minimum_size()` and skipped itself when the internal scroll was on —
+## but a card that has grown past the room's ceiling turns the scroll ON, so the skip fired precisely
+## when the defect was present. Proven: with 400px of dead space injected, the card-based form printed
+## nothing at all and the run stayed green.
+##
+## The scroll region is where the space would actually be, and the question has one honest form in
+## both regimes: **the region may be SHORTER than the body wants (the room's ceiling doing its job,
+## with the internal scrollbar carrying the rest) but never TALLER.** One-sided, so it needs no skip
+## and has nowhere to hide.
+##
+## Asked in EVERY card state the chapter renders, because the defect appeared on an INTERACTION rather
+## than on a mount and a bound checked only on the opening frame would not have seen it.
+func _assert_no_dead_space(arm: String) -> void:
+	var card := _panel().card()
+	var body: Control = card.find_child("LoadoutBody", true, false)
+	var scroll: Control = card.find_child("LoadoutScroll", true, false)
+	if body == null or scroll == null:
+		h._assert_hud("loadout/%s — the card still has a body and a scroll to measure" % arm, false)
+		return
+	var slack := scroll.size.y - body.get_combined_minimum_size().y
+	h._assert_hud("loadout/%s — no dead space under the columns (%.0f px of slack in the scroll)"
+			% [arm, slack],
+		slack <= CARD_DEAD_SPACE_TOLERANCE)
 
 # ---- the orb, in both of its states ------------------------------------------
 
@@ -536,6 +607,19 @@ func _recipe_count(recipe_id: String) -> int:
 	var label := Q.find_meta_node(row, HudLoadoutVocab.RECIPE_COUNT_META)
 	return int(label.get_meta(HudLoadoutVocab.RECIPE_COUNT_META)) if label != null else -1
 
+## A row's stepper VALUE as rendered — the middle child of the `− n +` triple, found structurally
+## rather than by text, since the text is the number under test.
+func _stepper_count(meta: StringName, id: String) -> int:
+	var row := _row_node(meta, id)
+	if row == null:
+		return -1
+	var minus := Q.find_button_by_text(row, STEPPER_MINUS_FACE)
+	if minus == null:
+		return -1
+	var parent := minus.get_parent()
+	var value: Label = parent.get_child(minus.get_index() + 1) as Label
+	return int(value.text) if value != null and value.text.is_valid_int() else -1
+
 func _plus_button(meta: StringName, id: String) -> Button:
 	var row := _row_node(meta, id)
 	return Q.find_button_by_text(row, STEPPER_PLUS_FACE) if row != null else null
@@ -573,6 +657,14 @@ func _window() -> Dictionary:
 			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: "hide",
 				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY: DEFAULT_HIDE},
 		],
+		HudLoadoutVocab.KIT_DEFAULTS_KEY: [
+			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_STALKING,
+				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: DEFAULT_STALKING},
+			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: "trapping",
+				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: DEFAULT_TRAPPING},
+			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: "gathering",
+				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: DEFAULT_GATHERING},
+		],
 		HudLoadoutVocab.CRAFTABLE_RECIPE_IDS_KEY: [
 			RECIPE_SLED, RECIPE_CROOK, RECIPE_BASKETS, RECIPE_TRAPS, RECIPE_SPEARS,
 			RECIPE_EARTHMOVING,
@@ -587,7 +679,11 @@ func _equipment_config() -> Dictionary:
 		_kit("trapping", "Trapping kit", ["hunt"], ["traps", "sled"]),
 		_kit("gathering", "Harvesting kit", ["forage"], ["baskets"]),
 		_kit("hurdling", "Hurdling kit", ["builders", "husbandry"], ["crook"]),
+		_kit("tillage", "Tillage kit", ["builders", "agriculture"], ["hoes"]),
 		_kit("roadbuilding", "Roadbuilding kit", ["builders", "roadwork"], ["earthmoving"]),
+		_kit("paving", "Paving kit", ["builders", "roadwork"], ["stone_dressing"]),
+		_kit("wayfinding", "Wayfinding kit", ["scout"], ["wayfinding"]),
+		_kit("warrior", "Warrior kit", ["warrior"], ["clubs"]),
 		_kit(KIT_NONE, "No kit", ["hunt", "forage"], []),
 	]}
 

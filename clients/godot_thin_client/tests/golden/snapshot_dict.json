@@ -1652,6 +1652,16 @@
       "opening_loadout.craftable_recipe_ids[1]"
     ],
     "kit_budget": 119,
+    "kit_defaults": [
+      {
+        "count": 173,
+        "kit_id": "opening_loadout.kit_defaults[0].kit_id"
+      },
+      {
+        "count": 166,
+        "kit_id": "opening_loadout.kit_defaults[1].kit_id"
+      }
+    ],
     "material_budget": 18,
     "material_defaults": [
       {

@@ -72,8 +72,8 @@ var _equipment_config: Dictionary = {}
 var _recipes: Array = []
 
 # --- The player's picks ---
-## `kit_id -> count`, empty until the player picks. **Every kit starts at 0** — choosing is the point
-## of the screen.
+## `kit_id -> count`. Seeded from the published kit defaults the first time a window opens, exactly as
+## the material column is — the profile suggests a starting kit spread and the player revises it.
 var _kit_picks: Dictionary = {}
 ## `material_id -> units`. Seeded from the published defaults the first time a window opens.
 var _material_picks: Dictionary = {}
@@ -108,7 +108,8 @@ func set_window(state: Variant) -> void:
 	_pickable = window.get(HudLoadoutVocab.PICKABLE_MATERIALS_KEY, [])
 	_craftable_recipe_ids = window.get(HudLoadoutVocab.CRAFTABLE_RECIPE_IDS_KEY, [])
 	if not _defaults_seeded:
-		_seed_defaults(window.get(HudLoadoutVocab.MATERIAL_DEFAULTS_KEY, []))
+		_seed_defaults(window.get(HudLoadoutVocab.MATERIAL_DEFAULTS_KEY, []),
+			window.get(HudLoadoutVocab.KIT_DEFAULTS_KEY, []))
 	if not _open:
 		# **THE TURN ADVANCED.** That is the ONLY thing that shuts this window — an accepted order
 		# does not — so the whole surface goes and whatever was left of either budget is forfeit.
@@ -475,21 +476,39 @@ func _on_commit_requested() -> void:
 	})
 	collapse()
 
-## Seed the resources column from the profile's published defaults — **once per world**, so a delta
-## re-stating them cannot overwrite what the player has since chosen. Anything the profile names that
-## is not pickable is dropped: it could not be spent and would strand part of the budget.
-func _seed_defaults(defaults: Variant) -> void:
+## Seed BOTH columns from the profile's published defaults — **once per world**, so a delta re-stating
+## them cannot overwrite what the player has since chosen.
+##
+## ⛔ **THE COUNTS GO IN AS PUBLISHED, neither clamped nor summed against their budget.** The sim
+## already fitted the kit spread to `kit_budget` (a head count it knows and the profile does not) and
+## scales it proportionally when it binds; a second clamp here would disagree with the first, and the
+## player would see a pre-fill the sim did not send.
+##
+## A material the profile names that is not PICKABLE is dropped — it could not be spent and would
+## strand part of the budget. **The kit half needs no such filter**: the roster it is drawn against is
+## the published equipment config, and a kit absent from that roster simply renders no row, so an
+## unknown id costs a dictionary entry nobody reads rather than a phantom control.
+func _seed_defaults(materials: Variant, kits: Variant) -> void:
 	_defaults_seeded = true
-	if not (defaults is Array):
-		return
-	var pickable: Dictionary = {}
-	for id_variant in _pickable:
-		pickable[String(id_variant)] = true
-	for entry_variant in defaults:
-		if not (entry_variant is Dictionary):
-			continue
-		var entry: Dictionary = entry_variant
-		var material_id := String(entry.get(HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY, ""))
-		if material_id.is_empty() or not pickable.has(material_id):
-			continue
-		_material_picks[material_id] = int(entry.get(HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY, 0))
+	if materials is Array:
+		var pickable: Dictionary = {}
+		for id_variant in _pickable:
+			pickable[String(id_variant)] = true
+		for entry_variant in materials:
+			if not (entry_variant is Dictionary):
+				continue
+			var entry: Dictionary = entry_variant
+			var material_id := String(entry.get(HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY, ""))
+			if material_id.is_empty() or not pickable.has(material_id):
+				continue
+			_material_picks[material_id] = int(
+				entry.get(HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY, 0))
+	if kits is Array:
+		for entry_variant in kits:
+			if not (entry_variant is Dictionary):
+				continue
+			var entry: Dictionary = entry_variant
+			var kit_id := String(entry.get(HudLoadoutVocab.KIT_DEFAULT_ID_KEY, ""))
+			if kit_id.is_empty():
+				continue
+			_kit_picks[kit_id] = int(entry.get(HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY, 0))

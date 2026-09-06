@@ -161,6 +161,25 @@ pub struct OpeningLoadoutConfig {
     /// [`Self::pickable_materials`], and the values must sum at or below [`Self::material_points`].
     #[serde(default)]
     pub material_defaults: BTreeMap<String, u32>,
+    /// **The kit column's pre-fill** — the material twin above, and a suggestion on exactly the same
+    /// terms: nothing is applied until a `SetStartingLoadout` arrives, and a client is free to draw
+    /// it and then send something else. Empty is the ordinary case.
+    ///
+    /// Every key must name a kit the equipment roster carries **and one that actually carries
+    /// items** (the roster's `none` buys nothing, so pre-filling it would suggest spending a hand on
+    /// air), and every count must be `> 0`. Both are checked by
+    /// [`StartProfiles::validate_against_equipment`].
+    ///
+    /// # ⛔ THERE IS NO SUM CHECK HERE, BECAUSE THE BUDGET IS NOT IN THIS FILE
+    ///
+    /// [`Self::material_defaults`] can be validated against [`Self::material_points`] at load
+    /// because both are config. The kit budget is **derived from the spawned band's working-age head
+    /// count**, which does not exist until worldgen has run — so an over-allocating pre-fill cannot
+    /// be a parse error and is instead **clamped at publish time** by
+    /// [`crate::starting_loadout::clamped_kit_defaults`], which states the clamping rule and warns
+    /// when it binds.
+    #[serde(default)]
+    pub kit_defaults: BTreeMap<String, u32>,
 }
 
 impl StartProfileOverrides {
@@ -384,6 +403,42 @@ impl StartProfiles {
         Ok(())
     }
 
+    /// **The kit half of the same cross-config debt** — every `opening_loadout.kit_defaults` key must
+    /// name a roster kit, and one that actually puts something in a hand.
+    ///
+    /// Its own method rather than an arm of [`Self::validate_against_materials`] because each
+    /// cross-config check is named for the config it reconciles against, which is the idiom every
+    /// other `validate_against_*` in this crate follows. Both are called from `build_headless_app`,
+    /// the one place all three tables are in scope.
+    ///
+    /// **The empty-`uses` rejection is the command's rule, applied one layer earlier.**
+    /// `apply_starting_loadout` refuses an allocation of a kit that carries nothing
+    /// ([`crate::starting_loadout::LoadoutRejection::KitBuysNothing`]); a *pre-fill* of one would
+    /// draw the picker opening on a row the server would then refuse, which is a worse failure than
+    /// a boot panic because nothing reports it.
+    pub fn validate_against_equipment(
+        &self,
+        equipment: &crate::equipment_config::EquipmentConfig,
+    ) -> Result<(), StartProfilesError> {
+        for profile in &self.profiles {
+            for id in profile.overrides.opening_loadout.kit_defaults.keys() {
+                let Some(definition) = equipment.kit_definition(id) else {
+                    return Err(StartProfilesError::UnknownOpeningKit {
+                        profile: profile.id.clone(),
+                        kit: id.clone(),
+                    });
+                };
+                if definition.uses.is_empty() {
+                    return Err(StartProfilesError::OpeningKitBuysNothing {
+                        profile: profile.id.clone(),
+                        kit: id.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn get(&self, id: &str) -> Option<&StartProfile> {
         self.index.get(id).and_then(|idx| self.profiles.get(*idx))
     }
@@ -463,6 +518,20 @@ fn validate_opening_loadout(
             ),
         });
     }
+    // **No sum check on the kit side**, because the kit budget is the spawned band's own head count
+    // rather than a number in this file — see `OpeningLoadoutConfig::kit_defaults`. A count of zero
+    // is still a fault here: a pre-fill of nothing is exactly what an absent key already says.
+    for (id, count) in &loadout.kit_defaults {
+        if *count == 0 {
+            return Err(StartProfilesError::InvalidOpeningLoadout {
+                profile: profile.to_string(),
+                reason: format!(
+                    "`kit_defaults` pre-fills '{id}' with 0 - omit the key to open that row empty, \
+                     which is the same statement without a number that looks like a dial"
+                ),
+            });
+        }
+    }
     Ok(())
 }
 
@@ -485,6 +554,16 @@ pub enum StartProfilesError {
          materials table does not carry"
     )]
     UnknownOpeningMaterial { profile: String, material: String },
+    #[error(
+        "start profile `{profile}` opening_loadout pre-fills kit `{kit}`, which the equipment \
+         roster does not carry"
+    )]
+    UnknownOpeningKit { profile: String, kit: String },
+    #[error(
+        "start profile `{profile}` opening_loadout pre-fills kit `{kit}`, which carries no items - \
+         the picker would open on a row the server refuses"
+    )]
+    OpeningKitBuysNothing { profile: String, kit: String },
 }
 
 impl ConfigLoadError for StartProfilesError {
@@ -891,6 +970,9 @@ mod tests {
         profiles
             .validate_against_materials(&materials)
             .expect("every pickable material must be on the shipped roster");
+        profiles
+            .validate_against_equipment(&crate::equipment_config::EquipmentConfig::builtin())
+            .expect("every pre-filled kit must be on the shipped roster and carry something");
         let mut checked = 0;
         for profile in profiles.iter() {
             let loadout = &profile.overrides().opening_loadout;
@@ -981,5 +1063,99 @@ mod tests {
                 .validate_against_materials(&crate::materials_config::MaterialsConfig::builtin()),
             Err(StartProfilesError::UnknownOpeningMaterial { .. })
         ));
+    }
+
+    /// **The kit column opens on the three subsistence kits, four hands each.**
+    ///
+    /// The counts are asserted as literals because they are the shipped *opening state of the game*
+    /// — the first thing a player sees in that column — so a pre-fill that drifted to something else
+    /// should have to be changed on purpose.
+    #[test]
+    fn the_shipped_profile_pre_fills_the_three_subsistence_kits() {
+        let profiles = StartProfiles::builtin();
+        let loadout = &profiles
+            .get("late_forager_tribe")
+            .expect("the shipped profile")
+            .overrides()
+            .opening_loadout;
+        assert_eq!(
+            loadout
+                .kit_defaults
+                .iter()
+                .map(|(id, count)| (id.as_str(), *count))
+                .collect::<Vec<_>>(),
+            vec![("big_game", 4), ("gathering", 4), ("trapping", 4)],
+            "Stalking, Harvesting and Trapping, four hands each - a plausible band rather than a \
+             column of zeros, with hands still left to spend deliberately"
+        );
+    }
+
+    /// A pre-filled kit the roster does not carry would draw a picker row the `set_starting_loadout`
+    /// handler then refuses, with nothing reporting why.
+    #[test]
+    fn a_pre_filled_kit_the_roster_does_not_carry_is_rejected() {
+        let mut json: Value =
+            serde_json::from_str(BUILTIN_START_PROFILES).expect("the builtin parses as json");
+        json["profiles"][0]["opening_loadout"]["kit_defaults"] =
+            serde_json::json!({ "ballista": 1 });
+        let profiles =
+            StartProfiles::from_json_str(&json.to_string()).expect("it parses and self-validates");
+        assert!(matches!(
+            profiles
+                .validate_against_equipment(&crate::equipment_config::EquipmentConfig::builtin()),
+            Err(StartProfilesError::UnknownOpeningKit { .. })
+        ));
+    }
+
+    /// **The command's own rule, one layer earlier.** `apply_starting_loadout` refuses an allocation
+    /// of a kit that carries nothing; a pre-fill of one would suggest spending a hand on air.
+    #[test]
+    fn a_pre_filled_kit_that_carries_nothing_is_rejected() {
+        let mut json: Value =
+            serde_json::from_str(BUILTIN_START_PROFILES).expect("the builtin parses as json");
+        json["profiles"][0]["opening_loadout"]["kit_defaults"] = serde_json::json!({ "none": 1 });
+        let profiles =
+            StartProfiles::from_json_str(&json.to_string()).expect("it parses and self-validates");
+        assert!(matches!(
+            profiles
+                .validate_against_equipment(&crate::equipment_config::EquipmentConfig::builtin()),
+            Err(StartProfilesError::OpeningKitBuysNothing { .. })
+        ));
+    }
+
+    /// A zero pre-fill is what an absent key already says, so a number that looks like a dial and
+    /// means nothing is a fault rather than a no-op.
+    #[test]
+    fn a_zero_kit_pre_fill_is_rejected() {
+        assert!(matches!(
+            mutated_loadout(|loadout| {
+                loadout["kit_defaults"] = serde_json::json!({ "big_game": 0 });
+            }),
+            StartProfilesError::InvalidOpeningLoadout { .. }
+        ));
+    }
+
+    /// ⛔ **THERE IS NO SUM CHECK ON THE KIT SIDE, AND THAT IS DELIBERATE.** The budget is the
+    /// spawned band's head count, which does not exist at load; an over-allocating pre-fill parses
+    /// and is clamped at publish time instead
+    /// ([`crate::starting_loadout::clamped_kit_defaults`]).
+    #[test]
+    fn a_kit_pre_fill_over_any_plausible_budget_still_parses() {
+        let mut json: Value =
+            serde_json::from_str(BUILTIN_START_PROFILES).expect("the builtin parses as json");
+        json["profiles"][0]["opening_loadout"]["kit_defaults"] =
+            serde_json::json!({ "big_game": 900 });
+        let profiles =
+            StartProfiles::from_json_str(&json.to_string()).expect("no load-time sum check exists");
+        assert_eq!(
+            profiles
+                .get("late_forager_tribe")
+                .expect("the shipped profile")
+                .overrides()
+                .opening_loadout
+                .kit_defaults
+                .get("big_game"),
+            Some(&900)
+        );
     }
 }

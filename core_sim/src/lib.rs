@@ -337,8 +337,8 @@ pub use start_profile::{
     StartProfilesHandle, StartProfilesMetadata, StartingUnitSpec,
 };
 pub use starting_loadout::{
-    apply_starting_loadout, KitAllocation, LoadoutRejection, MaterialAllocation, StartingLoadout,
-    OPENING_MATERIAL_READING,
+    apply_starting_loadout, clamped_kit_defaults, KitAllocation, LoadoutRejection,
+    MaterialAllocation, StartingLoadout, OPENING_MATERIAL_READING,
 };
 pub use supply::{balance_supply_networks, SupplyNetworkMembership};
 pub use supply_network_config::{
@@ -608,6 +608,12 @@ pub fn build_headless_app() -> App {
     // load because the profiles are read before the materials table exists.
     if let Err(err) = start_profiles.validate_against_materials(&materials_config) {
         panic!("start profiles do not reconcile with the materials table: {err}");
+    }
+    // **And the kit half against the roster**, for the same debt: a `kit_defaults` key naming a kit
+    // that does not exist — or one that carries nothing — would draw the picker opening on a row the
+    // `set_starting_loadout` handler then refuses, which reports nothing to anybody.
+    if let Err(err) = start_profiles.validate_against_equipment(&equipment_config) {
+        panic!("start profiles do not reconcile with the equipment roster: {err}");
     }
     let equipment_handle = equipment_config::EquipmentConfigHandle::new(equipment_config.clone());
     // **The recipe book is reconciled against BOTH tables**, here and only here, because this is the

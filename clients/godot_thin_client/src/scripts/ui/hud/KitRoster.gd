@@ -1126,20 +1126,12 @@ static func band_kit_tiers(band: Dictionary, kit_id: String) -> Dictionary:
 			return row
 	return {}
 
-## **The remaining condition of one ITEM, by its `equipment.json` id** — `CONDITION_DRY` when the band
-## publishes no row for it.
-##
-## Absent reads as dry deliberately: the caller has already established that the band stated *some*
-## condition, so a missing row for one item is a wire the client does not understand — and quoting a
-## kitted number for gear the server never confirmed is the failure mode this whole model exists to
-## prevent. Erring toward the unequipped tier under-promises instead.
-static func condition_of(band: Dictionary, item_id: String) -> float:
-	if item_id.is_empty():
-		return CONDITION_DRY
-	for row in band.get(BAND_ITEM_CONDITIONS_KEY, []):
-		if String(row.get(ITEM_CONDITION_ID_KEY, "")) == item_id:
-			return float(row.get(ITEM_CONDITION_REMAINING_KEY, CONDITION_DRY))
-	return CONDITION_DRY
+## ⛔ **`condition_of` IS DELETED, and B2's contract violation went with it.** It answered
+## `CONDITION_DRY` for an item the band publishes NO ROW for, so a band owning no baskets read
+## `baskets dry` — *you have baskets and they are spent* — where `snapshot.fbs` states outright that
+## *`remaining == 0` means owns none, never "owns one that is dry"; a batch with no units left is
+## removed*. Its one caller was the retired condition clause. The LIVE reader of that question is
+## `DetailFormat.kit_is_equipped`, which asks `count`.
 
 ## **WHAT A BAND-WIDE ROLE ACTUALLY GETS UNDER THIS KIT** — `{axis, tier, stated}`, the role twin of
 ## `effective_tiers` and it exists BECAUSE that one answers only the four source axes: a Scout's kit
@@ -1379,70 +1371,103 @@ static func kit_item_ids(kit: Dictionary) -> Array:
 	var items_variant: Variant = kit.get(KIT_ITEM_IDS_KEY, [])
 	return items_variant if items_variant is Array else []
 
-## **THE HINT LINE — THE EFFECTIVE TIER, NEVER THE FRESH ONE.** `attack 20.0 · carry 40.0 per hunter ·
-## spears 74 · sled 58` on a hunt sheet, `carry 8.0 per gatherer · baskets 61` on a forage one: the
-## tiers this band gets, then the condition of each item the kit actually carries, so a band one turn
-## from running dry can see it coming. `""` when the kit is unknown.
+## **THE LINE UNDER THE KIT PICKER — A SHORTFALL WARNING, OR NOTHING AT ALL.**
 ##
-## **THE ITEM CLAUSES ARE THE KIT'S OWN LIST, NOT ONE PER AXIS** (`KIT_ITEM_IDS_KEY`, in config order,
-## so the weapon still reads before the haul aid). Per-axis clauses had to name the item from the axis,
-## which is a guess: the Trapping kit read `attack 20.0 · carry 40.0 per hunter · spears 100 · sled 100`
-## — naming gear it does not carry and quoting the SPEARS' wear, so a band with fresh traps and dry
-## spears read exactly backwards. It now reads `traps`, with the traps' own condition.
+## Everyone on the job covered → `""`, and the caller mounts no label. Anyone short → ONE sentence,
+## which the caller renders in `HudStyle.DANGER`.
 ##
-## The number of clauses therefore follows the KIT rather than the job: `big_game` and `trapping` state
-## two, `gathering` one, `none` none at all.
+## > #### ⛔ IT USED TO BE A ROW OF TIERS AND CONDITIONS, AND EVERY PART OF THAT WAS RETIRED
+## >
+## > `attack 20.0 · carry 40.0 per hunter · spears 74 · sled 58`, and on a forage sheet
+## > `carry 8.0 per gatherer · baskets dry`. Reported from play: *"a very miserable 'baskets dry',
+## > which is Claude Speak, not real english. The whole carry 1.6 .. and subsequent carry 8.0 … are
+## > really meaningless. The user has no sense why it is saying that."*
+## >
+## > **A TIER IS WHAT ONE EQUIPPED WORKER GETS**, so quoting it beside a nine-person crew of whom one
+## > holds a basket describes nobody on the sheet. The `N of M equipped` clause was an attempt to
+## > qualify it; the answer is to state the shortfall and drop the rate.
+## >
+## > **Do not restore a number "for information".** A raw rate with no denominator tells a player
+## > nothing, and this line serves the hunt sheets too — the same problem, so the same rule; there is
+## > no forage special case.
 ##
-## ⛔ **THE TIER ARM TOOK THE QUARRY AND FORKED ON A PEN, AND IT DOES NEITHER NOW** (issue #543). The
-## dead reading: *"a hunt row works two different things through one verb, and they read disjoint
-## axes — a WILD herd is stalked and hauled (`attack` and the sled's carry); a PEN is collected
-## (`pen 40.0 per keeper`, **no attack**)"*, with a `quarry` parameter carried the whole way down so
-## the arm could be gated on the SOURCE.
+## **THE COVERAGE IS COUNTED IN UNITS AGAINST THE COMPOSED CREW**, which is the only reading available
+## before a commit: `KitItemCondition.workersOnQuotedJob` is the head count of the job as STAFFED, and
+## that is `0` on a sheet where nobody is assigned yet. So a party being composed is measured against
+## itself, and a host with no stepper (`KIT_CREW_UNCOMPOSED`) falls back to the published pair, which
+## is the sim's own answer wherever it applies.
 ##
-## **BOTH HALVES OF THAT ARE FALSE NOW.** A pen resolves the ordinary fight (`docs/plan_standing_
-## upkeep.md` §4.9 item 12b — containment solves the catching, weapons solve the killing), so the
-## weapon clause belongs on a pen; and `EquipmentStat::PenCarry` is deleted, so the haul clause is the
-## sled's on a pen exactly as on the range. The arm's own justification — *"at a pen, `pen 12.0 per
-## keeper` beside `pen 40.0 per keeper` is the whole visible difference the handling gear buys"* — was
-## the hurdles-vs-sled split, which §4.9 item 12 ended by making hurdles a material. **A hunt row now
-## states one pair of clauses at every rung**, so the parameter went with the fork.
+## **THE COUNT IS THE KIT'S, NOT ONE AXIS'S** — the `min` across the items the kit carries, and the
+## sentence names the item that is shortest. This file may not map an axis to the component behind it
+## (`big_game` takes its attack from `spears` and `trapping` from `traps`, and guessing that is what
+## once printed the spears' condition on a trap party's row), so *"who gets what this kit gives"* is
+## the only answerable form of the question.
 ##
-## **`crew` IS THE PARTY BEING COMPOSED, AND IT IS WHAT KEEPS THE TIERS FROM SPEAKING FOR IT.** The
-## tiers above describe ONE person; a band holding one spear and composing eight hunters read
-## `attack 20.0` while the sim priced seven of the eight bare-handed inside the take curve. So a
-## caller that has a stepper hands its value here and the line states the coverage beside the tiers
-## — see `_append_coverage` for where the count comes from and what it may not be used for. A caller
-## with no party (`KIT_CREW_UNCOMPOSED`) renders exactly as it did before the clause existed.
+## Silent in four states, each for its own reason:
+## - **A KIT THAT CARRIES NOTHING** (`none`): its tier IS the bare-handed one, which every worker
+##   already gets, so there is no shortfall to report.
+## - **A BAND THAT STATES NO COUNT** for one of the items — the client has not read that ledger and
+##   will not quote a `0` at it.
+## - **NO CREW AND NO PUBLISHED PAIR** — nothing to be a fraction of.
+## - **EVERYONE COVERED** — the rule, literally.
 static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: String,
 		crew: int = KIT_CREW_UNCOMPOSED) -> String:
 	if kit.is_empty():
 		return ""
-	# **A BAND-WIDE ROLE READS ONE AXIS AND ITS OWN ITEM**, and it takes a branch of its own rather
-	# than a fourth arm below: those arms are keyed by CARRY axis and resolve their conditions through
-	# `effective_tiers`, which is job-blind and would price a warrior's `attack` off the spears.
+	# **A BAND-WIDE ROLE KEEPS ITS OWN READING**, and takes a branch of its own: a role card states
+	# one standing slot's effect and its gear, which is a different surface from a party sheet and was
+	# not what the shortfall rule was written about.
 	if is_band_wide_role(job):
 		return role_hint(kits, kit, band, job)
-	var tiers := effective_tiers(kits, kit, band)
-	var parts: Array[String] = []
-	if job == JOB_FORAGE:
-		parts.append(HudComposeVocab.KIT_HINT_FORAGE_CARRY_FORMAT % _tier_face(
-			float(tiers[KIT_FORAGE_CARRY_KEY])))
-	else:
-		# ⛔ **A PENNED HERD TAKES THIS ARM TOO** (issue #543). A third arm stood above it, keyed by
-		# `carry_axis_for(job, quarry) == KIT_PEN_CARRY_KEY`, and it printed ONE clause — `pen 40.0 per
-		# keeper` — in place of the two below. The axis is deleted, so a pen is a hunt row like any
-		# other: it states the weapon AND the haul, which is strictly more than the pen clause said and
-		# is the same haul number the pen was collected at.
-		parts.append(HudComposeVocab.KIT_HINT_ATTACK_FORMAT % _tier_face(
-			float(tiers[KIT_ATTACK_KEY])))
-		parts.append(HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % _tier_face(
-			float(tiers[KIT_HUNT_CARRY_KEY])))
-	# **AFTER EVERY TIER AND BEFORE EVERY CONDITION**, because it qualifies all of the first group and
-	# none of the second: a tier is what one equipped worker gets, a condition is one item's own life.
-	_append_coverage(parts, band, kit, crew)
-	for item_variant in kit_item_ids(kit):
-		_append_condition(parts, band, tiers, String(item_variant))
-	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
+	return shortfall_line(kits, kit, band, job, crew)
+
+## The shortfall sentence itself, or `""`. Split out of `tier_hint` so a caller can ask for it without
+## going through the role fork, and so the harnesses can drive the three coverage states directly.
+static func shortfall_line(kits: Array, kit: Dictionary, band: Dictionary, job: String,
+		crew: int = KIT_CREW_UNCOMPOSED) -> String:
+	var items := kit_item_ids(kit)
+	if items.is_empty():
+		return ""
+	var on_job := crew
+	var held := -1
+	var short_item := ""
+	for item_variant in items:
+		var item_id := String(item_variant)
+		var owned := DetailFormat.kit_units_owned(band, item_id)
+		if owned == DetailFormat.KIT_UNITS_UNSTATED:
+			return ""
+		if held < 0 or owned < held:
+			held = owned
+			short_item = item_id
+		if on_job <= KIT_CREW_UNCOMPOSED:
+			# No party is being composed, so the published pair is the reading — the head count of the
+			# job as staffed, which is what the sim divided its own `workersHolding` against.
+			on_job = maxi(on_job, _published_on_quoted_job(band, item_id))
+	if on_job <= 0 or held < 0:
+		return ""
+	var covered := mini(held, on_job)
+	if covered >= on_job:
+		return ""
+
+	var crew_noun := String(HudComposeVocab.KIT_SHORTFALL_CREW_NOUNS.get(job,
+		HudComposeVocab.KIT_SHORTFALL_CREW_NOUN_FALLBACK))
+	var item_label := DetailFormat.kit_item_label(short_item).to_lower()
+	if covered <= 0:
+		return HudComposeVocab.KIT_SHORTFALL_NONE_FORMAT % [item_label, on_job, crew_noun]
+	return HudComposeVocab.KIT_SHORTFALL_SOME_FORMAT % [covered, on_job, crew_noun, item_label]
+
+## The sim's own head count for the job this item is quoted at, `0` when it states none. **`0` is not
+## a shortfall** — `snapshot.fbs` is explicit that `workersOnQuotedJob == 0` means nobody is staffed,
+## so there was no gear to go round and none went unheld.
+static func _published_on_quoted_job(band: Dictionary, item_id: String) -> int:
+	for row_variant in band.get(DetailFormat.KIT_ITEM_CONDITIONS_KEY, []):
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if String(row.get(DetailFormat.KIT_ITEM_ID_KEY, "")) != item_id:
+			continue
+		return int(float(row.get(DetailFormat.KIT_ITEM_ON_QUOTED_JOB_KEY, 0.0)))
+	return 0
 
 ## **THE BAND-WIDE ROLE CARDS' HINT** — `2-tile sight per vantage · Wayfinding 100`, the effect this
 ## band's Scout or Warrior actually gets under this kit, then the condition of the gear it carries.
@@ -1498,54 +1523,10 @@ static func _role_effect_phrase(job: String, tier: float) -> String:
 ## `-1` and not `0`: an empty crew is a real composed value, and it equips nobody.
 const KIT_CREW_UNCOMPOSED := -1
 
-## **HOW MANY OF THE COMPOSED CREW THIS KIT REACHES** — appended as `3 of 8 equipped`, or not at all.
-##
-## > #### ⛔ IT COUNTS UNITS, AND THAT IS THE ONE THING THE WIRE CANNOT ANSWER FOR A PRE-COMMIT SHEET
-## >
-## > `KitItemCondition.workersHolding` is the sim's own people-count and is the right reading
-## > everywhere it applies — but it is quoted against `workersOnQuotedJob`, which is
-## > `allocation.workers_on_job(...)`, and that is **0** on a sheet where nobody is assigned yet. Both
-## > published counts are therefore silent about the party the player is building. What is left is
-## > `DetailFormat.kit_units_owned`, and counting units against a composed crew is exact for every
-## > item the roster ships (`workers_per_unit` defaults to 1 and no shipped item overrides it).
-## > **Nothing about the FIGHT is re-derived here** — the attack tier stays the sim's, unblended.
-##
-## **THE COUNT IS THE KIT'S, NOT ONE AXIS'S**, and it is the `min` across the items the kit carries.
-## This file may not map an axis to the component behind it — `big_game` takes its attack from
-## `spears` and `trapping` from `traps`, and guessing that is what once printed the spears' condition
-## on a trap party's row — so *"who gets what this line quotes"* is the only answerable form of the
-## question, and a worker the kit does not fully reach does not get it.
-##
-## Silent in three states, each for its own reason:
-## - **NO PARTY** (`KIT_CREW_UNCOMPOSED`) or an empty one — nothing to be a fraction of.
-## - **A KIT THAT CARRIES NOTHING** (`none`): its tier IS the bare-handed one, which every worker
-##   gets, so `0 of 8 equipped` would report a shortfall against gear the kit never claimed.
-## - **A BAND THAT STATES NO COUNT** for one of the items — the same withholding `_append_condition`
-##   takes over an unstated condition, rather than a client quoting `0` at a ledger it has not read.
-static func _append_coverage(parts: Array[String], band: Dictionary, kit: Dictionary,
-		crew: int) -> void:
-	if crew <= 0:
-		return
-	var items := kit_item_ids(kit)
-	if items.is_empty():
-		return
-	var reached := crew
-	for item_variant in items:
-		var owned := DetailFormat.kit_units_owned(band, String(item_variant))
-		if owned == DetailFormat.KIT_UNITS_UNSTATED:
-			return
-		reached = mini(reached, owned)
-	parts.append(HudComposeVocab.KIT_HINT_COVERAGE_FORMAT % [reached, crew])
-
-static func _append_condition(parts: Array[String], band: Dictionary, tiers: Dictionary,
-		item_id: String) -> void:
-	if not bool(tiers.get("stated", false)) or item_id.is_empty():
-		return
-	var condition := condition_of(band, item_id)
-	if condition <= CONDITION_DRY:
-		parts.append(HudComposeVocab.KIT_HINT_DRY_FORMAT % item_id)
-	else:
-		parts.append(HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [item_id, int(condition)])
+# **THE CLAUSE APPENDERS ARE GONE WITH THE CLAUSES.** `_append_coverage` (`3 of 8 equipped`) and
+# `_append_condition` (`spears 74` / `baskets dry`) built the retired tier line; `shortfall_line`
+# above says the one thing they were between them trying to say. `condition_of` went with the second
+# — see its headstone further up.
 
 static func _tier_face(value: float) -> String:
 	return String.num(value, HudComposeVocab.KIT_TIER_DECIMALS)
@@ -1668,6 +1649,12 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 	if hint_text != "":
 		var hint := HudWidgets.alloc_hint_label(hint_text)
 		hint.set_meta(KIT_HINT_META, true)
+		# **ON A SOURCE JOB THIS LINE IS ONLY EVER A SHORTFALL, so it is only ever DANGER.** The
+		# faint hint ink `alloc_hint_label` installs was right for a row of tiers and conditions; a
+		# line that renders exclusively to say *some of these people have no gear* has to read as a
+		# warning. The band-wide ROLE cards keep their own reading and their own quiet ink.
+		if not is_band_wide_role(job):
+			hint.add_theme_color_override("font_color", HudStyle.DANGER)
 		block.add_child(hint)
 	return block
 

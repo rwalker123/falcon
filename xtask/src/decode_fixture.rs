@@ -1379,6 +1379,7 @@ fn seed_snapshot() -> WorldSnapshot {
     s.opening_loadout.pickable_materials = rows();
     s.opening_loadout.material_defaults = rows();
     s.opening_loadout.craftable_recipe_ids = rows();
+    s.opening_loadout.kit_defaults = rows();
     s.victory.modes = rows();
     s.victory.winner = Some(VictoryResultState::default());
 

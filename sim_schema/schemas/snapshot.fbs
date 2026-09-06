@@ -5705,12 +5705,25 @@ table OpeningLoadoutState {
   // PUBLISHED AS IDS rather than left for the client to infer: the alternative is sniffing a refusal
   // string off a craft offer, which makes a player-facing sentence into a machine contract.
   craftableRecipeIds:[string];
+  // The KIT column's pre-fill, the material one's twin — appended last (append-only).
+  //
+  // ALREADY CLAMPED to `kitBudget`. That budget is the spawned band's working-age head count rather
+  // than a config number, so `start_profiles.json` cannot sum-check its own pre-fill; the sim scales
+  // it proportionally at publish time and warns when that binds. A client draws these counts as-is
+  // and never has to re-fit them.
+  kitDefaults:[OpeningKitDefault];
 }
 
 // One pre-filled material allocation. `units` is in the same points the budget is counted in.
 table OpeningMaterialDefault {
   materialId:string;
   units:uint;
+}
+
+// One pre-filled kit allocation. `count` is in kits, against `kitBudget`.
+table OpeningKitDefault {
+  kitId:string;
+  count:uint;
 }
 
 // --- Connections: the contact primitive (arc #527, `docs/plan_contact_and_logistics.md` §Q2) ---

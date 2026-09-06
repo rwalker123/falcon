@@ -1694,7 +1694,7 @@ refusal).
 ## `chapters/starting_loadout.gd` — the turn-one outfitting picker (issue #629)
 
 **Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Seven frames and
-thirty-two assertions (`EXPECTED_CHECKPOINTS` **39** — frames count too). It ends by publishing a SHUT
+thirty-eight assertions (`EXPECTED_CHECKPOINTS` **45** — frames count too). It ends by publishing a SHUT
 window, so the surface it stands up is gone before anything appended after it could inherit it.
 
 **MOST OF IT IS ASSERTIONS, AND THAT IS THE POINT.** Every claim the third column makes renders as a
@@ -1760,6 +1760,34 @@ next snapshot and every one after it, which makes the window undismissible while
 looks exactly right. The chapter pushes a second identical window after dismissing and requires the
 card to stay away. Sabotage-verified by reverting `is_expanded()` to `is_open()` in
 `StartingLoadoutController.set_window`: exactly that claim fails and nothing else in the run does.
+
+⛔ **THIS CHAPTER CANNOT REPRODUCE THE CARD'S DEAD-SPACE DEFECT, AND THAT IS A PROPERTY OF `_settle`.**
+A reported growth of ~400px on picking one kit could not be staged here under any condition tried —
+five kit rows or nine, a tall room or one shortened until the internal scroll turned on, `_settle` or
+bare `process_frame`s, press / unpress / re-press. `_settle` does `process_frame → force_draw →
+process_frame`, and **a draw flushes the deferred container sort** that a minimum-size read depends
+on, so this walk hands the card the very layout pass whose absence is the bug. Verified rather than
+assumed: with the fix reverted the run is still green. **Do not read this walk's silence as evidence
+that a fit is correct** — the same blindness covers every other card measured through `_settle`.
+
+What it carries instead is a BOUND, `_assert_no_dead_space`, in every card state — and its first
+version was **vacuous in exactly the reported case**: it asked the card against
+`PanelContainer.get_combined_minimum_size()` and skipped itself when the scroll was on, but a card
+grown past the room's ceiling turns the scroll ON, so with 400px injected it printed nothing and the
+run stayed green. It asks the SCROLL REGION now, one-sided (shorter than the body is the ceiling doing
+its job; taller is the defect), which needs no skip. With 400px injected it fails at `343 px of slack`
+on the picked and spent states.
+
+**THE KIT FIXTURE IS THE SHIPPED NINE-KIT ROSTER** (plus `none`, so the picker has something to drop).
+It was five while chasing this defect and stayed nine: the client's own roster is what the card is laid
+out against, and a fixture two-thirds of its height cannot show a column that is about to overflow.
+
+**THE KIT COLUMN'S PRE-FILL IS ASSERTED COUNT BY COUNT, not as a total.** `opening_loadout.kit_defaults`
+arrives already clamped to `kitBudget` sim-side, so the failure worth catching is a client that
+re-fits it — and with the shipped spread (4/4/4 of a 17 budget) comfortably inside the budget, a second
+clamp would leave a total that still looks reasonable. A kit the pre-fill does NOT name is asserted at
+zero beside them, without which "opens on the defaults" passes on a column that put the same number on
+every row. Sabotage-verified by ignoring the field: five claims fail, at `got 0`.
 
 **THE FIXTURE OFFERS THE `none` KIT AND THE GATED RECIPE ON PURPOSE.** The picker has to drop the
 first (by its empty `uses`) and never draw the second (it is in the recipe book and off
@@ -2454,7 +2482,42 @@ longer exist — the fixture now stages the link-kind keys and the frame reads `
 trap: **a frame whose fixture is the last producer of a state can go on passing after the state
 becomes unreachable**, and it then guards nothing while looking like coverage.
 
-**A clean run is 420 frames / 1914 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+**A clean run is 420 frames / 1928 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+
+## The kit line's coverage states (`chapters/compose_rungs.gd`, `chapters/hunt.gd`)
+
+**`_assert_the_kit_line_is_a_shortfall_warning` replaced `_assert_kit_hint_names_the_kits_own_items`**,
+whose subject — *which item does the condition clause name* — went with the clause. The three coverage
+states are ONE claim and are asserted together on one band with only the units held moving: covered
+alone passes on a line that never renders, short alone on one that always does. Beside them: `none`
+(a kit that carries nothing can leave nobody short), an unstated ledger (not accused), and the
+**shortest-item** leg, which gives the sled a lower count than the spears so a line that always named
+`item_ids[0]` fails.
+
+**TWO NEIGHBOURING BLOCKS WERE RE-AIMED RATHER THAN DELETED** — they asserted the retired string but
+their subjects (a kit resolves ITS OWN tiers; a dry crook does not move the sled's haul) are live, so
+they ask `KitRoster.effective_tiers` now, which is the producer the line used to read.
+
+**`hunt.gd`'s `GATE_SPLIT_COVERED_KIT_HINT` INVERTED to `""`.** It asserted the clause STAYS at full
+coverage, arguing a player needs a `3 of 3` to watch become `3 of 4`; Ray's rule overrides that, and
+the baseline it preserved is exactly what made the sheet say something meaningless every frame.
+
+⛔ **AND A FIXTURE BUG SURFACED WITH IT.** `fixtures_band.kit_condition_rows` derived `count` from
+`workers_holding`, which parts company with ownership on an UNSTAFFED job: the band owns crooks and
+hoes but staffs no keeper, so those rows published *owns none* beside a healthy condition — a shape no
+server can send. They state `KIT_UNSTAFFED_UNITS_OWNED` now. It was invisible until
+`DetailFormat.kit_is_equipped` stopped inferring ownership from `remaining`.
+
+**The ownership claim is DRIVEN, not staged**, for the reason that fixture bug illustrates: the sim
+never publishes a live condition beside a zero count, so no fixture can carry the contradiction and a
+rendered row would be evidence of nothing. It is a pair — the forbidden shape must read UNOWNED, and
+an ordinary owned item must still read equipped, without which the first passes on a reader that
+answers `false` to everything.
+
+Sabotage-verified three ways, disjointly: the covered-state early return removed fails **two** (both
+covered claims, at `Only 17 of 17 hunters carry spears`); `kit_is_equipped` reverted to the condition
+test fails **one** (the driven ownership claim) — and **passed everything before that claim existed**,
+which is why it was added; and ignoring `kit_defaults` fails **five** in the loadout chapter. The
 figure recorded when the supply-network chapter landed was `403 / 1803`; the loadout chapter above adds
 seven frames and thirty-two claims and the rest is drift accumulated un-recorded, exactly as it has been
 every previous time. Measure; do not sum.

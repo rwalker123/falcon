@@ -13708,21 +13708,18 @@ func _assert_kit_picker_closed() -> void:
 	# so a face equal to the LIST entry means the override never ran, and the equality catches it.
 	_assert_kit_picker_face(picker, KitRoster.JOB_HUNT, "Stalking kit",
 		"…whose face names the selected kit (\"%s\")" % picker.text)
-	var hint := HudComposeVocab.KIT_HINT_SEPARATOR.join([
-		HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_EQUIPPED,
-			HudComposeVocab.KIT_TIER_DECIMALS),
-		HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % String.num(BandFx.KIT_HUNT_CARRY_BARE,
-			HudComposeVocab.KIT_TIER_DECIMALS),
-		# **THE ITEMS ARE THE KIT'S OWN, IN ITS OWN ORDER** — `big_game` carries spears then the sled, so
-		# the hint reads them out in that order and names nothing else. Taken from the ROSTER fixture's
-		# item ids, which is where the wire states them.
-		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [BandFx.KIT_ITEM_SPEARS,
-			int(KIT_FRAME_SPEARS_CONDITION)],
-		HudComposeVocab.KIT_HINT_DRY_FORMAT % BandFx.KIT_ITEM_SLED,
-	])
+	# ⛔ **THE HINT LINE IS A SHORTFALL WARNING NOW, AND THIS BAND IS FULLY COVERED, SO THERE IS NONE.**
+	# It asserted `attack 20.0 · carry 8.0 per hunter · spears 74 · sled dry` — a row of tiers and item
+	# conditions, every part of which is retired. A raw rate with no denominator told a player nothing
+	# and was wrong besides: a tier is what ONE EQUIPPED worker gets, quoted beside a whole crew.
+	#
+	# **The ABSENCE is the claim, and it is not vacuous**: `compose_rungs`'s
+	# `_assert_the_kit_line_is_a_shortfall_warning` renders the same control for a band that IS short
+	# and gets a sentence, so a line that never mounts fails there rather than passing here.
 	var rendered := _find_meta_control(_panel, KitRoster.KIT_HINT_META) as Label
-	_assert_band_panel("…over a hint stating the EFFECTIVE tier, not the fresh one — \"%s\"" % hint,
-		rendered != null and rendered.text == hint)
+	_assert_band_panel("…and a fully covered crew is given NO kit line to read (%s)"
+			% ("none" if rendered == null else "\"%s\"" % rendered.text),
+		rendered == null)
 
 ## The picker OPEN. A screenshot cannot say which entry carries the radio dot, so the structure rides
 ## here: the roster's hunt kits and only those, the composed one marked, the job default TAGGED, and
@@ -13767,13 +13764,18 @@ func _assert_kit_picker_open(picker: OptionButton) -> void:
 ## moved: the table was priced for another kit, and now the answer simply has not landed. Its caller
 ## uninstalls the canned answerer to reach it, since the prologue otherwise answers everything.
 func _assert_forecastless_sheet_suppresses_estimates() -> void:
+	# ⛔ **THE ANCHOR MOVED FROM THE HINT TO THE KIT ROW'S OWN FIELD KEY, and it had to.** This sliced
+	# the sheet's lines after the kit HINT, which stated the picked kit's tier on every sheet; that
+	# line is a shortfall WARNING now and this sheet composes `none`, a kit that carries nothing and
+	# so can never leave anyone short. The `Kit` key beside the picker is unconditional, sits in the
+	# same row, and gives the identical slice — so the claim below is unchanged in what it walks.
 	var hint := _find_meta_control(_panel, KitRoster.KIT_HINT_META) as Label
-	_assert_band_panel("the unanswered sheet still states the picked kit's tier", hint != null)
-	if hint == null:
-		return
+	_assert_band_panel("a kit that carries nothing states no shortfall line (%s)"
+			% ("none" if hint == null else "\"%s\"" % hint.text),
+		hint == null)
 	var lines := _text_lines(_panel)
-	var at := lines.find(hint.text)
-	_assert_band_panel("…and that hint is on the sheet the assertion walks", at >= 0)
+	var at := lines.find(HudComposeVocab.COMPOSE_FIELD_KIT)
+	_assert_band_panel("…and the kit row IS on the sheet the assertion walks", at >= 0)
 	if at < 0:
 		return
 	var tail := lines.slice(at + 1)
@@ -13786,7 +13788,7 @@ func _assert_forecastless_sheet_suppresses_estimates() -> void:
 		String.num(QUARRY_DEFENSE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS)]
 	var note := HudComposeVocab.DENIAL_FORECAST_PENDING
 	var want: Array[String] = [gate, note]
-	_assert_band_panel(("…and below it says EXACTLY the gate and the quoted-kit note — "
+	_assert_band_panel(("…and below the kit row it says EXACTLY the gate and the quoted-kit note — "
 			+ "no verdict, no caveat, no take, no refusal. Got %s") % str(tail),
 		tail == want)
 	# The send stays LIVE: the raid is perfectly launchable, we simply cannot quote its length. A
