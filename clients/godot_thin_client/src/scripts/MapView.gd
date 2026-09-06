@@ -3537,9 +3537,12 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 	var nearest_unit := _nearest_unit_sample(col, row)
 	if not nearest_unit.is_empty():
 		info["nearest_unit_distance"] = nearest_unit.get("distance", -1)
-		# `id`, not a `label`: the wire has never carried a top-level cohort label, so the `label` this
-		# read resolved to "" for every band. `id` is `HudFormat.band_name`'s answer, stamped above.
-		info["nearest_unit_label"] = nearest_unit.get("id", "")
+		# **`nearest_unit` is the SUMMARY `_nearest_unit_sample` builds, not a unit marker, and its two
+		# keys are the marker's two keys SWAPPED.** Summary `label` = the marker's `id`, which is the
+		# display name `HudFormat.band_name` stamped there; summary `id` = the marker's `entity`, the raw
+		# ECS bits. So the name is read from `label` and the entity from `id` — reading the name from
+		# `id` puts "Nearest band 1030792151041" on the card.
+		info["nearest_unit_label"] = nearest_unit.get("label", "")
 		info["nearest_unit_id"] = nearest_unit.get("id", "")
 	return info
 

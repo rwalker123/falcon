@@ -2384,3 +2384,35 @@ has been every previous time. Measure; do not sum.
 > were stale the moment the two branches met, because each figure counts the OTHER branch's frames
 > as absent. The merged figure was re-measured, not added — `396 + 7` and `1761 + 42` happen to land
 > near it, and that arithmetic is exactly the habit this paragraph exists to break.
+
+## The nearest-band readout's name (PR #634 review)
+
+Three `PASS` and NO frame, appended LAST in `chapters/tile_panel.gd` — it renders nothing and frees
+its map, so no capture before or after it moves. `EXPECTED_CHECKPOINTS` 116 → **123**, RE-MEASURED by
+raising the const to an impossible number and reading `reached 123` back; the declared 116 was
+already seven under the chapter's real count, so a delta applied to it would have set a floor the
+chapter could fall through.
+
+**`nearest_unit_label` is the only user-facing STRING the tile card composes out of a band**, and it
+is the shape a harness must catch: it degraded to the raw ECS entity while every frame in the corpus
+stayed byte-identical, because no fixture-fed state reaches `MapView._tile_info_at` and the card's
+own formatter is currently unreferenced. So the claim is asked of `_tile_info_at` DIRECTLY, over a
+real `MapView` with `set_fow_enabled(false)` — the `tile_panel_land_sticky` idiom — with a lone band
+three tiles from a bare probe hex.
+
+- **The fixture states `name` and NO `id`.** The marker's `id` is DERIVED from `name` by
+  `HudFormat.band_name`; a hand-stamped `id` would let the claim pass on a fixture doing the
+  derivation's job.
+- **The two keys are each other's control.** `nearest_unit_label` must be the NAME *and*
+  `nearest_unit_id` the entity, asserted in one breath — a claim about either alone passes on a card
+  that has stopped distinguishing them. The distance precondition rides ahead of both, or they pass
+  on the `""` an empty summary leaves.
+- ⛔ **`str()`, NEVER `String()`.** `String(…)` is a constructor accepting only the string types, so
+  it RAISES on the very int the regression puts in that slot — which aborts the chapter instead of
+  reporting the claim. Measured: the first cut failed as a `SCRIPT ERROR` at that line and surfaced
+  only as the checkpoint guard's `reached 121`. With `str()` the same sabotage names the value.
+
+Sabotage-verified by restoring `nearest_unit.get("id", "")`: exactly the two label claims fail, both
+naming `got "634"`, and the distance precondition correctly stays green.
+
+**A clean run is 413 frames / 1885 `PASS`, exit 0 — RE-MEASURED.**

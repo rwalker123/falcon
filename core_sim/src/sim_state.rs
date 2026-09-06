@@ -552,15 +552,13 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     // --- pass 4b: resources -------------------------------------------------------------------
     world.insert_resource(state.tick);
     world.insert_resource(state.band_ids);
-    // **Merged under the no-going-backwards rule, not overwritten** — see
-    // [`BandNameAllocator::restore`]. A rollback must never lower a faction's counter below a slot a
-    // band alive in this process already holds, or the next mint hands out a name already on screen.
-    let mut band_names = world
-        .get_resource::<BandNameAllocator>()
-        .cloned()
-        .unwrap_or_default();
-    band_names.restore_all(&state.band_names);
-    world.insert_resource(band_names);
+    // **Installed outright, exactly as [`BandIdAllocator`] is one line above.** The checkpoint is the
+    // authority on where every founding counter stood: the restore despawns each checkpoint-owned
+    // band before respawning, so no living band holds a slot the checkpoint does not. Carrying a
+    // higher live counter across would break the replay guarantee instead of protecting it — a band
+    // re-founded while replaying the log from its origin has to re-mint the very name it held in the
+    // run being replayed.
+    world.insert_resource(state.band_names.clone());
     world.insert_resource(state.beat_ledger.clone());
     world.insert_resource(state.capability_flags);
     // Installing the checkpoint's copy IS the truncation: the log is append-only, so the captured

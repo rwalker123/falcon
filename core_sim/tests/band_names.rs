@@ -57,6 +57,17 @@ fn a_resident_band(app: &mut bevy::app::App) -> (Entity, u64, FactionId) {
     (entity, id.0, cohort.faction)
 }
 
+/// The entity currently carrying `band_id`. A restore respawns every band, so an `Entity` grabbed
+/// before the rollback names nothing afterwards — the durable id is the only handle that survives.
+fn entity_for_band(app: &mut bevy::app::App, band_id: u64) -> Entity {
+    let mut query = app.world.query::<(Entity, &BandId)>();
+    query
+        .iter(&app.world)
+        .find(|(_, id)| id.0 == band_id)
+        .map(|(entity, _)| entity)
+        .expect("the band is in the world")
+}
+
 /// **Worldgen founds every band with a name**, which is the precondition everything below rests on.
 #[test]
 fn worldgen_founds_every_band_with_a_distinct_name() {
@@ -100,6 +111,57 @@ fn a_checkpoint_round_trip_preserves_every_name_and_the_counters() {
         app.world.resource::<BandNameAllocator>().peek(faction),
         counter_before,
         "the per-faction counter is checkpoint state; a reset one re-issues a live name"
+    );
+}
+
+/// **A restore rewinds the counter to the checkpoint's, so a re-founded band re-mints its name.**
+///
+/// This is the determinism guarantee made executable: replaying the command log from a checkpoint
+/// in a process that already ran past it must reproduce the run being replayed, name for name. The
+/// world here plays a founding forward, rolls back, and founds again — and the second splinter has
+/// to be handed the *same* name as the first. A restore that carried the live high-water mark
+/// across instead of installing the checkpoint's counters would mint the next name down and the
+/// replay would silently diverge from the run it is replaying.
+#[test]
+fn a_restore_rewinds_the_counter_so_a_re_founded_band_mints_the_same_name() {
+    let mut app = spawn_world();
+    let (_, parent_id, faction) = a_resident_band(&mut app);
+    let counter_at_checkpoint = app.world.resource::<BandNameAllocator>().peek(faction);
+    let checkpoint = capture_sim_state(&app.world);
+
+    // The run being replayed: a founding past the checkpoint moves the faction's counter on.
+    let parent = entity_for_band(&mut app, parent_id);
+    let first = core_sim::split_band_from_parent(&mut app.world, parent, SPLINTER_WORKERS, &SETTLE)
+        .expect("a worldgen band can spare a splinter");
+    let first_name = names_by_band(&mut app)
+        .get(&first.band.0)
+        .cloned()
+        .expect("the splinter is a band with a name");
+    assert!(
+        app.world.resource::<BandNameAllocator>().peek(faction) > counter_at_checkpoint,
+        "the founding has to move the counter, or this proves nothing"
+    );
+
+    restore_sim_state(&mut app.world, &checkpoint);
+    assert_eq!(
+        app.world.resource::<BandNameAllocator>().peek(faction),
+        counter_at_checkpoint,
+        "the checkpoint is the authority on where the counter stood, not the high-water mark"
+    );
+
+    // The replay: the same founding runs again and must land on the same name.
+    let parent = entity_for_band(&mut app, parent_id);
+    let second =
+        core_sim::split_band_from_parent(&mut app.world, parent, SPLINTER_WORKERS, &SETTLE)
+            .expect("the restored parent can spare the same splinter");
+    assert_eq!(
+        second.band.0, first.band.0,
+        "the id allocator rewound, so the replayed splinter is the same band"
+    );
+    assert_eq!(
+        names_by_band(&mut app).get(&second.band.0),
+        Some(&first_name),
+        "a replayed founding must re-mint the name that band actually had"
     );
 }
 

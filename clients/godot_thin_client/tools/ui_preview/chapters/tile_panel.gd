@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 116
+const EXPECTED_CHECKPOINTS := 123
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -69,6 +69,22 @@ const CYCLE_BAND_ENTITY := 401
 const CYCLE_HERD_FIRST_ID := "game_aurochs_429a"
 
 const CYCLE_HERD_SECOND_ID := "game_boar_429b"
+
+# The nearest-band readout's two hexes, on the same grid and clear of every other fixture's hex: the
+# band's own hex, and a bare probe hex `NEAREST_BAND_PROBE_DISTANCE` away under the Manhattan metric
+# `_nearest_unit_sample` measures with (`|dx| + |dy|` — 3 columns, 0 rows).
+const NEAREST_BAND_TILE := Vector2i(6, 26)
+
+const NEAREST_BAND_PROBE_TILE := Vector2i(9, 26)
+
+const NEAREST_BAND_PROBE_DISTANCE := 3
+
+# The sim's name for that band and its ECS handle. They must be a NAME and an INTEGER, because the
+# assertion is that the tile card reads the first and never the second.
+const NEAREST_BAND_NAME := "Kestrelwatch"
+
+const NEAREST_BAND_ENTITY := 634
+
 
 # The flash-guard band's NAME, the handle every roster-row helper below finds its row by (a name, not
 # a child index — the roster interleaves the land row and a group header ahead of the bands).
@@ -549,6 +565,30 @@ func _cycle_map_snapshot() -> Dictionary:
 				"x": CYCLE_TILE.x, "y": CYCLE_TILE.y,
 			}),
 		],
+	}
+
+## The MapView snapshot behind the nearest-band readout assertion — ONE band, alone on the grid, so
+## `_nearest_unit_sample` has exactly one candidate and the probe hex's answer is unambiguous. It
+## carries `name` (the SIM's field) and NO `id`, because that is the shape the wire really has: the
+## marker's `id` is DERIVED from `name` by `HudFormat.band_name`, and a hand-stamped `id` here would
+## let the assertion pass on a fixture doing the derivation's job. Same grid as the sticky fixture;
+## fog is turned off by the caller.
+func _nearest_band_map_snapshot() -> Dictionary:
+	var terrain: Array = []
+	terrain.resize(STICKY_GRID_W * STICKY_GRID_H)
+	terrain.fill(STICKY_TERRAIN_ID)
+	return {
+		"grid": {"width": STICKY_GRID_W, "height": STICKY_GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": [
+			{"name": NEAREST_BAND_NAME, "entity": NEAREST_BAND_ENTITY, "faction": 0, "size": 88,
+				"pos": [NEAREST_BAND_TILE.x, NEAREST_BAND_TILE.y],
+				"current_x": NEAREST_BAND_TILE.x, "current_y": NEAREST_BAND_TILE.y,
+				"working_age": 45, "idle_workers": 5, "work_range": 2, "hunt_reach": 4,
+				"turns_of_food": 9.0, "morale": 0.58, "activity": "idle",
+				"stores": {"provisions": 96.0}, "labor_assignments": []},
+		],
+		"herds": [],
 	}
 
 ## The occupied hex's herd carrying its tile_info, so show_herd_selection renders
@@ -1656,3 +1696,41 @@ func run(harness) -> void:
 	# renders its climate chip from.
 	TileClimate.set_cut_points(h.CLIMATE_POLAR_MAX_TEMP, h.CLIMATE_BOREAL_MAX_TEMP,
 		h.CLIMATE_TEMPERATE_MAX_TEMP)
+
+	# **THE NEAREST-BAND READOUT, ASKED OF `_tile_info_at` DIRECTLY — PNG-LESS, because the value is a
+	# NAME and a picture of a plausible-looking string proves nothing about which key it came from.**
+	# `nearest_unit_label` is the only user-facing STRING the tile card composes out of a band, and it
+	# degraded silently to the raw ECS entity (`Nearest band 1030792151041 is 3 tiles away`) the once
+	# the two keys were read the wrong way round. It is the last block in the chapter and renders
+	# nothing, so no frame before or after it moves.
+	var nearest_map: Node2D = h.MAP_VIEW_SCRIPT.new()
+	nearest_map.visible = false   # data only — a visible map renders behind the HUD in every later frame
+	h.add_child(nearest_map)
+	# FoW OFF, stated explicitly (the harness rule): `_fow_enabled` fails closed to `true`, and
+	# `_nearest_unit_sample` skips every fog-hidden band at source — the probe hex would then have no
+	# nearest band at all and every claim below would pass vacuously on an empty summary.
+	nearest_map.set_fow_enabled(false)
+	nearest_map.display_snapshot(_nearest_band_map_snapshot())
+	var nearest_info: Dictionary = nearest_map._tile_info_at(
+		NEAREST_BAND_PROBE_TILE.x, NEAREST_BAND_PROBE_TILE.y)
+	# **`str()`, NOT `String()`** — the label is the value under test, and `String(…)` is a CONSTRUCTOR
+	# that accepts only the string types, so it raises on the very int the regression puts there and
+	# ABORTS the chapter instead of reporting a failure. `str()` converts anything, so the claim fails
+	# by NAMING what it found.
+	var nearest_label := str(nearest_info.get("nearest_unit_label", ""))
+	# The precondition: the probe really did find that band. Without it the two claims below both pass
+	# on the `""` an empty summary leaves behind.
+	h._assert_hud("the probe hex has a nearest band, at the distance the fixture placed it",
+		int(nearest_info.get("nearest_unit_distance", -1)) == NEAREST_BAND_PROBE_DISTANCE)
+	h._assert_hud("…and the tile card reads that band's NAME, the one the sim published (got \"%s\")"
+		% nearest_label, nearest_label == NEAREST_BAND_NAME)
+	# THE NEGATIVE, and it is the whole point: the summary's `id` is the marker's `entity`, so a label
+	# read from it renders the raw ECS bits as a band name. `nearest_unit_id` is asserted to BE that
+	# entity in the same breath — the two keys are each other's control, and a claim about one alone
+	# passes on a card that has stopped distinguishing them.
+	h._assert_hud("…never the raw entity, which is what `nearest_unit_id` is for (got \"%s\")"
+		% nearest_label,
+		nearest_label != str(NEAREST_BAND_ENTITY) \
+			and int(nearest_info.get("nearest_unit_id", -1)) == NEAREST_BAND_ENTITY)
+	nearest_map.queue_free()
+	await h.get_tree().process_frame

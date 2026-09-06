@@ -4,6 +4,12 @@ paths:
   - "core_sim/src/data/band_names.json"
   - "core_sim/src/components.rs"
   - "core_sim/tests/band_names.rs"
+  # The four founding sites below. The mint/inherit split is this rule's centrepiece and these are
+  # the ONLY files that can break it — a party spawn that minted instead of inheriting would take a
+  # name slot its faction never founded a band for, and nothing else in the tree can do that.
+  - "core_sim/src/systems/worldgen.rs"
+  - "core_sim/src/systems/fission.rs"
+  - "core_sim/src/bin/server.rs"
 ---
 
 # A band's name: the sim owns it, and it is identity
@@ -63,14 +69,26 @@ and keeping the two together makes it structurally hard to hand a band an id and
 ## The checkpoint carries the name AND the counters
 
 `BandRecord::name` and `SimState::band_names`. The counters matter as much as the strings: a restore
-that put the bands back but reset a faction's slot would mint an already-issued name for the next
-band founded — the aliasing case `BandIdAllocator` documents. `restore_sim_state` merges them under
-`BandNameAllocator::restore`'s **no-going-backwards** rule rather than overwriting, so a rollback can
-never lower a counter below a slot a band alive in this process already holds.
+that put the bands back but left a faction's slot at `Default` would re-issue a name already on
+screen for the next band founded.
 
-`core_sim/tests/band_names.rs` drives the real capture/restore path and **kills a band between the
-two**, asserting the survivors against the pre-death capture — a positional scheme sneaking back in
-fails there.
+**`restore_sim_state` installs the checkpoint's counters OUTRIGHT**, on the line below the
+`BandIdAllocator` it now matches. The checkpoint is the authority on where every founding counter
+stood, and it is safe to take literally because the restore despawns every checkpoint-owned band
+before respawning — afterwards no living band holds a slot the checkpoint does not.
+
+> **A rewind must lower the counter, and that is the whole point.** This once merged under a
+> per-faction `max`, which sounds conservative and is the opposite: replaying the command log from
+> `log.origin` in a process that had already advanced, or loading an earlier save into a live one,
+> left each counter at its high-water mark — so a splinter founded during the replay minted a
+> *different* name than it held in the run being replayed, breaking the determinism promised above.
+> The clamp API was deleted with the merge, so there is nothing left to reach for.
+
+`core_sim/tests/band_names.rs` drives the real capture/restore path twice over. It **kills a band
+between capture and restore**, asserting the survivors against the pre-death capture — a positional
+scheme sneaking back in fails there. And it **re-founds a splinter across a rewind**, asserting the
+counter comes back to the checkpoint's value and the second splinter mints the first one's name;
+that is the replay-determinism claim made executable, and it fails against the merge.
 
 ## On the wire
 

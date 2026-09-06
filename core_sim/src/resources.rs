@@ -830,23 +830,6 @@ impl BandNameAllocator {
     pub fn counters(&self) -> &BTreeMap<FactionId, u32> {
         &self.minted
     }
-
-    /// Put one faction's counter back, refusing to move it backwards.
-    ///
-    /// The same aliasing case [`BandIdAllocator::restore`] guards: a checkpoint is the authority on
-    /// where a counter *was*, but a rollback must never lower one below a slot a living band in this
-    /// process already holds, or the next mint hands out a name that is already on screen.
-    pub fn restore(&mut self, faction: FactionId, next: u32) {
-        let slot = self.minted.entry(faction).or_insert(FIRST_NAME_SLOT);
-        *slot = (*slot).max(next);
-    }
-
-    /// Put every counter in `other` back, each under the no-going-backwards rule above.
-    pub fn restore_all(&mut self, other: &Self) {
-        for (faction, next) in &other.minted {
-            self.restore(*faction, *next);
-        }
-    }
 }
 
 /// First name slot handed to a faction. Unlike a band id there is no reserved "unset" slot — slot 0
@@ -2145,10 +2128,10 @@ mod tests {
         );
     }
 
-    /// One allocator, two factions: the counters are independent, and a stale checkpoint cannot
-    /// walk one backwards onto a slot a living band already holds.
+    /// One allocator, two factions: the counters advance independently, so one faction's founding
+    /// never moves another faction's next slot.
     #[test]
-    fn counters_are_per_faction_and_never_move_backwards() {
+    fn counters_are_per_faction() {
         let catalog = crate::band_names::BandNameCatalog::builtin();
         let mut allocator = BandNameAllocator::default();
         allocator.mint(FactionId(0), TEST_MAP_SEED, catalog.as_ref());
@@ -2162,14 +2145,5 @@ mod tests {
             0,
             "a faction that has founded nothing sits at its first slot"
         );
-
-        allocator.restore(FactionId(0), 1);
-        assert_eq!(
-            allocator.peek(FactionId(0)),
-            2,
-            "an older counter must not re-issue a slot a living band holds"
-        );
-        allocator.restore(FactionId(0), 9);
-        assert_eq!(allocator.peek(FactionId(0)), 9, "a later counter wins");
     }
 }
