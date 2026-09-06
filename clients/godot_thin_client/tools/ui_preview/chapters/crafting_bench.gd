@@ -895,9 +895,9 @@ func _assert_a_material_the_band_lacks_says_so() -> void:
 		h._assert_hud("crafting — the emptied-store panel is open", false)
 		return
 	var cordage := _owned_cell_texts(panel, "Cordage")
-	h._assert_hud("crafting — a material the band holds none of states that, rather than 0.0 (%s)"
-			% [cordage],
-		cordage == [HudCraftingVocab.OWNED_STOCK_NONE])
+	h._assert_hud("crafting — a material the band holds none of says so in the ledger's one "
+			+ "none-wording, rather than 0.0 (%s)" % [cordage],
+		cordage == [HudCraftingVocab.OWNED_NONE])
 	# …and the row still states what a pass would YIELD, which is the fact the cost cell now owns: an
 	# empty store is a reason to make the thing, so the arrow must survive having nothing to report.
 	var row := _ledger_row(panel, "Cordage")

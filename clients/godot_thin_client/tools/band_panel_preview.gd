@@ -9033,10 +9033,16 @@ const FACTION_SUB_FLOOR_FRACTION := 0.5
 
 const FACTION_SUB_FLOOR_FODDER := SourceForecast.FODDER_FLOW_MIN * FACTION_SUB_FLOOR_FRACTION
 
-## Foddering LEARNED, for the calm half of the dormant hover. The standing faction fixture carries
-## `foddering: 0.07`, which is the locked half — so the two sentences are staged by moving one track
-## and putting the fixture back, never by two rosters.
+## Foddering LEARNED, for the other half of the dormant claim. The standing faction fixture carries
+## `foddering: 0.07`, so learning the craft is staged by moving one track and putting the fixture
+## back, never by two rosters: the row must stay dim either way, a craft not being an economy.
 const FACTION_FODDERING_LEARNED := 1.0
+
+## **THE WORDS A FODDER SENTENCE CANNOT AVOID.** The dormant row registers NO hover, and the defect
+## that is about is block-wide: the stat block is one `RichTextLabel`, so anything the row registered
+## popped under a cursor resting on Growth, Morale or Food. Asked as words rather than against the two
+## retired consts, because a re-worded sentence would be the same defect back.
+const RETIRED_FODDER_HOVER_WORDS := ["fodder", "hay"]
 
 ## THE ROSTER WITH NO FODDER ECONOMY ANYWHERE — the same two bands, their larders stripped to a
 ## sub-floor crumb. Built off `_faction_roster` rather than beside it, so every OTHER fact the page
@@ -9128,32 +9134,24 @@ func _assert_faction_fodder_dormant() -> void:
 	_assert_band_panel("faction dormant: …and the two agree, off the ONE shared gate",
 		band_dormant and vitals.contains(dormant_needle))
 
-	# **WHY IT IS DIM, SENTENCE ONE: THE CRAFT IS MISSING.** The standing faction fixture is 7% along
-	# Foddering, so the page states the forage panel's own lock — and it must reach a cursor, which on
-	# a `RichTextLabel` means the label's own `tooltip_text` (`[hint=…]` does not parse in this build).
-	var locked_expected := DetailFormat.FODDER_LOCKED_TOOLTIP_FORMAT % [
-		HudFormat.progress_percent(float((_faction_knowledge_fixture()["knowledges"] as Dictionary)
-			.get(HudFloraVocab.KNOWLEDGE_TRACK_FODDERING, 0.0))),
-		FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL)]
+	# **AND IT SAYS NOTHING ELSE — THE DIM DASH IS THE WHOLE STATE.** The row registered two sentences
+	# here, a Foddering lock and a calm *no fodder yet*, and a row's hover on this surface is the
+	# BLOCK's: one `RichTextLabel`, one `tooltip_text`, `[hint=…]` unparsed by this build. So a
+	# paragraph about hay popped out from under a cursor resting on Growth, Morale or Food. Asserted
+	# on the label the block IS, since that is the only place such a sentence could land.
 	var label := _first_rich_text(band_zone)
-	_assert_band_panel("faction dormant: the page says WHY, in the forage panel's words: %s"
-		% locked_expected,
-		label != null and label.tooltip_text.contains(locked_expected))
+	_assert_band_panel("faction dormant: the dim row registers no hover — no hay reaches the block",
+		label != null and _mentions_none_of(label.tooltip_text, RETIRED_FODDER_HOVER_WORDS))
 
-	# **SENTENCE TWO: NOTHING IS WRONG.** Learn Foddering and the page is still dormant — nobody keeps
-	# a pen — but the reason is calm, and it must NOT be the lock's sentence. The inequality is the
-	# half that catches a build stating one sentence in both states.
+	# **AND KNOWING THE CRAFT DOES NOT MAKE AN ECONOMY.** Learn Foddering and the page is still
+	# dormant — nobody keeps a pen — which is the half that catches a page reading the knowledge track
+	# instead of the roster's larders.
 	var learned := _faction_knowledge_fixture()
 	(learned["knowledges"] as Dictionary)[HudFloraVocab.KNOWLEDGE_TRACK_FODDERING] = \
 		FACTION_FODDERING_LEARNED
 	_hud.update_intensification([learned])
 	_push_bands(_fodderless_faction_roster())
 	await _settle()
-	var calm_label := _first_rich_text(_panel._zones.get(BandCityPanel.ZONE_BAND))
-	_assert_band_panel("faction dormant: a faction that KNOWS Foddering and keeps no pen reads calm",
-		calm_label != null and calm_label.tooltip_text.contains(DetailFormat.FODDER_DORMANT_TOOLTIP))
-	_assert_band_panel("faction dormant: …which is NOT the lock's sentence",
-		calm_label != null and not calm_label.tooltip_text.contains(locked_expected))
 	_assert_band_panel("faction dormant: …and the row is dim either way — the craft is not an economy",
 		_faction_vitals_text(_panel._zones.get(BandCityPanel.ZONE_BAND)).contains(dormant_needle))
 	# The standing five-track row goes back before the frame: every claim above this line was made
@@ -9335,6 +9333,15 @@ func _assert_faction_caret_keeps_the_page() -> void:
 			and _hud._disclosures._breakdown_popover_label.text.contains(
 				HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX))
 	_hud._disclosures._close_popover()
+
+## Is `text` free of EVERY word in `words`, case-insensitively? A negative asked as words rather than
+## as a retired const, so a sentence re-worded rather than removed still fails it.
+func _mentions_none_of(text: String, words: Array) -> bool:
+	var haystack := text.to_lower()
+	for word in words:
+		if haystack.contains(String(word).to_lower()):
+			return false
+	return true
 
 ## The first `RichTextLabel` under a node — the faction zone's vitals block, which is its only one.
 func _first_rich_text(node: Node) -> RichTextLabel:

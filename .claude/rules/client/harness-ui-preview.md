@@ -987,7 +987,10 @@ Fodder row's now; the BBCode is byte-identical for all of them (`_key_cell` buil
 is Godot's table-cell underline pass and not a client difference. Do not "fix" it in the formatter.
 
 **MAKING THAT ROW UNCONDITIONAL cost one frame and fourteen `PASS`** — measured, `1504 -> 1518` on
-one windowed run, `EXPECTED_CHECKPOINTS` 86 -> 101. The frame is **`band_fodder_dormant`**, appended
+one windowed run, `EXPECTED_CHECKPOINTS` 86 -> 101. The chapter has grown since, and its count went
+**104 -> 101** when the row's two hover sentences were retired: five hover claims went and two took
+their place, a negative on each host that no hay word reaches its block `tooltip_text` at all.
+The frame is **`band_fodder_dormant`**, appended
 after the pull-down state so nothing before it moves, and it is the first in this chapter to hold a
 LIVE fodder row and a DORMANT one in ONE render — the dim treatment is a claim about a DIFFERENCE,
 and a difference photographed one half at a time is not photographed.
@@ -1002,9 +1005,10 @@ two and photograph perfectly tidily.
 
 **The block also moves the faction's Foddering and must put it back.** `_ingest_intensification`
 REPLACES a faction's whole row, and `band_expedition` is the FIRST chapter — every chapter after it
-inherits whatever this one leaves. The two dormant sentences need the track part-learned and then
-learned, so the block pushes both and restores the untouched zeros on the way out, the same restore
-`band_panel_preview` makes around its own five-track fixture.
+inherits whatever this one leaves. The row must read DORMANT with the track part-learned and with it
+learned — knowing the craft is not the same as keeping a larder — so the block pushes both and
+restores the untouched zeros on the way out, the same restore `band_panel_preview` makes around its
+own five-track fixture.
 
 **A `[url=` SEARCH OVER PRODUCED LINES IS A VACUOUS CARET TEST.** A line producer emits plain
 `Key: value` strings and `detail_bbcode` is what draws the clickable run, so the needle can never
@@ -1015,8 +1019,11 @@ band's registration beside it so "registers nothing" cannot pass on a build that
 anywhere.
 
 **Falsified four ways from this chapter**, each failing a disjoint set: dropping the dim treatment
-(2), dropping the hover (5), re-gating the row (9 — including the frame's own both-surfaces
-precondition), and registering a disclosure on the dormant row (2).
+(2), re-registering a hover on the dormant row (2), re-gating the row (9 — including the frame's own
+both-surfaces precondition), and registering a disclosure on the dormant row (2). Those two negatives
+are what the five hover claims became: **a sentence registered here reaches the whole block**, so the
+failure they catch is the opposite of the old one — a hay sentence coming BACK and landing under
+Growth or Morale.
 
 **`band_hay_and_pen` is the frame that carries a BAND and a PEN at once**, which the drawer cannot do
 on its own: a player band's detail moves into the Band/City dock when one is present, so the dock

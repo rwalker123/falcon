@@ -1165,9 +1165,10 @@ func _build_stock_owned_cell(offer: Dictionary, payload: Dictionary,
 	var batches: Array = batches_by_material.get(
 		String(output.get(HudCraftingVocab.RECIPE_OUTPUT_MATERIAL_ID_KEY, "")), [])
 	if batches.is_empty():
-		# **A MATERIAL THE BAND HOLDS NONE OF STATES THAT, not `0.0`.** The kit and tool branches below
-		# say what owning none MEANS for their kind of thing; this is that sentence for a pile.
-		return _chip(HudCraftingVocab.OWNED_STOCK_NONE, HudStyle.INK_FAINT,
+		# **A MATERIAL THE BAND HOLDS NONE OF STATES THAT, not `0.0`** — and it states it in the
+		# ledger's ONE none-wording, the same `Not made` a kit and a bench tool answer this column
+		# with. What is different about a pile is its ink, not its sentence.
+		return _chip(HudCraftingVocab.OWNED_NONE, HudStyle.INK_FAINT,
 			HudCraftingVocab.OWNED_CHIP_FONT_SIZE)
 	var total := 0.0
 	for batch_variant in batches:

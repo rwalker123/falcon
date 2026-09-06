@@ -345,9 +345,11 @@ const IMPROVEMENT_HINTS := {
     "tame": "Tame — gentle this herd into livestock: a reduced take while you work it, then it keeps to your band instead of roaming, and the same hunters bring back about half again as much. Your people still work it every turn.",
     # Corral is the ladder's best yield AND its only rung with a running cost. The hint has to carry
     # all three halves of that bargain — the ~25-turn investment dip, the top payoff, and the fact
-    # that a penned herd is a POPULATION YOU FEED: its food comes off your larder every turn, and an
+    # that a penned herd is a POPULATION YOU FEED: its food comes off the larder every turn, and an
     # underfed herd shrinks (and takes its yield down with it). It also still escapes if unstaffed.
-    "corral": "Corral — pen this herd: half yield for ~25 turns while you build, then the best yield of any herd. But penned animals can't graze: you feed them from your larder every turn, and an underfed herd shrinks. It must stay staffed or the herd goes wild again.",
+    # The hint calls that store `storage`, not `larder`: a hint is read at a glance, and one food
+    # store carries one word across the panel (`DetailFormat.FERTILITY_LABEL_RESERVE` and its twins).
+    "corral": "Corral — pen this herd: half yield for ~25 turns while you build, then the best yield of any herd. But penned animals can't graze: you feed them from your storage every turn, and an underfed herd shrinks. It must stay staffed or the herd goes wild again.",
 }
 
 # The overhunting flag itself. **What it MEANS is `LaborAssignment.overdraws` and nothing else** —

@@ -104,16 +104,14 @@ const KNOWLEDGE_METER_CELLS := FactionReadouts.KNOWLEDGE_METER_CELLS
 ## prints this zone's extent, and it has been at the edge of the ~300px a horizontal dock offers twice.
 ## The tier's threshold is `HudWorkVocab.FACTION_BAND_FULL_MIN_HEIGHT`, and it must stay above the
 ## full block's measured height.
-## `knowledge` is the player faction's `{track: progress}` row, threaded in as a PARAMETER like every
-## other input this stateless layer needs. Its ONE reader is the dormant `Fodder:` row's hover, which
-## states how far along Foddering is — knowledge is faction-scoped and no band dict carries it, so
-## this is the only level at which the figure exists.
+## **IT TAKES NO `knowledge` ROW.** It was threaded in for ONE reader — the dormant `Fodder:` row's
+## hover, which stated how far along Foddering is — and that row carries no hover now
+## (`DetailFormat.fodder_dormant_row`), so nothing on this page reads a knowledge track.
 static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureController,
-        sedentarization: Dictionary, sites: Array, full: bool,
-        knowledge: Dictionary) -> VBoxContainer:
+        sedentarization: Dictionary, sites: Array, full: bool) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     var bands := labor.player_bands()
-    col.add_child(_build_vitals_label(bands, disclosures, knowledge))
+    col.add_child(_build_vitals_label(bands, disclosures))
     var people := _build_people_block(bands)
     if people != null:
         col.add_child(people)
@@ -136,8 +134,7 @@ static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureCon
 ## numbers; a runway is one larder against one band's drain and a kit condition is three durabilities
 ## per band, so neither has a faction value to state and those rows carry the ALERT instead. The
 ## detail is one click away in every case.
-static func _build_vitals_label(bands: Array, disclosures: DisclosureController,
-        knowledge: Dictionary) -> RichTextLabel:
+static func _build_vitals_label(bands: Array, disclosures: DisclosureController) -> RichTextLabel:
     var label := RichTextLabel.new()
     label.bbcode_enabled = true
     label.fit_content = true
@@ -153,19 +150,21 @@ static func _build_vitals_label(bands: Array, disclosures: DisclosureController,
     # no longer has. `Kit` and `Growth` can both return "" the same way and had the same latent bug.
     _disclosures_clear(disclosures)
     var ctx := DetailFormat.Context.new()
-    # The context goes IN as well as out: the dormant `Fodder:` row registers its hover on it, exactly
-    # as the band page's producers do, and `block_tooltip` below reads it back off the same object.
-    var lines := _faction_summary_lines(bands, disclosures, knowledge, ctx)
+    # The context is this page's alone now: the row builders below take none, the only one that ever
+    # wrote to it being the dormant `Fodder:` row's retired hover. What still reads it here is the
+    # caret state and the tint table `detail_bbcode` resolves rows through.
+    var lines := _faction_summary_lines(bands, disclosures)
     # The carets are read from the CONTROLLER, not from a context the producer filled — every row
     # here registers its own disclosure as it is built, so the state is complete only after the last
     # of them. `BandDetailLines` hit exactly this ordering trap on the merged Growth clause.
     ctx.disclosures = disclosures.state()
     label.text = DetailFormat.detail_bbcode(lines, ctx)
-    # **THE HOVER A ROW REGISTERED, ANSWERED BY THE BLOCK.** The dormant `Fodder:` row says why it is
-    # dim this way; `[hint=…]` is not parsed by this Godot build (see `DetailFormat.block_tooltip`),
-    # so the label carries it. The band page's two hosts attach it exactly like this, and a page that
-    # skipped it would show the same dim row with no explanation on this scale alone. Empty for a
-    # block whose every row is live, which shows no tooltip at all.
+    # **A HOVER A ROW REGISTERS IS ANSWERED BY THE BLOCK, WHICH IS WHY NO ROW HERE REGISTERS ONE.**
+    # `[hint=…]` is not parsed by this Godot build (see `DetailFormat.block_tooltip`), so the label
+    # carries every registered sentence at once and a cursor anywhere over the block gets all of
+    # them — the dormant `Fodder:` row used to put a paragraph about hay under Growth and Morale
+    # that way. The attachment stays, in the shape both band-page hosts use, so a row that ever does
+    # have a block-wide sentence to make is answered; it joins nothing today and shows no tooltip.
     label.tooltip_text = DetailFormat.block_tooltip(ctx)
     return label
 
@@ -177,11 +176,10 @@ static func _disclosures_clear(disclosures: DisclosureController) -> void:
         disclosures.clear_rows()
 
 ## The rows, in the band page's order, registering each row's per-band drill-down as it goes.
-static func _faction_summary_lines(bands: Array, disclosures: DisclosureController,
-        knowledge: Dictionary, ctx: DetailFormat.Context) -> Array[String]:
+static func _faction_summary_lines(bands: Array, disclosures: DisclosureController) -> Array[String]:
     var lines: Array[String] = []
     lines.append(_food_line(bands, disclosures))
-    lines.append(_fodder_line(bands, disclosures, knowledge, ctx))
+    lines.append(_fodder_line(bands, disclosures))
     lines.append(_upkeep_line(bands, disclosures))
     lines.append(_morale_line(bands, disclosures))
     var growth := _growth_line(bands, disclosures)
@@ -247,7 +245,9 @@ static func _food_line(bands: Array, disclosures: DisclosureController) -> Strin
 ## with no fodder economy anywhere used to read `Fodder: 0.0 · +0.0 /turn` in FULL INK — a live-looking
 ## readout for an economy that does not exist, and one that disagreed with the dim `—` every one of its
 ## own bands was showing. The two scales say it the same way now, through the same builder
-## (`DetailFormat.fodder_dormant_row`) and the same hover.
+## (`DetailFormat.fodder_dormant_row`) — and what that builder says is a dim dash and nothing else:
+## the row carries no hover at either scale, the only hover it could register being the whole
+## BLOCK's.
 ##
 ## **THE GATE IS `band_has_fodder_economy` OVER THE BANDS, NOT A SECOND PREDICATE.** `_any_fodder_economy`
 ## is a fold and nothing else: whatever the per-band test admits, this page admits, and a faction test
@@ -256,14 +256,9 @@ static func _food_line(bands: Array, disclosures: DisclosureController) -> Strin
 ##
 ## **A DORMANT ROW REGISTERS NO DISCLOSURE**, so it wears no caret: there are no per-band rows worth
 ## opening when not one of them has a larder, and an empty pull-down is worse than none.
-static func _fodder_line(bands: Array, disclosures: DisclosureController,
-        knowledge: Dictionary, ctx: DetailFormat.Context) -> String:
+static func _fodder_line(bands: Array, disclosures: DisclosureController) -> String:
     if not _any_fodder_economy(bands):
-        # `RungGates.track` is the ONE reader of a `{track: progress}` row in this client — the same
-        # accessor every gate reason goes through, so a faction that has never begun the craft reads
-        # 0.0 here exactly as it does there.
-        return DetailFormat.fodder_dormant_row(ctx,
-            RungGates.track(knowledge, HudFloraVocab.KNOWLEDGE_TRACK_FODDERING))
+        return DetailFormat.fodder_dormant_row()
     var store := 0.0
     var net := 0.0
     var rows: Array[String] = []
