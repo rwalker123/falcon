@@ -206,7 +206,7 @@ static func _food_line(bands: Array, disclosures: DisclosureController) -> Strin
         var turns := float(band.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
         if BandFoodStatus.is_critical(turns):
             starving += 1
-        rows.append(_band_row(band, i, "%s · %s" % [
+        rows.append(_band_row(band, "%s · %s" % [
             SourceForecast.format_stock(DetailFormat.band_provisions(band)),
             SourceForecast.format_signed(DetailFormat.band_net_food(band))],
             DetailFormat.food_turns_text(turns)))
@@ -275,7 +275,7 @@ static func _fodder_line(bands: Array, disclosures: DisclosureController,
         var turns := float(band.get("turns_of_fodder", BandFoodStatus.UNLIMITED_TURNS))
         if BandFoodStatus.is_critical(turns):
             starving += 1
-        rows.append(_band_row(band, i, "%s · %s" % [
+        rows.append(_band_row(band, "%s · %s" % [
             SourceForecast.format_fodder(DetailFormat.band_fodder_store(band)),
             SourceForecast.format_signed_fodder(DetailFormat.band_net_fodder(band))],
             DetailFormat.food_turns_text(turns)))
@@ -356,7 +356,7 @@ static func _upkeep_line(bands: Array, disclosures: DisclosureController) -> Str
         var turns := float(worst[DetailFormat.MATERIAL_BILL_RUNWAY_KEY])
         if BandFoodStatus.is_critical(turns):
             alarmed += 1
-        rows.append(_band_row(band, i, "%s · %s" % [
+        rows.append(_band_row(band, "%s · %s" % [
             _material_face(String(worst[SourceForecast.MATERIAL_PAYOFF_ID_KEY]),
                 float(worst[DetailFormat.MATERIAL_BILL_STORE_KEY])),
             SourceForecast.format_signed(float(worst[DetailFormat.MATERIAL_BILL_INCOME_KEY])
@@ -418,7 +418,7 @@ static func _morale_line(bands: Array, disclosures: DisclosureController) -> Str
         var band: Dictionary = bands[i]
         if DetailFormat.morale_is_concerning(band):
             concerning += 1
-        rows.append(_band_row(band, i, "%d%%%s" % [
+        rows.append(_band_row(band, "%d%%%s" % [
             int(round(float(band.get("morale", 0.0)) * 100.0)), _trend_glyph(float(band.get("morale_delta", 0.0)))],
             DetailFormat.morale_cause_label(int(band.get("morale_cause", DetailFormat.MORALE_CAUSE_NONE)))))
     disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_MORALE,
@@ -445,7 +445,7 @@ static func _growth_line(bands: Array, disclosures: DisclosureController) -> Str
         weight += w
         if DetailFormat.growth_is_concerning(band):
             concerning += 1
-        rows.append(_band_row(band, i, HudWorkVocab.FACTION_PERCENT_FORMAT % int(
+        rows.append(_band_row(band, HudWorkVocab.FACTION_PERCENT_FORMAT % int(
             round(DetailFormat.band_fertility(band) * 100.0)), ""))
     if rows.is_empty():
         return ""
@@ -524,12 +524,14 @@ static func _severity_color(severity: String) -> Color:
 
 ## One row of a drill-down: the band's name, its value, and an optional dim note. The NAME is a
 ## clickable `[url]` so the popover doubles as the page's second, better way to reach a band.
-static func _band_row(band: Dictionary, index: int, value: String, note: String) -> String:
+## It takes no roster index: the name comes from the band itself (`HudFormat.band_name`), which is
+## what makes this row and the cycler's card agree about which band is which.
+static func _band_row(band: Dictionary, value: String, note: String) -> String:
     var suffix := "  [color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, note] if note != "" else ""
     return "%s%s%d][color=#%s]%s[/color][/url]  %s%s" % [
         DetailFormat.DISCLOSURE_URL_OPEN, HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX,
         int(band.get("entity", -1)), HudStyle.SIGNAL_HEX,
-        HudFormat.band_display_name(band, index + 1), value, suffix]
+        HudFormat.band_name(band), value, suffix]
 
 ## `  ⚠ 2 bands` — the alert clause a row appends when some band is in trouble. The COUNT and nothing
 ## more: which band it is lives one click away, which is the whole division of labour on this page.
@@ -634,7 +636,7 @@ static func build_parties_zone(labor: HudBandLaborState, herd_label_for_id: Call
     # **THE ROW'S TWO OWNERS ARE DIFFERENT ENTITIES HERE, and that is the whole reason `_summary_row`
     # takes them separately.** The TOGGLE is keyed on the PARTY, which is what the row's detail is
     # about and what `_faction_open_row` matches; the NAME's jump is keyed on the HOME BAND, which is
-    # what the name says. Binding one entity to both made a link reading `Band 2` select the
+    # what the name says. Binding one entity to both made a link reading a band's name select the
     # expedition — the row named one subject and delivered another.
     var names := _band_names_by_entity(labor)
     var shown: int = mini(parties.size(), HudWorkVocab.FACTION_LIST_ROWS_MAX)
@@ -913,7 +915,7 @@ static func _build_bands_block(labor: HudBandLaborState, attention: Array, open_
         var band: Dictionary = bands[i]
         var entity := int(band.get("entity", -1))
         var alerts: Array = by_owner.get(entity, [])
-        block.add_child(_summary_row(HudFormat.band_display_name(band, i + 1),
+        block.add_child(_summary_row(HudFormat.band_name(band),
             _work_summary(labor, band), worst_severity(alerts), entity, entity, on_toggle, on_jump))
         if entity == open_owner:
             block.add_child(_summary_detail(_work_detail_lines(labor, band), alerts))
@@ -1036,12 +1038,12 @@ static func _append_more_row(block: VBoxContainer, remaining: int) -> void:
         return
     block.add_child(HudWidgets.alloc_hint_label(HudWorkVocab.FACTION_LIST_MORE_FORMAT % remaining))
 
-## Entity → positional display name, for the parties zone's "which band did this party leave" column.
-## The index is the roster's, so a party's home band reads by the SAME name the cycler gives it.
+## Entity → display name, for the parties zone's "which band did this party leave" column. Resolved
+## through `HudFormat.band_name` like every other surface, so a party's home band reads by the SAME
+## name the cycler gives it.
 static func _band_names_by_entity(labor: HudBandLaborState) -> Dictionary:
     var names := {}
-    var bands := labor.player_bands()
-    for i in range(bands.size()):
-        var band: Dictionary = bands[i]
-        names[int(band.get("entity", -1))] = HudFormat.band_display_name(band, i + 1)
+    for band_variant in labor.player_bands():
+        var band: Dictionary = band_variant
+        names[int(band.get("entity", -1))] = HudFormat.band_name(band)
     return names

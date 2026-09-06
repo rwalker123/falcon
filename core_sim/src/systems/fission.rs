@@ -10,6 +10,7 @@
 
 use bevy::prelude::*;
 
+use crate::band_names::BandNameCatalogHandle;
 use crate::components::{
     available_workers, BandEquipment, BandId, DemographicFlowAccumulator, LaborAllocation,
     LocalStore, MoraleCause, MoraleContributions, PopulationCohort, ResidentBand, StartingUnit,
@@ -18,7 +19,7 @@ use crate::components::{
 use crate::culture::CultureManager;
 use crate::expedition_config::SettleConfig;
 use crate::provinces::ProvinceMap;
-use crate::resources::BandIdAllocator;
+use crate::resources::{BandIdAllocator, BandNameAllocator, SimulationConfig};
 use crate::scalar::{scalar_from_f32, scalar_zero, Scalar};
 
 /// **Why a split was refused.**
@@ -341,10 +342,30 @@ pub fn split_band_from_parent(
     dowry_received.credit(TransferLink::Local, provisions.to_f32());
 
     let band = world.resource_mut::<BandIdAllocator>().allocate();
+    // **A splinter is a NEW band, so it mints a fresh name rather than inheriting the parent's.**
+    // It walks out with the parent's food, kit and culture, but its identity is its own from the
+    // first turn — the parent is still standing, and two living bands may not answer to one name.
+    // Resolved before the spawn because minting borrows the world mutably.
+    let child_faction = child.faction;
+    let map_seed = world
+        .get_resource::<SimulationConfig>()
+        .map(|config| config.map_seed)
+        .unwrap_or_default();
+    // A hand-rolled test `World` may install neither resource; the builtin pool is the very list
+    // `include_str!` baked in, so falling back to it substitutes nothing.
+    let catalog = world
+        .get_resource::<BandNameCatalogHandle>()
+        .map(BandNameCatalogHandle::get)
+        .unwrap_or_else(crate::band_names::BandNameCatalog::builtin);
+    let name = world
+        .get_resource_mut::<BandNameAllocator>()
+        .map(|mut names| names.mint(child_faction, map_seed, catalog.as_ref()))
+        .unwrap_or_else(|| crate::components::BandName(String::new()));
     let child_entity = world
         .spawn((
             child,
             band,
+            name,
             ResidentBand,
             // **Every resident band carries a flow accumulator** or its births and deaths are
             // unreportable (`demographic_events::every_resident_band_carries_a_flow_accumulator`).

@@ -1243,7 +1243,7 @@ func _hunt_assignment(herd_id: String) -> Dictionary:
 
 func _band(assignments: Array) -> Dictionary:
 	return BandFx.with_band_id({
-		"id": "Band 1",
+		"name": "Elderford", "id": "Elderford",
 		"entity": KNOWLEDGE_BAND_ENTITY,
 		"faction": HudConst.PLAYER_FACTION_ID,
 		"size": 30,

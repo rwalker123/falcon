@@ -492,17 +492,18 @@ const DETAIL_FLOOR_LABELS := {
 const DEFAULT_DETAIL_LEVEL := RUNG_NOTABLE
 
 # ---- the detail tokens the dock itself reads -------------------------------
-## The band a demographic event happened to. **The snapshot carries no band NAME**, so the sim puts
-## its own durable `BandId` in the label as a positional fallback and repeats the id here — which is
-## what lets the client re-label the row with whatever IT calls that band. The client's name is a
-## ROSTER position (`HudFormat.band_display_name`), the sim's is a durable id, and the two routinely
-## disagree; the token is the only thing that can join them.
+## The band a demographic event happened to. An event LABEL is composed sim-side, where no roster is
+## in reach, so it spells the band out from its durable `BandId` and repeats that id here — which is
+## what lets the client re-label the row with whatever IT calls that band. The cohort's own `name`
+## (`HudFormat.band_name`) and the sim's `Band <id>` are different renderings by construction, and
+## this token is the only thing that can join them.
 const DETAIL_BAND_KEY := "band"
 ## **The exact string the sim writes when it names a band** (`core_sim` `systems::population::
-## band_label`). It is byte-identical to `HudFormat.BAND_DISPLAY_NAME_FORMAT` and must stay so: the
-## client substitutes its own name by replacing this rendering of the `band=` id, so a drift on
-## either side silently turns the substitution into a no-op rather than an error. Substituted only at
-## a digit boundary, or `Band 3` would also rewrite the `Band 3` inside `Band 30`.
+## band_label`) — a durable ID spelled out, NOT a row number, and deliberately not a fourth naming
+## rule. The client substitutes its own name by replacing this rendering of the `band=` id, so it must
+## stay byte-identical to the sim or the substitution silently turns into a no-op rather than an
+## error. Substituted only at a digit boundary, or `Band 3` would also rewrite the `Band 3` inside
+## `Band 30`, and never with an EMPTY name (see `EventDockPanel._swap_band_label`).
 const SIM_BAND_LABEL_FORMAT := "Band %d"
 
 ## **THE SECOND TOKEN THAT NAMES A BAND** (arc #527): the band a SHIPMENT was sent to or landed at,
@@ -513,17 +514,17 @@ const SIM_BAND_LABEL_FORMAT := "Band %d"
 const DETAIL_DESTINATION_KEY := "destination"
 
 ## **THE SIM'S OWN SPELLING FOR THE DESTINATION, and it is LOWER-CASE** —
-## `ExpeditionMission::destination_display`'s last-resort tier, `format!("band {}", id)`, which is the
-## normal path today because bands have no names. Byte-identical to the sim or the substitution is a
+## `ExpeditionMission::destination_display`'s last-resort tier, `format!("band {}", id)` — reached
+## when the party's destination is outside the viewer's roster, so no name can be resolved for it. Byte-identical to the sim or the substitution is a
 ## silent no-op, exactly as `SIM_BAND_LABEL_FORMAT` warns; it is a SEPARATE const rather than a reuse
 ## precisely because the two producers differ in case, and sharing one would have made the swap look
 ## correct while never firing.
 const SIM_DESTINATION_LABEL_FORMAT := "band %d"
 
 ## **EVERY `detail` TOKEN THAT NAMES A BAND, and the sim's rendering of each.** `EventDockPanel` walks
-## this rather than carrying one hand-written swap per producer — the client's band name is a ROSTER
-## POSITION and the sim's is a durable id, so every place the sim writes a band into a sentence needs
-## the same join, and a table is what stops the next producer growing a fifth copy of it.
+## this rather than carrying one hand-written swap per producer — the sim spells a band out from its
+## id and the client says its name, so every place the sim writes a band into a sentence needs the
+## same join, and a table is what stops the next producer growing a fifth copy of it.
 const BAND_ID_TOKEN_LABELS := {
 	DETAIL_BAND_KEY: SIM_BAND_LABEL_FORMAT,
 	DETAIL_DESTINATION_KEY: SIM_DESTINATION_LABEL_FORMAT,

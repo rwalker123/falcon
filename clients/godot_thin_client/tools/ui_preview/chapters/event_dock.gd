@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 194
+const EXPECTED_CHECKPOINTS := 195
 
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const WorldFx := preload("res://tools/ui_preview/fixtures_world.gd")
@@ -563,8 +563,10 @@ func _event_dock_zero_seq_fixture() -> Array:
 		{"tick": 61, "kind": "forage", "faction": 0, "label": "A second unsequenced row", "detail": "", "seq": 0},
 	]
 
-## The band-relabel fixture. The roster knows `band=3` as `Band 1` (its ROSTER POSITION, not its id)
-## and `band=30` as `Band 2`, and knows nothing of `band=9`.
+## The band-relabel fixture. The roster knows `band=3` as `Ashfell` and `band=30` as `Brackwater`,
+## and knows nothing of `band=9`. **The client's names are the SIM's, joined on the durable id** — the
+## sim spells a band out from that id (`Band 3`) because an event label is composed with no roster in
+## reach, and this map is what turns it back into the band's own name.
 ##
 ## **The third row is the DIGIT-BOUNDARY trap, and it is CONSTRUCTED rather than quoted.** The sim
 ## names exactly one band per label today (`systems::population::push_migration_events` writes
@@ -574,17 +576,23 @@ func _event_dock_zero_seq_fixture() -> Array:
 ## A fixture that cannot reach the state it claims makes the assertion decorative, so this one
 ## reaches it. Note the honest limitation it also pins: only the band the `band=` token NAMES is
 ## substituted — the second band keeps whatever the sim called it.
-const EVENT_DOCK_BAND_LABELS := {"3": "Band 1", "30": "Band 2"}
+const EVENT_DOCK_BAND_LABELS := {"3": "Ashfell", "30": "Brackwater"}
 
-const EVENT_DOCK_RELABELLED := "A child came of age in Band 1"
+## **AND ONE BAND THE ROSTER ANSWERS `""` FOR.** `HudBandLaborState.band_label_for_id` returns the
+## empty string for a band it does not hold, and a fixture can publish that straight into the map — so
+## the dock must leave the sim's own `Band <id>` standing rather than substituting emptiness and
+## deleting the subject out of the sentence.
+const EVENT_DOCK_BAND_LABELS_WITH_EMPTY := {"3": "Ashfell", "30": "Brackwater", "9": ""}
+
+const EVENT_DOCK_RELABELLED := "A child came of age in Ashfell"
 
 const EVENT_DOCK_UNKNOWN_BAND_LABEL := "A child came of age in Band 9"
 
-const EVENT_DOCK_DIGIT_BOUNDARY_LABEL := "Four left Band 1 for Band 30"
+const EVENT_DOCK_DIGIT_BOUNDARY_LABEL := "Four left Ashfell for Band 30"
 
 ## Both roles re-labelled in ONE line (arc #527): the sender through `band=`, the destination through
-## `destination=`. `Band 3` → `Band 1` and `band 30` → `Band 2`, off the same roster.
-const EVENT_DOCK_SHIPMENT_RELABELLED := "Band 1 delivered 12 food to Band 2"
+## `destination=`. `Band 3` → `Ashfell` and `band 30` → `Brackwater`, off the same roster.
+const EVENT_DOCK_SHIPMENT_RELABELLED := "Ashfell delivered 12 food to Brackwater"
 
 func _event_dock_band_label_fixture() -> Array:
 	return [
@@ -1259,13 +1267,14 @@ func run(harness) -> void:
 	h._assert_hud("seq 0 is a sentinel, not a key: two unsequenced rows do not collide",
 		event_dock._events.size() == EVENT_DOCK_ZERO_SEQ_ROWS)
 
-	# THE BAND NAME IS THE CLIENT'S. The sim writes a positional `Band <BandId>` because the snapshot
-	# carries no band name; the HUD's roster says that band is `Band 1`, and the dock must say so too
-	# — bounded at a digit boundary, so a `Band 3` fixture cannot rewrite the `Band 30` beside it.
+	# THE BAND NAME IS THE CLIENT'S. An event label is composed sim-side with no roster in reach, so it
+	# spells the band out from its durable id (`Band 3`); the HUD's roster says that band is `Ashfell`,
+	# and the dock must say so too — bounded at a digit boundary, so a `Band 3` fixture cannot rewrite
+	# the `Band 30` beside it.
 	event_dock.reset()
 	event_dock.set_band_labels(EVENT_DOCK_BAND_LABELS)
 	event_dock.ingest_events(_event_dock_band_label_fixture())
-	h._assert_hud("band label: the sim's positional `Band 3` is re-labelled to the roster's own name",
+	h._assert_hud("band label: the sim's id-spelled `Band 3` is re-labelled to the roster's own name",
 		_preview_event_label_count(event_dock, EVENT_DOCK_RELABELLED, true) == 1)
 	h._assert_hud("band label: an id the roster does not know keeps the sim's own label untouched",
 		_preview_event_label_count(event_dock, EVENT_DOCK_UNKNOWN_BAND_LABEL, true) == 1)
@@ -1277,6 +1286,14 @@ func run(harness) -> void:
 	# would have looked right and never fired. Both roles resolve in this one line.
 	h._assert_hud("band label: a shipment's `destination=` id is re-labelled too",
 		_preview_event_label_count(event_dock, EVENT_DOCK_SHIPMENT_RELABELLED, true) == 1)
+	# **AN EMPTY NAME IS NOT A NAME.** `band_label_for_id` answers `""` for a band the roster does not
+	# hold, and the map is published wholesale — so the swap has to refuse an empty replacement rather
+	# than deleting the band out of the sentence and leaving `A child came of age in `.
+	event_dock.reset()
+	event_dock.set_band_labels(EVENT_DOCK_BAND_LABELS_WITH_EMPTY)
+	event_dock.ingest_events(_event_dock_band_label_fixture())
+	h._assert_hud("band label: an EMPTY client name leaves the sim's own label standing",
+		_preview_event_label_count(event_dock, EVENT_DOCK_UNKNOWN_BAND_LABEL, true) == 1)
 	event_dock.set_band_labels({})
 
 	# THE PREFS FILE THAT EXISTS BUT HAS NO `[events]` SECTION — i.e. every player upgrading into

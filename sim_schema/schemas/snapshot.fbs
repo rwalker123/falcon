@@ -1449,6 +1449,22 @@ table PopulationCohortState {
   // FINITE AND >= 0, not positive: `0` is a legitimate setting ("hay is weightless"), the same wire
   // assertion the material lever carries and deliberately not the `> 0` the pack lever does.
   expeditionTradeFodderCarryWeight:float = 0;
+  // --- THE BAND'S NAME (appended last, issue #615) ---------------------------------------------
+  //
+  // *** THE SIM OWNS A BAND'S DISPLAY NAME. A CLIENT MUST NEVER FALL BACK TO COUNTING. ***
+  //
+  // Every cohort carries one, and an expedition party carries its HOME BAND's name - a party is
+  // those same people walking somewhere, not a second band with a second identity.
+  //
+  // It is minted once at founding from a per-faction permutation of a curated pool
+  // (`core_sim/src/data/band_names.json`) and is never derived positionally, so it does NOT change
+  // when another band dies. That is the whole point of the field: a client fabricating "Band N" from
+  // a row index gave two screens two different answers for one band, because they counted different
+  // rows - and renamed every band after a death.
+  //
+  // Empty means the sim has no name for this cohort (only reachable from a hand-built fixture); a
+  // client renders that as its `Band #<id>` fallback and nothing else.
+  name:string;
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of

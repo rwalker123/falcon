@@ -840,9 +840,14 @@ const EXCELLENT_HIDE_ROW := "hide · tough: excellent · supple: poor"
 
 ## What the neighbour is called on EVERY surface, and it is resolved the same way on each: the
 ## picker, the parties row and the drawer's `Bound for` all join `HudBandLaborState.band_label_for_id`
-## onto the band's durable id, so a band cannot be called two things on two screens. Band 2 of 2 in
+## onto the band's durable id, so a band cannot be called two things on two screens. **It is the
+## cohort's own `name`** since issue #615 — set on `_neighbour_band` and quoted here — not its slot in
 ## the roster this chapter pushes.
-const NEIGHBOUR_DISPLAY_NAME := "Band 2"
+const NEIGHBOUR_DISPLAY_NAME := "Brackwater"
+
+## …and the sending band's, for the same reason. Distinct words, so a readout that named the wrong
+## end of the shipment fails rather than looking plausible.
+const SHIPPER_DISPLAY_NAME := "Ashfell"
 
 ## The parties zone's live column — where every control this chapter drives is mounted.
 func _parties_zone() -> Node:
@@ -1092,7 +1097,8 @@ func _cargo_control(root: Node, needle: String, control: String) -> Control:
 ## shipment levers are what the mass meter is drawn against.
 func _shipper_band() -> Dictionary:
 	var band := BandFx.band_fixture()
-	band["id"] = "Band 1"
+	band["name"] = SHIPPER_DISPLAY_NAME
+	band["id"] = SHIPPER_DISPLAY_NAME
 	band["entity"] = SHIPPER_ENTITY
 	band = BandFx.with_band_id(band)
 	band["pos"] = [SHIPPER_TILE.x, SHIPPER_TILE.y]
@@ -1113,7 +1119,8 @@ func _shipper_band() -> Dictionary:
 ## does — which is the case a tie's subject takes whenever the player still holds the band.
 func _neighbour_band() -> Dictionary:
 	var band := BandFx.band_fixture()
-	band["id"] = "Band 2"
+	band["name"] = NEIGHBOUR_DISPLAY_NAME
+	band["id"] = NEIGHBOUR_DISPLAY_NAME
 	band["entity"] = NEIGHBOUR_ENTITY
 	band = BandFx.with_band_id(band)
 	band["pos"] = [NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y]

@@ -52,9 +52,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     components::{
-        BandBench, BandEquipment, BandId, BandTravel, DemographicFlowAccumulator, Expedition,
-        LaborAllocation, PopulationCohort, PowerNode, ResidentBand, Settlement, StartingUnit, Tile,
-        TownCenter,
+        BandBench, BandEquipment, BandId, BandName, BandTravel, DemographicFlowAccumulator,
+        Expedition, LaborAllocation, PopulationCohort, PowerNode, ResidentBand, Settlement,
+        StartingUnit, Tile, TownCenter,
     },
     connections::ConnectionLedger,
     crisis::{
@@ -73,9 +73,9 @@ use crate::{
     influencers::{InfluencerImpacts, InfluentialRoster, InfluentialRosterCheckpoint},
     knowledge_ledger::{KnowledgeLedger, KnowledgeLedgerCheckpoint},
     resources::{
-        BandIdAllocator, CapabilityFlags, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
-        DiscoveryProgressLedger, FactionInventory, PendingCrisisSeeds, PendingCrisisSpawns,
-        SentimentAxisBias, SimulationTick, TradeTelemetry,
+        BandIdAllocator, BandNameAllocator, CapabilityFlags, CommandEventLog, CorruptionLedgers,
+        CorruptionTelemetry, DiscoveryProgressLedger, FactionInventory, PendingCrisisSeeds,
+        PendingCrisisSpawns, SentimentAxisBias, SimulationTick, TradeTelemetry,
     },
     routes::RoadRegistry,
     sedentarization::SedentarizationScore,
@@ -110,6 +110,11 @@ pub struct ExpeditionRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BandRecord {
     pub id: BandId,
+    /// The band's name. **Identity, restored with the id** — a checkpoint that forgot it would
+    /// rename every band on rollback, which is the exact defect this field exists to remove. An
+    /// expedition party's record carries its home band's name, the same string the party's own
+    /// component holds.
+    pub name: String,
     /// The cohort. Its `home` / `current_tile` are [`Entity::PLACEHOLDER`]; the real positions are
     /// the two fields below.
     pub cohort: PopulationCohort,
@@ -161,6 +166,10 @@ pub struct SimState {
 
     // --- resources, cloned whole ---
     pub band_ids: BandIdAllocator,
+    /// The per-faction name counters. Checkpoint state for the same reason [`BandIdAllocator`] is:
+    /// restore the bands but not the counters and the next band founded after a rollback is minted
+    /// a name a living band already answers to.
+    pub band_names: BandNameAllocator,
     pub beat_ledger: BeatLedger,
     pub capability_flags: CapabilityFlags,
     pub command_events: CommandEventLog,
@@ -311,6 +320,10 @@ pub fn capture_sim_state(world: &World) -> SimState {
             });
             Some(BandRecord {
                 id,
+                name: entity
+                    .get::<BandName>()
+                    .map(|name| name.0.clone())
+                    .unwrap_or_default(),
                 cohort: stored,
                 home,
                 current,
@@ -361,6 +374,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         bands,
         settlements,
         band_ids: *world.resource::<BandIdAllocator>(),
+        band_names: world.resource::<BandNameAllocator>().clone(),
         active_crises: world.resource::<ActiveCrisisLedger>().checkpoint(),
         beat_ledger: world.resource::<BeatLedger>().clone(),
         capability_flags: *world.resource::<CapabilityFlags>(),
@@ -460,6 +474,9 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
         let mut entity = world.spawn((
             cohort,
             record.id,
+            // Unconditional, exactly like the id beside it: the name is what the band is called, and
+            // a band restored nameless would be renamed by the client's fallback.
+            BandName(record.name.clone()),
             record.flow_accumulator,
             record.equipment.clone(),
             record.bench.clone(),
@@ -535,6 +552,13 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     // --- pass 4b: resources -------------------------------------------------------------------
     world.insert_resource(state.tick);
     world.insert_resource(state.band_ids);
+    // **Installed outright, exactly as [`BandIdAllocator`] is one line above.** The checkpoint is the
+    // authority on where every founding counter stood: the restore despawns each checkpoint-owned
+    // band before respawning, so no living band holds a slot the checkpoint does not. Carrying a
+    // higher live counter across would break the replay guarantee instead of protecting it — a band
+    // re-founded while replaying the log from its origin has to re-mint the very name it held in the
+    // run being replayed.
+    world.insert_resource(state.band_names.clone());
     world.insert_resource(state.beat_ledger.clone());
     world.insert_resource(state.capability_flags);
     // Installing the checkpoint's copy IS the truncation: the log is append-only, so the captured

@@ -1259,6 +1259,25 @@ pub struct ResidentBand;
 )]
 pub struct BandId(pub u64);
 
+/// A band's **name** — the words a player calls it by, minted once at founding and never derived.
+///
+/// **It is IDENTITY, not presentation.** Nothing about the name is a function of where the band
+/// sits in a list, which is exactly the property the client could not supply for itself: two
+/// screens counting different rows (one filtered to resident bands, one over the raw wire array)
+/// named the same band differently, and a band dying renumbered every band after it. A name minted
+/// at founding cannot move when somebody else dies.
+///
+/// Minted from [`crate::resources::BandNameAllocator`] at the two places a band is **founded** —
+/// worldgen and a fission splinter — and **inherited** at the two places a band is *detached*: an
+/// expedition party is the same people as its home band walking somewhere, so it carries the home
+/// band's name rather than consuming a name slot of its own.
+///
+/// **It sits beside [`BandId`] rather than on [`PopulationCohort`] deliberately.** Identity
+/// components live together, and the cohort is a hot struct cloned per checkpoint capture and per
+/// expedition spawn — it does not need a heap allocation added to it.
+#[derive(Component, Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BandName(pub String);
+
 /// What an expedition was sent to do: `Scout` (explore + report the map, PR 1) or `Hunt` (follow a
 /// migratory herd, harvest food, deliver it, PR 2) — two verbs on one traveling-party system.
 // `Eq` is deliberately absent: the mission carries an `f32` floor, and float equality is not an

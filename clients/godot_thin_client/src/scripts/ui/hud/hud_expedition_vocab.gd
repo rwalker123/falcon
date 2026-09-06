@@ -53,6 +53,25 @@ const EXPEDITION_MISSION_LABELS := {
 	"trade": "Trade party",
 }
 
+## **THE PARENTHETICAL FORMS** — the mission word `HudFormat.band_name` tags a detached party's name
+## with, so a party reads `Ashfell (Scout)` beside its home band's bare `Ashfell`. One word each,
+## because they ride INSIDE a name on a map marker; the long forms above stay exactly as they are for
+## the rows that state a mission as a fact rather than as an epithet.
+##
+## A mission missing from this table degrades to the BARE band name — never to `Ashfell ()`, which is
+## why the caller tests `has` rather than reading a default out of it.
+const PARTY_SHORT_LABELS := {
+	"scout": "Scout",
+	"hunt": "Hunt",
+	# A denial raid's parenthetical is `Raid`, not `Deny`: the key is the sim's mission id, the word is
+	# what the player calls the thing (the same split `EXPEDITION_MISSION_LABELS` makes above).
+	"deny": "Raid",
+	"trade": "Trade",
+}
+
+## How the mission word joins the name: `<band> (<mission>)`.
+const PARTY_NAME_FORMAT := "%s (%s)"
+
 const EXPEDITION_PHASE_LABELS := {
 	"outbound": "Outbound",
 	"awaiting": "Awaiting orders",

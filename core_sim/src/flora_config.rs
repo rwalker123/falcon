@@ -32,6 +32,7 @@ use sim_runtime::TerrainType;
 use thiserror::Error;
 
 use crate::config_load::{load_config_from_env, ConfigLoadError};
+use crate::hashing::splitmix64;
 use crate::labor_config::{ForageLaborConfig, NO_FORAGE_CAPACITY};
 
 pub const BUILTIN_FLORA_CONFIG: &str = include_str!("data/flora_config.json");
@@ -793,16 +794,6 @@ impl FloraConfig {
 /// The sort (**weight DESC, then species key ASC**) is a *total* order, deliberately: `HashMap`
 /// iteration order is unstable, and this table is published on the wire, so ties broken by anything
 /// incidental would make the snapshot vary run to run.
-/// splitmix64 — a pure, deterministic 64-bit mixer (the same recipe `hydrology.rs` uses for its
-/// flat-tie jitter). No state, no RNG: the same input always produces the same output.
-#[inline]
-fn splitmix64(mut z: u64) -> u64 {
-    z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
-}
-
 /// FNV-1a over a tile's `(x, y)` — a deterministic, order-sensitive hash of the coordinate, so two
 /// tiles get uncorrelated realization draws.
 #[inline]

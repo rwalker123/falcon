@@ -39,8 +39,8 @@ use sim_runtime::{
 
 use crate::{
     components::{
-        available_workers, fragments_to_contract, BandEquipment, BandId, BandTravel, BuildSource,
-        Expedition, ExpeditionMission, LaborAllocation, LaborAssignment, LaborTarget,
+        available_workers, fragments_to_contract, BandEquipment, BandId, BandName, BandTravel,
+        BuildSource, Expedition, ExpeditionMission, LaborAllocation, LaborAssignment, LaborTarget,
         PendingMigration, PopulationCohort, PowerNode, SourcePriority, SourceYield, Tile, FODDER,
         FOOD, NO_RAID_FLOOR,
     },
@@ -1389,6 +1389,7 @@ mod tests {
             entity: Entity::from_raw(1),
             // This fixture asserts on the derived readouts, not on band identity.
             band_id: None,
+            band_name: None,
             cohort,
             allocation: Some(allocation),
             expedition: None,

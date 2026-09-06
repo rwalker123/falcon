@@ -213,11 +213,12 @@ signal roster_occupant_selected(kind: String, id: Variant)
 signal system_note_requested(label: String, detail: String)
 
 ## `band_id` (as a String) → the name this HUD gives that band, published on every snapshot from the
-## player-band roster. **The snapshot carries no band NAME**: the sim writes a positional
-## `Band <BandId>` into a demographic event's label and repeats the id as a `band=` detail token, so
-## the event dock can re-label the row with whatever the rest of the HUD calls that band. The client
-## name is a ROSTER POSITION and the sim's is a durable id, so the two routinely disagree — the token
-## is the only thing that can join them, and this map is the only place the join is possible.
+## player-band roster AND its detached parties. The sim writes `Band <BandId>` into a demographic
+## event's label — an ID, not a row number — and repeats that id as a `band=` detail token, because a
+## label is composed where no roster is in reach. The HUD's own name for the band is the cohort's
+## `name` run through `HudFormat.band_name` (which tags a party with its mission word), so the two
+## renderings differ by construction; the token is the only thing that can join them, and this map is
+## the only place the join is possible.
 signal band_labels_changed(labels: Dictionary)
 
 ## PURE FALLBACK build identifier of THIS client — used only when no git stamp is present.
@@ -2119,8 +2120,8 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # (first) stays the default actor; `player_bands` backs the assign controls' band-picker.
     # Split expeditions out of the band roster: they are detached scout/hunt parties, never a labor
     # actor band, and must not be counted by the cycler, listed in the band-picker, or given
-    # band-style attention labels. The attention producers key off the bands-only list, so an
-    # expedition never surfaces as "Band N starving/losing/idle".
+    # band-style attention labels. The attention producers key off the bands-only list, so a party
+    # never surfaces as "<band> starving/losing/idle" — its own producer says "awaiting orders".
     var new_sizes: Dictionary = {}
     var player_band: Dictionary = {}
     var player_bands: Array = []
@@ -2146,13 +2147,21 @@ func update_band_alerts(populations_variant: Variant) -> void:
     _band_labor.ingest_snapshot_bands(new_sizes, player_band, player_bands, player_expeditions)
     # 3a. Publish this roster's band NAMES for the event dock (see `band_labels_changed`). Keyed by
     # the durable `band_id` the sim puts in an event's `band=` token, valued with the same
-    # `HudFormat.band_display_name` the cycler, the picker and the orb's rows all use — so one band
-    # has one name across every surface. Rebuilt each snapshot, so a roster change relabels the
-    # dock's already-held rows too.
+    # `HudFormat.band_name` the cycler, the picker and the orb's rows all use — so one band has one
+    # name across every surface. Rebuilt each snapshot, so a roster change relabels the dock's
+    # already-held rows too.
+    #
+    # **PARTIES ARE PUBLISHED ALONGSIDE THE BANDS**, because a detached party carries its OWN
+    # `band_id` and the sim writes events about it — without them a scout party's rows rendered with
+    # the sim's raw `Band <id>` and nothing joined onto it (issue #615). A party's value is its home
+    # band's name plus the mission word, exactly as the map marker reads.
     var band_labels: Dictionary = {}
-    for i in range(player_bands.size()):
-        var roster_band: Dictionary = player_bands[i]
-        band_labels[str(int(roster_band.get("band_id", -1)))] = HudFormat.band_display_name(roster_band, i + 1)
+    for roster_band_variant in player_bands:
+        var roster_band: Dictionary = roster_band_variant
+        band_labels[str(int(roster_band.get("band_id", -1)))] = HudFormat.band_name(roster_band)
+    for party_variant in player_expeditions:
+        var party: Dictionary = party_variant
+        band_labels[str(int(party.get("band_id", -1)))] = HudFormat.band_name(party)
     band_labels_changed.emit(band_labels)
     # 4. Feed the band/expedition half to the turn-orb controller, which caches it and pushes the whole
     # registry (bands + the fork producer) as ONE replace — set_attention is wholesale, so a separate

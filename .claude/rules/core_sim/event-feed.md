@@ -294,9 +294,11 @@ importance one.
 > `ferocity 0` quarry the feed carries no `hunt_danger` row and a `hunt_report` row whose
 > `hunters_wounded` is strictly positive.
 
-**The label names `Band {id}`**, because the snapshot carries no band *name* — the client renders a
-positional "Band N" (`HudFormat.band_display_name`). Every event also carries the id as a `band=`
-token, which is what lets the client re-label the row with whatever it calls that band.
+**The label names `Band {id}`**, and every event also carries the id as a `band=` token — which is
+what lets the client re-label the row with the band's real name. The **name** rides
+`PopulationCohortState.name` on the cohort row, not on the event: an event is a fact about a moment
+and the roster is where a band's identity is published, so a name copied onto every line would be one
+more place for the two to disagree. See `.claude/rules/core_sim/band-names.md`.
 
 `Option<&BandId>` / `Option<&mut DemographicFlowAccumulator>` on the query: worldgen gives every
 real band both, and `demographic_events::every_resident_band_carries_a_flow_accumulator` fails if a

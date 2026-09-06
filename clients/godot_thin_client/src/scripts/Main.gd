@@ -2712,11 +2712,11 @@ func _connect_event_dock() -> void:
     if hud != null and hud.has_signal("system_note_requested") and not hud.is_connected(
             "system_note_requested", Callable(self, "_on_system_note_requested")):
         hud.connect("system_note_requested", Callable(self, "_on_system_note_requested"))
-    # THE DOCK NAMES A BAND THE WAY THE REST OF THE HUD DOES. The snapshot carries no band NAME, so
-    # the sim writes a positional `Band <BandId>` into a demographic event's label and repeats the id
-    # in the detail's `band=` token; the client's own name is a ROSTER POSITION, which the HUD owns.
-    # So the HUD publishes the map and the dock does the substitution — the sim's label is never
-    # changed, and neither surface reaches into the other.
+    # THE DOCK NAMES A BAND THE WAY THE REST OF THE HUD DOES. An event label is composed sim-side
+    # with no roster in reach, so it says `Band <BandId>` and repeats the id in the detail's `band=`
+    # token; the display name lives on the cohort, which the HUD owns. So the HUD publishes the
+    # id→name map and the dock does the substitution — the sim's label is never changed, and neither
+    # surface reaches into the other.
     if hud != null and hud.has_signal("band_labels_changed") and not hud.is_connected(
             "band_labels_changed", Callable(self, "_on_band_labels_changed")):
         hud.connect("band_labels_changed", Callable(self, "_on_band_labels_changed"))

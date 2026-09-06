@@ -315,23 +315,35 @@ func connections() -> Array:
 	return _connections
 
 ## **WHAT THIS CLIENT CALLS THE BAND WITH THIS DURABLE `band_id`** — `""` when the roster holds no
-## such band, which is the answer a caller must be able to act on rather than a name it can print.
+## such band at all, which is the answer a caller must be able to act on rather than a name it can
+## print. (Empty is never a NAME: a cohort with no `name` still resolves through
+## `HudFormat.band_name`'s id fallback.)
 ##
-## **THERE IS EXACTLY ONE BAND-NAMING RULE IN THIS CLIENT AND THIS IS THE JOIN ONTO IT.** A band's
-## name is its ROSTER POSITION (`HudFormat.band_display_name`) — the cycler, the band picker, the
-## faction page and the event dock's `band=` substitution all say `Band 2` for the same band because
-## they all resolve it that way. Anything that holds a band by its id and needs a label — a shipment's
-## destination, a connection's subject — comes here, so a band cannot be called two things on two
-## surfaces. (The dock keeps its own `{band_id: name}` dictionary rather than calling this, because it
-## must relabel rows it is already holding when the roster changes; it is built from the same
-## `band_display_name` in the same pass, so the two cannot disagree.)
+## **THE SIM OWNS THE NAME; THIS IS THE JOIN FROM A DURABLE `band_id` ONTO IT** (issue #615). The
+## cohort carries its own `name`, minted at founding and unchanged by another band's death, and
+## `HudFormat.band_name` is the single rule that turns a cohort into words — the cycler, the band
+## picker, the faction page and the event dock's `band=` substitution all go through it, so one band
+## cannot be called two things on two surfaces. Anything holding a band by its id and needing a label
+## — a shipment's destination, a connection's subject, an event row — comes here. (The dock keeps its
+## own `{band_id: name}` dictionary rather than calling this, because it must relabel rows it is
+## already holding when the roster changes; it is built from the same `band_name` in the same pass, so
+## the two cannot disagree.)
+##
+## **EXPEDITION PARTIES ARE SEARCHED TOO, AND THAT IS NOT AN EXTRA** — a party carries its own
+## `band_id`, so an event about one found nothing while this looked at resident bands alone and the
+## row rendered nameless. Bands first, then parties: a resident band is the commoner subject, and the
+## two id spaces do not overlap, so the order is only a cost ordering.
 func band_label_for_id(band_id: int) -> String:
 	if band_id == HudConst.NO_BAND_ID:
 		return ""
-	for i in range(_player_bands.size()):
-		var candidate: Dictionary = _player_bands[i]
+	for candidate_variant in _player_bands:
+		var candidate: Dictionary = candidate_variant
 		if int(candidate.get("band_id", HudConst.NO_BAND_ID)) == band_id:
-			return HudFormat.band_display_name(candidate, i + 1)
+			return HudFormat.band_name(candidate)
+	for party_variant in _player_expeditions:
+		var party: Dictionary = party_variant
+		if int(party.get("band_id", HudConst.NO_BAND_ID)) == band_id:
+			return HudFormat.band_name(party)
 	return ""
 
 ## **THE TIES ONE BAND HOLDS**, in the ledger's own order (the sim publishes a stable `BTreeMap`
