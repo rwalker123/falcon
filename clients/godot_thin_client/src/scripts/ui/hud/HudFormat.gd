@@ -28,7 +28,9 @@ const PEOPLE_DEPENDENCY_BASE := 100
 ## SHORT on purpose: the chip's face already carries the count, so the tooltip only has to say what a
 ## dependent IS and who carries them. The long version (which also quoted the ratio) explained the
 ## jargon without making it any more useful — the ratio itself is gone from the UI entirely.
-const PEOPLE_DEPENDENCY_TOOLTIP := """Children and elders — they eat from the larder but cannot be put to work.
+## The food store is `storage`, never `larder` — a tooltip is read at a glance, and one store carries
+## one word across the panel (`DetailFormat.FERTILITY_LABEL_RESERVE` and its trend twins).
+const PEOPLE_DEPENDENCY_TOOLTIP := """Children and elders — they eat from your storage but cannot be put to work.
 %d working-age adults support them."""
 ## Appended when dependents outnumber workers — the reason the chip is WARN-tinted.
 const PEOPLE_DEPENDENCY_HEAVY_TOOLTIP := "\nMore mouths than hands."

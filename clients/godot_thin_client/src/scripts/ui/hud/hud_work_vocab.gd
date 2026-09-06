@@ -1342,6 +1342,10 @@ const WORK_ROW_OPEN_HINT := "Click the row for detail and actions."
 ## The glyphs are each rung's EXISTING mark, reused (`DetailFormat.CULTIVATION_GLYPH` /
 ## `field_glyph` / `pastoral_glyph` / `CORRAL_GLYPH`) — see the block above them for why the pastoral
 ## rung has to borrow the `tame` verb's ◎.
+##
+## The penned rung's running cost names the food store `storage`, never `larder` — these tooltips are
+## read at a glance, and one store carries one word across the panel
+## (`DetailFormat.FERTILITY_LABEL_RESERVE` and its trend twins).
 const WORK_ROW_RUNG_TENDED_TOOLTIP := "Tended Patch — this ground has been cultivated."
 
 ## …and the committed crop when the patch carries one (`committed_display_name`, e.g. "Wild Emmer").
@@ -1353,7 +1357,7 @@ const WORK_ROW_RUNG_FIELD_CROP_FORMAT := "Field — %s sown, and there is no imp
 
 const WORK_ROW_RUNG_PASTORAL_TOOLTIP := "Pastoral herd — tamed, and it keeps to your camp."
 
-const WORK_ROW_RUNG_PENNED_TOOLTIP := "Penned herd — corralled, and there is no taming it further. It eats from your larder every turn."
+const WORK_ROW_RUNG_PENNED_TOOLTIP := "Penned herd — corralled, and there is no taming it further. It eats from your storage every turn."
 
 ## The under-contained managed-herd note (fauna neglect-escape arc): fewer keepers staffed than the
 ## herd needs, so it sheds whole animals into a nearby wild herd. Drives the row's amber stripe + the

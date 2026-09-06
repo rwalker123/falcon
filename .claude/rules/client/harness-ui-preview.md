@@ -1019,11 +1019,11 @@ band's registration beside it so "registers nothing" cannot pass on a build that
 anywhere.
 
 **Falsified four ways from this chapter**, each failing a disjoint set: dropping the dim treatment
-(2), dropping the hover (5), re-gating the row (9 — including the frame's own both-surfaces
-precondition), and registering a disclosure on the dormant row (2). The hover set is what the two
-no-hover negatives replaced: **a sentence registered here reaches the whole block**, so the modern
-failure they catch is the opposite one — a hay sentence coming BACK and landing under Growth or
-Morale.
+(2), re-registering a hover on the dormant row (2), re-gating the row (9 — including the frame's own
+both-surfaces precondition), and registering a disclosure on the dormant row (2). Those two negatives
+are what the five hover claims became: **a sentence registered here reaches the whole block**, so the
+failure they catch is the opposite of the old one — a hay sentence coming BACK and landing under
+Growth or Morale.
 
 **`band_hay_and_pen` is the frame that carries a BAND and a PEN at once**, which the drawer cannot do
 on its own: a player band's detail moves into the Band/City dock when one is present, so the dock
