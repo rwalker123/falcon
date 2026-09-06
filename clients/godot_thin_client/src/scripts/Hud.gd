@@ -1159,16 +1159,17 @@ func update_tile_temperatures(temperatures_variant: Variant) -> void:
 func update_food_modules(modules_variant: Variant) -> void:
     _band_labor.set_food_modules(modules_variant)
 
-## The world's KIT ROSTER and the FOUR job defaults (`docs/plan_denial_raid.md`) — the four compose
+## The world's KIT ROSTER and the FIVE job defaults (`docs/plan_denial_raid.md`) — the compose
 ## sheets' picker list, ingested once per world onto `_band_labor` (`kits()` / `default_kit_id()`).
 ## `Main` forwards the wire keys together because they are one fact; a roster whose defaults named
 ## kits it did not contain would open every picker on an entry it cannot show. Scout and Warrior
 ## joined the list when the roster gained gear for them — until then the band-wide roles had no kit
-## axis and published `""`.
+## axis and published `""` — and EXPEDITION joined it with the ranging kit, which is what a
+## provisioned party gathers and hunts on (`KitRoster.JOB_EXPEDITION`).
 func update_kit_roster(kits_variant: Variant, default_hunt: Variant, default_forage: Variant,
-        default_scout: Variant, default_warrior: Variant) -> void:
+        default_scout: Variant, default_warrior: Variant, default_expedition: Variant) -> void:
     _band_labor.set_kit_roster(kits_variant, String(default_hunt), String(default_forage),
-        String(default_scout), String(default_warrior))
+        String(default_scout), String(default_warrior), String(default_expedition))
 
 ## The world's CRAFTING CATALOGUES (`docs/plan_crafting_and_materials.md` §7) — the materials, the
 ## shared rating vocabulary, the recipe book and each faction's craft knowledge. Forwarded by `Main`

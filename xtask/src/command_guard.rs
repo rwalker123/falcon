@@ -422,8 +422,12 @@ enum KitToken {
     /// A kit-bearing variant whose optional tail is absent. To the server that means **the job's
     /// default**, which is exactly what a dropped selection also looks like.
     Omitted,
-    /// A variant with no kit axis at all (`move_band`, `cancel_order`, `recall_expedition`, and the
-    /// scouting `send_expedition`, which is not a kit job).
+    /// A variant with no kit axis at all (`move_band`, `cancel_order`, `recall_expedition`).
+    ///
+    /// **`send_expedition` used to be on this list and is not any more.** A scouting party inherited
+    /// the *hunt* job's default and the player never picked it; it resolves the `expedition` job's
+    /// kit now — the one that arms both the gathering and the hunting a provisioned party feeds
+    /// itself with — so its optional `kit <id>` tail is asserted like every other kit-bearing verb's.
     NotKitBearing,
 }
 
@@ -436,7 +440,8 @@ fn kit_token(payload: &CommandPayload) -> KitToken {
         | CommandPayload::BuildKit { kit_id, .. }
         | CommandPayload::SendDenialRaid { kit_id, .. }
         | CommandPayload::SendHuntExpedition { kit_id, .. }
-        | CommandPayload::SendTradeExpedition { kit_id, .. } => kit_id.clone(),
+        | CommandPayload::SendTradeExpedition { kit_id, .. }
+        | CommandPayload::SendExpedition { kit_id, .. } => kit_id.clone(),
         _ => return KitToken::NotKitBearing,
     };
     match optional {

@@ -792,15 +792,17 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     if snapshot.has("connections") and SnapshotSections.changed(snapshot, "connections"):
         _hud_invoke("update_connections", [snapshot["connections"]])
     if snapshot.has("kits") and SnapshotSections.changed(snapshot, "kits"):
-        # The KIT ROSTER + the FOUR job defaults, forwarded as ONE call: the compose sheets' pickers
+        # The KIT ROSTER + the FIVE job defaults, forwarded as ONE call: the compose sheets' pickers
         # need the list and the "what does the verb take when I name none" answer together, and a
         # roster ingested without its defaults would open every picker on nothing. Gated on `kits`
         # alone — the defaults are scalars riding the same section and change with it. The scout and
         # warrior entries arrived with the expanded roster; before it the band-wide roles had no kit
-        # axis and so no default to name.
+        # axis and so no default to name. The EXPEDITION entry arrived with the ranging kit, which is
+        # what a provisioned party gathers and hunts on (`KitRoster.JOB_EXPEDITION`).
         _hud_invoke("update_kit_roster", [snapshot["kits"],
             snapshot.get("default_hunt_kit_id", ""), snapshot.get("default_forage_kit_id", ""),
-            snapshot.get("default_scout_kit_id", ""), snapshot.get("default_warrior_kit_id", "")])
+            snapshot.get("default_scout_kit_id", ""), snapshot.get("default_warrior_kit_id", ""),
+            snapshot.get("default_expedition_kit_id", "")])
     # The CRAFTING CATALOGUES, forwarded as ONE call for the reason the kit roster is: they are one
     # fact, and a recipe book ingested without its materials renders a rail with no craft tracks and
     # costs in materials the panel cannot name. **Gated on `craft_knowledge`, not on `materials`** —
@@ -1213,7 +1215,13 @@ static func format_move_band(payload: Dictionary) -> Dictionary:
         "message": "Move band to (%d, %d)." % [x, y],
     }
 
-## `send_expedition <faction_id> <band_id> <party_workers> <x> <y>`
+## `send_expedition <faction_id> <band_id> <party_workers> <x> <y> [kit <id>]`
+##
+## **THE KIT IS THE ONE OPTIONAL TAIL**, and it is `send_hunt_expedition`'s named pair rather than a
+## sixth positional: the grammar is otherwise CLOSED at five tokens, so a stray positional is an
+## `UnexpectedArgument` parse error. It is omitted when the pick equals the `expedition` job's default
+## (`_kit_token`), which is what lets the sim resolve its own default and keeps a composition that
+## never touched the picker byte-identical to the pre-picker line.
 static func format_send_expedition(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
@@ -1224,8 +1232,12 @@ static func format_send_expedition(payload: Dictionary) -> Dictionary:
     var y := int(payload.get("y", -1))
     if party_workers <= 0 or x < 0 or y < 0:
         return {}
+    var line := "send_expedition %d %d %d %d %d" % [faction, band_id, party_workers, x, y]
+    # …and the kit LAST, after the positionals: the parser lifts the pair out of the tail before
+    # reading them, but a human reading the log should see the positional grammar unbroken.
+    line += _kit_token(payload)
     return {
-        "line": "send_expedition %d %d %d %d %d" % [faction, band_id, party_workers, x, y],
+        "line": line,
         "message": "Send scouting expedition (%d) to (%d, %d)." % [party_workers, x, y],
     }
 

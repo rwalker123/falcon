@@ -2354,6 +2354,50 @@ the face carries the job glyph the list deliberately omits.
   selectable; a worn component degrades the tier rather than removing the kit, and the wire carries no
   availability field to invent one from.
 
+### The `expedition` job — ONE kit arming TWO ways to feed a party
+
+`KitRoster.JOB_EXPEDITION` is the fifth job and the only one whose kit spans both food webs. A
+PROVISIONED detached party (Scout and Trade, never a hunt or a denial raid) walks out with a larder,
+drains it every turn, and is the only party in the game that has to REPLACE what it eats while out of
+contact with its band — by gathering off the stands it passes and, only if that was not enough, by
+taking the game it meets. The `ranging` kit (spears + sled + baskets) arms both halves, which is why
+this is its own job rather than `hunt`; the wire names its default as `defaultExpeditionKitId`
+(`HudBandLaborState.default_kit_id`, the fifth arm of that `match`).
+
+**NO KIT IS EVER WITHHELD ON THIS JOB, and that is a design decision rather than an omission.**
+`kit_offer`'s weapon rule is asked of a NAMED quarry, and a scouting party does not know what it will
+meet — the choice is a bet on the terrain it is heading into, not a solved answer — so the launch
+sheet passes NO quarry and every kit the roster lists for the job is selectable. The mechanism is
+`kit_offer`'s own early return for a job that is not `hunt`; nothing special-cases the sheet.
+
+**ITS HINT LINE STATES BOTH FEEDING PATHS, which is the whole reason the job exists.** A line quoting
+only the hunt axis would present half a choice as the whole of it — the player would read *Armed* and
+never learn the same pick decided whether the party can gather at all. `KitRoster.expedition_hint`
+composes three clauses, one per axis the job reads (the weapon, the hunt's haul, the forage web's
+haul), then the ordinary shortfall clause where somebody is going without.
+
+- **It names NO tier and NO number**, the source jobs' own rule (see the headstone above): a rate is
+  what ONE equipped worker gets and describes nobody on a nine-person sheet.
+- **It names NO item either.** `KitRoster` may not map an axis to the component behind it — `big_game`
+  takes its attack from `spears` and `trapping` from `traps` — so each clause says what the party can
+  DO. The shortfall clause beneath names the KIT, which is the thing the player picked.
+- **The bare side of each clause is a real, common state rather than a failure.** Coverage arms each
+  item independently, so a partly-equipped ranging party is modelled; the unequipped wording reads as
+  a smaller amount and never as a warning.
+
+**`hint_states_gear(job)` is the one test `build_kit_row` asks** to choose between a plain `Label`
+(all one run, all `DANGER` when short) and the rich-text line that tints the shortfall run alone. A
+source job's line is ONLY ever a shortfall and needs neither; a role card and a ranging party both
+state what the gear buys first, and reddening THAT would make a crew that is merely short read as one
+that is entirely wrong. `_shortfall_tinted` is the shared tinting helper, so a wording change to
+either producer cannot take the colour rule with it.
+
+**`expedition` IS DELIBERATELY ABSENT FROM `KIT_JOB_GLYPHS` / `KIT_JOB_MARKS` and takes the
+fallback.** The client ships no mark for it: `scout.png` is the SCOUT ROLE's footprints and this job
+covers the trade mission too, so lending it here would draw a scout on a shipment's picker — one art
+file for two activities, the drift `hunt.png` was written to end. The fallback is the honest answer —
+a carrying basket reading *some gear, unspecified*, which is what a kit spanning two food webs is.
+
 ### The compose sheet's FIELD ROWS are one family — `Band:` · `Kit` · `Quarry`
 
 Three rows, three widget TYPES, three different modules building them: the band picker

@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 103
+const EXPECTED_CHECKPOINTS := 115
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -892,6 +892,11 @@ func run(harness) -> void:
 	# **APPENDED, never inserted.** States render into one long-lived `HudLayer`, so a block moved is a
 	# set of frames changed — and this one deliberately follows the two ledgers it is the third of.
 	await _standing_bill_states()
+
+	# ---- THE SCOUT LAUNCH SHEET'S KIT PICKER ------------------------------------------------------
+	# **APPENDED, never inserted**, for the reason the block above states: states render into one
+	# long-lived `HudLayer`, so a block moved is a set of frames changed.
+	await _expedition_kit_states()
 
 	# band_alerts (above) left _player_band as an alert-fixture band (no work_range, far from the food
 	# tile); seed a NEAR band so the forage controls resolve an in-range actor.
@@ -1781,3 +1786,208 @@ func _lines_any_contain(lines: Array[String], needle: String) -> bool:
 		if String(line).contains(needle):
 			return true
 	return false
+
+# ---- THE SCOUT LAUNCH SHEET'S KIT PICKER (`.claude/rules/core_sim/expeditions.md`) ---------------
+#
+# A detached scouting party used to ignore equipment: the launch stamped the HUNT job's default on it
+# and the player never saw the choice. It resolves the `expedition` job now — the ranging kit, which
+# arms BOTH of the ways a provisioned party feeds itself out of contact with its band — so the sheet
+# has a second input and this block is what proves it reaches the glass.
+#
+# **THE THREE FRAMES ARE THE THREE THINGS THE LINE HAS TO BE ABLE TO SAY**: fully outfitted, short of
+# outfits, and bare-handed. A single frame would pass on a builder that printed one clause and never
+# reached the others.
+
+## The band the sheet is composed on — the reference band with every hand idle, so the party stepper
+## has a ceiling to move under and the compose footer opens at all.
+const EXPEDITION_KIT_IDLE_WORKERS := 12
+
+## A party the band's SCARCEST ranging item covers completely, and one it does not. The kit is spears
+## + sled + baskets and the fixture band holds 4 baskets (`BandFx.KIT_FORAGE_HEADCOUNT`), so a party
+## of 4 is fully outfitted and a party of 9 leaves five people short — which is the shortfall clause's
+## own arithmetic, stated here from the harness's side rather than read back off the line.
+const EXPEDITION_KIT_COVERED_PARTY := 4
+const EXPEDITION_KIT_SHORT_PARTY := 9
+
+## What the shortfall sentence must read at the short party — composed from the vocabulary's own
+## format, so a copy edit moves the claim with the line rather than breaking it.
+const EXPEDITION_KIT_SHORTFALL_COVERED := 4
+
+## The destination the command claim sends the party to; any land tile does, the assertion being about
+## the TAIL and not the target.
+const EXPEDITION_KIT_TARGET_X := 40
+const EXPEDITION_KIT_TARGET_Y := 22
+
+func _expedition_kit_states() -> void:
+	# ⛔ **THE BAND HAS TO STATE ITS GEAR LEDGER, or the shortfall clause is silent for the WRONG
+	# reason.** `shortfall_line` withholds itself entirely where a band has stated no `count` for an
+	# item — it will not accuse a band of a shortage the wire never described — and the bare reference
+	# fixture states none, so the short state would have photographed a covered party.
+	var launch_band := BandFx.with_equipped_kit(BandFx.band_fixture())
+	launch_band["idle_workers"] = EXPEDITION_KIT_IDLE_WORKERS
+	launch_band["labor_assignments"] = []
+	var panel: BandCityPanel = h.BAND_CITY_PANEL_SCENE.instantiate()
+	h.add_child(panel)
+	await h.get_tree().process_frame
+	panel.reservation_changed.connect(func(edge: int, size: float) -> void:
+		MAIN_SCRIPT.push_hud_strip(h._hud, BAND_PANEL_RESERVER, edge, size,
+			MAIN_SCRIPT.band_dock_overlays_hud(edge, size, h._hud, panel)))
+	panel.set_dock(SIDE_RIGHT)
+	panel.set_active_tab(BandCityPanel.ZONE_PARTIES)
+	h._hud.update_band_alerts([launch_band])
+	h._hud.show_unit_selection(launch_band)
+	await h._settle()
+	h._hud.set_band_city_panel(panel)
+	# ⛔ **THE DOCK IS HANDED THE BAND EXPLICITLY, because injecting the panel does not re-render the
+	# selection into it** — it comes up on whatever `panel_band()` the walk left behind, which is the
+	# reference band with 13 of its 16 hands already assigned. Every claim below is about a party
+	# stepper's ceiling and about how far this band's baskets reach into it, so a sheet composed on the
+	# wrong band measures the wrong thing while looking entirely ordinary.
+	h._hud._bandpanel.render_band(launch_band)
+	await h._settle()
+	# The sheet is staged the way the other harnesses stage a compose form — the mission is already
+	# settled by the footer button that would have opened it, so writing the pair is the whole of it.
+	h._hud._bandpanel._party_compose_open = true
+	h._hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_SCOUT
+	h._hud._bandpanel._send_expedition_count = EXPEDITION_KIT_COVERED_PARTY
+	h._hud._bandpanel.rerender()
+	await h._settle()
+
+	# State exp-kit-a — **THE SHEET AS IT OPENS**: party stepper, then the Kit row on the ranging kit
+	# (its `(default)` mark), then the gear line stating BOTH feeding paths, then the hint and the
+	# send. A party of 4 is inside the band's basket count, so no shortfall run renders.
+	await h._save("expedition_kit_ranging")
+	var sheet: Control = h._hud._bandpanel._party_compose_sheet
+	h._assert_hud("the scout launch sheet mounts a kit picker at all",
+		Q.find_meta_node(sheet, KitRoster.KIT_PICKER_META) != null)
+	# **THE PICKER OFFERS EVERY `expedition` KIT AND WITHHOLDS NONE.** A scouting party does not know
+	# what it will meet, so the per-quarry greying the hunt sheets do must not fire here — and the
+	# roster carries exactly two entries for this job, the ranging kit and the null one.
+	var entries := _picker_entries(sheet)
+	h._assert_hud("…listing both `expedition` kits (%d entries)" % entries.size(),
+		entries.size() == 2)
+	var withheld := 0
+	for row_variant in entries:
+		if bool((row_variant as Dictionary)["disabled"]):
+			withheld += 1
+	h._assert_hud("…and greying NONE of them — a scout's kit is a bet, not a solved answer",
+		withheld == 0)
+	# **THE GEAR LINE STATES BOTH WEBS.** This is the claim the whole arc turns on: one kit arms the
+	# hunting AND the gathering, so a line quoting only the hunt axis would hide half the choice.
+	var hint := _kit_hint_text(sheet)
+	h._assert_hud("the gear line states the HUNT path — \"%s\"" % hint,
+		hint.contains(HudComposeVocab.KIT_EXPEDITION_HUNT_ARMED)
+		and hint.contains(HudComposeVocab.KIT_EXPEDITION_HAUL_EQUIPPED))
+	h._assert_hud("…and the GATHER path in the same line, which is the half a hunt-only line hides",
+		hint.contains(HudComposeVocab.KIT_EXPEDITION_GATHER_EQUIPPED))
+	h._assert_hud("…and no shortfall run, this party being inside the band's outfits",
+		not hint.contains(HudComposeVocab.KIT_SHORTFALL_FORMAT % [
+			EXPEDITION_KIT_SHORTFALL_COVERED, EXPEDITION_KIT_COVERED_PARTY, ""]))
+
+	# State exp-kit-b — **THE SHORT PARTY**: the same kit, nine people, four complete outfits. The
+	# gear line is unchanged (what a kit arms is a fact about the kit) and the shortfall run is
+	# appended in danger ink beside it — the role cards' two-run treatment, one job over.
+	h._hud._bandpanel._send_expedition_count = EXPEDITION_KIT_SHORT_PARTY
+	h._hud._bandpanel.rerender()
+	await h._settle()
+	await h._save("expedition_kit_short")
+	var short_hint := _kit_hint_text(h._hud._bandpanel._party_compose_sheet)
+	var expected_shortfall := HudComposeVocab.KIT_SHORTFALL_FORMAT % [
+		EXPEDITION_KIT_SHORTFALL_COVERED, EXPEDITION_KIT_SHORT_PARTY,
+		BandFx.KIT_RANGING_DISPLAY_NAME + HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
+	h._assert_hud("a party past the band's outfits reads \"%s\"" % expected_shortfall,
+		short_hint.contains(expected_shortfall))
+	h._assert_hud("…while still stating both feeding paths above it",
+		short_hint.contains(HudComposeVocab.KIT_EXPEDITION_HUNT_ARMED)
+		and short_hint.contains(HudComposeVocab.KIT_EXPEDITION_GATHER_EQUIPPED))
+
+	# State exp-kit-c — **THE NULL KIT PICKED**: a party sent out bare-handed. Every clause flips to
+	# its unequipped twin, on BOTH webs — the reading that makes the trade legible — and the shortfall
+	# is silent, a kit that carries nothing leaving nobody short.
+	h._hud._bandpanel._role_kit_ids[h._hud._bandpanel._role_kit_key(launch_band,
+		KitRoster.JOB_EXPEDITION)] = BandFx.KIT_ID_NONE
+	h._hud._bandpanel.rerender()
+	await h._settle()
+	await h._save("expedition_kit_none")
+	var bare_hint := _kit_hint_text(h._hud._bandpanel._party_compose_sheet)
+	h._assert_hud("the null kit reads bare-handed on BOTH paths — \"%s\"" % bare_hint,
+		bare_hint.contains(HudComposeVocab.KIT_EXPEDITION_HUNT_BARE)
+		and bare_hint.contains(HudComposeVocab.KIT_EXPEDITION_HAUL_BARE)
+		and bare_hint.contains(HudComposeVocab.KIT_EXPEDITION_GATHER_BARE))
+
+	# **AND THE PICK REACHES THE COMMAND — PNG-LESS, because a tail is not a picture.** The send is
+	# driven through the REAL path (the sheet's confirm arms the targeting; the targeting's tile click
+	# builds the payload), so this covers the whole carry rather than a hand-built dictionary. The
+	# PAIR is the claim: the null pick emits the tail, and the DEFAULT pick emits none — a builder
+	# that always appended satisfies the first alone, and one that never did satisfies the second.
+	var bare_line := _expedition_command_line()
+	h._assert_hud("a non-default kit rides the command — \"%s\"" % bare_line,
+		bare_line.ends_with(" kit %s" % BandFx.KIT_ID_NONE))
+	h._hud._bandpanel._party_compose_open = true
+	h._hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_SCOUT
+	h._hud._bandpanel._role_kit_ids[h._hud._bandpanel._role_kit_key(launch_band,
+		KitRoster.JOB_EXPEDITION)] = BandFx.KIT_DEFAULT_EXPEDITION
+	h._hud._bandpanel.rerender()
+	await h._settle()
+	var default_line := _expedition_command_line()
+	h._assert_hud("…and the job default omits it, so the sim resolves its own — \"%s\"" % default_line,
+		not default_line.contains(" kit "))
+
+	# Release the dock and hand the reference band back — a stranded reserved edge moves every frame
+	# in the chapters after this one, and the compose sheet is shared HUD state.
+	h._hud._bandpanel._party_compose_open = false
+	h._hud._bandpanel._party_compose_mission = ""
+	h._hud._bandpanel._send_expedition_count = HudConst.WORKER_STEP
+	h._hud.set_band_city_panel(null)
+	panel.queue_free()
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud.clear_selection()
+	await h._settle()
+
+## Every entry the mounted kit picker is showing, as `{text, disabled}` in roster order — read off the
+## LIVE `OptionButton` the sheet mounted, never off `KitRoster.build_kit_row` called a second time: an
+## expectation re-derived through the builder under test asserts nothing about what was rendered.
+## (`compose_rungs.gd` carries the same reader for the hunt sheets; a chapter owns the query it uses.)
+func _picker_entries(surface: Node) -> Array:
+	var picker := Q.find_meta_node(surface, KitRoster.KIT_PICKER_META) as OptionButton
+	var rows: Array = []
+	if picker == null:
+		return rows
+	for index in picker.item_count:
+		rows.append({
+			"text": picker.get_item_text(index),
+			"disabled": picker.is_item_disabled(index),
+		})
+	return rows
+
+## The kit row's HINT as plain text — the line under the picker, read off whichever node the row
+## mounted. **It is a `RichTextLabel` on this job** (the gear clause is quiet and only the shortfall
+## run is tinted), so `get_parsed_text` is what strips the bbcode; `""` when no hint rendered at all.
+func _kit_hint_text(surface: Node) -> String:
+	var node := Q.find_meta_node(surface, KitRoster.KIT_HINT_META)
+	if node is RichTextLabel:
+		return (node as RichTextLabel).get_parsed_text()
+	if node is Label:
+		return (node as Label).text
+	return ""
+
+## Press the scout sheet's confirm, click a destination, and return the command line `Main` built for
+## it — the whole emit path, driven the way a player drives it. `""` if any leg of it went missing,
+## which fails the claim rather than passing it quietly.
+func _expedition_command_line() -> String:
+	var confirm := Q.find_meta_node(h._hud._bandpanel._party_compose_sheet,
+		HudWidgets.SEND_EXPEDITION_CONFIRM_META) as Button
+	if confirm == null:
+		return ""
+	# ⛔ **THE WITNESS IS A CONTAINER, NEVER A LOCAL.** A GDScript lambda captures a local by VALUE, so
+	# a closure assigning to a `String` here reports that nothing was ever emitted — the harness trap
+	# `chapters/trade.gd`'s destination pick already cost a run over.
+	var caught: Array[String] = []
+	var record := func(payload: Dictionary) -> void:
+		caught.append(String(MAIN_SCRIPT.format_send_expedition(payload).get("line", "")))
+	h._hud.send_expedition_requested.connect(record)
+	confirm.pressed.emit()
+	h._hud._targeting.try_dispatch({"x": EXPEDITION_KIT_TARGET_X, "y": EXPEDITION_KIT_TARGET_Y})
+	h._hud.send_expedition_requested.disconnect(record)
+	return caught[0] if not caught.is_empty() else ""

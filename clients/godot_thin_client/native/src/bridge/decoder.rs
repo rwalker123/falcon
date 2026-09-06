@@ -678,6 +678,14 @@ fn decode_delta_against(
     if let Some(default_warrior_kit) = delta.subsistence().and_then(|s| s.defaultWarriorKitId()) {
         frame.insert_changed("default_warrior_kit_id", default_warrior_kit);
     }
+    // The RANGING party's default, decoded on BOTH paths for exactly the reason the four above are —
+    // see `snapshot_to_dict`: a whole-section field read only on the full path republishes the
+    // baseline's value for the life of the world.
+    if let Some(default_expedition_kit) =
+        delta.subsistence().and_then(|s| s.defaultExpeditionKitId())
+    {
+        frame.insert_changed("default_expedition_kit_id", default_expedition_kit);
+    }
     // The whole effective `EquipmentConfig` as one `serde_json` string — the Workbench's two config
     // pages parse it themselves. `insert_changed`, like its siblings: the sim diffs it as a
     // `Whole<String>`, so it rides a delta ONLY when it moved and presence here IS the change

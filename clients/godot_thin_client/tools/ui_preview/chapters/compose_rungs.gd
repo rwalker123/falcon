@@ -899,7 +899,8 @@ func _picker_entry(surface: Node, display_name: String) -> Dictionary:
 func _kit_offer_states() -> void:
 	var roster := _offer_roster()
 	h._hud.update_kit_roster(roster, BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
-		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION)
 	var deer := _offer_quarry("game_deer_offer", "Red Deer", "big", OFFER_DEER_BODY_MASS,
 		OFFER_DEER_DEFENSE, SourceForecast.HUSBANDRY_CEILING_WILD)
 	var rabbit := _offer_quarry("game_rabbit_offer", "Rabbit Warren", "small",
@@ -992,7 +993,8 @@ func _kit_offer_states() -> void:
 	# roster the prologue seeded, and a chapter that left its own in place would re-list every later
 	# picker.
 	h._hud.update_kit_roster(BandFx.kit_roster_fixture(), BandFx.KIT_DEFAULT_HUNT,
-		BandFx.KIT_DEFAULT_FORAGE, BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+		BandFx.KIT_DEFAULT_FORAGE, BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION)
 	h._hud._drawercompose.close_compose_sheet()
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_kit_id(KitRoster.NO_KIT_ID)
@@ -1038,7 +1040,8 @@ func _quarry_defaulting_to(id: String, species: String, size_class: String, body
 func _herd_default_kit_states() -> void:
 	var roster := _offer_roster()
 	h._hud.update_kit_roster(roster, BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
-		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION)
 	var deer := _quarry_defaulting_to(DEFAULT_KIT_DEER_ID, "Red Deer", "big",
 		OFFER_DEER_BODY_MASS, OFFER_DEER_DEFENSE, BandFx.KIT_DEFAULT_HUNT)
 	var warren := _quarry_defaulting_to(DEFAULT_KIT_WARREN_ID, "Rabbit Warren", "small",
@@ -1082,7 +1085,8 @@ func _herd_default_kit_states() -> void:
 
 	# RESTORE, as the offer block does — the states after this one price against the prologue's roster.
 	h._hud.update_kit_roster(BandFx.kit_roster_fixture(), BandFx.KIT_DEFAULT_HUNT,
-		BandFx.KIT_DEFAULT_FORAGE, BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+		BandFx.KIT_DEFAULT_FORAGE, BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION)
 	h._hud._drawercompose.close_compose_sheet()
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_kit_id(KitRoster.NO_KIT_ID)
@@ -1177,7 +1181,8 @@ func _sled_roster() -> Array:
 func _assert_the_greying_follows_the_animal() -> void:
 	var kits := _sled_roster()
 	h._hud.update_kit_roster(kits, BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
-		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION)
 	# **THE PRECONDITION IS THAT THERE IS A HAUL TIER TO TELL KITS APART BY AT ALL** — read off the
 	# fixture dicts rather than through `kit_uses`, which is a term of the predicates under test. The
 	# stalking kit must beat the null kit on the ONE carry axis, or every claim below is asked on a
@@ -1496,7 +1501,8 @@ func _assert_the_appended_axes_read_the_band() -> void:
 func _assert_a_pen_prices_on_the_hunters_carry() -> void:
 	var kits_before: Array = h._hud._band_labor.kits()
 	h._hud.update_kit_roster(_pen_axis_roster(), BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
-		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION)
 	var band := _pen_axis_band(BandFx.hunt_preview_local_band())
 	var wild := _corral_twin(false)
 	var pen := _corral_twin(true)
@@ -1520,7 +1526,8 @@ func _assert_a_pen_prices_on_the_hunters_carry() -> void:
 		SourceForecast.FORECAST_PER_WORKER_KEY, 0.0))
 	h._hud._compose.set_hunt_kit_id(kit_before)
 	h._hud.update_kit_roster(kits_before, BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
-		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION)
 	h._assert_hud("precondition: the herd states a per-worker rate at all (%s)" % str(published),
 		published > 0.0)
 	# THE WILD READING IS UNCHANGED — a sled still hauls a carcass in off the range at the reference.
@@ -1869,7 +1876,8 @@ func _kit_swap_held_price(price: String) -> String:
 
 func _kit_swap_turn_estimate_states() -> void:
 	h._hud.update_kit_roster(_offer_roster(), BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
-		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION)
 	# The band has to publish a `kit_tiers` row for BOTH kits, or the geared frame reads the ungeared
 	# answer for a reason that has nothing to do with the picker.
 	var keepers := _pen_axis_band(BandFx.hunt_preview_local_band())

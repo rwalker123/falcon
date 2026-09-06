@@ -218,7 +218,8 @@ func _ready() -> void:
 	# is a token the REAL parser has to accept rather than one the client never emits.
 	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
 		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
-		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION)
 	# The band's TIES, which are what the shipment form draws its destinations from — a sheet with no
 	# live tie renders a sentence instead of a send, and the trade drive would have nothing to press.
 	_hud.update_connections(_connection_fixtures())
@@ -276,9 +277,17 @@ func _drive_move_band() -> void:
 	_hud._targeting.try_dispatch({"x": TARGET_X, "y": TARGET_Y})
 	await _settle()
 
-## `send_expedition` — outfit a party off the selected band, then click the destination tile.
+## `send_expedition` — outfit a party off the selected band with a KIT, then click the destination
+## tile.
+##
+## **A NON-DEFAULT KIT, so the line carries the `kit <id>` tail rather than omitting it.**
+## `Main._kit_token` omits the token when the selection equals the job default — which is the shipped
+## case and is byte-identical to the pre-picker line — so composing `ranging` here would assert
+## nothing about the kit at all. The hunt and denial drives take the same precaution for the same
+## reason, and `_record` fails loudly if a drive ever composes the default by accident.
 func _drive_send_expedition() -> void:
-	_hud._targeting.begin_send_expedition(_hud._band_labor.panel_band(), PARTY_WORKERS)
+	_hud._targeting.begin_send_expedition(_hud._band_labor.panel_band(), PARTY_WORKERS,
+		BandFx.KIT_ID_NONE, BandFx.KIT_DEFAULT_EXPEDITION)
 	_hud._targeting.try_dispatch({"x": TARGET_X, "y": TARGET_Y})
 	await _settle()
 
@@ -754,6 +763,9 @@ const KIT_BEARING_KINDS := {
 	"assign_labor": true,
 	"send_hunt_expedition": true,
 	"send_denial_raid": true,
+	# The SCOUTING party's kit — the `expedition` job's, not the hunt one's. It joined this list when
+	# a ranging party stopped inheriting the hunt default and got a kit the player picks.
+	"send_expedition": true,
 	# The per-entry builders kit. It rides the SAME `_kit_token` rule as the other three, which is the
 	# whole reason *"pick the default"* clears the override rather than needing a literal of its own.
 	"build_kit": true,

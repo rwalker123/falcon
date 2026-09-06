@@ -345,6 +345,23 @@ const JOB_FORAGE := SourceForecast.LABOR_KIND_FORAGE
 const JOB_SCOUT := "scout"
 const JOB_WARRIOR := "warrior"
 
+## **THE RANGING PARTY'S JOB — one crew, two ways to feed itself** (`equipment.json` → the ranging
+## kit, `.claude/rules/core_sim/expeditions.md`). It is the job the two PROVISIONED missions launch
+## on (Scout and Trade): such a party walks out with a larder, drains it every turn, and is the only
+## party in the game that has to REPLACE what it eats while out of contact with its band — which it
+## does by gathering off the stands it passes and, only if that was not enough, by taking the game it
+## meets. One kit arms both halves, which is why this is its own job rather than `JOB_HUNT`.
+##
+## ⛔ **A HUNT OR DENIAL PARTY IS NOT ON IT.** Those live off their kills, draw no provisions, and
+## resolve their kit off the QUARRY's derived default (`HERD_DEFAULT_KIT_KEY`) — so they stay on
+## `JOB_HUNT`, and the per-quarry greying that goes with it stays theirs.
+##
+## ⛔ **NO KIT IS EVER WITHHELD ON THIS JOB, and that is deliberate rather than an omission.**
+## `kit_offer`'s weapon rule is asked of a NAMED quarry, and a scouting party does not know what it
+## will meet: the choice is a bet on the terrain it is heading into, not a solved answer, so the
+## launch sheet passes no quarry and every kit the roster lists for this job is selectable.
+const JOB_EXPEDITION := "expedition"
+
 ## **THE BUILDING ROLE IS A JOB TOO** (`docs/plan_standing_upkeep.md` §2.5). A build's gear offset used
 ## to ride the SOURCE ROW's kit — a Corral was priced off the hunt row's husbandry gear — and it is
 ## read off this role's own row now that the build crew has left the tile.
@@ -1549,7 +1566,28 @@ static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 	# not what the shortfall rule was written about.
 	if is_band_wide_role(job):
 		return role_hint(kits, kit, band, job)
+	# **A RANGING PARTY'S LINE STATES BOTH FEEDING PATHS**, because one kit arms both and a line
+	# quoting only the hunt axis would hide half of what the player is choosing. Same two-clause shape
+	# as the role cards' — the neutral gear reading, then the shortfall where there is one.
+	if job == JOB_EXPEDITION:
+		return expedition_hint(kits, kit, band, crew)
 	return shortfall_line(kits, kit, band, job, crew)
+
+## **DOES THIS JOB'S HINT CARRY A NEUTRAL CLAUSE BESIDE THE SHORTFALL?** — the one test `build_kit_row`
+## asks to choose between a plain `Label` (all one run, all `DANGER` when short) and the rich-text
+## line that tints the shortfall run alone. A source job's line is ONLY ever a shortfall, so it needs
+## neither; a role card and a ranging party both state what the gear buys first, and reddening THAT
+## would make a crew that is merely short read as one that is entirely wrong.
+static func hint_states_gear(job: String) -> bool:
+	return is_band_wide_role(job) or job == JOB_EXPEDITION
+
+## The gear-stating hint as bbcode, whichever kind of job it is — the one dispatcher, so
+## `build_kit_row` never spells the fork twice.
+static func hint_markup(kits: Array, kit: Dictionary, band: Dictionary, job: String,
+		crew: int = KIT_CREW_UNCOMPOSED) -> String:
+	if job == JOB_EXPEDITION:
+		return expedition_hint_markup(kits, kit, band, crew)
+	return role_hint_markup(kits, kit, band, job)
 
 ## The shortfall sentence itself, or `""`. Split out of `tier_hint` so a caller can ask for it without
 ## going through the role fork, and so the harnesses can drive the three coverage states directly.
@@ -1649,8 +1687,71 @@ static func role_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 ## harnesses compare and what any non-rich host would need; the two compose the identical clauses, so
 ## a wording change reaches both.
 static func role_hint_markup(kits: Array, kit: Dictionary, band: Dictionary, job: String) -> String:
-	var plain := role_hint(kits, kit, band, job)
-	var shortfall := shortfall_line(kits, kit, band, job)
+	return _shortfall_tinted(role_hint(kits, kit, band, job),
+		shortfall_line(kits, kit, band, job))
+
+## **THE RANGING PARTY'S LINE — what this kit buys on EACH of the two ways the party can feed
+## itself, then the shortfall where somebody is going without.**
+##
+## **BOTH PATHS OR NEITHER, and that is the whole reason the line exists.** `KitJob::Expedition` is
+## the one job whose kit arms two food webs at once (`equipment.json` → the ranging kit: spears and a
+## sled for the roadside kill, baskets for what it gathers), and a hint quoting only the hunt axis
+## would present half a choice as the whole of it — the player would read "Armed" and never learn
+## that the same pick decided whether the party can gather at all.
+##
+## **IT NAMES NO TIER AND NO NUMBER**, exactly as the source jobs' line no longer does: a rate is
+## what ONE equipped worker gets, and quoting it beside a party of nine describes nobody on the sheet
+## (see `tier_hint`'s headstone). What it states instead is which of the three axes this kit lifts
+## above the roster's bare-handed tier, which is a fact about the KIT and answerable for any crew
+## size.
+##
+## **IT NAMES NO ITEM EITHER.** This file may not map an axis to the component behind it — `big_game`
+## takes its attack from `spears` and `trapping` from `traps`, and guessing that is what once printed
+## the spears' condition on a trap party's row — so the clauses say what the party can DO. The
+## shortfall clause beneath names the KIT, which is the thing the player actually picked.
+static func expedition_hint(kits: Array, kit: Dictionary, band: Dictionary,
+		crew: int = KIT_CREW_UNCOMPOSED) -> String:
+	var gear := expedition_gear_clause(kits, kit)
+	var parts: Array[String] = []
+	if gear != "":
+		parts.append(gear)
+	var shortfall := shortfall_line(kits, kit, band, JOB_EXPEDITION, crew)
+	if shortfall != "":
+		parts.append(shortfall)
+	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
+
+## The same line with the SHORTFALL RUN ALONE tinted — the role cards' rule, one job over. See
+## `role_hint_markup` for why the gear clause is left in the quiet ink.
+static func expedition_hint_markup(kits: Array, kit: Dictionary, band: Dictionary,
+		crew: int = KIT_CREW_UNCOMPOSED) -> String:
+	return _shortfall_tinted(expedition_hint(kits, kit, band, crew),
+		shortfall_line(kits, kit, band, JOB_EXPEDITION, crew))
+
+## **THE THREE CLAUSES, ONE PER AXIS THIS JOB READS** — the weapon, the hunt's haul, the gather's
+## haul — each resolved off the ROSTER's fresh tier against the roster's own bare-handed tier, never
+## off the band's worn row. Which paths a kit arms is a property of the kit; how far the band's gear
+## reaches into the party is the shortfall clause's business, and the two must not be run together.
+##
+## `""` for a kit the roster does not carry, which the caller renders as no line at all.
+static func expedition_gear_clause(kits: Array, kit: Dictionary) -> String:
+	if kit.is_empty():
+		return ""
+	var parts: Array[String] = [
+		HudComposeVocab.KIT_EXPEDITION_HUNT_ARMED if kit_arms_the_party(kits, kit) \
+			else HudComposeVocab.KIT_EXPEDITION_HUNT_BARE,
+		HudComposeVocab.KIT_EXPEDITION_HAUL_EQUIPPED \
+			if kit_uses(kits, kit, KIT_HUNT_CARRY_KEY) \
+			else HudComposeVocab.KIT_EXPEDITION_HAUL_BARE,
+		HudComposeVocab.KIT_EXPEDITION_GATHER_EQUIPPED \
+			if kit_uses(kits, kit, KIT_FORAGE_CARRY_KEY) \
+			else HudComposeVocab.KIT_EXPEDITION_GATHER_BARE,
+	]
+	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
+
+## Tint the shortfall RUN of an already-composed line, leaving every other run to the label's default
+## ink. Shared by the two gear-stating hints rather than written twice, so a wording change to either
+## cannot take the colour rule with it.
+static func _shortfall_tinted(plain: String, shortfall: String) -> String:
 	if plain == "" or shortfall == "":
 		return plain
 	return plain.replace(shortfall, HudComposeVocab.KIT_HINT_SHORTFALL_MARKUP % [
@@ -1808,8 +1909,8 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 		# text** — so a copy edit cannot silently take the colour with it.
 		var shortfall := shortfall_line(kits, selected, band, job, crew)
 		var hint: Control
-		if is_band_wide_role(job):
-			# ⛔ **A ROLE CARD'S LINE IS TWO RUNS AND ONLY THE SECOND IS A WARNING.** `1-tile sight per
+		if hint_states_gear(job):
+			# ⛔ **A GEAR-STATING LINE IS TWO RUNS AND ONLY THE SECOND IS A WARNING.** `1-tile sight per
 			# vantage` is a fact about the gear; reddening it would make a card that is merely short
 			# read as a card that is entirely wrong. A `Label` carries ONE `font_color`, so this line
 			# could only be all-red or all-quiet — which is why it rendered a live shortfall in the
@@ -1818,8 +1919,8 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 			# **IT COSTS NO ROW**, which is the constraint that picked the mechanism: the band zone's
 			# two-column split is authored against MEASURED block heights, so a second line here would
 			# re-open a flank that has been re-authored four times.
-			hint = HudWidgets.alloc_hint_markup(role_hint_markup(kits, selected, band, job),
-				HudStyle.INK_DIM)
+			hint = HudWidgets.alloc_hint_markup(
+				hint_markup(kits, selected, band, job, crew), HudStyle.INK_DIM)
 		else:
 			# A source job's line is ONLY ever a shortfall, so it is all one run and all DANGER.
 			var plain := HudWidgets.alloc_hint_label(hint_text)

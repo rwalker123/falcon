@@ -568,10 +568,20 @@ const KIT_ID_WARRIOR := "warrior"
 ## which one a queue entry gets is DERIVED from that entry's own web.
 const KIT_ID_HURDLING := "hurdling"
 const KIT_ID_TILLAGE := "tillage"
+## **THE RANGING KIT — the only entry on the `expedition` job** (`equipment.json`). It lists that job
+## alone, so it appears in no hunt, forage, scout, warrior or builders picker in either harness; the
+## one surface that lists it is the SCOUT launch sheet. It is the roster's only kit that equips
+## THREE items across BOTH food webs, which is the whole reason the job exists — see the scout
+## sheet's own comment in `BandPanelController._build_compose_sheet`.
+const KIT_ID_RANGING := "ranging"
+## Its display name, named because the shortfall sentence quotes it — `4 of 9 Ranging kits available`
+## — and a chapter composing that expectation from a literal would drift from the roster silently.
+const KIT_RANGING_DISPLAY_NAME := "Ranging kit"
 const KIT_DEFAULT_HUNT := KIT_ID_BIG_GAME
 const KIT_DEFAULT_FORAGE := KIT_ID_GATHERING
 const KIT_DEFAULT_SCOUT := KIT_ID_WAYFINDING
 const KIT_DEFAULT_WARRIOR := KIT_ID_WARRIOR
+const KIT_DEFAULT_EXPEDITION := KIT_ID_RANGING
 
 ## The `clubs` tier the warrior kit grants — well under the spear's 20, because a raid is people
 ## fighting animals at the camp with whatever is by the fire rather than a hunting party that chose
@@ -684,6 +694,23 @@ static func kit_roster_fixture() -> Array:
 			"item_ids": [KIT_ITEM_HOES],
 		},
 		{
+			# **THE RANGING KIT — three items, two food webs, ONE crew** (`equipment.json`). It is the
+			# `expedition` job's default and the only kit on this roster that lifts the attack, the
+			# hunt's carry AND the forage web's carry above bare at once, which is exactly what the
+			# scout sheet's gear line has to be able to state. It equips no axis to a value the roster
+			# does not already carry, so it moves neither `unequipped_tier` nor `equipped_tier` and no
+			# frame rendered before it existed changes.
+			"id": KIT_ID_RANGING, "display_name": KIT_RANGING_DISPLAY_NAME,
+			"jobs": [KitRoster.JOB_EXPEDITION],
+			"attack": KIT_ATTACK_EQUIPPED,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_EQUIPPED,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_EQUIPPED,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
+			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
+			"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
+			"item_ids": [KIT_ITEM_SPEARS, KIT_ITEM_SLED, KIT_ITEM_BASKETS],
+		},
+		{
 			"id": KIT_ID_NONE, "display_name": "No kit",
 			# **`builders` IS ON THIS LIST BECAUSE THE SHIPPED ROSTER PUTS IT THERE**
 			# (`equipment.json`'s `none` lists every job, and `default_kits.builders` IS `none`). It is
@@ -694,8 +721,12 @@ static func kit_roster_fixture() -> Array:
 			# is the bare-handed pick on a keeping row too — how a player conserves the tool on one
 			# site while its neighbour goes on using it — and `default_kits.agriculture` /
 			# `.husbandry` are BOTH `none`, so the roster was contradicting the defaults it ships with.
+			# …and `expedition` too, for the same reason and against the same config: `none` is what a
+			# player picks to send a ranging party out bare-handed, and a roster that omitted it would
+			# leave the scout sheet's picker a one-entry list with no choice to make.
 			"jobs": ["hunt", "forage", "scout", "warrior", "builders",
-				KitRoster.JOB_AGRICULTURE, KitRoster.JOB_HUSBANDRY],
+				KitRoster.JOB_AGRICULTURE, KitRoster.JOB_HUSBANDRY,
+				KitRoster.JOB_EXPEDITION],
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,

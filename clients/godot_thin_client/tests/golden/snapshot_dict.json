@@ -305,6 +305,7 @@
       "timer": 196
     }
   ],
+  "default_expedition_kit_id": "default_expedition_kit_id",
   "default_forage_kit_id": "default_forage_kit_id",
   "default_hunt_kit_id": "default_hunt_kit_id",
   "default_scout_kit_id": "default_scout_kit_id",

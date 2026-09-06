@@ -2366,3 +2366,47 @@ together — `RUNG_FX.stamp_patch` derives `current_rung` from the flag, so the 
 cannot be set apart. `_assert_repair_card_states_no_countdown` asks its BUILT row at a full meter and
 its unbuilt row on a patch that really is short of the rung; the claim (the fork on `built` happens
 before the countdown is read) is unchanged by the correction.
+
+## The scout launch sheet's kit picker (`chapters/band_expedition.gd`, the ranging-kit arc)
+
+Three frames — `expedition_kit_ranging` / `_short` / `_none` — appended LAST in the chapter's frame
+walk, plus nine claims. **The three frames are the three things the gear line has to be able to say**:
+fully outfitted, short of outfits, and bare-handed on both webs. One frame would pass on a builder
+that printed one clause and never reached the others.
+
+- **The picker's CONTENTS are the claim no frame can carry.** A scouting party is never told a kit
+  cannot be used, so the block asserts both `expedition` kits are listed AND that NONE is greyed —
+  the per-quarry withholding the hunt sheets do must not fire here, and a greyed row is invisible in a
+  thumbnail with the popup shut.
+- **The gear line is asserted for BOTH webs on the SAME line.** `hint.contains(GATHER_EQUIPPED)` is
+  the load-bearing one: a hunt-only line renders a perfectly ordinary hint.
+- **The command claim is a PAIR and PNG-less** — a tail is not a picture. The null pick must emit
+  ` kit none` and the DEFAULT pick must emit no tail at all: a builder that always appended satisfies
+  the first alone, one that never did satisfies the second. It is driven through the REAL path (the
+  sheet's confirm arms the targeting; `try_dispatch` builds the payload) so it covers the whole carry
+  rather than a hand-built dictionary.
+
+**Three harness traps this block walked into, all previously recorded elsewhere in this file and all
+met again here:**
+
+- ⛔ **A LAMBDA CAPTURES A LOCAL BY VALUE.** The command witness assigned to a `String` and reported
+  that nothing was ever emitted. It is an `Array` box now — the same trap `chapters/trade.gd`'s
+  destination pick cost a run over.
+- ⛔ **INJECTING THE PANEL DOES NOT RENDER THE SELECTION INTO IT.** The dock came up on whatever
+  `panel_band()` the walk had left behind — the reference band with 13 of 16 hands assigned — so the
+  party stepper capped at 3 and every claim was about the wrong band while looking ordinary. The block
+  calls `render_band` explicitly.
+- ⛔ **`shortfall_line` IS SILENT ON A BAND THAT STATES NO GEAR LEDGER**, and silence is also what a
+  fully-covered party produces. The bare `BandFx.band_fixture()` states no `kit_item_conditions`, so
+  the short state photographed a covered party; the block stages `BandFx.with_equipped_kit` and the
+  band's four baskets against a party of nine are what make `4 of 9 Ranging kits available` reachable.
+
+**`BandFx.kit_roster_fixture()` gained the `ranging` entry and `none` gained the `expedition` job.**
+The ranging kit lists that job ALONE and equips no axis to a value the roster does not already carry,
+so it moves neither `unequipped_tier` nor `equipped_tier` and appears in no hunt, forage, scout,
+warrior or builders picker in either harness — **no frame rendered before it existed changes.**
+
+**`command_guard` drives `send_expedition` with a NON-DEFAULT kit** (`BandFx.KIT_ID_NONE` against
+`KIT_DEFAULT_EXPEDITION`), and the verb joined `KIT_BEARING_KINDS`; `xtask/src/command_guard.rs`'s
+`kit_token` gained the `SendExpedition` arm, that verb having left the `NotKitBearing` list. Without
+both halves the drive would prove only that a line PARSES.

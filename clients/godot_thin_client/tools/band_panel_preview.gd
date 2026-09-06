@@ -958,7 +958,8 @@ func _ready() -> void:
 	# food modules above are — a roster seeded per frame would give one sheet a picker and the next none.
 	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
 		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
-		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION)
 	# **THE CANNED FORECAST ANSWERER — prologue, because a raid sheet without it renders no numbers
 	# at all.** The pre-launch forecasts are a request/response on the command socket now, and there is
 	# no server here; `ForecastQuery` would sit pending forever and every raid readout would be its
@@ -16635,7 +16636,8 @@ func _open_queue_row_kit_face(key: String) -> String:
 func _assert_a_road_under_way_reads_its_verb_and_its_kit() -> void:
 	_hud.update_kit_roster(_road_kit_roster(),
 		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
-		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION)
 	_hud.update_route_rungs(_road_queue_catalog())
 	_hud.update_road_network([_road_under_way_row()])
 	_set_forage_patches(_build_queue_patches(2))
@@ -16725,7 +16727,8 @@ func _assert_a_road_under_way_reads_its_verb_and_its_kit() -> void:
 func _restore_road_kit_roster() -> void:
 	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
 		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
-		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION)
 
 ## Put the roads and the catalog back where the states after this one expect them — SHARED harness
 ## state, the road frames' own rule: a road left on the model is a road the next state never staged.
