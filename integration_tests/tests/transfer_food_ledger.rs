@@ -365,6 +365,14 @@ fn the_food_ledger_reconciles_when_a_shipment_lands() {
         .get_mut::<PopulationCohort>(host)
         .expect("the band exists")
         .faction = FOREIGN_FACTION;
+    // **This frame is captured for the faction that OWNS the destination**, because the
+    // destination's own ledger rows are what this test reads. A snapshot publishes a *foreign* band
+    // redacted — position, name and scale only (`factions.md` → "What a foreign band publishes") —
+    // so a frame captured for the sender would carry the host's terms at zero by design, which is a
+    // fact about entitlement rather than about the food ledger this file pins. `FOREIGN_FACTION` is
+    // foreign to the *sender*, which is all the fixture wanted of it.
+    app.world
+        .insert_resource(core_sim::ViewerFaction(FOREIGN_FACTION));
     let host_id = band_id(&app, host);
 
     // A loaded party standing in the destination's camp: it hands the cargo over on the next turn.

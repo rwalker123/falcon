@@ -2527,9 +2527,27 @@ pub fn capture_snapshot(
             )
         })
         .unwrap_or_default();
+    // ⛔ **WIRE-LEVEL FOG FOR PEOPLE — the SAME seam the herd list uses.**
+    //
+    // `HerdSnapshotInputs::herd_is_visible` asks `VisibilityLedger::is_visible(viewer, x, y)` and
+    // short-circuits on `fog_enabled`; this asks the identical question, so there is one notion of
+    // *"the viewer can see this"* rather than a second one free to drift from it. `Active`, not
+    // `Discovered`, for the herd list's reason: ground you saw two hundred turns ago says nothing
+    // about where a band is camped today, and a band wanders.
+    //
+    // **Fails CLOSED.** A band whose tile does not resolve to a position, and an absent faction map
+    // (before the first `calculate_visibility`, or the turn after a rollback clears the ledger),
+    // both read as not-visible — matching `visibility_raster_from_ledger`, which emits an
+    // all-unexplored raster in the same state.
+    let foreign_band_is_visible = |position: Option<UVec2>| -> bool {
+        if !config.fog_enabled {
+            return true;
+        }
+        position.is_some_and(|pos| visibility_ledger.is_visible(viewer_faction.0, pos.x, pos.y))
+    };
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
-        .map(
+        .filter_map(
             |(
                 entity,
                 cohort,
@@ -2542,6 +2560,31 @@ pub fn capture_snapshot(
                 bench,
             )| {
                 let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
+                // ⛔ **THE THREE TIERS — resolved FIRST, so nothing below it is even computed for a
+                // band the viewer is not entitled to.** See
+                // [`crate::snapshot::population::redacted_population_state`].
+                //
+                //   1. **your own band** — the full row, unchanged;
+                //   2. **a foreign band standing where you can see** — a redacted row, because the
+                //      client colours foreign markers by faction and draws them, so the row has to
+                //      exist;
+                //   3. **a foreign band anywhere else** — no row at all.
+                //
+                // **`fog_enabled` moves the line between 2 and 3 and NEVER between 1 and 2.** Fog
+                // decides what you can *see*; it is not an entitlement switch, so turning it off
+                // reveals where the rival's camps are and still says nothing about their insides.
+                if cohort.faction != viewer_faction.0 {
+                    if !foreign_band_is_visible(current_pos) {
+                        return None;
+                    }
+                    return Some(crate::snapshot::population::redacted_population_state(
+                        entity,
+                        band_id,
+                        band_name,
+                        cohort,
+                        current_pos,
+                    ));
+                }
                 // A band is "traveling" while a `move_band` order is still en route to its target.
                 let is_traveling = travel
                     .map(|t| current_pos.map(|p| p != t.target).unwrap_or(true))
@@ -2627,7 +2670,7 @@ pub fn capture_snapshot(
                         config.map_topology.wrap_horizontal,
                     )
                 });
-                population_state(PopulationStateInputs {
+                Some(population_state(PopulationStateInputs {
                     entity,
                     band_id,
                     band_name,
@@ -2683,7 +2726,7 @@ pub fn capture_snapshot(
                         forage: &forage_registry,
                         herds: &herd_registry,
                     },
-                })
+                }))
             },
         )
         .collect();

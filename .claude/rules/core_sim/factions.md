@@ -11,6 +11,9 @@ paths:
   - "core_sim/tests/faction_support/mod.rs"
   - "core_sim/tests/multi_faction_start.rs"
   - "core_sim/tests/defection_contact_gate.rs"
+  - "core_sim/src/snapshot/capture.rs"
+  - "core_sim/src/snapshot/population.rs"
+  - "core_sim/tests/foreign_band_redaction.rs"
 ---
 
 # Factions — who plays the world, and who is allowed to command
@@ -252,6 +255,77 @@ logistics link rule is stated.
 *better-off* faction; contact is the half this arc landed, and it is the half that stops a band
 walking to strangers on the far side of the world.
 
+## What a foreign band publishes — THREE TIERS, by what the viewer can see
+
+A snapshot is **one viewer's view**. Herds are fog-filtered, connections are filtered on the
+observer's faction and roads are gated on `Discovered` — the band list was the one collection
+published whole, with no `With`, no faction predicate and no visibility test on
+`PopulationSnapshotQuery`. Every connected client therefore received every band's complete internal
+state: morale, larder, runway, knowledge fragments, labor assignments, equipment, bench, build
+queue, reachable stockpile, outfitting window, exact position — and its **pending defection**. The
+Godot client declined to *draw* most of it, which is presentation, not a boundary.
+
+| Tier | Which band | What the frame carries |
+|---|---|---|
+| 1 | **your own** | the full row, unchanged in every field |
+| 2 | **a foreign band standing where you can see** | a **redacted** row: `entity`, `band_id`, `faction`, `name`, `current_x`/`current_y`, `size`. Everything else at its default |
+| 3 | **a foreign band anywhere else** | **no row at all** |
+
+**Tier 2 exists rather than folding into tier 3** because the client already colours foreign markers
+by faction and draws them: with no row there is nothing to draw, and rendering that works today
+breaks. What it publishes is what standing on a ridge watching a stranger's camp tells you — where
+they are, who they are, roughly how many. `size` comes from `cohort.size`, which is exactly the
+`size` the owner's own row publishes, so an observer and the owner never disagree about how many
+people are standing there.
+
+**`entity` is on the list because it is the DELTA'S ROW KEY**, not a fact about the band:
+`diff_new` keys populations by it, so omitting it would collide every redacted row onto `0` and
+leave the append-only delta unable to tell two of them apart.
+
+### The redaction is an ALLOW-LIST, not a set of deletions
+
+`redacted_population_state` names six fields and takes **everything else from `Default`**. A row
+built the other way round — full, then blanked — fails open on exactly the field nobody thought
+about, and the wire is append-only, so there is always a next field. Built this way, a field added
+to `PopulationCohortState` later is redacted by construction.
+
+**A non-optional table is redacted by being DEFAULT-VALUED, not by being absent.**
+`PopulationCohortState.bench` is a plain `BenchState`, so the codec writes a bench on every row and
+always will; the default bench is an *idle* one — empty recipe, no crew, no progress — which says
+nothing about the band. `core_sim/tests/foreign_band_redaction.rs` accordingly asserts the bench's
+**content**, not its presence.
+
+### The gate is the herd path's visibility seam, and fog is NOT a disclosure switch
+
+Tier 2 vs tier 3 asks `VisibilityLedger::is_visible(viewer, x, y)` and short-circuits on
+`config.fog_enabled` — character for character the question `HerdSnapshotInputs::herd_is_visible`
+asks, so there is one notion of *"the viewer can see this"* rather than a second one free to drift.
+`Active`, not `Discovered`, for the herd list's reason: ground you saw two hundred turns ago says
+nothing about where a band is camped today. It **fails closed** — a band whose tile does not resolve,
+and an absent faction map, both read as not-visible, matching the all-unexplored raster
+`visibility_raster_from_ledger` emits in the same state.
+
+> #### ⛔ `fog_enabled` MOVES THE LINE BETWEEN TIERS 2 AND 3, NEVER BETWEEN 1 AND 2
+>
+> Fog decides what you can **see**; it is not an entitlement switch. With fog off every foreign band
+> gets a row — you can see where their camps are — and every one of those rows is still **redacted**.
+> Wiring `fog_enabled` into the ownership branch would turn a rendering/debug convenience into a
+> data-disclosure toggle, which is the failure this callout exists to name.
+
+### What follows from redacting, downstream of the row
+
+- **`snapshot_demographics` reports nothing for a foreign faction.** It aggregates the published
+  whole-people triple, which a redacted row leaves at zero. That is the correct answer — a rival's
+  age structure is not yours to read — rather than a gap.
+- The sentiment / corruption / military overlays are built from the same published list, so they no
+  longer carry a rival's morale or unrest either. One seam, one answer.
+- `population_state` guarantees `size == children + working + elders` for a band you own. A redacted
+  row deliberately publishes the **scale without the structure**, which is what looking at a camp
+  from a distance gives you; that invariant is an own-band one.
+
+**The `.fbs` did not change**, deliberately: every redacted field expresses "absent" as its existing
+default on the existing table, so there is no append and no merge hazard.
+
 ## The single-faction assumptions that are still live
 
 Two places still read a one-faction world into a roster that may hold more.
@@ -259,7 +333,7 @@ Two places still read a one-faction world into a roster that may hold more.
 | Site | What it assumes |
 |---|---|
 | `telling/mod.rs` (signal sampling) | Takes the registry's **lowest id** as "the player" and filters every band view to it; its own comment says there is no `player_faction` accessor. |
-| `visibility.rs` `ViewerFaction` | A single **global** resource read by `snapshot/capture.rs`, so one snapshot is captured and broadcast to every connected client. |
+| `visibility.rs` `ViewerFaction` | A single **global** resource read by `snapshot/capture.rs`, so one snapshot is captured and broadcast to every connected client. The band filter above made it *load-bearing* rather than merely limiting: the one captured frame is now redacted for everyone who is not `ViewerFaction`, so a second connected human sees their own people as a foreign band. One frame per viewer is what that needs, not a wider filter. |
 
 ## The two-faction fixture
 

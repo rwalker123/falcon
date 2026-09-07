@@ -614,6 +614,56 @@ pub(crate) fn builtin_hunt_crew_levers() -> &'static HuntCrewLevers<'static> {
     })
 }
 
+/// ⛔ **A FOREIGN BAND'S ROW, REDACTED TO WHAT AN OBSERVER CAN ACTUALLY SEE.**
+///
+/// Standing on a ridge watching a stranger's camp tells you **where they are, roughly how many
+/// there are, and what they call themselves**. It does not tell you their morale, their larder,
+/// their runway, what they know, who is assigned to what, what gear they carry, what is on their
+/// bench, what they are building, what stockpile they can reach, or that one of their bands is
+/// about to change sides. Every one of those rode the wire for every band before this
+/// (`factions.md` → "What a foreign band publishes").
+///
+/// # The allow-list is the WHOLE construction, not a set of deletions
+///
+/// Six fields are named and **everything else comes from `Default`**. That is the load-bearing
+/// choice: a field appended to `PopulationCohortState` later is redacted *by construction* rather
+/// than by whoever added it remembering to come here. A redaction written as "build the full row,
+/// then blank the sensitive parts" fails open on exactly the field nobody thought about, which is
+/// the field worth having.
+///
+/// | Published | Why it is not a leak |
+/// |---|---|
+/// | `entity` | the **delta's row key** (`diff_new` keys populations by it), not a fact about the band. Omitting it would collide every redacted row onto key `0` and make the append-only delta unable to tell them apart |
+/// | `band_id` | the durable handle the client already colours and addresses markers by |
+/// | `faction` | whose people they are — the thing you learn *first* by looking at them |
+/// | `name` | who they say they are |
+/// | `current_x` / `current_y` | where they are standing, which is the only reason this row exists at all |
+/// | `size` | a camp's rough scale is legible from outside, and the client sizes its marker with it. Taken from `cohort.size`, which is exactly the `size` the owner's own row publishes (`whole_age_brackets` sums its triple back to it), so an observer and the owner never disagree about how many people are there |
+///
+/// **The published triple is left at zero, and that is not a broken invariant.** `population_state`
+/// guarantees `size == children_count + working_age + elders_count` for a band you own; a redacted
+/// row deliberately publishes the *scale* without the *structure*, which is what looking at a camp
+/// from a distance gives you. Anything aggregating the triple (`snapshot_demographics`) therefore
+/// reports nothing for a foreign faction, which is the correct answer rather than a gap.
+pub(crate) fn redacted_population_state(
+    entity: Entity,
+    band_id: Option<&BandId>,
+    band_name: Option<&BandName>,
+    cohort: &PopulationCohort,
+    current_position: Option<UVec2>,
+) -> PopulationCohortState {
+    PopulationCohortState {
+        entity: entity.to_bits(),
+        band_id: band_id.map(|id| id.0).unwrap_or_default(),
+        name: band_name.map(|name| name.0.clone()).unwrap_or_default(),
+        faction: cohort.faction.0,
+        current_x: current_position.map(|p| p.x).unwrap_or(0),
+        current_y: current_position.map(|p| p.y).unwrap_or(0),
+        size: cohort.size,
+        ..PopulationCohortState::default()
+    }
+}
+
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
     let PopulationStateInputs {
         entity,
