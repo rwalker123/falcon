@@ -362,12 +362,44 @@ apply only where the row describes something that can be *seen*.
 | `discoveredSites` | `snapshot/knowledge.rs` | **Viewer** — the row is whose scouts have been there, not what is on the ground |
 | `greatDiscoveryProgress` | `great_discovery.rs` | **Viewer** — it carries `covert` and an ETA |
 | `greatDiscoveries` | `great_discovery.rs` | **Viewer + any record flagged `publicly_deployed`** — see the exemption below |
+| `greatDiscoveryTelemetry` | `great_discovery.rs` | **Viewer** — and each counter is defined as *how many rows of the list beside it*; see "A derived aggregate is faction-keyed data" |
 | `knowledgeLedger` / `knowledgeTimeline` / `knowledgeMetrics` | `knowledge_ledger.rs` | **Viewer** — entries by `owner_faction`, timeline by `source_faction` (world-level lines, which carry none, are kept), metrics recomputed over the viewer's own entries |
 | `commandEvents` | `snapshot/campaign.rs` | **Viewer** |
 | `pendingForks` / `stanceAxes` / `voiceMedium` | `snapshot/campaign.rs` | **Viewer** |
 | `openingLoadout` | `snapshot/campaign.rs` | **Viewer** — already took `viewer_faction` for its known-crafts list |
 | `tiles`, the rasters, `foodModules`, `climateBands`, the catalogues (`kits`, `materials`, `recipes`, `ladderKnowledge`, `routeRungs`, `campaignProfiles`) | various | **World** — terrain and per-world constants, carrying no faction. The client fogs the map from `visibilityRaster` |
 | `victory.winner` | `snapshot/campaign.rs` | **World** — a winner is public by definition |
+
+### ⛔ A DERIVED AGGREGATE IS FACTION-KEYED DATA, EVEN WITH NO FACTION FIELD
+
+**A count, sum, max or any/all over per-faction state launders that state into a figure that looks
+world-level.** It carries no `faction`, so a sweep that enumerates sections whose *rows* are keyed by
+faction walks straight past it — which is exactly what happened to `greatDiscoveryTelemetry`, whose
+`totalResolved` was `ledger.records.len()`: every faction's resolved discoveries, including the ones
+the viewer-scoped `greatDiscoveries` list beside it deliberately withholds. The symptom on the client
+was a panel printing *"Resolved discoveries: 7"* above a list of 2.
+
+**The rule that replaces "is it filtered": an aggregate is defined as *how many rows of the list it
+summarises*.** "Filtered" passes on any number that happens to be small; agreement with the list is
+the claim a reader of the panel actually depends on, and it is what a test can pin. Where a counter
+summarises no published list, it is scoped by the same predicate the list would use, shared as a
+named function so the two cannot drift — `discovery_reaches_viewer` and
+`constellation_is_a_candidate` exist for that reason and have two callers each.
+
+| Published aggregate | Verdict |
+|---|---|
+| `greatDiscoveryTelemetry.totalResolved` / `.activeConstellations` / `.pendingCandidates` | **Was world, now viewer.** All three counted across every faction |
+| `knowledgeMetrics` (leak warnings/criticals, countermeasures, common knowledge) | **Viewer** — recomputed over the viewer's own ledger entries |
+| `header.populationCount` | **Viewer for free** — it counts the already-filtered band list |
+| `demographics` | **Viewer for free** — same reason: it aggregates the redacted band rows |
+| the sentiment / corruption / military rasters | **Viewer for free** — all three are built from the filtered `population_states` |
+| `openingLoadout.craftableRecipeIds` | **Viewer for free** — an `all()` over a known-crafts map already resolved for `viewer_faction` |
+| `crisisTelemetry` (`modifiersActive`, `warningsActive`, `criticalsActive`, the gauges) | **World, correctly.** A crisis is an event on the map; `ActiveCrisisLedger` is not keyed by faction, and `CrisisGaugeState.band` is a *severity* band, not a band of people |
+| `powerMetrics`, `header.tileCount` / `.powerCount` / `.influencerCount` | **World, correctly** — none of the underlying rows carries a faction |
+| `sentiment`, `axisBias` | **World, correctly** — culture-wide axes with no per-faction storage |
+| `greatDiscoveryDefinitions` | **World, correctly** — *how many constellations exist to chase* is the legitimately world-level number in this arc, and it ships as a catalogue with no faction at all |
+| `victory.modes[].progress` | **World, and not a leak — because victory has no per-faction model at all.** Progress is evaluated from `SimulationMetrics`, and `victory.winner.faction` is hard-coded `FactionId(0)` (`victory.rs`). It is a *third* single-faction assumption, of a different kind from the two below: not a filter that is missing, a model that is absent |
+| `cultureLayers` / `cultureTensions` | **World, correctly.** `CultureOwner` *can* name a band — but only global, regional and tile-local layers are ever published (`capture.rs`), so no band-scoped layer reaches the wire |
 
 ### Three deliberate exemptions, and why each stays
 

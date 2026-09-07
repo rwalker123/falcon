@@ -6,8 +6,11 @@ use std::sync::OnceLock;
 pub(crate) struct GreatDiscoverySnapshotParam<'w, 's> {
     ledger: Res<'w, GreatDiscoveryLedger>,
     readiness: Res<'w, GreatDiscoveryReadiness>,
-    telemetry: Res<'w, GreatDiscoveryTelemetry>,
     registry: Res<'w, GreatDiscoveryRegistry>,
+    // **`GreatDiscoveryTelemetry` is deliberately NOT here.** Its two counters are world-level
+    // server metrics (`SimulationMetrics.great_discovery_candidates` / `_active`); the frame's
+    // counters are derived per viewer from the ledger and the readiness map instead, so the numbers
+    // agree with the lists they sit above. See `snapshot_telemetry`.
     #[system_param(ignore)]
     _marker: std::marker::PhantomData<&'s ()>,
 }
@@ -2794,7 +2797,8 @@ pub fn capture_snapshot(
     let great_discovery_definition_states = snapshot_definitions(&gds.registry);
     let great_discovery_states = snapshot_discoveries(&gds.ledger, viewer_faction.0);
     let great_discovery_progress_states = snapshot_progress(&gds.readiness, viewer_faction.0);
-    let great_discovery_telemetry_state = snapshot_telemetry(&gds.ledger, &gds.telemetry);
+    let great_discovery_telemetry_state =
+        snapshot_telemetry(&gds.ledger, &gds.readiness, viewer_faction.0);
     drop(discovery_scope);
 
     // The contiguous full-grid raster block: terrain, sentiment, corruption, culture,

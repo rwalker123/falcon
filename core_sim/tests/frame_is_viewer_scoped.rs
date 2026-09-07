@@ -22,8 +22,8 @@ mod faction_support;
 use core_sim::{
     publish_baseline_snapshot, run_turn, CommandEventEntry, CommandEventKind, CommandEventLog,
     DiscoveredSites, DiscoveryProgressLedger, FactionInventory, ForageRegistry, GreatDiscoveryId,
-    GreatDiscoveryLedger, GreatDiscoveryRecord, KnowledgeLedger, KnowledgeLedgerEntry, Scalar,
-    SnapshotHistory, VisibilityLedger, CULTIVATION_DISCOVERY_ID,
+    GreatDiscoveryLedger, GreatDiscoveryRecord, GreatDiscoveryRegistry, KnowledgeLedger,
+    KnowledgeLedgerEntry, Scalar, SnapshotHistory, VisibilityLedger, CULTIVATION_DISCOVERY_ID,
 };
 use faction_support::{human_and_ai, world_with, HOME, RIVAL};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -202,6 +202,33 @@ fn a_world_where_both_peoples_have_something_to_hide() -> App {
                 CULTIVATION_DISCOVERY_ID,
                 Scalar::from_f32(RIVAL_PROGRESS),
             );
+        }
+    }
+
+    // **Both peoples partway up a real constellation**, so `activeConstellations` is a live number
+    // rather than a zero that agrees with everything. The requirement ids are read off the LIVE
+    // registry rather than typed in: they are `great_discovery_definitions.json`'s, and a fixture
+    // holding its own copy would go quietly vacuous the day the catalogue is retuned.
+    {
+        let requirements: Vec<u32> = app
+            .world
+            .resource::<GreatDiscoveryRegistry>()
+            .definitions()
+            .next()
+            .expect("the catalogue declares at least one constellation")
+            .requirements
+            .iter()
+            .map(|requirement| requirement.discovery_id)
+            .collect();
+        assert!(
+            !requirements.is_empty(),
+            "the fixture needs a constellation with requirements to make progress on"
+        );
+        let mut discovery = app.world.resource_mut::<DiscoveryProgressLedger>();
+        for faction in [HOME, RIVAL] {
+            for discovery_id in &requirements {
+                discovery.add_progress(faction, *discovery_id, Scalar::one());
+            }
         }
     }
 
@@ -419,6 +446,112 @@ fn a_rivals_publicly_deployed_discovery_is_visible_and_its_covert_one_is_not() {
     assert!(
         !rows.contains(&(RIVAL.0, COVERT_DISCOVERY)),
         "a rival's COVERT discovery must not ride the wire: {rows:?}"
+    );
+}
+
+/// ⛔ **AN AGGREGATE MUST AGREE WITH THE LIST IT SUMMARISES.**
+///
+/// `greatDiscoveryTelemetry`'s three counters are `count(...)` over the same per-faction ledgers the
+/// two lists beside them are built from, and every one of them used to count across **every
+/// faction** — `totalResolved` was literally `ledger.records.len()`. A `u32` carries no faction, so
+/// the section did not *look* faction-keyed and the row-by-row sweep walked past it; the symptom was
+/// a client printing *"Resolved discoveries: 7"* above a list of 2.
+///
+/// **So the assertion is agreement, not filtering.** "The count is viewer-scoped" would pass on any
+/// number that happens to be small; "the count equals the number of rows the frame carries" is the
+/// claim a reader of the panel actually depends on, and it is the one that catches the next counter
+/// to launder faction-keyed data into a world-looking figure.
+///
+/// The fixture is what gives this teeth: each faction holds one covert discovery and one public one,
+/// so the viewer's list is **three** rows (own covert, own public, the rival's public) while the
+/// ledger holds **four**. An unfiltered count reads 4 over a list of 3.
+#[test]
+fn the_discovery_counters_agree_with_the_lists_they_summarise() {
+    let app = a_world_where_both_peoples_have_something_to_hide();
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let section = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .knowledge()
+        .expect("the knowledge section is published");
+
+    let resolved_rows = section
+        .greatDiscoveries()
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+    let active_rows = section
+        .greatDiscoveryProgress()
+        .map(|rows| rows.iter().filter(|row| row.progress() > 0).count())
+        .unwrap_or(0);
+    let telemetry = section
+        .greatDiscoveryTelemetry()
+        .expect("the telemetry rides every frame");
+
+    assert!(
+        resolved_rows > 0,
+        "the liveness half: the fixture has to publish resolved discoveries, or a count of 0          agrees with an empty list and proves nothing"
+    );
+    assert_eq!(
+        telemetry.totalResolved() as usize,
+        resolved_rows,
+        "`totalResolved` must count the rows the frame carries, not the rows the ledger holds"
+    );
+    assert!(
+        active_rows > 0,
+        "the liveness half again, for the readiness counters: the fixture has to put the viewer \
+         partway up a constellation, or `activeConstellations == 0` agrees with an empty list \
+         whether it is filtered or not"
+    );
+    assert_eq!(
+        telemetry.activeConstellations() as usize,
+        active_rows,
+        "`activeConstellations` must count the viewer's own in-flight rows"
+    );
+    assert!(
+        telemetry.pendingCandidates() <= telemetry.activeConstellations(),
+        "a candidate is an active constellation, so it cannot outnumber them: {} > {}",
+        telemetry.pendingCandidates(),
+        telemetry.activeConstellations()
+    );
+}
+
+/// The counter's own leak, stated directly: the ledger genuinely holds more than the frame counts.
+///
+/// Separate from the agreement test above because the two fail for different reasons — this one
+/// fails if the *fixture* stops staging a discovery the viewer may not see, which would make the
+/// agreement test vacuous without saying so.
+#[test]
+fn the_resolved_count_is_smaller_than_the_ledger_it_is_drawn_from() {
+    let app = a_world_where_both_peoples_have_something_to_hide();
+    let held = app.world.resource::<GreatDiscoveryLedger>().records().len();
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let published = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .knowledge()
+        .and_then(|section| section.greatDiscoveryTelemetry())
+        .expect("the telemetry rides every frame")
+        .totalResolved() as usize;
+
+    assert!(
+        published < held,
+        "the fixture stages a discovery the viewer may not see, so the published count MUST be          smaller than the {held} the ledger holds — got {published}"
     );
 }
 

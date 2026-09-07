@@ -67,7 +67,6 @@ use crate::{
     great_discovery::{
         snapshot_definitions, snapshot_discoveries, snapshot_progress, snapshot_telemetry,
         GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
-        GreatDiscoveryTelemetry,
     },
     heightfield::ElevationField,
     influencers::InfluentialRoster,
