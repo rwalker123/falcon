@@ -24,11 +24,11 @@ are grouped near the top of `MapView.gd`, after the FoW/height consts.)
   sprite is tried BEFORE the empty-glyph placeholder branch, which returns early), else the opaque
   `settlement_stage_icon` emoji (⛺ nomadic / 🛖 camp / 🏘️ village). Either way at
   `BAND_STAGE_GLYPH_SIZE_FACTOR` via the shared drop-shadow helpers (`_draw_marker_sprite` /
-  `_draw_marker_glyph`), **no faction ring or disc**. Ownership is carried by a **faction-colored nameplate banner** (`_draw_band_banner`,
-  `BAND_BANNER_*` consts) — a short rounded bar under the token filled with the band's faction
-  color, drawn for the **active (primary) card only** and LOD-suppressed below
-  `ICON_MIN_DETAIL_RADIUS`. The banner is intentionally sized as the substrate for an optional
-  faction/band **name label** later (text on the bar). When `settlement_stage_icon` is empty
+  `_draw_marker_glyph`), **no faction ring or disc**. Ownership is carried by a **nameplate under the token**, drawn for the
+  **active (primary) card only**, which takes **one of two forms by zoom** — the **band NAME PILL**
+  at/above `BAND_NAME_PILL_MIN_RADIUS` (24.0), the **faction-colored bar** between that and
+  `ICON_MIN_DETAIL_RADIUS` (16.0), and nothing below (see "The nameplate is two shapes" below).
+  When `settlement_stage_icon` is empty
   (pre-stage / missing snapshot — rare) the token draws a small **neutral non-circular** fallback
   marker (gray square, `BAND_FALLBACK_MARKER_*`) instead of the glyph, never a disc. The stage
   label (`settlement_stage_label`) surfaces as the Occupants roster row's hover tooltip.
@@ -38,7 +38,8 @@ are grouped near the top of `MapView.gd`, after the FoW/height consts.)
   full-brightness on top. The active band reads by brightness alone — there is **no per-token
   selection ring** (the hex selection outline marks the tile); `BAND_STACK_BEHIND_TINT` is the
   single lever for the recede effect (RGB<1 darkens, alpha<1 fades — swap between the two there).
-  Beyond 3, a `×N` count pill folded onto the **right end of the banner** (nameplate-with-count).
+  Beyond 3, a `×N` count pill folded onto the **right end of whichever nameplate is drawn**
+  (nameplate-with-count) — one anchoring rule, fed the `Rect2` the bar or the pill returns.
   Food-days dot + the travel arrow draw on the active card only.
 - **SECONDARY — herds / food sites / wondrous sites** ring the hex in **fixed edge slots**
   (`SECONDARY_SLOT_OFFSETS`, near the hex corners), computed once per frame in
@@ -59,8 +60,9 @@ are grouped near the top of `MapView.gd`, after the FoW/height consts.)
 
 Verify visual changes via `tools/map_preview.gd` (`scripts/preview.sh res://tools/map_preview.tscn`
 → `ui_preview_out/map_band_stack.png` / `map_mixed_hex.png` / `map_far_zoom.png` /
-`map_stage_glyphs.png` (the ⛺→🛖→🏘️ progression + empty-stage neutral non-circular fallback marker) + the existing
-labor-highlight states).
+`map_stage_glyphs.png` (the ⛺→🛖→🏘️ progression + empty-stage neutral non-circular fallback marker) /
+`map_band_names.png` / `map_band_names_overlap.png` / `map_band_names_gate.png` /
+`map_band_names_below_gate.png` + the existing labor-highlight states).
 
 
 ## The slot lookup is public, and the overflow chip reports what it hides
@@ -88,6 +90,117 @@ stack, land included (`map-renderers.md` → Select-then-cycle). The marks SIGNA
 so icons never jump between frames; reordering on a state change would make a herd swap corners the
 turn a knowledge track completes. Frame: `map_overflow_worked`.
 
+## The nameplate is TWO SHAPES, and the pill REPLACES the bar rather than writing on it
+
+A band's map token names itself: `_draw_band_name_pill` puts the band's own name — "Ashfell",
+"Shepherd's Fold", or "Ashfell (Scout)" for a party — on the same dark rounded plate as the
+`×N`/`+N` badges, anchored where the faction bar sits and returning the same `Rect2` so the over-cap
+chip's anchoring code never learns which shape it got. The name is read straight off the marker's
+`id`, which `MapView`'s marker loop stamps from `HudFormat.band_name`, so the map, the Occupants
+drawer and the turn orb's rows always say the same thing about the same band. **Nothing here derives
+or invents a name**; a band without one gets no pill.
+
+**THE PILL REPLACES THE BAR — it is not text drawn on it**, and that is the correction to the
+original plan for this bar ("intentionally sized as the substrate for a name label later"). The bar
+is sized off the TOKEN radius (`BAND_BANNER_WIDTH_FACTOR` 2.4 × a token that is itself 0.34 × the hex
+radius), which at a hex radius of 40 is about **33×7 px** — a strip that holds no legible text at any
+font size, and one that would have to grow with zoom to hold a fixed-size label anyway. So above
+`BAND_NAME_PILL_MIN_RADIUS` (24.0) the pill draws INSTEAD of the bar, and below it the bar draws
+unchanged; the two never appear together, because two nameplate shapes in one frame read as two
+kinds of band.
+
+**FIXED SCREEN SIZE, FOR FREE.** `MapView` zooms by recomputing hex geometry from `radius` rather
+than by a canvas transform, so a constant `BAND_NAME_PILL_FONT_SIZE` already IS constant screen
+pixels — the same property the `×N`/`+N` badges have always relied on. Nothing counter-scales. The
+only thing zoom moves is the anchor, which follows the token radius so the pill stays off the glyph;
+`BAND_NAME_PILL_GAP` on top of it is a fixed pixel count, because a gap that scaled with the token
+would drift the label away from its glyph at high zoom.
+
+**THE GATE IS ABOUT CLUTTER, NOT LEGIBILITY — the opposite of `BAND_LETHAL_MARK_MIN_RADIUS`.** The ⚠
+is gated because a pictogram stops resolving as a triangle when it gets small. A fixed-size pill
+never gets small: it is exactly as readable at radius 12 as at radius 80. What changes is how much
+MAP a ~100 px label covers — at the gate radius a 15-character name already spans about 2.5 hexes,
+and below it the map becomes a wall of labels. The bar is the small-footprint answer to the same
+ownership question, which is why the gate hands over to it rather than to nothing.
+
+### The overlap cull, and why the SELECTED band places first
+
+Fixed-size labels do not shrink out of each other's way, so neighbouring pills collide well before
+the gate stops them. `BandMarkerRenderer` therefore reserves label rects in a **pre-pass**
+(`_reserve_name_pills`) before anything is drawn: a rect that intersects one already placed is
+**skipped entirely** — no pill, and no fall back to the scaled bar. The token, its card stack, its ⚠
+and its food dot all still draw, so the band is never hidden; only its name is.
+
+- **The pre-pass exists because the two orders differ.** Labels are placed with the tile holding
+  `selected_unit_id` FIRST — a cull must never eat the label of the band the player is working —
+  while TOKENS keep snapshot order so no glyph changes what it stacks over. Resolving placement up
+  front leaves the draw pass byte-for-byte what it was.
+- **Everything after the selected tile keeps snapshot order**, for the reason the secondary slots
+  fill sequentially: placement has to give the same answer frame to frame, or labels flicker on and
+  off as the array shuffles.
+- **Both halves of the state are rebuilt every pass.** A rect surviving a frame would cull a label
+  that has nothing to collide with.
+- **A plate's half-extent is ONE expression, `MapView.pill_half_extent`.** `_fill_pill` draws end-cap
+  circles of radius `half_h` centred at `±half_w`, so a plate inks `half_h` FURTHER on each side than
+  its body. A measurement that forgets the caps under-reserves ~10 px per side at
+  `BAND_NAME_PILL_FONT_SIZE` 11 — enough for two labels the cull has just cleared to visibly overlap,
+  which is the one thing the cull exists to prevent. `count_pill_reach` and `_name_plate_half` are
+  both that single function now, rather than two formulas for one shape that have to agree.
+- **The reservation is TWO rects, because the footprint and the chip anchor are different
+  questions.** `_name_pill_rects` measures once and returns both. The **FOOTPRINT** is everything the
+  label inks — the plate's caps included, plus BOTH halves of the over-cap `×N` chip — and it is what
+  `_label_rects` holds and the cull intersects. The **ANCHOR** ends where the chip's CENTRE goes, and
+  it is what the draw pass is handed, so `_draw_band_stack`'s one-line chip anchor never learns which
+  nameplate shape it got. One rect could not be both: `count_pill_reach` is a HALF-width, so a rect
+  that reserves the whole chip ends a chip-radius past where the chip should be centred.
+- **The chip anchors past the plate's BODY edge, not its inked edge**, so the chip's round left cap
+  nests into the plate's round right cap and `Thornhollow ×4` reads as one nameplate; anchoring past
+  the ink stands it a full cap clear and it reads as a separate badge. On a bar carrying no text the
+  anchor was harmless wherever it landed — on a pill it is what keeps the chip off the name's last
+  letters. The bar needs no allowance at all, which is why all of this lives on the pill rather than
+  in the anchoring code.
+
+Foreign bands take the pill exactly as your own do — the fog rule already means a foreign band you
+cannot see is not drawn at all, so it needs no rule of its own. **Expeditions get no pill**, the same
+`is_expedition` guard that has always kept the bar off them: a party's faction reads off its hollow
+flag-disc ring.
+
+> #### ⛔ THE BAR IS INVISIBLE TO AN EXACT-COLOUR PROBE, AND THE TOKEN WILL ANSWER FOR IT
+>
+> `map_band_names_below_gate` asserts the pill's ABSENCE, which is only worth asserting because the
+> BAR is visibly present in the same frame — the `map-preview` rule the ⚠'s LOD probe was rebuilt
+> around. Two things make that presence hard to measure, and the first cut of this probe got the
+> second one wrong.
+>
+> The bar cannot be found by matching its faction colour: just under the gate it is ~19×4 px and the
+> frame is resampled on its way to the framebuffer, so measured on that frame the closest pixel was
+> **0.26** away from the flat faction colour while bare terrain reached **0.40**. The discriminating
+> property is REDNESS again (`FACTION_BAR_INK_RED_MARGIN`).
+>
+> **But a redness probe centred on the hex measures the TOKEN, not the bar.** `village.png` peaks at
+> **0.490** redness across **7908** pixels — its roofs — and `camp.png` at 0.310, so a box containing
+> the glyph passes with `_draw_band_banner` deleted: the same "passed with the feature removed"
+> failure the ⚠'s callout above was written about, reproduced one section later by reusing its box.
+> The probe is a WINDOW BELOW THE GLYPH now (`_frame_inks_red_below_hex`,
+> `NAME_PILL_BAR_PROBE_TOP`/`BOTTOM`/`HALF_W` — 0.36–0.85 hex radii down, ±0.6 wide) and the gate
+> fixtures build with `STAGE_NOMADIC`, whose sprite has **zero** pixels over the margin.
+> `_frame_inks_red_near_hex` keeps the ⚠'s box, which must contain the token; both share
+> `_frame_inks_red_in_box`.
+>
+> **The margin is 0.12, measured in the window it is used in**: the bar peaks there at **0.180** and
+> bare terrain under a bannerless token at **0.063**. The 0.24 it replaced was above the bar's
+> arithmetic CEILING — faction 1 is `Color(0.95, 0.62, 0.2)`, so 0.33 at full strength and strictly
+> less after blending. **A threshold a feature cannot reach is the arithmetic saying the calibration
+> was taken off something else**, and it is the cheapest check available on a probe like this.
+>
+> The cull's own claim is STRUCTURAL, not pixel-based — `MapView.band_label_tiles()` reports which
+> tiles placed a label, because a culled label leaves no ink and "dropped" is otherwise
+> indistinguishable from "drawn somewhere I did not probe". The crowded fixture puts the selected
+> band SECOND in snapshot order, so a renderer with no priority rule keeps the wrong label and fails.
+> It also carries an **END-CAP band**, sitting in the ~21 px window between a "Shepherd's Fold"
+> plate's body (98.0 px) and its inked width (119.4 px), so a cull that measures bodies rather than
+> whole plates fails on that band and only that band.
+
 ## An expedition's disc wears its MISSION's mark, and there are four of them
 
 `BandMarkerRenderer._draw_expedition_body`: ⚑ scout · 🏹 hunt · 💀 denial · **📦 trade** (arc #527).
@@ -113,7 +226,7 @@ reading draws nothing: unknown is not deadly.
 
 **UP-LEFT, AND THE QUADRANT IS THE WHOLE PLACEMENT DECISION.** Three marks already hang off a band
 token and each owns a direction — the food-runway dot up-RIGHT (`BAND_FOOD_DOT_OFFSET_FACTOR`), the
-faction nameplate banner BELOW (`_draw_band_banner`), the over-cap count pill on the banner's right
+nameplate BELOW (`_draw_band_banner` / `_draw_band_name_pill`), the over-cap count pill on the banner's right
 end or bottom-right (`BAND_COUNT_BADGE_OFFSET`). Up-left is the one free corner. (The travel arrow
 points wherever the destination is and can reserve nothing; it is a thin line and reads through a
 glyph.)

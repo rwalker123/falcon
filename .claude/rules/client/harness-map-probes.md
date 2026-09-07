@@ -857,3 +857,56 @@ that draws it for every band, which is the one way this could be wrong and still
 Sabotage-verified in two runs: dropping the LOD gate and the `is_lethal` test together (2 fail — the
 survivable band's absence and the far-zoom absence, the latter only biting once the grid moved beside
 the gate); and skipping the draw entirely (2 fail — the close mark and the smallest-size mark).
+
+### `map_band_names*` — the fixed-screen-size BAND NAME PILL (`map-markers.md`)
+
+Four frames. `map_band_names` is the look: three separately-factioned bands carrying the name pool's
+shortest and longest entries ("Lowfen", "Shepherd's Fold") plus a four-band stack whose
+`Thornhollow ×4` has to read as ONE nameplate. `map_band_names_overlap` is the cull.
+`map_band_names_gate` / `map_band_names_below_gate` straddle `BAND_NAME_PILL_MIN_RADIUS`.
+
+**EVERY FIXTURE BAND IS NAMED, and `_with_stage` is where that is stamped** — the one builder all
+five band fixtures funnel through. The map's nameplate IS the sim's name for the band
+(`HudFormat.band_name` → the marker's `id`), so before this the whole frame set rendered the
+`Band #-1` id fallback under every token. Names come from the sim's own pool
+(`core_sim/src/data/band_names.json`) rather than invented, so the frames render label widths the
+shipped game can actually produce; a caller that sets `name` itself keeps it, because the pill states
+pick specific lengths.
+
+**THE CULL'S CLAIM IS STRUCTURAL.** A culled label leaves no ink, so `MapView.band_label_tiles()` —
+which tiles actually placed a label — is what the frame asserts on; a pixel probe cannot tell
+"dropped" from "drawn somewhere I did not look", and the surviving pill overhangs the culled band's
+hex anyway, so a probe at that hex would find the WRONG label and pass. The crowded fixture puts the
+selected band **second in snapshot order**, so a renderer with no selected-first priority keeps the
+west label and fails.
+
+**IT ALSO CARRIES AN END-CAP BAND, and its position is the whole assertion.** A plate inks a cap
+radius further on each side than its body, so a cull measuring bodies clears labels that visibly
+overlap — a bug no ordinary crowded fixture can catch, because bands close enough to collide at all
+collide by far more than a cap. The third band sits in the **21.4 px window** between a
+"Shepherd's Fold" plate's body (**98.0 px**) and its ink (**119.4 px**): two columns out is 109.7 px,
+which is 11.7 clear of the body threshold and 9.7 inside the inked one. It is placed two columns
+**west**, on the same side as the adjacent band, so the three claims cannot cross-talk — two columns
+east it would clear the west band outright and a broken PRIORITY rule would fail the end-cap
+assertion for an unrelated reason.
+
+> #### ⛔ TWO GRIDS THAT HAD TO BE MEASURED, NOT DERIVED
+>
+> **The cull needs a grid that actually crowds.** At the 16×12 grid the rest of this harness uses,
+> the fit is radius **83** — `SQRT3 × 83 = 144 px` between neighbours, half again the ~100 px a
+> 15-character pill spans, so two adjacent bands never collide and the state proved nothing. The
+> crowded fixture uses 35×32 (fit ~31.7, ~54.9 px apart) and states the measured spacing in its
+> premise. The grid is tuned to the END-CAP band's window above as well as to the collision itself,
+> which is why it is not the roundest number that crowds.
+>
+> **The LOD pair straddles the gate by a hair**, the `map_band_lethal_mark*` rule: 45×41 fits at
+> ~24.8 and 47×43 at ~23.6, either side of 24.0. Below the gate the scaled faction BAR is plainly
+> drawn under the same token, which is what makes the pill's absence there a claim about which FORM
+> the nameplate took rather than about a zoom where nothing would have shown.
+>
+> **Both gate fixtures build with `STAGE_NOMADIC`, and that is load-bearing, not incidental.** The
+> bar is measured by REDNESS, and a village's roofs are redder than the bar is — so with a village
+> token the probe passed with the banner deleted. The tent's sprite has zero pixels over the margin,
+> and the probe window moved below the glyph besides (`_frame_inks_red_below_hex`, against the ⚠'s
+> `_frame_inks_red_near_hex`, which must contain its token). See `map-markers.md` for the
+> measurements and for `FACTION_BAR_INK_RED_MARGIN`'s re-derivation to 0.12.

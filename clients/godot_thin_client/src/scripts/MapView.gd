@@ -266,11 +266,12 @@ const OCCUPANT_KEY_DATA := "data"
 # already names it — so it is the one entry whose `data` is empty by construction.
 const LAND_CYCLE_ENTRY := {OCCUPANT_KEY_KIND: OCCUPANT_KIND_LAND, OCCUPANT_KEY_DATA: {}}
 
-# Primary band token: a settlement-stage glyph over a faction-colored nameplate banner
-# (ownership cue). No faction ring or disc — the banner carries ownership; selection is
-# conveyed by the selected/hovered hex outline, and the active stacked band reads by
-# brightness (back cards darkened) — there is no per-token selection ring. No name label
-# yet — the banner is the substrate for one.
+# Primary band token: a settlement-stage glyph over a nameplate that takes ONE OF TWO FORMS by
+# zoom — the fixed-size BAND NAME PILL above `BAND_NAME_PILL_MIN_RADIUS`, the scaled
+# faction-colored bar below it (see both const blocks). Either way the nameplate carries
+# ownership, so there is no faction ring or disc; selection is conveyed by the selected/hovered
+# hex outline, and the active stacked band reads by brightness (back cards darkened) — there is
+# no per-token selection ring.
 const BAND_TOKEN_RADIUS_FACTOR := 0.34       # of hex radius — the spotlight token (was 0.30)
 const BAND_TOKEN_OUTLINE_COLOR := Color(0.04, 0.05, 0.06, 0.9)
 const BAND_TOKEN_OUTLINE_WIDTH := 2.0
@@ -284,9 +285,10 @@ const BAND_STAGE_GLYPH_COLOR := Color(0.99, 0.99, 0.96, 1.0)
 const BAND_FALLBACK_MARKER_COLOR := Color(0.55, 0.57, 0.6, 1.0)  # neutral gray, faction-agnostic
 const BAND_FALLBACK_MARKER_SIZE_FACTOR := 1.1  # square side as a factor of the token radius
 # Faction nameplate banner: a short faction-colored bar under the PRIMARY token (active top
-# card only, far-zoom LOD-gated). Reuses the band's faction color as fill so ownership reads
-# without a ring/disc. Intentionally wide enough to later host a faction/band NAME LABEL drawn
-# on top of the bar — keep the width/height structured for that.
+# card only, drawn between `ICON_MIN_DETAIL_RADIUS` and `BAND_NAME_PILL_MIN_RADIUS`). Reuses the
+# band's faction color as fill so ownership reads without a ring/disc. It is the MID-zoom form of
+# the nameplate: sized off the token radius, it is ~33x7 px at a hex radius of 40 and can hold no
+# text at any legible size, so the name pill REPLACES it above the gate rather than writing on it.
 const BAND_BANNER_WIDTH_FACTOR := 2.4         # bar width as a factor of the token radius
 const BAND_BANNER_HEIGHT_FACTOR := 0.5        # bar height as a factor of the token radius
 const BAND_BANNER_GAP_FACTOR := 0.18          # gap below the glyph as a factor of the token radius
@@ -294,6 +296,29 @@ const BAND_BANNER_OUTLINE_COLOR := Color(0.04, 0.05, 0.06, 0.9)  # thin dark out
 const BAND_BANNER_OUTLINE_WIDTH := 1.0        # ~1px outline
 const BAND_BANNER_CORNER_RADIUS_FACTOR := 0.35  # corner radius as a factor of the bar height
 const BAND_TASK_ARROW_WIDTH := 2.5           # travel/task destination arrow
+# BAND NAME PILL: the HIGH-zoom form of the nameplate — the band's own name ("Ashfell",
+# "Shepherd's Fold") on the same dark rounded plate as the `×N`/`+N` badges, with the faction
+# color moved to the plate's BORDER. The faction color is not the fill because names ride on it:
+# dark text on a pale faction color is unreadable, and picking the ink per faction by luminance
+# would give every faction a differently-styled label.
+#
+# FIXED SCREEN SIZE. MapView zooms by recomputing hex geometry from `radius`, not by a canvas
+# transform, so a constant font size already IS constant screen pixels (the badges rely on the
+# same property). Nothing counter-scales.
+#
+# The gate is about CLUTTER, not legibility — the opposite of `BAND_LETHAL_MARK_MIN_RADIUS`. The
+# pill stays exactly as readable at any zoom; what changes is how much MAP a fixed-width label
+# covers, and at small hexes a 15-character name spans several of them. Below the gate the scaled
+# faction bar answers the same ownership question in a token-sized footprint.
+const BAND_NAME_PILL_MIN_RADIUS := 24.0       # hex radius at/above which the pill replaces the bar
+const BAND_NAME_PILL_FONT_SIZE := 11          # screen px; matches MARKER_BADGE_FONT_SIZE, decided separately
+const BAND_NAME_PILL_PAD_X := 5.0             # symmetric horizontal padding inside the plate (screen px).
+                                              # Unlike a count badge, a 15-character name needs real
+                                              # padding — the round end caps alone crowd the text.
+const BAND_NAME_PILL_BORDER_WIDTH := 1.5      # faction-colored outline thickness (screen px)
+const BAND_NAME_PILL_GAP := 3.0               # FIXED screen-px gap under the token. The banner's gap
+                                              # scales with the token; a fixed-size pill wants a fixed
+                                              # gap so it can't drift off the glyph at high zoom.
 # Co-located bands fan into an up-right offset card stack: back cards darkened, the
 # active (selected/cycled) band drawn full-brightness on top. Beyond the cap, a `×N` badge.
 const BAND_STACK_MAX_CARDS := 3
@@ -2635,14 +2660,58 @@ func _draw_marker_sprite(center: Vector2, tex: Texture2D, size: int, modulate: C
 ## The shared rounded-pill PLATE: a dark rounded-rect (draw_rect body + two end-cap circles) centered
 ## on `center`, sized to an already-measured `text_size` plus `pad_x` of symmetric horizontal padding.
 ## Single source of truth for the pill look — used by the `×N`/`+N` count badges (`_draw_count_pill`,
-## no extra padding: the end caps are its padding) and by the on-tile yield labels
-## (`BandOverlayRenderer._draw_yield_label`, padded so the plate hugs the text+glyph run).
-func _draw_pill_plate(center: Vector2, text_size: Vector2, pad_x: float, bg: Color) -> void:
+## no extra padding: the end caps are its padding), by the on-tile yield labels
+## (`BandOverlayRenderer._draw_yield_label`, padded so the plate hugs the text+glyph run), and by the
+## BAND NAME PILL (`BandMarkerRenderer._draw_band_name_pill`), which is the one caller that asks for a
+## border.
+##
+## The optional BORDER is drawn as a second, larger plate UNDERNEATH the body rather than as a stroke:
+## a stroked rounded pill would have to seam a rect outline into two arcs, and the two-plate form has
+## no joins to get wrong. It costs nothing for the borderless callers — `PILL_NO_BORDER` is fully
+## transparent and `border_width` defaults to 0, so the `×N`/`+N`/yield callers render exactly the
+## pixels they always did.
+const PILL_NO_BORDER := Color(0.0, 0.0, 0.0, 0.0)   # the default: draw no border plate at all
+func _draw_pill_plate(center: Vector2, text_size: Vector2, pad_x: float, bg: Color,
+		border: Color = PILL_NO_BORDER, border_width: float = 0.0) -> void:
 	var half_w: float = text_size.x * 0.5 + pad_x
 	var half_h: float = text_size.y * 0.5 * MARKER_BADGE_HEIGHT_FACTOR
-	draw_rect(Rect2(center.x - half_w, center.y - half_h, half_w * 2.0, half_h * 2.0), bg)
-	draw_circle(Vector2(center.x - half_w, center.y), half_h, bg)
-	draw_circle(Vector2(center.x + half_w, center.y), half_h, bg)
+	if border_width > 0.0 and border.a > 0.0:
+		_fill_pill(center, half_w + border_width, half_h + border_width, border)
+	_fill_pill(center, half_w, half_h, bg)
+
+## One rounded-pill fill: the body rect plus its two round end caps, all in `color`.
+func _fill_pill(center: Vector2, half_w: float, half_h: float, color: Color) -> void:
+	draw_rect(Rect2(center.x - half_w, center.y - half_h, half_w * 2.0, half_h * 2.0), color)
+	draw_circle(Vector2(center.x - half_w, center.y), half_h, color)
+	draw_circle(Vector2(center.x + half_w, center.y), half_h, color)
+
+## THE HALF-EXTENTS OF A PILL PLATE — the widest and tallest points of what `_draw_pill_plate`
+## actually inks, for text already measured at the caller's font size.
+##
+## **THE END CAPS ARE THE TERM EVERY "HOW WIDE IS THIS LABEL" CALCULATION FORGETS.** `_fill_pill`
+## draws the body rect out to `±half_w` and then a circle of radius `half_h` CENTRED on each of those
+## edges, so the plate reaches a further `half_h` left and right than the body it was measured from —
+## about 9–10 px per side at font 11. Anything sizing a box around a pill (`count_pill_reach`, the
+## band name pill's overlap footprint) must ask HERE rather than re-deriving it, because the version
+## that omits the caps looks plausible and under-measures by a fifth of the plate.
+func pill_half_extent(text_size: Vector2, pad_x: float, border_width: float) -> Vector2:
+	var half_h: float = text_size.y * 0.5 * MARKER_BADGE_HEIGHT_FACTOR + border_width
+	return Vector2(text_size.x * 0.5 + pad_x + border_width + half_h, half_h)
+
+## How far a `×N`/`+N` count pill reaches from its own centre — its widest point, END CAP INCLUDED,
+## which is just `pill_half_extent` asked about a borderless badge. The band NAME PILL needs this to
+## RESERVE the room the chip takes on its right end: a nameplate carrying TEXT (unlike the faction bar
+## it replaces above the zoom gate) loses its last letters if the chip lands on them.
+func count_pill_reach(text: String) -> float:
+	var font: Font = ThemeDB.fallback_font
+	if font == null or text == "":
+		return 0.0
+	var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, MARKER_BADGE_FONT_SIZE)
+	return pill_half_extent(text_size, MARKER_BADGE_PAD_X, COUNT_PILL_NO_BORDER_WIDTH).x
+
+## A count badge takes no border — `_draw_count_pill` passes `_draw_pill_plate` no border colour at
+## all — so its reach is measured with none.
+const COUNT_PILL_NO_BORDER_WIDTH := 0.0
 
 ## A small dark rounded pill with centered text — shared by the primary `×N` count
 ## badge and the secondary `+N` overflow chip.
@@ -5238,6 +5307,14 @@ func has_ready_for_improvement_data() -> bool:
 func ready_for_improvement_facts() -> PackedStringArray:
 	_realize_deferred_overlay(ReadyForImprovement.CHANNEL_KEY)
 	return ReadyForImprovement.facts(self, _ready_for_improvement)
+
+## Which tiles actually PLACED a band name pill in the last draw pass — the overlap cull's answer,
+## exposed the same way the secondary slot lookups are (a `MapView` pass-through; no renderer holds
+## another). A culled label leaves no ink, so this is the only way a harness can tell "dropped" from
+## "drawn somewhere I didn't probe", and it is what `map_preview` asserts the selected band's
+## priority with.
+func band_label_tiles() -> Array:
+	return _band_markers.placed_label_tiles()
 
 func secondary_slot_of(key: String) -> int:
 	return _secondary_markers.slot_of(key)
