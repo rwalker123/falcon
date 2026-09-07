@@ -2666,9 +2666,15 @@ IT"; what belongs here is the shape of the drive. `EXPECTED_CHECKPOINTS` 369 →
 IS the armed crew (`herd_hunt_short_of_spears`), the cap is the herd's own room with every hand armed
 (`herd_hunt_plateau_is_the_herd`), and a PEN, which answers `armed_crew == max_workers` because there
 is no attack-vs-defense gate behind a fence. The first two are one A/B on ONE aurochs with only the
-reply's two numbers moving; the pen is the state a `cap <= armed_crew` gate gets wrong, and its
-precondition — `26` armed hands answered against a cap of `5` — is asserted as a relation between the
-fixture and the render, since the `<=` reading has nothing to get wrong on a pen whose cap is larger.
+reply's two numbers moving.
+
+**TWO of the three falsify a `cap <= armed_crew` gate, and they falsify it DIFFERENTLY** — which is why
+neither is the redundant one a later reader may drop. The herd-bound state is a fully armed band whose
+cap the **herd** set (`6` against `26` armed), so `<=` holds, prints the gear note, and fails that
+state's own refusal of it. The **pen** is a band whose gear is irrelevant because there is no fight to
+gate (`26` armed against a cap of `5`), so `<=` blames spears for a bound that is the room. The pen's
+precondition is asserted as a relation between the fixture and the render, since the `<=` reading has
+nothing to get wrong on a pen whose cap is larger.
 
 **THE CURVE IS COMPOSED, NOT TAKEN FROM `ForecastFx.crew_take_rows`** — rows that rise once per armed
 hunter and then go flat, which is the shape a plateau of EITHER kind has and so the reason the reply

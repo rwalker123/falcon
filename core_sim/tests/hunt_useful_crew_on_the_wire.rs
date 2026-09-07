@@ -2124,3 +2124,47 @@ fn a_bare_band_arms_nobody_and_names_no_weapon() {
         "a kit whose weapon the band no longer holds names nothing"
     );
 }
+
+/// **A PEN ARMS EVERY HAND, BECAUSE A SLAUGHTER HAS NO GATE — and the same hands out on the range
+/// arm nobody.**
+///
+/// [`core_sim::hunt_armed_crew`] answers `max_workers` outright when `fauna::herd_fight_stage`
+/// answers `None`, which is what a corralled herd does: there is no attack-vs-defense gate behind a
+/// fence for a weapon to clear, so a penned row's armed count is never a story about spears. That
+/// early return is the premise the client's `useful == armed_crew` gate rests on, and it is
+/// restated on [`sim_runtime::commands::HuntCrewTakeReply::armed_crew`] — which is why it is worth
+/// an assertion on this side of the wire rather than four prose copies.
+///
+/// # ⛔ THE PAIR IS THE TEST, and each arm catches its own sabotage
+///
+/// One band, one species, one kit, one crew pool: **the fence is the only thing that differs**, so
+/// the two answers differing is attributable to it and to nothing else.
+///
+/// 1. **The penned arm** catches deleting that early return. Without it a bare-handed keeper is
+///    `attack 1` against the aurochs' `defense 6`, and a player standing at a room-bound pen whose
+///    keepers are collecting fine would be told *"the rest have no spears"*.
+/// 2. **The wild arm** catches the opposite sabotage — a `hunt_armed_crew` that answers
+///    `max_workers` unconditionally — and it is what makes the penned arm say anything at all: a
+///    pen arming everybody is only a claim about the fence if the same hands are gated without one.
+///
+/// Both counts are stated against the pool the reply was **asked** at ([`POOL`], the query's own
+/// `max_workers`) rather than a literal, so a fixture that resized its band could not turn a full
+/// count into a coincidence.
+#[test]
+fn a_pen_arms_every_hand_because_a_slaughter_has_no_gate() {
+    let mut pen = world_keeping_a_pen(AUROCHS, bare());
+    assert_eq!(
+        crew_take_reply(&mut pen, default_hunt_kit()).armed_crew,
+        POOL,
+        "a pen is slaughtered rather than fought, so every hand in the asked pool of {POOL} is \
+         armed for the job — bare hands included"
+    );
+
+    let mut range = world_hunting(AUROCHS, bare());
+    assert_eq!(
+        crew_take_reply(&mut range, default_hunt_kit()).armed_crew,
+        NO_USEFUL_CREW,
+        "…and the SAME bare hands on the SAME aurochs OUT ON THE RANGE arm nobody — `attack 1` \
+         against `defense 6` lands exactly nothing, at any head count"
+    );
+}

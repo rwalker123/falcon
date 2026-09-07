@@ -1531,9 +1531,16 @@ const MAX_USEFUL_NOUN_MANY := "workers"
 # four "more would be idle" blames the herd for a shortage of gear while thirteen hands stand idle.
 # The reply's `armed_crew` is what separates the two, and this wording is earned only where the cap
 # EQUALS it (see `DrawerComposeController._forecast_worker_cap`, which holds the whole gate).
-# The third `%s` is the reply's `weapon_item_id` verbatim — the shipped ids are lowercase plurals that
-# read as English here (`spears`, `traps`), and inventing a display-name table beside them would be a
-# second vocabulary to keep true.
+# The third `%s` is the reply's `weapon_item_id` VERBATIM. `DetailFormat.kit_item_label` would name
+# it — that table is real and already carries `spears` and `traps` — and it is deliberately not read
+# here, because it answers in a kit ROW's voice ("Spears", capitalised) while this position is
+# mid-sentence, where a capital reads as a proper noun. The ids the hunt kits name their weapon by
+# are lowercase English plurals, so raw is the spelling that finishes "the rest have no …" as
+# English.
+# **WHAT THAT COSTS, STATED RATHER THAN DENIED**: a hunt weapon whose id is not a lowercase plural
+# would reach the player exactly as the wire spells it. Three items on the roster already carry ids
+# of that shape — `stone_dressing`, `tanning_frame`, `bone_awl` — and none of them is the attack item
+# of any hunt kit, so it is the CURRENT roster, not this format, that keeps the sentence English.
 const MAX_USEFUL_NOTE_GEAR_FORMAT := "max %d %s useful here — the rest have no %s"
 # The CONFIRMED-row twin of MAX_USEFUL_NOTE_FORMAT: a worked source's `+` explaining why it is dead
 # (see `source_worker_cap_state`). Worded from the row's point of view ("fully staffed") rather than

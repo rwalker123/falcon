@@ -7850,9 +7850,20 @@ EQUALS the cap the sheet says so instead:
 
 **The weapon's id is rendered verbatim, and it is published precisely because the client may not derive
 it.** `KitRoster.kit_item_ids` says what a kit CARRIES, never what each item is FOR, so nothing on this
-side can pick the weapon out of `{spears, sled}`. The shipped ids are lowercase plurals that read as
-English in that sentence (`spears`, `traps`); a display-name table beside them would be a second
-vocabulary to keep true.
+side can pick the weapon out of `{spears, sled}`.
+
+**`DetailFormat.kit_item_label` is deliberately NOT used here, and the reason is the sentence position
+rather than the table's absence.** That table exists — `DetailFormat.KIT_ITEM_LABELS`, one entry per
+kit item with the raw id as its own fallback — and what it answers is a LABEL: `"Spears"`, capitalised
+for a row header, which reads wrong in the middle of a sentence. The id is what this sentence wants,
+because the shipped hunt weapons are `spears` and `traps` — lowercase English plurals, already the
+words a player would use.
+
+**That is a fact about the HUNT roster and states nothing about the item table at large.** Three of the
+thirteen shipped items carry underscored ids — `stone_dressing`, `tanning_frame`, `bone_awl` — and none
+of them is the attack item of any hunt kit, `clubs` belonging to the warrior kit which is not one. A
+hunt weapon named that way would print into the sentence exactly as the wire spells it, and
+`kit_item_label` is where a display form for it already lives.
 
 **The gate is `DrawerComposeController._forecast_worker_cap`'s alone, and every conjunct earns its
 place** — `cap == armed_crew and armed_crew > CREW_TAKE_NO_ARMED_CREW and assignable > cap and

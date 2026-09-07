@@ -5395,7 +5395,12 @@ func _armed_crew_note_states() -> void:
 
 	# State b — THE SAME HERD, EVERY HAND ARMED. The curve stops at the herd's room instead, so the
 	# armed count sits ABOVE the cap and the gear sentence is not earned: the idle wording is the true
-	# one, and this is the state a `cap <= armed_crew` gate would still get right by accident.
+	# one. **AND THIS STATE FALSIFIES `cap <= armed_crew` TOO** — the cap is the herd's plateau while
+	# the armed count is the whole pool, so `<=` HOLDS here, a gate written that way prints the gear
+	# note, and the assertion below is exactly the refusal of it. It falsifies the `<=` reading
+	# DIFFERENTLY from the pen, which is why both states are kept: here a fully armed band is held by
+	# the HERD's room, where state c's band is held by its pen's own production and its gear never
+	# entered the question at all. Two ways one wrong comparison goes wrong.
 	_spear_short_plateau = SPEAR_SHORT_HERD_PLATEAU
 	_spear_short_armed = pool
 	await _open_spear_short_sheet(aurochs, pool)
