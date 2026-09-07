@@ -2071,6 +2071,7 @@ mod tests {
     use crate::metrics::SimulationMetrics;
     use crate::orders::FactionRegistry;
     use crate::resources::SimulationTick;
+    use crate::start_profile::{FactionControl, FactionSpec};
     use bevy::app::App;
     use bevy::ecs::event::Events;
     use bevy::ecs::world::Mut;
@@ -2092,7 +2093,15 @@ mod tests {
         app.insert_resource(SimulationMetrics::default());
         app.insert_resource(knowledge_config_handle);
         app.insert_resource(knowledge_ledger);
-        app.insert_resource(FactionRegistry::new(factions.to_vec()));
+        // Ids are positional in the registry, so the harness declares one spec per faction the
+        // test names and lets `new` number them.
+        let specs: Vec<FactionSpec> = factions
+            .iter()
+            .map(|_| FactionSpec {
+                control: FactionControl::Human,
+            })
+            .collect();
+        app.insert_resource(FactionRegistry::new(&specs));
         let budget_config = catalog.config().counter_intel_budget().clone();
         app.insert_resource(catalog);
         app.insert_resource(roster);

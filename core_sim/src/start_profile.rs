@@ -109,7 +109,33 @@ impl StartProfile {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+/// **How a faction is driven.** There is no third option: every faction is either somebody's to
+/// play or something the sim drives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactionControl {
+    Human,
+    Ai,
+}
+
+/// **One faction as the start profile declares it.** Its [`crate::orders::FactionId`] is its
+/// **index** in the profile's list — ids are positional, never authored, so a profile cannot mint a
+/// duplicate id or leave a gap for the registry's control map to miss.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FactionSpec {
+    pub control: FactionControl,
+}
+
+/// **The world a profile that says nothing gets**: one human faction, which is what the shipped
+/// campaign and every test harness run on. Shared with [`crate::orders::FactionRegistry::default`]
+/// so the two cannot drift.
+pub(crate) fn default_factions() -> Vec<FactionSpec> {
+    vec![FactionSpec {
+        control: FactionControl::Human,
+    }]
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct StartProfileOverrides {
     #[serde(default)]
     pub starting_units: Vec<StartingUnitSpec>,
@@ -123,6 +149,11 @@ pub struct StartProfileOverrides {
     pub victory_modes_enabled: Vec<String>,
     #[serde(default)]
     pub food_modules: FoodModulePreference,
+    /// **Who plays this world**, in list order — entry `i` is `FactionId(i)`. Absent means the
+    /// shipped single-human world ([`default_factions`]); present-but-broken (empty, or nobody
+    /// human) is a boot panic, per the config-loading rule.
+    #[serde(default = "default_factions")]
+    pub factions: Vec<FactionSpec>,
     /// **The turn-one outfitting window's dials** — see [`OpeningLoadoutConfig`]. **Required**: a
     /// profile with no opening loadout spawns a band that owns nothing and can never be given
     /// anything, so an absent block is a campaign that cannot be played rather than a default worth
@@ -182,9 +213,51 @@ pub struct OpeningLoadoutConfig {
     pub kit_defaults: BTreeMap<String, u32>,
 }
 
+/// Hand-written rather than derived: a derived `Default` would give `factions` an **empty** `Vec`,
+/// and an empty registry has no faction 0 for worldgen to place, no player and nobody for the turn
+/// queue to await. The empty roster has to be unrepresentable from *every* construction path, not
+/// only the deserialising one.
+impl Default for StartProfileOverrides {
+    fn default() -> Self {
+        Self {
+            starting_units: Vec::new(),
+            starting_knowledge_tags: Vec::new(),
+            inventory: Vec::new(),
+            ai_profile_overrides: HashMap::new(),
+            victory_modes_enabled: Vec::new(),
+            food_modules: FoodModulePreference::default(),
+            factions: default_factions(),
+            opening_loadout: OpeningLoadoutConfig::default(),
+        }
+    }
+}
+
 impl StartProfileOverrides {
     pub fn from_profile(profile: &StartProfile) -> Self {
         profile.overrides.clone()
+    }
+
+    /// **The two rules a declared roster must satisfy**, checked once at boot before the registry is
+    /// seeded. A violation panics naming the profile, matching the boot rule for config: an absent
+    /// key falls back to the builtin default, a present-but-broken one stops the server rather than
+    /// booting a world that cannot be played.
+    pub fn validate_factions(&self, profile_id: &str) {
+        if self.factions.is_empty() {
+            panic!(
+                "start profile '{profile_id}' declares an empty `factions` list; a world with no \
+                 factions has nobody to place, play or await"
+            );
+        }
+        if !self
+            .factions
+            .iter()
+            .any(|spec| spec.control == FactionControl::Human)
+        {
+            panic!(
+                "start profile '{profile_id}' declares no `human` faction; a world nobody plays is \
+                 not a world"
+            );
+        }
     }
 }
 
@@ -849,6 +922,85 @@ mod tests {
         fauna::{FODDERING_DISCOVERY_ID, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
         forage::{CULTIVATION_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID},
     };
+
+    /// A profile carrying only the keys every profile must carry, so a test can add exactly the
+    /// `factions` declaration it is about — or leave it out.
+    fn profile_json(id: &str, factions: Option<&str>) -> String {
+        let roster = factions
+            .map(|list| format!(", \"factions\": {list}"))
+            .unwrap_or_default();
+        format!(
+            "{{\"id\": \"{id}\", \"opening_loadout\": {{\"material_points\": 1, \
+             \"pickable_materials\": [\"bone\"]}}{roster}}}"
+        )
+    }
+
+    fn parse_profile(id: &str, factions: Option<&str>) -> StartProfile {
+        serde_json::from_str(&profile_json(id, factions)).expect("profile parses")
+    }
+
+    /// **The shipped world is unchanged by the lever existing.** A profile that says nothing about
+    /// factions is one human faction, exactly as before the `factions` key was added.
+    #[test]
+    fn a_profile_without_a_factions_key_is_one_human_faction() {
+        let profile = parse_profile("silent_roster", None);
+        assert_eq!(profile.overrides.factions.len(), 1);
+        assert_eq!(profile.overrides.factions[0].control, FactionControl::Human);
+        profile.overrides.validate_factions(&profile.id);
+    }
+
+    /// The builtin profile omits the key, so the builtin can never trip validation.
+    #[test]
+    fn the_builtin_profiles_declare_one_human_faction_each() {
+        for profile in &StartProfiles::builtin().profiles {
+            profile.overrides.validate_factions(&profile.id);
+            assert_eq!(
+                profile.overrides.factions.len(),
+                1,
+                "profile '{}' is expected to ship single-faction",
+                profile.id
+            );
+        }
+    }
+
+    /// **The non-serde construction path gets the same world.** A derived `Default` would hand back
+    /// an empty roster here, which is why the impl is written by hand.
+    #[test]
+    fn start_profile_overrides_default_is_one_human_faction() {
+        let overrides = StartProfileOverrides::default();
+        assert_eq!(overrides.factions.len(), 1);
+        assert_eq!(overrides.factions[0].control, FactionControl::Human);
+        overrides.validate_factions("default");
+    }
+
+    #[test]
+    fn a_declared_roster_parses_in_order() {
+        let profile = parse_profile(
+            "two_sided",
+            Some("[{\"control\": \"human\"}, {\"control\": \"ai\"}]"),
+        );
+        let controls: Vec<FactionControl> = profile
+            .overrides
+            .factions
+            .iter()
+            .map(|spec| spec.control)
+            .collect();
+        assert_eq!(controls, vec![FactionControl::Human, FactionControl::Ai]);
+    }
+
+    #[test]
+    #[should_panic(expected = "start profile 'empty_roster' declares an empty `factions` list")]
+    fn an_empty_roster_panics_naming_the_profile() {
+        let profile = parse_profile("empty_roster", Some("[]"));
+        profile.overrides.validate_factions(&profile.id);
+    }
+
+    #[test]
+    #[should_panic(expected = "start profile 'all_ai' declares no `human` faction")]
+    fn a_roster_with_nobody_human_panics_naming_the_profile() {
+        let profile = parse_profile("all_ai", Some("[{\"control\": \"ai\"}]"));
+        profile.overrides.validate_factions(&profile.id);
+    }
 
     /// Every knowledge the intensification ladder gates on (or earns), and the id it must map to.
     /// `foddering` (F3) is earned by running a pen but gates no rung of its own — still it must be

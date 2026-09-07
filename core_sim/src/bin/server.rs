@@ -6146,11 +6146,21 @@ fn rung_beneath(rung: RungKey) -> Option<RungKey> {
 
 /// **A band by its durable id, and the tile it is standing on** — the pair the road verbs need, so
 /// the lookup and the position cannot come from two different frames.
-fn band_entity_and_tile(app: &mut bevy::prelude::App, band: BandId) -> Option<(Entity, UVec2)> {
+///
+/// **Resolves only the commanding faction's own bands.** A band id is a durable, guessable handle,
+/// so a resolver that matches on the id alone hands another faction's band to whatever asked. The
+/// road verbs already refuse a foreign band by name in [`road_verb_refusal`] — that refusal stays,
+/// because it is the message the player reads; this gate is the seam that makes the *next* caller
+/// safe without having to remember.
+fn band_entity_and_tile(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band: BandId,
+) -> Option<(Entity, UVec2)> {
     let mut query = app.world.query::<(Entity, &PopulationCohort, &BandId)>();
     let (entity, current_tile) = query
         .iter(&app.world)
-        .find(|(_, _, id)| **id == band)
+        .find(|(_, cohort, id)| **id == band && cohort.faction == faction)
         .map(|(entity, cohort, _)| (entity, cohort.current_tile))?;
     let position = app.world.get::<Tile>(current_tile)?.position;
     Some((entity, position))
@@ -6222,7 +6232,7 @@ fn handle_road_verb(
     // **The keeper and the remoteness quote, written together**, because the price is a fact about
     // the moment the band took the road on — `ForagePatch::field_cost_multiplier`'s discipline.
     let band = BandId(band_id);
-    let Some((entity, band_tile)) = band_entity_and_tile(app, band) else {
+    let Some((entity, band_tile)) = band_entity_and_tile(app, faction, band) else {
         emit_command_failure(
             app,
             CommandEventKind::Road,
@@ -7521,7 +7531,9 @@ fn release_roads_at(
             _ => return 0,
         }
     };
-    if let Some((entity, _)) = band_entity_and_tile(app, keeper.band) {
+    // `keeper.faction == faction` was just checked above, so the resolver's gate is a no-op here
+    // rather than a change of behaviour.
+    if let Some((entity, _)) = band_entity_and_tile(app, keeper.faction, keeper.band) {
         let mut allocation = band_allocation_mut(app, entity);
         allocation.unqueue_build(&BuildSource::Road(tile));
     }
@@ -9645,7 +9657,104 @@ fn is_replayable(command: &Command) -> bool {
     )
 }
 
+/// **The faction ISSUING a command, and what to call it in the log** — `None` for the commands that
+/// are not issued on any faction's behalf (world/server verbs, and the espionage queue verbs, whose
+/// faction lives in a payload rather than on the envelope).
+///
+/// ⛔ **Deliberately exhaustive, with no `_` arm.** A new command variant must state whether it is
+/// somebody's order or the server's own business; a wildcard would silently answer "nobody's" and
+/// take the new verb out of the membership gate below.
+///
+/// A faction named *inside* a payload is not a commanding faction and is not returned here:
+/// espionage verbs legitimately name another faction as owner or target
+/// ([`Command::QueueEspionageMission`]), and a shipment's destination is cross-faction by
+/// construction ([`resolve_shipment`]).
+fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
+    match command {
+        Command::Orders { faction, .. } => Some((*faction, "orders")),
+        Command::UpdateCounterIntelPolicy { faction, .. } => {
+            Some((*faction, "counter_intel_policy"))
+        }
+        Command::AdjustCounterIntelBudget { faction, .. } => {
+            Some((*faction, "counter_intel_budget"))
+        }
+        Command::SpawnCrisis { faction, .. } => Some((*faction, "spawn_crisis")),
+        Command::AssignLabor { faction, .. } => Some((*faction, "assign_labor")),
+        Command::MoveBand { faction, .. } => Some((*faction, "move_band")),
+        Command::SendExpedition { faction, .. } => Some((*faction, "send_expedition")),
+        Command::RecallExpedition { faction, .. } => Some((*faction, "recall_expedition")),
+        Command::SplitBand { faction, .. } => Some((*faction, "split_band")),
+        Command::SendHuntExpedition { faction, .. } => Some((*faction, "send_hunt_expedition")),
+        Command::SendDenialRaid { faction, .. } => Some((*faction, "send_denial_raid")),
+        Command::SendTradeExpedition { faction, .. } => Some((*faction, "send_trade_expedition")),
+        Command::FoundSettlement { faction, .. } => Some((*faction, "found_settlement")),
+        Command::Tame { faction, .. } => Some((*faction, "tame")),
+        Command::AnswerFork { faction, .. } => Some((*faction, "answer_fork")),
+        Command::Cultivate { faction, .. } => Some((*faction, "cultivate")),
+        Command::Sow { faction, .. } => Some((*faction, "sow")),
+        Command::Corral { faction, .. } => Some((*faction, "corral")),
+        Command::Grade { faction, .. } => Some((*faction, "grade")),
+        Command::Pave { faction, .. } => Some((*faction, "pave")),
+        Command::Abandon { faction, .. } => Some((*faction, "abandon")),
+        Command::Unqueue { faction, .. } => Some((*faction, "unqueue")),
+        Command::BuildOrder { faction, .. } => Some((*faction, "build_order")),
+        Command::BuildKit { faction, .. } => Some((*faction, "build_kit")),
+        Command::UpkeepKit { faction, .. } => Some((*faction, "upkeep_kit")),
+        Command::WorkPriority { faction, .. } => Some((*faction, "work_priority")),
+        Command::BenchPriority { faction, .. } => Some((*faction, "bench_priority")),
+        Command::UpkeepMode { faction, .. } => Some((*faction, "upkeep_mode")),
+        Command::ExtendPen { faction, .. } => Some((*faction, "extend_pen")),
+        Command::SetHerdOutput { faction, .. } => Some((*faction, "set_herd_output")),
+        Command::SetBench { faction, .. } => Some((*faction, "set_bench")),
+        Command::ClearBench { faction, .. } => Some((*faction, "clear_bench")),
+        Command::BenchCrew { faction, .. } => Some((*faction, "bench_crew")),
+        Command::CancelOrder { faction, .. } => Some((*faction, "cancel_order")),
+        Command::SetStartingLoadout { faction, .. } => Some((*faction, "set_starting_loadout")),
+        Command::Turn(_)
+        | Command::ResetMap { .. }
+        | Command::Rollback { .. }
+        | Command::UpdateEspionageGenerators { .. }
+        | Command::QueueEspionageMission { .. }
+        | Command::UpdateEspionageQueueDefaults { .. }
+        | Command::ReloadConfig { .. }
+        | Command::SetCrisisAutoSeed { .. }
+        | Command::SetFogEnabled { .. }
+        | Command::SetStartProfile { .. }
+        | Command::ExportMap { .. }
+        | Command::Resync
+        | Command::NewGame { .. }
+        | Command::SetConfigOverride { .. }
+        | Command::ClearConfigOverrides
+        | Command::Query { .. }
+        | Command::SaveGame { .. }
+        | Command::LoadGame { .. }
+        | Command::DeleteSave { .. } => None,
+    }
+}
+
 fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &SnapshotServer) {
+    // **Membership is checked ONCE, here, where a command enters the world with a faction on it.**
+    // Without it a command from an unregistered faction still reaches its handler and is refused
+    // downstream by `no_such_band` / `wrong_faction` — which reads as a legitimate faction that
+    // owns nothing, and writes a command-failure event *tagged with a faction that does not
+    // exist*. There is deliberately no `emit_command_failure` on this path for the same reason:
+    // the feed is per-faction, and there is no faction to file it under.
+    if let Some((faction, label)) = commanding_faction(&command) {
+        let registered = app
+            .world
+            .get_resource::<FactionRegistry>()
+            .map(|registry| registry.contains(faction))
+            .unwrap_or(false);
+        if !registered {
+            warn!(
+                target: "shadow_scale::command",
+                command = label,
+                faction = %faction.0,
+                "command.rejected=unknown_faction"
+            );
+            return;
+        }
+    }
     match command {
         Command::ExportMap { path } => {
             write_map_export(app, path);
@@ -19178,6 +19287,104 @@ mod tests {
         assert!(
             queued_road_tiles(&app, other).is_empty(),
             "the refused band queues nothing, so its builders never touch that tile"
+        );
+    }
+
+    /// ⛔ **A BAND ID RESOLVES ONLY FOR THE FACTION THAT OWNS THE BAND.**
+    ///
+    /// [`band_entity_and_tile`] used to match on the id alone, which made it the one production
+    /// band resolver that would hand a caller another faction's band. Both of its callers happened
+    /// to be behind an ownership check already, so nothing was exploitable — the point of the gate
+    /// is that the *next* caller does not have to know that.
+    ///
+    /// The player-facing refusal in `road_verb_refusal` is asserted here too, because the gate is
+    /// defence in depth and must not have quietly replaced the message a player reads.
+    #[test]
+    fn a_band_resolves_only_for_the_faction_that_owns_it() {
+        const COORD: UVec2 = UVec2::new(1, 1);
+
+        let (mut app, faction, _band) = road_world(COORD);
+        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteTrail);
+        let stranger = FactionId(1);
+        grant_roadbuilding(&mut app, faction);
+        grant_roadbuilding(&mut app, stranger);
+
+        assert!(
+            band_entity_and_tile(&mut app, faction, BandId(ROAD_BAND_ID)).is_some(),
+            "the band's own faction resolves it"
+        );
+        assert!(
+            band_entity_and_tile(&mut app, stranger, BandId(ROAD_BAND_ID)).is_none(),
+            "another faction naming the same id resolves nothing"
+        );
+
+        handle_road_verb(&mut app, stranger, ROAD_BAND_ID, COORD, Improvement::Grade);
+        assert!(
+            road_failure_detail_contains(&app, "is not one of your people"),
+            "and the refusal a player reads is unchanged"
+        );
+        assert_eq!(
+            keeper_of(&app, COORD),
+            None,
+            "nobody keeps a road a foreign faction was refused"
+        );
+    }
+
+    /// ⛔ **A COMMAND FROM A FACTION THIS WORLD DOES NOT HAVE IS DROPPED AT THE DOOR.**
+    ///
+    /// Before the membership gate, such a command ran all the way into its handler and was refused
+    /// downstream by the ownership checks — which reads as *a real faction that happens to own
+    /// nothing*, and files a command-failure event **tagged with a faction that does not exist**.
+    /// The assertion is therefore on both halves: the world is untouched, and nothing was filed
+    /// under the stranger.
+    ///
+    /// Asserting the observable effect (no keeper) rather than that a resolver returned `None`,
+    /// per the precedent above: "resolved nothing" was never the symptom.
+    #[test]
+    fn a_command_from_an_unregistered_faction_never_reaches_its_handler() {
+        const COORD: UVec2 = UVec2::new(1, 1);
+
+        let (mut app, faction, _band) = road_world(COORD);
+        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteTrail);
+        // The stranger is knowledgeable and addresses a real band, so membership is the ONLY thing
+        // standing between it and the handler.
+        let stranger = FactionId(7);
+        grant_roadbuilding(&mut app, faction);
+        grant_roadbuilding(&mut app, stranger);
+        assert!(
+            !app.world.resource::<FactionRegistry>().contains(stranger),
+            "the fixture world is the shipped single-faction one"
+        );
+
+        let snapshot_server = loopback_snapshot_server();
+        let grade = |faction: FactionId| Command::Grade {
+            faction,
+            band_id: ROAD_BAND_ID,
+            target_x: COORD.x,
+            target_y: COORD.y,
+        };
+
+        apply_command(&mut app, grade(stranger), &snapshot_server);
+        assert_eq!(
+            keeper_of(&app, COORD),
+            None,
+            "the stranger's command never reached the road handler"
+        );
+        assert!(
+            app.world
+                .resource::<CommandEventLog>()
+                .iter()
+                .all(|entry| entry.faction != stranger),
+            "and nothing is filed in the feed under a faction that does not exist"
+        );
+
+        // The same command from the registered faction lands, so the refusal above is membership
+        // and not a fixture that could never have worked.
+        apply_command(&mut app, grade(faction), &snapshot_server);
+        assert_eq!(
+            keeper_of(&app, COORD),
+            Some(BandId(ROAD_BAND_ID)),
+            "a registered faction takes the same road on"
         );
     }
 

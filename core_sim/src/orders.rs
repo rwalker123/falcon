@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use bevy::prelude::Resource;
+
+use crate::start_profile::{default_factions, FactionControl, FactionSpec};
 
 /// Identifier for a faction participating in the turn loop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -14,23 +16,63 @@ impl fmt::Display for FactionId {
     }
 }
 
-/// Registry of factions recognised by the simulation server.
+/// **Registry of factions recognised by the simulation server**, seeded from the active start
+/// profile's `factions` list (see [`crate::start_profile::FactionSpec`]).
+///
+/// # ⛔ INVARIANT: `control` is keyed by exactly the ids in `factions`
+///
+/// Every reader that walks `factions` and then asks how a faction is driven would otherwise have to
+/// handle "registered but uncontrolled", a state with no meaning. [`FactionRegistry::new`] is the
+/// only constructor that can produce a non-default registry, and it derives **both** fields from one
+/// list, so the two cannot be written apart. Ids are **positional** — `FactionId(i)` for index `i` —
+/// which is why a profile cannot mint a duplicate id or leave a gap.
 #[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct FactionRegistry {
     pub factions: Vec<FactionId>,
+    pub control: BTreeMap<FactionId, FactionControl>,
 }
 
+/// One human faction — the shipped world, and what a test harness or any other non-profile
+/// construction path gets. Shares [`crate::start_profile::default_factions`] with the profile
+/// layer's default so the two statements of "the default world" cannot drift.
 impl Default for FactionRegistry {
     fn default() -> Self {
-        Self {
-            factions: vec![FactionId(0)],
-        }
+        Self::new(&default_factions())
     }
 }
 
 impl FactionRegistry {
-    pub fn new(factions: Vec<FactionId>) -> Self {
-        Self { factions }
+    /// Derives ids and control from one declaration order: entry `i` becomes `FactionId(i)`.
+    pub fn new(factions: &[FactionSpec]) -> Self {
+        let control: BTreeMap<FactionId, FactionControl> = factions
+            .iter()
+            .enumerate()
+            .map(|(index, spec)| (FactionId(index as u32), spec.control))
+            .collect();
+        let factions: Vec<FactionId> = (0..factions.len())
+            .map(|index| FactionId(index as u32))
+            .collect();
+        debug_assert!(
+            factions.len() == control.len() && factions.iter().all(|id| control.contains_key(id)),
+            "faction registry control map must be keyed by exactly the registered factions"
+        );
+        Self { factions, control }
+    }
+
+    /// How `faction` is driven, or `None` if it is not registered at all.
+    pub fn control_of(&self, faction: FactionId) -> Option<FactionControl> {
+        self.control.get(&faction).copied()
+    }
+
+    /// Whether the sim drives `faction`. An unregistered faction is not the sim's to drive, so this
+    /// is `false` rather than a panic.
+    pub fn is_ai(&self, faction: FactionId) -> bool {
+        self.control_of(faction) == Some(FactionControl::Ai)
+    }
+
+    /// Whether `faction` is one this world recognises.
+    pub fn contains(&self, faction: FactionId) -> bool {
+        self.control.contains_key(&faction)
     }
 }
 
@@ -153,5 +195,75 @@ impl TurnQueue {
                 self.awaiting.remove(faction);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec(control: FactionControl) -> FactionSpec {
+        FactionSpec { control }
+    }
+
+    /// The registry a test harness, a save-less world and any other non-profile path gets.
+    #[test]
+    fn the_default_registry_is_one_human_faction() {
+        let registry = FactionRegistry::default();
+        assert_eq!(registry.factions, vec![FactionId(0)]);
+        assert_eq!(
+            registry.control_of(FactionId(0)),
+            Some(FactionControl::Human)
+        );
+        assert!(!registry.is_ai(FactionId(0)));
+    }
+
+    /// **Ids are positional**: entry `i` of the declaration is `FactionId(i)`, and the control map
+    /// is keyed by exactly those ids.
+    #[test]
+    fn a_declared_roster_seeds_positional_ids_and_their_control() {
+        let registry =
+            FactionRegistry::new(&[spec(FactionControl::Human), spec(FactionControl::Ai)]);
+        assert_eq!(registry.factions, vec![FactionId(0), FactionId(1)]);
+        assert_eq!(
+            registry.control_of(FactionId(0)),
+            Some(FactionControl::Human)
+        );
+        assert_eq!(registry.control_of(FactionId(1)), Some(FactionControl::Ai));
+        assert!(!registry.is_ai(FactionId(0)));
+        assert!(registry.is_ai(FactionId(1)));
+        let control_keys: Vec<FactionId> = registry.control.keys().copied().collect();
+        assert_eq!(control_keys, registry.factions);
+    }
+
+    /// An id nobody declared is not registered, is not the sim's to drive, and has no control.
+    #[test]
+    fn an_unregistered_faction_has_no_control_and_is_not_ai() {
+        let registry = FactionRegistry::new(&[spec(FactionControl::Human)]);
+        assert!(registry.contains(FactionId(0)));
+        assert!(!registry.contains(FactionId(7)));
+        assert_eq!(registry.control_of(FactionId(7)), None);
+        assert!(!registry.is_ai(FactionId(7)));
+    }
+
+    /// The turn queue is built from the registry's ids, so a seeded second faction is awaited
+    /// without anything else being told about it.
+    #[test]
+    fn the_turn_queue_awaits_every_seeded_faction() {
+        let registry =
+            FactionRegistry::new(&[spec(FactionControl::Human), spec(FactionControl::Ai)]);
+        let mut queue = TurnQueue::new(registry.factions.clone());
+        let mut awaiting = queue.awaiting();
+        awaiting.sort();
+        assert_eq!(awaiting, vec![FactionId(0), FactionId(1)]);
+
+        let outcome = queue
+            .submit_orders(FactionId(0), FactionOrders::end_turn())
+            .expect("faction 0 is registered");
+        assert_eq!(outcome, SubmitOutcome::Accepted { remaining: 1 });
+        let outcome = queue
+            .submit_orders(FactionId(1), FactionOrders::end_turn())
+            .expect("faction 1 is registered");
+        assert_eq!(outcome, SubmitOutcome::ReadyToResolve);
     }
 }
