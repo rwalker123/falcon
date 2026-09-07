@@ -83,18 +83,21 @@ func _reserve_name_pills(by_tile: Dictionary, order: Array, radius: float, origi
 		if bool(active.get("is_expedition", false)):
 			continue
 		var center: Vector2 = _view._hex_center_wrapped(tile.x, tile.y, radius, origin)
-		var rect := _name_pill_rect(center, token_radius, String(active.get("id", "")), group.size())
-		if rect.size == Vector2.ZERO:
+		var rects := _name_pill_rects(center, token_radius, String(active.get("id", "")), group.size())
+		var footprint: Rect2 = rects[NAME_PILL_FOOTPRINT]
+		if footprint.size == Vector2.ZERO:
 			continue
 		var blocked := false
 		for placed in _label_rects:
-			if placed.intersects(rect):
+			if placed.intersects(footprint):
 				blocked = true
 				break
 		if blocked:
 			continue
-		_label_rects.append(rect)
-		_label_grants[tile] = rect
+		# The cull reasons about the FOOTPRINT; the draw pass is handed the ANCHOR, which is the same
+		# plate ending where the `×N` chip has to be centred. See `_name_pill_rects`.
+		_label_rects.append(footprint)
+		_label_grants[tile] = rects[NAME_PILL_ANCHOR]
 
 ## `order`, with the selected band's tile moved to the front — the ONE reordering the cull does, and
 ## it touches label placement only (the caller still draws tokens in `order`).
@@ -231,63 +234,100 @@ func _draw_band_token(unit: Dictionary, center: Vector2, token_radius: float, di
 func _band_faction_color(unit: Dictionary) -> Color:
 	return _view.faction_colors.get(unit.get("faction", ""), _view.BAND_FACTION_FALLBACK_COLOR)
 
-## THE BAND NAME PILL's geometry, resolved WITHOUT drawing — the reservation pass needs the rect
+## THE BAND NAME PILL's geometry, resolved WITHOUT drawing — the reservation pass needs the rects
 ## before it knows whether the pill may be drawn at all, and the draw then reuses the very rect that
 ## was tested, so a granted label can never land somewhere the cull did not clear.
 ##
 ## Fixed screen size: the plate is measured off the text at `BAND_NAME_PILL_FONT_SIZE` and the gap
 ## below the token is a fixed pixel count, so the only thing zoom moves is the anchor (which follows
-## the token's radius, keeping the pill off the glyph at every scale). An unnamed band returns an
-## empty rect and gets no pill — the name is the sim's, never fabricated here.
-## The returned rect is the label's WHOLE FOOTPRINT — the plate plus the room the `×N` chip will take
-## on its right end when the stack is over cap. Both consumers want that total: the cull, because a
-## chip is as much clutter as the name it caps, and the caller's chip anchor, which centres the chip
-## on `rect`'s right edge. The faction BAR needs no such allowance (nothing is written on it), which
-## is why this reservation lives on the pill rather than in the anchoring code.
-func _name_pill_rect(center: Vector2, token_radius: float, band_name: String, count: int) -> Rect2:
-	var half := _name_plate_half(band_name)
-	if half == Vector2.ZERO:
-		return Rect2()
-	var chip_reach := 0.0
+## the token's radius, keeping the pill off the glyph at every scale).
+##
+## ⛔ **A NAME PILL HAS TWO RECTS AND THEY ARE NOT THE SAME ONE.** Collapsing them is what let the
+## cull clear two labels whose plates visibly overlapped, and what put the `×N` chip's outer half
+## outside the reservation entirely.
+##
+## - `NAME_PILL_FOOTPRINT` — **every pixel the label inks**: the plate's round END CAPS (which reach a
+##   plate half-height further out on each side than the body — see `MapView.pill_half_extent`) and
+##   BOTH halves of the `×N` chip. This is what the overlap cull tests and stores.
+## - `NAME_PILL_ANCHOR` — the same plate, but ending where the chip must be CENTRED, which is one chip
+##   half-width past the plate's rectangular BODY. `_draw_band_stack` centres the chip on this rect's
+##   right edge — the identical rule it applies to the faction bar's rect — so one anchoring line
+##   serves both nameplate shapes and the mid-zoom path is untouched.
+##
+## **THE CHIP FOLDS ONTO THE BODY EDGE, NOT THE INKED EDGE**, and that is the look, not an oversight:
+## the chip's round left cap nests into the plate's round right cap, so `Thornhollow ×4` reads as one
+## nameplate. Anchoring past the inked edge would push the chip a full cap clear of the plate and it
+## would read as a separate badge.
+##
+## Both rects are empty for a band with no name, which gets no pill at all: the name is the sim's, and
+## this renderer never invents one.
+const NAME_PILL_FOOTPRINT := 0
+const NAME_PILL_ANCHOR := 1
+func _name_pill_rects(center: Vector2, token_radius: float, band_name: String, count: int) -> Array[Rect2]:
+	var text_size := _name_text_size(band_name)
+	if text_size == Vector2.ZERO:
+		return [Rect2(), Rect2()] as Array[Rect2]
+	var half := _name_plate_half(text_size)
+	var left: float = center.x - half.x
+	var top: float = center.y + token_radius + _view.BAND_NAME_PILL_GAP
+	var height: float = half.y * 2.0
+	var inked_right: float = center.x + half.x
+	var anchor_right: float = inked_right
+	var footprint_right: float = inked_right
 	if count > _view.BAND_STACK_MAX_CARDS:
-		chip_reach = _view.count_pill_reach(_count_pill_text(count))
-	var pill_y: float = center.y + token_radius + _view.BAND_NAME_PILL_GAP + half.y
-	return Rect2(center.x - half.x, pill_y - half.y, half.x * 2.0 + chip_reach, half.y * 2.0)
+		var chip_reach: float = _view.count_pill_reach(_count_pill_text(count))
+		anchor_right = center.x + _name_plate_body_half_w(text_size) + chip_reach
+		# The chip is centred on `anchor_right` and reaches `chip_reach` further right again. `maxf`
+		# because a short name under a big count could still be the narrower of the two.
+		footprint_right = maxf(inked_right, anchor_right + chip_reach)
+	return [
+		Rect2(left, top, footprint_right - left, height),
+		Rect2(left, top, anchor_right - left, height),
+	] as Array[Rect2]
 
-## Half-extents of the name pill's PLATE alone — the measured text, its padding, and the border plate
-## drawn under it. `Vector2.ZERO` for a band with no name, which gets no pill at all: the name is the
-## sim's, and this renderer never invents one.
-func _name_plate_half(band_name: String) -> Vector2:
+## The name at `BAND_NAME_PILL_FONT_SIZE`, measured once and threaded through the geometry below.
+## `Vector2.ZERO` for no name / no font.
+func _name_text_size(band_name: String) -> Vector2:
 	var font: Font = ThemeDB.fallback_font
 	if font == null or band_name == "":
 		return Vector2.ZERO
-	var text_size: Vector2 = font.get_string_size(band_name, HORIZONTAL_ALIGNMENT_LEFT, -1,
+	return font.get_string_size(band_name, HORIZONTAL_ALIGNMENT_LEFT, -1,
 		_view.BAND_NAME_PILL_FONT_SIZE)
-	return Vector2(
-		text_size.x * 0.5 + _view.BAND_NAME_PILL_PAD_X + _view.BAND_NAME_PILL_BORDER_WIDTH,
-		text_size.y * 0.5 * _view.MARKER_BADGE_HEIGHT_FACTOR + _view.BAND_NAME_PILL_BORDER_WIDTH)
+
+## The plate's INKED half-extents, end caps and border included — `MapView.pill_half_extent` asked
+## about this pill's padding and border. The plate is centred on `x` within its rect, so this is also
+## what the draw pass offsets by to put the plate back under the token.
+func _name_plate_half(text_size: Vector2) -> Vector2:
+	return _view.pill_half_extent(text_size, _view.BAND_NAME_PILL_PAD_X,
+		_view.BAND_NAME_PILL_BORDER_WIDTH)
+
+## Where the plate's rectangular BODY ends, measured from the pill's centre — i.e. the plate half-
+## extent WITHOUT its end cap. Only the chip anchor wants this (see `_name_pill_rects`); everything
+## measuring the label's size wants `_name_plate_half`.
+func _name_plate_body_half_w(text_size: Vector2) -> float:
+	return text_size.x * 0.5 + _view.BAND_NAME_PILL_PAD_X + _view.BAND_NAME_PILL_BORDER_WIDTH
 
 ## The over-cap count chip's text, written once so the string the caller DRAWS and the string the
 ## pill MEASURES its reservation against can never drift apart.
 func _count_pill_text(count: int) -> String:
 	return "×%d" % count
 
-## Draw the band's name into a rect `_name_pill_rect` already measured and the cull already cleared.
+## Draw the band's name into the ANCHOR rect `_name_pill_rects` measured and the cull cleared.
 ## The plate is the shared `_draw_pill_plate` — the same family as the `×N`/`+N` badges — with the
 ## FACTION COLOR on its border rather than its fill: the fill has to stay dark for `MARKER_BADGE_FG`
 ## text to read, and tinting it per faction would make every faction's label a different style.
-## Returns the rect so the caller can anchor the `×N` count pill to its right end, exactly as the
+## Returns that rect so the caller can centre the `×N` count pill on its right end, exactly as the
 ## faction bar does.
 func _draw_band_name_pill(rect: Rect2, band_name: String, faction_color: Color) -> Rect2:
 	var font: Font = ThemeDB.fallback_font
-	if font == null or band_name == "":
+	var text_size := _name_text_size(band_name)
+	if font == null or text_size == Vector2.ZERO:
 		return Rect2()
-	# The plate is LEFT-aligned in the rect, not centred in it: the rect may carry a chip allowance on
-	# its right end (see `_name_pill_rect`), and the plate itself still has to sit under the token.
-	var half := _name_plate_half(band_name)
+	# The plate is LEFT-aligned in the rect, not centred in it: the rect ends at the CHIP ANCHOR, not
+	# at the plate (see `_name_pill_rects`), while the plate itself still has to sit under the token.
+	# `rect.position.x` is `center.x - half.x`, so this puts it back exactly on the hex centre.
+	var half := _name_plate_half(text_size)
 	var pill_center := Vector2(rect.position.x + half.x, rect.position.y + rect.size.y * 0.5)
-	var text_size: Vector2 = font.get_string_size(band_name, HORIZONTAL_ALIGNMENT_LEFT, -1,
-		_view.BAND_NAME_PILL_FONT_SIZE)
 	_view._draw_pill_plate(pill_center, text_size, _view.BAND_NAME_PILL_PAD_X, _view.MARKER_BADGE_BG,
 		faction_color, _view.BAND_NAME_PILL_BORDER_WIDTH)
 	_view.draw_string(font,

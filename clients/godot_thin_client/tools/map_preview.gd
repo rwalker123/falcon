@@ -1068,10 +1068,13 @@ func _ready() -> void:
 		_map.last_hex_radius >= MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS)
 	await _save("map_band_names_overlap")
 	var culled_labels: Array = _map.band_label_tiles()
-	_assert_map("two touching pills, one label: the overlapping one is dropped outright",
+	_assert_map("three crowded bands, one label: every overlapping pill is dropped outright",
 		culled_labels.size() == 1)
 	_assert_map("…and the one kept is the SELECTED band's, not the first in snapshot order",
-		culled_labels.size() == 1 and culled_labels[0] == NAME_PILL_CULL_EAST_TILE)
+		culled_labels.has(NAME_PILL_CULL_EAST_TILE)
+			and not culled_labels.has(NAME_PILL_CULL_WEST_TILE))
+	_assert_map("…and the END-CAP band is culled too, so the cull measures the plate's caps and not just its body",
+		not culled_labels.has(NAME_PILL_CULL_CAP_TILE))
 
 	# map_band_names_gate — the pill at the smallest zoom it is ever drawn at (a grid fitting JUST
 	# above BAND_NAME_PILL_MIN_RADIUS). Anything smaller takes the scaled faction bar instead.
@@ -1106,8 +1109,7 @@ func _ready() -> void:
 	_assert_map("one notch below the gate no pill is placed",
 		_map.band_label_tiles().is_empty())
 	_assert_map("…because the SCALED FACTION BAR is what the nameplate is at that zoom",
-		_frame_inks_red_near_hex(below_gate_frame, below_gate_tile, NAME_PILL_GATE_PROBE_RADII,
-			FACTION_BAR_INK_RED_MARGIN))
+		_frame_inks_red_below_hex(below_gate_frame, below_gate_tile, FACTION_BAR_INK_RED_MARGIN))
 
 	# State M — hunting expeditions (PR 2, §2b): alongside the resident band (solid dot) and a scout
 	# party (hollow ⚑ flag), two hunt parties render as hollow 🏹 bow discs — one Hunting, one
@@ -3558,19 +3560,40 @@ const WARNING_INK_RED_MARGIN := 0.24
 func _frame_marks_warning_near_hex(image: Image, tile: Vector2i, radii: float) -> bool:
 	return _frame_inks_red_near_hex(image, tile, radii, WARNING_INK_RED_MARGIN)
 
-## The generalised form: is there ink around this token whose RED channel runs `margin` clear of its
-## own green and blue? Shared by the ⚠ probe above and by the below-gate nameplate probe, which asks
-## the same question of the orange faction BAR for the same reason — see `FACTION_BAR_INK_RED_MARGIN`.
+## The generalised form: is there ink in a box CENTRED on this token whose RED channel runs `margin`
+## clear of its own green and blue? This is the ⚠'s question — the mark hangs off the token's
+## up-left diagonal, so its box has to contain the token.
 func _frame_inks_red_near_hex(image: Image, tile: Vector2i, radii: float, margin: float) -> bool:
 	if image == null:
 		return false
 	var center: Vector2 = _map._hex_center(tile.x, tile.y, _map.last_hex_radius, _map.last_origin)
+	var half: float = radii * float(_map.last_hex_radius)
+	return _frame_inks_red_in_box(image, center - Vector2(half, half), Vector2(half, half) * 2.0, margin)
+
+## The same question asked of a box BELOW the token, holding the faction bar and no part of the stage
+## sprite (`NAME_PILL_BAR_PROBE_*`). **The window is the whole point**: a box around the token is
+## answered by the art on it, which is how the previous version of this probe passed with
+## `_draw_band_banner` deleted. See `FACTION_BAR_INK_RED_MARGIN`.
+func _frame_inks_red_below_hex(image: Image, tile: Vector2i, margin: float) -> bool:
+	if image == null:
+		return false
+	var center: Vector2 = _map._hex_center(tile.x, tile.y, _map.last_hex_radius, _map.last_origin)
+	var r := float(_map.last_hex_radius)
+	return _frame_inks_red_in_box(image,
+		Vector2(center.x - NAME_PILL_BAR_PROBE_HALF_W * r, center.y + NAME_PILL_BAR_PROBE_TOP * r),
+		Vector2(NAME_PILL_BAR_PROBE_HALF_W * 2.0 * r,
+			(NAME_PILL_BAR_PROBE_BOTTOM - NAME_PILL_BAR_PROBE_TOP) * r),
+		margin)
+
+## The scan both windows share. Takes VIEWPORT coordinates and rescales into image pixels — the
+## captured framebuffer can be larger or smaller than the logical viewport (HiDPI / content scale),
+## the `_save_crop_px` rule.
+func _frame_inks_red_in_box(image: Image, origin: Vector2, size: Vector2, margin: float) -> bool:
 	var px_scale := float(image.get_width()) / maxf(get_viewport().get_visible_rect().size.x, 1.0)
-	var half: float = radii * float(_map.last_hex_radius) * px_scale
-	var x0 := clampi(int(center.x * px_scale - half), 0, image.get_width() - 1)
-	var y0 := clampi(int(center.y * px_scale - half), 0, image.get_height() - 1)
-	var x1 := clampi(int(center.x * px_scale + half), 0, image.get_width())
-	var y1 := clampi(int(center.y * px_scale + half), 0, image.get_height())
+	var x0 := clampi(int(origin.x * px_scale), 0, image.get_width() - 1)
+	var y0 := clampi(int(origin.y * px_scale), 0, image.get_height() - 1)
+	var x1 := clampi(int((origin.x + size.x) * px_scale), 0, image.get_width())
+	var y1 := clampi(int((origin.y + size.y) * px_scale), 0, image.get_height())
 	for py in range(y0, y1):
 		for px in range(x0, x1):
 			var pixel := image.get_pixel(px, py)
@@ -4383,17 +4406,42 @@ func _snapshot_band_names() -> Dictionary:
 ## **THE SELECTED BAND IS DELIBERATELY SECOND IN SNAPSHOT ORDER.** Placement otherwise runs in
 ## snapshot order, so without the selected-first priority the WEST band would win and this frame
 ## would pass on a renderer that has no priority rule at all.
-## The cull grid. **MEASURED, not derived**: the 16x12 grid this harness uses elsewhere fits at
-## radius 83, which puts `SQRT3 x 83 = 144 px` between neighbouring hexes — half again the ~100 px a
-## 15-character pill spans, so nothing collides there and the state would have proved nothing. This
-## grid fits at ~35, i.e. ~61 px apart, where two long names genuinely cannot both fit. The premise
-## assertion states the radius it got.
-const NAME_PILL_CULL_GRID_W := 32
-const NAME_PILL_CULL_GRID_H := 29
+## The cull grid, and **it is sized by MEASUREMENT for two jobs at once**. First, it has to crowd at
+## all: the 16x12 grid this harness uses elsewhere fits at radius 83, which puts `SQRT3 x 83 = 144 px`
+## between neighbours — wider than the 119 px a 15-character pill inks, so nothing collides there and
+## the state would have proved nothing. Second, two columns out has to land in the END-CAP BAND's
+## blind window (see it below), which pins the fitted radius near 31.7 rather than anywhere merely
+## "close". The premise assertion states the radius and spacing it got.
+const NAME_PILL_CULL_GRID_W := 35
+const NAME_PILL_CULL_GRID_H := 32
 const NAME_PILL_CULL_WEST_ENTITY := 9520
 const NAME_PILL_CULL_EAST_ENTITY := 9521
 const NAME_PILL_CULL_WEST_TILE := Vector2i(NAME_PILL_CULL_GRID_W / 2 - 1, NAME_PILL_CULL_GRID_H / 2)
 const NAME_PILL_CULL_EAST_TILE := Vector2i(NAME_PILL_CULL_GRID_W / 2, NAME_PILL_CULL_GRID_H / 2)
+
+## ⛔ **THE END-CAP BAND — a third band placed where only the plate's ROUND CAPS overlap.** A pill
+## plate is a body rect plus a circle of the plate's half-HEIGHT centred on each end, so it reaches
+## one cap radius further left and right than the body it is measured from. A cull measuring only the
+## body clears every pair whose BODIES miss, which leaves a window two cap radii wide where two
+## plates visibly overlap and both labels are drawn anyway.
+##
+## **THE ADJACENT BAND CANNOT CATCH THAT, AND THE SPACING IS TUNED SO THIS ONE CAN.** Measured on this
+## frame at font 11: a "Shepherd's Fold" plate inks **119.4 px** and its body is **98.0 px**, so the
+## blind window is the 21.4 px between them. `NAME_PILL_CULL_GRID_*` is sized to put the fitted radius
+## at ~31.7 (hex spacing ~54.9 px), which lands two columns out at **109.7 px** — 11.7 px clear of the
+## body threshold and 9.7 px inside the inked one, i.e. near the middle of the window rather than at
+## either lip. The band one column out (~54.9 px) is culled either way and proves nothing about caps.
+##
+## **IT SITS ON THE SAME SIDE AS THE ADJACENT BAND, AND THAT IS WHAT KEEPS THE THREE CLAIMS APART.**
+## Two columns EAST it would be 164.7 px from the west band — clear of it — so losing the
+## selected-first priority rule would leave it legitimately drawable and fail the end-cap assertion
+## for a reason that has nothing to do with end caps. Two columns WEST it is one column from the west
+## band, so it is culled whichever of the two wins. Sabotaging the cap term then fails only the count
+## and this assertion; sabotaging the priority rule fails only the "kept is the selected band" one.
+const NAME_PILL_CULL_CAP_ENTITY := 9522
+const NAME_PILL_CULL_CAP_COLS := 2
+const NAME_PILL_CULL_CAP_TILE := Vector2i(NAME_PILL_CULL_GRID_W / 2 - NAME_PILL_CULL_CAP_COLS,
+	NAME_PILL_CULL_GRID_H / 2)
 
 func _snapshot_band_names_crowded() -> Dictionary:
 	var west := _band_at(NAME_PILL_CULL_WEST_ENTITY, NAME_PILL_CULL_WEST_TILE.x,
@@ -4402,13 +4450,17 @@ func _snapshot_band_names_crowded() -> Dictionary:
 	var east := _band_at(NAME_PILL_CULL_EAST_ENTITY, NAME_PILL_CULL_EAST_TILE.x,
 		NAME_PILL_CULL_EAST_TILE.y, STAGE_VILLAGE, 0)
 	east["name"] = NAME_PILL_LONG_NAME
+	var cap := _band_at(NAME_PILL_CULL_CAP_ENTITY, NAME_PILL_CULL_CAP_TILE.x,
+		NAME_PILL_CULL_CAP_TILE.y, STAGE_CAMP, 2)
+	cap["name"] = NAME_PILL_LONG_NAME
 	var terrain: Array = []
 	terrain.resize(NAME_PILL_CULL_GRID_W * NAME_PILL_CULL_GRID_H)
 	terrain.fill(TERRAIN_ID)
 	return {
 		"grid": {"width": NAME_PILL_CULL_GRID_W, "height": NAME_PILL_CULL_GRID_H, "wrap_horizontal": false},
 		"overlays": {"terrain": terrain},
-		"populations": [west, east],   # west first — the priority rule is what puts east's label down
+		# West FIRST — the priority rule is what puts east's label down instead of it.
+		"populations": [west, east, cap],
 		"herds": [],
 	}
 
@@ -4423,29 +4475,52 @@ const NAME_PILL_GATE_ABOVE_GRID_W := 45
 const NAME_PILL_GATE_ABOVE_GRID_H := 41
 const NAME_PILL_GATE_BELOW_GRID_W := 47
 const NAME_PILL_GATE_BELOW_GRID_H := 43
-## How far around the token the gate frames probe for nameplate ink, in hex radii. Tight: the
-## nameplate hangs just under the token in both forms, and a wide box would let a NEIGHBOUR's
-## nameplate answer for this one.
-const NAME_PILL_GATE_PROBE_RADII := 1.2
+## The BAR's OWN window, in hex radii from the token centre — deliberately BELOW the glyph rather
+## than a box around it. The token box spans ±`BAND_TOKEN_RADIUS_FACTOR` (0.34) of the hex radius and
+## the bar hangs from ~0.40 to ~0.57 under the centre, so this window holds the whole bar and none of
+## the sprite. Narrow horizontally too: the bar is 2.4 token radii wide, and a wider box would let a
+## NEIGHBOUR's nameplate answer for this one.
+const NAME_PILL_BAR_PROBE_TOP := 0.36
+const NAME_PILL_BAR_PROBE_BOTTOM := 0.85
+const NAME_PILL_BAR_PROBE_HALF_W := 0.6
 ## The gate band's faction — ORANGE, and picked for that: the below-gate frame proves the scaled bar
 ## is what the nameplate is at that zoom, and orange is what the probe below can see.
 const NAME_PILL_GATE_FACTION := 1
-## ⛔ **AN EXACT-COLOUR PROBE CANNOT SEE THE BAR, AND THE FIRST ONE HERE DID NOT.** Just under the
-## gate the bar is ~19x4 viewport px and the frame is resampled on its way to the framebuffer, so no
-## pixel reaches the flat faction colour: measured on this very frame, the closest was **0.26** away
-## from it while bare terrain got to **0.40** — no threshold separates those. The discriminating
-## property is REDNESS, exactly as it is for the ⚠ (`WARNING_INK_RED_MARGIN`): the orange bar
-## measures ~0.41 and this map's khaki terrain ~0.06, so the margin sits in a wide gap rather than
-## being tuned past one of them.
-const FACTION_BAR_INK_RED_MARGIN := 0.24
+## ⛔ **TWO PROBES FOR THIS ONE CLAIM WERE WRONG BEFORE THIS NUMBER WAS TRUSTWORTHY.**
+##
+## **An exact-colour probe cannot see the bar.** Just under the gate it is ~19×4 viewport px and the
+## frame is resampled on its way to the framebuffer, so no pixel reaches the flat faction colour:
+## measured, the closest was **0.26** away from it while bare terrain got to **0.40**. No threshold
+## separates those. The discriminating property is REDNESS, as it is for the ⚠
+## (`WARNING_INK_RED_MARGIN`).
+##
+## **And the redness probe that replaced it was reading the VILLAGE SPRITE.** Its box was centred on
+## the hex, `_snapshot_band_name_gate` built its band with `STAGE_VILLAGE`, and `village.png`'s red
+## roofs put **7908 pixels** over the old 0.24 margin with a peak of 0.490 — so the assertion passed
+## on the token alone and **survived deleting `_draw_band_banner`**. The "~0.41" that margin was
+## calibrated against was the roof, not the bar; the bar's arithmetic ceiling is only 0.33
+## (faction 1 is `Color(0.95, 0.62, 0.2)`) and it never gets near that once blended.
+##
+## Two changes make the claim real, and both were needed. The fixtures took `STAGE_NOMADIC`, whose
+## sprite peaks at 0.212 redness with **zero** pixels over 0.24; and the probe moved off the hex
+## centre into the bar's own window BELOW the glyph (`NAME_PILL_BAR_PROBE_*`), so no stage art can
+## answer for the bar again. **Re-measured in that window on that fixture: the bar peaks at 0.180 and
+## the bare terrain under a bannerless token at 0.063.** This margin splits those two down the middle
+## rather than sitting a hair off either.
+const FACTION_BAR_INK_RED_MARGIN := 0.12
 
 ## One named band at the middle of whatever grid it is asked for — the gate frames want a single
 ## unambiguous subject, not a row the cull could also be acting on.
+##
+## **`STAGE_NOMADIC`, AND THE STAGE IS PART OF THE TEST.** The below-gate frame asks a redness probe
+## whether the faction BAR inked anything, and `village.png`'s red roofs answered for it (see
+## `FACTION_BAR_INK_RED_MARGIN`). The tent has zero pixels over any margin this probe could use —
+## the same property that makes the pre-existing ⚠ probe sound.
 func _snapshot_band_name_gate(width: int, height: int) -> Dictionary:
 	var terrain: Array = []
 	terrain.resize(width * height)
 	terrain.fill(TERRAIN_ID)
-	var band := _band_at(NAME_PILL_ENTITY_BASE, width / 2, height / 2, STAGE_VILLAGE, NAME_PILL_GATE_FACTION)
+	var band := _band_at(NAME_PILL_ENTITY_BASE, width / 2, height / 2, STAGE_NOMADIC, NAME_PILL_GATE_FACTION)
 	band["name"] = NAME_PILL_LONG_NAME
 	return {
 		"grid": {"width": width, "height": height, "wrap_horizontal": false},

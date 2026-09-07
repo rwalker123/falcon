@@ -140,32 +140,66 @@ and its food dot all still draw, so the band is never hidden; only its name is.
   off as the array shuffles.
 - **Both halves of the state are rebuilt every pass.** A rect surviving a frame would cull a label
   that has nothing to collide with.
-- **The reserved rect includes the `×N` chip's reach** (`MapView.count_pill_reach`). The chip is
-  centred on the nameplate's right edge, which was harmless on a bar carrying no text and eats the
-  last letters of a name; the pill reserves that room so `Thornhollow ×4` reads as one nameplate.
-  The bar needs no such allowance, which is why the reservation lives on the pill and not in the
-  anchoring code.
+- **A plate's half-extent is ONE expression, `MapView.pill_half_extent`.** `_fill_pill` draws end-cap
+  circles of radius `half_h` centred at `±half_w`, so a plate inks `half_h` FURTHER on each side than
+  its body. A measurement that forgets the caps under-reserves ~10 px per side at
+  `BAND_NAME_PILL_FONT_SIZE` 11 — enough for two labels the cull has just cleared to visibly overlap,
+  which is the one thing the cull exists to prevent. `count_pill_reach` and `_name_plate_half` are
+  both that single function now, rather than two formulas for one shape that have to agree.
+- **The reservation is TWO rects, because the footprint and the chip anchor are different
+  questions.** `_name_pill_rects` measures once and returns both. The **FOOTPRINT** is everything the
+  label inks — the plate's caps included, plus BOTH halves of the over-cap `×N` chip — and it is what
+  `_label_rects` holds and the cull intersects. The **ANCHOR** ends where the chip's CENTRE goes, and
+  it is what the draw pass is handed, so `_draw_band_stack`'s one-line chip anchor never learns which
+  nameplate shape it got. One rect could not be both: `count_pill_reach` is a HALF-width, so a rect
+  that reserves the whole chip ends a chip-radius past where the chip should be centred.
+- **The chip anchors past the plate's BODY edge, not its inked edge**, so the chip's round left cap
+  nests into the plate's round right cap and `Thornhollow ×4` reads as one nameplate; anchoring past
+  the ink stands it a full cap clear and it reads as a separate badge. On a bar carrying no text the
+  anchor was harmless wherever it landed — on a pill it is what keeps the chip off the name's last
+  letters. The bar needs no allowance at all, which is why all of this lives on the pill rather than
+  in the anchoring code.
 
 Foreign bands take the pill exactly as your own do — the fog rule already means a foreign band you
 cannot see is not drawn at all, so it needs no rule of its own. **Expeditions get no pill**, the same
 `is_expedition` guard that has always kept the bar off them: a party's faction reads off its hollow
 flag-disc ring.
 
-> #### ⛔ THE BAR IS INVISIBLE TO AN EXACT-COLOUR PROBE
+> #### ⛔ THE BAR IS INVISIBLE TO AN EXACT-COLOUR PROBE, AND THE TOKEN WILL ANSWER FOR IT
 >
 > `map_band_names_below_gate` asserts the pill's ABSENCE, which is only worth asserting because the
 > BAR is visibly present in the same frame — the `map-preview` rule the ⚠'s LOD probe was rebuilt
-> around. But the bar cannot be found by matching its faction colour: just under the gate it is
-> ~19×4 px and the frame is resampled on its way to the framebuffer, so measured on that frame the
-> closest pixel was **0.26** away from the flat faction colour while bare terrain reached **0.40**.
-> The discriminating property is REDNESS again (`FACTION_BAR_INK_RED_MARGIN`, sharing
-> `_frame_inks_red_near_hex` with the ⚠ probe): the orange bar measures ~0.41, the khaki terrain
-> ~0.06.
+> around. Two things make that presence hard to measure, and the first cut of this probe got the
+> second one wrong.
+>
+> The bar cannot be found by matching its faction colour: just under the gate it is ~19×4 px and the
+> frame is resampled on its way to the framebuffer, so measured on that frame the closest pixel was
+> **0.26** away from the flat faction colour while bare terrain reached **0.40**. The discriminating
+> property is REDNESS again (`FACTION_BAR_INK_RED_MARGIN`).
+>
+> **But a redness probe centred on the hex measures the TOKEN, not the bar.** `village.png` peaks at
+> **0.490** redness across **7908** pixels — its roofs — and `camp.png` at 0.310, so a box containing
+> the glyph passes with `_draw_band_banner` deleted: the same "passed with the feature removed"
+> failure the ⚠'s callout above was written about, reproduced one section later by reusing its box.
+> The probe is a WINDOW BELOW THE GLYPH now (`_frame_inks_red_below_hex`,
+> `NAME_PILL_BAR_PROBE_TOP`/`BOTTOM`/`HALF_W` — 0.36–0.85 hex radii down, ±0.6 wide) and the gate
+> fixtures build with `STAGE_NOMADIC`, whose sprite has **zero** pixels over the margin.
+> `_frame_inks_red_near_hex` keeps the ⚠'s box, which must contain the token; both share
+> `_frame_inks_red_in_box`.
+>
+> **The margin is 0.12, measured in the window it is used in**: the bar peaks there at **0.180** and
+> bare terrain under a bannerless token at **0.063**. The 0.24 it replaced was above the bar's
+> arithmetic CEILING — faction 1 is `Color(0.95, 0.62, 0.2)`, so 0.33 at full strength and strictly
+> less after blending. **A threshold a feature cannot reach is the arithmetic saying the calibration
+> was taken off something else**, and it is the cheapest check available on a probe like this.
 >
 > The cull's own claim is STRUCTURAL, not pixel-based — `MapView.band_label_tiles()` reports which
 > tiles placed a label, because a culled label leaves no ink and "dropped" is otherwise
 > indistinguishable from "drawn somewhere I did not probe". The crowded fixture puts the selected
 > band SECOND in snapshot order, so a renderer with no priority rule keeps the wrong label and fails.
+> It also carries an **END-CAP band**, sitting in the ~21 px window between a "Shepherd's Fold"
+> plate's body (98.0 px) and its inked width (119.4 px), so a cull that measures bodies rather than
+> whole plates fails on that band and only that band.
 
 ## An expedition's disc wears its MISSION's mark, and there are four of them
 

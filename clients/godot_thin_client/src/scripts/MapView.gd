@@ -2685,16 +2685,33 @@ func _fill_pill(center: Vector2, half_w: float, half_h: float, color: Color) -> 
 	draw_circle(Vector2(center.x - half_w, center.y), half_h, color)
 	draw_circle(Vector2(center.x + half_w, center.y), half_h, color)
 
-## How far a `×N`/`+N` count pill reaches from its own centre — its widest point, END CAP INCLUDED.
-## The band NAME PILL needs this to RESERVE the room the chip will take on its right end: the chip is
-## centred on the nameplate's right edge, and a nameplate carrying TEXT (unlike the faction bar it
-## replaces above the zoom gate) loses its last letters if the chip lands on them.
+## THE HALF-EXTENTS OF A PILL PLATE — the widest and tallest points of what `_draw_pill_plate`
+## actually inks, for text already measured at the caller's font size.
+##
+## **THE END CAPS ARE THE TERM EVERY "HOW WIDE IS THIS LABEL" CALCULATION FORGETS.** `_fill_pill`
+## draws the body rect out to `±half_w` and then a circle of radius `half_h` CENTRED on each of those
+## edges, so the plate reaches a further `half_h` left and right than the body it was measured from —
+## about 9–10 px per side at font 11. Anything sizing a box around a pill (`count_pill_reach`, the
+## band name pill's overlap footprint) must ask HERE rather than re-deriving it, because the version
+## that omits the caps looks plausible and under-measures by a fifth of the plate.
+func pill_half_extent(text_size: Vector2, pad_x: float, border_width: float) -> Vector2:
+	var half_h: float = text_size.y * 0.5 * MARKER_BADGE_HEIGHT_FACTOR + border_width
+	return Vector2(text_size.x * 0.5 + pad_x + border_width + half_h, half_h)
+
+## How far a `×N`/`+N` count pill reaches from its own centre — its widest point, END CAP INCLUDED,
+## which is just `pill_half_extent` asked about a borderless badge. The band NAME PILL needs this to
+## RESERVE the room the chip takes on its right end: a nameplate carrying TEXT (unlike the faction bar
+## it replaces above the zoom gate) loses its last letters if the chip lands on them.
 func count_pill_reach(text: String) -> float:
 	var font: Font = ThemeDB.fallback_font
 	if font == null or text == "":
 		return 0.0
 	var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, MARKER_BADGE_FONT_SIZE)
-	return text_size.x * 0.5 + MARKER_BADGE_PAD_X + text_size.y * 0.5 * MARKER_BADGE_HEIGHT_FACTOR
+	return pill_half_extent(text_size, MARKER_BADGE_PAD_X, COUNT_PILL_NO_BORDER_WIDTH).x
+
+## A count badge takes no border — `_draw_count_pill` passes `_draw_pill_plate` no border colour at
+## all — so its reach is measured with none.
+const COUNT_PILL_NO_BORDER_WIDTH := 0.0
 
 ## A small dark rounded pill with centered text — shared by the primary `×N` count
 ## badge and the secondary `+N` overflow chip.
