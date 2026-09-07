@@ -53,15 +53,15 @@ signal advance_requested
 ## needs the row to say which, or the press opens whichever subject the panel was already on.
 signal panel_requested(kind: String, subject: int)
 
+## What a row carries when its producer named no subject — every producer but the outfitting picker,
+## whose panel has one window per band. `0` is "no band" throughout this client.
+const PANEL_SUBJECT_NONE := 0
+
 # ---- severity model --------------------------------------------------------
 ## **SATISFIED, and it is the BOTTOM of the ladder rather than a kind of `info`.** `info` means
 ## *neutral news* — a build finished, a discovery landed — which is a statement about something that
 ## HAPPENED. This one says a standing requirement is now MET, so it must lose the orb's accent to any
 ## real news and to every warning, while still painting the orb when it is all there is.
-## What a row carries when its producer named no subject — every producer but the outfitting picker,
-## whose panel has one window per band. `0` is "no band" throughout this client.
-const PANEL_SUBJECT_NONE := 0
-
 const SEVERITY_READY := "ready"
 const SEVERITY_INFO := "info"
 const SEVERITY_WARN := "warn"

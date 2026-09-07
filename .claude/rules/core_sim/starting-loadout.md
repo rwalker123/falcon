@@ -260,8 +260,22 @@ both.
 ## The manifest divides on the RATIO, never on the rounded share
 
 `share` is a fixed-point quotient: a third stores as `0.333333`, and `0.333333 × 3` floors to **0**.
-`fission::whole_share` computes `floor(held × asked ÷ workers)` instead. Continuous quantities — the
-larder, the material batches — multiply by the share as before, because nothing there is quantised.
+`fission::whole_share` computes `floor(held × asked ÷ workers)` instead, and its sibling
+`whole_share_of` does the same for a `held` the parent stores in fixed point — a material total, or a
+grant's material points. **Every whole-unit quantity a split derives goes through one of the two**:
+the item manifest, the default take's materials, and the splinter's slice of the parent's grant.
+Continuous quantities — the larder, the material batches — multiply by the share as before, because
+nothing there is quantised.
+
+The division is done in **exact integers**, never through `f32`, and both operands being fixed point
+at the same scale is what makes that free: the scale cancels, so `held.raw() × asked ÷ workers.raw()`
+*is* the floored quotient. An `f32` hop fails in both directions — a non-dyadic count rounds up
+(a tenth of 101 at 10.1 workers answered 9, and the `min(held)` clamp cannot see a quotient that is
+too *small*), and multiplying the rounded share rounds down (15 hands splitting 5 against 30 points
+gives `30 × 0.333333 = 9.99999`, floor 9, where a third of thirty is exactly 10). The second is
+reachable on shipped config, so `split_loadout::a_grant_split_divides_the_material_points_on_the_ratio`
+pins those numbers rather than deriving them from the `earthlike` fixture, whose own worker count
+never lands on a non-terminating share.
 
 ## The pre-fill is the SPAWNED band's, and a splinter has a DEFAULT TAKE instead
 

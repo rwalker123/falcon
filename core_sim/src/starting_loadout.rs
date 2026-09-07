@@ -126,8 +126,10 @@ pub struct LoadoutWindow {
     /// Where this window's gear comes from, and what caps it. See [`LoadoutSupply`].
     pub supply: LoadoutSupply,
     /// **The kit rows the last accepted order named** — the accepted allocation, which is what the
-    /// picker re-draws and what a revision replaces. Empty for a window nobody has ordered against
-    /// yet, *including* a splinter's, whose default take is per-item and names no kit.
+    /// picker re-draws and what a revision replaces. Empty only for a window nobody has ordered
+    /// against yet: a **splinter's opens at its default take**, denominated in kits by
+    /// [`crate::systems::split_band_from_parent`] so that re-sending it unchanged is a no-op rather
+    /// than an order to take nothing.
     pub kits: Vec<KitAllocation>,
     /// The material rows the last accepted order named, the twin of [`Self::kits`].
     pub materials: Vec<MaterialAllocation>,

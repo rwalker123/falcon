@@ -847,6 +847,51 @@ fn a_grant_split_moves_nothing_when_the_parent_still_fits_its_reduced_budget() {
     );
 }
 
+/// ⛔ **THE GRANT PARTITION DIVIDES ON THE RATIO, NOT ON THE ROUNDED SHARE.**
+///
+/// 15 hands splitting 5 against the shipped 30-point grant is exactly a third, and a third of thirty
+/// is exactly ten. `share` is a fixed-point quotient, so it stores as `0.333333`, and a partition
+/// that multiplies the parent's points by it gets `9.99999` and floors to **9** — the splinter a
+/// point short of what it is owed and the parent a point richer than it should be.
+///
+/// **The numbers are pinned rather than derived from the fixture**, because the `earthlike` band's
+/// own worker count does not land on a non-terminating share: a test that only exercises today's
+/// fixture never sees this.
+#[test]
+fn a_grant_split_divides_the_material_points_on_the_ratio() {
+    const WORKERS: f32 = 15.0;
+    const ASKED: u32 = 5;
+    // A third of the shipped profile's 30 material points, in whole points.
+    const SPLINTER_POINTS: u32 = 10;
+
+    let mut app = world_on_the_build_turn();
+    let (parent, parent_band) = home_band(&mut app);
+    set_workers(&mut app, parent, WORKERS);
+    let (_, material_budget) = grant_of(&app, parent_band);
+    assert_eq!(
+        material_budget,
+        SPLINTER_POINTS * 3,
+        "fixture: the shipped grant must be three times the share asserted below, or this case is \
+         no longer the exact third it was chosen to be"
+    );
+
+    let split = split_band_from_parent(&mut app.world, parent, ASKED, &permissive_settle())
+        .expect("the split is admitted");
+
+    let (_, splinter_points) = grant_of(&app, split.band);
+    assert_eq!(
+        splinter_points, SPLINTER_POINTS,
+        "a third of {material_budget} points is {SPLINTER_POINTS}, not the {splinter_points} a \
+         rounded share floors to"
+    );
+    let (_, parent_points) = grant_of(&app, parent_band);
+    assert_eq!(
+        parent_points,
+        material_budget - SPLINTER_POINTS,
+        "and what the splinter took is exactly what the parent gave up — no point is minted or lost"
+    );
+}
+
 /// ⛔ **THE METERS CANNOT READ NEGATIVE.**
 ///
 /// The reported symptom: 17 hands and 30 points, `bone 3 / fibre 17 / hide 8` committed, split 5

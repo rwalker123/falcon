@@ -539,7 +539,7 @@ pub fn split_band_from_parent(
         parent,
         band,
         asked,
-        share,
+        cohort_working,
         SplinterTake {
             kits: default_kits,
             materials: default_materials,
@@ -563,21 +563,47 @@ pub fn split_band_from_parent(
     })
 }
 
-/// **The whole units a proportional share of `held` comes to** — `floor(held × asked ÷ workers)`.
+/// **The whole units a proportional share of `held` comes to** — `floor(held × asked ÷ workers)`,
+/// for a `held` that is already a whole count.
 ///
 /// Computed from the **ratio** rather than from the already-rounded `share`, and that is not a
 /// micro-optimisation: `share` is a fixed-point quotient, so a third stores as `0.333333` and
 /// `0.333333 × 3` floors to **0** — the third of three spears the player asked for, gone.
+fn whole_share(held: u32, asked: u32, workers: Scalar) -> u32 {
+    whole_share_of(Scalar::from_u32(held), asked, workers)
+}
+
+/// **The `Scalar`-valued sibling of [`whole_share`]** — `floor(held × asked ÷ workers)` for a `held`
+/// the parent stores in fixed point (a material total, a grant's point budget).
+///
+/// # ⛔ THE DIVISION IS THE WHOLE POINT — IT NEVER GOES THROUGH FLOATING POINT
+///
+/// This is the one site the quantised division is done, and it is done in **exact integers**: both
+/// operands are fixed point at the same `SCALE`, so the scale cancels and `held.raw() × asked ÷
+/// workers.raw()` *is* the quotient, floored, with no rounding step to lose. Every f32 hop on the
+/// way defeats it in one of two directions, and both have shipped as bugs:
+///
+/// - a non-dyadic count rounds **up** — `held = 101, asked = 1, workers = 10.1` answered **9**
+///   instead of 10, and the `min(held)` clamp cannot see a quotient that is too *small*;
+/// - a caller that multiplies by the already-rounded `share` floors an exact quotient one short —
+///   15 workers splitting 5 against a 30-point grant gives `share = 0.333333`, `30 × 0.333333 =
+///   9.99999`, floor **9** where the manifest owes 10.
+///
+/// So callers pass the **ratio** (`asked`, `workers`), never a share, and `i128` carries the product
+/// because a whole-unit `held` scaled by `SCALE` and multiplied by `asked` overflows `i64`.
 ///
 /// A zero worker count divides nothing: the caller has already refused that split, and answering `0`
 /// here keeps the helper total.
-fn whole_share(held: u32, asked: u32, workers: Scalar) -> u32 {
-    let workers = workers.to_f32() as f64;
-    if held == 0 || asked == 0 || workers <= 0.0 {
+fn whole_share_of(held: Scalar, asked: u32, workers: Scalar) -> u32 {
+    let (held, workers) = (held.raw(), workers.raw());
+    if held <= 0 || asked == 0 || workers <= 0 {
         return 0;
     }
-    let share = (held as f64) * (asked as f64) / workers;
-    share.floor().max(0.0).min(held as f64) as u32
+    let quotient = i128::from(held) * i128::from(asked) / i128::from(workers);
+    // A share cannot exceed the whole: `asked > workers` is refused upstream, but the clamp keeps
+    // the helper total rather than trusting that.
+    let whole_held = i128::from(held) / i128::from(Scalar::SCALE);
+    quotient.clamp(0, whole_held) as u32
 }
 
 /// **Open the splinter's own outfitting window** (`crate::starting_loadout`).
@@ -599,7 +625,9 @@ fn open_splinter_loadout_window(
     parent: Entity,
     band: BandId,
     asked: u32,
-    share: Scalar,
+    // The **parent's** whole working value, i.e. the denominator of the split's share — passed
+    // rather than the share itself so the grant partition divides exactly. See [`whole_share`].
+    workers: Scalar,
     take: SplinterTake,
 ) -> bool {
     let Some(parent_band) = world.get::<BandId>(parent).copied() else {
@@ -615,11 +643,11 @@ fn open_splinter_loadout_window(
     let supply = match parent_grant {
         Some((parent_kits, parent_points)) => {
             let kit_budget = asked.min(parent_kits);
-            let material_budget = (scalar_from_f32(parent_points as f32) * share)
-                .to_f32()
-                .floor()
-                .max(0.0) as u32;
-            let material_budget = material_budget.min(parent_points);
+            // On the RATIO, never on the rounded `share`: [`whole_share`] already clamps to the
+            // budget it divides, and multiplying the parent's points by a fixed-point quotient is
+            // the exact trap it exists to close — 15 workers splitting 5 against 30 points floors
+            // to 9 that way, one point short of the 10 the manifest owes.
+            let material_budget = whole_share(parent_points, asked, workers);
             if let Some(window) = loadout.window_mut(parent_band) {
                 window.supply = LoadoutSupply::Grant {
                     kit_budget: parent_kits - kit_budget,
@@ -883,7 +911,9 @@ fn default_take_kits(
 /// Materials are one-to-one with the currency the command spends, so this publishes exactly and needs
 /// none of [`default_take_kits`]' clamping. It is **floored to whole units** for the same reason the
 /// kit half is denominated in kits: the card states `units:u32`, so a fractional take is one it
-/// cannot show and re-sending what it showed would hand the remainder back.
+/// cannot show and re-sending what it showed would hand the remainder back. The flooring is
+/// [`whole_share_of`]'s, on the ratio and in exact integers — a parent's holding is a `Scalar`, and
+/// dividing one of those through `f32` rounds a non-dyadic total up past the unit it actually owns.
 fn default_take_materials(
     parent: Option<&LocalStore>,
     asked: u32,
@@ -895,18 +925,46 @@ fn default_take_materials(
     parent
         .materials()
         .filter_map(|(material, _)| {
-            let held = parent.material_total(material).to_f32();
-            let workers = workers.to_f32();
-            if held <= 0.0 || asked == 0 || workers <= 0.0 {
-                return None;
-            }
-            let units = ((held as f64) * f64::from(asked) / f64::from(workers))
-                .floor()
-                .max(0.0) as u32;
+            let units = whole_share_of(parent.material_total(material), asked, workers);
             (units > 0).then(|| MaterialAllocation {
                 material_id: material.to_string(),
                 units,
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod fission_tests {
+    use super::*;
+
+    /// ⛔ **THE SHARE IS DIVIDED IN EXACT INTEGERS, IN BOTH DIRECTIONS IT CAN GO WRONG.**
+    ///
+    /// `held = 101, asked = 1, workers = 10.1` is the round-up case: `10.1` has no exact `f32`, so
+    /// the old division answered **9** for a tenth of 101, and `min(held)` cannot catch a quotient
+    /// that is too *small*. `held = 30, asked = 5, workers = 15` is the round-down twin — a third of
+    /// thirty is exactly 10, which any hop through the rounded `share` (`0.333333`) floors to 9.
+    #[test]
+    fn whole_share_divides_exactly_rather_than_through_floating_point() {
+        assert_eq!(whole_share(101, 1, Scalar::from_f32(10.1)), 10);
+        assert_eq!(whole_share(30, 5, Scalar::from_i64(15)), 10);
+        assert_eq!(
+            whole_share_of(Scalar::from_i64(101), 1, Scalar::from_f32(10.1)),
+            10
+        );
+    }
+
+    /// The helper stays **total**: nothing to divide, nobody to divide among, and a share that would
+    /// exceed the whole all answer without panicking.
+    #[test]
+    fn whole_share_is_total_at_its_edges() {
+        assert_eq!(whole_share(0, 4, Scalar::from_i64(8)), 0);
+        assert_eq!(whole_share(9, 0, Scalar::from_i64(8)), 0);
+        assert_eq!(whole_share(9, 4, Scalar::zero()), 0);
+        assert_eq!(whole_share(9, 40, Scalar::from_i64(8)), 9);
+        assert_eq!(
+            whole_share_of(Scalar::from_f32(2.5), 4, Scalar::from_i64(2)),
+            2
+        );
+    }
 }

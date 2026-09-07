@@ -1504,9 +1504,10 @@ table BandLoadoutWindowState {
   // Material points this window may MINT against, one point per unit. 0 for a take.
   materialBudget:uint;
   // THE ACCEPTED ALLOCATION - the kit rows this band's last accepted `set_starting_loadout` named.
-  // Empty for a window nobody has ordered against yet, INCLUDING a fresh splinter's: the default take
-  // a split hands over is per-ITEM (a proportional share of everything the parent held) and names no
-  // kit, so it shows up in `equipmentBatches` rather than here.
+  // Empty only for a window nobody has ordered against yet. A FRESH SPLINTER'S IS NOT EMPTY: the
+  // default take a split hands over is denominated in KITS and published right here, so a card that
+  // renders these rows and re-sends them untouched commits an exact no-op. Rendering an empty card
+  // instead and echoing it back is a real order - TAKE NOTHING - and forfeits the whole dowry.
   kits:[OpeningKitDefault];
   // The material half of the accepted allocation, the twin of `kits`.
   materials:[OpeningMaterialDefault];

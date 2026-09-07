@@ -1788,8 +1788,12 @@ pub(crate) fn band_loadout_windows<'a>(
                             let available = parent_store.material_total(material) + standing;
                             BandLoadoutSupplyRowState {
                                 id: material.to_string(),
-                                // Floored, because whole units are the currency the command spends.
-                                units: available.to_f32().max(0.0) as u32,
+                                // Floored, because whole units are the currency the command spends
+                                // — and floored in **fixed point**, not through `f32`: past 1023
+                                // whole units the conversion is no longer exact, so roughly one
+                                // count in four would round just under its boundary and publish a
+                                // cap one unit below what the server will actually honour.
+                                units: available.raw().max(0).div_euclid(Scalar::SCALE) as u32,
                             }
                         })
                         .filter(|row| row.units > 0)

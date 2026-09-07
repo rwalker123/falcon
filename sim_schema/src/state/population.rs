@@ -1894,9 +1894,10 @@ pub struct BandLoadoutWindowState {
     #[serde(default)]
     pub material_budget: u32,
     /// **The accepted allocation** — the kit rows this band's last accepted `set_starting_loadout`
-    /// named. Empty for a window nobody has ordered against yet, *including* a fresh splinter's: the
-    /// default take a split hands over is per-item and names no kit, so it shows up in
-    /// [`PopulationCohortState::equipment_batches`] rather than here.
+    /// named. Empty only for a window nobody has ordered against yet; **a fresh splinter's is not
+    /// empty**, because the default take a split hands over is denominated in kits and published
+    /// here, so re-sending these rows untouched is an exact no-op. An empty tail is a real order —
+    /// *take nothing* — which on a splinter would hand the whole dowry back.
     #[serde(default)]
     pub kits: Vec<OpeningKitDefaultState>,
     /// The material half of the accepted allocation, the twin of [`Self::kits`].
