@@ -4,11 +4,34 @@ use std::time::{Duration, Instant};
 
 use core_sim::{
     build_test_app, run_turn, scalar_one, scalar_zero, ConstellationRequirement,
-    DiscoveryProgressLedger, FactionId, FactionRegistry, GreatDiscoveryDefinition,
-    GreatDiscoveryId, GreatDiscoveryLedger, GreatDiscoveryRegistry, GreatDiscoveryTelemetry,
-    ObservationLedger, SnapshotHistory,
+    DiscoveryProgressLedger, FactionControl, FactionId, FactionRegistry, FactionSpec,
+    GreatDiscoveryDefinition, GreatDiscoveryId, GreatDiscoveryLedger, GreatDiscoveryRegistry,
+    GreatDiscoveryTelemetry, ObservationLedger, SnapshotHistory,
 };
 use sim_runtime::KnowledgeField;
+
+/// **Seat a real two-faction roster**: faction 0 the player's, faction 1 AI-driven.
+///
+/// `FactionRegistry::new` is the only way to say this. These fixtures used to assign the id vector
+/// directly, which left the default one-entry control map behind — so `FactionId(1)` was in
+/// `factions` while `contains(FactionId(1))` was false, and the server's membership gate would have
+/// dropped its commands. The registry's fields are private now, and this is the shape that replaced
+/// it.
+fn seat_two_factions(app: &mut bevy::prelude::App) {
+    let registry = FactionRegistry::new(&[
+        FactionSpec {
+            control: FactionControl::Human,
+        },
+        FactionSpec {
+            control: FactionControl::Ai,
+        },
+    ]);
+    assert!(
+        registry.contains(FactionId(1)),
+        "the second faction is registered, not merely listed"
+    );
+    app.world.insert_resource(registry);
+}
 
 const FORCED_PUBLICATION_FLAG: u32 = 1 << 3;
 
@@ -16,11 +39,6 @@ const FORCED_PUBLICATION_FLAG: u32 = 1 << 3;
 fn gds_turn_budget_processes_many_constellations_in_single_turn() {
     common::ensure_test_config();
     let mut app = build_test_app();
-
-    {
-        let mut factions = app.world.resource_mut::<FactionRegistry>();
-        factions.factions = vec![FactionId(0)];
-    }
 
     {
         let mut observations = app.world.resource_mut::<ObservationLedger>();
@@ -100,11 +118,6 @@ fn gds_turn_budget_processes_many_constellations_in_single_turn() {
 fn gds_snapshot_stream_carries_resolved_records() {
     common::ensure_test_config();
     let mut app = build_test_app();
-
-    {
-        let mut factions = app.world.resource_mut::<FactionRegistry>();
-        factions.factions = vec![FactionId(0)];
-    }
 
     {
         let mut observations = app.world.resource_mut::<ObservationLedger>();
@@ -190,10 +203,7 @@ fn gds_forced_publication_marks_discovery_deployed() {
     common::ensure_test_config();
     let mut app = build_test_app();
 
-    {
-        let mut factions = app.world.resource_mut::<FactionRegistry>();
-        factions.factions = vec![FactionId(0), FactionId(1)];
-    }
+    seat_two_factions(&mut app);
 
     {
         let mut observations = app.world.resource_mut::<ObservationLedger>();

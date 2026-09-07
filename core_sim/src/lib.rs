@@ -512,7 +512,7 @@ pub fn build_headless_app() -> App {
         .overrides
         .validate_factions(&active_profile.id);
     let faction_registry = orders::FactionRegistry::new(&active_profile.overrides.factions);
-    let turn_queue = orders::TurnQueue::new(faction_registry.factions.clone());
+    let turn_queue = orders::TurnQueue::new(faction_registry.factions().to_vec());
     // Depth is decided in ONE place — `snapshot::PUBLICATION_RING_DEPTH`, which
     // `capture_snapshot` no longer has to re-assert every turn.
     let snapshot_history = SnapshotHistory::with_capacity(snapshot::PUBLICATION_RING_DEPTH);
@@ -656,13 +656,13 @@ pub fn build_headless_app() -> App {
     let espionage_catalog =
         espionage::EspionageCatalog::load_builtin().expect("espionage catalog should parse");
     let mut espionage_roster = espionage::EspionageRoster::default();
-    espionage_roster.seed_from_catalog(&faction_registry.factions, &espionage_catalog);
+    espionage_roster.seed_from_catalog(faction_registry.factions(), &espionage_catalog);
     let counter_intel_budgets = espionage::CounterIntelBudgets::new(
-        &faction_registry.factions,
+        faction_registry.factions(),
         espionage_catalog.config().counter_intel_budget(),
     );
     let security_policies = espionage::FactionSecurityPolicies::new(
-        &faction_registry.factions,
+        faction_registry.factions(),
         espionage::SecurityPolicy::Standard,
     );
 

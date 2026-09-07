@@ -1425,7 +1425,7 @@ pub fn initialise_espionage_roster(
     catalog: Res<EspionageCatalog>,
     factions: Res<FactionRegistry>,
 ) {
-    roster.seed_from_catalog(&factions.factions, &catalog);
+    roster.seed_from_catalog(factions.factions(), &catalog);
 }
 
 #[derive(Resource, Debug, Clone, Serialize, Deserialize)]
@@ -1580,6 +1580,17 @@ impl FactionSecurityPolicies {
             .get(&faction)
             .copied()
             .unwrap_or(self.default_policy)
+    }
+
+    /// Whether this faction was **seeded a row of its own**, rather than reading
+    /// [`Self::policy`]'s fallback.
+    ///
+    /// The two are indistinguishable through `policy` by construction — the fallback *is* the
+    /// seeded value — so a faction the world forgot to seed answers `Standard` exactly like one it
+    /// did. That is what makes a missing row invisible in play and is why the seeding paths are
+    /// asserted through this instead.
+    pub fn contains(&self, faction: FactionId) -> bool {
+        self.policies.contains_key(&faction)
     }
 
     pub fn set_policy(&mut self, faction: FactionId, policy: SecurityPolicy) {
@@ -2076,6 +2087,10 @@ mod tests {
     use bevy::ecs::event::Events;
     use bevy::ecs::world::Mut;
     use bevy_ecs::system::RunSystemOnce;
+
+    /// Slack for the fixed-point round trip: a sampled `f32` is stored as a [`Scalar`] and read
+    /// back, so an in-band draw can land a quantisation step outside the band it was drawn from.
+    const STAT_BAND_TOLERANCE: f32 = 0.001;
 
     fn setup_app_with_catalog(factions: &[FactionId]) -> App {
         let mut app = App::new();
@@ -2576,49 +2591,47 @@ mod tests {
 
     #[test]
     fn generated_agents_respect_configured_bands() {
-        let faction = FactionId(2);
+        // **Positional**: `setup_app_with_catalog` numbers its registry from the declaration order,
+        // so naming any other id would key the roster, the budgets and the policies on a faction
+        // that app's registry does not contain.
+        let faction = FactionId(0);
         let app = setup_app_with_catalog(&[faction]);
-        let (stealth_min, stealth_max, recon_min, recon_max, counter_min, counter_max) = {
-            let catalog = app.world.resource::<EspionageCatalog>();
-            let defaults = catalog.config().agent_defaults();
-            let (stealth_min, stealth_max) = defaults.stealth_range();
-            let (recon_min, recon_max) = defaults.recon_range();
-            let (counter_min, counter_max) = defaults.counter_intel_range();
-            (
-                stealth_min,
-                stealth_max,
-                recon_min,
-                recon_max,
-                counter_min,
-                counter_max,
-            )
-        };
+
+        let catalog = app.world.resource::<EspionageCatalog>();
         let roster = app.world.resource::<EspionageRoster>();
-        let agents = roster.agents_for(faction);
-        let generated: Vec<_> = agents.iter().filter(|agent| agent.generated).collect();
+        let generated: Vec<&EspionageAgent> = roster
+            .agents_for(faction)
+            .iter()
+            .filter(|agent| agent.generated)
+            .collect();
         assert!(
             !generated.is_empty(),
             "expected generated agents to be seeded"
         );
+
         for agent in generated {
-            let stealth = agent.stealth.to_f32();
-            let recon = agent.recon.to_f32();
-            let counter_intel = agent.counter_intel.to_f32();
-            assert!(
-                stealth >= stealth_min - 0.001 && stealth <= stealth_max + 0.001,
-                "stealth {:.3} out of configured band",
-                stealth
-            );
-            assert!(
-                recon >= recon_min - 0.001 && recon <= recon_max + 0.001,
-                "recon {:.3} out of configured band",
-                recon
-            );
-            assert!(
-                counter_intel >= counter_min - 0.001 && counter_intel <= counter_max + 0.001,
-                "counter-intel {:.3} out of configured band",
-                counter_intel
-            );
+            let generator = catalog
+                .generators()
+                .find(|generator| generator.id == agent.template_id)
+                .expect("a generated agent names the generator that produced it");
+            for (label, value, range) in [
+                ("stealth", agent.stealth, generator.stealth_range),
+                ("recon", agent.recon, generator.recon_range),
+                (
+                    "counter-intel",
+                    agent.counter_intel,
+                    generator.counter_intel_range,
+                ),
+            ] {
+                let value = value.to_f32();
+                assert!(
+                    value >= range.min - STAT_BAND_TOLERANCE
+                        && value <= range.max + STAT_BAND_TOLERANCE,
+                    "{label} {value:.3} outside the generator's own band {:.3}..={:.3}",
+                    range.min,
+                    range.max
+                );
+            }
             assert!(
                 agent.tags.iter().any(|tag| tag == "generated"),
                 "generated agents should include the generated tag"

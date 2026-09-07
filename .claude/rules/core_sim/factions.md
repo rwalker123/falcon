@@ -33,17 +33,26 @@ unrepresentable rather than merely validated against.
 
 ```rust
 pub struct FactionRegistry {
-    pub factions: Vec<FactionId>,
-    pub control: BTreeMap<FactionId, FactionControl>,
+    factions: Vec<FactionId>,
+    control: BTreeMap<FactionId, FactionControl>,
 }
 ```
 
 **`control` is keyed by exactly the ids in `factions`.** `FactionRegistry::new(&[FactionSpec])` is
 the only constructor that can produce a non-default registry, and it derives *both* fields from one
 declaration list, so the two cannot be written apart; a `debug_assert!` there states the invariant.
-Readers ask through `control_of`, `is_ai` and `contains` rather than indexing the map, and an
-unregistered faction answers `None` / `false` rather than panicking — a faction nobody declared is
-not the sim's to drive.
+Readers ask through `factions()`, `control_of`, `is_ai` and `contains` rather than touching either
+field, and an unregistered faction answers `None` / `false` rather than panicking — a faction nobody
+declared is not the sim's to drive.
+
+**Both fields are private, and privacy is what makes the invariant an invariant.** While they were
+`pub` the `debug_assert!` guarded only the constructor, and three integration fixtures wrote
+`factions.factions = vec![FactionId(0), FactionId(1)]` onto a default registry — leaving the
+one-entry control map behind, so `FactionId(1)` was listed while `contains(FactionId(1))` was false
+and `control_of` was `None`. That is exactly the "registered but uncontrolled" state this section
+calls meaningless, and it is the state in which `apply_command`'s membership gate silently drops a
+faction's commands. Serde reads and writes private fields, so nothing about the save format depends
+on their visibility.
 
 `FactionControl` is `Human | Ai`. There is no third arm: every faction is either somebody's to play
 or something the sim drives. It lives in `start_profile.rs` with `FactionSpec`, because the profile
@@ -52,8 +61,20 @@ is where control is *declared*; `orders.rs` imports it.
 ## Where the roster comes from
 
 - **`build_headless_app`** validates the active profile's roster and then seeds the registry from
-  it, before `TurnQueue::new(registry.factions.clone())`. Raising the count therefore extends the
+  it, before `TurnQueue::new(registry.factions().to_vec())`. Raising the count therefore extends the
   await set with no further edit.
+- **`apply_start_profile`** (`bin/server.rs`) re-seeds the registry **and everything else the boot
+  path seeds from it** when a runtime command names another profile. It has to:
+  `rebuild_world_from_config` calls `build_headless_app` *first*, so a `new_game` arrives holding the
+  **boot** profile's roster, and applying the chosen one to `SimulationConfig` alone left a
+  two-faction profile producing a one-faction world. See the table below for the set.
+- **`save::apply_save`** rebuilds the `TurnQueue` from the registry it has just restored, beside that
+  restore rather than in the load handler. A load's replacement app is also a `build_headless_app`,
+  so its queue awaits the *file's* profile; a two-faction save opened on the shipped one-faction
+  profile would otherwise resolve turns without ever awaiting faction 1. The rollback path
+  (`bin/server.rs`) rebuilds it from the registry for its own reason — the discarded future's
+  submissions must not survive — and the two now say the same thing. **The load needs nothing
+  further**: every other roster-derived resource is checkpoint state and comes back with the save.
 - **`FactionRegistry::default()`** is one human faction — `FactionId(0)`, `control { 0: Human }` —
   and is what a test harness or any other non-profile construction path gets. It shares
   `start_profile::default_factions()` with the profile layer's default so the two statements of
@@ -63,6 +84,29 @@ is where control is *declared*; `orders.rs` imports it.
   empty roster has no faction 0 for worldgen to place, nobody to play and nobody to await. The empty
   roster has to be unrepresentable from every construction path, not only the deserialising one.
 
+### ⛔ THE ROSTER-DERIVED SET IS FIVE RESOURCES, AND A RUNTIME PATH OWES ALL OF THEM
+
+`build_headless_app` builds five things from `faction_registry.factions()`. Re-seeding some of them
+on a roster change is the *same defect* as re-seeding none, one resource further along — and worse to
+read, because the next person infers the short list is the whole list.
+
+| Resource | `new_game` / `set_start_profile` | A load |
+|---|---|---|
+| `FactionRegistry` | re-seeded in `apply_start_profile` | restored — `WorldStatics` |
+| `TurnQueue` | rebuilt from that registry | **rebuilt in `apply_save`** — server-side order intake, so no payload carries it |
+| `CounterIntelBudgets` | re-seeded, through `CounterIntelBudgets::new` | restored — `SimState` |
+| `FactionSecurityPolicies` | re-seeded, through `FactionSecurityPolicies::new(.., Standard)` | restored — `SimState` |
+| `EspionageRoster` | **deliberately not** — `initialise_espionage_roster` is a `Startup` system that seeds from whatever registry it finds, and the caller runs Startup afterwards | restored — `SimState` |
+
+Both re-seeds go through the **boot path's own constructors**, so a fresh faction's starting state
+has one definition rather than two.
+
+**Neither of the two espionage resources can report its own omission.**
+`CounterIntelBudgets::available` answers `scalar_zero` for a faction with no row and
+`FactionSecurityPolicies::policy` answers its `default_policy` — which *is* the seeded value — so a
+forgotten faction is silently indistinguishable from a seeded one at every reader. That is why
+`FactionSecurityPolicies::contains` exists: the row's presence is the only thing a test can assert
+on.
 ### Validation is a boot panic
 
 `StartProfileOverrides::validate_factions(profile_id)` enforces two rules and panics naming the
@@ -76,6 +120,15 @@ profile when either breaks:
 This is the `config-loading.md` boot rule applied to a profile key: **absent means the builtin
 default, present-but-broken stops the boot.** The shipped profile omits `factions` entirely, so the
 builtin can never trip it.
+
+**A profile chosen at RUNTIME is refused instead, never panicked on.** `new_game` and
+`set_start_profile` ask `StartProfileOverrides::faction_roster_error()` — the same two rules,
+returning the broken one instead of panicking — and answer the way each already answers a profile id
+it cannot resolve: `new_game` warns `new_game.rejected=unusable_roster` and returns **before the
+outgoing world is torn down**, and `apply_start_profile` writes nothing and warns
+`start_profile.rejected=unusable_roster`. Boot panics because there is no earlier world to decline
+back to; taking a live server down because a player picked a bad profile is a worse answer than
+declining the pick.
 
 ## Command authorization
 
@@ -124,7 +177,7 @@ cohort.age_turns >= migration_min_settled_turns
     && !cohort.knowledge.is_empty()
 ```
 
-and the destination is `registry.factions.iter().find(|&&f| f != cohort.faction)` — the first id
+and the destination is `registry.factions().iter().find(|&&f| f != cohort.faction)` — the first id
 that is not yours. On arrival the knowledge transfers **and `cohort.faction = migration.destination`**:
 the band is gone for good.
 

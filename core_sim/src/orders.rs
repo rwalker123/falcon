@@ -26,10 +26,17 @@ impl fmt::Display for FactionId {
 /// only constructor that can produce a non-default registry, and it derives **both** fields from one
 /// list, so the two cannot be written apart. Ids are **positional** — `FactionId(i)` for index `i` —
 /// which is why a profile cannot mint a duplicate id or leave a gap.
+///
+/// **Both fields are private, and that is what enforces the invariant.** While they were `pub` the
+/// `debug_assert!` in `new` guarded only the constructor, and three test worlds pushed a second id
+/// into `factions` while leaving `control` at one entry — a roster whose second faction
+/// [`Self::contains`] denied, which is exactly the command-dropping state the paragraph above calls
+/// unrepresentable. Readers take [`Self::factions`] and the control accessors instead; serde reads
+/// and writes private fields, so the save format does not care.
 #[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct FactionRegistry {
-    pub factions: Vec<FactionId>,
-    pub control: BTreeMap<FactionId, FactionControl>,
+    factions: Vec<FactionId>,
+    control: BTreeMap<FactionId, FactionControl>,
 }
 
 /// One human faction — the shipped world, and what a test harness or any other non-profile
@@ -57,6 +64,12 @@ impl FactionRegistry {
             "faction registry control map must be keyed by exactly the registered factions"
         );
         Self { factions, control }
+    }
+
+    /// Every registered faction, in id order — the roster the turn queue awaits and every fan-out
+    /// (espionage seeding, migration destinations, the save's world statics) walks.
+    pub fn factions(&self) -> &[FactionId] {
+        &self.factions
     }
 
     /// How `faction` is driven, or `None` if it is not registered at all.
@@ -210,7 +223,7 @@ mod tests {
     #[test]
     fn the_default_registry_is_one_human_faction() {
         let registry = FactionRegistry::default();
-        assert_eq!(registry.factions, vec![FactionId(0)]);
+        assert_eq!(registry.factions(), [FactionId(0)]);
         assert_eq!(
             registry.control_of(FactionId(0)),
             Some(FactionControl::Human)
@@ -224,7 +237,7 @@ mod tests {
     fn a_declared_roster_seeds_positional_ids_and_their_control() {
         let registry =
             FactionRegistry::new(&[spec(FactionControl::Human), spec(FactionControl::Ai)]);
-        assert_eq!(registry.factions, vec![FactionId(0), FactionId(1)]);
+        assert_eq!(registry.factions(), [FactionId(0), FactionId(1)]);
         assert_eq!(
             registry.control_of(FactionId(0)),
             Some(FactionControl::Human)
@@ -233,7 +246,7 @@ mod tests {
         assert!(!registry.is_ai(FactionId(0)));
         assert!(registry.is_ai(FactionId(1)));
         let control_keys: Vec<FactionId> = registry.control.keys().copied().collect();
-        assert_eq!(control_keys, registry.factions);
+        assert_eq!(control_keys, registry.factions());
     }
 
     /// An id nobody declared is not registered, is not the sim's to drive, and has no control.
@@ -252,7 +265,7 @@ mod tests {
     fn the_turn_queue_awaits_every_seeded_faction() {
         let registry =
             FactionRegistry::new(&[spec(FactionControl::Human), spec(FactionControl::Ai)]);
-        let mut queue = TurnQueue::new(registry.factions.clone());
+        let mut queue = TurnQueue::new(registry.factions().to_vec());
         let mut awaiting = queue.awaiting();
         awaiting.sort();
         assert_eq!(awaiting, vec![FactionId(0), FactionId(1)]);

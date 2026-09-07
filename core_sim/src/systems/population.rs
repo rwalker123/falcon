@@ -949,7 +949,7 @@ pub fn simulate_population(
             && !cohort.knowledge.is_empty()
         {
             if let Some(&destination) = registry
-                .factions
+                .factions()
                 .iter()
                 .find(|&&faction| faction != cohort.faction)
             {

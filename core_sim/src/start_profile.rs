@@ -242,10 +242,23 @@ impl StartProfileOverrides {
     /// key falls back to the builtin default, a present-but-broken one stops the server rather than
     /// booting a world that cannot be played.
     pub fn validate_factions(&self, profile_id: &str) {
+        if let Some(reason) = self.faction_roster_error() {
+            panic!("start profile '{profile_id}' {reason}");
+        }
+    }
+
+    /// The rule this roster breaks, or `None` if it is usable — the same two rules
+    /// [`Self::validate_factions`] panics on, phrased so a **runtime** caller can refuse instead.
+    ///
+    /// A profile chosen mid-session (`new_game`, `set_start_profile`) is a player's pick, not the
+    /// boot config, and taking the server down over one is a worse answer than declining it — so
+    /// those paths ask this and refuse the way they already refuse a profile id they cannot
+    /// resolve. Boot still panics: there is no earlier world to decline back to.
+    pub fn faction_roster_error(&self) -> Option<&'static str> {
         if self.factions.is_empty() {
-            panic!(
-                "start profile '{profile_id}' declares an empty `factions` list; a world with no \
-                 factions has nobody to place, play or await"
+            return Some(
+                "declares an empty `factions` list; a world with no factions has nobody to place, \
+                 play or await",
             );
         }
         if !self
@@ -253,11 +266,9 @@ impl StartProfileOverrides {
             .iter()
             .any(|spec| spec.control == FactionControl::Human)
         {
-            panic!(
-                "start profile '{profile_id}' declares no `human` faction; a world nobody plays is \
-                 not a world"
-            );
+            return Some("declares no `human` faction; a world nobody plays is not a world");
         }
+        None
     }
 }
 
