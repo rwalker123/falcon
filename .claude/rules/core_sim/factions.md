@@ -14,6 +14,14 @@ paths:
   - "core_sim/src/snapshot/capture.rs"
   - "core_sim/src/snapshot/population.rs"
   - "core_sim/tests/foreign_band_redaction.rs"
+  - "core_sim/tests/frame_is_viewer_scoped.rs"
+  - "core_sim/src/snapshot/economy.rs"
+  - "core_sim/src/snapshot/knowledge.rs"
+  - "core_sim/src/snapshot/campaign.rs"
+  - "core_sim/src/snapshot/subsistence.rs"
+  - "core_sim/src/snapshot/crafting.rs"
+  - "core_sim/src/great_discovery.rs"
+  - "core_sim/src/knowledge_ledger.rs"
 ---
 
 # Factions — who plays the world, and who is allowed to command
@@ -325,6 +333,88 @@ and an absent faction map, both read as not-visible, matching the all-unexplored
 
 **The `.fbs` did not change**, deliberately: every redacted field expresses "absent" as its existing
 default on the existing table, so there is no append and no merge hazard.
+
+## Which frame sections are viewer-scoped
+
+⛔ **A PUBLISHED FRAME IS ONE VIEWER'S VIEW.** The band list was the first unfiltered section found,
+and one unfiltered section meant the *section list* needed sweeping rather than one spelling
+correcting. It did: at the time of the sweep, **thirteen** faction-keyed sections were published
+whole to every client.
+
+**The rule, per section:** the viewer's own rows in full; a rival's absent. A section whose subject
+has **no thing on the map to look at** — a stockpile total, a knowledge track, a stance — has no
+"visible" middle tier at all, so there is nothing to redact it down to; the band list's three tiers
+apply only where the row describes something that can be *seen*.
+
+| Frame section | Built in | Scope |
+|---|---|---|
+| `populations` | `snapshot/capture.rs` + `snapshot/population.rs` | **Three tiers** — see the section above |
+| `demographics` | `snapshot/population.rs` | **Viewer** — derived from the redacted band list, so a foreign faction aggregates to nothing |
+| `foragePatches` | `snapshot/subsistence.rs` | **The row is terrain and always rides; the IMPROVEMENT on it is viewer-scoped** — see below |
+| `herds` | `snapshot/subsistence.rs` | **Fog-filtered** (`Active`), plus your own animals wherever they stand |
+| `routes` | `snapshot/routes.rs` | **Fog-filtered** (`Discovered`) — a road does not wander off |
+| `connections` | `snapshot/connections.rs` | **Viewer** — edges whose *observer* band is the viewer's |
+| `factionInventory` | `snapshot/economy.rs` | **Viewer** |
+| `sedentarization` | `snapshot/subsistence.rs` | **Viewer** |
+| `intensificationKnowledge` | `snapshot/subsistence.rs` | **Viewer** |
+| `craftKnowledge` | `snapshot/crafting.rs` | **Viewer** |
+| `discoveryProgress` | `snapshot/knowledge.rs` | **Viewer** |
+| `discoveredSites` | `snapshot/knowledge.rs` | **Viewer** — the row is whose scouts have been there, not what is on the ground |
+| `greatDiscoveryProgress` | `great_discovery.rs` | **Viewer** — it carries `covert` and an ETA |
+| `greatDiscoveries` | `great_discovery.rs` | **Viewer + any record flagged `publicly_deployed`** — see the exemption below |
+| `knowledgeLedger` / `knowledgeTimeline` / `knowledgeMetrics` | `knowledge_ledger.rs` | **Viewer** — entries by `owner_faction`, timeline by `source_faction` (world-level lines, which carry none, are kept), metrics recomputed over the viewer's own entries |
+| `commandEvents` | `snapshot/campaign.rs` | **Viewer** |
+| `pendingForks` / `stanceAxes` / `voiceMedium` | `snapshot/campaign.rs` | **Viewer** |
+| `openingLoadout` | `snapshot/campaign.rs` | **Viewer** — already took `viewer_faction` for its known-crafts list |
+| `tiles`, the rasters, `foodModules`, `climateBands`, the catalogues (`kits`, `materials`, `recipes`, `ladderKnowledge`, `routeRungs`, `campaignProfiles`) | various | **World** — terrain and per-world constants, carrying no faction. The client fogs the map from `visibilityRaster` |
+| `victory.winner` | `snapshot/campaign.rs` | **World** — a winner is public by definition |
+
+### Three deliberate exemptions, and why each stays
+
+1. **`connections` publishes an edge whose *subject* is foreign.** That is the point of a connection:
+   the row exists because the viewer's band met theirs. It is already filtered on the **observer**.
+2. **A trade shipment names a destination band in another faction** (`expeditionDestinationBand` on
+   the party's own row). A cross-faction shipment is a thing you deliberately sent; withholding its
+   destination would break the verb.
+3. **`greatDiscoveries` carries a rival's `publicly_deployed` record.** `mark_public` is a live
+   mutator and the flag's whole meaning is *"this faction has shown the world"* — withholding such a
+   record would leave the flag observable only to its owner, the one reader it is not for. A
+   discovery kept quiet stays quiet, and `greatDiscoveryProgress` takes **no** such exemption.
+
+### The improvement on a tile follows the ground
+
+A `foragePatch` row is a fact about a **tile**, and tiles are published whole — so the row always
+rides, and its ecology half (biomass, capacity, phase, composition) is world-visible like the terrain
+it describes. What is *not* a fact about the tile is the improvement standing on it: `owner`,
+`isCultivated` / `cultivationProgress`, `isField` / `fieldProgress`. Those are a fact about a people,
+and before the sweep every client got them for every patch on the map — a live readout of exactly
+which ground a rival was farming.
+
+They are legible where the viewer's own hand built them, and where a rival's are on ground the viewer
+has **explored** — `is_discovered`, not `is_visible`, on `route_states`' precedent: **a field is
+built into the ground and does not wander off**, so having seen it once remains true. (A herd is the
+opposite case and uses `Active`.) The staleness that buys — a field that has since gone feral still
+reading as a field — is the staleness a remembered road already carries.
+
+> **`hasOwner` is why "unowned" and "owned by faction 0" are different readings.** The wire carries a
+> presence bit beside `owner:uint`, because faction 0 is a real faction and `owner == 0` cannot mean
+> *no owner*. A reader testing `owner != 0` silently drops every patch the first faction tends.
+
+### What the sweep could not observe, and why that is not a gap
+
+`pendingForks` / `stanceAxes` / `voiceMedium` are filtered, and the filter is **currently
+unobservable**: the Telling samples for *the registry's lowest id* (the tripwire below), so no other
+faction has ever had a row for the filter to drop. The filter is in place ahead of that tripwire
+being cleared rather than after it.
+
+### The delta is safe under filtering, for two different reasons
+
+- **`diff_appended`** (the event feed) ships rows with `seq > cursor` and advances the cursor to the
+  highest seq it *shipped*, so the gaps a filter leaves in the sequence are rows that were never the
+  client's to hold.
+- **The indexed diffs** key on `(faction, id)` and several carry no `removed_*` list. That is safe
+  here because a viewer never changes mid-session, so a filtered row never transitions from present
+  to absent — the state that would strand a stale row on the client.
 
 ## The single-faction assumptions that are still live
 

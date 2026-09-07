@@ -257,7 +257,7 @@ pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRe
 pub use great_discovery::{
     ConstellationRequirement, GreatDiscoveryCandidateEvent, GreatDiscoveryDefinition,
     GreatDiscoveryEffectEvent, GreatDiscoveryEffectKind, GreatDiscoveryFlag, GreatDiscoveryId,
-    GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
+    GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRecord, GreatDiscoveryRegistry,
     GreatDiscoveryResolvedEvent, GreatDiscoveryTelemetry, ObservationLedger,
 };
 pub use hydrology::{generate_hydrology, HydrologyState};

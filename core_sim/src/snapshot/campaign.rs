@@ -29,9 +29,16 @@ pub(crate) fn victory_snapshot_from_resource(state: &VictoryState) -> VictorySna
 ///
 /// `isDefer` is resolved here rather than left to the client: the client must not have to know
 /// that an empty `writes` is what makes a choice a defer, and its turn gate depends on the answer.
-pub(crate) fn snapshot_pending_forks(ledger: &BeatLedger) -> Vec<PendingForksState> {
+pub(crate) fn snapshot_pending_forks(
+    ledger: &BeatLedger,
+    viewer: FactionId,
+) -> Vec<PendingForksState> {
     let mut by_faction: BTreeMap<u32, Vec<PendingForkState>> = BTreeMap::new();
-    for fork in ledger.pending_forks() {
+    for fork in ledger
+        .pending_forks()
+        .iter()
+        .filter(|fork| fork.faction == viewer)
+    {
         by_faction
             .entry(fork.faction.0)
             .or_default()
@@ -68,9 +75,10 @@ pub(crate) fn snapshot_pending_forks(ledger: &BeatLedger) -> Vec<PendingForksSta
 /// Every faction's **effective** stance per axis, so the client can show what the player's
 /// identity currently reads as. Derived per turn by `telling_tick`, so a rehydrated ledger exports
 /// nothing until the next tick.
-pub(crate) fn snapshot_stance_axes(ledger: &BeatLedger) -> Vec<StanceState> {
+pub(crate) fn snapshot_stance_axes(ledger: &BeatLedger, viewer: FactionId) -> Vec<StanceState> {
     ledger
         .effective_stance_by_faction()
+        .filter(|(faction, _)| *faction == viewer)
         .map(|(faction, axes)| StanceState {
             faction: faction.0,
             axes: axes
@@ -87,9 +95,13 @@ pub(crate) fn snapshot_stance_axes(ledger: &BeatLedger) -> Vec<StanceState> {
 /// Every faction's attained narrator **medium**, so the client can present the telling as an oral
 /// saga / painted chronicle / written record. Presentational only — the medium never selects
 /// different copy (see `core_sim/src/telling/medium.rs`).
-pub(crate) fn snapshot_voice_medium(ledger: &BeatLedger) -> Vec<VoiceMediumState> {
+pub(crate) fn snapshot_voice_medium(
+    ledger: &BeatLedger,
+    viewer: FactionId,
+) -> Vec<VoiceMediumState> {
     ledger
         .mediums_by_faction()
+        .filter(|(faction, _)| *faction == viewer)
         .map(|(faction, medium)| VoiceMediumState {
             faction: faction.0,
             medium_id: medium.id.clone(),
@@ -108,8 +120,18 @@ fn voice_lines(lines: &BTreeMap<String, String>) -> Vec<VoiceLineState> {
         .collect()
 }
 
-pub fn command_events_to_state(log: &CommandEventLog) -> Vec<CommandEventState> {
+/// **THE FEED IS PER-FACTION, and this is where that becomes true on the wire.**
+///
+/// Every writer files its entry under the faction it happened to — a herd drifting off is filed
+/// under its owner, a site discovery under the finder, a command under its issuer — so a frame
+/// carrying every faction's entries hands the viewer a running commentary on a rival's whole turn.
+///
+/// **Filtering here is safe for the append-only delta.** `diff_appended` ships rows with
+/// `seq > cursor` and advances the cursor to the highest seq it *shipped*, so the gaps a filter
+/// leaves in the sequence are rows that were never the client's to hold.
+pub fn command_events_to_state(log: &CommandEventLog, viewer: FactionId) -> Vec<CommandEventState> {
     log.iter()
+        .filter(|entry| entry.faction == viewer)
         .map(|entry| CommandEventState {
             tick: entry.tick,
             kind: entry.kind.as_str().to_string(),

@@ -182,7 +182,29 @@ fn a_rival_in_plain_sight() -> (App, BandId, BandId) {
     let beside = position_of(&app, home_entity);
     stand_at(&mut app, rival_entity, beside);
     run_turn(&mut app);
+    assert_visibility(&app, beside, true);
     (app, home_band, rival_band)
+}
+
+/// ⛔ **THE PREMISE, ASKED OF THE LEDGER RATHER THAN ASSUMED.**
+///
+/// Both fixtures below arrange a rival to be in or out of HOME's sight by *moving it*, which is a
+/// statement about distance, not about visibility. Sight ranges are config
+/// (`visibility_config.json`), scouts post vantage rings, and terrain modifies both — so "30 tiles
+/// away" is a plausible way to be unseen, never a guarantee of it. Checking it here turns a map or
+/// config change that invalidates the premise into a loud failure at the setup, instead of a
+/// mystery failure in an assertion about redaction.
+fn assert_visibility(app: &App, tile: UVec2, expected: bool) {
+    let visible = app
+        .world
+        .resource::<core_sim::VisibilityLedger>()
+        .is_visible(HOME, tile.x, tile.y);
+    assert_eq!(
+        visible,
+        expected,
+        "the fixture needs {tile:?} to be {} to HOME, and the visibility ledger says otherwise",
+        if expected { "VISIBLE" } else { "out of sight" }
+    );
 }
 
 /// The same world with the rival left where worldgen put it, then walked further still — far outside
@@ -199,6 +221,7 @@ fn a_rival_over_the_horizon() -> (App, BandId, BandId) {
     );
     stand_at(&mut app, rival_entity, far);
     run_turn(&mut app);
+    assert_visibility(&app, far, false);
     (app, home_band, rival_band)
 }
 

@@ -391,12 +391,16 @@ enum SourceKey {
     Herd(String),
 }
 
+/// **The viewer's own settling score, and nobody else's** — a bare number with nothing on the map to
+/// look at, so it has no visible tier (`factions.md` → "Which frame sections are viewer-scoped").
 pub(crate) fn snapshot_sedentarization(
     score: &SedentarizationScore,
+    viewer: FactionId,
 ) -> Vec<SchemaSedentarizationState> {
     score
         .iter_sorted()
         .into_iter()
+        .filter(|(faction, _)| *faction == viewer)
         .map(|(faction, entry)| SchemaSedentarizationState {
             faction: faction.0,
             score: entry.score,
@@ -1422,11 +1426,43 @@ pub(crate) fn snapshot_forage_patches(
     // **The live keeping kit per worked source**, on the same rule one account over. See
     // [`UpkeepKitIds`].
     upkeep_kits: &UpkeepKitIds,
+    // ⛔ **WHO IS LOOKING, AND WHAT THEY HAVE SEEN.** A patch row is a fact about a TILE, and tiles
+    // are published whole — the client fogs the map from `visibility_raster`. What is *not* a fact
+    // about the tile is the improvement standing on it: who tends it and how far along their
+    // Cultivate and Sow meters are. That is a fact about a people, and before this every client
+    // received it for every patch on the map — a live readout of exactly which ground a rival was
+    // farming. See [`ForagePatchState`]'s ownership fields and `factions.md` → "Which frame
+    // sections are viewer-scoped".
+    viewer: FactionId,
+    visibility: &crate::visibility::VisibilityLedger,
+    fog_enabled: bool,
 ) -> Vec<ForagePatchState> {
     let mut patches: Vec<ForagePatchState> = registry
         .patches
         .values()
         .map(|patch| {
+            // ⛔ **IS THE IMPROVEMENT ON THIS TILE THE VIEWER'S TO READ?**
+            //
+            // Yours always is, and an untended patch has no improvement to hide. A *rival's* is
+            // legible exactly where the viewer has **explored** the ground — `is_discovered`, not
+            // `is_visible`, on `route_states`' precedent: a field is built into the ground and does
+            // not wander off, so having seen it once remains true, the same argument a road makes.
+            // (A herd is the opposite case and uses `Active`.) The staleness that buys — a field
+            // that has since gone feral still reading as a field — is the same staleness a
+            // remembered road carries, and is accepted for the same reason.
+            let improvement_is_legible = patch.owner.is_none_or(|owner| owner == viewer)
+                || !fog_enabled
+                || visibility.is_discovered(viewer, patch.tile.x, patch.tile.y);
+            let improvement_fraction =
+                |value: f32| if improvement_is_legible { value } else { 0.0 };
+            let improvement_flag = |value: bool| if improvement_is_legible { value } else { false };
+            let improvement_owner = |value: Option<u32>| {
+                if improvement_is_legible {
+                    value
+                } else {
+                    None
+                }
+            };
             let seasonal = seasonal_weights
                 .get(&patch.tile)
                 .copied()
@@ -1521,12 +1557,12 @@ pub(crate) fn snapshot_forage_patches(
                 // of one question and could contradict each other. The meter asks the standing now
                 // (`intensification::rung_work_done`); the equality above is a construction rather
                 // than a coincidence of the arithmetic.
-                cultivation_progress: build_fraction(
+                cultivation_progress: improvement_fraction(build_fraction(
                     crate::forage::patch_rung_work_done(patch, RungKey::PlantTended, ladder),
                     cultivation_work_cost,
-                ),
-                is_cultivated: patch.is_cultivated(),
-                owner: patch.owner.map(|faction| faction.0),
+                )),
+                is_cultivated: improvement_flag(patch.is_cultivated()),
+                owner: improvement_owner(patch.owner.map(|faction| faction.0)),
                 biomass: patch.biomass,
                 // **WHAT THE PATCH HOLDS NOW — the rung is IN this number.** It is the tile's `K`
                 // times the interpolated `field_capacity_gain` (`patch_carrying_capacity`, written
@@ -1545,11 +1581,11 @@ pub(crate) fn snapshot_forage_patches(
                 // Field may stand on ground that was never tended — and its own preparing/payoff
                 // pair. `field_yield` below comes off the same `rung_payoff` seam the labor arm pays a
                 // Field with, so the client's "then Y" is the number the sim will hand over.
-                field_progress: build_fraction(
+                field_progress: improvement_fraction(build_fraction(
                     crate::forage::patch_rung_work_done(patch, RungKey::PlantField, ladder),
                     field_work_cost,
-                ),
-                is_field: patch.is_field(),
+                )),
+                is_field: improvement_flag(patch.is_field()),
                 // **Through `rung_payoff` at rung 3** — the same seam the sim pays every plant rung
                 // with, asked about the Field by name. It used to call a rung-3-only managed rate;
                 // that model is retired, so the quote and the payout are one expression again.
@@ -2205,12 +2241,21 @@ pub(crate) fn snapshot_route_rungs(ladder: &LadderConfig) -> Vec<RouteRungState>
 ///
 /// **The five named float fields it replaced are retired.** Adding a knowledge used to mean adding a
 /// schema field, which is why the route branch's two lessons had nowhere to appear at all.
+/// **Only the viewer's own progress.** What another people has learned is not legible from outside —
+/// there is no thing on the map that is "their knowledge" to be seen — so this has no visible tier
+/// (`factions.md` → "Which frame sections are viewer-scoped").
 pub(crate) fn snapshot_intensification_knowledge(
     ledger: &DiscoveryProgressLedger,
     ladder: &LadderConfig,
+    viewer: FactionId,
 ) -> Vec<IntensificationKnowledgeState> {
     let roster = ladder.knowledge_roster();
-    let mut factions: Vec<u32> = ledger.progress.keys().map(|faction| faction.0).collect();
+    let mut factions: Vec<u32> = ledger
+        .progress
+        .keys()
+        .filter(|faction| **faction == viewer)
+        .map(|faction| faction.0)
+        .collect();
     factions.sort_unstable();
     factions.dedup();
     factions

@@ -2751,7 +2751,7 @@ pub fn capture_snapshot(
         entries: knowledge_ledger_states,
         timeline: knowledge_timeline_states,
         metrics: knowledge_metrics_state,
-    } = knowledge_ledger.snapshot_payload();
+    } = knowledge_ledger.snapshot_payload(viewer_faction.0);
 
     let mut generation_states: Vec<GenerationState> =
         registry.profiles().iter().map(generation_state).collect();
@@ -2790,10 +2790,10 @@ pub fn capture_snapshot(
     // The discovery ladder's four readouts plus its telemetry. Per catalogued discovery — a content
     // count, so it grows when the catalog does, never with the map.
     let discovery_scope = crate::turn_profile::scope("snapshot.build.discovery");
-    let discovery_states = discovery_progress_entries(&discovery_progress);
+    let discovery_states = discovery_progress_entries(&discovery_progress, viewer_faction.0);
     let great_discovery_definition_states = snapshot_definitions(&gds.registry);
-    let great_discovery_states = snapshot_discoveries(&gds.ledger);
-    let great_discovery_progress_states = snapshot_progress(&gds.readiness);
+    let great_discovery_states = snapshot_discoveries(&gds.ledger, viewer_faction.0);
+    let great_discovery_progress_states = snapshot_progress(&gds.readiness, viewer_faction.0);
     let great_discovery_telemetry_state = snapshot_telemetry(&gds.ledger, &gds.telemetry);
     drop(discovery_scope);
 
@@ -3163,9 +3163,10 @@ pub fn capture_snapshot(
         upkeep_kits: &upkeep_kit_ids,
     });
     drop(herds_scope);
-    let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
-    let sedentarization_state = snapshot_sedentarization(&sedentarization);
-    let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
+    let faction_inventory_state = snapshot_faction_inventory(&faction_inventory, viewer_faction.0);
+    let sedentarization_state = snapshot_sedentarization(&sedentarization, viewer_faction.0);
+    let discovered_sites_state =
+        snapshot_discovered_sites(&discovered_sites, &sites_config, viewer_faction.0);
     // **Faction is a property of the ENDPOINT** — resolved here, once, so the connection ledger
     // itself never carries one. An edge whose observer band is gone resolves to nothing and is
     // filtered out rather than published against a guessed faction.
@@ -3217,19 +3218,22 @@ pub fn capture_snapshot(
         &flora_quotes,
         &build_kit_ids,
         &upkeep_kit_ids,
+        viewer_faction.0,
+        &visibility_ledger,
+        config.fog_enabled,
     );
     drop(forage_patches_scope);
     let intensification_knowledge_state =
-        snapshot_intensification_knowledge(&discovery_progress, &ladder_config);
+        snapshot_intensification_knowledge(&discovery_progress, &ladder_config, viewer_faction.0);
     let ladder_knowledge_state = snapshot_ladder_knowledge(&ladder_config);
     // **THE ROUTE BRANCH'S RUNG CATALOG** — what a road may become, beside what there is to learn.
     // A per-world constant like the roster above, so it diffs out after the first frame.
     let route_rung_state = snapshot_route_rungs(&ladder_config);
-    let command_events_state = command_events_to_state(&command_events);
+    let command_events_state = command_events_to_state(&command_events, viewer_faction.0);
     // The Telling's client-facing fork tier + stance readout (BTree-backed, so already ordered).
-    let pending_forks_state = snapshot_pending_forks(&beat_ledger);
-    let stance_axes_state = snapshot_stance_axes(&beat_ledger);
-    let voice_medium_state = snapshot_voice_medium(&beat_ledger);
+    let pending_forks_state = snapshot_pending_forks(&beat_ledger, viewer_faction.0);
+    let stance_axes_state = snapshot_stance_axes(&beat_ledger, viewer_faction.0);
+    let voice_medium_state = snapshot_voice_medium(&beat_ledger, viewer_faction.0);
     let victory_snapshot_state = victory_snapshot_from_resource(&victory);
     let capability_bits = capability_flags.bits();
     drop(readouts_scope);
@@ -3256,6 +3260,7 @@ pub fn capture_snapshot(
         &materials_config,
         &discovery_progress,
         knowledge_threshold,
+        viewer_faction.0,
     );
     // **The opening loadout picker's row.** A world with no chosen campaign publishes the default —
     // a shut window with no budget — which is exactly what such a world has.

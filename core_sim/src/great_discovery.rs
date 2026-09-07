@@ -963,10 +963,21 @@ pub fn export_great_discovery_metrics(
     }
 }
 
-pub fn snapshot_discoveries(ledger: &GreatDiscoveryLedger) -> Vec<GreatDiscoveryState> {
+/// **The viewer's own great discoveries, plus any a rival has DEPLOYED PUBLICLY.**
+///
+/// The second half is a deliberate exemption, not an oversight: `publicly_deployed` is a live flag
+/// with its own mutator (`GreatDiscoveryLedger::mark_public`), and its entire meaning is *"this
+/// faction has shown the world"*. Withholding a publicly-deployed discovery would make the flag
+/// unobservable to everyone but its owner, which is the one reader it is not for. A discovery kept
+/// quiet stays quiet. See `factions.md` → "Which frame sections are viewer-scoped".
+pub fn snapshot_discoveries(
+    ledger: &GreatDiscoveryLedger,
+    viewer: FactionId,
+) -> Vec<GreatDiscoveryState> {
     let mut states: Vec<GreatDiscoveryState> = ledger
         .records()
         .iter()
+        .filter(|record| record.faction == viewer || record.publicly_deployed)
         .map(|record| GreatDiscoveryState {
             id: record.id.0,
             faction: record.faction.0,
@@ -980,9 +991,19 @@ pub fn snapshot_discoveries(ledger: &GreatDiscoveryLedger) -> Vec<GreatDiscovery
     states
 }
 
-pub fn snapshot_progress(readiness: &GreatDiscoveryReadiness) -> Vec<GreatDiscoveryProgressState> {
+/// **The viewer's own in-flight discoveries only** — no public-deployment exemption here, unlike
+/// [`snapshot_discoveries`]. A row that has not resolved has not been shown to anybody, and it
+/// carries `covert` and an ETA: it is the research a rival is *hiding*, which is what the espionage
+/// arc exists to make you work for.
+pub fn snapshot_progress(
+    readiness: &GreatDiscoveryReadiness,
+    viewer: FactionId,
+) -> Vec<GreatDiscoveryProgressState> {
     let mut states: Vec<GreatDiscoveryProgressState> = Vec::new();
     for (faction, entries) in readiness.iter() {
+        if faction != viewer {
+            continue;
+        }
         for (id, progress) in entries {
             if progress.resolved {
                 continue;
