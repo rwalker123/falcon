@@ -3636,9 +3636,13 @@ func _units_on_tile(col: int, row: int) -> Array:
 ## chokepoint for herd-by-coordinate lookups: the Occupants roster, the herd-selection click, the
 ## hunt-target click resolution and the pre-launch trip forecast all read the herds through here (via
 ## `_tile_info_at` → `tile_info.herds`), so gating HERE makes "you can only hunt/forecast what you can
-## actually see" true by construction. The server still exports every herd unfiltered (a wire-level
-## leak, tracked separately), so this client gate is LOAD-BEARING, not cosmetic — do not bypass it by
-## reading `herds` by coordinate somewhere else.
+## actually see" true by construction.
+##
+## **THE SERVER FOG-FILTERS THE HERD LIST TOO NOW** (`snapshot/subsistence.rs`'s `herd_is_visible`),
+## so this is no longer the only thing standing between the player and an unseen herd. Keep it anyway:
+## it is the single chokepoint for herd-by-coordinate lookups, and every one of the four readers above
+## depends on it answering the same question the renderer does — do not bypass it by reading `herds`
+## by coordinate somewhere else.
 func _herds_on_tile(col: int, row: int) -> Array:
 	var matches: Array = []
 	if not _is_tile_visible(col, row):

@@ -1977,8 +1977,15 @@ func reapply_selection(kind: String, data: Dictionary) -> void:
             _selection.select_tile(data.duplicate(true) if data is Dictionary else {})
             _render_selection_panel(_selection.tile_info(), {}, {})
         _:
-            # Selected occupant vanished (e.g. the band expired). Drop to its last tile
-            # if known, else hide the card. Intentionally does not touch pending state.
+            # The selected occupant is no longer in the frame. Drop to its last tile if known, else
+            # hide the card. Intentionally does not touch pending state.
+            #
+            # ⛔ **ABSENCE MEANS OUT OF SIGHT, NOT DEATH.** A foreign band's row is published only
+            # while it stands where the viewer can see (`.claude/rules/core_sim/factions.md` → the
+            # three tiers), so a rival walking behind a ridge leaves the frame and comes back when it
+            # returns — the same way a fog-gated herd does. That is why this arm quietly falls back to
+            # the tile rather than announcing anything: a "band lost" note here would report a
+            # stranger's death every time one walked out of view.
             _selection.select_land()
             if _selection.tile_info().is_empty():
                 _hide_selection_card()

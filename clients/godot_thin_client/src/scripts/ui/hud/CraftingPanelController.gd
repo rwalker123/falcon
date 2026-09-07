@@ -144,9 +144,10 @@ func render() -> void:
 		CraftingPanel.PAYLOAD_MATERIALS: _materials,
 		CraftingPanel.PAYLOAD_BAND_LEGEND: _band_legend,
 		CraftingPanel.PAYLOAD_RECIPES: _recipes,
-		# The player's own tracks. The wire carries every faction's, exactly as the sedentarization and
-		# knowledge vectors do, and this is the ONE place they are filtered — so the rail cannot end up
-		# quoting another people's Tanning.
+		# The player's own tracks, and this is the ONE place they are filtered — so the rail cannot end
+		# up quoting another people's Tanning. **The wire now carries the VIEWER's alone**
+		# (`.claude/rules/core_sim/factions.md` → "Which frame sections are viewer-scoped"), so the
+		# filter is defence in depth rather than the boundary; it stays for the reason above.
 		CraftingPanel.PAYLOAD_CRAFT_KNOWLEDGE: _player_craft_knowledge(),
 		# **THE CREW STEPPER'S CEILING, NOT THE BAND'S IDLE COUNT.** `effective_idle` nets the bench
 		# out (a worker at the bench is assigned labor); the stepper asks how many COULD stand at the
