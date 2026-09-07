@@ -376,6 +376,13 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
                 per_crew.push(&crew_row_to_dict(row).to_variant());
             }
             let _ = dict.insert("per_crew", &per_crew);
+            // WHY THE CURVE STOPPED RISING, forwarded beside the rows because the rows cannot say:
+            // a plateau is either the herd's room or the band's weapons, and only `armed_crew`
+            // equalling that plateau distinguishes them (`SourceForecast.MAX_USEFUL_NOTE_GEAR_FORMAT`).
+            // The weapon's id comes with it because the kit roster says what a kit CARRIES and never
+            // what each item is FOR, so the sheet cannot name the missing gear on its own.
+            let _ = dict.insert("armed_crew", i64::from(reply.armed_crew));
+            let _ = dict.insert("weapon_item_id", reply.weapon_item_id.as_str());
         }
         Ok(QueryReply::ListSaves(slots)) => {
             let _ = dict.insert("ok", true);

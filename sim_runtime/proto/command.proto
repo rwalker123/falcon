@@ -1144,6 +1144,32 @@ message HuntCrewTakeReply {
   // is 0. Index `i` is the crew of `i + 1`, and each row echoes its own `workers` so a client never
   // has to trust that.
   repeated HuntCrewTakeRow per_crew = 1;
+
+  // WHY THE CURVE STOPPED RISING - how many of `max_workers` carry something that can hurt THIS
+  // quarry, in whole hands. A plateau means either the herd ran out of room or the band ran out of
+  // weapons, and the rows alone cannot say which: on a band short of spears the curve rises once
+  // per armed hunter, so `armed_crew == plateau` is the reading behind "the rest have no spears"
+  // rather than "more would be idle".
+  //
+  // 0 when nothing the party holds can hurt the quarry (a trapping party against a 120 kg aurochs
+  // falls back to the bare hand's `attack 1`); `max_workers` when everybody is armed - including at
+  // a PEN, which has no attack-vs-defense gate at all, so no keeper needs a weapon there.
+  //
+  // Resolved from the SAME kit coverage and quarry the curve's last row is built from
+  // (`fauna::hunt_armed_crew`), so the count and the plateau it explains describe one party.
+  uint32 armed_crew = 2;
+
+  // WHICH ITEM IS THE WEAPON - the id of the item in the resolved kit that supplies the attack
+  // (`spears` for `big_game`, `traps` for `trapping`), EMPTY when no item in it supplies one.
+  //
+  // It is published because a client MAY NOT DERIVE IT: the kit roster says what a kit carries,
+  // never what each item is for, so nothing on that side can pick the weapon out of
+  // `{spears, sled}`.
+  //
+  // It names the weapon the kit holds, not one that works here - a trapping party against an
+  // aurochs reads `traps` with `armed_crew` 0, because the kit carries a weapon it cannot use on
+  // that body.
+  string weapon_item_id = 3;
 }
 
 message CommandEnvelope {

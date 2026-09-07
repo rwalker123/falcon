@@ -813,6 +813,17 @@ rather than silently ignored (`config-loading.md`'s "looks live but isn't").
 `hunter_profile_unbounded` is *"the best this kit can do against something"* and is for surfaces with
 no target — the published kit roster and a band's own `hunterAttack` row.
 
+**And a third resolver answers WHICH ITEM the attack came from**: `EquipmentConfig::attack_item_id`,
+the same best-of-the-live-items fold kept to the id rather than the value (`"spears"` on `big_game`,
+`"traps"` on `trapping`, `None` when nothing live in the kit declares one). It exists because a
+readout that has to **name** the weapon cannot work it out downstream — a kit is a set of item ids
+and nothing in it says which of `{spears, sled}` is the thing you kill with, which is precisely the
+knowledge the effects table keeps out of call sites, and `KitRoster.gd` is forbidden to re-derive.
+Its one consumer is the crew-take reply's `weapon_item_id` (`fauna.md` → "AND THE REPLY SAYS WHICH OF
+THE TWO STOPPED IT"). It is asked **unbounded**, so a trapping party still names `traps` against an
+aurochs: *which item is the weapon* is a fact about the kit, and *whether it reaches this quarry* is
+the party's own resolved attack, answered separately by `fauna::hunt_armed_crew`.
+
 > **The hunt job's DEFAULT kit must carry no mass-bounded attack, and `validate` enforces it.**
 > `default_kits.hunt` is what this file answers wherever there is **no quarry to test a bound
 > against**: a band's own `hunterAttack` row, `HuntingParty::builtin_equipped`, and a herd whose

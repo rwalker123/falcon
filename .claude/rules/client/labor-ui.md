@@ -7835,3 +7835,48 @@ looking one up — the wire's key is only `materials`, and WHICH good is the run
 prefix. **The ink is the RENDERER's because the sentence cannot carry it**: the same string goes
 verbatim into the build queue row's plain-text `tooltip_text`, where a `[color=…]` run would print its
 own markup. An empty pile takes `BUILD_BLOCKED_MATERIALS_UNNAMED` rather than inventing a good.
+
+## THE CAP'S NOTE NAMES THE SPEARS WHERE THE SPEARS ARE WHAT BOUND IT
+
+A take curve plateaus for one of two reasons and the rows alone cannot say which: the **herd** ran out
+of room, or the **band** ran out of weapons. `MAX_USEFUL_NOTE_FORMAT`'s *"max 4 workers useful here —
+more would be idle"* is only true of the first, and on a band armed for four it blamed the herd for a
+shortage of spears while thirteen hands stood idle beside it. `HuntCrewTakeReply` therefore carries two
+crew-wide answers beside `per_crew` — `armed_crew`, how many of the asked crew hold something that can
+hurt THIS quarry, and `weapon_item_id`, the id of the item supplying that attack — and where the first
+EQUALS the cap the sheet says so instead:
+
+`SourceForecast.MAX_USEFUL_NOTE_GEAR_FORMAT` — *"max %d %s useful here — the rest have no %s"*.
+
+**The weapon's id is rendered verbatim, and it is published precisely because the client may not derive
+it.** `KitRoster.kit_item_ids` says what a kit CARRIES, never what each item is FOR, so nothing on this
+side can pick the weapon out of `{spears, sled}`. The shipped ids are lowercase plurals that read as
+English in that sentence (`spears`, `traps`); a display-name table beside them would be a second
+vocabulary to keep true.
+
+**The gate is `DrawerComposeController._forecast_worker_cap`'s alone, and every conjunct earns its
+place** — `cap == armed_crew and armed_crew > CREW_TAKE_NO_ARMED_CREW and assignable > cap and
+weapon_item_id != ""`:
+
+- **EQUALITY, NEVER `<=`.** A **pen** answers `armed_crew == max_workers`, there being no
+  attack-vs-defense gate behind a fence, so `<=` tells a player whose pen cap is ROOM-bound that the
+  rest have no spears. Equality is the whole of what says the gear is the binding term — and it also
+  keeps a fully-armed band on the old wording, its `armed_crew` sitting ABOVE a cap the herd set.
+- **`armed_crew > 0`.** With nothing that can hurt the quarry the cap is `MAX_USEFUL_BARREN` from a
+  different branch entirely, the kit row already says the party carries nothing that brings this animal
+  down, and `weapon_item_id` is legitimately empty (it names the weapon the kit HOLDS, so a trapping
+  party against an aurochs reads `traps` beside an `armed_crew` of `0`).
+- **IDLE HANDS.** The labor-bound return above already guarantees `assignable > cap` here; it is
+  written out anyway, so the gate reads as the whole condition for the wording rather than inheriting
+  half of it from a branch above that a later edit may move.
+
+**THE HERD-BOUND AND REACH-BOUND CAPS KEEP `MAX_USEFUL_NOTE_FORMAT` UNCHANGED**, and no sentence was
+invented for them: the reply says which term binds only in the gear case, and copy the wire cannot
+source is copy that has to be kept true by hand.
+
+**IT IS THE COMPOSE SHEET'S ALONE.** `SourceForecast.source_worker_cap_state` — the Work board's
+worked-row twin — reads the sim's published `huntUsefulWorkers` with no curve and no reply in hand, so
+it cannot say WHY it is capped and its wording is unchanged; `expedition_useful_cap` likewise. The
+forage caller of `_forecast_worker_cap` passes neither value: a patch asks no attack-vs-defense
+question, so the defaults are the unarmed pair (`SourceForecast.CREW_TAKE_NO_ARMED_CREW`, `""`) and the
+plant web renders exactly what it did.
