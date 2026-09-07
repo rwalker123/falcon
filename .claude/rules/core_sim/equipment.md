@@ -1389,8 +1389,16 @@ in `bin/server.rs`, and restored by `sim_state.rs` (`BandRecord::equipment`, car
   `hunt_useful_crew_on_the_wire::a_pens_take_neither_blunts_the_spear_nor_costs_the_keepers`, whose
   second arm sends the *same band, same species, same crew, same kit* out on the range and requires
   both costs to land there — so the two identities are about the fence and not about a dead path.
-- **An expedition never touches baskets.** A raid is a hunt (`ExpeditionMission` has no gather verb),
-  so `advance_expeditions` resolves the sled and the hunting kit and nothing else.
+- **A RAID never touches baskets; a PROVISIONED PARTY does.** The two halves of
+  `advance_expeditions` diverge here. A raid (`Hunt` / the denial verb) lives off its kills, so it
+  resolves the sled and the hunting kit and nothing else. A **provisioned** party (`Scout` / `Trade`,
+  on [`KitJob::Expedition`]) has to replace what it eats out of contact with its band, so it gathers
+  off a stand in reach before it hunts what it meets — `systems/expeditions.rs` resolves
+  `forage_per_worker_biomass_capacity` through the party's own coverage and charges
+  `WearQuantum::BiomassGathered` on the baskets for what it took. See "The `expedition` job" below.
+  > ⛔ **This bullet read *"an expedition never touches baskets"* and was true until the ranging kit
+  > existed.** Do not restore it from the `ExpeditionMission`-has-no-gather-verb argument: the gather
+  > is not a mission verb, it is how a provisioned party of *any* verb feeds itself on the march.
 
 **`forage_per_worker_biomass(capacity, seasonal)` takes a RESOLVED tier, not a config handle.** That
 is the seam the basket tier rides; sites with no band to resolve against (the patch telemetry in
@@ -1609,7 +1617,7 @@ one that soaks many blows per body burns it faster, which is the retune's whole 
 
 ### Wear rides the SAME predicate that chose the tier
 
-Every wear site is gated on the effective predicate its own tier came from. **There are nine, and
+Every wear site is gated on the effective predicate its own tier came from. **There are ten, and
 this list is the one an audit checks against** — the ones in `systems/expeditions.rs`,
 `visibility_systems.rs` and `systems/crafting.rs` are outside `systems/labor.rs`'s assignment loop
 entirely, which is exactly how a site gets missed:
@@ -1621,6 +1629,7 @@ entirely, which is exactly how a site gets missed:
 | `systems/labor.rs` — a wild hunt | spears/traps **per blow landed, per crew** (`HuntFight::charge_strike_wear`), the sled per biomass hauled | the crew's own narrowed kit for the weapon; the assignment's kit for the sled |
 | `systems/expeditions.rs` — the raid's take | the weapon per blow landed, per crew; the sled per biomass hauled | the party's launch-time kit, narrowed per crew for the weapon |
 | `systems/expeditions.rs` — the scout's roadside kill | likewise | likewise |
+| `systems/expeditions.rs` — a provisioned party's gather | baskets, per biomass gathered off the stand | the party's launch-time kit supplies `forage_carry` — a party sent out on `none` gathers by hand and wears nothing |
 | `visibility_systems.rs` — `calculate_visibility` | wayfinding, per tile first revealed | only a **scout vantage's** first sightings, and only for the band that posted it |
 | `systems/expeditions.rs` — a party's observe pass | wayfinding, per tile first revealed | tiles neither already in the party's own `pending_reveal` buffer nor already `Discovered`/`Active` on its faction map — charged **at observe**, never at the comm flush |
 | `systems/labor.rs` — `advance_predator_raids` | clubs, **per blow landed, per warrior line** | the line landed something — a bare line cannot clear the pack's `defense`, and a band nobody raided pays zero |
