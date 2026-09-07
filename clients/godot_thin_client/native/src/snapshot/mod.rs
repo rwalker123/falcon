@@ -1418,6 +1418,16 @@ pub(crate) fn snapshot_to_dict(
     {
         let _ = dict.insert("default_warrior_kit_id", default_warrior_kit);
     }
+    // **THE RANGING PARTY'S DEFAULT** — the `expedition` job's, which the two PROVISIONED missions
+    // (Scout, Trade) launch on. It gets a key of its own beside the four above because one kit arms
+    // BOTH of the ways a detached party feeds itself, gathering and hunting; quoting the hunt
+    // default here would open the scout launch sheet on a kit that cannot gather.
+    if let Some(default_expedition_kit) = snapshot
+        .subsistence()
+        .and_then(|s| s.defaultExpeditionKitId())
+    {
+        let _ = dict.insert("default_expedition_kit_id", default_expedition_kit);
+    }
     // **THE WHOLE EFFECTIVE `EquipmentConfig`, `serde_json`-serialized** — carried as one opaque
     // string and republished as one, never parsed here. The Workbench's Equipment and Kits pages
     // parse it themselves and walk it blind, which is what lets a field added to `equipment.json`

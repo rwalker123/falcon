@@ -121,6 +121,23 @@ pub enum EquipmentStat {
     /// one of them would be a fourth authority over the same line. What wayfinding gear buys is what
     /// an observer can make out once they are there.
     ScoutVantageRange,
+    /// **The per-turn observation radius a DETACHED PARTY maps the ground at.** Declared
+    /// **unequipped**; the equipped `9` is `expedition_config.json`'s `observe_sight_range`.
+    ///
+    /// # ⛔ A SECOND STAT, NOT A REUSE OF [`Self::ScoutVantageRange`]
+    ///
+    /// [`EquipmentConfig::rate_tier`] takes the **equipped** side from the caller's baseline and the
+    /// **unequipped** side from the item, and an item declares **one** unequipped side per stat. So
+    /// reusing the vantage's stat would drag a bare-handed *party* down to the vantage's bare `1.0`,
+    /// which is wrong: a band standing still sees `observe_sight_range` far with no gear at all
+    /// (that lever's own doc says it matches the band base sight), and a detached party is the same
+    /// people with the same eyes. What the gear buys is reach **beyond** unaided sight, never the
+    /// ability to see at all.
+    ///
+    /// A posted vantage — one or two people on a hilltop, equipped range `2` — and a whole ranging
+    /// party are two different observers with two different **bare** values, so they are two stats.
+    /// One item may legally declare both, and `wayfinding` does.
+    ExpeditionSightRange,
     /// **THE EXTRA WORK ONE EQUIPPED WORKER DELIVERS PER TURN ON A BUILD** — added to the crew's own
     /// output, never subtracted from the job (`docs/plan_standing_upkeep.md` §4.8). Neutral at
     /// **`0.0`**; **flint hoes ship `+0.5` on the plant web and a flint crook `+0.5` on the animal
@@ -220,6 +237,7 @@ impl EquipmentStat {
             | EquipmentStat::HuntCarry
             | EquipmentStat::ForageCarry
             | EquipmentStat::ScoutVantageRange
+            | EquipmentStat::ExpeditionSightRange
             | EquipmentStat::CraftSpeed
             | EquipmentStat::CraftQualityCeiling
             | EquipmentStat::CraftMaterialEfficiency => None,
@@ -234,13 +252,20 @@ impl EquipmentStat {
     ///
     /// **They do not all declare the same SIDE, and that is one-home-per-fact rather than an
     /// inconsistency.** The two carries declare the **equipped** side on the item's tier (that is
-    /// what the material buys) and fall back to `labor_config.json`'s no-equipment baseline; the
-    /// vantage declares the **unequipped** side on the item, because its equipped value already has
-    /// a home elsewhere — `labor_config.scout.vantage_range`.
-    pub const TWO_TIER: [EquipmentStat; 3] = [
+    /// what the material buys) and fall back to `labor_config.json`'s no-equipment baseline; the two
+    /// sight ranges declare the **unequipped** side on the item, because each equipped value already
+    /// has a home elsewhere — `labor_config.scout.vantage_range` for the vantage,
+    /// `expedition_config.observe_sight_range` for the detached party.
+    ///
+    /// **Two sight ranges rather than one, on one item.** `wayfinding` declares both, which the
+    /// at-most-one-item-per-stat rule permits and this list requires: a posted vantage and a ranging
+    /// party are different observers with different bare readings
+    /// ([`EquipmentStat::ExpeditionSightRange`]).
+    pub const TWO_TIER: [EquipmentStat; 4] = [
         EquipmentStat::HuntCarry,
         EquipmentStat::ForageCarry,
         EquipmentStat::ScoutVantageRange,
+        EquipmentStat::ExpeditionSightRange,
     ];
 
     /// **The stats only a bench TOOL may declare** — a tool bounds one material and grants nothing
@@ -962,12 +987,22 @@ pub enum KitJob {
     /// kit** — the same opening the two keeping roles have. The day a barrow or a paving maul
     /// declares a stat, this job is what it names.
     Roadwork,
+    /// **A RANGING PARTY'S SELF-RELIANCE** — the job a *provisioned* detached party
+    /// ([`crate::components::ExpeditionMission::Scout`] and `Trade`) is outfitted for, and the one
+    /// job that covers **both** ways such a party feeds itself: it gathers off the stands it passes
+    /// and it takes the game it meets. That is why it is its own job rather than the two it borrows
+    /// seams from — gear covers *people*, and a party far from home is one crew doing both.
+    ///
+    /// **A raid is not on this job.** `Hunt` and denial parties live off their kills, draw no
+    /// provisions upkeep, and resolve their kit off the *quarry's* derived default
+    /// ([`crate::fauna::quarry_default_hunt_kit`]); they stay on [`KitJob::Hunt`].
+    Expedition,
 }
 
 impl KitJob {
     /// Every job, for the validations and the wire — one list, so a new job cannot be validated in
     /// three places and forgotten in a fourth.
-    pub const ALL: [KitJob; 8] = [
+    pub const ALL: [KitJob; 9] = [
         KitJob::Hunt,
         KitJob::Forage,
         KitJob::Scout,
@@ -976,6 +1011,7 @@ impl KitJob {
         KitJob::Husbandry,
         KitJob::Builders,
         KitJob::Roadwork,
+        KitJob::Expedition,
     ];
 
     /// The wire/command token for this job — the same string `assign_labor`'s role token uses (and
@@ -991,6 +1027,7 @@ impl KitJob {
             KitJob::Husbandry => "husbandry",
             KitJob::Builders => "builders",
             KitJob::Roadwork => "roadwork",
+            KitJob::Expedition => "expedition",
         }
     }
 }
@@ -1038,6 +1075,11 @@ pub struct DefaultKitsConfig {
     /// `roadwork` role opens bare like the two keeping roles above it. There is no builders-style
     /// per-branch derivation to fall back on here, because a route's build takes no crew at all.
     pub roadwork: String,
+    /// **What a ranging party carries when the launch verb names no kit** — the shipped `ranging`
+    /// kit, which arms both of the ways a provisioned party feeds itself. Unlike the keeping roles
+    /// above, this one is NOT `none`: a party out of contact with its band that cannot gather and
+    /// cannot hunt has no way at all to replace what it eats.
+    pub expedition: String,
 }
 
 /// **What the kit is being resolved AGAINST** — the argument a mass-bounded effect is tested on.
@@ -1954,6 +1996,7 @@ impl EquipmentConfig {
             KitJob::Husbandry => &self.default_kits.husbandry,
             KitJob::Builders => &self.default_kits.builders,
             KitJob::Roadwork => &self.default_kits.roadwork,
+            KitJob::Expedition => &self.default_kits.expedition,
         }
     }
 
@@ -2260,6 +2303,26 @@ impl EquipmentConfig {
         self.rate_tier(EquipmentStat::ScoutVantageRange, equipped_range, kit, wear)
     }
 
+    /// **The per-turn observation radius a detached party maps the ground at** — resolved against
+    /// the equipped radius the caller already holds (`expedition_config.observe_sight_range`).
+    ///
+    /// The [`Self::scout_vantage_range`] call above, one observer over: same shape, same rounding
+    /// contract (`f32` here, the reveal path rounds), a **different bare value**. See
+    /// [`EquipmentStat::ExpeditionSightRange`] for why the two are not one stat.
+    pub fn expedition_sight_range(
+        &self,
+        equipped_range: f32,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> f32 {
+        self.rate_tier(
+            EquipmentStat::ExpeditionSightRange,
+            equipped_range,
+            kit,
+            wear,
+        )
+    }
+
     /// **A warrior's per-head combat profile, kit composed in** — the defending contingent's side of
     /// `advance_predator_raids`, resolved through the *same* seam and the same `attack` stat a
     /// hunter's is.
@@ -2281,36 +2344,42 @@ impl EquipmentConfig {
         self.hunter_profile_for(intrinsic, kit, wear, Quarry::Any)
     }
 
-    /// **The three two-sided rates' shared resolution** — [`EquipmentStat::TWO_TIER`] is the count
-    /// and the roster. `baseline` is the **no-equipment** rate the caller already holds
-    /// (`labor_config.json`'s), and the gear's own declaration is what lifts it.
+    /// **The two-sided rates' shared resolution** — [`EquipmentStat::TWO_TIER`] is the count and the
+    /// roster. `baseline` is the **no-equipment** rate the caller already holds (`labor_config.json`'s
+    /// for the carries and the vantage, `expedition_config.json`'s for the ranging party), and the
+    /// gear's own declaration is what lifts it.
     ///
-    /// > ⛔ **This opened *"The FOUR two-sided rates' shared resolution"***, and the fourth was
-    /// > `EquipmentStat::PenCarry`, deleted by issue #543 once both sides of it landed on the `sled`
-    /// > and a pen became something collected on `hunt_carry` itself. `TWO_TIER` is `3` and has been
-    /// > since; it is named once so a stale count here cannot outlive it again.
+    /// > ⛔ **THE COUNT IS NOT WRITTEN IN THIS SENTENCE, AND THAT IS ON PURPOSE.** It has been three
+    /// > and it has been four twice over — an earlier fourth was `EquipmentStat::PenCarry`, deleted
+    /// > by issue #543 once both sides of it landed on the `sled` and a pen became something
+    /// > collected on `hunt_carry` itself; the fourth today is
+    /// > [`EquipmentStat::ExpeditionSightRange`], which is a genuinely different observer rather
+    /// > than a second name for one number. Read the count off `TWO_TIER`, which is its one home, so
+    /// > a stale figure in this prose cannot outlive the roster again.
     ///
     /// Three arms, and which one runs is one-home-per-fact rather than free choice:
     ///
     /// - a live item declaring the **equipped** side (the two carries, on their tier) *is* the
     ///   answer — that is what the material bought;
-    /// - a live item declaring the **unequipped** side — **the vantage, and on the shipped roster
-    ///   only the vantage** — means the *equipped* rate applies, and that rate is looked up through
+    /// - a live item declaring the **unequipped** side — **the two sight ranges, and on the shipped
+    ///   roster only those** — means the *equipped* rate applies, and that rate is looked up through
     ///   [`Self::equipped_reference`] because it lives somewhere else. For
-    ///   [`EquipmentStat::ScoutVantageRange`] nothing in the item table declares an equipped side at
-    ///   all, so that lookup falls through to the `baseline` the caller is already holding, which is
-    ///   `labor_config.scout.vantage_range` — exactly the "somewhere else" it means;
+    ///   [`EquipmentStat::ScoutVantageRange`] and [`EquipmentStat::ExpeditionSightRange`] alike
+    ///   nothing in the item table declares an equipped side at all, so that lookup falls through to
+    ///   the `baseline` the caller is already holding — `labor_config.scout.vantage_range` and
+    ///   `expedition_config.observe_sight_range`, exactly the "somewhere else" it means;
     /// - nothing live ⇒ [`Self::declared_tier`] over the **whole item table**, because a band
     ///   carrying no scouting gear still has to know what an unaided vantage makes out and that
     ///   number lives on the gear it is not carrying (`wayfinding`'s item-level
-    ///   `scout_vantage_range`). `declared_tier` reads `shared_effect`, i.e. **item-level**
-    ///   declarations only, so it never answers for the two carries — their equipped side sits on a
-    ///   **tier** — and for them the `baseline` stands.
+    ///   `scout_vantage_range`, and its `expedition_sight_range` beside it). `declared_tier` reads
+    ///   `shared_effect`, i.e. **item-level** declarations only, so it never answers for the two
+    ///   carries — their equipped side sits on a **tier** — and for them the `baseline` stands.
     ///
-    /// **The last two arms are both live, and both of them are the vantage's.** `wayfinding` is the
-    /// only item on the shipped roster declaring an unequipped side at all, so it alone reaches
-    /// them: a fresh wayfinding kit takes the second arm and a spent one takes the third, which is
-    /// what `equipment_toe::the_wayfinding_tier_steps_down_when_the_kit_runs_dry` pins.
+    /// **The last two arms are both live, and both of them are `wayfinding`'s.** It is the only item
+    /// on the shipped roster declaring an unequipped side at all, so it alone reaches them, on
+    /// **both** of the sight stats it declares: a fresh wayfinding kit takes the second arm and a
+    /// spent one takes the third, which is what
+    /// `equipment_toe::the_wayfinding_tier_steps_down_when_the_kit_runs_dry` pins.
     ///
     /// > ⛔ **The third arm was justified as *"a party with no handling gear still has to know what a
     /// > bare-handed pen collects and that number lives on the gear it is not carrying"***, and both
@@ -2563,7 +2632,7 @@ impl EquipmentConfig {
 
     /// **Every tier a kit grants, resolved once, for one `(kit, wear)` pair.**
     ///
-    /// The nine numbers a consumer needs to describe what sending *this* kit buys, each through the
+    /// Every number a consumer needs to describe what sending *this* kit buys, each through the
     /// same seam the take path reads it through — so a readout cannot drift from what the raid
     /// actually pays.
     ///
@@ -2572,7 +2641,7 @@ impl EquipmentConfig {
     /// `snapshot::kit_roster_states` resolves it per kit over a **fresh** ledger (the picker's
     /// reference), and `snapshot::population_state` resolves it per band over that band's **live**
     /// ledger. Those differ only in the `wear` argument, and the per-band-per-kit readout would have
-    /// been a third copy of the same nine calls. One function, three call sites, no drift.
+    /// been a third copy of the same calls. One function, three call sites, no drift.
     ///
     /// **Every axis a kit can lift is here, and adding one here is what keeps the two readings in
     /// step.** The pen's collection rate and the scout vantage's reach were resolved *beside* this
@@ -2590,12 +2659,17 @@ impl EquipmentConfig {
     /// **`warrior_attack` is deliberately NOT here.** It is the same `attack` this already resolves,
     /// read through a different *kit* rather than a different stat — so a band's warrior tier is the
     /// warrior kit's own row, not a tenth number on every row.
+    // One baseline argument per two-sided rate, plus the kit and the wear it is read at. Bundling
+    // them into a struct would only move the same four numbers one indirection away, and every
+    // caller already holds them as separate config levers.
+    #[allow(clippy::too_many_arguments)]
     pub fn resolve_kit_tiers(
         &self,
         hunter_intrinsic: CombatStats,
         baseline_haul_rate: f32,
         baseline_gather_rate: f32,
         equipped_vantage_range: f32,
+        equipped_expedition_sight_range: f32,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
     ) -> ResolvedKitTiers {
@@ -2633,6 +2707,14 @@ impl EquipmentConfig {
             forage_carry_bare_per_worker_biomass: self
                 .unequipped_reference(EquipmentStat::ForageCarry, baseline_gather_rate),
             scout_vantage_range: self.scout_vantage_range(equipped_vantage_range, kit, wear),
+            // **The detached party's observation radius, beside the posted vantage's** — a different
+            // observer with a different bare reading, resolved through its own stat for the reason
+            // [`EquipmentStat::ExpeditionSightRange`] gives.
+            expedition_sight_range: self.expedition_sight_range(
+                equipped_expedition_sight_range,
+                kit,
+                wear,
+            ),
             // `0` is the *sentinel* for "unbounded" on both ends — the schema's own default, and what
             // every weapon but the passive device ships.
             attack_min_body_mass: attack_min_body_mass.unwrap_or(UNBOUNDED_BODY_MASS),
@@ -3109,6 +3191,12 @@ impl EquipmentConfig {
     /// is written, parses, validates, and is then ignored by the one resolver that reads the item.
     /// Rejecting it says so at load instead.
     fn validate_warrior_kits_have_no_quarry(&self) -> Result<(), EquipmentConfigError> {
+        // ⛔ **[`KitJob::Expedition`] IS DELIBERATELY NOT IN THIS LIST, and must not be added.**
+        // The rule is *"this role has no quarry to test the bound against"*, and a ranging party
+        // does: its roadside kill resolves `PartyResolution::party_against(Quarry::Mass(..))` off
+        // the herd it met, exactly as a hunt row does. So a mass-bounded weapon in a ranging kit
+        // resolves correctly rather than counting everywhere, and rejecting it here would refuse a
+        // legal kit for a reason that is not true of this job.
         for kit in self.kits.iter().filter(|kit| {
             kit.jobs
                 .iter()
@@ -3476,6 +3564,11 @@ pub struct ResolvedKitTiers {
     /// The sight range each posted scout vantage reveals at — the wayfinding gear's. A distance in
     /// tiles, carried as `f32` because the effects axis is continuous; the reveal path rounds.
     pub scout_vantage_range: f32,
+    /// **The per-turn observation radius a DETACHED PARTY carrying this kit maps at** — the
+    /// wayfinding gear's, read one observer over from [`Self::scout_vantage_range`] and with its own
+    /// bare value (see [`EquipmentStat::ExpeditionSightRange`]). A distance in tiles, `f32` for the
+    /// same reason; `advance_expeditions` rounds.
+    pub expedition_sight_range: f32,
     /// **The range of quarry [`Self::attack`] applies to**, by body mass.
     /// [`UNBOUNDED_BODY_MASS`] on either end means no bound there. Outside the range the kit grants
     /// no attack at all and the party falls back to the bare hand's.
@@ -4811,7 +4904,7 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
                     { "id": "big_game", "display_name": "B", "jobs": ["hunt"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game" },
+                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -4821,7 +4914,7 @@ mod tests {
                 r#""kits": [
                     { "id": "big_game", "display_name": "A", "jobs": [], "uses": [] }
                 ],
-                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game" },
+                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -4831,7 +4924,7 @@ mod tests {
                 r#""kits": [
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game" },
+                "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -4842,7 +4935,7 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
                     { "id": "gathering", "display_name": "B", "jobs": ["forage"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering", "agriculture": "gathering", "husbandry": "gathering", "builders": "gathering" , "roadwork": "gathering" },
+                "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering", "agriculture": "gathering", "husbandry": "gathering", "builders": "gathering" , "roadwork": "gathering", "expedition": "gathering" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -4872,7 +4965,7 @@ mod tests {
             r#""kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["net_kit"] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game" },
+            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -4922,9 +5015,9 @@ mod tests {
             },
             "kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["spears"] },
-                { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout", "agriculture", "husbandry", "builders", "roadwork"], "uses": ["snares"] }
+                { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout", "agriculture", "husbandry", "builders", "roadwork", "expedition"], "uses": ["snares"] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior", "agriculture": "warrior", "husbandry": "warrior", "builders": "warrior" , "roadwork": "warrior" },
+            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior", "agriculture": "warrior", "husbandry": "warrior", "builders": "warrior" , "roadwork": "warrior", "expedition": "warrior" },
             "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }
@@ -4944,9 +5037,9 @@ mod tests {
     const ROSTER_JSON: &str = r#""kits": [
                 { "id": "big_game", "display_name": "Stalking kit", "jobs": ["hunt"], "uses": ["spears", "sled"] },
                 { "id": "gathering", "display_name": "Gathering kit", "jobs": ["forage"], "uses": ["baskets"] },
-                { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior", "agriculture", "husbandry", "builders"], "uses": [] }
+                { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior", "agriculture", "husbandry", "builders", "expedition"], "uses": [] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none", "builders": "none" , "roadwork": "none" },
+            "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none", "builders": "none" , "roadwork": "none", "expedition": "none" },
             "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#;

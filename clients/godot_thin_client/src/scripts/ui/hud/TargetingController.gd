@@ -316,14 +316,28 @@ func _try_dispatch_pending_move_band(tile_info: Dictionary) -> void:
 
 # ---- Send-expedition -----------------------------------------------------------------------------
 
-## Send-expedition: outfit `band` with `party_workers` and enter tile-targeting; the next tile
-## click emits send_expedition_requested. Mirrors the move-band pending flow.
-func begin_send_expedition(band: Dictionary, party_workers: int) -> void:
+## Send-expedition: outfit `band` with `party_workers` and the kit they carry, then enter
+## tile-targeting; the next tile click emits send_expedition_requested. Mirrors the move-band pending
+## flow.
+##
+## **THE KIT IS OUTFITTING, SO IT IS SETTLED AT THE SHEET AND CARRIED THROUGH THE TARGETING** — the
+## compose sheet is closed by the time the destination is clicked, so a pick left behind on it would
+## be gone by the time the payload is built. `default_kit_id` travels beside it because
+## `Main._kit_token` omits the tail when the two agree, which is what lets a composition that never
+## touched the picker emit the byte-identical line it emitted before the picker existed.
+func begin_send_expedition(band: Dictionary, party_workers: int,
+		kit_id: String = KitRoster.NO_KIT_ID,
+		default_kit_id: String = KitRoster.NO_KIT_ID) -> void:
 	# Targeting asks the player to click the map — a sheet floating over it is a trap (§15).
 	_drawercompose.close_compose_sheet()
 	if band.is_empty() or party_workers <= 0:
 		return
-	_pending_send_expedition = {"band": band.duplicate(true), "party_workers": party_workers}
+	_pending_send_expedition = {
+		"band": band.duplicate(true),
+		"party_workers": party_workers,
+		"kit_id": kit_id,
+		"default_kit_id": default_kit_id,
+	}
 	_refresh_targeting()
 
 func _cancel_pending_send_expedition() -> void:
@@ -346,6 +360,11 @@ func _try_dispatch_pending_send_expedition(tile_info: Dictionary) -> void:
 		"party_workers": int(_pending_send_expedition.get("party_workers", 0)),
 		"x": x,
 		"y": y,
+		# The kit the party walks out with, and the job default `Main._kit_token` omits the tail for —
+		# the `send_hunt_expedition` payload's own pairing.
+		"kit_id": String(_pending_send_expedition.get("kit_id", KitRoster.NO_KIT_ID)),
+		"default_kit_id": String(_pending_send_expedition.get("default_kit_id",
+			KitRoster.NO_KIT_ID)),
 	})
 	_pending_send_expedition = {}
 	_refresh_targeting()

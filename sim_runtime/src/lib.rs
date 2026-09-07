@@ -431,6 +431,7 @@ pub mod knowledge {
                 default_forage_kit_id: String::new(),
                 default_scout_kit_id: String::new(),
                 default_warrior_kit_id: String::new(),
+                default_expedition_kit_id: String::new(),
                 equipment_config_json: String::new(),
                 opening_loadout: Default::default(),
                 faction_inventory: Vec::new(),

@@ -779,6 +779,21 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
         // is decided by the people and their gear and never by what they are standing on, so a pen
         // is collected on `hunt_carry_per_worker_biomass` above.
         let _ = dict.insert("scout_vantage_range", kit.scoutVantageRange() as f64);
+        // **AND THE DETACHED PARTY'S OWN SIGHT, WHICH IS NOT THE VANTAGE READ TWICE.** A ranging
+        // party maps the ground at this radius per turn: the `wayfinding` gear declares the BARE
+        // reading (6 tiles — what a band standing still sees with nothing at all) and
+        // `expedition_config.observe_sight_range` is the EQUIPPED tier above it, so the one item
+        // lifts two sight axes and one kit row carries both numbers. A sheet quoting
+        // `scout_vantage_range` at a party would tell a bare-handed one it sees ONE tile when it
+        // sees six — `rate_tier` reads one unequipped side per stat, which is why the sim split them
+        // (`.claude/rules/core_sim/equipment.md`).
+        //
+        // **It rides the ROSTER ROW rather than sitting beside the `default*KitId` strings** because
+        // the launch sheet needs the number for the kit UNDER THE CURSOR — a gear line whose sight
+        // clause did not move between `ranging` and `none` would teach the player the gear does
+        // nothing. `0` is the absent reading, as it is for every tier above; `KitRoster.TIER_ABSENT`
+        // is the client's half of that and withholds the clause rather than printing `0-tile`.
+        let _ = dict.insert("expedition_sight_range", kit.expeditionSightRange() as f64);
         // **THE BUILD AXIS, IN WORK UNITS** — the EXTRA work ONE equipped worker DELIVERS per turn,
         // summed over the equipped crew. Neutral `0`; the shipped crook declares **0.5**, so an
         // equipped builder banks `1.0 + 0.5 = 1.5` work a turn where a bare one banks `1.0`.

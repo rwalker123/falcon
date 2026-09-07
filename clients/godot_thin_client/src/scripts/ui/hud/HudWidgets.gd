@@ -1002,6 +1002,13 @@ const SEND_TRADE_CONFIRM_META := "send_trade_confirm"
 ## command grammar rejects one). Its face is the collapse verdict, so text is not matchable either.
 const SEND_DENIAL_CONFIRM_META := "send_denial_confirm"
 
+## The SCOUTING party's confirm button, and its own meta for the same reason the denial one is: the
+## three missions' sends are different signals with non-interchangeable payloads, so a harness that
+## pressed "the send button" on a parties compose sheet could not say which it launched. Its face is
+## fixed text (`SEND_EXPEDITION_BUTTON`), but the payload it composes now carries a KIT — which is
+## reachable only through the inline `pressed` lambda, and therefore only through this handle.
+const SEND_EXPEDITION_CONFIRM_META := "send_expedition_confirm"
+
 ## A parties-footer MISSION LAUNCH button (`⚑ Scout` / `🏹 Hunt` / `💀 Deny`), as `Button` meta, carrying
 ## the MISSION key it opens the compose sheet on. It is the entry point to a composing act — the press
 ## a player makes and the only path that opens a sheet with nothing filled in — so a harness that

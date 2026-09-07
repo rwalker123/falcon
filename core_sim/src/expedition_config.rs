@@ -40,9 +40,17 @@ pub struct ExpeditionConfig {
     /// 1.0 today — mirrors migration's stubbed movement-tech factor.
     // TODO(phase2): scale by movement/comm tech; mirrors migration's stubbed factor.
     pub comm_range_tech_factor: f32,
-    /// The expedition's per-turn line-of-sight observation radius. Default matches the band base
-    /// sight range (`visibility_config.json` BandScout `base_range` 6) — an expedition sees as far
-    /// as a normal band, it just reports on a comm-range delay.
+    /// **The detached party's per-turn line-of-sight observation radius, at the EQUIPPED tier.** The
+    /// party resolves it through
+    /// [`crate::equipment_config::EquipmentConfig::expedition_sight_range`] against the kit it was
+    /// launched with and its own wear — the same two-tier shape `labor_config.scout.vantage_range`
+    /// has for a resident band's posted vantage.
+    ///
+    /// The **bare** reading is the `wayfinding` item's `expedition_sight_range` (`6.0`), which is
+    /// the flat radius this key used to be and matches the band base sight
+    /// (`visibility_config.json` BandScout `base_range` 6): a party carrying no wayfinding gear sees
+    /// exactly as far as it always did and reports on a comm-range delay, and only a kitted one sees
+    /// further.
     pub observe_sight_range: u32,
     /// Provisions drawn from the home band's larder at launch = `party × hex-distance-to-target ×
     /// this`.
@@ -522,7 +530,7 @@ mod tests {
     fn builtin_config_parses() {
         let config = ExpeditionConfig::builtin();
         assert_eq!(config.comm_range_tiles, 2);
-        assert_eq!(config.observe_sight_range, 6);
+        assert_eq!(config.observe_sight_range, 9);
         assert!(config.provision_draw_per_worker_per_tile > 0.0);
         assert!(config.provision_upkeep_per_worker > 0.0);
         assert!(config.hunt.per_worker_carry > 0.0);

@@ -89,6 +89,10 @@ var _default_forage_kit_id: String = KitRoster.NO_KIT_ID
 # roster gained wayfinding gear and clubs for them.
 var _default_scout_kit_id: String = KitRoster.NO_KIT_ID
 var _default_warrior_kit_id: String = KitRoster.NO_KIT_ID
+# The RANGING party's default — the `expedition` job's, which the two provisioned missions launch on.
+# Its own field beside the four because one kit arms both of the ways a detached party feeds itself;
+# see `KitRoster.JOB_EXPEDITION`.
+var _default_expedition_kit_id: String = KitRoster.NO_KIT_ID
 
 # ---- Read accessors (backing value returned by reference — no deep copy) --------------------------
 
@@ -147,6 +151,8 @@ func default_kit_id(job: String) -> String:
 			return _default_scout_kit_id
 		KitRoster.JOB_WARRIOR:
 			return _default_warrior_kit_id
+		KitRoster.JOB_EXPEDITION:
+			return _default_expedition_kit_id
 		KitRoster.JOB_BUILDERS:
 			# **THE WIRE NAMES NO BUILDERS DEFAULT**, so this answers `""` — the "a job the wire has
 			# not named a default for" case above, stated rather than reached by fall-through. Falling
@@ -367,13 +373,13 @@ func connections_for_band(band_id: int) -> Array:
 			rows.append(row)
 	return rows
 
-## Ingest the world's kit roster and the FOUR job defaults. **They ride ONE call**, because they are
+## Ingest the world's kit roster and the FIVE job defaults. **They ride ONE call**, because they are
 ## one fact: a roster whose defaults name kits it does not contain would let every picker open on an
 ## entry it cannot show. A non-Array roster is ignored (the last value stands), matching the
 ## `set_food_modules` / `set_forage_patches` ingest — a delta carries a section only when it changed,
 ## so absence means unchanged and never "the world has no kits".
 func set_kit_roster(kits_variant: Variant, default_hunt: String, default_forage: String,
-		default_scout: String, default_warrior: String) -> void:
+		default_scout: String, default_warrior: String, default_expedition: String) -> void:
 	if not (kits_variant is Array):
 		return
 	_kits = kits_variant
@@ -381,6 +387,7 @@ func set_kit_roster(kits_variant: Variant, default_hunt: String, default_forage:
 	_default_forage_kit_id = default_forage
 	_default_scout_kit_id = default_scout
 	_default_warrior_kit_id = default_warrior
+	_default_expedition_kit_id = default_expedition
 	changed.emit(&"kits")
 
 func set_panel_band(band: Dictionary) -> void:

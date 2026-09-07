@@ -5595,6 +5595,32 @@ SHEET". Two consequences are this sheet's own:
   `hunt_trip_estimates_kit_id`, additionally dropping the floor picker's metrics and the demand-side
   party cap.
 
+### …and the SCOUT sheet mounts it too, on the `expedition` job
+
+The scout launch form's comment read *"a single input — its only question is party size"* and that is
+no longer true. A detached scouting party used to ignore equipment almost entirely: the launch stamped
+the HUNT job's default kit on it and the player never saw the choice. It resolves
+`KitRoster.JOB_EXPEDITION` now (the spec, the gear line and the no-withholding rule are in
+`labor-ui.md` → "The `expedition` job"), and three things are this sheet's own:
+
+- **The row sits between the party stepper and the hint**, the placement every other sheet and role
+  card takes: a kit describes the crew, so its row goes with the crew.
+- **The selection is PER BAND, keyed through `_role_kit_key` (`"<band entity>:<role>"`)** with the job
+  token as the role. The parties zone cycles bands, and a per-job key alone would carry a choice made
+  for one band's party onto every other band's sheet.
+- **THE KIT RIDES THE TARGETING, NOT THE PRESS.** The destination is a map click away and
+  `_close_party_compose` fires first, so the pick would be gone by the time the payload is built:
+  `TargetingController.begin_send_expedition` takes `kit_id` + `default_kit_id` and carries them into
+  `send_expedition_requested`. `Main.format_send_expedition` appends the tail through `_kit_token`,
+  which OMITS it at the job default — so a composition that never touched the picker emits the
+  byte-identical line it emitted before the picker existed and the sim resolves its own default.
+  `HudWidgets.SEND_EXPEDITION_CONFIRM_META` is the confirm's handle, the three missions' sends being
+  different signals with non-interchangeable payloads.
+
+**THE TRADE SHEET QUOTES NO KIT AT ALL and was left alone.** It mounts no picker, its payload carries
+no `kit_id`, and `_kit_token` therefore emits nothing — so `send_trade_expedition` resolves the
+`expedition` job's default sim-side, which is the kit a shipment now wants.
+
 ### Frames
 
 `band_panel_preview`: **`band_panel_compose_deny_kit`** (the picker CLOSED, on a band whose SLED has

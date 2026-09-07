@@ -48,6 +48,14 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `move_band_requested` → `Main._on_hud_move_band` → `move_band …`; the expedition-target click
   (`_try_dispatch_pending_send_expedition`) emits `send_expedition_requested` →
   `Main._on_hud_send_expedition` → `send_expedition …`.
+- ⛔ **THE SCOUTING PARTY'S KIT IS OUTFITTING AND SO RIDES THE PENDING DICT, not the press.**
+  `begin_send_expedition` takes `kit_id` + `default_kit_id` beside the party size and
+  `_pending_send_expedition` carries both to the tile click. It has to: the launch sheet is closed by
+  `_close_party_compose` before the destination is picked, so a selection left behind on it would be
+  gone by the time the payload is built. The pair is `send_hunt_expedition`'s own — the default
+  travels because `Main._kit_token` omits the ` kit <id>` tail when the two agree, so a composition
+  that never touched the picker emits the line it emitted before the picker existed. Whose kit it is
+  and why the job is not `hunt`: `labor-ui.md` → "The `expedition` job".
 - **Scouting expedition** (`docs/plan_exploration_and_sites.md` §2; snapshot
   `PopulationCohortState.isExpedition`/`expeditionMission`/`expeditionPhase`, decoded in
   `native/src/lib.rs population_to_dict` as `is_expedition`/`expedition_mission`/`expedition_phase`,

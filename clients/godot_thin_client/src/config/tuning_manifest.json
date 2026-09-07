@@ -228,9 +228,9 @@
           "min": 1,
           "max": 16,
           "step": 1,
-          "default": 6,
+          "default": 9,
           "unit": "hexes",
-          "hint": "Per-turn LOS radius a scouting party reveals."
+          "hint": "Per-turn LOS radius a scouting party reveals WITH wayfinding gear. A party carrying none observes at the item's bare 6."
         },
         {
           "pointer": "/provision_upkeep_per_worker",

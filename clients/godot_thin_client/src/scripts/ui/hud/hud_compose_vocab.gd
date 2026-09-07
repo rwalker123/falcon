@@ -1497,8 +1497,16 @@ const KIT_JOB_GLYPHS := {
 ## was a 🛡 there and a 🪓 here, which is one job drawn two ways and exactly the drift `hunt.png` was
 ## written to end.
 ##
-## Coverage is COMPLETE for the four jobs the roster ships, and `KIT_JOB_MARK_FALLBACK` covers the
-## fifth case — a job the table has never heard of — so this picker has no glyph face left at all.
+## **`expedition` IS DELIBERATELY ABSENT FROM BOTH TABLES AND TAKES THE FALLBACK.** The client ships
+## no mark for it: `scout.png` is the SCOUT ROLE's footprints and the `expedition` job covers the
+## trade mission too, so lending it here would draw a scout on a shipment's picker — one art file for
+## two activities, which is the drift `hunt.png` was written to end. The fallback is the honest
+## answer: a carrying basket reading *some gear, unspecified*, which is exactly what a ranging kit
+## spanning two food webs is. Do not invent art to close this row.
+##
+## Coverage is otherwise COMPLETE for the jobs the roster ships, and `KIT_JOB_MARK_FALLBACK` covers
+## the remaining case — a job the table has never heard of — so this picker has no glyph face left at
+## all.
 const KIT_JOB_MARKS := {
 	"hunt": "hunt",
 	"forage": "forage",
@@ -1636,6 +1644,62 @@ const KIT_SHORTFALL_FORMAT := "%d of %d %s available"
 ## short. That is a structural guarantee rather than luck, but the suffix is documented here because a
 ## roster whose names ever went plural would need a different rule.
 const KIT_SHORTFALL_PLURAL_SUFFIX := "s"
+
+## > #### THE RANGING PARTY'S LINE — FOUR CLAUSES: THE TWO FEEDING PATHS, THE HAUL, AND THE SIGHT
+## >
+## > `KitJob::Expedition` is the one job whose kit arms TWO food webs at once, because a provisioned
+## > party feeds itself by gathering off the stands it passes and by taking the game it meets. So its
+## > hint states both: a line quoting only the hunt axis would show half a choice as the whole of it.
+## > The `ranging` kit's FOURTH item (`wayfinding`) buys the party's observation radius, and that is
+## > the fourth clause — it earned its place in the kit once the radius became kit-aware, so the line
+## > grew with it rather than leaving an item in the party's hands that the sheet never mentions.
+## >
+## > **NO RATE**, the source jobs' own rule (see the headstone above) — a rate is what ONE equipped
+## > worker gets and says nothing about a party. **A DISTANCE IS NOT A RATE**, which is why the sight
+## > clause may quote its tiles: it is one number for the whole marching party, answerable at any
+## > crew size, and it is the one axis whose reading MOVES between the kits on offer. **AND NO ITEM
+## > NAMED**, because `KitRoster` may not map an axis to the component behind it. Each clause says
+## > what the party can DO, resolved off the roster's fresh tier against its bare-handed one.
+##
+## The WEAPON clause — does this kit lift `attack` above the roster's bare-handed tier? Written as
+## the party's own state rather than as the gear's, since the same sentence has to read correctly for
+## a kit carrying spears and for one carrying traps.
+const KIT_EXPEDITION_HUNT_ARMED := "Armed for the kill"
+const KIT_EXPEDITION_HUNT_BARE := "Bare-handed against game"
+
+## The HUNT web's haul — what the party can drag home off a kill. Its own clause beside the weapon
+## because the two are separately observable: a kit can arm a party that must then carry the carcass
+## by hand.
+const KIT_EXPEDITION_HAUL_EQUIPPED := "hauls what it kills"
+const KIT_EXPEDITION_HAUL_BARE := "carries its kill by hand"
+
+## …and the FORAGE web's, which is the half a hunt-only line would have hidden. The bare side is a
+## real, common state rather than a failure — coverage arms each item independently — so it reads as
+## a smaller amount and never as a warning.
+const KIT_EXPEDITION_GATHER_EQUIPPED := "gathers by the packload"
+const KIT_EXPEDITION_GATHER_BARE := "gathers by the armful"
+
+## …and the FOURTH axis, HOW FAR THE PARTY SEES — the only clause on this line that quotes a number,
+## and it quotes one BECAUSE the number is the choice. The other three are binary (the kit arms a
+## path or it does not), so a word says the whole of each; sight is a distance the gear EXTENDS —
+## `expedition_config.observe_sight_range` with the wayfinding gear against the item's own bare
+## reading without it — and a clause that read identically at both ends would teach the player the
+## fourth item does nothing. One format, both states, the value read off the kit under the cursor.
+##
+## **IT IS THE PARTY'S SIGHT, NOT A POSTED VANTAGE'S**, which is why it does not borrow
+## `DetailFormat.KIT_ROLE_SCOUT_VANTAGE_FORMAT`: the same `wayfinding` item lifts two axes with two
+## different bare readings, and one sentence serving both would put the vantage's 1 tile in a ranging
+## party's mouth. `on the march` is what names the observer, the way `per vantage` names the other.
+##
+## **HYPHENATED, NOT `sees %s tiles`** — the axis bottoms out at a small whole number and
+## `sees 1 tiles ahead` is the row every value-plus-unit phrasing prints down there.
+## `DetailFormat.KIT_VANTAGE_DECIMALS` carries the same rule one observer over.
+const KIT_EXPEDITION_SIGHT_FORMAT := "%s-tile sight on the march"
+
+## Whole tiles, for the vantage's own reason: the wire carries the radius as a float so the effects
+## axis stays tunable, and the sim ROUNDS it before a party reveals anything
+## (`systems/expeditions.rs`). A fractional tile is a distance the map cannot draw.
+const KIT_EXPEDITION_SIGHT_DECIMALS := 0
 
 ## **THE SHORTFALL RUN'S WRAPPER on a line that carries a neutral clause beside it** — the role cards'
 ## gear line, whose effect half must stay quiet. The colour is passed in rather than baked, so the ink

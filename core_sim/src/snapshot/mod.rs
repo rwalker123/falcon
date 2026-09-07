@@ -1107,6 +1107,7 @@ mod tests {
             default_forage_kit_id: String::new(),
             default_scout_kit_id: String::new(),
             default_warrior_kit_id: String::new(),
+            default_expedition_kit_id: String::new(),
             equipment_config_json: String::new(),
             tiles,
             populations: Vec::new(),
@@ -1183,6 +1184,7 @@ mod tests {
             default_forage_kit_id: String::new(),
             default_scout_kit_id: String::new(),
             default_warrior_kit_id: String::new(),
+            default_expedition_kit_id: String::new(),
             equipment_config_json: String::new(),
             tiles: Vec::new(),
             populations: Vec::new(),
@@ -1254,6 +1256,7 @@ mod tests {
             default_forage_kit_id: String::new(),
             default_scout_kit_id: String::new(),
             default_warrior_kit_id: String::new(),
+            default_expedition_kit_id: String::new(),
             equipment_config_json: String::new(),
             tiles: Vec::new(),
             populations: Vec::new(),
@@ -1372,6 +1375,8 @@ mod tests {
             equipped_vantage_range: crate::labor_config::LaborConfig::builtin()
                 .scout
                 .vantage_range as f32,
+            equipped_expedition_sight_range: crate::expedition_config::ExpeditionConfig::builtin()
+                .observe_sight_range as f32,
         };
         let expedition_config = crate::expedition_config::ExpeditionConfig::builtin();
         let levers = ExpeditionLevers {

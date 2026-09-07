@@ -621,6 +621,10 @@ enum Command {
         party_workers: u32,
         target_x: u32,
         target_y: u32,
+        /// **The kit the ranging party is sent out with** — an `equipment.json` roster id, or
+        /// `None` for the **expedition** job's default. Rejected with a reason if unknown or
+        /// wrong-job, exactly as the raiding verbs' is.
+        kit_id: Option<String>,
     },
     RecallExpedition {
         faction: FactionId,
@@ -3742,7 +3746,13 @@ fn handle_move_band(
 /// Outfit and launch a scouting expedition: draw `party_workers` off the resolved home band's
 /// working pool and larder-drawn provisions, then spawn a detached `StartingUnit` band tagged
 /// `Expedition` (deliberately no `ResidentBand`) traveling toward the target. v1 is deterministic
-/// success. Text form: `send_expedition <faction> <band> <party_workers> <x> <y>`.
+/// success. Text form: `send_expedition <faction> <band> <party_workers> <x> <y> [kit <id>]`.
+///
+/// **The kit is the party's SELF-RELIANCE**, resolved off [`KitJob::Expedition`]: a scouting party
+/// is provisioned, drains that larder every turn, and replaces it on the march by gathering off a
+/// stand in reach and — only if that was not enough — taking the game it meets
+/// (`systems::expeditions::advance_expeditions`). Both halves resolve through this one kit.
+#[allow(clippy::too_many_arguments)] // every launch order the verb accepts is a parameter
 fn handle_send_expedition(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -3750,7 +3760,26 @@ fn handle_send_expedition(
     party_workers: u32,
     target_x: u32,
     target_y: u32,
+    kit_id: Option<String>,
 ) {
+    // **The kit fails closed, and is resolved before anything is drawn** — the rule every other
+    // launch verb follows, so a party is never half-outfitted off a refused order.
+    let kit = {
+        let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+        let absent = equipment_cfg.default_kit(KitJob::Expedition);
+        match equipment_cfg.resolve_kit_or(kit_id.as_deref(), KitJob::Expedition, absent) {
+            Ok(kit) => kit,
+            Err(reason) => {
+                emit_command_failure(
+                    app,
+                    CommandEventKind::ExpeditionSent,
+                    faction,
+                    format!("send_expedition: {reason}."),
+                );
+                return;
+            }
+        }
+    };
     let target = UVec2::new(target_x, target_y);
     if ensure_land_tile(
         app,
@@ -3906,14 +3935,9 @@ fn handle_send_expedition(
                 pending_contacts: Default::default(),
                 // An outfitted party leaves with an empty trade pack — it earns its pelts in the
                 // field (`advance_expeditions`).
-                // **A scout carries the HUNT job's default kit.** `send_expedition` names no kit —
-                // scouting is not a kit job — but a scout's opportunistic roadside kill resolves
-                // through the very same hunt seams, so it needs a real mask rather than a hole.
-                kit: app
-                    .world
-                    .resource::<EquipmentConfigHandle>()
-                    .get()
-                    .default_kit(KitJob::Hunt),
+                // **The kit the player named, else the EXPEDITION job's default** — resolved above,
+                // before anything was drawn off the band, and carried for the party's whole life.
+                kit: kit.clone(),
                 // A scout carries no shipment — the cargo store is the trade verb's.
                 cargo: LocalStore::new(),
             },
@@ -5172,13 +5196,15 @@ fn handle_send_trade_expedition(
 ) {
     const VERB: &str = "send_trade_expedition";
     // **The kit fails closed**, resolved before anything is drawn — the rule both raiding verbs
-    // follow. A trade party is quoted at the **hunt** job for the reason a scout is: it carries the
-    // sled that decides what it can haul, and its opportunistic roadside kill resolves through the
-    // same hunt seams.
+    // follow. A trade party is quoted at the **expedition** job for the reason a scout is: it is
+    // *provisioned*, so it is one of the two missions that has to replace what it eats while out of
+    // contact, by gathering and by hunting — which is exactly what [`KitJob::Expedition`] covers.
+    // (It read the **hunt** job until the ranging kit existed, which armed the roadside kill and
+    // left the party unable to gather at all.)
     let kit = {
         let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-        let absent = equipment_cfg.default_kit(KitJob::Hunt);
-        match equipment_cfg.resolve_kit_or(kit_id.as_deref(), KitJob::Hunt, absent) {
+        let absent = equipment_cfg.default_kit(KitJob::Expedition);
+        match equipment_cfg.resolve_kit_or(kit_id.as_deref(), KitJob::Expedition, absent) {
             Ok(kit) => kit,
             Err(reason) => {
                 emit_command_failure(
@@ -8706,12 +8732,14 @@ fn command_from_payload(
             party_workers,
             target_x,
             target_y,
+            kit_id,
         } => Some(Command::SendExpedition {
             faction: FactionId(faction_id),
             band_id,
             party_workers,
             target_x,
             target_y,
+            kit_id,
         }),
         ProtoCommandPayload::RecallExpedition {
             faction_id,
@@ -9803,8 +9831,17 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             party_workers,
             target_x,
             target_y,
+            kit_id,
         } => {
-            handle_send_expedition(app, faction, band_id, party_workers, target_x, target_y);
+            handle_send_expedition(
+                app,
+                faction,
+                band_id,
+                party_workers,
+                target_x,
+                target_y,
+                kit_id,
+            );
         }
         Command::RecallExpedition {
             faction,
@@ -19334,6 +19371,8 @@ mod tests {
             NAMED_PARTY_WORKERS,
             target.x,
             target.y,
+            // No kit named — the party leaves on the `expedition` job's default.
+            None,
         );
         let party = app
             .world

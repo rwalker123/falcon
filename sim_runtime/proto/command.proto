@@ -350,6 +350,12 @@ message SendExpeditionCommand {
   uint32 party_workers = 3;
   uint32 target_x = 4;
   uint32 target_y = 5;
+  // THE KIT the party is SENT OUT WITH — resolved ONCE at launch and carried for the party's whole
+  // life, never re-resolved against the band's later stock. Absent = the EXPEDITION job's default
+  // (`equipment.json`'s `ranging`), which arms both of the ways a provisioned party feeds itself:
+  // the stands it gathers from and the game it meets. An unknown id, or one whose `jobs` does not
+  // include `expedition`, is a command failure with a reason. Appended (append-only).
+  optional string kit_id = 6;
 }
 
 // Order an in-flight expedition home (phase -> Returning; folds back on arrival).

@@ -27,6 +27,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let default_forage_kit_id = builder.create_string(&snapshot.default_forage_kit_id);
     let default_scout_kit_id = builder.create_string(&snapshot.default_scout_kit_id);
     let default_warrior_kit_id = builder.create_string(&snapshot.default_warrior_kit_id);
+    let default_expedition_kit_id = builder.create_string(&snapshot.default_expedition_kit_id);
     let equipment_config_json = builder.create_string(&snapshot.equipment_config_json);
     // The crafting catalogues — TYPED, not a second `equipmentConfigJson`: that blob has no gameplay
     // consumer, and a gameplay readout gets a field of its own rather than reaching into a string.
@@ -49,6 +50,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
             defaultForageKitId: Some(default_forage_kit_id),
             defaultScoutKitId: Some(default_scout_kit_id),
             defaultWarriorKitId: Some(default_warrior_kit_id),
+            defaultExpeditionKitId: Some(default_expedition_kit_id),
             // The designer surface's read-only catalogue — the whole TOE config as one JSON string.
             // Workbench-only; see the schema comment.
             equipmentConfigJson: Some(equipment_config_json),
@@ -109,6 +111,10 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .default_warrior_kit_id
         .as_ref()
         .map(|id| builder.create_string(id));
+    let default_expedition_kit_id = delta
+        .default_expedition_kit_id
+        .as_ref()
+        .map(|id| builder.create_string(id));
     let equipment_config_json = delta
         .equipment_config_json
         .as_ref()
@@ -147,6 +153,7 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             defaultForageKitId: default_forage_kit_id,
             defaultScoutKitId: default_scout_kit_id,
             defaultWarriorKitId: default_warrior_kit_id,
+            defaultExpeditionKitId: default_expedition_kit_id,
             equipmentConfigJson: equipment_config_json,
             materials,
             characteristicBands: characteristic_bands,
@@ -346,6 +353,7 @@ fn create_kits<'a>(
                 forageCarryPerWorkerBiomass: state.forage_carry_per_worker_biomass,
                 // The scout vantage's tier — the role the roster gained with wayfinding gear.
                 scoutVantageRange: state.scout_vantage_range,
+                expeditionSightRange: state.expedition_sight_range,
                 // What the kit DOES beyond the tiers — all three neutral at 1.0, so a kit declaring
                 // none of them encodes exactly as it did before they existed.
                 attackMinBodyMass: state.attack_min_body_mass,

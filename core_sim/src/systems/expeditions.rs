@@ -64,6 +64,10 @@ pub struct ExpeditionConfigs<'w> {
     /// The materials table — a raid's take is a yield edge like any other, so the party banks hide,
     /// bone and fibre off what it carries and hands them to the band on arrival.
     pub materials: Res<'w, crate::materials_config::MaterialsConfigHandle>,
+    /// **The flora roster** — a ranging party gathers off the stands it passes, and what a stand
+    /// converts to food is its tile's realized basket. In the bundle rather than at top level for
+    /// the reason the bundle exists: the system is at Bevy's 16-parameter ceiling.
+    pub flora: Res<'w, FloraConfigHandle>,
 }
 
 /// Advance any `move_band` order one step toward its target. The band travels at
@@ -148,13 +152,18 @@ pub fn advance_band_movement(
 /// `advance_band_movement` (so it reads the party's fresh position) and before the Visibility
 /// stage's `discover_sites`. For each expedition:
 /// - **Observe + comm-flush is SHARED by every mission (scout AND hunt)** — a ranging party maps the
-///   terrain it crosses regardless of verb. Each turn it observes the tiles in `observe_sight_range`
-///   LOS of its current tile into a **private** pending-reveal buffer (it does NOT touch the faction
+///   terrain it crosses regardless of verb. Each turn it observes the tiles in LOS of its current
+///   tile — at the radius its own kit resolves through
+///   [`crate::equipment_config::EquipmentStat::ExpeditionSightRange`], `observe_sight_range` being
+///   the *equipped* tier — into a **private** pending-reveal buffer (it does NOT touch the faction
 ///   map — it is `Without<Expedition>` in `calculate_visibility`); and when within the effective comm
 ///   range of the home band's live tile, promotes every buffered tile to `Discovered` on the faction
 ///   map (never downgrading a live `Active` tile) and clears the buffer. For a hunt party this fires
 ///   at each Delivering drop-off / Returning fold-back. Site discovery rides the flushed tiles for
-///   free via the Visibility stage's `discover_sites`.
+///   free via the Visibility stage's `discover_sites`. The gear is charged
+///   [`crate::equipment_config::WearQuantum::TileRevealed`] **at observe time**, for tiles neither
+///   already buffered nor already on the faction map — never at the flush, which would be a turn
+///   clock.
 /// - **Provisions** drain by `party × provision_upkeep_per_worker` (scouts only — hunt lives off its
 ///   kills); non-fatal at zero in v1.
 /// - **Both halves of a kill's [`HuntYield`] come home** (#337) — the provisions into the party's
@@ -181,7 +190,15 @@ pub fn advance_expeditions(
     mut contacts: ResMut<crate::connections::ContactsThisTurn>,
     mut event_log: ResMut<CommandEventLog>,
     mut herds: ResMut<HerdRegistry>,
+    // **The stands a ranging party gathers off** — the plant half of how a provisioned party feeds
+    // itself, drawn down through the same `forage_take` primitive a resident band's gatherers use.
+    mut forage_registry: ResMut<ForageRegistry>,
     tiles: Query<&Tile>,
+    // **The gather's SEASON** — a stand's per-worker throughput is scaled by its tile's food module
+    // (`NO_FORAGE_SEASON` where there is none), the same reading the Forage arm of
+    // `advance_labor_allocation` takes. Its own query rather than a column on `tiles`, because
+    // `build_terrain_tags_grid` above takes that query whole.
+    food_modules: Query<&FoodModuleTag>,
     mut expeditions: Query<ExpeditionParty>,
     mut bands: Query<ExpeditionHomeBands, Without<Expedition>>,
 ) {
@@ -209,13 +226,21 @@ pub fn advance_expeditions(
     // `CombatConfig::expedition_tuning`.
     let combat_tuning = combat_config.expedition_tuning();
     let materials_cfg = configs.materials.get();
+    let flora = configs.flora.get();
     let person_profile = configs.creatures.get().person();
     // **The minimal TOE** — the two-tier table and the durability dials, resolved once. What varies
     // per party is only its `BandEquipment` *wear*.
     let equipment_cfg = configs.equipment.get();
-    // The **equipped** per-hunter haul rate; the SLED kit names the step down. A raid is a hunt, so
-    // baskets never enter this path (§4.8's one kit, one job) — an expedition has no gather mission.
+    // The **equipped** per-hunter haul rate; the SLED kit names the step down.
     let equipped_haul_rate = labor.hunt.per_worker_biomass_capacity;
+    // **And the bare-handed per-gatherer GATHER rate**, the baseline the BASKETS step a party up
+    // from — the plant twin of the line above, resolved through the same seam
+    // `advance_labor_allocation` reads it through. A provisioned party *does* have a gather mission:
+    // it replenishes off the stands it passes before it will pick a fight ([`KitJob::Expedition`],
+    // `equipment.json`'s `ranging` kit). (This used to read *"a raid is a hunt, so baskets never
+    // enter this path — an expedition has no gather mission"*, which the ranging kit made false: the
+    // two feeding paths are one kit's two items.)
+    let baseline_gather_rate = labor.forage.per_worker_biomass_capacity;
     let map_seed = sim_config.map_seed;
     let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
     let grid_width = tile_registry.width;
@@ -283,6 +308,28 @@ pub fn advance_expeditions(
         let per_worker_biomass = coverage.weighted_rate(|kit| {
             equipment_cfg.hunt_per_worker_biomass_capacity(equipped_haul_rate, kit, &party_wear)
         });
+        // **The GATHER twin of the haul tier above**, resolved through the same coverage: a party of
+        // ten with four baskets gathers with four baskets and by hand on the other six. It is what
+        // makes the `ranging` kit's third item real — the rate a bare-handed party replenishes at is
+        // the unequipped one, and the difference is the whole reason the kit exists.
+        let per_worker_gather_biomass = coverage.weighted_rate(|kit| {
+            equipment_cfg.forage_per_worker_biomass_capacity(baseline_gather_rate, kit, &party_wear)
+        });
+        // **How far this party sees, resolved ONCE per party per turn like every tier beside it** —
+        // `expedition_config.observe_sight_range` is the *equipped* radius and the `wayfinding`
+        // item's `expedition_sight_range` declares the bare one, exactly the way a resident band's
+        // posted vantage splits `labor_config.scout.vantage_range` against the same item's
+        // `scout_vantage_range` in `calculate_visibility`.
+        //
+        // **NOT resolved through `coverage`, and that is the difference from the two carries above.**
+        // A carry is per worker, so a party of ten with four sleds hauls at two rates; sight is one
+        // question asked of one marching party, so it takes the kit's own tier the way the vantage
+        // does. Rounded here because the reveal geometry is a tile radius; the effects axis stays
+        // continuous so a designer can tune it.
+        let observe_sight_range = equipment_cfg
+            .expedition_sight_range(cfg.observe_sight_range as f32, &party_kit, &party_wear)
+            .max(0.0)
+            .round() as u32;
         // The weapon decides what the party can hurt at all (§4.2's gate), so it is resolved here and
         // not left at the intrinsic bare-handed tier. `exposure` and `dispersion` ride beside it —
         // a raid carrying a stand-off kit takes no injuries and scares nothing off, exactly as a
@@ -414,9 +461,12 @@ pub fn advance_expeditions(
         // a. Observe into the private buffer — no faction-map mutation here. Dedup against an
         // O(1) `HashSet` scratch (built once) instead of an O(n) `Vec::contains` per tile.
         let mut seen: HashSet<UVec2> = expedition.pending_reveal.iter().copied().collect();
+        // **What this party will be charged for on `WearQuantum::TileRevealed`** — counted here, at
+        // the moment of looking, and only for ground that is genuinely new. See the charge below.
+        let mut newly_seen: u32 = 0;
         for pos in crate::visibility_systems::visible_tiles_in_range(
             exp_pos,
-            cfg.observe_sight_range,
+            observe_sight_range,
             &elevation,
             vis_cfg.line_of_sight.enabled,
             &terrain_tags,
@@ -426,6 +476,16 @@ pub fn advance_expeditions(
         ) {
             if seen.insert(pos) {
                 expedition.pending_reveal.push(pos);
+                // **FIRST-EVER-REVEALED, on the party's OWN buffer AND on the faction map.** The
+                // buffer half alone would still charge a party walking home over ground its band
+                // mapped turns ago — a turn clock in a per-use costume, which
+                // `docs/plan_denial_raid.md` §1.2 forbids and which the `wayfinding` item's own
+                // comment calls out. `is_discovered` is true for `Discovered` *and* `Active`, i.e.
+                // "already on the faction map", and it is a **read**: the flush below still owns
+                // every mutation of the ledger.
+                if !ledger.is_discovered(faction, pos.x, pos.y) {
+                    newly_seen += 1;
+                }
             }
             // **Peoples found on the march go into the private buffer beside the tiles.** Not gated
             // on `seen`: a party that has already mapped a tile can still find somebody standing on
@@ -440,6 +500,33 @@ pub fn advance_expeditions(
                             .insert(*subject, (pos, current_turn));
                     }
                 }
+            }
+        }
+
+        // a2. **The wayfinding gear is charged for the ground this party mapped**, per tile revealed
+        // for the FIRST time — the same quantum a resident band's posted vantage pays on, named by
+        // quantum rather than by item so a kit carrying none of it wears nothing.
+        //
+        // # ⛔ CHARGED AT OBSERVE TIME, NOT AT THE COMM FLUSH, AND NOT PER TILE BUFFERED
+        //
+        // The buffer is a report, not work: flushing it charges the turn the party walked home, and
+        // charging every buffered tile bills a party for re-crossing ground it already mapped. Both
+        // are turn clocks wearing a per-use costume (`docs/plan_denial_raid.md` §1.2).
+        //
+        // Charging while the party is *out doing the looking* also settles two things the flush
+        // could not: an orphaned party that never reports still wore its gear, and a long trip does
+        // not land its whole bill in one lump on the turn it walks back into camp.
+        //
+        // **Accrue AFTER the take**, the ordering every wear site uses — this turn's ground was seen
+        // at the tier it was priced with above, so a step-down lands on the next turn.
+        if newly_seen > 0 {
+            if let Some(kit) = party_equipment.as_mut() {
+                kit.wear_kit(
+                    &equipment_cfg,
+                    &party_kit,
+                    crate::equipment_config::WearQuantum::TileRevealed,
+                    newly_seen as f32,
+                );
             }
         }
 
@@ -484,22 +571,153 @@ pub fn advance_expeditions(
                 cohort.stores.take(FOOD, upkeep);
             }
 
-            // Opportunistic replenish: when provisions fall below `party × upkeep × low_turns` and a
-            // huntable herd is within reach, top up off it via the shared `hunt_take` primitive
-            // (capped at the low-water buffer so it doesn't overfill). Same code path as the hunt.
+            // ---- Opportunistic replenish: GATHER FIRST, THEN HUNT ---------------------------
+            //
+            // When provisions fall below `party × upkeep × low_turns`, a ranging party tops itself
+            // up off the ground it is standing on — first from a stand in reach, and only if that
+            // was not enough, off the game it meets. Both draws go through the primitives a
+            // resident band's crews use (`forage_take` / `hunt_take`), capped at the low-water
+            // buffer so neither overfills.
+            //
+            // # ⛔ IT IS AN ORDER, NOT A SCORE, AND MUST NOT BECOME ONE
+            //
+            // **Gathering costs no lives, no animals and no weapon wear** — the party spends baskets
+            // and walks on — while a kill costs casualties, spears and a herd. So the party
+            // exhausts the safe option before it picks a fight, and that single rule is the whole
+            // model: a ranking pass between the two would let a fat herd outbid a stand the party
+            // could have stripped for nothing, which is exactly the trade nobody would make.
             let low_buffer = scalar_from_f32(
                 workers as f32 * cfg.provision_upkeep_per_worker * cfg.replenish.low_turns as f32,
             );
             if cohort.stores.get(FOOD) < low_buffer {
-                // First huntable herd within replenish reach (not necessarily the closest —
+                // **The nearest stand in reach with something takeable standing above the floor.**
+                // Keyed on `(distance, y, x)` rather than "the first match" because
+                // `ForageRegistry::patches` is a `HashMap` whose iteration order is not
+                // deterministic — a party standing between two stands must not pick by hash order.
+                let stand = forage_registry
+                    .patches
+                    .iter()
+                    .filter_map(|(tile, patch)| {
+                        let distance = crate::grid_utils::hex_distance_wrapped(
+                            exp_pos,
+                            *tile,
+                            grid_width,
+                            wrap_horizontal,
+                        );
+                        (distance <= cfg.replenish.reach_tiles
+                            && crate::forage::patch_take_room(patch, DEFAULT_ESCAPEMENT_FLOOR)
+                                > NOTHING_TO_GATHER)
+                            .then_some((distance, tile.y, tile.x))
+                    })
+                    .min()
+                    .map(|(_, y, x)| UVec2::new(x, y));
+                let ground = stand.and_then(|tile| {
+                    let entity = tile_registry.index(tile.x, tile.y)?;
+                    let ground = tiles.get(entity).ok()?;
+                    Some((tile, ground, food_modules.get(entity).ok()))
+                });
+                if let Some((tile, ground, module)) = ground {
+                    // **What is actually growing here**, through the one `tile_flora_composition`
+                    // seam (never `FloraConfig::composition` on a raw terrain), and the gather's
+                    // season, which is the food module's — a tile carrying none offers no wild
+                    // gather at all (`NO_FORAGE_SEASON`), exactly as on the resident Forage arm.
+                    let composition =
+                        tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+                    let seasonal =
+                        module.map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
+                    let room = (low_buffer - cohort.stores.get(FOOD)).max(scalar_zero());
+                    let patch = forage_registry
+                        .patch_mut(tile)
+                        .expect("the stand was just found in this registry");
+                    // **The room converts to a collection bound, exactly as the roadside kill's
+                    // does** ([`carry_room_biomass`]): the pack's remaining provisions inverted
+                    // through this stand's own conversion rate, so a nearly-topped-up party draws
+                    // less off the ground rather than gathering food it must drop.
+                    //
+                    // It rides the CREW'S THROUGHPUT because that is the only bound `forage_take`
+                    // takes — the whole crew term is `workers × capacity × seasonal`, so capping
+                    // the capacity caps the draw, and the take path stays the one the band uses.
+                    let per_biomass = forage_provisions(
+                        crate::fauna::ONE_UNIT_OF_BIOMASS,
+                        patch_provisions_per_biomass_taking(
+                            patch,
+                            &composition,
+                            &flora,
+                            &labor.forage,
+                            &TakeSelection::EVERYTHING,
+                        ),
+                        EXPEDITION_OUTPUT_MULTIPLIER,
+                    );
+                    let crew = workers as f32 * seasonal;
+                    let capped_per_worker =
+                        if per_biomass > NOTHING_TO_GATHER && crew > NOTHING_TO_GATHER {
+                            per_worker_gather_biomass.min(room.to_f32() / per_biomass / crew)
+                        } else {
+                            NOTHING_TO_GATHER
+                        };
+                    // **What the crew took off the stand**, read either side of the take — the wear
+                    // quantum below is biomass, not provisions.
+                    let standing_before = patch.biomass;
+                    let gathered = forage_take(
+                        patch,
+                        &composition,
+                        workers,
+                        // **The restrained floor**, the same one the roadside kill takes at: a
+                        // party replenishing on the march can never be the thing that ruins a
+                        // stand.
+                        DEFAULT_ESCAPEMENT_FLOOR,
+                        // A ranging party carries home whatever the stand offers — it is eating,
+                        // not choosing a crop.
+                        &TakeSelection::EVERYTHING,
+                        &labor.forage,
+                        &flora,
+                        EXPEDITION_OUTPUT_MULTIPLIER,
+                        capped_per_worker,
+                        seasonal,
+                    );
+                    let gathered_biomass = standing_before - patch.biomass;
+                    if gathered > scalar_zero() {
+                        cohort.stores.add(FOOD, gathered);
+                    }
+                    // **The BASKETS are charged per USE, never per turn** — the biomass this crew
+                    // actually took off the stand, the same quantum the resident Forage arm
+                    // charges. Named by quantum rather than by item, so an item added to the
+                    // ranging kit that wears per biomass gathered is charged here without editing
+                    // this call, and a party whose kit carries no baskets gathered by hand and
+                    // wears nothing.
+                    if let Some(kit) = party_equipment.as_mut() {
+                        kit.wear_kit(
+                            &equipment_cfg,
+                            &party_kit,
+                            crate::equipment_config::WearQuantum::BiomassGathered,
+                            gathered_biomass,
+                        );
+                    }
+                }
+            }
+            // **Only a party the stand could not fill picks a fight.** Re-read rather than reusing
+            // the test above: the gather may have topped the pack up, and a party that no longer
+            // needs food does not kill for it.
+            if cohort.stores.get(FOOD) < low_buffer {
+                // First **edible** herd within replenish reach (not necessarily the closest —
                 // `position` returns the first match).
+                //
+                // # ⛔ AN INEDIBLE HERD IS SKIPPED OUTRIGHT, NOT RANKED LAST (issue #373)
+                //
+                // This whole arm is triggered by the FOOD low-water mark and exists to feed the
+                // party, so a quarry that pays no provisions cannot answer the question that was
+                // asked. A starving party used to kill a wolf pack it could not eat — spending
+                // casualties, spears and a herd to bank pelts — and then walk on still starving.
+                // Materials are a byproduct of a food take here and never the reason for one; the
+                // hunt verb remains the way to go after pelts deliberately.
                 let in_range = herds.herds.iter().position(|herd| {
-                    crate::grid_utils::hex_distance_wrapped(
-                        exp_pos,
-                        herd.position(),
-                        grid_width,
-                        wrap_horizontal,
-                    ) <= cfg.replenish.reach_tiles
+                    herd_hunt_yield(herd, &fauna).edible()
+                        && crate::grid_utils::hex_distance_wrapped(
+                            exp_pos,
+                            herd.position(),
+                            grid_width,
+                            wrap_horizontal,
+                        ) <= cfg.replenish.reach_tiles
                 });
                 if let Some(idx) = in_range {
                     // A scout only nibbles the sustainable surplus off passing game (the Sustain
@@ -513,8 +731,9 @@ pub fn advance_expeditions(
                     // per-source yield row), which is honest as far as it goes: an opportunistic
                     // roadside kill is exactly where a party leaves most of the carcass.
                     let room = (low_buffer - cohort.stores.get(FOOD)).max(scalar_zero());
-                    // The **species'** food rate, not the global one: an inedible quarry never fills
-                    // the pack, so the room converts to an unbounded biomass collection.
+                    // The **species'** food rate, not the global one — and edible by
+                    // construction (the search above), so the room really does invert into a
+                    // finite biomass collection rather than [`NO_CARRY_BOUND`].
                     let scout_yield = herd_hunt_yield(&herds.herds[idx], &fauna);
                     let carry_room = carry_room_biomass(room, &scout_yield);
                     // The quarry's mass, read before the mutable borrow — a mass-bounded weapon is
@@ -596,8 +815,9 @@ pub fn advance_expeditions(
                     // **The MATERIAL account of the same roadside kill** — a scout's kill is skinned
                     // as well as butchered. Off `take.carried`, like the food above it and like
                     // every resident seam: you cannot tan a hide you left on the range, so a scout
-                    // that hauled nothing banks nothing. It is what keeps an opportunistic take on
-                    // an *inedible* herd from being a pure waste of animals.
+                    // that hauled nothing banks nothing. The hides are a **byproduct** of a food
+                    // take and never the reason for one — the search above never reaches an
+                    // inedible herd (#373).
                     crate::materials_config::credit_material_yield(
                         &mut cohort.stores,
                         &materials_cfg,
@@ -1260,6 +1480,16 @@ pub fn advance_expeditions(
 /// band, so it carries no morale/discontent output modifier (unlike the band Hunt arm, which passes
 /// `output_multiplier(cohort, ..)`). Named so the forecast and the take can't disagree.
 const EXPEDITION_OUTPUT_MULTIPLIER: f32 = 1.0;
+
+/// **"There is nothing here to gather"** — the zero the replenish gather measures three of its
+/// terms against: the stand's room above the floor, what one unit of its biomass converts to in
+/// food, and the crew term (`workers × seasonal`) that would carry it home.
+///
+/// One constant for three tests because they state the same thing in three units: any of them at
+/// zero means the gather cannot pay, so the party leaves the stand untouched and falls through to
+/// the hunt arm. It is deliberately **not** [`NO_FORAGE_SEASON`] — that names one *input* being
+/// absent, while this is the outcome the three share.
+const NOTHING_TO_GATHER: f32 = 0.0;
 
 /// **No carry bound at all**, the sentinel [`fauna::quantise_animal_take`] reads as *"the pack cannot
 /// be the thing that stops this"*.

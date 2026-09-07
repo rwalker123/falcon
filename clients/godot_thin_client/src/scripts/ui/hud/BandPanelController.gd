@@ -6951,8 +6951,17 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
     if _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_SPLIT:
         _fill_split_compose_sheet(sheet, band)
         return sheet
-    # SCOUT — a single input. Its only question is party size, and nothing about a scouting party
-    # depends on where it is going, so the destination is still picked on the map after the send.
+    # SCOUT — TWO inputs: how many go, and what they carry. Nothing about a scouting party depends on
+    # where it is going, so the destination is still picked on the map after the send.
+    #
+    # **THE KIT IS A REAL QUESTION HERE, and until the ranging kit existed it was not asked at all** —
+    # the launch stamped the hunt job's default on the party and the player never saw it. A
+    # provisioned party drains its larder every turn and is the only party in the game that has to
+    # REPLACE what it eats out of contact with its band, which it does by gathering off the stands it
+    # passes and, only if that was not enough, by taking the game it meets. One kit arms both halves,
+    # so what is picked here decides how far the party can range before it starves
+    # (`KitRoster.JOB_EXPEDITION`).
+    #
     # **THE CEILING IS THE BAND'S IDLE WORKERS**, as it is on all three launch verbs: the sim carries no
     # rules cap on party size, and `max_expedition_party_size` — which nothing here reads — echoed how
     # far the retired estimate tables were sampled, never a limit anyone may send under.
@@ -6963,15 +6972,38 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
             _send_expedition_count = clampi(n, HudConst.WORKER_STEP, party_max)
             rerender()))
     sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_OF_IDLE_FORMAT % idle))
+    # **THE KIT ROW SITS BETWEEN THE STEPPER AND THE HINT**, the rule every other sheet and role card
+    # follows: a kit describes the crew, so its row goes with the crew.
+    #
+    # ⛔ **NO QUARRY IS PASSED, AND THAT IS THE POINT RATHER THAN AN OMISSION.** The hunt sheets grey a
+    # kit that cannot hurt the chosen animal and derive a per-quarry default from it; a scouting party
+    # does not know what it will meet, so no kit is ever withheld here — the choice is a bet on the
+    # terrain being walked into, not a solved answer. `KitRoster.kit_offer` withholds nothing on a job
+    # that is not `hunt`, so the empty quarry below is the whole of the mechanism.
+    var kits := _band_labor.kits()
+    var default_kit := _band_labor.default_kit_id(KitRoster.JOB_EXPEDITION)
+    # The pick is PER BAND (`_role_kit_key`): the parties zone cycles bands, and a per-job key alone
+    # would carry a choice made for one band's party onto every other band's sheet.
+    var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_EXPEDITION, default_kit,
+        _composed_role_kit_id(band, KitRoster.JOB_EXPEDITION))
+    _mount_kit_row(sheet, kits, KitRoster.JOB_EXPEDITION, kit_id, default_kit, band,
+        func(picked: String) -> void:
+            _role_kit_ids[_role_kit_key(band, KitRoster.JOB_EXPEDITION)] = picked
+            rerender(),
+        {}, "", _send_expedition_count)
     sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.SEND_EXPEDITION_HINT))
     var confirm := Button.new()
     confirm.text = HudComposeVocab.SEND_EXPEDITION_BUTTON
     confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    confirm.set_meta(HudWidgets.SEND_EXPEDITION_CONFIRM_META, true)
     HudStyle.apply_button(confirm, "primary")
     confirm.tooltip_text = HudComposeVocab.SEND_EXPEDITION_HINT
     confirm.pressed.connect(func() -> void:
         _close_party_compose()
-        _targeting.begin_send_expedition(band, _send_expedition_count))
+        # **THE KIT RIDES THE TARGETING**, not the press: the destination is a map click away, so the
+        # selection has to survive the sheet closing. `Main._kit_token` omits the tail when the pick
+        # equals the job default, which is why the default travels beside it.
+        _targeting.begin_send_expedition(band, _send_expedition_count, kit_id, default_kit))
     sheet.add_child(confirm)
     return sheet
 

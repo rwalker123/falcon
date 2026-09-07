@@ -270,8 +270,10 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "send_expedition",
         aliases: &[],
-        summary: "Outfit a detached scouting party (workers + provisions) and send it to a target.",
-        usage: "send_expedition <faction_id> <band_id> <party_workers> <x> <y>",
+        summary: "Outfit a detached scouting party (workers + provisions) and send it to a \
+                  target. The party feeds itself on the march — it gathers off a stand in reach \
+                  before it hunts — so the kit it carries is what decides how much it can replace.",
+        usage: "send_expedition <faction_id> <band_id> <party_workers> <x> <y> [kit <id>]",
     },
     CommandVerbHelp {
         verb: "recall_expedition",
@@ -1421,12 +1423,23 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let y_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            // **The kit is a NAMED token** (`kit <id>`), exactly as on `send_hunt_expedition` — the
+            // one optional tail this verb takes. Absent = the `expedition` job's default.
+            let mut tail: Vec<&str> = parts.collect();
+            let kit_id = take_named_token(&mut tail, "kit", "send_expedition kit id")?;
+            // **Nothing else may follow.** The scout's grammar is otherwise closed (its target is
+            // the five positionals), so a stray token is a misunderstanding of the verb rather than
+            // a value to drop — the same fail-closed reading `send_denial_raid` takes.
+            if let Some(extra) = tail.into_iter().next() {
+                return Err(CommandParseError::UnexpectedArgument(extra.to_string()));
+            }
             Ok(CommandPayload::SendExpedition {
                 faction_id: parse_u32(faction_str, "send_expedition faction")?,
                 band_id: Some(parse_u64(band_str, "send_expedition band_id")?),
                 party_workers: parse_u32(workers_str, "send_expedition party_workers")?,
                 target_x: parse_u32(x_str, "send_expedition target_x")?,
                 target_y: parse_u32(y_str, "send_expedition target_y")?,
+                kit_id,
             })
         }
         "recall_expedition" => {

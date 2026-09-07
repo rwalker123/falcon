@@ -283,6 +283,8 @@ pub(crate) struct PublishState {
     /// re-send only on a world rebuild.
     default_scout_kit_id: Whole<String>,
     default_warrior_kit_id: Whole<String>,
+    /// The ranging party's default, diffed like the four above — a per-world constant.
+    default_expedition_kit_id: Whole<String>,
     /// The serialized TOE config the Workbench's designer pages print — a per-world constant like
     /// the roster above, and diffed for the same reason: it is the largest string on the section
     /// and nothing about it changes between world rebuilds.
@@ -676,6 +678,7 @@ struct SubsistenceParts {
     default_forage_kit_id: Option<String>,
     default_scout_kit_id: Option<String>,
     default_warrior_kit_id: Option<String>,
+    default_expedition_kit_id: Option<String>,
     equipment_config_json: Option<String>,
     materials: Option<Vec<MaterialDefState>>,
     characteristic_bands: Option<Vec<CharacteristicBandState>>,
@@ -695,6 +698,7 @@ fn diff_subsistence(
     default_forage_kit_id: &mut Whole<String>,
     default_scout_kit_id: &mut Whole<String>,
     default_warrior_kit_id: &mut Whole<String>,
+    default_expedition_kit_id: &mut Whole<String>,
     equipment_config_json: &mut Whole<String>,
     materials: &mut Whole<Vec<MaterialDefState>>,
     characteristic_bands: &mut Whole<Vec<CharacteristicBandState>>,
@@ -723,6 +727,11 @@ fn diff_subsistence(
         default_warrior_kit_id: diff_whole(
             default_warrior_kit_id,
             &snapshot.default_warrior_kit_id,
+            write,
+        ),
+        default_expedition_kit_id: diff_whole(
+            default_expedition_kit_id,
+            &snapshot.default_expedition_kit_id,
             write,
         ),
         equipment_config_json: diff_whole(
@@ -881,6 +890,7 @@ impl PublishState {
             default_forage_kit_id: Whole::default(),
             default_scout_kit_id: Whole::default(),
             default_warrior_kit_id: Whole::default(),
+            default_expedition_kit_id: Whole::default(),
             equipment_config_json: Whole::default(),
             history: VecDeque::new(),
         }
@@ -1013,6 +1023,7 @@ impl PublishState {
             default_forage_kit_id,
             default_scout_kit_id,
             default_warrior_kit_id,
+            default_expedition_kit_id,
             equipment_config_json,
             populations,
             generations,
@@ -1126,6 +1137,7 @@ impl PublishState {
                         default_forage_kit_id,
                         default_scout_kit_id,
                         default_warrior_kit_id,
+                        default_expedition_kit_id,
                         equipment_config_json,
                         materials,
                         characteristic_bands,
@@ -1224,6 +1236,7 @@ impl PublishState {
             default_forage_kit_id: subsistence_parts.default_forage_kit_id,
             default_scout_kit_id: subsistence_parts.default_scout_kit_id,
             default_warrior_kit_id: subsistence_parts.default_warrior_kit_id,
+            default_expedition_kit_id: subsistence_parts.default_expedition_kit_id,
             equipment_config_json: subsistence_parts.equipment_config_json,
             populations: people_parts.populations,
             removed_populations: people_parts.removed_populations,
@@ -1444,6 +1457,8 @@ impl PublishState {
             .reset(entry.snapshot.default_scout_kit_id.clone());
         self.default_warrior_kit_id
             .reset(entry.snapshot.default_warrior_kit_id.clone());
+        self.default_expedition_kit_id
+            .reset(entry.snapshot.default_expedition_kit_id.clone());
         self.equipment_config_json
             .reset(entry.snapshot.equipment_config_json.clone());
         self.great_discoveries.reset(
@@ -1606,6 +1621,7 @@ impl PublishState {
             default_forage_kit_id: None,
             default_scout_kit_id: None,
             default_warrior_kit_id: None,
+            default_expedition_kit_id: None,
             equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
@@ -1746,6 +1762,7 @@ impl PublishState {
             default_forage_kit_id: None,
             default_scout_kit_id: None,
             default_warrior_kit_id: None,
+            default_expedition_kit_id: None,
             equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
@@ -1870,6 +1887,7 @@ impl PublishState {
             default_forage_kit_id: None,
             default_scout_kit_id: None,
             default_warrior_kit_id: None,
+            default_expedition_kit_id: None,
             equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
@@ -1976,6 +1994,7 @@ fn kit_roster_states(
                 labor.hunt.per_worker_biomass_capacity,
                 labor.forage.per_worker_biomass_capacity,
                 labor.scout.vantage_range as f32,
+                kit_levers.equipped_expedition_sight_range,
                 &choice,
                 &fresh,
             );
@@ -1994,6 +2013,11 @@ fn kit_roster_states(
                 // reach, exactly like the three above, so the picker renders the kit and not the
                 // band that happens to be selected.
                 scout_vantage_range: tiers.scout_vantage_range,
+                // **What a DETACHED PARTY carrying this kit observes at**, the launch sheet's gear
+                // line. Not the vantage's number read twice: the two are different observers with
+                // different bare readings, so a sheet quoting the vantage's would tell a bare
+                // ranging party it sees one tile when it sees six.
+                expedition_sight_range: tiers.expedition_sight_range,
                 // **The retired multiplier's slot, held at its neutral** — the stat is an
                 // additive per-worker contribution now (`buildWorkPerWorker` beside it), and a
                 // number in these units would read as a rate on a field the client renders as one.
@@ -2410,6 +2434,9 @@ pub fn capture_snapshot(
         baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
         baseline_gather_rate: labor_config.forage.per_worker_biomass_capacity,
         equipped_vantage_range: labor_config.scout.vantage_range as f32,
+        // The detached party's *equipped* observation radius, beside the posted vantage's — the
+        // second axis the one wayfinding item lifts.
+        equipped_expedition_sight_range: expedition_cfg.observe_sight_range as f32,
     };
     // **The crafting readout's config half, resolved ONCE for the capture.** `craftOffers` is
     // bands × recipes, and everything that is a function of the recipe alone — its group, its bench
@@ -3198,6 +3225,12 @@ pub fn capture_snapshot(
             .to_string(),
         default_warrior_kit_id: equipment_config
             .default_kit_id(crate::equipment_config::KitJob::Warrior)
+            .to_string(),
+        // **The ranging party's default** — the launch verbs' answer when the player names no kit,
+        // published beside the four role defaults for the same reason they are: the client's launch
+        // sheet has to open on the kit the sim will actually resolve.
+        default_expedition_kit_id: equipment_config
+            .default_kit_id(crate::equipment_config::KitJob::Expedition)
             .to_string(),
         tiles: tile_states,
         populations: population_states,
